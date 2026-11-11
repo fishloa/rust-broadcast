@@ -762,32 +762,17 @@ fn scratch(name: &str) -> PathBuf {
 /// Run the validator in `dir` on `entry`; return the MUST-level (requirement
 /// level 1) messages it reports, anywhere in its JSON.
 fn validator_errors(dir: &Path, entry: &str, extra: &[&str]) -> Vec<String> {
-    let out = dir.join("out.json");
-    let status = output_bounded(
-        Command::new("mediastreamvalidator")
-            .current_dir(dir)
-            .args(extra)
-            .args(["--quiet", "-t", &VALIDATOR_TIMEOUT_SECS.to_string(), "-O"])
-            .arg(&out)
-            .arg(entry),
-        Duration::from_secs(VALIDATOR_TIMEOUT_SECS) + VALIDATOR_MARGIN,
-    )
-    .expect("run mediastreamvalidator")
-    .status;
-    assert!(status.success(), "validator exit {status}");
-    // The JSON is machine-written with one `"key" : value` per line; compare
-    // whitespace-free so the exact spacing does not matter.
-    let compact: String = std::fs::read_to_string(&out)
-        .expect("validator json")
+    let json = test_fixtures::process::msv::MsvRun::new(dir, entry)
+        .extra(extra)
+        .timeout_secs(VALIDATOR_TIMEOUT_SECS as u32)
+        .deadline(Duration::from_secs(VALIDATOR_TIMEOUT_SECS) + VALIDATOR_MARGIN)
+        .run();
+    let compact: String = json
+        .to_string()
         .chars()
         .filter(|c| !c.is_whitespace())
         .collect();
     let mut errors = Vec::new();
-    // `errorRequirementLevel` 1 marks RFC "MUST"-level findings (see
-    // media-doctor's `mediastreamvalidator_oracle` calibration notes). Each
-    // finding is one flat `{...}` message object, so the block around the
-    // marker is exactly that message: an object boundary on each side, never
-    // a fixed window that could reach into a neighbour.
     let key = "\"errorRequirementLevel\":1";
     let mut from = 0;
     while let Some(at) = compact[from..].find(key) {
