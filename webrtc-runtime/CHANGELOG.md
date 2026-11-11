@@ -3,6 +3,9 @@
 All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
+### Added
+- `sdp`, the one place a WHIP/WHEP SDP document is built: `session_answer` renders the whole answer (origin, session name, timing and the single media section with its ICE/DTLS attributes) from typed inputs — the local `IpAddr`, `LocalMediaIdentity` (ICE ufrag/pwd and the `sha-256` certificate fingerprint), the `AnswerTransport` narrowed to one payload type, `CodecAttribute`s and the gathered candidates — and `restart_answer` renders the ICE-restart answer fragment. `offer_codec_attributes` picks the offer's `a=rtpmap`/`a=fmtp`/`a=rtcp-fb` entries naming the chosen payload type for an answer to echo. Rendering reports `Error::SdpWrite` instead of a lossy conversion. `sdp-types` is now a plain dependency (the builder is in the default build), so the `media` feature no longer enables it.
+
 
 ## [0.7.0] - 2026-11-10
 ### Changed

@@ -1779,13 +1779,15 @@ pub const TABLE: &[Crate] = &[
     // `rtp_packet::rtcp::CompoundPacket`), the same shape as WHIP/WHEP's own `Event` —
     // not a spec/field label. `media::transport::SetupRole` is NOT skipped: its
     // three variants are the literal SDP `a=setup` tokens (RFC 8842 §4.1), so it
-    // carries `name()` + `impl_spec_display!`.
+    // carries `name()` + `impl_spec_display!`. Likewise `sdp::Direction` (the
+    // `a=recvonly`/`a=sendonly` tokens) and `sdp::CodecAttributeName` (the
+    // `a=rtpmap`/`a=fmtp`/`a=rtcp-fb` attribute names).
     Crate {
         name: "webrtc-runtime",
         scope: Scope::PerFile,
         matcher: Matcher::Loose,
         skip: &["Error", "Event", "State", "MediaEvent", "Whip", "Whep"],
-        expected: Some(&["SetupRole"]),
+        expected: Some(&["SetupRole", "Direction", "CodecAttributeName"]),
         min_enums: None,
     },
 ];
