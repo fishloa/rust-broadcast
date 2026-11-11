@@ -168,13 +168,14 @@ futures-util      = { workspace = true, features = ["std"] }
 # only `multimux`'s `whip`/`whep` features below turn that on. See this
 # crate's `rust-version` note on those features for why the split matters.
 webrtc-runtime    = { path = "../webrtc-runtime", version = "0.7.0", optional = true, default-features = false }
-# WHEP output (`output::whep`, issue #743) only: builds the typed
-# `rtp_packet::RtpPacket` values `webrtc_runtime::media::MediaTransport::
-# encrypt_rtp` requires — see that method's own signature. Unlike
-# `webrtc-runtime`, this crate has no `rtc-dtls` transitive dependency; it
-# is kept behind the `whep` feature (rather than unconditional) purely so it
-# is never pulled in by a build that never touches WHEP.
-rtp-packet        = { path = "../rtp-packet", version = "0.6.0", optional = true, default-features = false }
+# RFC 3550 §5.1 RTP header, in two places: WHEP output (`output::whep`,
+# issue #743) builds the typed `rtp_packet::RtpPacket` values
+# `webrtc_runtime::media::MediaTransport::encrypt_rtp` requires, and the raw
+# RTP-over-UDP source (`source::rtp_udp`) reads the payload type through
+# `RtpPacket` rather than masking header byte 1. The source one is not
+# feature-gated, so this dependency is unconditional; it is a small,
+# `no_std`-capable crate with no `rtc-dtls` tree behind it.
+rtp-packet        = { path = "../rtp-packet", version = "0.6.0", default-features = false }
 # DVB SI EIT present/following (issue #903, `dvr`): `dvb_si::demux::SiDemux`
 # reassembles EIT p/f sections from raw TS packets so `DvrRecorder` can roll
 # the archive period on the programme boundary rather than only on the
@@ -243,7 +244,7 @@ test-hooks  = ["test-seams", "dep:webrtc-runtime", "webrtc-runtime/test-seams"]
 # pattern elsewhere (`InputSpec::Whip` vs. a hypothetical output-side
 # equivalent). Both enable `webrtc-runtime/media`, so both pull the same
 # ICE/DTLS-SRTP dependency tree described on `whip` above.
-whep        = ["dep:webrtc-runtime", "webrtc-runtime/media", "dep:rtp-packet"]
+whep        = ["dep:webrtc-runtime", "webrtc-runtime/media"]
 
 [[example]]
 name = "serve_rtsp"
