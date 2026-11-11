@@ -1,5 +1,6 @@
 mod availability;
 mod base_url;
+mod client_addressing;
 mod client_config;
 mod client_faults;
 mod client_misc;
@@ -7,7 +8,6 @@ mod client_periods;
 mod client_select_audio;
 mod client_static;
 mod client_url_policy;
-mod client_addressing;
 mod clock;
 mod common;
 mod dash_mpd_reader;

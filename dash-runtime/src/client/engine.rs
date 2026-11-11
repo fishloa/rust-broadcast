@@ -1463,12 +1463,15 @@ impl DashClient {
         self.reqs.remove(&id);
         match planned {
             Ok(p) => {
-                if let Some(r) = self.rep_mut(rep) {
-                    let start = r.start_time_us.take();
-                    r.next_issue = start
-                        .and_then(|t| match p.plan.index_at_or_before(t) { Ok(i) => i, Err(_) => None })
-                        .unwrap_or(0);
-                    r.plan = Some(p.plan);
+                let start = self.rep_mut(rep).and_then(|r| r.start_time_us.take());
+                match start.map_or(Ok(None), |t| p.plan.index_at_or_before(t)) {
+                    Ok(index) => {
+                        if let Some(r) = self.rep_mut(rep) {
+                            r.next_issue = index.unwrap_or(0);
+                            r.plan = Some(p.plan);
+                        }
+                    }
+                    Err(e) => self.drop_rep_in(rep, DropCause::Addressing(address_name(&e))),
                 }
             }
             Err(e) => self.drop_rep_in(rep, DropCause::Addressing(plan_error_name(&e))),
@@ -2163,7 +2166,10 @@ impl DashClient {
         };
         match rep.plan.as_ref() {
             Some(plan) => {
-                rep.next_issue = match plan.index_at_or_before(switch_us) { Ok(Some(i)) => i, _ => 0 };
+                rep.next_issue = match plan.index_at_or_before(switch_us) {
+                    Ok(Some(i)) => i,
+                    _ => 0,
+                };
                 rep.joined = true;
                 let last = rep
                     .next_issue

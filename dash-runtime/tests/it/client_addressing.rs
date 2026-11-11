@@ -1,7 +1,9 @@
 //! A segment-address error after the initial plan drops the track with its
 //! typed cause instead of stalling.
 
-use dash_runtime::client::{Action, DashClient, DashConfig, DropCause, FatalKind, Output, PullLimits, ResponseMeta};
+use dash_runtime::client::{
+    Action, DashClient, DashConfig, DropCause, FatalKind, Output, PullLimits, ResponseMeta,
+};
 
 const DOC: &str = "http://dash.test/live/manifest.mpd";
 
@@ -50,5 +52,8 @@ fn a_segment_address_error_after_the_initial_plan_drops_the_track() {
             break;
         }
     }
-    assert!(dropped || fatal, "expected typed addressing drop/fatal, not a stall");
+    assert!(
+        dropped || fatal,
+        "expected typed addressing drop/fatal, not a stall"
+    );
 }

@@ -907,10 +907,7 @@ impl DashClient {
                 let delay = self.delay_us(hint);
                 match join_index(plan, utc, delay) {
                     Some(idx) => {
-                        let last = match idx
-                            .checked_sub(1)
-                            .map_or(Ok(None), |i| plan.get(i))
-                        {
+                        let last = match idx.checked_sub(1).map_or(Ok(None), |i| plan.get(i)) {
                             Ok(s) => s.map(|s| s.time_ticks),
                             Err(e) => return Candidate::Unaddressable(address_name(&e)),
                         };
@@ -1452,7 +1449,10 @@ impl DashClient {
         match self.build_rep(at) {
             Ok(mut rep) => {
                 if let (Some(plan), Some(us)) = (rep.plan.as_ref(), switch_us) {
-                    rep.next_issue = match plan.index_at_or_before(us) { Ok(Some(i)) => i, _ => 0 };
+                    rep.next_issue = match plan.index_at_or_before(us) {
+                        Ok(Some(i)) => i,
+                        _ => 0,
+                    };
                     rep.joined = true;
                     match rep
                         .next_issue
@@ -1533,7 +1533,10 @@ impl DashClient {
                 if rep.joined {
                     let bound = p.plan.len().unwrap_or(u64::MAX / 2);
                     rep.next_issue = match rep.last_time {
-                        Some(t) => p.plan.leading_true(bound, |s| s.time_ticks <= t).unwrap_or(0),
+                        Some(t) => p
+                            .plan
+                            .leading_true(bound, |s| s.time_ticks <= t)
+                            .unwrap_or(0),
                         None => 0,
                     };
                 }

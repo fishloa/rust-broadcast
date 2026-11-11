@@ -122,6 +122,9 @@ pub fn join_index(plan: &SegmentPlan, utc_now_us: i128, delay_us: i128) -> Optio
     let w = window(plan, utc_now_us)?;
     let (ast, _) = plan.avail_parts()?;
     let t = join_time_us(utc_now_us, delay_us, ast, plan.period_start_us());
-    let at = match plan.index_at_or_before(t) { Ok(Some(i)) => i, _ => w.oldest };
+    let at = match plan.index_at_or_before(t) {
+        Ok(Some(i)) => i,
+        _ => w.oldest,
+    };
     Some(at.clamp(w.oldest, w.newest))
 }

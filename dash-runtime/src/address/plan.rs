@@ -672,13 +672,13 @@ impl SegmentPlan {
             .avail
             .as_ref()
             .map(|a| init_available_from(a.ast_us, self.period_start_us));
-        let until = self
-            .len()
-            .and_then(|n| n.checked_sub(1))
-            .and_then(|last| match self.get(last) {
-                Ok(Some(s)) => s.available_until_us,
-                _ => None,
-            });
+        let until =
+            self.len()
+                .and_then(|n| n.checked_sub(1))
+                .and_then(|last| match self.get(last) {
+                    Ok(Some(s)) => s.available_until_us,
+                    _ => None,
+                });
         ResourceRef {
             reference: reference.to_owned(),
             byte_range: range,
@@ -689,7 +689,6 @@ impl SegmentPlan {
 
     /// Index of the last segment whose Period-relative start is at or before
     /// `period_time_us`; `None` before the first segment.
-    #[must_use]
     pub fn index_at_or_before(&self, period_time_us: i128) -> Result<Option<u64>, AddressError> {
         let n = self.len();
         let (mut lo, mut hi) = (0u64, n.unwrap_or(u64::MAX / 2));
@@ -704,13 +703,11 @@ impl SegmentPlan {
     }
 
     /// Availability start of the segment at `index`.
-    #[must_use]
     pub fn available_from_us(&self, index: u64) -> Result<Option<i128>, AddressError> {
         Ok(self.get(index)?.and_then(|s| s.available_from_us))
     }
 
     /// Availability end of the segment at `index`.
-    #[must_use]
     pub fn available_until_us(&self, index: u64) -> Result<Option<i128>, AddressError> {
         Ok(self.get(index)?.and_then(|s| s.available_until_us))
     }
@@ -718,7 +715,11 @@ impl SegmentPlan {
     /// The first index, and the number of segments, for which `pred` holds on
     /// a monotone-in-index predicate over `[0, bound)`: the count of leading
     /// indices where `pred` is true.
-    pub(crate) fn leading_true(&self, bound: u64, pred: impl Fn(&SegmentRef) -> bool) -> Result<u64, AddressError> {
+    pub(crate) fn leading_true(
+        &self,
+        bound: u64,
+        pred: impl Fn(&SegmentRef) -> bool,
+    ) -> Result<u64, AddressError> {
         let (mut lo, mut hi) = (0u64, bound);
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
