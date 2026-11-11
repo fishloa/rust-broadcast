@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- `RtmpMux` frames at exactly the chunk size it announces: a `chunk_size` of 0 or above `rtmp_runtime::chunk::MAX_CHUNK_SIZE` (16 MiB) is rejected with `RtmpFlvError::ChunkSizeTooLarge` instead of announcing it and framing at the writer's clamped value. A tag body over `rtmp_runtime::chunk::MAX_MESSAGE_LEN` (8 MiB) is rejected with the new `RtmpFlvError::MessageTooLarge { len, max }` instead of producing a message `RtmpDemux` refuses.
 ### Changed
 - BREAKING: transmux no longer reads MPDs; `dash_runtime::mpd` is the workspace's one MPD reader (#2340). Removed: `Mpd`, `MpdType`, `Period`, `AdaptationSet`, `Representation`, `SegmentTemplate` (including `match_url`), `SegmentTimeline`, `S`, `TimelineSegment`, `TemplateMatch`, `dash_parse::default_limits` and `dash_parse::MAX_TIMELINE_SEGMENTS`, and every `DashParseError` variant except the one `parse_iso8601_duration` returns. Parse with `dash_runtime::mpd::Mpd::parse` (or `parse_with` for limits); reverse-match a segment URL with `dash_runtime::address::template::match_url`. transmux keeps MPD writing (`DashPackager`) and `parse_iso8601_duration`.
 - BREAKING: removed `MAX_FORMAT_WIDTH` (and its `transmux` re-export); the `%0Nd` template width bound belongs to the MPD reader, `dash_runtime::address::template::MAX_FORMAT_WIDTH`.
