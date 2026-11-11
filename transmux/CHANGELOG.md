@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `rtp::Mp2tPacketiser` (`new(ssrc, initial_seq)`, `packetise(ts_packets, timestamp)`): MPEG-2 TS over RTP (RFC 2250 §2) — up to seven whole TS packets (`rtp::MP2T_TS_PACKETS_PER_PACKET`) per RTP packet at static payload type 33 (`rtp::MP2T_PT`, `rtp::MP2T_CLOCK_RATE`), serialized through `rtp_packet::RtpPacket`. It is sans-IO: the caller supplies the 90 kHz timestamp, and a slice that is not a whole number of 188-byte TS packets is `Error::InvalidInput` rather than being split.
 ### Changed
 - BREAKING: the Smooth Streaming client Manifest moved to the new `broadcast-smooth` crate, below this container hub as the HLS playlist syntax is (#2356). Removed from `transmux` and the crate root: the module `smooth_parse` and its `SmoothManifest`, `StreamIndex`, `QualityLevel`, `C`, `StreamType`, `SmoothParseError`, `default_limits`, `MAX_CHUNK_RUN`, `MAX_CODEC_PRIVATE_DATA_HEX_LEN`, `TOKEN_BITRATE`, `TOKEN_START_TIME` and the private `xml_walk` plumbing. Parse and render with `broadcast_smooth::SmoothManifest` (`parse` / `parse_with_limits` / `to_xml`); `SMOOTH_TIMESCALE` is re-exported unchanged from `broadcast_smooth`. `track_spec_from_quality_level` stays here (now `transmux::smooth_codec`) because it builds this crate's `TrackSpec`, and takes a `broadcast_smooth::QualityLevel`.
 - `broadcast-smooth` is an optional, std-only dependency (`dep:broadcast-smooth` in the `std` feature), so `transmux` builds `no_std` again as the other XML paths allow.

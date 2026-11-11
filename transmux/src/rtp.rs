@@ -2106,6 +2106,90 @@ pub fn depacketise_klv(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
 }
 
 // ---------------------------------------------------------------------------
+// MPEG-2 TS over RTP (RFC 2250 §2) — MP2T
+// ---------------------------------------------------------------------------
+
+/// RFC 3551 §6 static payload type for a MPEG-2 transport stream (RFC 2250
+/// §2 binds MP2T to it).
+pub const MP2T_PT: u8 = 33;
+
+/// RFC 2250 §2: a MP2T packet carries "no more than seven" whole TS packets.
+pub const MP2T_TS_PACKETS_PER_PACKET: usize = 7;
+
+/// RFC 2250 §2's fixed RTP clock rate for MP2T.
+pub const MP2T_CLOCK_RATE: u32 = 90_000;
+
+/// The largest payload one MP2T RTP packet may carry
+/// ([`MP2T_TS_PACKETS_PER_PACKET`] whole TS packets).
+pub const MP2T_MAX_PAYLOAD: usize = mpeg_ts::ts::TS_PACKET_SIZE * MP2T_TS_PACKETS_PER_PACKET;
+
+/// Packetise a run of whole MPEG-2 TS packets into MP2T RTP packets
+/// (RFC 2250 §2).
+///
+/// Each packet carries up to [`MP2T_TS_PACKETS_PER_PACKET`] whole TS packets
+/// at the caller's 90 kHz timestamp, which is the same for every packet of
+/// one run: RFC 2250 §2 has the timestamp advance with the media clock, which
+/// is the caller's (an RTSP push reads its own `Instant`) and never this
+/// crate's. Sequence numbers advance from [`initial_seq`](Self::new) and wrap
+/// at 16 bits; the SSRC is fixed per packetiser.
+///
+/// A `ts_packets` slice that is not a whole number of TS packets is an error
+/// rather than being split across packets: RFC 2250 §2 permits only whole TS
+/// packets as the payload, so a split one would be undecodable.
+#[derive(Debug, Clone)]
+pub struct Mp2tPacketiser {
+    ssrc: u32,
+    seq: u16,
+}
+
+impl Mp2tPacketiser {
+    /// Start sending from `initial_seq` under `ssrc` (RFC 3550 §5.1).
+    #[must_use]
+    pub fn new(ssrc: u32, initial_seq: u16) -> Self {
+        Self {
+            ssrc,
+            seq: initial_seq,
+        }
+    }
+
+    /// The sequence number the next packet will carry.
+    #[must_use]
+    pub fn next_seq(&self) -> u16 {
+        self.seq
+    }
+
+    /// The serialized RTP packets carrying `ts_packets` at `timestamp`.
+    pub fn packetise(&mut self, ts_packets: &[u8], timestamp: u32) -> Result<Vec<Vec<u8>>> {
+        if !ts_packets.len().is_multiple_of(mpeg_ts::ts::TS_PACKET_SIZE) {
+            return Err(Error::InvalidInput(
+                "MP2T payload is not a whole number of 188-byte TS packets",
+            ));
+        }
+        let count = ts_packets.len().div_ceil(MP2T_MAX_PAYLOAD);
+        let mut packets = Vec::with_capacity(count);
+        for payload in ts_packets.chunks(MP2T_MAX_PAYLOAD) {
+            let wire = RtpPacketWire {
+                marker: false,
+                payload_type: MP2T_PT,
+                sequence_number: self.seq,
+                timestamp,
+                ssrc: self.ssrc,
+                csrc: Vec::new(),
+                extension: None,
+                padding: None,
+                payload,
+            };
+            let mut out = alloc::vec![0u8; wire.serialized_len()];
+            wire.serialize_into(&mut out)
+                .map_err(|_| Error::InvalidInput("RTP packet did not fit its own length"))?;
+            packets.push(out);
+            self.seq = self.seq.wrapping_add(1);
+        }
+        Ok(packets)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // base64 + hex (RFC 4648) via the `base64` and `hex` crates
 // ---------------------------------------------------------------------------
 
@@ -2184,6 +2268,88 @@ pub(crate) fn hex_decode(s: &str) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `n` whole TS packets, each led by its own sync byte and numbered so a
+    /// reordered or split packet shows up.
+    fn ts_packets(n: usize) -> alloc::vec::Vec<u8> {
+        let mut out = alloc::vec![0u8; n * mpeg_ts::ts::TS_PACKET_SIZE];
+        for (i, packet) in out.chunks_mut(mpeg_ts::ts::TS_PACKET_SIZE).enumerate() {
+            packet[0] = 0x47;
+            packet[1] = u8::try_from(i).unwrap_or(0);
+        }
+        out
+    }
+
+    #[test]
+    fn mp2t_packs_seven_ts_packets_into_one_rtp_packet() {
+        let mut packetiser = Mp2tPacketiser::new(0xDEAD_BEEF, 0x1234);
+        let ts = ts_packets(MP2T_TS_PACKETS_PER_PACKET);
+        let packets = packetiser.packetise(&ts, 0x0100_0000).expect("packetise");
+        assert_eq!(packets.len(), 1);
+        let packet = RtpPacketWire::parse(&packets[0]).expect("parse");
+        assert_eq!(packet.payload_type, MP2T_PT);
+        assert!(!packet.marker, "RFC 2250 §2 has no marker bit");
+        assert_eq!(packet.sequence_number, 0x1234);
+        assert_eq!(packet.timestamp, 0x0100_0000);
+        assert_eq!(packet.ssrc, 0xDEAD_BEEF);
+        assert_eq!(packet.payload, &ts[..]);
+        assert_eq!(packetiser.next_seq(), 0x1235);
+    }
+
+    #[test]
+    fn mp2t_payload_type_is_the_static_mp2t_one() {
+        assert_eq!(MP2T_PT, 33, "RFC 3551 §6 static MP2T payload type");
+    }
+
+    #[test]
+    fn mp2t_splits_eight_ts_packets_into_two_rtp_packets_in_order() {
+        let mut packetiser = Mp2tPacketiser::new(0xDEAD_BEEF, 0);
+        let ts = ts_packets(MP2T_TS_PACKETS_PER_PACKET + 1);
+        let packets = packetiser.packetise(&ts, 9000).expect("packetise");
+        assert_eq!(packets.len(), 2);
+        let first = RtpPacketWire::parse(&packets[0]).expect("parse");
+        let second = RtpPacketWire::parse(&packets[1]).expect("parse");
+        assert_eq!(
+            first.payload.len(),
+            MP2T_MAX_PAYLOAD,
+            "a full packet carries the maximum"
+        );
+        assert_eq!(
+            second.payload.len(),
+            mpeg_ts::ts::TS_PACKET_SIZE,
+            "the remainder is one whole TS packet"
+        );
+        let mut reassembled = first.payload.to_vec();
+        reassembled.extend_from_slice(second.payload);
+        assert_eq!(reassembled, ts);
+        assert_eq!((first.sequence_number, second.sequence_number), (0, 1));
+        assert_eq!(first.timestamp, second.timestamp);
+    }
+
+    #[test]
+    fn mp2t_rejects_a_partial_ts_packet() {
+        let mut packetiser = Mp2tPacketiser::new(1, 0);
+        let err = packetiser
+            .packetise(&ts_packets(1)[..100], 0)
+            .expect_err("a partial TS packet must be an error");
+        assert!(matches!(err, Error::InvalidInput(_)), "{err:?}");
+        assert_eq!(packetiser.next_seq(), 0, "nothing may be consumed");
+    }
+
+    #[test]
+    fn mp2t_sequence_number_wraps_at_sixteen_bits() {
+        let mut packetiser = Mp2tPacketiser::new(1, u16::MAX);
+        let packets = packetiser
+            .packetise(&ts_packets(MP2T_TS_PACKETS_PER_PACKET + 1), 0)
+            .expect("packetise");
+        let first = RtpPacketWire::parse(&packets[0]).expect("parse");
+        let second = RtpPacketWire::parse(&packets[1]).expect("parse");
+        assert_eq!(
+            (first.sequence_number, second.sequence_number),
+            (u16::MAX, 0)
+        );
+        assert_eq!(packetiser.next_seq(), 1, "wraps, never panics");
+    }
 
     /// A real 23.976 fps H.264 stream at the 90 kHz RTP clock presents its
     /// frames at `round(i * 90000 * 1001 / 24000)` ticks — i.e. steps that

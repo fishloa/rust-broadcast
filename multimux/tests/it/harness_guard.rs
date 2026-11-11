@@ -61,6 +61,10 @@ const SLEEP_ALLOW: &[&str] = &[
     "lldash_dashjs.rs",
     "push_negotiate.rs",
     "push_rtsp.rs",
+    // The RTSP push wire golden waits for the server to read RECORD's response before
+    // the first media packet, so every frame is recorded under the request it
+    // followed; there is no condition to poll on the client side.
+    "push_rtsp_wire.rs",
     "rtsp_ingest.rs",
     "server_timeouts.rs",
     "smooth_oracle.rs",

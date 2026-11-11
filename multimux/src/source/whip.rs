@@ -143,16 +143,6 @@ const RTP_MIN_HEADER_LEN: usize = 12;
 /// Mask for the 7-bit payload-type field (RTP header byte 1, bit 7 is the
 /// marker bit).
 const RTP_PT_MASK: u8 = 0x7F;
-/// Mask for the RTP version+padding+extension+CSRC-count byte (header byte
-/// 0) this module preserves verbatim when rebuilding wire bytes from a
-/// decrypted, already-parsed [`webrtc_runtime::media::DecryptedRtp`] — always
-/// `2` (version) with no padding/extension/CSRC beyond what the CSRC list
-/// itself already carries, per RFC 3550 §5.1.
-const RTP_VERSION_BYTE: u8 = 0x80;
-/// RFC 3550 §5.1 `X` (extension) bit in the first header byte.
-const RTP_EXTENSION_BIT: u8 = 0x10;
-/// RFC 3550 §5.3.1: the extension `length` field counts 32-bit words.
-const RTP_EXTENSION_WORD_LEN: usize = 4;
 
 /// Default cap on concurrently admitted WHIP publishers per route, mirroring
 /// [`crate::source::rtmp::DEFAULT_RTMP_MAX_SESSIONS`]'s own reasoning: generous
@@ -1434,45 +1424,36 @@ fn payload_type_of(packet: &[u8]) -> Option<u8> {
 }
 
 /// Rebuilds a wire-format RTP packet (RFC 3550 §5.1 fixed header, CSRC list,
-/// and payload, concatenated) from a [`webrtc_runtime::media::DecryptedRtp`]
-/// — the type [`MediaTransport`] hands back has already promoted the header
-/// fields to typed values and decrypted the payload, but
-/// `RtpStreamDepacketiser::push` (like every RTP depacketiser in this
-/// workspace) takes the raw wire packet, so this reconstructs it rather than
-/// growing a second, parsed-header entry point on that shared type just for
-/// this one caller. A §5.3.1 header extension reported by the transport is
-/// written back (X bit set, `defined by profile`, length in 32-bit words,
-/// data), so RFC 8285 `mid`/`rid`/CVO survive to the depacketiser. The CSRC
-/// count always fits: `csrc` was parsed from the 4-bit CC field.
+/// §5.3.1 extension, payload) from a
+/// [`webrtc_runtime::media::DecryptedRtp`] — the type [`MediaTransport`]
+/// hands back has already promoted the header fields to typed values and
+/// decrypted the payload, but `RtpStreamDepacketiser::push` (like every RTP
+/// depacketiser in this workspace) takes the raw wire packet. The bytes are
+/// `rtp_packet::RtpPacket`'s, so the framing is the one codec's: a §5.3.1
+/// header extension is written back (X bit set, `defined by profile`, length
+/// in 32-bit words, data), so RFC 8285 `mid`/`rid`/CVO survive to the
+/// depacketiser.
 fn rebuild_rtp_wire(pkt: &webrtc_runtime::media::DecryptedRtp) -> Vec<u8> {
-    let csrc_count = pkt.csrc.len().min(0x0F) as u8;
-    let mut out = Vec::with_capacity(12 + 4 * csrc_count as usize + pkt.payload.len());
-    let extension_bit = if pkt.extension.is_some() {
-        RTP_EXTENSION_BIT
-    } else {
-        0
+    let wire = rtp_packet::RtpPacket {
+        marker: pkt.marker,
+        payload_type: pkt.payload_type,
+        sequence_number: pkt.sequence_number,
+        timestamp: pkt.timestamp,
+        ssrc: pkt.ssrc,
+        csrc: pkt.csrc.clone(),
+        extension: pkt
+            .extension
+            .as_ref()
+            .map(|ext| rtp_packet::HeaderExtension {
+                profile_id: ext.profile_id,
+                data: &ext.data,
+            }),
+        padding: None,
+        payload: &pkt.payload,
     };
-    out.push(RTP_VERSION_BYTE | extension_bit | csrc_count);
-    out.push(if pkt.marker {
-        0x80 | (pkt.payload_type & RTP_PT_MASK)
-    } else {
-        pkt.payload_type & RTP_PT_MASK
-    });
-    out.extend_from_slice(&pkt.sequence_number.to_be_bytes());
-    out.extend_from_slice(&pkt.timestamp.to_be_bytes());
-    out.extend_from_slice(&pkt.ssrc.to_be_bytes());
-    for csrc in pkt.csrc.iter().take(csrc_count as usize) {
-        out.extend_from_slice(&csrc.to_be_bytes());
-    }
-    if let Some(ext) = &pkt.extension {
-        // RFC 3550 §5.3.1: length counts 32-bit words of extension data.
-        let words = u16::try_from(ext.data.len() / RTP_EXTENSION_WORD_LEN)
-            .expect("extension data was parsed from a 16-bit word-count field");
-        out.extend_from_slice(&ext.profile_id.to_be_bytes());
-        out.extend_from_slice(&words.to_be_bytes());
-        out.extend_from_slice(&ext.data);
-    }
-    out.extend_from_slice(&pkt.payload);
+    let mut out = vec![0u8; broadcast_common::Serialize::serialized_len(&wire)];
+    broadcast_common::Serialize::serialize_into(&wire, &mut out)
+        .expect("a parsed RTP packet re-serializes");
     out
 }
 

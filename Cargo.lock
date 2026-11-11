@@ -3659,6 +3659,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tokio-util",
+ "url",
  "webpki-roots",
  "workspace-guards",
 ]

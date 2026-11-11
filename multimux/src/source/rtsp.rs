@@ -1856,21 +1856,23 @@ mod tests {
         /// Builds a minimal RFC 3550 §5.1 RTP packet carrying one NAL unit
         /// verbatim (RFC 6184 §5.1) — same shape as this file's centrepiece
         /// test's inline packets and `multimux/tests/it/rtsp_ingest.rs`'s
-        /// `rtp_packet` helper.
-        fn rtp_packet(seq: u16, timestamp: u32, marker: bool, nal: &[u8]) -> Vec<u8> {
+        /// `h264_rtp_packet` helper.
+        fn h264_rtp_packet(seq: u16, timestamp: u32, marker: bool, nal: &[u8]) -> Vec<u8> {
             const PT_H264_DYNAMIC: u8 = 96;
             const SSRC: u32 = 0xCAFE_BABE;
-            let mut pkt = Vec::with_capacity(12 + nal.len());
-            pkt.push(0x80); // V=2, P=0, X=0, CC=0
-            pkt.push(if marker {
-                0x80 | PT_H264_DYNAMIC
-            } else {
-                PT_H264_DYNAMIC
-            });
-            pkt.extend_from_slice(&seq.to_be_bytes());
-            pkt.extend_from_slice(&timestamp.to_be_bytes());
-            pkt.extend_from_slice(&SSRC.to_be_bytes());
-            pkt.extend_from_slice(nal);
+            let wire = rtp_packet::RtpPacket {
+                marker,
+                payload_type: PT_H264_DYNAMIC,
+                sequence_number: seq,
+                timestamp,
+                ssrc: SSRC,
+                csrc: Vec::new(),
+                extension: None,
+                padding: None,
+                payload: nal,
+            };
+            let mut pkt = vec![0u8; broadcast_common::Serialize::serialized_len(&wire)];
+            broadcast_common::Serialize::serialize_into(&wire, &mut pkt).expect("serialize RTP");
             pkt
         }
 
@@ -1909,7 +1911,7 @@ mod tests {
             let non2 = [0x41u8, 0xCC, 0xDD];
             let aus: [(u32, &[u8]); 3] = [(1000, &idr), (4000, &non1), (7000, &non2)];
             for (i, (ts, nal)) in aus.into_iter().enumerate() {
-                let pkt = rtp_packet(1 + i as u16, ts, true, nal);
+                let pkt = h264_rtp_packet(1 + i as u16, ts, true, nal);
                 let frame = rtsp_runtime::interleaved::InterleavedFrame::new(0, pkt)
                     .to_bytes()
                     .expect("serialize interleaved frame");

@@ -481,20 +481,22 @@ mod tests {
         )
     }
 
-    fn rtp_packet(seq: u16, timestamp: u32, marker: bool, nal: &[u8]) -> Vec<u8> {
+    fn h264_rtp_packet(seq: u16, timestamp: u32, marker: bool, nal: &[u8]) -> Vec<u8> {
         const PT_H264_DYNAMIC: u8 = 96;
         const SSRC: u32 = 0xCAFE_BABE;
-        let mut pkt = Vec::with_capacity(12 + nal.len());
-        pkt.push(0x80);
-        pkt.push(if marker {
-            0x80 | PT_H264_DYNAMIC
-        } else {
-            PT_H264_DYNAMIC
-        });
-        pkt.extend_from_slice(&seq.to_be_bytes());
-        pkt.extend_from_slice(&timestamp.to_be_bytes());
-        pkt.extend_from_slice(&SSRC.to_be_bytes());
-        pkt.extend_from_slice(nal);
+        let wire = rtp_packet::RtpPacket {
+            marker,
+            payload_type: PT_H264_DYNAMIC,
+            sequence_number: seq,
+            timestamp,
+            ssrc: SSRC,
+            csrc: Vec::new(),
+            extension: None,
+            padding: None,
+            payload: nal,
+        };
+        let mut pkt = vec![0u8; broadcast_common::Serialize::serialized_len(&wire)];
+        broadcast_common::Serialize::serialize_into(&wire, &mut pkt).expect("serialize RTP");
         pkt
     }
 
@@ -517,10 +519,16 @@ mod tests {
         let mut dialer = RtpUdpDialer::new(sdp_body());
         let mut session = dialer.dial().unwrap();
         session
-            .feed(&rtp_packet(1, 1000, true, &[0x65, 0xAA]), Timestamp::ZERO)
+            .feed(
+                &h264_rtp_packet(1, 1000, true, &[0x65, 0xAA]),
+                Timestamp::ZERO,
+            )
             .unwrap();
         session
-            .feed(&rtp_packet(2, 4000, false, &[0x41, 0xBB]), Timestamp::ZERO)
+            .feed(
+                &h264_rtp_packet(2, 4000, false, &[0x41, 0xBB]),
+                Timestamp::ZERO,
+            )
             .unwrap();
         assert_eq!(count_samples(&mut session), 0, "nothing emitted yet");
         session.finish().unwrap();
@@ -531,9 +539,9 @@ mod tests {
 
     #[test]
     fn payload_type_of_extracts_pt_ignoring_marker_bit() {
-        let pkt = rtp_packet(1, 1000, true, &[0x65]);
+        let pkt = h264_rtp_packet(1, 1000, true, &[0x65]);
         assert_eq!(payload_type_of(&pkt), Some(96));
-        let pkt = rtp_packet(1, 1000, false, &[0x65]);
+        let pkt = h264_rtp_packet(1, 1000, false, &[0x65]);
         assert_eq!(payload_type_of(&pkt), Some(96));
     }
 
@@ -570,7 +578,7 @@ mod tests {
         // A feed with an unroutable payload type still drives Established +
         // NewProgram (the "before any packet is routed" property) even
         // though the packet itself yields no sample.
-        let mut foreign = rtp_packet(1, 1000, true, &[0x65]);
+        let mut foreign = h264_rtp_packet(1, 1000, true, &[0x65]);
         foreign[1] = 200; // PT never declared in the SDP
         driver.feed(&foreign, Timestamp::ZERO);
         assert!(matches!(driver.health(), HealthState::Live));
@@ -595,11 +603,11 @@ mod tests {
             media_plane::DEFAULT_MAX_PROGRAMS,
         );
 
-        let idr = rtp_packet(1, 1000, true, &[0x65, 0xAA]);
+        let idr = h264_rtp_packet(1, 1000, true, &[0x65, 0xAA]);
         driver.feed(&idr, Timestamp::ZERO);
         let first_ptr = std::sync::Arc::as_ptr(driver.trunk(ProgramId(0)).unwrap());
 
-        let next = rtp_packet(2, 4000, true, &[0x41, 0xBB]);
+        let next = h264_rtp_packet(2, 4000, true, &[0x41, 0xBB]);
         driver.feed(&next, Timestamp::from_nanos(1));
         let second_ptr = std::sync::Arc::as_ptr(driver.trunk(ProgramId(0)).unwrap());
 
@@ -637,7 +645,7 @@ mod tests {
             media_plane::DEFAULT_MAX_PROGRAMS,
         );
 
-        let idr = rtp_packet(1, 1000, true, &[0x65, 0xAA]);
+        let idr = h264_rtp_packet(1, 1000, true, &[0x65, 0xAA]);
         driver.feed(&idr, Timestamp::ZERO);
         assert!(matches!(driver.health(), HealthState::Live));
         let mut cursor = driver.trunk(ProgramId(0)).unwrap().subscribe();
@@ -648,7 +656,7 @@ mod tests {
         // slot; `non1` below continues the sequence right where `idr` left
         // off (seq 2, not 3) so the dropped datagram leaves no reorder-buffer
         // hole for the depacketiser's own (unrelated) gap logic to open.
-        let malformed = with_invalid_rtp_version(rtp_packet(99, 4000, true, &[0x41, 0xBB]));
+        let malformed = with_invalid_rtp_version(h264_rtp_packet(99, 4000, true, &[0x41, 0xBB]));
         driver.feed(&malformed, Timestamp::from_nanos(1));
         assert!(
             matches!(driver.health(), HealthState::Live),
@@ -656,9 +664,9 @@ mod tests {
             driver.health()
         );
 
-        let non1 = rtp_packet(2, 4000, true, &[0x41, 0xBB]);
+        let non1 = h264_rtp_packet(2, 4000, true, &[0x41, 0xBB]);
         driver.feed(&non1, Timestamp::from_nanos(2));
-        let non2 = rtp_packet(3, 7000, true, &[0x41, 0xCC]);
+        let non2 = h264_rtp_packet(3, 7000, true, &[0x41, 0xCC]);
         driver.feed(&non2, Timestamp::from_nanos(3));
 
         let mut samples_seen = 0usize;
@@ -720,7 +728,7 @@ mod tests {
         let non2 = [0x41u8, 0xCC, 0xDD];
         let aus: [(u32, &[u8]); 3] = [(1000, &idr), (4000, &non1), (7000, &non2)];
         for (i, (ts, nal)) in aus.into_iter().enumerate() {
-            let pkt = rtp_packet(1 + i as u16, ts, true, nal);
+            let pkt = h264_rtp_packet(1 + i as u16, ts, true, nal);
             sender
                 .send_to(&pkt, local_addr)
                 .await

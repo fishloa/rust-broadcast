@@ -5,10 +5,11 @@
 use std::time::Duration;
 
 use rtsp_runtime::client::ClientEvent;
+use rtsp_runtime::sdp::control_url;
 use rtsp_runtime::server::ServerEvent;
 use rtsp_runtime::{
-    AsyncRtspClient, AsyncRtspServer, ClientSession, RtspTimeouts, StatusCode, Transport,
-    TransportSpec,
+    AsyncRtspClient, AsyncRtspServer, ClientSession, RtspTimeouts, SessionState, StatusCode,
+    Transport, TransportSpec,
 };
 use tokio::io::duplex;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -452,4 +453,153 @@ async fn send_interleaved_never_parks_on_the_inbound_probe() {
         "{FRAMES} sends against an idle peer took {took:?} (>= {BOUND:?}): the inbound \
          probe is waiting on a timer tick instead of polling once"
     );
+}
+
+#[tokio::test]
+async fn start_record_announces_sets_up_the_control_url_and_records() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    // A recording relay: keeps each request's line and headers, and answers
+    // every one with 200 OK plus a Session id on SETUP (RFC 2326 §12.37).
+    let server = tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        let mut buf = Vec::new();
+        let mut seen: Vec<String> = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            let n = match sock.read(&mut chunk).await {
+                Ok(0) | Err(_) => return seen,
+                Ok(n) => n,
+            };
+            buf.extend_from_slice(&chunk[..n]);
+            while let Some(end) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                let head = String::from_utf8_lossy(&buf[..end]).into_owned();
+                let body_len = head
+                    .lines()
+                    .find_map(|l| {
+                        let (name, value) = l.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())?
+                    })
+                    .unwrap_or(0);
+                if buf.len() < end + 4 + body_len {
+                    break;
+                }
+                buf.drain(..end + 4 + body_len);
+                let request_line = head.lines().next().unwrap_or_default().to_string();
+                let is_setup = request_line.starts_with("SETUP ");
+                let cseq = head
+                    .lines()
+                    .find_map(|l| l.strip_prefix("CSeq:"))
+                    .unwrap_or("1")
+                    .trim()
+                    .to_string();
+                seen.push(head);
+                let extra = if is_setup { "Session: 1\r\n" } else { "" };
+                let response = format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n{extra}\r\n");
+                if sock.write_all(response.as_bytes()).await.is_err() {
+                    return seen;
+                }
+            }
+        }
+    });
+
+    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
+    client.start_record(&url, SDP, 0).await.unwrap();
+    assert_eq!(client.state(), SessionState::Recording);
+    client.teardown(url.as_str()).await.unwrap();
+    drop(client);
+
+    let seen = tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .expect("server must finish")
+        .unwrap();
+    let lines: Vec<&str> = seen
+        .iter()
+        .map(|h| h.lines().next().unwrap_or(""))
+        .collect();
+    assert_eq!(
+        lines,
+        vec![
+            format!("ANNOUNCE rtsp://{addr}/live/key RTSP/1.0"),
+            format!("SETUP rtsp://{addr}/live/key/trackID=0 RTSP/1.0"),
+            format!("RECORD rtsp://{addr}/live/key RTSP/1.0"),
+            format!("TEARDOWN rtsp://{addr}/live/key RTSP/1.0"),
+        ]
+    );
+    assert!(
+        seen[1].contains("interleaved=0-1") && seen[1].contains("mode=\"RECORD\""),
+        "SETUP must ask for record mode on the interleaved pair: {}",
+        seen[1]
+    );
+    assert!(
+        seen[0].contains("Content-Type: application/sdp"),
+        "{}",
+        seen[0]
+    );
+}
+
+#[tokio::test]
+async fn start_record_fails_a_rejected_request_naming_its_method() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        let mut chunk = [0u8; 4096];
+        loop {
+            let n = match sock.read(&mut chunk).await {
+                Ok(0) | Err(_) => return,
+                Ok(n) => n,
+            };
+            let text = String::from_utf8_lossy(&chunk[..n]).into_owned();
+            if !text.contains("\r\n\r\n") {
+                continue;
+            }
+            let cseq = text
+                .lines()
+                .find_map(|l| l.strip_prefix("CSeq:"))
+                .unwrap_or("1")
+                .trim()
+                .to_string();
+            let response = if text.starts_with("SETUP ") {
+                format!("RTSP/1.0 461 Unsupported Transport\r\nCSeq: {cseq}\r\n\r\n")
+            } else {
+                format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n\r\n")
+            };
+            if sock.write_all(response.as_bytes()).await.is_err() {
+                return;
+            }
+        }
+    });
+
+    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
+    let err = client.start_record(&url, SDP, 0).await.expect_err("461");
+    assert!(
+        matches!(
+            err,
+            rtsp_runtime::Error::UnexpectedResponse {
+                method: rtsp_runtime::Method::Setup,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+    drop(server);
+}
+
+#[test]
+fn control_url_appends_one_track_id_segment() {
+    let base = url::Url::parse("rtsp://h:554/push/").unwrap();
+    assert_eq!(control_url(&base).unwrap(), "rtsp://h:554/push/trackID=0");
+    let base = url::Url::parse("rtsp://[::1]/push").unwrap();
+    assert_eq!(control_url(&base).unwrap(), "rtsp://[::1]/push/trackID=0");
+    let cannot_be_a_base = url::Url::parse("rtsp:cam").unwrap();
+    assert!(matches!(
+        control_url(&cannot_be_a_base),
+        Err(rtsp_runtime::Error::InvalidUrl { .. })
+    ));
 }

@@ -4,6 +4,7 @@
 ### Changed
 - The WHIP and WHEP endpoints build their SDP answer and ICE-restart answer fragment with `webrtc_runtime::sdp` instead of assembling the session here (#2363); the documents are byte-identical to before (goldens in `fixtures/golden/webrtc/`).
 - The Smooth source and output use `broadcast-smooth`'s manifest model instead of `transmux`'s removed `smooth_parse` module (#2356); transmux keeps the fragments and the codec glue.
+- The RTSP push sends RFC 2250 §2 MP2T packets built by `transmux::rtp::Mp2tPacketiser` and records through `rtsp_runtime::AsyncRtspClient::start_record`; multimux now supplies only the SDP media section and the 90 kHz timestamp (its one clock read). Its own RTP header writer, MP2T splitting, control-URL derivation and ANNOUNCE/SETUP/RECORD choreography are gone. The wire is byte-identical: `fixtures/golden/rtsp/push-wire.golden` records every request and interleaved packet from before the move and matches without regeneration (#2368).
 - The RTSP push builds its ANNOUNCE session description with `rtsp_runtime::sdp::session_description` and supplies only its `m=` block, instead of assembling `v=`/`o=`/`s=`/`c=` itself; the body is byte-identical (`fixtures/golden/rtsp/rtsp-announce.sdp`).
 - The DASH-IF ingest reads the publisher's MPD and matches uploaded segment URLs with `dash-runtime` instead of transmux's removed MPD model (#2340).
 

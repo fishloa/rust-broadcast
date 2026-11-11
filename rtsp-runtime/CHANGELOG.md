@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 ### Added
+- `AsyncRtspClient::start_record(url, sdp, interleaved_channel)` runs the whole publish flow: `ANNOUNCE` (RFC 2326 §10.3), `SETUP` on the track's control URL in `mode=record` (§10.4, §12.39) and `RECORD` (§10.11), returning `Error::UnexpectedResponse { method, status }` for the first request a server rejects and `Error::UnexpectedEvent` when a request draws anything but a response, so a pushing caller supplies only its SDP and its payload.
+- `sdp::control_url(base)` and `TRACK_CONTROL`: the track's control URL, `base` with `trackID=0` appended as a final path segment (RFC 2326 Appendix C.1.1) via `Url::path_segments_mut`, and the attribute value that names it; a URL with no authority (`rtsp:cam`) is `Error::InvalidUrl`. `url` is now a plain dependency.
 - `sdp::session_description(name, origin, connection, medias)` (re-exported as `session_description`), the workspace's one RFC 4566 §5 session builder: it renders the `v=`/`o=`/`s=`/`c=`/`t=` lines and each media description handed to it, so a crate owning a container's payload formats (`transmux`) describes only its media sections and the RTSP push announces its one section through it. It returns `Error::SdpWrite { what, source }` instead of a lossy conversion when the writer's bytes are not UTF-8, and `sdp-types` 0.3 is now a plain dependency (it is `std`-only, as this crate).
 
 ## [0.11.0] - 2026-11-10
