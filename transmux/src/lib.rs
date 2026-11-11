@@ -79,8 +79,7 @@
 //!   / [`validate_media_segment`] / [`validate_cmaf_track`]).
 //! - **Utilities:** NAL keyframe classification ([`is_keyframe_nal`] /
 //!   [`nal_unit_type`]); I-frame trick-play track derivation ([`derive_iframe_track`]);
-//!   URI-reference resolution for DASH `BaseURL`/`SegmentTemplate`
-//!   (`base_url`, `std` only; WHATWG `url::Url::join`); the single ISO/IEC 14496-12:2026 §8.8.7/§8.8.8 fragment
+//!   the single ISO/IEC 14496-12:2026 §8.8.7/§8.8.8 fragment
 //!   sample-offset resolver shared by the demuxer, decryptor and validator
 //!   ([`frag_offsets`]).
 //!
@@ -160,8 +159,6 @@ pub mod avc_parameter_set;
 pub mod avs2;
 pub mod avs3;
 pub mod avs3_audio;
-#[cfg(feature = "std")]
-pub mod base_url;
 pub mod bitreader;
 pub mod box_types;
 pub mod caption_detect;
@@ -176,7 +173,6 @@ pub mod cenc_encrypt;
 pub mod cli;
 #[cfg(feature = "std")]
 pub mod dash;
-#[cfg(feature = "std")]
 pub(crate) mod display_track;
 pub mod dovi;
 pub mod drm;
@@ -426,8 +422,6 @@ pub use smooth::{
 // Note: `smooth_parse::StreamType` is not re-exported at the crate root — it
 // would collide with `mp4esds::StreamType` (an unrelated ES descriptor
 // field); reach it via `transmux::smooth_parse::StreamType`.
-#[cfg(feature = "std")]
-pub use base_url::{resolve as resolve_url_reference, resolve_chain as resolve_base_url_chain};
 pub use dovi::{
     DoviBlSignalCompatibilityId, DoviDecoderConfigurationRecord, DoviSampleEntryKind,
     DoviVideoStreamDescriptor,

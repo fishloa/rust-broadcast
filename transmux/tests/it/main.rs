@@ -8,7 +8,6 @@ mod audio_srat;
 mod avc_hvc_config;
 mod avc_parameter_set_stream;
 mod base64_lenient;
-mod base_url;
 #[path = "support/bit_writer.rs"]
 mod bit_writer;
 #[path = "support/box_iter.rs"]

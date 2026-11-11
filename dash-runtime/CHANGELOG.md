@@ -3,6 +3,8 @@
 All notable changes to dash-runtime will be documented in this file.
 
 ## [Unreleased]
+### Added
+- `mpd::base_url` (`resolve`, `resolve_chain`, `first_forbidden_char`): RFC 3986 §5 URL-reference and `BaseURL`-chain resolution over `url::Url::join`, moved from `transmux`, whose only caller was this crate; `mpd::urls` now resolves through it instead of `transmux` (#2355).
 ### Changed
 - BREAKING: the MPD model, parser and `SegmentTemplate` grammar live in the new `broadcast-dash` crate. `mpd::model`, `mpd::descriptors`, `mpd::inherit` and `address::template` are re-exports of `broadcast_dash` (so `dash_runtime::mpd::Mpd` and friends keep resolving), and `limits::Limits` is a re-export of `broadcast_dash::limits::Limits`. Code that imported from `dash_runtime::mpd`, `dash_runtime::address::template` or `dash_runtime::limits` keeps compiling; new code should depend on `broadcast-dash` directly. `error::{Limit, MpdError, Unsupported}` are re-exports of `broadcast_dash::error`. The `xs:dateTime`/NTP readers moved to `broadcast_dash::xs_datetime` (still at `timing::datetime`) and the HTTP `Date` reader gained its own module, `timing::http_date`; `TimingError::DateTime` now carries only `broadcast_dash::xs_datetime::DateTimeError`, and a bad `Date` value is `TimingError::HttpDate(..)`.
 - The MPD reader's namespace and hostile-input bound tests lost when the reader moved out of transmux are back, against `dash_runtime::mpd::Mpd` (issue #2340), and the DASH validator golden now has a test that a refused MPD is recorded as `dash-parse-error`, never as `clean`.

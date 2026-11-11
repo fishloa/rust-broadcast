@@ -1,11 +1,10 @@
 //! RFC 3986 §5.4 reference-resolution vectors and BaseURL-chain behaviour for
-//! `transmux::base_url` (SP3). The two tables moved here verbatim from the
-//! deleted `dvb-ci/src/ci_plus/uri.rs`; the `url` crate implements the WHATWG URL algorithm,
-//! which differs from strict RFC 3986 in exactly the rows listed in
-//! `WHATWG_DIFFERENCES`.
-#![cfg(feature = "std")]
+//! `dash_runtime::mpd::base_url` (SP3, moved from `transmux`). The two tables
+//! moved here verbatim from the deleted `dvb-ci/src/ci_plus/uri.rs`; the `url`
+//! crate implements the WHATWG URL algorithm, which differs from strict RFC
+//! 3986 in exactly the rows listed in `WHATWG_DIFFERENCES`.
 
-use transmux::base_url::{first_forbidden_char, resolve, resolve_chain};
+use dash_runtime::mpd::base_url::{first_forbidden_char, resolve, resolve_chain};
 use url::Url;
 
 const BASE: &str = "http://a/b/c/d;p?q";
@@ -396,14 +395,13 @@ fn unparseable_references_are_none_not_a_panic() {
 }
 
 #[test]
-fn crate_root_re_exports_exist() {
+fn the_public_entry_points_resolve_the_same_reference() {
     assert_eq!(
-        transmux::resolve_url_reference(Some(&Url::parse("http://a/b/c/d;p?q").unwrap()), "g")
-            .as_deref(),
+        resolve(Some(&Url::parse("http://a/b/c/d;p?q").unwrap()), "g").as_deref(),
         Some("http://a/b/c/g")
     );
     assert_eq!(
-        transmux::resolve_base_url_chain(None, &["http://a/".to_string()], "s.m4s").as_deref(),
+        resolve_chain(None, &["http://a/".to_string()], "s.m4s").as_deref(),
         Some("http://a/s.m4s")
     );
 }

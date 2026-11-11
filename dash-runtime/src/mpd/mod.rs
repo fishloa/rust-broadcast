@@ -4,6 +4,7 @@
 //! The model, the parser and the SegmentTemplate grammar live in
 //! [`broadcast_dash`]; this module keeps what a player adds on top of them.
 
+pub mod base_url;
 pub mod urls;
 
 pub use broadcast_dash::descriptors;
