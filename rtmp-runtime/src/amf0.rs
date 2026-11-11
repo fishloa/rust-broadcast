@@ -541,6 +541,33 @@ impl Command {
     }
 }
 
+/// Encode `values` in order as one AMF0 byte sequence: what a message body
+/// carrying several bare values is (`onMetaData` is a String followed by an
+/// ECMA Array, §2 of the AMF0 spec).
+///
+/// # Errors
+///
+/// [`RtmpError::FieldOverflow`] when a string, key or array exceeds its AMF0
+/// length prefix (see [`Amf0Value`]'s own serializer).
+pub fn amf0_values(values: &[Amf0Value]) -> Result<Vec<u8>> {
+    let len = values.iter().try_fold(0usize, |acc, value| {
+        acc.checked_add(value.serialized_len())
+            .ok_or(RtmpError::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "amf0 value sequence length",
+                    value: u64::MAX,
+                    max: u64::MAX,
+                },
+            ))
+    })?;
+    let mut out = alloc::vec![0u8; len];
+    let mut written = 0usize;
+    for value in values {
+        written += value.serialize_into(&mut out[written..])?;
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -552,6 +579,18 @@ mod tests {
         assert_eq!(&parsed, v);
         // parse -> serialize -> byte-identical
         assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
+    }
+
+    #[test]
+    fn a_value_sequence_encodes_each_value_in_order() {
+        let values = [
+            Amf0Value::String("onMetaData".to_string()),
+            Amf0Value::EcmaArray(vec![("duration".to_string(), Amf0Value::Number(1.5))]),
+        ];
+        let body = amf0_values(&values).expect("encode");
+        let mut expected = values[0].try_to_bytes().unwrap();
+        expected.extend(values[1].try_to_bytes().unwrap());
+        assert_eq!(body, expected);
     }
 
     #[test]

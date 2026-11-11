@@ -110,12 +110,26 @@ fn a_cut_trailing_tag_body_is_reported() {
     }
     assert!(saw_error, "a cut final tag body must be an error item");
 
+    // §E.4.1 makes the trailing PreviousTagSize redundant (it repeats the
+    // tag's own size), so a final tag missing only that field is complete.
     let complete = &bytes[..bytes.len() - FLV_PREV_TAG_SIZE_LEN];
-    let tags: Vec<_> = rtmp_runtime::flv::tags(complete, &header).collect();
-    assert!(
-        tags.iter().all(Result::is_ok),
-        "a final tag missing only its redundant PreviousTagSize is complete (§E.4.1)"
+    let tags: Vec<_> = rtmp_runtime::flv::tags(complete, &header)
+        .collect::<Result<Vec<_>, _>>()
+        .expect("a final tag missing only its redundant PreviousTagSize is complete");
+    let full: Vec<_> = rtmp_runtime::flv::tags(&bytes, &header)
+        .collect::<Result<Vec<_>, _>>()
+        .expect("the whole fixture walks");
+    assert_eq!(
+        tags.len(),
+        full.len(),
+        "every tag is walked; only the final trailer is missing"
     );
+    assert!(!tags.is_empty(), "the fixture carries tags");
+    let last = tags.last().expect("the fixture carries tags");
+    let last_full = full.last().expect("the fixture carries tags");
+    assert_eq!(last.tag_type, last_full.tag_type, "final tag type");
+    assert_eq!(last.timestamp, last_full.timestamp, "final tag timestamp");
+    assert_eq!(last.body, last_full.body, "final tag body");
 }
 
 #[test]

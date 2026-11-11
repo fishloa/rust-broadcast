@@ -2002,12 +2002,7 @@ fn reassemble_audio_impl(
 /// 4-byte length-prefix a list of NALs into an IR video sample.
 fn length_prefix_nals(nals: &[Vec<u8>]) -> Vec<u8> {
     let total: usize = nals.iter().map(|n| NAL_LENGTH_SIZE + n.len()).sum();
-    let mut out = Vec::with_capacity(total);
-    for nal in nals {
-        out.extend_from_slice(&(nal.len() as u32).to_be_bytes());
-        out.extend_from_slice(nal);
-    }
-    out
+    crate::annexb::length_prefix(total, nals.iter().map(Vec::as_slice))
 }
 
 /// A parsed RTP fixed header (RFC 3550 §5.1) — the fields the spoke needs.

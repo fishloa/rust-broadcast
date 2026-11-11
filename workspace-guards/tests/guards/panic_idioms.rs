@@ -24,15 +24,12 @@ const FORBIDDEN: &[&str] = &[
     "unimplemented!(",
 ];
 
-/// The non-test prefix of a file: everything before the first
-/// `#[cfg(test)]` / `#[cfg(all(test, ..))]`.
-fn non_test(body: &str) -> &str {
-    let cut = ["#[cfg(test)]", "#[cfg(all(test"]
-        .iter()
-        .filter_map(|m| body.find(m))
-        .min()
-        .unwrap_or(body.len());
-    &body[..cut]
+/// The source without its test code: every item carrying `#[cfg(test)]` or
+/// `#[cfg(all(test, ..))]`, blanked so line numbers still match the file.
+fn non_test(body: &str) -> String {
+    workspace_guards::scan::without_attributed_items(body, |attr| {
+        attr.starts_with("#[cfg(test)]") || attr.starts_with("#[cfg(all(test")
+    })
 }
 
 fn hits_in(body: &str) -> Vec<(usize, String)> {
@@ -120,4 +117,12 @@ fn allow_entry_pins_file_and_text() {
     let problems = problems_in(&c, &files);
     assert_eq!(problems.len(), 1, "{problems:?}");
     assert!(problems[0].contains("src/b.rs"));
+}
+
+#[test]
+fn a_test_module_in_the_middle_does_not_hide_the_code_after_it() {
+    let body = "#[cfg(test)]\nmod t {\n    fn f() {}\n}\n#[ignore]\nfn g() { x.unwrap(); }\n";
+    let hits = hits_in(body);
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    assert_eq!(hits[0].0, 6, "the line number is the one in the file");
 }

@@ -33,7 +33,9 @@ use core::fmt;
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use rtmp_runtime::RtmpError;
-use rtmp_runtime::chunk::{ChunkAssembler, ChunkWriter, DEFAULT_CHUNK_SIZE, Message};
+use rtmp_runtime::chunk::{
+    ChunkAssembler, ChunkWriter, DEFAULT_CHUNK_SIZE, MAX_CHUNK_SIZE, MAX_MESSAGE_LEN, Message,
+};
 use rtmp_runtime::flv::{FlvHeader, FlvTag, TagType};
 use rtmp_runtime::message::{ProtocolControl, msg_type};
 
@@ -72,10 +74,20 @@ pub enum RtmpFlvError {
     },
     /// FLV routing of the reassembled A/V bodies failed.
     Flv(FlvError),
-    /// A [`RtmpMux::chunk_size`] exceeded the `u32` the chunk writer takes.
+    /// A [`RtmpMux::chunk_size`] was 0 or above `rtmp_runtime::chunk::MAX_CHUNK_SIZE`:
+    /// the muxer would otherwise announce a size it does not frame at (the
+    /// chunk writer clamps it).
     ChunkSizeTooLarge {
         /// The requested chunk size.
         size: usize,
+    },
+    /// A tag body exceeded `rtmp_runtime::chunk::MAX_MESSAGE_LEN`; the message
+    /// would be rejected by [`RtmpDemux`] on the other end.
+    MessageTooLarge {
+        /// The tag body length.
+        len: usize,
+        /// The largest message length a peer accepts.
+        max: usize,
     },
     /// The RTMP wire layer (chunk stream assembly / chunking) failed.
     Rtmp(rtmp_runtime::RtmpError),
@@ -93,9 +105,12 @@ impl fmt::Display for RtmpFlvError {
                 )
             }
             RtmpFlvError::Flv(e) => write!(f, "RTMP FLV routing: {e}"),
-            RtmpFlvError::ChunkSizeTooLarge { size } => write!(
+            RtmpFlvError::ChunkSizeTooLarge { size } => {
+                write!(f, "RTMP chunk size {size} is not in 1..={MAX_CHUNK_SIZE}")
+            }
+            RtmpFlvError::MessageTooLarge { len, max } => write!(
                 f,
-                "RTMP chunk size {size} does not fit the u32 chunk size field"
+                "RTMP message body {len} bytes exceeds the {max}-byte message limit"
             ),
             RtmpFlvError::Rtmp(e) => write!(f, "RTMP wire: {e}"),
             RtmpFlvError::FieldOverflow(e) => write!(f, "RTMP {e}"),
@@ -287,11 +302,28 @@ impl RtmpMux {
     }
 
     /// Create a muxer with an explicit chunk size.
+    ///
+    /// The size is announced to the peer verbatim, so it must be exactly the
+    /// size the chunk writer frames at: `[`RtmpMux::package`]` rejects a
+    /// `chunk_size` of 0 or above `rtmp_runtime::chunk::MAX_CHUNK_SIZE` with
+    /// [`RtmpFlvError::ChunkSizeTooLarge`] rather than announce it and frame at
+    /// a clamped one.
     pub fn with_chunk_size(chunk_size: usize) -> Self {
         Self {
-            chunk_size: chunk_size.max(1),
+            chunk_size,
             message_stream_id: 1,
         }
+    }
+
+    /// The chunk size as the wire field carries it, rejecting a value the chunk
+    /// writer would clamp (so the announced size is the framed size).
+    fn wire_chunk_size(&self) -> Result<u32, RtmpFlvError> {
+        let size = u32::try_from(self.chunk_size)
+            .ok()
+            .filter(|size| (1..=MAX_CHUNK_SIZE).contains(size));
+        size.ok_or(RtmpFlvError::ChunkSizeTooLarge {
+            size: self.chunk_size,
+        })
     }
 }
 
@@ -301,10 +333,8 @@ impl Package for RtmpMux {
     type Error = RtmpFlvError;
 
     fn package(&mut self, media: &Media) -> Result<Vec<u8>, RtmpFlvError> {
-        let chunk_size =
-            u32::try_from(self.chunk_size).map_err(|_| RtmpFlvError::ChunkSizeTooLarge {
-                size: self.chunk_size,
-            })?;
+        let chunk_size = self.wire_chunk_size()?;
+        let max_message_len = usize::try_from(MAX_MESSAGE_LEN).unwrap_or(usize::MAX);
         let mut flv_mux = FlvMux::new();
         let flv = flv_mux.package(media).map_err(RtmpFlvError::Flv)?;
         let tags = walk_flv_tags(&flv)?;
@@ -317,6 +347,12 @@ impl Package for RtmpMux {
             writer.set_chunk_size(chunk_size);
         }
         for tag in tags {
+            if tag.body.len() > max_message_len {
+                return Err(RtmpFlvError::MessageTooLarge {
+                    len: tag.body.len(),
+                    max: max_message_len,
+                });
+            }
             let (chunk_stream_id, message_type_id) = match tag.tag_type {
                 TagType::Audio => (CSID_AUDIO, msg_type::AUDIO),
                 TagType::Video => (CSID_VIDEO, msg_type::VIDEO),

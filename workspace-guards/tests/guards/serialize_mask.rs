@@ -169,11 +169,11 @@ fn shifts_bare_field(ctx: &str) -> bool {
 }
 
 fn hits_in(body: &str) -> Vec<(usize, String)> {
-    let end = body.find("#[cfg(test)]").unwrap_or(body.len());
+    let prod = workspace_guards::scan::non_test_source_blanked(body);
     let mut cur_fn = String::new();
     let mut out = Vec::new();
     // Join each statement across lines so a multi-line `x\n & MASK` is seen.
-    let lines: Vec<&str> = body[..end].lines().collect();
+    let lines: Vec<&str> = prod.lines().collect();
     for (n, raw) in lines.iter().enumerate() {
         let line = raw.trim();
         if let Some(rest) = line.split("fn ").nth(1).filter(|_| {
@@ -336,4 +336,10 @@ fn scanner_bites_on_header_helper_bodies() {
     assert_eq!(hits_in(reserved_field).len(), 1);
     let checked = "pub(crate) fn b5_of(reserved_b5: u8, version_number: u8) -> Result<u8> {\n    Ok((fit_mask(reserved_b5, RESERVED_2, \"r\")? << 6) | (fit_mask(version_number, B5_VERSION_MASK, \"v\")? << 1))\n}\n";
     assert!(hits_in(checked).is_empty());
+}
+
+#[test]
+fn a_test_module_in_the_middle_does_not_hide_the_code_after_it() {
+    let body = "#[cfg(test)]\nmod t {\n    fn f() {}\n}\nfn g(s: &S) {\n    buf[0] = (s.v & 0x0F) << 4;\n}\n";
+    assert_eq!(hits_in(body).len(), 1, "{:?}", hits_in(body));
 }

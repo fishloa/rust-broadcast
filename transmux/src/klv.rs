@@ -10,10 +10,9 @@
 //!   low 7 bits = count of big-endian length bytes) — ISO/IEC 8825-1 §8.1.3,
 //!   via SMPTE ST 336. The codec itself is `broadcast_common::klv`'s; this
 //!   module only sizes it and appends it to a packet, propagating its errors.
-//! - **Generic KLV item** ([`KlvItem`]): a 16-byte Universal Label key + owned
-//!   value bytes, serialized through the borrowed shared
-//!   `broadcast_common::klv::KlvItem` with a *computed* (never echoed) minimal
-//!   BER length.
+//! - **Generic KLV item**: the shared borrowed `broadcast_common::klv::KlvItem`
+//!   (16-byte Universal Label key + value slice) — the one KLV item type in the
+//!   workspace; there is no owned copy here.
 //! - **BER-OID tags** ([`ber_oid`] / [`encode_ber_oid`]): the 1-byte (multi-byte
 //!   continuation on the top bit) integer keys used inside a Local Set.
 //! - **UAS Datalink Local Set** ([`UasLocalSet`]): the MISB ST 0601 packet — the
@@ -40,7 +39,7 @@
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::klv::{
-    KlvItem as Item, UNIVERSAL_LABEL_LEN, UniversalLabel, ber_length_size, decode_ber_length,
+    KlvItem, UNIVERSAL_LABEL_LEN, UniversalLabel, ber_length_size, decode_ber_length,
     encode_ber_length as encode_ber_length_into,
 };
 use broadcast_common::len::{need_in, need_out};
@@ -172,58 +171,6 @@ pub fn ber_oid(bytes: &[u8]) -> Result<(u32, usize)> {
         }
     }
     Ok((value, consumed))
-}
-
-/// A single generic KLV triplet: a 16-byte Universal Label key and its owned
-/// value bytes.
-///
-/// The wire form is the shared borrowed [`KlvItem`] from `broadcast_common`,
-/// serialized with the canonical minimal BER length; only the owned value
-/// bytes live here.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct KlvItem {
-    /// The 16-byte SMPTE Universal Label key.
-    pub key: UniversalLabel,
-    /// The raw value bytes.
-    pub value: Vec<u8>,
-}
-
-impl KlvItem {
-    /// Build a KLV item from a Universal Label key and owned value bytes.
-    pub fn new(key: UniversalLabel, value: Vec<u8>) -> Self {
-        Self { key, value }
-    }
-
-    /// The borrowed triplet this item serializes as.
-    #[must_use]
-    pub fn as_item(&self) -> Item<'_> {
-        Item::new(self.key, &self.value)
-    }
-}
-
-impl<'a> Parse<'a> for KlvItem {
-    type Error = Error;
-
-    fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let item = Item::parse(bytes)?;
-        Ok(Self {
-            key: item.key,
-            value: item.value.to_vec(),
-        })
-    }
-}
-
-impl Serialize for KlvItem {
-    type Error = Error;
-
-    fn serialized_len(&self) -> usize {
-        self.as_item().serialized_len()
-    }
-
-    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        Ok(self.as_item().serialize_into(buf)?)
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -420,7 +367,7 @@ impl<'a> Parse<'a> for UasLocalSet {
                 reason: "not the MISB ST 0601 UAS Datalink Local Set Universal Label",
             }));
         }
-        let items = parse_local_set_items(&item.value)?;
+        let items = parse_local_set_items(item.value)?;
         Ok(Self { items })
     }
 }
@@ -517,10 +464,7 @@ mod tests {
         bytes.extend_from_slice(&[0xFFu8; 8]);
         let err = KlvItem::parse(&bytes).expect_err("hostile BER length must be rejected");
         assert!(
-            matches!(
-                err,
-                Error::Klv(broadcast_common::klv::KlvError::BufferTooShort(..))
-            ),
+            matches!(err, broadcast_common::klv::KlvError::BufferTooShort(..)),
             "expected BufferTooShort, got {err:?}"
         );
     }

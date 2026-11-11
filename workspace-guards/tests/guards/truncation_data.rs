@@ -4,7 +4,6 @@
 use crate::truncation::Crate;
 
 pub const EXEMPT: &[&str] = &[
-    "broadcast-common",
     "broadcast-auth",
     "dvb-si",
     "dvb-conformance",
@@ -39,6 +38,10 @@ pub const EXEMPT: &[&str] = &[
 ];
 
 pub const TABLE: &[Crate] = &[
+    Crate {
+        name: "broadcast-common",
+        allowlist: &[],
+    },
     Crate {
         name: "atsc3-route",
         allowlist: &[],
@@ -211,27 +214,44 @@ pub const TABLE: &[Crate] = &[
             (
                 "src/annexb.rs",
                 "out.extend_from_slice(&(nal.len() as u32).to_be_bytes());",
-                "infallible util over a caller slice; NAL > 4 GiB needs a >4 GiB \
-                     input slice. Every demux path feeding it is capped at 4 MiB \
-                     (ts_demux MAX_PES_BUFFER_BYTES).",
+                "length_prefix, the one 4-byte NAL length writer: its NALs come from \
+                     TS demux (PES buffer capped at 4 MiB, ts_demux MAX_PES_BUFFER_BYTES) \
+                     and RTP depacketisation (FU-A / STAP-A reassembler caps), never near 4 GiB.",
             ),
             (
-                "src/flv.rs",
-                "out.extend_from_slice(&(s.len() as u16).to_be_bytes());",
-                "amf0_string is only ever called with the crate's own static \
-                     property names (`onMetaData`, `duration`, ...), a few bytes each.",
+                "src/h262.rs",
+                "u8::try_from(aspect).unwrap_or(u8::MAX),",
+                "Annex E aspect_ratio_information is a 4-bit code copied through from a parsed sequence header; these builders only re-emit parsed fields.",
             ),
             (
-                "src/flv.rs",
-                "out.extend_from_slice(&(props.len() as u32).to_be_bytes());",
-                "props is the onMetaData property list built from at most 8 \
-                     static entries just above.",
+                "src/h262.rs",
+                "debug_assert_eq!(u8::try_from(id).unwrap_or(u8::MAX), SEQUENCE_EXTENSION_ID);",
+                "A debug assertion comparing against a constant, not a length write.",
             ),
             (
-                "src/rtp.rs",
-                "out.extend_from_slice(&(nal.len() as u32).to_be_bytes());",
-                "length_prefix_nals: NALs come from RTP depacketisation, bounded by \
-                     the reassembler caps (FU-A / STAP-A), never near 4 GiB.",
+                "src/h262.rs",
+                "u8::try_from(id).unwrap_or(u8::MAX),",
+                "sequence_extension_id is the fixed 1-byte extension id copied through from a parsed value; the clamp is unreachable.",
+            ),
+            (
+                "src/h262.rs",
+                "u8::try_from(p).unwrap_or(u8::MAX),",
+                "Chroma-format flag in the sequence extension; copied through from a parsed value.",
+            ),
+            (
+                "src/h262.rs",
+                "u8::try_from(t).unwrap_or(u8::MAX),",
+                "Chroma-format flag in the sequence extension; copied through from a parsed value.",
+            ),
+            (
+                "src/h262.rs",
+                "u8::try_from(m).unwrap_or(u8::MAX),",
+                "Chroma-format flag in the sequence extension; copied through from a parsed value.",
+            ),
+            (
+                "src/h262.rs",
+                "video_format: u8::try_from(video_format).unwrap_or(u8::MAX),",
+                "video_format is a 3-bit Annex E code copied through from a parsed sequence header.",
             ),
         ],
     },

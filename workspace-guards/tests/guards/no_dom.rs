@@ -41,105 +41,17 @@ pub struct Crate {
 const BANNED_WORDS: [&str; 5] = ["Node", "Element", "Dom", "Tree", "Xml"];
 const ENTITY_LITERALS: [&str; 5] = ["&amp;", "&lt;", "&gt;", "&quot;", "&apos;"];
 
-/// Net `{` minus `}` on a line, ignoring string/char literals and `//` comments.
-fn brace_delta(line: &str) -> (i64, bool) {
-    let mut delta = 0i64;
-    let mut seen_open = false;
-    let mut chars = line.chars().peekable();
-    let mut in_str = false;
-    while let Some(c) = chars.next() {
-        if in_str {
-            match c {
-                '\\' => {
-                    chars.next();
-                }
-                '"' => in_str = false,
-                _ => {}
-            }
-            continue;
-        }
-        match c {
-            '"' => in_str = true,
-            '/' if chars.peek() == Some(&'/') => break,
-            '\'' => {
-                // A char literal ('{', '\n', ...) — skip it; lifetimes have no closing quote.
-                let rest: String = chars.clone().take(3).collect();
-                if let Some(end) = rest.find('\'') {
-                    for _ in 0..=end {
-                        chars.next();
-                    }
-                }
-            }
-            '{' => {
-                delta += 1;
-                seen_open = true;
-            }
-            '}' => delta -= 1,
-            _ => {}
-        }
-    }
-    (delta, seen_open)
-}
-
-/// Whether the item after the attribute line at `attr` is a `mod`.
-fn next_item_is_mod(lines: &[&str], attr: usize) -> Option<usize> {
-    let mut j = attr + 1;
-    while j < lines.len() && lines[j].trim_start().starts_with("#[") {
-        j += 1;
-    }
-    let t = lines.get(j)?.trim_start();
-    let t = t.strip_prefix("pub").map_or(t, |r| {
-        let r = r.trim_start();
-        if r.starts_with('(') {
-            r.find(')').map_or(r, |i| r[i + 1..].trim_start())
-        } else {
-            r
-        }
-    });
-    t.starts_with("mod ").then_some(j)
-}
-
-/// Index of the last line of the brace-matched block that starts on `from`
-/// (`mod x;` with no body ends on its own line).
-fn end_of_block(lines: &[&str], from: usize) -> usize {
-    let mut depth = 0i64;
-    let mut opened = false;
-    for (k, line) in lines.iter().enumerate().skip(from) {
-        let (d, saw_open) = brace_delta(line);
-        depth += d;
-        opened |= saw_open;
-        if opened && depth <= 0 {
-            return k;
-        }
-        if !opened && line.trim_end().ends_with(';') {
-            return k;
-        }
-    }
-    lines.len().saturating_sub(1)
-}
-
-/// The production code of a file with its `(line number, line)` pairs:
-/// comment lines are dropped and ONLY the brace-matched body of a
-/// `#[cfg(test)]`-annotated `mod` is skipped; everything else (including other
-/// `#[cfg(test)]` items such as a `use` or a helper fn) is still scanned.
-fn code_lines(text: &str) -> Vec<(usize, &str)> {
-    let lines: Vec<&str> = text.lines().collect();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < lines.len() {
-        let t = lines[i].trim_start();
-        if t.starts_with("#[cfg(test)]")
-            && let Some(m) = next_item_is_mod(&lines, i)
-        {
-            i = end_of_block(&lines, m) + 1;
-            continue;
-        }
-        if !t.starts_with("//") {
-            out.push((i + 1, lines[i]));
-        }
-        i += 1;
-    }
-    out
+/// The production code of a file as `(line number, line)` pairs: comment lines
+/// are dropped and every item carrying `#[cfg(test)]` is blanked with the
+/// shared lexer, so production code after a mid-file test module is still
+/// scanned and every line number still matches the file.
+fn code_lines(text: &str) -> Vec<(usize, String)> {
+    workspace_guards::scan::without_attributed_items(text, |attr| attr.starts_with("#[cfg(test)]"))
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| !line.trim_start().starts_with("//"))
+        .map(|(no, line)| (no + 1, line.to_string()))
+        .collect()
 }
 
 /// The CamelCase words of an identifier (`XmlReader` -> `Xml`, `Reader`).
@@ -253,6 +165,7 @@ fn problems_in(c: &Crate, files: &[(String, String)]) -> Vec<String> {
             xml_modules += 1;
         }
         for (n, line) in code_lines(text) {
+            let line = line.as_str();
             let at = |msg: &str| format!("{path}:{n}: {msg}");
             if line.contains("roxmltree") {
                 hits.push(at("`roxmltree`"));
@@ -381,5 +294,16 @@ fn problems_in_flags_a_dom_a_hand_escaper_and_a_stale_allow() {
         problems_in(&c, &no_quick_xml)
             .join("\n")
             .contains("scan is vacuous")
+    );
+}
+
+#[test]
+fn a_test_module_in_the_middle_does_not_hide_the_code_after_it() {
+    let src = "#[cfg(test)]\nmod t {\n    fn f() {}\n}\nfn g(s: &str) -> String {\n    s.replace(\"&amp;\", \"&\")\n}\n";
+    let code = code_lines(src);
+    assert!(
+        code.iter()
+            .any(|(no, line)| *no == 6 && line.contains("&amp;")),
+        "offender after a mid-file test module was skipped: {code:?}"
     );
 }
