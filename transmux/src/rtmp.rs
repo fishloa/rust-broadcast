@@ -349,10 +349,12 @@ mod tests {
         assert!(
             matches!(
                 err,
-                RtmpFlvError::FieldOverflow(broadcast_common::len::FieldOverflow {
-                    field: "DataSize",
-                    ..
-                })
+                RtmpFlvError::Rtmp(rtmp_runtime::RtmpError::FieldOverflow(
+                    broadcast_common::len::FieldOverflow {
+                        field: "DataSize",
+                        ..
+                    }
+                ))
             ),
             "expected FieldOverflow for DataSize, got {err:?}"
         );
