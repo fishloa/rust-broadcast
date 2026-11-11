@@ -18,9 +18,8 @@ use transmux::ll_dash::UTCTIMING_HTTP_HEAD_2014;
 use transmux::pipeline::{CodecConfig, SubtitleFormat, SubtitleSampleEntry};
 use transmux::ts_demux::TsDemux;
 use transmux::{
-    AspectRatioIdc, CencScheme, ConstantIvSenc, Fmp4Demux, Media, MediaKind, Sample,
-    SampleEncryptionEntry, SmoothManifest, SmoothPackager, Track, TrackEncryption,
-    TrackEncryptionBox, TrackId, TrackSpec, WvttSampleEntry, playready_wrmheader,
+    AspectRatioIdc, Fmp4Demux, Media, MediaKind, Sample, SmoothManifest, SmoothPackager, Track,
+    TrackId, TrackSpec, WvttSampleEntry, playready_wrmheader,
 };
 
 fn check(name: &str, actual: &str) {
@@ -134,7 +133,9 @@ fn squashed_media() -> Media {
     media
 }
 
-fn encrypted_media(scheme: CencScheme, kid: [u8; 16]) -> Media {
+#[cfg(feature = "cenc")]
+fn encrypted_media(scheme: transmux::CencScheme, kid: [u8; 16]) -> Media {
+    use transmux::{ConstantIvSenc, SampleEncryptionEntry, TrackEncryption, TrackEncryptionBox};
     let mut media = media();
     for track in &mut media.tracks {
         let samples = vec![
@@ -305,11 +306,6 @@ fn dash_mpd_element_coverage_matches_golden() {
         ),
         ("languages", bilingual_media(), DashPackager::default()),
         ("sar-par", squashed_media(), DashPackager::default()),
-        (
-            "cbcs",
-            encrypted_media(CencScheme::Cbcs, kid),
-            DashPackager::default(),
-        ),
         ("stpp", av_subtitle_media(), DashPackager::default()),
         ("wvtt", wvtt_media(), DashPackager::default()),
     ];
@@ -319,6 +315,16 @@ fn dash_mpd_element_coverage_matches_golden() {
             .unwrap_or_else(|e| panic!("{name}: {e}"));
         check(&format!("golden/dash/dash-cover-{name}.mpd"), &mpd);
     }
+}
+
+#[cfg(feature = "cenc")]
+#[test]
+fn dash_mpd_cbcs_coverage_matches_golden() {
+    let kid = [0x11u8; 16];
+    let mpd = DashPackager::default()
+        .package(&encrypted_media(transmux::CencScheme::Cbcs, kid))
+        .expect("cbcs MPD");
+    check("golden/dash/dash-cover-cbcs.mpd", &mpd);
 }
 
 #[test]
