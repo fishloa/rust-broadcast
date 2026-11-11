@@ -31,6 +31,7 @@ timed-metadata   = { path = "../timed-metadata", version = "0.10.0", default-fea
 transmux         = { path = "../transmux", version = "0.31.0", default-features = false }
 # HLS (M3U8) playlist syntax (issue #878): the validator parses playlists
 # via this crate directly rather than reaching through `transmux` for it.
+broadcast-dash   = { path = "../broadcast-dash", version = "0.1.0", optional = true }
 broadcast-hls    = { path = "../broadcast-hls", version = "0.7.0", default-features = false }
 # Container-format detection for the `check` CLI's input routing (issue #1112
 # / audit MD-W7): a file that is a TS but does not start on a packet boundary,
@@ -65,7 +66,7 @@ default = ["std", "cli"]
 std     = ["broadcast-common/std", "mpeg-ts/std", "transmux/std", "dvb-conformance/std", "broadcast-hls/std", "serde?/std", "serde_json?/std", "dash"]
 # The DASH MPD validator: it reads the MPD with dash-runtime (issue #2340),
 # which is `std`-only, so this feature implies `std`.
-dash    = ["dep:dash-runtime", "std"]
+dash    = ["dep:broadcast-dash", "std"]
 serde   = ["dep:serde", "dep:serde_json"]
 # STD-ONLY features (not no_std, not built by the CI thumbv7em step): `metrics`
 # (metrics facade + Prometheus exporter), `net` (tokio + hyper + socket2 HTTP

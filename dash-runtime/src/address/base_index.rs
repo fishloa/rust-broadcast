@@ -10,7 +10,7 @@ use transmux::SegmentIndexBox;
 
 use super::AddressError;
 use crate::error::Unsupported;
-use crate::mpd::model::ByteRange;
+use broadcast_dash::ByteRange;
 
 /// `reference_type` of a reference that points at another `sidx`.
 const REFERENCE_TYPE_SIDX: u8 = 1;

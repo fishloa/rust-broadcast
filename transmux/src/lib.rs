@@ -13,7 +13,7 @@
 //! It **never encodes or decodes media**: it parses codec *config/parameter
 //! headers* only to build container boxes and derive metadata; coded samples
 //! pass through opaque. `no_std` + `alloc`, except the XML manifest paths
-//! ([`dash`], [`dash_parse`], [`smooth`], [`smooth_parse`], [`LlDashPackager`] and
+//! ([`dash`], [`smooth`], [`LlDashPackager`] and
 //! the PlayReady [`playready_wrmheader`]/[`playready_pro`]/[`playready_pssh`]
 //! builders), which are built on `quick-xml` and need the `std` feature.
 //!
@@ -79,8 +79,7 @@
 //!   / [`validate_media_segment`] / [`validate_cmaf_track`]).
 //! - **Utilities:** NAL keyframe classification ([`is_keyframe_nal`] /
 //!   [`nal_unit_type`]); I-frame trick-play track derivation ([`derive_iframe_track`]);
-//!   URI-reference resolution for DASH `BaseURL`/`SegmentTemplate`
-//!   (`base_url`, `std` only; WHATWG `url::Url::join`); the single ISO/IEC 14496-12:2026 §8.8.7/§8.8.8 fragment
+//!   the single ISO/IEC 14496-12:2026 §8.8.7/§8.8.8 fragment
 //!   sample-offset resolver shared by the demuxer, decryptor and validator
 //!   ([`frag_offsets`]).
 //!
@@ -160,8 +159,6 @@ pub mod avc_parameter_set;
 pub mod avs2;
 pub mod avs3;
 pub mod avs3_audio;
-#[cfg(feature = "std")]
-pub mod base_url;
 pub mod bitreader;
 pub mod box_types;
 pub mod caption_detect;
@@ -176,8 +173,6 @@ pub mod cenc_encrypt;
 pub mod cli;
 #[cfg(feature = "std")]
 pub mod dash;
-#[cfg(feature = "std")]
-pub mod dash_parse;
 pub(crate) mod display_track;
 pub mod dovi;
 pub mod drm;
@@ -233,9 +228,10 @@ pub mod slice_header;
 #[cfg(feature = "std")]
 pub mod smooth;
 #[cfg(feature = "std")]
-pub mod smooth_fragment;
 #[cfg(feature = "std")]
-pub mod smooth_parse;
+pub mod smooth_codec;
+#[cfg(feature = "std")]
+pub mod smooth_fragment;
 pub mod splice;
 pub mod sps;
 pub mod subtitle_entries;
@@ -252,8 +248,6 @@ pub mod vp9;
 pub mod vvc_config;
 pub mod webm_demux;
 mod wire_cursor;
-#[cfg(feature = "std")]
-mod xml_walk;
 
 pub use aac_asc::{
     AdtsHeader, AudioObjectType, AudioSpecificConfig, ChannelConfiguration, HeAacProfile,
@@ -294,8 +288,6 @@ pub use dash::{
     TrackSegments, TrickModeAdaptationSet, TrickModeRepr, rfc6381_codec_string,
     rfc6381_track_codec_string,
 };
-#[cfg(feature = "std")]
-pub use dash_parse::{DashParseError, parse_iso8601_duration};
 pub use drm::{
     COMMON_SYSTEM_ID, FAIRPLAY_SYSTEM_ID, PLAYREADY_SYSTEM_ID, WIDEVINE_SYSTEM_ID,
     cenc_kid_to_playready, fairplay_pssh, fairplay_pssh_data, playready_kid_to_cenc,
@@ -426,11 +418,9 @@ pub use smooth::{
     FOURCC_AACL, FOURCC_H264, SMOOTH_TIMESCALE, SmoothFragment, SmoothOutput, SmoothPackager,
     SmoothStreamType, TFXD_UUID, TfxdBox,
 };
-// Note: `smooth_parse::StreamType` is not re-exported at the crate root — it
-// would collide with `mp4esds::StreamType` (an unrelated ES descriptor
-// field); reach it via `transmux::smooth_parse::StreamType`.
-#[cfg(feature = "std")]
-pub use base_url::{resolve as resolve_url_reference, resolve_chain as resolve_base_url_chain};
+// Note: `broadcast_smooth::StreamType` (the Smooth `StreamIndex@Type`) is not
+// re-exported at the crate root — it would collide with `mp4esds::StreamType`
+// (an unrelated ES descriptor field); reach it via `broadcast_smooth`.
 pub use dovi::{
     DoviBlSignalCompatibilityId, DoviDecoderConfigurationRecord, DoviSampleEntryKind,
     DoviVideoStreamDescriptor,
@@ -441,10 +431,7 @@ pub use hdr10plus::{
     Hdr10PlusMetadata, OverlapProcessOption, PeakLuminanceTable, WindowRegion,
 };
 #[cfg(feature = "std")]
-pub use smooth_parse::{
-    C, MAX_CHUNK_RUN, MAX_CODEC_PRIVATE_DATA_HEX_LEN, QualityLevel, SmoothManifest,
-    SmoothParseError, StreamIndex, track_spec_from_quality_level,
-};
+pub use smooth_codec::track_spec_from_quality_level;
 pub use splice::{SplicePoint, SpliceResult, concat, snap_to_preceding_sync, splice_insert};
 pub use sps::{
     AvcReorderDepth, AvcSpsInfo, AvcVuiTiming, HevcSpsInfo, HevcVpsTiming, HevcVuiTiming,

@@ -138,10 +138,34 @@ pub const TABLE: &[Crate] = &[
         name: "broadcast-common",
         scope: Scope::Crate,
         matcher: Matcher::Strict,
-        // `BitError` and `KlvError`: structured errors with a message-bearing
-        // Display, not spec labels. `BerLength`: a serialization-form choice
-        // (`Minimal` vs a preserved on-wire `Fixed` width), not a wire field.
-        skip: &["BitError", "KlvError", "BerLength"],
+        // `BitError`, `KlvError` and `XmlError`: structured errors with a
+        // message-bearing or descriptive variant set, not spec labels.
+        // `BerLength`: a serialization-form choice (`Minimal` vs a preserved
+        // on-wire `Fixed` width), not a wire field. `Frame`: the XML reader's
+        // own traversal stack, not a label.
+        skip: &["BitError", "KlvError", "XmlError", "BerLength", "Frame"],
+        expected: None,
+        min_enums: None,
+    },
+    // Drift-guard for the spec/field-enum label convention (issue #204).
+    //
+    // `broadcast-dash` labels every spec/field enum it defines (`PresentationType`,
+    // `Limit`, `Unsupported`, `Role`, `TemplateFault`, `UrlType`, `Actuate`,
+    // `UtcScheme`, `TemplateError`'s sibling enums); its structured errors
+    // (`MpdError`, `DashParseError`, `DateTimeError`, `TemplateError`) are
+    // skipped, as is `TemplateUse` (a set of booleans, not a wire value).
+    Crate {
+        name: "broadcast-dash",
+        scope: Scope::Crate,
+        matcher: Matcher::Loose,
+        skip: &[
+            "MpdError",
+            "DashParseError",
+            "DateTimeError",
+            "TemplateError",
+            "InheritError",
+            "SegmentInfo",
+        ],
         expected: None,
         min_enums: None,
     },
@@ -154,6 +178,19 @@ pub const TABLE: &[Crate] = &[
     // A present `Display` delegates to an inherent `name()`, so it transitively
     // guarantees `name()` exists — this one check enforces the whole convention
     // and catches a new `pub enum` that nobody labelled.
+    // Drift-guard for the spec/field-enum label convention (issue #204).
+    //
+    // One spec/field enum — `StreamType` (`StreamIndex@Type`) — carries
+    // `name()` + `impl_spec_display!`. `SmoothParseError` is a structured
+    // error (skipped).
+    Crate {
+        name: "broadcast-smooth",
+        scope: Scope::Crate,
+        matcher: Matcher::Loose,
+        skip: &["SmoothParseError"],
+        expected: Some(&["StreamType"]),
+        min_enums: None,
+    },
     Crate {
         name: "broadcast-hls",
         scope: Scope::Crate,
@@ -340,6 +377,7 @@ pub const TABLE: &[Crate] = &[
             "InheritError",
             "OfferOutcome",
             "SegmentInfo",
+            "HttpDateError",
             "Error",
             "Action",
             "ResourceId",

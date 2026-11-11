@@ -2,8 +2,8 @@
 
 use super::AddressError;
 use super::timeline::TimelineIndex;
-use crate::mpd::inherit::ListInfo;
-use crate::mpd::model::{ByteRange, SegmentUrl};
+use broadcast_dash::inherit::ListInfo;
+use broadcast_dash::{ByteRange, SegmentUrl};
 
 /// One listed segment with its timing.
 #[derive(Debug, Clone, PartialEq, Eq)]

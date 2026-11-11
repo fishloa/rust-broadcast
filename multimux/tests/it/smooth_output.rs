@@ -25,6 +25,7 @@ use axum::http::{Request, StatusCode};
 use broadcast_auth::Credentials;
 use tower::ServiceExt;
 
+use broadcast_smooth::SmoothManifest;
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
 use multimux::output::llhls::LlHlsOutput;
@@ -32,7 +33,6 @@ use multimux::output::smooth::SmoothOutput;
 use multimux::route::RouteHandle;
 use transmux::ll_hls::LlHlsSegmenter;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
-use transmux::smooth_parse::SmoothManifest;
 
 fn video_track_spec() -> TrackSpec {
     video_track_spec_sized(1280, 720)
@@ -162,10 +162,7 @@ async fn manifest_is_served_and_well_formed() {
     );
 
     let stream = &manifest.streams[0];
-    assert_eq!(
-        stream.stream_type,
-        transmux::smooth_parse::StreamType::Video
-    );
+    assert_eq!(stream.stream_type, broadcast_smooth::StreamType::Video);
     assert!(
         !stream.qualities.is_empty(),
         "must have at least one QualityLevel"

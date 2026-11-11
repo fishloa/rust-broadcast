@@ -438,7 +438,9 @@ version = "0.5.0"
 dependencies = [
  "broadcast-auth",
  "broadcast-common",
+ "broadcast-dash",
  "broadcast-hls",
+ "broadcast-smooth",
  "buffering-runtime",
  "cookie",
  "cookie_store",
@@ -485,6 +487,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "broadcast-dash"
+version = "0.1.0"
+dependencies = [
+ "broadcast-common",
+ "jiff",
+ "test-fixtures",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "broadcast-hls"
 version = "0.7.0"
 dependencies = [
@@ -503,6 +515,16 @@ dependencies = [
  "hound",
  "libm",
  "test-alloc",
+ "test-fixtures",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "broadcast-smooth"
+version = "0.1.0"
+dependencies = [
+ "broadcast-common",
+ "quick-xml",
  "test-fixtures",
  "thiserror 2.0.21",
 ]
@@ -1062,6 +1084,7 @@ name = "dash-runtime"
 version = "0.4.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-dash",
  "container-probe",
  "jiff",
  "percent-encoding",
@@ -2373,6 +2396,7 @@ name = "media-doctor"
 version = "0.15.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-dash",
  "broadcast-hls",
  "clap",
  "container-probe",
@@ -2562,6 +2586,7 @@ dependencies = [
  "broadcast-client",
  "broadcast-common",
  "broadcast-hls",
+ "broadcast-smooth",
  "bytes",
  "caption-convert",
  "container-probe",
@@ -4569,7 +4594,9 @@ dependencies = [
  "aes 0.9.4",
  "base64 0.23.1",
  "broadcast-common",
+ "broadcast-dash",
  "broadcast-hls",
+ "broadcast-smooth",
  "bytes",
  "cbc",
  "cc-data",

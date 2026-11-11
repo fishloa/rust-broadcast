@@ -23,7 +23,7 @@ use crate::box_types::{box_iter, parse_box};
 use crate::error::{Error, Result};
 use crate::movie_fragment::MovieFragmentBox;
 use crate::smooth::{TFXD_UUID, TfxdBox};
-use crate::smooth_parse::default_limits;
+use broadcast_smooth::default_limits;
 
 const PROTECTION_ELEMENT: &str = "Protection";
 const BOX_MOOF: [u8; 4] = *b"moof";
@@ -70,13 +70,13 @@ broadcast_common::impl_spec_display!(FragmentState);
 
 /// Whether the manifest carries a `<Protection>` element (PlayReady/PIFF sample encryption)
 /// anywhere, matched on a namespace-aware `quick-xml` pull loop under the same bounds as
-/// [`crate::smooth_parse::SmoothManifest::parse`]: only an element in no namespace counts (a
+/// [`broadcast_smooth::SmoothManifest::parse`]: only an element in no namespace counts (a
 /// Smooth manifest has none), so a `<ms:Protection>` or default-namespaced look-alike in a
 /// foreign namespace, a comment, an attribute value or a longer name such as `<ProtectionFoo>`
 /// does not.
 ///
 /// A document the reader cannot get through reports `false`; the caller goes on to
-/// [`crate::smooth_parse::SmoothManifest::parse`], which rejects the same input with its own
+/// [`broadcast_smooth::SmoothManifest::parse`], which rejects the same input with its own
 /// error, so nothing unreadable is ever played.
 #[must_use]
 pub fn manifest_declares_protection(xml: &str) -> bool {

@@ -1,10 +1,9 @@
 //! The `xs:duration` reader every duration-valued MPD (ISO/IEC 23009-1)
 //! attribute uses.
 //!
-//! **MPD reading is `dash-runtime`'s** (`dash_runtime::mpd`, issue #2340): one
-//! bounded MPD reader in the workspace, the one `DashClient` plays from.
-//! `transmux` only writes MPDs ([`crate::dash`]) and needs this one item,
-//! because the writer renders `.`/`S` durations.
+//! The one reader in the workspace for this lexical form, shared by the MPD
+//! parser here and by `transmux`'s MPD writer, which renders `.`/`S`
+//! durations and reads them back to check the round trip.
 //!
 //! [`parse_iso8601_duration`] reads the `PnYnMnDTnHnMnS` lexical form (W3C XML
 //! Schema 1.1 Part 2 §3.3.6): the `P`/`T` and every designator are UPPER case,
@@ -15,9 +14,8 @@
 //! a magnitude beyond `jiff`'s span limits — is a structured error, never a
 //! panic.
 
-use alloc::string::String;
-use core::fmt;
-use core::time::Duration;
+use std::fmt;
+use std::time::Duration;
 
 // ---------------------------------------------------------------------------
 // Error
@@ -45,7 +43,6 @@ impl fmt::Display for DashParseError {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for DashParseError {}
 
 // ---------------------------------------------------------------------------

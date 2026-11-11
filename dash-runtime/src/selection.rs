@@ -18,10 +18,10 @@
 
 use broadcast_common::impl_spec_display;
 
-use crate::address::template;
-use crate::mpd::descriptors::{self, Role, essential_understood};
-use crate::mpd::inherit::{SegmentInfo, effective_common, resolve_segment_info};
-use crate::mpd::model::{AdaptationSet, Mpd, Period, Representation};
+use broadcast_dash::descriptors::{self, Role, essential_understood};
+use broadcast_dash::inherit::{SegmentInfo, effective_common, resolve_segment_info};
+use broadcast_dash::template;
+use broadcast_dash::{AdaptationSet, Mpd, Period, Representation};
 
 const CODEC_SEPARATOR: char = ',';
 const LANG_SUBTAG_SEPARATOR: char = '-';
@@ -278,7 +278,7 @@ fn has_trick_mode(set: &AdaptationSet) -> bool {
         .any(|d| d.scheme_id_uri == transmux::TRICKMODE_SCHEME)
 }
 
-fn unknown_essential(descs: &[crate::mpd::model::Descriptor]) -> bool {
+fn unknown_essential(descs: &[broadcast_dash::Descriptor]) -> bool {
     descs.iter().any(|d| !essential_understood(d))
 }
 
@@ -306,7 +306,7 @@ fn segment_info_ok(period: &Period, set: &AdaptationSet, rep: &Representation) -
             .as_ref()
             .is_none_or(|tl| tl.unsupported.is_none()),
         Ok(SegmentInfo::Base(_)) => true,
-        Err(_) => false,
+        Ok(_) | Err(_) => false,
     }
 }
 
@@ -340,7 +340,12 @@ fn is_protected(set: &AdaptationSet) -> bool {
 }
 
 fn is_main(set: &AdaptationSet) -> bool {
-    descriptors::roles(&set.roles).any(|r| r == Role::Main)
+    set.roles
+        .iter()
+        .filter(|d| d.scheme_id_uri == descriptors::SCHEME_ROLE)
+        .filter_map(|d| d.value.as_deref())
+        .map(Role::from_value)
+        .any(|r| r == Role::Main)
 }
 
 fn rep_allowed(set: &AdaptationSet, rep: &Representation, policy: &Policy) -> bool {
@@ -501,7 +506,12 @@ pub fn select(mpd: &Mpd, period_idx: usize, policy: &Policy) -> Selection {
         });
     }
     let secondary = |set: &AdaptationSet| {
-        descriptors::roles(&set.roles).any(|r| matches!(r, Role::Commentary | Role::Description))
+        set.roles
+            .iter()
+            .filter(|d| d.scheme_id_uri == descriptors::SCHEME_ROLE)
+            .filter_map(|d| d.value.as_deref())
+            .map(Role::from_value)
+            .any(|r| matches!(r, Role::Commentary | Role::Description))
     };
     let audio_set_has_allowed = |a: &AudioSet| -> bool {
         let set = &period.adaptation_sets[a.set];

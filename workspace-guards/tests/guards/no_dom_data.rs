@@ -7,6 +7,43 @@ use crate::no_dom::Crate;
 
 pub const TABLE: &[Crate] = &[
     Crate {
+        name: "broadcast-common",
+        allowed_types: &[
+            (
+                "Elem",
+                "the bounded XML reader's element node (namespace, local name, attributes, kept children, text); the one tree the shared reader builds, depth- and count-limited",
+            ),
+            (
+                "XmlError",
+                "the reader's rejection reason (invalid UTF-8, not well-formed, foreign root, exceeded bound), not a node",
+            ),
+            (
+                "XmlLimits",
+                "the hostile-input ceilings (bytes, depth, elements, attribute size/count) the reader enforces, not a node",
+            ),
+            ("XmlLimit", "which ceiling tripped, not a node"),
+            (
+                "XmlBudget",
+                "the running tally of one document against its ceilings, not a node",
+            ),
+            (
+                "XmlWriter",
+                "an indenting quick-xml writer alias shared by the manifest writers, never read back into a tree",
+            ),
+        ],
+        allowed_fns: &[
+            (
+                "is_xml_char",
+                "XML 1.0 section 2.2 Char predicate used to validate decoded text, not an escaper",
+            ),
+            (
+                "char_data",
+                "decodes one quick-xml event's character data (text, CDATA, resolved references) through the Char predicate, not a hand-rolled unescaper",
+            ),
+        ],
+        needs_xml_module: true,
+    },
+    Crate {
         name: "dvb-mabr",
         allowed_types: &[],
         allowed_fns: &[
@@ -37,17 +74,33 @@ pub const TABLE: &[Crate] = &[
         needs_xml_module: true,
     },
     Crate {
-        name: "transmux",
-        allowed_types: &[
+        name: "broadcast-smooth",
+        allowed_types: &[(
+            "XmlReader",
+            "private namespace-aware namespace/limits wrapper over quick_xml::NsReader, not a tree",
+        )],
+        allowed_fns: &[
             (
-                "XmlReader",
-                "private alias of quick_xml::Reader, not a tree",
+                "element_text",
+                "reads one text-only element's character data through the shared walker; not a DOM or an escaper",
             ),
             (
-                "XmlSubtitleSampleEntry",
-                "ISO BMFF stpp sample entry (XML subtitle track) box, unrelated to XML parsing",
+                "xml_error",
+                "maps a quick-xml error to the parser error enum",
+            ),
+            (
+                "xml_message",
+                "builds a positioned parser error from a validation message",
             ),
         ],
+        needs_xml_module: true,
+    },
+    Crate {
+        name: "transmux",
+        allowed_types: &[(
+            "XmlSubtitleSampleEntry",
+            "ISO BMFF stpp sample entry (XML subtitle track) box, unrelated to XML parsing",
+        )],
         allowed_fns: &[
             (
                 "xml_error",

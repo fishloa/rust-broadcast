@@ -39,6 +39,7 @@ rdd29        = { path = "../rdd29" }
 st377-1      = { path = "../st377-1" }
 transmux      = { path = "../transmux" }
 broadcast-hls = { path = "../broadcast-hls" }
+broadcast-smooth = { path = "../broadcast-smooth" }
 media-doctor  = { path = "../media-doctor" }
 broadcast-auth = { path = "../broadcast-auth" }
 rtmp-runtime  = { path = "../rtmp-runtime" }
@@ -249,8 +250,8 @@ test = false
 doc  = false
 
 [[bin]]
-name = "transmux_base_url"
-path = "fuzz_targets/transmux_base_url.rs"
+name = "dash_base_url"
+path = "fuzz_targets/dash_base_url.rs"
 test = false
 doc  = false
 
@@ -285,8 +286,8 @@ test = false
 doc  = false
 
 [[bin]]
-name = "transmux_smooth_manifest"
-path = "fuzz_targets/transmux_smooth_manifest.rs"
+name = "smooth_manifest_parse"
+path = "fuzz_targets/smooth_manifest_parse.rs"
 test = false
 doc  = false
 

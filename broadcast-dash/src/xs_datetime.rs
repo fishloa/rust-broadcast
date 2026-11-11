@@ -1,10 +1,10 @@
-//! `xs:dateTime` (accepted subset), HTTP `Date` and NTP timestamp readers.
+//! `xs:dateTime` (accepted subset) and NTP timestamp readers.
 //!
 //! The accepted `xs:dateTime` subset is project policy, recorded with its
 //! rationale and the full accept/reject table in
 //! `private/specs-verified/dash/docs-specs/xs-datetime-subset.md` (W3C XML Schema Part 2, 3.2.7;
-//! ISO/IEC 23009-1 5.8.5.7 `DIRECT-VALUE`). Calendar arithmetic is jiff's;
-//! nothing here reads a clock.
+//! ISO/IEC 23009-1 5.8.5.7 `DIRECT-VALUE`, and the `http-ntp`/`direct` body).
+//! Calendar arithmetic is jiff's; nothing here reads a clock.
 
 use jiff::Span;
 use jiff::civil::{Date, DateTime};
@@ -22,10 +22,10 @@ const MAX_SECOND: u8 = 59;
 const END_OF_DAY_HOUR: u8 = 24;
 const FIRST_YEAR: i16 = 1;
 const YEAR_DIGITS: usize = 4;
+/// Resolution of one NTP timestamp, in microseconds.
+pub const NTP_RESOLUTION_US: u64 = 1_000;
 const NTP_FRACTION_BITS: u32 = 32;
 const NTP_TIMESTAMP_LEN: usize = 8;
-const HTTP_DATE_RFC850: &str = "%A, %d-%b-%y %H:%M:%S GMT";
-const HTTP_DATE_ASCTIME: &str = "%a %b %e %H:%M:%S %Y";
 
 /// Why a time string or timestamp was rejected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
@@ -41,9 +41,6 @@ pub enum DateTimeError {
     /// The instant cannot be represented.
     #[error("instant outside the representable range")]
     OutOfRange,
-    /// Not an HTTP `Date` value.
-    #[error("not an HTTP Date value")]
-    HttpDate,
     /// Not an 8-byte NTP timestamp.
     #[error("not an 8-byte NTP timestamp")]
     Ntp,
@@ -231,31 +228,6 @@ fn parse_zone(c: &mut Cursor<'_>) -> Result<Offset, DateTimeError> {
     }
     let seconds = sign * (i32::from(h) * SECONDS_PER_HOUR + i32::from(m) * SECONDS_PER_MINUTE);
     Offset::from_seconds(seconds).map_err(|_| DateTimeError::Field("zone offset"))
-}
-
-/// Parse an HTTP-date (RFC 9110 5.6.7) to Unix microseconds: the preferred
-/// IMF-fixdate and the two obsolete forms a recipient must still accept, the
-/// RFC 850 form (two-digit years follow jiff's POSIX window: 69-99 are 19xx,
-/// 00-68 are 20xx, so no clock is needed) and the asctime form (always UTC).
-/// Resolution is whole seconds. Used for the `Date` and `Retry-After` headers.
-///
-/// # Errors
-/// [`DateTimeError::HttpDate`] when `text` is not a date.
-pub fn parse_http_date(text: &str) -> Result<i64, DateTimeError> {
-    let text = text.trim();
-    if let Ok(t) = jiff::fmt::rfc2822::DateTimeParser::new().parse_timestamp(text) {
-        return Ok(t.as_microsecond());
-    }
-    [HTTP_DATE_RFC850, HTTP_DATE_ASCTIME]
-        .iter()
-        .find_map(|format| {
-            jiff::fmt::strtime::parse(format, text)
-                .and_then(|broken| broken.to_datetime())
-                .and_then(|datetime| datetime.to_zoned(jiff::tz::TimeZone::UTC))
-                .ok()
-        })
-        .map(|zoned| zoned.timestamp().as_microsecond())
-        .ok_or(DateTimeError::HttpDate)
 }
 
 /// Read a 64-bit NTP timestamp (RFC 5905 Figure 3: 32-bit seconds since

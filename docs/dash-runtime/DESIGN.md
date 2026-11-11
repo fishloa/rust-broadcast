@@ -13,7 +13,7 @@ work-breakdown step W-c re-reads them before coding). Sections 0-11 are written 
 | D2 | Shared retry logic | EXTRACT first (W-a) into `broadcast-client/src/source/fetch/`: small state machines (ConnAlloc, Backoff+Retry-After, FailureCounter, Deadlines, Window, bounded Body/range check), NOT a generic engine; HLS refactored onto them with zero behaviour change | rounds 3 and 8 found their bugs in exactly this logic; copying it triples the audit surface |
 | D3 | NotMedia check | MOVE `has_ts_structure`/`has_media_fragment`/`is_progressive_movie` from hls-runtime private fns into `container-probe` (additive), both runtimes call it | one structural definition of "is this body media" |
 | D4 | Wall clock | Session gains `set_wall_clock(now_us, unix_us)` (an anchor PAIR, host optional) and `Config::dash`; clock ladder: `UTCTiming` (client-measured, mono-anchored) > host wall clock > MPD response `Date`; none => fatal `ClockUnavailable` for dynamic MPDs only | static MPDs and every non-DASH source need no clock; UTCTiming alone anchors the monotonic clock |
-| D5 | MPD parsing | NEW module `dash_runtime::mpd` (full model, quick-xml); `transmux::dash_parse` is NOT changed (published, structs are not `#[non_exhaustive]`, epoch-purity rule); reuse its pure helpers (`parse_iso8601_duration`, `SegmentTemplate::resolve`, `SegmentTimeline::resolve`, `SegmentIndexBox::parse_body`) | additive-only semver for transmux, no second template/timeline implementation |
+| D5 | MPD parsing | NEW module `dash_runtime::mpd` (full model, quick-xml); the then-`transmux` reader is NOT changed (published, structs are not `#[non_exhaustive]`, epoch-purity rule); reuse its pure helpers (`parse_iso8601_duration`, `SegmentTemplate::resolve`, `SegmentTimeline::resolve`, `SegmentIndexBox::parse_body`) | additive-only semver for transmux, no second template/timeline implementation |
 | D6 | Addressing in 0.1.0 | SegmentTemplate (`$Number$`/`$Time$`/`$Bandwidth$`/`$RepresentationID$`, widths, `$$`), SegmentTimeline (incl. negative `r`, `@n`), SegmentList, SegmentBase+`indexRange` sidx (on-demand), BaseURL alternates; `$SubNumber$`/`@k` segment sequences and Ed.6 `Pattern` => typed unsupported | covers livesim2, ffmpeg, Shaka, MP4Box, on-demand profile |
 | D7 | Live/VOD | One `DashClient` plays all selected AdaptationSets on ONE timeline (unlike HLS's second adapter for audio) | DASH segments of all sets share the MPD clock; avoids PTS re-alignment |
 | D8 | MPD patch / xlink / inband emsg events | Out of 0.1.0. Patch: ignore `PatchLocation`, always refetch the whole MPD (patch is optional, 5.4.1). xlink: only `resolve-to-zero` removal, other `xlink:href` Periods/sets skipped with a non-fatal typed notice. emsg/EventStream: not surfaced (HLS parity) | cost/benefit; no fixture exercises them |
@@ -182,14 +182,16 @@ step threshold off by one, resync period ignored.
 
 ## 4. MPD parsing: what exists, what is missing, where it lives
 
-### 4.1 `transmux::dash_parse` today (read from the source, `transmux/src/dash_parse.rs`)
+### 4.1 The MPD reader this design superseded (recorded as read at the time)
+
+The `xs:duration` reader and the MPD model+parser that lived in `transmux` and `dash-runtime` when this section was written have since moved: the model, parser, template grammar and duration reader are `broadcast-dash` (#2355), and the player on top of them is `dash-runtime`.
 
 A v1 subset written as the inverse of `DashPackager`: `Mpd{profiles, mpd_type, mediaPresentationDuration, minimumUpdatePeriod, availabilityStartTime (RAW string), timeShiftBufferDepth,
 first BaseURL, periods}`, `Period{id,start,duration, first BaseURL}`, `AdaptationSet{mimeType, contentType, first BaseURL, effective SegmentTemplate}`, `Representation{id,bandwidth,codecs,width,height,
 frameRate (string), audioSamplingRate, mimeType, first BaseURL, effective SegmentTemplate}`, `SegmentTemplate{timescale, initialization, media, startNumber, duration, presentationTimeOffset, timeline}`,
 `SegmentTimeline{S{t,d,r}}` with negative `r`. It is not namespace-aware (prefixes stripped) and skips everything else as opaque subtrees. The structs are NOT `#[non_exhaustive]`.
 
-| Feature | dash_parse today | dash-runtime 0.1.0 | Clause |
+| Feature | the then-transmux reader | dash-runtime 0.1.0 | Clause |
 |---|---|---|---|
 | `MPD@publishTime/minBufferTime/maxSegmentDuration/suggestedPresentationDelay/availabilityEndTime/@id`, `Location` | missing | parsed (xs:dateTime via jiff, any offset; no zone = UTC) | 5.3.1.2 Table 3; IOP 4.4.4 |
 | `UTCTiming` (all 7 schemes) | missing | parsed, ordered; 5 acted on (section 3.3) | 5.8.5.7 |
@@ -440,7 +442,7 @@ livesim2 e2e (W-g, built and run): `broadcast-client/tests/e2e_livesim2.rs`, a b
 ### 8.2 Layers
 
 1. **Unit/vector:** every formula of sections 4.3 and 5.3 with hand-computed numbers (the Table 10 vector; `$Number$` with `startNumber` 0 and 1; PeriodStart rules 1-5; timeline with `@n`, gaps, negative `r`; sidx anchor; template widths and invalid identifiers; BaseURL join/override; `urlparam:2014`).
-2. **Differential:** (a) new parser vs `transmux::dash_parse` on the shared fields for every `DashPackager` configuration and every committed MPD, and the URL lists vs `Mpd::resolve_segment_url`; (b) lazy timeline expander vs `SegmentTimeline::resolve` as oracle (property: equal whenever no `@n`);
+2. **Differential:** (a) new parser vs the then-transmux reader on the shared fields for every `DashPackager` configuration and every committed MPD, and the URL lists vs `Mpd::resolve_segment_url`; (b) lazy timeline expander vs `SegmentTimeline::resolve` as oracle (property: equal whenever no `@n`);
    (c) vs `multimux` `dash_pull::plan_timeline`/`build_plan` on the subset multimux supports (this test lives in `multimux`, the highest crate, after W-f: the cross-crate-tests rule); (d) generator round trip: `DashPackager` output of the source fixture, served by the loopback origin, consumed by `DashClient`, must yield the byte-identical `Sample` sequence of a direct `Fmp4Demux` of the same segments.
 3. **Whole-client sans-IO** with the `World` of section 3.6: join, refresh sequence (the livesim2 a/b pairs), Period transition continuous/connected/unsignalled, representation switch, audio switch, early/gone/expired cadence, give-up VOD/live, MPD reset.
 4. **Session level** (`broadcast-client/tests/dash_*.rs`): oracle = a bare `DashClient` driven with the same bodies; chunking invariance of the Event sequence (1 B, 1316 B, 64 KiB body chunks); auth scoping (credentials never reach a CDN origin or a UTC server), per-request redirects, cookies, `extra_headers`, Retry-After table, bounded bodies, request timeouts, in-flight window table, gate (VOD lead, live lead) from real segment durations, jump detector, `select_variant`/`select_audio_rendition`, status sequence, terminal rules after fatal.
@@ -515,7 +517,7 @@ Needs spec clarification FIRST: nothing blocks (the public notes cover every cla
 - **R2 `Date` rung.** Edge caches can serve a stale `Date` (IOP 4.7.2 warns for `http-head`); it is the last resort and flagged by `ClockSource::MpdDate`.
 - **R3 SSRF / hostile MPD.** BaseURL, segment and UTCTiming URLs are chosen by the MPD's server (the same property as the `resource_metadata` note in the client design). A player tolerates it; a SERVER-side pull (multimux) must not fetch `169.254.169.254` because an MPD says so: `DashConfig::cross_origin_urls=false` restricts every derived URL to the MPD origin, and multimux sets it by default (W-f; note the existing `dash_pull` has the same exposure today). UTC and MPD bodies are size-bounded (UTC bodies 4 KiB), MPD bounds in 4.2, timelines expand lazily, `MUP=0` is floored at 1 s.
 - **R4 host clock semantics.** The host's monotonic clock must keep counting across device sleep (Apple: continuous clock) or the host must call `set_wall_clock` after wake; the `now_us` jump catch-up rules of the client design (audit #1484) bound the damage, documented in the host contract.
-- **R5 two MPD parsers.** `transmux::dash_parse` and `dash_runtime::mpd` coexist until W-f; the differentials are the guard; deprecating `dash_parse` is a later, separate transmux decision.
+- **R5 two MPD parsers.** RESOLVED: `transmux`'s reader was deleted first (#2340) and the one reader is now `broadcast-dash` (#2355).
 - **R6 A.11 redirect rule.** Using a redirect target as the permanent update URL (A.11) can pin a temporary signed URL; the spec is followed, `Location` wins when present.
 - **R7 `S@t` vs tfdt.** Clock/addressing code must use `S@t` for `$Time$` and presentation arithmetic, never tfdt (section 11 item 2); a regression test uses the ffmpeg fixture whose `t=2070` differs from tfdt 0.
 - **R8 livesim2 drift.** Pinned version, e2e asserts structure not timing constants.

@@ -5,7 +5,7 @@
 //! samples). Each test bites by parsing the produced outputs (manifest XML +
 //! fragment boxes) and asserting against what the crate itself demuxes — never
 //! a bare substring or a hardcoded offset. The manifest XML is walked with the
-//! crate's own [`transmux::smooth_parse::SmoothManifest::parse`] — not a
+//! crate's own [`broadcast_smooth::SmoothManifest::parse`] — not a
 //! second hand-rolled test parser — so these tests double as the parser's
 //! strongest bite: round-tripping the real writer's output.
 #![cfg(feature = "std")]
@@ -13,12 +13,13 @@
 use std::path::PathBuf;
 
 use broadcast_common::{Package, Parse, Unpackage};
+use broadcast_smooth::{SmoothManifest, StreamType};
 use transmux::aac_asc::AudioSpecificConfig;
 use transmux::box_types::parse_box;
 use transmux::media::{Fmp4Demux, Media};
 use transmux::pipeline::{CodecConfig, build_init_segment};
 use transmux::smooth::{FOURCC_AACL, FOURCC_H264, SmoothOutput, SmoothPackager, TFXD_UUID};
-use transmux::smooth_parse::{SmoothManifest, StreamType, track_spec_from_quality_level};
+use transmux::track_spec_from_quality_level;
 use transmux::ts_demux::TsDemux;
 
 // ---------------------------------------------------------------------------
@@ -212,7 +213,6 @@ fn fragment_c_timeline() {
             StreamType::Video => video_track(&media),
             StreamType::Audio => audio_track(&media),
             StreamType::Text => panic!("unexpected text stream"),
-            _ => panic!("unexpected stream type"),
         };
 
         // Number of `c` == number of emitted fragments for this track.

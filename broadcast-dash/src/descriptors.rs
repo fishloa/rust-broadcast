@@ -115,15 +115,6 @@ impl Role {
 }
 impl_spec_display!(Role);
 
-/// The roles declared by `Role` descriptors of the DASH role scheme.
-pub fn roles(descriptors: &[Descriptor]) -> impl Iterator<Item = Role> + '_ {
-    descriptors
-        .iter()
-        .filter(|d| d.scheme_id_uri == SCHEME_ROLE)
-        .filter_map(|d| d.value.as_deref())
-        .map(Role::from_value)
-}
-
 /// The first descriptor with `scheme`.
 #[must_use]
 pub fn find<'a>(descriptors: &'a [Descriptor], scheme: &str) -> Option<&'a Descriptor> {

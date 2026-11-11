@@ -1,6 +1,6 @@
 //! BaseURL alternates and URL resolution (ISO/IEC 23009-1 5.6).
 //!
-//! Resolution is RFC 3986 5.2 through [`transmux::resolve_base_url_chain`]
+//! Resolution is RFC 3986 5.2 through [`crate::mpd::base_url::resolve_chain`]
 //! (which also rejects control characters), never string concatenation
 //! (5.6.4 informative note). Alternates (5.6.5) are ordered by DVB `@priority`
 //! (ETSI TS 103 285 10.8.2.1, default 1) then document order; `@weight` is
@@ -9,9 +9,11 @@
 
 use url::Url;
 
-use super::descriptors::SCHEME_URLPARAM;
-use super::model::{AdaptationSet, BaseUrl, Descriptor, Mpd, Period, Representation, UrlQueryInfo};
 use crate::limits::MAX_BASE_CANDIDATES;
+use broadcast_dash::descriptors::SCHEME_URLPARAM;
+use broadcast_dash::{
+    AdaptationSet, BaseUrl, Descriptor, Mpd, Period, Representation, UrlQueryInfo,
+};
 
 /// ETSI TS 103 285 10.8.2.1: the `@dvb:priority` default.
 pub const DEFAULT_BASE_PRIORITY: u32 = 1;
@@ -47,7 +49,7 @@ impl BaseCandidate {
     /// `None` when any entry or the reference is unusable.
     #[must_use]
     pub fn resolve(&self, document_url: Option<&Url>, reference: &str) -> Option<String> {
-        transmux::resolve_base_url_chain(document_url, &self.chain, reference)
+        super::base_url::resolve_chain(document_url, &self.chain, reference)
     }
 }
 

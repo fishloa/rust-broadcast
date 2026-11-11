@@ -10,7 +10,7 @@ use std::time::Duration;
 use broadcast_common::impl_spec_display;
 
 use crate::error::Unsupported;
-use crate::timing::utc_timing::UtcScheme;
+use crate::utc_timing::UtcScheme;
 
 /// `MPD@type` (Table 3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

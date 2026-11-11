@@ -1,0 +1,36 @@
+[package]
+name    = "broadcast-smooth"
+version              = "0.1.0"
+edition = "2024"
+description = "Microsoft Smooth Streaming (MS-SSTR) client Manifest: typed model with parse and serialize."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords = ["smooth-streaming", "ms-sstr", "manifest", "xml"]
+categories = ["parser-implementations", "multimedia"]
+repository   = "https://github.com/fishloa/rust-broadcast"
+readme       = "README.md"
+rust-version.workspace = true
+exclude = ["docs/**"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+broadcast-common = { path = "../broadcast-common", version = "11.1.0", default-features = false }
+quick-xml  = { workspace = true }
+thiserror  = { version = "2" }
+
+[dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
+
+[features]
+default = ["std", "manifest"]
+# `std` links the standard library (the crate is plain `std`, like
+# `dash-runtime`: the XML module it reads through is std-only).
+std = ["broadcast-common/std", "broadcast-common/xml", "thiserror/std"]
+# The client Manifest itself: parsing and serializing XML. On with `std`.
+manifest = ["std", "broadcast-common/xml"]
+
+[lints]
+workspace = true

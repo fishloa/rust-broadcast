@@ -81,7 +81,7 @@ builds (see the table above against the in-tree versions below).
 ## The crates
 
 <!-- BEGIN GENERATED: crate-index (tools/gen-crate-index.py) -->
-**60 workspace members.** 54 are on crates.io; 47 are proven `no_std` by CI (built with `--no-default-features` for `thumbv7em-none-eabi`). Versions below are the **in-tree** versions on this branch; the badge shows what crates.io currently serves.
+**62 workspace members.** 55 are on crates.io; 47 are proven `no_std` by CI (built with `--no-default-features` for `thumbv7em-none-eabi`). Versions below are the **in-tree** versions on this branch; the badge shows what crates.io currently serves.
 
 ### Overview
 
@@ -112,8 +112,10 @@ builds (see the table above against the in-tree versions below).
 | [`scte35-splice`](#scte35-splice) | Metadata and ad-insertion signalling | 5.0.1 | [![crates.io](https://img.shields.io/crates/v/scte35-splice.svg)](https://crates.io/crates/scte35-splice) | yes | 1 | on crates.io |
 | [`timed-metadata`](#timed-metadata) | Metadata and ad-insertion signalling | 0.10.0 | [![crates.io](https://img.shields.io/crates/v/timed-metadata.svg)](https://crates.io/crates/timed-metadata) | yes | 2 | on crates.io |
 | [`broadcast-hls`](#broadcast-hls) | Containers and adaptive streaming | 0.7.0 | [![crates.io](https://img.shields.io/crates/v/broadcast-hls.svg)](https://crates.io/crates/broadcast-hls) | yes | 1 | on crates.io |
+| [`broadcast-smooth`](#broadcast-smooth) | Containers and adaptive streaming | 0.1.0 | [![crates.io](https://img.shields.io/crates/v/broadcast-smooth.svg)](https://crates.io/crates/broadcast-smooth) | no | 1 | on crates.io |
 | [`container-probe`](#container-probe) | Containers and adaptive streaming | 0.3.1 | [![crates.io](https://img.shields.io/crates/v/container-probe.svg)](https://crates.io/crates/container-probe) | yes | 1 | on crates.io |
 | [`transmux`](#transmux) | Containers and adaptive streaming | 0.31.0 | [![crates.io](https://img.shields.io/crates/v/transmux.svg)](https://crates.io/crates/transmux) | yes | 3 | on crates.io |
+| [`broadcast-dash`](#broadcast-dash) | Live transport protocols | 0.1.0 | — | no | 1 | not on crates.io |
 | [`buffering-runtime`](#buffering-runtime) | Live transport protocols | 0.2.2 | [![crates.io](https://img.shields.io/crates/v/buffering-runtime.svg)](https://crates.io/crates/buffering-runtime) | yes | 1 | on crates.io |
 | [`rtmp-runtime`](#rtmp-runtime) | Live transport protocols | 0.9.1 | [![crates.io](https://img.shields.io/crates/v/rtmp-runtime.svg)](https://crates.io/crates/rtmp-runtime) | yes | 1 | on crates.io |
 | [`rtp-packet`](#rtp-packet) | Live transport protocols | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/rtp-packet.svg)](https://crates.io/crates/rtp-packet) | yes | 1 | on crates.io |
@@ -171,7 +173,7 @@ The base of the workspace: the zero-copy `Parse<'a>` / `Serialize` trait pair ev
 - **Cargo description:** Foundation for the rust-broadcast crates: symmetric Parse/Serialize traits, CRC-32/MPEG-2, BCD + MJD time codecs, bit I/O, 33-bit/PCR clock arithmetic, checked field widths, container-mux and Stage traits. no_std + alloc.
 - **Version (in-tree):** 11.1.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 0
 - **Depends on (workspace):** none
-- **Used by (workspace):** 52 workspace crates
+- **Used by (workspace):** 54 workspace crates
 - **Links:** [README](../broadcast-common/README.md) · [CHANGELOG](../broadcast-common/CHANGELOG.md) · [crates.io](https://crates.io/crates/broadcast-common) · [docs.rs](https://docs.rs/broadcast-common)
 
 ### MPEG-2 TS / PES / PS framing
@@ -451,6 +453,17 @@ Parses and serializes HLS playlists, including Low-Latency HLS (parts, preload h
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`multimux`](#multimux), [`ssai-runtime`](#ssai-runtime), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
 - **Links:** [README](../broadcast-hls/README.md) · [CHANGELOG](../broadcast-hls/CHANGELOG.md) · [crates.io](https://crates.io/crates/broadcast-hls) · [docs.rs](https://docs.rs/broadcast-hls)
 
+#### broadcast-smooth
+
+Parses and serializes the Smooth `SmoothStreamingMedia` client Manifest: streams, quality levels, the `c` fragment timeline, the live/DVR attributes and the `Protection` header; the serializer writes exactly the model. Extracted from `transmux` so a manifest-only consumer does not pull in the muxing hub; the fragment responses and the codec-config glue that synthesises an init segment stay in `transmux`.
+
+- **Standards:** MS-SSTR (Microsoft Open Specifications), client Manifest (transcription in the private repo)
+- **Cargo description:** Microsoft Smooth Streaming (MS-SSTR) client Manifest: typed model with parse and serialize.
+- **Version (in-tree):** 0.1.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 1
+- **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
+- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux), [`transmux`](#transmux)
+- **Links:** [README](../broadcast-smooth/README.md) · [CHANGELOG](../broadcast-smooth/CHANGELOG.md) · [crates.io](https://crates.io/crates/broadcast-smooth) · [docs.rs](https://docs.rs/broadcast-smooth)
+
 #### container-probe
 
 Identifies MPEG-2 TS (any of 188/192/204/208-byte strides at any phase), ISOBMFF, Matroska/WebM, MPEG-PS, FLV, MXF, WAV, Ogg, ASF and ADTS/MP3/Annex B elementary streams. Every prober runs and scores structural evidence; a near-tie reports `Ambiguous`, and `Insufficient` (read more) is distinct from `Unknown` (stop).
@@ -469,13 +482,24 @@ Demuxes any supported container into one neutral IR (`Media` / `Track`) and muxe
 - **Standards:** ISO/IEC 14496-12:2026 / -15 / -30, ISO/IEC 23000-19 (CMAF), ISO/IEC 23009-1 (DASH), ISO/IEC 23001-7 (CENC), ISO/IEC 13818-1, RFC 8216, RFC 3550, MS-SSTR, GY/T 420-2025 (AVS2/AVS3/Audio Vivid in ISOBMFF); editions mostly unverified (several ISO texts are paid and not vendored)
 - **Cargo description:** Any-to-any media container muxing hub: demux TS, fMP4/CMAF, MPEG-PS, WebM, FLV, or RTMP into one neutral IR and mux to CMAF/fMP4, progressive MP4, TS, DASH, low-latency DASH, HLS, low-latency HLS, Smooth Streaming, or RTMP. CENC/CBCS encrypt+decrypt, SSAI splice, RTP/RTCP, and an fMP4/CMAF conformance validator; parses codec config headers only, samples stay opaque. no_std + alloc, except the XML manifest paths (DASH/Smooth/PlayReady), which need the std feature.
 - **Version (in-tree):** 0.31.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 3
-- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`cc-data`](#cc-data), [`container-probe`](#container-probe), [`dvb-si`](#dvb-si), [`mp4-emsg`](#mp4-emsg), [`mpeg-pes`](#mpeg-pes), [`mpeg-ps`](#mpeg-ps), [`mpeg-ts`](#mpeg-ts), [`rtmp-runtime`](#rtmp-runtime), [`rtp-packet`](#rtp-packet)
+- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`broadcast-smooth`](#broadcast-smooth), [`cc-data`](#cc-data), [`container-probe`](#container-probe), [`dvb-si`](#dvb-si), [`mp4-emsg`](#mp4-emsg), [`mpeg-pes`](#mpeg-pes), [`mpeg-ps`](#mpeg-ps), [`mpeg-ts`](#mpeg-ts), [`rtmp-runtime`](#rtmp-runtime), [`rtp-packet`](#rtp-packet)
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`dash-runtime`](#dash-runtime), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux)
 - **Links:** [README](../transmux/README.md) · [CHANGELOG](../transmux/CHANGELOG.md) · [crates.io](https://crates.io/crates/transmux) · [docs.rs](https://docs.rs/transmux)
 
 ### Live transport protocols
 
 Sans-IO session engines and packet codecs for RTSP, RTP/RTCP, RTMP, SRT, RIST, WebRTC (WHIP/WHEP), LL-HLS and ST 2022-6.
+
+#### broadcast-dash
+
+The read side of DASH, kept below the container hub: a bounded, namespace-aware MPD parser over the shared `broadcast_common::xml` reader with a typed consume-only model (`Mpd`/`Period`/`AdaptationSet`/`Representation` and the three Segment addressing layers), the descriptor scheme vocabulary, attribute inheritance, the `$Identifier$`/`%0Nd` SegmentTemplate grammar, the `UTCTiming` schemes and the `xs:duration`/`xs:dateTime`/NTP readers. It plans, addresses and fetches nothing; that is `dash-runtime`.
+
+- **Standards:** ISO/IEC 23009-1:2022 (5.3, 5.7, 5.8, Annex B, Annex I); ETSI TS 103 285 (DVB DASH extensions); W3C XML Schema 1.1 Part 2 (xs:duration, xs:dateTime)
+- **Cargo description:** MPEG-DASH (ISO/IEC 23009-1) manifest syntax: the MPD model, its bounded parser, the SegmentTemplate substitution grammar and the xs:duration reader. Parsing only, no client.
+- **Version (in-tree):** 0.1.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 1
+- **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
+- **Used by (workspace):** [`dash-runtime`](#dash-runtime), [`media-doctor`](#media-doctor)
+- **Links:** [README](../broadcast-dash/README.md) · [CHANGELOG](../broadcast-dash/CHANGELOG.md)
 
 #### buffering-runtime
 
@@ -567,12 +591,12 @@ WHIP ingest and WHEP egress session establishment as state machines over `http` 
 
 #### dash-runtime
 
-A bounded, namespace-aware MPD parser and typed consume-only model, attribute inheritance, a lazy Segment plan (SegmentTemplate, SegmentTimeline, SegmentList, SegmentBase + sidx) with availability windows, a UTC clock fed by UTCTiming measurements, PeriodStart and live-edge arithmetic, and Representation selection. `DashClient` plays static and dynamic MPDs (SegmentTemplate/Timeline/List, on-demand `sidx`, multiple Periods with continuity) to ordered `Fmp4Demux` samples, with typed failure classes and an origin pin; live adds a clock ladder (UTCTiming, host clock, response Date), join at the presentation delay, availability gating, MPD refresh and reset, and early/expired/missing classification. No I/O and no clock reads: every instant is an argument. Not yet published.
+The player on top of `broadcast-dash` (the MPD model and parser live there): a lazy Segment plan (SegmentTemplate, SegmentTimeline, SegmentList, SegmentBase + sidx) with availability windows, a UTC clock fed by UTCTiming measurements, PeriodStart and live-edge arithmetic, and Representation selection. `DashClient` plays static and dynamic MPDs (SegmentTemplate/Timeline/List, on-demand `sidx`, multiple Periods with continuity) to ordered `Fmp4Demux` samples, with typed failure classes and an origin pin; live adds a clock ladder (UTCTiming, host clock, response Date), join at the presentation delay, availability gating, MPD refresh and reset, and early/expired/missing classification. No I/O and no clock reads: every instant is an argument. Not yet published.
 
 - **Standards:** ISO/IEC 23009-1:2022 (5.3, 5.6, 5.8.5.7, Annex A, Annex I); DASH-IF IOP v4.3 (live timing); ETSI TS 103 285 (BaseURL priority)
 - **Cargo description:** Sans-IO MPEG-DASH (ISO/IEC 23009-1): MPD model and parser, segment addressing, UTC clock and live-edge arithmetic, and a client for static and dynamic presentations. No I/O, no clock reads.
 - **Version (in-tree):** 0.4.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 4
-- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`container-probe`](#container-probe), [`transmux`](#transmux)
+- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-dash`](#broadcast-dash), [`container-probe`](#container-probe), [`transmux`](#transmux)
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`media-doctor`](#media-doctor), [`multimux`](#multimux)
 - **Links:** [README](../dash-runtime/README.md) · [CHANGELOG](../dash-runtime/CHANGELOG.md) · [docs + spec pointer](../dash-runtime/docs/)
 
@@ -594,7 +618,7 @@ Bytes-in/actions-out client session: auth layer, redirects, and TS-over-HTTP (`t
 - **Standards:** none (implementation-defined policy; requirements from zenith-tv player)
 - **Cargo description:** Generic sans-IO client session: auth, redirects, and TS-over-HTTP, HLS, DASH, Smooth, RTMP, RTSP, UDP/RTP and SRT sources.
 - **Version (in-tree):** 0.5.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 6
-- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`buffering-runtime`](#buffering-runtime), [`dash-runtime`](#dash-runtime), [`dvb-si`](#dvb-si), [`hls-runtime`](#hls-runtime), [`mpeg-ts`](#mpeg-ts), [`rtmp-runtime`](#rtmp-runtime), [`rtp-packet`](#rtp-packet), [`rtsp-runtime`](#rtsp-runtime), [`srt-runtime`](#srt-runtime), [`transmux`](#transmux)
+- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`broadcast-smooth`](#broadcast-smooth), [`buffering-runtime`](#buffering-runtime), [`dash-runtime`](#dash-runtime), [`dvb-si`](#dvb-si), [`hls-runtime`](#hls-runtime), [`mpeg-ts`](#mpeg-ts), [`rtmp-runtime`](#rtmp-runtime), [`rtp-packet`](#rtp-packet), [`rtsp-runtime`](#rtsp-runtime), [`srt-runtime`](#srt-runtime), [`transmux`](#transmux)
 - **Used by (workspace):** [`multimux`](#multimux)
 - **Links:** [README](../broadcast-client/README.md) · [CHANGELOG](../broadcast-client/CHANGELOG.md) · [docs + spec pointer](../broadcast-client/docs/)
 
@@ -664,7 +688,7 @@ A pluggable diagnostics harness: each `Diagnostic` checks one rule (sync, PAT/PM
 - **Standards:** Checks against ISO/IEC 13818-1, RFC 8216, ISO/IEC 23009-1, SCTE 35
 - **Cargo description:** Media diagnostics harness for DVB/MPEG-TS: pluggable lint-style checks (sync, PAT/PMT versioning, CC anomalies, PCR, PTS/DTS monotonicity, SCTE-35 splice consistency) + HLS playlist validation.
 - **Version (in-tree):** 0.15.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 5
-- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`container-probe`](#container-probe), [`dash-runtime`](#dash-runtime), [`dvb-conformance`](#dvb-conformance), [`dvb-si`](#dvb-si), [`mpeg-pes`](#mpeg-pes), [`mpeg-ts`](#mpeg-ts), [`scte35-splice`](#scte35-splice), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
+- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-dash`](#broadcast-dash), [`broadcast-hls`](#broadcast-hls), [`container-probe`](#container-probe), [`dash-runtime`](#dash-runtime), [`dvb-conformance`](#dvb-conformance), [`dvb-si`](#dvb-si), [`mpeg-pes`](#mpeg-pes), [`mpeg-ts`](#mpeg-ts), [`scte35-splice`](#scte35-splice), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
 - **Used by (workspace):** [`compliance-probe`](#compliance-probe)
 - **Links:** [README](../media-doctor/README.md) · [CHANGELOG](../media-doctor/CHANGELOG.md) · [crates.io](https://crates.io/crates/media-doctor) · [docs.rs](https://docs.rs/media-doctor)
 
@@ -686,7 +710,7 @@ Ingest RTSP, RTP/UDP, TS over UDP or HTTP, SRT, HLS/DASH/Smooth pull, RTMP push 
 - **Standards:** Composes the live and container crates (RTSP, RTP, SRT, RTMP, HLS, DASH, Smooth, WHIP/WHEP)
 - **Cargo description:** Multi-input (RTSP/RTP/TS-UDP/TS-HTTP/SRT/HLS-pull/DASH-pull/Smooth-pull/RTMP/file), multi-output (LL-HLS/DASH/LL-DASH/Smooth/TS-HLS/catch-up + SRT/RTMP/RTSP push) just-in-time repackaging HTTP origin (library: tokio + axum), with shared output auth and an external scheme plugin registry.
 - **Version (in-tree):** 0.18.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 7
-- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-client`](#broadcast-client), [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`caption-convert`](#caption-convert), [`container-probe`](#container-probe), [`dash-runtime`](#dash-runtime), [`dvb-si`](#dvb-si), [`hls-runtime`](#hls-runtime), [`media-plane`](#media-plane), [`mpeg-ts`](#mpeg-ts), [`rtmp-runtime`](#rtmp-runtime), [`rtp-packet`](#rtp-packet), [`rtsp-runtime`](#rtsp-runtime), [`srt-runtime`](#srt-runtime), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux), [`webrtc-runtime`](#webrtc-runtime)
+- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-client`](#broadcast-client), [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`broadcast-smooth`](#broadcast-smooth), [`caption-convert`](#caption-convert), [`container-probe`](#container-probe), [`dash-runtime`](#dash-runtime), [`dvb-si`](#dvb-si), [`hls-runtime`](#hls-runtime), [`media-plane`](#media-plane), [`mpeg-ts`](#mpeg-ts), [`rtmp-runtime`](#rtmp-runtime), [`rtp-packet`](#rtp-packet), [`rtsp-runtime`](#rtsp-runtime), [`srt-runtime`](#srt-runtime), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux), [`webrtc-runtime`](#webrtc-runtime)
 - **Used by (workspace):** [`multimux-cli`](#multimux-cli)
 - **Links:** [README](../multimux/README.md) · [CHANGELOG](../multimux/CHANGELOG.md) · [docs + spec pointer](../multimux/docs/) · [crates.io](https://crates.io/crates/multimux) · [docs.rs](https://docs.rs/multimux)
 
@@ -863,7 +887,7 @@ Layer 0 has no workspace dependencies; every other crate sits one layer above it
 
 ```text
 layer 0: broadcast-auth, broadcast-common, test-alloc, test-fixtures, workspace-guards
-layer 1: atsc3, broadcast-hls, broadcast-loudness, buffering-runtime, cc-data, container-probe, dvb-bbframe, dvb-mabr, dvb-simulcrypt, dvb-subtitle, dvb-vbi, mp4-emsg, mpeg-pes, mpeg-ts, rdd29, rmt-flute, rtmp-runtime, rtp-packet, rtsp-runtime, scte104, scte35-splice, srt-runtime, st12-1, st2022, st337, st377-1, ttml-subtitle, ule
+layer 1: atsc3, broadcast-dash, broadcast-hls, broadcast-loudness, broadcast-smooth, buffering-runtime, cc-data, container-probe, dvb-bbframe, dvb-mabr, dvb-simulcrypt, dvb-subtitle, dvb-vbi, mp4-emsg, mpeg-pes, mpeg-ts, rdd29, rmt-flute, rtmp-runtime, rtp-packet, rtsp-runtime, scte104, scte35-splice, srt-runtime, st12-1, st2022, st337, st377-1, ttml-subtitle, ule
 layer 2: atsc3-route, dvb-csa, dvb-si, dvb-t2mi, mpeg-ps, rist-runtime, ssai-runtime, st291, timed-metadata, webrtc-runtime
 layer 3: caption-convert, dvb-ci, dvb-conformance, dvb-stream, dvb-tools, playout-runtime, transmux
 layer 4: dash-runtime, dvb-ci-runtime, media-plane, ts-fix
@@ -883,8 +907,10 @@ flowchart BT
   end
   subgraph L1["layer 1"]
     atsc3["atsc3"]
+    broadcast_dash["broadcast-dash"]
     broadcast_hls["broadcast-hls"]
     broadcast_loudness["broadcast-loudness"]
+    broadcast_smooth["broadcast-smooth"]
     buffering_runtime["buffering-runtime"]
     cc_data["cc-data"]
     container_probe["container-probe"]
@@ -959,14 +985,17 @@ flowchart BT
   broadcast_client --> hls_runtime
   broadcast_client --> rtsp_runtime
   broadcast_client --> srt_runtime
+  broadcast_dash --> broadcast_common
   broadcast_hls --> broadcast_common
   broadcast_loudness --> broadcast_common
+  broadcast_smooth --> broadcast_common
   buffering_runtime --> broadcast_common
   caption_convert --> timed_metadata
   cc_data --> broadcast_common
   compliance_probe --> media_doctor
   compliance_probe --> media_plane
   container_probe --> broadcast_common
+  dash_runtime --> broadcast_dash
   dash_runtime --> transmux
   dvb_bbframe --> broadcast_common
   dvb_ci --> dvb_si
@@ -1023,6 +1052,7 @@ flowchart BT
   timed_metadata --> mp4_emsg
   timed_metadata --> scte35_splice
   transmux --> broadcast_hls
+  transmux --> broadcast_smooth
   transmux --> cc_data
   transmux --> container_probe
   transmux --> dvb_si

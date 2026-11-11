@@ -107,7 +107,7 @@ fn date_header_gets_the_half_second() {
     assert_eq!(s.uncertainty_us, 50 + 500_000);
     assert!(matches!(
         sample_from_date_header("garbage", Exchange::new(0, 1), MAX_RTT),
-        Err(dash_runtime::timing::TimingError::DateTime(..))
+        Err(dash_runtime::timing::TimingError::HttpDate(..))
     ));
 }
 

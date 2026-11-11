@@ -21,6 +21,7 @@ pub const EXEMPT: &[&str] = &[
     "media-plane",
     "ttml-subtitle",
     "broadcast-hls",
+    "broadcast-smooth",
     "broadcast-loudness",
     "buffering-runtime",
     "broadcast-client",
@@ -38,6 +39,10 @@ pub const EXEMPT: &[&str] = &[
 ];
 
 pub const TABLE: &[Crate] = &[
+    Crate {
+        name: "broadcast-dash",
+        allowlist: &[],
+    },
     Crate {
         name: "broadcast-common",
         allowlist: &[],

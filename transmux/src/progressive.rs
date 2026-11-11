@@ -814,7 +814,7 @@ fn track_timings(media: &Media, movie_timescale: u32) -> Vec<TrackTiming> {
 /// at version 0, 64 at version 1 (ISO/IEC 14496-12:2026 §8.2.2.2, §8.3.2.2,
 /// §8.4.2.2). `build_init_segment` writes version-0 headers, so a duration
 /// past `u32::MAX` used to be truncated by the v0 serializer's `as u32`: a
-/// 10 MHz track (a Smooth-sourced timeline, `smooth_parse`) wrapped after
+/// 10 MHz track (a Smooth-sourced timeline, `broadcast_smooth`) wrapped after
 /// 7.2 minutes and a 90 kHz one after 13.2 hours, so players reported a wrong
 /// length and sought wrongly (audit r05-W24). Each box is promoted to version
 /// 1 when its own duration does not fit version 0.

@@ -6,7 +6,7 @@
 extern crate alloc;
 
 mod container_codec;
-// `check_dash_mpd` parses the MPD with `dash_runtime::mpd::Mpd`, whose quick-xml
+// `check_dash_mpd` parses the MPD with `broadcast_dash::Mpd`, whose quick-xml
 // parser is `std`-only.
 #[cfg(all(feature = "std", feature = "dash"))]
 mod dash_validator;

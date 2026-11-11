@@ -1,0 +1,28 @@
+[package]
+name      = "broadcast-dash"
+version   = "0.1.0"
+edition   = "2024"
+description = "MPEG-DASH (ISO/IEC 23009-1) manifest syntax: the MPD model, its bounded parser, the SegmentTemplate substitution grammar and the xs:duration reader. Parsing only, no client."
+license   = "MIT OR Apache-2.0"
+authors   = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords  = ["dash", "mpd", "manifest", "parser", "iso23009"]
+categories = ["multimedia", "parser-implementations"]
+repository = "https://github.com/fishloa/rust-broadcast"
+readme    = "README.md"
+rust-version.workspace = true
+exclude   = ["docs/**"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+broadcast-common = { path = "../broadcast-common", version = "11.0.1", default-features = false, features = ["std", "xml"] }
+jiff = { version = "0.2", default-features = false, features = ["std"] }
+thiserror = "2"
+
+[dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
+
+[lints]
+workspace = true

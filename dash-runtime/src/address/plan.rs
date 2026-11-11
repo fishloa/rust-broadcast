@@ -22,12 +22,12 @@ use super::list;
 use super::template::{self, TemplateError, TemplateFault, TemplateUse};
 use super::timeline::TimelineIndex;
 use crate::error::Unsupported;
-use crate::mpd::inherit::{ListInfo, ResolvedMulti, SegmentInfo, TemplateInfo};
-use crate::mpd::model::{BaseInfo, ByteRange, UrlType};
 use crate::timing::availability::{
     init_available_from, segment_available_from_ticks, segment_available_until_ticks, ticks_to_us,
 };
 use broadcast_common::timescale::{Rounding, from_micros};
+use broadcast_dash::inherit::{ListInfo, ResolvedMulti, SegmentInfo, TemplateInfo};
+use broadcast_dash::{BaseInfo, ByteRange, UrlType};
 
 const MICROS: i128 = 1_000_000;
 
@@ -248,6 +248,7 @@ impl SegmentPlan {
             SegmentInfo::Template(t) => Self::from_template(input, t)?,
             SegmentInfo::List(l) => Self::from_list(input, l)?,
             SegmentInfo::Base(b) => Self::from_base(input, b)?,
+            _ => return Err(AddressError::UnsupportedFeature),
         };
         plan.avail = avail;
         plan.period_start_us = input.period_start_us;
@@ -528,6 +529,7 @@ impl SegmentPlan {
                     which: "time",
                 },
                 TemplateError::Invalid(f) => fault(&m.template, f),
+                _ => AddressError::UnsupportedFeature,
             }),
             (None, Some(r)) => Ok(r.to_owned()),
             (None, None) => Ok(String::new()),

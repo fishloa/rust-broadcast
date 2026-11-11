@@ -9,10 +9,10 @@ use super::action::{Action, UtcId, UtcMethod};
 use super::config::DashConfig;
 use super::error::Failure;
 use super::meta::UtcResponse;
-use crate::mpd::model::UtcTiming;
 use crate::timing::utc_timing::{
     Exchange, UtcSample, UtcScheme, sample_from_body, sample_from_date_header, sample_from_direct,
 };
+use broadcast_dash::UtcTiming;
 
 const STATUS_METHOD_NOT_ALLOWED: u16 = 405;
 const STATUS_NOT_IMPLEMENTED: u16 = 501;
@@ -89,7 +89,7 @@ fn ordered(elements: &[UtcTiming], accept: &mut dyn FnMut(&str) -> Option<String
                     }
                 }
             }
-            UtcScheme::Ntp | UtcScheme::Sntp | UtcScheme::Unknown => {}
+            _ => {}
         }
     }
     first.extend(last);

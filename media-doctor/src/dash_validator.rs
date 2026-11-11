@@ -1,7 +1,7 @@
 //! DASH MPD manifest validator (ISO/IEC 23009-1).
 //!
 //! Accepts an MPD XML text and a [`Report`](crate::Report), appending findings
-//! for spec violations. Reuses [`dash_runtime::mpd::Mpd::parse`] as the
+//! for spec violations. Reuses [`broadcast_dash::Mpd::parse`] as the
 //! structured parse layer — no regex-based or manual XML re-parsing.
 //!
 //! # Rule IDs
@@ -17,16 +17,16 @@
 
 use crate::report::{Finding, Location, Report, Severity};
 use alloc::collections::BTreeMap;
-use dash_runtime::mpd::PresentationType;
-use dash_runtime::mpd::inherit::{SegmentInfo, resolve_segment_info};
+use broadcast_dash::PresentationType;
+use broadcast_dash::inherit::{SegmentInfo, resolve_segment_info};
 
 /// The parse bounds this validator reads with: the hostile-input defaults
 /// throughout, except that **nothing is ever too large to validate** — a bound
 /// trip would report a well-formed manifest as unparseable. Per-rule numeric
 /// over-range is a rule's own finding (`dash-segment-timeline-r-range`), not a
 /// parse failure.
-fn relaxed_limits() -> dash_runtime::limits::Limits {
-    let mut limits = dash_runtime::limits::Limits::default();
+fn relaxed_limits() -> broadcast_dash::limits::Limits {
+    let mut limits = broadcast_dash::limits::Limits::default();
     limits.max_bytes = usize::MAX;
     limits.max_depth = usize::MAX;
     limits.max_elements = usize::MAX;
@@ -43,8 +43,8 @@ fn relaxed_limits() -> dash_runtime::limits::Limits {
 
 /// Parse an MPD into dash-runtime's model, recording the findings a refused
 /// document earns. `None` means a finding was already recorded.
-fn parse_mpd(text: &str, report: &mut Report) -> Option<dash_runtime::mpd::Mpd> {
-    match dash_runtime::mpd::Mpd::parse_with(text.as_bytes(), &relaxed_limits()) {
+fn parse_mpd(text: &str, report: &mut Report) -> Option<broadcast_dash::Mpd> {
+    match broadcast_dash::Mpd::parse_with(text.as_bytes(), &relaxed_limits()) {
         Ok(mpd) => Some(mpd),
         Err(err) => {
             report.push(Finding::new(
@@ -137,10 +137,10 @@ pub fn check_dash_mpd(text: &str, report: &mut Report) {
 /// its declaration, and each Representation without a timeline of its own is
 /// then not checked again.
 fn effective_timeline<'a>(
-    period: &'a dash_runtime::mpd::Period,
-    aset: &'a dash_runtime::mpd::AdaptationSet,
-    repr: &'a dash_runtime::mpd::Representation,
-) -> Option<(&'a dash_runtime::mpd::SegmentTimeline, u64)> {
+    period: &'a broadcast_dash::Period,
+    aset: &'a broadcast_dash::AdaptationSet,
+    repr: &'a broadcast_dash::Representation,
+) -> Option<(&'a broadcast_dash::SegmentTimeline, u64)> {
     let declared = repr
         .segment
         .template
@@ -172,7 +172,7 @@ fn effective_timeline<'a>(
 /// the realistic error entirely: the same `@id` reused by two different
 /// AdaptationSets of the same Period (audit MD-W12).
 fn check_representation_id_duplicates(
-    period: &dash_runtime::mpd::Period,
+    period: &broadcast_dash::Period,
     period_idx: usize,
     report: &mut Report,
 ) {
@@ -180,7 +180,7 @@ fn check_representation_id_duplicates(
     // *unless* the Representations are functionally identical, in which case
     // the duplicate is redundant rather than ambiguous — a Warning, not an
     // Error.
-    let mut seen: BTreeMap<&str, &dash_runtime::mpd::Representation> = BTreeMap::new();
+    let mut seen: BTreeMap<&str, &broadcast_dash::Representation> = BTreeMap::new();
     for (as_idx, aset) in period.adaptation_sets.iter().enumerate() {
         for repr in &aset.representations {
             let Some(previous) = seen.insert(&repr.id, repr) else {
@@ -213,8 +213,8 @@ fn check_representation_id_duplicates(
 /// identical — same codec, bandwidth, geometry, framing and addressing, i.e.
 /// the same content described twice (ISO/IEC 23009-1 §5.3.5.2's exception).
 fn functionally_identical(
-    a: &dash_runtime::mpd::Representation,
-    b: &dash_runtime::mpd::Representation,
+    a: &broadcast_dash::Representation,
+    b: &broadcast_dash::Representation,
 ) -> bool {
     a.bandwidth == b.bandwidth
         && a.common.codecs == b.common.codecs
@@ -229,8 +229,8 @@ fn functionally_identical(
 
 /// The `SegmentTemplate` a Representation declares itself (5.3.9.4).
 fn segment_template(
-    repr: &dash_runtime::mpd::Representation,
-) -> Option<&dash_runtime::mpd::SegmentTemplate> {
+    repr: &broadcast_dash::Representation,
+) -> Option<&broadcast_dash::SegmentTemplate> {
     repr.segment.template.as_ref()
 }
 
@@ -241,7 +241,7 @@ fn segment_template(
 /// end time. The explicit/computed `@t` must be ≥ the previous element's end
 /// time (a gap is a legal discontinuity; backward time is not).
 fn validate_segment_timeline(
-    timeline: &dash_runtime::mpd::SegmentTimeline,
+    timeline: &broadcast_dash::SegmentTimeline,
     timescale: u64,
     r_key: &str,
     report: &mut Report,

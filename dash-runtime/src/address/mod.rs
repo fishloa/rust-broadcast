@@ -13,8 +13,9 @@ pub mod base_index;
 pub mod list;
 pub mod plan;
 pub mod representation;
-pub mod template;
 pub mod timeline;
+
+pub use broadcast_dash::template;
 
 pub use plan::{DynamicContext, PlanInput, ResourceRef, SegmentPlan, SegmentRef};
 pub use representation::{PlanError, PlanOptions, PlannedRepresentation, plan_representation};
@@ -95,4 +96,8 @@ pub enum AddressError {
     /// A `SegmentList` entry with no `@media` and no `@mediaRange`.
     #[error("SegmentURL has neither @media nor @mediaRange")]
     EmptySegmentUrl,
+    /// A Segment addressing kind this core does not plan (a future
+    /// `broadcast-dash` variant), or a template fault it does not classify.
+    #[error("unsupported segment addressing")]
+    UnsupportedFeature,
 }

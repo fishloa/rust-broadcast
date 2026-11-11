@@ -1,6 +1,11 @@
 //! BaseURL and URL-reference resolution (ISO/IEC 23009-1 §5.6.5 over RFC 3986
 //! §5, as implemented by the `url` crate — SP3). `std` only.
 //!
+//! Moved here from `transmux` (#2355): the only caller was the MPD reader's
+//! BaseURL alternates, and `transmux` now writes MPDs rather than fetching
+//! them. The synthetic root keeps its historical `transmux-relative:///`
+//! scheme, which never leaves a result.
+//!
 //! A DASH client turns a relative `SegmentTemplate`/`BaseURL` reference into the
 //! URL it fetches by joining a `BaseURL` chain onto the MPD's own URL. With no
 //! location (an in-memory MPD) the join happens against a fixed synthetic
