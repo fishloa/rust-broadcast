@@ -1466,7 +1466,7 @@ impl DashClient {
                 if let Some(r) = self.rep_mut(rep) {
                     let start = r.start_time_us.take();
                     r.next_issue = start
-                        .and_then(|t| p.plan.index_at_or_before(t))
+                        .and_then(|t| match p.plan.index_at_or_before(t) { Ok(i) => i, Err(_) => None })
                         .unwrap_or(0);
                     r.plan = Some(p.plan);
                 }
@@ -2163,7 +2163,7 @@ impl DashClient {
         };
         match rep.plan.as_ref() {
             Some(plan) => {
-                rep.next_issue = plan.index_at_or_before(switch_us).unwrap_or(0);
+                rep.next_issue = match plan.index_at_or_before(switch_us) { Ok(Some(i)) => i, _ => 0 };
                 rep.joined = true;
                 let last = rep
                     .next_issue
