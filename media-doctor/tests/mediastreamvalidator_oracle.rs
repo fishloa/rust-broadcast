@@ -192,54 +192,11 @@ impl std::fmt::Display for Finding {
 /// Media Playlist otherwise blocks for the 300s default waiting for a reload
 /// that a static fixture file will never produce).
 fn run_validator(dir: &Path, entry: &str, parse_only: bool, timeout_secs: u32) -> Vec<Finding> {
-    // The JSON output path (`-O`) is deliberately OUTSIDE `dir`: for the
-    // calibration test `dir` is `private/fixtures/hls/spec/` tree, and
-    // writing scratch output into a source directory would dirty a fixture
-    // tree the test run itself doesn't own. Unique per call (a monotonic
-    // counter) since `cargo test` runs test functions concurrently by
-    // default and this file's own tests share one process.
-    static CALL_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let call_id = CALL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let out_json = std::env::temp_dir().join(format!(
-        "mediastreamvalidator-oracle-{}-{call_id}.json",
-        std::process::id()
-    ));
-
-    let mut cmd = Command::new("mediastreamvalidator");
-    cmd.current_dir(dir);
-    if parse_only {
-        cmd.arg("--parse-playlist-only");
-    }
-    cmd.arg("--quiet")
-        .arg("-t")
-        .arg(timeout_secs.to_string())
-        .arg("-O")
-        .arg(&out_json)
-        .arg(entry);
-    let out = output_bounded(
-        &mut cmd,
-        Duration::from_secs(u64::from(timeout_secs)) + VALIDATOR_MARGIN,
-    )
-    .expect("run mediastreamvalidator");
-
-    let text = fs::read_to_string(&out_json).unwrap_or_else(|e| {
-        panic!(
-            "mediastreamvalidator produced no JSON at {} ({e}); \
-             status={:?} stdout={} stderr={}",
-            out_json.display(),
-            out.status,
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr),
-        )
-    });
-    let json: Value = serde_json::from_str(&text).unwrap_or_else(|e| {
-        panic!(
-            "parse mediastreamvalidator JSON at {}: {e}",
-            out_json.display()
-        )
-    });
-    let _ = fs::remove_file(&out_json);
-
+    let json = test_fixtures::process::msv::MsvRun::new(dir, entry)
+        .parse_only(parse_only)
+        .timeout_secs(timeout_secs)
+        .deadline(Duration::from_secs(u64::from(timeout_secs)) + VALIDATOR_MARGIN)
+        .run();
     let mut findings = Vec::new();
     collect_findings(&json, "$", &mut findings);
     findings
