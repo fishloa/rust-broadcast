@@ -109,34 +109,11 @@ const MAX_KEY_BODY_BYTES: usize = 4096;
 /// Length of an AES-128 key file (RFC 8216 §5.1).
 const AES128_KEY_LEN: usize = 16;
 
-/// Base delay for the **exponential** resource-fetch retry backoff (audit
-/// W14d): the delay for attempt N is `base * 2^(N-1)`, capped at
-/// [`RESOURCE_RETRY_MAX_DELAY`]. A fixed 200 ms was far too short for an
-/// eviction race (the segment reappears on the next playlist reload, seconds
-/// later); starting at 500 ms and doubling reaches ~64 s by the 8th attempt,
-/// well past a normal reload cycle, without stalling the live edge on the
-/// first retry.
-const RESOURCE_RETRY_BASE_DELAY: Duration = Duration::from_millis(500);
+/// Resource-fetch retry backoff steps (milliseconds), then a 30 s cap.
+const RESOURCE_RETRY_DELAYS_MS: [u64; 6] = [500, 1000, 2000, 4000, 8000, 16000];
 
-/// Growth factor of the resource-fetch retry delay (doubling).
-const RESOURCE_RETRY_FACTOR: f64 = 2.0;
-
-/// Cap on the exponential resource-fetch retry delay.
-const RESOURCE_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
-
-/// Exponential backoff for resource-fetch attempt `attempt` (1-based),
-/// capped at [`RESOURCE_RETRY_MAX_DELAY`].
-fn retry_backoff(attempt: u32) -> Duration {
-    // The workspace's one capped-exponential implementation (audit r07-O1 /
-    // #1141; SP1.5 moved it onto `backon`); `attempt` here is 1-based,
-    // `delay_for_attempt` 0-based.
-    crate::reconnect::ReconnectSchedule::from_parts(
-        RESOURCE_RETRY_BASE_DELAY,
-        RESOURCE_RETRY_MAX_DELAY,
-        RESOURCE_RETRY_FACTOR,
-    )
-    .delay_for_attempt(attempt.saturating_sub(1))
-}
+/// Cap on the resource-fetch retry backoff.
+const RESOURCE_RETRY_CAP_MS: u64 = 30_000;
 
 /// The `PendingFetch` for one resource fetch, after `delay`. The single
 /// place a resource is described, so the first try and every retry share the
@@ -149,6 +126,7 @@ fn resource_fetch(
     url: String,
     read_timeout: Duration,
     delay: Duration,
+    retry_after: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<HlsFetchId, u64>>>,
 ) -> crate::source::pull::PendingFetch<HlsFetchId> {
     let cap = match fetch_id {
         HlsFetchId::Key(_) => MAX_KEY_BODY_BYTES,
@@ -157,19 +135,28 @@ fn resource_fetch(
     crate::source::pull::PendingFetch {
         delay,
         fut: Box::pin(async move {
-            let result = tokio::time::timeout(
+            let (result, retry_after_us) = tokio::time::timeout(
                 read_timeout,
-                fetch_bytes_capped(&http, &url, creds.as_ref(), cap),
+                fetch_bytes_capped_with_retry_after(&http, &url, creds.as_ref(), cap),
             )
             .await
             .unwrap_or_else(|_| {
-                Err(MultimuxError::Connect {
-                    reason: format!(
-                        "hls-pull: resource {fetch_id:?} read exceeded {read_timeout:?}"
-                    ),
-                })
-            })
-            .and_then(|bytes| match fetch_id {
+                (
+                    Err(MultimuxError::Connect {
+                        reason: format!(
+                            "hls-pull: resource {fetch_id:?} read exceeded {read_timeout:?}"
+                        ),
+                    }),
+                    0,
+                )
+            });
+            if retry_after_us > 0 {
+                retry_after
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(fetch_id, retry_after_us);
+            }
+            let result = result.and_then(|bytes| match fetch_id {
                 HlsFetchId::Key(id) if bytes.len() != AES128_KEY_LEN => {
                     Err(hls_runtime::client::Error::BadKeyLength {
                         id,
@@ -401,26 +388,55 @@ async fn fetch_bytes_capped(
     creds: Option<&ScopedCredentials>,
     cap: usize,
 ) -> Result<Vec<u8>> {
-    let response = authenticated_get(client, url, creds).await?;
+    let (result, _) = fetch_bytes_capped_with_retry_after(client, url, creds, cap).await;
+    result
+}
+
+/// Like [`fetch_bytes_capped`], but also returns any `Retry-After` delay (microseconds) carried
+/// by a `429`/`503` response, for the caller's retry scheduling.
+async fn fetch_bytes_capped_with_retry_after(
+    client: &HttpClient,
+    url: &str,
+    creds: Option<&ScopedCredentials>,
+    cap: usize,
+) -> (core::result::Result<Vec<u8>, MultimuxError>, u64) {
+    let response = match authenticated_get(client, url, creds).await {
+        Ok(r) => r,
+        Err(e) => return (Err(e), 0),
+    };
     let status = response.status();
     if !status.is_success() {
+        let headers: Vec<(String, String)> = response
+            .headers()
+            .iter()
+            .filter_map(|(name, value)| Some((name.to_string(), value.to_str().ok()?.to_string())))
+            .collect();
+        let retry_after_us = if status == reqwest::StatusCode::TOO_MANY_REQUESTS
+            || status == reqwest::StatusCode::SERVICE_UNAVAILABLE
+        {
+            broadcast_client::fetch::retry_after_us(status.as_u16(), &headers, 0, None)
+        } else {
+            0
+        };
         // 401/403 are permanent (a bad credential or a forbidden resource);
         // every other status is transient and may be retried.
-        return Err(
-            if status == reqwest::StatusCode::UNAUTHORIZED
-                || status == reqwest::StatusCode::FORBIDDEN
-            {
-                MultimuxError::Auth {
-                    reason: format!("hls-pull: {status}"),
-                }
-            } else {
-                MultimuxError::Connect {
-                    reason: format!("hls-pull: HTTP {status}"),
-                }
-            },
-        );
+        let err = if status == reqwest::StatusCode::UNAUTHORIZED
+            || status == reqwest::StatusCode::FORBIDDEN
+        {
+            MultimuxError::Auth {
+                reason: format!("hls-pull: {status}"),
+            }
+        } else {
+            MultimuxError::Connect {
+                reason: format!("hls-pull: HTTP {status}"),
+            }
+        };
+        return (Err(err), retry_after_us);
     }
-    crate::source::read_body_capped(response, cap, "hls-pull").await
+    (
+        crate::source::read_body_capped(response, cap, "hls-pull").await,
+        0,
+    )
 }
 
 /// Opens `route`'s connect-time HTTP client and userinfo-stripped URL —
@@ -526,6 +542,9 @@ pub async fn run_hls_pull(
     // far. A playlist fetch is not tracked — a broken manifest is a
     // route-level failure, not a transient one.
     let mut resource_retries: HashMap<HlsFetchId, (String, u32)> = HashMap::new();
+    let retry_after_seen: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<HlsFetchId, u64>>,
+    > = std::sync::Arc::default();
     // The session's own reload-pacing floor (`Action::WaitMs`): the *next*
     // playlist fetch is dispatched no earlier than this. `None` until the
     // engine has paced once. Set to `last playlist dispatch + hint` when a
@@ -576,6 +595,7 @@ pub async fn run_hls_pull(
                         url,
                         read_timeout,
                         Duration::ZERO,
+                        std::sync::Arc::clone(&retry_after_seen),
                     ));
                 }
                 Action::FetchKey { id, url } => {
@@ -591,6 +611,7 @@ pub async fn run_hls_pull(
                         url,
                         read_timeout,
                         Duration::ZERO,
+                        std::sync::Arc::clone(&retry_after_seen),
                     ));
                 }
                 // `Action` is `#[non_exhaustive]`: a future variant is simply
@@ -673,13 +694,25 @@ pub async fn run_hls_pull(
                             }
                             // Queued, not spawned: the spawn loop applies
                             // the in-flight bound and the backoff delay.
+                            let backoff_delay_us = broadcast_client::fetch::Backoff::new(
+                                &RESOURCE_RETRY_DELAYS_MS,
+                                RESOURCE_RETRY_CAP_MS,
+                            )
+                            .delay_us(next_attempt as u64);
+                            let retry_after_us = retry_after_seen
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .remove(&fetch_id)
+                                .unwrap_or(0);
+                            let delay = Duration::from_micros(backoff_delay_us.max(retry_after_us));
                             scheduler.push_retry(resource_fetch(
                                 http.clone(),
                                 credentials.clone(),
                                 fetch_id,
                                 url,
                                 read_timeout,
-                                retry_backoff(next_attempt),
+                                delay,
+                                std::sync::Arc::clone(&retry_after_seen),
                             ));
                         } else {
                             tracing::error!(
@@ -754,42 +787,10 @@ fn hls_pull_has_no_inline_sleep_outside_the_scheduler() {
 
 #[cfg(test)]
 mod tests {
-    use crate::testutil::drain;
-    /// Before/after pin (#1141): the shared `Backoff` reproduces the
-    /// shift-based schedule `retry_backoff` carried before consolidation.
-    /// SP1.5: `retry_backoff` is the pre-consolidation shift series
-    /// (0.5 s doubling to a 30 s cap) with `backon`'s jitter on top, so the
-    /// band is pinned exactly and the cap saturates.
-    #[test]
-    fn retry_backoff_matches_the_pre_consolidation_shift_schedule() {
-        for attempt in 0..40u32 {
-            let shift = attempt.saturating_sub(1).min(16);
-            let raw = RESOURCE_RETRY_BASE_DELAY
-                .checked_mul(1u32 << shift)
-                .unwrap_or(RESOURCE_RETRY_MAX_DELAY)
-                .min(RESOURCE_RETRY_MAX_DELAY);
-            let got = retry_backoff(attempt);
-            // Equal jitter: `raw * [0.5, 1.0)`.
-            assert!(
-                got >= raw / 2 && got < raw + Duration::from_nanos(1),
-                "attempt {attempt}: {got:?} outside [{:?}, {raw:?})",
-                raw / 2
-            );
-        }
-        // C2: once raw saturates at the cap the delay stays jittered in
-        // [cap/2, cap), never a single constant.
-        for _ in 0..40 {
-            let d = retry_backoff(20);
-            assert!(
-                d >= RESOURCE_RETRY_MAX_DELAY / 2 && d < RESOURCE_RETRY_MAX_DELAY,
-                "capped retry {d:?} must stay jittered in [cap/2, cap)"
-            );
-        }
-    }
-
     use super::*;
     use crate::source::IngestTimeouts;
     use crate::testutil::MockAuthScheme;
+    use crate::testutil::drain;
     use broadcast_auth::Credentials;
     use broadcast_hls::{MediaPlaylist, MediaSegment};
     use media_plane::ingress::HealthState;
@@ -1033,6 +1034,7 @@ Content-Length: {over}
             url,
             Duration::from_secs(10),
             Duration::ZERO,
+            std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         );
         pending.fut.await.1
     }
@@ -1670,6 +1672,107 @@ Content-Length: {over}
         // Real samples reach the trunk on a fresh drive over the same route
         // (subscribing after the first run would miss the backlog — see the
         // module doc).
+        assert_samples_reach_the_trunk(&route).await;
+        server.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn run_hls_pull_honours_retry_after_on_a_503() {
+        use axum::Router;
+        use axum::extract::{Path as AxumPath, State};
+        use axum::response::{IntoResponse, Response as AxumResponse};
+        use axum::routing::get;
+        use std::sync::Mutex as StdMutex;
+        use std::sync::atomic::AtomicU64;
+
+        let (playlist_text, init, segments) = build_cmaf_fixture();
+
+        #[derive(Clone)]
+        struct State2 {
+            playlist: String,
+            init: Vec<u8>,
+            segments: std::sync::Arc<Vec<Vec<u8>>>,
+            seg0_requests: std::sync::Arc<AtomicU64>,
+            first_at: std::sync::Arc<StdMutex<Option<tokio::time::Instant>>>,
+            second_at: std::sync::Arc<StdMutex<Option<tokio::time::Instant>>>,
+        }
+
+        async fn handler(
+            AxumPath(name): AxumPath<String>,
+            State(state): State<State2>,
+        ) -> AxumResponse {
+            if name == "media.m3u8" {
+                return state.playlist.into_response();
+            }
+            if name == "init.mp4" {
+                return state.init.into_response();
+            }
+            if name == "seg0.m4s" {
+                let n = state
+                    .seg0_requests
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if n == 0 {
+                    *state.first_at.lock().unwrap() = Some(tokio::time::Instant::now());
+                    return (
+                        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                        [("retry-after", "2")],
+                    )
+                        .into_response();
+                }
+                *state.second_at.lock().unwrap() = Some(tokio::time::Instant::now());
+            }
+            if let Some(idx) = name
+                .strip_prefix("seg")
+                .and_then(|s| s.strip_suffix(".m4s"))
+                .and_then(|s| s.parse::<usize>().ok())
+                && let Some(bytes) = state.segments.get(idx)
+            {
+                return bytes.clone().into_response();
+            }
+            axum::http::StatusCode::NOT_FOUND.into_response()
+        }
+
+        let seg0_requests = std::sync::Arc::new(AtomicU64::new(0));
+        let first_at = std::sync::Arc::new(StdMutex::new(None));
+        let second_at = std::sync::Arc::new(StdMutex::new(None));
+        let app = Router::new()
+            .route("/{name}", get(handler))
+            .with_state(State2 {
+                playlist: playlist_text,
+                init,
+                segments: std::sync::Arc::new(segments),
+                seg0_requests: std::sync::Arc::clone(&seg0_requests),
+                first_at: std::sync::Arc::clone(&first_at),
+                second_at: std::sync::Arc::clone(&second_at),
+            });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind ephemeral loopback port");
+        let addr = listener.local_addr().expect("local addr");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("axum server");
+        });
+
+        let route = HlsPullRoute::new("pulled-retry-after", format!("http://{addr}/media.m3u8"));
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let handle = std::sync::Arc::clone(&route_handle);
+        let result = tokio::time::timeout(
+            Duration::from_secs(60),
+            run_hls_pull(&route, trunk_config(), handshake(), &route_handle),
+        )
+        .await
+        .expect("run_hls_pull must not hang");
+        assert!(
+            result.is_ok(),
+            "a 503 with Retry-After must be retried, not end the session: {result:?}"
+        );
+        let first = first_at.lock().unwrap().expect("first request recorded");
+        let second = second_at.lock().unwrap().expect("second request recorded");
+        assert!(
+            second.duration_since(first) >= Duration::from_secs(2),
+            "retry must wait at least the Retry-After delay"
+        );
+        let _ = handle;
         assert_samples_reach_the_trunk(&route).await;
         server.abort();
     }
