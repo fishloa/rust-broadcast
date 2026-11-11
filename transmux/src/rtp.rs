@@ -102,10 +102,6 @@ pub const DEFAULT_VIDEO_PT: u8 = 96;
 pub const DEFAULT_AUDIO_PT: u8 = 97;
 /// Default network MTU (payload budget) forcing FU-A on larger NALs.
 pub const DEFAULT_MTU: usize = 1400;
-/// The `c=` connection address [`build_sdp_with_connection`] emits by
-/// default: the same loopback the `o=` line names (RFC 8866 §5.7).
-pub const LOCAL_CONNECTION_ADDRESS: core::net::IpAddr =
-    core::net::IpAddr::V4(core::net::Ipv4Addr::LOCALHOST);
 /// First payload type of the dynamic range (RFC 3551 §6).
 const DYNAMIC_PT_MIN: u8 = 96;
 /// Last payload type of the dynamic range (RFC 3551 §6).
@@ -234,15 +230,18 @@ pub struct RtpStream {
     pub packets: Vec<RtpPacket>,
 }
 
-/// The output of [`RtpPacketiser`]: per-track RTP streams plus an SDP string.
+/// The output of [`RtpPacketiser`]: per-track RTP streams plus the SDP media
+/// descriptions that describe them.
 #[derive(Debug, Clone)]
 pub struct RtpOutput {
     /// One [`RtpStream`] per packetised track, in track order.
     pub streams: Vec<RtpStream>,
-    /// The session-level SDP describing every stream (RFC 4566). `std` only:
-    /// it is written with `sdp-types`.
+    /// One SDP media description (`m=` with its `a=rtpmap`/`a=fmtp`) per
+    /// stream, in the same order (RFC 4566 §5.14, RFC 6184 §8.1, RFC 3640
+    /// §4.1). Session-level lines are not transmux's: build the session with
+    /// `rtsp_runtime::sdp::session_description` over these. `std` only.
     #[cfg(feature = "std")]
-    pub sdp: String,
+    pub medias: Vec<sdp_types::Media>,
 }
 
 // ---------------------------------------------------------------------------
@@ -481,7 +480,7 @@ impl Package for RtpPacketiser {
         Ok(RtpOutput {
             streams,
             #[cfg(feature = "std")]
-            sdp: build_sdp(sdp_media),
+            medias: sdp_media,
         })
     }
 }
@@ -814,55 +813,6 @@ fn asc_bytes(esds: &crate::mp4esds::EsdsBox) -> Result<&[u8]> {
 // ---------------------------------------------------------------------------
 // SDP generation (RFC 4566)
 // ---------------------------------------------------------------------------
-
-/// Assemble the full session-level SDP from the per-media sections.
-///
-/// Includes a session-level `c=` line, because RFC 4566 §5.7 requires one:
-/// "A session description MUST contain either at least one `c=` field in each
-/// media description or a single `c=` field at the session level." The media
-/// descriptions here use port 0 (the packets are handed over as
-/// [`RtpPacket`]s, not sent from this process), so a strict parser enforcing
-/// that requirement had nothing to read and rejected the description. The
-/// address is the loopback the `o=` line already names; a caller that
-/// transmits elsewhere uses [`build_sdp_with_connection`].
-#[cfg(feature = "std")]
-fn build_sdp(medias: Vec<sdp_types::Media>) -> String {
-    build_sdp_with_connection(LOCAL_CONNECTION_ADDRESS, medias)
-}
-
-/// Assemble a session-level SDP with an explicit `c=` connection address
-/// (RFC 8866 §5.7). The session SDP `RtpOutput::sdp` carries uses
-/// [`LOCAL_CONNECTION_ADDRESS`].
-///
-/// The address is an [`IpAddr`](core::net::IpAddr), not a string, so it cannot
-/// carry anything SDP would misread: the `<addrtype>` subfield (`IP4`/`IP6`)
-/// follows the address's own family (RFC 8866 §5.7: "This memo only defines
-/// `IP4` and `IP6`"), and no CR, LF or space can be smuggled into the line.
-/// `Session::write` performs no CR/LF escaping of the session name or
-/// attribute values; only the connection address is typed, and every other
-/// value is produced internally by this module (fmtp strings are built here,
-/// never from caller text).
-///
-/// The session is written with `sdp-types` 0.2 (`Session::write`), so this is
-/// `std`-only.
-#[cfg(feature = "std")]
-pub fn build_sdp_with_connection(
-    connection_address: core::net::IpAddr,
-    medias: Vec<sdp_types::Media>,
-) -> String {
-    let mut session = sdp_types::Session::new(
-        sdp_types::Origin::with_ip_addr(0, 0, core::net::Ipv4Addr::LOCALHOST),
-        "transmux RTP",
-    );
-    // `from_ip_addr` derives `IP4`/`IP6` from the address family, so no CR/LF or
-    // space can reach the c= line (the typed address is the injection guard).
-    session.connection = Some(sdp_types::Connection::from_ip_addr(connection_address));
-    session.medias = medias;
-    let mut out = Vec::new();
-    // Writing into a `Vec<u8>` cannot fail; every field is a `String`.
-    let _ = session.write(&mut out);
-    String::from_utf8_lossy(&out).into_owned()
-}
 
 /// SDP media section for an H.264 video stream (RFC 6184 §8.1).
 #[cfg(feature = "std")]

@@ -142,6 +142,9 @@ mod rtp_stream_paff;
 mod rtp_stream_reorder;
 mod sample_aes;
 mod sample_aes_h264_oracle;
+#[cfg(feature = "std")]
+#[path = "support/sdp_session.rs"]
+mod sdp_session;
 mod segment_cut_policy;
 mod segment_emsg;
 mod segmenter;

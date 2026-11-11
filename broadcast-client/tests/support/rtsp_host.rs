@@ -56,7 +56,14 @@ impl MediaFixture {
             ..RtpPacketiser::default()
         };
         let out = packetiser.package(media).expect("packetise fixture");
-        let mut session = sdp_types::Session::parse(out.sdp.as_bytes()).expect("parse sdp");
+        let mut session = sdp_types::Session::new(
+            sdp_types::Origin::with_ip_addr(0, 0, std::net::Ipv4Addr::LOCALHOST),
+            "broadcast-client RTSP fixture",
+        );
+        session.set_connection(sdp_types::Connection::from_ip_addr(std::net::IpAddr::V4(
+            std::net::Ipv4Addr::LOCALHOST,
+        )));
+        session.medias = out.medias;
         for (n, m) in session.medias.iter_mut().enumerate() {
             m.add_attribute_with_value("control", format!("trackID={}", n + 1));
         }

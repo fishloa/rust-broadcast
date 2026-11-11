@@ -2534,6 +2534,7 @@ dependencies = [
  "memchr",
  "rtsp-types",
  "rustls",
+ "sdp-types",
  "thiserror",
  "tokio",
  "tokio-rustls",

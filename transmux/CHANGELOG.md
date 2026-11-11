@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- BREAKING: transmux describes RTP media sections only; the SDP session description is built by `rtsp_runtime::sdp::session_description` (#2357). `RtpOutput::sdp` is replaced by `RtpOutput::medias` (`Vec<sdp_types::Media>`, one per stream, the same media descriptions as before); `build_sdp`, `build_sdp_with_connection` and `LOCAL_CONNECTION_ADDRESS` are removed. Build the document with `rtsp_runtime::sdp::session_description("transmux RTP", sdp_types::Origin::with_ip_addr(0, 0, Ipv4Addr::LOCALHOST), sdp_types::Connection::from_ip_addr(addr), out.medias)`; the bytes are unchanged (`fixtures/golden/rtp/rtp-sdp-*.sdp` and `fixtures/golden/rtsp/sdp-transmux-h264-aac.sdp` were recorded from the old renderer and match without regeneration).
 ### Fixed
 - The DVB-DASH HDR branch of the MPD writer is covered by a golden recorded from an HEVC HDR10+ stream (`fixtures/golden/dash/dash-cover-dvb-hdr10plus.mpd`), and the coverage test pins the values of `HDR_METADATA_SCHEME` and `DVB_HDR_DMI_SCHEME` as well as the element and attribute names. `GOLDEN_BLESS` and `REGENERATE_FLV_WALK_GOLDEN` refuse to rewrite a committed golden when `CI` is set.
 - `FlvDemux` and `StreamingFlvDemux` report an FLV header whose signature is `"FLV"` but whose `DataOffset` is below the 9-byte header as the new `FlvError::Header(rtmp_runtime::RtmpError)`, and keep `FlvError::BadSignature` for a wrong signature. Both demuxers now reject such a header (they used to clamp its `DataOffset` up to 9).

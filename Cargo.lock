@@ -4589,6 +4589,7 @@ dependencies = [
  "quick-xml",
  "rtmp-runtime",
  "rtp-packet",
+ "rtsp-runtime",
  "scte35-splice",
  "sdp-types",
  "serde",

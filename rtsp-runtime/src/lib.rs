@@ -14,6 +14,7 @@ pub mod interleaved;
 pub mod io;
 mod limits;
 mod rfc2326_lex;
+pub mod sdp;
 pub mod server;
 pub mod session_header;
 pub mod state;
@@ -31,6 +32,8 @@ pub use server::{ServerEvent, ServerSession};
 pub use session_header::SessionHeader;
 pub use state::SessionState;
 pub use transport::{Delivery, LowerTransport, Transport, TransportMode, TransportSpec};
+
+pub use sdp::session_description;
 
 // Re-export the underlying codec types callers need to inspect events.
 pub use rtsp_types::{Method, StatusCode};

@@ -43,6 +43,7 @@ media-doctor  = { path = "../media-doctor" }
 broadcast-auth = { path = "../broadcast-auth" }
 rtmp-runtime  = { path = "../rtmp-runtime" }
 rtsp-runtime  = { path = "../rtsp-runtime" }
+sdp-types     = "0.3"
 media-plane   = { path = "../media-plane" }
 ttml-subtitle = { path = "../ttml-subtitle" }
 broadcast-loudness = { path = "../broadcast-loudness" }

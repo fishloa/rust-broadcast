@@ -392,13 +392,11 @@ pub use rtcp::{
     SDES_PRIV, SDES_TOOL, SdesChunk, SdesItem, SdesItemType, SenderReport, SourceDescription,
 };
 pub use rtmp::{RtmpDemux, RtmpFlvError, RtmpMux};
-#[cfg(feature = "std")]
-pub use rtp::build_sdp_with_connection;
 pub use rtp::{
     DEFAULT_AAC_CLOCK_RATE, DEFAULT_AUDIO_PT, DEFAULT_KLV_PT, DEFAULT_MTU, DEFAULT_VIDEO_PT,
-    KLV_ENCODING_NAME, LOCAL_CONNECTION_ADDRESS, MAX_TIMING_WARNINGS, NAL_TYPE_IDR,
-    RtpDepacketiser, RtpInput, RtpInputStream, RtpMediaKind, RtpOutput, RtpPacket, RtpPacketiser,
-    RtpStream, RtpTimingWarning, VIDEO_CLOCK_RATE, depacketise_klv, packetise_klv,
+    KLV_ENCODING_NAME, MAX_TIMING_WARNINGS, NAL_TYPE_IDR, RtpDepacketiser, RtpInput,
+    RtpInputStream, RtpMediaKind, RtpOutput, RtpPacket, RtpPacketiser, RtpStream, RtpTimingWarning,
+    VIDEO_CLOCK_RATE, depacketise_klv, packetise_klv,
 };
 pub use rtp_sdp::{
     aac_config_from_asc_bytes, aac_config_from_asc_hex, aac_config_from_fmtp, avc_config_from_fmtp,

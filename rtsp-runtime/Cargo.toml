@@ -22,6 +22,10 @@ broadcast-auth = { path = "../broadcast-auth", version = "0.6.0" }
 thiserror  = "2"
 memchr     = "2"
 serde      = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
+# The session description `sdp::session_description` renders (RFC 4566 §5).
+# `sdp-types` 0.3 is `std`-only (it writes through `std::io::Write`), and this
+# crate is `std`, so it is a plain dependency.
+sdp-types  = { workspace = true }
 
 # `tokio` adapter (real sockets) — feature-gated; the sans-IO core needs none of it.
 tokio         = { version = "1", optional = true, features = ["net", "io-util", "rt", "macros", "time"] }
@@ -50,7 +54,6 @@ tls   = ["tokio", "dep:tokio-rustls", "dep:rustls", "dep:webpki-roots"]
 
 [dev-dependencies]
 tokio     = { version = "1", features = ["full", "test-util"] }
-sdp-types = { workspace = true }
 test-fixtures = { path = "../test-fixtures" }
 workspace-guards = { path = "../workspace-guards" }
 

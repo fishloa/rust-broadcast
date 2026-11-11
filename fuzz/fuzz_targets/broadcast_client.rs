@@ -281,16 +281,17 @@ fn rtp_seed() -> &'static RtpSeed {
             ..transmux::RtpPacketiser::default()
         };
         let out = packetiser.package(&media).expect("packetise fixture");
-        let mut sdp = String::new();
-        let mut media_sections = 0usize;
-        for line in out.sdp.lines() {
-            sdp.push_str(line);
-            sdp.push_str("\r\n");
-            if line.starts_with("m=") {
-                media_sections += 1;
-                sdp.push_str(&format!("a=control:trackID={media_sections}\r\n"));
-            }
+        let mut medias = out.medias;
+        for (n, media) in medias.iter_mut().enumerate() {
+            media.add_attribute_with_value("control", format!("trackID={}", n + 1));
         }
+        let sdp = rtsp_runtime::sdp::session_description(
+            "broadcast-client fuzz seed",
+            sdp_types::Origin::with_ip_addr(0, 0, std::net::Ipv4Addr::LOCALHOST),
+            sdp_types::Connection::from_ip_addr(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
+            medias,
+        )
+        .expect("render session description");
         let packets = out
             .streams
             .iter()

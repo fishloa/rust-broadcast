@@ -33,6 +33,18 @@ pub enum Error {
     #[error("failed to serialize RTSP message")]
     MessageWrite(#[source] rtsp_types::WriteError),
 
+    /// The SDP session description could not be written (RFC 4566 §5):
+    /// `what` names the step (`"write"`, or `"utf-8"` when the writer's bytes
+    /// were not valid UTF-8).
+    #[error("failed to render the SDP session description ({what})")]
+    SdpWrite {
+        /// Which step failed.
+        what: &'static str,
+        /// The underlying IO error.
+        #[source]
+        source: std::io::Error,
+    },
+
     /// A method was invoked (client) or received (server) that is not permitted
     /// in the current session state. The server maps this to `455 Method Not
     /// Valid In This State` (RFC 2326 §11.3.6, Appendix A).

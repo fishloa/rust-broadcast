@@ -7,8 +7,9 @@ use std::fs;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::Path;
 
+use crate::sdp_session;
 use broadcast_common::{Package, Unpackage};
-use transmux::{RtpPacketiser, TsDemux, build_sdp_with_connection};
+use transmux::{RtpOutput, RtpPacketiser, TsDemux};
 
 fn check(name: &str, actual: &str) {
     if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
@@ -35,7 +36,10 @@ fn rtp_session_sdp_matches_golden() {
         ..RtpPacketiser::default()
     };
     let out = p.package(&media).expect("packetise");
-    check("golden/rtp/rtp-sdp-h264-aac.sdp", &out.sdp);
+    check(
+        "golden/rtp/rtp-sdp-h264-aac.sdp",
+        &sdp_session::local_session(out),
+    );
 }
 
 /// A parseable session whose only role is to give the test an `sdp_types::Media`.
@@ -50,10 +54,19 @@ fn connection_address_sdp_matches_golden() {
     let media: Vec<sdp_types::Media> = sdp_types::Session::parse(MEDIA_BLOCK_SESSION.as_bytes())
         .expect("parse media block")
         .medias;
-    let v4 = build_sdp_with_connection(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7)), media);
-    let v6 = build_sdp_with_connection(
+    let v4 = sdp_session::session(
+        RtpOutput {
+            streams: Vec::new(),
+            medias: media,
+        },
+        IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7)),
+    );
+    let v6 = sdp_session::session(
+        RtpOutput {
+            streams: Vec::new(),
+            medias: Vec::new(),
+        },
         IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)),
-        Vec::new(),
     );
     check("golden/rtp/rtp-sdp-conn-v4.sdp", &v4);
     check("golden/rtp/rtp-sdp-conn-v6.sdp", &v6);
