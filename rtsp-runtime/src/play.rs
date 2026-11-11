@@ -387,6 +387,26 @@ mod tests {
     }
 
     #[test]
+    fn identical_rtp_and_rtcp_channels_are_unusable() {
+        let mut plan = plan(None, None, &["trackID=0"], 0).unwrap();
+        let same = interleaved("RTP/AVP/TCP;interleaved=3-3");
+        assert!(matches!(
+            plan.accept_setup(0, Some(&same)),
+            Err(Error::UnusableTransport)
+        ));
+    }
+
+    #[test]
+    fn an_interleaved_answer_over_udp_is_unusable() {
+        let mut plan = plan(None, None, &["trackID=0"], 0).unwrap();
+        let udp = interleaved("RTP/AVP/UDP;interleaved=0-1");
+        assert!(matches!(
+            plan.accept_setup(0, Some(&udp)),
+            Err(Error::UnusableTransport)
+        ));
+    }
+
+    #[test]
     fn content_base_is_the_base_for_relative_controls() {
         let plan = plan(Some("rtsp://cam.example/base/"), None, &["trackID=0"], 0).unwrap();
         assert_eq!(
