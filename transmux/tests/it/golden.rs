@@ -11,12 +11,17 @@ use std::path::{Path, PathBuf};
 
 use broadcast_common::{Package, Unpackage};
 use transmux::dash::{
-    Addressing, ContentProtectionSystem, DashPackager, InbandEventStream, TrackSegments,
-    TrickModeAdaptationSet, TrickModeRepr,
+    Addressing, ContentProtectionSystem, DVB_DASH_PROFILE_PREFIX, DashPackager, InbandEventStream,
+    TrackSegments, TrickModeAdaptationSet, TrickModeRepr,
 };
 use transmux::ll_dash::UTCTIMING_HTTP_HEAD_2014;
+use transmux::pipeline::{CodecConfig, SubtitleFormat, SubtitleSampleEntry};
 use transmux::ts_demux::TsDemux;
-use transmux::{SmoothManifest, SmoothPackager, playready_wrmheader};
+use transmux::{
+    AspectRatioIdc, CencScheme, ConstantIvSenc, Fmp4Demux, Media, MediaKind, Sample,
+    SampleEncryptionEntry, SmoothManifest, SmoothPackager, Track, TrackEncryption,
+    TrackEncryptionBox, TrackId, TrackSpec, WvttSampleEntry, playready_wrmheader,
+};
 
 fn check(name: &str, actual: &str) {
     if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
@@ -37,6 +42,124 @@ fn fixtures() -> PathBuf {
 fn media() -> transmux::media::Media {
     let ts = fs::read(fixtures().join("ts/h264-aac.ts")).expect("ts fixture");
     TsDemux::new().unpackage(&ts[..]).expect("demux")
+}
+
+/// The fixture media with HDR10+ (ST 2094-40) announced on every track.
+fn all_hdr10plus(mut media: Media) -> Media {
+    for track in &mut media.tracks {
+        track.spec.hdr10plus = true;
+    }
+    media
+}
+
+/// The real AVC + `stpp`/TTML capture (`fixtures/mp4/cmaf-av-subtitle`).
+fn av_subtitle_media() -> Media {
+    let bytes = test_fixtures::read("mp4/cmaf-av-subtitle/av-subtitle-frag.mp4");
+    Fmp4Demux::new()
+        .unpackage(&bytes[..])
+        .expect("demux cmaf AVC + stpp fixture")
+}
+
+/// A spec-vector `wvtt` text track: no producer writes WebVTT in ISO BMFF.
+fn wvtt_media() -> Media {
+    let entry = WvttSampleEntry::new("WEBVTT\n\nNOTE spec vector\n");
+    let spec = TrackSpec::new(
+        TrackId::new(1),
+        1000,
+        CodecConfig::Subtitle {
+            format: SubtitleFormat::WebVtt,
+            sample_entry: Some(SubtitleSampleEntry::WebVtt(entry)),
+        },
+    );
+    let mut payl = Vec::new();
+    payl.extend_from_slice(&(8u32 + 2).to_be_bytes());
+    payl.extend_from_slice(b"payl");
+    payl.extend_from_slice(b"Hi");
+    let mut vttc = Vec::new();
+    vttc.extend_from_slice(&(8u32 + payl.len() as u32).to_be_bytes());
+    vttc.extend_from_slice(b"vttc");
+    vttc.extend_from_slice(&payl);
+    let sample = Sample::new(vttc, Some(0), Some(0), Some(1000), true);
+    Media::new(vec![Track::new(spec, vec![sample])], 1000)
+}
+
+/// A two-language audio pair plus a video track — the only way to reach
+/// `AdaptationSet@lang` (no committed TS capture names a language code).
+fn bilingual_media() -> Media {
+    fn lang_es_info(lang: &[u8; 3]) -> Vec<u8> {
+        vec![0x0a, 0x04, lang[0], lang[1], lang[2], 0x00]
+    }
+    let mut media = media();
+    let source = media
+        .tracks
+        .iter()
+        .find(|t| media_kind_of(t) == MediaKind::Audio)
+        .expect("fixture has an audio track")
+        .clone();
+    let mut eng = source.clone();
+    eng.spec.track_id = TrackId::new(90);
+    eng.spec.es_info_descriptors = lang_es_info(b"eng");
+    let mut fra = source;
+    fra.spec.track_id = TrackId::new(91);
+    fra.spec.es_info_descriptors = lang_es_info(b"fra");
+    media.tracks.push(eng);
+    media.tracks.push(fra);
+    media
+}
+
+fn media_kind_of(track: &Track) -> MediaKind {
+    match &track.spec.config {
+        CodecConfig::Avc { .. } => MediaKind::Video,
+        CodecConfig::Aac { .. } => MediaKind::Audio,
+        _ => MediaKind::Text,
+    }
+}
+
+/// The AVC track carrying the profile's own display geometry with a VUI
+/// `aspect_ratio_idc` set to `3:2`, so `Representation@width`/`@height` (the
+/// cropped samples) disagree with `@sar`.
+fn squashed_media() -> Media {
+    let mut media = media();
+    let video = media
+        .tracks
+        .iter_mut()
+        .find(|t| media_kind_of(t) == MediaKind::Video)
+        .expect("fixture has a video track");
+    let mut display = video.spec.display.clone().expect("AVC SPS geometry");
+    display.aspect_ratio = Some(AspectRatioIdc::ExtendedSar {
+        sar_width: 3,
+        sar_height: 2,
+    });
+    video.spec.display = Some(display);
+    media
+}
+
+fn encrypted_media(scheme: CencScheme, kid: [u8; 16]) -> Media {
+    let mut media = media();
+    for track in &mut media.tracks {
+        let samples = vec![
+            SampleEncryptionEntry {
+                initialization_vector: vec![0u8; 8],
+                subsamples: vec![],
+            };
+            track.samples.len()
+        ];
+        track.encryption = Some(TrackEncryption::new(
+            scheme,
+            TrackEncryptionBox {
+                version: 0,
+                default_crypt_byte_block: 0,
+                default_skip_byte_block: 0,
+                default_is_protected: 1,
+                default_per_sample_iv_size: 8,
+                default_kid: kid,
+                default_constant_iv: None,
+            },
+            samples,
+            ConstantIvSenc::default(),
+        ));
+    }
+    media
 }
 
 /// Run-length-encodable segment durations for every track.
@@ -134,6 +257,71 @@ fn dash_mpd_variants_match_golden() {
 }
 
 #[test]
+fn dash_mpd_element_coverage_matches_golden() {
+    let kid = [0x11u8; 16];
+    let trick = TrickModeAdaptationSet {
+        id: 7,
+        main_adaptation_set_id: 0,
+        max_playout_rate: 8,
+        repr: TrickModeRepr {
+            id: "trick-repr-0".into(),
+            codecs: "avc1.64001e".into(),
+            bandwidth: 150_000,
+            width: Some(320),
+            height: Some(180),
+            timescale: 90000,
+            total_duration: 900000,
+        },
+    };
+    let variants: Vec<(&str, Media, DashPackager)> = vec![
+        (
+            "dvb-hdr",
+            all_hdr10plus(media()),
+            DashPackager {
+                profiles: format!("{DVB_DASH_PROFILE_PREFIX}2020"),
+                content_protection: vec![ContentProtectionSystem {
+                    scheme_id_uri: "urn:mpeg:dash:mp4protection:2011".to_string(),
+                    value: Some("cbcs".to_string()),
+                    default_kid: Some(kid),
+                    pssh: None,
+                }],
+                inband_event_streams: vec![InbandEventStream {
+                    scheme_id_uri: "urn:scte:scte35:2013:bin".to_string(),
+                    value: Some("cue".to_string()),
+                }],
+                trick_mode: Some(trick.clone()),
+                ..DashPackager::default()
+            },
+        ),
+        (
+            "live",
+            media(),
+            DashPackager {
+                dynamic: true,
+                publish_time: Some("2026-01-01T00:00:01Z".into()),
+                suggested_presentation_delay: Some("PT4S".into()),
+                ..DashPackager::default()
+            },
+        ),
+        ("languages", bilingual_media(), DashPackager::default()),
+        ("sar-par", squashed_media(), DashPackager::default()),
+        (
+            "cbcs",
+            encrypted_media(CencScheme::Cbcs, kid),
+            DashPackager::default(),
+        ),
+        ("stpp", av_subtitle_media(), DashPackager::default()),
+        ("wvtt", wvtt_media(), DashPackager::default()),
+    ];
+    for (name, source, mut pkg) in variants {
+        let mpd = pkg
+            .package(&source)
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        check(&format!("golden/dash/dash-cover-{name}.mpd"), &mpd);
+    }
+}
+
+#[test]
 fn ll_dash_mpd_variants_match_golden() {
     let media = media();
     let plain = crate::ll_packager::ll_packager(2.0, 0.5, 3000);
@@ -165,6 +353,32 @@ fn smooth_manifest_matches_golden() {
 }
 
 #[test]
+fn smooth_manifest_element_coverage_matches_golden() {
+    let mut two_audio = media();
+    let source = two_audio
+        .tracks
+        .iter()
+        .find(|t| media_kind_of(t) == MediaKind::Audio)
+        .expect("fixture has an audio track")
+        .clone();
+    let mut second = source;
+    second.spec.track_id = TrackId::new(92);
+    two_audio.tracks.push(second);
+    let variants: Vec<(&str, Media)> = vec![
+        ("stpp", av_subtitle_media()),
+        ("wvtt", wvtt_media()),
+        ("two-audio", two_audio),
+    ];
+    for (name, media) in variants {
+        let out = SmoothPackager::default().package(&media).expect(name);
+        check(
+            &format!("golden/smooth/smooth-cover-{name}.xml"),
+            &out.manifest,
+        );
+    }
+}
+
+#[test]
 fn playready_wrmheader_matches_golden() {
     let kid_a = [0x11u8; 16];
     let kid_b: [u8; 16] = core::array::from_fn(|i| i as u8);
@@ -180,4 +394,272 @@ fn playready_wrmheader_matches_golden() {
         "golden/smooth/wrm-specials.xml",
         &playready_wrmheader(&[kid_a], Some("a&b<c>d\"e'f")),
     );
+}
+
+/// Every XML element name and attribute name the DASH/LL-DASH MPD writer
+/// (`transmux/src/dash.rs`, `transmux/src/ll_dash/mpd.rs`) or the Smooth
+/// manifest writer (`transmux/src/smooth.rs::render_manifest`) can emit. Pinned
+/// so a name no golden exercises cannot slip in unnoticed.
+const WRITER_ELEMENT_NAMES: &[&str] = &[
+    "MPD",
+    "Period",
+    "AdaptationSet",
+    "ContentProtection",
+    "cenc:pssh",
+    "InbandEventStream",
+    "SupplementalProperty",
+    "Role",
+    "Representation",
+    "AudioChannelConfiguration",
+    "SegmentTemplate",
+    "SegmentTimeline",
+    "S",
+    "ServiceDescription",
+    "Latency",
+    "PlaybackRate",
+    "UTCTiming",
+    "SmoothStreamingMedia",
+    "StreamIndex",
+    "QualityLevel",
+    "c",
+    "WRMHEADER",
+    "DATA",
+    "PROTECTINFO",
+    "KIDS",
+    "KID",
+    "LA_URL",
+];
+
+const WRITER_ATTRIBUTE_NAMES: &[&str] = &[
+    "xmlns",
+    "xmlns:cenc",
+    "profiles",
+    "type",
+    "minBufferTime",
+    "mediaPresentationDuration",
+    "availabilityStartTime",
+    "publishTime",
+    "minimumUpdatePeriod",
+    "timeShiftBufferDepth",
+    "suggestedPresentationDelay",
+    "id",
+    "start",
+    "contentType",
+    "mimeType",
+    "segmentAlignment",
+    "startWithSAP",
+    "lang",
+    "par",
+    "maxPlayoutRate",
+    "codingDependency",
+    "schemeIdUri",
+    "value",
+    "cenc:default_KID",
+    "codecs",
+    "bandwidth",
+    "width",
+    "height",
+    "frameRate",
+    "sar",
+    "audioSamplingRate",
+    "timescale",
+    "duration",
+    "startNumber",
+    "initialization",
+    "media",
+    "t",
+    "d",
+    "r",
+    "availabilityTimeOffset",
+    "availabilityTimeComplete",
+    "target",
+    "min",
+    "max",
+    "MajorVersion",
+    "MinorVersion",
+    "Duration",
+    "TimeScale",
+    "Type",
+    "Name",
+    "Subtype",
+    "Chunks",
+    "QualityLevels",
+    "Url",
+    "Index",
+    "Bitrate",
+    "FourCC",
+    "MaxWidth",
+    "MaxHeight",
+    "CodecPrivateData",
+    "SamplingRate",
+    "Channels",
+    "BitsPerSample",
+    "AudioTag",
+    "n",
+    "version",
+    "ALGID",
+    "VALUE",
+];
+
+/// Names the writers can emit from some public-API configuration, paired with
+/// a spec clause: the "Spec:" line of the coverage test asserts the clause is
+/// cited in the writer's own source, and the "Golden:" line asserts a golden
+/// file carries the name — one element/attribute name.
+const WRITER_NAME_EVIDENCE: &[&str] = &[
+    "Element MPD: Spec: §5.3.1.2 Golden: golden/dash/dash-default.mpd",
+    "Element Period: Spec: §5.3.1 Golden: golden/dash/dash-default.mpd",
+    "Element AdaptationSet: Spec: §5.3.3 Golden: golden/dash/dash-default.mpd",
+    "Element ContentProtection: Spec: §5.8.4.1 Golden: golden/dash/dash-protected.mpd",
+    "Element cenc:pssh: Spec: §12.1 Golden: golden/dash/dash-protected.mpd",
+    "Element InbandEventStream: Spec: §5.3.3 Golden: golden/dash/dash-protected.mpd",
+    "Element SupplementalProperty: Spec: §5.8.5.8 Golden: golden/dash/dash-trick.mpd",
+    "Element Role: Spec: §5.8.5.5 Golden: golden/dash/dash-default.mpd",
+    "Element Representation: Spec: §5.3.5 Golden: golden/dash/dash-default.mpd",
+    "Element AudioChannelConfiguration: Spec: 23003 Golden: golden/dash/dash-default.mpd",
+    "Element SegmentTemplate: Spec: §5.3.9.4.4 Golden: golden/dash/dash-default.mpd",
+    "Element SegmentTimeline: Spec: §5.3.9.6 Golden: golden/dash/dash-timeline.mpd",
+    "Element S: Spec: §5.3.9.6 Golden: golden/dash/dash-timeline.mpd",
+    "Element ServiceDescription: Spec: §5.13.2 Golden: golden/dash/lldash-plain.mpd",
+    "Element Latency: Spec: §5.13.2 Golden: golden/dash/lldash-plain.mpd",
+    "Element PlaybackRate: Spec: PlaybackRate Golden: golden/dash/lldash-rate.mpd",
+    "Element UTCTiming: Spec: §5.8.4.11 Golden: golden/dash/lldash-utc.mpd",
+    "Element SmoothStreamingMedia: Spec: §2.2.2 Golden: golden/smooth/smooth.manifest.xml",
+    "Element StreamIndex: Spec: §2.2.2.3 Golden: golden/smooth/smooth.manifest.xml",
+    "Element QualityLevel: Spec: §2.2.2.5 Golden: golden/smooth/smooth.manifest.xml",
+    "Element c: Spec: §2.2.2.6 Golden: golden/smooth/smooth.manifest.xml",
+    "Element WRMHEADER: Spec: §3.2 Golden: golden/smooth/wrm-two-kids.xml",
+    "Element DATA: Spec: §3.2 Golden: golden/smooth/wrm-two-kids.xml",
+    "Element PROTECTINFO: Spec: §3.2 Golden: golden/smooth/wrm-two-kids.xml",
+    "Element KIDS: Spec: §3.2 Golden: golden/smooth/wrm-two-kids.xml",
+    "Element KID: Spec: §3.2 Golden: golden/smooth/wrm-two-kids.xml",
+    "Element LA_URL: Spec: §3.2 Golden: golden/smooth/wrm-two-kids.xml",
+    "Attribute xmlns: Spec: §5.3.1.2 Golden: golden/dash/dash-default.mpd",
+    "Attribute xmlns:cenc: Spec: 23001-7 Golden: golden/dash/dash-protected.mpd",
+    "Attribute profiles: Spec: §5.3.1.2 Golden: golden/dash/dash-default.mpd",
+    "Attribute type: Spec: §5.3.1.2 Golden: golden/dash/dash-dynamic.mpd",
+    "Attribute minBufferTime: Spec: §5.3.1.2 Golden: golden/dash/dash-default.mpd",
+    "Attribute mediaPresentationDuration: Spec: §5.3.1.2 Golden: golden/dash/dash-default.mpd",
+    "Attribute availabilityStartTime: Spec: §5.3.1.2 Golden: golden/dash/dash-dynamic.mpd",
+    "Attribute publishTime: Spec: §5.3.1.2 Golden: golden/dash/dash-dynamic.mpd",
+    "Attribute minimumUpdatePeriod: Spec: §5.3.1.2 Golden: golden/dash/dash-dynamic.mpd",
+    "Attribute timeShiftBufferDepth: Spec: §5.3.1.2 Golden: golden/dash/dash-dynamic.mpd",
+    "Attribute suggestedPresentationDelay: Spec: §5.3.1.2 Golden: golden/dash/dash-dynamic.mpd",
+    "Attribute id: Spec: §5.3.3 Golden: golden/dash/dash-default.mpd",
+    "Attribute start: Spec: §5.3.1 Golden: golden/dash/dash-default.mpd",
+    "Attribute contentType: Spec: §5.3.3 Golden: golden/dash/dash-default.mpd",
+    "Attribute mimeType: Spec: §5.3.3 Golden: golden/dash/dash-default.mpd",
+    "Attribute segmentAlignment: Spec: §5.3.3 Golden: golden/dash/dash-default.mpd",
+    "Attribute startWithSAP: Spec: §5.3.3 Golden: golden/dash/dash-default.mpd",
+    "Attribute lang: Spec: §5.3.3.2 Golden: golden/dash/dash-cover-languages.mpd",
+    "Attribute par: Spec: §4.4 Golden: golden/dash/dash-default.mpd",
+    "Attribute maxPlayoutRate: Spec: §5.8.5.8 Golden: golden/dash/dash-trick.mpd",
+    "Attribute codingDependency: Spec: §5.8.5.8 Golden: golden/dash/dash-trick.mpd",
+    "Attribute schemeIdUri: Spec: §5.8.4.1 Golden: golden/dash/dash-protected.mpd",
+    "Attribute value: Spec: §5.8.4.1 Golden: golden/dash/dash-protected.mpd",
+    "Attribute cenc:default_KID: Spec: 23001-7 Golden: golden/dash/dash-protected.mpd",
+    "Attribute codecs: Spec: §5.3.5 Golden: golden/dash/dash-default.mpd",
+    "Attribute bandwidth: Spec: §5.3.5 Golden: golden/dash/dash-default.mpd",
+    "Attribute width: Spec: §5.3.5 Golden: golden/dash/dash-default.mpd",
+    "Attribute height: Spec: §5.3.5 Golden: golden/dash/dash-default.mpd",
+    "Attribute frameRate: Spec: §5.3.5 Golden: golden/dash/dash-default.mpd",
+    "Attribute sar: Spec: §4.4 Golden: golden/dash/dash-default.mpd",
+    "Attribute audioSamplingRate: Spec: §5.3.5 Golden: golden/dash/dash-default.mpd",
+    "Attribute timescale: Spec: §5.3.9.4.4 Golden: golden/dash/dash-default.mpd",
+    "Attribute duration: Spec: §5.3.9.4.4 Golden: golden/dash/dash-default.mpd",
+    "Attribute startNumber: Spec: §5.3.9.4.4 Golden: golden/dash/dash-default.mpd",
+    "Attribute initialization: Spec: §5.3.9.4.4 Golden: golden/dash/dash-default.mpd",
+    "Attribute media: Spec: §5.3.9.4.4 Golden: golden/dash/dash-default.mpd",
+    "Attribute t: Spec: §5.3.9.6 Golden: golden/dash/dash-timeline.mpd",
+    "Attribute d: Spec: §5.3.9.6 Golden: golden/dash/dash-timeline.mpd",
+    "Attribute r: Spec: §5.3.9.6 Golden: golden/dash/dash-timeline.mpd",
+    "Attribute availabilityTimeOffset: Spec: §5.3.9.5.3 Golden: golden/dash/lldash-plain.mpd",
+    "Attribute availabilityTimeComplete: Spec: §5.3.9.5.3 Golden: golden/dash/lldash-plain.mpd",
+    "Attribute target: Spec: §5.13.2 Golden: golden/dash/lldash-plain.mpd",
+    "Attribute min: Spec: PlaybackRate Golden: golden/dash/lldash-rate.mpd",
+    "Attribute max: Spec: PlaybackRate Golden: golden/dash/lldash-rate.mpd",
+    "Attribute MajorVersion: Spec: §2.2.2 Golden: golden/smooth/smooth.manifest.xml",
+    "Attribute MinorVersion: Spec: §2.2.2 Golden: golden/smooth/smooth.manifest.xml",
+    "Attribute Duration: Spec: §2.2.2 Golden: golden/smooth/smooth.manifest.xml",
+    "Attribute TimeScale: Spec: §2.2.2 Golden: golden/smooth/smooth.manifest.xml",
+    "Attribute Type: Spec: §2.2.2.3 Golden: golden/smooth/smooth.manifest.xml",
+    "Attribute Name: Spec: §2.2.2.3 Golden: golden/smooth/smooth-cover-two-audio.xml",
+    "Attribute Subtype: Spec: §2.2.2.3 Golden: golden/smooth/smooth.manifest.xml",
+    "Attribute Chunks: Spec: §2.2.2.3 Golden: golden/smooth/smooth.manifest.xml",
+    "Attribute QualityLevels: Spec: §2.2.2.3 Golden: golden/smooth/smooth.manifest.xml",
+    "Attribute Url: Spec: §2.2.2.3 Golden: golden/smooth/smooth.manifest.xml",
+    "Attribute Index: Spec: §2.2.2.5 Golden: golden/smooth/smooth.manifest.xml",
+    "Attribute Bitrate: Spec: §2.2.2.5 Golden: golden/smooth/smooth.manifest.xml",
+    "Attribute FourCC: Spec: §2.2.2.5 Golden: golden/smooth/smooth.manifest.xml",
+    "Attribute MaxWidth: Spec: §2.2.2.5 Golden: golden/smooth/smooth.manifest.xml",
+    "Attribute MaxHeight: Spec: §2.2.2.5 Golden: golden/smooth/smooth.manifest.xml",
+    "Attribute CodecPrivateData: Spec: §2.2.2.5 Golden: golden/smooth/smooth.manifest.xml",
+    "Attribute SamplingRate: Spec: §2.2.2.5 Golden: golden/smooth/smooth.manifest.xml",
+    "Attribute Channels: Spec: §2.2.2.5 Golden: golden/smooth/smooth.manifest.xml",
+    "Attribute BitsPerSample: Spec: §2.2.2.5 Golden: golden/smooth/smooth.manifest.xml",
+    "Attribute AudioTag: Spec: §2.2.2.5 Golden: golden/smooth/smooth.manifest.xml",
+    "Attribute n: Spec: §2.2.2.6 Golden: golden/smooth/smooth.manifest.xml",
+    "Attribute version: Spec: §3.2 Golden: golden/smooth/wrm-two-kids.xml",
+    "Attribute ALGID: Spec: §3.2 Golden: golden/smooth/wrm-two-kids.xml",
+    "Attribute VALUE: Spec: §3.2 Golden: golden/smooth/wrm-two-kids.xml",
+];
+
+#[test]
+fn writer_goldens_cover_every_emitted_name() {
+    let mut evidence: Vec<(bool, &str, &str, &str)> = Vec::new();
+    for entry in WRITER_NAME_EVIDENCE {
+        fn part<'a>(entry: &str, (text, rest): &(&'a str, &'a str)) -> (&'a str, &'a str) {
+            text.split_once(rest)
+                .unwrap_or_else(|| panic!("malformed evidence entry: {entry}"))
+        }
+        let (tag, rest) = part(entry, &(entry, " "));
+        let (name, spec_and_golden) = part(entry, &(rest, ": "));
+        let (spec, golden) = part(entry, &(spec_and_golden, " Golden: "));
+        let spec = part(entry, &(spec, "Spec: ")).1;
+        evidence.push((tag == "Element", name, spec, golden));
+    }
+    for (is_element, name, _, _) in &evidence {
+        let list = if *is_element {
+            WRITER_ELEMENT_NAMES
+        } else {
+            WRITER_ATTRIBUTE_NAMES
+        };
+        assert!(
+            list.contains(name),
+            "{name} is pinned twice or missing from the name list"
+        );
+    }
+    for name in WRITER_ELEMENT_NAMES.iter().chain(WRITER_ATTRIBUTE_NAMES) {
+        assert!(
+            evidence.iter().any(|(_, n, _, _)| n == name),
+            "{name} has no evidence entry"
+        );
+    }
+
+    let source = writer_source();
+    for (is_element, name, spec, golden) in &evidence {
+        assert!(
+            source.contains(spec),
+            "{name}: spec citation {spec:?} is not in the writer source"
+        );
+        let golden = test_fixtures::read_to_string(golden);
+        let emitted = format!("{}{name}", if *is_element { "<" } else { " " });
+        assert!(golden.contains(&emitted), "{name} is not in {golden:?}");
+    }
+}
+
+fn writer_source() -> String {
+    let mut source = String::new();
+    for path in &[
+        "dash.rs",
+        "ll_dash.rs",
+        "ll_dash/mpd.rs",
+        "smooth.rs",
+        "drm.rs",
+    ] {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join(path);
+        let text =
+            fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        source.push_str(&workspace_guards::scan::non_test_source(&text));
+    }
+    source
 }
