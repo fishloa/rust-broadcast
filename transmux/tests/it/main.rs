@@ -178,6 +178,10 @@ mod subtitle_real_producers;
 mod subtitle_remux;
 mod sweep_output_golden;
 #[cfg(feature = "std")]
+#[cfg(feature = "std")]
+mod timed_metadata_sei_caption_fixture;
+#[cfg(feature = "std")]
+mod timed_metadata_teletext_tsduck_oracle;
 mod timeline_oracle;
 mod timing;
 mod timing_groups;

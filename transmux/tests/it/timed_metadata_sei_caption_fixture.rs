@@ -34,13 +34,9 @@
 //!   `ffmpeg -f lavfi -i "movie=<slice>[out+subcc]" -c:s srt` (ffmpeg's own
 //!   EIA-608 decoder, `cc_dec`) against the exact same slice — an external
 //!   oracle, not a value invented for this test.
-#![cfg(feature = "cc-data")]
-
 use broadcast_common::{Parse, Unpackage};
 use cc_data::CcData;
 use cc_data::decode::Cea608Channel;
-use std::fs;
-use std::path::PathBuf;
 use timed_metadata::event::MediaTime;
 use timed_metadata::webvtt::{Cea608CueExtractor, write_document};
 use transmux::{CodecConfig, NalCodec, TsDemux, caption_cc_data};
@@ -115,13 +111,8 @@ fn assert_valid_webvtt(doc: &str) {
 // Synthetic fixture: SEI-wrap the SAME frames #568 feeds as raw PES cc_data()
 // ---------------------------------------------------------------------------
 
-fn synthetic_fixture_path() -> PathBuf {
-    test_fixtures::path("captions/cea608-cc1-synthetic.txt")
-}
-
 fn load_synthetic_frames() -> Vec<(u64, Vec<u8>)> {
-    let text = fs::read_to_string(synthetic_fixture_path())
-        .expect("read cea608-cc1-synthetic.txt fixture (shared with issue #568)");
+    let text = test_fixtures::read_to_string("captions/cea608-cc1-synthetic.txt");
     let mut frames = Vec::new();
     for line in text.lines() {
         let line = line.trim();
@@ -265,7 +256,7 @@ fn extract_sei_frames_from_ts(data: &[u8]) -> Vec<(u64, Vec<u8>)> {
 fn real_capture_sei_captions_match_ffmpeg_oracle() {
     let Some(data) = test_fixtures::require_bytes(
         &format!("ts/{REAL_CAPTURE}.ts"),
-        "webvtt_sei_caption_fixture",
+        "timed_metadata_sei_caption_fixture",
     ) else {
         return;
     };
