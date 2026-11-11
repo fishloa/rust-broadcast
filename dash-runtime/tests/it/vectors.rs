@@ -7,7 +7,8 @@ use dash_runtime::address::template::{
     TemplateFault, TemplateUse, scan, scan_initialization, scan_media, substitute,
 };
 use dash_runtime::address::timeline::TimelineIndex;
-use dash_runtime::address::{AddressError, PlanOptions, plan_representation};
+use dash_runtime::address::{AddressError, PlanError, PlanOptions, plan_representation};
+use dash_runtime::mpd::inherit::InheritError;
 use dash_runtime::mpd::urls::{
     append_query, base_candidates, representation_candidates, segment_url_query,
 };
@@ -496,7 +497,8 @@ fn inheritance_lower_level_wins_attribute_by_attribute() {
     assert_eq!(b.plan.get(0).unwrap().unwrap().reference, "b-9.m4s");
     assert_eq!(a.plan.len(), Some(3));
     assert_eq!(a.plan.timescale(), 1000);
-    // A level that introduces a timeline does not inherit @duration.
+    // A level that introduces a timeline does not inherit @duration, and a
+    // child timeline under an inherited @duration is the same conflict.
     let m = mpd(
         r#"type="static" mediaPresentationDuration="PT6S""#,
         r#"<Period><SegmentTemplate timescale="1" duration="2" media="$Number$.m4s"/>
@@ -504,9 +506,10 @@ fn inheritance_lower_level_wins_attribute_by_attribute() {
            <SegmentTemplate><SegmentTimeline><S t="0" d="3" r="1"/></SegmentTimeline></SegmentTemplate>
            </Representation></AdaptationSet></Period>"#,
     );
-    let p = plan_representation(&m, RepRef::at(0, 0, 0), &PlanOptions::default()).unwrap();
-    assert_eq!(p.plan.len(), Some(2));
-    assert_eq!(p.plan.get(1).unwrap().unwrap().start_us, 3 * S);
+    assert_eq!(
+        plan_representation(&m, RepRef::at(0, 0, 0), &PlanOptions::default()).unwrap_err(),
+        PlanError::Inherit(InheritError::DurationAndTimeline)
+    );
     // A SegmentList below a SegmentTemplate is a violation.
     let m = mpd(
         r#"type="static" mediaPresentationDuration="PT6S""#,
