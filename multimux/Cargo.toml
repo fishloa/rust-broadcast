@@ -59,6 +59,10 @@ dash-runtime      = { path = "../dash-runtime", version = "0.4.0" }
 # TS-over-HTTP pull policy core (`source::ts_http`): finite/VOD detection and
 # the post-establishment stall decision; the demuxer stays `ts_program`.
 broadcast-client  = { path = "../broadcast-client", version = "0.5.0" }
+# The workspace's single UDP bind (`dvb_stream::udp::bind_standard`): the
+# `SO_REUSEADDR`/`SO_REUSEPORT`/`SO_RCVBUF`/multicast-join option list lives
+# there, not in each UDP-family ingest source.
+dvb-stream        = { path = "../dvb-stream",     version = "0.8.1", features = ["udp"] }
 # Needed directly (not just via hls-runtime/transmux) by `source::hls_pull`
 # to recover `TrackSpec`s from a pulled stream's init segment via
 # `Fmp4Demux::unpackage` (the `Unpackage` trait) — issue #663 P3c.
@@ -139,12 +143,6 @@ backon            = { version = "1.6", default-features = false }
 # Locks without poisoning (SP6.6): a panicking holder's guard drops and the
 # next acquire succeeds.
 parking_lot       = "0.13"
-# UDP binds with real `SO_RCVBUF`/`SO_REUSEADDR`/multicast-interface options
-# (SP1.6) rather than `tokio::net::UdpSocket::bind`'s fixed defaults.
-# `all` is socket2's non-default feature that gates `set_reuse_port` (SP1.6
-# I-C); tokio already enables it transitively, but declaring it here makes the
-# `SO_REUSEPORT` path explicit and cfg-visible.
-socket2           = { workspace = true, features = ["all"] }
 metrics           = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
 tokio-rustls      = { version = "0.26", optional = true }
@@ -170,13 +168,14 @@ futures-util      = { workspace = true, features = ["std"] }
 # only `multimux`'s `whip`/`whep` features below turn that on. See this
 # crate's `rust-version` note on those features for why the split matters.
 webrtc-runtime    = { path = "../webrtc-runtime", version = "0.7.0", optional = true, default-features = false }
-# WHEP output (`output::whep`, issue #743) only: builds the typed
-# `rtp_packet::RtpPacket` values `webrtc_runtime::media::MediaTransport::
-# encrypt_rtp` requires — see that method's own signature. Unlike
-# `webrtc-runtime`, this crate has no `rtc-dtls` transitive dependency; it
-# is kept behind the `whep` feature (rather than unconditional) purely so it
-# is never pulled in by a build that never touches WHEP.
-rtp-packet        = { path = "../rtp-packet", version = "0.6.0", optional = true, default-features = false }
+# RFC 3550 §5.1 RTP header, in two places: WHEP output (`output::whep`,
+# issue #743) builds the typed `rtp_packet::RtpPacket` values
+# `webrtc_runtime::media::MediaTransport::encrypt_rtp` requires, and the raw
+# RTP-over-UDP source (`source::rtp_udp`) reads the payload type through
+# `RtpPacket` rather than masking header byte 1. The source one is not
+# feature-gated, so this dependency is unconditional; it is a small,
+# `no_std`-capable crate with no `rtc-dtls` tree behind it.
+rtp-packet        = { path = "../rtp-packet", version = "0.6.0", default-features = false }
 # DVB SI EIT present/following (issue #903, `dvr`): `dvb_si::demux::SiDemux`
 # reassembles EIT p/f sections from raw TS packets so `DvrRecorder` can roll
 # the archive period on the programme boundary rather than only on the
@@ -245,7 +244,7 @@ test-hooks  = ["test-seams", "dep:webrtc-runtime", "webrtc-runtime/test-seams"]
 # pattern elsewhere (`InputSpec::Whip` vs. a hypothetical output-side
 # equivalent). Both enable `webrtc-runtime/media`, so both pull the same
 # ICE/DTLS-SRTP dependency tree described on `whip` above.
-whep        = ["dep:webrtc-runtime", "webrtc-runtime/media", "dep:rtp-packet"]
+whep        = ["dep:webrtc-runtime", "webrtc-runtime/media"]
 
 [[example]]
 name = "serve_rtsp"
@@ -311,11 +310,12 @@ dvb-conformance  = { path = "../dvb-conformance", version = "13.1.0", default-fe
 # feature). This is the standard self-dev-dependency pattern (Cargo allows a
 # crate to dev-depend on itself); it adds no new package to the lock.
 multimux         = { path = ".", features = ["test-seams"] }
-# `socket2::Socket::get_recv_buffer_size` so `multimux/tests/it/udp_bind.rs` can prove the
-# requested `SO_RCVBUF` was APPLIED (the library binds through `socket2`
-# internally but does not re-export it). Already a transitive dependency at
-# the same version, so this adds no new lock entry.
-socket2          = { workspace = true }
+# `socket2` sockets in the test hosts (`SockRef::recv_buffer_size` so
+# `udp_bind.rs` can prove the requested `SO_RCVBUF` was APPLIED, `SockRef` for
+# the rtmp read-failure harness, `Socket::new` for the RTSP push bounds).
+# The library's own UDP bind lives in `dvb_stream::udp::bind_standard`. Needs
+# `all` for the option getters/setters (`set_reuse_port` is non-default).
+socket2          = { workspace = true, features = ["all"] }
 # `ProgramId` for the SPTS program in `multimux/tests/it/origin_gzip.rs` (already a
 # dependency of the library, so no new lock entry).
 media-plane         = { path = "../media-plane", version = "0.11.0", default-features = false, features = ["std"] }

@@ -879,6 +879,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "dvb-stream"
+version = "0.8.1"
+dependencies = [
+ "broadcast-common",
+ "bytes",
+ "dvb-si",
+ "dvb-t2mi",
+ "futures-core",
+ "mpeg-ts",
+ "rtp-packet",
+ "socket2",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "dvb-t2mi"
 version = "13.1.0"
 dependencies = [
@@ -2000,6 +2017,7 @@ dependencies = [
  "container-probe",
  "dash-runtime",
  "dvb-si",
+ "dvb-stream",
  "futures-util",
  "getrandom 0.4.3",
  "headers",
@@ -2017,12 +2035,12 @@ dependencies = [
  "quick-xml",
  "reqwest",
  "rtmp-runtime",
+ "rtp-packet",
  "rtsp-runtime",
  "rustls",
  "sdp-types",
  "serde",
  "serde_json",
- "socket2",
  "srt-runtime",
  "thiserror",
  "timed-metadata",

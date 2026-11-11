@@ -79,6 +79,7 @@ use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use broadcast_common::clock33::PTS_HZ;
 use broadcast_common::timescale::{Rounding, rescale_u64};
 use transmux::TrackId;
 
@@ -1625,7 +1626,7 @@ impl ProgramSegmenter {
         // offset — no per-segment rounding accumulation (issue #1083, E).
         if let Some(anchor) = self.anchor {
             let delta_ns = self.next_timeline_ns.saturating_sub(anchor.timeline_ns);
-            let delta_90k = delta_ns.saturating_mul(timed_metadata::PTS_HZ) / NANOS_PER_SEC;
+            let delta_90k = rescale_u64(delta_ns, NANOS_PER_SEC, PTS_HZ, Rounding::Floor);
             let start_90k = anchor.source_90k.saturating_add(delta_90k);
             self.segment_writer
                 .note_segment_start(segment.segment_seq, timed_metadata::MediaTime(start_90k));
@@ -1744,7 +1745,7 @@ fn rescale_to_90k(pts: i64, timescale: u32) -> u64 {
     rescale_u64(
         u64::try_from(pts).unwrap_or(0),
         timescale,
-        timed_metadata::PTS_HZ,
+        PTS_HZ,
         Rounding::Floor,
     )
 }
@@ -2568,38 +2569,34 @@ mod tests {
             .find(|l| !l.starts_with('#') && l.ends_with(".ts"))
     }
 
-    /// Count PMT sections (`table_id == 0x02`, ISO/IEC 13818-1 Table 2-31) in
-    /// one whole-packet MPEG-2 TS byte buffer — a genuine parse of the wire
-    /// bytes (per-PID PSI section reassembly via `mpeg_ts::ts::SectionReassembler`,
-    /// same machinery `dvb-si`'s own `ts` feature is built on), not an
-    /// assumption about which PID `transmux::ts_mux` happens to place the PMT
-    /// on (issue #887's MPTS test needs this to actually *prove* RFC
-    /// 8216bis §3.1.1's "a Transport Stream Segment MUST contain a single
-    /// MPEG-2 Program" constraint, not merely trust `ts_mux`'s own
-    /// single-PMT-by-construction doc).
+    /// How many times [`count_pmt_sections`] reads its buffer: a second pass
+    /// lets a PMT that precedes its PAT be seen.
+    const PMT_SECTION_SCAN_PASSES: usize = 2;
+
+    /// Count PMT sections (ISO/IEC 13818-1 Table 2-31) in one whole-packet
+    /// MPEG-2 TS byte buffer through `dvb_si::demux::SiDemux` — the same
+    /// section reassembly `dvb-si`'s `ts` feature is built on, so the count is
+    /// a genuine parse of the wire bytes, not an assumption about which PID
+    /// `transmux::ts_mux` happens to place the PMT on (issue #887's MPTS test
+    /// needs this to actually *prove* RFC 8216bis §3.1.1's "a Transport
+    /// Stream Segment MUST contain a single MPEG-2 Program" constraint, not
+    /// merely trust `ts_mux`'s own single-PMT-by-construction doc).
+    ///
+    /// The demux only watches the PMT PIDs each served PAT names
+    /// (`follow_pat`), so a PMT is counted once its PAT names it — fully
+    /// reading a one-pass buffer a second time (`PMT_SECTION_SCAN_PASSES`)
+    /// lets a PMT that precedes its PAT, a legal but unusual order, be seen
+    /// too; the same-version PAT is gated on the repeat, so no PMT is counted
+    /// twice.
     fn count_pmt_sections(ts_bytes: &[u8]) -> usize {
-        use broadcast_common::Parse;
-        use mpeg_ts::section::Section;
-        use mpeg_ts::ts::{SectionReassembler, TsPacket};
-
-        use mpeg_ts::ts::TS_PACKET_SIZE;
-        const PMT_TABLE_ID: u8 = 0x02;
-
-        let mut reassemblers: HashMap<mpeg_ts::pid::Pid, SectionReassembler> = HashMap::new();
+        let mut demux = SiDemux::builder().build();
         let mut pmt_count = 0usize;
-        for chunk in ts_bytes.chunks_exact(TS_PACKET_SIZE) {
-            let packet = TsPacket::parse(chunk).expect("a muxed TS segment is well-formed packets");
-            let Some(payload) = packet.payload else {
-                continue;
-            };
-            let reassembler = reassemblers.entry(packet.header.pid).or_default();
-            reassembler.feed(payload, packet.header.pusi);
-            while let Some(section_bytes) = reassembler.pop_section() {
-                if let Ok(section) = Section::parse(section_bytes.as_ref())
-                    && section.table_id == PMT_TABLE_ID
-                {
-                    pmt_count += 1;
-                }
+        for _ in 0..PMT_SECTION_SCAN_PASSES {
+            for packet in ts_bytes.chunks_exact(mpeg_ts::ts::TS_PACKET_SIZE) {
+                pmt_count += demux
+                    .feed(packet)
+                    .filter(|event| event.table_id() == dvb_si::TableId::Pmt as u8)
+                    .count();
             }
         }
         pmt_count
@@ -2719,58 +2716,48 @@ mod tests {
 
     // --- ISOBMFF box parser (issue #781: assert track 9 in output) ---
 
-    type BoxPayload<'a> = &'a [u8];
+    use dvb_si::demux::SiDemux;
+    use transmux::TrackFragmentHeaderBox;
+    use transmux::box_types;
 
-    fn box_iter(buf: &[u8]) -> impl Iterator<Item = (u32, BoxPayload<'_>)> {
-        BoxIter { buf }
-    }
+    /// Box types the segment assertions walk and recognise (four-character
+    /// codes, ISO/IEC 14496-12:2026 §4.2; `styp` names a CMAF segment type
+    /// per ISO/IEC 23000-19 §7.1).
+    const MOOF: [u8; 4] = *b"moof";
+    const TRAF: [u8; 4] = *b"traf";
+    const TFHD: [u8; 4] = *b"tfhd";
+    const STYP: [u8; 4] = transmux::segments::STYP;
+    const STYP_BYTES: &[u8] = &STYP;
+    const MOOF_BYTES: &[u8] = &MOOF;
 
-    struct BoxIter<'a> {
-        buf: &'a [u8],
-    }
-
-    impl<'a> Iterator for BoxIter<'a> {
-        type Item = (u32, BoxPayload<'a>);
-
-        fn next(&mut self) -> Option<Self::Item> {
-            if self.buf.len() < 8 {
-                return None;
-            }
-            let size =
-                u32::from_be_bytes([self.buf[0], self.buf[1], self.buf[2], self.buf[3]]) as usize;
-            if size < 8 || size > self.buf.len() {
-                return None;
-            }
-            let fourcc = u32::from_be_bytes([self.buf[4], self.buf[5], self.buf[6], self.buf[7]]);
-            let payload = &self.buf[8..size];
-            self.buf = &self.buf[size..];
-            Some((fourcc, payload))
-        }
-    }
-
-    /// Collect every `track_ID` from `tfhd` boxes in a CMAF segment
-    /// (walks `moof` → `traf` → `tfhd`, ISO/IEC 14496-12:2026 §8.8.7).
+    /// Collect every `track_ID` from `tfhd` boxes in a CMAF segment: walk
+    /// `moof` → `traf`, then let `transmux`'s typed parser read each `tfhd`
+    /// body (ISO/IEC 14496-12:2026 §8.8.7).
     fn tfhd_track_ids(segment_bytes: &[u8]) -> Vec<u32> {
         let mut ids = Vec::new();
-        for (fourcc, moof) in box_iter(segment_bytes) {
-            if fourcc != u32::from_be_bytes(*b"moof") {
-                continue;
-            }
-            for (traf_cc, traf) in box_iter(moof) {
-                if traf_cc != u32::from_be_bytes(*b"traf") {
-                    continue;
-                }
-                for (tfhd_cc, tfhd) in box_iter(traf) {
-                    if tfhd_cc != u32::from_be_bytes(*b"tfhd") {
-                        continue;
-                    }
-                    if tfhd.len() >= 8 {
-                        ids.push(u32::from_be_bytes([tfhd[4], tfhd[5], tfhd[6], tfhd[7]]));
+        for moof in top_level_boxes(segment_bytes, MOOF) {
+            for traf in top_level_boxes(moof.body, TRAF) {
+                for tfhd in top_level_boxes(traf.body, TFHD) {
+                    if let Ok(header) = TrackFragmentHeaderBox::parse_body(tfhd.body) {
+                        ids.push(header.track_id.value());
                     }
                 }
             }
         }
         ids
+    }
+
+    /// The top-level boxes of `data` whose type is `box_type`; a malformed or
+    /// truncated box ends the walk.
+    fn top_level_boxes<'a>(
+        data: &'a [u8],
+        box_type: [u8; 4],
+    ) -> impl Iterator<Item = box_types::BoxRef<'a>> {
+        box_types::box_iter(data)
+            .map_while(Result::ok)
+            .filter_map(move |(b, _consumed)| {
+                (b.header.box_type == box_types::BoxType(box_type)).then_some(b)
+            })
     }
 
     /// Collect segment sequence numbers from an LL-HLS playlist
@@ -3506,12 +3493,13 @@ mod tests {
         while let Some(item) = cursor.poll() {
             if let media_plane::trunk::SegmentCursorItem::Segment(entry) = item {
                 assert_ne!(
-                    entry.bytes[0], 0x47,
+                    entry.bytes[0],
+                    mpeg_ts::ts::TS_SYNC_BYTE,
                     "segment {} is MPEG-TS bytes on an fMP4 route",
                     entry.sequence_number
                 );
                 assert!(
-                    matches!(&entry.bytes[4..8], b"styp" | b"moof"),
+                    matches!(&entry.bytes[4..8], STYP_BYTES | MOOF_BYTES),
                     "segment {} does not start with an fMP4 box: {:02x?}",
                     entry.sequence_number,
                     &entry.bytes[..8]

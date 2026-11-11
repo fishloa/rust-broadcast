@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 ### Changed
+- The UDP-family ingest sources bind through `dvb_stream::udp::bind_standard`, the workspace's one UDP bind, instead of a crate-local `socket2` setup: same options (`SO_REUSEADDR`, `SO_REUSEPORT` where it exists, `SO_RCVBUF` with the 4 MiB default, the IPv4/IPv6 multicast join), and a refused `SO_RCVBUF` is still logged and the bind carried on.
+- The raw RTP-over-UDP source reads the payload type through `rtp_packet::RtpPacket` rather than masking header byte 1, so the RTP header layout has one owner (a packet that is not a valid RTP header is dropped as before); that crate is now a plain dependency instead of being pulled in only by the `whep` feature.
+- The 90 kHz clock rate is named once, from `broadcast_common::clock33::PTS_HZ`; `timed_metadata::PTS_HZ` (a re-export of the same constant) and a local copy are gone.
 - The WHIP and WHEP endpoints build their SDP answer and ICE-restart answer fragment with `webrtc_runtime::sdp` instead of assembling the session here (#2363); the documents are byte-identical to before (goldens in `fixtures/golden/webrtc/`).
 - The Smooth source and output use `broadcast-smooth`'s manifest model instead of `transmux`'s removed `smooth_parse` module (#2356); transmux keeps the fragments and the codec glue.
 - The RTSP push sends RFC 2250 §2 MP2T packets built by `transmux::rtp::Mp2tPacketiser` and records through `rtsp_runtime::AsyncRtspClient::start_record`; multimux now supplies only the SDP media section and the 90 kHz timestamp (its one clock read). Its own RTP header writer, MP2T splitting, control-URL derivation and ANNOUNCE/SETUP/RECORD choreography are gone. The wire is byte-identical: `fixtures/golden/rtsp/push-wire.golden` records every request and interleaved packet from before the move and matches without regeneration (#2368).

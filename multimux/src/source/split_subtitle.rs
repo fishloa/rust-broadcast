@@ -57,7 +57,7 @@ use super::segment::{PendingPublish, drain_publish_queue};
 use super::split_audio::LeaderDurations;
 use crate::route::{MAX_SUBTITLE_RENDITIONS, RouteHandle, SubtitleServing, subtitle_playlist_uri};
 
-const PTS_HZ: i128 = 90_000;
+const PTS_HZ_TICKS: i128 = clock33::PTS_HZ as i128;
 const NANOS_PER_SEC_F64: f64 = 1_000_000_000.0;
 const NANOS_PER_SEC: u64 = 1_000_000_000;
 
@@ -414,7 +414,7 @@ impl<D: CueDecoder> Core<D> {
             let start = self.note_cut(&part.cut);
             self.close_spans(leaders);
             self.publish_segments(Some(part.cut.msn), leaders, &mut ready);
-            let ticks = ((part.duration_secs * PTS_HZ as f64).round() as i64).max(1);
+            let ticks = ((part.duration_secs * PTS_HZ_TICKS as f64).round() as i64).max(1);
             let end = start.saturating_add(ticks);
             self.edge = self.edge.max(end);
             ready.push(Ready::Part(ReadyPart {
@@ -434,7 +434,7 @@ impl<D: CueDecoder> Core<D> {
             if span.end.is_none()
                 && let Some(duration) = leaders.get(msn)
             {
-                let ticks = (duration * PTS_HZ as f64).round() as i64;
+                let ticks = (duration * PTS_HZ_TICKS as f64).round() as i64;
                 span.end = Some(span.start + ticks);
             }
             if let Some(end) = span.end {
@@ -465,7 +465,7 @@ impl<D: CueDecoder> Core<D> {
                 duration_secs: leaders
                     .get(&msn)
                     .copied()
-                    .unwrap_or((end - span.start) as f64 / PTS_HZ as f64),
+                    .unwrap_or((end - span.start) as f64 / PTS_HZ_TICKS as f64),
                 body: self.render(span.start, end),
             }));
             self.spans.remove(&msn);
@@ -563,7 +563,8 @@ impl SubtitleFollower {
         self.next_timeline_ns = start_ns;
         self.first_discontinuous = true;
         self.core.mpegts_at_origin =
-            u64::try_from(i128::from(start_ns) * PTS_HZ / i128::from(NANOS_PER_SEC)).unwrap_or(0);
+            u64::try_from(i128::from(start_ns) * PTS_HZ_TICKS / i128::from(NANOS_PER_SEC))
+                .unwrap_or(0);
     }
 
     pub(super) fn push(&mut self, sample: &Sample) {

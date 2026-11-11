@@ -157,7 +157,7 @@ impl Dialer for TsUdpDialer {
 }
 
 /// Binds `route`'s UDP socket and returns it, ready for
-/// [`recv_and_feed`]/[`run_ts_udp`] — split out so tests can synchronise on
+/// [`run_ts_udp`] — split out so tests can synchronise on
 /// the bound address before a synthetic sender starts writing to it (UDP has
 /// no connect-then-accept handshake to synchronise on otherwise).
 ///
@@ -194,37 +194,6 @@ pub async fn bind(route: &TsUdpRoute) -> Result<UdpSocket> {
         route.socket.clone(),
     )
     .await
-}
-
-/// Reads one datagram from `socket` (bounded by `read_timeout`) and feeds it
-/// to `driver`. Returns the number of bytes read (and fed) on a normal
-/// read, or `Err` on a read stall or socket error — UDP is connectionless,
-/// so unlike a TCP/HTTP source there is no transport-level clean
-/// end-of-stream; every termination here is reported as an I/O-layer error
-/// for the caller (production: the route supervisor) to reconnect on,
-/// exactly as the pre-5a `next_samples` did.
-///
-/// The returned count lets the caller also feed the same bytes to the
-/// route's DVR EIT tracker (`RouteHandle::feed_si_ts`, crate-private —
-/// issue #903) without an extra allocation: `buf` is a reused buffer, so
-/// only `&buf[..n]` is this read's actual data.
-pub async fn recv_and_feed(
-    socket: &UdpSocket,
-    buf: &mut [u8],
-    driver: &mut media_plane::ingress::IngestDriver<TsIngestSession>,
-    read_timeout: Duration,
-    now: Timestamp,
-) -> Result<usize> {
-    let n = tokio::time::timeout(read_timeout, socket.recv(buf))
-        .await
-        .map_err(|_| MultimuxError::Connect {
-            reason: format!("ts/udp recv: no data within {read_timeout:?}"),
-        })?
-        .map_err(|e| MultimuxError::Connect {
-            reason: format!("udp recv: {e}"),
-        })?;
-    driver.feed(&buf[..n], now);
-    Ok(n)
 }
 
 /// The ts/udp source's [`IngestStep`](crate::source::driver::IngestStep):
@@ -274,7 +243,7 @@ impl crate::source::driver::IngestStep<TsIngestSession> for TsUdpStep {
 /// [`media_plane::ingress::IngestDriver`] until a read stall (bounded by
 /// [`IngestTimeouts::read`]) — the new `connect()`+`next_samples()` loop,
 /// replacing the pre-5a `TsUdpSource`/`TsUdpSession` pair. Returns the error
-/// that ended the loop (always a read-side error — see [`recv_and_feed`]);
+/// that ended the loop (always a read-side error — see the step below);
 /// the caller (the route supervisor) reconnects on it.
 ///
 /// `route_handle` is the driver-backed registry side of issue #805 task 2 —
@@ -328,6 +297,7 @@ pub async fn run_ts_udp(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::source::driver::{IngestStep, StepOutcome};
     use crate::source::ts_program::test_support::{build_ts_bytes, handshake, trunk_config};
     use media_plane::ingress::{HealthState, IngestDriver, ProgramId};
 
@@ -365,23 +335,23 @@ mod tests {
         );
         assert!(matches!(driver.health(), HealthState::Establishing));
 
-        let mut buf = vec![0u8; MAX_TS_READ];
+        let mut step = TsUdpStep {
+            socket,
+            buf: vec![0u8; MAX_TS_READ],
+            start: tokio::time::Instant::now(),
+            route_handle: std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4)),
+        };
         let mut cursor = None;
         let mut saw_sample = false;
-        for i in 0..200u64 {
+        for _ in 0..200u64 {
             // HANG GUARD (issue #826): per-iteration read timeout in a
             // real-socket loopback test. Real UDP on loopback resolves in
             // ~ms; this only exists to keep the 200-iteration loop from
             // spinning on an empty socket, not a timing claim.
-            let read = recv_and_feed(
-                &socket,
-                &mut buf,
-                &mut driver,
-                Duration::from_secs(60),
-                Timestamp::from_nanos(i),
-            )
-            .await;
-            if read.is_err() {
+            if !matches!(
+                IngestStep::step(&mut step, &mut driver, Duration::from_secs(60)).await,
+                StepOutcome::Received
+            ) {
                 break;
             }
             if cursor.is_none() {
@@ -427,7 +397,12 @@ mod tests {
             handshake(),
             media_plane::DEFAULT_MAX_PROGRAMS,
         );
-        let mut buf = vec![0u8; MAX_TS_READ];
+        let mut step = TsUdpStep {
+            socket,
+            buf: vec![0u8; MAX_TS_READ],
+            start: tokio::time::Instant::now(),
+            route_handle: std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4)),
+        };
 
         // DISCRIMINATOR (issue #826): the assertion window must prove the
         // operation returns through the CONFIGURED read timeout, not via
@@ -439,24 +414,22 @@ mod tests {
         // the configured timeout and falls through to a 30+s system
         // default is still caught. MUTATION CHECKED: inflating
         // READ_TIMEOUT to 30s makes the 10s outer timeout fire first,
-        // producing `Elapsed` instead of `recv_and_feed`'s own error,
+        // producing `Elapsed` instead of the step's own idle outcome,
         // proving this bound still discriminates.
         let outcome = tokio::time::timeout(
             Duration::from_secs(10),
-            recv_and_feed(
-                &socket,
-                &mut buf,
-                &mut driver,
-                READ_TIMEOUT,
-                Timestamp::ZERO,
-            ),
+            IngestStep::step(&mut step, &mut driver, READ_TIMEOUT),
         )
         .await
-        .expect("recv_and_feed must not exceed the assertion window");
+        .expect("the read must not exceed the assertion window");
         assert!(
-            matches!(outcome, Err(crate::error::MultimuxError::Connect { .. })),
-            "expected a recoverable read-timeout error"
+            matches!(outcome, StepOutcome::Idle),
+            "a silent source is idle, and the loop turns that into a stall"
         );
+        assert!(matches!(
+            step.stalled(READ_TIMEOUT),
+            MultimuxError::Connect { .. }
+        ));
     }
 
     /// A pre-bound socket handed to [`TsUdpRoute::with_socket`] is consumed

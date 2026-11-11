@@ -253,7 +253,7 @@ pub async fn connect_caller(route: &SrtRoute) -> Result<SrtSocket> {
 /// idle (nothing is wrong), not stalled — the same reasoning the pre-5a
 /// `connect()` used, preserved so the accept side's behaviour is unchanged
 /// by this port. The post-accept read is bounded by
-/// [`IngestTimeouts::read`] in [`recv_and_feed`].
+/// [`IngestTimeouts::read`] in the drive loop's first bounded read.
 pub async fn accept_listener(route: &SrtRoute) -> Result<SrtSocket> {
     let listen = route
         .listen
@@ -280,46 +280,6 @@ pub async fn accept_listener(route: &SrtRoute) -> Result<SrtSocket> {
     guard.accept().await.map_err(|e| MultimuxError::Connect {
         reason: format!("srt: accept: {e}"),
     })
-}
-
-/// What one [`recv_and_feed`] call observed on the SRT socket.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum StreamStatus {
-    /// A payload was read and fed to the driver — carries the payload's
-    /// own bytes so the caller can also feed the route's DVR EIT tracker
-    /// (`RouteHandle::feed_si_ts`, crate-private — issue #903) without a
-    /// second read.
-    Fed(Vec<u8>),
-    /// The peer shut the connection down cleanly — not an error.
-    Ended,
-}
-
-/// Reads the next SRT payload (bounded by `read_timeout`) and feeds it to
-/// `driver`.
-///
-/// # Errors
-/// A read stall or a socket error — both genuine failures, distinct from the
-/// clean [`StreamStatus::Ended`].
-pub async fn recv_and_feed(
-    sock: &mut SrtSocket,
-    driver: &mut IngestDriver<TsIngestSession>,
-    read_timeout: Duration,
-    now: Timestamp,
-) -> Result<StreamStatus> {
-    let payload = tokio::time::timeout(read_timeout, sock.recv())
-        .await
-        .map_err(|_| MultimuxError::Connect {
-            reason: format!("srt recv: no data within {read_timeout:?}"),
-        })?
-        .map_err(|e| MultimuxError::Connect {
-            reason: format!("srt recv: {e}"),
-        })?;
-    let Some(bytes) = payload else {
-        return Ok(StreamStatus::Ended);
-    };
-    driver.feed(&bytes, now);
-    Ok(StreamStatus::Fed(bytes.to_vec()))
 }
 
 /// The SRT source's [`IngestStep`](crate::source::driver::IngestStep): one
@@ -501,7 +461,7 @@ mod tests {
     /// (`SrtListener::accept` → `StreamingTsDemux` → `Trunk`) actually moves
     /// real H.264 samples, not just that the track set resolves.
     ///
-    /// MUTATION-CHECKED: make `recv_and_feed` drop the payload (skip
+    /// MUTATION-CHECKED: make `SrtStep::step` drop the payload (skip
     /// `driver.feed`) and this test's sample-count assertion fails — nothing
     /// ever reaches the `Trunk`.
     #[tokio::test]
