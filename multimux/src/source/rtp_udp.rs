@@ -302,52 +302,6 @@ pub async fn bind(route: &RtpUdpRoute) -> Result<UdpSocket> {
     .await
 }
 
-/// A driver no longer running (issue r07-C8) becomes a terminal error here,
-/// rather than the receive loop silently continuing to feed a session that
-/// will never make progress again — so the caller's supervisor reconnects
-/// instead of `/readyz` reporting a dead route as `Live` forever. Pulled out
-/// of [`recv_and_feed`] so the classification itself is directly testable
-/// without needing a real socket or a genuinely-failed session.
-fn terminal_error_if_not_running(
-    health: &media_plane::ingress::HealthState<MultimuxError>,
-) -> Option<MultimuxError> {
-    if health.is_running() {
-        return None;
-    }
-    Some(MultimuxError::Connect {
-        reason: format!("rtp/udp session ended: {health:?}"),
-    })
-}
-
-/// Reads one datagram from `socket` (bounded by `read_timeout`) and feeds it
-/// to `driver`. See `ts_udp::recv_and_feed` — identical shape, plus a
-/// post-feed health check (issue r07-C8): a depayload failure no longer
-/// fails the session (dropped and logged instead, in `RtpUdpIngestSession::
-/// feed`), but this is still the one place that notices if the driver ends
-/// up not running for some other reason and turns that into the terminal
-/// error the caller's supervisor reconnects on.
-pub async fn recv_and_feed(
-    socket: &UdpSocket,
-    buf: &mut [u8],
-    driver: &mut media_plane::ingress::IngestDriver<RtpUdpIngestSession>,
-    read_timeout: Duration,
-    now: Timestamp,
-) -> Result<()> {
-    let n = tokio::time::timeout(read_timeout, socket.recv(buf))
-        .await
-        .map_err(|_| MultimuxError::Connect {
-            reason: format!("rtp/udp recv: no data within {read_timeout:?}"),
-        })?
-        .map_err(|e| MultimuxError::Connect {
-            reason: format!("udp recv: {e}"),
-        })?;
-    driver.feed(&buf[..n], now);
-    if let Some(e) = terminal_error_if_not_running(driver.health()) {
-        return Err(e);
-    }
-    Ok(())
-}
-
 /// Constructs (`dial()`, no I/O), binds the socket, and drives an
 /// [`RtpUdpIngestSession`] through [`media_plane::ingress::IngestDriver`]
 /// until a read stall — the new drive loop, replacing the pre-5a
@@ -443,6 +397,7 @@ pub async fn run_rtp_udp(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::source::driver::{IngestStep, StepOutcome};
     use media_plane::ingress::{HandshakePolicy, HealthState, IngestDriver};
     use media_plane::trunk::TrunkConfig;
     use std::num::NonZeroUsize;
@@ -663,30 +618,22 @@ mod tests {
         );
     }
 
-    /// [`terminal_error_if_not_running`] is the one piece of new decision
-    /// logic issue r07-C8's second half adds: `recv_and_feed`'s own
-    /// health check, not the machinery that gets a driver into a terminal
-    /// state (already `media_plane::ingress`'s job) — so it is tested
-    /// directly against every `HealthState` variant, without needing to
-    /// force an actual driver failure end to end.
-    #[test]
-    fn terminal_error_if_not_running_covers_every_health_state() {
-        assert!(terminal_error_if_not_running(&HealthState::Establishing).is_none());
-        assert!(terminal_error_if_not_running(&HealthState::Live).is_none());
-        assert!(terminal_error_if_not_running(&HealthState::Ended).is_some());
-        assert!(
-            terminal_error_if_not_running(&HealthState::Failed(MultimuxError::Protocol {
-                phase: "PLAY",
-                reason: "boom".to_string(),
-            }))
-            .is_some()
-        );
-        assert!(
-            terminal_error_if_not_running(&HealthState::HandshakeTimedOut {
-                deadline: Timestamp::ZERO,
-            })
-            .is_some()
-        );
+    fn driver() -> IngestDriver<RtpUdpIngestSession> {
+        let mut dialer = RtpUdpDialer::new(sdp_body());
+        IngestDriver::new(
+            dialer.dial().unwrap(),
+            trunk_config(),
+            handshake(),
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        )
+    }
+
+    fn step(socket: UdpSocket) -> RtpUdpStep {
+        RtpUdpStep {
+            socket,
+            buf: vec![0u8; MAX_UDP_DATAGRAM],
+            start: tokio::time::Instant::now(),
+        }
     }
 
     /// End-to-end loopback: real socket I/O, real depayloaded samples land
@@ -696,15 +643,8 @@ mod tests {
         let route = RtpUdpRoute::new("cam-udp", "127.0.0.1:0", sdp_body(), None);
         let socket = bind(&route).await.expect("bind");
         let local_addr = socket.local_addr().expect("local addr");
-
-        let mut dialer = RtpUdpDialer::new(route.sdp.clone());
-        let session = dialer.dial().unwrap();
-        let mut driver = IngestDriver::new(
-            session,
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
-        );
+        let mut step = step(socket);
+        let mut driver = driver();
 
         let sender = UdpSocket::bind("127.0.0.1:0").await.expect("bind sender");
         let idr = [0x65u8, 0xAA, 0xBB];
@@ -719,24 +659,21 @@ mod tests {
                 .expect("send RTP packet");
         }
 
-        let mut buf = vec![0u8; MAX_UDP_DATAGRAM];
         let mut cursor = None;
         let mut samples_seen = 0usize;
-        for i in 0..10u64 {
+        for _ in 0..10 {
             // HANG GUARD (issue #826): per-iteration recv timeout within a
             // 10-iteration loopback test. All 3 RTP packets arrive within
             // ~ms of each other over loopback UDP, so this recv normally
             // resolves immediately. Only job is to prevent spinning on an
             // empty socket, not a timing claim.
-            recv_and_feed(
-                &socket,
-                &mut buf,
-                &mut driver,
-                Duration::from_secs(60),
-                Timestamp::from_nanos(i),
-            )
-            .await
-            .expect("recv within hang guard");
+            assert!(
+                matches!(
+                    step.step(&mut driver, Duration::from_secs(60)).await,
+                    StepOutcome::Received
+                ),
+                "recv within hang guard"
+            );
             if cursor.is_none() {
                 cursor = driver.trunk(ProgramId(0)).map(|t| t.subscribe());
             }
@@ -755,43 +692,26 @@ mod tests {
         );
     }
 
-    /// A source that never sends any RTP packet must not hang `recv_and_feed`
-    /// forever — issue #663 P5.2, preserved from the pre-5a test.
+    /// A source that never sends any RTP packet must report itself idle, and
+    /// the read deadline must become a recoverable error — issue #663 P5.2,
+    /// preserved from the pre-5a test.
     #[tokio::test]
-    async fn recv_and_feed_times_out_when_source_is_silent() {
+    async fn step_reports_idle_and_stalls_when_source_is_silent() {
         let route = RtpUdpRoute::new("cam-udp", "127.0.0.1:0", sdp_body(), None);
-        let socket = bind(&route).await.expect("bind");
-        let mut dialer = RtpUdpDialer::new(route.sdp.clone());
-        let session = dialer.dial().unwrap();
-        let mut driver = IngestDriver::new(
-            session,
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
-        );
-        let mut buf = vec![0u8; MAX_UDP_DATAGRAM];
+        let mut step = step(bind(&route).await.expect("bind"));
+        let mut driver = driver();
 
-        const READ_TIMEOUT: Duration = Duration::from_secs(2);
-        // DISCRIMINATOR (issue #826): same gap-widening pattern as
-        // `ts_udp::recv_and_feed_times_out_when_source_goes_silent`.
-        // Configured read timeout raised 100ms→2s, assertion window
-        // raised 500ms→10s — 10s still discriminates against a 30+s
-        // system-default fallback.
-        let outcome = tokio::time::timeout(
-            Duration::from_secs(10),
-            recv_and_feed(
-                &socket,
-                &mut buf,
-                &mut driver,
-                READ_TIMEOUT,
-                Timestamp::ZERO,
-            ),
-        )
-        .await
-        .expect("recv_and_feed must not exceed the assertion window");
+        const READ_TIMEOUT: Duration = Duration::from_millis(50);
         assert!(
-            matches!(outcome, Err(crate::error::MultimuxError::Connect { .. })),
-            "expected a recoverable read-timeout error"
+            matches!(
+                step.step(&mut driver, READ_TIMEOUT).await,
+                StepOutcome::Idle
+            ),
+            "a silent socket is idle, not a failure"
         );
+        assert!(matches!(
+            step.stalled(READ_TIMEOUT),
+            MultimuxError::Connect { .. }
+        ));
     }
 }
