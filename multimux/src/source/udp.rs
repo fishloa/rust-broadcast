@@ -1,10 +1,12 @@
 //! Shared UDP transport helper for the UDP-family ingest sources
 //! ([`crate::source::rtp_udp`], [`crate::source::ts_udp`]): bind a socket
 //! with configurable socket options and optionally join a multicast group.
-//! Pure socket setup — no protocol parsing — kept out of both sources so
-//! there is exactly one bind/join implementation between them (issue #663
-//! P3a; SP1.6 moved the bind onto `socket2` so `SO_RCVBUF`/`SO_REUSEADDR`
-//! and the multicast interface are real options rather than defaults).
+//! This module only translates multimux's route config into a
+//! [`dvb_stream::udp::SocketSpec`]: the socket option list itself lives in
+//! `dvb-stream`'s `bind_standard`, the workspace's single UDP bind (issue
+//! #2374), so multimux's UDP, RTP-UDP, TS-UDP and broadcast-client's hosts
+//! cannot drift apart (issue #663 P3a; SP1.6 made `SO_RCVBUF`/`SO_REUSEADDR`
+//! and the multicast interface real options rather than defaults).
 //!
 //! # Multicast port sharing is per-OS (be honest about it)
 //!
@@ -20,8 +22,9 @@
 //!   multi-receiver sharing on Windows is genuinely unsupported by this
 //!   helper — do not rely on it.
 //!
-//! `reuse_port` is applied only on Unix (`cfg(unix)`); on other platforms it
-//! is ignored rather than silently mis-set.
+//! `reuse_port` is applied only where `socket2` has the option (Unix, minus
+//! solaris/illumos/cygwin/nuttx/wasi); elsewhere it is ignored rather than
+//! silently mis-set.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -58,8 +61,9 @@ pub struct UdpBindOptions {
     /// IPv6 interface *index* (as a decimal string). `None` joins on the
     /// unspecified interface (any).
     pub multicast_interface: Option<String>,
-    /// Set `SO_REUSEPORT` before bind (Unix only; ignored elsewhere). See the
-    /// module doc's per-OS multicast-sharing note. Defaults to `false`.
+    /// Set `SO_REUSEPORT` before bind (where the option exists; ignored
+    /// elsewhere). See the module doc's per-OS multicast-sharing note.
+    /// Defaults to `false`.
     pub reuse_port: bool,
 }
 
@@ -76,118 +80,92 @@ pub async fn bind_udp(
     multicast_group: Option<&str>,
     opts: UdpBindOptions,
 ) -> Result<UdpSocket> {
-    let bind_addr: SocketAddr = addr.parse().map_err(|e| MultimuxError::Connect {
-        reason: format!("bad UDP bind address {addr:?}: {e}"),
-    })?;
-    let domain = socket2::Domain::for_address(bind_addr);
-    let socket = socket2::Socket::new(domain, socket2::Type::DGRAM, Some(socket2::Protocol::UDP))
-        .map_err(|e| MultimuxError::Connect {
-        reason: format!("udp socket: {e}"),
-    })?;
-    // SO_REUSEADDR before bind (two-listener tests rely on it being a
-    // deliberate option, not a default).
-    if opts.reuse_address {
-        socket
-            .set_reuse_address(true)
-            .map_err(|e| MultimuxError::Connect {
-                reason: format!("SO_REUSEADDR: {e}"),
-            })?;
-    }
-    // SO_REUSEPORT: use socket2's OWN target gate so this can never fail to
-    // build where socket2's `set_reuse_port` is absent (solaris/illumos/
-    // cygwin/nuttx/wasi, or a build without socket2's `all` feature) — see
-    // socket2's cfg on `set_reuse_port`. Elsewhere the
-    // option is ignored, not mis-set.
-    #[cfg(not(any(
-        target_os = "solaris",
-        target_os = "illumos",
-        target_os = "cygwin",
-        target_os = "nuttx",
-        target_os = "wasi",
-        not(target_family = "unix")
-    )))]
-    if opts.reuse_port {
-        socket
-            .set_reuse_port(true)
-            .map_err(|e| MultimuxError::Connect {
-                reason: format!("SO_REUSEPORT: {e}"),
-            })?;
-    }
-    #[cfg(any(
-        target_os = "solaris",
-        target_os = "illumos",
-        target_os = "cygwin",
-        target_os = "nuttx",
-        target_os = "wasi",
-        not(target_family = "unix")
-    ))]
-    let _ = opts.reuse_port;
-    // A requested buffer is a request; a default applies when none is given,
-    // so a high-bitrate input is not left at the OS default. Best-effort: the
-    // OS may clamp it (Linux doubles and floors at `rmem_default`; macOS adds
-    // overhead), and a failed/clamped `set` must NOT fail the bind — log and
-    // carry on.
-    let wanted_recv = requested_recv_buffer_bytes(opts.recv_buffer_bytes);
-    if let Err(e) = socket.set_recv_buffer_size(wanted_recv) {
-        tracing::warn!(
-            requested = wanted_recv,
-            error = %e,
-            "SO_RCVBUF not applied; the socket keeps the OS default"
-        );
-    }
-    let sin = socket2::SockAddr::from(bind_addr);
-    socket.bind(&sin).map_err(|e| MultimuxError::Connect {
-        reason: format!("udp bind {addr}: {e}"),
-    })?;
-    socket
-        .set_nonblocking(true)
-        .map_err(|e| MultimuxError::Connect {
-            reason: format!("udp nonblocking: {e}"),
+    let spec = socket_spec(addr, multicast_group, opts)?;
+    let wanted_recv = spec.recv_buffer_size;
+    let std_socket =
+        dvb_stream::udp::bind_standard(spec).map_err(|e| MultimuxError::Connect {
+            reason: format!("udp bind {addr}: {e}"),
         })?;
-    if let Some(group) = multicast_group {
-        let group_ip: IpAddr = group.parse().map_err(|e| MultimuxError::Connect {
-            reason: format!("bad multicast group {group:?}: {e}"),
-        })?;
-        match group_ip {
-            IpAddr::V4(v4) => {
-                let iface: Ipv4Addr = opts
-                    .multicast_interface
-                    .as_deref()
-                    .map(str::parse)
-                    .transpose()
-                    .map_err(|e| MultimuxError::Connect {
-                        reason: format!("bad multicast interface: {e}"),
-                    })?
-                    .unwrap_or(Ipv4Addr::UNSPECIFIED);
-                let target = socket2::InterfaceIndexOrAddress::Address(iface);
-                socket
-                    .join_multicast_v4_n(&v4, &target)
-                    .map_err(|e| MultimuxError::Connect {
-                        reason: format!("join multicast group {group}: {e}"),
-                    })?;
-            }
-            IpAddr::V6(v6) => {
-                let interface: u32 = opts
-                    .multicast_interface
-                    .as_deref()
-                    .map(str::parse)
-                    .transpose()
-                    .map_err(|e| MultimuxError::Connect {
-                        reason: format!("bad multicast interface index: {e}"),
-                    })?
-                    .unwrap_or(0);
-                socket
-                    .join_multicast_v6(&v6, interface)
-                    .map_err(|e| MultimuxError::Connect {
-                        reason: format!("join multicast group {group}: {e}"),
-                    })?;
-            }
+    if let Some(requested) = wanted_recv {
+        match std_socket.recv_buffer_size() {
+            Ok(actual) if actual < requested => tracing::debug!(
+                requested,
+                actual,
+                "SO_RCVBUF clamped by the kernel"
+            ),
+            Ok(_) => {}
+            Err(e) => tracing::warn!(
+                requested,
+                error = %e,
+                "SO_RCVBUF not applied; the socket keeps the OS default"
+            ),
         }
     }
-    let std_socket: std::net::UdpSocket = socket.into();
-    UdpSocket::from_std(std_socket).map_err(|e| MultimuxError::Connect {
+    UdpSocket::from_std(std_socket.into()).map_err(|e| MultimuxError::Connect {
         reason: format!("udp async: {e}"),
     })
+}
+
+/// The socket options `bind_udp` asks for: the caller's, with the crate's
+/// default `SO_RCVBUF` filled in when none was given.
+fn socket_spec(
+    addr: &str,
+    multicast_group: Option<&str>,
+    opts: UdpBindOptions,
+) -> Result<dvb_stream::udp::SocketSpec> {
+    let connect_error = |reason: String| MultimuxError::Connect { reason };
+    let bind_addr: SocketAddr = addr
+        .parse()
+        .map_err(|e| connect_error(format!("bad UDP bind address {addr:?}: {e}")))?;
+    let multicast = multicast_group
+        .map(|group| membership(group, opts.multicast_interface.as_deref()))
+        .transpose()?;
+    let mut spec = dvb_stream::udp::SocketSpec::new(bind_addr)
+        .with_reuse(opts.reuse_address, opts.reuse_port)
+        .with_recv_buffer_size(requested_recv_buffer_bytes(opts.recv_buffer_bytes))
+        .with_context("multimux udp bind");
+    if let Some(membership) = multicast {
+        spec = spec.with_multicast(membership);
+    }
+    Ok(spec)
+}
+
+/// The group membership `bind_udp` joins, parsed out of the configured group
+/// and interface strings.
+fn membership(
+    group: &str,
+    interface: Option<&str>,
+) -> Result<dvb_stream::udp::MulticastMembership> {
+    let connect_error = |reason: String| MultimuxError::Connect { reason };
+    let group_ip: IpAddr = group
+        .parse()
+        .map_err(|e| connect_error(format!("bad multicast group {group:?}: {e}")))?;
+    Ok(match group_ip {
+        IpAddr::V4(v4) => dvb_stream::udp::MulticastMembership::V4 {
+            group: v4,
+            interface: parse_interface(interface)?,
+        },
+        IpAddr::V6(v6) => dvb_stream::udp::MulticastMembership::V6 {
+            group: v6,
+            interface: interface
+                .map(str::parse)
+                .transpose()
+                .map_err(|e| connect_error(format!("bad multicast interface index: {e}")))?
+                .unwrap_or(0),
+        },
+    })
+}
+
+/// The IPv4 interface a join goes out on: the configured dotted literal, or
+/// the unspecified address (any interface) when none is configured.
+fn parse_interface(interface: Option<&str>) -> Result<Ipv4Addr> {
+    interface
+        .map(str::parse)
+        .transpose()
+        .map_err(|e| MultimuxError::Connect {
+            reason: format!("bad multicast interface: {e}"),
+        })
+        .map(|iface| iface.unwrap_or(Ipv4Addr::UNSPECIFIED))
 }
 
 #[cfg(test)]
@@ -217,5 +195,74 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[test]
+    fn spec_carries_the_caller_options() {
+        let spec = socket_spec(
+            "127.0.0.1:5004",
+            Some("239.255.42.1"),
+            UdpBindOptions {
+                recv_buffer_bytes: Some(1024),
+                reuse_address: true,
+                multicast_interface: Some("127.0.0.1".to_string()),
+                reuse_port: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            spec.bind_addr,
+            SocketAddr::from(([127, 0, 0, 1], 5004))
+        );
+        assert_eq!(spec.recv_buffer_size, Some(1024));
+        assert!(spec.reuse_address);
+        assert!(!spec.reuse_port);
+        assert_eq!(
+            spec.multicast,
+            Some(dvb_stream::udp::MulticastMembership::V4 {
+                group: Ipv4Addr::new(239, 255, 42, 1),
+                interface: Ipv4Addr::LOCALHOST,
+            })
+        );
+    }
+
+    #[test]
+    fn spec_defaults_the_receive_buffer_and_the_interface() {
+        let spec = socket_spec("0.0.0.0:5004", Some("239.255.42.1"), UdpBindOptions::default())
+            .unwrap();
+        assert_eq!(spec.recv_buffer_size, Some(DEFAULT_RECV_BUFFER_BYTES));
+        assert_eq!(
+            spec.multicast,
+            Some(dvb_stream::udp::MulticastMembership::V4 {
+                group: Ipv4Addr::new(239, 255, 42, 1),
+                interface: Ipv4Addr::UNSPECIFIED,
+            })
+        );
+        assert!(socket_spec("0.0.0.0:5004", None, UdpBindOptions::default())
+            .unwrap()
+            .multicast
+            .is_none());
+    }
+
+    #[test]
+    fn spec_rejects_a_bad_interface() {
+        assert!(socket_spec(
+            "0.0.0.0:5004",
+            Some("239.255.42.1"),
+            UdpBindOptions {
+                multicast_interface: Some("eth0".to_string()),
+                ..UdpBindOptions::default()
+            },
+        )
+        .is_err());
+        assert!(socket_spec(
+            "0.0.0.0:5004",
+            Some("ff3e::1"),
+            UdpBindOptions {
+                multicast_interface: Some("eth0".to_string()),
+                ..UdpBindOptions::default()
+            },
+        )
+        .is_err());
     }
 }

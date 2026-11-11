@@ -3,7 +3,7 @@
 //! [`TsDecoder::datagram`] for framing.
 
 use std::io;
-use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket as StdUdp};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, UdpSocket as StdUdp};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -65,29 +65,180 @@ impl MulticastConfig {
     ///
     /// Any socket option, bind or multicast-join failure.
     pub fn bind(&self) -> io::Result<StdUdp> {
-        let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
-        if self.reuse_address {
-            socket.set_reuse_address(true)?;
-            #[cfg(all(
-                unix,
-                not(any(
-                    target_os = "solaris",
-                    target_os = "illumos",
-                    target_os = "cygwin",
-                    target_os = "nuttx",
-                    target_os = "wasi"
-                ))
-            ))]
-            socket.set_reuse_port(true)?;
-        }
-        if let Some(n) = self.recv_buffer_size {
-            socket.set_recv_buffer_size(n)?;
-        }
-        socket.bind(&SockAddr::from(self.bind_addr))?;
-        socket.join_multicast_v4(&self.group, &self.interface)?;
-        socket.set_nonblocking(true)?;
+        let spec = || SocketSpec {
+            bind_addr: SocketAddr::V4(self.bind_addr),
+            multicast: Some(MulticastMembership::V4 {
+                group: self.group,
+                interface: self.interface,
+            }),
+            reuse_address: self.reuse_address,
+            reuse_port: self.reuse_address,
+            recv_buffer_size: self.recv_buffer_size,
+            context: Some("multicast bind"),
+        };
+        let spec = spec();
+        let socket = match bind_standard(spec) {
+            Err(error) if self.recv_buffer_size.is_some() => {
+                tracing::warn!(
+                    error = %error,
+                    requested = self.recv_buffer_size,
+                    "SO_RCVBUF not applied; the socket keeps the OS default"
+                );
+                bind_standard(SocketSpec {
+                    recv_buffer_size: None,
+                    ..spec
+                })?
+            }
+            other => other?,
+        };
         Ok(socket.into())
     }
+}
+
+impl SocketSpec {
+    /// A plain unicast bind with no options set (see each field for the
+    /// default the OS then applies).
+    #[must_use]
+    pub fn new(bind_addr: SocketAddr) -> Self {
+        Self {
+            bind_addr,
+            multicast: None,
+            reuse_address: false,
+            reuse_port: false,
+            recv_buffer_size: None,
+            context: None,
+        }
+    }
+
+    /// Join `group` after the bind.
+    #[must_use]
+    pub fn with_multicast(mut self, group: MulticastMembership) -> Self {
+        self.multicast = Some(group);
+        self
+    }
+
+    /// Enable `SO_REUSEADDR` / `SO_REUSEPORT` before the bind.
+    #[must_use]
+    pub fn with_reuse(mut self, address: bool, port: bool) -> Self {
+        self.reuse_address = address;
+        self.reuse_port = port;
+        self
+    }
+
+    /// Request a socket receive buffer of `bytes`.
+    #[must_use]
+    pub fn with_recv_buffer_size(mut self, bytes: usize) -> Self {
+        self.recv_buffer_size = Some(bytes);
+        self
+    }
+
+    /// Log a bind failure with `context`.
+    #[must_use]
+    pub fn with_context(mut self, context: &'static str) -> Self {
+        self.context = Some(context);
+        self
+    }
+}
+
+/// Address family of the IP multicast group a socket joins.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MulticastMembership {
+    /// An IPv4 group, joined on an IPv4 interface address.
+    V4 {
+        /// The group to receive.
+        group: Ipv4Addr,
+        /// The interface the join goes out on.
+        interface: Ipv4Addr,
+    },
+    /// An IPv6 group, joined on an interface index (`0` = the system default).
+    V6 {
+        /// The group to receive.
+        group: Ipv6Addr,
+        /// The interface index the join goes out on.
+        interface: u32,
+    },
+}
+
+/// Everything [`bind_standard`] needs to build one datagram socket.
+///
+/// Every option is a *request*: the kernel may clamp `recv_buffer_size`
+/// (Linux doubles it and floors it at `rmem_default`; macOS adds overhead).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SocketSpec {
+    /// Local address and port to bind.
+    pub bind_addr: SocketAddr,
+    /// Group to join after the bind; `None` leaves the socket unicast-only.
+    pub multicast: Option<MulticastMembership>,
+    /// Set `SO_REUSEADDR` before the bind.
+    pub reuse_address: bool,
+    /// Set `SO_REUSEPORT` before the bind (ignored where the option does not exist).
+    pub reuse_port: bool,
+    /// `SO_RCVBUF` to request; `None` keeps the OS default.
+    pub recv_buffer_size: Option<usize>,
+    /// Log the bind failure at debug level with this context; `None` only
+    /// returns it.
+    pub context: Option<&'static str>,
+}
+
+/// Creates, configures and binds one UDP socket from `spec`, returning it
+/// non-blocking and ready to hand to a runtime.
+///
+/// This is the workspace's single datagram bind: every consumer that needs
+/// `SO_REUSEADDR` / `SO_REUSEPORT`, a socket receive buffer and a multicast
+/// join gets it here rather than repeating the per-OS option list.
+/// `SO_REUSEPORT` is applied only where `socket2` provides it (a Unix that is
+/// not solaris, illumos, cygwin, nuttx or wasi); elsewhere the request is
+/// ignored rather than mis-set.
+///
+/// # Errors
+///
+/// Any socket option, bind or multicast-join failure.
+pub fn bind_standard(spec: SocketSpec) -> io::Result<Socket> {
+    open_standard(&spec).inspect_err(|error| {
+        if let Some(context) = spec.context {
+            tracing::debug!(%error, context, "UDP bind failed");
+        }
+    })
+}
+
+fn open_standard(spec: &SocketSpec) -> io::Result<Socket> {
+    let socket = Socket::new(
+        Domain::for_address(spec.bind_addr),
+        Type::DGRAM,
+        Some(Protocol::UDP),
+    )?;
+    if spec.reuse_address {
+        socket.set_reuse_address(true)?;
+    }
+    #[cfg(all(
+        unix,
+        not(any(
+            target_os = "solaris",
+            target_os = "illumos",
+            target_os = "cygwin",
+            target_os = "nuttx",
+            target_os = "wasi"
+        ))
+    ))]
+    if spec.reuse_port {
+        socket.set_reuse_port(true)?;
+    }
+    if let Some(n) = spec.recv_buffer_size {
+        socket.set_recv_buffer_size(n)?;
+    }
+    socket.bind(&SockAddr::from(spec.bind_addr))?;
+    match spec.multicast {
+        Some(MulticastMembership::V4 { group, interface }) => {
+            socket.join_multicast_v4(&group, &interface)?;
+        }
+        Some(MulticastMembership::V6 { group, interface }) => {
+            socket.join_multicast_v6(&group, interface)?;
+        }
+        None => {}
+    }
+    socket.set_nonblocking(true)?;
+    Ok(socket)
 }
 
 /// `UdpFramed` yields `(packet, source)`; the streams only want the packet.
