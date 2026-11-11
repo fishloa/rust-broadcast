@@ -5,15 +5,15 @@ use broadcast_dash::Mpd;
 const DIVERGENT: &[(&str, &str)] = &[
     (
         "dash-mpd-frac-main.golden",
-        "transmux floating-point duration formatting defect (PT0.30000000000000004S)",
+        "historical main output pinned by fixtures/golden/dash/PROVENANCE.md, not current transmux output",
     ),
     (
         "dash-mpd-window3600-main.golden",
-        "transmux writes PT3600S but canonical form is PT1H",
+        "historical main output pinned by fixtures/golden/dash/PROVENANCE.md, not current transmux output",
     ),
     (
         "dash-mpd-window60-main.golden",
-        "transmux writes PT60S but canonical form is PT1M",
+        "historical main output pinned by fixtures/golden/dash/PROVENANCE.md, not current transmux output",
     ),
 ];
 
