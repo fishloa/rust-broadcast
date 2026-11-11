@@ -7,6 +7,10 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use webrtc_runtime::sdp::{
+    AnswerCodec, AnswerTransport, Direction, LocalMediaIdentity, restart_answer,
+};
+
 /// Bound on concurrent in-flight signalling requests for one WHIP/WHEP
 /// listener (a shared `GlobalConcurrencyLimitLayer` request-concurrency pool,
 /// not a TCP connection cap — see `serve_hyper_util`'s `MAX_CONNECTIONS` for
@@ -21,6 +25,18 @@ pub(crate) const MAX_HTTP_BODY_BYTES: usize = 64 * 1024;
 /// Bounds an entire signalling request (headers + body) — a peer that stops
 /// sending mid-request is closed rather than held open indefinitely.
 pub(crate) const HTTP_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The `m=` section a restart fragment carries describes no format: RFC 3264
+/// §5.1's port for a stream that is not at its final address.
+const HOLD_PORT: u16 = 9;
+
+/// A restart fragment carries no `a=fingerprint`, so this value never reaches
+/// one; it is `restart_answer`'s own neutral placeholder.
+const RESTART_FRAGMENT_FINGERPRINT: &str = "";
+
+/// The payload type a restart fragment's `m=` section names, when the
+/// fragment itself carries none (RFC 3264 §5.1's payload type for no media).
+const HOLD_PAYLOAD_TYPE: u8 = 0;
 
 /// Minimum floor between two consecutive [`MediaTransport::handle_timeout`]
 /// calls (finding N3): a transport whose `poll_timeout` keeps returning an
@@ -448,24 +464,20 @@ impl std::fmt::Debug for IceFragment {
 }
 
 /// Parses a Trickle ICE SDP fragment with `sdp-types`: the fragment has no
-/// session-header lines, so it is appended to a typed, `Session::write`-
-/// rendered prelude and parsed as one session. Candidates are taken from the
-/// session level and every media section.
+/// session-header lines, so it is appended to the prelude
+/// [`webrtc_runtime::sdp::fragment_prelude`] renders and parsed as one
+/// session. Candidates are taken from the session level and every media
+/// section.
 pub(crate) fn parse_ice_fragment(body: &[u8]) -> Result<IceFragment, String> {
-    use sdp_types::{Origin, Session};
     let text = std::str::from_utf8(body).map_err(|_| "fragment is not UTF-8".to_string())?;
-    let mut doc = Vec::new();
-    Session::new(
-        Origin::with_ip_addr("0", 0, std::net::Ipv4Addr::UNSPECIFIED),
-        "-",
-    )
-    .write(&mut doc)
-    .map_err(|e| format!("render prelude: {e}"))?;
+    let mut doc = webrtc_runtime::sdp::fragment_prelude()
+        .map_err(|e| format!("render prelude: {e}"))?
+        .into_bytes();
     for line in text.lines().filter(|l| !l.is_empty()) {
         doc.extend_from_slice(line.as_bytes());
         doc.extend_from_slice(b"\r\n");
     }
-    let session = Session::parse(&doc).map_err(|e| format!("parse fragment: {e}"))?;
+    let session = sdp_types::Session::parse(&doc).map_err(|e| format!("parse fragment: {e}"))?;
     let mut out = IceFragment::default();
     let attrs = session
         .attributes
@@ -524,51 +536,43 @@ pub(crate) fn validate_restart(
 
 /// Renders the ICE-restart answer fragment (RFC 9725 section 4.3.2: this
 /// side's new credentials and its candidates, as an RFC 8840 section 4.4
-/// `application/trickle-ice-sdpfrag` body). Built with `sdp-types` and cut
-/// down to the fragment lines (the session header lines are not part of a
-/// fragment).
+/// `application/trickle-ice-sdpfrag` body), through
+/// [`webrtc_runtime::sdp::restart_answer`].
 pub(crate) fn render_restart_fragment(
     ufrag: &str,
     pwd: &str,
     candidates: &[String],
 ) -> Result<Vec<u8>, String> {
-    use sdp_types::{Media, Origin, Session};
-    let mut session = Session::new(
-        Origin::with_ip_addr("0", 0, std::net::Ipv4Addr::UNSPECIFIED),
-        "-",
-    );
-    session.add_attribute_with_value("ice-ufrag", ufrag);
-    session.add_attribute_with_value("ice-pwd", pwd);
-    let mut media = Media {
-        media: "video".to_string(),
-        port: 9,
-        num_ports: None,
-        proto: "UDP/TLS/RTP/SAVPF".to_string(),
-        fmt: "0".to_string(),
-        media_title: None,
-        connections: Vec::new(),
-        bandwidths: Vec::new(),
-        key: None,
-        attributes: Vec::new(),
+    let codec = AnswerCodec {
+        direction: Direction::Send,
+        transport: AnswerTransport {
+            offer: sdp_types::Media {
+                media: "video".to_string(),
+                port: HOLD_PORT,
+                num_ports: None,
+                proto: "UDP/TLS/RTP/SAVPF".to_string(),
+                fmt: String::new(),
+                media_title: None,
+                connections: Vec::new(),
+                bandwidths: Vec::new(),
+                key: None,
+                attributes: Vec::new(),
+            },
+            payload_type: HOLD_PAYLOAD_TYPE,
+        },
+        codec_attributes: Vec::new(),
     };
-    for c in candidates {
-        media.add_attribute_with_value("candidate", c);
-    }
-    session.medias.push(media);
-    let mut full = Vec::new();
-    session
-        .write(&mut full)
-        .map_err(|e| format!("render restart fragment: {e}"))?;
-    // Keep the attribute and media lines; drop the header lines.
-    let text = String::from_utf8(full).map_err(|e| e.to_string())?;
-    let mut out = String::new();
-    for line in text.lines() {
-        if matches!(line.as_bytes().first(), Some(b'a' | b'm')) {
-            out.push_str(line);
-            out.push_str("\r\n");
-        }
-    }
-    Ok(out.into_bytes())
+    restart_answer(
+        LocalMediaIdentity {
+            ice_ufrag: ufrag,
+            ice_pwd: pwd,
+            fingerprint: RESTART_FRAGMENT_FINGERPRINT,
+        },
+        &codec,
+        candidates,
+    )
+    .map(String::into_bytes)
+    .map_err(|e| format!("render restart fragment: {e}"))
 }
 
 /// An ICE restart worked out from a `PATCH`, not yet applied.
@@ -606,6 +610,19 @@ pub(crate) fn plan_restart(
         answer,
         etag: token(ETAG_TOKEN_LEN),
     })
+}
+
+#[doc(hidden)]
+#[cfg(feature = "test-hooks")]
+pub fn restart_fragment_for_test(
+    fragment: &[u8],
+    current_remote_ufrag: &str,
+    local_candidates: &[String],
+    token: fn(usize) -> String,
+) -> Option<Vec<u8>> {
+    plan_restart(fragment, current_remote_ufrag, local_candidates, token)
+        .ok()
+        .map(|plan| plan.answer)
 }
 
 /// Queues `plan` for the media task and records the peer's new `ufrag` as the
