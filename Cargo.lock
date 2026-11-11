@@ -4599,6 +4599,7 @@ dependencies = [
  "thiserror 2.0.21",
  "timed-metadata",
  "url",
+ "workspace-guards",
  "zeroize",
 ]
 

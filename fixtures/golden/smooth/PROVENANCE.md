@@ -178,3 +178,14 @@ generated from unmodified `main` at commit 182d03f78bd508981c2f2dace5efeebcfe882
 The W1-T `xs:duration` change (Task 12c) intentionally edits the `PT...S` values in the `*.mpd` goldens (listed in the CHANGELOG);
 these four files stay byte-identical.
 
+
+## Writer element/attribute coverage (`smooth-cover-*.xml`)
+
+`smooth-cover-{stpp,wvtt,two-audio}.xml` record the Smooth manifest writer
+(element/attribute) names the `smooth*.xml` files above do not exercise: the
+`Type="text"` stream with its required `Subtype="SUBT"`, the second same-type
+stream's `Name` and `Url` ordinal, and the text `QualityLevel` without audio or
+geometry attributes. Same regeneration command as the DASH coverage files above.
+Capture commit: `2aaa8c1da6d76edae46c1f870028eb377f462dc2`. `stpp` is the real
+AVC + TTML CMAF capture, `wvtt` a spec vector, `two-audio` the fixture media
+with a second copy of its audio track.

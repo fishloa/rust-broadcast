@@ -98,6 +98,8 @@ cli    = ["dep:clap", "dep:container-probe", "std"]
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
+# `golden.rs` takes the guard lexer (`scan::non_test_source`) rather than a copy.
+workspace-guards = { path = "../workspace-guards" }
 # Counting/capping test allocator (path-only, publish = false; never published).
 test-alloc = { path = "../test-alloc" }
 # golden_gate.rs (issue #569) shells out to `ffprobe -of json` and parses the

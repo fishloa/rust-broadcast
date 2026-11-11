@@ -178,3 +178,22 @@ generated from unmodified `main` at commit 182d03f78bd508981c2f2dace5efeebcfe882
 The W1-T `xs:duration` change (Task 12c) intentionally edits the `PT...S` values in the `*.mpd` goldens (listed in the CHANGELOG);
 these four files stay byte-identical.
 
+
+## Writer element/attribute coverage (`dash-cover-*.mpd`)
+
+`dash-cover-{dvb-hdr,live,sar-par,languages,cbcs,stpp,wvtt}.mpd` record every
+element and attribute name of the DASH MPD writer (`transmux/src/dash.rs`) that
+the older `dash-*.mpd` files above do not exercise, so the move of the writer
+into a syntax crate (issues #2355, #2356) cannot change an unobserved branch.
+Recorded from the current code with:
+
+    GOLDEN_BLESS=$PWD/fixtures cargo test -p transmux --all-features --locked --test it golden
+
+Capture commit: `2aaa8c1da6d76edae46c1f870028eb377f462dc2`. Two inputs are
+synthetic because no committed capture produces them: `languages` appends two
+copies of the fixture's audio track carrying an `ISO_639_language_descriptor`
+(`eng`, `fra`) — no committed TS capture names a language code — and `sar-par`
+re-signals the fixture's own AVC SPS geometry with a `3:2` VUI sample aspect
+ratio so `@par` and `@sar` disagree. `stpp` is the real AVC + TTML CMAF capture
+(`fixtures/mp4/cmaf-av-subtitle`); `wvtt` is a spec vector (no producer writes
+WebVTT in ISO BMFF).

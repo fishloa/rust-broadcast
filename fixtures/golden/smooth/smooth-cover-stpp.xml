@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<SmoothStreamingMedia MajorVersion="2" MinorVersion="0" Duration="20000000" TimeScale="10000000">
+  <StreamIndex Type="video" Subtype="" Chunks="1" QualityLevels="1" Url="QualityLevels({bitrate})/Fragments(video={start time})">
+    <QualityLevel Index="0" Bitrate="28088" FourCC="H264" MaxWidth="64" MaxHeight="64" CodecPrivateData="000000016742C00ADA109B011000000300100000030040F1226A0000000168CE0FC8"/>
+    <c n="0" t="0" d="20000000"/>
+  </StreamIndex>
+  <StreamIndex Type="text" Subtype="SUBT" Chunks="1" QualityLevels="1" Url="QualityLevels({bitrate})/Fragments(text={start time})">
+    <QualityLevel Index="0" Bitrate="5696" FourCC="stpp"/>
+    <c n="0" t="0" d="20000000"/>
+  </StreamIndex>
+</SmoothStreamingMedia>

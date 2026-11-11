@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<SmoothStreamingMedia MajorVersion="2" MinorVersion="0" Duration="10000000" TimeScale="10000000">
+  <StreamIndex Type="text" Subtype="SUBT" Chunks="1" QualityLevels="1" Url="QualityLevels({bitrate})/Fragments(text={start time})">
+    <QualityLevel Index="0" Bitrate="144" FourCC="wvtt"/>
+    <c n="0" t="0" d="10000000"/>
+  </StreamIndex>
+</SmoothStreamingMedia>

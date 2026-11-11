@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" profiles="urn:mpeg:dash:profile:isoff-live:2011" type="static" minBufferTime="PT2S" mediaPresentationDuration="PT2S">
+  <Period id="0" start="PT0S">
+    <AdaptationSet id="0" contentType="video" mimeType="video/mp4" segmentAlignment="true" startWithSAP="1" par="1:1">
+      <Role schemeIdUri="urn:mpeg:dash:role:2011" value="main"/>
+      <Representation id="1" mimeType="video/mp4" codecs="avc1.42C00A" bandwidth="28088" width="64" height="64" frameRate="2/1" sar="1:1">
+        <SegmentTemplate timescale="16384" duration="32768" startNumber="1" initialization="init-stream$RepresentationID$.m4s" media="chunk-stream$RepresentationID$-$Number$.m4s"/>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet id="1" contentType="text" mimeType="application/mp4" segmentAlignment="true" startWithSAP="1">
+      <Role schemeIdUri="urn:mpeg:dash:role:2011" value="main"/>
+      <Representation id="2" mimeType="application/mp4" codecs="stpp" bandwidth="5696">
+        <SegmentTemplate timescale="1000000" duration="2000000" startNumber="1" initialization="init-stream$RepresentationID$.m4s" media="chunk-stream$RepresentationID$-$Number$.m4s"/>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>
