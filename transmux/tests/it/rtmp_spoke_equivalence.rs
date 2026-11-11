@@ -47,27 +47,14 @@ fn track_summary(media: &Media) -> Vec<(String, usize, Vec<usize>)> {
         .collect()
 }
 
-/// `(tag type, timestamp, body)` for every tag an FLV byte stream carries.
+/// `(tag type, timestamp, body)` for every tag an FLV byte stream carries,
+/// walked with `rtmp-runtime`'s strict tag walker (no hand-rolled framing).
 fn flv_tags(flv: &[u8]) -> Vec<(u8, u32, Vec<u8>)> {
-    let data_offset = u32::from_be_bytes([flv[5], flv[6], flv[7], flv[8]]) as usize;
-    let mut off = data_offset.max(9) + 4;
-    let mut tags = Vec::new();
-    while off + 11 <= flv.len() {
-        let tag_type = flv[off];
-        let len = (usize::from(flv[off + 1]) << 16)
-            | (usize::from(flv[off + 2]) << 8)
-            | usize::from(flv[off + 3]);
-        let timestamp = (u32::from(flv[off + 7]) << 24)
-            | (u32::from(flv[off + 4]) << 16)
-            | (u32::from(flv[off + 5]) << 8)
-            | u32::from(flv[off + 6]);
-        if off + 11 + len > flv.len() {
-            break;
-        }
-        tags.push((tag_type, timestamp, flv[off + 11..off + 11 + len].to_vec()));
-        off += 11 + len + 4;
-    }
-    tags
+    let header = <rtmp_runtime::flv::FlvHeader as Parse>::parse(flv).expect("FLV header");
+    rtmp_runtime::flv::tags(flv, &header)
+        .map(|tag| tag.map(|tag| (tag.tag_type.to_byte(), tag.timestamp, tag.body.to_vec())))
+        .collect::<Result<Vec<_>, _>>()
+        .expect("FLV tags walk")
 }
 
 /// The same tags as the RTMP messages the chunk stream must carry.
@@ -112,7 +99,6 @@ fn the_rtmp_spoke_carries_the_same_media_as_the_flv_spoke() {
             !ground_truth.tracks.is_empty(),
             "{rel}: fixture must have at least one track"
         );
-        let flv_media = normalised_media(bytes.as_slice());
         let flv_bytes = FlvMux::new().package(&ground_truth).expect("IR to FLV");
         let expected = messages_of(&flv_tags(&flv_bytes));
         assert!(
@@ -158,7 +144,7 @@ fn the_rtmp_spoke_carries_the_same_media_as_the_flv_spoke() {
 
             assert_eq!(
                 track_summary(&rtmp_media),
-                track_summary(&flv_media),
+                track_summary(&ground_truth),
                 "{rel} at chunk size {chunk_size}: track/sample shape"
             );
             assert_eq!(
