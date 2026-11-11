@@ -399,38 +399,25 @@ impl<'a> Parse<'a> for FlvTag<'a> {
     type Error = RtmpError;
 
     fn parse(bytes: &'a [u8]) -> FlvResult<Self> {
-        need_in(bytes, FLV_TAG_HEADER_LEN, "FLV tag header")?;
-        let tag_type = TagType::from_byte(bytes.first().copied().unwrap_or_default());
-        let data_size = u32::from_be_bytes([
-            0,
-            bytes.get(1).copied().unwrap_or_default(),
-            bytes.get(2).copied().unwrap_or_default(),
-            bytes.get(3).copied().unwrap_or_default(),
-        ]);
-        let ts_low24 = u32::from_be_bytes([
-            0,
-            bytes.get(4).copied().unwrap_or_default(),
-            bytes.get(5).copied().unwrap_or_default(),
-            bytes.get(6).copied().unwrap_or_default(),
-        ]);
-        let ts_extended = u32::from(bytes.get(7).copied().unwrap_or_default());
-        let stream_id = u32::from_be_bytes([
-            bytes.get(8).copied().unwrap_or_default(),
-            bytes.get(9).copied().unwrap_or_default(),
-            bytes.get(10).copied().unwrap_or_default(),
-            0,
-        ]);
-        let data_size = usize::try_from(data_size).map_err(|_| RtmpError::Malformed {
-            what: "FLV tag DataSize",
-        })?;
-        let body_at = FLV_TAG_HEADER_LEN;
-        let body_end = body_at.checked_add(data_size).ok_or(RtmpError::Malformed {
-            what: "FLV tag DataSize",
-        })?;
+        let FlvTagHeader {
+            tag_type,
+            data_size,
+            timestamp,
+            stream_id,
+        } = FlvTagHeader::parse(bytes)?;
+        let body_end = FLV_TAG_HEADER_LEN
+            .checked_add(
+                usize::try_from(data_size).map_err(|_| RtmpError::Malformed {
+                    what: "FLV tag DataSize",
+                })?,
+            )
+            .ok_or(RtmpError::Malformed {
+                what: "FLV tag DataSize",
+            })?;
         // `PreviousTagSize` may be cut off a final tag: §E.4.1 makes it
         // redundant (it repeats this tag's size), so the body is what this
         // decode needs and the trailer is not checked.
-        let body = bytes.get(body_at..body_end).ok_or_else(|| {
+        let body = bytes.get(FLV_TAG_HEADER_LEN..body_end).ok_or_else(|| {
             broadcast_common::error::BufferTooShort {
                 need: body_end.saturating_add(FLV_PREV_TAG_SIZE_LEN),
                 have: bytes.len(),
@@ -439,10 +426,93 @@ impl<'a> Parse<'a> for FlvTag<'a> {
         })?;
         Ok(Self {
             tag_type,
-            timestamp: ts_low24 | (ts_extended << FLV_TIMESTAMP_EXTENDED_SHIFT),
+            timestamp,
             stream_id,
             body,
         })
+    }
+}
+
+/// The 11-byte tag header of a tag whose body may not have arrived yet
+/// (§E.4.1): `TagType`, `DataSize`, `Timestamp` + `TimestampExtended` and
+/// `StreamID`, without the body — what an incremental reader needs to know how
+/// many bytes the whole tag takes before it can decode one.
+///
+/// `FlvTag::parse` and the tolerant walk both read the header through here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FlvTagHeader {
+    /// `TagType` byte (§E.4.1).
+    pub tag_type: TagType,
+    /// `DataSize` (§E.4.1): the body length that follows the header.
+    pub data_size: u32,
+    /// Millisecond timestamp: the UI24 `Timestamp` plus the UI8
+    /// `TimestampExtended` as its top byte (§E.4.1).
+    pub timestamp: u32,
+    /// `StreamID` (§E.4.1).
+    pub stream_id: u32,
+}
+
+impl FlvTagHeader {
+    /// The header of the tag starting at the front of `bytes`.
+    ///
+    /// # Errors
+    /// [`RtmpError::BufferTooShort`] when fewer than [`FLV_TAG_HEADER_LEN`]
+    /// bytes are present.
+    pub fn parse(bytes: &[u8]) -> FlvResult<Self> {
+        need_in(bytes, FLV_TAG_HEADER_LEN, "FLV tag header")?;
+        let field = |at: usize| bytes.get(at).copied().unwrap_or_default();
+        let data_size = u32::from_be_bytes([0, field(1), field(2), field(3)]);
+        let ts_low24 = u32::from_be_bytes([0, field(4), field(5), field(6)]);
+        let ts_extended = u32::from(field(7));
+        let stream_id = u32::from_be_bytes([0, field(8), field(9), field(10)]);
+        Ok(Self {
+            tag_type: TagType::from_byte(field(0)),
+            data_size,
+            timestamp: ts_low24 | (ts_extended << FLV_TIMESTAMP_EXTENDED_SHIFT),
+            stream_id,
+        })
+    }
+
+    /// Bytes of the whole tag this header announces: header, body and the
+    /// trailing `PreviousTagSize` (§E.4.1).
+    #[must_use]
+    pub fn total_len(&self) -> usize {
+        let body = usize::try_from(self.data_size).unwrap_or(usize::MAX);
+        FLV_TAG_HEADER_LEN
+            .saturating_add(body)
+            .saturating_add(FLV_PREV_TAG_SIZE_LEN)
+    }
+}
+
+impl Serialize for FlvTagHeader {
+    type Error = RtmpError;
+
+    fn serialized_len(&self) -> usize {
+        FLV_TAG_HEADER_LEN
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> FlvResult<usize> {
+        need_out(buf, FLV_TAG_HEADER_LEN)?;
+        let size = ui24(self.data_size, "FLV tag DataSize")?;
+        let low = ui24(self.timestamp & TIMESTAMP_LOW24_MASK, "FLV tag Timestamp")?;
+        let extended = self.timestamp >> FLV_TIMESTAMP_EXTENDED_SHIFT;
+        let Some(extended) = u8::try_from(extended).ok() else {
+            return Err(RtmpError::Malformed {
+                what: "FLV tag TimestampExtended",
+            });
+        };
+        let stream_id = ui24(self.stream_id, "FLV tag StreamID")?;
+        let Some(header) = buf.get_mut(..FLV_TAG_HEADER_LEN) else {
+            return Err(RtmpError::Malformed {
+                what: "FLV tag header",
+            });
+        };
+        header[0] = self.tag_type.to_byte();
+        header[TAG_DATA_SIZE_AT..TAG_TIMESTAMP_AT].copy_from_slice(&size);
+        header[TAG_TIMESTAMP_AT..TAG_TIMESTAMP_EXTENDED_AT].copy_from_slice(&low);
+        header[TAG_TIMESTAMP_EXTENDED_AT] = extended;
+        header[TAG_STREAM_ID_AT..FLV_TAG_HEADER_LEN].copy_from_slice(&stream_id);
+        Ok(FLV_TAG_HEADER_LEN)
     }
 }
 
@@ -584,8 +654,10 @@ fn plausible_tag_header(input: &[u8], off: usize, known_type: bool) -> bool {
 /// The `DataSize` of the tag whose header starts at `off` (the caller has
 /// checked that the header is readable).
 fn tag_data_size(input: &[u8], off: usize) -> usize {
-    let field = |at: usize| input.get(at).copied().unwrap_or_default();
-    u32::from_be_bytes([0, field(off + 1), field(off + 2), field(off + 3)]) as usize
+    FlvTagHeader::parse(&input[off..])
+        .ok()
+        .and_then(|header| usize::try_from(header.data_size).ok())
+        .unwrap_or_default()
 }
 
 /// Whether the tag starting at `off` is followed by a consistent chain: its

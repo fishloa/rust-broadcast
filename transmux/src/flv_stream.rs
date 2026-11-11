@@ -97,10 +97,9 @@ use crate::aac_asc::AudioSpecificConfig;
 use crate::annexb::{NAL_LENGTH_SIZE, NAL_LENGTH_SIZE_MINUS_ONE, normalise_nal_length_size};
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::flv::{
-    AUDIO_SAMPLE_SIZE_BITS, CODEC_ID_AVC, FLV_HEADER_LEN, FLV_SIGNATURE, FLV_TIMESCALE,
-    FRAME_TYPE_KEYFRAME, FlvError, MAX_FLV_HEADER_LEN, PREV_TAG_SIZE_LEN, TAG_HEADER_LEN,
-    aac_packet_type, asc_rate_hz, avc_dimensions, avc_packet_type, build_aac_esds, read_si24,
-    tag_type,
+    AUDIO_SAMPLE_SIZE_BITS, CODEC_ID_AVC, FLV_HEADER_LEN, FLV_TIMESCALE, FRAME_TYPE_KEYFRAME,
+    FlvError, MAX_FLV_HEADER_LEN, PREV_TAG_SIZE_LEN, TAG_HEADER_LEN, aac_packet_type, asc_rate_hz,
+    avc_dimensions, avc_packet_type, build_aac_esds, read_si24, tag_type,
 };
 use crate::ir::DemuxEvent;
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
@@ -323,34 +322,31 @@ impl StreamingFlvDemux {
                 if self.pending.len() < FLV_HEADER_LEN + PREV_TAG_SIZE_LEN {
                     break; // header (+ PreviousTagSize0) not fully arrived yet
                 }
-                if self.pending[0..3] != FLV_SIGNATURE {
-                    return Err(FlvError::BadSignature([
-                        self.pending[0],
-                        self.pending[1],
-                        self.pending[2],
-                    ]));
-                }
                 // DataOffset (bytes [5:9]) points past the header to the
-                // first PreviousTagSize0 — mirrors `crate::flv::iter_tags`.
-                // Validated against `MAX_FLV_HEADER_LEN` *before* using it to
-                // size a skip: a malicious value (e.g. 0xFFFF_FFFF) would
-                // otherwise never satisfy the `pending.len() < skip` check
-                // below, so every `feed` call would simply keep appending to
-                // `pending` forever waiting for a "header" that never
-                // completes (#738 T11a review, Important — remote OOM/DoS).
-                let data_offset = u32::from_be_bytes([
-                    self.pending[5],
-                    self.pending[6],
-                    self.pending[7],
-                    self.pending[8],
-                ]);
-                if data_offset as usize > MAX_FLV_HEADER_LEN {
+                // first PreviousTagSize0. It is validated against
+                // `MAX_FLV_HEADER_LEN` *before* it sizes a skip: a malicious
+                // value (e.g. 0xFFFF_FFFF) would otherwise never satisfy the
+                // `pending.len() < skip` check below, so every `feed` call
+                // would keep appending to `pending` forever waiting for a
+                // "header" that never completes (#738 T11a review, Important —
+                // remote OOM/DoS).
+                let header = match rtmp_runtime::flv::FlvHeader::parse(&self.pending) {
+                    Ok(header) => header,
+                    Err(_) => {
+                        return Err(FlvError::BadSignature([
+                            self.pending[0],
+                            self.pending[1],
+                            self.pending[2],
+                        ]));
+                    }
+                };
+                if usize::try_from(header.data_offset).unwrap_or(usize::MAX) > MAX_FLV_HEADER_LEN {
                     return Err(FlvError::HeaderTooLarge {
-                        declared: data_offset,
+                        declared: header.data_offset,
                         max: MAX_FLV_HEADER_LEN,
                     });
                 }
-                let skip = (data_offset as usize).max(FLV_HEADER_LEN) + PREV_TAG_SIZE_LEN;
+                let skip = header.first_tag_offset();
                 if self.pending.len() < skip {
                     break; // a non-standard larger header hasn't fully arrived
                 }
@@ -360,22 +356,17 @@ impl StreamingFlvDemux {
             }
 
             let remaining = &self.pending[*cursor..];
-            if remaining.len() < TAG_HEADER_LEN {
+            let Ok(tag_header) = rtmp_runtime::flv::FlvTagHeader::parse(remaining) else {
                 break; // partial tag header
-            }
-            let tag_type_byte = remaining[0];
-            let data_size =
-                u32::from_be_bytes([0, remaining[1], remaining[2], remaining[3]]) as usize;
-            let total = TAG_HEADER_LEN
-                .saturating_add(data_size)
-                .saturating_add(PREV_TAG_SIZE_LEN);
+            };
+            let total = tag_header.total_len();
             if remaining.len() < total {
                 break; // tag body / trailing PreviousTagSize not fully arrived
             }
             let Ok(tag) = rtmp_runtime::flv::FlvTag::parse(remaining) else {
                 break; // the full tag is here, so this only fails on a framing bug
             };
-            let timestamp = tag.timestamp;
+            let (tag_type_byte, timestamp) = (tag.tag_type.to_byte(), tag_header.timestamp);
             let body = tag.body;
             // The tag is fully present, so it is consumed either way: advance
             // the cursor *before* parsing, so a structural failure (a corrupt
@@ -438,23 +429,19 @@ impl StreamingFlvDemux {
             // header; `feed` validates it against `MAX_FLV_HEADER_LEN` before
             // trusting it, and rejects an over-large one, so the worst this
             // can over-ask for is that already-rejected bound.
-            let data_offset = u32::from_be_bytes([
-                self.pending[5],
-                self.pending[6],
-                self.pending[7],
-                self.pending[8],
-            ]) as usize;
-            let skip = data_offset.max(FLV_HEADER_LEN) + PREV_TAG_SIZE_LEN;
+            let skip = rtmp_runtime::flv::FlvHeader::parse(&self.pending)
+                .map_or(FLV_HEADER_LEN + PREV_TAG_SIZE_LEN, |header| {
+                    header.first_tag_offset()
+                });
             return skip.saturating_sub(have).max(1);
         }
         if have < TAG_HEADER_LEN {
             return TAG_HEADER_LEN - have;
         }
-        // Tag header present: `DataSize` (bytes [1:4], 24-bit) gives the whole
-        // remaining unit — body plus the trailing `PreviousTagSize`.
-        let data_size =
-            u32::from_be_bytes([0, self.pending[1], self.pending[2], self.pending[3]]) as usize;
-        let total = TAG_HEADER_LEN + data_size + PREV_TAG_SIZE_LEN;
+        // Tag header present: its `DataSize` gives the whole remaining unit —
+        // body plus the trailing `PreviousTagSize`.
+        let total = rtmp_runtime::flv::FlvTagHeader::parse(&self.pending)
+            .map_or(TAG_HEADER_LEN, |header| header.total_len());
         total.saturating_sub(have).max(1)
     }
 

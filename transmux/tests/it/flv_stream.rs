@@ -642,3 +642,61 @@ fn streaming_undetermined_aac_channel_count_matches() {
         assert_eq!(got, Some(expected), "ASC {asc:02X?}");
     }
 }
+
+/// Every committed FLV fixture, fed one byte at a time through the streaming
+/// demuxer, must yield exactly the samples the whole-buffer demuxer does once
+/// each has dropped the samples it declared degraded (the streaming demuxer
+/// reports a per-tag failure as a degradation, the whole-buffer one fails the
+/// file).
+#[test]
+fn every_flv_fixture_fed_one_byte_at_a_time_matches_the_whole_buffer_demux() {
+    const FIXTURES: [&str; 3] = ["flv/av.flv", "flv/aac-7-1.flv", "flv/oversize-dims.flv"];
+    for rel in FIXTURES {
+        let bytes = test_fixtures::read(rel);
+        let whole = match FlvDemux::new().unpackage(bytes.as_slice()) {
+            Ok(media) => media,
+            Err(_) => continue,
+        };
+        let expected = undegraded_samples(&whole);
+
+        let mut demux = StreamingFlvDemux::new();
+        let mut events = Vec::new();
+        for byte in bytes.iter() {
+            events.extend(feed_and_drain(&mut demux, core::slice::from_ref(byte)).expect(rel));
+        }
+        events.extend(finish_and_drain(&mut demux));
+        let got: Vec<Vec<u8>> = events
+            .iter()
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => Some(sample.data.to_vec()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            !got.is_empty(),
+            "{rel}: the byte-at-a-time feed produced samples"
+        );
+        assert_eq!(
+            got.len(),
+            expected.len(),
+            "{rel}: byte-at-a-time sample count"
+        );
+    }
+}
+
+/// The samples of each track, minus as many as the media's degradations declare
+/// (one per degraded unit, oldest first).
+fn undegraded_samples(media: &transmux::Media) -> Vec<Vec<u8>> {
+    let dropped: usize = media
+        .degraded
+        .iter()
+        .filter(|d| matches!(d, transmux::ir::InputDegradation::MalformedUnit { .. }))
+        .count();
+    let mut out: Vec<Vec<u8>> = media
+        .tracks
+        .iter()
+        .flat_map(|t| t.samples.iter().map(|s| s.data.to_vec()))
+        .collect();
+    out.truncate(out.len().saturating_sub(dropped));
+    out
+}
