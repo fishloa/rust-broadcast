@@ -886,10 +886,13 @@ fn pending_fetch(
                 Ok(Ok(FetchOne::NotReady)) => FetchResult::NotReady(MultimuxError::Connect {
                     reason: format!("smooth-pull {what} ({id:?}) not ready yet"),
                 }),
-                Ok(Err(e)) => FetchResult::Failed(e),
-                Err(_) => FetchResult::Failed(MultimuxError::Connect {
-                    reason: format!("smooth-pull {what} ({id:?}) read exceeded {read_timeout:?}"),
-                }),
+                Ok(Err(e)) => FetchResult::Failed { error: e, retry_after: None },
+                Err(_) => FetchResult::Failed {
+                    error: MultimuxError::Connect {
+                        reason: format!("smooth-pull {what} ({id:?}) read exceeded {read_timeout:?}"),
+                    },
+                    retry_after: None,
+                },
             };
             let key = SmoothFetch {
                 id,
@@ -1026,7 +1029,7 @@ pub async fn run_smooth_pull(
                 driver.feed((fetch.id, bytes.as_slice()), now);
                 crate::source::advance_route(&driver, route_handle, &mut progress).await;
             }
-            Some(crate::source::pull::FetchOutcome::Failed(_fetch, e)) => {
+            Some(crate::source::pull::FetchOutcome::Failed(_fetch, e, _)) => {
                 // A real fetch failure ends the session.
                 return Err(e);
             }

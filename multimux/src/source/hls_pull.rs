@@ -109,11 +109,34 @@ const MAX_KEY_BODY_BYTES: usize = 4096;
 /// Length of an AES-128 key file (RFC 8216 §5.1).
 const AES128_KEY_LEN: usize = 16;
 
-/// Resource-fetch retry backoff steps (milliseconds), then a 30 s cap.
-const RESOURCE_RETRY_DELAYS_MS: [u64; 6] = [500, 1000, 2000, 4000, 8000, 16000];
+/// Base delay for the **exponential** resource-fetch retry backoff (audit
+/// W14d): the delay for attempt N is `base * 2^(N-1)`, capped at
+/// [`RESOURCE_RETRY_MAX_DELAY`]. A fixed 200 ms was far too short for an
+/// eviction race (the segment reappears on the next playlist reload, seconds
+/// later); starting at 500 ms and doubling reaches ~64 s by the 8th attempt,
+/// well past a normal reload cycle, without stalling the live edge on the
+/// first retry.
+const RESOURCE_RETRY_BASE_DELAY: Duration = Duration::from_millis(500);
 
-/// Cap on the resource-fetch retry backoff.
-const RESOURCE_RETRY_CAP_MS: u64 = 30_000;
+/// Growth factor of the resource-fetch retry delay (doubling).
+const RESOURCE_RETRY_FACTOR: f64 = 2.0;
+
+/// Cap on the exponential resource-fetch retry delay.
+const RESOURCE_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
+
+/// Exponential backoff for resource-fetch attempt `attempt` (1-based),
+/// capped at [`RESOURCE_RETRY_MAX_DELAY`].
+fn retry_backoff(attempt: u32) -> Duration {
+    // The workspace's one capped-exponential implementation (audit r07-O1 /
+    // #1141; SP1.5 moved it onto `backon`); `attempt` here is 1-based,
+    // `delay_for_attempt` 0-based.
+    crate::reconnect::ReconnectSchedule::from_parts(
+        RESOURCE_RETRY_BASE_DELAY,
+        RESOURCE_RETRY_MAX_DELAY,
+        RESOURCE_RETRY_FACTOR,
+    )
+    .delay_for_attempt(attempt.saturating_sub(1))
+}
 
 /// The `PendingFetch` for one resource fetch, after `delay`. The single
 /// place a resource is described, so the first try and every retry share the
@@ -126,7 +149,6 @@ fn resource_fetch(
     url: String,
     read_timeout: Duration,
     delay: Duration,
-    retry_after: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<HlsFetchId, u64>>>,
 ) -> crate::source::pull::PendingFetch<HlsFetchId> {
     let cap = match fetch_id {
         HlsFetchId::Key(_) => MAX_KEY_BODY_BYTES,
@@ -150,12 +172,11 @@ fn resource_fetch(
                     0,
                 )
             });
-            if retry_after_us > 0 {
-                retry_after
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert(fetch_id, retry_after_us);
-            }
+            let retry_after = if retry_after_us > 0 {
+                Some(std::time::Duration::from_micros(retry_after_us))
+            } else {
+                None
+            };
             let result = result.and_then(|bytes| match fetch_id {
                 HlsFetchId::Key(id) if bytes.len() != AES128_KEY_LEN => {
                     Err(hls_runtime::client::Error::BadKeyLength {
@@ -168,7 +189,10 @@ fn resource_fetch(
             });
             (
                 fetch_id,
-                crate::source::pull::FetchResult::from_result(result),
+                match result {
+                    Ok(b) => crate::source::pull::FetchResult::Ready(b),
+                    Err(e) => crate::source::pull::FetchResult::failed_after(e, retry_after),
+                },
             )
         }),
     }
@@ -542,9 +566,6 @@ pub async fn run_hls_pull(
     // far. A playlist fetch is not tracked — a broken manifest is a
     // route-level failure, not a transient one.
     let mut resource_retries: HashMap<HlsFetchId, (String, u32)> = HashMap::new();
-    let retry_after_seen: std::sync::Arc<
-        std::sync::Mutex<std::collections::HashMap<HlsFetchId, u64>>,
-    > = std::sync::Arc::default();
     // The session's own reload-pacing floor (`Action::WaitMs`): the *next*
     // playlist fetch is dispatched no earlier than this. `None` until the
     // engine has paced once. Set to `last playlist dispatch + hint` when a
@@ -595,7 +616,6 @@ pub async fn run_hls_pull(
                         url,
                         read_timeout,
                         Duration::ZERO,
-                        std::sync::Arc::clone(&retry_after_seen),
                     ));
                 }
                 Action::FetchKey { id, url } => {
@@ -611,7 +631,6 @@ pub async fn run_hls_pull(
                         url,
                         read_timeout,
                         Duration::ZERO,
-                        std::sync::Arc::clone(&retry_after_seen),
                     ));
                 }
                 // `Action` is `#[non_exhaustive]`: a future variant is simply
@@ -649,7 +668,7 @@ pub async fn run_hls_pull(
                 driver.feed((fetch_id, bytes.as_slice()), now);
                 crate::source::advance_route(&driver, route_handle, &mut progress).await;
             }
-            Some(crate::source::pull::FetchOutcome::Failed(fetch_id, e)) => {
+            Some(crate::source::pull::FetchOutcome::Failed(fetch_id, e, retry_after)) => {
                 // A failed **resource** fetch is retried (bounded) rather than
                 // ending the session (audit run 7, W14): a single part that
                 // 404s on an eviction race, or one dropped connection, must
@@ -694,17 +713,9 @@ pub async fn run_hls_pull(
                             }
                             // Queued, not spawned: the spawn loop applies
                             // the in-flight bound and the backoff delay.
-                            let backoff_delay_us = broadcast_client::fetch::Backoff::new(
-                                &RESOURCE_RETRY_DELAYS_MS,
-                                RESOURCE_RETRY_CAP_MS,
-                            )
-                            .delay_us(next_attempt as u64);
-                            let retry_after_us = retry_after_seen
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner())
-                                .remove(&fetch_id)
-                                .unwrap_or(0);
-                            let delay = Duration::from_micros(backoff_delay_us.max(retry_after_us));
+                            // retry_after travels with the fetch result (see pull::FetchResult).
+                            let delay = retry_backoff(next_attempt)
+                                .max(retry_after.unwrap_or_default());
                             scheduler.push_retry(resource_fetch(
                                 http.clone(),
                                 credentials.clone(),
@@ -712,7 +723,6 @@ pub async fn run_hls_pull(
                                 url,
                                 read_timeout,
                                 delay,
-                                std::sync::Arc::clone(&retry_after_seen),
                             ));
                         } else {
                             tracing::error!(
@@ -787,6 +797,38 @@ fn hls_pull_has_no_inline_sleep_outside_the_scheduler() {
 
 #[cfg(test)]
 mod tests {
+    /// Before/after pin (#1141): the shared `Backoff` reproduces the
+    /// shift-based schedule `retry_backoff` carried before consolidation.
+    /// SP1.5: `retry_backoff` is the pre-consolidation shift series
+    /// (0.5 s doubling to a 30 s cap) with `backon`'s jitter on top, so the
+    /// band is pinned exactly and the cap saturates.
+    #[test]
+    fn retry_backoff_matches_the_pre_consolidation_shift_schedule() {
+        for attempt in 0..40u32 {
+            let shift = attempt.saturating_sub(1).min(16);
+            let raw = RESOURCE_RETRY_BASE_DELAY
+                .checked_mul(1u32 << shift)
+                .unwrap_or(RESOURCE_RETRY_MAX_DELAY)
+                .min(RESOURCE_RETRY_MAX_DELAY);
+            let got = retry_backoff(attempt);
+            // Equal jitter: `raw * [0.5, 1.0)`.
+            assert!(
+                got >= raw / 2 && got < raw + Duration::from_nanos(1),
+                "attempt {attempt}: {got:?} outside [{:?}, {raw:?})",
+                raw / 2
+            );
+        }
+        // C2: once raw saturates at the cap the delay stays jittered in
+        // [cap/2, cap), never a single constant.
+        for _ in 0..40 {
+            let d = retry_backoff(20);
+            assert!(
+                d >= RESOURCE_RETRY_MAX_DELAY / 2 && d < RESOURCE_RETRY_MAX_DELAY,
+                "capped retry {d:?} must stay jittered in [cap/2, cap)"
+            );
+        }
+    }
+
     use super::*;
     use crate::source::IngestTimeouts;
     use crate::testutil::MockAuthScheme;
@@ -1034,7 +1076,6 @@ Content-Length: {over}
             url,
             Duration::from_secs(10),
             Duration::ZERO,
-            std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         );
         pending.fut.await.1
     }
@@ -1045,9 +1086,10 @@ Content-Length: {over}
         let result = run_key_fetch(url).await;
         server.abort();
         match result {
-            crate::source::pull::FetchResult::Failed(MultimuxError::LlHls(
-                hls_runtime::client::Error::BadKeyLength { len, .. },
-            )) => assert_eq!(len, AES128_KEY_LEN - 1),
+            crate::source::pull::FetchResult::Failed {
+                error: MultimuxError::LlHls(hls_runtime::client::Error::BadKeyLength { len, .. }),
+                ..
+            } => assert_eq!(len, AES128_KEY_LEN - 1),
             _ => panic!("expected a typed BadKeyLength failure"),
         }
     }
@@ -1058,7 +1100,7 @@ Content-Length: {over}
         let result = run_key_fetch(url).await;
         server.abort();
         match result {
-            crate::source::pull::FetchResult::Failed(MultimuxError::Connect { reason }) => {
+            crate::source::pull::FetchResult::Failed { error: MultimuxError::Connect { reason }, .. } => {
                 assert!(reason.contains("exceeds"), "{reason}");
             }
             _ => panic!("expected the body cap to reject the key"),
