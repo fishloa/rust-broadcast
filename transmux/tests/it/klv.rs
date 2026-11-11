@@ -4,11 +4,11 @@
 //! UAS Datalink Local Set, RFC 6597 KLV-over-RTP. See
 //! `private/specs-verified/mpeg/transmux/klv/klv-misb0601.md`.
 
-use broadcast_common::klv::UNIVERSAL_LABEL_LEN;
+use broadcast_common::klv::{KlvItem, UNIVERSAL_LABEL_LEN};
 use broadcast_common::{Parse, Serialize};
 use transmux::klv::{
-    CHECKSUM_LEN, KlvItem, LocalSetItem, PRECISION_TIMESTAMP_LEN, TAG_CHECKSUM,
-    TAG_PRECISION_TIMESTAMP, UAS_LS_KEY, UasLocalSet, checksum_bcc16,
+    CHECKSUM_LEN, LocalSetItem, PRECISION_TIMESTAMP_LEN, TAG_CHECKSUM, TAG_PRECISION_TIMESTAMP,
+    UAS_LS_KEY, UasLocalSet, checksum_bcc16,
 };
 use transmux::rtp::{depacketise_klv, packetise_klv};
 
@@ -22,7 +22,7 @@ const RTP_MARKER_MASK: u8 = 0x80;
 #[test]
 fn klv_item_value_grows_ber_length_to_long_form() {
     // The value length drives the on-wire BER length: 255 -> 81 FF, 256 -> 82 01 00.
-    let at_255 = KlvItem::new(UAS_LS_KEY, vec![0xAB; 255]);
+    let at_255 = KlvItem::new(UAS_LS_KEY, &[0xAB; 255]);
     let b255 = at_255.try_to_bytes().unwrap();
     assert_eq!(
         &b255[UNIVERSAL_LABEL_LEN..UNIVERSAL_LABEL_LEN + 2],
@@ -30,7 +30,7 @@ fn klv_item_value_grows_ber_length_to_long_form() {
     );
     assert_eq!(b255.len(), at_255.serialized_len());
 
-    let at_256 = KlvItem::new(UAS_LS_KEY, vec![0xAB; 256]);
+    let at_256 = KlvItem::new(UAS_LS_KEY, &[0xAB; 256]);
     let b256 = at_256.try_to_bytes().unwrap();
     assert_eq!(
         &b256[UNIVERSAL_LABEL_LEN..UNIVERSAL_LABEL_LEN + 3],
@@ -47,18 +47,14 @@ fn klv_item_indefinite_form_rejected() {
     bytes.push(0x80);
     assert!(matches!(
         KlvItem::parse(&bytes),
-        Err(transmux::error::Error::Klv(
-            broadcast_common::klv::KlvError::BerIndefiniteLength
-        ))
+        Err(broadcast_common::klv::KlvError::BerIndefiniteLength)
     ));
     // Long form promising bytes that aren't there -> error, no panic.
     bytes[UNIVERSAL_LABEL_LEN] = 0x82;
     bytes.push(0x01);
     assert!(matches!(
         KlvItem::parse(&bytes),
-        Err(transmux::error::Error::Klv(
-            broadcast_common::klv::KlvError::BufferTooShort(..)
-        ))
+        Err(broadcast_common::klv::KlvError::BufferTooShort(..))
     ));
 }
 
@@ -68,7 +64,7 @@ fn klv_item_indefinite_form_rejected() {
 
 #[test]
 fn klv_item_round_trip() {
-    let item = KlvItem::new(UAS_LS_KEY, b"hello KLV value".to_vec());
+    let item = KlvItem::new(UAS_LS_KEY, b"hello KLV value");
     let bytes = item.try_to_bytes().unwrap();
     let parsed = KlvItem::parse(&bytes).unwrap();
     assert_eq!(parsed, item);
@@ -80,8 +76,8 @@ fn klv_item_round_trip() {
 fn klv_item_length_is_computed_not_stored() {
     // The serialized length byte is COMPUTED from the value: mutate the value
     // length and the on-wire length field must track it.
-    let short = KlvItem::new(UAS_LS_KEY, vec![0xAB; 5]);
-    let long = KlvItem::new(UAS_LS_KEY, vec![0xAB; 6]);
+    let short = KlvItem::new(UAS_LS_KEY, &[0xAB; 5]);
+    let long = KlvItem::new(UAS_LS_KEY, &[0xAB; 6]);
     let sb = short.try_to_bytes().unwrap();
     let lb = long.try_to_bytes().unwrap();
     // Byte at index 16 is the (short-form) BER length.
@@ -89,7 +85,7 @@ fn klv_item_length_is_computed_not_stored() {
     assert_eq!(lb[UNIVERSAL_LABEL_LEN], 6);
 
     // A value that forces a 2-byte BER length (>= 128).
-    let big = KlvItem::new(UAS_LS_KEY, vec![0xCD; 300]);
+    let big = KlvItem::new(UAS_LS_KEY, &[0xCD; 300]);
     let bb = big.try_to_bytes().unwrap();
     assert_eq!(
         &bb[UNIVERSAL_LABEL_LEN..UNIVERSAL_LABEL_LEN + 3],
