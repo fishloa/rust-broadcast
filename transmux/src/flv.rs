@@ -103,6 +103,12 @@ pub(crate) const PREV_TAG_SIZE_LEN: usize = rtmp_runtime::flv::FLV_PREV_TAG_SIZE
 /// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
 pub(crate) const MAX_FLV_HEADER_LEN: usize = 1024;
 
+/// What `rtmp_runtime::flv::FlvHeader::parse` names a `DataOffset` it rejects
+/// (§E.2 — the field is the header length, so it can never be below
+/// [`FLV_HEADER_LEN`]). Matched so the boxed error carries the real cause
+/// rather than a bad-signature report for a stream whose signature is `FLV`.
+pub(crate) const FLV_DATA_OFFSET: &str = "FLV header DataOffset";
+
 /// `TagType` values (§E.4.1).
 ///
 /// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
@@ -255,6 +261,9 @@ pub enum FlvError {
         /// The codec name.
         codec: &'static str,
     },
+    /// The signature is `"FLV"` but the rest of the header was rejected
+    /// (§E.2) — currently a `DataOffset` below the 9-byte header itself.
+    Header(RtmpError),
     /// Underlying parse/serialize error from a reused codec-config builder.
     Codec(Error),
 }
@@ -286,6 +295,7 @@ impl fmt::Display for FlvError {
                 )
             }
             FlvError::Codec(e) => write!(f, "FLV codec config: {e}"),
+            FlvError::Header(e) => write!(f, "FLV header: {e}"),
         }
     }
 }
@@ -391,7 +401,10 @@ struct TagWalk<'a> {
 /// rather than a bare `NoSupportedTrack`.
 fn iter_tags(input: &[u8]) -> Result<TagWalk<'_>> {
     need_in(input, FLV_HEADER_LEN + PREV_TAG_SIZE_LEN, "FLV header")?;
-    let header = FlvHeader::parse(input).map_err(|e| match e {
+    let header = FlvHeader::parse(input).map_err(|e| match e.clone() {
+        RtmpError::Malformed {
+            what: FLV_DATA_OFFSET,
+        } => Error::from(FlvErrorAsError(FlvError::Header(e))),
         RtmpError::Malformed { what } => Error::InvalidInput(what),
         RtmpError::BufferTooShort(w) => Error::from(FlvErrorAsError(FlvError::TagOverrun {
             offset: 0,
@@ -456,6 +469,7 @@ impl From<FlvErrorAsError> for Error {
                 FlvError::NoSupportedTrack => "FLV no supported track",
                 FlvError::UnsupportedCodec { .. } => "FLV unsupported codec",
                 FlvError::HeaderTooLarge { .. } => "FLV header DataOffset too large",
+                FlvError::Header(_) => "FLV header DataOffset below the header",
                 _ => "FLV error",
             }),
         }

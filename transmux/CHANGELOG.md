@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Fixed
+- `FlvDemux` and `StreamingFlvDemux` report an FLV header whose signature is `"FLV"` but whose `DataOffset` is below the 9-byte header as the new `FlvError::Header(rtmp_runtime::RtmpError)`, and keep `FlvError::BadSignature` for a wrong signature. Both demuxers now reject such a header (they used to clamp its `DataOffset` up to 9).
 - `RtmpMux` frames at exactly the chunk size it announces: a `chunk_size` of 0 or above `rtmp_runtime::chunk::MAX_CHUNK_SIZE` (16 MiB) is rejected with `RtmpFlvError::ChunkSizeTooLarge` instead of announcing it and framing at the writer's clamped value. A tag body over `rtmp_runtime::chunk::MAX_MESSAGE_LEN` (8 MiB) is rejected with the new `RtmpFlvError::MessageTooLarge { len, max }` instead of producing a message `RtmpDemux` refuses.
 ### Changed
 - `StreamingFlvDemux` decodes the FLV header and every tag header with `rtmp_runtime::flv`'s parsers (`FlvHeader::parse`, the new `FlvTagHeader`) instead of its own `u32::from_be_bytes` reads; its incremental buffering is unchanged, and every committed fixture fed one byte at a time still yields the whole-buffer demuxer's samples.
