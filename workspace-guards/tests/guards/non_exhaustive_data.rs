@@ -34,6 +34,7 @@ pub const TABLE: &[Crate] = &[
         skip: &["Frame"],
         variants: false,
     },
+    plain("broadcast-dash"),
     plain("broadcast-hls"),
     plain("broadcast-loudness"),
     plain("buffering-runtime"),

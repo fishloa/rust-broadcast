@@ -149,6 +149,28 @@ pub const TABLE: &[Crate] = &[
     },
     // Drift-guard for the spec/field-enum label convention (issue #204).
     //
+    // `broadcast-dash` labels every spec/field enum it defines (`PresentationType`,
+    // `Limit`, `Unsupported`, `Role`, `TemplateFault`, `UrlType`, `Actuate`,
+    // `UtcScheme`, `TemplateError`'s sibling enums); its structured errors
+    // (`MpdError`, `DashParseError`, `DateTimeError`, `TemplateError`) are
+    // skipped, as is `TemplateUse` (a set of booleans, not a wire value).
+    Crate {
+        name: "broadcast-dash",
+        scope: Scope::Crate,
+        matcher: Matcher::Loose,
+        skip: &[
+            "MpdError",
+            "DashParseError",
+            "DateTimeError",
+            "TemplateError",
+            "InheritError",
+            "SegmentInfo",
+        ],
+        expected: None,
+        min_enums: None,
+    },
+    // Drift-guard for the spec/field-enum label convention (issue #204).
+    //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list (errors only — all other public enums in broadcast-hls are
     // spec/field label enums), and fails if any remaining enum has neither
@@ -342,6 +364,7 @@ pub const TABLE: &[Crate] = &[
             "InheritError",
             "OfferOutcome",
             "SegmentInfo",
+            "HttpDateError",
             "Error",
             "Action",
             "ResourceId",

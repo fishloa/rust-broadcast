@@ -43,7 +43,6 @@ mod damaged_unit_resync_flv;
 mod damaged_unit_resync_webm;
 mod dash;
 #[cfg(feature = "std")]
-mod dash_duration;
 mod dash_mpd;
 mod dash_xsd;
 mod degraded_at_track;

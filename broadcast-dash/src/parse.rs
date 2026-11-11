@@ -3,16 +3,15 @@
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-use transmux::parse_iso8601_duration;
-
 use broadcast_common::xml::{Elem, Namespace, read_tree};
 
-use super::descriptors::XLINK_RESOLVE_TO_ZERO;
-use super::model::*;
+use crate::descriptors::XLINK_RESOLVE_TO_ZERO;
+use crate::duration::parse_iso8601_duration;
 use crate::error::{Limit, MpdError, Unsupported};
 use crate::limits::Limits;
-use crate::timing::datetime::parse_xs_datetime;
-use crate::timing::utc_timing::UtcScheme;
+use crate::model::*;
+use crate::utc_timing::UtcScheme;
+use crate::xs_datetime::parse_xs_datetime;
 
 const PROFILE_SEPARATOR: char = ',';
 const INFINITY_TOKEN: &str = "INF";

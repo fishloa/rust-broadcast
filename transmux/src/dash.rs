@@ -1550,7 +1550,7 @@ mod xs_duration_tests {
             Duration::new(61, 500_000_000),
         ] {
             assert_eq!(
-                crate::dash_parse::parse_iso8601_duration(&xs_duration(d)).unwrap(),
+                broadcast_dash::duration::parse_iso8601_duration(&xs_duration(d)).unwrap(),
                 d
             );
         }

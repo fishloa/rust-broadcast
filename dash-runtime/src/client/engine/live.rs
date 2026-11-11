@@ -17,11 +17,11 @@ use crate::client::action::{MpdValidators, UtcId};
 use crate::client::config::DashClockPolicy;
 use crate::client::meta::UtcResponse;
 use crate::client::utc_sampler::{Step, UtcSampler};
-use crate::mpd::descriptors::SCHEME_RESET;
 use crate::timing::clock::{AdoptReason, Anchor, ClockSource, OfferOutcome, OfferPolicy};
 use crate::timing::live_edge::{join_index, oldest_in_window, presentation_delay_us};
 use crate::timing::period::duration_us;
 use crate::timing::utc_timing::{Exchange, UtcSample, sample_from_date_header};
+use broadcast_dash::descriptors::SCHEME_RESET;
 
 /// A forced second look at the UTC clock after a segment error is taken at
 /// most this often (23009-1 A.7: check the clock first, then the MPD).

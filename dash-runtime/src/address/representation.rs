@@ -7,12 +7,12 @@ use transmux::SegmentIndexBox;
 
 use super::AddressError;
 use super::plan::{DynamicContext, PlanInput, SegmentPlan};
-use crate::mpd::inherit::{InheritError, SegmentInfo, resolve_segment_info};
-use crate::mpd::model::{Mpd, PresentationType};
 use crate::mpd::urls::{BaseCandidate, representation_candidates};
 use crate::selection::RepRef;
 use crate::timing::availability::ato_seconds_to_us;
 use crate::timing::period::{PeriodTiming, duration_us, period_timings};
+use broadcast_dash::inherit::{InheritError, SegmentInfo, resolve_segment_info};
+use broadcast_dash::{Mpd, PresentationType};
 
 /// Why a Representation could not be planned.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -90,6 +90,7 @@ fn info_tsb(info: &SegmentInfo) -> Option<std::time::Duration> {
         SegmentInfo::Template(t) => t.multi.base.time_shift_buffer_depth,
         SegmentInfo::List(l) => l.multi.base.time_shift_buffer_depth,
         SegmentInfo::Base(b) => b.time_shift_buffer_depth,
+        _ => None,
     }
 }
 
@@ -98,6 +99,7 @@ fn info_ato(info: &SegmentInfo) -> Option<f64> {
         SegmentInfo::Template(t) => t.multi.base.availability_time_offset,
         SegmentInfo::List(l) => l.multi.base.availability_time_offset,
         SegmentInfo::Base(b) => b.availability_time_offset,
+        _ => None,
     }
 }
 

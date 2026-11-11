@@ -17,7 +17,7 @@
 //! `vectors::timeline_numbers_gaps_negative_r_and_n`).
 
 use crate::limits::MAX_TIMELINE_SEGMENTS;
-use crate::mpd::model::SegmentTimeline;
+use broadcast_dash::SegmentTimeline;
 
 use super::AddressError;
 

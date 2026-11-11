@@ -13,10 +13,10 @@ The first run of this table left three survivors (M01, M03, M17); the tests that
 
 | Id | Mutation | File | Result | Killed by |
 |---|---|---|---|---|
-| M01 | template width bound `>` -> `>=` | `address/template.rs` | killed | `template_widths_escapes_and_invalid_forms` |
-| M02 | template zero flag constant '0' -> '1' | `address/template.rs` | killed | `ffmpeg_live_number_window_matches_the_capture`, `ffmpeg_live_timeline_window_matches_the_capture`, `ffmpeg_quirk_time_is_the_sidx_value_not_tfdt`, `ffmpeg_timeline_manifest_matches_disk` |
-| M03 | `$$` escape not recognised | `address/template.rs` | killed | `template_widths_escapes_and_invalid_forms` |
-| M04 | media template allows Number and Time together | `address/template.rs` | killed | `template_widths_escapes_and_invalid_forms` |
+| M01 | template width bound `>` -> `>=` | `broadcast-dash: template.rs` | killed | `template_widths_escapes_and_invalid_forms` |
+| M02 | template zero flag constant '0' -> '1' | `broadcast-dash: template.rs` | killed | `ffmpeg_live_number_window_matches_the_capture`, `ffmpeg_live_timeline_window_matches_the_capture`, `ffmpeg_quirk_time_is_the_sidx_value_not_tfdt`, `ffmpeg_timeline_manifest_matches_disk` |
+| M03 | `$$` escape not recognised | `broadcast-dash: template.rs` | killed | `template_widths_escapes_and_invalid_forms` |
+| M04 | media template allows Number and Time together | `broadcast-dash: template.rs` | killed | `template_widths_escapes_and_invalid_forms` |
 | M05 | negative r count: ceil -> floor | `address/timeline.rs` | killed | `differential_c_lazy_timeline_equals_transmux_resolve`, `timeline_numbers_gaps_negative_r_and_n` |
 | M06 | @n ignored | `address/timeline.rs` | killed | `timeline_numbers_gaps_negative_r_and_n` |
 | M07 | @t gap treated as contiguous | `address/timeline.rs` | killed | `differential_a_new_parser_agrees_with_transmux_on_shared_mpds`, `differential_c_lazy_timeline_equals_transmux_resolve`, `ffmpeg_live_timeline_window_matches_the_capture`, `ffmpeg_quirk_time_is_the_sidx_value_not_tfdt` |
@@ -45,26 +45,26 @@ The first run of this table left three survivors (M01, M03, M17); the tests that
 | M30 | downgrade ignores the policy flag | `timing/clock.rs` | killed | `replacement_never_loses_the_most_trusted_anchor_under_random_offers`, `replacement_order` |
 | M31 | PeriodStart chain ignores previous duration | `timing/period.rs` | killed | `period_start_rules_one_to_five` |
 | M32 | early-terminated needs both conditions | `timing/period.rs` | killed | `period_start_rules_one_to_five` |
-| M33 | inheritance: higher level wins | `mpd/inherit.rs` | killed | `inheritance_lower_level_wins_attribute_by_attribute` |
-| M34 | timeline level still inherits @duration | `mpd/inherit.rs` | killed | `inheritance_lower_level_wins_attribute_by_attribute` |
+| M33 | inheritance: higher level wins | `broadcast-dash: inherit.rs` | killed | `inheritance_lower_level_wins_attribute_by_attribute` |
+| M34 | timeline level still inherits @duration | `broadcast-dash: inherit.rs` | killed | `inheritance_lower_level_wins_attribute_by_attribute` |
 | M35 | BaseURL alternates not ordered by priority | `mpd/urls.rs` | killed | `base_url_alternates_are_ordered_by_priority_then_document_order` |
 | M36 | useMPDUrlQuery ignored | `mpd/urls.rs` | killed | `url_query_info_minimal_form` |
 | M37 | sidx anchor off by one | `address/base_index.rs` | killed | `on_demand_sidx_ranges_tile_the_real_file` |
 | M38 | video picks the lowest bandwidth | `selection.rs` | killed | `video_picks_highest_bandwidth_within_policy_else_lowest` |
 | M39 | language prefix without subtag boundary | `selection.rs` | killed | `audio_language_role_and_fallbacks` |
-| M40 | hour 24 accepted with a fraction | `timing/datetime.rs` | killed | `rejected_table` |
-| M41 | zone +14:mm accepted | `timing/datetime.rs` | killed | `rejected_table` |
-| M42 | depth bound off by one | `mpd/xml.rs` | killed | `depth_bound` |
-| M43 | DOCTYPE accepted | `mpd/xml.rs` | killed | `billion_laughs_is_refused_before_any_expansion` |
+| M40 | hour 24 accepted with a fraction | `broadcast-dash: xs_datetime.rs` | killed | `rejected_table` |
+| M41 | zone +14:mm accepted | `broadcast-dash: xs_datetime.rs` | killed | `rejected_table` |
+| M42 | depth bound off by one | `broadcast-common: xml_chars.rs / xml.rs` | killed | `depth_bound` |
+| M43 | DOCTYPE accepted | `broadcast-common: xml_chars.rs / xml.rs` | killed | `billion_laughs_is_refused_before_any_expansion` |
 | M44 | timeline @t going backwards accepted | `address/timeline.rs` | killed | `timeline_rejects_going_backwards_and_bounds_the_count` |
 | M45 | availability end counts one duration, not two (microsecond form) | `timing/availability.rs` | killed | `public_formulas_on_hand_computed_numbers` |
 | M46 | join picks the segment after T_join | `timing/live_edge.rs` | killed | `livesim2_time_timeline_window_and_numbers` |
 | M47 | first static Period has no PeriodStart | `timing/period.rs` | killed | `end_number_caps_and_a_short_last_segment_is_shortened`, `end_number_truncates_a_timeline`, `gpac_timeline_video_matches_tfdt_and_audio_quirk_is_kept`, `hierarchical_sidx_is_a_typed_unsupported_error` |
 | M48 | endNumber does not truncate a timeline run | `address/timeline.rs` | killed | `end_number_truncates_a_timeline` |
-| M49 | http-xsdate classified as http-iso | `timing/utc_timing.rs` | killed | `utc_timing_schemes_are_classified_from_the_real_mpd` |
+| M49 | `http-xsdate` classified as `http-iso` | n/a (equivalent) | equivalent | none: the `UTCTiming` scheme table moved to `broadcast-dash: utc_timing.rs` (#2355), so the row's two arms are the same enum in one crate; the classifier's own crate test pins every scheme URI |
 | M50 | $Time$ takes S@t - PTO instead of the raw S@t (D3) | `address/plan.rs` | killed | `differential_a_new_parser_agrees_with_transmux_on_shared_mpds`, `time_substitution_is_the_raw_s_at_even_with_a_presentation_time_offset` |
 | M51 | hierarchical sidx accepted | `address/base_index.rs` | killed | `hierarchical_sidx_is_a_typed_unsupported_error` |
-| M52 | DASH-IF role Main not recognised | `mpd/descriptors.rs` | killed | `video_prefers_the_main_role_set` |
+| M52 | DASH-IF role Main not recognised | `broadcast-dash: descriptors.rs` | killed | `video_prefers_the_main_role_set` |
 | M53 | Period end of the last Period ignores mediaPresentationDuration | `timing/period.rs` | killed | `end_number_caps_and_a_short_last_segment_is_shortened`, `inheritance_lower_level_wins_attribute_by_attribute`, `iop_table_10_worked_example`, `period_start_rules_one_to_five` |
-| M54 | xlink resolve-to-zero Period kept | `mpd/parse.rs` | killed | `drops_and_their_reasons`, `resolve_to_zero_xlink_removes_the_element` |
-| M55 | timescale default 1 -> 1000 | `mpd/inherit.rs` | killed | `timescale_defaults_to_one_when_no_level_declares_it` |
+| M54 | xlink resolve-to-zero Period kept | `broadcast-dash: parse.rs` | killed | `drops_and_their_reasons`, `resolve_to_zero_xlink_removes_the_element` |
+| M55 | timescale default 1 -> 1000 | `broadcast-dash: inherit.rs` | killed | `timescale_defaults_to_one_when_no_level_declares_it` |

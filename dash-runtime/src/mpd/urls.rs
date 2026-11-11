@@ -9,9 +9,11 @@
 
 use url::Url;
 
-use super::descriptors::SCHEME_URLPARAM;
-use super::model::{AdaptationSet, BaseUrl, Descriptor, Mpd, Period, Representation, UrlQueryInfo};
 use crate::limits::MAX_BASE_CANDIDATES;
+use broadcast_dash::descriptors::SCHEME_URLPARAM;
+use broadcast_dash::{
+    AdaptationSet, BaseUrl, Descriptor, Mpd, Period, Representation, UrlQueryInfo,
+};
 
 /// ETSI TS 103 285 10.8.2.1: the `@dvb:priority` default.
 pub const DEFAULT_BASE_PRIORITY: u32 = 1;

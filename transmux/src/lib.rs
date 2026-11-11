@@ -13,7 +13,7 @@
 //! It **never encodes or decodes media**: it parses codec *config/parameter
 //! headers* only to build container boxes and derive metadata; coded samples
 //! pass through opaque. `no_std` + `alloc`, except the XML manifest paths
-//! ([`dash`], [`dash_parse`], [`smooth`], [`smooth_parse`], [`LlDashPackager`] and
+//! ([`dash`], [`smooth`], [`smooth_parse`], [`LlDashPackager`] and
 //! the PlayReady [`playready_wrmheader`]/[`playready_pro`]/[`playready_pssh`]
 //! builders), which are built on `quick-xml` and need the `std` feature.
 //!
@@ -177,7 +177,6 @@ pub mod cli;
 #[cfg(feature = "std")]
 pub mod dash;
 #[cfg(feature = "std")]
-pub mod dash_parse;
 pub(crate) mod display_track;
 pub mod dovi;
 pub mod drm;
@@ -294,8 +293,6 @@ pub use dash::{
     TrackSegments, TrickModeAdaptationSet, TrickModeRepr, rfc6381_codec_string,
     rfc6381_track_codec_string,
 };
-#[cfg(feature = "std")]
-pub use dash_parse::{DashParseError, parse_iso8601_duration};
 pub use drm::{
     COMMON_SYSTEM_ID, FAIRPLAY_SYSTEM_ID, PLAYREADY_SYSTEM_ID, WIDEVINE_SYSTEM_ID,
     cenc_kid_to_playready, fairplay_pssh, fairplay_pssh_data, playready_kid_to_cenc,

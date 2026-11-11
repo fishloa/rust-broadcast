@@ -1,15 +1,19 @@
-//! Pure time arithmetic: UTC clock, `xs:dateTime`, UTCTiming, availability,
-//! live edge and PeriodStart. Nothing in this module reads a clock; every
-//! function takes the instants it needs as arguments.
+//! Pure time arithmetic: UTC clock, HTTP `Date`, availability, live edge and
+//! PeriodStart. Nothing in this module reads a clock; every function takes the
+//! instants it needs as arguments. The `xs:dateTime`, NTP and `UTCTiming`
+//! readers live in [`broadcast_dash::xs_datetime`] and
+//! [`broadcast_dash::utc_timing`] and are re-exported here.
 
 use thiserror::Error;
 
 pub mod availability;
 pub mod clock;
-pub mod datetime;
+pub mod http_date;
 pub mod live_edge;
 pub mod period;
 pub mod utc_timing;
+
+pub use broadcast_dash::xs_datetime as datetime;
 
 /// Why a clock sample could not be built.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
@@ -38,7 +42,10 @@ pub enum TimingError {
     /// The scheme has no body time this core can read.
     #[error("UTCTiming scheme {0} is not sampled from a response body")]
     SchemeNotSampled(utc_timing::UtcScheme),
-    /// The time text was not accepted.
+    /// An `xs:dateTime` was not accepted.
     #[error(transparent)]
     DateTime(#[from] datetime::DateTimeError),
+    /// An HTTP `Date` value was not accepted.
+    #[error(transparent)]
+    HttpDate(#[from] http_date::HttpDateError),
 }

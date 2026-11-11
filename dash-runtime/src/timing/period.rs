@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use broadcast_common::impl_spec_display;
 
-use crate::mpd::model::{Mpd, PresentationType};
+use broadcast_dash::{Mpd, PresentationType};
 
 const MICROS_PER_SECOND: i128 = 1_000_000;
 const NANOS_PER_MICRO: u32 = 1_000;

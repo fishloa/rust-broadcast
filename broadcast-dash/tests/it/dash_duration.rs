@@ -2,8 +2,8 @@
 //! space (Part 2 §3.3.6): every valid form representable as an unsigned
 //! `core::time::Duration` is accepted, everything else is a structured
 //! `InvalidDuration` (never a panic).
+use broadcast_dash::duration::{DashParseError, parse_iso8601_duration};
 use core::time::Duration;
-use transmux::dash_parse::{DashParseError, parse_iso8601_duration};
 
 fn ok(s: &str) -> Duration {
     parse_iso8601_duration(s).unwrap_or_else(|e| panic!("{s:?}: {e}"))

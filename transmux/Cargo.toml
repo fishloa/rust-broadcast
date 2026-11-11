@@ -98,6 +98,10 @@ cli    = ["dep:clap", "dep:container-probe", "std"]
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
+# The xs:duration reader round-trip test lives in broadcast-dash (it moved
+# there with the parser); transmux's writer test reads it back through it.
+# Dev-only: transmux itself never depends on broadcast-dash.
+broadcast-dash = { path = "../broadcast-dash" }
 # `tests/it/rtp.rs` / `golden_wire.rs` render the session description over
 # `RtpOutput::medias` with the one workspace builder (`rtsp-runtime::sdp`).
 # Dev-only: transmux itself never depends on the RTSP crate.

@@ -20,13 +20,13 @@ use super::output::{AudioRendition, DropCause, ManifestSelection, Notice, Output
 use crate::address::base_index;
 use crate::address::{AddressError, PlanError, PlanOptions, SegmentPlan, plan_representation};
 use crate::error::Unsupported;
-use crate::mpd::descriptors::SCHEME_PERIOD_CONTINUITY;
-use crate::mpd::inherit::{SegmentInfo, effective_common, resolve_segment_info};
-use crate::mpd::model::{ByteRange, Descriptor, Mpd, PresentationType};
 use crate::mpd::urls::{BaseCandidate, append_query, representation_candidates, segment_url_query};
 use crate::selection::{RepRef, Selection, SetClass, select};
 use crate::timing::clock::UtcClock;
 use crate::timing::period::period_timings;
+use broadcast_dash::descriptors::SCHEME_PERIOD_CONTINUITY;
+use broadcast_dash::inherit::{SegmentInfo, effective_common, resolve_segment_info};
+use broadcast_dash::{ByteRange, Descriptor, Mpd, PresentationType};
 
 /// A missing last segment shorter than this, in microseconds, is the tail a
 /// muxer declared past the media (one frame of the slowest common video
@@ -327,6 +327,7 @@ fn address_name(e: &AddressError) -> &'static str {
         AddressError::IndexRequired => "index_required",
         AddressError::EmptySegmentUrl => "empty_segment_url",
         AddressError::ZeroSegmentDuration => "zero_segment_duration",
+        _ => "unsupported_feature",
     }
 }
 
@@ -345,7 +346,7 @@ fn range_pair(r: Option<ByteRange>) -> std::result::Result<Option<(u64, u64)>, D
         .transpose()
 }
 
-fn continuity_signals(set: &crate::mpd::model::AdaptationSet, previous: &str) -> bool {
+fn continuity_signals(set: &broadcast_dash::AdaptationSet, previous: &str) -> bool {
     let named = |d: &Descriptor| {
         d.scheme_id_uri == SCHEME_PERIOD_CONTINUITY && d.value.as_deref() == Some(previous)
     };
@@ -1019,7 +1020,7 @@ impl DashClient {
                         .initialization
                         .as_ref()
                         .map(|u| (u.source_url.clone().unwrap_or_default(), u.range)),
-                    SegmentInfo::Template(_) | SegmentInfo::List(_) => None,
+                    _ => None,
                 }
             }
             Err(_) => None,
@@ -1055,7 +1056,7 @@ impl DashClient {
                     .map_err(|_| DropCause::Addressing("inherit"))?;
                 let range = match info {
                     SegmentInfo::Base(b) => b.index_range,
-                    SegmentInfo::Template(_) | SegmentInfo::List(_) => None,
+                    _ => None,
                 };
                 let range = range.ok_or(DropCause::Addressing("index_required"))?;
                 (None, Some(IndexReq { range }))

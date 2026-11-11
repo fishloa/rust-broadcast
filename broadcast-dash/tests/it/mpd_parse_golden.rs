@@ -1,15 +1,15 @@
 //! Pins the parsed MPD model on every committed MPD fixture (#2355).
 //!
-//! The model and parser move from `dash-runtime` to `broadcast-dash`; the move
-//! is safe only if every fixture yields the same `{:#?}` of the parse result
-//! (`Ok` model or `Err`), recorded here before the move. Without a private
-//! checkout only the public rows are compared.
+//! Every fixture must yield byte-identical `{:#?}` of the parse result (`Ok`
+//! model or `Err`) to the file recorded before the model moved here from
+//! `dash-runtime`. Without a private checkout only the public rows are
+//! compared.
 
 use std::path::{Path, PathBuf};
 
-use dash_runtime::error::MpdError;
-use dash_runtime::limits::Limits;
-use dash_runtime::mpd::Mpd;
+use broadcast_dash::Mpd;
+use broadcast_dash::error::MpdError;
+use broadcast_dash::limits::Limits;
 
 const GOLDEN: &str = "golden/dash/mpd-parse.golden";
 const PUBLIC_PREFIX: &str = "fixtures/";
