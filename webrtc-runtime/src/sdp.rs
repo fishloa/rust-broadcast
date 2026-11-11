@@ -55,6 +55,7 @@ const FRAGMENT_ORIGIN_ADDRESS: IpAddr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
 /// Which way media flows in an answer (`a=recvonly`/`a=sendonly`,
 /// RFC 8866 §6.7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Direction {
     /// A WHIP answer: the publisher sends, this side receives. The offer's
     /// `a=rtpmap`/`a=fmtp`/`a=rtcp-fb` attributes naming the chosen payload
@@ -99,6 +100,7 @@ impl CodecAttribute {
 
 /// The codec attributes an answer may carry (RFC 8866 §5.13).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CodecAttributeName {
     /// `a=rtpmap`: the payload type's encoding name and clock rate
     /// (RFC 8866 §5.13).
@@ -163,7 +165,7 @@ pub struct AnswerCodec {
 
 /// This side's ICE credentials and DTLS certificate fingerprint (§5.13
 /// `a=ice-ufrag`/`a=ice-pwd`/`a=fingerprint`).
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct LocalMediaIdentity<'a> {
     /// The `a=ice-ufrag` value of this generation.
     pub ice_ufrag: &'a str,
@@ -199,8 +201,8 @@ pub fn offer_codec_attributes(media: &Media, payload_type: u8) -> Vec<CodecAttri
         .collect()
 }
 
-/// The `a=mid` the answer echoes: the offer media section's own
-/// [`MID_ATTRIBUTE`], or [`DEFAULT_MID`] when it carries none.
+/// The `a=mid` the answer echoes: the offer media section's own `a=mid`
+/// value, or [`DEFAULT_MID`] when it carries none.
 pub fn offer_mid(media: &Media) -> String {
     media
         .get_first_attribute_value(MID_ATTRIBUTE)
