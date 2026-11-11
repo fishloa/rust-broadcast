@@ -63,6 +63,22 @@ pub struct RtspTransportConfig {
     /// Bounds on every awaited IO the push performs (SP6.1, defect 4): the
     /// OPTIONS/ANNOUNCE/SETUP/RECORD exchanges and each interleaved write.
     pub timeouts: rtsp_runtime::RtspTimeouts,
+    /// A fixed SSRC and RTP clock origin, so a test can record byte-exact
+    /// wire output. `None` (production) draws both per connection.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub test_wire: Option<RtpWireState>,
+}
+
+/// The per-connection values a byte-exact wire golden pins.
+#[cfg(feature = "test-hooks")]
+#[derive(Debug, Clone, Copy)]
+#[doc(hidden)]
+pub struct RtpWireState {
+    /// The fixed RTP SSRC (RFC 3550 §5.1).
+    pub ssrc: u32,
+    /// The RTP timestamp origin (RFC 2250 §2's 90 kHz clock).
+    pub started: std::time::Instant,
 }
 
 /// Manual `Debug`: the username/password pair never renders (issue #1142).
@@ -163,6 +179,13 @@ impl PushTransport for RtspTransport {
         }
 
         let control_url = control_url(&parsed)?;
+        #[cfg(feature = "test-hooks")]
+        let (ssrc, started) = match config.test_wire {
+            Some(wire) => (wire.ssrc, wire.started),
+            None => (crate::secure_random::ssrc(), Instant::now()),
+        };
+        #[cfg(not(feature = "test-hooks"))]
+        let (ssrc, started) = (crate::secure_random::ssrc(), Instant::now());
 
         // Every IO the adapter performs is bounded by `config.timeouts`
         // (SP6.1, defect 4): the OPTIONS exchange below and every later
@@ -193,8 +216,8 @@ impl PushTransport for RtspTransport {
             url: clean_url,
             control_url,
             seq: 0,
-            ssrc: crate::secure_random::ssrc(),
-            started: Instant::now(),
+            ssrc,
+            started,
             ts_mux: transmux::StreamingTsMux::new(),
             teardown: None,
         })

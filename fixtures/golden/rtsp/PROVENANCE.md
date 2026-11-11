@@ -177,3 +177,27 @@ publish-graph a cycle). Regenerate:
 ```bash
 GOLDEN_BLESS=fixtures/golden/rtsp cargo test -p multimux --locked --test it sdp_session
 ```
+
+## `push-wire.golden`
+
+The exact RTSP push wire (issue #2368): every request — `OPTIONS`, `ANNOUNCE` with its SDP
+body, `SETUP` on the `trackID=0` control URL, `RECORD`, the best-effort `TEARDOWN` — and every
+interleaved RTP packet, recorded from `RtspTransport` on branch `refactor/rtsp-push-2368` at
+commit `2ee7f4c52`, **before** the RTP header, the RFC 2250 §2 MP2T packing and the RECORD flow
+moved into `rtp-packet`, `transmux` and `rtsp-runtime`. It must stay byte-identical through
+that move: never regenerate it.
+
+- Source: `fixtures/ts/h264-aac.ts`, first second of samples, re-muxed once through
+  `transmux::TsMux` (no muxing state in a recording) and pushed twice.
+- SSRC pinned with `RtspTransportConfig::test_wire` (`0x5EED_2368`); the loopback address is
+  written as `<loopback>`, and each RTP timestamp — the elapsed time since the connection, the
+  one field a wall-clock read sets — as `xxxx`. Every other byte, sequence numbers included, is
+  the wire.
+- Recorded against rtsp-runtime's own sans-IO `ServerSession` behind a loopback TCP listener
+  that keeps each request's raw bytes (`AsyncRtspServer` returns parsed events, not bytes).
+
+Pinned by `multimux/tests/it/push_rtsp_wire.rs`:
+
+```bash
+cargo test -p multimux --all-features --locked --test it push_rtsp_wire
+```

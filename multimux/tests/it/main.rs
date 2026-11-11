@@ -46,6 +46,8 @@ mod push_rtmp;
 mod push_rtmp_bounds;
 mod push_rtsp;
 mod push_rtsp_bounds;
+#[cfg(feature = "test-hooks")]
+mod push_rtsp_wire;
 mod push_ts_stream;
 mod reconnect_policy;
 #[cfg(all(feature = "whip", feature = "whep", feature = "test-hooks"))]
