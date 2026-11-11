@@ -21,6 +21,9 @@ pub enum PresentationType {
     Static,
     /// `dynamic`: segments become available over wall-clock time.
     Dynamic,
+    /// `list` (ISO/IEC 23009-1 ed.6): the presentation is an ordered list of
+    /// Periods, each naming an imported MPD.
+    List,
 }
 
 impl PresentationType {
@@ -30,6 +33,7 @@ impl PresentationType {
         match self {
             Self::Static => "static",
             Self::Dynamic => "dynamic",
+            Self::List => "list",
         }
     }
 }
@@ -473,6 +477,17 @@ pub struct AdaptationSet {
     pub representations: Vec<Representation>,
 }
 
+/// `ImportedMPD` (ISO/IEC 23009-1 ed.6 `ImportedMpdType`): an `xs:anyURI`
+/// element text plus `@earliestResolutionTimeOffset`.
+#[derive(Debug, Clone, PartialEq, Default)]
+#[non_exhaustive]
+pub struct ImportedMpd {
+    /// The imported MPD's location (the element text).
+    pub url: String,
+    /// `@earliestResolutionTimeOffset`, seconds; the schema default is 60.0.
+    pub earliest_resolution_time_offset: Option<f64>,
+}
+
 /// A `Period` (5.3.2).
 #[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
@@ -493,6 +508,9 @@ pub struct Period {
     pub segment: SegmentLayer,
     /// `AssetIdentifier`.
     pub asset_identifier: Option<Descriptor>,
+    /// `ImportedMPD` (ISO/IEC 23009-1 ed.6 Table `ImportedMpdType`): the MPD a
+    /// `@type="list"` Period presents.
+    pub imported_mpd: Option<ImportedMpd>,
     /// `EssentialProperty`.
     pub essential_properties: Vec<Descriptor>,
     /// `SupplementalProperty`.

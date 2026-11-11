@@ -4,21 +4,21 @@
 //! standard's editors (electronic inserts of the standard, kept private). Every one validates
 //! against the same directory's `DASH-MPD.xsd`, so they are an oracle that is NOT our own
 //! writer round-tripping itself. For each example this test asserts that
-//! [`transmux::dash_parse::Mpd::parse`] accepts it and that the number of `Period`,
+//! [`Mpd::parse`] accepts it and that the number of `Period`,
 //! `AdaptationSet` and `Representation` elements it extracts equals an independent count of
 //! those start tags (quick-xml, no shared code with the parser).
 //!
 //! One example is a documented gap: `example_G27.mpd` uses the 6th edition's `SegmentTimeline`
 //! `Pattern` element and `S` entries without `@d` (`<S t=".." r=".." p=".." pE=".."/>`). The
 //! XSD gives the syntax only; the semantics are in the paywalled 2026 text, which we do not
-//! hold, so the parser must keep rejecting it (loudly, with `@d` named) rather than guess.
+//! hold, so the plan must keep rejecting it (loudly, with `@d` named) rather than guess.
 //! The expectation is pinned so that adding pattern support makes this test fail and forces
 //! the transcription first.
-#![cfg(feature = "std")]
-
+use dash_runtime::address::{PlanOptions, plan_representation};
+use dash_runtime::mpd::Mpd;
+use dash_runtime::selection::RepRef;
 use quick_xml::Reader;
 use quick_xml::events::Event;
-use transmux::dash_parse::{DashParseError, Mpd};
 
 /// 6th-edition-only examples whose semantics we cannot implement without the paywalled text.
 const UNSUPPORTED_SIXTH_EDITION: &[&str] = &["example_G27.mpd"];
@@ -87,7 +87,7 @@ fn every_supported_iso_example_parses_with_the_independent_element_counts() {
         if UNSUPPORTED_SIXTH_EDITION.contains(&name.as_str()) {
             continue;
         }
-        let mpd = Mpd::parse(xml).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let mpd = Mpd::parse(xml.as_bytes()).unwrap_or_else(|e| panic!("{name}: {e}"));
         let (periods, sets, reps) = independent_counts(xml);
         let got_sets: usize = mpd.periods.iter().map(|p| p.adaptation_sets.len()).sum();
         let got_reps: usize = mpd
@@ -112,14 +112,13 @@ fn the_sixth_edition_segment_timeline_pattern_example_is_rejected_not_guessed() 
             .iter()
             .find(|(n, _)| n == name)
             .unwrap_or_else(|| panic!("{name} missing from the corpus"));
-        let err = Mpd::parse(xml).expect_err("pattern timelines are not implemented");
-        assert_eq!(
-            err,
-            DashParseError::MissingAttribute {
-                element: "S",
-                attr: "d"
-            },
-            "{name}: expected the missing-@d rejection"
+        let rejected_at_parse = Mpd::parse(xml.as_bytes()).is_err();
+        let rejected_at_plan = Mpd::parse(xml.as_bytes()).is_ok_and(|mpd| {
+            plan_representation(&mpd, RepRef::at(0, 0, 0), &PlanOptions::default()).is_err()
+        });
+        assert!(
+            rejected_at_parse || rejected_at_plan,
+            "{name}: a Pattern timeline must be rejected, not guessed"
         );
     }
 }

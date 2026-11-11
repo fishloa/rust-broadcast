@@ -12,8 +12,8 @@
 use thiserror::Error;
 
 use super::model::{
-    AdaptationSet, BaseInfo, CommonAttributes, MultiInfo, Period, Representation, SegmentTimeline,
-    SegmentUrl,
+    AdaptationSet, BaseInfo, CommonAttributes, MultiInfo, Period, Representation, SegmentLayer,
+    SegmentTemplate, SegmentTimeline, SegmentUrl,
 };
 
 /// `@timescale` default (5.3.9.2.2).
@@ -95,6 +95,33 @@ pub enum SegmentInfo {
     /// `SegmentBase` or none: one Media Segment at the `BaseURL`, optionally
     /// indexed by a `sidx` at `@indexRange`.
     Base(BaseInfo),
+}
+
+/// `level` with its `SegmentTemplate` taking the `SegmentTimeline` it does not
+/// declare from the enclosing levels' templates (5.3.9.2.1: the lowest level
+/// that declares one wins).
+fn with_inherited_timeline<'a>(
+    enclosing: impl Iterator<Item = &'a SegmentLayer>,
+    level: &'a SegmentLayer,
+) -> Result<SegmentLayer, InheritError> {
+    let Some(template) = &level.template else {
+        return Ok(level.clone());
+    };
+    let inherited = enclosing
+        .filter_map(|l| l.template.as_ref())
+        .map(|t| &t.multi)
+        .try_fold(MultiInfo::default(), |merged, multi| {
+            merge_multi(&merged, multi)
+        })?;
+    let mut layer = level.clone();
+    layer.template = Some(SegmentTemplate {
+        multi: merge_multi(&inherited, &template.multi)?,
+        media: template.media.clone(),
+        index: template.index.clone(),
+        initialization: template.initialization.clone(),
+        bitstream_switching: template.bitstream_switching.clone(),
+    });
+    Ok(layer)
 }
 
 fn merge_base(parent: &BaseInfo, child: &BaseInfo) -> BaseInfo {
@@ -180,7 +207,14 @@ pub fn resolve_segment_info(
     set: &AdaptationSet,
     rep: &Representation,
 ) -> Result<SegmentInfo, InheritError> {
-    let layers = [&period.segment, &set.segment, &rep.segment];
+    let segments = [&period.segment, &set.segment, &rep.segment];
+    let resolved: Vec<SegmentLayer> = segments
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(i, l)| with_inherited_timeline(segments[..i].iter().copied(), l))
+        .collect::<Result<_, _>>()?;
+    let layers = [&resolved[0], &resolved[1], &resolved[2]];
     let has_template = layers.iter().any(|l| l.template.is_some());
     let has_list = layers.iter().any(|l| l.list.is_some());
     if has_template && has_list {

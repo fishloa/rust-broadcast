@@ -5,9 +5,9 @@ use crate::common;
 
 use common::Rng;
 use dash_runtime::address::{PlanOptions, plan_representation};
-use dash_runtime::error::{Limit, MpdError, Unsupported};
+use dash_runtime::error::{Limit, MpdError};
 use dash_runtime::limits::Limits;
-use dash_runtime::mpd::Mpd;
+use dash_runtime::mpd::{Mpd, PresentationType};
 use dash_runtime::selection::{Policy, RepRef, select};
 
 const NS: &str = "urn:mpeg:dash:schema:mpd:2011";
@@ -300,10 +300,12 @@ fn schema_violations_are_typed_not_panics() {
             "{what}"
         );
     }
-    assert!(matches!(
-        parse(r#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="list"/>"#),
-        Err(MpdError::Unsupported(Unsupported::PresentationTypeList))
-    ));
+    assert_eq!(
+        parse(r#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="list"/>"#)
+            .expect("an ed.6 list MPD is in scope")
+            .kind,
+        PresentationType::List
+    );
     let rep = |attrs: &str| {
         wrap(&format!(
             r#"<Period><AdaptationSet><Representation {attrs}/></AdaptationSet></Period>"#

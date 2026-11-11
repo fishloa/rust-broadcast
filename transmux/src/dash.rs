@@ -85,8 +85,9 @@
 //!
 //! The MPD is emitted with [`quick_xml::Writer`] (every attribute value and
 //! text node is escaped by quick-xml), so this module — like
-//! [`crate::dash_parse`], [`crate::smooth`] and [`crate::smooth_parse`] — needs
-//! the `std` feature (quick-xml is `std`-only).
+//! [`crate::smooth`] and [`crate::smooth_parse`] — needs the `std` feature
+//! (quick-xml is `std`-only). Reading an MPD back is not this crate's job:
+//! `dash-runtime` owns the one MPD reader (issue #2340).
 
 use crate::TrackId;
 use alloc::format;

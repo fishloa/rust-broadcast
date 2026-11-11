@@ -916,7 +916,7 @@ pub fn dash(fx: &Fixture, _: &Cfg) -> Option<Value> {
         return None;
     }
     let text = std::str::from_utf8(&fx.data).ok()?;
-    Some(match transmux::Mpd::parse(text) {
+    Some(match dash_runtime::mpd::Mpd::parse(text.as_bytes()) {
         Err(e) => json!({ "err": variant_name(&format!("{e:?}")) }),
         Ok(m) => json!({ "ok": true, "periods": m.periods.len() }),
     })

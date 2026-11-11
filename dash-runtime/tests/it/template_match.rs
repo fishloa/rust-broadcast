@@ -1,9 +1,9 @@
-//! `SegmentTemplate::match_url` is the exact inverse of `SegmentTemplate::resolve`
-//! (ISO/IEC 23009-1 §5.3.9.4.4 identifier grammar; issue: DASH-IF ingest P1).
+//! `match_url` is the exact inverse of `substitute`
+//! (ISO/IEC 23009-1 5.3.9.4.4 identifier grammar; issue: DASH-IF ingest P1).
 //! The receiver of a DASH-IF Live Media Ingest POST has only the request path
 //! and must recover which Representation/segment it names.
 
-use transmux::dash_parse::SegmentTemplate;
+use dash_runtime::address::template::{match_url, substitute};
 
 const IDS: &[&str] = &["video", "audio-en", "v1", "1080p", "7"];
 
@@ -22,8 +22,7 @@ const VALUES: &[u64] = &[0, 1, 7, 42, 99_999, 100_000, 123_456_789, u64::MAX];
 type Got = (String, Option<u64>, Option<u64>, Option<u64>);
 
 fn m(t: &str, c: &str, ids: &[&str]) -> Option<Got> {
-    SegmentTemplate::match_url(t, c, ids)
-        .map(|x| (x.representation_id, x.number, x.time, x.bandwidth))
+    match_url(t, c, ids).map(|x| (x.representation_id, x.number, x.time, x.bandwidth))
 }
 
 /// resolve -> match_url returns exactly the inputs that were substituted, for a
@@ -41,7 +40,7 @@ fn match_inverts_resolve_over_a_grid() {
                 let number = has_number.then_some(n);
                 let time = has_time.then_some(n.wrapping_add(3));
                 let bw = has_bw.then_some(n / 2 + 1);
-                let url = SegmentTemplate::resolve(t, id, number, time, bw);
+                let url = substitute(t, id, number, time, bw.unwrap_or(0));
                 let got = m(t, &url, IDS).unwrap_or_else(|| panic!("no match: {t:?} <- {url:?}"));
                 assert_eq!(
                     got,
@@ -145,6 +144,6 @@ fn unicode_and_boundary_inputs_never_panic() {
         "日本語",
         "video/s-1.m4s\u{0}",
     ] {
-        let _ = SegmentTemplate::match_url(t, c, IDS);
+        let _ = match_url(t, c, IDS);
     }
 }

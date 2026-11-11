@@ -7,12 +7,15 @@
 //! No sockets, no tokio, no axum: inputs are plain Rust values. Cited against
 //! `private/specs/dashif_live_media_ingest_v1.3.html` §5.2, §5.3, §6.2
 //! (items 1, 11, 18, 16 a-h, 17 a-e, 19) and ISO/IEC 23009-1 §5.3.9.4.4
-//! (template grammar) as implemented by [`transmux::dash_parse::SegmentTemplate::resolve`].
+//! (template grammar) as implemented by [`dash_runtime::address::template`].
 
 use std::collections::{HashMap, HashSet};
 
 use axum::http::StatusCode;
-use transmux::dash_parse::{Mpd, SegmentTemplate};
+use dash_runtime::address::template::match_url;
+use dash_runtime::mpd::{Mpd, SegmentTemplate};
+
+const MICROS_PER_SECOND: i64 = 1_000_000;
 
 /// HTTP method of an ingest request (§5.2.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -192,8 +195,7 @@ impl IngestError {
 
 impl ManifestGrouping {
     pub fn from_mpd(bytes: &[u8]) -> Result<Self, IngestError> {
-        let xml = std::str::from_utf8(bytes).map_err(|_| IngestError::BadRequest)?;
-        let mpd = Mpd::parse(xml).map_err(|_| IngestError::BadRequest)?;
+        let mpd = Mpd::parse(bytes).map_err(|_| IngestError::BadRequest)?;
 
         if mpd.periods.len() != 1 {
             return Err(IngestError::MpdMultiplePeriods);
@@ -201,29 +203,31 @@ impl ManifestGrouping {
         let period = &mpd.periods[0];
 
         // BaseURL absent anywhere (§6.2.16d).
-        if mpd.base_url.is_some()
-            || period.base_url.is_some()
+        if !mpd.base_urls.is_empty()
+            || !period.base_urls.is_empty()
             || mpd
                 .periods
                 .iter()
-                .flat_map(|p| p.adaptation_sets.iter())
+                .flat_map(|p| &p.adaptation_sets)
                 .any(|a| {
-                    a.base_url.is_some() || a.representations.iter().any(|r| r.base_url.is_some())
+                    !a.base_urls.is_empty()
+                        || a.representations.iter().any(|r| !r.base_urls.is_empty())
                 })
         {
             return Err(IngestError::MpdBaseUrlPresent);
         }
 
         // An AdaptationSet may carry the template on itself (inherited by reps).
-        let mut templates: Vec<(String /*rep id*/, SegmentTemplate)> = Vec::new();
+        let mut templates: Vec<(String, &SegmentTemplate)> = Vec::new();
         let mut switching_sets: Vec<Vec<String>> = Vec::new();
         for aset in &period.adaptation_sets {
             let mut set_ids: Vec<String> = Vec::new();
             for rep in &aset.representations {
                 let tmpl = rep
-                    .segment_template
-                    .clone()
-                    .or_else(|| aset.segment_template.clone());
+                    .segment
+                    .template
+                    .as_ref()
+                    .or(aset.segment.template.as_ref());
                 let tmpl = match tmpl {
                     Some(t) => t,
                     None => return Err(IngestError::MpdMissingSegmentTemplate),
@@ -294,7 +298,11 @@ impl ManifestGrouping {
             media_template,
             addressing,
             switching_sets,
-            availability_start_time: mpd.availability_start_time.clone(),
+            availability_start_time: mpd
+                .availability_start_time_us
+                .and_then(|us| us.checked_div(MICROS_PER_SECOND))
+                .and_then(|s| jiff::Timestamp::from_second(s).ok())
+                .map(|t| t.to_string()),
             period_start: period.start,
         })
     }
@@ -344,12 +352,12 @@ pub fn classify(
         .map(|s| s.as_str())
         .collect();
 
-    if let Some(m) = SegmentTemplate::match_url(&g.init_template, req.path, &known) {
+    if let Some(m) = match_url(&g.init_template, req.path, &known) {
         return Ok(ObjectKind::Header {
             representation_id: m.representation_id,
         });
     }
-    if let Some(m) = SegmentTemplate::match_url(&g.media_template, req.path, &known) {
+    if let Some(m) = match_url(&g.media_template, req.path, &known) {
         return Ok(ObjectKind::Segment {
             representation_id: m.representation_id,
             number: m.number,

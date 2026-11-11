@@ -1,15 +1,12 @@
-//! Truncation gate for the MPD and Smooth manifest parsers: cutting a document
-//! at ANY offset before the end of its root end tag must be a structured error;
-//! only the complete document plus trailing whitespace may parse, asserted
-//! explicitly as `Ok`.
+//! Truncation gate for the Smooth manifest parser: cutting a manifest at ANY
+//! offset before the end of its root end tag must be a structured error; only
+//! the complete document plus trailing whitespace may parse, asserted
+//! explicitly as `Ok`. The MPD reader is dash-runtime's.
 #![cfg(feature = "std")]
-
-use std::fs;
-use std::path::PathBuf;
 
 use broadcast_common::{Package, Unpackage};
 use transmux::ts_demux::TsDemux;
-use transmux::{DashPackager, Mpd, SmoothManifest, SmoothPackager};
+use transmux::{SmoothManifest, SmoothPackager};
 
 fn assert_every_truncation_errors<T, E: std::fmt::Debug>(
     name: &str,
@@ -39,50 +36,14 @@ fn assert_every_truncation_errors<T, E: std::fmt::Debug>(
     assert!(parse(text).is_ok(), "{name}: the full document parses");
 }
 
-fn fixtures() -> PathBuf {
-    test_fixtures::root()
-}
-
 #[test]
-fn committed_mpd_fixtures_truncations_all_error() {
-    for name in ["dash/manifest.mpd", "dash/manifest-inheritance.mpd"] {
-        let text = fs::read_to_string(fixtures().join(name)).expect("fixture");
-        assert_every_truncation_errors(name, &text, Mpd::parse);
-    }
-}
-
-#[test]
-fn packager_output_truncations_all_error() {
-    let ts = fs::read(fixtures().join("ts/h264-aac.ts")).expect("ts fixture");
+fn smooth_manifest_truncations_all_error() {
+    let ts = std::fs::read(test_fixtures::path("ts/h264-aac.ts")).expect("ts fixture");
     let media = TsDemux::new().unpackage(&ts[..]).expect("demux");
-
-    let mpd = DashPackager::default().package(&media).expect("mpd");
-    assert_every_truncation_errors("DashPackager MPD", &mpd, Mpd::parse);
-
     let smooth = SmoothPackager::default().package(&media).expect("smooth");
     assert_every_truncation_errors(
         "SmoothPackager manifest",
         &smooth.manifest,
         SmoothManifest::parse,
     );
-}
-
-/// Hostile input: very deep nesting of unknown elements is skipped iteratively
-/// (no recursion), so a 60k-deep MPD is refused with the typed depth limit
-/// (#1708) instead of overflowing the stack.
-#[test]
-fn deeply_nested_unknown_elements_do_not_overflow() {
-    let depth = 60_000;
-    let xml = format!(
-        r#"<MPD profiles="p"><Period>{}{}</Period></MPD>"#,
-        "<x>".repeat(depth),
-        "</x>".repeat(depth)
-    );
-    assert!(matches!(
-        Mpd::parse(&xml),
-        Err(transmux::dash_parse::DashParseError::TooLarge {
-            limit: broadcast_common::xml_chars::XmlLimit::Depth,
-            ..
-        })
-    ));
 }

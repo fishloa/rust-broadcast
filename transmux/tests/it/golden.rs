@@ -1,6 +1,6 @@
 //! Byte-for-byte golden gate for the XML renderers and parsers: DASH MPD,
-//! LL-DASH MPD, Smooth manifest, PlayReady WRMHEADER, and the parse results
-//! (`Debug` dumps) of the committed MPD fixtures. The expected files in
+//! LL-DASH MPD, Smooth manifest and PlayReady WRMHEADER. The MPD reader is
+//! dash-runtime's (issue #2340). The expected files in
 //! `fixtures/golden/dash/` were generated from the pre-quick-xml code on `origin/main`
 //! (see `fixtures/golden/dash/PROVENANCE.md`). Set `GOLDEN_BLESS=<dir>` to write the files
 //! instead of comparing.
@@ -16,7 +16,7 @@ use transmux::dash::{
 };
 use transmux::ll_dash::UTCTIMING_HTTP_HEAD_2014;
 use transmux::ts_demux::TsDemux;
-use transmux::{Mpd, SmoothManifest, SmoothPackager, playready_wrmheader};
+use transmux::{SmoothManifest, SmoothPackager, playready_wrmheader};
 
 fn check(name: &str, actual: &str) {
     if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
@@ -180,20 +180,4 @@ fn playready_wrmheader_matches_golden() {
         "golden/smooth/wrm-specials.xml",
         &playready_wrmheader(&[kid_a], Some("a&b<c>d\"e'f")),
     );
-}
-
-#[test]
-fn mpd_parse_results_match_golden() {
-    for name in ["manifest", "manifest-inheritance"] {
-        let text =
-            fs::read_to_string(fixtures().join(format!("dash/{name}.mpd"))).expect("fixture");
-        let parsed = Mpd::parse(&text).expect("parse");
-        check(
-            &format!("golden/dash/parse-{name}.txt"),
-            &format!("{parsed:#?}\n"),
-        );
-    }
-    let own = DashPackager::default().package(&media()).expect("mpd");
-    let parsed = Mpd::parse(&own).expect("parse own mpd");
-    check("golden/dash/parse-own-mpd.txt", &format!("{parsed:#?}\n"));
 }

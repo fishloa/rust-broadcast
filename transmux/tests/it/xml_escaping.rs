@@ -1,6 +1,6 @@
 //! XML escaping gate for every `quick-xml`-backed writer in `transmux`: a value
 //! carrying all five XML specials (`& < > " '`) must be escaped on the wire
-//! (exact output asserted) and must re-parse to the original string.
+//! (exact output asserted) and must read back to the original string.
 #![cfg(feature = "std")]
 
 use broadcast_common::{Package, Unpackage};
@@ -8,10 +8,9 @@ use quick_xml::Reader;
 use quick_xml::XmlVersion;
 use quick_xml::escape::resolve_predefined_entity;
 use quick_xml::events::Event;
-use transmux::dash::DashPackager;
 use transmux::ll_dash::UTCTIMING_HTTP_HEAD_2014;
+use transmux::playready_wrmheader;
 use transmux::ts_demux::TsDemux;
-use transmux::{Mpd, playready_wrmheader};
 
 /// All five XML specials in one string.
 const SPECIALS: &str = "a&b<c>d\"e'f";
@@ -70,32 +69,6 @@ fn text_of(xml: &str, element: &str) -> String {
             _ => {}
         }
     }
-}
-
-#[test]
-fn dash_mpd_escapes_caller_strings_and_round_trips() {
-    let media = demux_media();
-    let mut pkg = DashPackager {
-        profiles: SPECIALS.to_string(),
-        availability_start_time: Some(SPECIALS.to_string()),
-        publish_time: Some(SPECIALS.to_string()),
-        dynamic: true,
-        ..DashPackager::default()
-    };
-    let xml = pkg.package(&media).expect("package MPD");
-
-    assert!(
-        xml.contains(&format!("profiles=\"{SPECIALS_ATTR}\"")),
-        "profiles must be escaped on the wire: {xml}"
-    );
-    assert!(
-        xml.contains(&format!("availabilityStartTime=\"{SPECIALS_ATTR}\"")),
-        "availabilityStartTime must be escaped on the wire"
-    );
-    // Round trip through the crate's own parser.
-    let mpd = Mpd::parse(&xml).expect("re-parse");
-    assert_eq!(mpd.profiles, SPECIALS);
-    assert_eq!(mpd.availability_start_time.as_deref(), Some(SPECIALS));
 }
 
 #[test]

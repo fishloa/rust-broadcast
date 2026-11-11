@@ -1,11 +1,11 @@
 use broadcast_common::{Package, Unpackage};
+use dash_runtime::address::template::substitute;
 use multimux::dashif_ingest::classify;
 use multimux::dashif_ingest::{
     Addressing, IngestError, IngestMethod, IngestState, ManifestFormat, ManifestGrouping,
     ObjectKind, RequestMeta, SegmentDisposition,
 };
 use transmux::dash::DashPackager;
-use transmux::dash_parse::SegmentTemplate;
 use transmux::ts_demux::TsDemux;
 
 fn demux_media() -> transmux::media::Media {
@@ -65,6 +65,24 @@ fn committed_mpds() {
     let _g = ManifestGrouping::from_mpd(&bytes).expect("template accepted");
 }
 
+/// `period` with its `@id` moved on, so it is a second Period rather than a
+/// duplicate of the first (which the MPD reader itself rejects).
+fn renumber_period(period: &str) -> String {
+    let Some(at) = period.find("id=\"") else {
+        return period.to_string();
+    };
+    let after = &period[at + "id=\"".len()..];
+    let Some(end) = after.find('"') else {
+        return period.to_string();
+    };
+    format!(
+        "{}id=\"{}-second\"{}",
+        &period[..at],
+        &after[..end],
+        &after[end + 1..]
+    )
+}
+
 // (c) minimal violating MPDs, one per sub-clause.
 #[test]
 fn violating_multiple_periods() {
@@ -72,7 +90,8 @@ fn violating_multiple_periods() {
     let period_start = mpd.find("<Period").unwrap();
     let period_end = mpd.find("</Period>").unwrap() + "</Period>".len();
     let period = &mpd[period_start..period_end];
-    let broken = mpd.replacen("</Period>", &format!("</Period>{}", period), 1);
+    let second = renumber_period(period);
+    let broken = mpd.replacen("</Period>", &format!("</Period>{second}"), 1);
     let err = ManifestGrouping::from_mpd(broken.as_bytes()).unwrap_err();
     assert!(matches!(err, IngestError::MpdMultiplePeriods));
 }
@@ -215,8 +234,8 @@ fn classify_header_and_segment_number() {
     let mpd = build_mpd();
     let g = ManifestGrouping::from_mpd(mpd.as_bytes()).unwrap();
     let rep = &g.switching_sets[0][0];
-    let init_path = SegmentTemplate::resolve(&g.init_template, rep, None, None, None);
-    let media_path = SegmentTemplate::resolve(&g.media_template, rep, Some(1), None, None);
+    let init_path = substitute(&g.init_template, rep, None, None, 0);
+    let media_path = substitute(&g.media_template, rep, Some(1), None, 0);
     let req = RequestMeta {
         method: IngestMethod::Post,
         path: &init_path,
@@ -257,7 +276,7 @@ fn classify_segment_time() {
     let g = ManifestGrouping::from_mpd(mpd.as_bytes()).unwrap();
     let rep = &g.switching_sets[0][0];
     let time_val = 1000u64;
-    let media_path = SegmentTemplate::resolve(&g.media_template, rep, None, Some(time_val), None);
+    let media_path = substitute(&g.media_template, rep, None, Some(time_val), 0);
     let req = RequestMeta {
         method: IngestMethod::Post,
         path: &media_path,

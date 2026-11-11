@@ -23,14 +23,15 @@ use transmux::TrackId;
 use crate::support::origin::{body_string, get};
 use axum::http::StatusCode;
 use broadcast_common::Unpackage;
+use dash_runtime::mpd::Mpd;
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
 use multimux::output::dash::DashOutput;
 use multimux::output::ll_dash::LlDashOutput;
 use multimux::route::RouteHandle;
 use tower::ServiceExt;
+use transmux::TsDemux;
 use transmux::ll_hls::LlHlsSegmenter;
-use transmux::{Mpd, TsDemux};
 
 const TARGET_SECS: f64 = 2.0;
 const PART_MS: u32 = 500;
@@ -50,24 +51,33 @@ struct Edge {
 }
 
 fn read_mpd(xml: &str) -> Edge {
-    let mpd = Mpd::parse(xml).unwrap_or_else(|e| panic!("MPD parse: {e:?}\n{xml}"));
-    let t = mpd.periods[0].adaptation_sets[0]
-        .segment_template
-        .clone()
-        .or_else(|| {
-            mpd.periods[0].adaptation_sets[0].representations[0]
-                .segment_template
-                .clone()
-        })
+    let mpd = Mpd::parse(xml.as_bytes()).unwrap_or_else(|e| panic!("MPD parse: {e:?}\n{xml}"));
+    let period = &mpd.periods[0];
+    let set = &period.adaptation_sets[0];
+    let t = set
+        .segment
+        .template
+        .as_ref()
+        .or(set.representations[0].segment.template.as_ref())
         .expect("SegmentTemplate");
+    let info = match dash_runtime::mpd::inherit::resolve_segment_info(
+        period,
+        set,
+        &set.representations[0],
+    )
+    .expect("resolve")
+    {
+        dash_runtime::mpd::inherit::SegmentInfo::Template(info) => info,
+        _ => panic!("expected a SegmentTemplate chain"),
+    };
     Edge {
-        start_number: t.start_number,
-        seg_secs: t.duration.expect("@duration") as f64 / t.timescale as f64,
+        start_number: info.multi.start_number,
+        seg_secs: t.multi.duration.expect("@duration") as f64 / info.multi.timescale as f64,
         tsbd_secs: mpd
             .time_shift_buffer_depth
             .expect("timeShiftBufferDepth")
             .as_secs_f64(),
-        media: t.media.expect("media template"),
+        media: info.media.expect("media template"),
     }
 }
 

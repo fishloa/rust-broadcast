@@ -187,6 +187,19 @@ fn nothing_playable_is_a_typed_fatal() {
 }
 
 #[test]
+fn a_list_mpd_is_a_typed_fatal_and_nothing_is_requested() {
+    let text = base_text().replacen("type=\"static\"", "type=\"list\"", 1);
+    let run = play_text(text, PullLimits::default());
+    assert_eq!(
+        run.fatal,
+        Some(FatalKind::MpdInvalid {
+            reason: "presentation_type_list"
+        })
+    );
+    assert!(!run.ended);
+}
+
+#[test]
 fn a_dynamic_mpd_with_no_clock_source_is_fatal_and_nothing_else_is_requested() {
     let run = drive(
         "http://dash.test/live-number/live.mpd",

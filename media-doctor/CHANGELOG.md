@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- A `MPD@type="list"` MPD (ISO/IEC 23009-1 6th edition) is no longer reported with `dash-period-no-adaptation-sets` for Periods that import an MPD (`ImportedMPD`) or with `dash-static-mpd-missing-duration`; both were false positives.
+### Changed
+- `check_dash_mpd` reads MPDs with `dash_runtime::mpd` (new dependency, under `std`) instead of transmux's MPD model, which was removed (#2340). Its findings are pinned on every MPD fixture and the ISO/IEC 23009-1 examples.
 
 ## [0.15.0] - 2026-11-10
 ### Added

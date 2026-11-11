@@ -48,3 +48,95 @@ fn livesim2_dynamic_mpd_values() {
     assert_eq!(mpd.periods[0].adaptation_sets.len(), 2);
     assert_eq!(mpd.utc_timings.len(), 1);
 }
+
+const ISO_LIST_EXAMPLE: &str = "specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G29-2.mpd";
+
+#[test]
+fn list_mpd_parses_its_imported_mpds() {
+    let Some(root) = test_fixtures::private_root() else {
+        eprintln!("SKIPPED list_mpd_parses_its_imported_mpds: private checkout absent");
+        return;
+    };
+    let path = root.join(ISO_LIST_EXAMPLE);
+    assert!(
+        path.is_file(),
+        "private checkout present but {} is missing",
+        path.display()
+    );
+    let mpd = Mpd::parse(&std::fs::read(&path).expect("read")).expect("parse");
+    assert_eq!(mpd.kind, PresentationType::List);
+    assert_eq!(mpd.periods.len(), 3);
+    let urls: Vec<&str> = mpd
+        .periods
+        .iter()
+        .map(|p| p.imported_mpd.as_ref().expect("ImportedMPD").url.as_str())
+        .collect();
+    assert_eq!(urls, ["ad0.mpd", "ad1.mpd", "ad2.mpd"]);
+    assert_eq!(
+        mpd.periods[0]
+            .imported_mpd
+            .as_ref()
+            .expect("ImportedMPD")
+            .earliest_resolution_time_offset,
+        Some(0.0)
+    );
+}
+
+const INHERITING_TIMELINE: &str = "specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G22.mpd";
+
+#[test]
+fn a_representation_inherits_the_adaptation_sets_timeline() {
+    let Some(root) = test_fixtures::private_root() else {
+        eprintln!(
+            "SKIPPED a_representation_inherits_the_adaptation_sets_timeline: private checkout absent"
+        );
+        return;
+    };
+    let path = root.join(INHERITING_TIMELINE);
+    assert!(
+        path.is_file(),
+        "private checkout present but {} is missing",
+        path.display()
+    );
+    let mpd = Mpd::parse(&std::fs::read(&path).expect("read")).expect("parse");
+    let set = &mpd.periods.first().expect("period").adaptation_sets[0];
+    let declared = set
+        .segment
+        .template
+        .as_ref()
+        .expect("AdaptationSet SegmentTemplate");
+    assert_eq!(
+        declared
+            .multi
+            .timeline
+            .as_ref()
+            .expect("timeline")
+            .entries
+            .len(),
+        3
+    );
+    let bare = set
+        .representations
+        .iter()
+        .find(|r| {
+            r.segment
+                .template
+                .as_ref()
+                .is_some_and(|t| t.multi.timeline.is_none())
+        })
+        .expect("a Representation with a SegmentTemplate of its own");
+    let info = dash_runtime::mpd::inherit::resolve_segment_info(&mpd.periods[0], set, bare)
+        .expect("resolve");
+    let dash_runtime::mpd::inherit::SegmentInfo::Template(info) = info else {
+        panic!("expected a SegmentTemplate chain");
+    };
+    assert_eq!(
+        info.multi
+            .timeline
+            .expect("inherited timeline")
+            .entries
+            .len(),
+        3
+    );
+    assert_eq!(info.multi.timescale, 90_000);
+}

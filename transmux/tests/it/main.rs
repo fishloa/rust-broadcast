@@ -44,9 +44,7 @@ mod damaged_unit_resync_webm;
 mod dash;
 #[cfg(feature = "std")]
 mod dash_duration;
-mod dash_iso_examples;
 mod dash_mpd;
-mod dash_parse;
 mod dash_xsd;
 mod degraded_at_track;
 mod demux_timing_invariant;
@@ -180,7 +178,6 @@ mod subtitle_real_producers;
 mod subtitle_remux;
 mod sweep_output_golden;
 #[cfg(feature = "std")]
-mod template_match;
 #[cfg(feature = "std")]
 mod timed_metadata_sei_caption_fixture;
 #[cfg(feature = "std")]

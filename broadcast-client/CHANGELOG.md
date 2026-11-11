@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- A DASH source whose MPD is `MPD@type="list"` (ISO/IEC 23009-1 6th edition) fails with the typed unsupported-addressing error instead of a generic playback-timeline failure (#2340).
 
 ## [0.5.0] - 2026-11-10
 ### Changed

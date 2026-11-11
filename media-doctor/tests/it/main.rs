@@ -3,6 +3,7 @@ mod broadcast_hls_oracle;
 mod cli_routing;
 mod codec_v2_real_captures;
 mod dash_validator_fixture;
+mod dash_validator_golden;
 mod hevc_array_findings;
 mod hls_fixture;
 mod hls_validator_fixture;
