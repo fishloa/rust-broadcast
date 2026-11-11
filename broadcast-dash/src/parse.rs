@@ -154,7 +154,7 @@ fn opt_time(e: &Elem<Ns>, name: &'static str) -> Result<Option<i64>, MpdError> {
         .transpose()
 }
 
-fn parse_range(name: &'static str, v: &str) -> Result<ByteRange, MpdError> {
+pub(crate) fn parse_range(name: &'static str, v: &str) -> Result<ByteRange, MpdError> {
     let v = v.trim();
     let (first, last) = v.split_once('-').ok_or_else(|| invalid(name, v))?;
     let first = first.parse::<u64>().map_err(|_| invalid(name, v))?;

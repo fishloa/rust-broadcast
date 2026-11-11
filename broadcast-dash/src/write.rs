@@ -285,7 +285,6 @@ fn write_base_info(
 fn write_segment_base(w: &mut Writer<Vec<u8>>, sb: &SegmentBase) -> Result<(), MpdError> {
     let mut e = BytesStart::new("SegmentBase");
     write_base_info(w, &mut e, &sb.info)?;
-    // children
     let has_init = sb.info.initialization.is_some();
     let has_ri = sb.info.representation_index.is_some();
     if !has_init && !has_ri {
@@ -346,7 +345,6 @@ fn write_segment_list(w: &mut Writer<Vec<u8>>, sl: &SegmentList) -> Result<(), M
     if let Some(v) = sl.multi.end_number {
         e.push_attribute(("endNumber", v.to_string().as_str()));
     }
-    // xlink
     if let Some(x) = &sl.xlink {
         e.push_attribute(("xlink:href", x.href.as_str()));
         if x.actuate != Actuate::OnRequest {

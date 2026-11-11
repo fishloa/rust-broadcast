@@ -63,7 +63,7 @@ impl Actuate {
 impl_spec_display!(Actuate);
 
 /// An `xlink` reference on a Period, AdaptationSet or SegmentList.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub struct Xlink {
     /// `@xlink:href`.
@@ -73,13 +73,22 @@ pub struct Xlink {
 }
 
 /// A single byte range `first-last` (RFC 7233 2.1), inclusive.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub struct ByteRange {
     /// First byte.
     pub first: u64,
     /// Last byte; `None` for the open-ended form `first-`.
     pub last: Option<u64>,
+}
+
+impl core::fmt::Display for ByteRange {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.last {
+            Some(last) => write!(f, "{}-{}", self.first, last),
+            None => write!(f, "{}-", self.first),
+        }
+    }
 }
 
 impl ByteRange {
@@ -178,7 +187,7 @@ pub struct UrlQueryInfo {
 }
 
 /// A `UTCTiming` element (5.8.4.11).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub struct UtcTiming {
     /// Classified `@schemeIdUri`.
