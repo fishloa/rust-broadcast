@@ -49,6 +49,7 @@
 extern crate alloc;
 
 pub mod bcd;
+pub mod ber;
 pub mod bits;
 pub mod cenc;
 pub mod clock33;
@@ -56,6 +57,7 @@ pub mod crc32_mpeg2;
 pub mod erased;
 pub mod error;
 pub mod hex;
+pub mod klv;
 pub mod len;
 pub mod mux;
 pub mod parity;

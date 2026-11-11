@@ -88,7 +88,7 @@ builds (see the table above against the in-tree versions below).
 | Crate | Domain | In-tree version | crates.io | `no_std` (CI) | Layer | Status |
 |---|---|---|---|---|---|---|
 | [`broadcast-auth`](#broadcast-auth) | Foundation | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/broadcast-auth.svg)](https://crates.io/crates/broadcast-auth) | no | 0 | on crates.io |
-| [`broadcast-common`](#broadcast-common) | Foundation | 11.0.1 | [![crates.io](https://img.shields.io/crates/v/broadcast-common.svg)](https://crates.io/crates/broadcast-common) | yes | 0 | on crates.io |
+| [`broadcast-common`](#broadcast-common) | Foundation | 11.1.0 | [![crates.io](https://img.shields.io/crates/v/broadcast-common.svg)](https://crates.io/crates/broadcast-common) | yes | 0 | on crates.io |
 | [`mpeg-pes`](#mpeg-pes) | MPEG-2 TS / PES / PS framing | 0.7.1 | [![crates.io](https://img.shields.io/crates/v/mpeg-pes.svg)](https://crates.io/crates/mpeg-pes) | yes | 1 | on crates.io |
 | [`mpeg-ts`](#mpeg-ts) | MPEG-2 TS / PES / PS framing | 0.7.1 | [![crates.io](https://img.shields.io/crates/v/mpeg-ts.svg)](https://crates.io/crates/mpeg-ts) | yes | 1 | on crates.io |
 | [`mpeg-ps`](#mpeg-ps) | MPEG-2 TS / PES / PS framing | 0.7.1 | [![crates.io](https://img.shields.io/crates/v/mpeg-ps.svg)](https://crates.io/crates/mpeg-ps) | yes | 2 | on crates.io |
@@ -169,7 +169,7 @@ The base of the workspace: the zero-copy `Parse<'a>` / `Serialize` trait pair ev
 
 - **Standards:** ISO/IEC 13818-1 CRC-32 (Annex A); ISO/IEC 23001-7 scheme identity (`cenc`)
 - **Cargo description:** Foundation for the rust-broadcast crates: symmetric Parse/Serialize traits, CRC-32/MPEG-2, BCD + MJD time codecs, bit I/O, 33-bit/PCR clock arithmetic, checked field widths, container-mux and Stage traits. no_std + alloc.
-- **Version (in-tree):** 11.0.1 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 0
+- **Version (in-tree):** 11.1.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 0
 - **Depends on (workspace):** none
 - **Used by (workspace):** 52 workspace crates
 - **Links:** [README](../broadcast-common/README.md) · [CHANGELOG](../broadcast-common/CHANGELOG.md) · [crates.io](https://crates.io/crates/broadcast-common) · [docs.rs](https://docs.rs/broadcast-common)

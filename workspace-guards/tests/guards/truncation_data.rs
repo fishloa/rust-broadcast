@@ -216,11 +216,6 @@ pub const TABLE: &[Crate] = &[
                      (ts_demux MAX_PES_BUFFER_BYTES).",
             ),
             (
-                "src/klv.rs",
-                "out.push(BER_LONG_FORM_FLAG | (value_bytes.len() as u8));",
-                "value_bytes is the minimal big-endian bytes of a u64: 1..=8 long.",
-            ),
-            (
                 "src/flv.rs",
                 "out.extend_from_slice(&(s.len() as u16).to_be_bytes());",
                 "amf0_string is only ever called with the crate's own static \

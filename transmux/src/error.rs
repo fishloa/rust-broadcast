@@ -56,6 +56,10 @@ pub enum Error {
     #[error(transparent)]
     InvalidValue(#[from] broadcast_common::error::InvalidValue),
 
+    /// A KLV triplet or BER length token failure (SMPTE ST 336 framing).
+    #[error(transparent)]
+    Klv(#[from] broadcast_common::klv::KlvError),
+
     /// A field was missing or structurally invalid.
     #[error(transparent)]
     InvalidField(#[from] broadcast_common::error::InvalidField),
