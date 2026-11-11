@@ -431,4 +431,80 @@ mod tests {
     fn resolve_credentials_is_none_with_neither_source() {
         assert!(resolve_credentials(None, None).is_none());
     }
+
+    #[tokio::test]
+    async fn golden_basic_same_origin_sends_authorization() {
+        let (a_url, a_seen) = origin(None).await;
+        let creds = scoped(
+            Credentials::Basic {
+                username: "user".into(),
+                password: "pass".into(),
+            },
+            &a_url,
+        );
+        let resp = authenticated_get(&client(), &format!("{a_url}/seg"), creds.as_ref())
+            .await
+            .unwrap();
+        assert!(resp.status().is_success());
+        let seen = a_seen.lock().unwrap();
+        assert_eq!(seen.as_slice(), [Some("Basic dXNlcjpwYXNz".to_string())]);
+    }
+
+    #[tokio::test]
+    async fn golden_bearer_token_sends_authorization() {
+        let (a_url, a_seen) = origin(None).await;
+        let creds = scoped(
+            Credentials::Bearer {
+                token: "tok-secret".into(),
+            },
+            &a_url,
+        );
+        let resp = authenticated_get(&client(), &format!("{a_url}/seg"), creds.as_ref())
+            .await
+            .unwrap();
+        assert!(resp.status().is_success());
+        let seen = a_seen.lock().unwrap();
+        assert_eq!(seen.as_slice(), [Some("Bearer tok-secret".to_string())]);
+    }
+
+    #[tokio::test]
+    async fn golden_digest_first_bare_then_replay_with_digest() {
+        let (a_url, a_seen) = origin(None).await;
+        // Use /challenge which returns 401 with a Digest challenge.
+        let creds = scoped(Credentials::new("user", "pass"), &a_url);
+        let _ = authenticated_get(&client(), &format!("{a_url}/challenge"), creds.as_ref()).await;
+        let seen = a_seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[0], None);
+        assert!(seen[1].as_deref().unwrap_or("").starts_with("Digest "));
+    }
+
+    #[tokio::test]
+    async fn golden_cross_origin_gets_no_authorization() {
+        let (b_url, b_seen) = origin(None).await;
+        let (a_url, _a_seen) = origin(None).await;
+        let creds = scoped(
+            Credentials::Bearer {
+                token: "tok-secret".into(),
+            },
+            &a_url,
+        );
+        authenticated_get(&client(), &format!("{b_url}/seg"), creds.as_ref())
+            .await
+            .unwrap();
+        assert_eq!(b_seen.lock().unwrap().as_slice(), [None]);
+    }
+
+    #[tokio::test]
+    async fn golden_second_401_stops_after_one_replay() {
+        let (a_url, a_seen) = origin(None).await;
+        let creds = scoped(Credentials::new("user", "pass"), &a_url);
+        // /challenge always 401; current code resends once then returns the 401.
+        let resp = authenticated_get(&client(), &format!("{a_url}/challenge"), creds.as_ref())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let seen = a_seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+    }
 }
