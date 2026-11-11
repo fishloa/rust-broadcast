@@ -160,6 +160,7 @@ pub struct PlaySession {
     pub sdp: String,
     /// The interleaved RTP channel the server negotiated on `SETUP`.
     pub negotiated_channel: u8,
+    pub skipped: Vec<String>,
 }
 
 impl AsyncRtspClient<TcpStream> {
@@ -450,6 +451,7 @@ where
         Ok(PlaySession {
             sdp,
             negotiated_channel,
+            skipped: Vec::new(),
         })
     }
 

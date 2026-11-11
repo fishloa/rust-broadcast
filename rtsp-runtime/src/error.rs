@@ -102,6 +102,11 @@ pub enum Error {
         what: &'static str,
     },
 
+    /// A per-media `a=control` URL names a different authority than the
+    /// request URL (RFC 2326 §C.1.1); such a redirect is refused.
+    #[error("control URL crosses authorities")]
+    ForeignAuthority,
+
     /// Authentication failed: no credentials were configured, the challenge
     /// could not be parsed, or the digest computation failed (RFC 2326 §14).
     #[error("authentication failure")]
