@@ -28,6 +28,7 @@ mod live_sampler;
 mod live_soak;
 mod live_world;
 mod mpd_fixtures;
+mod mpd_parse_golden;
 mod no_clock_guard;
 mod selection;
 mod static_fixtures;
