@@ -4,8 +4,8 @@
 //! The scan is strict: a `$` that does not enclose a known identifier makes
 //! the whole template invalid, which the spec resolves by dropping the
 //! containing Representation (5.3.9.4.4 step 2). Format tags are `%0<width>d`
-//! only. Substitution itself is `transmux::SegmentTemplate::resolve`, so the
-//! two crates cannot disagree about widths or `$$`.
+//! only. Substitution goes through the same [`parts`] the scan builds, so a
+//! width is clamped once (to [`MAX_FORMAT_WIDTH`]) and `$$` is read once.
 
 use broadcast_common::impl_spec_display;
 use transmux::dash_parse::MAX_FORMAT_WIDTH;
@@ -177,7 +177,43 @@ pub fn substitute(
     time: Option<u64>,
     bandwidth: u64,
 ) -> String {
-    transmux::SegmentTemplate::resolve(template, representation_id, number, time, Some(bandwidth))
+    let Ok(parts) = parts(template) else {
+        return String::new();
+    };
+    let mut out = String::with_capacity(template.len());
+    for part in &parts {
+        match part {
+            Part::Literal(text) => out.push_str(text),
+            Part::Escape => out.push(DELIMITER),
+            Part::RepresentationId => out.push_str(representation_id),
+            Part::Number(width) => {
+                if let Some(value) = number {
+                    out.push_str(&pad(value, *width));
+                }
+            }
+            Part::Time(width) => {
+                if let Some(value) = time {
+                    out.push_str(&pad(value, *width));
+                }
+            }
+            Part::Bandwidth(width) => out.push_str(&pad(bandwidth, *width)),
+        }
+    }
+    out
+}
+
+/// `value` in decimal, zero-padded to `width` (never truncated, never wider
+/// than [`MAX_FORMAT_WIDTH`]).
+fn pad(value: u64, width: Option<usize>) -> String {
+    let digits = value.to_string();
+    let width = width.unwrap_or(1).min(MAX_FORMAT_WIDTH);
+    if width <= digits.len() {
+        return digits;
+    }
+    let mut out = String::with_capacity(width);
+    out.extend(core::iter::repeat_n('0', width - digits.len()));
+    out.push_str(&digits);
+    out
 }
 
 /// A template split into literals and Table 21 identifiers, with each

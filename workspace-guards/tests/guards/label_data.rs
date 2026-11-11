@@ -1593,15 +1593,10 @@ pub const TABLE: &[Crate] = &[
             "FlvError",
             "RtmpFlvError",
             "CliError",
-            // `dash_parse::DashParseError` (issue #758 T1): a structured parse error,
-            // labelled via a hand-written `Display` impl (matching `FlvError`), not
-            // the spec-token convention — already satisfied by that `Display` impl,
-            // listed here for the same documentation reason `FlvError`/`RtmpFlvError` are.
-            "DashParseError",
             // `smooth_parse::SmoothParseError` (issue #759 T1): a structured parse
-            // error, labelled via a hand-written `Display` impl mirroring
-            // `DashParseError`, not the spec-token convention — already satisfied by
-            // that `Display` impl, listed here for the same documentation reason.
+            // error, labelled via a hand-written `Display` impl (matching
+            // `FlvError`), not the spec-token convention — already satisfied by that
+            // `Display` impl, listed here for the same documentation reason.
             "SmoothParseError",
             // clap CLI argument enum (labels are the `--format` strings, owned by
             // `clap::ValueEnum`, not this convention)

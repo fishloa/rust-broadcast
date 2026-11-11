@@ -10,7 +10,6 @@ mod clock;
 mod common;
 mod dash_mpd_reader;
 mod datetime;
-mod differential;
 mod display_sample;
 mod error_variants;
 mod hostile;

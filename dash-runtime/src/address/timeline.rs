@@ -13,8 +13,8 @@
 //! numbering; `@r >= 0` gives `r + 1` segments; a negative `@r` repeats up to
 //! the next `S@t`, or for the last `S` to the Period end, as
 //! `ceil((end - time) / d)` (the spec prints no rounding rule; this is the
-//! `transmux::SegmentTimeline::resolve` reading, which the differential test
-//! holds this to).
+//! reading the workspace's former second reader used, pinned by
+//! `vectors::timeline_numbers_gaps_negative_r_and_n`).
 
 use crate::limits::MAX_TIMELINE_SEGMENTS;
 use crate::mpd::model::SegmentTimeline;

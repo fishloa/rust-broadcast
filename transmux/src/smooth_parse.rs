@@ -3,8 +3,9 @@
 //! [`crate::smooth::SmoothPackager`]'s writer.
 //!
 //! Smooth-pull ingest (issue #759, T1) needs to fetch a remote client
-//! Manifest and resolve the fragment URLs it describes, exactly as
-//! [`crate::dash_parse`] does for DASH (issue #758). Like that parser, this
+//! Manifest and resolve the fragment URLs it describes, as `transmux`'s former
+//! DASH reader did (that reader is now `dash_runtime::mpd`, issue #2340). Like
+//! that parser, this
 //! one reads XML with the shared [`quick_xml::Reader`]-based tokenizer
 //! (crate-private, `std` feature) rather than writing a second one.
 //!
@@ -96,10 +97,9 @@ use crate::subtitle_entries::{WvttSampleEntry, XmlSubtitleSampleEntry};
 
 /// Errors returned while parsing an MS-SSTR client Manifest.
 ///
-/// Distinct from [`crate::Error`] and from [`crate::dash_parse::DashParseError`]
-/// (though structurally a near-mirror of the latter) — this parser never
-/// panics on malformed or truncated input; every failure path returns one of
-/// these variants instead.
+/// Distinct from [`crate::Error`]; this parser never panics on malformed or
+/// truncated input — every failure path returns one of these variants
+/// instead.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SmoothParseError {
@@ -315,10 +315,10 @@ pub fn default_limits() -> XmlLimits {
 // Unbounded-input caps (remote alloc-DoS defense)
 // ---------------------------------------------------------------------------
 
-/// Cap on total chunks expanded from a `StreamIndex`'s `c@r` repeat runs.
-/// Mirrors [`crate::dash_parse::MAX_TIMELINE_SEGMENTS`]: a hostile Manifest
-/// specifying a huge `<c r="...">` would allocate unboundedly otherwise.
-/// 100,000 chunks is generous while still protecting against allocation DoS.
+/// Cap on total chunks expanded from a `StreamIndex`'s `c@r` repeat runs: a
+/// hostile Manifest specifying a huge `<c r="...">` would allocate unboundedly
+/// otherwise. 100,000 chunks is generous while still protecting against
+/// allocation DoS.
 pub const MAX_CHUNK_RUN: usize = 100_000;
 
 /// Cap on a `QualityLevel@CodecPrivateData` hex string's length, checked
