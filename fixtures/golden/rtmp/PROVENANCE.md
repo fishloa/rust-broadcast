@@ -25,4 +25,8 @@ the `onMetaData` builder and the FLV codec gate moved from `multimux` into
 
     REGENERATE_PUSH_GOLDENS=1 cargo test -p multimux --all-features --locked --test it push_wire_goldens
 
-It is never re-blessed to make a change pass.
+The body was re-recorded once, by the same test, because the RTMP push now
+frames the shared `transmux::on_metadata_body` instead of its own AMF0 Object:
+the two differ only in that the body's ECMA array keeps its end-of-object
+marker (`00 00 09`) and carries no `duration` (a live stream has none). It is
+never re-blessed again to make a change pass.

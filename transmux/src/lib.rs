@@ -304,7 +304,7 @@ pub use flac::{
 };
 pub use flv::{
     FlvDemux, FlvError, FlvMux, FlvPayload, FlvPayloadKind, flv_frame_payloads,
-    flv_sequence_header_payloads,
+    flv_sequence_header_payloads, flv_track_kind, on_metadata_body,
 };
 pub use flv_stream::StreamingFlvDemux;
 pub use h262::{SequenceDisplayExtension, SequenceHeaderGeometry};
