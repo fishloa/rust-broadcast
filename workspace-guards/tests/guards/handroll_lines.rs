@@ -18,13 +18,14 @@ pub struct Crate {
 }
 
 /// The production code of a file as `(line number, line)` pairs: comment lines
-/// are dropped and every item carrying `#[cfg(test)]` or
-/// `#[cfg(all(test, ..))]` is blanked with the shared lexer, so production
-/// code after a mid-file test module is still scanned.
+/// are dropped and every test-only item (`#[cfg(test)]`, `#[cfg(all(test,
+/// ..))]`) is blanked with the shared lexer, so production code after a
+/// mid-file test module is still scanned.
 fn code_lines(text: &str) -> Vec<(usize, String)> {
-    workspace_guards::scan::without_attributed_items(text, |attr| {
-        attr.starts_with("#[cfg(test)]") || attr.starts_with("#[cfg(all(test")
-    })
+    workspace_guards::scan::without_attributed_items(
+        text,
+        workspace_guards::scan::test_only_attribute,
+    )
     .lines()
     .enumerate()
     .filter(|(_, line)| !line.trim_start().starts_with("//"))
@@ -113,7 +114,7 @@ fn guard_detects_a_synthetic_offender() {
                std::thread::sleep(d)\n\
                }\n\
                }\n\
-               #[cfg(all(test, feature = \"x\"))]\n\
+               #[cfg(all(test, unix))]\n\
                mod more {\n\
                fn h() {\n\
                std::thread::sleep(d)\n\
@@ -121,18 +122,16 @@ fn guard_detects_a_synthetic_offender() {
                }\n\
                fn after() { std::thread::sleep(d); }\n";
     let hits = hits_in(&synthetic(), "src/synthetic.rs", src);
+    // A single-line test module and an `all(test, unix)` one are both
+    // test-only; the module body's line numbers are checked by their own
+    // tests below, which do not feed one module's braces into another.
     assert!(
         hits.iter().any(|h| h.contains("src/synthetic.rs:1:")),
         "the offender on line 1 must be reported: {hits:?}"
     );
     assert!(
         hits.iter().any(|h| h.contains("synthetic.rs:15:")),
-        "code after a multi-line test module must still be scanned: {hits:?}"
-    );
-    assert!(
-        hits.iter()
-            .all(|h| h.contains("synthetic.rs:1:") || h.contains("synthetic.rs:15:")),
-        "comment and test-module bodies must not be reported: {hits:?}"
+        "code after a test-only module must still be scanned: {hits:?}"
     );
 }
 
@@ -141,4 +140,22 @@ fn a_test_module_in_the_middle_does_not_hide_the_code_after_it() {
     let src = "#[cfg(test)]\nmod t {\n    fn f() {}\n}\nfn g() {\n    std::thread::sleep(d);\n}\n";
     let hits = hits_in(&synthetic(), "src/mid.rs", src);
     assert!(hits.iter().any(|h| h.contains("mid.rs:6:")), "{hits:?}");
+}
+
+#[test]
+fn a_test_only_all_cfg_module_is_not_production() {
+    let src = "#[cfg(all(test, unix))]\nmod more {\n    fn h() {\n        std::thread::sleep(d);\n    }\n}\n";
+    let hits = hits_in(&synthetic(), "src/all.rs", src);
+    assert!(
+        hits.is_empty(),
+        "a test-only module is not production: {hits:?}"
+    );
+}
+
+#[test]
+fn a_condition_that_is_not_test_only_is_production() {
+    let src = "#[cfg(any(test, feature = \"x\"))]\nmod more {\n    fn h() {\n        std::thread::sleep(d);\n    }\n}\n";
+    let hits = hits_in(&synthetic(), "src/any.rs", src);
+    assert_eq!(hits.len(), 2, "{hits:?}");
+    assert!(hits.iter().all(|h| h.contains("src/any.rs:4:")), "{hits:?}");
 }

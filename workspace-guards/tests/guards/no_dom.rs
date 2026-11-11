@@ -42,16 +42,20 @@ const BANNED_WORDS: [&str; 5] = ["Node", "Element", "Dom", "Tree", "Xml"];
 const ENTITY_LITERALS: [&str; 5] = ["&amp;", "&lt;", "&gt;", "&quot;", "&apos;"];
 
 /// The production code of a file as `(line number, line)` pairs: comment lines
-/// are dropped and every item carrying `#[cfg(test)]` is blanked with the
-/// shared lexer, so production code after a mid-file test module is still
-/// scanned and every line number still matches the file.
+/// are dropped and every test-only item (`#[cfg(test)]`, `#[cfg(all(test,
+/// ..))]`) is blanked with the shared lexer, so production code after a
+/// mid-file test module is still scanned and every line number still matches
+/// the file.
 fn code_lines(text: &str) -> Vec<(usize, String)> {
-    workspace_guards::scan::without_attributed_items(text, |attr| attr.starts_with("#[cfg(test)]"))
-        .lines()
-        .enumerate()
-        .filter(|(_, line)| !line.trim_start().starts_with("//"))
-        .map(|(no, line)| (no + 1, line.to_string()))
-        .collect()
+    workspace_guards::scan::without_attributed_items(
+        text,
+        workspace_guards::scan::test_only_attribute,
+    )
+    .lines()
+    .enumerate()
+    .filter(|(_, line)| !line.trim_start().starts_with("//"))
+    .map(|(no, line)| (no + 1, line.to_string()))
+    .collect()
 }
 
 /// The CamelCase words of an identifier (`XmlReader` -> `Xml`, `Reader`).

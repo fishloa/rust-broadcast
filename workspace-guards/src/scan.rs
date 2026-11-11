@@ -1,13 +1,16 @@
-//! Shared scanner for the lexical source guards: `non_test_source` strips
-//! `#[cfg(test)] mod` items with a small lexer that understands comments,
+//! Shared scanner for the lexical source guards: `non_test_source` strips the
+//! items `#[cfg(test)]` compiles only for tests — `#[cfg(test)]` itself and
+//! the test-only `all(..)` forms such as `#[cfg(all(test, unix))]`, by
+//! [`test_only_attribute`] — with a small lexer that understands comments,
 //! strings (including multi-line and raw strings) and char literals, so a brace
 //! or quote inside a string cannot desynchronise it. A guard crate that keeps
 //! its own extra checks takes this as a dev-dependency instead of copying it.
 
 use std::path::Path;
 
-/// Source with every `#[cfg(test)] mod name { ... }` item removed (and an out-of-line
-/// `#[cfg(test)] mod name;` declaration), found with a small lexer that understands
+/// Source with every test-only `#[cfg(...)] mod name { ... }` item removed (and an
+/// out-of-line `#[cfg(test)] mod name;` declaration) — "test-only" is
+/// [`test_only_attribute`] — found with a small lexer that understands
 /// comments, strings (including multi-line and raw strings) and char literals, so an
 /// unbalanced brace or quote inside a string cannot desynchronise it.
 pub fn non_test_source(src: &str) -> String {
@@ -22,29 +25,33 @@ pub fn non_test_source_blanked(src: &str) -> String {
 }
 
 fn non_test_source_masked(src: &str, blank: bool) -> String {
-    let b = src.as_bytes();
-    let mut out = String::new();
-    let mut i = 0;
-    let mut line_start = true;
-    while i < b.len() {
-        if line_start
-            && src[i..]
-                .trim_start_matches([' ', '\t'])
-                .starts_with("#[cfg(test)]")
-            && let Some(end) = test_mod_end(b, i)
-        {
-            if blank {
-                out.extend(src[i..end].chars().filter(|c| *c == '\n'));
-            }
-            i = end;
-            continue;
+    without_attributed_items_blanked(src, test_only_attribute, blank)
+}
+
+/// Whether an attribute is exactly test-only: `#[cfg(test)]`, or an `all(..)`
+/// whose every term is `test` or a platform term that only narrows a test
+/// build (`unix`, `windows`). A term set that includes anything else
+/// (`any(..)`, `not(..)`, a feature) is NOT test-only — that item is compiled
+/// outside `cargo test` and its code must keep being scanned.
+pub fn test_only_attribute(attr: &str) -> bool {
+    let mut has_test = false;
+    let mut all_ok = true;
+    for word in attribute_words(attr) {
+        match word {
+            "test" => has_test = true,
+            "all" | "cfg" | "unix" | "windows" => {}
+            _ => all_ok = false,
         }
-        line_start = b[i] == b'\n' || (line_start && (b[i] == b' ' || b[i] == b'\t'));
-        let ch = src[i..].chars().next().unwrap();
-        out.push(ch);
-        i += ch.len_utf8();
     }
-    out
+    has_test && all_ok
+}
+
+/// The bare words of an attribute, with punctuation, brackets and quotes
+/// dropped: `#[cfg(all(test, unix))]` yields `cfg all test unix`.
+fn attribute_words(expr: &str) -> Vec<&str> {
+    expr.split(|c: char| !c.is_alphanumeric() && c != '_')
+        .filter(|word| !word.is_empty())
+        .collect()
 }
 
 fn skip_ws(b: &[u8], mut i: usize) -> usize {
@@ -52,55 +59,6 @@ fn skip_ws(b: &[u8], mut i: usize) -> usize {
         i += 1;
     }
     i
-}
-
-/// If the `#[cfg(test)]` at `i` is followed (past other attributes) by a `mod`,
-/// the index just past that module (its closing brace, or the `;`).
-fn test_mod_end(b: &[u8], i: usize) -> Option<usize> {
-    let mut j = skip_ws(b, i);
-    let mut consumed = false;
-    // one or more attributes
-    while b[j..].starts_with(b"#[") {
-        let mut depth = 0i32;
-        while j < b.len() {
-            match b[j] {
-                b'[' => depth += 1,
-                b']' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        j += 1;
-                        break;
-                    }
-                }
-                _ => {}
-            }
-            j += 1;
-        }
-        consumed = true;
-        j = skip_ws(b, j);
-    }
-    if !consumed {
-        return None;
-    }
-    if let Some(rest) = b[j..].strip_prefix(b"pub") {
-        j = skip_ws(b, b.len() - rest.len());
-    }
-    if b[j..].starts_with(b"(")
-        && let Some(close) = b[j..].iter().position(|c| *c == b')')
-    {
-        j = skip_ws(b, j + close + 1);
-    }
-    if !b[j..].starts_with(b"mod ") {
-        return None;
-    }
-    while j < b.len() && b[j] != b'{' && b[j] != b';' {
-        j += 1;
-    }
-    match b.get(j) {
-        Some(b';') => Some(j + 1),
-        Some(b'{') => Some(skip_block(b, j)),
-        _ => None,
-    }
 }
 
 /// Index just past the `}` matching the `{` at `start`.
@@ -215,13 +173,25 @@ fn skip_raw_string(b: &[u8], i: usize) -> usize {
 /// skipped, and the item is found with the same string/comment-aware lexer as
 /// [`non_test_source`].
 pub fn without_attributed_items(src: &str, matches: impl Fn(&str) -> bool) -> String {
+    without_attributed_items_blanked(src, matches, true)
+}
+
+/// [`without_attributed_items`], with the removed items either blanked (their
+/// line breaks kept) or cut entirely.
+fn without_attributed_items_blanked(
+    src: &str,
+    matches: impl Fn(&str) -> bool,
+    blank: bool,
+) -> String {
     let b = src.as_bytes();
     let mut out = String::new();
     let mut i = 0;
     let mut line_start = true;
     while i < b.len() {
         if line_start && let Some(end) = attributed_item_end(src, b, i, &matches) {
-            out.extend(src[i..end].chars().filter(|c| *c == '\n'));
+            if blank {
+                out.extend(src[i..end].chars().filter(|c| *c == '\n'));
+            }
             i = end;
             line_start = true;
             continue;
