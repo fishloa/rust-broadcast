@@ -626,6 +626,9 @@ fn write_period(w: &mut Writer<Vec<u8>>, p: &Period) -> Result<(), MpdError> {
     for d in &p.supplemental_properties {
         write_descriptor(w, "SupplementalProperty", d)?;
     }
+    for sd in &p.service_descriptions {
+        write_service_description(w, sd)?;
+    }
     for a in &p.adaptation_sets {
         write_adaptation_set(w, a)?;
     }

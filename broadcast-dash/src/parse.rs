@@ -529,6 +529,10 @@ fn period(e: &Elem<Ns>, ctx: &mut Ctx<'_>) -> Result<Option<Period>, MpdError> {
         imported_mpd: e.child("ImportedMPD").map(imported_mpd).transpose()?,
         essential_properties: descriptors(e, "EssentialProperty")?,
         supplemental_properties: descriptors(e, "SupplementalProperty")?,
+        service_descriptions: e
+            .children_named("ServiceDescription")
+            .map(service_description)
+            .collect::<Result<Vec<_>, _>>()?,
         adaptation_sets: sets,
     }))
 }

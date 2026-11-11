@@ -534,6 +534,8 @@ pub struct Period {
     pub supplemental_properties: Vec<Descriptor>,
     /// The AdaptationSets.
     pub adaptation_sets: Vec<AdaptationSet>,
+    /// `ServiceDescription`.
+    pub service_descriptions: Vec<ServiceDescription>,
 }
 
 /// `Latency` child of `ServiceDescription` (Annex K).
