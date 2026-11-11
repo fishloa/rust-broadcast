@@ -1,16 +1,12 @@
-//! Smooth client engine (placeholder skeleton; full implementation in progress).
+//! The Smooth client engine: [`SmoothClient`] and the types it exchanges with a host.
 
-/// Sans-IO Smooth Streaming client engine.
-pub struct SmoothClient;
+mod action;
+mod config;
+mod engine;
+mod output;
+mod stream;
 
-impl SmoothClient {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl Default for SmoothClient {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+pub use action::{Action, FetchFailure, RequestId, StreamId};
+pub use config::{QualitySelector, SmoothConfig};
+pub use engine::SmoothClient;
+pub use output::{Dropped, ManifestFault, Output, QualityInfo};
