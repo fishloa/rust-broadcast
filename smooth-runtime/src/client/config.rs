@@ -58,11 +58,11 @@ impl fmt::Debug for QualitySelector {
 pub struct SmoothConfig {
     /// Live join point, in fragments behind the newest.
     pub live_join_fragments: usize,
-    /// See [`DEFAULT_MAX_FRAGMENT_FAILURES`].
+    /// Consecutive failures of one fragment before it is skipped (live) or the session ends (static); default 5.
     pub max_fragment_failures: u32,
-    /// See [`DEFAULT_MAX_MANIFEST_FAILURES`].
+    /// Consecutive manifest failures before the session ends; default 5.
     pub max_manifest_failures: u32,
-    /// See [`DEFAULT_MAX_REFRESH_MISSES`].
+    /// Consecutive refreshes lacking a stream before that stream is abandoned; default 5.
     pub max_refresh_misses: u32,
     /// Retry delays by attempt, in milliseconds.
     pub backoff_ms: Vec<u64>,

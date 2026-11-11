@@ -398,6 +398,10 @@ pub async fn run_smooth_pull(
         let now = Timestamp::from_instant(start, std::time::Instant::now());
         if driver.next_deadline().is_some_and(|d| d <= now) {
             driver.on_deadline(now);
+            crate::source::advance_route(&driver, route_handle, &mut progress).await;
+        }
+        if !driver.health().is_running() {
+            return crate::source::finish_vod(route_handle, terminal_result(driver, "smooth-pull"));
         }
         while let Some(action) = driver.poll_transmit() {
             let (id, kind, url) = match action {

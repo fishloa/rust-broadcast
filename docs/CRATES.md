@@ -610,7 +610,7 @@ The one Smooth pull client that `broadcast-client` and `multimux` both adapt: `S
 - **Version (in-tree):** 0.1.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 4
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-smooth`](#broadcast-smooth), [`transmux`](#transmux)
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux)
-- **Links:** [README](../smooth-runtime/README.md)
+- **Links:** [README](../smooth-runtime/README.md) · [CHANGELOG](../smooth-runtime/CHANGELOG.md)
 
 #### hls-runtime
 

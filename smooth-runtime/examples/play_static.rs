@@ -26,7 +26,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         match (flag.as_str(), args.next()) {
             ("--dir", Some(value)) => dir = PathBuf::from(value),
             _ => {
-                return Err(format!("usage: play_static [--dir <fixture dir>] (got {flag})").into());
+                return Err(
+                    format!("usage: play_static [--dir <fixture dir>] (got {flag})").into(),
+                );
             }
         }
     }
