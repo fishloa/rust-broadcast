@@ -113,6 +113,11 @@ pub enum Error {
         channel: u8,
     },
 
+    /// A `SETUP` answer's `Transport` is not interleaved TCP with two distinct
+    /// channels, or names a setup the plan does not have (RFC 2326 §12.39).
+    #[error("unusable negotiated transport")]
+    UnusableTransport,
+
     /// The interleaved channel pairs for the tracks of a play flow do not fit
     /// in the `u8` channel space from the requested first channel (§10.12).
     #[error("interleaved channels exhausted")]

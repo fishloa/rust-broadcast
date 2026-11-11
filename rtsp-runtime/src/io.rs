@@ -28,6 +28,8 @@ use std::time::Duration;
 
 use futures_util::{FutureExt, SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
+
+use crate::PlaySession;
 use tokio::net::TcpStream;
 use tokio_util::codec::Framed;
 
@@ -152,34 +154,6 @@ pub struct AsyncRtspClient<S> {
     deferred_error: Option<Error>,
     timeouts: RtspTimeouts,
 }
-
-/// A track negotiated by [`AsyncRtspClient::start_play`].
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub struct PlayTrack {
-    /// The SETUP URI used for this track.
-    pub control: String,
-    /// The interleaved RTP channel negotiated for this track.
-    pub channel: u8,
-}
-
-/// Result of a successful [`AsyncRtspClient::start_play`].
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub struct PlaySession {
-    /// The SDP body returned by `DESCRIBE` (RFC 2326 §10.2).
-    pub sdp: String,
-    /// The tracks negotiated by the flow.
-    pub tracks: Vec<PlayTrack>,
-    /// Control URLs skipped because they crossed authorities.
-    pub skipped: Vec<String>,
-}
-
-/// SDP attribute naming a track's or the session's control URL (RFC 2326 Appendix C.1.1).
-const CONTROL_ATTRIBUTE: &str = "control";
-
-/// Interleaved channels one track consumes: RTP and RTCP (RFC 2326 §12.39).
-const CHANNELS_PER_TRACK: u8 = 2;
 
 impl AsyncRtspClient<TcpStream> {
     /// Connects a plain-TCP (`rtsp://`) client to `addr`.
@@ -442,55 +416,19 @@ where
             });
         }
         let sdp = String::from_utf8(body).map_err(|e| Error::InvalidSdp(e.to_string()))?;
-        let description = sdp_types::Session::parse(sdp.as_bytes())
-            .map_err(|e| Error::InvalidSdp(e.to_string()))?;
+        let mut plan = crate::PlayPlan::from_describe(
+            url,
+            self.framed.codec_mut().session.content_base(),
+            None,
+            &sdp,
+            first_channel,
+        )?;
 
-        let mut base = self
-            .framed
-            .codec_mut()
-            .session
-            .content_base()
-            .and_then(|b| url::Url::parse(b).ok())
-            .unwrap_or_else(|| url.clone());
-        if !base.path().ends_with('/') {
-            let slashed = format!("{}/", base.path());
-            base.set_path(&slashed);
-        }
-
-        let control_of = |attributes: &[sdp_types::Attribute]| {
-            attributes
-                .iter()
-                .find(|a| a.attribute == CONTROL_ATTRIBUTE)
-                .and_then(|a| a.value.clone())
-        };
-
-        let play_uri =
-            crate::sdp::resolve_control(url, &base, control_of(&description.attributes).as_deref())
-                .ok_or(Error::InvalidUrl {
-                    what: "session control crosses authorities",
-                })?;
-
-        let mut kept: Vec<String> = Vec::new();
-        let mut skipped: Vec<String> = Vec::new();
-        for media in &description.medias {
-            let control = control_of(&media.attributes);
-            match crate::sdp::resolve_control(url, &base, control.as_deref()) {
-                Some(resolved) => kept.push(resolved),
-                None => skipped.extend(control),
-            }
-        }
-
-        let mut tracks: Vec<PlayTrack> = Vec::new();
-        let mut next_low = Some(first_channel);
-        for control in kept {
-            let low = next_low.ok_or(Error::InterleavedChannelExhausted)?;
-            let high = low
-                .checked_add(1)
-                .ok_or(Error::InterleavedChannelExhausted)?;
-            next_low = low.checked_add(CHANNELS_PER_TRACK);
-            let transport = crate::Transport::single(
-                crate::transport::TransportSpec::rtp_avp_tcp_interleaved(low, high),
-            );
+        for index in 0..plan.setups().len() {
+            let Some(setup) = plan.setups().get(index) else {
+                break;
+            };
+            let (control, transport) = (setup.control.clone(), setup.transport.clone());
             match self.setup(&control, &transport).await? {
                 crate::client::ClientEvent::Response { status, .. } if status.is_success() => {}
                 crate::client::ClientEvent::Response { status, .. } => {
@@ -501,27 +439,11 @@ where
                 }
                 other => return Err(Error::UnexpectedEvent { event: other }),
             }
-            let negotiated = self
-                .framed
-                .codec_mut()
-                .session
-                .take_negotiated_transport()
-                .as_ref()
-                .and_then(crate::Transport::first)
-                .and_then(|spec| spec.interleaved.map(|(lo, _)| lo))
-                .unwrap_or(low);
-            if tracks.iter().any(|t| t.channel == negotiated) {
-                return Err(Error::InterleavedChannelCollision {
-                    channel: negotiated,
-                });
-            }
-            tracks.push(PlayTrack {
-                control,
-                channel: negotiated,
-            });
+            let negotiated = self.framed.codec_mut().session.take_negotiated_transport();
+            plan.accept_setup(index, negotiated.as_ref())?;
         }
 
-        match self.play(&play_uri).await? {
+        match self.play(plan.play_uri()).await? {
             crate::client::ClientEvent::Response { status, .. } if status.is_success() => {}
             crate::client::ClientEvent::Response { status, .. } => {
                 return Err(Error::UnexpectedResponse {
@@ -532,11 +454,7 @@ where
             other => return Err(Error::UnexpectedEvent { event: other }),
         }
 
-        Ok(PlaySession {
-            sdp,
-            tracks,
-            skipped,
-        })
+        Ok(plan.into_session(sdp))
     }
 
     /// Sends `payload` as an interleaved (`$`-framed) media packet on `channel`

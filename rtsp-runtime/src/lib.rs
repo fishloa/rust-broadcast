@@ -13,6 +13,7 @@ pub mod interleaved;
 #[cfg(feature = "tokio")]
 pub mod io;
 mod limits;
+pub mod play;
 mod rfc2326_lex;
 pub mod sdp;
 pub mod server;
@@ -28,6 +29,7 @@ pub use interleaved::InterleavedFrame;
 pub use io::{
     AsyncRtspClient, AsyncRtspServer, RTSP_DEFAULT_PORT, RTSPS_DEFAULT_PORT, RtspTimeouts,
 };
+pub use play::{PlannedSetup, PlayPlan, PlaySession, PlayTrack};
 pub use server::{ServerEvent, ServerSession};
 pub use session_header::SessionHeader;
 pub use state::SessionState;
