@@ -98,17 +98,24 @@ fn truncated_input_at_every_length_is_an_error_not_a_panic() {
 }
 
 #[test]
-fn a_short_trailing_tag_is_reported() {
+fn a_cut_trailing_tag_body_is_reported() {
     let bytes = test_fixtures::read("flv/av.flv");
     let header = FlvHeader::parse(&bytes).unwrap();
-    let cut = &bytes[..bytes.len() - 1];
+    let cut = &bytes[..bytes.len() - 40];
     let mut saw_error = false;
     for tag in rtmp_runtime::flv::tags(cut, &header) {
         if tag.is_err() {
             saw_error = true;
         }
     }
-    assert!(saw_error, "a cut final tag must be an error item");
+    assert!(saw_error, "a cut final tag body must be an error item");
+
+    let complete = &bytes[..bytes.len() - FLV_PREV_TAG_SIZE_LEN];
+    let tags: Vec<_> = rtmp_runtime::flv::tags(complete, &header).collect();
+    assert!(
+        tags.iter().all(Result::is_ok),
+        "a final tag missing only its redundant PreviousTagSize is complete (§E.4.1)"
+    );
 }
 
 #[test]

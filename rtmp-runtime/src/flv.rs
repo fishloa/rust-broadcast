@@ -378,6 +378,21 @@ impl<'a> FlvTag<'a> {
         )
         .map_err(Into::into)
     }
+
+    /// The tag's declared `DataSize` (§E.4.1), read from `bytes`' first
+    /// [`FLV_TAG_HEADER_LEN`] bytes — how many body bytes the tag claims,
+    /// whether or not they have all arrived yet.
+    ///
+    /// # Errors
+    /// [`RtmpError::BufferTooShort`] if `bytes` does not hold a full header.
+    pub fn data_size(bytes: &'a [u8]) -> FlvResult<usize> {
+        need_in(bytes, FLV_TAG_HEADER_LEN, "FLV tag header")?;
+        let field = |at: usize| bytes.get(at).copied().unwrap_or_default();
+        let data_size = u32::from_be_bytes([0, field(1), field(2), field(3)]);
+        usize::try_from(data_size).map_err(|_| RtmpError::Malformed {
+            what: "FLV tag DataSize",
+        })
+    }
 }
 
 impl<'a> Parse<'a> for FlvTag<'a> {
@@ -408,16 +423,20 @@ impl<'a> Parse<'a> for FlvTag<'a> {
         let data_size = usize::try_from(data_size).map_err(|_| RtmpError::Malformed {
             what: "FLV tag DataSize",
         })?;
-        let total = FLV_TAG_HEADER_LEN
-            .checked_add(data_size)
-            .and_then(|t| t.checked_add(FLV_PREV_TAG_SIZE_LEN))
-            .ok_or(RtmpError::Malformed {
-                what: "FLV tag DataSize",
-            })?;
-        need_in(bytes, total, "FLV tag")?;
-        let body = bytes
-            .get(FLV_TAG_HEADER_LEN..total.saturating_sub(FLV_PREV_TAG_SIZE_LEN))
-            .unwrap_or_default();
+        let body_at = FLV_TAG_HEADER_LEN;
+        let body_end = body_at.checked_add(data_size).ok_or(RtmpError::Malformed {
+            what: "FLV tag DataSize",
+        })?;
+        // `PreviousTagSize` may be cut off a final tag: §E.4.1 makes it
+        // redundant (it repeats this tag's size), so the body is what this
+        // decode needs and the trailer is not checked.
+        let body = bytes.get(body_at..body_end).ok_or_else(|| {
+            broadcast_common::error::BufferTooShort {
+                need: body_end.saturating_add(FLV_PREV_TAG_SIZE_LEN),
+                have: bytes.len(),
+                what: "FLV tag",
+            }
+        })?;
         Ok(Self {
             tag_type,
             timestamp: ts_low24 | (ts_extended << FLV_TIMESTAMP_EXTENDED_SHIFT),
