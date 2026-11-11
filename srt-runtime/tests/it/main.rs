@@ -29,6 +29,8 @@ mod rfc_vectors;
 mod tokio_crypto_interop;
 mod trait_round_trip;
 mod tsbpd_delivery;
+#[cfg(feature = "std")]
+mod url_table;
 
 /// A default handshake that does not advertise TLPKTDROP, for tests whose
 /// contract is that every loss is recovered by retransmission. Advertising it
