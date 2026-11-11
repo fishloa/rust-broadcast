@@ -31,11 +31,12 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio_util::codec::Framed;
 
+use crate::Method;
 use crate::client::{ClientEvent, ClientSession};
 use crate::codec::{ClientCodec, ServerCodec, ServerFrame, bounded};
 use crate::error::{Error, IoContext, Result};
 use crate::server::{ServerEvent, ServerSession};
-use crate::transport::Transport;
+use crate::transport::{Transport, TransportSpec};
 
 /// Default TCP port for `rtsp://` (RFC 2326 §1 / IANA `rtsp`).
 pub const RTSP_DEFAULT_PORT: u16 = 554;
@@ -314,6 +315,51 @@ where
         let cseq = self.framed.codec().session.peek_next_cseq();
         let bytes = self.framed.codec_mut().session.record(uri)?;
         self.exchange(cseq, bytes).await
+    }
+
+    /// Publishes a stream in one call: `ANNOUNCE` carrying `sdp` (RFC 2326
+    /// §10.3), `SETUP` on the track's control URL (`trackID=0` appended to
+    /// `url`, Appendix C.1.1) with an interleaved `mode=record` transport
+    /// (§12.39), then `RECORD` (§10.11).
+    ///
+    /// `interleaved_channel` is the RTP channel; RTCP takes the next one, as
+    /// [`TransportSpec::rtp_avp_tcp_interleaved`] pairs them. Every request is
+    /// sent in that order with `url` as the presentation URI and the control
+    /// URL only on `SETUP`, so the sequence a server sees is fixed.
+    ///
+    /// Fails with [`Error::UnexpectedResponse`] on the first request that is
+    /// answered with anything but a 2xx, naming the method, and with
+    /// [`Error::InvalidUrl`] for a `url` with no authority to derive the
+    /// control URL on.
+    pub async fn start_record(
+        &mut self,
+        url: &url::Url,
+        sdp: &str,
+        interleaved_channel: u8,
+    ) -> Result<()> {
+        let uri = url.as_str();
+        let control = crate::sdp::control_url(url)?;
+        let mut spec = TransportSpec::rtp_avp_tcp_interleaved(
+            interleaved_channel,
+            interleaved_channel.wrapping_add(1),
+        );
+        spec.mode = vec![crate::TransportMode::Record];
+        let transport = crate::Transport::single(spec);
+
+        for (method, event) in [
+            (Method::Announce, self.announce(uri, sdp).await),
+            (Method::Setup, self.setup(&control, &transport).await),
+            (Method::Record, self.record(uri).await),
+        ] {
+            match event? {
+                ClientEvent::Response { status, .. } if status.is_success() => {}
+                ClientEvent::Response { status, .. } => {
+                    return Err(Error::UnexpectedResponse { method, status });
+                }
+                other => return Err(Error::UnexpectedEvent { event: other }),
+            }
+        }
+        Ok(())
     }
 
     /// Sends `payload` as an interleaved (`$`-framed) media packet on `channel`

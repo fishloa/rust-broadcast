@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `rtp::Mp2tPacketiser` (`new(ssrc, initial_seq)`, `packetise(ts_packets, timestamp)`): MPEG-2 TS over RTP (RFC 2250 §2) — up to seven whole TS packets (`rtp::MP2T_TS_PACKETS_PER_PACKET`) per RTP packet at static payload type 33 (`rtp::MP2T_PT`, `rtp::MP2T_CLOCK_RATE`), serialized through `rtp_packet::RtpPacket`. It is sans-IO: the caller supplies the 90 kHz timestamp, and a slice that is not a whole number of 188-byte TS packets is `Error::InvalidInput` rather than being split.
 ### Changed
 - BREAKING: transmux describes RTP media sections only; the SDP session description is built by `rtsp_runtime::sdp::session_description` (#2357). `RtpOutput::sdp` is replaced by `RtpOutput::medias` (`Vec<sdp_types::Media>`, one per stream, the same media descriptions as before); `build_sdp`, `build_sdp_with_connection` and `LOCAL_CONNECTION_ADDRESS` are removed. Build the document with `rtsp_runtime::sdp::session_description("transmux RTP", sdp_types::Origin::with_ip_addr(0, 0, Ipv4Addr::LOCALHOST), sdp_types::Connection::from_ip_addr(addr), out.medias)`; the bytes are unchanged (`fixtures/golden/rtp/rtp-sdp-*.sdp` and `fixtures/golden/rtsp/sdp-transmux-h264-aac.sdp` were recorded from the old renderer and match without regeneration).
 ### Fixed

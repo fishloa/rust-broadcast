@@ -47,3 +47,28 @@ pub fn session_description(
         source: std::io::Error::new(std::io::ErrorKind::InvalidData, source),
     })
 }
+/// The `control` attribute value naming a session-less presentation's one
+/// track: `trackID=0` (RFC 2326 Appendix C.1.1's `trackID` form).
+pub const TRACK_CONTROL: &str = "trackID=0";
+
+/// The track's own control URL: `base` with [`TRACK_CONTROL`] appended as a
+/// final path segment (RFC 2326 §12.39 `control`, Appendix C.1.1).
+///
+/// Built with [`url::Url::path_segments_mut`], so a trailing slash never
+/// doubles, an IPv6 host stays bracketed and the query is preserved. Fails for
+/// a URL with no authority the segments can be set on — a cannot-be-a-base
+/// URL such as `rtsp:cam`, which `Url::parse` accepts but which names no host
+/// to dial.
+pub fn control_url(base: &url::Url) -> crate::Result<String> {
+    let mut url = base.clone();
+    {
+        let mut segments = url
+            .path_segments_mut()
+            .map_err(|()| crate::Error::InvalidUrl {
+                what: "rtsp URL has no authority (expected rtsp://host[:port]/path)",
+            })?;
+        segments.pop_if_empty();
+        segments.push(TRACK_CONTROL);
+    }
+    Ok(url.to_string())
+}

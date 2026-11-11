@@ -9,6 +9,7 @@
 //! and authentication (§14 — `private/specs-verified/rtp/rtsp-runtime/auth.md`).
 
 use crate::Method;
+use crate::StatusCode;
 use crate::state::SessionState;
 
 /// Result alias for the engine's fallible operations.
@@ -72,6 +73,34 @@ pub enum Error {
     /// An interleaved `$` frame was malformed (RFC 2326 §10.12).
     #[error("invalid interleaved frame: {0}")]
     InterleavedFrame(String),
+
+    /// A request in a multi-request flow (e.g.
+    /// [`AsyncRtspClient::start_record`](crate::AsyncRtspClient::start_record))
+    /// was answered with a non-2xx status.
+    #[error("{method:?} rejected with {status:?}")]
+    UnexpectedResponse {
+        /// The method that was rejected.
+        method: Method,
+        /// The status the server answered with.
+        status: StatusCode,
+    },
+
+    /// A request in a multi-request flow was answered with something other
+    /// than a response (RFC 2326 §7.1).
+    #[error("unexpected event for a request: {event:?}")]
+    UnexpectedEvent {
+        /// The event the flow did not expect.
+        event: crate::client::ClientEvent,
+    },
+
+    /// A caller-supplied URL cannot be used for the request it names (e.g. a
+    /// cannot-be-a-base `rtsp:cam` has no authority to derive a control URL
+    /// on, RFC 2326 Appendix C.1.1).
+    #[error("invalid URL: {what}")]
+    InvalidUrl {
+        /// What is wrong with the URL.
+        what: &'static str,
+    },
 
     /// Authentication failed: no credentials were configured, the challenge
     /// could not be parsed, or the digest computation failed (RFC 2326 §14).

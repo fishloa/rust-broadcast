@@ -26,6 +26,10 @@ serde      = { version = "1", optional = true, default-features = false, feature
 # `sdp-types` 0.3 is `std`-only (it writes through `std::io::Write`), and this
 # crate is `std`, so it is a plain dependency.
 sdp-types  = { workspace = true }
+# The publish flow derives its control URL with `Url::path_segments_mut`
+# (RFC 2326 Appendix C.1.1), so a trailing slash or an IPv6 host cannot
+# produce a malformed one.
+url        = "2"
 
 # `tokio` adapter (real sockets) — feature-gated; the sans-IO core needs none of it.
 tokio         = { version = "1", optional = true, features = ["net", "io-util", "rt", "macros", "time"] }
