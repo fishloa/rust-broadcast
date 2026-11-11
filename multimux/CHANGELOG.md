@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 ### Changed
-- The WHIP and WHEP endpoints' SDP documents (the answer and the ICE-restart answer fragment) are recorded byte for byte in `fixtures/golden/webrtc/` before issue #2363 moves their session assembly into `webrtc-runtime`; the outputs are unchanged.
+- The WHIP and WHEP endpoints build their SDP answer and ICE-restart answer fragment with `webrtc_runtime::sdp` instead of assembling the session here (#2363); the documents are byte-identical to before (goldens in `fixtures/golden/webrtc/`).
 - The RTSP push builds its ANNOUNCE session description with `rtsp_runtime::sdp::session_description` and supplies only its `m=` block, instead of assembling `v=`/`o=`/`s=`/`c=` itself; the body is byte-identical (`fixtures/golden/rtsp/rtsp-announce.sdp`).
 - The DASH-IF ingest reads the publisher's MPD and matches uploaded segment URLs with `dash-runtime` instead of transmux's removed MPD model (#2340).
 
