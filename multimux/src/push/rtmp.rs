@@ -19,14 +19,26 @@ use transmux::TrackId;
 use transmux::flv_track_kind;
 use transmux::ir::{Media, Track, TrackSpec};
 
-/// Chunk stream of the `onMetaData` Data message — the one the RTMP client's
-/// own metadata message uses (Adobe RTMP 1.0 §5.3.1.2 keeps protocol control
-/// on 2 and commands on 3), which `rtmp-runtime` does not name publicly.
-const RTMP_DATA_CHUNK_STREAM_ID: u32 = 4;
-
-/// Message type of the Data AMF0 message that carries `onMetaData` (Adobe
-/// RTMP 1.0 §7.1).
-const RTMP_DATA_MESSAGE_TYPE: u8 = rtmp_runtime::message::msg_type::DATA_AMF0;
+/// The metadata pair the RTMP client frames (`@setDataFrame`/`onMetaData`,
+/// Adobe RTMP 1.0 §7.1): the handler name, then the property object
+/// `transmux::on_metadata_body` writes after it. The client writes that name
+/// itself, so the body's own is read back rather than sent twice, and its
+/// chunk stream is the client's (stream 4), which keeps the message headers
+/// self-contained.
+fn on_metadata_values(
+    body: &[u8],
+) -> Result<Vec<(String, rtmp_runtime::amf0::Amf0Value)>, rtmp_runtime::RtmpError> {
+    use broadcast_common::{Parse, Serialize};
+    use rtmp_runtime::amf0::Amf0Value;
+    let name = Amf0Value::parse(body)?;
+    let rest = &body[name.serialized_len()..];
+    let Amf0Value::String(handler) = name else {
+        return Err(rtmp_runtime::RtmpError::Malformed {
+            what: "onMetaData body does not start with its handler name",
+        });
+    };
+    Ok(vec![(handler, Amf0Value::parse(rest)?)])
+}
 
 /// Per-connection configuration for the RTMP push transport.
 #[derive(Clone)]
@@ -185,16 +197,19 @@ impl PushTransport for RtmpTransport {
                 .collect(),
             0,
         );
-        let meta_bytes = rtmp_runtime::chunk::ChunkWriter::new()
-            .write(&rtmp_runtime::chunk::Message {
-                chunk_stream_id: RTMP_DATA_CHUNK_STREAM_ID,
-                timestamp: 0,
-                message_type_id: RTMP_DATA_MESSAGE_TYPE,
-                message_stream_id: 1,
-                payload: transmux::on_metadata_body(&media, None)
-                    .map_err(|e| RtmpPushError::Protocol(e.to_string()))?,
-            })
-            .map_err(|e| RtmpPushError::Protocol(e.to_string()))?;
+        let meta_bytes = {
+            let client = self
+                .client
+                .as_mut()
+                .ok_or_else(|| RtmpPushError::Connect("not connected".into()))?;
+            let body = transmux::on_metadata_body(&media, None)
+                .map_err(|e| RtmpPushError::Protocol(e.to_string()))?;
+            let values =
+                on_metadata_values(&body).map_err(|e| RtmpPushError::Protocol(e.to_string()))?;
+            client
+                .encode_metadata(&values)
+                .map_err(|e| RtmpPushError::Protocol(e.to_string()))?
+        };
         self.write_message(&meta_bytes).await?;
 
         let headers = transmux::flv_sequence_header_payloads(&media)

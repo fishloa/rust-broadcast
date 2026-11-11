@@ -25,11 +25,30 @@ the `onMetaData` builder and the FLV codec gate moved from `multimux` into
 
     REGENERATE_PUSH_GOLDENS=1 cargo test -p multimux --all-features --locked --test it push_wire_goldens
 
-The body was re-recorded once, by the same test, because the RTMP push now
-frames the shared `transmux::on_metadata_body` instead of its own AMF0 Object
-builder: the old builder wrote an AMF0 `Object` (a server turned it into a
-`03` script tag), the shared body carries the AMF0 ECMA array `FlvMux` writes
-(a `08` script tag, with the end-of-object marker) and the same properties
-minus `duration` (a live stream has none). Every other recorded body — the
-tag headers, both sequence headers and the first media body — is unchanged.
-The record is never re-blessed again to make a change pass.
+Only the `onMetaData_body` line has ever been re-recorded; the test's own
+regenerate switch rewrote that one line and no other byte of the file. The
+tag headers, both sequence headers and the first media body are the bytes
+taken at the commit above.
+
+What changed in that line, over two reviewed steps:
+
+1. The push stopped building its own AMF0 `Object` and frames the shared
+   `transmux::on_metadata_body` instead. The old push wrote `width`,
+   `height`, `videocodecid`, `audiocodecid`, `audiosamplerate` and
+   `audiochannels`, and its client wrapped them in an Object (a receiving
+   server turned that into a `03` script tag). The shared body carries an
+   ECMA array (an `08` script tag, with the end-of-object marker) — the same
+   shape `FlvMux` writes to a file — and no `duration`, which a live stream
+   has none of.
+2. `audiosamplerate` was added back to the shared builder (issue #2369
+   follow-up): Adobe FLV v10.1 §E.5
+   (`private/specs-md/adobe_flv_f4v_v10_1.md`) defines `audiosamplerate`
+   (Number) and `stereo` (Boolean) and does not define `audiochannels`.
+   `stereo` is now derived from the AAC track's channel count rather than
+   always `true`, so this fixture's mono AAC track records `false`; the old
+   push's `audiochannels` is not written by any writer.
+
+So the recorded properties are, in order: `width`, `height`,
+`videocodecid`, `audiocodecid`, `audiosamplerate`, `stereo` — and the
+`audiochannels` key the pre-#2369 push wrote is gone. The record is never
+re-blessed again to make a change pass.

@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- The `onMetaData` body `FlvMux` writes (and, through `on_metadata_body`, the RTMP push publishes) carries `audiosamplerate` from the AAC track's own rate, and `stereo` now follows that track's channel count instead of always being `true` — both are properties Adobe FLV v10.1 §E.5 defines (issue #2369 follow-up). A mono AAC track's FLV file therefore records `stereo: false` where it recorded `true`.
 ### Added
 - `flv_track_kind` (whether FLV can carry a codec config: AVC video or AAC audio) and `on_metadata_body` (the `onMetaData` script body for a media, with an optional `duration` so a live publication can omit it) are public, and `FlvMux` writes its script tag through them, so any other FLV/RTMP writer in the workspace can carry the same bytes instead of keeping a second builder (issue #2369). `FlvMux`'s output is unchanged.
 - `rtp::Mp2tPacketiser` (`new(ssrc, initial_seq)`, `packetise(ts_packets, timestamp)`): MPEG-2 TS over RTP (RFC 2250 §2) — up to seven whole TS packets (`rtp::MP2T_TS_PACKETS_PER_PACKET`) per RTP packet at static payload type 33 (`rtp::MP2T_PT`, `rtp::MP2T_CLOCK_RATE`), serialized through `rtp_packet::RtpPacket`. It is sans-IO: the caller supplies the 90 kHz timestamp, and a slice that is not a whole number of 188-byte TS packets is `Error::InvalidInput` rather than being split.

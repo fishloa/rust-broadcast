@@ -1543,6 +1543,9 @@ const META_VIDEOCODECID_AVC: f64 = 7.0;
 const META_AUDIOCODECID_AAC: f64 = 10.0;
 /// The handler name an `onMetaData` script body starts with (§E.4.1).
 const META_HANDLER_NAME: &str = "onMetaData";
+/// The AAC channel count `onMetaData`'s `stereo` flag stands for (§E.5: the
+/// same two-channel answer the FLV `SoundType` bit gives).
+const AAC_CHANNELS_STEREO: u32 = 2;
 
 /// The `onMetaData` body — the AMF0 `onMetaData` name followed by one ECMA
 /// array of the informational properties FLV players read, in the order they
@@ -1584,7 +1587,15 @@ pub fn on_metadata_body(
         Some(CodecConfig::Avc { width, height, .. }) => (*width, *height),
         _ => (0, 0),
     };
-    let props = onmetadata_properties(duration, width, height, video.is_some(), audio.is_some());
+    let audio = match audio.map(|t| &t.spec.config) {
+        Some(CodecConfig::Aac {
+            sample_rate,
+            channel_count,
+            ..
+        }) => Some((*sample_rate, *channel_count)),
+        _ => None,
+    };
+    let props = onmetadata_properties(duration, width, height, video.is_some(), audio);
     amf0_values(&[
         Amf0Value::String(META_HANDLER_NAME.to_string()),
         Amf0Value::EcmaArray(props),
@@ -1611,7 +1622,7 @@ fn onmetadata_properties(
     width: u16,
     height: u16,
     has_video: bool,
-    has_audio: bool,
+    audio: Option<(u32, u16)>,
 ) -> Vec<(String, Amf0Value)> {
     let mut props: Vec<(String, Amf0Value)> = Vec::new();
     if let Some(duration) = duration {
@@ -1625,12 +1636,19 @@ fn onmetadata_properties(
             Amf0Value::Number(META_VIDEOCODECID_AVC),
         ));
     }
-    if has_audio {
+    if let Some((sample_rate, channel_count)) = audio {
         props.push((
             "audiocodecid".to_string(),
             Amf0Value::Number(META_AUDIOCODECID_AAC),
         ));
-        props.push(("stereo".to_string(), Amf0Value::Boolean(true)));
+        props.push((
+            "audiosamplerate".to_string(),
+            Amf0Value::Number(f64::from(sample_rate)),
+        ));
+        props.push((
+            "stereo".to_string(),
+            Amf0Value::Boolean(u32::from(channel_count) == AAC_CHANNELS_STEREO),
+        ));
     }
     props
 }
