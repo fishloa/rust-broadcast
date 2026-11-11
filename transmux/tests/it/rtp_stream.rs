@@ -18,6 +18,8 @@
 //! numbers no real short fixture naturally produces.
 #![cfg(feature = "std")]
 
+#[cfg(feature = "std")]
+use crate::sdp_session;
 use broadcast_common::{Package, Unpackage};
 use std::collections::HashSet;
 use transmux::TrackId;
@@ -66,7 +68,7 @@ fn audio_stream(out: &RtpOutput) -> &RtpStream {
 }
 
 // Pull one fmtp attribute value ("sprop-parameter-sets=" / "config=") out of an
-// SDP string. Test-only crude extraction (no sdp-types dependency in transmux).
+// SDP string. Test-only crude extraction.
 fn fmtp_value<'a>(sdp: &'a str, key: &str) -> Option<&'a str> {
     for line in sdp.lines() {
         if let Some(idx) = line.find(key) {
@@ -103,7 +105,8 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
         .filter(|s| s.flags.is_sync)
         .count();
     // Build codec config from the generated SDP (exercises P2).
-    let sprop = fmtp_value(&out.sdp, "sprop-parameter-sets=").expect("sprop");
+    let sdp = sdp_session::local_session(out.clone());
+    let sprop = fmtp_value(&sdp, "sprop-parameter-sets=").expect("sprop");
     let avc = avc_config_from_sprop(sprop).expect("avc from sprop");
     // SPS/PPS bytes recovered from SDP must equal the fixture's.
     if let CodecConfig::Avc { config, .. } = &orig_video.spec.config {
@@ -174,7 +177,7 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
     );
 
     // AAC: SDP config= → CodecConfig::Aac, rate/channels sane.
-    let cfg_hex = fmtp_value(&out.sdp, "config=")
+    let cfg_hex = fmtp_value(&sdp, "config=")
         .expect("SDP must carry AAC config= for the fixture's AAC track");
     let aac = aac_config_from_asc_hex(cfg_hex).expect("aac from config");
     match aac {

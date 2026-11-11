@@ -6,6 +6,5 @@ mod io_push_drain;
 mod io_timeouts;
 mod k2_server;
 mod no_handroll_guard;
-mod sdp_session;
 mod session_edge_cases;
 mod transport_session;

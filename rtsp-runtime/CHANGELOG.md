@@ -5,6 +5,8 @@ All notable changes to `rtsp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `sdp::session_description(name, origin, connection, medias)` (re-exported as `session_description`), the workspace's one RFC 4566 §5 session builder: it renders the `v=`/`o=`/`s=`/`c=`/`t=` lines and each media description handed to it, so a crate owning a container's payload formats (`transmux`) describes only its media sections and the RTSP push announces its one section through it. It returns `Error::SdpWrite { what, source }` instead of a lossy conversion when the writer's bytes are not UTF-8, and `sdp-types` 0.3 is now a plain dependency (it is `std`-only, as this crate).
 
 ## [0.11.0] - 2026-11-10
 ### Changed

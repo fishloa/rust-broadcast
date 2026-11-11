@@ -170,9 +170,10 @@ session builder moved into `rtsp_runtime::sdp`), so the move can be checked byte
   `s=multimux push`, `c=IN IP4 0.0.0.0`). The push's whole ANNOUNCE body is already pinned by
   `rtsp-announce.sdp` above and is asserted byte-identical to the media-section golden's host.
 
-Pinned by `rtsp-runtime/tests/it/sdp_session.rs` (the two builders live in host crates that
-may not depend on `rtsp-runtime`; they are dev-dependencies of it instead). Regenerate:
+Pinned by `multimux/tests/it/sdp_session.rs`, which can reach both builders (`multimux` depends
+on `rtsp-runtime`, never the reverse, and a dev-dependency back on `multimux` would make the
+publish-graph a cycle). Regenerate:
 
 ```bash
-GOLDEN_BLESS=fixtures/golden/rtsp cargo test -p rtsp-runtime --locked --test it sdp_session
+GOLDEN_BLESS=fixtures/golden/rtsp cargo test -p multimux --locked --test it sdp_session
 ```

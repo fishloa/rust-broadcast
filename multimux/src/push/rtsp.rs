@@ -29,6 +29,7 @@
 use crate::push::PushTransport;
 use rtsp_runtime::Credentials;
 use rtsp_runtime::client::{ClientEvent, ClientSession};
+use rtsp_runtime::sdp::session_description;
 use rtsp_runtime::transport::{Transport, TransportSpec};
 use std::time::Instant;
 use tokio::net::TcpStream;
@@ -48,6 +49,8 @@ const RTP_CLOCK_HZ: u64 = 90_000;
 const RTP_HEADER_LEN: usize = 12;
 /// RFC 3550 §5.1: the first header byte `V=2, P=0, X=0, CC=0` (`0b10_000000`).
 const RTP_VERSION_2_NO_FLAGS: u8 = 0b1000_0000;
+/// The session name (`s=`) the push's SDP carries.
+const SESSION_NAME: &str = "multimux push";
 /// Bound on the best-effort `TEARDOWN` sent from [`RtspTransport::close`].
 const TEARDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
@@ -377,11 +380,21 @@ pub fn control_url_for_test(url: &str) -> Result<String, String> {
 /// this single RTP session, matching the one SETUP/one interleaved channel
 /// this transport actually uses, not one `m=` line per elementary track.
 ///
-/// Returns an error rather than `expect`ing (project rule: no production
-/// `expect` on a fallible path); writing to a `Vec` and `String::from_utf8`
-/// are effectively infallible, but the error is surfaced anyway.
+/// The session-level lines come from `rtsp_runtime::sdp::session_description`
+/// (the one session builder in the workspace, issue #2357); this transport
+/// supplies only the media description.
 fn build_sdp() -> Result<String, RtspPushError> {
-    render_session(vec![push_media()])
+    let origin = sdp_types::Origin::new(
+        "0",
+        0,
+        sdp_types::NetType::In,
+        sdp_types::AddrType::Ip4,
+        "0.0.0.0",
+    );
+    let connection =
+        sdp_types::Connection::new(sdp_types::NetType::In, sdp_types::AddrType::Ip4, "0.0.0.0");
+    session_description(SESSION_NAME, origin, connection, vec![push_media()])
+        .map_err(|e| RtspPushError::Protocol(format!("SDP session: {e}")))
 }
 
 /// One `m=` section for the whole MPEG-2 TS-muxed stream: RFC 2250 §2's
@@ -402,23 +415,6 @@ fn push_media() -> sdp_types::Media {
     ));
     media.add_attribute(Attribute::with_value("control", "trackID=0"));
     media
-}
-
-/// Render `medias` as a session description with the zero origin and
-/// `0.0.0.0` connection the push announces.
-fn render_session(medias: Vec<sdp_types::Media>) -> Result<String, RtspPushError> {
-    use sdp_types::{AddrType, Connection, NetType, Origin, Session};
-
-    let origin = Origin::new("0", 0, NetType::In, AddrType::Ip4, "0.0.0.0");
-    let mut session = Session::new(origin, "multimux push");
-    session.set_connection(Connection::new(NetType::In, AddrType::Ip4, "0.0.0.0"));
-    session.medias = medias;
-
-    let mut out = Vec::new();
-    session
-        .write(&mut out)
-        .map_err(|e| RtspPushError::Protocol(format!("SDP write: {e}")))?;
-    String::from_utf8(out).map_err(|e| RtspPushError::Protocol(format!("SDP encoding: {e}")))
 }
 
 /// `#[doc(hidden)]` test seam: the SDP the push announces, so the golden

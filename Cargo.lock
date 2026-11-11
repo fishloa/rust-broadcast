@@ -3620,13 +3620,11 @@ name = "rtsp-runtime"
 version = "0.11.0"
 dependencies = [
  "broadcast-auth",
- "broadcast-common",
  "bytes",
  "futures-util",
  "getrandom 0.4.3",
  "http-auth",
  "memchr",
- "multimux",
  "rtsp-types",
  "rustls",
  "sdp-types",
@@ -3636,7 +3634,6 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tokio-util",
- "transmux",
  "webpki-roots",
  "workspace-guards",
 ]
@@ -4592,6 +4589,7 @@ dependencies = [
  "quick-xml",
  "rtmp-runtime",
  "rtp-packet",
+ "rtsp-runtime",
  "scte35-splice",
  "sdp-types",
  "serde",

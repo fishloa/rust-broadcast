@@ -4,7 +4,11 @@
 //!
 //! Every test bites against the demuxed oracle, never hardcoded values.
 
+#[cfg(feature = "std")]
+use crate::sdp_session;
 use broadcast_common::{Package, Serialize, Unpackage};
+#[cfg(feature = "std")]
+use transmux::RtpOutput;
 use transmux::TrackId;
 use transmux::pipeline::CodecConfig;
 #[cfg(feature = "std")]
@@ -1171,14 +1175,14 @@ fn every_stream_gets_a_unique_dynamic_payload_type() {
     assert_eq!(pts[3], transmux::DEFAULT_AUDIO_PT);
 
     // And the generated SDP.as_str() binds each of those types exactly once.
+    let sdp = sdp_session::local_session(out);
     for pt in &pts {
         let needle = format!("a=rtpmap:{pt} ");
         assert_eq!(
-            out.sdp.matches(&needle).count(),
+            sdp.matches(&needle).count(),
             1,
             "SDP.as_str() must bind {pt} exactly once:
-{}",
-            out.sdp
+{sdp}"
         );
     }
 }
@@ -1196,18 +1200,19 @@ fn every_stream_gets_a_unique_dynamic_payload_type() {
 fn generated_sdp_parses_with_an_independent_parser() {
     let media = demux_fixture();
     let out = packetise(&media);
+    let streams = out.streams.len();
+    let sdp = sdp_session::local_session(out);
     assert!(
-        out.sdp.contains("c=IN IP4 "),
+        sdp.contains("c=IN IP4 "),
         "the SDP.as_str() must carry a c= line:
-{}",
-        out.sdp
+{sdp}"
     );
 
-    let parsed: sdp_types::Session = sdp_types::Session::parse(out.sdp.as_bytes())
-        .expect("sdp-types must accept the SDP.as_str()");
+    let parsed: sdp_types::Session =
+        sdp_types::Session::parse(sdp.as_bytes()).expect("sdp-types must accept the SDP.as_str()");
     assert_eq!(
         parsed.medias.len(),
-        out.streams.len(),
+        streams,
         "every stream must appear as one m= section"
     );
     // A parser that follows §5.7 can resolve a connection for every media
@@ -1223,7 +1228,7 @@ fn generated_sdp_parses_with_an_independent_parser() {
     // Each stream's payload type is bound in exactly its own m= section, and
     // that section is the stream's own media kind. The `rtpmap` value is
     // `<pt> <encoding>/<clock>` (RFC 4566 §5.14).
-    for stream in &out.streams {
+    for stream in &packetise(&media).streams {
         let bound: Vec<&str> = parsed
             .medias
             .iter()
@@ -1262,23 +1267,19 @@ fn generated_sdp_parses_with_an_independent_parser() {
 #[cfg(feature = "std")]
 #[test]
 fn sdp_line_order_follows_rfc8866_section_5() {
-    let out = packetise(&demux_fixture());
-    let kinds: Vec<char> = out
-        .sdp
+    let sdp = sdp_session::local_session(packetise(&demux_fixture()));
+    let kinds: Vec<char> = sdp
         .split("\r\n")
         .filter(|l| !l.is_empty())
         .map(|l| l.chars().next().unwrap())
         .collect();
-    assert!(out.sdp.ends_with("\r\n") && !out.sdp.contains("\n\n"));
+    assert!(sdp.ends_with("\r\n") && !sdp.contains("\n\n"));
     assert_eq!(&kinds[..5], &['v', 'o', 's', 'c', 't']);
     let first_m = kinds.iter().position(|&c| c == 'm').unwrap();
     assert!(kinds[5..first_m].iter().all(|&c| c == 'a'), "{kinds:?}");
     assert!(
-        out.sdp
-            .lines()
-            .all(|l| l.len() >= 2 && l.as_bytes()[1] == b'='),
-        "{}",
-        out.sdp
+        sdp.lines().all(|l| l.len() >= 2 && l.as_bytes()[1] == b'='),
+        "{sdp}"
     );
 }
 
@@ -1534,27 +1535,22 @@ fn aac_pkt(seq: u16, ts: u32, au: &[u8]) -> Vec<u8> {
 fn connection_address_is_typed_and_emits_the_right_addrtype() {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-    let media = demux_fixture();
-    let out = packetise(&media);
+    let out = packetise(&demux_fixture());
 
-    // IPv4: `c=IN IP4 <v4>`, alongside real media sections (taken from the
-    // packetiser's own SDP.as_str() through the independent parser).
-    let media_sections = sdp_types::Session::parse(out.sdp.as_bytes())
-        .expect("sdp-types accepts the packetiser's SDP.as_str()")
-        .medias;
-    let v4 = transmux::build_sdp_with_connection(
-        IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7)),
-        media_sections,
-    );
+    // IPv4: `c=IN IP4 <v4>`, alongside the packetiser's real media sections.
+    let v4 = sdp_session::session(out, IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7)));
     assert!(
         v4.contains("c=IN IP4 203.0.113.7\r\n"),
         "IPv4 must emit addrtype IP4:\n{v4}"
     );
 
     // IPv6: `c=IN IP6 <v6>`, with no brackets and no TTL (RFC 8866 §5.7).
-    let v6 = transmux::build_sdp_with_connection(
+    let v6 = sdp_session::session(
+        RtpOutput {
+            streams: Vec::new(),
+            medias: Vec::new(),
+        },
         IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)),
-        Vec::new(),
     );
     assert!(
         v6.contains("c=IN IP6 2001:db8::1\r\n"),
@@ -1575,7 +1571,13 @@ fn connection_address_is_typed_and_emits_the_right_addrtype() {
     // under the old `&str` API: this is the closest a caller can get to it now,
     // and it yields a plain address (or a parse error), never extra fields.
     if let Ok(injected) = "1.2.3.4\r\nm=video 0 RTP/AVP 96".parse::<IpAddr>() {
-        let sdp = transmux::build_sdp_with_connection(injected, Vec::new());
+        let sdp = sdp_session::session(
+            RtpOutput {
+                streams: Vec::new(),
+                medias: Vec::new(),
+            },
+            injected,
+        );
         assert_eq!(
             sdp.matches("m=").count(),
             0,
@@ -1583,8 +1585,8 @@ fn connection_address_is_typed_and_emits_the_right_addrtype() {
         );
     }
     assert!(
-        transmux::LOCAL_CONNECTION_ADDRESS.is_ipv4(),
-        "the default connection address is the loopback the o= line names"
+        IpAddr::V4(Ipv4Addr::LOCALHOST).is_ipv4(),
+        "the local connection address is the loopback the o= line names"
     );
     // A description with the typed address still parses, and every media
     // section resolves a connection from the session level (RFC 8866 §5.7).
@@ -2405,8 +2407,8 @@ fn gap_before_an_fu_a_start_loses_only_the_runs_au() {
 #[test]
 fn sdp_matches_demuxed_config() {
     let media = demux_fixture();
-    let out = packetise(&media);
-    let sdp = &out.sdp;
+    let sdp = sdp_session::local_session(packetise(&media));
+    let sdp = &sdp;
 
     assert!(sdp.contains("m=video"), "SDP.as_str() has m=video");
     assert!(sdp.contains("m=audio"), "SDP.as_str() has m=audio");

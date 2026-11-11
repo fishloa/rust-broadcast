@@ -1,10 +1,10 @@
 //! Goldens for the SDP session description, recorded from `main` before issue
 //! #2357 moved the session builder into `rtsp_runtime::sdp`.
 //!
-//! The two crates that build one are reachable from here as dev-dependencies:
-//! `sdp-types` 0.3 is `std`-only, so the `std`-implied host dev-dependency set
-//! resolves its features exactly as the two host crates do; neither depends on
-//! this crate. `GOLDEN_BLESS=<dir>` writes instead.
+//! multimux has both builders in scope (`transmux`'s RTP packetiser and its
+//! own RTSP push). It lives here rather than in `rtsp-runtime` so the SDP crate
+//! never depends on the two that produce media sections: `multimux` depends on
+//! `rtsp-runtime`, never the reverse. `GOLDEN_BLESS=<dir>` writes instead.
 
 use std::fs;
 
@@ -30,28 +30,6 @@ fn check(name: &str, actual: &str) {
     assert_eq!(actual, expected, "{name} differs from the golden output");
 }
 
-/// A `c=IN IP4 0.0.0.0` session description over `medias`, the shape both
-/// crates' current session builders render.
-fn render(medias: Vec<sdp_types::Media>) -> String {
-    let origin = sdp_types::Origin::new(
-        "0",
-        0,
-        sdp_types::NetType::In,
-        sdp_types::AddrType::Ip4,
-        "0.0.0.0",
-    );
-    let mut session = sdp_types::Session::new(origin, "multimux push");
-    session.set_connection(sdp_types::Connection::new(
-        sdp_types::NetType::In,
-        sdp_types::AddrType::Ip4,
-        "0.0.0.0",
-    ));
-    session.medias = medias;
-    let mut out = Vec::new();
-    session.write(&mut out).expect("write SDP");
-    String::from_utf8(out).expect("utf8 SDP")
-}
-
 /// transmux's `RtpOutput::medias` for the committed H.264 + AAC fixture
 /// (`broadcast-client`'s RTSP capture fixture) — the media sections that
 /// become the session's `m=` blocks.
@@ -67,9 +45,13 @@ fn transmux_rtp_medias_match_golden() {
         ..transmux::RtpPacketiser::default()
     };
     let out = packetiser.package(&media).expect("packetise fixture");
-    let parsed = sdp_types::Session::parse(out.sdp.as_bytes()).expect("parse SDP");
-    assert_eq!(parsed.medias.len(), out.streams.len());
-    check("golden/rtsp/sdp-transmux-h264-aac.sdp", &out.sdp);
+    assert_eq!(out.medias.len(), out.streams.len());
+    let origin = sdp_types::Origin::with_ip_addr(0, 0, std::net::Ipv4Addr::LOCALHOST);
+    let connection =
+        sdp_types::Connection::from_ip_addr(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+    let sdp = rtsp_runtime::session_description("transmux RTP", origin, connection, out.medias)
+        .expect("render session");
+    check("golden/rtsp/sdp-transmux-h264-aac.sdp", &sdp);
 }
 
 /// multimux's MPEG-2 TS push media sections, as the ANNOUNCE body
@@ -94,5 +76,16 @@ fn multimux_rtsp_push_medias_match_golden() {
             media[0].media, media[0].port, media[0].proto, media[0].fmt
         ),
     );
-    check("golden/rtsp/sdp-push-mp2t-session.sdp", &render(media));
+    let origin = sdp_types::Origin::new(
+        "0",
+        0,
+        sdp_types::NetType::In,
+        sdp_types::AddrType::Ip4,
+        "0.0.0.0",
+    );
+    let connection =
+        sdp_types::Connection::new(sdp_types::NetType::In, sdp_types::AddrType::Ip4, "0.0.0.0");
+    let session = rtsp_runtime::session_description("multimux push", origin, connection, media)
+        .expect("render session");
+    check("golden/rtsp/sdp-push-mp2t-session.sdp", &session);
 }
