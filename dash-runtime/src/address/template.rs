@@ -8,7 +8,6 @@
 //! width is clamped once (to [`MAX_FORMAT_WIDTH`]) and `$$` is read once.
 
 use broadcast_common::impl_spec_display;
-use transmux::dash_parse::MAX_FORMAT_WIDTH;
 
 const IDENT_RESERVED: &str = "RepresentationID";
 const IDENT_NUMBER: &str = "Number";
@@ -57,6 +56,48 @@ pub enum TemplateFault {
     /// An `@initialization` template containing `$Number$` or `$Time$`.
     DynamicIdentifierInInitialization,
 }
+
+/// Cap on the `%0Nd` zero-padding width in a `$Number$`, `$Time$` or
+/// `$Bandwidth$` substitution. A `u64` in decimal has at most 20 digits, so a
+/// wider padding is meaningless and a hostile `$Number%9999999999d$` would
+/// allocate or loop unboundedly.
+pub const MAX_FORMAT_WIDTH: usize = 20;
+
+/// Why [`substitute`] could not render a URL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TemplateError {
+    /// The template is invalid; the Representation is dropped.
+    Invalid(TemplateFault),
+    /// The template contains `$Number$` but no number was supplied.
+    MissingNumber,
+    /// The template contains `$Time$` but no time was supplied.
+    MissingTime,
+}
+
+impl TemplateError {
+    /// The [`TemplateFault`] behind [`TemplateError::Invalid`]; a missing value
+    /// is reported as [`TemplateFault::MissingNumberOrTime`], which is where
+    /// 5.3.9.4.4 leaves a template the caller cannot render.
+    #[must_use]
+    pub fn fault(self) -> TemplateFault {
+        match self {
+            Self::Invalid(f) => f,
+            Self::MissingNumber | Self::MissingTime => TemplateFault::MissingNumberOrTime,
+        }
+    }
+
+    /// Stable snake_case label.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Invalid(_) => "invalid",
+            Self::MissingNumber => "missing_number",
+            Self::MissingTime => "missing_time",
+        }
+    }
+}
+impl_spec_display!(TemplateError);
 
 impl TemplateFault {
     /// Stable snake_case label.
@@ -169,17 +210,20 @@ pub fn scan_initialization(template: &str) -> Result<TemplateUse, TemplateFault>
 }
 
 /// Substitute the identifiers of an already scanned template.
-#[must_use]
+///
+/// # Errors
+/// [`TemplateError::Invalid`] when the template is not a valid 5.3.9.4.4
+/// template, [`TemplateError::MissingNumber`] / [`TemplateError::MissingTime`]
+/// when the template names a value the caller did not supply. A missing value
+/// is never dropped silently: the URL would point at the wrong segment.
 pub fn substitute(
     template: &str,
     representation_id: &str,
     number: Option<u64>,
     time: Option<u64>,
     bandwidth: u64,
-) -> String {
-    let Ok(parts) = parts(template) else {
-        return String::new();
-    };
+) -> Result<String, TemplateError> {
+    let parts = parts(template).map_err(TemplateError::Invalid)?;
     let mut out = String::with_capacity(template.len());
     for part in &parts {
         match part {
@@ -187,19 +231,17 @@ pub fn substitute(
             Part::Escape => out.push(DELIMITER),
             Part::RepresentationId => out.push_str(representation_id),
             Part::Number(width) => {
-                if let Some(value) = number {
-                    out.push_str(&pad(value, *width));
-                }
+                let value = number.ok_or(TemplateError::MissingNumber)?;
+                out.push_str(&pad(value, *width));
             }
             Part::Time(width) => {
-                if let Some(value) = time {
-                    out.push_str(&pad(value, *width));
-                }
+                let value = time.ok_or(TemplateError::MissingTime)?;
+                out.push_str(&pad(value, *width));
             }
             Part::Bandwidth(width) => out.push_str(&pad(bandwidth, *width)),
         }
     }
-    out
+    Ok(out)
 }
 
 /// `value` in decimal, zero-padded to `width` (never truncated, never wider
@@ -474,5 +516,56 @@ fn numeric(
         if solutions.len() >= 2 {
             return;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TemplateError, TemplateFault, substitute};
+
+    #[test]
+    fn time_template_without_a_time_is_an_error() {
+        assert_eq!(
+            substitute("chunk-$Time$.m4s", "r1", None, None, 1),
+            Err(TemplateError::MissingTime)
+        );
+        assert_eq!(
+            substitute("chunk-$Time$.m4s", "r1", Some(3), None, 1),
+            Err(TemplateError::MissingTime)
+        );
+    }
+
+    #[test]
+    fn number_template_without_a_number_is_an_error() {
+        assert_eq!(
+            substitute("chunk-$Number%05d$.m4s", "r1", None, None, 1),
+            Err(TemplateError::MissingNumber)
+        );
+        assert_eq!(
+            substitute("chunk-$Number%05d$.m4s", "r1", None, Some(3), 1),
+            Err(TemplateError::MissingNumber)
+        );
+    }
+
+    #[test]
+    fn invalid_template_is_an_error() {
+        assert_eq!(
+            substitute("chunk-$Number.m4s", "r1", Some(1), None, 1),
+            Err(TemplateError::Invalid(
+                TemplateFault::UnterminatedIdentifier
+            ))
+        );
+    }
+
+    #[test]
+    fn supplied_values_render() {
+        assert_eq!(
+            substitute("chunk-$Number%05d$-$Time$.m4s", "r1", Some(7), Some(11), 1),
+            Ok("chunk-00007-11.m4s".to_owned())
+        );
+        assert_eq!(
+            substitute("$RepresentationID$/init.mp4", "r1", None, None, 1),
+            Ok("r1/init.mp4".to_owned())
+        );
     }
 }

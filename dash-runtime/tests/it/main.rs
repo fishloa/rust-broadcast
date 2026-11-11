@@ -35,3 +35,4 @@ mod template_match;
 mod timeline_zero_duration;
 mod transmux_packager_mpd;
 mod vectors;
+mod xml_namespaces;

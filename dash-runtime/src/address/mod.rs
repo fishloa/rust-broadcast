@@ -32,6 +32,15 @@ pub enum AddressError {
         /// What is wrong with it.
         fault: template::TemplateFault,
     },
+    /// A template names a `$Number$` or `$Time$` the Representation has no
+    /// value for; rendering it would address the wrong segment.
+    #[error("template `{template}` names {which} but there is no value for it")]
+    MissingTemplateValue {
+        /// The template text.
+        template: String,
+        /// Which identifier (`number`, `time`).
+        which: &'static str,
+    },
     /// A feature outside the 0.1 scope.
     #[error("unsupported: {0}")]
     Unsupported(Unsupported),

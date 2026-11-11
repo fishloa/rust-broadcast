@@ -65,7 +65,7 @@ fn closed_form_equals_brute_force_over_segment_formulas() {
         let horizon = seg_us * 300;
         let now = origin + i128::from(rng.below(u64::try_from(horizon).unwrap())) - seg_us / 2;
         let brute_newest = (0..1_000u64)
-            .take_while(|i| p.plan.get(*i).unwrap().available_from_us.unwrap() <= now)
+            .take_while(|i| p.plan.get(*i).unwrap().unwrap().available_from_us.unwrap() <= now)
             .last();
         assert_eq!(
             newest_complete(&p.plan, now),
@@ -76,6 +76,7 @@ fn closed_form_equals_brute_force_over_segment_formulas() {
             let brute_oldest = (0..=newest).find(|i| {
                 p.plan
                     .get(*i)
+                    .unwrap()
                     .unwrap()
                     .available_until_us
                     .is_none_or(|u| u >= now)
@@ -155,12 +156,24 @@ fn availability_time_offset_makes_segments_available_earlier_only_when_applied()
     )
     .unwrap();
     let without = plan_representation(&m, RepRef::at(0, 0, 0), &PlanOptions::default()).unwrap();
-    let a = with.plan.get(0).unwrap().available_from_us.unwrap();
-    let b = without.plan.get(0).unwrap().available_from_us.unwrap();
+    let a = with
+        .plan
+        .get(0)
+        .unwrap()
+        .unwrap()
+        .available_from_us
+        .unwrap();
+    let b = without
+        .plan
+        .get(0)
+        .unwrap()
+        .unwrap()
+        .available_from_us
+        .unwrap();
     assert_eq!(b - a, 1_500_000);
     assert_eq!(
-        with.plan.get(0).unwrap().available_until_us,
-        without.plan.get(0).unwrap().available_until_us,
+        with.plan.get(0).unwrap().unwrap().available_until_us,
+        without.plan.get(0).unwrap().unwrap().available_until_us,
         "the end of the window is not shifted"
     );
 }

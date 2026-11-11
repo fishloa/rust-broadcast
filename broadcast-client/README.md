@@ -399,7 +399,7 @@ dynamic one, with a start lead of `min(3 x maxSegmentDuration, playout.live_star
 **Errors.** `MpdParse { reason }` (`xml`, `invalid_utf8`, `not_mpd`, `invalid`, `too_large`; non-fatal, once per
 kind until samples arrive, fatal after `max_key_failures` consecutive bodies with no good MPD between),
 `MpdInvalid { reason }` (no Period, no playable Representation, missing `availabilityStartTime`; fatal),
-`UnsupportedAddressing { reason }` (`presentation_type_list` is fatal; a Representation that cannot be addressed
+`UnsupportedAddressing { reason }` (an `MPD@type="list"` presentation is fatal, as `presentation_type_list`; a Representation that cannot be addressed
 or leaves the MPD origin under `cross_origin_urls = false` is dropped, non-fatal, and fatal only when nothing is
 left), `UnsupportedFeature { feature }` (`preselection`, `xlink`, `mpd_patch`, `event_stream`, `low_latency`,
 `utc_timing_scheme`, `utc_cross_origin`; once per feature per session, never fatal), `LiveEdgeLost` (the session

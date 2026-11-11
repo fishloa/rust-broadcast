@@ -11,6 +11,7 @@ use dash_runtime::client::{
     Action, DashClient, DashConfig, DropCause, Error, FatalKind, Notice, Output, PullLimits,
     ResourceId,
 };
+use dash_runtime::error::Unsupported;
 use dash_runtime::selection::DropReason;
 
 const DIR: &str = "timeline-ffmpeg-quirk";
@@ -192,9 +193,7 @@ fn a_list_mpd_is_a_typed_fatal_and_nothing_is_requested() {
     let run = play_text(text, PullLimits::default());
     assert_eq!(
         run.fatal,
-        Some(FatalKind::MpdInvalid {
-            reason: "presentation_type_list"
-        })
+        Some(FatalKind::Unsupported(Unsupported::PresentationTypeList))
     );
     assert!(!run.ended);
 }

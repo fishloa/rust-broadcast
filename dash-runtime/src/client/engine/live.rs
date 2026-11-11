@@ -315,7 +315,7 @@ impl DashClient {
             r.plan.as_ref().is_some_and(|p| {
                 p.len()
                     .and_then(|n| n.checked_sub(1))
-                    .and_then(|last| p.get(last))
+                    .and_then(|last| p.get(last).ok().flatten())
                     .is_some_and(|s| {
                         s.start_us
                             .saturating_add(s.duration_us)
@@ -398,7 +398,7 @@ impl DashClient {
                     .filter_map(|r| {
                         let p = r.plan.as_ref()?;
                         let last = p.len()?.checked_sub(1)?;
-                        p.get(last).map(|s| s.duration_us)
+                        p.get(last).ok().flatten().map(|s| s.duration_us)
                     })
                     .max()
                     .unwrap_or(0)
@@ -894,13 +894,13 @@ impl DashClient {
                 return Candidate::Idle;
             };
             if !rep.joined {
-                let hint = plan.get(0).map_or(0, |s| s.duration_us);
+                let hint = plan.get(0).ok().flatten().map_or(0, |s| s.duration_us);
                 let delay = self.delay_us(hint);
                 match join_index(plan, utc, delay) {
                     Some(idx) => {
                         let last = idx
                             .checked_sub(1)
-                            .and_then(|i| plan.get(i))
+                            .and_then(|i| plan.get(i).ok().flatten())
                             .map(|s| s.time_ticks);
                         let lane = &mut self.periods[pi].lanes[li];
                         let ri = lane.reps.len() - 1;
@@ -913,6 +913,8 @@ impl DashClient {
                     None => {
                         let first = plan
                             .get(0)
+                            .ok()
+                            .flatten()
                             .and_then(|s| s.available_from_us)
                             .map(|a| a.saturating_add(margin));
                         return match first {
@@ -926,7 +928,7 @@ impl DashClient {
                     }
                 }
             }
-            let Some(seg) = plan.get(rep.next_issue) else {
+            let Some(seg) = plan.get(rep.next_issue).ok().flatten() else {
                 return Candidate::Idle;
             };
             if seg.available_until_us.is_some_and(|u| u < utc) {
@@ -965,7 +967,7 @@ impl DashClient {
                 let last = lane.reps[ri]
                     .plan
                     .as_ref()
-                    .and_then(|p| o.checked_sub(1).and_then(|i| p.get(i)))
+                    .and_then(|p| o.checked_sub(1).and_then(|i| p.get(i).ok().flatten()))
                     .map(|s| s.time_ticks);
                 lane.reps[ri].last_time = last;
                 push_marker(lane);
@@ -1108,7 +1110,7 @@ impl DashClient {
                     let last = lane.reps[ri]
                         .plan
                         .as_ref()
-                        .and_then(|p| o.checked_sub(1).and_then(|i| p.get(i)))
+                        .and_then(|p| o.checked_sub(1).and_then(|i| p.get(i).ok().flatten()))
                         .map(|s| s.time_ticks);
                     lane.reps[ri].last_time = last;
                 }
@@ -1391,7 +1393,11 @@ impl DashClient {
         let switch_us = {
             let lane = &self.periods[pi].lanes[li];
             lane.current()
-                .and_then(|c| c.plan.as_ref().and_then(|p| p.get(c.next_issue)))
+                .and_then(|c| {
+                    c.plan
+                        .as_ref()
+                        .and_then(|p| p.get(c.next_issue).ok().flatten())
+                })
                 .map(|s| s.start_us)
         };
         let Some(at) = replacement.filter(|a| a.period == index) else {
@@ -1408,7 +1414,7 @@ impl DashClient {
                     rep.last_time = rep
                         .next_issue
                         .checked_sub(1)
-                        .and_then(|i| plan.get(i))
+                        .and_then(|i| plan.get(i).ok().flatten())
                         .map(|s| s.time_ticks);
                 }
                 let ri = self.periods[pi].lanes[li].reps.len();

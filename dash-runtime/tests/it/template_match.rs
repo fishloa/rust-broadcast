@@ -40,7 +40,7 @@ fn match_inverts_resolve_over_a_grid() {
                 let number = has_number.then_some(n);
                 let time = has_time.then_some(n.wrapping_add(3));
                 let bw = has_bw.then_some(n / 2 + 1);
-                let url = substitute(t, id, number, time, bw.unwrap_or(0));
+                let url = substitute(t, id, number, time, bw.unwrap_or(0)).unwrap();
                 let got = m(t, &url, IDS).unwrap_or_else(|| panic!("no match: {t:?} <- {url:?}"));
                 assert_eq!(
                     got,

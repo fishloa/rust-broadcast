@@ -25,11 +25,11 @@ fn ffmpeg_live_number_window_matches_the_capture() {
     let video = l.plan(RepRef::at(0, 0, 0));
     assert!(video.plan.len().is_none(), "no Period end: open-ended plan");
     let newest = newest_complete(&video.plan, publish).unwrap();
-    assert_eq!(video.plan.get(newest).unwrap().number, 7);
+    assert_eq!(video.plan.get(newest).unwrap().unwrap().number, 7);
     let oldest = oldest_in_window(&video.plan, publish).unwrap();
-    assert_eq!(video.plan.get(oldest).unwrap().number, 3);
+    assert_eq!(video.plan.get(oldest).unwrap().unwrap().number, 3);
     for number in 5..=7 {
-        let seg = video.plan.get(number - 1).unwrap();
+        let seg = video.plan.get(number - 1).unwrap().unwrap();
         assert_eq!(seg.number, number);
         assert!(
             seg.index >= oldest && seg.index <= newest,
@@ -38,7 +38,7 @@ fn ffmpeg_live_number_window_matches_the_capture() {
         let file = l.file_of(&video, &seg.reference);
         assert!(file.is_file(), "{}", file.display());
     }
-    let eight = video.plan.get(7).unwrap();
+    let eight = video.plan.get(7).unwrap().unwrap();
     assert!(
         eight.available_from_us.unwrap() > publish,
         "segment 8 is on disk but not yet announced available"
@@ -47,10 +47,10 @@ fn ffmpeg_live_number_window_matches_the_capture() {
     // SPD 2 s: T_join = publish - 2 s - AST = 13.667 s, inside segment 7.
     let delay = 2 * SECOND_US;
     let join = join_index(&video.plan, publish, delay).unwrap();
-    assert_eq!(video.plan.get(join).unwrap().number, 7);
+    assert_eq!(video.plan.get(join).unwrap().unwrap().number, 7);
     // Delay 0 puts T_join inside the not-yet-complete segment 8: clamped back to 7.
     let join0 = join_index(&video.plan, publish, 0).unwrap();
-    assert_eq!(video.plan.get(join0).unwrap().number, 7);
+    assert_eq!(video.plan.get(join0).unwrap().unwrap().number, 7);
     // A much older clock clamps to the oldest segment still in the window.
     let w = window(&video.plan, publish).unwrap();
     assert_eq!(
@@ -82,13 +82,25 @@ fn ffmpeg_live_timeline_window_matches_the_capture() {
             assert!(l.file_of(p, &seg.reference).is_file());
         }
     }
-    assert_eq!(video.plan.get(0).unwrap().reference, "seg-0-003.m4s");
+    assert_eq!(
+        video.plan.get(0).unwrap().unwrap().reference,
+        "seg-0-003.m4s"
+    );
     // The newest listed video segment ends 0.56 s after publishTime: listed
     // segments may run one ahead (IOP 4.3.6), the formula still gates it.
     let newest = newest_complete(&video.plan, publish).unwrap();
-    assert_eq!(video.plan.get(newest).unwrap().number, 5);
-    assert_eq!(video.plan.get(3).unwrap().number, 6);
-    assert!(video.plan.get(3).unwrap().available_from_us.unwrap() > publish);
+    assert_eq!(video.plan.get(newest).unwrap().unwrap().number, 5);
+    assert_eq!(video.plan.get(3).unwrap().unwrap().number, 6);
+    assert!(
+        video
+            .plan
+            .get(3)
+            .unwrap()
+            .unwrap()
+            .available_from_us
+            .unwrap()
+            > publish
+    );
 }
 
 #[test]
@@ -103,10 +115,10 @@ fn livesim2_time_timeline_window_and_numbers() {
     let audio = l.plan(RepRef::at(0, 0, 0));
     let video = l.plan(RepRef::at(0, 1, 0));
     assert_eq!(video.plan.len(), Some(31));
-    let first = video.plan.get(0).unwrap();
+    let first = video.plan.get(0).unwrap().unwrap();
     assert_eq!(first.reference, "V300/161274100320000.m4s");
     assert_eq!(first.time_ticks, 161_274_100_320_000);
-    let last = video.plan.get(30).unwrap();
+    let last = video.plan.get(30).unwrap().unwrap();
     assert_eq!(last.reference, "V300/161274105720000.m4s");
     assert_eq!(
         last.available_from_us.unwrap(),
@@ -128,7 +140,10 @@ fn livesim2_time_timeline_window_and_numbers() {
     let join_before = join_index(&video.plan, publish, 6 * SECOND_US + 1).unwrap();
     assert_eq!(join_before, 27);
     let total: u64 = audio.plan.iter().map(|s| s.duration_ticks).sum();
-    assert_eq!(audio.plan.get(0).unwrap().time_ticks, 86_012_853_504_000);
+    assert_eq!(
+        audio.plan.get(0).unwrap().unwrap().time_ticks,
+        86_012_853_504_000
+    );
     let audio_end_us = (i128::from(86_012_853_504_000u64) + i128::from(total)) * SECOND_US / 48_000;
     assert!(
         (audio_end_us - publish).abs() < 2 * SECOND_US,
@@ -172,7 +187,7 @@ fn livesim2_consecutive_refreshes_keep_numbers_stable() {
 fn livesim2_number_variant_uses_a_large_start_number() {
     let l = load("dash/livesim2/segtimelinenr_a.mpd");
     let video = l.plan(RepRef::at(0, 1, 0));
-    let first = video.plan.get(0).unwrap();
+    let first = video.plan.get(0).unwrap().unwrap();
     assert_eq!(first.number, 895_967_208);
     assert_eq!(first.reference, format!("V300/{}.m4s", first.number));
 }
@@ -182,7 +197,7 @@ fn a_segment_is_in_the_window_through_its_availability_end_and_out_one_microseco
     let l = load("dash/livesim2/segtimeline_time_a.mpd");
     let video = l.plan(RepRef::at(0, 1, 0));
     let first = video.plan.get(0).unwrap();
-    let until = first.available_until_us.unwrap();
+    let until = first.unwrap().available_until_us.unwrap();
     let newest_at = |utc: i128| oldest_in_window(&video.plan, utc);
     let publish = i128::from(l.mpd.publish_time_us.unwrap());
     assert!(

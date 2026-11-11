@@ -3,9 +3,10 @@
 //! ISO/IEC 23009-1 5.3.9.1: Segment information may be declared at any of the
 //! three levels; an element inherits the attributes and children of the same
 //! element above it, and the lower level wins attribute by attribute.
-//! `@duration` and `SegmentTimeline` are exclusive (5.3.9.2.1), so a level
-//! that introduces one does not inherit the other. A SegmentTemplate and a
-//! SegmentList may not both appear along one chain.
+//! `@duration` and `SegmentTimeline` are exclusive (5.3.9.2.1) in the
+//! Representation's *effective* Segment information, so a child timeline and a
+//! parent `@duration` conflict exactly as two attributes on one level do. A
+//! SegmentTemplate and a SegmentList may not both appear along one chain.
 //! The `RepresentationBase` attributes (5.3.7.2) of a Representation fall back
 //! to its AdaptationSet's.
 
@@ -32,8 +33,10 @@ pub enum InheritError {
         "SegmentTemplate and SegmentList both appear along one Period/AdaptationSet/Representation chain"
     )]
     TemplateAndList,
-    /// `@duration` and `SegmentTimeline` on one element (5.3.9.2.1).
-    #[error("both @duration and SegmentTimeline are present on one level")]
+    /// `@duration` and `SegmentTimeline` in one Representation's effective
+    /// Segment information, on one level or across inherited levels
+    /// (5.3.9.2.1).
+    #[error("both @duration and SegmentTimeline are present (on one level or across inheritance)")]
     DurationAndTimeline,
 }
 
@@ -156,16 +159,10 @@ fn merge_base(parent: &BaseInfo, child: &BaseInfo) -> BaseInfo {
 }
 
 fn merge_multi(parent: &MultiInfo, child: &MultiInfo) -> Result<MultiInfo, InheritError> {
-    if child.duration.is_some() && child.timeline.is_some() {
-        return Err(InheritError::DurationAndTimeline);
-    }
-    let (duration, timeline) = if child.timeline.is_some() {
-        (None, child.timeline.clone())
-    } else if child.duration.is_some() {
-        (child.duration, None)
-    } else {
-        (parent.duration, parent.timeline.clone())
-    };
+    let (duration, timeline) = (
+        child.duration.or(parent.duration),
+        child.timeline.clone().or_else(|| parent.timeline.clone()),
+    );
     Ok(MultiInfo {
         base: merge_base(&parent.base, &child.base),
         duration,

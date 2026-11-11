@@ -70,8 +70,6 @@ const REASON_TOO_LARGE: &str = "too_large";
 const REASON_UNKNOWN: &str = "unknown";
 const REASON_NO_PLAYABLE: &str = "no_playable_representation";
 const REASON_CONTENT_PROTECTION: &str = "content_protection";
-/// The ed.6 `MPD@type` value a client cannot play (ISO/IEC 23009-1 ed.6 Table 3).
-const LIST_PRESENTATION_TYPE: &str = "presentation_type_list";
 const FEATURE_PRESELECTION: &str = "preselection";
 const FEATURE_XLINK: &str = "xlink";
 const FEATURE_MPD_PATCH: &str = "mpd_patch";
@@ -1276,12 +1274,8 @@ impl DashSource {
                     method: REASON_CONTENT_PROTECTION.to_string(),
                 }
             }
-            FatalKind::MpdInvalid {
-                reason: LIST_PRESENTATION_TYPE,
-            } => ErrorKind::UnsupportedAddressing {
-                reason: LIST_PRESENTATION_TYPE,
-            },
             FatalKind::MpdInvalid { reason } => ErrorKind::MpdInvalid { reason },
+            FatalKind::Unsupported(u) => ErrorKind::UnsupportedAddressing { reason: u.name() },
             FatalKind::UnsupportedAddressing { reason } => {
                 ErrorKind::UnsupportedAddressing { reason }
             }

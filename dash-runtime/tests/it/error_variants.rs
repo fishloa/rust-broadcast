@@ -51,6 +51,60 @@ fn a_duration_and_a_timeline_on_one_template_cannot_be_inherited() {
 }
 
 #[test]
+fn a_parent_duration_and_a_child_timeline_conflict() {
+    let mpd = mpd_full(
+        "static",
+        "",
+        r#"<SegmentTemplate media="a$Number$.m4s" duration="2" timescale="1"/>"#,
+        r#"<SegmentTemplate><SegmentTimeline><S d="2"/></SegmentTimeline></SegmentTemplate>"#,
+    );
+    assert_eq!(
+        plan(&mpd),
+        Err(PlanError::Inherit(InheritError::DurationAndTimeline))
+    );
+}
+
+#[test]
+fn a_parent_timeline_and_a_child_duration_conflict() {
+    let mpd = mpd_full(
+        "static",
+        "",
+        r#"<SegmentTemplate media="a$Time$.m4s" timescale="1"><SegmentTimeline><S d="2"/></SegmentTimeline></SegmentTemplate>"#,
+        r#"<SegmentTemplate duration="3"/>"#,
+    );
+    assert_eq!(
+        plan(&mpd),
+        Err(PlanError::Inherit(InheritError::DurationAndTimeline))
+    );
+}
+
+#[test]
+fn a_parent_duration_alone_is_inherited() {
+    let mpd = mpd_full(
+        "static",
+        "",
+        r#"<SegmentTemplate media="a$Number$.m4s" duration="2" timescale="1"/>"#,
+        r#"<SegmentTemplate/>"#,
+    );
+    let p = plan_representation(&mpd, RepRef::at(0, 0, 0), &PlanOptions::default()).unwrap();
+    assert_eq!(p.plan.len(), Some(5));
+    assert_eq!(p.plan.get(0).unwrap().unwrap().duration_ticks, 2);
+}
+
+#[test]
+fn a_child_timeline_alone_is_inherited() {
+    let mpd = mpd_full(
+        "static",
+        "",
+        r#"<SegmentTemplate media="a$Time$.m4s" timescale="1"/>"#,
+        r#"<SegmentTemplate><SegmentTimeline><S d="2"/></SegmentTimeline></SegmentTemplate>"#,
+    );
+    let p = plan_representation(&mpd, RepRef::at(0, 0, 0), &PlanOptions::default()).unwrap();
+    assert_eq!(p.plan.len(), Some(1));
+    assert_eq!(p.plan.get(0).unwrap().unwrap().time_ticks, 0);
+}
+
+#[test]
 fn a_template_without_media_has_nothing_to_address() {
     assert_eq!(
         static_plan(r#"<SegmentTemplate duration="2" timescale="1"/>"#),

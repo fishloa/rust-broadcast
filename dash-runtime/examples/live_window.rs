@@ -72,6 +72,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Some(w) => {
                 let show = |i: u64| {
                     plan.get(i)
+                        .ok()
+                        .flatten()
                         .map(|s| format!("#{} {}", s.number, s.reference))
                         .unwrap_or_default()
                 };
@@ -86,7 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         let next = newest_complete(plan, now_us).map_or(0, |n| n + 1);
-        if let Some(seg) = plan.get(next) {
+        if let Some(seg) = plan.get(next).ok().flatten() {
             let wait = seg.available_from_us.unwrap_or(now_us) - now_us;
             println!(
                 "{label}: next segment #{} in {:.3}s",

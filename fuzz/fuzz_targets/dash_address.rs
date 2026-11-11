@@ -98,7 +98,10 @@ fuzz_target!(|data: &[u8]| {
 
     let mut previous = None;
     for i in 0..WALK.min(plan.len().unwrap_or(WALK)) {
-        let seg = plan.get(i).expect("index below len() exists");
+        let Ok(seg) = plan.get(i) else {
+            return;
+        };
+        let seg = seg.expect("index below len() exists");
         assert_eq!(seg.index, i);
         if let Some((n, t, from)) = previous {
             assert!(
@@ -115,7 +118,7 @@ fuzz_target!(|data: &[u8]| {
         previous = Some((seg.number, seg.time_ticks, seg.available_from_us));
     }
     if let Some(n) = plan.len() {
-        assert!(plan.get(n).is_none());
+        assert!(!matches!(plan.get(n), Ok(Some(_))));
     }
 
     if plan.is_dynamic() {
@@ -123,8 +126,8 @@ fuzz_target!(|data: &[u8]| {
         let delay = i128::from(delay_s) * 1_000_000;
         let newest = newest_complete(plan, now);
         if let Some(k) = newest {
-            assert!(plan.get(k).unwrap().available_from_us.unwrap() <= now);
-            if let Some(next) = plan.get(k + 1) {
+            assert!(plan.get(k).unwrap().unwrap().available_from_us.unwrap() <= now);
+            if let Ok(Some(next)) = plan.get(k + 1) {
                 assert!(
                     next.available_from_us.unwrap() > now,
                     "newest is the last complete one"

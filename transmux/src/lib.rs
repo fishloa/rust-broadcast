@@ -294,7 +294,7 @@ pub use dash::{
     rfc6381_track_codec_string,
 };
 #[cfg(feature = "std")]
-pub use dash_parse::{DashParseError, MAX_FORMAT_WIDTH, parse_iso8601_duration};
+pub use dash_parse::{DashParseError, parse_iso8601_duration};
 pub use drm::{
     COMMON_SYSTEM_ID, FAIRPLAY_SYSTEM_ID, PLAYREADY_SYSTEM_ID, WIDEVINE_SYSTEM_ID,
     cenc_kid_to_playready, fairplay_pssh, fairplay_pssh_data, playready_kid_to_cenc,

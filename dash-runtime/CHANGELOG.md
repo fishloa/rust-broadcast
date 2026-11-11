@@ -3,7 +3,12 @@
 All notable changes to dash-runtime will be documented in this file.
 
 ## [Unreleased]
+### Changed
+- The MPD reader's namespace and hostile-input bound tests lost when the reader moved out of transmux are back, against `dash_runtime::mpd::Mpd` (issue #2340), and the DASH validator golden now has a test that a refused MPD is recorded as `dash-parse-error`, never as `clean`.
+- BREAKING: `address::template::substitute` returns `Result<String, TemplateError>` and `SegmentPlan::get` returns `Result<Option<SegmentRef>, AddressError>`. A template naming `$Number$`/`$Time$` the caller has no value for, or a template that does not parse, is now an error instead of silently dropping the identifier (yielding a URL such as `chunk-.m4s`) or an empty string, which fetched the wrong segment.
 ### Fixed
+- A list presentation (`MPD@type="list"`) is refused with `FatalKind::Unsupported(Unsupported::PresentationTypeList)` instead of `MpdInvalid { reason: "presentation_type_list" }`; the refusal now carries the typed error every other unsupported feature uses.
+- `@duration` on a parent level and a `SegmentTimeline` on a child level (or the reverse) are refused as `InheritError::DurationAndTimeline`, as two attributes on one level already were: ISO/IEC 23009-1 5.3.9.2.1 forbids both in a Representation's effective Segment information, and the child's timeline used to silently replace the inherited duration.
 - A Representation inherits its AdaptationSet's `SegmentTemplate` timeline when it declares none of its own; the segment plan used to see no timeline there (found by pinning media-doctor's DASH validator on the ISO 23009-1 examples, where example G22 produced 18 timeline findings instead of 3).
 ### Added
 - `address::template::match_url`: reverse segment-template matching (an uploaded segment URL to its representation id and `$Number$`/`$Time$`/`$Bandwidth$`), moved here from transmux so dash-runtime is the one MPD reader (#2340).
