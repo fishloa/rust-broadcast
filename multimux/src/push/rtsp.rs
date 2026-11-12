@@ -696,6 +696,11 @@ mod tests {
         transport.close();
     }
 
+    /// Only turns a keepalive that never elicits the 454 into a failure. The
+    /// keepalive is due after half the one-second session timeout, so a stall
+    /// of the whole process shorter than this cannot fail the test.
+    const KEEPALIVE_HANG_CEILING: std::time::Duration = std::time::Duration::from_secs(60);
+
     /// I-D(1): a real socket 454 reaches `SessionLost` — the wiring, not just
     /// the pure `map_rtsp_error`. A loopback peer serves the record handshake,
     /// then answers the push's next request (the keepalive `GET_PARAMETER`)
@@ -754,19 +759,20 @@ mod tests {
         let mut client = rtsp_runtime::AsyncRtspClient::connect_with_timeouts(
             &addr,
             ClientSession::new(),
-            rtsp_runtime::RtspTimeouts::default()
-                .with_read_idle(std::time::Duration::from_millis(100))
-                .with_write(std::time::Duration::from_millis(300)),
+            rtsp_runtime::RtspTimeouts::default(),
         )
         .await
         .expect("connect");
         let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).expect("URL");
         let sdp = build_sdp().expect("sdp");
-        let _ = client.start_record(&url, &sdp, 0).await;
+        client
+            .start_record(&url, &sdp, 0)
+            .await
+            .expect("the record handshake completes");
 
         // Send media until the keepalive (session timeout=1 s) elicits the 454
         // and the drain surfaces it.
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        let deadline = tokio::time::Instant::now() + KEEPALIVE_HANG_CEILING;
         loop {
             match client.send_interleaved(0, &[0u8; 188]).await {
                 Ok(()) => {}
