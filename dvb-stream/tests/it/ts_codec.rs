@@ -314,3 +314,15 @@ fn a_lone_packet_at_end_of_input_is_still_delivered() {
     let last = d.decode_eof(&mut buf).unwrap().expect("lone packet at EOF");
     assert_eq!(last[1], 9);
 }
+
+#[test]
+fn datagram_mode_accepts_a_single_short_sync_byte() {
+    let mut d = TsDecoder::datagram();
+    let mut buf = BytesMut::new();
+    buf.extend_from_slice(&[0x47]);
+    let mut got = Vec::new();
+    while let Some(p) = d.decode_eof(&mut buf).unwrap() {
+        got.push(p);
+    }
+    assert!(got.is_empty());
+}

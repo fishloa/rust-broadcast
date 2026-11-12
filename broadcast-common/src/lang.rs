@@ -40,3 +40,38 @@ pub fn bcp47_language(iso639_2: &str) -> Option<String> {
     }
     lang.alpha3_b().map(|b| b.to_string())
 }
+
+/// Whether a candidate language tag matches a preferred language by BCP 47
+/// prefix, ASCII case-insensitive.
+///
+/// `preferred` is the desired language tag (e.g. from a user preference);
+/// `language` is the candidate tag (e.g. from a manifest). A match holds when
+/// the two are equal or `language` is a more specific subtag of `preferred`
+/// (separated by `-`).
+#[must_use]
+pub fn language_matches(preferred: &str, language: &str) -> bool {
+    let (p, l) = (
+        preferred.to_ascii_lowercase(),
+        language.to_ascii_lowercase(),
+    );
+    l == p || l.strip_prefix(&p).is_some_and(|rest| rest.starts_with('-'))
+}
+
+/// Alias for [`language_matches`] (argument order: preferred, then language).
+#[must_use]
+pub fn lang_matches(preferred: &str, language: &str) -> bool {
+    language_matches(preferred, language)
+}
+
+#[cfg(test)]
+mod tests_lang_match {
+    use super::*;
+
+    #[test]
+    fn exact_and_prefix() {
+        assert!(language_matches("en", "en"));
+        assert!(language_matches("en", "en-US"));
+        assert!(!language_matches("en", "fr"));
+        assert!(!language_matches("en", "english"));
+    }
+}

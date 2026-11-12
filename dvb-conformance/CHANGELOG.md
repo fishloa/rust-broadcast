@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- Legal-duplicate TS packet detection now imports `mpeg_ts::ts_dup` instead of `broadcast_common::ts_dup` (#2466).
 
 ## [13.1.0] - 2026-11-10
 ### Fixed

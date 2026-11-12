@@ -677,7 +677,7 @@ fn caller_supplied_pssh_renders_base64_cenc_pssh_child() {
         b'h', // fake box header, content irrelevant to this test
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
     ];
-    let expected_b64 = transmux::rtp::base64_encode(&pssh_bytes);
+    let expected_b64 = broadcast_common::base64::base64_encode(&pssh_bytes);
 
     let mut pkg = DashPackager {
         content_protection: vec![ContentProtectionSystem {
