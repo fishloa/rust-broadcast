@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ingress::AdmittedDriver`: the bookkeeping every concurrently-admitting push-ingest loop had hand-written — one `IngestDriver` per admitted session (`accept`/`accept_with`/`register`), each session's clock measured from its own admission rather than the route's start, `feed`/`finish` plus a release-then-reap step that frees the session's `max_sessions` slot, and an idle clock (`touch`/`idle_deadline`) measured only from input the session actually took in. The multiplexing WHIP and RTMP ingest loops now share it instead of each carrying a copy.
 - `ingress::ListenDriver::listener`: read access to the listener a driver owns.
 
+### Fixed
+- `AdmittedDriver::with_session`/`session_parts` now check admission before touching `progress`, so an unknown/reaped id returns `None` without inserting a progress entry.
+
 ## [0.11.0] - 2026-11-10
 ### Added
 - `Trunk::open_segment`: the lowest segment above the last closed one that has resident parts.

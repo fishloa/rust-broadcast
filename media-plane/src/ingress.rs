@@ -1707,16 +1707,18 @@ impl<L: Listener, P: Default> AdmittedDriver<L, P> {
         id: SessionId,
         f: impl FnOnce(&IngestDriver<L::Session>, &mut P) -> R,
     ) -> Option<R> {
+        let driver = self.driver.driver(id)?;
         let state = self.progress.entry(id).or_default();
-        self.driver.driver(id).map(|driver| f(driver, state))
+        Some(f(driver, state))
     }
 
     /// Session `id`'s driver and its own progress state, both borrowable
     /// across an `.await` (the publish-and-segment step is async) — the same
     /// pair as [`Self::with_session`], for a caller whose step must await.
     pub fn session_parts(&mut self, id: SessionId) -> Option<(&IngestDriver<L::Session>, &mut P)> {
+        let driver = self.driver.driver(id)?;
         let state = self.progress.entry(id).or_default();
-        self.driver.driver(id).map(|driver| (driver, state))
+        Some((driver, state))
     }
 
     /// The instant to feed session `id` with: `clock` measured from that
@@ -2765,6 +2767,35 @@ mod tests {
         // A reaped session keeps no clock: it falls back to the route start.
         admitted.prune_clocks();
         assert_eq!(admitted.now(id, at), Timestamp::from_nanos(1_000_000_000));
+    }
+
+    #[test]
+    fn with_session_and_session_parts_on_unknown_id_do_not_insert_progress() {
+        use std::time::Instant;
+
+        let start = Instant::now();
+        let mut admitted: AdmittedDriver<QueuedListener, ()> = AdmittedDriver::new(
+            run_listen(
+                QueuedListener {
+                    paused: std::cell::Cell::new(false),
+                    max_sessions: 1,
+                },
+                trunk_config(),
+                handshake(),
+                max_programs(),
+            ),
+            start,
+        );
+        let before = admitted.len();
+        assert_eq!(admitted.session_count(), 0);
+        assert!(
+            admitted
+                .with_session(SessionId(9999), |_d, _p| ())
+                .is_none()
+        );
+        assert!(admitted.session_parts(SessionId(9999)).is_none());
+        assert_eq!(admitted.len(), before);
+        assert_eq!(admitted.session_count(), 0);
     }
 
     #[test]
