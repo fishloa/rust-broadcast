@@ -531,3 +531,7 @@ mod tests {
         ));
     }
 }
+
+
+/// Most media sections a session plays; further supported sections are ignored.
+pub const MAX_TRACKS: usize = 16;
