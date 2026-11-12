@@ -4,6 +4,8 @@ use broadcast_dash::Mpd;
 use broadcast_dash::model::*;
 
 type Place = fn(&mut Mpd, Descriptor);
+type XlinkPlace = fn(&mut Mpd);
+type BasePlace = fn(&mut Mpd, BaseUrl);
 
 fn skeleton() -> Mpd {
     let mut rep = Representation::default();
@@ -141,7 +143,7 @@ fn xlink() -> Xlink {
     x
 }
 
-fn xlink_places() -> Vec<(&'static str, fn(&mut Mpd))> {
+fn xlink_places() -> Vec<(&'static str, XlinkPlace)> {
     vec![
         ("period", |m| m.periods[0].xlink = Some(xlink())),
         ("adaptation set", |m| {
@@ -167,7 +169,7 @@ fn assert_declares_what_it_emits(name: &str, mpd: &Mpd) {
     let xml = mpd.to_xml().unwrap();
     let again = Mpd::parse(xml.as_bytes()).unwrap_or_else(|e| panic!("{name}: {e}\n{xml}"));
     let mut expected = mpd.clone();
-    expected.features = again.features.clone();
+    expected.features = again.features;
     assert_eq!(again, expected, "{name}\n{xml}");
 }
 
@@ -203,7 +205,7 @@ fn a_dvb_base_url_anywhere_declares_its_prefix() {
     let mut b = BaseUrl::default();
     b.url = "http://b/".to_string();
     b.priority = Some(1);
-    let places: Vec<(&str, fn(&mut Mpd, BaseUrl))> = vec![
+    let places: Vec<(&str, BasePlace)> = vec![
         ("mpd", |m, b| m.base_urls = vec![b]),
         ("period", |m, b| m.periods[0].base_urls = vec![b]),
         ("event stream", |m, b| {
