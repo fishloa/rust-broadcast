@@ -143,7 +143,7 @@ fn resource_fetch(
     url: String,
     read_timeout: Duration,
     delay: Duration,
-) -> crate::source::pull::PendingFetch<HlsFetchId> {
+) -> crate::source::pull::PendingFetch<HlsFetchId, Fetched> {
     let cap = match fetch_id {
         HlsFetchId::Key(_) => MAX_KEY_BODY_BYTES,
         _ => crate::source::MAX_HTTP_BODY_BYTES,
@@ -152,7 +152,7 @@ fn resource_fetch(
     crate::source::pull::PendingFetch {
         delay,
         fut: Box::pin(async move {
-            let (result, retry_after) = tokio::time::timeout(
+            let (result, learned, retry_after) = tokio::time::timeout(
                 read_timeout,
                 fetch_bytes_capped_with_retry_after(&http, &url, &mut auth, cap, now_us),
             )
@@ -164,6 +164,7 @@ fn resource_fetch(
                             "hls-pull: resource {fetch_id:?} read exceeded {read_timeout:?}"
                         ),
                     }),
+                    Learned::default(),
                     None,
                 )
             });
@@ -180,8 +181,17 @@ fn resource_fetch(
             (
                 fetch_id,
                 match result {
-                    Ok(b) => crate::source::pull::FetchResult::Ready(b),
-                    Err(e) => crate::source::pull::FetchResult::failed_after(e, retry_after),
+                    Ok(bytes) => {
+                        crate::source::pull::FetchResult::Ready(Fetched { bytes, learned })
+                    }
+                    Err(e) => crate::source::pull::FetchResult::Failed {
+                        error: e,
+                        learned: Fetched {
+                            bytes: Vec::new(),
+                            learned,
+                        },
+                        retry_after,
+                    },
                 },
             )
         }),
@@ -196,7 +206,7 @@ fn playlist_fetch(
     now_us: u64,
     url: String,
     read_timeout: Duration,
-) -> crate::source::pull::PendingFetch<HlsFetchId> {
+) -> crate::source::pull::PendingFetch<HlsFetchId, Fetched> {
     playlist_fetch_after(http, auth, now_us, url, read_timeout, Duration::ZERO)
 }
 
@@ -208,12 +218,12 @@ fn playlist_fetch_after(
     url: String,
     read_timeout: Duration,
     delay: Duration,
-) -> crate::source::pull::PendingFetch<HlsFetchId> {
+) -> crate::source::pull::PendingFetch<HlsFetchId, Fetched> {
     let mut auth = auth.clone();
     crate::source::pull::PendingFetch {
         delay,
         fut: Box::pin(async move {
-            let (result, retry_after) = tokio::time::timeout(
+            let (result, learned, retry_after) = tokio::time::timeout(
                 read_timeout,
                 fetch_bytes_capped_with_retry_after(
                     &http,
@@ -229,14 +239,24 @@ fn playlist_fetch_after(
                     Err(MultimuxError::Connect {
                         reason: format!("hls-pull: playlist read exceeded {read_timeout:?}"),
                     }),
+                    Learned::default(),
                     None,
                 )
             });
             (
                 HlsFetchId::Playlist,
                 match result {
-                    Ok(b) => crate::source::pull::FetchResult::Ready(b),
-                    Err(e) => crate::source::pull::FetchResult::failed_after(e, retry_after),
+                    Ok(bytes) => {
+                        crate::source::pull::FetchResult::Ready(Fetched { bytes, learned })
+                    }
+                    Err(e) => crate::source::pull::FetchResult::Failed {
+                        error: e,
+                        learned: Fetched {
+                            bytes: Vec::new(),
+                            learned,
+                        },
+                        retry_after,
+                    },
                 },
             )
         }),
@@ -459,11 +479,15 @@ async fn fetch_bytes_capped_with_retry_after(
     now_us: u64,
 ) -> (
     core::result::Result<Vec<u8>, MultimuxError>,
+    Learned,
     Option<Duration>,
 ) {
     let response = match authenticated_get(client, url, auth, now_us).await {
         Ok(r) => r,
-        Err(e) => return (Err(e), None),
+        Err(e) => return (Err(e), Learned::default(), None),
+    };
+    let learned = Learned {
+        cookies: auth.cookies(now_us),
     };
     let status = response.status();
     if !status.is_success() {
@@ -481,12 +505,31 @@ async fn fetch_bytes_capped_with_retry_after(
                 reason: format!("hls-pull: HTTP {status}"),
             }
         };
-        return (Err(err), retry_after);
+        return (Err(err), learned, retry_after);
     }
     (
         crate::source::read_body_capped(response, cap, "hls-pull").await,
+        learned,
         None,
     )
+}
+
+/// What one attempted fetch learned for its session: the cookies its responses
+/// left in the state it ran on. The fetch works on a copy of the session's
+/// [`AuthState`] (a clone starts with a fresh cookie jar), so the copy's jar is
+/// what comes back here and [`AuthState::adopt_cookies`] hands it to the
+/// session.
+#[derive(Debug, Default, Clone)]
+pub struct Learned {
+    cookies: Vec<(String, String)>,
+}
+
+/// One fetch's outcome as the drive loop sees it: the body (empty on a failed
+/// fetch) and what the attempt learned.
+#[derive(Debug)]
+pub struct Fetched {
+    bytes: Vec<u8>,
+    learned: Learned,
 }
 
 /// Opens `route`'s connect-time HTTP client and userinfo-stripped URL —
@@ -580,7 +623,7 @@ async fn drive(
     handshake: HandshakePolicy,
     route_handle: &std::sync::Arc<crate::route::RouteHandle>,
 ) -> Result<()> {
-    let (http, clean_url, credentials) = build_client(route)?;
+    let (http, clean_url, mut credentials) = build_client(route)?;
     let mut dialer = HlsPullDialer {
         playlist_url: clean_url.to_string(),
     };
@@ -600,7 +643,7 @@ async fn drive(
     // The fetch/retry/wait engine (SP6.2) owns the backlog, the in-flight
     // bound, the retries and the waits; this loop owns only the `Action`
     // translation and the `feed`.
-    let mut scheduler: crate::source::pull::PullScheduler<HlsFetchId> =
+    let mut scheduler: crate::source::pull::PullScheduler<HlsFetchId, Fetched> =
         crate::source::pull::PullScheduler::new(crate::source::MAX_INFLIGHT_FETCHES);
     // Tracks resource fetches so a transient failure (a 404 from an eviction
     // race, a dropped connection) can be retried instead of ending the whole
@@ -624,6 +667,13 @@ async fn drive(
     let mut progress = crate::source::DriverProgress::new();
 
     loop {
+        // Fetches this drain hands the session's auth state to. They are
+        // dispatched once the drain is over and their state is back, so a
+        // second fetch in the same drain still carries the session's
+        // credentials (an HLS playlist names its segments, and an encrypted
+        // one its key, all in one go).
+        let mut pending: Vec<crate::source::pull::PendingFetch<HlsFetchId, Fetched>> = Vec::new();
+        let mut paced: Vec<Option<tokio::time::Instant>> = Vec::new();
         while let Some(action) = driver.poll_transmit() {
             match action {
                 Action::WaitMs(ms) => {
@@ -642,16 +692,14 @@ async fn drive(
                     // fast playlist response is not re-fetched immediately.
                     let floor = pacing.on_push(tokio::time::Instant::now());
                     playlist_url = Some(url.clone());
-                    scheduler.push_at(
-                        playlist_fetch(
-                            http.clone(),
-                            &credentials,
-                            clock.unix_us(),
-                            url,
-                            read_timeout,
-                        ),
-                        floor,
-                    );
+                    pending.push(playlist_fetch(
+                        http.clone(),
+                        &credentials,
+                        clock.unix_us(),
+                        url,
+                        read_timeout,
+                    ));
+                    paced.push(floor);
                 }
                 Action::FetchResource { id, url, .. } => {
                     // Remember the URL so a transient failure can be retried
@@ -660,7 +708,7 @@ async fn drive(
                     resource_retries
                         .entry(fetch_id)
                         .or_insert_with(|| (url.clone(), 1));
-                    scheduler.push(resource_fetch(
+                    pending.push(resource_fetch(
                         http.clone(),
                         &credentials,
                         clock.unix_us(),
@@ -669,6 +717,7 @@ async fn drive(
                         read_timeout,
                         Duration::ZERO,
                     ));
+                    paced.push(None);
                 }
                 Action::FetchKey { id, url } => {
                     let fetch_id = HlsFetchId::Key(id);
@@ -676,7 +725,7 @@ async fn drive(
                         continue;
                     }
                     resource_retries.insert(fetch_id, (url.clone(), 1));
-                    scheduler.push(resource_fetch(
+                    pending.push(resource_fetch(
                         http.clone(),
                         &credentials,
                         clock.unix_us(),
@@ -685,6 +734,7 @@ async fn drive(
                         read_timeout,
                         Duration::ZERO,
                     ));
+                    paced.push(None);
                 }
                 // `Action` is `#[non_exhaustive]`: a future variant is simply
                 // dropped from the backlog rather than failing the whole
@@ -692,6 +742,12 @@ async fn drive(
                 // no-op, not fatal" posture.
                 _ => {}
             }
+        }
+        // The whole drain is built first, so a fetch that is paced keeps its
+        // floor and one response cannot redraw the next fetch's headers
+        // halfway through the drain.
+        for (fetch, floor) in pending.drain(..).zip(paced.drain(..)) {
+            scheduler.push_at(fetch, floor);
         }
 
         scheduler.pump();
@@ -716,27 +772,33 @@ async fn drive(
         let joined = scheduler.next(reload_hint, IDLE_POLL_INTERVAL).await;
         let now = Timestamp::from_instant(start, std::time::Instant::now());
         match joined {
-            Some(crate::source::pull::FetchOutcome::Ready(fetch_id, bytes)) => {
+            Some(crate::source::pull::FetchOutcome::Ready(fetch_id, fetched)) => {
                 resource_retries.remove(&fetch_id);
                 if fetch_id == HlsFetchId::Playlist {
                     playlist_waits = 0;
                 }
-                driver.feed((fetch_id, bytes.as_slice()), now);
+                credentials.adopt_cookies(&fetched.learned.cookies);
+                driver.feed((fetch_id, fetched.bytes.as_slice()), now);
                 crate::source::advance_route(&driver, route_handle, &mut progress).await;
             }
-            Some(crate::source::pull::FetchOutcome::Failed(fetch_id, e, retry_after)) => {
-                // A failed **resource** fetch is retried (bounded) rather than
-                // ending the session (audit run 7, W14): a single part that
-                // 404s on an eviction race, or one dropped connection, must
-                // not reconnect the whole route (which disrupts every
-                // viewer). A failed **playlist** fetch is still terminal — a
-                // broken manifest is not a transient error.
+            Some(crate::source::pull::FetchOutcome::Failed(fetch_id, e, learned, retry_after)) => {
+                // A resource or key refused for want of a credential the
+                // attempt itself could not carry is retried on the session's
+                // own state, which has it: a key server that answers before a
+                // preemptive Basic header is armed, or a live playlist that
+                // hands out its first parts before its challenge is answered.
+                // `retry_for_auth` marks exactly that refusal.
+                let retry_for_auth =
+                    matches!(e, MultimuxError::Auth { .. }) && !learned.learned.cookies.is_empty();
                 match fetch_id {
                     HlsFetchId::Resource(_) | HlsFetchId::Key(_) => {
                         // A permanent auth/permission failure is not retried —
                         // retrying 8 times over ~2 min would only delay the
-                        // reconnect for a credential that will never work.
-                        if matches!(e, MultimuxError::Auth { .. }) {
+                        // reconnect for a credential that will never work —
+                        // unless the refusal is one the session can now answer
+                        // (see `retry_for_auth`), which gets the retry the
+                        // bound allows.
+                        if matches!(e, MultimuxError::Auth { .. }) && !retry_for_auth {
                             tracing::error!(
                                 resource = ?fetch_id,
                                 error = %e,
@@ -1142,7 +1204,7 @@ Content-Length: {over}
         (format!("http://{addr}/key.bin"), task)
     }
 
-    async fn run_key_fetch(url: String) -> crate::source::pull::FetchResult {
+    async fn run_key_fetch(url: String) -> crate::source::pull::FetchResult<Fetched> {
         let pending = resource_fetch(
             HttpClient::new(),
             &scope_credentials(None, &Url::parse(&url).expect("url")),
@@ -1191,7 +1253,8 @@ Content-Length: {over}
         let result = run_key_fetch(url).await;
         server.abort();
         match result {
-            crate::source::pull::FetchResult::Ready(bytes) => {
+            crate::source::pull::FetchResult::Ready(fetched) => {
+                let bytes = fetched.bytes;
                 assert_eq!(bytes, vec![0x66; AES128_KEY_LEN]);
             }
             _ => panic!("expected the key bytes"),

@@ -373,13 +373,21 @@ fn pending_fetch(
                     status,
                     error,
                     retry_after,
-                })) => (status, FetchResult::Failed { error, retry_after }),
+                })) => (
+                    status,
+                    FetchResult::Failed {
+                        error,
+                        learned: Vec::new(),
+                        retry_after,
+                    },
+                ),
                 Err(_) => (
                     None,
                     FetchResult::Failed {
                         error: MultimuxError::Connect {
                             reason: format!("smooth-pull {what} read exceeded {read_timeout:?}"),
                         },
+                        learned: Vec::new(),
                         retry_after: None,
                     },
                 ),
@@ -481,7 +489,7 @@ pub async fn run_smooth_pull(
                 driver.feed(input, now);
                 crate::source::advance_route(&driver, route_handle, &mut progress).await;
             }
-            Some(crate::source::pull::FetchOutcome::Failed(fetch, e, retry_after)) => {
+            Some(crate::source::pull::FetchOutcome::Failed(fetch, e, _, retry_after)) => {
                 if fetch.status == Some(StatusCode::UNAUTHORIZED.as_u16()) {
                     return Err(e);
                 }

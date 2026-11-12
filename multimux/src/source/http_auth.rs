@@ -123,8 +123,16 @@ pub(crate) async fn authenticated_get_with(
     extra_headers: &[(HeaderName, String)],
     now_us: u64,
 ) -> Result<Response> {
+    // Preemptive Basic (RFC 7617) is armed once per state and never re-armed:
+    // an already negotiated authenticator is left exactly as it is, so a
+    // successful first attempt cannot be turned into a re-authentication by a
+    // retry of the same request.
     auth.preauthorize_basic();
     let parsed = Url::parse(url).ok();
+    // What the first request will carry, for `had_auth` below. A Digest state
+    // that has not negotiated its nonce yet sends nothing, so this is the
+    // request's own credential, not the state's: evaluating it also arms the
+    // authenticator, so the request `build_request` builds is the one measured.
     let had_auth = parsed
         .as_ref()
         .is_some_and(|parsed| carries_credentials(&auth.request_headers(parsed, now_us)));
@@ -160,7 +168,11 @@ pub(crate) async fn authenticated_get_with(
     {
         return Ok(response);
     }
-    let decision = auth.handle_unauthorized(status, &response_headers, had_auth, false);
+    // `had_auth` says whether a credential was sent; `stale_replayed` orders a
+    // `stale=true` re-challenge against the one replay a *previous* exchange
+    // already spent. A fresh state with no authenticator has spent none.
+    let stale_replayed = had_auth && auth.is_authenticated();
+    let decision = auth.handle_unauthorized(status, &response_headers, had_auth, stale_replayed);
     if !matches!(decision, AuthDecision::Replay | AuthDecision::ReplayStale) {
         return Ok(response);
     }

@@ -178,6 +178,26 @@ impl AuthState {
         was_waiting
     }
 
+    /// Take `cookies` into this state's jar, so the session carries them into
+    /// its next request.
+    ///
+    /// A pull fetches through tasks, each working on its own copy of the
+    /// session's state (a copy starts with a fresh cookie jar and no
+    /// negotiated authenticator), so the cookies a response set live in the
+    /// copy; they come back here.
+    pub fn adopt_cookies(&mut self, cookies: &[(String, String)]) {
+        if cookies.is_empty() {
+            return;
+        }
+        self.jar.seed(cookies);
+    }
+
+    /// Whether a Digest/Basic authenticator has been negotiated, so a request
+    /// built now would carry an `Authorization` header.
+    pub fn is_authenticated(&self) -> bool {
+        self.authenticator.is_some()
+    }
+
     /// Arms `Credentials::Basic` so [`request_headers`](Self::request_headers) sends it on the first
     /// request without waiting for a `401` (RFC 7617 permits preemptive Basic). A no-op for any
     /// other credential, or when an authenticator is already negotiated.

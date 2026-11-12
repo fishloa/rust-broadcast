@@ -186,7 +186,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "source/dash_pull/tests.rs",
-        1606,
+        1607,
         "test HTTP server task; aborted at test end",
     ),
 ];

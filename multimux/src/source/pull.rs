@@ -53,80 +53,80 @@ impl FetchResult {
             Ok(b) => FetchResult::Ready(b),
             Err(e) => FetchResult::Failed {
                 error: e,
+                learned: Vec::new(),
                 retry_after: None,
             },
         }
     }
-
-    /// Build a failed result that also carries a server-requested `Retry-After`
-    /// wait (RFC 9110 §10.2.3).
-    pub fn failed_after(error: MultimuxError, retry_after: Option<Duration>) -> Self {
-        FetchResult::Failed { error, retry_after }
-    }
 }
 
 /// What one fetch future resolved to, before the scheduler attaches its key.
-pub(crate) enum FetchResult {
-    /// The fetch resolved to bytes.
-    Ready(Vec<u8>),
+pub(crate) enum FetchResult<R = Vec<u8>> {
+    /// The fetch resolved: the bytes, or whatever else `R` a source carries
+    /// back out of a fetch alongside them (`hls_pull`'s drained auth state).
+    Ready(R),
     /// The fetch failed.
     Failed {
         /// The error.
         error: MultimuxError,
+        /// What the attempt learned before it failed — a refused request can
+        /// still carry a `Set-Cookie` or a challenge the session must keep.
+        learned: R,
         /// The `Retry-After` wait a `429`/`503` asked for, if any.
         retry_after: Option<Duration>,
     },
 }
 
 /// The outcome of one spawned fetch.
-pub(crate) enum FetchOutcome<K> {
-    /// The fetch resolved: `(key, bytes)`.
-    Ready(K, Vec<u8>),
-    /// The fetch failed: `(key, error, retry_after)` — the source decides retry vs terminal.
-    Failed(K, MultimuxError, Option<Duration>),
+pub(crate) enum FetchOutcome<K, R = Vec<u8>> {
+    /// The fetch resolved: its key and its ready payload.
+    Ready(K, R),
+    /// The fetch failed: its key, the error, what the attempt learned and the
+    /// `Retry-After` wait, if any — the source decides retry vs terminal.
+    Failed(K, MultimuxError, R, Option<Duration>),
     /// The spawned fetch task itself panicked or was aborted.
     TaskPanic(String),
 }
 
-impl<K: fmt::Debug> fmt::Debug for FetchOutcome<K> {
+impl<K: fmt::Debug, R> fmt::Debug for FetchOutcome<K, R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            FetchOutcome::Ready(k, b) => write!(f, "Ready({k:?}, {} bytes)", b.len()),
-            FetchOutcome::Failed(k, e, _) => write!(f, "Failed({k:?}, {e})"),
+            FetchOutcome::Ready(k, _) => write!(f, "Ready({k:?}, ..)"),
+            FetchOutcome::Failed(k, e, _, _) => write!(f, "Failed({k:?}, {e})"),
             FetchOutcome::TaskPanic(e) => write!(f, "TaskPanic({e})"),
         }
     }
 }
 
-type FetchFuture<K> = Pin<Box<dyn Future<Output = (K, FetchResult)> + Send>>;
+type FetchFuture<K, R> = Pin<Box<dyn Future<Output = (K, FetchResult<R>)> + Send>>;
 
 /// One fetch to spawn.
-pub(crate) struct PendingFetch<K> {
+pub(crate) struct PendingFetch<K, R = Vec<u8>> {
     /// How long to wait before this fetch's future is first polled (its
     /// "dispatch"). A retry uses it for its backoff; a paced fetch (see
     /// [`PullScheduler::push_at`]) uses it for its not-before floor.
     pub delay: Duration,
-    pub fut: FetchFuture<K>,
+    pub fut: FetchFuture<K, R>,
 }
 
 /// The single fetch/retry/wait engine for the pull sources.
-pub(crate) struct PullScheduler<K: Send + 'static> {
-    inflight: JoinSet<(K, FetchResult)>,
-    backlog: VecDeque<QueuedFetch<K>>,
-    retries: VecDeque<QueuedFetch<K>>,
+pub(crate) struct PullScheduler<K: Send + 'static, R: Send + 'static = Vec<u8>> {
+    inflight: JoinSet<(K, FetchResult<R>)>,
+    backlog: VecDeque<QueuedFetch<K, R>>,
+    retries: VecDeque<QueuedFetch<K, R>>,
     max_inflight: usize,
 }
 
 /// A fetch waiting for a slot, with the instant it first may run. It takes an
 /// in-flight slot only once due, so a fetch sleeping out a backoff or a pacing
 /// floor never keeps a ready fetch from starting.
-struct QueuedFetch<K> {
+struct QueuedFetch<K, R> {
     due: tokio::time::Instant,
-    fut: FetchFuture<K>,
+    fut: FetchFuture<K, R>,
 }
 
-impl<K> QueuedFetch<K> {
-    fn after(fetch: PendingFetch<K>) -> Self {
+impl<K, R> QueuedFetch<K, R> {
+    fn after(fetch: PendingFetch<K, R>) -> Self {
         Self {
             due: tokio::time::Instant::now() + fetch.delay,
             fut: fetch.fut,
@@ -134,15 +134,15 @@ impl<K> QueuedFetch<K> {
     }
 }
 
-fn pop_due<K>(
-    queue: &mut VecDeque<QueuedFetch<K>>,
+fn pop_due<K, R>(
+    queue: &mut VecDeque<QueuedFetch<K, R>>,
     now: tokio::time::Instant,
-) -> Option<QueuedFetch<K>> {
+) -> Option<QueuedFetch<K, R>> {
     let index = queue.iter().position(|queued| queued.due <= now)?;
     queue.remove(index)
 }
 
-impl<K: Send + 'static> PullScheduler<K> {
+impl<K: Send + 'static, R: Send + 'static> PullScheduler<K, R> {
     /// A scheduler that keeps at most `max_inflight` fetches running.
     pub fn new(max_inflight: usize) -> Self {
         Self {
@@ -154,7 +154,7 @@ impl<K: Send + 'static> PullScheduler<K> {
     }
 
     /// Queue a fetch behind everything already backlogged.
-    pub fn push(&mut self, fetch: PendingFetch<K>) {
+    pub fn push(&mut self, fetch: PendingFetch<K, R>) {
         self.backlog.push_back(QueuedFetch::after(fetch));
     }
 
@@ -162,7 +162,7 @@ impl<K: Send + 'static> PullScheduler<K> {
     /// (a pacing floor — see the module doc's `WaitMs` section). The floor is
     /// resolved against the current instant here, so later pump/backlog
     /// churn cannot shorten or lengthen it.
-    pub fn push_at(&mut self, fetch: PendingFetch<K>, not_before: Option<tokio::time::Instant>) {
+    pub fn push_at(&mut self, fetch: PendingFetch<K, R>, not_before: Option<tokio::time::Instant>) {
         let mut queued = QueuedFetch::after(fetch);
         if let Some(not_before) = not_before {
             queued.due = not_before.max(tokio::time::Instant::now());
@@ -172,7 +172,7 @@ impl<K: Send + 'static> PullScheduler<K> {
 
     /// Queue a due retry — a retry takes a free slot before the backlog, so
     /// an eviction race is repaired before new work is started.
-    pub fn push_retry(&mut self, fetch: PendingFetch<K>) {
+    pub fn push_retry(&mut self, fetch: PendingFetch<K, R>) {
         self.retries.push_back(QueuedFetch::after(fetch));
     }
 
@@ -221,7 +221,7 @@ impl<K: Send + 'static> PullScheduler<K> {
         &mut self,
         wait_hint: Option<Duration>,
         idle_park: Duration,
-    ) -> Option<FetchOutcome<K>> {
+    ) -> Option<FetchOutcome<K, R>> {
         let deadline = wait_hint.map(|hint| tokio::time::Instant::now() + hint);
         loop {
             self.pump();
@@ -263,9 +263,14 @@ impl<K: Send + 'static> PullScheduler<K> {
             };
             return match joined {
                 Some(Ok((key, FetchResult::Ready(bytes)))) => Some(FetchOutcome::Ready(key, bytes)),
-                Some(Ok((key, FetchResult::Failed { error, retry_after }))) => {
-                    Some(FetchOutcome::Failed(key, error, retry_after))
-                }
+                Some(Ok((
+                    key,
+                    FetchResult::Failed {
+                        error,
+                        learned,
+                        retry_after,
+                    },
+                ))) => Some(FetchOutcome::Failed(key, error, learned, retry_after)),
                 Some(Err(e)) => Some(FetchOutcome::TaskPanic(e.to_string())),
                 None => None,
             };

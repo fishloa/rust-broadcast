@@ -212,7 +212,14 @@ fn failed_after(
     retry_after: Option<Duration>,
 ) -> (DashFetch, FetchResult) {
     fetch.outcome = Outcome::Failed(failure);
-    (fetch, FetchResult::Failed { error, retry_after })
+    (
+        fetch,
+        FetchResult::Failed {
+            error,
+            learned: Vec::new(),
+            retry_after,
+        },
+    )
 }
 
 fn header_text(headers: &HeaderMap, name: &HeaderName) -> Option<String> {
@@ -297,6 +304,7 @@ pub(super) async fn exchange(
             fetch,
             FetchResult::Failed {
                 error,
+                learned: Vec::new(),
                 retry_after: None,
             },
         );
@@ -482,7 +490,7 @@ pub(super) async fn run<S: RouteSink>(
             Some(FetchOutcome::Ready(fetch, body)) => {
                 feed_response(&mut driver, fetch, &body, now_us);
             }
-            Some(FetchOutcome::Failed(fetch, error, retry_after)) => match fetch.outcome {
+            Some(FetchOutcome::Failed(fetch, error, _, retry_after)) => match fetch.outcome {
                 Outcome::Unauthorized => return Err(error),
                 Outcome::Failed(failure) => {
                     if fetch.target == FetchTarget::Mpd && !driver.session().mpd_accepted() {
