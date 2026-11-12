@@ -316,5 +316,4 @@ mod tests {
         let url = SrtUrl::parse("srt://h:9000?streamid=%C3%A9").expect("valid utf8");
         assert_eq!(url.stream_id.as_deref(), Some("é"));
     }
-
 }

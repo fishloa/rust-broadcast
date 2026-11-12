@@ -1386,5 +1386,4 @@ mod tests {
         let partial = &flv[..flv.len().min(FLV_HEADER_LEN + 3)];
         assert!(demux.feed(partial).is_ok());
     }
-
 }
