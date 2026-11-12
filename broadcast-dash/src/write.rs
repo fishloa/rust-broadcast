@@ -8,6 +8,7 @@ use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 use crate::duration::format_iso8601_duration;
 use crate::error::MpdError;
 use crate::model::*;
+use crate::parse::{INFINITY_TOKEN, NEGATIVE_INFINITY_TOKEN};
 use crate::xs_datetime::format_xs_datetime;
 
 const NS_MPD: &str = "urn:mpeg:dash:schema:mpd:2011";
@@ -290,15 +291,7 @@ fn write_base_url(w: &mut Writer<Vec<u8>>, b: &BaseUrl) -> Result<(), MpdError> 
         e.push_attribute(("dvb:weight", v.to_string().as_str()));
     }
     if let Some(v) = b.availability_time_offset {
-        if v.is_infinite() {
-            if v.is_sign_negative() {
-                e.push_attribute(("availabilityTimeOffset", "-INF"));
-            } else {
-                e.push_attribute(("availabilityTimeOffset", "INF"));
-            }
-        } else {
-            e.push_attribute(("availabilityTimeOffset", v.to_string().as_str()));
-        }
+        e.push_attribute(("availabilityTimeOffset", format_xs_double(v).as_str()));
     }
     if let Some(v) = b.availability_time_complete {
         e.push_attribute(("availabilityTimeComplete", if v { "true" } else { "false" }));
@@ -318,6 +311,16 @@ fn write_base_url(w: &mut Writer<Vec<u8>>, b: &BaseUrl) -> Result<(), MpdError> 
             .map_err(io_err)?;
     }
     Ok(())
+}
+
+fn format_xs_double(v: f64) -> String {
+    if v == f64::INFINITY {
+        INFINITY_TOKEN.to_string()
+    } else if v == f64::NEG_INFINITY {
+        NEGATIVE_INFINITY_TOKEN.to_string()
+    } else {
+        v.to_string()
+    }
 }
 
 fn write_range(r: &ByteRange) -> String {
@@ -375,11 +378,7 @@ fn write_segment_base(w: &mut Writer<Vec<u8>>, sb: &SegmentBase) -> Result<(), M
     let mut e = BytesStart::new("SegmentBase");
     write_base_info(w, &mut e, &sb.info)?;
     if let Some(v) = sb.info.availability_time_offset {
-        if v.fract() == 0.0 {
-            e.push_attribute(("availabilityTimeOffset", format!("{}", v as i64).as_str()));
-        } else {
-            e.push_attribute(("availabilityTimeOffset", v.to_string().as_str()));
-        }
+        e.push_attribute(("availabilityTimeOffset", format_xs_double(v).as_str()));
     }
     if let Some(v) = sb.info.availability_time_complete {
         e.push_attribute(("availabilityTimeComplete", if v { "true" } else { "false" }));
@@ -436,11 +435,7 @@ fn write_segment_list(w: &mut Writer<Vec<u8>>, sl: &SegmentList) -> Result<(), M
     let mut e = BytesStart::new("SegmentList");
     write_base_info(w, &mut e, &sl.multi.base)?;
     if let Some(v) = sl.multi.base.availability_time_offset {
-        if v.fract() == 0.0 {
-            e.push_attribute(("availabilityTimeOffset", format!("{}", v as i64).as_str()));
-        } else {
-            e.push_attribute(("availabilityTimeOffset", v.to_string().as_str()));
-        }
+        e.push_attribute(("availabilityTimeOffset", format_xs_double(v).as_str()));
     }
     if let Some(v) = sl.multi.base.availability_time_complete {
         e.push_attribute(("availabilityTimeComplete", if v { "true" } else { "false" }));
@@ -533,11 +528,7 @@ fn write_segment_template(w: &mut Writer<Vec<u8>>, st: &SegmentTemplate) -> Resu
         e.push_attribute(("bitstreamSwitching", v.as_str()));
     }
     if let Some(v) = st.multi.base.availability_time_offset {
-        if v.fract() == 0.0 {
-            e.push_attribute(("availabilityTimeOffset", format!("{}", v as i64).as_str()));
-        } else {
-            e.push_attribute(("availabilityTimeOffset", v.to_string().as_str()));
-        }
+        e.push_attribute(("availabilityTimeOffset", format_xs_double(v).as_str()));
     }
     if let Some(v) = st.multi.base.availability_time_complete {
         e.push_attribute(("availabilityTimeComplete", if v { "true" } else { "false" }));
