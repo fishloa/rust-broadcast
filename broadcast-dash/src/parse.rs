@@ -486,10 +486,7 @@ fn adaptation_set(e: &Elem<Ns>, ctx: &mut Ctx<'_>) -> Result<Option<AdaptationSe
         xlink: link,
         roles: descriptors(e, "Role")?,
         accessibilities: descriptors(e, "Accessibility")?,
-        labels: e
-            .children_named("Label")
-            .map(|l| l.text.trim().to_owned())
-            .collect(),
+        labels: labels(e, "Label")?,
         base_urls: base_urls(e, ctx)?,
         segment: segment_layer(e, ctx)?,
         content_protections: descriptors(e, "ContentProtection")?,
@@ -773,17 +770,23 @@ fn preselection(e: &Elem<Ns>) -> Result<Preselection, MpdError> {
         content_protections: descriptors(e, "ContentProtection")?,
         output_protection: e.child("OutputProtection").map(descriptor).transpose()?,
         inband_event_streams: descriptors(e, "InbandEventStream")?,
-        group_labels: labels(e, "GroupLabel"),
-        labels: labels(e, "Label"),
+        group_labels: labels(e, "GroupLabel")?,
+        labels: labels(e, "Label")?,
         producer_reference_times: producer_reference_times(e)?,
         resyncs: resyncs(e)?,
         unsupported,
     })
 }
 
-fn labels(e: &Elem<Ns>, name: &str) -> Vec<String> {
+fn labels(e: &Elem<Ns>, name: &str) -> Result<Vec<Label>, MpdError> {
     e.children_named(name)
-        .map(|l| l.text.trim().to_owned())
+        .map(|l| {
+            Ok(Label {
+                id: opt_u32(l, "id")?.unwrap_or_default(),
+                lang: opt_str(l, "lang"),
+                text: l.text.trim().to_owned(),
+            })
+        })
         .collect()
 }
 

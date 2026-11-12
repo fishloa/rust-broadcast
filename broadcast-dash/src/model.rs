@@ -572,6 +572,19 @@ pub struct PatchLocation {
     pub ttl: Option<f64>,
 }
 
+/// A `Label` or `GroupLabel` (`LabelType`): its text with `@id` (default 0)
+/// and `@lang`.
+#[derive(Debug, Clone, PartialEq, Default)]
+#[non_exhaustive]
+pub struct Label {
+    /// `@id`.
+    pub id: u32,
+    /// `@lang`.
+    pub lang: Option<String>,
+    /// Element text.
+    pub text: String,
+}
+
 /// A `Resync` (ISO/IEC 23009-1 clause 5.3.13, Table 15) resynchronisation
 /// point of an AdaptationSet or Representation.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -669,10 +682,10 @@ pub struct Preselection {
     pub output_protection: Option<Descriptor>,
     /// `InbandEventStream`.
     pub inband_event_streams: Vec<Descriptor>,
-    /// `GroupLabel` texts.
-    pub group_labels: Vec<String>,
-    /// `Label` texts.
-    pub labels: Vec<String>,
+    /// `GroupLabel` elements.
+    pub group_labels: Vec<Label>,
+    /// `Label` elements.
+    pub labels: Vec<Label>,
     /// `ProducerReferenceTime`.
     pub producer_reference_times: Vec<ProducerReferenceTime>,
     /// `Resync`.
@@ -758,8 +771,8 @@ pub struct AdaptationSet {
     pub roles: Vec<Descriptor>,
     /// `Accessibility` descriptors.
     pub accessibilities: Vec<Descriptor>,
-    /// `Label` texts.
-    pub labels: Vec<String>,
+    /// `Label` elements.
+    pub labels: Vec<Label>,
     /// `BaseURL` alternates.
     pub base_urls: Vec<BaseUrl>,
     /// Segment information declared here.

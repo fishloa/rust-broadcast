@@ -216,7 +216,7 @@ fn a_model_with_every_field_set_round_trips() {
     aset.xlink = Some(axl);
     aset.roles = vec![desc.clone()];
     aset.accessibilities = vec![desc.clone()];
-    aset.labels = vec!["lab".to_string(), "lab2".to_string()];
+    aset.labels = vec![label(0, None, "lab"), label(7, Some("fr"), "lab2")];
     let mut abu = BaseUrl::default();
     abu.url = "http://ab/".to_string();
     aset.base_urls = vec![abu];
@@ -351,6 +351,14 @@ fn every_field_resync() -> Resync {
     r
 }
 
+fn label(id: u32, lang: Option<&str>, text: &str) -> Label {
+    let mut l = Label::default();
+    l.id = id;
+    l.lang = lang.map(str::to_string);
+    l.text = text.to_string();
+    l
+}
+
 fn every_field_preselection(desc: &Descriptor) -> Preselection {
     let mut common = CommonAttributes::default();
     common.profiles = Some("prof".to_string());
@@ -387,8 +395,8 @@ fn every_field_preselection(desc: &Descriptor) -> Preselection {
     p.content_protections = vec![desc.clone()];
     p.output_protection = Some(desc.clone());
     p.inband_event_streams = vec![desc.clone()];
-    p.group_labels = vec!["group".to_string()];
-    p.labels = vec!["one".to_string(), "two".to_string()];
+    p.group_labels = vec![label(3, Some("de"), "group")];
+    p.labels = vec![label(0, None, "one"), label(5, Some("en"), "two")];
     p.producer_reference_times = vec![every_field_producer_reference_time(
         3,
         ProducerReferenceKind::Captured,
@@ -547,16 +555,106 @@ fn preselection_representation_base_survives_a_write() {
 
 #[test]
 fn a_preselection_child_the_model_lacks_is_flagged_and_refused_on_write() {
-    let xml = br#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" minBufferTime="PT1S"><Period id="0"><Preselection preselectionComponents="1"><Switching interval="2"/></Preselection></Period></MPD>"#;
+    for child in [
+        r#"<Switching interval="2"/>"#,
+        r#"<RandomAccess interval="2"/>"#,
+        r#"<ContentPopularityRate source="1" type="PR"/>"#,
+        r#"<SegmentSequenceProperties/>"#,
+    ] {
+        let xml = format!(
+            r#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" minBufferTime="PT1S"><Period id="0"><Preselection preselectionComponents="1">{child}</Preselection></Period></MPD>"#
+        );
+        let mpd = Mpd::parse(xml.as_bytes()).unwrap();
+        assert_eq!(
+            mpd.periods[0].preselections[0].unsupported,
+            Some(Unsupported::RepresentationBaseChild),
+            "{child}"
+        );
+        assert_eq!(
+            mpd.to_xml(),
+            Err(MpdError::Unsupported(Unsupported::RepresentationBaseChild)),
+            "{child}"
+        );
+    }
+}
+
+fn plain_descriptor() -> Descriptor {
+    let mut d = Descriptor::default();
+    d.scheme_id_uri = "urn:x".to_string();
+    d.value = Some("v".to_string());
+    d
+}
+
+fn every_field_preselection_mpd() -> Mpd {
+    let mut period = Period::default();
+    period.preselections = vec![every_field_preselection(&plain_descriptor())];
+    let mut mpd = Mpd::default();
+    mpd.profiles = vec!["urn:mpeg:dash:profile:isoff-live:2011".to_string()];
+    mpd.min_buffer_time = Some(Duration::from_secs(1));
+    mpd.periods = vec![period];
+    mpd
+}
+
+#[test]
+fn preselection_children_are_written_in_the_schema_sequence() {
+    let xml = every_field_preselection_mpd().to_xml().unwrap();
+    let root = broadcast_common::xml::read_tree::<()>(
+        xml.as_bytes(),
+        "MPD",
+        &Limits::default().xml_limits(),
+    )
+    .unwrap();
+    let pre = &root.child("Period").unwrap().child("Preselection").unwrap();
+    let names: Vec<&str> = pre.children.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "FramePacking",
+            "AudioChannelConfiguration",
+            "ContentProtection",
+            "OutputProtection",
+            "EssentialProperty",
+            "SupplementalProperty",
+            "InbandEventStream",
+            "GroupLabel",
+            "Label",
+            "Label",
+            "ProducerReferenceTime",
+            "Resync",
+            "Accessibility",
+            "Role",
+            "Rating",
+            "Viewpoint",
+        ]
+    );
+}
+
+#[test]
+fn the_every_field_preselection_validates_against_the_schema() {
+    let Some(schema) = test_fixtures::process::xsd::dash_mpd_schema("preselection_xsd") else {
+        return;
+    };
+    let xml = every_field_preselection_mpd().to_xml().unwrap();
+    if let Err(e) = test_fixtures::process::xsd::validate(&schema, "preselection", &xml) {
+        panic!("{e}\n{xml}");
+    }
+}
+
+#[test]
+fn label_id_and_lang_survive_a_write() {
+    let xml = br#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" minBufferTime="PT1S"><Period id="0"><AdaptationSet><Label id="4" lang="fr">A</Label></AdaptationSet><Preselection preselectionComponents="1"><GroupLabel id="2" lang="de">G</GroupLabel><Label>L</Label></Preselection></Period></MPD>"#;
     let mpd = Mpd::parse(xml).unwrap();
-    assert_eq!(
-        mpd.periods[0].preselections[0].unsupported,
-        Some(Unsupported::RepresentationBaseChild)
+    let set = &mpd.periods[0].adaptation_sets[0];
+    assert_eq!(set.labels, [label(4, Some("fr"), "A")]);
+    let pre = &mpd.periods[0].preselections[0];
+    assert_eq!(pre.group_labels, [label(2, Some("de"), "G")]);
+    assert_eq!(pre.labels, [label(0, None, "L")]);
+    let written = mpd.to_xml().unwrap();
+    assert!(
+        written.contains(r#"<Label id="4" lang="fr">A</Label>"#),
+        "{written}"
     );
-    assert_eq!(
-        mpd.to_xml(),
-        Err(MpdError::Unsupported(Unsupported::RepresentationBaseChild))
-    );
+    assert_eq!(Mpd::parse(written.as_bytes()).unwrap(), mpd);
 }
 
 #[test]
