@@ -128,6 +128,7 @@ impl SeqValidity {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
 
     fn valid(verdict: SeqVerdict) -> bool {
         matches!(verdict, SeqVerdict::Valid { .. })
