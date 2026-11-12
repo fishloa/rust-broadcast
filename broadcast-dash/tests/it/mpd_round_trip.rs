@@ -8,12 +8,7 @@ use broadcast_dash::utc_timing::UtcScheme;
 use super::corpus;
 
 fn without_unwritten_features(mut mpd: Mpd) -> Mpd {
-    mpd.features.patch_location = false;
-    mpd.features.event_stream = false;
-    mpd.features.preselection = false;
-    mpd.features.producer_reference_time = false;
-    mpd.features.content_steering = false;
-    mpd.features.resync = false;
+    mpd.features = mpd.features.written();
     mpd
 }
 

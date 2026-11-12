@@ -243,6 +243,24 @@ pub struct MpdFeatures {
     pub xlink_resolve_to_zero: bool,
 }
 
+impl MpdFeatures {
+    /// These flags with the read-only ones (`patch_location`, `event_stream`,
+    /// `preselection`, `producer_reference_time`, `content_steering`,
+    /// `resync`) cleared: what survives a parse -> [`Mpd::to_xml`] -> parse
+    /// round trip, since the writer does not emit elements it does not model.
+    pub fn written(self) -> Self {
+        Self {
+            patch_location: false,
+            event_stream: false,
+            preselection: false,
+            producer_reference_time: false,
+            content_steering: false,
+            resync: false,
+            ..self
+        }
+    }
+}
+
 /// The `RepresentationBase` attributes (5.3.7.2) that AdaptationSet and
 /// Representation both carry and Representation inherits.
 #[derive(Debug, Clone, PartialEq, Default)]

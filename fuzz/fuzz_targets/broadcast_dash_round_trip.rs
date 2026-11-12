@@ -10,7 +10,8 @@ fuzz_target!(|data: &[u8]| {
     if data.len() > MAX_INPUT {
         return;
     }
-    let Ok(mpd) = Mpd::parse(data) else { return };
+    let Ok(mut mpd) = Mpd::parse(data) else { return };
+    mpd.features = mpd.features.written();
     let xml = mpd.to_xml().expect("a parsed MPD renders");
     let reparsed = Mpd::parse(xml.as_bytes()).expect("the writer output parses");
     assert_eq!(reparsed, mpd);
