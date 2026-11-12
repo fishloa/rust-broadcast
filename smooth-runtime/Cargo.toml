@@ -31,6 +31,10 @@ thiserror         = "2"
 [dev-dependencies]
 test-fixtures     = { path = "../test-fixtures" }
 workspace-guards  = { path = "../workspace-guards" }
+# The golden Manifest test parses both documents with the workspace's one XML
+# reader, so a difference in either is reported as elements and attributes
+# rather than as a byte offset.
+quick-xml        = { workspace = true }
 
 [features]
 default = ["std"]

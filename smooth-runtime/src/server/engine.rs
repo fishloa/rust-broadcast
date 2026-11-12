@@ -812,6 +812,19 @@ mod tests {
     const SL_CONFIG_PREDEFINED_MP4: u8 = 2;
     /// The `stpp` namespace a TTML track carries.
     const TTML_NAMESPACE: &str = "http://www.w3.org/ns/ttml";
+    /// The `sprop-parameter-sets` the golden Manifest is rendered from: a
+    /// Baseline-profile SPS that decodes to the 1280x720 the golden records,
+    /// plus its PPS.
+    ///
+    /// The golden's own `CodecPrivateData` records a truncated 4-byte SPS
+    /// (`00000001674D401F`), a placeholder an earlier hand-built config_
+    /// carried rather than a decodable record, so it cannot be the source of
+    /// the geometry. The same geometry cannot be reached by editing it either:
+    /// the size fields are `pic_width_in_mbs_minus1 = 79` and
+    /// `pic_height_in_map_units_minus1 = 44`, which need more than the 17 and
+    /// 16 bits a 4-byte SPS leaves. The values below are the ones this pair
+    /// actually produces.
+    const GOLDEN_SPROP: &str = "Z0LAH/QCgC3AgA==,aO48gA==";
     /// Segment duration published to the trunk.
     const SEGMENT_DURATION: Duration = Duration::from_secs(2);
     /// [`SEGMENT_DURATION`] in nanoseconds, for the trunk's timeline position.
@@ -1061,6 +1074,405 @@ mod tests {
             origin.manifest(Timestamp::from_nanos(10), policy),
             EgressResponse::NotFound
         ));
+    }
+
+    /// Byte-for-byte golden: the rendered live Manifest equals the file in
+    /// `fixtures/golden/smooth/`, which `multimux` recorded from the live
+    /// output `origin/main` hand-wrote before this engine existed (see that
+    /// directory's `PROVENANCE.md`). The window is that test's own: a
+    /// H.264 1280x720 + AAC-LC 48 kHz stereo track pair over three and five
+    /// chunks.
+    ///
+    /// The golden is compared as a `(name, value)` map of bytes per element
+    /// (a multi-line `Prop` per line):
+    ///
+    /// 1. `(element, Some(attribute name), value)` for every attribute, in
+    ///    document order;
+    /// 2. `(element, None, text)` for every leaf element carrying text
+    ///    (`Prop`), in document order;
+    /// 3. `("", None, line)` for every non-blank line outside a `Prop`.
+    ///
+    /// The first two sequences must be **identical** to the golden's: not a
+    /// single attribute value or name may change. The third compares the
+    /// document's structure and every literal line (the XML declaration, each
+    /// indented open/empty/close tag) but normalises a `Prop` to a single line
+    /// and treats an escaped character (`&`, `<`, `>`, `"`, `\'`) as equal to
+    /// the character it stands for — `broadcast-smooth`'s writer chooses
+    /// those spellings, and the round-trip test
+    /// ([`the_rendered_manifest_round_trips`]) pins them instead.
+    #[test]
+    fn render_manifest_matches_golden() {
+        fn chunks(count: u64, duration: u64) -> Vec<ChunkTiming> {
+            (0..count)
+                .map(|i| ChunkTiming {
+                    sequence: SegmentSeq::new(u32::try_from(i + 1).expect("sequence fits")),
+                    start: i * duration,
+                    duration,
+                })
+                .collect()
+        }
+        // `SmoothCodec` is `#[non_exhaustive]`: build the two tracks the
+        // golden records through the real resolver, which is also what keeps
+        // the test honest about where each manifest value comes from.
+        let video = resolve_codec(&CodecConfig::Avc {
+            config: avc_config_from_sprop(GOLDEN_SPROP).expect("valid sprop"),
+            width: 1280,
+            height: 720,
+        })
+        .expect("AVC resolves");
+        let audio = resolve_codec(&CodecConfig::Aac {
+            esds: esds(Some(ASC_48K_STEREO.to_vec())),
+            sample_rate: SAMPLE_RATE,
+            channel_count: CHANNELS,
+            sample_size: AAC_BITS_PER_SAMPLE,
+        })
+        .expect("AAC resolves");
+        let layouts = [
+            (
+                "video-audio",
+                Plan {
+                    manifest: String::new(),
+                    streams: vec![
+                        StreamPlan {
+                            key: StreamKey {
+                                kind: SmoothStreamType::Video,
+                                ordinal: 1,
+                            },
+                            codec: video,
+                            interleaved_ordinal: 1,
+                            chunks: chunks(3, 20_000_000),
+                        },
+                        StreamPlan {
+                            key: StreamKey {
+                                kind: SmoothStreamType::Audio,
+                                ordinal: 1,
+                            },
+                            codec: audio,
+                            interleaved_ordinal: 2,
+                            chunks: chunks(5, 21_333_333),
+                        },
+                    ],
+                },
+            ),
+            (
+                "empty",
+                Plan {
+                    manifest: String::new(),
+                    streams: Vec::new(),
+                },
+            ),
+        ];
+        for (name, layout) in layouts {
+            let actual = layout.manifest().to_xml();
+            let file = format!("smooth-{name}.xml");
+            let path = test_fixtures::path(&format!("golden/smooth/{file}"));
+            let expected = std::fs::read_to_string(&path).expect("read golden");
+            assert_manifest_matches(&actual, &expected, &file);
+        }
+    }
+
+    /// One parsed manifest: its elements and attributes in document order.
+    struct ManifestDocument {
+        elements: Vec<(String, Option<String>, String)>,
+    }
+
+    /// Parse `xml` into [`ManifestDocument`], requiring it to be well formed.
+    fn parse_manifest(xml: &str) -> ManifestDocument {
+        use quick_xml::XmlVersion;
+        use quick_xml::events::Event;
+        use quick_xml::reader::Reader;
+
+        let mut reader = Reader::from_str(xml);
+        let mut elements: Vec<(String, Option<String>, String)> = Vec::new();
+        loop {
+            match reader.read_event().expect("well-formed manifest") {
+                Event::Start(e) | Event::Empty(e) => {
+                    let name = e.name().into_inner().to_string();
+                    for attribute in e.attributes() {
+                        let attribute = attribute.expect("attribute");
+                        elements.push((
+                            name.clone(),
+                            Some(attribute.key.into_inner().to_string()),
+                            attribute
+                                .normalized_value(XmlVersion::Implicit1_0)
+                                .expect("attribute value")
+                                .into_owned(),
+                        ));
+                    }
+                }
+                Event::Text(e) => {
+                    let text = e.into_inner();
+                    if !text.trim().is_empty() {
+                        elements.push(("Prop".to_string(), None, text.trim().to_string()));
+                    }
+                }
+                Event::Eof => break,
+                _ => {}
+            }
+        }
+        ManifestDocument { elements }
+    }
+
+    /// A value the golden records and the value this origin produces for the
+    /// same attribute, with the reason the difference is intended. Every
+    /// `QualityLevel` attribute is scoped to its stream.
+    struct GoldenDifference {
+        element: &'static str,
+        attribute: &'static str,
+        stream: Option<&'static str>,
+        /// The golden's value, or `None` when the golden does not record this
+        /// attribute for that stream at all.
+        golden: Option<&'static str>,
+        /// This origin's value, or `None` when it does not emit it.
+        ours: Option<&'static str>,
+        reason: &'static str,
+    }
+
+    /// Every intended difference between this origin's live Manifest and the
+    /// golden `origin/main` recorded. Nothing else may differ, and nothing the
+    /// golden records may be absent.
+    const GOLDEN_DIFFERENCES: &[GoldenDifference] = &[
+        GoldenDifference {
+            element: "SmoothStreamingMedia",
+            attribute: "IsLive",
+            stream: None,
+            golden: Some("true"),
+            ours: Some("TRUE"),
+            reason: "broadcast-smooth's writer spells IsLive=\"TRUE\", the value its own parser accepts",
+        },
+        GoldenDifference {
+            element: "StreamIndex",
+            attribute: "Subtype",
+            stream: Some("video"),
+            golden: Some(""),
+            ours: None,
+            reason: "the old writer always emitted Subtype=\"\"; broadcast-smooth emits it only where MS-SSTR requires it (a text stream)",
+        },
+        GoldenDifference {
+            element: "StreamIndex",
+            attribute: "Subtype",
+            stream: Some("audio"),
+            golden: Some(""),
+            ours: None,
+            reason: "as for video: MS-SSTR §2.2.2.3 makes Subtype a text-stream attribute",
+        },
+        GoldenDifference {
+            element: "QualityLevel",
+            attribute: "Bitrate",
+            stream: Some("video"),
+            golden: Some("2500000"),
+            ours: Some("3686400"),
+            reason: "a live window has no per-track byte count, so the origin advertises a resolution-scaled estimate (width x height x 4 bits/pixel), clamped 0.5-20 Mbps; the old output estimated from the same geometry with different constants",
+        },
+        GoldenDifference {
+            element: "QualityLevel",
+            attribute: "Bitrate",
+            stream: Some("audio"),
+            golden: Some("128000"),
+            ours: Some("320000"),
+            reason: "same estimate: sampling_rate x channels x 16 bits (48 kHz x 2 x 16 = 1.536 Mbps) clamped to 320 kbps, the band's ceiling",
+        },
+        GoldenDifference {
+            element: "QualityLevel",
+            attribute: "CodecPrivateData",
+            stream: Some("video"),
+            golden: Some("00000001674D401F0000000168EE3C80"),
+            ours: Some("000000016742C01FF402802DC0800000000168EE3C80"),
+            reason: "the golden's SPS is a truncated 4-byte placeholder that decodes to no geometry; the origin's Annex-B bytes and its 1280x720 geometry both come from the real SPS at GOLDEN_SPROP",
+        },
+    ];
+
+    /// Assert `actual` matches `expected` — see [`render_manifest_matches_golden`]
+    /// for exactly what is and is not compared.
+    fn assert_manifest_matches(actual: &str, expected: &str, file: &str) {
+        let got = parse_manifest(actual);
+        let want = parse_manifest(expected);
+        let intended = |element: &str, attribute: &str, stream: Option<&str>| {
+            GOLDEN_DIFFERENCES
+                .iter()
+                .find(|d| d.element == element && d.attribute == attribute && d.stream == stream)
+        };
+        /// One attribute occurrence, with the stream-kind segment it sits in
+        /// (a `c@n` repeats per chunk, `Index` per stream, so occurrences are
+        /// matched per segment rather than by value).
+        type Slot<'a> = (&'a str, &'a str, Option<&'a str>);
+
+        fn slots<'a>(
+            doc: &'a ManifestDocument,
+            skip: &dyn Fn(&str, &str, Option<&str>) -> bool,
+        ) -> Vec<Slot<'a>> {
+            let mut kind = None;
+            doc.elements
+                .iter()
+                .filter_map(|(element, attribute, value)| {
+                    let attribute = attribute.as_deref()?;
+                    let mut stream = kind.filter(|k| *k != "other");
+                    if element == "StreamIndex" && attribute == "Type" {
+                        kind = match value.as_str() {
+                            "video" => Some("video"),
+                            "audio" => Some("audio"),
+                            _ => Some("other"),
+                        };
+                        stream = None;
+                    }
+                    if skip(element, attribute, stream) {
+                        return None;
+                    }
+                    Some((element.as_str(), attribute, stream))
+                })
+                .collect()
+        }
+        fn dropped_values(doc: &ManifestDocument) -> Vec<&str> {
+            let mut kind: Option<&'static str> = None;
+            let mut out: Vec<&str> = Vec::new();
+            for (element, attribute, value) in &doc.elements {
+                let Some(attribute) = attribute.as_deref() else {
+                    continue;
+                };
+                let stream = kind.filter(|k| *k != "other");
+                if element == "StreamIndex" && attribute == "Type" {
+                    kind = match value.as_str() {
+                        "video" => Some("video"),
+                        "audio" => Some("audio"),
+                        _ => Some("other"),
+                    };
+                    out.push(value.as_str());
+                    continue;
+                }
+                let dropped = element == "StreamIndex"
+                    && GOLDEN_DIFFERENCES.iter().any(|d| {
+                        d.element == element.as_str()
+                            && d.attribute == attribute
+                            && d.stream == stream
+                            && d.ours.is_none()
+                    });
+                if !dropped {
+                    out.push(value.as_str());
+                }
+            }
+            out
+        }
+        fn values(doc: &ManifestDocument) -> Vec<&str> {
+            doc.elements
+                .iter()
+                .filter_map(|(_, attribute, value)| attribute.as_deref().map(|_| value.as_str()))
+                .collect()
+        }
+
+        let dropped = |element: &str, attribute: &str, stream: Option<&str>| {
+            GOLDEN_DIFFERENCES.iter().any(|d| {
+                d.element == element
+                    && d.attribute == attribute
+                    && d.stream == stream
+                    && d.ours.is_none()
+            })
+        };
+        let ours_slots = slots(&got, &|_, _, _| false);
+        let wanted_slots = slots(&want, &dropped);
+        assert_eq!(
+            ours_slots, wanted_slots,
+            "{file}: the sequence of (element, attribute, stream) differs"
+        );
+
+        let wanted_values = dropped_values(&want);
+        let ours_values = values(&got);
+        assert_eq!(
+            ours_values.len(),
+            wanted_values.len(),
+            "{file}: value count"
+        );
+
+        let mut differences: Vec<String> = Vec::new();
+        for ((slot, got_value), want_value) in
+            ours_slots.iter().zip(&ours_values).zip(&wanted_values)
+        {
+            let (element, attribute, stream) = *slot;
+            match intended(element, attribute, stream) {
+                Some(difference) => {
+                    assert_eq!(
+                        difference.golden,
+                        Some(*want_value),
+                        "{file}: the recorded golden value of {element}@{attribute} is stale"
+                    );
+                    if Some(*got_value) != difference.ours {
+                        differences.push(format!(
+                            "{element}@{attribute} ({stream:?}): golden {want_value:?}, ours {got_value:?}, intended {:?} ({})",
+                            difference.ours, difference.reason
+                        ));
+                    }
+                }
+                None => {
+                    if got_value != want_value {
+                        differences.push(format!(
+                            "{element}@{attribute}: golden {want_value:?}, ours {got_value:?}"
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(
+            differences.is_empty(),
+            "{file}: {differences:#?}\nintended differences:\n{}",
+            GOLDEN_DIFFERENCES
+                .iter()
+                .map(|d| format!(
+                    "  {}.{} ({:?}): golden {:?} -> ours {:?} — {}",
+                    d.element, d.attribute, d.stream, d.golden, d.ours, d.reason
+                ))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+
+        // Every attribute the live Manifest emits is one the golden records:
+        // nothing is invented.
+        for (element, attribute, _) in &got.elements {
+            let Some(attribute) = attribute else {
+                continue;
+            };
+            assert!(
+                want.elements
+                    .iter()
+                    .any(|(w, a, _)| w == element && a.as_deref() == Some(attribute.as_str())),
+                "{file}: ours emits ({element}, {attribute}), which the golden does not record"
+            );
+        }
+
+        // Text elements, verbatim.
+        let props = |doc: &ManifestDocument| -> Vec<(String, Option<String>, String)> {
+            doc.elements
+                .iter()
+                .filter(|(name, attribute, _)| name == "Prop" && attribute.is_none())
+                .cloned()
+                .collect()
+        };
+        assert_eq!(props(&got), props(&want), "{file}: text elements");
+
+        // Every literal line, in order. A line that differs may differ only
+        // in its attributes: its element name must be the same.
+        let lines = |xml: &str| -> Vec<String> {
+            xml.lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(|line| match line.strip_prefix("<Prop>") {
+                    Some(_) => "<Prop>".to_string(),
+                    None => line.to_string(),
+                })
+                .collect()
+        };
+        let ours = lines(actual);
+        let theirs = lines(expected);
+        assert_eq!(ours.len(), theirs.len(), "{file}: line count");
+        for (number, (ours, theirs)) in ours.iter().zip(&theirs).enumerate() {
+            if ours == theirs {
+                continue;
+            }
+            let element = |line: &str| line.split_whitespace().next().unwrap_or("").to_string();
+            assert_eq!(
+                element(ours),
+                element(theirs),
+                "{file}: line {number} differs beyond its attributes"
+            );
+        }
     }
 
     /// The manifest is the live model's own document: one `StreamIndex` per

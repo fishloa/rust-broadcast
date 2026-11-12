@@ -4091,6 +4091,7 @@ dependencies = [
  "broadcast-common",
  "broadcast-smooth",
  "media-plane",
+ "quick-xml",
  "test-fixtures",
  "thiserror 2.0.21",
  "transmux",
