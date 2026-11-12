@@ -182,6 +182,7 @@ pub struct LocalMediaIdentity<'a> {
 /// them cannot break the answer's framing.
 pub fn offer_codec_attributes(media: &Media, payload_type: u8) -> Vec<CodecAttribute> {
     let prefix = format!("{payload_type} ");
+    let wildcard_prefix = String::from("* ");
     media
         .attributes
         .iter()
@@ -194,9 +195,13 @@ pub fn offer_codec_attributes(media: &Media, payload_type: u8) -> Vec<CodecAttri
             .into_iter();
             let name = names.find(|name| name.name() == attribute.attribute)?;
             let value = attribute.value.as_deref()?;
-            value
-                .starts_with(&prefix)
-                .then(|| CodecAttribute::new(name, String::from(value)))
+            let is_rtcp_fb = name == CodecAttributeName::RtcpFb;
+            let matches = if is_rtcp_fb {
+                value.starts_with(&prefix) || value.starts_with(&wildcard_prefix)
+            } else {
+                value.starts_with(&prefix)
+            };
+            matches.then(|| CodecAttribute::new(name, String::from(value)))
         })
         .collect()
 }
