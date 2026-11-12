@@ -254,7 +254,7 @@ fn cc_anomaly_discontinuity_not_flagged() {
 }
 
 /// m6-single.ts has exactly 879 CC anomalies (§2.4.3.3, via
-/// `broadcast_common::ts_dup`: every same-CC repeat that is not
+/// `mpeg_ts::ts_dup`: every same-CC repeat that is not
 /// byte-identical to its predecessor outside the PCR field, and not a
 /// signalled discontinuity, is a genuine continuity fault) concentrated on
 /// PIDs 0x82/0x83/0x84.
@@ -291,7 +291,7 @@ fn cc_anomaly_m6_single_has_many_errors() {
 
 /// m6-duplicate.ts has exactly 5 true legal duplicates under the §2.4.3.3
 /// byte-identical-except-PCR rule (cross-checked directly against
-/// `broadcast_common::ts_dup::check_duplicate` below, independently of
+/// `mpeg_ts::ts_dup::check_duplicate` below, independently of
 /// `CcAnomalyCheck` itself) and zero illegal third-consecutive repeats.
 /// Assert the legal duplicates are NOT flagged as errors, and that the
 /// total anomaly count matches m6-single.ts exactly (the duplicates are
@@ -339,11 +339,11 @@ fn cc_anomaly_m6_duplicate_legal_dups_not_flagged() {
 }
 
 /// Count legal duplicates / illegal third-repeats on `ts` directly via
-/// `broadcast_common::ts_dup`, independently of `CcAnomalyCheck`'s own use
+/// `mpeg_ts::ts_dup`, independently of `CcAnomalyCheck`'s own use
 /// of it — the oracle the assertions above cross-check against.
 fn count_legal_duplicates(ts: &[u8]) -> (usize, usize) {
-    use broadcast_common::ts_dup::{DuplicateVerdict, check_duplicate};
     use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
+    use mpeg_ts::ts_dup::{DuplicateVerdict, check_duplicate};
     use std::collections::BTreeMap;
 
     struct St {
