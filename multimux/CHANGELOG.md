@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- The RTSP pull and the raw RTP/UDP source read SDP media sections through `transmux::sdp_track` (the rule `broadcast-client` already used): the played payload type is the first listed one with a usable `a=rtpmap`/`a=fmtp` (previously always the first listed, with the section's first `rtpmap`/`fmtp` whatever payload type they named), an H.264 section without `sprop-parameter-sets` is accepted with in-band parameter sets, an audio section whose `a=rtpmap` names another codec is rejected, and the H.264 coded size comes from the SPS. Recorded row by row in `fixtures/golden/sdp-tracks/multimux.txt`.
 ### Added
 - An RTSP pull sends `TEARDOWN` (RFC 2326 §10.7) for a playing session when it is cancelled, before the connection closes; `RtspIngestSession::finish` queues it and the shared ingest scaffold writes what a finished session queued on cancel.
 - An RTSP pull feeds interleaved RTCP on the negotiated RTCP channel to the track's depacketiser, which records Sender Report NTP anchors (`RtspIngestSession::rtcp_frames` counts them).

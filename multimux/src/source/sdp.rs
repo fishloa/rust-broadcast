@@ -6,18 +6,8 @@ use crate::source::TrackInit;
 use rtsp_runtime::PlayPlan;
 use sdp_types::{Media, Session};
 use transmux::TrackId;
-use transmux::pipeline::CodecConfig;
-use transmux::rtp::RtpMediaKind;
-use transmux::rtp_sdp::rtpmap_clock_rate;
-use transmux::{aac_config_from_fmtp, avc_config_from_fmtp};
+use transmux::sdp_track;
 use url::Url;
-
-/// Unknown coded dimensions from SDP alone (matches transmux's own
-/// placeholder convention for `CodecConfig::Avc`).
-const UNKNOWN_DIMENSION: u16 = 0;
-
-/// Default RTP clock rate when `a=rtpmap` is missing or unparsable.
-const DEFAULT_CLOCK_RATE_HZ: u32 = 90_000;
 
 /// First interleaved RTP channel of an RTSP pull.
 const FIRST_CHANNEL: u8 = 0;
@@ -28,68 +18,21 @@ const CHANNEL_STEP: u8 = 2;
 /// Builds one media section's [`TrackInit`] (channel 0; the caller assigns the real one).
 fn track_init(media_index: usize, media: &Media) -> Result<TrackInit> {
     let track_id = u32::try_from(media_index).map_or(u32::MAX, |i| i.saturating_add(1));
-    let fmtp = media.get_first_attribute_value("fmtp").flatten();
-    let rtpmap = media.get_first_attribute_value("rtpmap").flatten();
-    let control = media
-        .get_first_attribute_value("control")
-        .flatten()
-        .map(|s| s.to_string());
-    let clock_rate = rtpmap
-        .and_then(rtpmap_clock_rate)
-        .unwrap_or(DEFAULT_CLOCK_RATE_HZ);
-    // `m=<media> <port> <proto> <fmt>` (RFC 4566 §5.14): `fmt` is the
-    // space-separated payload-type list; this crate assumes one codec
-    // per media (matches the fmtp/rtpmap lookups above, which take the
-    // *first* value regardless of which payload type they're tagged
-    // with), so only the first listed payload type is kept. It is the
-    // only signal a raw RTP/UDP source (no RTSP interleaved-channel
-    // framing) has to route an incoming packet to its track — see
-    // `crate::source::rtp_udp`.
-    let payload_type: u8 = media
-        .fmt
-        .split_whitespace()
-        .next()
-        .and_then(|pt| pt.parse().ok())
-        .ok_or_else(|| MultimuxError::Sdp {
-            reason: format!(
-                "media {:?} has no payload type in its fmt field",
-                media.media
-            ),
-        })?;
-
-    let (kind, config): (RtpMediaKind, CodecConfig) = match media.media.as_str() {
-        "video" => {
-            let fmtp = fmtp.ok_or_else(|| MultimuxError::Sdp {
-                reason: "video media missing fmtp".into(),
-            })?;
-            let avc = avc_config_from_fmtp(fmtp)?;
-            (
-                RtpMediaKind::H264,
-                CodecConfig::Avc {
-                    config: avc,
-                    width: UNKNOWN_DIMENSION,
-                    height: UNKNOWN_DIMENSION,
-                },
-            )
-        }
-        "audio" => {
-            let fmtp = fmtp.ok_or_else(|| MultimuxError::Sdp {
-                reason: "audio media missing fmtp".into(),
-            })?;
-            (RtpMediaKind::Aac, aac_config_from_fmtp(fmtp)?)
-        }
-        other => {
-            return Err(MultimuxError::Sdp {
-                reason: format!("unsupported media {other:?}"),
-            });
-        }
-    };
+    let track = sdp_track(media).ok_or_else(|| MultimuxError::Sdp {
+        reason: format!("media {:?} has no playable payload type", media.media),
+    })?;
+    let payload_type = track.payload_type.ok_or_else(|| MultimuxError::Sdp {
+        reason: format!(
+            "media {:?} has no payload type in its fmt field",
+            media.media
+        ),
+    })?;
     Ok(TrackInit {
         track_id: TrackId::new(track_id),
-        kind,
-        config,
-        clock_rate,
-        control,
+        kind: track.kind,
+        config: track.config,
+        clock_rate: track.clock_rate,
+        control: track.control,
         channel: 0,
         payload_type,
     })
@@ -200,6 +143,7 @@ pub fn load_sdp(spec: &str) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use transmux::rtp::RtpMediaKind;
 
     // Minimal H.264 SDP (one video media) with a real sprop-parameter-sets
     // (SPS: nal_unit_type 7, 18 bytes; PPS: nal_unit_type 8, 4 bytes).
