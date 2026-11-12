@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Legal-duplicate TS packet detection now imports `mpeg_ts::ts_dup` instead of `broadcast_common::ts_dup` (#2466).
 ### Added
+- `insert_event_message_boxes_after_styp` splices serialized `emsg` boxes after the first top-level `styp` box using parsed box boundaries (a 64-bit `largesize` box before it is stepped over), and `segments::MOOF`, the Movie Fragment Box four-CC.
 - Timeline-jump detector (`timeline` module): `JumpDetector`, `TimelineJumpConfig`, `DEFAULT_JUMP_BACKWARD_US`, `DEFAULT_JUMP_FORWARD_SLACK_US` moved from `broadcast-client`; per-track discontinuity detection with configurable thresholds.
 ### Fixed
 - DASH `AdaptationSet@lang` is now canonicalised to a BCP 47 tag via `broadcast-common::lang::bcp47_language`, so `fre`/`fra` share one AdaptationSet.
