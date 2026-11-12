@@ -20,6 +20,7 @@ const IN_SYNC: &str = "media_doctor_conformance_in_sync";
 const CONFORMANCE_EVENTS_TOTAL: &str = "media_doctor_conformance_events_total";
 const SCTE35_EVENTS_TOTAL: &str = "media_doctor_scte35_events_total";
 const SCTE35_OPEN_EVENTS: &str = "media_doctor_scte35_open_events";
+const SCTE35_CUES_TOTAL: &str = "media_doctor_scte35_cues_total";
 const PTS_DTS_ANOMALIES_TOTAL: &str = "media_doctor_pts_dts_anomalies_total";
 const CODEC_SIGNALLING_MISMATCH: &str = "media_doctor_codec_signalling_mismatch";
 const PTS_DTS_ANOMALY: &str = "media_doctor_pts_dts_anomaly";
@@ -69,6 +70,10 @@ pub fn publish(s: &WatchSnapshot) {
         "Currently-unmatched (\"out\" with no \"in\" yet, and no auto-return) SCTE-35 splice_insert events."
     );
     describe_counter!(
+        SCTE35_CUES_TOTAL,
+        "SCTE-35 splice_insert cues observed, by where the target time lands relative to the program's reference decode timestamp (ANSI/SCTE 35 section 9.7.3.1)."
+    );
+    describe_counter!(
         PTS_DTS_ANOMALIES_TOTAL,
         "Non-monotonic decode-timestamp (DTS, else PTS) events observed on tracked PES PIDs."
     );
@@ -95,6 +100,9 @@ pub fn publish(s: &WatchSnapshot) {
             .absolute(c.count);
     }
     counter!(SCTE35_EVENTS_TOTAL).absolute(s.scte35_events);
+    counter!(SCTE35_CUES_TOTAL, "timing" => "in_future").absolute(s.scte35_in_future);
+    counter!(SCTE35_CUES_TOTAL, "timing" => "in_past").absolute(s.scte35_in_past);
+    counter!(SCTE35_CUES_TOTAL, "timing" => "immediate").absolute(s.scte35_immediate);
     gauge!(SCTE35_OPEN_EVENTS).set(f64::from(u32::try_from(s.scte35_open).unwrap_or(u32::MAX)));
     counter!(PTS_DTS_ANOMALIES_TOTAL).absolute(s.pts_dts_anomalies);
     for f in &s.codec_signalling {
@@ -125,12 +133,31 @@ mod tests {
         let golden = std::fs::read_to_string(test_fixtures::path(golden_name)).unwrap();
         let (mut golden_meta, golden_series) = parse_exposition(&golden);
         drop_header_only_families(&mut golden_meta, &golden_series);
-        let (new_meta, new_series) = parse_exposition(&render(&state));
-        assert_eq!(golden_meta, new_meta, "HELP/TYPE differ from {golden_name}");
-        assert_eq!(
-            golden_series, new_series,
-            "series differ from {golden_name}"
-        );
+        let (mut new_meta, new_series) = parse_exposition(&render(&state));
+        drop_header_only_families(&mut new_meta, &new_series);
+        const ADDED_SINCE_GOLDEN: &[&str] = &[
+            SCTE35_CUES_TOTAL,
+        ];
+        for name in new_meta.keys() {
+            assert!(
+                golden_meta.contains_key(name) || ADDED_SINCE_GOLDEN.contains(&name.as_str()),
+                "the exposition family {name} is not in {golden_name}"
+            );
+        }
+        for (name, meta) in &golden_meta {
+            assert_eq!(
+                new_meta.get(name),
+                Some(meta),
+                "HELP/TYPE of {name} differs from {golden_name}"
+            );
+        }
+        for (key, value) in &golden_series {
+            assert_eq!(
+                new_series.get(key),
+                Some(value),
+                "series {key} differs from {golden_name}"
+            );
+        }
     }
 
     /// The exposition of the committed capture equals, semantically, the

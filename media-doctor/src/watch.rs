@@ -95,6 +95,9 @@ use transmux::iter_annexb_nals;
 /// math, rather than a second hand-rolled `1 << 33` (audit MD-W10).
 const PTS_HALF: u64 = broadcast_common::clock33::WRAP_33BIT_HALF;
 
+/// Nanoseconds in one tick of the 90 kHz program clock (ANSI/SCTE 35 §9.2).
+const NANOS_PER_TICK: u128 = 1_000_000_000 / broadcast_common::clock33::PTS_HZ as u128;
+
 /// Which framing/timing rules apply to a tracked elementary-stream PID.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EsKind {
@@ -147,6 +150,36 @@ pub struct ConformanceSample {
     pub count: u64,
 }
 
+/// Where one SCTE-35 cue's target lands relative to the reference "now".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CueTiming {
+    /// No target time at all: `splice_immediate_flag`, or every splice time
+    /// has `time_specified_flag == 0` (ANSI/SCTE 35 §9.7.3.1).
+    Immediate,
+    /// The target is at, or ahead of, the reference "now".
+    InFuture,
+    /// The target had already elapsed when the cue arrived.
+    InPast,
+}
+
+/// Judge one cue's effective target times against `now_pts`, both on the
+/// 33-bit 90 kHz clock with carry ignored (ANSI/SCTE 35 §9.2, §9.6.1).
+/// One elapsed component makes the whole cue late — a cue the splicer would
+/// act on too early on that component.
+pub(crate) fn cue_timing(times: &[u64], now_pts: u64) -> CueTiming {
+    if times.is_empty() {
+        return CueTiming::Immediate;
+    }
+    if times
+        .iter()
+        .all(|&target| scte35_splice::judge_splice_time(target, now_pts))
+    {
+        CueTiming::InFuture
+    } else {
+        CueTiming::InPast
+    }
+}
+
 /// A per-PID boolean figure in a [`WatchSnapshot`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -180,6 +213,15 @@ pub struct WatchSnapshot {
     pub scte35_events: u64,
     /// Currently-unmatched SCTE-35 `splice_insert` events.
     pub scte35_open: u64,
+    /// SCTE-35 `splice_insert` cues carrying a target at or ahead of the
+    /// program's most recent decode timestamp.
+    pub scte35_in_future: u64,
+    /// SCTE-35 `splice_insert` cues carrying a target that had already
+    /// elapsed when they arrived.
+    pub scte35_in_past: u64,
+    /// SCTE-35 `splice_insert` cues with no target time at all
+    /// (`splice_immediate_flag` or `time_specified_flag == 0`).
+    pub scte35_immediate: u64,
     /// Non-monotonic decode-timestamp events observed.
     pub pts_dts_anomalies: u64,
     /// Codec-signalling mismatch per PID (only PIDs with at least one access
@@ -215,6 +257,9 @@ pub struct WatchState {
     pid_refs: BTreeMap<Pid, usize>,
     datagrams_total: u64,
     scte35_events_total: u64,
+    scte35_in_future_total: u64,
+    scte35_in_past_total: u64,
+    scte35_immediate_total: u64,
     pts_dts_anomalies_total: u64,
     last_clock: Duration,
 }
@@ -239,6 +284,9 @@ impl WatchState {
             pid_refs: BTreeMap::new(),
             datagrams_total: 0,
             scte35_events_total: 0,
+            scte35_in_future_total: 0,
+            scte35_in_past_total: 0,
+            scte35_immediate_total: 0,
             pts_dts_anomalies_total: 0,
             last_clock: Duration::ZERO,
         }
@@ -456,22 +504,54 @@ impl WatchState {
     }
 
     /// Reassemble + parse `splice_info_section`s on a PMT-declared SCTE-35
-    /// PID, tracking each `splice_event_id`'s open/closed state.
+    /// PID, tracking each `splice_event_id`'s open/closed state and judging
+    /// where each cue's target time lands.
     fn feed_scte35(&mut self, pid: Pid, ts_packet: &TsPacket<'_>) {
         let Some(payload) = ts_packet.payload else {
             return;
         };
+        let now_pts = self.reference_now();
         let Some(track) = self.scte35_tracks.get_mut(&pid.value()) else {
             return;
         };
-        // The shared tracker keeps only events that are still open (an "out"
-        // that expects a separate return cue); a matching "in" — or an "out"
-        // carrying `break_duration.auto_return = true`, which closes at its
-        // own duration (ANSI/SCTE 35 §9.8.2, §9.9.2.2) — drops the entry, so
-        // memory is one entry per *currently* open break, not per event ever
-        // seen (audit MD-W3).
         let events_total = &mut self.scte35_events_total;
-        track.feed(payload, ts_packet.header.pusi, |_| *events_total += 1);
+        let future_total = &mut self.scte35_in_future_total;
+        let past_total = &mut self.scte35_in_past_total;
+        let immediate_total = &mut self.scte35_immediate_total;
+        track.feed(payload, ts_packet.header.pusi, |observation| {
+            *events_total += 1;
+            match cue_timing(observation.event.times.as_slice(), now_pts) {
+                CueTiming::Immediate => *immediate_total += 1,
+                CueTiming::InFuture => *future_total += 1,
+                CueTiming::InPast => *past_total += 1,
+            }
+        });
+    }
+
+    /// The reference "now" for judging a cue's target time: the highest
+    /// decode timestamp any tracked elementary PID has reached, on the same
+    /// 33-bit 90 kHz clock (ANSI/SCTE 35 §9.2) a cue's target is coded on.
+    /// Until an access unit has carried one, ingest clock [`Self::now`]
+    /// stands in, the same fallback `compliance-probe` uses.
+    fn reference_now(&self) -> u64 {
+        let ingest = u64::try_from(self.last_clock.as_nanos() / NANOS_PER_TICK).unwrap_or(u64::MAX);
+        let mut now: Option<u64> = None;
+        for track in self.es_tracks.values() {
+            let Some(prev) = track.prev_decode else {
+                continue;
+            };
+            now = Some(match now {
+                Some(current)
+                    if broadcast_common::clock33::wrapping_forward_distance(current, prev)
+                        <= broadcast_common::clock33::WRAP_33BIT_HALF =>
+                {
+                    prev
+                }
+                Some(current) => current,
+                None => prev,
+            });
+        }
+        now.unwrap_or(ingest)
     }
 
     /// Reassemble PES on a PMT-declared video/audio PID, checking codec
@@ -590,6 +670,9 @@ impl WatchState {
                 .values()
                 .map(|t| u64::try_from(t.open_count()).unwrap_or(u64::MAX))
                 .sum(),
+            scte35_in_future: self.scte35_in_future_total,
+            scte35_in_past: self.scte35_in_past_total,
+            scte35_immediate: self.scte35_immediate_total,
             pts_dts_anomalies: self.pts_dts_anomalies_total,
             codec_signalling: self
                 .es_tracks
@@ -705,6 +788,21 @@ pub(crate) mod tests {
         }
         let _ = writeln!(out, "media_doctor_scte35_events_total {}", s.scte35_events);
         let _ = writeln!(out, "media_doctor_scte35_open_events {}", s.scte35_open);
+        let _ = writeln!(
+            out,
+            "media_doctor_scte35_cues_total{{timing=\"in_future\"}} {}",
+            s.scte35_in_future
+        );
+        let _ = writeln!(
+            out,
+            "media_doctor_scte35_cues_total{{timing=\"in_past\"}} {}",
+            s.scte35_in_past
+        );
+        let _ = writeln!(
+            out,
+            "media_doctor_scte35_cues_total{{timing=\"immediate\"}} {}",
+            s.scte35_immediate
+        );
         let _ = writeln!(
             out,
             "media_doctor_pts_dts_anomalies_total {}",
@@ -1842,6 +1940,53 @@ pub(crate) mod tests {
             !state.pmt_generations.contains_key(&1),
             "and clear its generation entry",
         );
+    }
+
+    /// The shared cue-sanity engine (`scte35_splice::judge_splice_time`) is
+    /// what `compliance-probe` reports through its own names. A cue whose
+    /// target has already elapsed is `in_past`, one exactly at "now" is
+    /// `in_future`, and a cue carrying no time at all is `immediate`.
+    #[test]
+    fn scte35_cue_timing_classifies_against_the_reference_now() {
+        let now = 90_000u64 * 10;
+        assert_eq!(cue_timing(&[], now), CueTiming::Immediate);
+        assert_eq!(cue_timing(&[now], now), CueTiming::InFuture);
+        assert_eq!(cue_timing(&[now + 90_000], now), CueTiming::InFuture);
+        assert_eq!(cue_timing(&[now - 90_000], now), CueTiming::InPast);
+        assert_eq!(
+            cue_timing(&[now + 90_000, now - 90_000], now),
+            CueTiming::InPast,
+            "one elapsed component makes the whole cue late"
+        );
+    }
+
+    /// Reference "now" comes from the highest decode timestamp seen, and
+    /// falls back to the ingest clock before any access unit has carried one.
+    #[test]
+    fn reference_now_prefers_a_decode_timestamp_and_falls_back_to_the_clock() {
+        let mut null_packet = [0xFFu8; TS_PACKET_SIZE];
+        null_packet[0] = mpeg_ts::ts::TS_SYNC_BYTE;
+        null_packet[1] = 0x1F;
+        null_packet[2] = 0xFF;
+        null_packet[3] = 0x10;
+        let mut state = WatchState::new();
+        state.feed_ts_packet(&null_packet, Duration::from_secs(3));
+        let ingest_ticks =
+            u64::try_from(Duration::from_secs(3).as_nanos() / NANOS_PER_TICK).expect("fits u64");
+        assert_eq!(
+            state.reference_now(),
+            ingest_ticks,
+            "with no decode timestamp yet, the ingest clock stands in"
+        );
+
+        state.es_tracks.insert(
+            0x0101,
+            EsTrack {
+                prev_decode: Some(90_000),
+                ..EsTrack::new(EsKind::Video)
+            },
+        );
+        assert_eq!(state.reference_now(), 90_000);
     }
 
     /// Extract the bare numeric value of a metric with no labels from
