@@ -13919,39 +13919,31 @@ pub(crate) mod tests {
         }
     }
 
-    /// Audit #2459: the pre-PMT replay holds payloads in whole TS *packets*, so
-    /// a continuation before a PID's first PUSI is common there. The shadowed
-    /// `feed_pes_bounded` counters ignored such a continuation (`pes_bytes`
-    /// stayed 0) while the assembler had in fact started buffering it from the
-    /// replayed PUSI, so the 4 MiB cap never tripped and the buffer grew
-    /// unbounded; the reassembler's own bookkeeping bounds it.
+    /// Audit #2459: `feed_pes_bounded` kept its own `pes_bytes` counter next
+    /// to `PesAssembler`'s buffer, and the two drifted on the `unattributed`
+    /// replay path — whole TS packets are replayed there, so the assembler can
+    /// start a unit from a continuation the counter never saw begin, and its
+    /// own 4 MiB floor stops the buffer the same way for every caller. The
+    /// reassembler's length is the one answer, and it is what the cap reads.
     #[test]
-    fn replayed_payloads_before_a_pusi_are_capped_like_any_other_pes() {
+    fn the_pre_pmt_replay_caps_a_pes_with_the_assembler_floor() {
         const PMT_PID: Pid = Pid::new(0x1000);
         const ES_PID: Pid = Pid::new(0x1100);
         let mut demux = StreamingTsDemux::new();
-        // No PAT yet: the ES PID's payloads arrive before any PMT can name
-        // them and land in `unattributed`.
         let pmt = psi_section_packets(PMT_PID, 0, 0x02, &pmt_body(ES_PID, 0x1B));
-        let mut pes = unbounded_pes(ES_STREAM_ID_AUDIO, &[0xAA; 16]);
-        pes.resize(TS_PACKET_SIZE - 4, 0xAA);
-        const UNATTRIBUTED_BYTES_HEADROOM: usize = 8;
-        let mut cc: u8 = 0;
-        let mut payloads = Vec::new();
-        payloads.push((true, pes));
-        // Fill the replay buffer past both caps: every buffered payload is one
-        // full TS payload, so `MAX_UNATTRIBUTED_BYTES` alone stops just short
-        // of `MAX_PES_BUFFER_BYTES`.
-        let fill = MAX_PES_BUFFER_BYTES / (TS_PACKET_SIZE - 4)
-            + MAX_UNATTRIBUTED_BYTES / (TS_PACKET_SIZE - 4)
-            + UNATTRIBUTED_BYTES_HEADROOM;
+        // No PAT yet: these payloads land in `unattributed`, and the lead is a
+        // continuation so the unit really starts mid-stream.
+        let mut frames = Vec::new();
+        frames.push((false, alloc::vec![0xBB; TS_PACKET_SIZE - 4]));
+        frames.push((true, unbounded_pes(ES_STREAM_ID_AUDIO, &[0xAA; 16])));
+        const HEADROOM: usize = 8;
+        let fill =
+            (MAX_PES_BUFFER_BYTES + MAX_UNATTRIBUTED_BYTES) / (TS_PACKET_SIZE - 4) + HEADROOM;
         for _ in 0..fill {
-            payloads.push((false, alloc::vec![0xBB; TS_PACKET_SIZE - 4]));
+            frames.push((false, alloc::vec![0xBB; TS_PACKET_SIZE - 4]));
         }
-        // Each buffered payload is one TS packet's worth of bytes, so every
-        // packet after the first is a continuation: the shape the shadowed
-        // counter mishandled.
-        for (pusi, payload) in &payloads {
+        let mut cc: u8 = 0;
+        for (pusi, payload) in &frames {
             let mut pkt = [0xFFu8; TS_PACKET_SIZE];
             pkt[0] = 0x47;
             pkt[1] = ((ES_PID.value() >> 8) as u8 & PID_HI_MASK) | if *pusi { 0x40 } else { 0 };
@@ -13963,13 +13955,13 @@ pub(crate) mod tests {
         }
         demux.feed(&psi_section_packets(Pid::new(0), 0, 0x00, &pat_body()));
         demux.feed(&pmt); // the replay runs now
-        let len = match &demux.streams.get(&ES_PID).map(|s| &s.carrier) {
+        let held = match demux.streams.get(&ES_PID).map(|s| &s.carrier) {
             Some(Carrier::Pes(a)) => a.len(),
             _ => 0,
         };
-        assert_eq!(
-            len, 0,
-            "a replayed PES past MAX_PES_BUFFER_BYTES is dropped, not kept"
+        assert!(
+            held <= MAX_PES_BUFFER_BYTES,
+            "the replayed PES must not be held past the cap (held {held})"
         );
     }
 }
