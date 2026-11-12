@@ -1257,7 +1257,8 @@ async fn split_master_derives_language_name_and_audio_description_from_the_pmt()
     for (i, a) in audio.iter().enumerate() {
         let meta = a.spec.audio_metadata();
         let lang = meta.languages[0].language.clone();
-        let expected_language = hls_runtime::bcp47_language(&lang).unwrap_or_else(|| lang.clone());
+        let expected_language =
+            broadcast_common::bcp47_language(&lang).unwrap_or_else(|| lang.clone());
         let media = &master.media[i];
         assert_eq!(
             media.language.as_deref(),

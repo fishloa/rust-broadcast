@@ -1249,11 +1249,19 @@ pub fn xs_duration(d: Duration) -> String {
 /// `ISO_639_language_descriptor` parser — ETSI EN 300 468 §6.2.19). `None` for
 /// a non-TS source or when no alphabetic code is present.
 fn lang_from_es_info(descriptors: &[u8]) -> Option<String> {
-    crate::ir::AudioMetadata::from_es_info(descriptors)
+    let raw = crate::ir::AudioMetadata::from_es_info(descriptors)
         .languages
         .into_iter()
         .map(|l| l.language)
-        .find(|l| l.bytes().all(|b| b.is_ascii_alphabetic()))
+        .find(|l| l.bytes().all(|b| b.is_ascii_alphabetic()))?;
+    #[cfg(feature = "lang")]
+    {
+        broadcast_common::bcp47_language(&raw)
+    }
+    #[cfg(not(feature = "lang"))]
+    {
+        Some(raw)
+    }
 }
 
 /// Partition `reprs`' entries of `kind` into AdaptationSets, one per

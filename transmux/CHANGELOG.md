@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Fixed
+- DASH `AdaptationSet@lang` is now canonicalised to a BCP 47 tag via `broadcast-common::lang::bcp47_language`, so `fre`/`fra` share one AdaptationSet.
 - `aac_asc::parse_adts_header` now rejects non-ADTS headers: layer must be `00`, sampling frequency index must not be reserved/escape, and `frame_length` must be at least the header length. `adts_header_len` now lives only in `aac_asc` (taking the parsed header); `sample_aes` and `ts_demux` call it instead of keeping their own copies.
 - `TrackAligner::sender_reports_refused`: the 3600 s skew refusal covers every track at once and keeps them `AvSync::Provisional` while the clocks disagree; it is now observable as state (cleared on the next accepted evaluation) and documented in the module docs (audit A9-6).
 - The 3600 s wallclock-skew refusal in `RtpStreamDepacketiser::sync_start_decode_times` was invisible: a wrong NTP clock on one track silently left the tracks `Provisional`, and `TrackAligner` re-ran the sync computation (a `Vec` allocation) on every sample. New `RtpStreamDepacketiser::try_sync_start_decode_times` returns `Err(WallSkewExceeded { skew_seconds })` for it (`sync_start_decode_times` keeps its signature), `TrackAligner::skew_rejections` counts each refused set of Sender Reports, and the aligner stops re-evaluating until the next Sender Report.

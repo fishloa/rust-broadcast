@@ -419,11 +419,11 @@ fn adaptation_sets_split_by_language_and_codec() {
         .collect();
     assert_eq!(audio_langs.len(), 2, "two audio AdaptationSets");
     assert!(
-        audio_langs.contains(&Some("eng")),
+        audio_langs.contains(&Some("en")),
         "eng set: {audio_langs:?}"
     );
     assert!(
-        audio_langs.contains(&Some("fra")),
+        audio_langs.contains(&Some("fr")),
         "fra set: {audio_langs:?}"
     );
 
@@ -478,7 +478,7 @@ fn adaptation_sets_merge_same_language_and_codec() {
         .iter()
         .find(|s| s.attr("contentType") == Some("audio"))
         .expect("audio set");
-    assert_eq!(audio_set.attr("lang"), Some("eng"), "@lang on the set");
+    assert_eq!(audio_set.attr("lang"), Some("en"), "@lang on the set");
     assert_eq!(
         audio_set.find_all("Representation").len(),
         2,
@@ -559,7 +559,7 @@ fn adaptation_sets_have_unique_ids_and_split_by_codec_family() {
         .collect();
     assert_eq!(audio.len(), 2, "AAC and AC-3 are separate sets:\n{xml}");
     for s in &audio {
-        assert_eq!(s.attr("lang"), Some("eng"), "same language, same @lang");
+        assert_eq!(s.attr("lang"), Some("en"), "same language, same @lang");
         assert_eq!(s.find_all("Representation").len(), 1);
     }
     let codecs: Vec<&str> = audio

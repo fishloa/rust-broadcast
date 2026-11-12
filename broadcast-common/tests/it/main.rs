@@ -1,3 +1,4 @@
+mod bcp47_language;
 mod crc32_mpeg2;
 mod hex_parity;
 mod no_panicking_to_bytes_guard;

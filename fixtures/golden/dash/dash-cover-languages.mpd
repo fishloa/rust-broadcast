@@ -14,14 +14,14 @@
         <SegmentTemplate timescale="44100" duration="134144" startNumber="1" initialization="init-stream$RepresentationID$.m4s" media="chunk-stream$RepresentationID$-$Number$.m4s"/>
       </Representation>
     </AdaptationSet>
-    <AdaptationSet id="2" contentType="audio" mimeType="audio/mp4" segmentAlignment="true" startWithSAP="1" lang="eng">
+    <AdaptationSet id="2" contentType="audio" mimeType="audio/mp4" segmentAlignment="true" startWithSAP="1" lang="en">
       <Role schemeIdUri="urn:mpeg:dash:role:2011" value="main"/>
       <Representation id="90" mimeType="audio/mp4" codecs="mp4a.40.2" bandwidth="96014" audioSamplingRate="44100">
         <AudioChannelConfiguration schemeIdUri="urn:mpeg:dash:23003:3:audio_channel_configuration:2011" value="1"/>
         <SegmentTemplate timescale="44100" duration="134144" startNumber="1" initialization="init-stream$RepresentationID$.m4s" media="chunk-stream$RepresentationID$-$Number$.m4s"/>
       </Representation>
     </AdaptationSet>
-    <AdaptationSet id="3" contentType="audio" mimeType="audio/mp4" segmentAlignment="true" startWithSAP="1" lang="fra">
+    <AdaptationSet id="3" contentType="audio" mimeType="audio/mp4" segmentAlignment="true" startWithSAP="1" lang="fr">
       <Role schemeIdUri="urn:mpeg:dash:role:2011" value="main"/>
       <Representation id="91" mimeType="audio/mp4" codecs="mp4a.40.2" bandwidth="96014" audioSamplingRate="44100">
         <AudioChannelConfiguration schemeIdUri="urn:mpeg:dash:23003:3:audio_channel_configuration:2011" value="1"/>
