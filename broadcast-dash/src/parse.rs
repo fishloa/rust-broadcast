@@ -14,8 +14,8 @@ use crate::utc_timing::UtcScheme;
 use crate::xs_datetime::parse_xs_datetime;
 
 const PROFILE_SEPARATOR: char = ',';
-const INFINITY_TOKEN: &str = "INF";
-const NEGATIVE_INFINITY_TOKEN: &str = "-INF";
+pub(crate) const INFINITY_TOKEN: &str = "INF";
+pub(crate) const NEGATIVE_INFINITY_TOKEN: &str = "-INF";
 const MAX_START_WITH_SAP: u8 = 6;
 const NS_MPD_ROOT: &str = "MPD";
 

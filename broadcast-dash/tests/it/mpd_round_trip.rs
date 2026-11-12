@@ -7,6 +7,11 @@ use broadcast_dash::utc_timing::UtcScheme;
 
 use super::corpus;
 
+fn without_unwritten_features(mut mpd: Mpd) -> Mpd {
+    mpd.features = mpd.features.written();
+    mpd
+}
+
 #[test]
 fn every_parsed_fixture_round_trips_through_the_writer() {
     let mut count = 0usize;
@@ -18,7 +23,7 @@ fn every_parsed_fixture_round_trips_through_the_writer() {
         let xml = mpd.to_xml().unwrap_or_else(|e| panic!("{name}: {e}"));
         let again = Mpd::parse_with(xml.as_bytes(), &Limits::default())
             .unwrap_or_else(|e| panic!("{name}: {e}"));
-        assert_eq!(again, mpd, "{name}");
+        assert_eq!(again, without_unwritten_features(mpd), "{name}");
         count += 1;
     }
     assert!(count >= 20, "round-tripped only {count} fixtures");
@@ -241,20 +246,36 @@ fn a_model_with_every_field_set_round_trips() {
     period.adaptation_sets = vec![aset];
 
     mpd.periods = vec![period];
-    mpd.features.patch_location = true;
-    mpd.features.event_stream = true;
     mpd.features.inband_event_stream = true;
-    mpd.features.preselection = true;
     mpd.features.service_description = true;
-    mpd.features.producer_reference_time = true;
-    mpd.features.content_steering = true;
-    mpd.features.resync = true;
     mpd.features.low_latency = true;
     mpd.features.xlink_resolve_to_zero = false;
 
     let xml = mpd.to_xml().unwrap();
     let again = Mpd::parse(xml.as_bytes()).unwrap();
     assert_eq!(again, mpd);
+}
+
+#[test]
+fn unwritten_feature_flags_emit_no_element() {
+    let mut mpd = Mpd::default();
+    mpd.features.patch_location = true;
+    mpd.features.event_stream = true;
+    mpd.features.preselection = true;
+    mpd.features.producer_reference_time = true;
+    mpd.features.content_steering = true;
+    mpd.features.resync = true;
+    let xml = mpd.to_xml().unwrap();
+    for name in [
+        "PatchLocation",
+        "EventStream",
+        "Preselection",
+        "ProducerReferenceTime",
+        "ContentSteering",
+        "Resync",
+    ] {
+        assert!(!xml.contains(name), "{name} emitted:\n{xml}");
+    }
 }
 
 #[test]
@@ -281,4 +302,33 @@ fn a_model_without_min_buffer_time_round_trips_without_one() {
     assert_eq!(mpd.min_buffer_time, None);
     let again = Mpd::parse_with(mpd.to_xml().unwrap().as_bytes(), &Limits::default()).unwrap();
     assert_eq!(again, mpd);
+}
+
+#[test]
+fn infinite_availability_time_offset_round_trips_on_every_segment_element() {
+    let mut mpd = Mpd::default();
+    let mut period = Period::default();
+    let mut template = SegmentTemplate::default();
+    template.multi.base.availability_time_offset = Some(f64::INFINITY);
+    let mut list = SegmentList::default();
+    list.multi.base.availability_time_offset = Some(f64::NEG_INFINITY);
+    let mut base = SegmentBase::default();
+    base.info.availability_time_offset = Some(1.0e19);
+    let mut aset = AdaptationSet::default();
+    let mut rep = Representation::default();
+    period.segment.template = Some(template);
+    aset.segment.list = Some(list);
+    rep.segment.base = Some(base);
+    aset.representations = vec![rep];
+    period.adaptation_sets = vec![aset];
+    mpd.periods = vec![period];
+    mpd.features.low_latency = true;
+    let xml = mpd.to_xml().unwrap();
+    assert!(xml.contains("availabilityTimeOffset=\"INF\""), "{xml}");
+    assert!(xml.contains("availabilityTimeOffset=\"-INF\""), "{xml}");
+    assert!(
+        xml.contains("availabilityTimeOffset=\"10000000000000000000\""),
+        "{xml}"
+    );
+    assert_eq!(Mpd::parse(xml.as_bytes()).unwrap(), mpd);
 }

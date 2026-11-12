@@ -210,6 +210,12 @@ impl UtcTiming {
 }
 
 /// Which not-acted-on constructs the MPD contained.
+///
+/// Read-only: [`Mpd::to_xml`] emits no element for `patch_location`,
+/// `event_stream`, `preselection`, `producer_reference_time`,
+/// `content_steering` or `resync` (the model keeps only the flag, not the
+/// element), so a parse -> write -> parse clears those six flags. The other
+/// flags are derived from content the writer does emit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub struct MpdFeatures {
@@ -235,6 +241,24 @@ pub struct MpdFeatures {
     /// A Period or AdaptationSet removed because its xlink was
     /// `urn:mpeg:dash:resolve-to-zero:2013`.
     pub xlink_resolve_to_zero: bool,
+}
+
+impl MpdFeatures {
+    /// These flags with the read-only ones (`patch_location`, `event_stream`,
+    /// `preselection`, `producer_reference_time`, `content_steering`,
+    /// `resync`) cleared: what survives a parse -> [`Mpd::to_xml`] -> parse
+    /// round trip, since the writer does not emit elements it does not model.
+    pub fn written(self) -> Self {
+        Self {
+            patch_location: false,
+            event_stream: false,
+            preselection: false,
+            producer_reference_time: false,
+            content_steering: false,
+            resync: false,
+            ..self
+        }
+    }
 }
 
 /// The `RepresentationBase` attributes (5.3.7.2) that AdaptationSet and
