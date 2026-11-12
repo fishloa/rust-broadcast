@@ -40,6 +40,7 @@ struct Run {
     number: u64,
     d: u64,
     count: u64,
+    tail: u64,
 }
 
 /// The lazily expanded timeline.
@@ -121,17 +122,25 @@ impl TimelineIndex {
                     count_hint: total.saturating_add(count),
                 });
             }
+            let cut_at_next = s.r < 0 && entries.get(i + 1).is_some_and(|n| n.t.is_some());
             if count > 0 {
+                let tail = match entries.get(i + 1).and_then(|n| n.t) {
+                    Some(next_t) if cut_at_next => {
+                        let last_start = time.saturating_add(s.d.saturating_mul(count - 1));
+                        next_t.saturating_sub(last_start).clamp(1, s.d)
+                    }
+                    _ => s.d,
+                };
                 runs.push(Run {
                     first_index: total,
                     time,
                     number,
                     d: s.d,
                     count,
+                    tail,
                 });
             }
             let span = s.d.checked_mul(count).ok_or(AddressError::Overflow)?;
-            let cut_at_next = s.r < 0 && entries.get(i + 1).is_some_and(|n| n.t.is_some());
             time = if cut_at_next {
                 entries[i + 1].t.unwrap_or(time)
             } else {
@@ -167,7 +176,7 @@ impl TimelineIndex {
         Some(TimelineSegment {
             number: run.number.saturating_add(k),
             time: run.time.saturating_add(k.saturating_mul(run.d)),
-            duration: run.d,
+            duration: if k + 1 == run.count { run.tail } else { run.d },
         })
     }
 
