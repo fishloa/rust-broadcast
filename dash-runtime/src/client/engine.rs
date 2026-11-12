@@ -1067,20 +1067,22 @@ impl DashClient {
         mpd: &Mpd,
         at: RepRef,
         planned: &std::result::Result<crate::address::PlannedRepresentation, PlanError>,
-    ) -> Option<(String, Option<ByteRange>)> {
+    ) -> std::result::Result<Option<(String, Option<ByteRange>)>, DropCause> {
         match planned {
-            Ok(p) => p.plan.init().map(|r| (r.reference, r.byte_range)),
+            Ok(p) => Ok(p.plan.init().map(|r| (r.reference, r.byte_range))),
             Err(PlanError::Address(AddressError::IndexRequired)) => {
-                let (period, set, rep) = at.resolve(mpd)?;
-                match resolve_segment_info(period, set, rep).ok()? {
-                    SegmentInfo::Base(b) => b
+                let Some((period, set, rep)) = at.resolve(mpd) else {
+                    return Ok(None);
+                };
+                Ok(match resolve_segment_info(period, set, rep).ok() {
+                    Some(SegmentInfo::Base(b)) => b
                         .initialization
                         .as_ref()
                         .map(|u| (u.source_url.clone().unwrap_or_default(), u.range)),
                     _ => None,
-                }
+                })
             }
-            Err(_) => None,
+            Err(e) => Err(DropCause::Addressing(plan_error_name(e))),
         }
     }
 
@@ -1100,7 +1102,7 @@ impl DashClient {
         let query = segment_url_query(mpd, period, set, rep, self.mpd_query.as_deref())
             .map_err(|_| DropCause::UnusableUrl)?;
         let planned = plan_representation(mpd, at, &self.plan_options());
-        let init = Self::init_reference(mpd, at, &planned).ok_or(DropCause::NoInitialization)?;
+        let init = Self::init_reference(mpd, at, &planned)?.ok_or(DropCause::NoInitialization)?;
         let (plan, index) = match planned {
             Ok(p) => {
                 if p.plan.len().is_none() && mpd.kind != PresentationType::Dynamic {
@@ -1180,7 +1182,9 @@ impl DashClient {
                     mpd,
                     rep.at,
                     &Err(PlanError::Address(AddressError::IndexRequired)),
-                ),
+                )
+                .ok()
+                .flatten(),
             }
         };
         self.rep_loc.insert(rep_id, (pi, li, ri));
@@ -1949,17 +1953,25 @@ impl DashClient {
 
     // Manifest and switching ----------------------------------------------
 
-    fn init_url_of(&self, at: RepRef) -> Option<String> {
-        let mpd = self.mpd.as_ref()?;
+    fn init_url_of(&self, at: RepRef) -> std::result::Result<Option<String>, DropCause> {
+        let Some(mpd) = self.mpd.as_ref() else {
+            return Ok(None);
+        };
         let planned = plan_representation(mpd, at, &PlanOptions::default());
-        let (reference, _) = Self::init_reference(mpd, at, &planned)?;
-        let (period, set, rep) = at.resolve(mpd)?;
+        let Some((reference, _)) = Self::init_reference(mpd, at, &planned)? else {
+            return Ok(None);
+        };
+        let Some((period, set, rep)) = at.resolve(mpd) else {
+            return Ok(None);
+        };
         let cands = filter_candidates(
             representation_candidates(mpd, period, set, rep),
             self.doc_url.as_ref(),
             self.dash.cross_origin_urls,
         );
-        cands.first()?.resolve(self.doc_url.as_ref(), &reference)
+        Ok(cands
+            .first()
+            .and_then(|c| c.resolve(self.doc_url.as_ref(), &reference)))
     }
 
     fn manifest(&self, pi: usize) -> ManifestSelection {
@@ -1979,9 +1991,10 @@ impl DashClient {
             .filter_map(|&at| {
                 let (_, set, rep) = at.resolve(mpd)?;
                 let common = effective_common(set, rep);
+                let init_url = self.init_url_of(at).ok().flatten();
                 Some(VariantInfo {
                     rep: at,
-                    init_url: self.init_url_of(at),
+                    init_url,
                     bandwidth: rep.bandwidth,
                     resolution: common.width.zip(common.height),
                     codecs: common.codecs,
@@ -2014,7 +2027,7 @@ impl DashClient {
                     language: set.lang.clone(),
                     default: a.is_main,
                     autoselect: true,
-                    init_url: self.init_url_of(chosen),
+                    init_url: self.init_url_of(chosen).ok().flatten(),
                     reps: a.reps.clone(),
                 })
             })
