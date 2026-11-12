@@ -5760,7 +5760,7 @@ impl StreamingTsDemux {
             last_payload_full: false,
             pes_declared_len: 0,
             pes_received: 0,
-                fallback: (0, 0),
+            fallback: (0, 0),
             frame_period: None,
             last_stamped_dts: None,
             units_since_stamped: 0,

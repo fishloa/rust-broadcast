@@ -1192,9 +1192,16 @@ fn audio_frame_body(sound_type: u8, data: &[u8]) -> Vec<u8> {
 /// per the media-plane architecture) and rescale here instead.
 fn ticks_to_ms(ticks: i64, timescale: u32) -> Result<i64> {
     if timescale == 0 {
-        return Err(Error::InvalidInput("FLV mux requires a non-zero track timescale"));
+        return Err(Error::InvalidInput(
+            "FLV mux requires a non-zero track timescale",
+        ));
     }
-    Ok(rescale_i64(ticks, timescale, FLV_TIMESCALE, Rounding::TowardZero))
+    Ok(rescale_i64(
+        ticks,
+        timescale,
+        FLV_TIMESCALE,
+        Rounding::TowardZero,
+    ))
 }
 
 /// [`ticks_to_ms`] for a value that must land in an FLV `Timestamp` (the UI24

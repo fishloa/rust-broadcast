@@ -268,7 +268,12 @@ fn rescale_ticks(ticks: i64, from_timescale: u32, to_timescale: u32) -> Result<i
     if from_timescale == 0 || to_timescale == 0 {
         return Err(Error::InvalidInput("timescale must be non-zero"));
     }
-    Ok(rescale_i64(ticks, from_timescale, to_timescale, Rounding::TowardZero))
+    Ok(rescale_i64(
+        ticks,
+        from_timescale,
+        to_timescale,
+        Rounding::TowardZero,
+    ))
 }
 
 /// Shift every sample's absolute `dts`/`pts` — when present — by `offset`

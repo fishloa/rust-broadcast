@@ -1467,14 +1467,13 @@ fn build_es_payload(plan: &EsPlan, sample: &Sample) -> Result<Vec<u8>> {
             ensure_avc_aud(au)
         }
         EsKind::Hevc => {
-            let au =
-                build_annexb_au(
-                    &sample.data,
-                    sample.flags.is_sync,
-                    &plan.hevc_vps_sps_pps,
-                    |n| nal_unit_type(NalCodec::Hevc, n) == Some(HEVC_NAL_SPS),
-                    |n| nal_unit_type(NalCodec::Hevc, n) == Some(HEVC_NAL_AUD),
-                )?;
+            let au = build_annexb_au(
+                &sample.data,
+                sample.flags.is_sync,
+                &plan.hevc_vps_sps_pps,
+                |n| nal_unit_type(NalCodec::Hevc, n) == Some(HEVC_NAL_SPS),
+                |n| nal_unit_type(NalCodec::Hevc, n) == Some(HEVC_NAL_AUD),
+            )?;
             ensure_hevc_aud(au)
         }
         EsKind::Aac => {
@@ -1529,9 +1528,7 @@ where
 {
     let nals = iter_length_prefixed_nals(length_prefixed)?;
 
-    let needs_params = is_sync
-        && !param_sets.is_empty()
-        && !nals.iter().any(|n| is_sps(n));
+    let needs_params = is_sync && !param_sets.is_empty() && !nals.iter().any(|n| is_sps(n));
 
     if !needs_params {
         // Straight, byte-exact rewrite of the existing NAL sequence.
@@ -1618,13 +1615,17 @@ fn ensure_hevc_aud(mut au: Vec<u8>) -> Result<Vec<u8>> {
 /// The AVC `nal_unit_type` of the first NAL in an Annex B buffer, or `None`
 /// when the buffer is empty (a zero-length sample has no NAL at all).
 fn first_avc_nal_type(annexb: &[u8]) -> Option<u8> {
-    crate::annexb::iter_annexb_nals(annexb).next().and_then(|n| n.first().map(|b| b & H264_NAL_TYPE_MASK))
+    crate::annexb::iter_annexb_nals(annexb)
+        .next()
+        .and_then(|n| n.first().map(|b| b & H264_NAL_TYPE_MASK))
 }
 
 /// The HEVC `nal_unit_type` of the first NAL in an Annex B buffer (2-byte NAL
 /// header, H.265 §7.3.1.2), or `None` when the buffer is empty.
 fn first_hevc_nal_type(annexb: &[u8]) -> Option<u8> {
-    crate::annexb::iter_annexb_nals(annexb).next().and_then(|n| nal_unit_type(NalCodec::Hevc, n))
+    crate::annexb::iter_annexb_nals(annexb)
+        .next()
+        .and_then(|n| nal_unit_type(NalCodec::Hevc, n))
 }
 
 /// Build a PAT section (one program → `pmt_pid`) with its trailing CRC_32.
