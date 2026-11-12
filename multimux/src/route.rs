@@ -331,6 +331,10 @@ pub struct DashWindowSegment {
     /// route carries over from the program a reconnect replaced, so it keeps
     /// counting up across a source reconnect.
     pub public_seq: u64,
+    /// The segment is a gap placeholder (no media bytes): the program had no
+    /// muxable track while it was cut (`#EXT-X-GAP` on HLS, the end of a DASH
+    /// Period).
+    pub gap: bool,
 }
 
 /// What a replacement program continues from its predecessor on the same
@@ -370,7 +374,7 @@ pub(crate) struct DashState {
     cursor: Mutex<SegmentCursor>,
     window: Mutex<VecDeque<DashWindowSegment>>,
     capacity: usize,
-    track_specs: Mutex<Vec<TrackSpec>>,
+    track_specs: Mutex<Vec<(u32, Vec<TrackSpec>)>>,
     /// Wall-clock instant the route's presentation began: when its first
     /// `Trunk` was minted, carried unchanged across a reconnect. The source of
     /// `MPD@availabilityStartTime` (ISO/IEC 23009-1 §5.3.1.2 Table 3: "the
@@ -394,11 +398,49 @@ impl DashState {
     }
 
     fn set_track_specs(&self, specs: Vec<TrackSpec>) {
-        *self.track_specs.lock() = specs;
+        let mut log = self.track_specs.lock();
+        match log.last_mut() {
+            Some((_, latest)) => *latest = specs,
+            None => log.push((0, specs)),
+        }
+    }
+
+    fn begin_track_specs(
+        &self,
+        first_segment: media_plane::ids::SegmentSeq,
+        specs: Vec<TrackSpec>,
+    ) {
+        let first = first_segment.value();
+        let mut log = self.track_specs.lock();
+        match log.last_mut() {
+            Some((from, latest)) if *from >= first => *latest = specs,
+            _ => log.push((first, specs)),
+        }
     }
 
     fn track_specs(&self) -> Vec<TrackSpec> {
-        self.track_specs.lock().clone()
+        self.track_specs
+            .lock()
+            .last()
+            .map(|(_, specs)| specs.clone())
+            .unwrap_or_default()
+    }
+
+    fn track_specs_at(&self, segment: media_plane::ids::SegmentSeq) -> Vec<TrackSpec> {
+        let log = self.track_specs.lock();
+        log.iter()
+            .rev()
+            .find(|(from, _)| *from <= segment.value())
+            .or_else(|| log.first())
+            .map(|(_, specs)| specs.clone())
+            .unwrap_or_default()
+    }
+
+    fn retire_track_specs_before(&self, oldest: media_plane::ids::SegmentSeq) {
+        let mut log = self.track_specs.lock();
+        while log.len() > 1 && log[1].0 <= oldest.value() {
+            log.remove(0);
+        }
     }
 
     /// Absorb every segment this route's `SegmentCursor` has produced since
@@ -420,8 +462,12 @@ impl DashState {
                         .epoch
                         .seq_offset
                         .saturating_add(u64::from(entry.sequence_number.value())),
+                    gap: entry.bytes.is_empty(),
                 });
             }
+        }
+        if let Some(oldest) = window.front() {
+            self.retire_track_specs_before(oldest.segment_seq);
         }
     }
 
@@ -461,6 +507,10 @@ pub(crate) struct ProgramServing {
     trunk: Arc<Trunk>,
     ll_hls: Arc<HlsOrigin>,
     dash: Arc<DashState>,
+    /// Whether the program has muxable media now. Cleared when the source
+    /// drops every muxable track; the specs and segments already published
+    /// are unaffected.
+    tracks_active: std::sync::atomic::AtomicBool,
     /// This program's route name — labels the DVR-failure metric recorded when
     /// a panic during persist stops recording for this program (I1).
     route_name: String,
@@ -723,6 +773,7 @@ impl ProgramServing {
             trunk,
             ll_hls,
             dash,
+            tracks_active: std::sync::atomic::AtomicBool::new(true),
             route_name: route_name.to_string(),
             #[cfg(test)]
             panic_on_persist: std::sync::atomic::AtomicBool::new(false),
@@ -920,7 +971,12 @@ impl ProgramServing {
         self.ll_hls.init_bytes()
     }
 
-    fn set_track_specs(&self, specs: Vec<TrackSpec>, mapped: &[(usize, TrackSpec)]) {
+    fn set_track_specs(
+        &self,
+        specs: Vec<TrackSpec>,
+        mapped: &[(usize, TrackSpec)],
+        first_segment: Option<media_plane::ids::SegmentSeq>,
+    ) {
         // The HLS master playlist's `CODECS` comes from the same specs (the
         // only source for a TS-HLS origin, which has no init segment to read).
         // With separate audio renditions the primary playlist carries only the
@@ -943,11 +999,26 @@ impl ProgramServing {
                 tracing::warn!(%error, "audio rendition CODECS unavailable for these track specs");
             }
         }
-        self.dash.set_track_specs(specs);
+        match first_segment {
+            Some(first) => self.dash.begin_track_specs(first, specs),
+            None => self.dash.set_track_specs(specs),
+        }
     }
 
     fn track_specs(&self) -> Vec<TrackSpec> {
         self.dash.track_specs()
+    }
+
+    fn track_specs_at(&self, segment: media_plane::ids::SegmentSeq) -> Vec<TrackSpec> {
+        self.dash.track_specs_at(segment)
+    }
+
+    fn set_tracks_active(&self, active: bool) {
+        self.tracks_active.store(active, Ordering::SeqCst);
+    }
+
+    fn tracks_active(&self) -> bool {
+        self.tracks_active.load(Ordering::SeqCst)
     }
 
     fn window_segments(&self) -> Vec<DashWindowSegment> {
@@ -2044,11 +2115,32 @@ impl RouteHandle {
     /// derivation) — the one piece of codec metadata no `Trunk` ring holds. A
     /// no-op (logged) if `program` has not been published yet.
     pub fn set_track_specs(&self, program: ProgramId, specs: Vec<TrackSpec>) {
+        self.record_track_specs(program, specs, None);
+    }
+
+    /// [`Self::set_track_specs`] for a track set that starts a new init
+    /// generation at `first_segment`: the specs already recorded keep
+    /// describing the segments before it.
+    pub(crate) fn begin_track_specs(
+        &self,
+        program: ProgramId,
+        specs: Vec<TrackSpec>,
+        first_segment: media_plane::ids::SegmentSeq,
+    ) {
+        self.record_track_specs(program, specs, Some(first_segment));
+    }
+
+    fn record_track_specs(
+        &self,
+        program: ProgramId,
+        specs: Vec<TrackSpec>,
+        first_segment: Option<media_plane::ids::SegmentSeq>,
+    ) {
         let specs = self.with_declared_audio_profiles(specs);
         match self.serving(program) {
             Some(serving) => {
                 let mapped = crate::source::split_audio::resolve_sources(self, &specs);
-                serving.set_track_specs(specs, &mapped)
+                serving.set_track_specs(specs, &mapped, first_segment)
             }
             None => {
                 tracing::warn!(
@@ -2057,6 +2149,33 @@ impl RouteHandle {
                 )
             }
         }
+    }
+
+    /// The track specs that describe `segment` of `program`'s window.
+    pub(crate) fn track_specs_at(
+        &self,
+        program: ProgramId,
+        segment: media_plane::ids::SegmentSeq,
+    ) -> Vec<TrackSpec> {
+        self.serving(program)
+            .map(|s| s.track_specs_at(segment))
+            .unwrap_or_default()
+    }
+
+    /// Record whether `program` has muxable media now. `false` after the
+    /// source drops every muxable track; the segments already published and
+    /// the specs describing them are untouched.
+    pub(crate) fn set_tracks_active(&self, program: ProgramId, active: bool) {
+        if let Some(serving) = self.serving(program) {
+            serving.set_tracks_active(active);
+        }
+    }
+
+    /// `true` while `program` has muxable media; `false` once the source has
+    /// dropped every muxable track (and until it announces one again), or if
+    /// `program` is not registered.
+    pub fn has_active_tracks(&self, program: ProgramId) -> bool {
+        self.serving(program).is_some_and(|s| s.tracks_active())
     }
 
     /// `program`'s recorded track specs — empty if `program` is not

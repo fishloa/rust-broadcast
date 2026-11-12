@@ -999,7 +999,7 @@ mod driver_progress_tests {
     /// now-removed track from the first NewProgram, because the sync loop
     /// silently skipped the empty set.
     #[test]
-    fn empty_track_set_replaces_previous_populated_set() {
+    fn an_empty_track_set_leaves_no_active_tracks_and_the_window_specs_unchanged() {
         struct TrackSetSession {
             pending: std::collections::VecDeque<SessionEvent>,
             feed_count: u32,
@@ -1075,16 +1075,19 @@ mod driver_progress_tests {
             "track specs must reflect the announced track"
         );
 
-        // Feed 3: TracksChanged(0, []) — clears tracks.
+        assert!(route.has_active_tracks(ProgramId(0)));
+
         driver.feed(&[], Timestamp::from_nanos(3));
         report_driver_progress(&driver, &route, &mut published);
         segment::drive_program_segmenters(&driver, &route, &mut segmenters);
-        let specs = route.track_specs(ProgramId(0));
+        assert!(
+            !route.has_active_tracks(ProgramId(0)),
+            "an empty TracksChanged leaves the route with no active tracks"
+        );
         assert_eq!(
-            specs.len(),
-            0,
-            "empty TracksChanged must replace the old track set — \
-             the route's track specs must reflect empty, not the stale old set"
+            route.track_specs(ProgramId(0)).len(),
+            1,
+            "the specs describing the segments still in the window are unchanged"
         );
     }
 }

@@ -373,6 +373,27 @@ pub(super) enum PendingPublish {
     Segment(SegmentEntry),
 }
 
+/// What [`ProgramSegmenter::apply_track_change`] did with a track-set change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TrackChange {
+    /// Admitted in place: the init segment is unchanged.
+    Admitted,
+    /// The segmenter was rebuilt; the new init serves from this segment.
+    Rebuilt { first_segment: SegmentSeq },
+    /// The set carries no media the container can mux (empty, or data only).
+    NoMuxableMedia,
+    /// The change could not be applied; the previous segmenter stays.
+    Refused,
+}
+
+/// The program has no muxable media: its current segment was closed, a gap
+/// placeholder published, and every sample is dropped until a track set the
+/// container can mux arrives.
+#[derive(Debug, Clone, Copy)]
+struct GapState {
+    resume_segment: SegmentSeq,
+}
+
 /// [`SegmentWriter`] the resulting parts/segments are published back
 /// through.
 ///
@@ -396,6 +417,7 @@ pub struct ProgramSegmenter {
     /// `EXT-X-DISCONTINUITY` (RFC 8216bis 6.2.1: a change of timing or
     /// encoding is signalled with it).
     mark_next_discontinuous: bool,
+    gap: Option<GapState>,
     /// Cumulative nanoseconds of segment duration published so far by this
     /// segmenter — mirrors `crate::route::RouteHandle`'s own
     /// `next_timeline_ns`, kept per-program here since each program's
@@ -873,6 +895,7 @@ impl ProgramSegmenter {
             segment_writer,
             seg,
             mark_next_discontinuous: false,
+            gap: None,
             next_timeline_ns: 0,
             track_generation,
             published_tracks,
@@ -974,17 +997,38 @@ impl ProgramSegmenter {
         while let Some(item) = self.cursor.poll() {
             if let SampleCursorItem::TracksChanged { generation, tracks } = item {
                 if generation > self.track_generation {
-                    route_handle.set_track_specs(program, tracks.to_vec());
                     let previous_tracks = std::mem::replace(&mut self.published_tracks, tracks);
                     let previous_moves = self.timescale_moves.clone();
-                    if !self.apply_track_change(program, trunk, route_handle, generation) {
-                        self.published_tracks = previous_tracks;
-                        self.timescale_moves = previous_moves;
+                    match self.apply_track_change(program, trunk, route_handle, generation) {
+                        TrackChange::Admitted => {
+                            route_handle.set_track_specs(program, self.published_tracks.to_vec());
+                            route_handle.set_tracks_active(program, true);
+                        }
+                        TrackChange::Rebuilt { first_segment } => {
+                            route_handle.begin_track_specs(
+                                program,
+                                self.published_tracks.to_vec(),
+                                first_segment,
+                            );
+                            route_handle.set_tracks_active(program, true);
+                        }
+                        TrackChange::NoMuxableMedia => {
+                            self.published_tracks = previous_tracks;
+                            self.timescale_moves = previous_moves;
+                            self.enter_gap(program, trunk, route_handle);
+                        }
+                        TrackChange::Refused => {
+                            self.published_tracks = previous_tracks;
+                            self.timescale_moves = previous_moves;
+                        }
                     }
                     self.track_generation = generation;
                     self.caption_detectors.clear();
                 }
             } else if let SampleCursorItem::Timed { track_id, sample } = item {
+                if self.gap.is_some() {
+                    continue;
+                }
                 if self
                     .subtitle_followers
                     .iter()
@@ -1335,7 +1379,7 @@ impl ProgramSegmenter {
         trunk: &Trunk,
         route_handle: &RouteHandle,
         generation: u64,
-    ) -> bool {
+    ) -> TrackChange {
         let new_tracks = route_handle.with_declared_audio_profiles(self.published_tracks.to_vec());
         self.timescale_moves = timescale_moves(&self.published_tracks, &new_tracks);
         tracing::info!(
@@ -1356,8 +1400,13 @@ impl ProgramSegmenter {
             Vec::new()
         };
 
+        if is_ts && new_specs.is_empty() {
+            tracing::warn!("mid-stream track-set change left no TS-muxable track — entering a gap");
+            return TrackChange::NoMuxableMedia;
+        }
+
         let mut any_admitted = false;
-        for spec in &new_specs {
+        for spec in new_specs.iter().filter(|_| self.gap.is_none()) {
             match self.seg.update_track(spec) {
                 Ok(transmux::UpdateTrackOutcome::Unchanged) => {}
                 Ok(transmux::UpdateTrackOutcome::Unknown) => {
@@ -1371,6 +1420,7 @@ impl ProgramSegmenter {
         }
 
         if matches!(route_handle.container(), Container::Fmp4) || !any_admitted {
+            let mut first_segment = None;
             // Rebuild the segmenter from the trunk's current complete
             // track set. The previous segmenter's buffered samples have
             // already been flushed by `pump` (which calls this before
@@ -1388,9 +1438,9 @@ impl ProgramSegmenter {
                     if muxable.is_empty() {
                         tracing::warn!(
                             "mid-stream track-set change left no fMP4-muxable track — \
-                             keeping the current segmenter"
+                             entering a gap"
                         );
-                        return false;
+                        return TrackChange::NoMuxableMedia;
                     }
                     // Flush the old segmenter in place, drain its output and
                     // read its next sequence numbers — the replacement
@@ -1400,7 +1450,7 @@ impl ProgramSegmenter {
                     // rebuild leaves a working fMP4 segmenter, never a
                     // placeholder of another container.
                     let AnySegmenter::Fmp4(old_seg) = &mut self.seg else {
-                        return false;
+                        return TrackChange::Refused;
                     };
                     if let Err(e) = old_seg.flush() {
                         tracing::warn!(error = %e, "old segmenter flush on rebuild failed");
@@ -1415,7 +1465,10 @@ impl ProgramSegmenter {
                         .into_iter()
                         .map(Into::into)
                         .collect();
-                    let (next_seq, current_seg) = old_seg.next_sequence_numbers();
+                    let (next_seq, mut current_seg) = old_seg.next_sequence_numbers();
+                    if let Some(gap) = self.gap {
+                        current_seg = current_seg.max(gap.resume_segment.value());
+                    }
                     let part_cuts = old_seg.take_ready_part_cuts();
                     self.note_leader_segments(&segments);
                     let leader_parts = self.leader_parts(&part_cuts, &parts);
@@ -1424,17 +1477,13 @@ impl ProgramSegmenter {
                     self.feed_followers(part_cuts, &leader_parts);
                     self.finish_followers();
                     let last_queued = self
-                        .pending
-                        .iter()
-                        .filter_map(|p| match p {
-                            PendingPublish::Segment(entry) => Some(entry.sequence_number.value()),
-                            PendingPublish::Part(_) => None,
-                        })
+                        .last_queued_segment(trunk)
+                        .into_iter()
                         .chain(last_flushed)
-                        .chain(trunk.last_closed_segment().map(SegmentSeq::value))
                         .max();
                     let new_init_first_segment =
                         SegmentSeq::new(last_queued.unwrap_or(0)).saturating_next();
+                    first_segment = Some(new_init_first_segment);
 
                     match LlHlsSegmenter::with_part_target_at(
                         muxable,
@@ -1483,7 +1532,7 @@ impl ProgramSegmenter {
                                 "fMP4 segmenter rebuild failed — keeping the current \
                                  segmenter, track change dropped"
                             );
-                            return false;
+                            return TrackChange::Refused;
                         }
                     }
                 }
@@ -1497,7 +1546,10 @@ impl ProgramSegmenter {
                     // cut segment `0`, which this `Trunk` (already holding
                     // segments from the *old* segmenter this rebuild is
                     // replacing) rejects as non-monotonic forever after.
-                    let next_seq = self.segment_writer.next_sequence_number();
+                    let mut next_seq = self.segment_writer.next_sequence_number();
+                    if let Some(gap) = self.gap {
+                        next_seq = next_seq.max(gap.resume_segment);
+                    }
                     match StreamingTsHlsSegmenter::with_start_sequence(
                         new_tracks.to_vec(),
                         route_handle.target_duration_secs().round().max(1.0) as u32,
@@ -1537,7 +1589,7 @@ impl ProgramSegmenter {
                                 error = %e,
                                 "TS segmenter rebuild failed — track addition dropped"
                             );
-                            return false;
+                            return TrackChange::Refused;
                         }
                     }
                 }
@@ -1548,11 +1600,58 @@ impl ProgramSegmenter {
                         "mid-stream track-set change on an unsupported container — \
                          new tracks will not be served"
                     );
-                    return false;
+                    return TrackChange::Refused;
                 }
             }
+            if self.gap.take().is_some() {
+                self.mark_next_discontinuous = true;
+            }
+            return first_segment.map_or(TrackChange::Admitted, |first_segment| {
+                TrackChange::Rebuilt { first_segment }
+            });
         }
-        true
+        TrackChange::Admitted
+    }
+
+    fn last_queued_segment(&self, trunk: &Trunk) -> Option<u32> {
+        self.pending
+            .iter()
+            .filter_map(|p| match p {
+                PendingPublish::Segment(entry) => Some(entry.sequence_number.value()),
+                PendingPublish::Part(_) => None,
+            })
+            .chain(trunk.last_closed_segment().map(SegmentSeq::value))
+            .max()
+    }
+
+    fn enter_gap(&mut self, program: ProgramId, trunk: &Trunk, route_handle: &RouteHandle) {
+        route_handle.set_tracks_active(program, false);
+        if self.gap.is_some() {
+            return;
+        }
+        self.flush();
+        let seq = SegmentSeq::new(self.last_queued_segment(trunk).unwrap_or(0)).saturating_next();
+        let duration = Duration::from_secs_f64(route_handle.target_duration_secs());
+        let start_ns = self.next_timeline_ns;
+        self.next_timeline_ns = self
+            .next_timeline_ns
+            .saturating_add(u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX));
+        if !self.followers.is_empty() || !self.subtitle_followers.is_empty() {
+            self.leader_durations
+                .insert(seq.value(), duration.as_secs_f64());
+        }
+        self.publish_without_blocking(PendingPublish::Segment(SegmentEntry::new(
+            Vec::new(),
+            seq,
+            duration,
+            Timestamp::from_nanos(start_ns),
+            SegmentMeta {
+                discontinuous: false,
+            },
+        )));
+        self.gap = Some(GapState {
+            resume_segment: seq.saturating_next(),
+        });
     }
 
     /// Finalize any trailing buffered partial segment — called once the
@@ -3469,11 +3568,30 @@ mod tests {
             rig.feed();
         }
         rig.snapshot("2 empty track set", &mut out);
+        assert!(!rig.route.has_active_tracks(ProgramId(0)));
+        let gap_playlist = render_playlist(&rig.route);
+        assert!(gap_playlist.contains("#EXT-X-GAP"), "{gap_playlist}");
+        let gap_mpd = crate::output::dash::render_mpd_at(
+            &rig.route,
+            std::time::UNIX_EPOCH + Duration::from_secs(GAP_PRESENTATION_ORIGIN_SECS),
+        )
+        .expect("the segments before the gap still render");
+        assert_eq!(gap_mpd.matches("<Period ").count(), 1, "{gap_mpd}");
+        assert!(
+            gap_mpd.contains(" duration=\"PT"),
+            "the Period ends at the gap: {gap_mpd}"
+        );
 
         rig.driver.session().change_tracks(gap_video_audio_specs());
         let resumed = rig.closed_segments() + GAP_SEGMENTS_PER_STAGE;
         rig.feed_until_segments(resumed);
         rig.snapshot("3 video+audio again", &mut out);
+        assert!(rig.route.has_active_tracks(ProgramId(0)));
+        let resumed_playlist = render_playlist(&rig.route);
+        assert!(
+            resumed_playlist.contains("#EXT-X-DISCONTINUITY\n"),
+            "{resumed_playlist}"
+        );
 
         assert_gap_golden(&out);
     }
@@ -3513,6 +3631,7 @@ mod tests {
             segment_writer,
             seg,
             mark_next_discontinuous: false,
+            gap: None,
             next_timeline_ns: 0,
             track_generation: trunk.track_generation(),
             published_tracks: trunk.tracks(),
@@ -3763,12 +3882,24 @@ mod tests {
         let writer = trunk.writer().expect("first take succeeds");
         writer.set_tracks(vec![track_spec(TrackId::new(1))]);
         let route = RouteHandle::new(1.0, 250, 8);
+        route.publish_program(ProgramId(0), Arc::clone(&trunk));
         let mut segmenter =
             ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("fMP4 segmenter builds");
+        route.set_track_specs(ProgramId(0), segmenter.published_tracks.to_vec());
 
         writer.set_tracks(vec![data_track_spec(TrackId::new(2))]);
         segmenter.pump(ProgramId(0), &trunk, &route);
         assert!(matches!(segmenter.seg, AnySegmenter::Fmp4(_)));
+        assert_eq!(
+            route
+                .track_specs(ProgramId(0))
+                .iter()
+                .map(|t| t.track_id)
+                .collect::<Vec<_>>(),
+            vec![TrackId::new(1)],
+            "a data-only change must not change the advertised specs"
+        );
+        assert!(!route.has_active_tracks(ProgramId(0)));
         assert_eq!(
             segmenter
                 .published_tracks

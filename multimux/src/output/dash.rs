@@ -224,19 +224,135 @@ fn render_mpd(route: &RouteHandle) -> Option<String> {
     render_mpd_at(route, origin)
 }
 
+/// One Period of the MPD: a run of consecutive media segments, closed by the
+/// gap placeholder that follows it (if any).
+struct PeriodRun<'a> {
+    segments: &'a [crate::route::DashWindowSegment],
+    ended_by: Option<&'a crate::route::DashWindowSegment>,
+}
+
+fn period_runs(window: &[crate::route::DashWindowSegment]) -> Vec<PeriodRun<'_>> {
+    let mut runs = Vec::new();
+    let mut start = 0;
+    for (at, segment) in window.iter().enumerate() {
+        if segment.gap {
+            if start < at {
+                runs.push(PeriodRun {
+                    segments: &window[start..at],
+                    ended_by: Some(segment),
+                });
+            }
+            start = at + 1;
+        }
+    }
+    if start < window.len() {
+        runs.push(PeriodRun {
+            segments: &window[start..],
+            ended_by: None,
+        });
+    }
+    runs
+}
+
 /// Render the MPD with an explicit presentation `origin` for `availabilityStartTime`, so a
 /// golden can freeze the wall-clock value (`render_mpd` delegates with the
 /// program's own `presentation_origin`). `#[doc(hidden)]` and only reachable from tests.
+///
+/// Each run of media segments between gap placeholders is its own Period
+/// (ISO/IEC 23009-1 §5.3.2: a Period is a span of the presentation with a
+/// fixed set of encoded versions; `private/specs-verified/dash/iso-23009-1/`
+/// Period clause): the Period ends where the gap begins, and the next one
+/// starts at its first segment's number with the track set that segment was
+/// cut under.
 #[doc(hidden)]
 pub fn render_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<String> {
-    let specs = route.track_specs(crate::route::SPTS_PROGRAM_ID);
+    let program = crate::route::SPTS_PROGRAM_ID;
+    let window = route.window_segments(program);
+    let runs = period_runs(&window);
+    let first_number = start_number(route);
+    let nominal_secs = route.target_duration_secs();
+    if runs.is_empty() {
+        if !window.is_empty() {
+            return None;
+        }
+        return render_period_document(
+            route,
+            origin,
+            &window,
+            &route.track_specs(program),
+            first_number,
+            false,
+        );
+    }
+    if let [only] = runs.as_slice()
+        && only.ended_by.is_none()
+    {
+        return render_period_document(
+            route,
+            origin,
+            &window,
+            &route.track_specs(program),
+            first_number,
+            true,
+        );
+    }
+    let mut mpd: Option<broadcast_dash::Mpd> = None;
+    for (index, run) in runs.iter().enumerate() {
+        let first = run.segments[0];
+        let specs = if run.ended_by.is_some() {
+            route.track_specs_at(program, first.segment_seq)
+        } else {
+            route.track_specs(program)
+        };
+        let Some(xml) =
+            render_period_document(route, origin, &window, &specs, first.public_seq, true)
+        else {
+            continue;
+        };
+        let mut parsed = broadcast_dash::Mpd::parse(xml.as_bytes()).ok()?;
+        if parsed.periods.is_empty() {
+            continue;
+        }
+        let mut period = parsed.periods.remove(0);
+        let start = period_start(first.public_seq, first_number, nominal_secs)?;
+        period.id = Some(index.to_string());
+        period.start = Some(start);
+        period.duration = match run.ended_by {
+            Some(gap) => {
+                Some(period_start(gap.public_seq, first_number, nominal_secs)?.checked_sub(start)?)
+            }
+            None => None,
+        };
+        match mpd.as_mut() {
+            Some(base) => base.periods.push(period),
+            None => {
+                parsed.periods.push(period);
+                mpd = Some(parsed);
+            }
+        }
+    }
+    mpd?.to_xml().ok()
+}
+
+fn period_start(public_seq: u64, first_number: u64, nominal_secs: f64) -> Option<Duration> {
+    let segments = public_seq.saturating_sub(first_number);
+    Duration::try_from_secs_f64(nominal_secs * segments as f64).ok()
+}
+
+fn render_period_document(
+    route: &RouteHandle,
+    origin: SystemTime,
+    window: &[crate::route::DashWindowSegment],
+    specs: &[TrackSpec],
+    start_number: u64,
+    has_segments: bool,
+) -> Option<String> {
     // `@id` forced to DEFAULT_TRACK_ID (see module docs' "Single-rendition
     // model") regardless of which track this route's own PMT numbered it.
-    let mut spec = select_representable_track(&specs)?;
+    let mut spec = select_representable_track(specs)?;
     spec.track_id = DEFAULT_TRACK_ID;
     let timescale = spec.timescale.max(1);
 
-    let window = route.window_segments(crate::route::SPTS_PROGRAM_ID);
     // `@startNumber` is the number of the first segment this program EVER
     // published ([`FIRST_SEGMENT_NUMBER`]), fixed for its life -- never the
     // window's oldest. ISO/IEC 23009-1 §5.3.9.5.3:
@@ -246,19 +362,18 @@ pub fn render_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<String> 
     // live edge from `availabilityStartTime` + `startNumber`. A startNumber
     // that slid with the window while AST stayed fixed made it request
     // segments that do not exist (404) once the window slid (issue #1058).
-    let start_number = start_number(route);
     // `@duration` is the nominal target, constant across MPD refreshes (the
     // window's own first-segment duration changes as it slides, which would
     // change the client's whole number<->time mapping).
     let nominal_ticks =
         ((route.target_duration_secs() * f64::from(timescale)).round() as u64).max(1);
-    let segments = if window.is_empty() {
-        Vec::new()
-    } else {
+    let segments = if has_segments {
         vec![TrackSegments {
             track_id: DEFAULT_TRACK_ID,
             durations: vec![nominal_ticks],
         }]
+    } else {
+        Vec::new()
     };
 
     // timeShiftBufferDepth: the window's total buffered duration — the
@@ -284,7 +399,7 @@ pub fn render_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<String> 
         init_template: "init-$RepresentationID$.mp4".to_string(),
         media_template: "seg-$RepresentationID$-$Number$.m4s".to_string(),
         availability_start_time: Some(format_iso8601(origin)),
-        publish_time: Some(publish_time(origin, &window)),
+        publish_time: Some(publish_time(origin, window)),
         minimum_update_period: Some(xs_duration_secs_checked(
             "minimum_update_period",
             target_duration_secs,
@@ -526,6 +641,46 @@ mod tests {
             segment_seq: seq,
             part_count: 1,
         }
+    }
+
+    fn gap_seg(seq: u32, duration: f64) -> SegmentInfo {
+        SegmentInfo {
+            bytes: Vec::new(),
+            ..seg(seq, duration)
+        }
+    }
+
+    #[test]
+    fn a_gap_ends_the_period_and_the_next_segments_open_a_new_one() {
+        let program = crate::route::SPTS_PROGRAM_ID;
+        let route = RouteHandle::new(4.0, 500, 8);
+        route.publish_new_program(program);
+        route.set_track_specs(program, vec![video_spec(TrackId::new(1))]);
+        for info in [seg(1, 4.0), seg(2, 4.0), gap_seg(3, 4.0), seg(4, 4.0)] {
+            route.add_segment(program, info).expect("add_segment");
+        }
+        let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let mpd = render_mpd_at(&route, now).expect("renders");
+        assert_eq!(mpd.matches("<Period ").count(), 2, "{mpd}");
+        assert!(
+            mpd.contains("<Period id=\"0\" start=\"PT0S\" duration=\"PT8S\">"),
+            "{mpd}"
+        );
+        assert!(mpd.contains("<Period id=\"1\" start=\"PT12S\">"), "{mpd}");
+        assert!(mpd.contains("startNumber=\"4\""), "{mpd}");
+    }
+
+    #[test]
+    fn a_window_of_only_gap_placeholders_renders_no_mpd() {
+        let program = crate::route::SPTS_PROGRAM_ID;
+        let route = RouteHandle::new(4.0, 500, 8);
+        route.publish_new_program(program);
+        route.set_track_specs(program, vec![video_spec(TrackId::new(1))]);
+        route
+            .add_segment(program, gap_seg(1, 4.0))
+            .expect("add_segment");
+        let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        assert!(render_mpd_at(&route, now).is_none());
     }
 
     #[test]

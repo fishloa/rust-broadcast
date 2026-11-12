@@ -2586,6 +2586,7 @@ dependencies = [
  "broadcast-auth",
  "broadcast-client",
  "broadcast-common",
+ "broadcast-dash",
  "broadcast-hls",
  "broadcast-smooth",
  "bytes",
