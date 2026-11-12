@@ -23,7 +23,9 @@ const REFRESH_DIVISOR: u64 = 2;
 const FIRST_TRACK_ID: u32 = 1;
 
 fn timescale_of(manifest: &SmoothManifest, index: &StreamIndex) -> Option<u32> {
-    u32::try_from(index.timescale.unwrap_or(manifest.timescale)).ok()
+    u32::try_from(index.timescale.unwrap_or(manifest.timescale))
+        .ok()
+        .filter(|&t| t != 0)
 }
 
 #[derive(Debug, Clone, Copy)]

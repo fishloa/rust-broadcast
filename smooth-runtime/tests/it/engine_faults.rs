@@ -177,3 +177,18 @@ fn a_stream_whose_timeline_cannot_be_enumerated_ends_the_session_with_a_typed_ca
     host.run_until(|o| o.iter().any(|o| is_fatal(o) || is_ended(o)));
     assert!(host.has(|o| matches!(o, Output::Fatal(SmoothError::Timeline { .. }))));
 }
+
+#[test]
+fn a_zero_timescale_is_never_delivered() {
+    let zero = String::from_utf8(fixture("av/Manifest"))
+        .expect("utf8")
+        .replace(
+            "<SmoothStreamingMedia ",
+            "<SmoothStreamingMedia TimeScale=\"0\" ",
+        );
+    let mut host = av_host(SmoothConfig::default());
+    host.route("Manifest", vec![Reply::Body(zero.into_bytes())]);
+    host.run_until(|o| o.iter().any(|o| is_fatal(o) || is_ended(o)));
+    assert!(!host.has(|o| matches!(o, Output::Tracks(_))));
+    assert!(host.has(|o| matches!(o, Output::Fatal(SmoothError::NoUsableStream))));
+}
