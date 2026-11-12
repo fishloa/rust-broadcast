@@ -79,7 +79,6 @@ use core::time::Duration;
 use mpeg_ts::pid::Pid;
 
 use crate::diagnostics::codec_common::has_adts_sync;
-use crate::diagnostics::scte35_track::SpliceTracker;
 use dvb_conformance::ConformanceMonitor;
 use dvb_si::demux::SiDemux;
 use dvb_si::tables::AnyTableSection;
@@ -87,6 +86,7 @@ use dvb_si::tables::pmt::StreamType;
 use mpeg_pes::{PesAssembler, PesPacket};
 use mpeg_ts::resync::TsResync;
 use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
+use scte35_splice::SpliceTracker;
 use transmux::iter_annexb_nals;
 
 /// Half of the 33-bit PTS/DTS range: the threshold distinguishing a genuine
@@ -130,13 +130,6 @@ impl EsTrack {
             decode_anomaly: false,
         }
     }
-}
-
-/// Accumulated count for one TR 101 290 [`dvb_conformance::Indicator`].
-struct ConformanceCount {
-    priority: &'static str,
-    clause: &'static str,
-    count: u64,
 }
 
 /// One TR 101 290 indicator's accumulated event count, as exposed by
@@ -220,7 +213,6 @@ pub struct WatchState {
     /// How many programs currently declare each elementary PID. A PID shared
     /// by two programs must stay tracked while either still declares it.
     pid_refs: BTreeMap<Pid, usize>,
-    conformance_counts: BTreeMap<&'static str, ConformanceCount>,
     datagrams_total: u64,
     scte35_events_total: u64,
     pts_dts_anomalies_total: u64,
@@ -245,7 +237,6 @@ impl WatchState {
             scte35_tracks: BTreeMap::new(),
             pmt_generations: BTreeMap::new(),
             pid_refs: BTreeMap::new(),
-            conformance_counts: BTreeMap::new(),
             datagrams_total: 0,
             scte35_events_total: 0,
             pts_dts_anomalies_total: 0,
@@ -275,17 +266,7 @@ impl WatchState {
     fn feed_ts_packet(&mut self, packet: &[u8; TS_PACKET_SIZE], clock: Duration) {
         self.last_clock = clock;
 
-        for ev in self.conformance.feed(packet, clock) {
-            let entry = self
-                .conformance_counts
-                .entry(ev.indicator.name())
-                .or_insert_with(|| ConformanceCount {
-                    priority: ev.priority.name(),
-                    clause: ev.indicator.clause(),
-                    count: 0,
-                });
-            entry.count += 1;
-        }
+        let _ = self.conformance.feed(packet, clock);
 
         let Ok(ts_packet) = TsPacket::parse(packet) else {
             return;
@@ -593,10 +574,11 @@ impl WatchState {
             dropped_bytes: resync_stats.dropped_bytes,
             in_sync: conformance_stats.in_sync,
             conformance: self
-                .conformance_counts
-                .iter()
-                .map(|(name, c)| ConformanceSample {
-                    indicator: name,
+                .conformance
+                .indicator_counts()
+                .into_iter()
+                .map(|c| ConformanceSample {
+                    indicator: c.indicator,
                     priority: c.priority,
                     clause: c.clause,
                     count: c.count,
