@@ -75,6 +75,7 @@ fuzz_target!(|data: &[u8]| {
                             id,
                             FetchFailure {
                                 status: Some(NOT_FOUND),
+                                ..FetchFailure::default()
                             },
                         ),
                         _ => {
