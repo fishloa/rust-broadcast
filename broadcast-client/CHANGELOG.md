@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
+- RTSP keepalive now uses `rtsp_runtime::ClientSession`'s schedule (half the declared `Session;timeout=`, the RFC 2326 §12.37 60 s default when none is declared) instead of a local timer with its own default and ceiling.
 - RTP sequence validity now uses `rtp_packet::SeqValidity` instead of a local delta/resync heuristic.
 ### Changed
 - RTSP pull uses rtsp-runtime's `MAX_TRACKS` cap instead of a local constant.

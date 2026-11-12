@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Changed
+- RTSP keepalive is now `rtsp_runtime::ClientSession`'s schedule driven from `next_deadline`/`on_deadline`, instead of a second timer with its own clamp; the keepalive is `GET_PARAMETER`.
 - Timeline discontinuity detection now uses the per-track detector from `transmux` (broadcast-client semantics); the 10 s `MEDIA_DISCONTINUITY_NS` constant is removed.
 - RTSP pull skips unplayable SDP media sections (and foreign-authority controls and sections beyond the track cap) instead of failing the whole route; fails only when nothing is playable. Skipped sections are logged as route warnings.
 

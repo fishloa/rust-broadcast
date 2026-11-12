@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 use broadcast_client::Config;
 use sdp_types::Attribute;
 use support::rtsp_host::{
-    BASE_URL, Host, MediaFixture, OPTIONS, PLAY, SEC, SETUP, Server, TEARDOWN, quiet_config,
+    BASE_URL, Host, KEEPALIVE, MediaFixture, PLAY, SEC, SETUP, Server, TEARDOWN, quiet_config,
 };
 
 const AGGREGATE: &str = "rtsp://cam.test/live/agg";
@@ -56,7 +56,7 @@ fn a_session_level_control_is_the_aggregate_url_for_play_options_and_teardown() 
     let mut host = connected(&with_session_control(AGGREGATE), quiet_config());
     assert_eq!(uris(&host, PLAY), [AGGREGATE]);
     host.advance_to(KEEPALIVE_SECS * SEC);
-    assert_eq!(uris(&host, OPTIONS), [AGGREGATE]);
+    assert_eq!(uris(&host, KEEPALIVE), [AGGREGATE]);
     host.session.close();
     host.drain();
     let teardown = host.sent_methods().iter().any(|m| m == TEARDOWN);

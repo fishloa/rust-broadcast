@@ -25,6 +25,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `AsyncRtspClient::start_record` uses checked arithmetic for the RTCP interleaved channel and returns `Error::InterleavedChannelExhausted` on overflow (matching the play flow) instead of wrapping.
 - `AsyncRtspClient::start_record` and `start_play` (and `PlayPlan`) strip userinfo from the request URI, so credentials travel only in the `Authorization` header.
 
+### Changed
+- The RTSP session keepalive schedule is the only one: `poll_timeout`/`handle_timeout` derive the deadline from the SETUP-declared `Session;timeout=` (RFC 2326 §12.37, 60 s default) and now drive every adapter, which no longer keep timers of their own.
+
 ## [0.11.0] - 2026-11-10
 ### Changed
 - A `3xx` or `454 Session Not Found` response now resets the session (id, transport, timeout, authenticator) and the caller must `SETUP` again.

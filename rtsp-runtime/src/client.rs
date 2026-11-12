@@ -1473,6 +1473,38 @@ mod tests {
     }
 
     #[test]
+    fn a_ten_second_session_asks_for_its_keepalive_before_five_seconds_elapse() {
+        // RFC 2326 §12.37: the server may tear the session down at 10 s.
+        // The client must ask well inside that window, so the keepalive
+        // deadline — not the expiry — is what a driver waits for.
+        let t0 = Instant::now();
+        let mut c = established(Some(10));
+        c.mark_activity(t0);
+        let deadline = c
+            .poll_timeout()
+            .expect("a ten second session has a deadline");
+        assert!(
+            deadline < t0 + Duration::from_secs(10),
+            "the keepalive must be due strictly before the session expires"
+        );
+        assert!(
+            c.handle_timeout(deadline - Duration::from_millis(1))
+                .unwrap()
+                .is_none(),
+            "nothing is sent before the deadline"
+        );
+        assert!(
+            c.handle_timeout(deadline).unwrap().is_some(),
+            "the keepalive is sent at the deadline"
+        );
+        assert_eq!(
+            c.poll_timeout(),
+            Some(deadline + Duration::from_secs(5)),
+            "and re-armed half a timeout later"
+        );
+    }
+
+    #[test]
     fn keepalive_uses_the_rfc_default_timeout_when_none_was_declared() {
         let t0 = Instant::now();
         let mut c = established(None);

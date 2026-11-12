@@ -15,7 +15,8 @@ pub const BASE_URL: &str = "rtsp://cam.test/live/";
 pub const DESCRIBE: &str = "DESCRIBE";
 pub const SETUP: &str = "SETUP";
 pub const PLAY: &str = "PLAY";
-pub const OPTIONS: &str = "OPTIONS";
+/// The keepalive method the RTSP session engine sends (`GET_PARAMETER`).
+pub const KEEPALIVE: &str = "GET_PARAMETER";
 pub const TEARDOWN: &str = "TEARDOWN";
 const FIXTURE: &str = "ts/h264-aac.ts";
 const MTU: usize = 1400;
@@ -349,8 +350,8 @@ impl Server {
                     respond(rec.cseq, 200, extra, Vec::new())
                 }
             },
-            OPTIONS if self.rotate_options_nonce => self.answer_options_rotating(rec),
-            OPTIONS => respond(rec.cseq, self.options_status, Vec::new(), Vec::new()),
+            KEEPALIVE if self.rotate_options_nonce => self.answer_options_rotating(rec),
+            KEEPALIVE => respond(rec.cseq, self.options_status, Vec::new(), Vec::new()),
             _ => respond(rec.cseq, 200, Vec::new(), Vec::new()),
         }
     }

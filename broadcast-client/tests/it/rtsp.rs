@@ -7,8 +7,8 @@ use broadcast_client::{Action, Config, Credentials, Error, Event, Session, Sourc
 use rtsp_runtime::transport::{LowerTransport, Transport};
 use sdp_types::{Media, MediaType, Origin, TransportProto};
 use support::rtsp_host::{
-    BASE_URL, Chunking, DESCRIBE, Host, MediaFixture, OPTIONS, PLAY, SEC, SETUP, Server, TEARDOWN,
-    channel_of, connects, interleaved, quiet_config, samples_of, sender_report_at,
+    BASE_URL, Chunking, DESCRIBE, Host, KEEPALIVE, MediaFixture, PLAY, SEC, SETUP, Server,
+    TEARDOWN, channel_of, connects, interleaved, quiet_config, samples_of, sender_report_at,
     sender_report_frame, session_id, wakes,
 };
 use url::Url;
@@ -72,15 +72,15 @@ fn tcp_connects(host: &Host) -> usize {
     connects(&host.actions).len()
 }
 
-fn options_at(host: &mut Host, due_us: u64) -> usize {
+fn keepalives_at(host: &mut Host, due_us: u64) -> usize {
     host.advance_to(due_us - 1);
     assert_eq!(
-        host.server.count(OPTIONS),
+        host.server.count(KEEPALIVE),
         0,
         "no keepalive before {due_us} us"
     );
     host.advance_to(due_us);
-    host.server.count(OPTIONS)
+    host.server.count(KEEPALIVE)
 }
 
 fn sdp_with(medias: Vec<Media>) -> String {
@@ -434,18 +434,18 @@ fn status_establishing_then_live_once() {
 }
 
 #[test]
-fn keepalive_options_sent_at_half_session_timeout_and_reply_405_ignored() {
+fn keepalive_sent_at_half_session_timeout_and_reply_405_ignored() {
     let mut s = server();
     s.session_timeout = Some(40);
     s.options_status = 405;
     let mut host = connected(quiet_config(), s);
-    assert_eq!(options_at(&mut host, 20 * SEC), 1);
+    assert_eq!(keepalives_at(&mut host, 20 * SEC), 1);
     let keepalive = host
         .server
         .log
         .iter()
-        .find(|r| r.method == OPTIONS)
-        .expect("options");
+        .find(|r| r.method == KEEPALIVE)
+        .expect("keepalive");
     assert_eq!(keepalive.uri, BASE_URL);
     assert_eq!(keepalive.header("session"), Some(session_id()));
     host.events();
@@ -464,15 +464,15 @@ fn keepalive_options_sent_at_half_session_timeout_and_reply_405_ignored() {
         "a 405 must not tear the connection down"
     );
     host.advance_to(40 * SEC - 1);
-    assert_eq!(host.server.count(OPTIONS), 1);
+    assert_eq!(host.server.count(KEEPALIVE), 1);
     host.advance_to(40 * SEC);
-    assert_eq!(host.server.count(OPTIONS), 2, "the keepalive is re-armed");
+    assert_eq!(host.server.count(KEEPALIVE), 2, "the keepalive is re-armed");
 }
 
 #[test]
 fn keepalive_default_30s_when_no_timeout() {
     let mut host = connected(quiet_config(), server());
-    assert_eq!(options_at(&mut host, 30 * SEC), 1);
+    assert_eq!(keepalives_at(&mut host, 30 * SEC), 1);
 }
 
 #[test]
@@ -856,7 +856,7 @@ fn session_timeout_header_parsed_from_setup() {
         s.session_timeout = Some(declared);
         let mut host = connected(quiet_config(), s);
         assert_eq!(
-            options_at(&mut host, keepalive_secs * SEC),
+            keepalives_at(&mut host, keepalive_secs * SEC),
             1,
             "Session timeout={declared} gives a {keepalive_secs} s keepalive"
         );
@@ -872,7 +872,7 @@ fn keepalive_is_strictly_before_a_short_session_timeout() {
         let expiry = u64::from(declared) * SEC;
         host.advance_to(expiry - 1);
         assert!(
-            host.server.count(OPTIONS) >= 1,
+            host.server.count(KEEPALIVE) >= 1,
             "Session timeout={declared}: no keepalive before expiry"
         );
     }
