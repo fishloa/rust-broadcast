@@ -7,11 +7,7 @@ mod closed_captions;
 mod cold_playlist_hold;
 mod dash_pull_route;
 mod dash_sliding_window;
-mod dashif_ingest_core;
 mod dashif_ingest_e2e;
-mod dashif_ingest_session;
-mod dashif_ingest_session_chunked;
-mod dashif_ingest_session_strict;
 #[cfg(feature = "test-seams")]
 mod dispatch_ingest;
 mod dovi_route;

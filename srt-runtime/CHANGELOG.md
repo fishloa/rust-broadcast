@@ -5,6 +5,8 @@ All notable changes to `srt-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- Test-harness `tool_available` now uses `test-fixtures::process::tool_available_lenient`.
 ### Fixed
 - `SrtUrl::parse` ignores a query key whose percent-decoding is not UTF-8 like any other unknown key, instead of rejecting the URL.
 ### Added

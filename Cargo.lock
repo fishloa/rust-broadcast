@@ -486,8 +486,10 @@ dependencies = [
  "erased-serde",
  "hex",
  "iso-639",
+ "jiff",
  "quick-xml",
  "serde",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1090,11 +1092,14 @@ dependencies = [
  "broadcast-common",
  "broadcast-dash",
  "container-probe",
+ "http",
  "jiff",
+ "media-plane",
  "percent-encoding",
  "quick-xml",
  "test-fixtures",
  "thiserror 2.0.21",
+ "tracing",
  "transmux",
  "url",
  "workspace-guards",
@@ -4284,6 +4289,7 @@ version = "0.1.0"
 dependencies = [
  "hex",
  "serde_json",
+ "tokio",
  "wait-timeout",
 ]
 

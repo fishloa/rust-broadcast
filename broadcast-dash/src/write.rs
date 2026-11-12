@@ -5,7 +5,7 @@ use std::io;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::{Reader, Writer};
 
-use crate::duration::format_iso8601_duration;
+use crate::duration::xs_duration;
 use crate::error::MpdError;
 use crate::model::*;
 use crate::parse::{INFINITY_TOKEN, NEGATIVE_INFINITY_TOKEN};
@@ -130,7 +130,7 @@ impl Mpd {
             root.push_attribute(("profiles", self.profiles.join(",").as_str()));
         }
         root.push_attribute(("type", self.kind.name()));
-        if let Some(min_buffer) = self.min_buffer_time.map(format_iso8601_duration) {
+        if let Some(min_buffer) = self.min_buffer_time.map(xs_duration) {
             root.push_attribute(("minBufferTime", min_buffer.as_str()));
         }
         if ns.cenc {
@@ -159,22 +159,16 @@ impl Mpd {
             ));
         }
         if let Some(v) = self.minimum_update_period {
-            root.push_attribute(("minimumUpdatePeriod", format_iso8601_duration(v).as_str()));
+            root.push_attribute(("minimumUpdatePeriod", xs_duration(v).as_str()));
         }
         if let Some(v) = self.time_shift_buffer_depth {
-            root.push_attribute(("timeShiftBufferDepth", format_iso8601_duration(v).as_str()));
+            root.push_attribute(("timeShiftBufferDepth", xs_duration(v).as_str()));
         }
         if let Some(v) = self.suggested_presentation_delay {
-            root.push_attribute((
-                "suggestedPresentationDelay",
-                format_iso8601_duration(v).as_str(),
-            ));
+            root.push_attribute(("suggestedPresentationDelay", xs_duration(v).as_str()));
         }
         if let Some(v) = self.media_presentation_duration {
-            root.push_attribute((
-                "mediaPresentationDuration",
-                format_iso8601_duration(v).as_str(),
-            ));
+            root.push_attribute(("mediaPresentationDuration", xs_duration(v).as_str()));
         }
         if let Some(v) = &self.id {
             root.push_attribute(("id", v.as_str()));
@@ -191,10 +185,10 @@ impl Mpd {
             ));
         }
         if let Some(v) = self.max_segment_duration {
-            root.push_attribute(("maxSegmentDuration", format_iso8601_duration(v).as_str()));
+            root.push_attribute(("maxSegmentDuration", xs_duration(v).as_str()));
         }
         if let Some(v) = self.max_subsegment_duration {
-            root.push_attribute(("maxSubsegmentDuration", format_iso8601_duration(v).as_str()));
+            root.push_attribute(("maxSubsegmentDuration", xs_duration(v).as_str()));
         }
         Ok(root)
     }
@@ -613,7 +607,7 @@ fn write_base_url(w: &mut Writer<Vec<u8>>, b: &BaseUrl) -> Result<(), MpdError> 
         e.push_attribute(("availabilityTimeComplete", if v { "true" } else { "false" }));
     }
     if let Some(v) = b.time_shift_buffer_depth {
-        e.push_attribute(("timeShiftBufferDepth", format_iso8601_duration(v).as_str()));
+        e.push_attribute(("timeShiftBufferDepth", xs_duration(v).as_str()));
     }
     if b.url.is_empty() && e.attributes().count() == 0 {
         w.write_event(Event::Empty(e)).map_err(io_err)?;
@@ -679,7 +673,7 @@ fn write_base_info(
         e.push_attribute(("presentationDuration", v.to_string().as_str()));
     }
     if let Some(v) = info.time_shift_buffer_depth {
-        e.push_attribute(("timeShiftBufferDepth", format_iso8601_duration(v).as_str()));
+        e.push_attribute(("timeShiftBufferDepth", xs_duration(v).as_str()));
     }
     if let Some(v) = &info.index_range {
         e.push_attribute(("indexRange", write_range(v).as_str()));
@@ -974,10 +968,10 @@ fn write_period(w: &mut Writer<Vec<u8>>, p: &Period) -> Result<(), MpdError> {
         e.push_attribute(("id", v.as_str()));
     }
     if let Some(v) = p.start {
-        e.push_attribute(("start", format_iso8601_duration(v).as_str()));
+        e.push_attribute(("start", xs_duration(v).as_str()));
     }
     if let Some(v) = p.duration {
-        e.push_attribute(("duration", format_iso8601_duration(v).as_str()));
+        e.push_attribute(("duration", xs_duration(v).as_str()));
     }
     if p.bitstream_switching {
         e.push_attribute(("bitstreamSwitching", "true"));

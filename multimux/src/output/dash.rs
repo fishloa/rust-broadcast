@@ -70,9 +70,9 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use broadcast_common::Package;
+use broadcast_dash::duration::xs_duration;
 use hls_runtime::server::DEFAULT_TRACK_ID;
 use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress};
-use transmux::dash::xs_duration;
 use transmux::{Addressing, DashPackager, Media, Track, TrackSegments, TrackSpec};
 
 use crate::http::{self, BLOCKING_RELOAD_TIMEOUT};
@@ -623,7 +623,7 @@ pub(crate) enum DurationError {
     InvalidInput { secs: f64 },
 }
 
-/// A whole/ fractional second count as an `xs:duration` via [`transmux::dash::xs_duration`] (the workspace's one `xs:duration` spelling rule),
+/// A whole/ fractional second count as an `xs:duration` via [`broadcast_dash::duration::xs_duration`] (the workspace's one `xs:duration` spelling rule),
 /// without panicking on a bad input.
 ///
 /// `secs` must be finite, strictly positive, and within [`Duration`]'s range
@@ -1122,7 +1122,7 @@ mod tests {
 
     /// A finite `f64` between `i64::MAX` and `u64::MAX` seconds is a valid
     /// `Duration` but not a `SignedDuration`: it renders the saturated
-    /// maximum (the one shared `transmux::dash::xs_duration` rule), never a
+    /// maximum (the one shared `broadcast_dash::duration::xs_duration` rule), never a
     /// panic and never a wrapped small value.
     #[test]
     fn xs_duration_secs_saturates_beyond_i64_seconds() {

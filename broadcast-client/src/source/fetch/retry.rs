@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use crate::Event;
 use crate::events::MAX_SERVER_REFUSED_REASON_BYTES;
 
-use dash_runtime::timing::http_date::parse_http_date;
+use broadcast_common::http_date::parse_http_date;
 
 use super::wall::WallClock;
 

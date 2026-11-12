@@ -162,7 +162,7 @@ Input detection uses `container-probe`, which scores structural evidence over th
 - **Live segmenters:** `Segmenter`, `LlHlsSegmenter` (parts before the segment closes, `set_start_time_ns`), `StreamingTsHlsSegmenter` (rolling playlist, `with_start_sequence`, `TsContinuity`, `set_start_time_ns`), `LlSegmenter`.
 - **Container boxes (ISO/IEC 14496-12:2026, ISO/IEC 14496-15:2017):** `AVCParameterSampleEntry` (avcp sample entry and `AVCParameterSample`), `TrackReferenceBox` (tref, with `AVCP_REFERENCE_TYPE`), `DataEntry` (url/urn/imdt/snim data entries in dref), `SubSampleInformationBoxV2` and `SubSampleReferenceTableBox` (ssrt), `HEVCSampleEntry::array_completeness_violations`.
 - **Transforms:** `Repackage`, `rebase_to_zero`, `apply_offset`, `insert_discontinuity_gap`, `concat`, `splice_insert` (keyframe-snapped, returns `SpliceResult`), `derive_iframe_track`.
-- **DASH details:** `SegmentTimeline::resolve` and `resolve_in_period` (media-timeline `S@t` less `presentationTimeOffset`), `dash::xs_duration`, `dash_parse`, `base_url`.
+- **DASH details:** `SegmentTimeline::resolve` and `resolve_in_period` (media-timeline `S@t` less `presentationTimeOffset`), (removed; use `broadcast_dash::duration::xs_duration`), `dash_parse`, `base_url`.
 - **RTP:** `RtpPacketiser`, `RtpDepacketiser`, `RtpStreamDepacketiser`, `rtp_sdp` helpers, KLV over RTP.
 - **Validation:** `validate_init_segment`, `validate_media_segment`, `validate_cmaf_track` yielding `ConformanceIssue`.
 - **Caption detection:** `CaptionDetector`, `DetectedCaption` (`Cea608(Cea608Channel)` / `Cea708(u8)`), `declared_caption_services` and `DetectedCaption::declared_language` for CEA-608/708 caption discovery from a video track's PMT loop and sample data (issue #1428).
