@@ -1193,3 +1193,90 @@ async fn a_subtitle_track_is_advertised() {
         "the subtitle stream advertises its chunks"
     );
 }
+
+/// Smooth's responses carry the `Cache-Control` the origin already sent: an
+/// egress answer's `CachePolicy` has never reached the wire (the former
+/// hand-built handlers passed `NoCache` and then built their own response,
+/// dropping it), and the router's `cache_control_for` classifies a `Manifest`
+/// and a `Fragments(...)` path as "anything else", which is `no-cache` for a
+/// success and for an error alike. Both routes must keep that.
+#[tokio::test]
+async fn smooth_responses_carry_no_cache() {
+    const NO_CACHE: &str = "no-cache";
+    let store = Arc::new(RouteHandle::new(W13_TARGET_SECS, PART_TARGET_MS, 2));
+    let specs = vec![video_track_spec()];
+    let program = media_plane::ProgramId(0);
+    store.publish_new_program(program);
+    let mut seg = LlHlsSegmenter::with_part_target(
+        specs.clone(),
+        transmux::VIDEO_CLOCK_RATE,
+        W13_TARGET_SECS,
+        PART_TARGET_MS,
+    )
+    .expect("segmenter builds");
+    store.set_init(program, seg.init_segment().expect("init"));
+    store.set_track_specs(program, specs);
+    for i in 0..=W13_SYNC_EVERY {
+        let sample = Sample::new(
+            vec![0xAAu8.wrapping_add((i % 251) as u8); 64],
+            Some(i64::from(i) * i64::from(W13_FRAME_DUR)),
+            Some(i64::from(i) * i64::from(W13_FRAME_DUR)),
+            Some(W13_FRAME_DUR),
+            i.is_multiple_of(W13_SYNC_EVERY),
+        );
+        seg.push(TrackId::new(1), sample).expect("push");
+    }
+    seg.flush().expect("flush");
+    for segment in seg.take_ready_segments() {
+        store.add_segment(program, segment).expect("add_segment");
+    }
+
+    let app = build_app(store, Arc::new(SmoothOutput));
+    let resp = app
+        .clone()
+        .oneshot(get("/cam/Manifest"))
+        .await
+        .expect("router call");
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()
+            .get(axum::http::header::CACHE_CONTROL)
+            .expect("manifest carries Cache-Control"),
+        NO_CACHE
+    );
+    let manifest = SmoothManifest::parse(&body_string(resp).await).expect("manifest parses");
+
+    let stream = &manifest.streams[0];
+    let bitrate = stream.qualities.first().map(|q| q.bitrate).unwrap_or(0);
+    let (start, _) = stream.enumerate_chunks().expect("chunks")[0];
+    let url = stream.resolve_fragment_url(bitrate, start);
+    let resp = app
+        .clone()
+        .oneshot(get(&format!("/cam/{url}")))
+        .await
+        .expect("router call");
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()
+            .get(axum::http::header::CACHE_CONTROL)
+            .expect("fragment carries Cache-Control"),
+        NO_CACHE
+    );
+
+    // An error answer is `no-cache` too — never a cacheable failure.
+    let resp = app
+        .oneshot(get("/cam/QualityLevels(1)/Fragments(video=999999999)"))
+        .await
+        .expect("router call");
+    assert!(
+        resp.status().is_client_error() || resp.status().is_server_error(),
+        "a fragment time outside the window is not a success: {}",
+        resp.status()
+    );
+    assert_eq!(
+        resp.headers()
+            .get(axum::http::header::CACHE_CONTROL)
+            .expect("an error carries Cache-Control"),
+        NO_CACHE
+    );
+}

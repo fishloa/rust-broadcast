@@ -22,6 +22,18 @@
 //!
 //! Fragments are the same bytes the shared resource route serves for
 //! LL-HLS/DASH — the `Trunk` is the single copy.
+//!
+//! # `Cache-Control`
+//!
+//! The origin answers with a `media_plane::egress::CachePolicy` (`NoCache` for
+//! a Manifest, `Immutable` for a fragment), but no route in this crate applies
+//! that policy to the wire: the former hand-built handlers dropped it too.
+//! Every response's `Cache-Control` comes from the router's own
+//! `cache_control_for`, which classifies a `Manifest` and a
+//! `QualityLevels(…)/Fragments(…)` path as "anything else" — `no-cache` for a
+//! success and for an error alike. That is what these routes sent before and
+//! what they send now (`tests/it/smooth_output.rs`'s
+//! `smooth_responses_carry_no_cache` pins it).
 
 use std::sync::Arc;
 
