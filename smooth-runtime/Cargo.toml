@@ -2,7 +2,7 @@
 name         = "smooth-runtime"
 version      = "0.1.0"
 edition      = "2024"
-description  = "Sans-IO Smooth Streaming (MS-SSTR) client engine: manifest fetch/refresh, protection refusal, stream/quality selection, chunk enumeration, fragment URL resolution, init/tfxd handling, encrypted-fragment probe, retry/backoff, live join and discontinuity. No I/O, no clock reads."
+description  = "Sans-IO Smooth Streaming (MS-SSTR) engine: a pull client (manifest fetch/refresh, stream/quality selection, chunk enumeration, fragment URLs, init/tfxd handling, retry/backoff, live join) and a live origin that renders the client Manifest and serves fragments from a media-plane Trunk. No I/O, no clock reads."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords     = ["smooth-streaming", "ms-sstr", "sans-io", "streaming", "manifest"]
@@ -20,16 +20,25 @@ rustdoc-args = ["--cfg", "docsrs"]
 broadcast-common  = { path = "../broadcast-common", version = "11.1.0", default-features = false, features = ["std", "xml"] }
 broadcast-smooth   = { path = "../broadcast-smooth", version = "0.1.0" }
 transmux          = { path = "../transmux", version = "0.31.0", default-features = false, features = ["std"] }
+# Only pulled in by the `std` feature: `server::SmoothOrigin` (issue #2453)
+# renders the live Manifest from a `media_plane::Trunk`'s own segment ring —
+# `Trunk` is `std`-only (see its module doc), the same gate `hls-runtime`'s
+# `server` module inherits.
+media-plane       = { path = "../media-plane", version = "0.11.0", optional = true, default-features = false }
 url               = "2"
 thiserror         = "2"
 
 [dev-dependencies]
 test-fixtures     = { path = "../test-fixtures" }
 workspace-guards  = { path = "../workspace-guards" }
+# The golden Manifest test parses both documents with the workspace's one XML
+# reader, so a difference in either is reported as elements and attributes
+# rather than as a byte offset.
+quick-xml        = { workspace = true }
 
 [features]
 default = ["std"]
-std = ["broadcast-common/std", "broadcast-smooth/std", "transmux/std", "thiserror/std"]
+std = ["broadcast-common/std", "broadcast-smooth/std", "transmux/std", "thiserror/std", "media-plane/std"]
 
 [lints]
 workspace = true

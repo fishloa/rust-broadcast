@@ -295,29 +295,7 @@ impl SmoothPackager {
     /// Convert a tick count in the track's media timescale to
     /// [`SMOOTH_TIMESCALE`] ticks with integer round-to-nearest (`no_std`-safe).
     fn to_smooth_ticks(ticks: u64, media_timescale: u32) -> u64 {
-        rescale_u64(ticks, media_timescale, SMOOTH_TIMESCALE, Rounding::Nearest)
-    }
-
-    /// The `CodecPrivateData` bytes for a video track: start-code-prefixed
-    /// SPS+PPS NAL units (§2.2.2.5).
-    fn video_codec_private_data(config: &crate::avc_config::AVCConfigurationBox) -> Vec<u8> {
-        let mut out = Vec::new();
-        for sps in &config.config.sps {
-            out.extend_from_slice(&START_CODE);
-            out.extend_from_slice(&sps.0);
-        }
-        for pps in &config.config.pps {
-            out.extend_from_slice(&START_CODE);
-            out.extend_from_slice(&pps.0);
-        }
-        out
-    }
-
-    /// The `CodecPrivateData` bytes for an AAC track: the raw
-    /// AudioSpecificConfig carried in the `esds` (§2.2.2.5).
-    fn audio_codec_private_data(esds: &crate::mp4esds::EsdsBox) -> Result<Vec<u8>> {
-        let dsi = esds.require_decoder_specific_info()?;
-        Ok(dsi.to_vec())
+        to_smooth_ticks(ticks, media_timescale)
     }
 
     /// Segment one track into Smooth fragments and resolve its manifest info.
@@ -338,8 +316,7 @@ impl SmoothPackager {
         fragments_out: &mut Vec<SmoothFragment>,
     ) -> Result<StreamInfo> {
         let media_timescale = track.spec.timescale.max(1);
-        let (stream_type, fourcc, codec_private_data, width, height, sampling_rate, channels) =
-            resolve_codec(&track.spec.config)?;
+        let codec = resolve_codec(&track.spec.config)?;
 
         let timeline = smooth_timeline(track, origin, media_timescale)?;
 
@@ -396,14 +373,14 @@ impl SmoothPackager {
         .max(1);
 
         Ok(StreamInfo {
-            stream_type,
-            fourcc,
-            codec_private_data,
+            stream_type: codec.stream_type,
+            fourcc: codec.fourcc,
+            codec_private_data: codec.codec_private_data,
             bitrate,
-            width,
-            height,
-            sampling_rate,
-            channels,
+            width: codec.width,
+            height: codec.height,
+            sampling_rate: codec.sampling_rate,
+            channels: codec.channels,
             qualities: STREAM_QUALITY_LEVELS,
             fragments: fragment_timings,
             total_duration,
@@ -601,44 +578,92 @@ impl broadcast_common::Package for SmoothPackager {
 // Codec resolution
 // ---------------------------------------------------------------------------
 
-type ResolvedCodec = (
-    SmoothStreamType,
-    &'static str,
-    Vec<u8>,
-    Option<u32>,
-    Option<u32>,
-    Option<u32>,
-    Option<u16>,
-);
+/// A track's Smooth codec description, resolved once from its [`CodecConfig`]
+/// by [`resolve_codec`] — the single source of the manifest's `FourCC`,
+/// `CodecPrivateData` and per-kind parameters for both this crate's packager
+/// and the live origin in `smooth-runtime`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SmoothCodec {
+    /// Which `StreamIndex` the track belongs to.
+    pub stream_type: SmoothStreamType,
+    /// The `QualityLevel@FourCC` (§2.2.2.5).
+    pub fourcc: &'static str,
+    /// The `QualityLevel@CodecPrivateData` bytes, hex-encoded into the
+    /// manifest by the writer.
+    pub codec_private_data: Vec<u8>,
+    /// `QualityLevel@MaxWidth`, video only — decoded from the SPS.
+    pub width: Option<u32>,
+    /// `QualityLevel@MaxHeight`, video only — decoded from the SPS.
+    pub height: Option<u32>,
+    /// `QualityLevel@SamplingRate`, audio only — the AudioSpecificConfig's
+    /// effective rate, so an SBR stream advertises its doubled rate.
+    pub sampling_rate: Option<u32>,
+    /// `QualityLevel@Channels`, audio only.
+    pub channels: Option<u16>,
+}
 
-/// Resolve the Smooth stream type, FourCC, `CodecPrivateData`, and per-kind
-/// parameters for a track's [`CodecConfig`].
+/// The `CodecPrivateData` bytes for a video track: start-code-prefixed
+/// SPS+PPS NAL units (§2.2.2.5).
+fn avc_codec_private_data(config: &crate::avc_config::AVCConfigurationBox) -> Vec<u8> {
+    let mut out = Vec::new();
+    for sps in &config.config.sps {
+        out.extend_from_slice(&START_CODE);
+        out.extend_from_slice(&sps.0);
+    }
+    for pps in &config.config.pps {
+        out.extend_from_slice(&START_CODE);
+        out.extend_from_slice(&pps.0);
+    }
+    out
+}
+
+/// The `CodecPrivateData` bytes for an AAC track: the raw AudioSpecificConfig
+/// carried in the `esds` (§2.2.2.5). An `esds` without a
+/// DecoderSpecificInfo describes no decoder, so it is refused rather than
+/// advertised as an empty `CodecPrivateData` a client cannot initialise from.
+fn aac_codec_private_data(esds: &crate::mp4esds::EsdsBox) -> Result<Vec<u8>> {
+    let dsi = esds.require_decoder_specific_info()?;
+    Ok(dsi.to_vec())
+}
+
+/// Convert a tick count in `media_timescale` to [`SMOOTH_TIMESCALE`] ticks with
+/// integer round-to-nearest.
+pub fn to_smooth_ticks(ticks: u64, media_timescale: u32) -> u64 {
+    rescale_u64(ticks, media_timescale, SMOOTH_TIMESCALE, Rounding::Nearest)
+}
+
+/// Resolve the Smooth stream type, FourCC, `CodecPrivateData` and per-kind
+/// parameters for a track's [`CodecConfig`] — the one codec resolver shared by
+/// [`SmoothPackager`] and `smooth-runtime`'s live origin.
 ///
-/// Only the [MS-SSTR]-defined H.264 (video) and AAC-LC (audio) codecs are
-/// supported; other codecs return [`Error::InvalidInput`].
-fn resolve_codec(config: &CodecConfig) -> Result<ResolvedCodec> {
+/// H.264 video takes its geometry from the first SPS (the coded dimensions,
+/// authoritative even when the `CodecConfig` carries none — RTP/WHEP ingest
+/// builds `CodecConfig::Avc` with width and height `0`), AAC audio its
+/// `AudioSpecificConfig` and reported channel count, and a subtitle track
+/// re-muxed from an ISOBMFF `stpp`/`wvtt` sample entry its sample-format FourCC.
+/// Every other codec is [`Error::InvalidInput`].
+pub fn resolve_codec(config: &CodecConfig) -> Result<SmoothCodec> {
     match config {
         CodecConfig::Avc { config, .. } => {
-            let cpd = SmoothPackager::video_codec_private_data(config);
-            // Prefer SPS-decoded geometry (authoritative coded dimensions).
-            let (w, h) = config
+            let (width, height) = config
                 .config
                 .sps
                 .first()
                 .and_then(|sps| sps.decode().ok())
-                .map(|i| (i.width, i.height))
+                .map(|info| (info.width, info.height))
                 .ok_or(Error::InvalidInput(
                     "AVC track has no decodable SPS for Smooth geometry",
                 ))?;
-            Ok((
-                SmoothStreamType::Video,
-                FOURCC_H264,
-                cpd,
-                Some(w),
-                Some(h),
-                None,
-                None,
-            ))
+            Ok(SmoothCodec {
+                stream_type: SmoothStreamType::Video,
+                fourcc: FOURCC_H264,
+                codec_private_data: avc_codec_private_data(config),
+                width: Some(width),
+                height: Some(height),
+                sampling_rate: None,
+                channels: None,
+            })
         }
         CodecConfig::Aac {
             esds,
@@ -646,24 +671,23 @@ fn resolve_codec(config: &CodecConfig) -> Result<ResolvedCodec> {
             sample_rate,
             ..
         } => {
-            let cpd = SmoothPackager::audio_codec_private_data(esds)?;
-            // Prefer the ASC-decoded sampling rate; fall back to the entry.
-            let rate = AudioSpecificConfig::parse(&cpd)
+            let codec_private_data = aac_codec_private_data(esds)?;
+            let sampling_rate = AudioSpecificConfig::parse(&codec_private_data)
                 .ok()
                 .and_then(|asc| asc.effective_sampling_frequency())
                 .unwrap_or(*sample_rate);
-            Ok((
-                SmoothStreamType::Audio,
-                FOURCC_AACL,
-                cpd,
-                None,
-                None,
-                Some(rate),
-                Some(*channel_count),
-            ))
+            Ok(SmoothCodec {
+                stream_type: SmoothStreamType::Audio,
+                fourcc: FOURCC_AACL,
+                codec_private_data,
+                width: None,
+                height: None,
+                sampling_rate: Some(sampling_rate),
+                channels: Some(*channel_count),
+            })
         }
         // A subtitle track re-muxed from an ISOBMFF `stpp` / `wvtt` sample entry
-        // (issue #1186): the fragment carries the samples as they are, the
+        // (issue #1186): the fragments carry the samples as they are, the
         // manifest names the sample format by its entry fourcc.
         CodecConfig::Subtitle {
             sample_entry: Some(entry),
@@ -673,15 +697,15 @@ fn resolve_codec(config: &CodecConfig) -> Result<ResolvedCodec> {
                 crate::pipeline::SubtitleSampleEntry::Ttml(_) => FOURCC_STPP,
                 crate::pipeline::SubtitleSampleEntry::WebVtt(_) => FOURCC_WVTT,
             };
-            Ok((
-                SmoothStreamType::Text,
+            Ok(SmoothCodec {
+                stream_type: SmoothStreamType::Text,
                 fourcc,
-                Vec::new(),
-                None,
-                None,
-                None,
-                None,
-            ))
+                codec_private_data: Vec::new(),
+                width: None,
+                height: None,
+                sampling_rate: None,
+                channels: None,
+            })
         }
         _ => Err(Error::InvalidInput(
             "Smooth Streaming supports only H.264 video, AAC-LC audio and ISOBMFF (stpp/wvtt) subtitles",

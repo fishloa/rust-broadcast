@@ -10,9 +10,12 @@
 ### Removed
 - BREAKING: the public `multimux::dashif_ingest` module; use `dash_runtime::ingest` (issue #2480).
 - Blocking-reload timeout policy now lives in `hls-runtime::server` (multimux calls it).
-### Changed
 - The DASH/LL-DASH manifests render their `xs:duration` attributes with `broadcast_dash::duration::xs_duration`, the one writer in the workspace, instead of `transmux::dash::xs_duration` (removed); the rendered bytes are unchanged (#2465).
 - RTSP keepalive is now `rtsp_runtime::ClientSession`'s schedule driven from `next_deadline`/`on_deadline`, instead of a second timer with its own clamp, and it follows the method the server advertises: the first keepalive is a `GET_PARAMETER` probe whose `Public` answer settles the rest (`OPTIONS` for a server that does not list it).
+- The Smooth output no longer disagrees with the packager's own Smooth path (issue #2453): AAC without a `DecoderSpecificInfo` is a server error instead of a manifest advertising `CodecPrivateData=""`, a second track of a kind (`audio`/`audio_2`) gets its own `Name` and `Url` and stays reachable by its fragment URL, `stpp`/`wvtt` subtitle tracks are advertised as a `text` `StreamIndex` (`Subtype="SUBT"`), and video geometry comes from the SPS rather than from a `CodecConfig` that RTSP/WHIP ingest leaves at 0.
+
+- The Smooth output's `Manifest` and fragment responses carry the `Cache-Control` they always did (`no-cache`, from the router's own `cache_control_for`): an egress `CachePolicy` still reaches the wire nowhere in this crate, and `smooth_responses_carry_no_cache` pins a success and an error alike (issue #2453 round 2).
+- The Smooth output is an adapter over `smooth_runtime::SmoothOrigin` (issue #2453): `multimux/src/output/smooth.rs` keeps only the axum routes and response mapping. The manifest model and its XML writer, the chunk timeline, the fragment-URL grammar, stream identity and the codec parameters now live in `smooth-runtime`/`broadcast-smooth`/`transmux`. An egress answer of `BadRequest` because a track cannot be described maps to a 5xx (`crate::http::into_response_with_message`).
 - Timeline discontinuity detection now uses the per-track detector from `transmux` (broadcast-client semantics); the 10 s `MEDIA_DISCONTINUITY_NS` constant is removed.
 - RTSP pull skips unplayable SDP media sections (and foreign-authority controls and sections beyond the track cap) instead of failing the whole route; fails only when nothing is playable. Skipped sections are logged as route warnings.
 ### Removed
