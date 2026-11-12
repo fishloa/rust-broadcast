@@ -18,6 +18,12 @@
 //! `RtpStreamDepacketiser::sync_start_decode_times`, which owns the NTP arithmetic
 //! ([`AvSync::SenderReport`]).
 //!
+//! If the Sender Reports' NTP clocks disagree by more than an hour the whole set is refused
+//! (`RtpStreamDepacketiser::try_sync_start_decode_times` checks every anchored track together),
+//! the tracks stay [`AvSync::Provisional`] for as long as the clocks keep disagreeing, and the
+//! refusal is visible through [`TrackAligner::skew_rejections`] and
+//! [`TrackAligner::sender_reports_refused`]. An `RTP-Info` mapping, when present, is not affected.
+//!
 //! Switching to the new offset never moves a track's times backwards: a forward step is applied at
 //! once, a backward step is slewed by at most half a sample duration per sample. A step larger
 //! than [`SR_SWITCH_TOLERANCE_US`] is an honest timeline change and is reported as one
@@ -106,6 +112,7 @@ pub struct TrackAligner {
     held: Vec<(TrackId, Sample)>,
     sr_dirty: bool,
     skew_rejections: u64,
+    sender_reports_refused: bool,
 }
 
 fn rescale(ticks: i64, from: u32, to: u32) -> i64 {
@@ -172,6 +179,17 @@ impl TrackAligner {
     #[must_use]
     pub fn skew_rejections(&self) -> u64 {
         self.skew_rejections
+    }
+
+    /// Whether the most recent evaluation of the Sender Reports was refused because the tracks'
+    /// NTP clocks were more than an hour apart. While this is `true` the aligner cannot reach
+    /// [`AvSync::SenderReport`]: the refusal covers every track at once (the skew check runs over
+    /// all anchored tracks, so one mis-set clock blocks the good pair too), and no outlier is
+    /// excluded and no fallback is taken. It clears on the first evaluation that is accepted, which
+    /// happens only after a later Sender Report arrives ([`Self::note_rtcp`]) and the clocks agree.
+    #[must_use]
+    pub fn sender_reports_refused(&self) -> bool {
+        self.sender_reports_refused
     }
 
     /// Places `sample`; may hold early non-anchor samples until the anchor track has one.
@@ -255,10 +273,12 @@ impl TrackAligner {
             Ok(times) => times.into_iter().collect(),
             Err(_) => {
                 self.skew_rejections = self.skew_rejections.saturating_add(1);
+                self.sender_reports_refused = true;
                 self.sr_dirty = false;
                 return;
             }
         };
+        self.sender_reports_refused = false;
         let Some((&anchor_sdt, anchor_scale)) = times
             .get(&anchor)
             .zip(self.lanes.get(&anchor).map(|l| l.timescale))
@@ -695,5 +715,27 @@ mod tests {
         );
         let skew = rig.depa.try_sync_start_decode_times().unwrap_err();
         assert!(skew.skew_seconds > 3600.0, "{}", skew.skew_seconds);
+    }
+
+    #[test]
+    fn a_skew_refusal_is_observable_until_consistent_sender_reports_arrive() {
+        let mut rig = Rig::new(48_000, WRAPPING_BASE);
+        assert!(!rig.aligner.sender_reports_refused());
+        rig.depa.push_rtcp(VIDEO, &sender_report(0, VIDEO_BASE));
+        rig.depa
+            .push_rtcp(OTHER, &sender_report_at(1, 0, WRAPPING_BASE));
+        rig.aligner.note_rtcp();
+        for k in 0..FRAMES {
+            rig.frame(k);
+        }
+        assert!(
+            rig.aligner.sender_reports_refused(),
+            "the refusal stands while the clocks disagree"
+        );
+        rig.sender_reports(0);
+        for k in FRAMES..FRAMES * 2 {
+            rig.frame(k);
+        }
+        assert!(!rig.aligner.sender_reports_refused());
     }
 }

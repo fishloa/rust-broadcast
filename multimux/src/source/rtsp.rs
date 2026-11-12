@@ -171,6 +171,43 @@ struct AlignDiagnostics {
     discontinuities: u64,
     ntp_zero_seen: u64,
     skew_seen: u64,
+    last_rejection: Option<Rejection>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Rejection {
+    NtpZero,
+    Skew,
+}
+
+impl Rejection {
+    fn warn(self, total: u64) {
+        match self {
+            Rejection::NtpZero => tracing::warn!(
+                total,
+                "rtsp: ignored a Sender Report with NTP time zero (the sender's clock is unsynchronised)"
+            ),
+            Rejection::Skew => tracing::warn!(
+                total,
+                "rtsp: Sender Reports place the tracks more than an hour apart; keeping provisional A/V placement"
+            ),
+        }
+    }
+
+    fn repeat(self, total: u64) {
+        match self {
+            Rejection::NtpZero => {
+                tracing::debug!(
+                    total,
+                    "rtsp: ignored another Sender Report with NTP time zero"
+                )
+            }
+            Rejection::Skew => tracing::debug!(
+                total,
+                "rtsp: Sender Reports still place the tracks more than an hour apart"
+            ),
+        }
+    }
 }
 
 impl AlignDiagnostics {
@@ -212,17 +249,20 @@ impl AlignDiagnostics {
         }
         if ntp_zero_total > self.ntp_zero_seen {
             self.ntp_zero_seen = ntp_zero_total;
-            tracing::warn!(
-                total = ntp_zero_total,
-                "rtsp: ignored a Sender Report with NTP time zero (the sender's clock is unsynchronised)"
-            );
+            self.note_rejection(Rejection::NtpZero, ntp_zero_total);
         }
         if skew_total > self.skew_seen {
             self.skew_seen = skew_total;
-            tracing::warn!(
-                total = skew_total,
-                "rtsp: Sender Reports place the tracks more than an hour apart; keeping provisional A/V placement"
-            );
+            self.note_rejection(Rejection::Skew, skew_total);
+        }
+    }
+
+    fn note_rejection(&mut self, rejection: Rejection, total: u64) {
+        if self.last_rejection == Some(rejection) {
+            rejection.repeat(total);
+        } else {
+            self.last_rejection = Some(rejection);
+            rejection.warn(total);
         }
     }
 }
@@ -1086,14 +1126,16 @@ mod tests {
     }
 
     #[test]
-    fn rejected_sender_reports_warn_once_per_new_rejection() {
+    fn rejected_sender_reports_warn_on_transitions_only() {
         let mut diagnostics = AlignDiagnostics::default();
         let mut pending = VecDeque::new();
         let lines = logged(|| {
             diagnostics.record(&mut pending, Vec::new(), 1, 0);
-            diagnostics.record(&mut pending, Vec::new(), 1, 0);
-            diagnostics.record(&mut pending, Vec::new(), 1, 1);
-            diagnostics.record(&mut pending, Vec::new(), 2, 1);
+            diagnostics.record(&mut pending, Vec::new(), 2, 0);
+            diagnostics.record(&mut pending, Vec::new(), 3, 0);
+            diagnostics.record(&mut pending, Vec::new(), 3, 1);
+            diagnostics.record(&mut pending, Vec::new(), 3, 2);
+            diagnostics.record(&mut pending, Vec::new(), 4, 2);
         });
         let warned: Vec<_> = lines
             .iter()

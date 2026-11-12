@@ -2246,6 +2246,16 @@ mod tests {
 
         driver.feed(b"pes", Timestamp::from_nanos(2));
 
+        let announced = cursor
+            .poll()
+            .expect("a cursor subscribed before the re-announcement must see the track change");
+        assert!(
+            matches!(
+                announced,
+                crate::SampleCursorItem::TracksChanged { generation: 2, .. }
+            ),
+            "the re-announcement is an in-band track change, got {announced:?}"
+        );
         let item = cursor
             .poll()
             .expect("a cursor subscribed before the re-announcement must still receive samples");
