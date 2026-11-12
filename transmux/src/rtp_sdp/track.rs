@@ -108,18 +108,25 @@ fn pending_avc_config() -> CodecConfig {
 }
 
 fn track_of_payload(media: &sdp_types::Media, payload_type: &str) -> Option<SdpTrack> {
-    use crate::rtp::RtpMediaKind;
+    use crate::rtp::{AAC_INDEX_DELTA_LENGTH, AAC_INDEX_LENGTH, AAC_SIZE_LENGTH, RtpMediaKind};
 
     let fmtp = attribute_of_payload(media, "fmtp", payload_type);
     let rtpmap = attribute_of_payload(media, "rtpmap", payload_type);
     let encoding = rtpmap.and_then(rtpmap_encoding_name);
-    let clock_rate = rtpmap
-        .and_then(rtpmap_clock_rate)
-        .unwrap_or(DEFAULT_CLOCK_RATE_HZ);
+    let rtpmap_present = rtpmap.is_some();
+    let parsed_clock = rtpmap.and_then(rtpmap_clock_rate);
     let encoding_is =
         |expected: &str| encoding.is_none_or(|name| name.eq_ignore_ascii_case(expected));
-    let (kind, config) = match media.media.as_str() {
+    let (kind, config, clock_rate) = match media.media.as_str() {
         MEDIA_VIDEO if encoding_is(ENCODING_H264) => {
+            // RFC 6184 §6.2-6.4: modes 0 (single NAL unit) and 1 (non-interleaved) only.
+            if let Some(fmtp) = fmtp
+                && let Some(mode) = fmtp_param(fmtp, "packetization-mode")
+                && mode != "0"
+                && mode != "1"
+            {
+                return None;
+            }
             let config = match fmtp {
                 None => encoding.map(|_| pending_avc_config())?,
                 Some(fmtp) => match avc_config_from_fmtp(fmtp) {
@@ -142,10 +149,32 @@ fn track_of_payload(media: &sdp_types::Media, payload_type: &str) -> Option<SdpT
                     Err(_) => return None,
                 },
             };
-            (RtpMediaKind::H264, config)
+            let clock = match parsed_clock {
+                Some(c) => c,
+                None if rtpmap_present => return None,
+                None => DEFAULT_CLOCK_RATE_HZ,
+            };
+            (RtpMediaKind::H264, config, clock)
         }
         MEDIA_AUDIO if encoding_is(ENCODING_AAC) => {
-            (RtpMediaKind::Aac, aac_config_from_fmtp(fmtp?).ok()?)
+            let fmtp = fmtp?;
+            let config = aac_config_from_fmtp(fmtp).ok()?;
+            // RFC 3640 §3.3.6: AAC-hbr 13/3/3 only.
+            let mode = fmtp_param(fmtp, "mode").unwrap_or("AAC-hbr");
+            if !mode.eq_ignore_ascii_case("AAC-hbr") {
+                return None;
+            }
+            let size_length: u32 = fmtp_param(fmtp, "sizeLength")?.parse().ok()?;
+            let index_length: u32 = fmtp_param(fmtp, "indexLength")?.parse().ok()?;
+            let index_delta_length: u32 = fmtp_param(fmtp, "indexDeltaLength")?.parse().ok()?;
+            if size_length != AAC_SIZE_LENGTH
+                || index_length != AAC_INDEX_LENGTH
+                || index_delta_length != AAC_INDEX_DELTA_LENGTH
+            {
+                return None;
+            }
+            let clock = parsed_clock?; // AAC requires an rtpmap clock rate
+            (RtpMediaKind::Aac, config, clock)
         }
         _ => return None,
     };
@@ -153,7 +182,7 @@ fn track_of_payload(media: &sdp_types::Media, payload_type: &str) -> Option<SdpT
         kind,
         config,
         clock_rate,
-        payload_type: payload_type.parse().ok(),
+        payload_type: payload_type.parse::<u8>().ok().filter(|&pt| pt <= 127),
         control: media
             .get_first_attribute_value("control")
             .flatten()
@@ -255,5 +284,82 @@ mod tests {
              a=fmtp:dyn sprop-parameter-sets={SPROP}\r\n"
         ));
         assert_eq!(sdp_track(&m).unwrap().payload_type, None);
+    }
+
+    #[test]
+    fn fmtp_param_names_are_case_insensitive() {
+        let m = media(
+            "m=audio 0 RTP/AVP 97\r\na=rtpmap:97 mpeg4-generic/48000/2\r\n\
+             a=fmtp:97 streamtype=5; Mode=AAC-hbr; Config=1190; SizeLength=13; IndexLength=3; IndexDeltaLength=3\r\n",
+        );
+        let track = sdp_track(&m).unwrap();
+        assert_eq!(track.kind, RtpMediaKind::Aac);
+    }
+
+    #[test]
+    fn aac_lbr_mode_is_not_playable() {
+        let m = media(
+            "m=audio 0 RTP/AVP 97\r\na=rtpmap:97 mpeg4-generic/48000/2\r\n\
+             a=fmtp:97 mode=AAC-lbr; config=1190; sizeLength=6; indexLength=2; indexDeltaLength=2\r\n",
+        );
+        assert_eq!(sdp_track(&m), None);
+    }
+
+    #[test]
+    fn aac_wrong_sizes_are_not_playable() {
+        let m = media(
+            "m=audio 0 RTP/AVP 97\r\na=rtpmap:97 mpeg4-generic/48000/2\r\n\
+             a=fmtp:97 mode=AAC-hbr; config=1190; sizeLength=6; indexLength=2; indexDeltaLength=2\r\n",
+        );
+        assert_eq!(sdp_track(&m), None);
+    }
+
+    #[test]
+    fn h264_packetization_mode_2_is_not_playable() {
+        let m = media(&format!(
+            "m=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\n\
+             a=fmtp:96 packetization-mode=2; sprop-parameter-sets={SPROP}\r\n"
+        ));
+        assert_eq!(sdp_track(&m), None);
+    }
+
+    #[test]
+    fn h264_packetization_modes_0_and_1_are_playable() {
+        for mode in ["0", "1"] {
+            let m = media(&format!(
+                "m=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\n\
+                 a=fmtp:96 packetization-mode={mode}; sprop-parameter-sets={SPROP}\r\n"
+            ));
+            assert!(sdp_track(&m).is_some(), "mode {mode}");
+        }
+        let m = media(&format!(
+            "m=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\n\
+             a=fmtp:96 sprop-parameter-sets={SPROP}\r\n"
+        ));
+        assert!(sdp_track(&m).is_some());
+    }
+
+    #[test]
+    fn zero_clock_rate_is_invalid() {
+        let m = media("m=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/0\r\n");
+        assert_eq!(sdp_track(&m), None);
+    }
+
+    #[test]
+    fn aac_without_rtpmap_is_not_playable() {
+        let m = media(
+            "m=audio 0 RTP/AVP 97\r\na=fmtp:97 mode=AAC-hbr; config=1190; sizeLength=13; indexLength=3; indexDeltaLength=3\r\n",
+        );
+        assert_eq!(sdp_track(&m), None);
+    }
+
+    #[test]
+    fn payload_type_above_127_has_no_number() {
+        let m = media(&format!(
+            "m=video 0 RTP/AVP 200\r\na=rtpmap:200 H264/90000\r\n\
+             a=fmtp:200 sprop-parameter-sets={SPROP}\r\n"
+        ));
+        let track = sdp_track(&m).unwrap();
+        assert_eq!(track.payload_type, None);
     }
 }
