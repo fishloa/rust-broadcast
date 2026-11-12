@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Fixed
+- The RTSP pull logs (warn) each Sender Report it ignored for NTP time zero and each set refused for tracks more than an hour apart; a repeated timeline-step discontinuity warns once and the repeats log at debug instead of flooding, and `queue_placed` no longer returns a count only a test read (the tests assert the log output).
 - The RTSP pull logs (warn) the aligner's timeline-step `Discontinuity` and placement-rule `State` outputs instead of dropping them silently; `media_plane::SessionEvent` has no equivalent to forward.
 - The Smooth pull keeps logging the engine's `Output::Discontinuity` rather than forwarding it: `media_plane::SessionEvent` has no discontinuity event, so unlike `broadcast-client` (`Event::Discontinuity`) the trunk gets no marker; pinned by a unit test.
 ### Changed
