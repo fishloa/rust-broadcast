@@ -129,7 +129,7 @@ fn star_control_is_the_base_itself() {
     let host = connected(NO_SLASH_URL, Config::default(), Server::new(&sdp));
     assert_eq!(
         setup_uris(&host),
-        vec![format!("{NO_SLASH_URL}/"), format!("{NO_SLASH_URL}/")]
+        vec![NO_SLASH_URL.to_string(), NO_SLASH_URL.to_string()]
     );
 
     let mut server = Server::new(&sdp);

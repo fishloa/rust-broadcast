@@ -15,6 +15,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `Error::InterleavedChannelCollision { channel }` (the server assigned one interleaved channel to two tracks), `Error::InterleavedChannelExhausted` (the channel pairs no longer fit in a `u8` from the requested first channel) and `Error::InvalidSdp` (a `DESCRIBE` body that is not UTF-8 or not an SDP).
 
 ### Fixed
+- `a=control:*` names the aggregate URL itself (`Content-Base`/`Content-Location`, else the request URL) without a trailing slash added, so `PLAY` for request URL `rtsp://h/live/key` goes to `rtsp://h/live/key`; the slash is kept only when joining relative media controls onto a request-URL base (an interop choice, documented).
 - A 2xx `SETUP` reply with no `Transport` header no longer leaves the previous `SETUP`'s negotiated transport in `ClientSession::negotiated_transport()`; the transport is cleared on every `SETUP` response, so a second track cannot inherit the first track's channels.
 - BREAKING: `PlayPlan::accept_setup(index, None)` is the new `Error::MissingTransport` (RFC 2326 §12.39 requires `Transport` in a 2xx `SETUP` reply) instead of silently keeping the offered channel pair; `start_play` surfaces it for a server that omits the header.
 - `AsyncRtspClient::start_play` no longer shows the `send_interleaved` paragraph at the head of its rustdoc.

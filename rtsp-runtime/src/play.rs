@@ -16,6 +16,7 @@ const CONTROL_ATTRIBUTE: &str = "control";
 
 /// Interleaved channels one track consumes: RTP and RTCP (RFC 2326 §12.39).
 const CHANNELS_PER_TRACK: u8 = 2;
+const AGGREGATE_CONTROL: &str = "*";
 
 /// A track negotiated by a play flow.
 #[derive(Debug, Clone)]
@@ -89,8 +90,11 @@ impl PlayPlan {
     /// C.1.1). Track `n` is offered the interleaved pair `first_channel + 2n` /
     /// `first_channel + 2n + 1`. A media control on another authority is
     /// listed in [`skipped`](Self::skipped) instead of set up. `PLAY` goes to
-    /// the session-level control (`*` is the base); a session-level control
-    /// that is absent, or on another authority, leaves `PLAY` on `request_url`.
+    /// the session-level control; `*` names the aggregate URL itself (the
+    /// `Content-Base`/`Content-Location`, else `request_url`, with no slash
+    /// added), and a control that is absent, or on another authority, leaves
+    /// `PLAY` on `request_url`. The trailing slash on a request-URL base is
+    /// an interop choice for relative media controls, not an RFC rule.
     ///
     /// # Errors
     ///
@@ -139,21 +143,25 @@ impl PlayPlan {
         let description = sdp_types::Session::parse(sdp.as_bytes())
             .map_err(|e| Error::InvalidSdp(e.to_string()))?;
 
-        let base = content_base
+        let aggregate = content_base
             .or(content_location)
-            .and_then(|b| request_url.join(b).ok())
-            .unwrap_or_else(|| {
-                let mut base = request_url.clone();
-                if !base.path().ends_with('/') {
-                    let slashed = format!("{}/", base.path());
-                    base.set_path(&slashed);
-                }
-                base
-            });
+            .and_then(|b| request_url.join(b).ok());
+        let relative_base = aggregate.clone().unwrap_or_else(|| {
+            let mut base = request_url.clone();
+            if !base.path().ends_with('/') {
+                let slashed = format!("{}/", base.path());
+                base.set_path(&slashed);
+            }
+            base
+        });
+        let aggregate = aggregate.unwrap_or_else(|| request_url.clone());
+        let resolve = |control: Option<&str>| match control {
+            Some(AGGREGATE_CONTROL) => Some(aggregate.to_string()),
+            other => crate::sdp::resolve_control(&request_url, &relative_base, other),
+        };
 
         let play_uri =
-            crate::sdp::resolve_control(&request_url, &base, control_of(&description.attributes))
-                .unwrap_or_else(|| request_url.to_string());
+            resolve(control_of(&description.attributes)).unwrap_or_else(|| request_url.to_string());
 
         let mut setups: Vec<PlannedSetup> = Vec::new();
         let mut skipped: Vec<SkippedMedia> = Vec::new();
@@ -165,7 +173,7 @@ impl PlayPlan {
                 continue;
             }
             let control = control_of(&media.attributes);
-            let Some(resolved) = crate::sdp::resolve_control(&request_url, &base, control) else {
+            let Some(resolved) = resolve(control) else {
                 skipped.extend(control.map(|c| SkippedMedia {
                     media_index,
                     control: c.to_string(),
@@ -453,7 +461,15 @@ mod tests {
     #[test]
     fn the_session_control_names_the_play_uri() {
         let aggregate = plan(None, Some("*"), &["trackID=0"], 0).unwrap();
-        assert_eq!(aggregate.play_uri(), "rtsp://cam.example/live/key/");
+        assert_eq!(aggregate.play_uri(), REQUEST);
+        let based = plan(
+            Some("rtsp://cam.example/base/"),
+            Some("*"),
+            &["trackID=0"],
+            0,
+        )
+        .unwrap();
+        assert_eq!(based.play_uri(), "rtsp://cam.example/base/");
         let named = plan(None, Some("agg"), &["trackID=0"], 0).unwrap();
         assert_eq!(named.play_uri(), "rtsp://cam.example/live/key/agg");
     }
