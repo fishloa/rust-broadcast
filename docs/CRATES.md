@@ -124,9 +124,9 @@ builds (see the table above against the in-tree versions below).
 | [`st2022`](#st2022) | Live transport protocols | 0.3.0 | [![crates.io](https://img.shields.io/crates/v/st2022.svg)](https://crates.io/crates/st2022) | yes | 1 | on crates.io |
 | [`rist-runtime`](#rist-runtime) | Live transport protocols | 0.5.1 | [![crates.io](https://img.shields.io/crates/v/rist-runtime.svg)](https://crates.io/crates/rist-runtime) | yes | 2 | on crates.io |
 | [`webrtc-runtime`](#webrtc-runtime) | Live transport protocols | 0.7.0 | [![crates.io](https://img.shields.io/crates/v/webrtc-runtime.svg)](https://crates.io/crates/webrtc-runtime) | no | 2 | on crates.io |
-| [`smooth-runtime`](#smooth-runtime) | Live transport protocols | 0.1.0 | — | no | 4 | not on crates.io |
 | [`dash-runtime`](#dash-runtime) | Live transport protocols | 0.4.0 | — | no | 5 | not on crates.io |
 | [`hls-runtime`](#hls-runtime) | Live transport protocols | 0.13.0 | [![crates.io](https://img.shields.io/crates/v/hls-runtime.svg)](https://crates.io/crates/hls-runtime) | yes | 5 | on crates.io |
+| [`smooth-runtime`](#smooth-runtime) | Live transport protocols | 0.1.0 | — | no | 5 | not on crates.io |
 | [`broadcast-client`](#broadcast-client) | Live transport protocols | 0.5.0 | — | no | 6 | not on crates.io |
 | [`ssai-runtime`](#ssai-runtime) | Servers, runtimes and tools | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/ssai-runtime.svg)](https://crates.io/crates/ssai-runtime) | yes | 2 | on crates.io |
 | [`dvb-tools`](#dvb-tools) | Servers, runtimes and tools | 13.1.0 | [![crates.io](https://img.shields.io/crates/v/dvb-tools.svg)](https://crates.io/crates/dvb-tools) | no | 3 | on crates.io |
@@ -590,17 +590,6 @@ WHIP ingest and WHEP egress session establishment as state machines over `http` 
 - **Used by (workspace):** [`multimux`](#multimux)
 - **Links:** [README](../webrtc-runtime/README.md) · [CHANGELOG](../webrtc-runtime/CHANGELOG.md) · [crates.io](https://crates.io/crates/webrtc-runtime) · [docs.rs](https://docs.rs/webrtc-runtime)
 
-#### smooth-runtime
-
-The one Smooth pull client that `broadcast-client` and `multimux` both adapt: `SmoothClient` is driven with `poll`, `on_manifest`, `on_fragment` and `on_failure` and drained with `next_output`. It owns manifest fetch and live refresh, `<Protection>` refusal, `StreamIndex` identity across a refresh, stream and quality selection, chunk enumeration, fragment URL resolution, first-fragment track-id discovery, the synthetic init segment, the `tfxd` timestamp base, the encrypted-fragment probe, retry with backoff, live join look-ahead inside the DVR window and discontinuity handling. Manifest syntax is `broadcast-smooth`'s and the codec glue is `transmux`'s. No I/O and no clock reads: every instant is an argument. Not yet published.
-
-- **Standards:** MS-SSTR (Microsoft Open Specifications), client Manifest and fragment responses (transcription in the private repo)
-- **Cargo description:** Sans-IO Smooth Streaming (MS-SSTR) client engine: manifest fetch/refresh, protection refusal, stream/quality selection, chunk enumeration, fragment URL resolution, init/tfxd handling, encrypted-fragment probe, retry/backoff, live join and discontinuity. No I/O, no clock reads.
-- **Version (in-tree):** 0.1.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 4
-- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-smooth`](#broadcast-smooth), [`transmux`](#transmux)
-- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux)
-- **Links:** [README](../smooth-runtime/README.md) · [CHANGELOG](../smooth-runtime/CHANGELOG.md)
-
 #### dash-runtime
 
 The player on top of `broadcast-dash` (the MPD model and parser live there): a lazy Segment plan (SegmentTemplate, SegmentTimeline, SegmentList, SegmentBase + sidx) with availability windows, a UTC clock fed by UTCTiming measurements, PeriodStart and live-edge arithmetic, and Representation selection. `DashClient` plays static and dynamic MPDs (SegmentTemplate/Timeline/List, on-demand `sidx`, multiple Periods with continuity) to ordered `Fmp4Demux` samples, with typed failure classes and an origin pin; live adds a clock ladder (UTCTiming, host clock, response Date), join at the presentation delay, availability gating, MPD refresh and reset, and early/expired/missing classification. No I/O and no clock reads: every instant is an argument. Not yet published.
@@ -622,6 +611,17 @@ A caller-driven LL-HLS playback client (blocking reload, part prefetch, fMP4 dem
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`container-probe`](#container-probe), [`media-plane`](#media-plane), [`mpeg-ts`](#mpeg-ts), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux)
 - **Links:** [README](../hls-runtime/README.md) · [CHANGELOG](../hls-runtime/CHANGELOG.md) · [crates.io](https://crates.io/crates/hls-runtime) · [docs.rs](https://docs.rs/hls-runtime)
+
+#### smooth-runtime
+
+The one Smooth pull client that `broadcast-client` and `multimux` both adapt: `SmoothClient` is driven with `poll`, `on_manifest`, `on_fragment` and `on_failure` and drained with `next_output`. It owns manifest fetch and live refresh, `<Protection>` refusal, `StreamIndex` identity across a refresh, stream and quality selection, chunk enumeration, fragment URL resolution, first-fragment track-id discovery, the synthetic init segment, the `tfxd` timestamp base, the encrypted-fragment probe, retry with backoff, live join look-ahead inside the DVR window and discontinuity handling. Manifest syntax is `broadcast-smooth`'s and the codec glue is `transmux`'s. No I/O and no clock reads: every instant is an argument. Not yet published.
+
+- **Standards:** MS-SSTR (Microsoft Open Specifications), client Manifest and fragment responses (transcription in the private repo)
+- **Cargo description:** Sans-IO Smooth Streaming (MS-SSTR) engine: a pull client (manifest fetch/refresh, stream/quality selection, chunk enumeration, fragment URLs, init/tfxd handling, retry/backoff, live join) and a live origin that renders the client Manifest and serves fragments from a media-plane Trunk. No I/O, no clock reads.
+- **Version (in-tree):** 0.1.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 5
+- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-smooth`](#broadcast-smooth), [`media-plane`](#media-plane), [`transmux`](#transmux)
+- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux)
+- **Links:** [README](../smooth-runtime/README.md) · [CHANGELOG](../smooth-runtime/CHANGELOG.md)
 
 #### broadcast-client
 
@@ -679,7 +679,7 @@ Four layers (`Dialer`/`Listener` -> byte stages -> `IngestSession` -> IR transfo
 - **Cargo description:** The ingress/egress spine for a live media origin: Dialer/Listener -> byte stages -> IngestSession -> Trunk (bounded sample/segment/event/part rings with cursor subscribers), three egress shapes (served/push/segment), and tiered retention with DVR pinning. Built on broadcast_common::Stage. no_std + alloc byte layer; Trunk and above require std.
 - **Version (in-tree):** 0.11.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 4
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
-- **Used by (workspace):** [`compliance-probe`](#compliance-probe), [`dash-runtime`](#dash-runtime), [`hls-runtime`](#hls-runtime), [`multimux`](#multimux)
+- **Used by (workspace):** [`compliance-probe`](#compliance-probe), [`dash-runtime`](#dash-runtime), [`hls-runtime`](#hls-runtime), [`multimux`](#multimux), [`smooth-runtime`](#smooth-runtime)
 - **Links:** [README](../media-plane/README.md) · [CHANGELOG](../media-plane/CHANGELOG.md) · [crates.io](https://crates.io/crates/media-plane) · [docs.rs](https://docs.rs/media-plane)
 
 #### ts-fix
@@ -902,8 +902,8 @@ layer 0: broadcast-auth, broadcast-common, test-alloc, test-fixtures, workspace-
 layer 1: atsc3, broadcast-dash, broadcast-hls, broadcast-loudness, broadcast-smooth, buffering-runtime, cc-data, container-probe, dvb-bbframe, dvb-mabr, dvb-simulcrypt, dvb-subtitle, dvb-vbi, mp4-emsg, mpeg-pes, mpeg-ts, rdd29, rmt-flute, rtmp-runtime, rtp-packet, rtsp-runtime, scte104, srt-runtime, st12-1, st2022, st337, st377-1, ttml-subtitle, ule
 layer 2: atsc3-route, dvb-csa, dvb-si, dvb-t2mi, mpeg-ps, rist-runtime, scte35-splice, ssai-runtime, st291, webrtc-runtime
 layer 3: dvb-ci, dvb-conformance, dvb-stream, dvb-tools, playout-runtime, timed-metadata, transmux
-layer 4: caption-convert, dvb-ci-runtime, media-plane, smooth-runtime, ts-fix
-layer 5: dash-runtime, hls-runtime
+layer 4: caption-convert, dvb-ci-runtime, media-plane, ts-fix
+layer 5: dash-runtime, hls-runtime, smooth-runtime
 layer 6: broadcast-client, media-doctor
 layer 7: compliance-probe, multimux
 layer 8: multimux-cli
@@ -973,12 +973,12 @@ flowchart BT
     caption_convert["caption-convert"]
     dvb_ci_runtime["dvb-ci-runtime"]
     media_plane["media-plane"]
-    smooth_runtime["smooth-runtime"]
     ts_fix["ts-fix"]
   end
   subgraph L5["layer 5"]
     dash_runtime["dash-runtime"]
     hls_runtime["hls-runtime"]
+    smooth_runtime["smooth-runtime"]
   end
   subgraph L6["layer 6"]
     broadcast_client["broadcast-client"]
@@ -1051,7 +1051,7 @@ flowchart BT
   rtsp_runtime --> broadcast_auth
   scte104 --> broadcast_common
   scte35_splice --> mpeg_ts
-  smooth_runtime --> transmux
+  smooth_runtime --> media_plane
   srt_runtime --> broadcast_common
   ssai_runtime --> broadcast_hls
   st12_1 --> broadcast_common
