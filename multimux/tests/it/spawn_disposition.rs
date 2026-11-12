@@ -35,7 +35,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ("dvr.rs", 603, "spawn_blocking DVR write; awaited inline"),
     (
         "source/pull.rs",
-        200,
+        246,
         "PullScheduler's `inflight` JoinSet (drained on drop); the shared engine for the three pull sources",
     ),
     (
@@ -91,12 +91,12 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "output/whep.rs",
-        1543,
+        1531,
         "WHEP signalling server; JOINED before run_whep returns (port-release ordering)",
     ),
     (
         "output/whep.rs",
-        1565,
+        1553,
         "WHEP viewer session on the run's session TaskTracker (close()+wait() on cancel)",
     ),
     (
@@ -186,7 +186,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "source/dash_pull/tests.rs",
-        1606,
+        1607,
         "test HTTP server task; aborted at test end",
     ),
 ];

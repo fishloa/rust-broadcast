@@ -29,7 +29,7 @@ use crate::cenc::ProtectionSystemSpecificHeaderBox;
 use crate::error::{Error, Result};
 use crate::rtp::base64_decode;
 #[cfg(feature = "std")]
-use crate::rtp::base64_encode;
+use broadcast_common::base64::base64_encode;
 #[cfg(feature = "std")]
 use quick_xml::Writer;
 #[cfg(feature = "std")]

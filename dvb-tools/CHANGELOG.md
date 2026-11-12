@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- `pids` PCR wrap detection now uses `broadcast_common::clock33::pcr_signed_distance` (bidirectional) instead of a hand-rolled forward-only wrap (#2477).
 
 ## [13.1.0] - 2026-11-10
 ### Fixed

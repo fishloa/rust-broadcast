@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Fixed
+- The crate builds with `--no-default-features`: it reads XML unconditionally, so its `broadcast-common` dependency always enables `std` and `xml` (it failed with unresolved imports of `broadcast_common::xml`).
 - `StreamIndex::enumerate_chunks`: a `c` with no `@d` and `@r > 1` takes `(next.t - t) / r` as each fragment's duration (it took the whole span, so the run overshot the next explicit `t`), and returns the new `SmoothParseError::IndivisibleRun` when the span is not a whole multiple of `r`.
 - `StreamIndex::enumerate_chunks`: an explicit `c@t` that repeats or steps back before the end of the preceding entry is `SmoothParseError::NonMonotonicTime` also when `@d` is present; it was only checked when `@d` was absent, so the plan refetched a fragment and emitted samples whose dts jumped back.
 - `StreamIndex::enumerate_chunks`: `c@r` is now one-based (MS-SSTR §2.2.2.6): an entry with `r = n` stands for `n` fragments; `r = 0` is rejected with `SmoothParseError::InvalidRepeatCount`. Previously `r` was treated as `r + 1` (DASH SegmentTimeline semantics).

@@ -2,9 +2,8 @@
 //! multi-scheme auth"; dedup issue #724): an axum middleware layer that
 //! gates a router behind Basic (RFC 7617), Digest (RFC 7616), or Bearer (RFC
 //! 6750) auth, for `source::ts_http`/`source::hls_pull`'s own loopback tests
-//! to drive the *real* `TsHttpRoute`/`HlsPullRoute` (and therefore the
-//! real `source::http_auth`/`hls_runtime::client::tokio_client` challenge-
-//! response code) against.
+//! to drive the *real* `TsHttpRoute`/`HlsPullRoute` (and therefore the real
+//! `source::http_auth` challenge-response code) against.
 //!
 //! A thin wrapper over the real [`broadcast_auth::Verifier`] — the same
 //! production challenge/verify code `crate::origin::output_auth_gate` gates

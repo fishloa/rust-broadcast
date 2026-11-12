@@ -1,6 +1,6 @@
 //! RFC 4648 §10 vectors, plus the leniency real SDP producers depend on.
 use broadcast_common::Serialize;
-use transmux::rtp::{base64_decode, base64_encode};
+use broadcast_common::base64::{base64_decode_lenient as base64_decode, base64_encode};
 use transmux::rtp_sdp::avc_config_from_sprop;
 
 const VECTORS: [(&str, &str); 7] = [
@@ -41,13 +41,7 @@ fn non_zero_trailing_bits_are_tolerated() {
 #[test]
 fn invalid_bytes_and_whitespace_are_errors() {
     for bad in ["Zm9v!", "Zm 9v", "Zm9v\n", "-_-_"] {
-        assert!(
-            matches!(
-                base64_decode(bad),
-                Err(transmux::error::Error::InvalidValue(..))
-            ),
-            "{bad:?}"
-        );
+        assert!(base64_decode(bad).is_err(), "{bad:?}");
     }
 }
 
@@ -56,10 +50,7 @@ fn invalid_bytes_and_whitespace_are_errors() {
 /// now an error.
 #[test]
 fn stray_equals_inside_the_data_is_an_error() {
-    assert!(matches!(
-        base64_decode("Zm9v=YmFy"),
-        Err(transmux::error::Error::InvalidValue(..))
-    ));
+    assert!(base64_decode("Zm9v=YmFy").is_err());
 }
 
 /// The real ffmpeg High-profile `sprop-parameter-sets` (fixture
@@ -84,12 +75,6 @@ fn unpadded_real_sprop_gives_identical_avcc() {
 #[test]
 fn truncated_last_quantum_and_excess_padding_are_errors() {
     for bad in ["QUJDR", "Z", "Zm9vY", "Zg===", "Zm8==", "Zm9v===="] {
-        assert!(
-            matches!(
-                base64_decode(bad),
-                Err(transmux::error::Error::InvalidValue(..))
-            ),
-            "{bad:?}"
-        );
+        assert!(base64_decode(bad).is_err(), "{bad:?}");
     }
 }

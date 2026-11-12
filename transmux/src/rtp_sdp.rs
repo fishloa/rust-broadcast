@@ -326,8 +326,8 @@ mod tests {
     use broadcast_common::error::BufferTooShort;
 
     use super::*;
-    use crate::rtp::base64_encode;
     use broadcast_common::Serialize;
+    use broadcast_common::base64::base64_encode;
 
     /// The ffmpeg-produced SDP for `fixtures/ts/h264/high.ts` (PROVENANCE:
     /// `ffmpeg -i fixtures/ts/h264/high.ts -c copy -f rtp -sdp_file high.sdp
