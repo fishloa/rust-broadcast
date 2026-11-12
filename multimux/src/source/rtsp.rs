@@ -39,8 +39,9 @@
 //! session down — many servers answer `OPTIONS` with `405` (it is optional,
 //! RFC 2326 §10.1).
 //!
-//! RTCP receiver reports are still not sent: nothing pre-5a did, and this
-//! raw-interleaved ingest does not need them.
+//! Inbound RTCP is fed to the track's depacketiser, whose Sender Report
+//! handling holds the RTP-to-NTP anchor; RTCP receiver reports are still not
+//! sent.
 //!
 //! # `rtsps://` (TLS)
 //!
@@ -162,6 +163,7 @@ pub struct RtspIngestSession {
     /// Interleaved media frames skipped because their RTP payload did not
     /// parse (audit T16, #1144) — see [`Self::malformed_media_frames`].
     malformed_media_frames: u64,
+    rtcp_frames: u64,
     torn_down: bool,
 }
 
@@ -195,6 +197,20 @@ impl RtspIngestSession {
     /// the session.
     pub fn malformed_media_frames(&self) -> u64 {
         self.malformed_media_frames
+    }
+
+    /// How many interleaved RTCP frames were routed to a track's depacketiser,
+    /// where a Sender Report anchors that track's RTP clock to NTP time
+    /// (RFC 3550 §6.4.1).
+    pub fn rtcp_frames(&self) -> u64 {
+        self.rtcp_frames
+    }
+
+    fn rtcp_track(&self, channel: u8) -> Option<TrackId> {
+        let plan = self.plan.as_ref()?;
+        self.tracks.iter().enumerate().find_map(|(index, track)| {
+            (plan.channels(index)?.1 == channel).then_some(track.track_id)
+        })
     }
 
     fn queue_teardown(&mut self) {
@@ -387,6 +403,12 @@ impl RtspIngestSession {
                     return Ok(());
                 }
                 let Some(track_id) = route_channel(channel, &self.tracks) else {
+                    if let Some(track_id) = self.rtcp_track(channel)
+                        && let Some(depa) = self.depacketiser.as_mut()
+                    {
+                        self.rtcp_frames = self.rtcp_frames.saturating_add(1);
+                        depa.push_rtcp(track_id, &data);
+                    }
                     return Ok(());
                 };
                 let Some(depa) = self.depacketiser.as_mut() else {
@@ -618,6 +640,7 @@ impl Dialer for RtspDialer {
             started: std::time::Instant::now(),
             keepalive_interval: None,
             malformed_media_frames: 0,
+            rtcp_frames: 0,
             torn_down: false,
         })
     }
@@ -1365,6 +1388,43 @@ mod tests {
         assert!(text.contains("Session: ABC123"), "{text}");
         session.finish().unwrap();
         assert!(session.poll_transmit().is_none(), "one TEARDOWN only");
+    }
+
+    #[test]
+    fn an_rtcp_frame_on_the_negotiated_rtcp_channel_reaches_the_depacketiser() {
+        let mut dialer = RtspDialer::new("rtsp://cam.local/stream", None);
+        let mut session = dialer.dial().expect("dial");
+        let _ = session.poll_transmit();
+        for (cseq, headers, body) in [
+            (1, "Content-Type: application/sdp\r\n", sdp_body()),
+            (
+                2,
+                "Transport: RTP/AVP/TCP;interleaved=4-5\r\nSession: ABC123;timeout=60\r\n",
+                String::new(),
+            ),
+            (3, "", String::new()),
+        ] {
+            session
+                .feed(
+                    &rtsp_response(cseq, "200 OK", headers, &body),
+                    Timestamp::ZERO,
+                )
+                .unwrap();
+            let _ = session.poll_transmit();
+        }
+        let frame = |channel: u8| {
+            rtsp_runtime::interleaved::InterleavedFrame::new(channel, vec![0x80, 0xC8, 0, 6])
+                .to_bytes()
+                .expect("frame")
+        };
+        session.feed(&frame(5), Timestamp::ZERO).unwrap();
+        assert_eq!(session.rtcp_frames(), 1);
+        session.feed(&frame(7), Timestamp::ZERO).unwrap();
+        assert_eq!(
+            session.rtcp_frames(),
+            1,
+            "an unnegotiated channel is not RTCP"
+        );
     }
 
     #[test]
