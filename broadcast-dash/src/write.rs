@@ -192,9 +192,6 @@ impl Mpd {
             root.push_attribute(("maxSubsegmentDuration", format_iso8601_duration(v).as_str()));
         }
         w.write_event(Event::Start(root)).map_err(io_err)?;
-        for sd in &self.service_descriptions {
-            write_service_description(&mut w, sd)?;
-        }
         for b in &self.base_urls {
             write_base_url(&mut w, b)?;
         }
@@ -206,14 +203,17 @@ impl Mpd {
             w.write_event(Event::End(BytesEnd::new("Location")))
                 .map_err(io_err)?;
         }
+        for sd in &self.service_descriptions {
+            write_service_description(&mut w, sd)?;
+        }
+        for p in &self.periods {
+            write_period(&mut w, p)?;
+        }
         for d in &self.essential_properties {
             write_descriptor(&mut w, "EssentialProperty", d)?;
         }
         for d in &self.supplemental_properties {
             write_descriptor(&mut w, "SupplementalProperty", d)?;
-        }
-        for p in &self.periods {
-            write_period(&mut w, p)?;
         }
         for u in &self.utc_timings {
             let mut e = BytesStart::new("UTCTiming");
@@ -675,13 +675,6 @@ fn write_period(w: &mut Writer<Vec<u8>>, p: &Period) -> Result<(), MpdError> {
         write_xlink_attrs(&mut e, x);
     }
     w.write_event(Event::Start(e)).map_err(io_err)?;
-    for b in &p.base_urls {
-        write_base_url(w, b)?;
-    }
-    write_segment_layer(w, &p.segment)?;
-    if let Some(d) = &p.asset_identifier {
-        write_descriptor(w, "AssetIdentifier", d)?;
-    }
     if let Some(im) = &p.imported_mpd {
         let mut ie = BytesStart::new("ImportedMPD");
         if let Some(v) = im.earliest_resolution_time_offset {
@@ -693,17 +686,24 @@ fn write_period(w: &mut Writer<Vec<u8>>, p: &Period) -> Result<(), MpdError> {
         w.write_event(Event::End(BytesEnd::new("ImportedMPD")))
             .map_err(io_err)?;
     }
-    for d in &p.essential_properties {
-        write_descriptor(w, "EssentialProperty", d)?;
+    for b in &p.base_urls {
+        write_base_url(w, b)?;
     }
-    for d in &p.supplemental_properties {
-        write_descriptor(w, "SupplementalProperty", d)?;
+    write_segment_layer(w, &p.segment)?;
+    if let Some(d) = &p.asset_identifier {
+        write_descriptor(w, "AssetIdentifier", d)?;
     }
     for sd in &p.service_descriptions {
         write_service_description(w, sd)?;
     }
     for a in &p.adaptation_sets {
         write_adaptation_set(w, a)?;
+    }
+    for d in &p.essential_properties {
+        write_descriptor(w, "EssentialProperty", d)?;
+    }
+    for d in &p.supplemental_properties {
+        write_descriptor(w, "SupplementalProperty", d)?;
     }
     w.write_event(Event::End(BytesEnd::new("Period")))
         .map_err(io_err)?;
@@ -771,20 +771,20 @@ fn write_adaptation_set(w: &mut Writer<Vec<u8>>, a: &AdaptationSet) -> Result<()
     }
 
     w.write_event(Event::Start(e)).map_err(io_err)?;
+    for d in &a.audio_channel_configurations {
+        write_descriptor(w, "AudioChannelConfiguration", d)?;
+    }
     for d in &a.content_protections {
         write_descriptor(w, "ContentProtection", d)?;
     }
-    for d in &a.inband_event_streams {
-        write_descriptor(w, "InbandEventStream", d)?;
+    for d in &a.essential_properties {
+        write_descriptor(w, "EssentialProperty", d)?;
     }
     for d in &a.supplemental_properties {
         write_descriptor(w, "SupplementalProperty", d)?;
     }
-    for d in &a.roles {
-        write_descriptor(w, "Role", d)?;
-    }
-    for d in &a.accessibilities {
-        write_descriptor(w, "Accessibility", d)?;
+    for d in &a.inband_event_streams {
+        write_descriptor(w, "InbandEventStream", d)?;
     }
     for l in &a.labels {
         w.write_event(Event::Start(BytesStart::new("Label")))
@@ -794,11 +794,11 @@ fn write_adaptation_set(w: &mut Writer<Vec<u8>>, a: &AdaptationSet) -> Result<()
         w.write_event(Event::End(BytesEnd::new("Label")))
             .map_err(io_err)?;
     }
-    for d in &a.essential_properties {
-        write_descriptor(w, "EssentialProperty", d)?;
+    for d in &a.accessibilities {
+        write_descriptor(w, "Accessibility", d)?;
     }
-    for d in &a.audio_channel_configurations {
-        write_descriptor(w, "AudioChannelConfiguration", d)?;
+    for d in &a.roles {
+        write_descriptor(w, "Role", d)?;
     }
     for b in &a.base_urls {
         write_base_url(w, b)?;
@@ -858,7 +858,6 @@ fn write_representation(w: &mut Writer<Vec<u8>>, r: &Representation) -> Result<(
     for d in &r.audio_channel_configurations {
         write_descriptor(w, "AudioChannelConfiguration", d)?;
     }
-    write_segment_layer(w, &r.segment)?;
     for d in &r.content_protections {
         write_descriptor(w, "ContentProtection", d)?;
     }
@@ -874,6 +873,7 @@ fn write_representation(w: &mut Writer<Vec<u8>>, r: &Representation) -> Result<(
     for b in &r.base_urls {
         write_base_url(w, b)?;
     }
+    write_segment_layer(w, &r.segment)?;
 
     w.write_event(Event::End(BytesEnd::new("Representation")))
         .map_err(io_err)?;
