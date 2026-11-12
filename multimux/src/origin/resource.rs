@@ -440,7 +440,7 @@ fn inject_segment_events(trunk: &Trunk, file: &str, body: HlsBody) -> HlsBody {
     }
 
     let segment = bytes.as_ref();
-    let spliced = transmux::insert_emsg_after_styp(segment, &emsg_bytes);
+    let spliced = transmux::insert_event_message_boxes_after_styp(segment, &emsg_bytes);
 
     HlsBody::Resource(Bytes::from(spliced))
 }
