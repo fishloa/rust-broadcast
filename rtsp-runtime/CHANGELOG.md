@@ -16,6 +16,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 - `sdp::resolve_control` compiled only with the `tokio` feature because it read the default-port constants from `io`; `RTSP_DEFAULT_PORT`/`RTSPS_DEFAULT_PORT` now live at the crate root (same `rtsp_runtime::` paths), so the sans-IO build has them.
+- `AsyncRtspClient::start_record` now sends `ANNOUNCE`, `SETUP` and `RECORD` one at a time, checking each response before sending the next, so a rejected `ANNOUNCE` no longer leaks `SETUP`/`RECORD`.
+- `AsyncRtspClient::start_record` uses checked arithmetic for the RTCP interleaved channel and returns `Error::InterleavedChannelExhausted` on overflow (matching the play flow) instead of wrapping.
+- `AsyncRtspClient::start_record` and `start_play` (and `PlayPlan`) strip userinfo from the request URI, so credentials travel only in the `Authorization` header.
 
 ## [0.11.0] - 2026-11-10
 ### Changed

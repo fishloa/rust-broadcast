@@ -943,3 +943,151 @@ async fn start_play_unexpected_response_yields_typed_error() {
     ));
     drop(server);
 }
+
+#[tokio::test]
+async fn start_record_announce_rejected_sends_only_one_request() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            let n = match sock.read(&mut chunk).await {
+                Ok(0) | Err(_) => return buf,
+                Ok(n) => n,
+            };
+            buf.extend_from_slice(&chunk[..n]);
+            if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                let cseq = String::from_utf8_lossy(&buf)
+                    .lines()
+                    .find_map(|l| l.strip_prefix("CSeq:"))
+                    .unwrap_or("1")
+                    .trim()
+                    .to_string();
+                let _ = sock
+                    .write_all(format!("RTSP/1.0 403 Forbidden\r\nCSeq: {cseq}\r\n\r\n").as_bytes())
+                    .await;
+                return buf;
+            }
+        }
+    });
+
+    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let url = url::Url::parse(&format!("rtsp://user:secret@{addr}/live/key")).unwrap();
+    let err = client.start_record(&url, SDP, 0).await.expect_err("403");
+    assert!(
+        matches!(
+            err,
+            rtsp_runtime::Error::UnexpectedResponse {
+                method: rtsp_runtime::Method::Announce,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+    let seen = tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .expect("server must finish")
+        .unwrap();
+    let text = String::from_utf8_lossy(&seen);
+    let count = text.matches("ANNOUNCE ").count()
+        + text.matches("SETUP ").count()
+        + text.matches("RECORD ").count();
+    assert_eq!(count, 1, "server saw more than one request: {text}");
+    drop(client);
+}
+
+#[tokio::test]
+async fn start_record_channel_255_is_exhausted() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let _ = listener.accept().await;
+    });
+    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
+    let err = client
+        .start_record(&url, SDP, 255)
+        .await
+        .expect_err("exhausted");
+    assert!(
+        matches!(err, rtsp_runtime::Error::InterleavedChannelExhausted),
+        "{err:?}"
+    );
+    drop(server);
+    drop(client);
+}
+
+#[tokio::test]
+async fn start_record_does_not_leak_password_in_request_line() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        let mut buf = Vec::new();
+        let mut seen: Vec<String> = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            let n = match sock.read(&mut chunk).await {
+                Ok(0) | Err(_) => return seen,
+                Ok(n) => n,
+            };
+            buf.extend_from_slice(&chunk[..n]);
+            while let Some(end) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                let head = String::from_utf8_lossy(&buf[..end]).into_owned();
+                let body_len = head
+                    .lines()
+                    .find_map(|l| {
+                        let (name, value) = l.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())?
+                    })
+                    .unwrap_or(0);
+                if buf.len() < end + 4 + body_len {
+                    break;
+                }
+                buf.drain(..end + 4 + body_len);
+                let request_line = head.lines().next().unwrap_or_default().to_string();
+                let is_setup = request_line.starts_with("SETUP ");
+                seen.push(head);
+                let cseq = seen
+                    .last()
+                    .unwrap()
+                    .lines()
+                    .find_map(|l| l.strip_prefix("CSeq:"))
+                    .unwrap_or("1")
+                    .trim()
+                    .to_string();
+                let extra = if is_setup { "Session: 1\r\n" } else { "" };
+                let response = format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n{extra}\r\n");
+                if sock.write_all(response.as_bytes()).await.is_err() {
+                    return seen;
+                }
+            }
+        }
+    });
+
+    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let url = url::Url::parse(&format!("rtsp://user:secret@{addr}/live/key")).unwrap();
+    client.start_record(&url, SDP, 0).await.unwrap();
+    client
+        .teardown(format!("rtsp://{addr}/live/key").as_str())
+        .await
+        .unwrap();
+    drop(client);
+
+    let seen = tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .expect("server must finish")
+        .unwrap();
+    for head in &seen {
+        let line = head.lines().next().unwrap_or("");
+        assert!(
+            !line.contains("secret"),
+            "password leaked in request line: {line}"
+        );
+    }
+}

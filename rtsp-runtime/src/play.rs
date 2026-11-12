@@ -134,6 +134,8 @@ impl PlayPlan {
         max_setups: usize,
         mut select: impl FnMut(usize, &sdp_types::Media) -> bool,
     ) -> Result<Self> {
+        let request_url = broadcast_auth::strip_userinfo(request_url).map_err(Error::from)?;
+
         let description = sdp_types::Session::parse(sdp.as_bytes())
             .map_err(|e| Error::InvalidSdp(e.to_string()))?;
 
@@ -150,7 +152,7 @@ impl PlayPlan {
             });
 
         let play_uri =
-            crate::sdp::resolve_control(request_url, &base, control_of(&description.attributes))
+            crate::sdp::resolve_control(&request_url, &base, control_of(&description.attributes))
                 .unwrap_or_else(|| request_url.to_string());
 
         let mut setups: Vec<PlannedSetup> = Vec::new();
@@ -163,7 +165,7 @@ impl PlayPlan {
                 continue;
             }
             let control = control_of(&media.attributes);
-            let Some(resolved) = crate::sdp::resolve_control(request_url, &base, control) else {
+            let Some(resolved) = crate::sdp::resolve_control(&request_url, &base, control) else {
                 skipped.extend(control.map(|c| SkippedMedia {
                     media_index,
                     control: c.to_string(),

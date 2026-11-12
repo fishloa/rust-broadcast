@@ -333,28 +333,19 @@ where
         sdp: &str,
         interleaved_channel: u8,
     ) -> Result<()> {
-        let uri = url.as_str();
-        let control = crate::sdp::control_url(url)?;
-        let mut spec = TransportSpec::rtp_avp_tcp_interleaved(
-            interleaved_channel,
-            interleaved_channel.wrapping_add(1),
-        );
+        let clean = broadcast_auth::strip_userinfo(url).map_err(Error::from)?;
+        let uri = clean.as_str();
+        let control = crate::sdp::control_url(&clean)?;
+        let rtcp = interleaved_channel
+            .checked_add(1)
+            .ok_or(Error::InterleavedChannelExhausted)?;
+        let mut spec = TransportSpec::rtp_avp_tcp_interleaved(interleaved_channel, rtcp);
         spec.mode = vec![crate::TransportMode::Record];
         let transport = crate::Transport::single(spec);
 
-        for (method, event) in [
-            (Method::Announce, self.announce(uri, sdp).await),
-            (Method::Setup, self.setup(&control, &transport).await),
-            (Method::Record, self.record(uri).await),
-        ] {
-            match event? {
-                ClientEvent::Response { status, .. } if status.is_success() => {}
-                ClientEvent::Response { status, .. } => {
-                    return Err(Error::UnexpectedResponse { method, status });
-                }
-                other => return Err(Error::UnexpectedEvent { event: other }),
-            }
-        }
+        expect_success(Method::Announce, self.announce(uri, sdp).await?)?;
+        expect_success(Method::Setup, self.setup(&control, &transport).await?)?;
+        expect_success(Method::Record, self.record(uri).await?)?;
         Ok(())
     }
 
@@ -399,7 +390,8 @@ where
     /// `u8`, and [`Error::InterleavedChannelCollision`] when the server
     /// assigns one channel to two tracks.
     pub async fn start_play(&mut self, url: &url::Url, first_channel: u8) -> Result<PlaySession> {
-        let (status, body) = match self.describe(url.as_str()).await? {
+        let clean = broadcast_auth::strip_userinfo(url).map_err(Error::from)?;
+        let (status, body) = match self.describe(clean.as_str()).await? {
             crate::client::ClientEvent::Response { status, body, .. } => (status, body),
             other => return Err(Error::UnexpectedEvent { event: other }),
         };
@@ -411,7 +403,7 @@ where
         }
         let sdp = String::from_utf8(body).map_err(|e| Error::InvalidSdp(e.to_string()))?;
         let mut plan = crate::PlayPlan::from_describe(
-            url,
+            &clean,
             self.framed.codec_mut().session.content_base(),
             None,
             &sdp,
@@ -1092,5 +1084,13 @@ mod tests {
             "os_session_id did not vary: {}",
             seen.len()
         );
+    }
+}
+
+fn expect_success(method: Method, event: ClientEvent) -> Result<()> {
+    match event {
+        ClientEvent::Response { status, .. } if status.is_success() => Ok(()),
+        ClientEvent::Response { status, .. } => Err(Error::UnexpectedResponse { method, status }),
+        other => Err(Error::UnexpectedEvent { event: other }),
     }
 }
