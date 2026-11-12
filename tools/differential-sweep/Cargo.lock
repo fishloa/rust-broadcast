@@ -2737,6 +2737,7 @@ name = "scte35-splice"
 version = "5.0.1"
 dependencies = [
  "broadcast-common",
+ "mpeg-ts",
  "serde",
  "thiserror",
 ]

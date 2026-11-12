@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Legal-duplicate TS packet detection now imports `mpeg_ts::ts_dup` instead of `broadcast_common::ts_dup` (#2466).
 - Test-harness `which` now lives in `test-fixtures::process::which`.
+- RTP sequence validity now uses `rtp_packet::SeqValidity` instead of a local copy.
 ### Added
 - `smooth::resolve_codec` returns `smooth::SmoothCodec` (stream type, FourCC, `CodecPrivateData`, SPS geometry, AudioSpecificConfig sampling rate and channels) instead of an anonymous tuple, and `smooth::to_smooth_ticks` is public — the one codec resolver for a Smooth manifest, shared by the packager and `smooth-runtime`'s live origin (issue #2453).
 - `insert_event_message_boxes_after_styp` splices serialized `emsg` boxes after the first top-level `styp` box using parsed box boundaries (a 64-bit `largesize` box before it is stepped over), and `segments::MOOF`, the Movie Fragment Box four-CC.

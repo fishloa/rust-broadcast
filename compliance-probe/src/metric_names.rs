@@ -11,6 +11,12 @@
 //!
 //! # What is measured, and what is deliberately not
 //!
+//! The counts behind `compliance_probe_tr101290_events_total` and the cues
+//! behind `compliance_probe_scte35_*` come from the engines `media-doctor`
+//! runs too (`dvb-conformance`'s own per-indicator accounting and
+//! `scte35-splice`'s shared tracker), so the two tools' differently-named
+//! metrics cannot disagree about the same stream.
+//!
 //! Every metric here is backed by a real, currently-implemented check.
 //! **`compliance_probe_tr101290_events_total{indicator="PCR_accuracy_error"}`
 //! will never appear** — [`dvb_conformance::Indicator::PcrAccuracyError`]

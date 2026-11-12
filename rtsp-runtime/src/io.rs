@@ -40,6 +40,12 @@ use crate::error::{Error, IoContext, Result};
 use crate::server::{ServerEvent, ServerSession};
 use crate::transport::{Transport, TransportSpec};
 
+/// The epoch [`now_us`] measures from: this process's first use of the clock.
+/// (An epoch is needed because tokio's paused-clock `Instant` has an arbitrary
+/// zero; the value itself carries no wall-clock meaning.)
+static NOW_EPOCH: std::sync::LazyLock<tokio::time::Instant> =
+    std::sync::LazyLock::new(tokio::time::Instant::now);
+
 /// Explicit bounds on every awaited IO of the RTSP adapters (W1 SP1.3): no wait
 /// is unbounded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,9 +119,18 @@ const MAX_PENDING_MEDIA_FRAMES: usize = 1024;
 /// after this many items stays in the socket buffer for the next read.
 const MAX_DRAIN_ITEMS: usize = 64;
 
-/// The current instant as a `std` one, virtual-time aware under tokio's paused clock.
-fn now() -> std::time::Instant {
-    tokio::time::Instant::now().into_std()
+/// The current time in whole microseconds on this adapter's monotonic clock —
+/// the caller-supplied `now_us` the sans-IO session's keepalive schedule is
+/// driven with, on the same [`NOW_EPOCH`] as [`deadline_instant`].
+fn now_us() -> u64 {
+    u64::try_from(NOW_EPOCH.elapsed().as_micros()).unwrap_or(u64::MAX)
+}
+
+/// The tokio timer instant for a session deadline read back from
+/// [`now_us`], so the adapter's own `sleep_until` waits exactly as long as the
+/// session says.
+fn deadline_instant(due_us: u64) -> tokio::time::Instant {
+    *NOW_EPOCH + Duration::from_micros(due_us)
 }
 
 /// Maps a tokio IO error into the crate error type.
@@ -225,7 +240,7 @@ where
 
     async fn write(&mut self, bytes: Vec<u8>) -> Result<()> {
         bounded(self.timeouts.write, "write", self.framed.send(bytes)).await?;
-        self.framed.codec_mut().session.mark_activity(now());
+        self.framed.codec_mut().session.mark_activity(now_us());
         Ok(())
     }
 
@@ -235,7 +250,7 @@ where
         // Inbound events (media, responses) deliberately do NOT count as keepalive
         // activity: the server's session timeout is refreshed by RTSP *requests*
         // (RFC 2326 §12.37), so a busy interleaved stream must not postpone the
-        // GET_PARAMETER keepalive.
+        // keepalive.
         if let Some(e) = self.deferred_error.take() {
             return Err(e);
         }
@@ -451,8 +466,9 @@ where
     }
 
     /// Drive the RTSP keepalive for a SEND-ONLY pusher: if the session's
-    /// keepalive deadline ([`ClientSession::poll_timeout`]) has passed, write a
-    /// `GET_PARAMETER` liveness ping now. A no-op otherwise. Honours the
+    /// keepalive deadline ([`ClientSession::poll_timeout`]) has passed, write
+    /// the liveness ping now — a `GET_PARAMETER` (RFC 2326 §10.6). A no-op
+    /// otherwise. Honours the
     /// crate's rule that **only requests we send** count as keepalive activity
     /// (inbound media/responses never do — see `next_event`), and the same
     /// half-timeout floor inside `poll_timeout`.
@@ -461,7 +477,7 @@ where
     /// call it directly from a pusher loop that sends media by any other path
     /// (e.g. a separate RTCP/`send` split), or when the media flow is idle.
     pub async fn poll_keepalive(&mut self) -> Result<()> {
-        if let Some(req) = self.framed.codec_mut().session.handle_timeout(now())? {
+        if let Some(req) = self.framed.codec_mut().session.handle_timeout(now_us())? {
             self.write(req).await?;
         }
         Ok(())
@@ -601,7 +617,7 @@ where
     /// frame arrives. Any control responses interleaved with media are consumed
     /// and their state transitions applied, but not returned here.
     ///
-    /// While waiting, a `GET_PARAMETER` keepalive is sent at half the session
+    /// While waiting, a keepalive is sent at half the session
     /// timeout ([`ClientSession::poll_timeout`]), so an idle-but-healthy
     /// stream does not lose its session.
     pub async fn recv_interleaved(&mut self) -> Result<Option<ClientEvent>> {
@@ -618,7 +634,7 @@ where
                 .codec()
                 .session
                 .poll_timeout()
-                .map(tokio::time::Instant::from_std);
+                .map(deadline_instant);
             let woke = {
                 let next = self.next_event();
                 tokio::pin!(next);
@@ -646,7 +662,7 @@ where
                     Some(_) => {} // control responses are applied by the session; not surfaced here
                 },
                 Woke::Keepalive => {
-                    if let Some(req) = self.framed.codec_mut().session.handle_timeout(now())? {
+                    if let Some(req) = self.framed.codec_mut().session.handle_timeout(now_us())? {
                         self.write(req).await?;
                     }
                 }

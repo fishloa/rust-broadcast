@@ -507,6 +507,20 @@ pub struct Stats {
     pub in_sync: bool,
 }
 
+/// Accumulated count for one TR 101 290 [`Indicator`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct IndicatorCount {
+    /// The indicator's name.
+    pub indicator: &'static str,
+    /// The indicator's priority tier.
+    pub priority: &'static str,
+    /// The TR 101 290 clause the indicator comes from.
+    pub clause: &'static str,
+    /// Events observed so far.
+    pub count: u64,
+}
+
 /// Configurable hysteresis and timeout parameters.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -782,6 +796,7 @@ pub struct ConformanceMonitor {
     config: Config,
     events: Vec<ConformanceEvent>,
     stats: Stats,
+    indicator_counts: BTreeMap<&'static str, IndicatorCount>,
 
     // Sync hysteresis state machine (1.1)
     in_sync: bool,
@@ -870,6 +885,7 @@ impl ConformanceMonitor {
                 events: 0,
                 in_sync: false,
             },
+            indicator_counts: BTreeMap::new(),
             in_sync: false,
             good_run: 0,
             bad_run: 0,
@@ -1210,6 +1226,12 @@ impl ConformanceMonitor {
         }
     }
 
+    /// Accumulated per-indicator event counts.
+    #[must_use]
+    pub fn indicator_counts(&self) -> alloc::vec::Vec<IndicatorCount> {
+        self.indicator_counts.values().cloned().collect()
+    }
+
     // ── Internal helpers ──────────────────────────────────────────────────
 
     fn emit(
@@ -1228,6 +1250,16 @@ impl ConformanceMonitor {
         };
         self.stats.events += 1;
         self.events.push(event);
+        let entry = self
+            .indicator_counts
+            .entry(indicator.name())
+            .or_insert_with(|| IndicatorCount {
+                indicator: indicator.name(),
+                priority: indicator.priority().name(),
+                clause: indicator.clause(),
+                count: 0,
+            });
+        entry.count += 1;
     }
 
     /// Continuity_count_error (1.4) check.

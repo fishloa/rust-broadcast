@@ -7,8 +7,8 @@ use broadcast_auth::{Credentials as AuthCredentials, Verifier};
 use broadcast_client::{Config, Credentials, Event, Status};
 use sdp_types::{Media, MediaType, TransportProto};
 use support::rtsp_host::{
-    BASE_URL, Host, MediaFixture, OPTIONS, PLAY, SEC, SETUP, Server, SetupReply, connects,
-    interleaved, quiet_config, samples_of,
+    BASE_URL, Host, MediaFixture, PLAY, SEC, SETUP, Server, SetupReply, connects, interleaved,
+    quiet_config, samples_of,
 };
 use transmux::rtp::RtpMediaKind;
 
@@ -287,7 +287,7 @@ fn keepalive_challenges_with_rotating_nonces_never_exhaust_the_replay_budget() {
     for cycle in 1..=KEEPALIVE_CYCLES {
         host.advance_to(cycle * KEEPALIVE_SECS * SEC);
         assert_eq!(
-            host.server.count(OPTIONS),
+            host.server.count("OPTIONS"),
             usize::try_from(cycle * 2).expect("small"),
             "cycle {cycle}: each keepalive is challenged once and retried once"
         );

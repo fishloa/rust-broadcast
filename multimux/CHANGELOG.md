@@ -11,6 +11,7 @@
 - BREAKING: the public `multimux::dashif_ingest` module; use `dash_runtime::ingest` (issue #2480).
 - Blocking-reload timeout policy now lives in `hls-runtime::server` (multimux calls it).
 - The DASH/LL-DASH manifests render their `xs:duration` attributes with `broadcast_dash::duration::xs_duration`, the one writer in the workspace, instead of `transmux::dash::xs_duration` (removed); the rendered bytes are unchanged (#2465).
+- RTSP keepalive is now `rtsp_runtime::ClientSession`'s schedule driven from `next_deadline`/`on_deadline`, instead of a second timer with its own clamp, and it follows the method the server advertises: the first keepalive is a `GET_PARAMETER` probe whose `Public` answer settles the rest (`OPTIONS` for a server that does not list it).
 - The Smooth output no longer disagrees with the packager's own Smooth path (issue #2453): AAC without a `DecoderSpecificInfo` is a server error instead of a manifest advertising `CodecPrivateData=""`, a second track of a kind (`audio`/`audio_2`) gets its own `Name` and `Url` and stays reachable by its fragment URL, `stpp`/`wvtt` subtitle tracks are advertised as a `text` `StreamIndex` (`Subtype="SUBT"`), and video geometry comes from the SPS rather than from a `CodecConfig` that RTSP/WHIP ingest leaves at 0.
 
 - The Smooth output's `Manifest` and fragment responses carry the `Cache-Control` they always did (`no-cache`, from the router's own `cache_control_for`): an egress `CachePolicy` still reaches the wire nowhere in this crate, and `smooth_responses_carry_no_cache` pins a success and an error alike (issue #2453 round 2).
@@ -82,6 +83,7 @@
 - `rescale_to_90k` now wraps the rescaled RTP timestamp into the 32-bit range explicitly (RFC 3550 §5.1) instead of relying on `as u32`.
 - `Recorder::lines` and `Recorder::len` recover a poisoned lock via `PoisonError::into_inner` instead of returning an empty golden.
 
+### Changed
 ## [0.18.0] - 2026-11-10
 ### Changed
 - LL-HLS and TS-HLS outputs now share one HLS media-playlist implementation (parameterised by held/insert-priority), removing the duplicated route/playlist code.

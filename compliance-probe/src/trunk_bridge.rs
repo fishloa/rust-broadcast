@@ -177,7 +177,7 @@ fn check_event(bridge: &TrunkBridge, entry: &EventEntry) {
 /// absolute, wrap-**unrolled** clock (`timed_metadata::Timeline::push_scte35`
 /// unrolls it long before an event reaches the event log)?
 ///
-/// A plain comparison, deliberately **not** `scte35::judge` (which reduces
+/// A plain comparison, deliberately **not** `scte35_splice::judge_splice_time` (which reduces
 /// its inputs modulo 2^33 via `wrapping_forward_distance`, for the still-raw
 /// wire path where that reduction is exactly what's needed). Reusing `judge`
 /// here on already-unrolled values would not skip its wrap branch — a
@@ -208,7 +208,7 @@ mod tests {
 
     /// W-CP-3: a target more than half of 2^33 ticks (about 13.3 hours at
     /// 90 kHz) ahead of `now` on the Trunk's unrolled clock must still read
-    /// as "in future", not "in past". `scte35::judge` (mod-2^33 reduction)
+    /// as "in future", not "in past". `scte35_splice::judge_splice_time` (mod-2^33 reduction)
     /// gets this wrong on unrolled inputs — this is the bug the module
     /// comment on [`unrolled_target_is_in_past`] warned was NOT actually
     /// exercised by the old (reused-`judge`) code, contrary to what that
@@ -227,13 +227,14 @@ mod tests {
         );
 
         // Demonstrate the bug this replaces: naively reducing modulo 2^33
-        // (what `scte35::judge` does, correctly, for the still-raw wire
-        // path) DOES fold this same unrolled pair into `InPast`.
-        assert_eq!(
-            crate::scte35::judge(target, now),
-            crate::scte35::Scte35Sanity::InPast,
-            "sanity check on the bug being replaced: judge() misreads this \
-             unrolled pair as InPast, which is why it must not be reused here"
+        // (what `scte35_splice::judge_splice_time` does, correctly, for the
+        // still-raw wire path) DOES fold this same unrolled pair into the
+        // past.
+        assert!(
+            !scte35_splice::judge_splice_time(target, now),
+            "sanity check on the bug being replaced: judge_splice_time() \
+             misreads this unrolled pair as in past, which is why it must \
+             not be reused here"
         );
     }
 
