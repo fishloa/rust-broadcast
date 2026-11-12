@@ -124,11 +124,9 @@ impl Mpd {
             root.push_attribute(("profiles", self.profiles.join(",").as_str()));
         }
         root.push_attribute(("type", self.kind.name()));
-        let min_buffer = self
-            .min_buffer_time
-            .map(format_iso8601_duration)
-            .unwrap_or_else(|| "PT2S".to_string());
-        root.push_attribute(("minBufferTime", min_buffer.as_str()));
+        if let Some(min_buffer) = self.min_buffer_time.map(format_iso8601_duration) {
+            root.push_attribute(("minBufferTime", min_buffer.as_str()));
+        }
         let cenc_needed = use_cenc;
         if cenc_needed {
             root.push_attribute(("xmlns:cenc", NS_CENC));
