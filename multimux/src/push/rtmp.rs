@@ -12,63 +12,32 @@
 //! — see `transmux::flv` for the tag-body layout this reuses.
 
 use crate::push::{PushTransport, SendMediaError};
-use rtmp_runtime::amf0::Amf0Value;
 use rtmp_runtime::target::RtmpTarget;
 use tokio::net::TcpStream;
 use transmux::CodecConfig;
 use transmux::TrackId;
+use transmux::flv_track_kind;
 use transmux::ir::{Media, Track, TrackSpec};
 
-/// FLV `videocodecid` metadata value for AVC (`CodecID` 7, Adobe FLV v10.1 §E.4.3).
-const META_VIDEOCODECID_AVC: f64 = 7.0;
-/// FLV `audiocodecid` metadata value for AAC (`SoundFormat` 10, Adobe FLV v10.1 §E.4.2).
-const META_AUDIOCODECID_AAC: f64 = 10.0;
-
-/// Whether `config` is a codec RTMP/FLV can carry (issue #934: FLV's
-/// mainstream is AVC video + AAC audio only — `transmux::flv`'s module doc).
-/// Any other track present in the trunk (e.g. a private/section stream) is
-/// silently excluded from the RTMP push rather than failing the whole batch.
-fn is_flv_codec(config: &CodecConfig) -> bool {
-    matches!(config, CodecConfig::Avc { .. } | CodecConfig::Aac { .. })
-}
-
-/// Build the `onMetaData` key/value list for `tracks`' (at most one) AVC and
-/// (at most one) AAC track — informational only; a decoder needs the
-/// sequence headers (`avcC`/ASC), not this, to actually decode.
-fn build_metadata(tracks: &[TrackSpec]) -> Vec<(String, Amf0Value)> {
-    let mut meta = Vec::new();
-    for t in tracks {
-        match &t.config {
-            CodecConfig::Avc { width, height, .. } => {
-                meta.push(("width".to_string(), Amf0Value::Number(*width as f64)));
-                meta.push(("height".to_string(), Amf0Value::Number(*height as f64)));
-                meta.push((
-                    "videocodecid".to_string(),
-                    Amf0Value::Number(META_VIDEOCODECID_AVC),
-                ));
-            }
-            CodecConfig::Aac {
-                sample_rate,
-                channel_count,
-                ..
-            } => {
-                meta.push((
-                    "audiocodecid".to_string(),
-                    Amf0Value::Number(META_AUDIOCODECID_AAC),
-                ));
-                meta.push((
-                    "audiosamplerate".to_string(),
-                    Amf0Value::Number(*sample_rate as f64),
-                ));
-                meta.push((
-                    "audiochannels".to_string(),
-                    Amf0Value::Number(*channel_count as f64),
-                ));
-            }
-            _ => {}
-        }
-    }
-    meta
+/// The metadata pair the RTMP client frames (`@setDataFrame`/`onMetaData`,
+/// Adobe RTMP 1.0 §7.1): the handler name, then the property object
+/// `transmux::on_metadata_body` writes after it. The client writes that name
+/// itself, so the body's own is read back rather than sent twice, and its
+/// chunk stream is the client's (stream 4), which keeps the message headers
+/// self-contained.
+fn on_metadata_values(
+    body: &[u8],
+) -> Result<Vec<(String, rtmp_runtime::amf0::Amf0Value)>, rtmp_runtime::RtmpError> {
+    use broadcast_common::{Parse, Serialize};
+    use rtmp_runtime::amf0::Amf0Value;
+    let name = Amf0Value::parse(body)?;
+    let rest = &body[name.serialized_len()..];
+    let Amf0Value::String(handler) = name else {
+        return Err(rtmp_runtime::RtmpError::Malformed {
+            what: "onMetaData body does not start with its handler name",
+        });
+    };
+    Ok(vec![(handler, Amf0Value::parse(rest)?)])
 }
 
 /// Per-connection configuration for the RTMP push transport.
@@ -195,20 +164,20 @@ impl PushTransport for RtmpTransport {
     }
 
     /// FLV's mainstream is AVC video + AAC audio only (issue #942) — see
-    /// this module's own `is_flv_codec`.
+    /// `transmux::flv_track_kind`.
     fn supports_codec(&self, config: &CodecConfig) -> bool {
-        is_flv_codec(config)
+        flv_track_kind(config).is_some()
     }
 
     /// Send `onMetaData` plus the AVC/AAC sequence headers (`avcC`/ASC) once,
     /// before any frame data (issue #934) — a decoder cannot initialise
     /// without them. Tracks this transport cannot carry over RTMP (anything
-    /// but AVC/AAC — `is_flv_codec`) are silently excluded, matching
+    /// but AVC/AAC — see `transmux::flv_track_kind`) are silently excluded, matching
     /// `send_media`'s per-batch filtering below.
     async fn setup(&mut self, tracks: &[TrackSpec]) -> Result<(), Self::Error> {
         let flv_tracks: Vec<TrackSpec> = tracks
             .iter()
-            .filter(|t| is_flv_codec(&t.config))
+            .filter(|t| flv_track_kind(&t.config).is_some())
             .cloned()
             .collect();
         if flv_tracks.is_empty() {
@@ -217,20 +186,10 @@ impl PushTransport for RtmpTransport {
             ));
         }
 
-        let metadata = build_metadata(&flv_tracks);
-        let meta_bytes = {
-            let client = self
-                .client
-                .as_mut()
-                .ok_or_else(|| RtmpPushError::Connect("not connected".into()))?;
-            client
-                .encode_metadata(&metadata)
-                .map_err(|e| RtmpPushError::Protocol(e.to_string()))?
-        };
-        self.write_message(&meta_bytes).await?;
-
-        // A zero-sample `Media` is enough to build the sequence-header
-        // payloads — they're derived only from `TrackSpec::config`.
+        // A zero-sample `Media` is enough for the metadata and the
+        // sequence-header payloads — both derive only from `TrackSpec::config`.
+        // Live publication has no known length, so the `duration` key is
+        // omitted rather than guessed.
         let media = Media::new(
             flv_tracks
                 .into_iter()
@@ -238,6 +197,21 @@ impl PushTransport for RtmpTransport {
                 .collect(),
             0,
         );
+        let meta_bytes = {
+            let client = self
+                .client
+                .as_mut()
+                .ok_or_else(|| RtmpPushError::Connect("not connected".into()))?;
+            let body = transmux::on_metadata_body(&media, None)
+                .map_err(|e| RtmpPushError::Protocol(e.to_string()))?;
+            let values =
+                on_metadata_values(&body).map_err(|e| RtmpPushError::Protocol(e.to_string()))?;
+            client
+                .encode_metadata(&values)
+                .map_err(|e| RtmpPushError::Protocol(e.to_string()))?
+        };
+        self.write_message(&meta_bytes).await?;
+
         let headers = transmux::flv_sequence_header_payloads(&media)
             .map_err(|e| RtmpPushError::Protocol(e.to_string()))?;
         for header in &headers {
@@ -269,7 +243,7 @@ impl PushTransport for RtmpTransport {
     /// `encode_video`/`encode_audio` are themselves sans-IO (RTMP
     /// chunk-stream framing is pure computation — only the socket write that
     /// follows is I/O), so this is a real factoring, not a workaround. Tracks
-    /// this transport cannot carry over RTMP are excluded (`is_flv_codec`);
+    /// this transport cannot carry over RTMP are excluded (no `transmux::flv_track_kind`);
     /// if that leaves nothing at all, returns [`SendMediaError::Mux`]
     /// (excluding *some* tracks while carrying others is not an error — see
     /// the warn-once note below).
@@ -277,7 +251,7 @@ impl PushTransport for RtmpTransport {
         let flv_tracks: Vec<Track> = media
             .tracks
             .iter()
-            .filter(|t| is_flv_codec(&t.spec.config))
+            .filter(|t| flv_track_kind(&t.spec.config).is_some())
             .cloned()
             .collect();
 
@@ -289,7 +263,7 @@ impl PushTransport for RtmpTransport {
             let refused_track_ids: Vec<TrackId> = media
                 .tracks
                 .iter()
-                .filter(|t| !is_flv_codec(&t.spec.config))
+                .filter(|t| flv_track_kind(&t.spec.config).is_none())
                 .map(|t| t.spec.track_id)
                 .collect();
             tracing::warn!(
@@ -482,7 +456,7 @@ mod tests {
     }
 
     /// `PushTransport::supports_codec` (issue #942) must delegate to the
-    /// real `is_flv_codec` predicate — the one place `push::egress::
+    /// real `transmux::flv_track_kind` — the one place `push::egress::
     /// PushTransportEgress::negotiate`/`renegotiate` decide whether a track
     /// is carriable at all, replacing the transport's own former ad-hoc
     /// check. Exercised against the real `RtmpTransport`, not a test
@@ -497,7 +471,7 @@ mod tests {
     /// `encode_media`'s FLV framing instead of being refused truthfully at
     /// negotiation time. Reverted after confirming the failure.
     #[test]
-    fn supports_codec_matches_is_flv_codec() {
+    fn supports_codec_matches_flv_track_kind() {
         let transport = RtmpTransport {
             client: None,
             warned_refused_tracks: false,

@@ -8,6 +8,22 @@ use broadcast_common::len::{need_in, need_out};
 pub const TS_PACKET_SIZE: usize = 188;
 /// Sync byte that every TS packet starts with (ISO/IEC 13818-1 §2.4.3.3).
 pub const TS_SYNC_BYTE: u8 = 0x47;
+/// The IP datagram that fits a 1500-byte Ethernet MTU: the common outer
+/// datagram for TS over UDP/SRT/RTP, in bytes. The 28 bytes are the smallest
+/// IP + UDP header pair (IPv4 header, or IPv6 with one extension header, plus
+/// the UDP header), so a datagram of this size never fragments even for a
+/// transport that sets the Don't-Fragment bit.
+pub const MAX_DATAGRAM_PAYLOAD: usize = 1472;
+/// TS packets carried in one datagram over IP: 7 whole 188-byte packets
+/// (1316 bytes), the largest whole-packet multiple that fits
+/// [`MAX_DATAGRAM_PAYLOAD`] — the TS-over-UDP payload size the RTP payload
+/// conventions describe. A sender that ignored this and wrote a whole muxed
+/// frame per datagram had every frame over about 1.3 kB dropped for
+/// exceeding the receiver's MTU-sized cap.
+pub const TS_PACKETS_PER_DATAGRAM: usize = 7;
+/// Bytes of TS carried in one datagram over IP: [`TS_PACKETS_PER_DATAGRAM`]
+/// whole packets.
+pub const TS_BYTES_PER_DATAGRAM: usize = TS_PACKETS_PER_DATAGRAM * TS_PACKET_SIZE;
 /// Upper bound on a single section: `section_length` is 12 bits (max 4095)
 /// plus the 3-byte header = 4098. (Long-form SI caps `section_length` at
 /// 4093 → total 4096, but maximal short-form private sections may reach
