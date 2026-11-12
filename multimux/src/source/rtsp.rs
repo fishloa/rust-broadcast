@@ -1060,8 +1060,8 @@ mod tests {
     fn logged(run: impl FnOnce()) -> Vec<(tracing::Level, String)> {
         let warnings = Warnings::default();
         tracing::subscriber::with_default(warnings.clone(), run);
-        let lines = warnings.0.lock().unwrap().clone();
-        lines
+        let guard = warnings.0.lock().unwrap();
+        guard.clone()
     }
 
     #[test]
