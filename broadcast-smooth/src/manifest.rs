@@ -789,7 +789,7 @@ impl StreamIndex {
                                 return Err(SmoothParseError::NonMonotonicTime { index: i });
                             }
                             let span = nt - t;
-                            if span % repeats != 0 {
+                            if !span.is_multiple_of(repeats) {
                                 return Err(SmoothParseError::IndivisibleRun { index: i });
                             }
                             span / repeats
