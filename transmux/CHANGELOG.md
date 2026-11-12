@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Changed
 - Legal-duplicate TS packet detection now imports `mpeg_ts::ts_dup` instead of `broadcast_common::ts_dup` (#2466).
+- Test-harness `which` now lives in `test-fixtures::process::which`.
 - RTP sequence validity now uses `rtp_packet::SeqValidity` instead of a local copy.
 ### Added
 - `insert_event_message_boxes_after_styp` splices serialized `emsg` boxes after the first top-level `styp` box using parsed box boundaries (a 64-bit `largesize` box before it is stepped over), and `segments::MOOF`, the Movie Fragment Box four-CC.

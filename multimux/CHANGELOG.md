@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 ### Changed
+- DASH-IF ingest sans-IO engine moved to `dash-runtime::ingest`; multimux keeps the axum glue.
+### Removed
+- BREAKING: the public `multimux::dashif_ingest` module; use `dash_runtime::ingest` (issue #2480).
+- Blocking-reload timeout policy now lives in `hls-runtime::server` (multimux calls it).
+### Changed
+- The DASH/LL-DASH manifests render their `xs:duration` attributes with `broadcast_dash::duration::xs_duration`, the one writer in the workspace, instead of `transmux::dash::xs_duration` (removed); the rendered bytes are unchanged (#2465).
 - RTSP keepalive is now `rtsp_runtime::ClientSession`'s schedule driven from `next_deadline`/`on_deadline`, instead of a second timer with its own clamp, and it follows the method the server advertises: the first keepalive is a `GET_PARAMETER` probe whose `Public` answer settles the rest (`OPTIONS` for a server that does not list it).
 - Timeline discontinuity detection now uses the per-track detector from `transmux` (broadcast-client semantics); the 10 s `MEDIA_DISCONTINUITY_NS` constant is removed.
 - RTSP pull skips unplayable SDP media sections (and foreign-authority controls and sections beyond the track cap) instead of failing the whole route; fails only when nothing is playable. Skipped sections are logged as route warnings.
