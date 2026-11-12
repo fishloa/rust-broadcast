@@ -4465,7 +4465,7 @@ mod tests {
             .expect("bind sender");
         let send_task = tokio::spawn(async move {
             loop {
-                for chunk in ts_bytes.chunks(7 * 188) {
+                for chunk in ts_bytes.chunks(mpeg_ts::TS_BYTES_PER_DATAGRAM) {
                     let _ = sender.send_to(chunk, addr).await;
                     tokio::time::sleep(Duration::from_millis(5)).await;
                 }

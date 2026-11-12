@@ -50,6 +50,12 @@ getrandom = { version = "0.4", optional = true, default-features = false }
 # (SP1.4) for the tokio adapter only; the no_std core stays dependency-free.
 bytes      = { version = "1", optional = true, default-features = false }
 tokio-util = { version = "0.7", optional = true, default-features = false, features = ["rt"] }
+# The `srt://` URL (`url::SrtUrl`) parses the authority and the query with the
+# `url` crate and decodes `streamid` values with `percent_encoding`; both are
+# std-only, so the URL type rides the `std` feature and the no_std core is
+# unaffected. Both versions are already in the workspace lock.
+url               = { version = "2", optional = true }
+percent-encoding  = { version = "2", optional = true }
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
@@ -62,7 +68,7 @@ tokio = { version = "1", default-features = false, features = ["net", "io-util",
 default = ["std"]
 # `std` links the standard library. Without it the crate is `#![no_std]` and
 # needs only `alloc`. The packet codecs themselves are fully no_std.
-std = ["broadcast-common/std", "thiserror/std", "serde?/std"]
+std = ["broadcast-common/std", "thiserror/std", "serde?/std", "dep:url", "dep:percent-encoding"]
 # Derive serde on the public wire types.
 serde = ["dep:serde"]
 # `crypto` adds the §6 payload-encryption path: AES-CTR encrypt/decrypt, RFC

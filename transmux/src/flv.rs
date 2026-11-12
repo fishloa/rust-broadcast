@@ -1397,18 +1397,7 @@ impl Package for FlvMux {
         );
 
         // --- onMetaData script tag (§E.4.1) ---
-        let (width, height) = match video.map(|t| &t.spec.config) {
-            Some(CodecConfig::Avc { width, height, .. }) => (*width, *height),
-            _ => (0, 0),
-        };
-        let duration_s = media_duration_seconds(media);
-        let props =
-            onmetadata_properties(duration_s, width, height, video.is_some(), audio.is_some());
-        let meta = amf0_values(&[
-            Amf0Value::String("onMetaData".to_string()),
-            Amf0Value::EcmaArray(props),
-        ])
-        .map_err(|e| Error::FieldOverflow(field_overflow(e)))?;
+        let meta = on_metadata_body(media, Some(media_duration_seconds(media)))?;
         OutTag {
             tag_type: TagType::Script,
             timestamp: 0,
@@ -1552,18 +1541,93 @@ fn media_duration_seconds(media: &Media) -> f64 {
 const META_VIDEOCODECID_AVC: f64 = 7.0;
 /// FLV `audiocodecid` for AAC (= `SoundFormat` 10).
 const META_AUDIOCODECID_AAC: f64 = 10.0;
+/// The handler name an `onMetaData` script body starts with (§E.4.1).
+const META_HANDLER_NAME: &str = "onMetaData";
+/// The AAC channel count `onMetaData`'s `stereo` flag stands for (§E.5: the
+/// same two-channel answer the FLV `SoundType` bit gives).
+const AAC_CHANNELS_STEREO: u32 = 2;
 
-/// The onMetaData property list of one media: the informational keys FLV
-/// players read, in the order they are written (AMF0 §2.10).
+/// The `onMetaData` body — the AMF0 `onMetaData` name followed by one ECMA
+/// array of the informational properties FLV players read, in the order they
+/// are written (Adobe FLV v10.1 §E.4.1, AMF0 §2) — that every FLV/RTMP writer
+/// in the workspace emits, so a file muxed by [`FlvMux`] and a stream
+/// published over RTMP describe the same tracks with the same bytes.
+///
+/// `duration` is the only property a caller decides: a file knows its own
+/// length ([`FlvMux`] passes the media's), a live publisher does not and
+/// passes `None`, which omits the key rather than claiming a length. A caller
+/// that must carry the file's tag bytes must also read the properties back:
+/// one written as an AMF0 Object re-reads as one, so re-encoding its value
+/// writes an extra end-of-object marker the file never had.
+///
+/// Tracks FLV cannot carry ([`flv_track_kind`]) contribute nothing, but the
+/// media must still hold at least one AVC video or AAC audio track.
+///
+/// # Errors
+///
+/// [`FlvError::NoSupportedTrack`] when no track is carryable, and
+/// [`FlvError::Codec`] wrapping the AMF0 field overflow when a key exceeds
+/// its length prefix.
+pub fn on_metadata_body(
+    media: &Media,
+    duration: Option<f64>,
+) -> core::result::Result<Vec<u8>, FlvError> {
+    let video = media
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }));
+    let audio = media
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }));
+    if video.is_none() && audio.is_none() {
+        return Err(FlvError::NoSupportedTrack);
+    }
+    let (width, height) = match video.map(|t| &t.spec.config) {
+        Some(CodecConfig::Avc { width, height, .. }) => (*width, *height),
+        _ => (0, 0),
+    };
+    let audio = match audio.map(|t| &t.spec.config) {
+        Some(CodecConfig::Aac {
+            sample_rate,
+            channel_count,
+            ..
+        }) => Some((*sample_rate, *channel_count)),
+        _ => None,
+    };
+    let props = onmetadata_properties(duration, width, height, video.is_some(), audio);
+    amf0_values(&[
+        Amf0Value::String(META_HANDLER_NAME.to_string()),
+        Amf0Value::EcmaArray(props),
+    ])
+    .map_err(|e| FlvError::Codec(Error::FieldOverflow(field_overflow(e))))
+}
+
+/// Whether FLV can carry `config`: AVC video or AAC audio, the two codecs of
+/// the FLV mainstream (Adobe FLV v10.1 §E.4.3.2 / §E.4.2.2). Every other
+/// codec — including the opaque [`CodecConfig::Data`] track a TS demux keeps
+/// — has no FLV tag, so a FLV or RTMP writer excludes it.
+#[must_use]
+pub fn flv_track_kind(config: &CodecConfig) -> Option<FlvPayloadKind> {
+    match config {
+        CodecConfig::Avc { .. } => Some(FlvPayloadKind::Video),
+        CodecConfig::Aac { .. } => Some(FlvPayloadKind::Audio),
+        _ => None,
+    }
+}
+
+/// The onMetaData property list of one media (AMF0 §2.10).
 fn onmetadata_properties(
-    duration: f64,
+    duration: Option<f64>,
     width: u16,
     height: u16,
     has_video: bool,
-    has_audio: bool,
+    audio: Option<(u32, u16)>,
 ) -> Vec<(String, Amf0Value)> {
     let mut props: Vec<(String, Amf0Value)> = Vec::new();
-    props.push(("duration".to_string(), Amf0Value::Number(duration)));
+    if let Some(duration) = duration {
+        props.push(("duration".to_string(), Amf0Value::Number(duration)));
+    }
     if has_video {
         props.push(("width".to_string(), Amf0Value::Number(f64::from(width))));
         props.push(("height".to_string(), Amf0Value::Number(f64::from(height))));
@@ -1572,12 +1636,19 @@ fn onmetadata_properties(
             Amf0Value::Number(META_VIDEOCODECID_AVC),
         ));
     }
-    if has_audio {
+    if let Some((sample_rate, channel_count)) = audio {
         props.push((
             "audiocodecid".to_string(),
             Amf0Value::Number(META_AUDIOCODECID_AAC),
         ));
-        props.push(("stereo".to_string(), Amf0Value::Boolean(true)));
+        props.push((
+            "audiosamplerate".to_string(),
+            Amf0Value::Number(f64::from(sample_rate)),
+        ));
+        props.push((
+            "stereo".to_string(),
+            Amf0Value::Boolean(u32::from(channel_count) == AAC_CHANNELS_STEREO),
+        ));
     }
     props
 }

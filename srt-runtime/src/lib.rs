@@ -23,6 +23,10 @@ pub mod packet;
 pub mod rendezvous;
 pub mod tsbpd;
 
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+pub mod url;
+
 #[cfg(feature = "tokio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "tokio")))]
 pub mod io;
@@ -33,6 +37,9 @@ pub use handshake_sm::{HandshakeConfig, HandshakeOutput, NegotiatedParams, Rejec
 pub use listener::{ListenerHandshake, ListenerHandshakeState};
 pub use packet::SrtPacket;
 pub use rendezvous::{RendezvousHandshake, RendezvousHandshakeState, RendezvousRole};
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+pub use url::SrtUrl;
 
 /// The Internet-Draft this crate implements packet structure from.
 pub const SPEC: &str = "draft-sharabayko-srt-01";

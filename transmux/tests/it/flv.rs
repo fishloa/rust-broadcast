@@ -1068,3 +1068,125 @@ fn zero_timescale_is_rejected_not_flattened_to_zero() {
         "expected a timescale error, got {err:?}"
     );
 }
+
+/// `on_metadata_body` is the only `onMetaData` body the workspace writes: the
+/// script tag `FlvMux` emits for this fixture, and the one a live RTMP push
+/// frames, differ only by the `duration` the file knows and a live stream
+/// does not. Bites if either writer grows its own property list again.
+#[test]
+fn on_metadata_body_is_the_tag_flv_mux_writes_minus_the_live_duration() {
+    let media = FlvDemux::new()
+        .unpackage(FLV.as_slice())
+        .expect("fixture FLV");
+    let flv = FlvMux::new().package(&media).expect("IR → FLV");
+    let header = <rtmp_runtime::flv::FlvHeader as Parse>::parse(&flv).expect("FLV header");
+    let script = rtmp_runtime::flv::tags(&flv, &header)
+        .map(|tag| tag.expect("FLV tag"))
+        .find(|tag| tag.tag_type == rtmp_runtime::flv::TagType::Script)
+        .expect("FlvMux writes an onMetaData script tag");
+
+    let file_body = transmux::on_metadata_body(&media, Some(script_duration_seconds(&media)))
+        .expect("file body");
+    assert_eq!(
+        script.body.to_vec(),
+        file_body,
+        "FlvMux's script tag is the shared onMetaData body"
+    );
+
+    let live = transmux::on_metadata_body(&media, None).expect("live body");
+    assert_eq!(
+        live.len() + script_duration_key_len(),
+        script.body.len(),
+        "the live body is the file's minus the duration key"
+    );
+    assert!(
+        live.starts_with(&script.body[..6]),
+        "both bodies start with the AMF0 onMetaData name"
+    );
+}
+
+/// The fixture's longest track duration as `FlvMux` writes it: the summed
+/// sample durations over the track's own timescale, in seconds.
+fn script_duration_seconds(media: &transmux::Media) -> f64 {
+    let mut max = 0.0f64;
+    for track in &media.tracks {
+        let ticks: u64 = track
+            .samples
+            .iter()
+            .map(|s| s.duration.unwrap_or(0) as u64)
+            .sum();
+        let secs = ticks as f64 / f64::from(track.spec.timescale);
+        if secs > max {
+            max = secs;
+        }
+    }
+    max
+}
+
+/// AMF0 bytes of the `duration` property a file's `onMetaData` carries and a
+/// live one omits: a `U16` key length, the key, the Number marker and the
+/// 8-byte double.
+fn script_duration_key_len() -> usize {
+    const U16_LEN: usize = 2;
+    const MARKER_LEN: usize = 1;
+    const NUMBER_LEN: usize = 8;
+    U16_LEN + "duration".len() + MARKER_LEN + NUMBER_LEN
+}
+
+/// The property names and values the shared `onMetaData` body carries for a
+/// real AAC fixture (Adobe FLV v10.1 §E.5, the defined property list): the
+/// AAC track's own sample rate and channel count decide `audiosamplerate`
+/// and `stereo`, and `audiochannels` — which is not an §E.5 property — is
+/// never written. Bites if the builder drifts from the file's own tracks.
+#[test]
+fn on_metadata_body_carries_the_flv_e5_audio_properties() {
+    use rtmp_runtime::amf0::Amf0Value;
+
+    let media = FlvDemux::new()
+        .unpackage(FLV.as_slice())
+        .expect("fixture FLV");
+    let Some(CodecConfig::Aac {
+        sample_rate,
+        channel_count,
+        ..
+    }) = media
+        .tracks
+        .iter()
+        .map(|t| &t.spec.config)
+        .find(|c| matches!(c, CodecConfig::Aac { .. }))
+    else {
+        panic!("the fixture must carry an AAC track");
+    };
+
+    let body = transmux::on_metadata_body(&media, None).expect("live body");
+    let Amf0Value::String(handler) = Amf0Value::parse(&body).expect("handler name") else {
+        panic!("the body must start with a handler name");
+    };
+    assert_eq!(handler, "onMetaData");
+    let Amf0Value::EcmaArray(properties) =
+        Amf0Value::parse(&body[3 + "onMetaData".len()..]).expect("property array")
+    else {
+        panic!("the body must carry an ECMA array");
+    };
+
+    let value = |key: &str| {
+        properties
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.clone())
+    };
+    assert_eq!(
+        value("audiosamplerate"),
+        Some(Amf0Value::Number(f64::from(*sample_rate))),
+        "the AAC track's own rate"
+    );
+    assert_eq!(
+        value("stereo"),
+        Some(Amf0Value::Boolean(*channel_count == 2)),
+        "stereo follows the track's channel count"
+    );
+    assert_eq!(value("audiocodecid"), Some(Amf0Value::Number(10.0)));
+    assert_eq!(value("videocodecid"), Some(Amf0Value::Number(7.0)));
+    assert_eq!(value("audiochannels"), None, "not an §E.5 property");
+    assert_eq!(value("duration"), None, "a live body has no length");
+}
