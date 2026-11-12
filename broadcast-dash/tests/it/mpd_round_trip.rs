@@ -273,3 +273,12 @@ fn to_xml_carries_declaration_and_namespace() {
     let xml2 = with_xlink.to_xml().unwrap();
     assert!(xml2.contains("xmlns:xlink=\"http://www.w3.org/1999/xlink\""));
 }
+
+#[test]
+fn a_model_without_min_buffer_time_round_trips_without_one() {
+    let xml = br#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT1S"><Period id="0"/></MPD>"#;
+    let mpd = Mpd::parse_with(xml, &Limits::default()).unwrap();
+    assert_eq!(mpd.min_buffer_time, None);
+    let again = Mpd::parse_with(mpd.to_xml().unwrap().as_bytes(), &Limits::default()).unwrap();
+    assert_eq!(again, mpd);
+}
