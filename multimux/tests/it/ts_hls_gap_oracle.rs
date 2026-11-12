@@ -27,7 +27,7 @@ use media_plane::ProgramId;
 use media_plane::trunk::{RetentionClass, Trunk, TrunkConfig, TrunkWriter};
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
-use multimux::output::ts_hls::TsHlsOutput;
+use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
 use multimux::source::segment::ProgramSegmenter;
 use transmux::pipeline::Sample;
@@ -129,7 +129,9 @@ impl Rig {
             STREAM.to_string(),
             (
                 Arc::clone(&route),
-                vec![Arc::new(TsHlsOutput::default()) as Arc<dyn Output>],
+                vec![Arc::new(HlsOutput::segmented(
+                    multimux::output::hls::DEFAULT_PLAYLIST_NAME,
+                )) as Arc<dyn Output>],
             ),
         );
         let app = router(Arc::new(AppState::new(streams)));
