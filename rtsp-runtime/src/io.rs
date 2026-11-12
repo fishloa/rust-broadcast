@@ -1069,6 +1069,14 @@ mod tls_timeout_tests {
     }
 }
 
+fn expect_success(method: Method, event: ClientEvent) -> Result<()> {
+    match event {
+        ClientEvent::Response { status, .. } if status.is_success() => Ok(()),
+        ClientEvent::Response { status, .. } => Err(Error::UnexpectedResponse { method, status }),
+        other => Err(Error::UnexpectedEvent { event: other }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::os_session_id;
@@ -1084,13 +1092,5 @@ mod tests {
             "os_session_id did not vary: {}",
             seen.len()
         );
-    }
-}
-
-fn expect_success(method: Method, event: ClientEvent) -> Result<()> {
-    match event {
-        ClientEvent::Response { status, .. } if status.is_success() => Ok(()),
-        ClientEvent::Response { status, .. } => Err(Error::UnexpectedResponse { method, status }),
-        other => Err(Error::UnexpectedEvent { event: other }),
     }
 }
