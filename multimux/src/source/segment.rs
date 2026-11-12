@@ -4825,4 +4825,148 @@ mod tests {
         );
         assert!(segmenter.start_gate_open);
     }
+
+    /// Issue #2469: `ProgramSegmenter` decides a re-anchor from the
+    /// timeline-jump detector now living in `transmux` — the media timeline
+    /// plus the delivery time between two samples. These tests feed it real
+    /// `Trunk` samples and assert on its production output: each closed
+    /// segment's start on the source 90 kHz clock, the value
+    /// [`SegmentWriter::note_segment_start`] records for
+    /// [`Trunk::segment_start_time`] (what a segmented SCTE-35 `emsg`
+    /// resolves through).
+    ///
+    /// A `segment_start_time` call made between two pushes may be hoisted
+    /// past the second one, so every snapshot below is taken after all the
+    /// pushes have happened.
+    struct JumpRig {
+        trunk: Arc<Trunk>,
+        writer: media_plane::trunk::TrunkWriter,
+        route: RouteHandle,
+        segmenter: ProgramSegmenter,
+    }
+
+    impl JumpRig {
+        fn new() -> Self {
+            use media_plane::trunk::TrunkConfig;
+            let trunk = Trunk::new(TrunkConfig::new(nz(256), nz(64), nz(16), nz(8), nz(8)));
+            let writer = trunk.writer().expect("writer");
+            writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+            let route = RouteHandle::new(1.0, 250, 8);
+            let segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
+            Self {
+                trunk,
+                writer,
+                route,
+                segmenter,
+            }
+        }
+
+        /// Push `count` frames from frame index `first`, with a sync sample
+        /// every [`GOP`] frames, through the production `pump` path.
+        fn push_frames(&mut self, first: u32, count: u32, pts_at: impl Fn(u32) -> i64) {
+            use media_plane::trunk::RetentionClass;
+            for i in first..first + count {
+                let pts = pts_at(i);
+                let mut sample = sample_at(i, i.is_multiple_of(GOP));
+                sample.pts = Some(pts);
+                sample.dts = Some(pts);
+                self.writer
+                    .publish(TrackId::new(1), RetentionClass::Timed, sample);
+                self.segmenter.pump(ProgramId(0), &self.trunk, &self.route);
+            }
+        }
+
+        /// The reported start of segments `1..=last` on the source clock.
+        fn source_starts(&mut self, last: u32) -> Vec<Option<u64>> {
+            self.segmenter.flush();
+            (1..=last)
+                .map(|seq| {
+                    self.trunk
+                        .segment_start_time(SegmentSeq::new(seq))
+                        .map(|t| t.0)
+                })
+                .collect()
+        }
+    }
+
+    /// One segment per second: 30 fps frames with a sync sample every 30.
+    const GOP: u32 = 30;
+
+    fn gapless_pts(i: u32) -> i64 {
+        i64::from(i) * i64::from(FRAME_DUR)
+    }
+
+    fn on_90k(pts: i64) -> u64 {
+        u64::try_from(pts).expect("test clocks stay positive")
+    }
+
+    /// (a) A video track whose PTS steps back 2 s mid-stream re-anchors: the
+    /// first segment after the step starts at the stepped-back source clock,
+    /// not at the pre-step clock continued forward. A 3 s step would put the
+    /// post-step clock below zero, where the sample clock is clamped.
+    #[test]
+    fn a_backward_pts_step_reanchors_the_segments_source_clock() {
+        let mut rig = JumpRig::new();
+        rig.push_frames(0, 60, gapless_pts);
+        let back = 2 * i64::from(transmux::VIDEO_CLOCK_RATE);
+        rig.push_frames(60, 60, |i| gapless_pts(i) - back);
+
+        assert_eq!(
+            rig.source_starts(3),
+            vec![Some(0), Some(90_000), Some(on_90k(gapless_pts(60) - back))],
+            "the segment after a 2 s backward PTS step must restart from the stepped-back \
+             source clock (frame 60 PTS minus 2 s), not continue the pre-step line at 180000"
+        );
+    }
+
+    /// (b) A forward PTS step of 8 s with well under a second of delivery
+    /// time between the two samples re-anchors: the segment after the step
+    /// starts at the jumped-to source clock. Both samples go in through the
+    /// same in-process pump loop, so the detector measures a delivery gap far
+    /// below its 5 s slack.
+    #[test]
+    fn a_forward_pts_step_reanchors_the_segments_source_clock() {
+        let mut rig = JumpRig::new();
+        rig.push_frames(0, 60, gapless_pts);
+        let forward = 8 * i64::from(transmux::VIDEO_CLOCK_RATE);
+        rig.push_frames(60, 60, |i| gapless_pts(i) + forward);
+
+        assert_eq!(
+            rig.source_starts(3),
+            vec![
+                Some(0),
+                Some(90_000),
+                Some(on_90k(gapless_pts(60) + forward))
+            ],
+            "the segment after an 8 s forward PTS step must restart from the jumped-to source \
+             clock (frame 60 PTS plus 8 s)"
+        );
+    }
+
+    /// (c) Continuous 30 fps video with ordinary B-frame reordering — PTS out
+    /// of order by a frame or two while the DTS stays monotonic — is one
+    /// timeline: no re-anchor, so every segment's reported start follows the
+    /// pre-step picture's own PTS and the starts stay exactly one segment
+    /// duration apart.
+    #[test]
+    fn b_frame_reordering_does_not_reanchor() {
+        let mut rig = JumpRig::new();
+        let reordered = |i: u32| -> i64 {
+            let display_offset = match i % 3 {
+                0 => 1,
+                1 => -2,
+                _ => -1,
+            };
+            gapless_pts(i) + i64::from(display_offset * 1_000)
+        };
+        rig.push_frames(0, 60, reordered);
+        rig.push_frames(60, 60, reordered);
+
+        assert_eq!(
+            rig.source_starts(3),
+            vec![Some(1_000), Some(91_000), Some(181_000)],
+            "B-frame reordering must not re-anchor: the starts follow the first picture of each \
+             segment (frame 0, 30, 60 at +1 ms per the reorder) and stay 90000 apart"
+        );
+    }
 }
