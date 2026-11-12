@@ -11,7 +11,7 @@ use tower::ServiceExt;
 
 use multimux::config::Config;
 use multimux::origin::{AppState, router};
-use multimux::output::llhls::LlHlsOutput;
+use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
 
 fn decl(name: &str, lang: &str, default: bool, uri: &str) -> AudioRenditionDecl {
@@ -40,7 +40,7 @@ async fn get_master(route: Arc<RouteHandle>) -> (StatusCode, String) {
         "cam".to_string(),
         (
             route,
-            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn multimux::output::Output>],
+            vec![Arc::new(HlsOutput::default()) as Arc<dyn multimux::output::Output>],
         ),
     );
     let resp = router(Arc::new(AppState::new(streams)))

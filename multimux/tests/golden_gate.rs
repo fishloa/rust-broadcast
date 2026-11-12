@@ -21,9 +21,9 @@
 //! workspace's real captured fixture (`fixtures/ts/h264-aac.ts` — Main
 //! profile, 320x240, 25 fps, 75 real video frames, ISO/IEC 13818-1; see
 //! `fixtures/ts/PROVENANCE.md`) via `TsDemux` and feeds those real samples
-//! through the exact same `LlHlsSegmenter` -> `RouteHandle` -> `LlHlsOutput`
+//! through the exact same `LlHlsSegmenter` -> `RouteHandle` -> `HlsOutput`
 //! origin stack `glass_to_glass.rs` uses, live-paced at the fixture's own
-//! frame rate. Audio is left out: `multimux::output::llhls::LlHlsOutput`
+//! frame rate. Audio is left out: `multimux::output::hls::HlsOutput`
 //! renders a single fixed track (`DEFAULT_TRACK_ID`), exactly as
 //! `glass_to_glass.rs` already assumes.
 //!
@@ -53,7 +53,7 @@ use hls_runtime::client::tokio_client::TokioClient;
 use hls_runtime::server::DEFAULT_TRACK_ID;
 use multimux::origin::{AppState, router};
 use multimux::output::Output as MmOutput;
-use multimux::output::llhls::LlHlsOutput;
+use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
 use transmux::ll_hls::LlHlsSegmenter;
 use transmux::{CodecConfig, FragmentTrackData, Sample, TrackSpec, TsDemux};
@@ -75,7 +75,7 @@ fn scratch_dir(name: &str) -> PathBuf {
 
 /// Demux the real `h264-aac.ts` fixture's AVC video track, forcing its
 /// `track_id` to [`DEFAULT_TRACK_ID`] — the fixed single track
-/// `multimux::output::llhls::LlHlsOutput` renders regardless of the
+/// `multimux::output::hls::HlsOutput` renders regardless of the
 /// source's own PID-derived track_id (see `glass_to_glass.rs`'s
 /// `TRACK_ID` const, which matches for the same reason).
 fn real_video_track_and_samples() -> (TrackSpec, Vec<Sample>) {
@@ -266,7 +266,7 @@ async fn start_ll_origin(
         "live".to_string(),
         (
             store.clone(),
-            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn MmOutput>],
+            vec![Arc::new(HlsOutput::default()) as Arc<dyn MmOutput>],
         ),
     );
     let app = router(Arc::new(AppState::new(streams)));

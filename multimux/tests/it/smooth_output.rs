@@ -28,7 +28,7 @@ use tower::ServiceExt;
 use broadcast_smooth::SmoothManifest;
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
-use multimux::output::llhls::LlHlsOutput;
+use multimux::output::hls::HlsOutput;
 use multimux::output::smooth::SmoothOutput;
 use multimux::route::RouteHandle;
 use transmux::ll_hls::LlHlsSegmenter;
@@ -365,7 +365,7 @@ async fn llhls_and_smooth_serve_from_same_trunk() {
         (
             store.clone(),
             vec![
-                Arc::new(LlHlsOutput::default()) as Arc<dyn Output>,
+                Arc::new(HlsOutput::default()) as Arc<dyn Output>,
                 Arc::new(SmoothOutput) as Arc<dyn Output>,
             ],
         ),

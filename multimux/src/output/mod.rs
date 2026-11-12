@@ -9,7 +9,7 @@
 //! module's docs for why (the "multi-output nest collision" this split fixes
 //! — issue #663 P4). LL-HLS and DASH share that one shared resource route
 //! because they are both fMP4/CMAF over the same produced bytes;
-//! [`ts_hls::TsHlsOutput`] (issue #887) shares the exact same route, but the
+//! [`hls::HlsOutput`] (segmented flavour) (issue #887) shares the exact same route, but the
 //! bytes it references are classic whole-segment `.ts` instead — the
 //! resource route itself is container-agnostic (resolved through the route's
 //! `hls_runtime::server::HlsOrigin`, which already dispatches on its own
@@ -21,11 +21,9 @@
 
 pub mod catchup;
 pub mod dash;
-pub(crate) mod hls;
+pub mod hls;
 pub mod ll_dash;
-pub mod llhls;
 pub mod smooth;
-pub mod ts_hls;
 // WHEP egress (issue #743): a raw listen-socket output (HTTP POST + SDP +
 // ICE/DTLS-SRTP, mirroring `crate::source::whip`'s ingest side) rather than
 // an axum-manifest `Output` — see `OutputKind::Whep`/`OutputKind::is_whep`
@@ -263,7 +261,7 @@ impl OutputKind {
     }
 
     /// Build the [`Output`] this kind names, using
-    /// [`llhls::DEFAULT_PLAYLIST_NAME`] for LL-HLS's media playlist filename.
+    /// [`hls::DEFAULT_PLAYLIST_NAME`] for LL-HLS's media playlist filename.
     /// Use [`Self::build_with_playlist_name`] to serve it under a
     /// configured name instead (`crate::config::Config::playlist_name`).
     ///
@@ -274,7 +272,7 @@ impl OutputKind {
     /// `crate::origin::serve_with_registry`, which resolves it via
     /// `registry.output(type_tag)` instead of calling this method.
     pub fn build(&self) -> Arc<dyn Output> {
-        self.build_with_playlist_name(llhls::DEFAULT_PLAYLIST_NAME)
+        self.build_with_playlist_name(hls::DEFAULT_PLAYLIST_NAME)
     }
 
     /// Build the [`Output`] this kind names, serving LL-HLS's media playlist
@@ -287,11 +285,11 @@ impl OutputKind {
     /// Panics if `self` is [`OutputKind::Custom`] — see [`Self::build`].
     pub fn build_with_playlist_name(&self, playlist_name: &str) -> Arc<dyn Output> {
         match self {
-            OutputKind::LlHls => Arc::new(llhls::LlHlsOutput::new(playlist_name)),
+            OutputKind::LlHls => Arc::new(hls::HlsOutput::low_latency(playlist_name)),
             OutputKind::Dash => Arc::new(dash::DashOutput),
             OutputKind::LlDash => Arc::new(ll_dash::LlDashOutput),
             OutputKind::Smooth => Arc::new(smooth::SmoothOutput),
-            OutputKind::TsHls => Arc::new(ts_hls::TsHlsOutput::new(playlist_name)),
+            OutputKind::TsHls => Arc::new(hls::HlsOutput::segmented(playlist_name)),
             OutputKind::Catchup => Arc::new(catchup::CatchupOutput),
             // Push outputs are not `Arc<dyn Output>` — they are driven by the
             // push driver (`crate::push`) instead of mounting manifest routes.

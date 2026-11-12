@@ -6,7 +6,7 @@
 //!
 //! `ServedEgress` is sans-IO by design (`media_plane::egress`'s own module
 //! doc): no `axum`, no `tokio`, no HTTP type appears in it. This module is
-//! the one place that bridges it to axum — [`crate::output::llhls`]'s
+//! the one place that bridges it to axum — [`crate::output::hls`]'s
 //! playlist route, the shared init/segment/part resource route
 //! ([`crate::origin::resource`]), and [`crate::output::dash`]/
 //! [`crate::output::ll_dash`]'s manifest routes all call the same two
@@ -62,7 +62,7 @@ pub(crate) fn playlist_reload_timeout(origin: &hls_runtime::server::HlsOrigin) -
 /// exists to prevent; `NotFound` (a genuinely different, permanent absence)
 /// is a real `404`.
 ///
-/// Every caller (`crate::output::llhls::media_playlist`,
+/// Every caller (`crate::output::hls::media_playlist`,
 /// `crate::output::dash::manifest`, `crate::output::ll_dash::manifest`,
 /// `crate::origin::resource::dynamic_file`/`fetch_part`) matches this
 /// `Result` once, up front, before touching `resolve_blocking`/`ll_hls()` at

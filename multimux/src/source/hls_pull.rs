@@ -1189,7 +1189,7 @@ Content-Length: {over}
     /// playlist via `broadcast_hls::MediaPlaylist::to_m3u8` (the same real
     /// renderer the workspace's own LL-HLS origin uses), rather than
     /// depending on `multimux`'s own (unrelated, currently-broken — see this
-    /// crate's CHANGELOG) `store`/`origin`/`output::llhls` modules the pre-5a
+    /// crate's CHANGELOG) `store`/`origin`/`output::hls` modules the pre-5a
     /// version of this test built a whole origin server out of.
     fn build_cmaf_fixture() -> (String, Vec<u8>, Vec<Vec<u8>>) {
         let mut seg = LlHlsSegmenter::with_part_target(

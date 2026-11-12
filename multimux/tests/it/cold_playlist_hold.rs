@@ -16,7 +16,7 @@ use tower::ServiceExt;
 use multimux::config::{Config, InputSpec, Route};
 use multimux::dvr::DvrConfig;
 use multimux::origin::{AppState, router};
-use multimux::output::llhls::LlHlsOutput;
+use multimux::output::hls::HlsOutput;
 use multimux::output::{Output, OutputKind};
 use multimux::registry::SchemeRegistry;
 use multimux::route::RouteHandle;
@@ -71,7 +71,7 @@ fn app(store: &Arc<RouteHandle>) -> axum::Router {
         "cam".to_string(),
         (
             Arc::clone(store),
-            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            vec![Arc::new(HlsOutput::default()) as Arc<dyn Output>],
         ),
     );
     router(Arc::new(AppState::new(streams)))

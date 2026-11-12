@@ -4,7 +4,7 @@
 //! through the same one adapter every other output uses
 //! (`crate::http::resolve_blocking`/`crate::http::into_response`).
 //! Init/segment byte ranges are the origin's *shared* resource route
-//! (`crate::origin::resource`) — the exact same bytes [`crate::output::llhls`]
+//! (`crate::origin::resource`) — the exact same bytes [`crate::output::hls`]
 //! serves; this module only renders the manifest (see `crate::output`
 //! module docs for why the byte-serving is shared, not per-output).
 //!
@@ -27,7 +27,7 @@
 //!
 //! # Single-rendition model
 //!
-//! Like [`crate::output::llhls`] (see [`DEFAULT_TRACK_ID`]'s docs), exactly
+//! Like [`crate::output::hls`] (see [`DEFAULT_TRACK_ID`]'s docs), exactly
 //! one `Representation` is described, using one of the route's recorded
 //! [`transmux::TrackSpec`]s ([`crate::route::RouteHandle::set_track_specs`])
 //! — but with its `track_id` forced to [`DEFAULT_TRACK_ID`] so the DASH
@@ -1375,7 +1375,7 @@ mod tests {
 
     /// MUTATION VERIFIED (issue #805 task 4): a route with no program
     /// announced yet must answer `503`, not `404` — see
-    /// `output::llhls`'s identical test for the mutation this guards
+    /// `output::hls`'s identical test for the mutation this guards
     /// (`http::resolve_route_program`'s `NotYetAnnounced` arm).
     #[tokio::test]
     async fn manifest_not_yet_announced_is_503_not_404() {

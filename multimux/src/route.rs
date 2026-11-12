@@ -58,7 +58,7 @@
 //! `two_programs_serve_distinct_media`). What is **not** wired up
 //! is a way for an HTTP request to *select* a non-default program: every
 //! egress call site in this crate (`crate::http::resolve_route_program`,
-//! `crate::output::llhls`/`dash`/`ll_dash`, `crate::origin::resource`)
+//! `crate::output::hls`/`dash`/`ll_dash`, `crate::origin::resource`)
 //! resolves the fixed `SPTS_PROGRAM_ID` — a request with no program
 //! selector at all resolves to it exactly as before, and there is currently
 //! no *other* selector a request can carry. Three ways to add one, in
@@ -72,7 +72,7 @@
 //! 2. **A query parameter** (e.g. `?program=2`) — additive: every existing
 //!    URL keeps working unchanged (no query parameter == `SPTS_PROGRAM_ID`),
 //!    and it slots into the existing `Query<..>` extractors
-//!    (`crate::output::llhls::BlockingReloadQuery` already does this for
+//!    (`crate::output::hls::BlockingReloadQuery` already does this for
 //!    blocking-reload parameters). The natural "MVP" choice.
 //! 3. **A config-declared per-program route** — `crate::config::Route` grows
 //!    a second name/output set bound to a specific non-default `ProgramId` on
@@ -286,7 +286,7 @@ broadcast_common::impl_spec_display!(TsHlsIdrStatus);
 /// yet (unlike every sibling crate) to enforce or record that exemption
 /// mechanically — see this task's own report.
 ///
-/// Read by every migrated egress call site (`crate::output::llhls`/`dash`/
+/// Read by every migrated egress call site (`crate::output::hls`/`dash`/
 /// `ll_dash`, `crate::origin::resource`, via
 /// `crate::http::resolve_route_program`): `Found` resolves and serves;
 /// `NotYetAnnounced` is a wait/`503`-style "not ready"; `NotFound` is a
@@ -2896,7 +2896,7 @@ mod program_registry_tests {
     /// A request for a program that has never been announced on this route
     /// resolves `NotYetAnnounced` — the wait/503 case — never `NotFound`
     /// (404), matching `crate::http::resolve_route_program`'s mapping. See
-    /// `crate::output::llhls`'s/`crate::origin::resource`'s own
+    /// `crate::output::hls`'s/`crate::origin::resource`'s own
     /// `*_not_yet_announced_is_503_not_404` tests for the same property
     /// proven through the real HTTP handlers.
     #[test]

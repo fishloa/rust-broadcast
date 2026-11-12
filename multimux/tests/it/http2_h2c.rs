@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
-use multimux::output::llhls::LlHlsOutput;
+use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
 use tokio::net::TcpListener;
 
@@ -45,7 +45,7 @@ fn make_state() -> Arc<AppState> {
         "cam".to_string(),
         (
             store,
-            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            vec![Arc::new(HlsOutput::default()) as Arc<dyn Output>],
         ),
     );
     Arc::new(AppState::new(streams))

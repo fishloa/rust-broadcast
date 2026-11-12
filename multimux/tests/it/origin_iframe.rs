@@ -17,8 +17,7 @@ use tower::ServiceExt;
 
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
-use multimux::output::llhls::LlHlsOutput;
-use multimux::output::ts_hls::TsHlsOutput;
+use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
 use transmux::ll_hls::LlHlsSegmenter;
 use transmux::pipeline::{Sample, TrackSpec};
@@ -50,7 +49,7 @@ async fn iframe_master_variant_gating() {
         "cam".to_string(),
         (
             store.clone(),
-            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            vec![Arc::new(HlsOutput::default()) as Arc<dyn Output>],
         ),
     );
     let app = router(Arc::new(AppState::new(streams)));
@@ -70,7 +69,7 @@ async fn iframe_master_variant_gating() {
         "cam".to_string(),
         (
             store2.clone(),
-            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            vec![Arc::new(HlsOutput::default()) as Arc<dyn Output>],
         ),
     );
     let app2 = router(Arc::new(AppState::new(streams2)));
@@ -113,7 +112,7 @@ async fn iframe_master_variant_gating() {
         "cam".to_string(),
         (
             audio_store.clone(),
-            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            vec![Arc::new(HlsOutput::default()) as Arc<dyn Output>],
         ),
     );
     let app3 = router(Arc::new(AppState::new(streams3)));
@@ -139,7 +138,7 @@ async fn iframe_playlist_byterange_matches_independent_calc() {
         "cam".to_string(),
         (
             store.clone(),
-            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            vec![Arc::new(HlsOutput::default()) as Arc<dyn Output>],
         ),
     );
     let app = router(Arc::new(AppState::new(streams)));
@@ -219,7 +218,7 @@ async fn iframe_range_requests() {
         "cam".to_string(),
         (
             store.clone(),
-            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            vec![Arc::new(HlsOutput::default()) as Arc<dyn Output>],
         ),
     );
     let app = router(Arc::new(AppState::new(streams)));
@@ -289,7 +288,7 @@ async fn iframe_part_query_rejected() {
         "cam".to_string(),
         (
             store.clone(),
-            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            vec![Arc::new(HlsOutput::default()) as Arc<dyn Output>],
         ),
     );
     let app = router(Arc::new(AppState::new(streams)));
@@ -316,7 +315,7 @@ async fn iframe_msn_with_part_query_served() {
         "cam".to_string(),
         (
             store.clone(),
-            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            vec![Arc::new(HlsOutput::default()) as Arc<dyn Output>],
         ),
     );
     let app = router(Arc::new(AppState::new(streams)));
@@ -345,7 +344,7 @@ async fn blocking_reload_timeout_is_503() {
         "cam".to_string(),
         (
             store.clone(),
-            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            vec![Arc::new(HlsOutput::default()) as Arc<dyn Output>],
         ),
     );
     let app = router(Arc::new(AppState::new(streams)));
@@ -391,7 +390,9 @@ async fn ts_hls_no_iframe() {
         "cam".to_string(),
         (
             store.clone(),
-            vec![Arc::new(TsHlsOutput::default()) as Arc<dyn Output>],
+            vec![Arc::new(HlsOutput::segmented(
+                multimux::output::hls::DEFAULT_PLAYLIST_NAME,
+            )) as Arc<dyn Output>],
         ),
     );
     let app = router(Arc::new(AppState::new(streams)));
@@ -451,7 +452,7 @@ async fn iframe_validator_clean() {
         "cam".to_string(),
         (
             store.clone(),
-            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            vec![Arc::new(HlsOutput::default()) as Arc<dyn Output>],
         ),
     );
     let app = router(Arc::new(AppState::new(streams)));
@@ -627,7 +628,7 @@ async fn iframe_scte35_emsg_shift() {
         "cam".to_string(),
         (
             store.clone(),
-            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            vec![Arc::new(HlsOutput::default()) as Arc<dyn Output>],
         ),
     );
     let app = router(Arc::new(AppState::new(streams)));
@@ -735,7 +736,7 @@ async fn iframe_rendition_report_uses_configured_playlist_name() {
         "cam".to_string(),
         (
             store.clone(),
-            vec![Arc::new(LlHlsOutput::new("live/main.m3u8")) as Arc<dyn Output>],
+            vec![Arc::new(HlsOutput::low_latency("live/main.m3u8")) as Arc<dyn Output>],
         ),
     );
     let app = router(Arc::new(AppState::new(streams)));

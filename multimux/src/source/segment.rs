@@ -2019,7 +2019,7 @@ mod tests {
 
     /// Render `route`'s current LL-HLS media playlist synchronously — the
     /// exact production call every LL-HLS request resolves through
-    /// (`crate::output::llhls::media_playlist` / `crate::http::resolve_blocking`,
+    /// (`crate::output::hls::media_playlist` / `crate::http::resolve_blocking`,
     /// minus the axum/tokio wrapping), so a passing assertion here is
     /// genuinely "resolvable the way egress resolves them", not a
     /// Trunk-level shortcut.

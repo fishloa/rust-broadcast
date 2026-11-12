@@ -7,7 +7,7 @@
 //! # Which origin
 //!
 //! The LL-HLS half of this file reuses `multimux`'s real, production
-//! `RouteHandle` + `LlHlsOutput` + `origin::router` (the same axum origin
+//! `RouteHandle` + `HlsOutput` + `origin::router` (the same axum origin
 //! shipped in `multimux`) — not a test double — driven by a hand-written,
 //! real-time-paced producer loop (a `transmux::ll_hls::LlHlsSegmenter` fed
 //! one sample every ~33ms, mirroring `multimux::pipeline::run_pipeline`'s own
@@ -19,7 +19,7 @@
 //! topologically highest crate it touches.
 //!
 //! The non-LL half uses a minimal hand-built axum app instead of
-//! `multimux`'s origin, since `multimux::output::llhls::LlHlsOutput` always
+//! `multimux`'s origin, since `multimux::output::hls::HlsOutput` always
 //! advertises LL-HLS `#EXT-X-SERVER-CONTROL`/`#EXT-X-PART-INF` — there is no
 //! way to make it render a playlist with `low_latency: None`.
 //!
@@ -46,7 +46,7 @@ use hls_runtime::client::Output;
 use hls_runtime::client::tokio_client::TokioClient;
 use multimux::origin::{AppState, router};
 use multimux::output::Output as MmOutput;
-use multimux::output::llhls::LlHlsOutput;
+use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
 use transmux::ll_hls::LlHlsSegmenter;
 use transmux::{
@@ -192,7 +192,7 @@ async fn start_ll_origin() -> (Arc<RouteHandle>, String, tokio::task::JoinHandle
         "live".to_string(),
         (
             store.clone(),
-            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn MmOutput>],
+            vec![Arc::new(HlsOutput::default()) as Arc<dyn MmOutput>],
         ),
     );
     let app = router(Arc::new(AppState::new(streams)));

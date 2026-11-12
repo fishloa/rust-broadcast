@@ -21,7 +21,7 @@ use media_plane::ProgramId;
 use media_plane::trunk::{EventAnchor, RetentionClass, Trunk, TrunkConfig};
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
-use multimux::output::llhls::LlHlsOutput;
+use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
 use multimux::source::segment::ProgramSegmenter;
 use scte35_splice::SpliceInfoSection;
@@ -134,7 +134,7 @@ async fn fetch_segment(route: Arc<RouteHandle>, seq: u32) -> Vec<u8> {
         "live".to_string(),
         (
             route,
-            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            vec![Arc::new(HlsOutput::default()) as Arc<dyn Output>],
         ),
     );
     let app = router(Arc::new(AppState::new(streams)));

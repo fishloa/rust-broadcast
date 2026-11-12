@@ -181,7 +181,7 @@ pub struct TokioClientConfig {
     pub request_timeout: Duration,
     /// Per-request timeout for a **blocking** Playlist Reload
     /// (`_HLS_msn`/`_HLS_part`, RFC 8216bis §6.2.5.2) — must exceed the
-    /// origin's own blocking hold time (e.g. `multimux`'s `LlHlsOutput` caps
+    /// origin's own blocking hold time (e.g. `multimux`'s `HlsOutput` caps
     /// at 5s) with headroom, since the origin is expected to hold the
     /// response open until new content exists or its own cap elapses.
     pub blocking_timeout: Duration,

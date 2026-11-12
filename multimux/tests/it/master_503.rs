@@ -9,8 +9,7 @@ use tower::ServiceExt;
 
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
-use multimux::output::llhls::LlHlsOutput;
-use multimux::output::ts_hls::TsHlsOutput;
+use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
 
 fn llhls_route_declared(declared: u64) -> Arc<RouteHandle> {
@@ -54,8 +53,8 @@ fn app_for(route: Arc<RouteHandle>, output: Arc<dyn Output>) -> axum::Router {
 #[tokio::test]
 async fn master_503_with_retry_after_before_first_segment() {
     for output in [
-        Arc::new(LlHlsOutput::default()) as Arc<dyn Output>,
-        Arc::new(TsHlsOutput::new("media.m3u8")) as Arc<dyn Output>,
+        Arc::new(HlsOutput::default()) as Arc<dyn Output>,
+        Arc::new(HlsOutput::segmented("media.m3u8")) as Arc<dyn Output>,
     ] {
         let route = if output.kind() == multimux::output::OutputKind::TsHls {
             ts_route_undeclared_unpublished()
@@ -92,7 +91,7 @@ async fn master_503_with_retry_after_before_first_segment() {
 #[tokio::test]
 async fn master_200_with_declared_bandwidth_before_first_segment() {
     let route = llhls_route_declared(9876);
-    let app = app_for(route, Arc::new(LlHlsOutput::default()));
+    let app = app_for(route, Arc::new(HlsOutput::default()));
     let resp = app
         .oneshot(
             Request::builder()
@@ -113,7 +112,7 @@ async fn master_200_with_declared_bandwidth_before_first_segment() {
 #[tokio::test]
 async fn master_200_after_first_segment_uses_measured() {
     let route = llhls_route_with_segment();
-    let app = app_for(route, Arc::new(LlHlsOutput::default()));
+    let app = app_for(route, Arc::new(HlsOutput::default()));
     let resp = app
         .oneshot(
             Request::builder()
@@ -147,8 +146,8 @@ fn published_without_segment(output: &Arc<dyn Output>) -> Arc<RouteHandle> {
 #[tokio::test]
 async fn master_503_when_published_but_no_segment_and_no_declared_bandwidth() {
     for output in [
-        Arc::new(LlHlsOutput::default()) as Arc<dyn Output>,
-        Arc::new(TsHlsOutput::new("media.m3u8")) as Arc<dyn Output>,
+        Arc::new(HlsOutput::default()) as Arc<dyn Output>,
+        Arc::new(HlsOutput::segmented("media.m3u8")) as Arc<dyn Output>,
     ] {
         let route = published_without_segment(&output);
         let app = app_for(route, output);
@@ -174,7 +173,7 @@ async fn master_503_when_published_but_no_segment_and_no_declared_bandwidth() {
 async fn master_ratchets_bandwidth_over_http() {
     let route = Arc::new(RouteHandle::new(4.0, 500, 4));
     route.publish_new_program(media_plane::ProgramId(0));
-    let app = app_for(route.clone(), Arc::new(LlHlsOutput::default()));
+    let app = app_for(route.clone(), Arc::new(HlsOutput::default()));
 
     // No measured segment yet -> 503 + Retry-After, never a placeholder.
     let resp = app
