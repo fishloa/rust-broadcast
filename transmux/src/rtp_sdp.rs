@@ -309,6 +309,14 @@ pub fn rtpmap_clock_rate(rtpmap: &str) -> Option<u32> {
     clock_str.trim().parse::<u32>().ok()
 }
 
+#[cfg(feature = "std")]
+mod track;
+#[cfg(feature = "std")]
+pub use track::{
+    SdpTrack, attribute_of_payload, first_encoding_name, is_played_encoding, rtpmap_encoding_name,
+    sdp_track,
+};
+
 #[cfg(test)]
 mod tests {
     use broadcast_common::error::BufferTooShort;

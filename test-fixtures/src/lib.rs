@@ -65,6 +65,51 @@ pub fn read_to_string(rel: &str) -> String {
         .unwrap_or_else(|e| panic!("fixture {} must be committed: {e}", p.display()))
 }
 
+const SDP_TRACK_EXISTING: &[&str] = &[
+    "golden/rtp/rtp-sdp-conn-v4.sdp",
+    "golden/rtp/rtp-sdp-conn-v6.sdp",
+    "golden/rtp/rtp-sdp-h264-aac.sdp",
+    "golden/rtsp/rtsp-announce.sdp",
+    "golden/rtsp/sdp-push-mp2t-media.sdp",
+    "golden/rtsp/sdp-push-mp2t-session.sdp",
+    "golden/rtsp/sdp-transmux-h264-aac.sdp",
+    "rtp/baseline-ffmpeg.sdp",
+    "rtp/high-ffmpeg.sdp",
+    "rtsp/sdp-sample.sdp",
+];
+const SDP_TRACK_INPUT_DIR: &str = "golden/sdp-tracks/in";
+
+/// Every SDP body the SDP-to-track interpretation goldens run over, as
+/// `(fixture path, bytes)`: each committed `.sdp` fixture plus the cases under
+/// `golden/sdp-tracks/in/`, in a stable order.
+///
+/// # Panics
+/// If a listed fixture or the input directory cannot be read.
+#[must_use]
+pub fn sdp_track_fixtures() -> Vec<(String, Vec<u8>)> {
+    let mut names: Vec<String> = SDP_TRACK_EXISTING
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+    let dir = path(SDP_TRACK_INPUT_DIR);
+    let mut inputs: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("fixture dir {} must exist: {e}", dir.display()))
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".sdp"))
+        .map(|name| format!("{SDP_TRACK_INPUT_DIR}/{name}"))
+        .collect();
+    inputs.sort();
+    names.extend(inputs);
+    names
+        .into_iter()
+        .map(|name| {
+            let bytes = read(&name);
+            (name, bytes)
+        })
+        .collect()
+}
+
 /// Environment variable that points at a checkout of the private repo (the
 /// directory that contains `fixtures/`), e.g. from a CI deploy-key job or a
 /// worktree whose own `private/` is not initialised.
