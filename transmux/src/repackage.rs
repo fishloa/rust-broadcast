@@ -92,13 +92,16 @@ fn presentation_times(track: &Track, origin: &TimelineOrigin) -> Vec<i64> {
 /// Convert a window edge given in the movie timescale to a track's media
 /// timescale, rounding down (`floor`) so the half-open `[start, end)` semantics
 /// are preserved without dropping a boundary sample.
-fn rescale_floor(ticks: u64, from_timescale: u32, to_timescale: u32) -> i64 {
-    rescale_i64(
+fn rescale_floor(ticks: u64, from_timescale: u32, to_timescale: u32) -> Result<i64> {
+    if from_timescale == 0 || to_timescale == 0 {
+        return Err(Error::InvalidInput("timescale must be non-zero"));
+    }
+    Ok(rescale_i64(
         i64::try_from(ticks).unwrap_or(i64::MAX),
         from_timescale,
         to_timescale,
         Rounding::Floor,
-    )
+    ))
 }
 
 /// The index of the track whose next un-fed sample has the earliest decode
@@ -213,8 +216,8 @@ impl Media {
         let anchor_track = &self.tracks[anchor];
         let anchor_ts = anchor_track.spec.timescale;
         let anchor_pts = presentation_times(anchor_track, &origin);
-        let anchor_lo = rescale_floor(start, self.movie_timescale, anchor_ts);
-        let anchor_hi = rescale_floor(end, self.movie_timescale, anchor_ts);
+        let anchor_lo = rescale_floor(start, self.movie_timescale, anchor_ts)?;
+        let anchor_hi = rescale_floor(end, self.movie_timescale, anchor_ts)?;
         let snapped = anchor_pts
             .iter()
             .position(|&p| p >= anchor_lo && p < anchor_hi)
@@ -230,14 +233,14 @@ impl Media {
         for (ti, track) in self.tracks.iter().enumerate() {
             let ts = track.spec.timescale;
             let pts = presentation_times(track, &origin);
-            let hi = rescale_floor(end, self.movie_timescale, ts);
+            let hi = rescale_floor(end, self.movie_timescale, ts)?;
             let start_idx = if ti == anchor {
                 snapped
             } else {
                 // Lower edge = the snapped anchor start, else the raw window.
                 let lo = match snapped {
                     Some(idx) => rescale_i64(anchor_pts[idx], anchor_ts, ts, Rounding::Floor),
-                    None => rescale_floor(start, self.movie_timescale, ts),
+                    None => rescale_floor(start, self.movie_timescale, ts)?,
                 };
                 pts.iter().position(|&p| p >= lo && p < hi)
             };

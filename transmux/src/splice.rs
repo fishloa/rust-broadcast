@@ -264,11 +264,11 @@ fn pick_reference_track(a: &[Track], b: &[Track], mapping: &[usize]) -> Option<u
 /// samples — never an already-rescaled delta carried over from a previous
 /// splice — which is what keeps sub-tick rounding from compounding across a
 /// chain of splices (see the module-level doc).
-fn rescale_ticks(ticks: i64, from_timescale: u32, to_timescale: u32) -> i64 {
+fn rescale_ticks(ticks: i64, from_timescale: u32, to_timescale: u32) -> Result<i64> {
     if from_timescale == 0 || to_timescale == 0 {
-        return ticks;
+        return Err(Error::InvalidInput("timescale must be non-zero"));
     }
-    rescale_i64(ticks, from_timescale, to_timescale, Rounding::TowardZero)
+    Ok(rescale_i64(ticks, from_timescale, to_timescale, Rounding::TowardZero))
 }
 
 /// Shift every sample's absolute `dts`/`pts` — when present — by `offset`
@@ -369,8 +369,8 @@ pub fn concat(a: &Media, b: &Media) -> Result<SpliceResult> {
         let shifted = match ref_shift {
             Some((ref_ts, join_dts_ref, incoming_ref_start)) => {
                 let track_ts = at.spec.timescale;
-                let offset = rescale_ticks(join_dts_ref, ref_ts, track_ts)
-                    - rescale_ticks(incoming_ref_start, ref_ts, track_ts);
+                let offset = rescale_ticks(join_dts_ref, ref_ts, track_ts)?
+                    - rescale_ticks(incoming_ref_start, ref_ts, track_ts)?;
                 shift_samples(&bt.samples, offset)
             }
             None => bt.samples.clone(),
@@ -577,8 +577,8 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
         // video track), rescaled into this track's own timescale — never
         // computed independently from this track's own boundary (that would
         // re-derive a per-track alignment and destroy A/V sync).
-        let ad_offset = rescale_ticks(join_dts_ref, ref_timescale, track_ts)
-            - rescale_ticks(incoming_ref_start, ref_timescale, track_ts);
+        let ad_offset = rescale_ticks(join_dts_ref, ref_timescale, track_ts)?
+            - rescale_ticks(incoming_ref_start, ref_timescale, track_ts)?;
         let shifted_ad = shift_samples(&adt.samples, ad_offset);
 
         let ad_span: u64 = adt
