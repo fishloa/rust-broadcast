@@ -463,3 +463,29 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod drift {
+    use super::*;
+
+    #[test]
+    fn adts_accept_reject_agrees_with_transmux() {
+        let valid = [0xFFu8, 0xF1, 0x00, 0x00, 0x0D, 0x60, 0x00];
+        assert_eq!(
+            adts_frame_len(&valid, 0).is_some(),
+            transmux::parse_adts_header(&valid).is_ok()
+        );
+
+        let mp3 = [0xFFu8, 0xFB, 0x90, 0x00, 0x00, 0x00, 0x00];
+        assert_eq!(
+            adts_frame_len(&mp3, 0).is_some(),
+            transmux::parse_adts_header(&mp3).is_ok()
+        );
+
+        let short = [0xFFu8, 0xF1, 0x00, 0x00, 0x00, 0x00, 0x00];
+        assert_eq!(
+            adts_frame_len(&short, 0).is_some(),
+            transmux::parse_adts_header(&short).is_ok()
+        );
+    }
+}
