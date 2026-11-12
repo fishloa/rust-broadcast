@@ -255,6 +255,12 @@ async fn send(net: &mut Net, req: &Request) -> Result<reqwest::Response> {
 
 /// The part of a ranged response the caller asked for, or `None` when the
 /// server's answer does not match the request.
+///
+/// A `206 Partial Content` **must** carry a `Content-Range` naming exactly the
+/// requested range (RFC 9110 §15.3.7: a 206's payload is defined by that
+/// header), so one without it is refused rather than judged by its length — the
+/// same rule `broadcast-client`'s fetch core applies. A `200` answered the
+/// whole representation, and the range is sliced out of it.
 pub(super) fn ranged_body(
     status: StatusCode,
     content_range: Option<(u64, u64)>,
@@ -266,7 +272,7 @@ pub(super) fn ranged_body(
         let last = offset
             .checked_add(u64::try_from(length).ok()?)?
             .checked_sub(1)?;
-        let honoured = content_range.is_none_or(|range| range == (offset, last));
+        let honoured = content_range? == (offset, last);
         return (honoured && body.len() == length).then_some(body);
     }
     let start = usize::try_from(offset).ok()?;
