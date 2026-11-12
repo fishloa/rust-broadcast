@@ -11,7 +11,6 @@ use url::Url;
 use crate::ClientIdentityScope;
 use crate::Credentials;
 use crate::Hint;
-use crate::auth::AuthState;
 use crate::error::{Error, TransportError};
 use crate::events::{Action, Config, ErrorKind, Event, SourceKind, Status};
 use crate::headers;
@@ -30,6 +29,7 @@ use crate::source::smooth::SmoothSource;
 use crate::source::srt::Notice;
 use crate::source::ts_http::TsHttpSource;
 use crate::source::ts_http_hold::{HoldLimits, StreamKind};
+use broadcast_auth::AuthState;
 use transmux::JumpDetector;
 use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 
@@ -407,9 +407,10 @@ impl Session {
                 lineage.stale_replayed,
             );
             match decision {
-                crate::auth::AuthDecision::Replay | crate::auth::AuthDecision::ReplayStale => {
+                broadcast_auth::AuthDecision::Replay
+                | broadcast_auth::AuthDecision::ReplayStale => {
                     let stale_replayed = lineage.stale_replayed
-                        || matches!(decision, crate::auth::AuthDecision::ReplayStale);
+                        || matches!(decision, broadcast_auth::AuthDecision::ReplayStale);
                     let new_headers = self.auth.request_headers(&req_url, self.now_us);
                     let authed = has_authorization(&new_headers);
                     if !replay_allowed(lineage, authed) {
@@ -434,11 +435,12 @@ impl Session {
                         identity: None,
                     });
                 }
-                crate::auth::AuthDecision::Wait(events) => {
-                    self.events.extend(events);
+                broadcast_auth::AuthDecision::Wait(events) => {
+                    self.events.extend(events.into_iter().map(Event::from));
                     self.actions.retain(|a| !matches!(a, Action::WakeAt(_)));
                     self.ts_wake = None;
                 }
+                _ => {}
             }
             return;
         }
@@ -1509,7 +1511,7 @@ fn take_userinfo(url: &mut Url) -> Result<Option<Credentials>, Error> {
 }
 
 fn has_authorization(headers: &[(String, String)]) -> bool {
-    crate::auth::carries_credentials(headers)
+    broadcast_auth::carries_credentials(headers)
 }
 
 fn has_mpd_extension(url: &Url) -> bool {

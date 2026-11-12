@@ -24,7 +24,6 @@ use broadcast_dash::template;
 use broadcast_dash::{AdaptationSet, Mpd, Period, Representation};
 
 const CODEC_SEPARATOR: char = ',';
-const LANG_SUBTAG_SEPARATOR: char = '-';
 const MIME_VIDEO: &str = "video/";
 const MIME_AUDIO: &str = "audio/";
 const MIME_TEXT: &str = "text/";
@@ -313,10 +312,7 @@ fn segment_info_ok(period: &Period, set: &AdaptationSet, rep: &Representation) -
 /// Whether `preferred` matches `lang` by BCP 47 prefix, ASCII case-insensitive.
 #[must_use]
 pub fn lang_matches(preferred: &str, lang: &str) -> bool {
-    let (p, l) = (preferred.to_ascii_lowercase(), lang.to_ascii_lowercase());
-    l == p
-        || l.strip_prefix(&p)
-            .is_some_and(|rest| rest.starts_with(LANG_SUBTAG_SEPARATOR))
+    broadcast_common::lang::lang_matches(preferred, lang)
 }
 
 fn codec_allowed(codecs: Option<&str>, prefixes: &[String]) -> bool {

@@ -31,6 +31,11 @@ pub fn hex_encode(data: &[u8]) -> String {
     ::hex::encode(data)
 }
 
+/// Hex-encode `data` as uppercase ASCII (two characters per byte).
+pub fn hex_encode_upper(data: &[u8]) -> String {
+    ::hex::encode_upper(data)
+}
+
 /// Hex-decode `text` (either case, an even number of digits), or `None` when
 /// it is not hex of even length.
 ///
@@ -51,6 +56,12 @@ mod tests {
     use super::*;
     use alloc::format;
     use alloc::vec::Vec;
+
+    #[test]
+    fn encodes_uppercase_zero_padded() {
+        assert_eq!(hex_encode_upper(&[0xDE, 0xAD, 0xBE, 0xEF]), "DEADBEEF");
+        assert_eq!(hex_encode_upper(&[]), "");
+    }
 
     #[test]
     fn encodes_lowercase_zero_padded() {

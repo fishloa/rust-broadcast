@@ -13,7 +13,7 @@ readme       = "README.md"
 [dependencies]
 # Floored at 9.2: `cenc::CencScheme` and `hex::hex_encode` (the definitions this
 # crate re-exports, shared with `broadcast-hls` — issue #878) landed there.
-broadcast-common = { path = "../broadcast-common", version = "11.1.0", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "11.1.0", default-features = false, features = ["base64"] }
 thiserror  = { version = "2", default-features = false }
 # Hex codec for every hex site (SP5); `alloc` only, so the core stays no_std.
 hex        = { version = "0.4", default-features = false, features = ["alloc"] }

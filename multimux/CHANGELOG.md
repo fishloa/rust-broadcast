@@ -2,14 +2,23 @@
 
 ## [Unreleased]
 ### Fixed
+- An HTTP pull (HLS, DASH, Smooth, TS-over-HTTP) keeps the auth state for the whole session: a cookie an origin sets on the playlist is sent with the segments, and a Digest challenge is negotiated once instead of on every request, because the state is updated in place rather than cloned per request. Cookies are stamped with the pull's own clock instead of `0`.
+- A `407` from an HTTP pull is returned unchanged instead of being retried; there is no proxy-credential configuration, and the origin's credentials are never sent as a proxy's.
+- The challenge-answer flag a pull passes on reports whether the request really carried an `Authorization` header, so a Digest state that has not negotiated its first nonce is not treated as a rejected credential.
+### Changed
+- DASH-IF ingest sans-IO engine moved to `dash-runtime::ingest`; multimux keeps the axum glue.
+### Removed
+- BREAKING: the public `multimux::dashif_ingest` module; use `dash_runtime::ingest` (issue #2480).
+- Blocking-reload timeout policy now lives in `hls-runtime::server` (multimux calls it).
+- The DASH/LL-DASH manifests render their `xs:duration` attributes with `broadcast_dash::duration::xs_duration`, the one writer in the workspace, instead of `transmux::dash::xs_duration` (removed); the rendered bytes are unchanged (#2465).
 - The Smooth output no longer disagrees with the packager's own Smooth path (issue #2453): AAC without a `DecoderSpecificInfo` is a server error instead of a manifest advertising `CodecPrivateData=""`, a second track of a kind (`audio`/`audio_2`) gets its own `Name` and `Url` and stays reachable by its fragment URL, `stpp`/`wvtt` subtitle tracks are advertised as a `text` `StreamIndex` (`Subtype="SUBT"`), and video geometry comes from the SPS rather than from a `CodecConfig` that RTSP/WHIP ingest leaves at 0.
 
-### Changed
 - The Smooth output's `Manifest` and fragment responses carry the `Cache-Control` they always did (`no-cache`, from the router's own `cache_control_for`): an egress `CachePolicy` still reaches the wire nowhere in this crate, and `smooth_responses_carry_no_cache` pins a success and an error alike (issue #2453 round 2).
 - The Smooth output is an adapter over `smooth_runtime::SmoothOrigin` (issue #2453): `multimux/src/output/smooth.rs` keeps only the axum routes and response mapping. The manifest model and its XML writer, the chunk timeline, the fragment-URL grammar, stream identity and the codec parameters now live in `smooth-runtime`/`broadcast-smooth`/`transmux`. An egress answer of `BadRequest` because a track cannot be described maps to a 5xx (`crate::http::into_response_with_message`).
 - Timeline discontinuity detection now uses the per-track detector from `transmux` (broadcast-client semantics); the 10 s `MEDIA_DISCONTINUITY_NS` constant is removed.
 - RTSP pull skips unplayable SDP media sections (and foreign-authority controls and sections beyond the track cap) instead of failing the whole route; fails only when nothing is playable. Skipped sections are logged as route warnings.
-
+### Removed
+- The `hls-runtime` `tokio` feature is no longer enabled: `hls-runtime` no longer has one.
 ### Added
 - LL-DASH renders through the shared DASH renderer (`manifest-ll.mpd` is the standard MPD model with the low-latency fields layered on: `ServiceDescription`/`Latency`, per-segment `availabilityTimeOffset`/`availabilityTimeComplete`, `minimumUpdatePeriod` at the chunk interval), so it gains what only `manifest.mpd` had: the Period split at a gap placeholder and at every init generation, each Period naming the versioned init segment its segments were cut under, and the SCTE-35 `InbandEventStream` declaration. A test pins that both flavours render the same Periods for a window through a gap and a codec change.
 

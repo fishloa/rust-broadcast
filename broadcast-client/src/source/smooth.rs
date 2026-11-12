@@ -13,12 +13,12 @@ use smooth_runtime::{
 };
 use url::Url;
 
-use crate::auth::{AuthDecision, AuthState};
 use crate::error::Error;
 use crate::events::{Action as HostAction, Config, ErrorKind, Event, ResumeMode, Status};
 use crate::playout::Source;
 use crate::redirect;
 use crate::source::fetch::conn::ConnAlloc;
+use broadcast_auth::{AuthDecision, AuthState};
 
 const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
 const HTTP_UNAUTHORIZED: u16 = 401;
@@ -330,9 +330,10 @@ impl SmoothSource {
                     self.start(req, h, now);
                 }
                 AuthDecision::Wait(events) => {
-                    self.events.extend(events);
+                    self.events.extend(events.into_iter().map(Event::from));
                     self.parked.push(req);
                 }
+                _ => {}
             }
             return;
         }

@@ -7,13 +7,14 @@
 //! No sockets, no tokio, no axum: inputs are plain Rust values. Cited against
 //! `private/specs/dashif_live_media_ingest_v1.3.html` §5.2, §5.3, §6.2
 //! (items 1, 11, 18, 16 a-h, 17 a-e, 19) and ISO/IEC 23009-1 §5.3.9.4.4
-//! (template grammar) as implemented by [`dash_runtime::address::template`].
+//! (template grammar) as implemented by [`crate::address::template`].
 
 use std::collections::{HashMap, HashSet};
 
-use axum::http::StatusCode;
-use dash_runtime::address::template::match_url;
-use dash_runtime::mpd::{Mpd, SegmentTemplate};
+use crate::address::template::match_url;
+use crate::mpd::{Mpd, SegmentTemplate};
+use broadcast_common::impl_spec_display;
+use http::StatusCode;
 
 const MICROS_PER_SECOND: i64 = 1_000_000;
 
@@ -34,7 +35,7 @@ impl IngestMethod {
     }
 }
 
-broadcast_common::impl_spec_display!(IngestMethod);
+impl_spec_display!(IngestMethod);
 
 /// Manifest flavour accepted on the ingest path (§6.2.2, §6.2.17).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,7 +54,7 @@ impl ManifestFormat {
     }
 }
 
-broadcast_common::impl_spec_display!(ManifestFormat);
+impl_spec_display!(ManifestFormat);
 
 /// Addressing mode derived from the MPD's `SegmentTemplate@media`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,7 +73,7 @@ impl Addressing {
     }
 }
 
-broadcast_common::impl_spec_display!(Addressing);
+impl_spec_display!(Addressing);
 
 /// Classified shape of one ingest request (DESIGN §2).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,7 +102,7 @@ impl ObjectKind {
     }
 }
 
-broadcast_common::impl_spec_display!(ObjectKind);
+impl_spec_display!(ObjectKind);
 
 /// Disposition of an accepted segment (§6.2.10/11).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,7 +123,7 @@ impl SegmentDisposition {
     }
 }
 
-broadcast_common::impl_spec_display!(SegmentDisposition);
+impl_spec_display!(SegmentDisposition);
 
 /// Metadata extracted from one ingest HTTP request.
 #[derive(Debug, Clone, Copy)]

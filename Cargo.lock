@@ -415,6 +415,8 @@ name = "broadcast-auth"
 version = "0.6.0"
 dependencies = [
  "base64 0.23.1",
+ "cookie",
+ "cookie_store",
  "form_urlencoded",
  "getrandom 0.4.3",
  "headers",
@@ -478,13 +480,16 @@ dependencies = [
 name = "broadcast-common"
 version = "11.1.0"
 dependencies = [
+ "base64 0.23.1",
  "chrono",
  "criterion",
  "erased-serde",
  "hex",
  "iso-639",
+ "jiff",
  "quick-xml",
  "serde",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1087,11 +1092,14 @@ dependencies = [
  "broadcast-common",
  "broadcast-dash",
  "container-probe",
+ "http",
  "jiff",
+ "media-plane",
  "percent-encoding",
  "quick-xml",
  "test-fixtures",
  "thiserror 2.0.21",
+ "tracing",
  "transmux",
  "url",
  "workspace-guards",
@@ -1768,24 +1776,19 @@ name = "hls-runtime"
 version = "0.13.0"
 dependencies = [
  "axum",
- "backon",
- "broadcast-auth",
  "broadcast-common",
  "broadcast-hls",
  "bytes",
  "container-probe",
- "headers",
  "jiff",
  "media-doctor",
  "media-plane",
  "mpeg-ts",
- "reqwest",
  "serde",
  "test-fixtures",
  "thiserror 2.0.21",
  "timed-metadata",
  "tokio",
- "tokio-util",
  "transmux",
  "url",
 ]
@@ -4288,6 +4291,7 @@ version = "0.1.0"
 dependencies = [
  "hex",
  "serde_json",
+ "tokio",
  "wait-timeout",
 ]
 

@@ -589,12 +589,12 @@ fn dash_representations_are_aligned_and_never_zero_duration() {
     // Alignment: the tfdt of segment 2 of each Representation, in seconds via
     // that Representation's declared timescale. MP4Box reads the tfdt out of the
     // produced files (a bare media segment has no `moov`).
-    match which("MP4Box") {
+    match test_fixtures::process::which("MP4Box") {
         Some(mp4box) => {
             let mut starts = Vec::new();
             for (i, id) in ["1", "2"].iter().enumerate() {
                 let path = dir.join(format!("chunk-stream{id}-2.m4s"));
-                let out = Command::new(mp4box)
+                let out = Command::new(&mp4box)
                     .arg("-info")
                     .arg(&path)
                     .output()
@@ -676,21 +676,6 @@ fn attr_u64(line: &str, key: &str) -> Option<u64> {
     rest.split('"').next()?.parse().ok()
 }
 
-/// Locate a tool by absolute path or on PATH.
-fn which(tool: &str) -> Option<&'static str> {
-    for p in ["/opt/homebrew/bin/", "/usr/local/bin/", "/usr/bin/"] {
-        let full = format!("{p}{tool}");
-        if std::path::Path::new(&full).exists() {
-            return Some(&*Box::leak(full.into_boxed_str()));
-        }
-    }
-    Command::new(tool)
-        .arg("--version")
-        .output()
-        .ok()
-        .map(|_| &*Box::leak(tool.to_string().into_boxed_str()))
-}
-
 /// Item 6, independent parser: the emitted MPD is well-formed XML and every
 /// `AdaptationSet` carries a unique `@id` (ISO/IEC 23009-1 §5.3.3.1).
 ///
@@ -721,9 +706,9 @@ fn dash_mpd_ids_are_unique_and_xml_is_well_formed() {
         "AdaptationSet@id must be unique: {ids:?}"
     );
 
-    match which("xmllint") {
+    match test_fixtures::process::which("xmllint") {
         Some(xmllint) => {
-            let out = Command::new(xmllint).arg("--noout").arg(&mpd).output();
+            let out = Command::new(&xmllint).arg("--noout").arg(&mpd).output();
             let Ok(out) = out else {
                 eprintln!("SKIP cli_binary: xmllint unavailable");
                 return;

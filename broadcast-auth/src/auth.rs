@@ -1,16 +1,15 @@
 //! Origin-scoped credentials and challenge handling.
 
+extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 
 use url::Url;
 
-use broadcast_auth::challenge::parse_challenges;
-use broadcast_auth::{Authenticator, Credentials};
+use crate::parse_challenges;
+use crate::{Authenticator, Credentials};
 
 use crate::cookies::CookieJar;
-use crate::headers;
-use crate::{Event, Status};
 
 const COOKIE: &str = "Cookie";
 const AUTHORIZATION: &str = "Authorization";
@@ -21,11 +20,17 @@ const STATUS_PROXY_AUTH_REQUIRED: u16 = 407;
 const CHALLENGE_SEPARATOR: &str = ", ";
 const PREEMPTIVE_BASIC_CHALLENGE: &str = "Basic realm=\"\"";
 
-/// Whether a request's headers carry credentials for the origin or for a proxy.
-pub(crate) fn carries_credentials(headers: &[(String, String)]) -> bool {
-    headers.iter().any(|(k, _)| {
-        k.eq_ignore_ascii_case(AUTHORIZATION) || k.eq_ignore_ascii_case(PROXY_AUTHORIZATION)
-    })
+fn is_reserved_header(name: &str) -> bool {
+    const RESERVED: [&str; 7] = [
+        "authorization",
+        "cookie",
+        "host",
+        "content-length",
+        "transfer-encoding",
+        "connection",
+        "range",
+    ];
+    RESERVED.iter().any(|r| name.eq_ignore_ascii_case(r))
 }
 
 fn authenticator_for(lines: &[String], creds: &Credentials) -> Option<Authenticator> {
@@ -40,6 +45,7 @@ fn authenticator_for(lines: &[String], creds: &Credentials) -> Option<Authentica
 }
 
 /// Result of handling a 401/407.
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum AuthDecision {
     /// Replay the request with credentials.
@@ -48,7 +54,63 @@ pub enum AuthDecision {
     /// lineage so a second stale answer is rejected instead of replayed again.
     ReplayStale,
     /// Wait for credentials.
-    Wait(Vec<Event>),
+    Wait(Vec<AuthEvent>),
+}
+
+/// Event emitted by [`AuthState::handle_unauthorized`] when it cannot replay on its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+#[allow(clippy::large_enum_variant)]
+pub enum AuthEvent {
+    /// Credentials are required from the host.
+    AuthRequired {
+        /// Scheme.
+        scheme: crate::Scheme,
+        /// Realm.
+        realm: Option<String>,
+        /// Origin.
+        origin: Url,
+        /// Resource metadata.
+        resource_metadata: Option<Url>,
+    },
+    /// Credentials were rejected.
+    AuthRejected {
+        /// HTTP status.
+        status: u16,
+    },
+    /// Waiting for credentials.
+    StatusWaitingForCredentials,
+}
+
+/// Whether a request's headers carry credentials for the origin or for a proxy.
+pub fn carries_credentials(headers: &[(String, String)]) -> bool {
+    const AUTHORIZATION: &str = "Authorization";
+    const PROXY_AUTHORIZATION: &str = "Proxy-Authorization";
+    headers.iter().any(|(k, _)| {
+        k.eq_ignore_ascii_case(AUTHORIZATION) || k.eq_ignore_ascii_case(PROXY_AUTHORIZATION)
+    })
+}
+
+/// A read handle on one [`AuthState`]'s cookie jar, kept by the caller that
+/// hands the state to a fetch; see [`AuthState::cookie_watch`].
+#[derive(Clone)]
+pub struct CookieWatch {
+    jar: CookieJar,
+}
+
+impl CookieWatch {
+    /// The cookies this watch sees, as `(name, value)`.
+    pub fn cookies(&self, now_us: u64) -> Vec<(String, String)> {
+        self.jar.export(now_us)
+    }
+}
+
+impl core::fmt::Debug for CookieWatch {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("CookieWatch")
+            .field("jar", &self.jar)
+            .finish()
+    }
 }
 
 /// Origin-scoped auth state.
@@ -63,8 +125,14 @@ pub struct AuthState {
     jar: CookieJar,
 }
 
-/// Clones the origin, extra headers, credentials and last challenge; the negotiated authenticator
-/// and the cookie jar are not carried over, so a clone starts a fresh Digest exchange.
+/// Clones the origin, extra headers, credentials and last challenge, and shares the cookie jar.
+///
+/// The jar is shared rather than copied (RFC 6265 §5.3: a user agent's cookie
+/// store is per session, not per request), so a request made on a clone
+/// receives the session's cookies and the cookies it is answered with are the
+/// session's. The negotiated authenticator is not carried over: the clone's
+/// request negotiates its own, which is what keeps a stale `nc` from being
+/// replayed on a parallel request.
 impl Clone for AuthState {
     fn clone(&self) -> Self {
         Self {
@@ -75,7 +143,7 @@ impl Clone for AuthState {
             last_challenge: self.last_challenge.clone(),
             proxy: self.proxy,
             waiting: self.waiting,
-            jar: CookieJar::new(&self.origin),
+            jar: self.jar.clone(),
         }
     }
 }
@@ -138,6 +206,23 @@ impl AuthState {
         was_waiting
     }
 
+    /// A second handle on this state's cookie jar.
+    ///
+    /// A caller that hands its state to a fetch (multimux's pull sources do,
+    /// one task per request) can keep this and read what the fetch has been
+    /// answered with while it runs, or take the `now_us` an expiry needs.
+    pub fn cookie_watch(&self) -> CookieWatch {
+        CookieWatch {
+            jar: self.jar.clone(),
+        }
+    }
+
+    /// Whether a Digest/Basic authenticator has been negotiated, so a request
+    /// built now would carry an `Authorization` header.
+    pub fn is_authenticated(&self) -> bool {
+        self.authenticator.is_some()
+    }
+
     /// Arms `Credentials::Basic` so [`request_headers`](Self::request_headers) sends it on the first
     /// request without waiting for a `401` (RFC 7617 permits preemptive Basic). A no-op for any
     /// other credential, or when an authenticator is already negotiated.
@@ -157,7 +242,7 @@ impl AuthState {
         let mut headers: Vec<(String, String)> = if same_origin {
             self.extra_headers
                 .iter()
-                .filter(|(k, _)| !headers::is_reserved(k))
+                .filter(|(k, _)| !is_reserved_header(k))
                 .cloned()
                 .collect()
         } else {
@@ -179,13 +264,12 @@ impl AuthState {
                 Credentials::Basic { .. } | Credentials::Digest { .. } => {
                     if let Some(auth) = &mut self.authenticator {
                         let target = &url[url::Position::BeforePath..url::Position::AfterQuery];
-                        let ctx = broadcast_auth::RequestContext::new("GET", target);
+                        let ctx = crate::RequestContext::new("GET", target);
                         if let Ok(val) = auth.authorization(&ctx) {
                             headers.push((name.to_string(), val));
                         }
                     }
                 }
-                _ => {}
             }
         }
         headers
@@ -218,7 +302,7 @@ impl AuthState {
             challenge_lines = select(&[WWW_AUTHENTICATE, PROXY_AUTHENTICATE]);
         }
 
-        let challenges: Vec<broadcast_auth::Challenge> = challenge_lines
+        let challenges: Vec<crate::Challenge> = challenge_lines
             .iter()
             .flat_map(|l| parse_challenges(&[l.as_str()]).challenges)
             .collect();
@@ -241,19 +325,19 @@ impl AuthState {
                 .or_else(|| challenges.first());
             let scheme = chosen
                 .map(|c| c.scheme.clone())
-                .unwrap_or(broadcast_auth::Scheme::Bearer);
+                .unwrap_or(crate::Scheme::Bearer);
             let realm = chosen.and_then(|c| c.realm.clone());
             let resource_metadata = chosen.and_then(|c| c.resource_metadata.clone());
             self.waiting = true;
             self.authenticator = None;
             return AuthDecision::Wait(vec![
-                Event::AuthRequired {
+                AuthEvent::AuthRequired {
                     scheme,
                     realm,
                     origin: self.origin.clone(),
                     resource_metadata,
                 },
-                Event::Status(Status::WaitingForCredentials),
+                AuthEvent::StatusWaitingForCredentials,
             ]);
         }
 
@@ -262,8 +346,8 @@ impl AuthState {
             self.waiting = true;
             self.authenticator = None;
             return AuthDecision::Wait(vec![
-                Event::AuthRejected { status },
-                Event::Status(Status::WaitingForCredentials),
+                AuthEvent::AuthRejected { status },
+                AuthEvent::StatusWaitingForCredentials,
             ]);
         }
 
@@ -283,8 +367,8 @@ impl AuthState {
         self.waiting = true;
         self.authenticator = None;
         AuthDecision::Wait(vec![
-            Event::AuthRejected { status },
-            Event::Status(Status::WaitingForCredentials),
+            AuthEvent::AuthRejected { status },
+            AuthEvent::StatusWaitingForCredentials,
         ])
     }
 }

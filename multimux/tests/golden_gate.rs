@@ -1,14 +1,15 @@
-//! Issue #717 acceptance: `hls-runtime`'s [`TokioClient`] as the
-//! **reference client** in the #569 player-validated golden-gate harness.
+//! Issue #717 acceptance: multimux's own HLS pull as the **reference client**
+//! in the #569 player-validated golden-gate harness.
 //!
 //! `transmux/tests/golden_gate.rs` (#569) validates only the ORIGIN half of
 //! the loop: transmux's own muxer/segmenter output handed straight to an
 //! independent decoder (`ffprobe`). This file closes the other half: a real
-//! LL-HLS origin -> a real [`TokioClient`] pulling it over loopback HTTP ->
-//! the client's *own* reconstructed init + samples muxed back into a real
-//! fMP4 -> `ffprobe`. If the client silently drops, duplicates, or reorders a
-//! sample, the reconstruction is provably not decodable/matching — not just
-//! structurally plausible.
+//! LL-HLS origin -> the production client (`source::hls_pull`'s
+//! `HlsIngestSession`, the same session `run_hls_pull` drives) pulling it over
+//! loopback HTTP -> the client's *own* reconstructed init + samples muxed
+//! back into a real fMP4 -> `ffprobe`. If the client silently drops,
+//! duplicates, or reorders a sample, the reconstruction is provably not
+//! decodable/matching — not just structurally plausible.
 //!
 //! # Why the real fixture, not a synthetic SPS/PPS
 //!
@@ -47,14 +48,16 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use serde_json::Value;
 
+use broadcast_common::{Stage, Timestamp};
 use broadcast_hls::{DecimalSeconds, MapTag, MediaPlaylist, MediaSegment};
-use hls_runtime::client::Output;
-use hls_runtime::client::tokio_client::TokioClient;
+use hls_runtime::client::Action;
 use hls_runtime::server::DEFAULT_TRACK_ID;
+use media_plane::ingress::{IngestSession, SessionEvent};
 use multimux::origin::{AppState, router};
 use multimux::output::Output as MmOutput;
 use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
+use multimux::source::hls_pull::{HlsFetchId, HlsIngestSession};
 use transmux::ll_hls::LlHlsSegmenter;
 use transmux::{CodecConfig, FragmentTrackData, Sample, TrackSpec, TsDemux};
 
@@ -199,9 +202,117 @@ fn assert_video_matches_source(src_probe: &Value, out_probe: &Value, what: &str)
     );
 }
 
+// ── The production client, driven exactly as `run_hls_pull` drives it ─────
+
+/// One driven client run, in the client's own terms: the init it received,
+/// every sample it emitted (in order), and how many blocking playlist reloads
+/// its requests carried.
+#[derive(Default)]
+struct ClientRun {
+    init: Option<Vec<u8>>,
+    samples: Vec<Sample>,
+    blocking_reloads: u64,
+}
+
+/// Drives `playlist_url` with the source's own [`HlsIngestSession`] —
+/// `poll_transmit` → GET → `feed`, the loop `run_hls_pull` runs over the same
+/// [`HlsPullRoute::new`] construction — until `enough` samples have been
+/// emitted or the playlist ends.
+async fn drive_session(playlist_url: &str, enough: usize) -> ClientRun {
+    let http = reqwest::Client::new();
+    let mut session = HlsIngestSession::new(playlist_url);
+    let mut run = ClientRun::default();
+    loop {
+        if run.samples.len() >= enough || session.ended() {
+            break;
+        }
+        let Some(action) = session.poll_transmit() else {
+            tokio::time::sleep(IDLE_POLL_INTERVAL).await;
+            continue;
+        };
+        match action {
+            Action::FetchPlaylist { blocking, .. } => {
+                if run.samples.len() >= enough {
+                    break;
+                }
+                if blocking.is_some() {
+                    run.blocking_reloads = run.blocking_reloads.saturating_add(1);
+                }
+                let url = action
+                    .playlist_request_url()
+                    .expect("FetchPlaylist always names a request URL");
+                let body = get_bytes(&http, &url, None).await;
+                session
+                    .feed((HlsFetchId::Playlist, body.as_slice()), Timestamp::ZERO)
+                    .expect("playlist accepted");
+            }
+            Action::FetchResource {
+                id,
+                url,
+                byte_range,
+            } => match try_get_bytes(&http, &url, byte_range).await {
+                Some(body) => session
+                    .feed((HlsFetchId::Resource(id), body.as_slice()), Timestamp::ZERO)
+                    .expect("resource accepted"),
+                None => session.resource_gone(id),
+            },
+            _ => {}
+        }
+        while let Some(event) = session.poll() {
+            match event {
+                SessionEvent::Sample { sample, .. } => run.samples.push(sample),
+                SessionEvent::NewProgram { .. } | SessionEvent::Established => {}
+                _ => {}
+            }
+        }
+        if let Some(init) = session.take_init() {
+            run.init = Some(init);
+        }
+    }
+    run
+}
+
+/// `GET url`, optionally for one byte sub-range.
+async fn get_bytes(http: &reqwest::Client, url: &str, byte_range: Option<(u64, u64)>) -> Vec<u8> {
+    try_get_bytes(http, url, byte_range)
+        .await
+        .unwrap_or_else(|| panic!("client GET {url} must succeed"))
+}
+
+/// [`get_bytes`], `None` for a `404` — the origin no longer has that part.
+async fn try_get_bytes(
+    http: &reqwest::Client,
+    url: &str,
+    byte_range: Option<(u64, u64)>,
+) -> Option<Vec<u8>> {
+    let mut request = http.get(url);
+    if let Some((offset, length)) = byte_range {
+        let end = offset.saturating_add(length.saturating_sub(1));
+        request = request.header("Range", format!("bytes={offset}-{end}"));
+    }
+    let response = request.send().await.expect("client GET");
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return None;
+    }
+    assert!(
+        response.status().is_success(),
+        "client GET {url} answered {}",
+        response.status()
+    );
+    Some(
+        response
+            .bytes()
+            .await
+            .expect("client reads the body")
+            .to_vec(),
+    )
+}
+
 // ── LL origin standup (mirrors glass_to_glass.rs's start_ll_origin) ────────
 
 const TARGET_DURATION_SECS: f64 = 1.0;
+/// How long the client poll parks when it has nothing to do yet.
+const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(5);
 const PART_TARGET_MS: u32 = 120;
 const WINDOW_SEGMENTS: usize = 8;
 
@@ -282,9 +393,9 @@ async fn start_ll_origin(
 }
 
 // ===========================================================================
-// Case 1: the headline #717 acceptance -- LL origin -> real TokioClient over
-// loopback -> the client's OWN reconstruction -> ffprobe decodes it, matches
-// the source's resolution, and reports exactly the frames fed in.
+// Case 1: the headline #717 acceptance -- LL origin -> the production client
+// over loopback -> the client's OWN reconstruction -> ffprobe decodes it,
+// matches the source's resolution, and reports exactly the frames fed in.
 // ===========================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -307,27 +418,24 @@ async fn ll_hls_client_reference_reconstructs_decodable_stream() {
     // (h264-aac.ts, 25fps). No latency claim here — this file's job is
     // decode-correctness via ffprobe, not timing; only fails a genuine
     // deadlock rather than hanging CI forever.
-    let (init_bytes, got_samples, stats) = tokio::time::timeout(Duration::from_secs(20), async {
-        let mut client = TokioClient::new(&playlist_url).expect("client builds");
-        let mut init_bytes: Option<Vec<u8>> = None;
-        let mut got_samples: Vec<Sample> = Vec::new();
-        while got_samples.len() < fed_count {
-            match client.next_output().await.expect("client must not error") {
-                Some(Output::Init(bytes)) => init_bytes = Some(bytes),
-                Some(Output::Samples { samples, .. }) => got_samples.extend(samples),
-                Some(Output::EndOfStream) | None => break,
-                Some(_other) => {}
-            }
-        }
-        (init_bytes, got_samples, client.stats())
-    })
+    let run = tokio::time::timeout(
+        Duration::from_secs(20),
+        drive_session(&playlist_url, fed_count),
+    )
     .await
     .expect("client run must complete within 20s (deadlock/hang guard)");
 
     producer.await.expect("producer task must not panic");
     server.abort();
 
-    let init_bytes = init_bytes.expect("client must emit an Init before any Samples");
+    let ClientRun {
+        init: Some(init_bytes),
+        samples: got_samples,
+        blocking_reloads,
+    } = run
+    else {
+        panic!("client must emit an Init before any Samples");
+    };
 
     // Rust-level exact bite: no drops/dupes/reorders, byte-identical samples,
     // in order -- deterministic and independent of ffprobe.
@@ -350,9 +458,9 @@ async fn ll_hls_client_reference_reconstructs_decodable_stream() {
         );
     }
     assert!(
-        stats.blocking_reloads > 0,
+        blocking_reloads > 0,
         "the reference-client run must exercise at least one Blocking Playlist Reload \
-         (RFC 8216bis, part of #717's player-validated bar): {stats:?}"
+         (RFC 8216bis, part of #717's player-validated bar): {blocking_reloads}"
     );
 
     // Mux the CLIENT's own reconstruction (its received Init bytes + the
@@ -547,27 +655,23 @@ async fn non_ll_full_segment_path_also_decodes() {
     // HANG GUARD (issue #807): 10s on a non-live, non-paced fetch of a single
     // pre-built segment -- normally near-instant. Only fails a genuine
     // deadlock rather than hanging CI forever.
-    let (got_init, got_samples) = tokio::time::timeout(Duration::from_secs(10), async {
-        let mut client =
-            TokioClient::new(format!("http://{addr}/media.m3u8")).expect("client builds");
-        let mut got_init: Option<Vec<u8>> = None;
-        let mut got_samples: Vec<Sample> = Vec::new();
-        loop {
-            match client.next_output().await.expect("client must not error") {
-                Some(Output::Init(bytes)) => got_init = Some(bytes),
-                Some(Output::Samples { samples, .. }) => got_samples.extend(samples),
-                Some(Output::EndOfStream) | None => break,
-                Some(_other) => {}
-            }
-        }
-        (got_init, got_samples)
-    })
+    let run = tokio::time::timeout(
+        Duration::from_secs(10),
+        drive_session(&format!("http://{addr}/media.m3u8"), fed_count),
+    )
     .await
     .expect("non-LL client run must complete within 10s (deadlock/hang guard)");
 
     server.abort();
 
-    let got_init = got_init.expect("must emit init even on the fallback path");
+    let ClientRun {
+        init: Some(got_init),
+        samples: got_samples,
+        ..
+    } = run
+    else {
+        panic!("must emit init even on the fallback path");
+    };
     assert_eq!(
         got_init, init_bytes,
         "init bytes must round-trip byte-identical on the fallback path"

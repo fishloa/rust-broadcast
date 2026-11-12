@@ -699,15 +699,6 @@ pub struct Av3aFmtp {
     pub bitrate: Option<u32>,
 }
 
-fn hex_val(c: u8) -> Option<u8> {
-    match c {
-        b'0'..=b'9' => Some(c - b'0'),
-        b'a'..=b'f' => Some(c - b'a' + 10),
-        b'A'..=b'F' => Some(c - b'A' + 10),
-        _ => None,
-    }
-}
-
 /// Decimal digits only: `str::parse` also accepts a leading `+`, which is not
 /// part of the SDP/MIME integer grammar.
 fn parse_unsigned(v: &str, field: &'static str) -> Result<u32> {
@@ -778,17 +769,9 @@ impl Av3aFmtp {
                     out.codec_nn_id = Some(CodecNnId::from_u16(n));
                 }
                 "config" => {
-                    let b = v.as_bytes();
-                    if b.len() % 2 != 0 {
-                        return Err(bad("config", b.len() as u64, "odd number of hex digits"));
-                    }
-                    let mut bytes = Vec::with_capacity(b.len() / 2);
-                    for p in b.chunks_exact(2) {
-                        let (Some(hi), Some(lo)) = (hex_val(p[0]), hex_val(p[1])) else {
-                            return Err(bad("config", 0, "not a hex string"));
-                        };
-                        bytes.push((hi << 4) | lo);
-                    }
+                    let Some(bytes) = broadcast_common::hex::hex_decode(v) else {
+                        return Err(bad("config", 0, "not a hex string"));
+                    };
                     out.config = Some(bytes);
                 }
                 _ => {}

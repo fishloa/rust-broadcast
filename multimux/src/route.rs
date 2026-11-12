@@ -1868,6 +1868,16 @@ impl RouteHandle {
             .map(|(_, serving)| serving.trunk())
     }
 
+    /// `test-seams` hook over [`Self::first_trunk`]: an integration test that
+    /// drives [`crate::source::hls_pull::run_hls_pull`] itself reads back what
+    /// the route published, exactly as egress would.
+    #[doc(hidden)]
+    #[cfg(feature = "test-seams")]
+    #[must_use]
+    pub fn first_trunk_for_test(&self) -> Option<Arc<Trunk>> {
+        self.first_trunk()
+    }
+
     /// Wait until at least one program is published on this route, then return
     /// the first program's `Trunk`. Used by push output tasks (issue #744).
     pub async fn await_first_trunk(&self) -> Arc<Trunk> {

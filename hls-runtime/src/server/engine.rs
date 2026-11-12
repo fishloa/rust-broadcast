@@ -4051,6 +4051,24 @@ fn relative_playlist_uri(from: &str, to: &str) -> String {
     }
 }
 
+/// Upper bound on how long a blocking playlist reload waits before giving up —
+/// the floor used by [`playlist_reload_timeout`] when no Target Duration is
+/// published yet (RFC 8216bis section 6.2.5.2).
+pub const BLOCKING_RELOAD_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// RFC 8216bis section 6.2.5.2: a Server "that cannot provide the requested
+/// Playlist after blocking for more than three Target Durations SHOULD return
+/// Service Unavailable".
+pub const BLOCKING_RELOAD_TARGET_DURATIONS: u32 = 3;
+
+/// How long a Playlist blocking reload waits on an origin: three of its
+/// published Target Durations, never less than [`BLOCKING_RELOAD_TIMEOUT`]
+/// (which also covers the time before the first segment fixes a target).
+pub fn playlist_reload_timeout(origin: &HlsOrigin) -> Duration {
+    (origin.published_target_duration() * BLOCKING_RELOAD_TARGET_DURATIONS)
+        .max(BLOCKING_RELOAD_TIMEOUT)
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

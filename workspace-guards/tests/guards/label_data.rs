@@ -80,7 +80,13 @@ pub const TABLE: &[Crate] = &[
         name: "broadcast-auth",
         scope: Scope::Crate,
         matcher: Matcher::Strict,
-        skip: &["Error", "Credentials", "AuthResult"],
+        skip: &[
+            "Error",
+            "Credentials",
+            "AuthResult",
+            "AuthDecision",
+            "AuthEvent",
+        ],
         expected: None,
         min_enums: None,
     },
@@ -143,7 +149,14 @@ pub const TABLE: &[Crate] = &[
         // `BerLength`: a serialization-form choice (`Minimal` vs a preserved
         // on-wire `Fixed` width), not a wire field. `Frame`: the XML reader's
         // own traversal stack, not a label.
-        skip: &["BitError", "KlvError", "XmlError", "BerLength", "Frame"],
+        skip: &[
+            "BitError",
+            "KlvError",
+            "XmlError",
+            "BerLength",
+            "Frame",
+            "HttpDateError",
+        ],
         expected: None,
         min_enums: None,
     },
@@ -390,6 +403,8 @@ pub const TABLE: &[Crate] = &[
         matcher: Matcher::Dash,
         skip: &[
             "MpdError",
+            "IngestError",
+            "SessionError",
             "AddressError",
             "PlanError",
             "TimingError",

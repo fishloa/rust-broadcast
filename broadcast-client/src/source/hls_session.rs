@@ -10,13 +10,13 @@ use hls_runtime::client::{MasterSelection, RenditionInfo};
 use transmux::TrackSpec;
 use url::Url;
 
-use crate::auth::AuthState;
 use crate::error::Error;
 use crate::events::{Action, Config, Event, Status};
 use crate::playout::Source;
 use crate::source::fetch::conn::ConnAlloc;
 use crate::source::fetch::wall::WallClock;
 use crate::source::hls::{HlsSource, Role};
+use broadcast_auth::AuthState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AudioMode {
@@ -254,7 +254,7 @@ impl HlsSession {
                 (r.autoselect || r.default)
                     && r.language
                         .as_deref()
-                        .is_some_and(|l| language_matches(l, pref))
+                        .is_some_and(|l| broadcast_common::lang::language_matches(pref, l))
             })
         {
             return Some(i);
@@ -498,13 +498,4 @@ impl HlsSession {
 
 fn is_fatal_error(event: &Event) -> bool {
     matches!(event, Event::Error { fatal: true, .. })
-}
-
-fn language_matches(language: &str, preferred: &str) -> bool {
-    let language = language.to_ascii_lowercase();
-    let preferred = preferred.to_ascii_lowercase();
-    language == preferred
-        || language
-            .strip_prefix(preferred.as_str())
-            .is_some_and(|rest| rest.starts_with('-'))
 }
