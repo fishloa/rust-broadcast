@@ -173,7 +173,7 @@ pub const FLV_STREAM_ID: u32 = 0;
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct FlvHeader {
+pub struct FlvHeader<'a> {
     /// `TypeFlags` bit 0 (§E.2): the file carries audio tags.
     pub has_audio: bool,
     /// `TypeFlags` bit 2 (§E.2): the file carries video tags.
@@ -183,9 +183,13 @@ pub struct FlvHeader {
     /// input may declare a larger one (extra header bytes the caller skips),
     /// and keeping it makes a parse/serialize round trip byte-exact.
     pub data_offset: u32,
+    /// The `DataOffset - 9` extra header bytes between the fixed 9-byte
+    /// header and the `PreviousTagSize0` that the parser skipped (§E.2).
+    /// Empty on every header this crate writes.
+    pub extra: &'a [u8],
 }
 
-impl FlvHeader {
+impl<'a> FlvHeader<'a> {
     /// A header declaring the given track kinds, with the standard
     /// `DataOffset`.
     pub fn new(has_audio: bool, has_video: bool) -> Self {
@@ -193,6 +197,7 @@ impl FlvHeader {
             has_audio,
             has_video,
             data_offset: FLV_DATA_OFFSET,
+            extra: &[],
         }
     }
 
@@ -220,7 +225,7 @@ impl FlvHeader {
     }
 }
 
-impl<'a> Parse<'a> for FlvHeader {
+impl<'a> Parse<'a> for FlvHeader<'a> {
     type Error = RtmpError;
 
     fn parse(bytes: &'a [u8]) -> FlvResult<Self> {
@@ -230,34 +235,32 @@ impl<'a> Parse<'a> for FlvHeader {
                 what: "FLV header signature",
             });
         }
-        let flags = bytes.get(4).copied().unwrap_or(0);
-        let offset = bytes.get(5..FLV_HEADER_LEN).unwrap_or(&[]);
-        let data_offset = u32::from_be_bytes(match <[u8; 4]>::try_from(offset) {
-            Ok(v) => v,
-            Err(_) => {
-                return Err(RtmpError::Malformed {
-                    what: "FLV header DataOffset",
-                });
-            }
-        });
-        if usize::try_from(data_offset).map_or(true, |o| o < FLV_HEADER_LEN) {
+        let flags = bytes[4];
+        let data_offset = u32::from_be_bytes(bytes[5..FLV_HEADER_LEN].try_into().unwrap());
+        let data_offset = usize::try_from(data_offset).map_err(|_| RtmpError::Malformed {
+            what: "FLV header DataOffset",
+        })?;
+        if data_offset < FLV_HEADER_LEN {
             return Err(RtmpError::Malformed {
                 what: "FLV header DataOffset",
             });
         }
+        need_in(bytes, data_offset, "FLV header")?;
+        let extra = &bytes[FLV_HEADER_LEN..data_offset];
         Ok(Self {
             has_audio: flags & FLV_FLAG_AUDIO != 0,
             has_video: flags & FLV_FLAG_VIDEO != 0,
-            data_offset,
+            data_offset: u32::try_from(data_offset).unwrap_or(u32::MAX),
+            extra,
         })
     }
 }
 
-impl Serialize for FlvHeader {
+impl<'a> Serialize for FlvHeader<'a> {
     type Error = RtmpError;
 
     fn serialized_len(&self) -> usize {
-        FLV_HEADER_LEN + FLV_PREV_TAG_SIZE_LEN
+        FLV_HEADER_LEN + self.extra.len() + FLV_PREV_TAG_SIZE_LEN
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> FlvResult<usize> {
@@ -280,7 +283,12 @@ impl Serialize for FlvHeader {
         out.get_mut(5..FLV_HEADER_LEN)
             .unwrap_or_default()
             .copy_from_slice(&offset.to_be_bytes());
-        out.get_mut(FLV_HEADER_LEN..len)
+        let extra_start = FLV_HEADER_LEN;
+        let extra_end = extra_start + self.extra.len();
+        if let Some(dst) = out.get_mut(extra_start..extra_end) {
+            dst.copy_from_slice(self.extra);
+        }
+        out.get_mut(extra_end..len)
             .unwrap_or_default()
             .copy_from_slice(&0u32.to_be_bytes());
         Ok(len)
@@ -424,6 +432,31 @@ impl<'a> Parse<'a> for FlvTag<'a> {
                 what: "FLV tag",
             }
         })?;
+        if bytes.len() >= body_end.saturating_add(FLV_PREV_TAG_SIZE_LEN) {
+            let trailing_bytes = bytes
+                .get(body_end..body_end + FLV_PREV_TAG_SIZE_LEN)
+                .ok_or(RtmpError::Malformed {
+                    what: "FLV tag PreviousTagSize",
+                })?;
+            let trailing = u32::from_be_bytes(trailing_bytes.try_into().map_err(|_| {
+                RtmpError::Malformed {
+                    what: "FLV tag PreviousTagSize",
+                }
+            })?);
+            let expected = u32::try_from(FLV_TAG_HEADER_LEN.saturating_add(
+                usize::try_from(data_size).map_err(|_| RtmpError::Malformed {
+                    what: "FLV tag DataSize",
+                })?,
+            ))
+            .map_err(|_| RtmpError::Malformed {
+                what: "FLV tag PreviousTagSize",
+            })?;
+            if trailing != expected {
+                return Err(RtmpError::Malformed {
+                    what: "FLV tag PreviousTagSize",
+                });
+            }
+        }
         Ok(Self {
             tag_type,
             timestamp,
@@ -599,7 +632,7 @@ fn ui24(value: u32, field: &'static str) -> FlvResult<[u8; U24_LEN]> {
 /// Strict: no resynchronisation. Every item is exactly one tag (header, body
 /// and `PreviousTagSize`); a trailing run too short to be a complete tag is
 /// yielded as an error item and ends the walk.
-pub fn tags<'a>(input: &'a [u8], header: &FlvHeader) -> Tags<'a> {
+pub fn tags<'a>(input: &'a [u8], header: &FlvHeader<'a>) -> Tags<'a> {
     Tags {
         input,
         offset: header.first_tag_offset(),
@@ -717,7 +750,7 @@ pub struct ResyncWalk<'a> {
 /// [`RtmpError::BufferTooShort`] when `input` is shorter than the header and
 /// its `PreviousTagSize0`, and when the *first* tag is already incomplete (that
 /// is not a recoverable tail: there is nothing complete to return).
-pub fn tags_resync<'a>(input: &'a [u8], header: &FlvHeader) -> FlvResult<ResyncWalk<'a>> {
+pub fn tags_resync<'a>(input: &'a [u8], header: &FlvHeader<'a>) -> FlvResult<ResyncWalk<'a>> {
     need_in(
         input,
         FLV_HEADER_LEN.saturating_add(FLV_PREV_TAG_SIZE_LEN),
