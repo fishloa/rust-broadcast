@@ -1656,4 +1656,59 @@ mod tests {
         );
         assert_eq!(body_bytes(resp).await, (0..100u8).collect::<Vec<_>>());
     }
+
+    /// Issue #2441: a window holding segments from two init generations must
+    /// render one Period per generation, each naming its OWN versioned init
+    /// URL, and each of those URLs must resolve to that generation's bytes.
+    #[tokio::test]
+    async fn a_window_spanning_two_init_generations_renders_a_period_per_init() {
+        let program = crate::route::SPTS_PROGRAM_ID;
+        let route = Arc::new(RouteHandle::new(4.0, 500, 8));
+        route.publish_new_program(program);
+        route.set_track_specs(
+            program,
+            vec![crate::testutil::video_spec(transmux::TrackId::new(1))],
+        );
+        let first_init = vec![0xAA; 8];
+        let second_init = vec![0xBB; 8];
+        route.set_init(program, first_init.clone());
+        for seq in 1..=2u32 {
+            route.add_segment(program, seg(seq)).expect("add_segment");
+        }
+        route.set_init(program, second_init.clone());
+        for seq in 3..=4u32 {
+            route.add_segment(program, seg(seq)).expect("add_segment");
+        }
+        let ll_hls = route.ll_hls(program).expect("program published");
+        let instance = ll_hls.instance();
+        let initialization = |generation| {
+            format!("initialization=\"init-$RepresentationID$-{instance}-{generation}.mp4\"")
+        };
+
+        let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        let mpd = crate::output::dash::render_mpd_at(&route, now).expect("renders");
+        assert_eq!(mpd.matches("<Period ").count(), 2, "{mpd}");
+        let (first, second) = mpd
+            .split_once("<Period id=\"1\"")
+            .expect("a second Period for the second init generation");
+        assert!(first.contains(&initialization(1)), "{mpd}");
+        assert!(!first.contains(&initialization(2)), "{mpd}");
+        assert!(second.contains(&initialization(2)), "{mpd}");
+        assert!(second.contains("startNumber=\"3\""), "{mpd}");
+
+        for (generation, expected) in [(1u32, first_init), (2, second_init)] {
+            let resp = dynamic_file(
+                State(Arc::clone(&route)),
+                HeaderMap::new(),
+                Path(format!("init-1-{instance}-{generation}.mp4")),
+            )
+            .await;
+            assert_eq!(resp.status(), StatusCode::OK, "generation {generation}");
+            assert_eq!(
+                body_bytes(resp).await,
+                expected,
+                "generation {generation}'s own init bytes"
+            );
+        }
+    }
 }

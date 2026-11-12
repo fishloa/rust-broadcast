@@ -203,7 +203,19 @@ pub fn render_ll_dash_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<
     // `init-1.mp4`/`seg-1-<N>.m4s` filenames exactly (the same whole-segment
     // shape `crate::output::dash` uses -- see module docs for why LL-DASH no
     // longer needs its own filename scheme).
-    packager.base.init_template = "init-$RepresentationID$.mp4".to_string();
+    let instance = route
+        .serving(crate::route::SPTS_PROGRAM_ID)
+        .map(|s| s.ll_hls().instance())
+        .unwrap_or(1);
+    let init_gen = route
+        .serving(crate::route::SPTS_PROGRAM_ID)
+        .map(|s| s.ll_hls().current_init_generation())
+        .unwrap_or_else(|| media_plane::ids::Generation::new(1));
+    packager.base.init_template = format!(
+        "init-$RepresentationID$-{}-{}.mp4",
+        instance,
+        init_gen.value()
+    );
     packager.base.media_template = "seg-$RepresentationID$-$Number$.m4s".to_string();
     // Tuned to the chunk/part interval, not the whole-segment target -- an
     // LL-DASH client should re-poll roughly as often as a new chunk can
@@ -444,7 +456,15 @@ mod tests {
             .add_segment(crate::route::SPTS_PROGRAM_ID, seg(2, 4.0))
             .expect("add_segment");
         let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
-        let actual = render_ll_dash_mpd_at(&route, now).expect("renders");
+        let instance = route
+            .serving(crate::route::SPTS_PROGRAM_ID)
+            .unwrap()
+            .ll_hls()
+            .instance()
+            .to_string();
+        let actual = render_ll_dash_mpd_at(&route, now)
+            .expect("renders")
+            .replace(&instance, "INSTANCE");
         let file = "golden/dash/ll-dash-mpd.golden";
         if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
             std::fs::create_dir_all(&dir).expect("create golden dir");

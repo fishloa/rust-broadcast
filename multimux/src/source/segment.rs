@@ -3535,10 +3535,9 @@ mod tests {
                 .to_string();
             out.push_str(&render_playlist(&self.route).replace(&instance, "INSTANCE"));
             out.push_str(&format!("==== {stage}: DASH MPD ====\n"));
-            out.push_str(
-                &crate::output::dash::render_mpd_at(&self.route, origin)
-                    .unwrap_or_else(|| "(no MPD: 503)".to_owned()),
-            );
+            let dash = crate::output::dash::render_mpd_at(&self.route, origin)
+                .unwrap_or_else(|| "(no MPD: 503)".to_owned());
+            out.push_str(&dash.replace(&instance, "INSTANCE"));
             out.push('\n');
         }
     }
