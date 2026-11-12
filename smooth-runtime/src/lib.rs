@@ -22,9 +22,16 @@
 
 pub mod client;
 pub mod error;
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+pub mod server;
 
 pub use client::{
     Action, Dropped, FetchFailure, ManifestFault, Output, QualityInfo, QualitySelector, RequestId,
     SmoothClient, SmoothConfig, StreamId,
 };
 pub use error::SmoothError;
+#[cfg(feature = "std")]
+pub use server::{
+    FragmentLocation, SmoothBody, SmoothOrigin, SmoothOriginError, SmoothRequest, StreamKey,
+};
