@@ -49,6 +49,42 @@ impl Mpd {
             if p.xlink.is_some() {
                 use_xlink = true;
             }
+            for es in &p.event_streams {
+                if es.xlink.is_some() {
+                    use_xlink = true;
+                }
+                for b in &es.base_urls {
+                    if b.priority.is_some() || b.weight.is_some() {
+                        use_dvb = true;
+                    }
+                }
+                for d in es
+                    .essential_properties
+                    .iter()
+                    .chain(es.supplemental_properties.iter())
+                    .chain(es.events.iter().flat_map(|e| {
+                        e.essential_properties
+                            .iter()
+                            .chain(e.supplemental_properties.iter())
+                    }))
+                {
+                    scan_desc(d);
+                }
+            }
+            for pre in &p.preselections {
+                for d in pre
+                    .audio_channel_configurations
+                    .iter()
+                    .chain(pre.essential_properties.iter())
+                    .chain(pre.supplemental_properties.iter())
+                    .chain(pre.accessibilities.iter())
+                    .chain(pre.roles.iter())
+                    .chain(pre.ratings.iter())
+                    .chain(pre.viewpoints.iter())
+                {
+                    scan_desc(d);
+                }
+            }
             for b in &p.base_urls {
                 if b.priority.is_some() || b.weight.is_some() {
                     use_dvb = true;
@@ -204,6 +240,9 @@ impl Mpd {
             w.write_event(Event::End(BytesEnd::new("Location")))
                 .map_err(io_err)?;
         }
+        for pl in &self.patch_locations {
+            write_patch_location(&mut w, pl)?;
+        }
         for sd in &self.service_descriptions {
             write_service_description(&mut w, sd)?;
         }
@@ -217,13 +256,10 @@ impl Mpd {
             write_descriptor(&mut w, "SupplementalProperty", d)?;
         }
         for u in &self.utc_timings {
-            let mut e = BytesStart::new("UTCTiming");
-            e.push_attribute(("schemeIdUri", u.scheme_id_uri.as_str()));
-            e.push_attribute(("value", u.value.as_str()));
-            if let Some(v) = &u.id {
-                e.push_attribute(("id", v.as_str()));
-            }
-            w.write_event(Event::Empty(e)).map_err(io_err)?;
+            write_utc_timing(&mut w, u)?;
+        }
+        if let Some(cs) = &self.content_steering {
+            write_content_steering(&mut w, cs)?;
         }
         w.write_event(Event::End(BytesEnd::new("MPD")))
             .map_err(io_err)?;
@@ -231,6 +267,253 @@ impl Mpd {
         out.push('\n');
         Ok(out)
     }
+}
+
+fn write_text_element(
+    w: &mut Writer<Vec<u8>>,
+    e: BytesStart<'_>,
+    name: &str,
+    text: &str,
+) -> Result<(), MpdError> {
+    if text.is_empty() {
+        return w.write_event(Event::Empty(e)).map_err(io_err);
+    }
+    w.write_event(Event::Start(e)).map_err(io_err)?;
+    w.write_event(Event::Text(BytesText::new(text)))
+        .map_err(io_err)?;
+    w.write_event(Event::End(BytesEnd::new(name)))
+        .map_err(io_err)
+}
+
+fn write_utc_timing(w: &mut Writer<Vec<u8>>, u: &UtcTiming) -> Result<(), MpdError> {
+    let mut e = BytesStart::new("UTCTiming");
+    e.push_attribute(("schemeIdUri", u.scheme_id_uri.as_str()));
+    e.push_attribute(("value", u.value.as_str()));
+    if let Some(v) = &u.id {
+        e.push_attribute(("id", v.as_str()));
+    }
+    w.write_event(Event::Empty(e)).map_err(io_err)
+}
+
+fn write_patch_location(w: &mut Writer<Vec<u8>>, p: &PatchLocation) -> Result<(), MpdError> {
+    let mut e = BytesStart::new("PatchLocation");
+    if let Some(v) = &p.service_location {
+        e.push_attribute(("serviceLocation", v.as_str()));
+    }
+    if let Some(v) = p.ttl {
+        e.push_attribute(("ttl", format_xs_double(v).as_str()));
+    }
+    write_text_element(w, e, "PatchLocation", &p.url)
+}
+
+fn write_content_steering(w: &mut Writer<Vec<u8>>, c: &ContentSteering) -> Result<(), MpdError> {
+    let mut e = BytesStart::new("ContentSteering");
+    if let Some(v) = &c.default_service_location {
+        e.push_attribute(("defaultServiceLocation", v.as_str()));
+    }
+    if c.query_before_start {
+        e.push_attribute(("queryBeforeStart", "true"));
+    }
+    if let Some(v) = c.client_requirement {
+        e.push_attribute(("clientRequirement", if v { "true" } else { "false" }));
+    }
+    write_text_element(w, e, "ContentSteering", &c.url)
+}
+
+fn write_event(w: &mut Writer<Vec<u8>>, ev: &StreamEvent) -> Result<(), MpdError> {
+    if let Some(u) = ev.unsupported {
+        return Err(MpdError::Unsupported(u));
+    }
+    let mut e = BytesStart::new("Event");
+    e.push_attribute((
+        "presentationTime",
+        ev.presentation_time.to_string().as_str(),
+    ));
+    if let Some(v) = ev.duration {
+        e.push_attribute(("duration", v.to_string().as_str()));
+    }
+    if let Some(v) = ev.id {
+        e.push_attribute(("id", v.to_string().as_str()));
+    }
+    if let Some(v) = ev.status {
+        e.push_attribute(("status", v.name()));
+    }
+    if let Some(v) = &ev.message_data {
+        e.push_attribute(("messageData", v.as_str()));
+    }
+    let has_children = !(ev.supplemental_properties.is_empty()
+        && ev.essential_properties.is_empty()
+        && ev.service_descriptions.is_empty());
+    if !has_children {
+        return write_text_element(w, e, "Event", &ev.text);
+    }
+    w.write_event(Event::Start(e)).map_err(io_err)?;
+    if !ev.text.is_empty() {
+        w.write_event(Event::Text(BytesText::new(&ev.text)))
+            .map_err(io_err)?;
+    }
+    for sd in &ev.service_descriptions {
+        write_service_description(w, sd)?;
+    }
+    for d in &ev.supplemental_properties {
+        write_descriptor(w, "SupplementalProperty", d)?;
+    }
+    for d in &ev.essential_properties {
+        write_descriptor(w, "EssentialProperty", d)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("Event")))
+        .map_err(io_err)
+}
+
+fn write_event_stream(w: &mut Writer<Vec<u8>>, es: &EventStream) -> Result<(), MpdError> {
+    let mut e = BytesStart::new("EventStream");
+    if let Some(x) = &es.xlink {
+        write_xlink_attrs(&mut e, x);
+    }
+    e.push_attribute(("schemeIdUri", es.scheme_id_uri.as_str()));
+    if let Some(v) = &es.value {
+        e.push_attribute(("value", v.as_str()));
+    }
+    if let Some(v) = es.timescale {
+        e.push_attribute(("timescale", v.to_string().as_str()));
+    }
+    if let Some(v) = es.presentation_time_offset {
+        e.push_attribute(("presentationTimeOffset", v.to_string().as_str()));
+    }
+    w.write_event(Event::Start(e)).map_err(io_err)?;
+    for ev in &es.events {
+        write_event(w, ev)?;
+    }
+    for b in &es.base_urls {
+        write_base_url(w, b)?;
+    }
+    for d in &es.essential_properties {
+        write_descriptor(w, "EssentialProperty", d)?;
+    }
+    for d in &es.supplemental_properties {
+        write_descriptor(w, "SupplementalProperty", d)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("EventStream")))
+        .map_err(io_err)
+}
+
+fn write_producer_reference_time(
+    w: &mut Writer<Vec<u8>>,
+    p: &ProducerReferenceTime,
+) -> Result<(), MpdError> {
+    let mut e = BytesStart::new("ProducerReferenceTime");
+    e.push_attribute(("id", p.id.to_string().as_str()));
+    if p.inband {
+        e.push_attribute(("inband", "true"));
+    }
+    if p.kind != ProducerReferenceKind::Encoder {
+        e.push_attribute(("type", p.kind.name()));
+    }
+    if let Some(v) = &p.application_scheme {
+        e.push_attribute(("applicationScheme", v.as_str()));
+    }
+    e.push_attribute(("wallClockTime", p.wall_clock_time.as_str()));
+    e.push_attribute(("presentationTime", p.presentation_time.to_string().as_str()));
+    match &p.utc_timing {
+        None => w.write_event(Event::Empty(e)).map_err(io_err),
+        Some(u) => {
+            w.write_event(Event::Start(e)).map_err(io_err)?;
+            write_utc_timing(w, u)?;
+            w.write_event(Event::End(BytesEnd::new("ProducerReferenceTime")))
+                .map_err(io_err)
+        }
+    }
+}
+
+fn write_resync(w: &mut Writer<Vec<u8>>, r: &Resync) -> Result<(), MpdError> {
+    let mut e = BytesStart::new("Resync");
+    if r.kind != 0 {
+        e.push_attribute(("type", r.kind.to_string().as_str()));
+    }
+    if let Some(v) = r.dt {
+        e.push_attribute(("dT", v.to_string().as_str()));
+    }
+    if let Some(v) = r.d_imax {
+        e.push_attribute(("dImax", format_xs_double(v).as_str()));
+    }
+    if let Some(v) = r.d_imin {
+        e.push_attribute(("dImin", format_xs_double(v).as_str()));
+    }
+    if r.marker {
+        e.push_attribute(("marker", "true"));
+    }
+    w.write_event(Event::Empty(e)).map_err(io_err)
+}
+
+fn write_preselection(w: &mut Writer<Vec<u8>>, p: &Preselection) -> Result<(), MpdError> {
+    let mut e = BytesStart::new("Preselection");
+    if let Some(v) = &p.id {
+        e.push_attribute(("id", v.as_str()));
+    }
+    e.push_attribute((
+        "preselectionComponents",
+        p.preselection_components.join(" ").as_str(),
+    ));
+    if let Some(v) = &p.lang {
+        e.push_attribute(("lang", v.as_str()));
+    }
+    if let Some(v) = p.order {
+        e.push_attribute(("order", v.name()));
+    }
+    if let Some(v) = &p.common.profiles {
+        e.push_attribute(("profiles", v.as_str()));
+    }
+    if let Some(v) = p.common.width {
+        e.push_attribute(("width", v.to_string().as_str()));
+    }
+    if let Some(v) = p.common.height {
+        e.push_attribute(("height", v.to_string().as_str()));
+    }
+    if let Some(v) = &p.common.sar {
+        e.push_attribute(("sar", v.as_str()));
+    }
+    if let Some(v) = &p.common.frame_rate {
+        e.push_attribute(("frameRate", v.as_str()));
+    }
+    if let Some(v) = &p.common.audio_sampling_rate {
+        e.push_attribute(("audioSamplingRate", v.as_str()));
+    }
+    if let Some(v) = &p.common.mime_type {
+        e.push_attribute(("mimeType", v.as_str()));
+    }
+    if let Some(v) = &p.common.codecs {
+        e.push_attribute(("codecs", v.as_str()));
+    }
+    if let Some(v) = p.common.max_playout_rate {
+        e.push_attribute(("maxPlayoutRate", format_xs_double(v).as_str()));
+    }
+    if let Some(v) = p.common.coding_dependency {
+        e.push_attribute(("codingDependency", if v { "true" } else { "false" }));
+    }
+    w.write_event(Event::Start(e)).map_err(io_err)?;
+    for d in &p.audio_channel_configurations {
+        write_descriptor(w, "AudioChannelConfiguration", d)?;
+    }
+    for d in &p.essential_properties {
+        write_descriptor(w, "EssentialProperty", d)?;
+    }
+    for d in &p.supplemental_properties {
+        write_descriptor(w, "SupplementalProperty", d)?;
+    }
+    for d in &p.accessibilities {
+        write_descriptor(w, "Accessibility", d)?;
+    }
+    for d in &p.roles {
+        write_descriptor(w, "Role", d)?;
+    }
+    for d in &p.ratings {
+        write_descriptor(w, "Rating", d)?;
+    }
+    for d in &p.viewpoints {
+        write_descriptor(w, "Viewpoint", d)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("Preselection")))
+        .map_err(io_err)
 }
 
 fn write_service_description(
@@ -660,6 +943,9 @@ fn write_period(w: &mut Writer<Vec<u8>>, p: &Period) -> Result<(), MpdError> {
     if let Some(d) = &p.asset_identifier {
         write_descriptor(w, "AssetIdentifier", d)?;
     }
+    for es in &p.event_streams {
+        write_event_stream(w, es)?;
+    }
     for sd in &p.service_descriptions {
         write_service_description(w, sd)?;
     }
@@ -671,6 +957,9 @@ fn write_period(w: &mut Writer<Vec<u8>>, p: &Period) -> Result<(), MpdError> {
     }
     for d in &p.supplemental_properties {
         write_descriptor(w, "SupplementalProperty", d)?;
+    }
+    for pre in &p.preselections {
+        write_preselection(w, pre)?;
     }
     w.write_event(Event::End(BytesEnd::new("Period")))
         .map_err(io_err)?;
@@ -761,6 +1050,12 @@ fn write_adaptation_set(w: &mut Writer<Vec<u8>>, a: &AdaptationSet) -> Result<()
         w.write_event(Event::End(BytesEnd::new("Label")))
             .map_err(io_err)?;
     }
+    for p in &a.producer_reference_times {
+        write_producer_reference_time(w, p)?;
+    }
+    for r in &a.resyncs {
+        write_resync(w, r)?;
+    }
     for d in &a.accessibilities {
         write_descriptor(w, "Accessibility", d)?;
     }
@@ -836,6 +1131,12 @@ fn write_representation(w: &mut Writer<Vec<u8>>, r: &Representation) -> Result<(
     }
     for d in &r.inband_event_streams {
         write_descriptor(w, "InbandEventStream", d)?;
+    }
+    for p in &r.producer_reference_times {
+        write_producer_reference_time(w, p)?;
+    }
+    for rs in &r.resyncs {
+        write_resync(w, rs)?;
     }
     for b in &r.base_urls {
         write_base_url(w, b)?;

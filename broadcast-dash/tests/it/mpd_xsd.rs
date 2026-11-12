@@ -1,4 +1,5 @@
 use broadcast_dash::Mpd;
+use broadcast_dash::error::{MpdError, Unsupported};
 use broadcast_dash::limits::Limits;
 
 use super::corpus;
@@ -20,7 +21,11 @@ fn every_valid_corpus_mpd_still_validates_after_parse_and_write() {
         let Ok(mpd) = Mpd::parse_with(text.as_bytes(), &Limits::default()) else {
             continue;
         };
-        let xml = mpd.to_xml().unwrap_or_else(|e| panic!("{name}: {e}"));
+        let xml = match mpd.to_xml() {
+            Ok(xml) => xml,
+            Err(MpdError::Unsupported(Unsupported::EventXmlPayload)) => continue,
+            Err(e) => panic!("{name}: {e}"),
+        };
         checked += 1;
         if let Err(e) = test_fixtures::process::xsd::validate(&schema, "written", &xml) {
             failures.push(format!("{name}:\n{e}"));

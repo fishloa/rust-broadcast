@@ -1293,7 +1293,8 @@ impl DashClient {
         if dynamic && new.availability_start_time_us.is_none() {
             return;
         }
-        let features = new.features;
+        let patch_location = new.has_patch_location();
+        let event_streams = new.has_event_streams();
         let reset = {
             let old = self.mpd.as_ref().expect("mpd present");
             let ids_differ = matches!((&old.id, &new.id), (Some(a), Some(b)) if a != b);
@@ -1310,10 +1311,10 @@ impl DashClient {
                 || has_reset
         };
         self.mpd = Some(new);
-        if features.patch_location {
+        if patch_location {
             self.notice_once(Notice::PatchIgnored);
         }
-        if features.event_stream || features.inband_event_stream {
+        if event_streams {
             self.notice_once(Notice::EventStreamIgnored);
         }
         if reset || !self.remap_periods() {
