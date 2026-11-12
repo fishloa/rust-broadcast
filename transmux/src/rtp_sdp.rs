@@ -260,7 +260,7 @@ pub fn fmtp_param<'a>(fmtp: &'a str, key: &str) -> Option<&'a str> {
         let Some((k, v)) = pair.split_once('=') else {
             continue;
         };
-        if k.trim() == key {
+        if k.trim().eq_ignore_ascii_case(key) {
             let v = v.trim();
             if !v.is_empty() {
                 return Some(v);
@@ -306,7 +306,11 @@ pub fn rtpmap_clock_rate(rtpmap: &str) -> Option<u32> {
     let mut fields = encoding.split('/');
     let _name = fields.next()?;
     let clock_str = fields.next()?;
-    clock_str.trim().parse::<u32>().ok()
+    let rate = clock_str.trim().parse::<u32>().ok()?;
+    if rate == 0 {
+        return None;
+    }
+    Some(rate)
 }
 
 #[cfg(feature = "std")]
@@ -734,6 +738,7 @@ mod tests {
         assert_eq!(rtpmap_clock_rate("H264/90000"), Some(90000));
         assert_eq!(rtpmap_clock_rate("malformed"), None);
         assert_eq!(rtpmap_clock_rate("96 H264/notanumber"), None);
-        assert_eq!(rtpmap_clock_rate(""), None);
+        assert_eq!(rtpmap_clock_rate("96 H264/0"), None);
+        assert_eq!(rtpmap_clock_rate("H264/0"), None);
     }
 }
