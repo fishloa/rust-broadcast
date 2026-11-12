@@ -48,6 +48,8 @@
 
 extern crate alloc;
 
+#[cfg(feature = "base64")]
+pub mod base64;
 pub mod bcd;
 pub mod ber;
 pub mod bits;

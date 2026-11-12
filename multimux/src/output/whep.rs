@@ -101,7 +101,7 @@ use transmux::TrackId;
 
 use broadcast_auth::Verifier;
 use broadcast_common::Parse;
-use broadcast_common::timescale::{Rounding, rescale_u64};
+use broadcast_common::Serialize;
 use media_plane::trunk::{SampleCursorItem, Trunk};
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::mpsc;
@@ -379,13 +379,13 @@ fn render_whep_answer(
         if i > 0 {
             sprop.push(',');
         }
-        sprop.push_str(&transmux::rtp::base64_encode(&sps.0));
+        sprop.push_str(&broadcast_common::base64::base64_encode(&sps.0));
     }
     for pps in &config.pps {
         if !sprop.is_empty() {
             sprop.push(',');
         }
-        sprop.push_str(&transmux::rtp::base64_encode(&pps.0));
+        sprop.push_str(&broadcast_common::base64::base64_encode(&pps.0));
     }
 
     let codec = AnswerCodec {
@@ -1001,22 +1001,8 @@ fn trunk_with_avc_track() -> Arc<Trunk> {
 /// RTP timestamps are modulo 2^32 (RFC 3550 §5.1), so the rescaled
 /// value wraps into the 32-bit range before it is placed in the header.
 fn rescale_to_90k(ticks: u64, from_timescale: u32) -> u32 {
-    let v = rescale_u64(ticks, from_timescale, VIDEO_CLOCK_RATE, Rounding::Nearest);
-    u32::try_from(v & u64::from(u32::MAX)).unwrap_or(0)
+    transmux::rtp::rescale_ts(ticks, from_timescale, VIDEO_CLOCK_RATE)
 }
-
-/// Byte offset of the `sequence number` field within the RTP fixed header
-/// (RFC 3550 §5.1: the 16-bit field immediately after the `V`/`P`/`X`/`CC`
-/// and `M`/`PT` octets).
-const RTP_SEQ_OFFSET: usize = 2;
-/// Width of the RTP `sequence number` field, in bytes (16 bits, RFC 3550
-/// §5.1).
-const RTP_SEQ_LEN: usize = 2;
-/// Byte offset of the `timestamp` field within the RTP fixed header
-/// (RFC 3550 §5.1: immediately after the sequence number).
-const RTP_TIMESTAMP_OFFSET: usize = RTP_SEQ_OFFSET + RTP_SEQ_LEN;
-/// Width of the RTP `timestamp` field, in bytes (32 bits, RFC 3550 §5.1).
-const RTP_TIMESTAMP_LEN: usize = 4;
 
 /// Overwrites an RTP packet's `sequence number` and `timestamp` fields on
 /// an already-serialized wire packet — see the module doc's "Continuous RTP
@@ -1076,10 +1062,14 @@ fn patch_seq_and_timestamp_parts(
     let mut v = Vec::with_capacity(len);
     v.extend_from_slice(header);
     v.extend_from_slice(payload);
-    v[RTP_SEQ_OFFSET..RTP_SEQ_OFFSET + RTP_SEQ_LEN].copy_from_slice(&seq.to_be_bytes());
-    v[RTP_TIMESTAMP_OFFSET..RTP_TIMESTAMP_OFFSET + RTP_TIMESTAMP_LEN]
-        .copy_from_slice(&timestamp.to_be_bytes());
-    Some(v)
+    // Use rtp-packet's header type to read/modify/write the fields rather
+    // than poking fixed byte offsets.
+    let mut pkt = rtp_packet::RtpPacket::parse(&v).ok()?;
+    pkt.sequence_number = seq;
+    pkt.timestamp = timestamp;
+    let mut out = vec![0u8; pkt.serialized_len()];
+    pkt.serialize_into(&mut out).ok()?;
+    Some(out)
 }
 
 /// The per-session negotiated state [`send_sample`] needs beyond the
@@ -1700,6 +1690,8 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
         for (i, b) in original.iter_mut().enumerate() {
             *b = u8::try_from(i).unwrap();
         }
+        // Keep the RTP version bits valid so the packet parses (RFC 3550 §5.1).
+        original[0] |= 0x80;
         let whole = patch_seq_and_timestamp(&original, 4242, 90_000).expect("full header");
         // Every split point, including inside the fixed header, gives the
         // identical result (the header/payload boundary is arbitrary).
@@ -1769,7 +1761,8 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
 
         // Exactly the fixed header (no payload) is the shortest acceptable
         // input — the boundary itself is inclusive.
-        let exact = vec![0u8; rtp_packet::FIXED_HEADER_LEN];
+        let mut exact = vec![0u8; rtp_packet::FIXED_HEADER_LEN];
+        exact[0] = 0x80; // valid RTP version
         let patched = patch_seq_and_timestamp(&exact, 42, 90_000)
             .expect("a bare fixed header is long enough to patch");
         assert_eq!(u16::from_be_bytes([patched[2], patched[3]]), 42);

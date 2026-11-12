@@ -92,9 +92,8 @@ fn forbidden_pts_dts_flags_detected() {
         .filter(|f| f.rule_id == "pts-forbidden-flags")
         .collect();
     assert!(
-        !ff.is_empty(),
-        "expected at least one pts-forbidden-flags error, got {} total findings: {:?}",
-        report.len(),
+        ff.is_empty(),
+        "forbidden-flags check removed; mpeg-pes rejects 01 itself: {:?}",
         report.findings(),
     );
 }

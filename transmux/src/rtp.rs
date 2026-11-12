@@ -64,7 +64,6 @@ use crate::TrackId;
 use alloc::collections::VecDeque;
 #[cfg(feature = "std")]
 use alloc::format;
-use alloc::string::String;
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 
@@ -675,8 +674,13 @@ fn sample_pts(track: &crate::media::Track, i: usize) -> u64 {
 }
 
 /// Rescale a tick count from `from` to `to` timescale (round to nearest).
-fn rescale_ts(ticks: u64, from: u32, to: u32) -> u32 {
-    rescale_u64(ticks, from, to, Rounding::Nearest) as u32
+///
+/// RTP timestamps are modulo 2^32 (RFC 3550 §5.1), so the result wraps
+/// into the 32-bit range rather than saturating or erroring.
+pub fn rescale_ts(ticks: u64, from: u32, to: u32) -> u32 {
+    let v = rescale_u64(ticks, from, to, Rounding::Nearest);
+    // Wrapping conversion: keep the low 32 bits (RFC 3550 §5.1).
+    (v & u64::from(u32::MAX)) as u32
 }
 
 /// Split a 4-byte length-prefixed IR video sample into its NAL slices.
@@ -827,8 +831,13 @@ fn sdp_video(
     let sprop = config
         .sps
         .iter()
-        .map(|n| base64_encode(&n.0))
-        .chain(config.pps.iter().map(|n| base64_encode(&n.0)))
+        .map(|n| broadcast_common::base64::base64_encode(&n.0))
+        .chain(
+            config
+                .pps
+                .iter()
+                .map(|n| broadcast_common::base64::base64_encode(&n.0)),
+        )
         .collect::<Vec<_>>()
         .join(",");
     let mut media = sdp_types::Media::new(
@@ -2193,29 +2202,10 @@ impl Mp2tPacketiser {
 // base64 + hex (RFC 4648) via the `base64` and `hex` crates
 // ---------------------------------------------------------------------------
 
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD;
-use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
-
-/// Decoder used for SDP `sprop-parameter-sets`, DRM headers and Smooth/DASH
-/// payloads: padding optional, trailing bits tolerated. Real producers emit
-/// unpadded and non-canonical base64; the crate default is strict.
-const LENIENT: GeneralPurpose = GeneralPurpose::new(
-    &base64::alphabet::STANDARD,
-    GeneralPurposeConfig::new()
-        .with_decode_padding_mode(DecodePaddingMode::Indifferent)
-        .with_decode_allow_trailing_bits(true),
-);
-
-/// Base64-encode bytes (RFC 4648 §4, with `=` padding).
-pub fn base64_encode(data: &[u8]) -> String {
-    STANDARD.encode(data)
-}
-
 /// Base64-decode a string (RFC 4648 §4); padding is optional and non-canonical
 /// trailing bits are tolerated; any other invalid input is an error.
-pub fn base64_decode(s: &str) -> Result<Vec<u8>> {
-    LENIENT.decode(s).map_err(|e| match e {
+pub(crate) fn base64_decode(s: &str) -> Result<Vec<u8>> {
+    broadcast_common::base64::base64_decode_lenient(s).map_err(|e| match e {
         base64::DecodeError::InvalidByte(_, byte) => Error::InvalidValue(InvalidValue {
             field: "base64",
             value: u64::from(byte),
@@ -2693,15 +2683,18 @@ mod tests {
     #[test]
     fn base64_round_trip() {
         let data = b"\x67\x42\xc0\x1e\xd9";
-        let enc = base64_encode(data);
+        let enc = broadcast_common::base64::base64_encode(data);
         assert_eq!(base64_decode(&enc).unwrap(), data);
     }
 
     #[test]
     fn base64_known_vector() {
         // RFC 4648 test vector.
-        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
-        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(
+            broadcast_common::base64::base64_encode(b"foobar"),
+            "Zm9vYmFy"
+        );
+        assert_eq!(broadcast_common::base64::base64_encode(b"fo"), "Zm8=");
         assert_eq!(base64_decode("Zm9vYmFy").unwrap(), b"foobar");
     }
 

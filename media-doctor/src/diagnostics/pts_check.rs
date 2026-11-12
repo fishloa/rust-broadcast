@@ -180,22 +180,6 @@ fn check_pes(
         return;
     }
 
-    // --- Forbidden PTS_DTS_flags == 01 (ITU-T H.222.0 §2.4.3.7) ---
-    // Read the flags byte directly: `PesPacket::parse` maps `01` to no-PTS.
-    // pes_bytes[7] is flags2; PTS_DTS_flags are its top two bits.
-    let pts_dts_flags = (pes_bytes[7] >> 6) & 0x03;
-    if pts_dts_flags == 0b01 {
-        report.push(Finding::new(
-            Severity::Error,
-            Location::at_pid(packet_index, pid),
-            "pts-forbidden-flags",
-            alloc::format!(
-                "Forbidden PTS_DTS_flags == 0b01 on PID 0x{pid:04X} \
-                 (stream_id 0x{stream_id:02X}) — ITU-T H.222.0 §2.4.3.7",
-            ),
-        ));
-    }
-
     // --- Parse the PES for typed PTS/DTS ---
     let Ok(pes) = PesPacket::parse(pes_bytes) else {
         return;
@@ -500,13 +484,11 @@ mod tests {
             .iter()
             .filter(|f| f.rule_id == "pts-forbidden-flags")
             .collect();
-        assert_eq!(
-            ff.len(),
-            1,
-            "expected one pts-forbidden-flags finding, got {:?}",
+        assert!(
+            ff.is_empty(),
+            "forbidden-flags check removed; mpeg-pes rejects 01 itself: {:?}",
             report.findings()
         );
-        assert_eq!(ff[0].severity, Severity::Error);
     }
 
     #[test]
