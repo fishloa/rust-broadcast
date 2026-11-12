@@ -3,7 +3,7 @@ Accept: application/sdp
 CSeq: 1
 User-Agent: rtsp-runtime
 ===
-SETUP rtsp://<loopback>/streamid=0 RTSP/1.0
+SETUP rtsp://<loopback>/test/streamid=0 RTSP/1.0
 CSeq: 2
 Transport: RTP/AVP/TCP;unicast;interleaved=0-1
 User-Agent: rtsp-runtime
