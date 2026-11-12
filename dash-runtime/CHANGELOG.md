@@ -6,6 +6,7 @@ All notable changes to dash-runtime will be documented in this file.
 ### Added
 - `mpd::base_url` (`resolve`, `resolve_chain`, `first_forbidden_char`): RFC 3986 §5 URL-reference and `BaseURL`-chain resolution over `url::Url::join`, moved from `transmux`, whose only caller was this crate; `mpd::urls` now resolves through it instead of `transmux` (#2355).
 ### Fixed
+- `TimelineIndex::build` still computed (and could fail with `AddressError::Overflow` on) the clock advance after the last `S`, where the new value is never used; it is now computed only when another `S` follows.
 - `TimelineIndex::build` computed the run span (`@d * count`) even when a negative-`@r` run was cut by the next `S@t` and the span was unused, so a legal timeline with a huge `@d` failed with `AddressError::Overflow`; the span is now computed only when it advances the clock.
 ### Changed
 - BREAKING: `SegmentPlan::index_at_or_before`, `available_from_us` and `available_until_us` return `Result<Option<_>, AddressError>` instead of folding an addressing failure into `None`.

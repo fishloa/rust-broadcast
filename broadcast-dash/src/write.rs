@@ -2,8 +2,8 @@
 
 use std::io;
 
-use quick_xml::Writer;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
+use quick_xml::{Reader, Writer};
 
 use crate::duration::format_iso8601_duration;
 use crate::error::MpdError;
@@ -11,11 +11,71 @@ use crate::model::*;
 use crate::parse::{INFINITY_TOKEN, NEGATIVE_INFINITY_TOKEN};
 use crate::xs_datetime::format_xs_datetime;
 
+const PREFIX_SEPARATOR: char = ':';
+const PREFIX_DVB: &str = "dvb";
+const PREFIX_XLINK: &str = "xlink";
+const PREFIX_URLPARAM: &str = "urlparam";
+const PREFIX_CENC: &str = "cenc";
+const PREFIX_XMLNS: &str = "xmlns";
 const NS_MPD: &str = "urn:mpeg:dash:schema:mpd:2011";
 const NS_DVB: &str = "urn:dvb:dash:dash-extensions:2014-1";
 const NS_CENC: &str = "urn:mpeg:cenc:2013";
 const NS_XLINK: &str = "http://www.w3.org/1999/xlink";
 const NS_URLPARAM: &str = "urn:mpeg:dash:schema:urlparam:2014";
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Prefixes {
+    dvb: bool,
+    xlink: bool,
+    urlparam: bool,
+    cenc: bool,
+}
+
+impl Prefixes {
+    fn emitted_by(xml: &str) -> Result<Self, MpdError> {
+        let mut found = Self::default();
+        let mut reader = Reader::from_str(xml);
+        loop {
+            let event = reader.read_event().map_err(|e| MpdError::Invalid {
+                what: "written MPD",
+                detail: e.to_string(),
+            })?;
+            let start = match &event {
+                Event::Eof => return Ok(found),
+                Event::Start(e) | Event::Empty(e) => e,
+                _ => continue,
+            };
+            found.note(start.name().as_ref())?;
+            for attr in start.attributes() {
+                let attr = attr.map_err(|e| MpdError::Invalid {
+                    what: "written MPD",
+                    detail: e.to_string(),
+                })?;
+                found.note(attr.key.as_ref())?;
+            }
+        }
+    }
+
+    fn note(&mut self, qname: &str) -> Result<(), MpdError> {
+        let Some((prefix, _)) = qname.split_once(PREFIX_SEPARATOR) else {
+            return Ok(());
+        };
+        match prefix {
+            PREFIX_DVB => self.dvb = true,
+            PREFIX_XLINK => self.xlink = true,
+            PREFIX_URLPARAM => self.urlparam = true,
+            PREFIX_CENC => self.cenc = true,
+            PREFIX_XMLNS => {}
+            other => {
+                return Err(MpdError::Invalid {
+                    what: "namespace prefix",
+                    detail: other.to_owned(),
+                });
+            }
+        }
+        Ok(())
+    }
+}
 
 impl Mpd {
     /// Render the model as an MPD XML document.
@@ -25,136 +85,27 @@ impl Mpd {
     /// practice) and [`MpdError::Invalid`] if a stored instant cannot be
     /// formatted.
     pub fn to_xml(&self) -> Result<String, MpdError> {
+        let bare = self.render(&Prefixes::default())?;
+        let used = Prefixes::emitted_by(&bare)?;
+        if used == Prefixes::default() {
+            Ok(bare)
+        } else {
+            self.render(&used)
+        }
+    }
+
+    fn render(&self, ns: &Prefixes) -> Result<String, MpdError> {
         let mut w = Writer::new_with_indent(Vec::new(), b' ', 2);
         let _ = w.write_event(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)));
-        let mut use_cenc = false;
-        let mut use_xlink = false;
-        let mut use_dvb = false;
-        let mut use_urlparam = false;
-        let mut scan_desc = |d: &Descriptor| {
-            if d.default_kid.is_some() || d.pssh.is_some() {
-                use_cenc = true;
-            }
-            if d.url_query.is_some() {
-                use_urlparam = true;
-            }
-        };
-        for d in &self.essential_properties {
-            scan_desc(d);
-        }
-        for d in &self.supplemental_properties {
-            scan_desc(d);
-        }
-        for p in &self.periods {
-            if p.xlink.is_some() {
-                use_xlink = true;
-            }
-            for es in &p.event_streams {
-                if es.xlink.is_some() {
-                    use_xlink = true;
-                }
-                for b in &es.base_urls {
-                    if b.priority.is_some() || b.weight.is_some() {
-                        use_dvb = true;
-                    }
-                }
-                for d in es
-                    .essential_properties
-                    .iter()
-                    .chain(es.supplemental_properties.iter())
-                    .chain(es.events.iter().flat_map(|e| {
-                        e.essential_properties
-                            .iter()
-                            .chain(e.supplemental_properties.iter())
-                    }))
-                {
-                    scan_desc(d);
-                }
-            }
-            for pre in &p.preselections {
-                for d in pre
-                    .audio_channel_configurations
-                    .iter()
-                    .chain(pre.essential_properties.iter())
-                    .chain(pre.supplemental_properties.iter())
-                    .chain(pre.accessibilities.iter())
-                    .chain(pre.roles.iter())
-                    .chain(pre.ratings.iter())
-                    .chain(pre.viewpoints.iter())
-                {
-                    scan_desc(d);
-                }
-            }
-            for b in &p.base_urls {
-                if b.priority.is_some() || b.weight.is_some() {
-                    use_dvb = true;
-                }
-            }
-            for a in &p.adaptation_sets {
-                if a.xlink.is_some() {
-                    use_xlink = true;
-                }
-                for b in &a.base_urls {
-                    if b.priority.is_some() || b.weight.is_some() {
-                        use_dvb = true;
-                    }
-                }
-                for r in &a.representations {
-                    for b in &r.base_urls {
-                        if b.priority.is_some() || b.weight.is_some() {
-                            use_dvb = true;
-                        }
-                    }
-                }
-                for d in a
-                    .roles
-                    .iter()
-                    .chain(a.accessibilities.iter())
-                    .chain(a.content_protections.iter())
-                    .chain(a.essential_properties.iter())
-                    .chain(a.supplemental_properties.iter())
-                    .chain(a.audio_channel_configurations.iter())
-                    .chain(a.inband_event_streams.iter())
-                {
-                    scan_desc(d);
-                }
-                for r in &a.representations {
-                    for d in r
-                        .content_protections
-                        .iter()
-                        .chain(r.essential_properties.iter())
-                        .chain(r.supplemental_properties.iter())
-                        .chain(r.audio_channel_configurations.iter())
-                        .chain(r.inband_event_streams.iter())
-                    {
-                        scan_desc(d);
-                    }
-                }
-            }
-            for b in &p.base_urls {
-                if b.priority.is_some() || b.weight.is_some() {
-                    use_dvb = true;
-                }
-            }
-            if p.xlink.is_some() {
-                use_xlink = true;
-            }
-        }
-        for b in &self.base_urls {
-            if b.priority.is_some() || b.weight.is_some() {
-                use_dvb = true;
-            }
-        }
-
         let mut root = BytesStart::new("MPD");
         root.push_attribute(("xmlns", NS_MPD));
-        if use_dvb {
+        if ns.dvb {
             root.push_attribute(("xmlns:dvb", NS_DVB));
         }
-        if use_xlink {
+        if ns.xlink {
             root.push_attribute(("xmlns:xlink", NS_XLINK));
         }
-        if use_urlparam {
+        if ns.urlparam {
             root.push_attribute(("xmlns:urlparam", NS_URLPARAM));
         }
         if !self.profiles.is_empty() {
@@ -164,8 +115,7 @@ impl Mpd {
         if let Some(min_buffer) = self.min_buffer_time.map(format_iso8601_duration) {
             root.push_attribute(("minBufferTime", min_buffer.as_str()));
         }
-        let cenc_needed = use_cenc;
-        if cenc_needed {
+        if ns.cenc {
             root.push_attribute(("xmlns:cenc", NS_CENC));
         }
         if let Some(v) = self.availability_start_time_us {
@@ -448,10 +398,16 @@ fn write_resync(w: &mut Writer<Vec<u8>>, r: &Resync) -> Result<(), MpdError> {
     w.write_event(Event::Empty(e)).map_err(io_err)
 }
 
-fn write_label(w: &mut Writer<Vec<u8>>, name: &str, text: &str) -> Result<(), MpdError> {
-    w.write_event(Event::Start(BytesStart::new(name)))
-        .map_err(io_err)?;
-    w.write_event(Event::Text(BytesText::new(text)))
+fn write_label(w: &mut Writer<Vec<u8>>, name: &str, label: &Label) -> Result<(), MpdError> {
+    let mut e = BytesStart::new(name);
+    if label.id != 0 {
+        e.push_attribute(("id", label.id.to_string().as_str()));
+    }
+    if let Some(v) = &label.lang {
+        e.push_attribute(("lang", v.as_str()));
+    }
+    w.write_event(Event::Start(e)).map_err(io_err)?;
+    w.write_event(Event::Text(BytesText::new(&label.text)))
         .map_err(io_err)?;
     w.write_event(Event::End(BytesEnd::new(name)))
         .map_err(io_err)
@@ -1131,12 +1087,7 @@ fn write_adaptation_set(w: &mut Writer<Vec<u8>>, a: &AdaptationSet) -> Result<()
         write_descriptor(w, "InbandEventStream", d)?;
     }
     for l in &a.labels {
-        w.write_event(Event::Start(BytesStart::new("Label")))
-            .map_err(io_err)?;
-        w.write_event(Event::Text(BytesText::new(l)))
-            .map_err(io_err)?;
-        w.write_event(Event::End(BytesEnd::new("Label")))
-            .map_err(io_err)?;
+        write_label(w, "Label", l)?;
     }
     for p in &a.producer_reference_times {
         write_producer_reference_time(w, p)?;

@@ -806,3 +806,9 @@ fn negative_r_cut_by_next_t_does_not_overflow_on_a_huge_duration() {
     assert_eq!(ix.len(), 3);
     assert_eq!(ix.segment(2).unwrap().time, u64::MAX - 1);
 }
+
+#[test]
+fn the_last_run_with_a_huge_duration_does_not_overflow_an_unused_clock() {
+    let ix = TimelineIndex::build(&timeline(&[(Some(0), None, u64::MAX, 1)]), 1, None).unwrap();
+    assert_eq!(ix.len(), 2);
+}

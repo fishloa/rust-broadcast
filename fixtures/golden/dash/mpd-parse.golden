@@ -1516,7 +1516,11 @@ Ok(
                         inband_event_streams: [],
                         group_labels: [],
                         labels: [
-                            "Francais",
+                            Label {
+                                id: 0,
+                                lang: None,
+                                text: "Francais",
+                            },
                         ],
                         producer_reference_times: [],
                         resyncs: [],
@@ -17390,7 +17394,11 @@ Ok(
                         inband_event_streams: [],
                         group_labels: [],
                         labels: [
-                            "Main English",
+                            Label {
+                                id: 1,
+                                lang: None,
+                                text: "Main English",
+                            },
                         ],
                         producer_reference_times: [],
                         resyncs: [],
@@ -17464,7 +17472,11 @@ Ok(
                         inband_event_streams: [],
                         group_labels: [],
                         labels: [
-                            "Main Spanish",
+                            Label {
+                                id: 1,
+                                lang: None,
+                                text: "Main Spanish",
+                            },
                         ],
                         producer_reference_times: [],
                         resyncs: [],
@@ -17884,7 +17896,11 @@ Ok(
                         inband_event_streams: [],
                         group_labels: [],
                         labels: [
-                            "Main English",
+                            Label {
+                                id: 1,
+                                lang: None,
+                                text: "Main English",
+                            },
                         ],
                         producer_reference_times: [],
                         resyncs: [],
@@ -17958,7 +17974,11 @@ Ok(
                         inband_event_streams: [],
                         group_labels: [],
                         labels: [
-                            "Main Spanish",
+                            Label {
+                                id: 1,
+                                lang: None,
+                                text: "Main Spanish",
+                            },
                         ],
                         producer_reference_times: [],
                         resyncs: [],

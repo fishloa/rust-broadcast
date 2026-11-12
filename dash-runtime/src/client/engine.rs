@@ -2024,7 +2024,7 @@ impl DashClient {
                     name: set
                         .labels
                         .first()
-                        .cloned()
+                        .map(|l| l.text.clone())
                         .or_else(|| set.lang.clone())
                         .unwrap_or_else(|| first_rep.id.clone()),
                     language: set.lang.clone(),
