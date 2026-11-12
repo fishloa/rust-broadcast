@@ -92,7 +92,10 @@ pub fn bind_udp(addr: SocketAddr, config: &UdpConfig) -> io::Result<UdpSocket> {
     };
 
     let mut spec = dvb_stream::udp::SocketSpec::new(SocketAddr::new(bind_ip, addr.port()))
-        .with_reuse(config.reuse_addr, config.reuse_addr && SHARE_PORT_NEEDS_REUSE_PORT);
+        .with_reuse(
+            config.reuse_addr,
+            config.reuse_addr && SHARE_PORT_NEEDS_REUSE_PORT,
+        );
     if let Some(bytes) = config.recv_buffer {
         spec = spec.with_recv_buffer_size(bytes);
     }
@@ -188,6 +191,17 @@ mod tests {
         let mut buf = [0u8; 16];
         let (n, _) = rx.recv_from(&mut buf).unwrap();
         assert_eq!(&buf[..n], b"\x47ts");
+    }
+
+    #[test]
+    fn reuse_addr_allows_a_second_bind_on_the_same_multicast_port() {
+        let cfg = UdpConfig {
+            reuse_addr: true,
+            ..UdpConfig::default()
+        };
+        let first = bind_udp("239.255.42.42:0".parse().unwrap(), &cfg).unwrap();
+        let addr = first.local_addr().unwrap();
+        bind_udp(addr, &cfg).unwrap();
     }
 
     #[test]

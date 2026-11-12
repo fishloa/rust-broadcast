@@ -452,6 +452,13 @@ mod tests {
     // Test 1 — aligned 188-byte passthrough
     // ------------------------------------------------------------------
     #[test]
+    fn lone_sync_byte_accepted_by_resync_not_confirmed() {
+        let buf = [TS_SYNC_BYTE];
+        assert_eq!(resync(&buf), Some(0));
+        assert_eq!(resync_confirmed(&buf), None);
+    }
+
+    #[test]
     fn aligned_188_passthrough() {
         let packets: Vec<_> = (0u8..5).map(|i| ts_packet(i + 1)).collect();
         let data = concat_ts(&packets);
