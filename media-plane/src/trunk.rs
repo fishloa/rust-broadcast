@@ -2122,19 +2122,6 @@ impl Trunk {
             .map(|e| e.sequence_number)
     }
 
-    /// Every segment currently resident in the log, oldest first.
-    ///
-    /// The random-access counterpart of [`Trunk::subscribe_segments`], for a
-    /// `ServedEgress` that renders a whole window (a manifest, a catch-up
-    /// range) rather than consuming segments one at a time: it needs *what
-    /// is in the log now*, not a moving read position, and taking a cursor
-    /// for it would make the window depend on when the cursor happened to be
-    /// created. The entries are `Clone` and hold `bytes::Bytes`, so this is
-    /// a refcount bump per segment, not a copy of the media.
-    pub fn segments(&self) -> Vec<SegmentEntry> {
-        self.lock_state().segments.entries.iter().cloned().collect()
-    }
-
     /// This program's current complete track set — see
     /// [`TrunkWriter::set_tracks`] for how it is set/replaced. Empty until
     /// the first `set_tracks` call (a freshly-minted `Trunk` announces no
