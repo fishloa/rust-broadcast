@@ -165,17 +165,30 @@ pub struct RtspIngestSession {
     torn_down: bool,
 }
 
-fn queue_placed(pending: &mut VecDeque<SessionEvent>, placed: Vec<transmux::AlignOut>) {
+fn queue_placed(pending: &mut VecDeque<SessionEvent>, placed: Vec<transmux::AlignOut>) -> usize {
+    let mut notices = 0;
     for out in placed {
-        if let transmux::AlignOut::Sample(track_id, sample) = out {
-            pending.push_back(SessionEvent::Sample {
-                program: ProgramId(0),
-                track_id,
-                retention: RetentionClass::Timed,
-                sample,
-            });
+        match out {
+            transmux::AlignOut::Sample(track_id, sample) => {
+                pending.push_back(SessionEvent::Sample {
+                    program: ProgramId(0),
+                    track_id,
+                    retention: RetentionClass::Timed,
+                    sample,
+                });
+            }
+            transmux::AlignOut::Discontinuity => {
+                notices += 1;
+                tracing::warn!("rtsp: the A/V timeline stepped (track alignment discontinuity)");
+            }
+            transmux::AlignOut::State(state) => {
+                notices += 1;
+                tracing::warn!(?state, "rtsp: the A/V placement rule changed");
+            }
+            _ => {}
         }
     }
+    notices
 }
 
 /// Default RTSP keepalive interval when a server declares a session timeout
@@ -948,6 +961,17 @@ mod tests {
 
     fn nz(n: usize) -> NonZeroUsize {
         NonZeroUsize::new(n).unwrap()
+    }
+
+    #[test]
+    fn queue_placed_reports_timeline_steps_and_state_changes() {
+        let mut pending = VecDeque::new();
+        let placed = vec![
+            transmux::AlignOut::State(transmux::AvSync::Provisional),
+            transmux::AlignOut::Discontinuity,
+        ];
+        assert_eq!(queue_placed(&mut pending, placed), 2);
+        assert!(pending.is_empty());
     }
 
     fn trunk_config() -> TrunkConfig {

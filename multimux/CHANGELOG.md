@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Fixed
+- The RTSP pull logs (warn) the aligner's timeline-step `Discontinuity` and placement-rule `State` outputs instead of dropping them silently; `media_plane::SessionEvent` has no equivalent to forward.
 - The Smooth pull keeps logging the engine's `Output::Discontinuity` rather than forwarding it: `media_plane::SessionEvent` has no discontinuity event, so unlike `broadcast-client` (`Event::Discontinuity`) the trunk gets no marker; pinned by a unit test.
 ### Changed
 - The RTSP pull and the raw RTP/UDP source read SDP media sections through `transmux::sdp_track` (the rule `broadcast-client` already used): the played payload type is the first listed one with a usable `a=rtpmap`/`a=fmtp` (previously always the first listed, with the section's first `rtpmap`/`fmtp` whatever payload type they named), an H.264 section without `sprop-parameter-sets` is accepted with in-band parameter sets, an audio section whose `a=rtpmap` names another codec is rejected, and the H.264 coded size comes from the SPS. Recorded row by row in `fixtures/golden/sdp-tracks/multimux.txt`.
