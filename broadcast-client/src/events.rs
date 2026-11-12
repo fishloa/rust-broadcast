@@ -1043,7 +1043,7 @@ pub struct Config {
     /// Both thresholds must be non-zero; a threshold of `u64::MAX` never fires in that direction.
     /// A threshold below the stream's frame spacing or reordering depth fires on ordinary
     /// samples and drops the other tracks' samples as stale.
-    pub timeline_jump: Option<crate::timeline::TimelineJumpConfig>,
+    pub timeline_jump: Option<transmux::TimelineJumpConfig>,
     /// Live TS-over-HTTP: the first media of each connection is held behind one
     /// [`Event::Tracks`] listing every PMT-declared stream until all have resolved or a hold
     /// limit is reached. This is the most input bytes held; must be at least
@@ -1216,7 +1216,7 @@ impl Default for Config {
             max_queued_events: DEFAULT_MAX_QUEUED_EVENTS,
             record_buffer_inputs: false,
             max_recorded_buffer_inputs: DEFAULT_MAX_RECORDED_BUFFER_INPUTS,
-            timeline_jump: Some(crate::timeline::TimelineJumpConfig::default()),
+            timeline_jump: Some(transmux::TimelineJumpConfig::default()),
             tracks_hold_max_input_bytes: DEFAULT_TRACKS_HOLD_MAX_INPUT_BYTES,
             tracks_hold_quiet_input_bytes: DEFAULT_TRACKS_HOLD_QUIET_INPUT_BYTES,
             tracks_hold_max_media_us: DEFAULT_TRACKS_HOLD_MAX_MEDIA_US,

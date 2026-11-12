@@ -211,6 +211,7 @@ pub mod rebase;
 pub mod repackage;
 #[cfg(test)]
 pub(crate) mod test_bits;
+pub mod timeline;
 pub use rtp_packet::rtcp;
 pub mod rtmp;
 pub mod rtp;
@@ -426,6 +427,9 @@ pub use segments::{FileTypeBox, MediaDataBox, SegmentTypeBox};
 pub use smooth::{
     FOURCC_AACL, FOURCC_H264, SMOOTH_TIMESCALE, SmoothFragment, SmoothOutput, SmoothPackager,
     SmoothStreamType, TFXD_UUID, TfxdBox,
+};
+pub use timeline::{
+    DEFAULT_JUMP_BACKWARD_US, DEFAULT_JUMP_FORWARD_SLACK_US, JumpDetector, TimelineJumpConfig,
 };
 // Note: `broadcast_smooth::StreamType` (the Smooth `StreamIndex@Type`) is not
 // re-exported at the crate root — it would collide with `mp4esds::StreamType`

@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Timeline-jump detector (`timeline` module): `JumpDetector`, `TimelineJumpConfig`, `DEFAULT_JUMP_BACKWARD_US`, `DEFAULT_JUMP_FORWARD_SLACK_US` moved from `broadcast-client`; per-track discontinuity detection with configurable thresholds.
 ### Fixed
 - DASH `AdaptationSet@lang` is now canonicalised to a BCP 47 tag via `broadcast-common::lang::bcp47_language`, so `fre`/`fra` share one AdaptationSet.
 - `aac_asc::parse_adts_header` now rejects non-ADTS headers: layer must be `00`, sampling frequency index must not be reserved/escape, and `frame_length` must be at least the header length. `adts_header_len` now lives only in `aac_asc` (taking the parsed header); `sample_aes` and `ts_demux` call it instead of keeping their own copies.
