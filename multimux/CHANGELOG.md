@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Fixed
+- The RTSP pull warns again when a Sender Report rejection of the same kind recurs after the reports recovered: an RTCP frame that is neither rejected nor skew-refused clears the remembered rejection (audit A10-6).
 - A track change the segmenter cannot apply (no fMP4-muxable track, or a failed rebuild) leaves the published track set and timescale moves at the ones the installed segmenter carries, instead of routing later samples by a set its muxer rejects (audit A10-5).
 - Push outputs (RTMP/SRT/RTSP) renegotiate their track selection on the in-band `SampleCursorItem::TracksChanged`, after every sample published under the previous set has been sent, instead of comparing `Trunk::track_generation` before draining the cursor (audit A10-1).
 - `ProgramSegmenter::try_new` takes its cursor, track generation and track set in one `Trunk` call, so a concurrent `set_tracks` can no longer leave its marker ignored (audit A10-3). An fMP4 rebuild starts the new init generation at the segment after the last one flushed or still queued, not the trunk's last closed segment, so a stalled DVR pin no longer moves the init (and the HLS discontinuity) onto an earlier segment (audit A10-2).
