@@ -20,7 +20,7 @@ use crate::output::{Output, OutputKind};
 use crate::route::{MAX_SUBTITLE_RENDITIONS, RouteHandle, subtitle_playlist_uri};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum HlsFlavour {
+pub(crate) enum HlsFlavour {
     LowLatency,
     Segmented,
 }
@@ -108,7 +108,7 @@ impl HlsOutput {
     /// Serves the media playlist at `/{playlist_name}` instead of the
     /// default `/media.m3u8` (`master.m3u8`'s `#EXT-X-STREAM-INF` reference
     /// follows suit — see `master_playlist`).
-    pub fn new(flavour: HlsFlavour, playlist_name: impl Into<String>) -> Self {
+    pub(crate) fn new(flavour: HlsFlavour, playlist_name: impl Into<String>) -> Self {
         HlsOutput {
             flavour,
             playlist_name: playlist_name.into(),
@@ -125,9 +125,6 @@ impl HlsOutput {
     }
     pub fn ts_hls(playlist_name: impl Into<String>) -> Self {
         Self::segmented(playlist_name)
-    }
-    pub fn flavour(&self) -> HlsFlavour {
-        self.flavour
     }
 }
 
