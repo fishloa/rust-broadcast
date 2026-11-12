@@ -46,27 +46,9 @@ use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use crate::support::listener;
 use crate::support::shared_it::{nz, poll_until_extinf};
 use listener::bind_tcp;
+use test_fixtures::process::wait_for_port;
 
 const ADMIN_TOKEN: &str = "admin-test-token";
-
-/// Waits until `addr` accepts a bare TCP connection — the origin's own
-/// listener bind happens inside the freshly-`tokio::spawn`ed server task, so
-/// a request sent immediately after `tokio::spawn` can race it (especially
-/// the *admin* listener, bound after the media one and after every startup
-/// route's `add_route` call). A generous hang guard, not a latency
-/// assertion.
-async fn wait_for_port(addr: SocketAddr) {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        if tokio::net::TcpStream::connect(addr).await.is_ok() {
-            return;
-        }
-        if tokio::time::Instant::now() >= deadline {
-            panic!("nothing ever accepted a connection on {addr} within the hang guard");
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-}
 
 // --- The "instant" synthetic Custom input scheme ---
 

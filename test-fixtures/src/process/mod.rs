@@ -21,8 +21,9 @@
 
 use std::fs::{self, File};
 use std::io;
-use std::net::{TcpListener, UdpSocket};
+use std::net::{SocketAddr, TcpListener, UdpSocket};
 use std::path::PathBuf;
+
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
@@ -99,6 +100,39 @@ pub fn tool_available(tool: &str, arg: &str) -> bool {
         .arg(arg)
         .output()
         .is_ok_and(|o| o.status.success())
+}
+
+/// Like [`tool_available`], but also accepts a tool that prints its version and
+/// exits non-zero (e.g. `srt-live-transmit -version`).
+#[must_use]
+pub fn tool_available_lenient(tool: &str, arg: &str) -> bool {
+    Command::new(tool)
+        .arg(arg)
+        .output()
+        .is_ok_and(|o| o.status.success() || !o.stdout.is_empty() || !o.stderr.is_empty())
+}
+
+/// Locate `bin` on `PATH`, returning its full path.
+#[must_use]
+pub fn which(bin: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(bin))
+        .find(|p| p.is_file())
+}
+
+/// Wait until `addr` accepts a bare TCP connection.
+pub async fn wait_for_port(addr: SocketAddr) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        if tokio::net::TcpStream::connect(addr).await.is_ok() {
+            return;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            panic!("nothing ever accepted a connection on {addr} within the hang guard");
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
 }
 
 /// First port of the range [`free_udp_port`] hands out; below every OS

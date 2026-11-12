@@ -46,14 +46,6 @@ use multimux::output::OutputKind;
 use crate::support::shared_it::{fixture_path, poll_until_extinf};
 use crate::support::udp_origin::{UdpTsOrigin, spawn_udp_ts_origin};
 
-/// Locate `bin` on `PATH`, returning its full path.
-fn which(bin: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|dir| dir.join(bin))
-        .find(|p| p.is_file())
-}
-
 fn have_oracle(bin: &str) -> bool {
     let probe = |arg: &str| {
         output_bounded(Command::new(bin).arg(arg), PROBE_DEADLINE).inspect_err(|e| {
@@ -257,7 +249,7 @@ async fn ffprobe_recognises_served_segment_as_mpegts() {
 async fn mediastreamvalidator_accepts_served_ts_hls_playlist() {
     // Locate the validator via `which` (default install is
     // `/usr/local/bin/mediastreamvalidator`, but it may be elsewhere on PATH).
-    let Some(validator) = which("mediastreamvalidator") else {
+    let Some(validator) = test_fixtures::process::which("mediastreamvalidator") else {
         eprintln!(
             "SKIP mediastreamvalidator_accepts_served_ts_hls_playlist: mediastreamvalidator not on PATH (Apple Additional Tools for Xcode; macOS only)"
         );

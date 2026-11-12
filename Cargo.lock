@@ -483,8 +483,10 @@ dependencies = [
  "erased-serde",
  "hex",
  "iso-639",
+ "jiff",
  "quick-xml",
  "serde",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -4285,6 +4287,7 @@ version = "0.1.0"
 dependencies = [
  "hex",
  "serde_json",
+ "tokio",
  "wait-timeout",
 ]
 

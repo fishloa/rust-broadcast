@@ -16,7 +16,6 @@ mod datetime;
 mod display_sample;
 mod error_variants;
 mod hostile;
-mod http_date;
 mod iso_examples;
 mod list_expand;
 mod live_captures;
