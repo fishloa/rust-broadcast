@@ -758,21 +758,25 @@ impl ProgramServing {
     }
 
     fn set_init(&self, bytes: impl Into<Bytes>) {
+        let first_seq = self
+            .trunk
+            .last_closed_segment()
+            .unwrap_or(media_plane::ids::SegmentSeq::new(0))
+            .saturating_next();
+        self.set_init_from(bytes, first_seq);
+    }
+
+    fn set_init_from(&self, bytes: impl Into<Bytes>, first_seq: media_plane::ids::SegmentSeq) {
         let bytes = bytes.into();
         if self.dvr_recording.load(Ordering::SeqCst)
             && self.ll_hls.init_bytes().as_ref() != Some(&bytes)
         {
-            let first_seq = self
-                .trunk
-                .last_closed_segment()
-                .unwrap_or(media_plane::ids::SegmentSeq::new(0))
-                .saturating_next();
             self.init_log.lock().push(crate::dvr::InitGeneration {
                 first_seq,
                 init: bytes.clone(),
             });
         }
-        self.ll_hls.set_init(bytes);
+        self.ll_hls.set_init_from(bytes, first_seq);
     }
 
     /// The init changes the recorder has yet to archive under, oldest first;
@@ -1914,6 +1918,21 @@ impl RouteHandle {
         }
     }
 
+    pub(crate) fn set_init_from(
+        &self,
+        program: ProgramId,
+        bytes: impl Into<Bytes>,
+        first_segment: media_plane::ids::SegmentSeq,
+    ) {
+        match self.serving(program) {
+            Some(serving) => serving.set_init_from(bytes, first_segment),
+            None => tracing::warn!(
+                ?program,
+                "RouteHandle::set_init_from: program not published yet"
+            ),
+        }
+    }
+
     /// Hand the caption streams detected in `program`'s video to its master
     /// playlist. `false` when the program is not published yet (the caller
     /// retries).
@@ -2489,6 +2508,46 @@ mod program_registry_tests {
             }
         }
         names
+    }
+
+    /// **A10-2.** A new init generation begins at the segment the caller names,
+    /// not at the trunk's last closed segment: a segment closed but not yet
+    /// published (stalled DVR pin) still belongs to the old init.
+    #[test]
+    fn set_init_from_starts_the_new_init_at_the_named_segment() {
+        let info = |seq: u32, byte: u8| transmux::ll_hls::SegmentInfo {
+            bytes: vec![byte; 8],
+            duration: 4.0,
+            segment_seq: seq,
+            part_count: 1,
+        };
+        let route = RouteHandle::new(4.0, 500, 8);
+        route.publish_new_program(ProgramId(1));
+        route.set_init(ProgramId(1), vec![0xA1; 4]);
+        route.add_segment(ProgramId(1), info(1, 0x11)).expect("add");
+        route.set_init_from(
+            ProgramId(1),
+            vec![0xB2; 4],
+            media_plane::ids::SegmentSeq::new(3),
+        );
+        route.add_segment(ProgramId(1), info(2, 0x12)).expect("add");
+        route.add_segment(ProgramId(1), info(3, 0x13)).expect("add");
+        let names = advertised_names(&route, ProgramId(1));
+        let maps: Vec<&String> = names.iter().filter(|n| n.starts_with("init")).collect();
+        let segment_names: Vec<&String> = names.iter().filter(|n| n.starts_with("seg")).collect();
+        assert_eq!(segment_names.len(), 3, "{names:?}");
+        let position = |needle: &String| names.iter().position(|n| n == needle);
+        let second_init = maps.last().and_then(|m| position(m)).expect("second init");
+        assert_eq!(
+            position(segment_names[1]).map(|p| p < second_init),
+            Some(true),
+            "segment 2 must still be served under the first init: {names:?}"
+        );
+        assert_eq!(
+            position(segment_names[2]).map(|p| p > second_init),
+            Some(true),
+            "segment 3 is the first under the second init: {names:?}"
+        );
     }
 
     /// Audit r09-C2 (#1030), restart with no DVR: a second "process" (a fresh

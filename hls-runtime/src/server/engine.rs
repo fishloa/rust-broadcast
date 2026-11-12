@@ -2003,6 +2003,20 @@ impl HlsOrigin {
     /// codec string cannot be built) make `CODECS` unknown (omitted, and any
     /// value from an earlier init is dropped), never guessed at.
     pub fn set_init(&self, bytes: impl Into<Bytes>) {
+        let next_seq = self
+            .trunk
+            .last_closed_segment()
+            .unwrap_or(SegmentSeq::new(0))
+            .saturating_next();
+        self.set_init_from(bytes, next_seq);
+    }
+
+    /// [`Self::set_init`] for a caller that knows which segment the new init
+    /// really starts at: segments the segmenter has closed but not yet
+    /// published (a stalled `ArchiveOverrun::StallIngest` pin) are not in the
+    /// trunk, so the trunk's own last-closed segment would put the init (and
+    /// its discontinuity) too early.
+    pub fn set_init_from(&self, bytes: impl Into<Bytes>, first_segment: SegmentSeq) {
         let bytes = bytes.into();
         if self.container == Container::Fmp4 {
             let derived = transmux::Fmp4Demux::new()
@@ -2030,14 +2044,7 @@ impl HlsOrigin {
                 *locked(&self.track_specs) = Vec::new();
             }
         }
-        // The first segment not yet closed is the first one cut against
-        // these bytes: call this before publishing it.
-        let next_seq = self
-            .trunk
-            .last_closed_segment()
-            .unwrap_or(SegmentSeq::new(0))
-            .saturating_next();
-        locked(&self.init).set(bytes, next_seq);
+        locked(&self.init).set(bytes, first_segment);
     }
 
     /// Tell the origin which tracks it serves, so the master playlist can

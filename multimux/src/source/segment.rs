@@ -750,11 +750,13 @@ impl ProgramSegmenter {
         target_duration_secs: f64,
         part_target_ms: u32,
     ) -> Option<Self> {
-        let tracks = route_handle.with_declared_audio_profiles(trunk.tracks().to_vec());
+        let (cursor, track_generation, published_tracks) =
+            trunk.subscribe_from_backlog_with_tracks();
+        let tracks = route_handle.with_declared_audio_profiles(published_tracks.to_vec());
         if tracks.is_empty() {
             return None;
         }
-        let timescale_moves = timescale_moves(&trunk.tracks(), &tracks);
+        let timescale_moves = timescale_moves(&published_tracks, &tracks);
         let segment_writer = trunk.segment_writer()?;
         // Seeded from `next_sequence_number` rather than the plain
         // `with_part_target` constructor's implicit `1`: this `Trunk` may
@@ -867,13 +869,13 @@ impl ProgramSegmenter {
             // consumer's shape: it exists to segment everything a program
             // ever publishes, not just what arrives after it happens to be
             // built.
-            cursor: trunk.subscribe_from_backlog(),
+            cursor,
             segment_writer,
             seg,
             mark_next_discontinuous: false,
             next_timeline_ns: 0,
-            track_generation: trunk.track_generation(),
-            published_tracks: trunk.tracks(),
+            track_generation,
+            published_tracks,
             gate_video_only: false,
             pending: VecDeque::new(),
             pending_since: None,
@@ -1412,9 +1414,22 @@ impl ProgramSegmenter {
                     let part_cuts = old_seg.take_ready_part_cuts();
                     self.note_leader_segments(&segments);
                     let leader_parts = self.leader_parts(&part_cuts, &parts);
+                    let last_flushed = segments.iter().map(|s| s.segment_seq.value()).max();
                     self.publish_in_stream_order(parts, segments);
                     self.feed_followers(part_cuts, &leader_parts);
                     self.finish_followers();
+                    let last_queued = self
+                        .pending
+                        .iter()
+                        .filter_map(|p| match p {
+                            PendingPublish::Segment(entry) => Some(entry.sequence_number.value()),
+                            PendingPublish::Part(_) => None,
+                        })
+                        .chain(last_flushed)
+                        .chain(trunk.last_closed_segment().map(SegmentSeq::value))
+                        .max();
+                    let new_init_first_segment =
+                        SegmentSeq::new(last_queued.unwrap_or(0)).saturating_next();
 
                     match LlHlsSegmenter::with_part_target_at(
                         muxable,
@@ -1426,7 +1441,7 @@ impl ProgramSegmenter {
                     ) {
                         Ok(seg) => {
                             if let Ok(init) = seg.init_segment() {
-                                route_handle.set_init(program, init);
+                                route_handle.set_init_from(program, init, new_init_first_segment);
                             }
                             self.seg = AnySegmenter::Fmp4(seg);
                             self.part_target_published = None;

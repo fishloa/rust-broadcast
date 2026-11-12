@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 ### Fixed
+- Push outputs (RTMP/SRT/RTSP) renegotiate their track selection on the in-band `SampleCursorItem::TracksChanged`, after every sample published under the previous set has been sent, instead of comparing `Trunk::track_generation` before draining the cursor (audit A10-1).
+- `ProgramSegmenter::try_new` takes its cursor, track generation and track set in one `Trunk` call, so a concurrent `set_tracks` can no longer leave its marker ignored (audit A10-3). An fMP4 rebuild starts the new init generation at the segment after the last one flushed or still queued, not the trunk's last closed segment, so a stalled DVR pin no longer moves the init (and the HLS discontinuity) onto an earlier segment (audit A10-2).
 - `ProgramSegmenter` switches track set on the in-band `SampleCursorItem::TracksChanged` rather than by comparing `Trunk::track_generation` before draining, so samples published before a Smooth quality switch are never muxed under the new init (audit A9-4).
 - An fMP4 rebuild after a track change gates only video until the new level's first sync sample; audio no longer dropped for that interval (audit A9-3).
 - The RTSP pull warns about rejected Sender Reports only when the rejection starts or its reason changes, and logs the rest at debug, instead of one warning per Sender Report (audit A9-5).
