@@ -53,9 +53,27 @@ seg-1-INSTANCE-2.m4s
 #EXT-X-PART:DURATION=0.066666667,URI="part-1-INSTANCE-3.4.m4s"
 #EXTINF:1,
 seg-1-INSTANCE-3.m4s
-#EXT-X-PRELOAD-HINT:TYPE=PART,URI="part-1-INSTANCE-4.0.m4s"
+#EXT-X-PART:DURATION=0.033333333,URI="part-1-INSTANCE-4.0.m4s",INDEPENDENT=YES
+#EXTINF:0.033333333,
+seg-1-INSTANCE-4.m4s
+#EXT-X-GAP
+#EXTINF:1,
+seg-1-INSTANCE-5.m4s
+#EXT-X-PRELOAD-HINT:TYPE=PART,URI="part-1-INSTANCE-6.0.m4s"
 ==== 2 empty track set: DASH MPD ====
-(no MPD: 503)
+<?xml version="1.0" encoding="utf-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" profiles="urn:mpeg:dash:profile:isoff-live:2011" type="dynamic" minBufferTime="PT2S" availabilityStartTime="2023-11-14T22:13:20Z" publishTime="2023-11-14T22:13:24.033Z" minimumUpdatePeriod="PT1S" timeShiftBufferDepth="PT5S">
+  <Period id="0" start="PT0S" duration="PT4S">
+    <AdaptationSet id="0" contentType="video" mimeType="video/mp4" segmentAlignment="true" startWithSAP="1" par="4:3">
+      <InbandEventStream schemeIdUri="urn:scte:scte35:2013:bin"/>
+      <Role schemeIdUri="urn:mpeg:dash:role:2011" value="main"/>
+      <Representation id="1" mimeType="video/mp4" codecs="avc1.420029" bandwidth="1" width="640" height="480" sar="1:1">
+        <SegmentTemplate timescale="90000" duration="90000" startNumber="1" initialization="init-$RepresentationID$.mp4" media="seg-$RepresentationID$-$Number$.m4s"/>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>
+
 ==== 3 video+audio again: HLS media playlist ====
 #EXTM3U
 #EXT-X-VERSION:6
@@ -73,25 +91,40 @@ seg-1-INSTANCE-2.m4s
 seg-1-INSTANCE-3.m4s
 #EXTINF:0.033333333,
 seg-1-INSTANCE-4.m4s
+#EXT-X-GAP
 #EXTINF:1,
 seg-1-INSTANCE-5.m4s
-#EXT-X-PART:DURATION=0.233333333,URI="part-1-INSTANCE-6.0.m4s",INDEPENDENT=YES
-#EXT-X-PART:DURATION=0.233333333,URI="part-1-INSTANCE-6.1.m4s"
-#EXT-X-PART:DURATION=0.233333333,URI="part-1-INSTANCE-6.2.m4s"
-#EXT-X-PART:DURATION=0.233333333,URI="part-1-INSTANCE-6.3.m4s"
-#EXT-X-PART:DURATION=0.066666667,URI="part-1-INSTANCE-6.4.m4s"
+#EXT-X-DISCONTINUITY
 #EXTINF:1,
 seg-1-INSTANCE-6.m4s
-#EXT-X-PRELOAD-HINT:TYPE=PART,URI="part-1-INSTANCE-7.0.m4s"
+#EXTINF:1,
+seg-1-INSTANCE-7.m4s
+#EXT-X-PART:DURATION=0.233333333,URI="part-1-INSTANCE-8.0.m4s",INDEPENDENT=YES
+#EXT-X-PART:DURATION=0.233333333,URI="part-1-INSTANCE-8.1.m4s"
+#EXT-X-PART:DURATION=0.233333333,URI="part-1-INSTANCE-8.2.m4s"
+#EXT-X-PART:DURATION=0.233333333,URI="part-1-INSTANCE-8.3.m4s"
+#EXT-X-PART:DURATION=0.066666667,URI="part-1-INSTANCE-8.4.m4s"
+#EXTINF:1,
+seg-1-INSTANCE-8.m4s
+#EXT-X-PRELOAD-HINT:TYPE=PART,URI="part-1-INSTANCE-9.0.m4s"
 ==== 3 video+audio again: DASH MPD ====
 <?xml version="1.0" encoding="utf-8"?>
-<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" profiles="urn:mpeg:dash:profile:isoff-live:2011" type="dynamic" minBufferTime="PT2S" availabilityStartTime="2023-11-14T22:13:20Z" publishTime="2023-11-14T22:13:25.033Z" minimumUpdatePeriod="PT1S" timeShiftBufferDepth="PT6S">
-  <Period id="0" start="PT0S">
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" profiles="urn:mpeg:dash:profile:isoff-live:2011" type="dynamic" minBufferTime="PT2S" availabilityStartTime="2023-11-14T22:13:20Z" publishTime="2023-11-14T22:13:27.033Z" minimumUpdatePeriod="PT1S" timeShiftBufferDepth="PT8S">
+  <Period id="0" start="PT0S" duration="PT4S">
     <AdaptationSet id="0" contentType="video" mimeType="video/mp4" segmentAlignment="true" startWithSAP="1" par="4:3">
       <InbandEventStream schemeIdUri="urn:scte:scte35:2013:bin"/>
       <Role schemeIdUri="urn:mpeg:dash:role:2011" value="main"/>
       <Representation id="1" mimeType="video/mp4" codecs="avc1.420029" bandwidth="1" width="640" height="480" sar="1:1">
         <SegmentTemplate timescale="90000" duration="90000" startNumber="1" initialization="init-$RepresentationID$.mp4" media="seg-$RepresentationID$-$Number$.m4s"/>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+  <Period id="1" start="PT5S">
+    <AdaptationSet id="0" contentType="video" mimeType="video/mp4" segmentAlignment="true" startWithSAP="1" par="4:3">
+      <InbandEventStream schemeIdUri="urn:scte:scte35:2013:bin"/>
+      <Role schemeIdUri="urn:mpeg:dash:role:2011" value="main"/>
+      <Representation id="1" mimeType="video/mp4" codecs="avc1.420029" bandwidth="1" width="640" height="480" sar="1:1">
+        <SegmentTemplate timescale="90000" duration="90000" startNumber="6" initialization="init-$RepresentationID$.mp4" media="seg-$RepresentationID$-$Number$.m4s"/>
       </Representation>
     </AdaptationSet>
   </Period>
