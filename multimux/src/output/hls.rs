@@ -89,7 +89,7 @@ pub const IFRAME_PLAYLIST_NAME: &str = "iframe.m3u8";
 /// [`RouteHandle`]. Init/segment/part byte ranges are the origin's shared
 /// resource route, not this one — see the module docs.
 ///
-/// [`Self::new`] serves the media playlist under a caller-chosen filename
+/// [`Self::low_latency`] and [`Self::segmented`] serve the media playlist under a caller-chosen filename
 /// (`crate::config::Config::playlist_name`) — `master.m3u8` always points at
 /// whichever name this instance was built with. [`Default`] (and therefore
 /// [`OutputKind::build`]) uses [`DEFAULT_PLAYLIST_NAME`].
@@ -152,7 +152,7 @@ impl Output for HlsOutput {
     /// Routes (relative — mounted by the origin under `/{stream}/`):
     /// - `GET /master.m3u8` — minimal single-variant master playlist.
     /// - `GET /{playlist_name}` — LL-HLS media playlist, blocking-reload
-    ///   aware (`/media.m3u8` unless [`HlsOutput::new`] configured a
+    ///   aware (`/media.m3u8` unless [`HlsOutput::low_latency`] or [`HlsOutput::segmented`] configured a
     ///   different name).
     fn manifest_routes(&self, route: Arc<RouteHandle>) -> Router {
         let state = HlsState {
