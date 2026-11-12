@@ -144,7 +144,7 @@ fn retry_backoff(attempt: u32) -> Duration {
 /// [`PullScheduler::pump`], not here.
 fn resource_fetch(
     http: HttpClient,
-    creds: Option<AuthState>,
+    creds: Option<std::sync::Arc<tokio::sync::Mutex<AuthState>>>,
     fetch_id: HlsFetchId,
     url: String,
     read_timeout: Duration,
@@ -157,9 +157,11 @@ fn resource_fetch(
     crate::source::pull::PendingFetch {
         delay,
         fut: Box::pin(async move {
+            let mut guard = creds.as_ref().map(|c| c.blocking_lock());
+            let creds_ref = guard.as_mut().map(|g| &mut **g);
             let (result, retry_after) = tokio::time::timeout(
                 read_timeout,
-                fetch_bytes_capped_with_retry_after(&http, &url, creds.as_ref(), cap),
+                fetch_bytes_capped_with_retry_after(&http, &url, creds_ref, cap),
             )
             .await
             .unwrap_or_else(|_| {
@@ -197,7 +199,7 @@ fn resource_fetch(
 /// issue is not transient; see the W14 note below).
 fn playlist_fetch(
     http: HttpClient,
-    creds: Option<AuthState>,
+    creds: Option<std::sync::Arc<tokio::sync::Mutex<AuthState>>>,
     url: String,
     read_timeout: Duration,
 ) -> crate::source::pull::PendingFetch<HlsFetchId> {
@@ -207,7 +209,7 @@ fn playlist_fetch(
 /// [`playlist_fetch`] dispatched after `delay`, the server's `Retry-After`.
 fn playlist_fetch_after(
     http: HttpClient,
-    creds: Option<AuthState>,
+    creds: Option<std::sync::Arc<tokio::sync::Mutex<AuthState>>>,
     url: String,
     read_timeout: Duration,
     delay: Duration,
@@ -215,12 +217,14 @@ fn playlist_fetch_after(
     crate::source::pull::PendingFetch {
         delay,
         fut: Box::pin(async move {
+            let mut guard = creds.as_ref().map(|c| c.blocking_lock());
+            let creds_ref = guard.as_mut().map(|g| &mut **g);
             let (result, retry_after) = tokio::time::timeout(
                 read_timeout,
                 fetch_bytes_capped_with_retry_after(
                     &http,
                     &url,
-                    creds.as_ref(),
+                    creds_ref,
                     crate::source::MAX_HTTP_BODY_BYTES,
                 ),
             )
@@ -417,7 +421,7 @@ impl Dialer for HlsPullDialer {
 /// Performs `GET url` (answering a Digest challenge if `creds` names one),
 /// returning an error on any non-2xx status.
 #[cfg(test)]
-async fn fetch_bytes(client: &HttpClient, url: &str, creds: Option<&AuthState>) -> Result<Vec<u8>> {
+async fn fetch_bytes(client: &HttpClient, url: &str, creds: Option<&mut AuthState>) -> Result<Vec<u8>> {
     fetch_bytes_capped_with_retry_after(client, url, creds, crate::source::MAX_HTTP_BODY_BYTES)
         .await
         .0
@@ -428,7 +432,7 @@ async fn fetch_bytes(client: &HttpClient, url: &str, creds: Option<&AuthState>) 
 async fn fetch_bytes_capped_with_retry_after(
     client: &HttpClient,
     url: &str,
-    creds: Option<&AuthState>,
+    creds: Option<&mut AuthState>,
     cap: usize,
 ) -> (
     core::result::Result<Vec<u8>, MultimuxError>,
@@ -500,7 +504,7 @@ impl PlaylistPacing {
     }
 }
 
-fn build_client(route: &HlsPullRoute) -> Result<(HttpClient, Url, Option<AuthState>)> {
+fn build_client(route: &HlsPullRoute) -> Result<(HttpClient, Url, Option<std::sync::Arc<tokio::sync::Mutex<AuthState>>>)> {
     let parsed = Url::parse(&route.target.url).map_err(|e| MultimuxError::Connect {
         reason: format!(
             "bad HLS-pull URL {}: {e}",
@@ -510,7 +514,7 @@ fn build_client(route: &HlsPullRoute) -> Result<(HttpClient, Url, Option<AuthSta
     let credentials =
         resolve_credentials(route.target.auth.clone(), credentials_from_url(&parsed)?);
     let clean_url = strip_userinfo(&parsed)?;
-    let credentials = scope_credentials(credentials, &clean_url);
+    let credentials = scope_credentials(credentials, &clean_url).map(|s| std::sync::Arc::new(tokio::sync::Mutex::new(s)));
     let http = HttpClient::builder()
         .redirect(crate::source::redirect_policy(true))
         .build()
@@ -1391,11 +1395,11 @@ Content-Length: {over}
                 Action::WaitMs(ms) => tokio::time::sleep(Duration::from_millis(ms)).await,
                 Action::FetchPlaylist { .. } => {
                     let url = action.playlist_request_url().expect("playlist URL");
-                    let bytes = fetch_bytes(&http, &url, credentials.as_ref()).await?;
+                    let bytes = fetch_bytes(&http, &url, Some(credentials.as_ref().map(|c| c.blocking_lock()).as_mut().map(|g| &mut *g).unwrap())).await?;
                     session.feed((HlsFetchId::Playlist, bytes.as_slice()), now)?;
                 }
                 Action::FetchResource { id, url, .. } => {
-                    let bytes = fetch_bytes(&http, &url, credentials.as_ref()).await?;
+                    let bytes = fetch_bytes(&http, &url, Some(credentials.as_ref().map(|c| c.blocking_lock()).as_mut().map(|g| &mut *g).unwrap())).await?;
                     session.feed((HlsFetchId::Resource(id), bytes.as_slice()), now)?;
                 }
                 _ => {}
@@ -1484,13 +1488,13 @@ Content-Length: {over}
                 Action::WaitMs(ms) => tokio::time::sleep(Duration::from_millis(ms)).await,
                 Action::FetchPlaylist { .. } => {
                     let url = action.playlist_request_url().expect("playlist URL");
-                    let bytes = fetch_bytes(&http, &url, credentials.as_ref())
+                    let bytes = fetch_bytes(&http, &url, Some(credentials.as_ref().map(|c| c.blocking_lock()).as_mut().map(|g| &mut *g).unwrap()))
                         .await
                         .expect("fetch");
                     driver.feed((HlsFetchId::Playlist, bytes.as_slice()), now);
                 }
                 Action::FetchResource { id, url, .. } => {
-                    let bytes = fetch_bytes(&http, &url, credentials.as_ref())
+                    let bytes = fetch_bytes(&http, &url, Some(credentials.as_ref().map(|c| c.blocking_lock()).as_mut().map(|g| &mut *g).unwrap()))
                         .await
                         .expect("fetch");
                     driver.feed((HlsFetchId::Resource(id), bytes.as_slice()), now);

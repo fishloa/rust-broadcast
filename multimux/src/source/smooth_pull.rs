@@ -282,7 +282,7 @@ fn status_error(what: &str, status: StatusCode, retry_after: Option<Duration>) -
 async fn fetch_one_bytes(
     client: &HttpClient,
     url: &str,
-    creds: Option<&AuthState>,
+    creds: Option<&mut AuthState>,
     what: &str,
 ) -> std::result::Result<Vec<u8>, FetchError> {
     let response = authenticated_get(client, url, creds)
@@ -345,7 +345,7 @@ type SmoothPendingFetch = crate::source::pull::PendingFetch<SmoothFetch>;
 
 fn pending_fetch(
     http: HttpClient,
-    creds: Option<AuthState>,
+    mut creds: Option<AuthState>,
     id: RequestId,
     kind: FetchKind,
     url: String,
@@ -361,7 +361,7 @@ fn pending_fetch(
             use crate::source::pull::FetchResult;
             let fetched = tokio::time::timeout(
                 read_timeout,
-                fetch_one_bytes(&http, &url, creds.as_ref(), what),
+                fetch_one_bytes(&http, &url, creds.as_mut(), what),
             )
             .await;
             let (status, result) = match fetched {
@@ -812,7 +812,8 @@ mod tests {
                 continue;
             };
             let now = Timestamp::from_nanos(0);
-            let (id, is_manifest, b) = fetch_action(&http, credentials.as_ref(), action).await;
+            let mut credentials = credentials;
+            let (id, is_manifest, b) = fetch_action(&http, credentials.as_mut(), action).await;
             let input = if is_manifest {
                 SmoothInput::Manifest(id, b.as_slice())
             } else {
@@ -922,7 +923,7 @@ mod tests {
         let (url, server, _media) = start_fixture_server(None).await;
         let route = SmoothPullRoute::new("smooth-cam", url);
 
-        let (http, clean_url, credentials) = build_client(&route).expect("build client");
+        let (http, clean_url, mut credentials) = build_client(&route).expect("build client");
         let mut dialer = SmoothPullDialer {
             manifest_url: clean_url,
         };
@@ -952,7 +953,8 @@ mod tests {
                 continue;
             };
             let now = Timestamp::from_nanos(0);
-            let (id, is_manifest, b) = fetch_action(&http, credentials.as_ref(), action).await;
+            let mut credentials = credentials;
+            let (id, is_manifest, b) = fetch_action(&http, credentials.as_mut(), action).await;
             let input = if is_manifest {
                 SmoothInput::Manifest(id, b.as_slice())
             } else {
@@ -1120,7 +1122,7 @@ mod tests {
 
     async fn fetch_action(
         http: &HttpClient,
-        creds: Option<&AuthState>,
+        creds: Option<&mut AuthState>,
         action: Action,
     ) -> (RequestId, bool, Vec<u8>) {
         let (id, is_manifest, url) = match action {

@@ -222,12 +222,12 @@ fn header_text(headers: &HeaderMap, name: &HeaderName) -> Option<String> {
         .map(|v| v.trim().to_owned())
 }
 
-async fn send(net: &Net, req: &Request) -> Result<reqwest::Response> {
+async fn send(net: &mut Net, req: &Request) -> Result<reqwest::Response> {
     if req.with_credentials {
         authenticated_get_with(
             &net.http,
             &req.url,
-            net.credentials.as_ref(),
+            net.credentials.as_mut(),
             &req.headers(),
         )
         .await
@@ -267,7 +267,7 @@ pub(super) fn ranged_body(
     body.get(start..end).map(<[u8]>::to_vec)
 }
 
-pub(super) async fn exchange(net: &Net, req: &Request, sent_us: u64) -> (DashFetch, FetchResult) {
+pub(super) async fn exchange(net: &mut Net, req: &Request, sent_us: u64) -> (DashFetch, FetchResult) {
     let mut fetch = DashFetch::new(req.target, sent_us);
     let response = match send(net, req).await {
         Ok(response) => response,
@@ -344,12 +344,12 @@ pub(super) async fn exchange(net: &Net, req: &Request, sent_us: u64) -> (DashFet
 }
 
 pub(super) fn spawn_fetch(net: &Net, req: Request) -> PendingFetch<DashFetch> {
-    let net = net.clone();
+    let mut net = net.clone();
     PendingFetch {
         delay: Duration::ZERO,
         fut: Box::pin(async move {
             let sent_us = net.clock.mono_us();
-            match tokio::time::timeout(req.timeout, exchange(&net, &req, sent_us)).await {
+            match tokio::time::timeout(req.timeout, exchange(&mut net, &req, sent_us)).await {
                 Ok(done) => done,
                 Err(_) => {
                     let error = MultimuxError::Connect {

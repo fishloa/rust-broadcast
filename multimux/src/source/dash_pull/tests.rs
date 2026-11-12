@@ -1607,7 +1607,7 @@ mod exchange {
         (format!("http://{addr}"), task)
     }
 
-    async fn run(net: &Net, req: Request) -> (DashFetch, FetchResult) {
+    async fn run(net: &mut Net, req: Request) -> (DashFetch, FetchResult) {
         drive::exchange(net, &req, 0).await
     }
 

@@ -79,7 +79,7 @@ serde = ["dep:serde"]
 # enabling it only adds the `client::tokio_client` module alongside it.
 
 [dev-dependencies]
-# Loopback mock HTTP servers for `hls-runtime/tests/it/tokio_client_auth.rs` (tokio is
+# Loopback mock HTTP servers (tokio is
 # already a dependency; these are features only).
 tokio             = { version = "1", features = ["net", "io-util", "rt", "macros", "time", "test-util"] }
 test-fixtures     = { path = "../test-fixtures" }

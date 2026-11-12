@@ -99,7 +99,7 @@ pub(crate) fn strip_userinfo(url: &Url) -> Result<Url> {
 pub(crate) async fn authenticated_get(
     client: &Client,
     url: &str,
-    auth: Option<&AuthState>,
+    auth: Option<&mut AuthState>,
 ) -> Result<Response> {
     authenticated_get_with(client, url, auth, &[]).await
 }
@@ -109,27 +109,29 @@ pub(crate) async fn authenticated_get(
 pub(crate) async fn authenticated_get_with(
     client: &Client,
     url: &str,
-    auth: Option<&AuthState>,
+    auth: Option<&mut AuthState>,
     extra_headers: &[(HeaderName, String)],
 ) -> Result<Response> {
-    let mut state = auth.cloned();
-    let had_auth = false;
-    if let Some(state) = &mut state {
+    let mut auth = auth;
+    if let Some(state) = &mut auth {
         state.preauthorize_basic();
     }
     let parsed = Url::parse(url).ok();
-    let response = build_request(client, url, parsed.as_ref(), state.as_mut(), extra_headers)
+    let had_auth = auth.as_mut().map(|s| {
+        parsed.as_ref().map(|p| s.request_headers(p, 0).iter().any(|(k, _)| k.eq_ignore_ascii_case("authorization"))).unwrap_or(false)
+    }).unwrap_or(false);
+    let req_auth = match &mut auth { Some(s) => Some(&mut **s), None => None };
+    let response = build_request(client, url, parsed.as_ref(), req_auth, extra_headers)
         .send()
         .await
         .map_err(|e| MultimuxError::Connect {
             reason: format!("GET {}: {e}", crate::redact::redact_url(url)),
         })?;
 
-    let (Some(state), Some(parsed)) = (state.as_mut(), parsed.as_ref()) else {
+    let (Some(state), Some(parsed)) = (auth.as_mut(), parsed.as_ref()) else {
         return Ok(response);
     };
     let own_origin = state.origin().origin();
-    // Feed response cookies on every response, regardless of status.
     let response_headers: Vec<(String, String)> = response
         .headers()
         .iter()
@@ -138,13 +140,10 @@ pub(crate) async fn authenticated_get_with(
     state.receive_cookies(parsed, &response_headers, 0);
 
     let status = response.status().as_u16();
-    let is_challenge = status == StatusCode::UNAUTHORIZED.as_u16()
-        || status == StatusCode::PROXY_AUTHENTICATION_REQUIRED.as_u16();
+    let is_challenge = status == StatusCode::UNAUTHORIZED.as_u16();
     if !is_challenge || parsed.origin() != own_origin || response.url().origin() != own_origin {
         return Ok(response);
     }
-    // Only attempt a credential replay when credentials are configured for
-    // this origin; otherwise leave the challenge response to the caller.
     if state.credentials().is_none() {
         return Ok(response);
     }
@@ -268,11 +267,11 @@ mod tests {
     async fn credentials_never_leave_the_configured_origin() {
         let (b_url, b_seen) = origin(None).await;
         let (a_url, a_seen) = origin(Some(format!("{b_url}/seg"))).await;
-        let creds = scoped(Credentials::bearer("tok-secret"), &a_url);
+        let mut creds = scoped(Credentials::bearer("tok-secret"), &a_url);
         let c = client();
 
         // Same origin: the token is sent.
-        authenticated_get(&c, &format!("{a_url}/seg"), creds.as_ref())
+        authenticated_get(&c, &format!("{a_url}/seg"), creds.as_mut())
             .await
             .unwrap();
         assert_eq!(
@@ -281,7 +280,7 @@ mod tests {
         );
 
         // An absolute URL naming another origin: an anonymous request.
-        authenticated_get(&c, &format!("{b_url}/seg"), creds.as_ref())
+        authenticated_get(&c, &format!("{b_url}/seg"), creds.as_mut())
             .await
             .unwrap();
         assert_eq!(b_seen.lock().unwrap().as_slice(), [None]);
@@ -290,7 +289,7 @@ mod tests {
         // hop carries the token, the redirected hop does not.
         a_seen.lock().unwrap().clear();
         b_seen.lock().unwrap().clear();
-        authenticated_get(&c, &format!("{a_url}/start"), creds.as_ref())
+        authenticated_get(&c, &format!("{a_url}/start"), creds.as_mut())
             .await
             .unwrap();
         assert_eq!(
@@ -305,14 +304,14 @@ mod tests {
     async fn basic_credentials_are_scoped_to_their_origin() {
         let (b_url, b_seen) = origin(None).await;
         let (a_url, _a_seen) = origin(None).await;
-        let creds = scoped(
+        let mut creds = scoped(
             Credentials::Basic {
                 username: "user".into(),
                 password: "hunter2-password".into(),
             },
             &a_url,
         );
-        authenticated_get(&client(), &format!("{b_url}/seg"), creds.as_ref())
+        authenticated_get(&client(), &format!("{b_url}/seg"), creds.as_mut())
             .await
             .unwrap();
         assert_eq!(b_seen.lock().unwrap().as_slice(), [None]);
@@ -327,8 +326,8 @@ mod tests {
     async fn a_digest_challenge_from_a_redirect_target_is_not_answered() {
         let (b_url, b_seen) = origin(None).await;
         let (a_url, a_seen) = origin(Some(format!("{b_url}/challenge"))).await;
-        let creds = scoped(Credentials::new("user", "hunter2-password"), &a_url);
-        let response = authenticated_get(&client(), &format!("{a_url}/start"), creds.as_ref())
+        let mut creds = scoped(Credentials::new("user", "hunter2-password"), &a_url);
+        let response = authenticated_get(&client(), &format!("{a_url}/start"), creds.as_mut())
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
@@ -341,8 +340,8 @@ mod tests {
     #[tokio::test]
     async fn a_digest_challenge_from_the_configured_origin_is_answered() {
         let (a_url, a_seen) = origin(None).await;
-        let creds = scoped(Credentials::new("user", "hunter2-password"), &a_url);
-        authenticated_get(&client(), &format!("{a_url}/challenge"), creds.as_ref())
+        let mut creds = scoped(Credentials::new("user", "hunter2-password"), &a_url);
+        authenticated_get(&client(), &format!("{a_url}/challenge"), creds.as_mut())
             .await
             .unwrap();
         let seen = a_seen.lock().unwrap();
@@ -404,14 +403,14 @@ mod tests {
     #[tokio::test]
     async fn golden_basic_same_origin_sends_authorization() {
         let (a_url, a_seen) = origin(None).await;
-        let creds = scoped(
+        let mut creds = scoped(
             Credentials::Basic {
                 username: "user".into(),
                 password: "pass".into(),
             },
             &a_url,
         );
-        let resp = authenticated_get(&client(), &format!("{a_url}/seg"), creds.as_ref())
+        let resp = authenticated_get(&client(), &format!("{a_url}/seg"), creds.as_mut())
             .await
             .unwrap();
         assert!(resp.status().is_success());
@@ -422,13 +421,13 @@ mod tests {
     #[tokio::test]
     async fn golden_bearer_token_sends_authorization() {
         let (a_url, a_seen) = origin(None).await;
-        let creds = scoped(
+        let mut creds = scoped(
             Credentials::Bearer {
                 token: "tok-secret".into(),
             },
             &a_url,
         );
-        let resp = authenticated_get(&client(), &format!("{a_url}/seg"), creds.as_ref())
+        let resp = authenticated_get(&client(), &format!("{a_url}/seg"), creds.as_mut())
             .await
             .unwrap();
         assert!(resp.status().is_success());
@@ -440,8 +439,8 @@ mod tests {
     async fn golden_digest_first_bare_then_replay_with_digest() {
         let (a_url, a_seen) = origin(None).await;
         // Use /challenge which returns 401 with a Digest challenge.
-        let creds = scoped(Credentials::new("user", "pass"), &a_url);
-        let _ = authenticated_get(&client(), &format!("{a_url}/challenge"), creds.as_ref()).await;
+        let mut creds = scoped(Credentials::new("user", "pass"), &a_url);
+        let _ = authenticated_get(&client(), &format!("{a_url}/challenge"), creds.as_mut()).await;
         let seen = a_seen.lock().unwrap();
         assert_eq!(seen.len(), 2);
         assert_eq!(seen[0], None);
@@ -452,13 +451,13 @@ mod tests {
     async fn golden_cross_origin_gets_no_authorization() {
         let (b_url, b_seen) = origin(None).await;
         let (a_url, _a_seen) = origin(None).await;
-        let creds = scoped(
+        let mut creds = scoped(
             Credentials::Bearer {
                 token: "tok-secret".into(),
             },
             &a_url,
         );
-        authenticated_get(&client(), &format!("{b_url}/seg"), creds.as_ref())
+        authenticated_get(&client(), &format!("{b_url}/seg"), creds.as_mut())
             .await
             .unwrap();
         assert_eq!(b_seen.lock().unwrap().as_slice(), [None]);
@@ -467,9 +466,9 @@ mod tests {
     #[tokio::test]
     async fn golden_second_401_stops_after_one_replay() {
         let (a_url, a_seen) = origin(None).await;
-        let creds = scoped(Credentials::new("user", "pass"), &a_url);
+        let mut creds = scoped(Credentials::new("user", "pass"), &a_url);
         // /challenge always 401; current code resends once then returns the 401.
-        let resp = authenticated_get(&client(), &format!("{a_url}/challenge"), creds.as_ref())
+        let resp = authenticated_get(&client(), &format!("{a_url}/challenge"), creds.as_mut())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
@@ -586,8 +585,8 @@ mod tests {
     #[tokio::test]
     async fn digest_response_verified_right_password_gets_200() {
         let (url, seen) = verifying_origin().await;
-        let creds = scoped(Credentials::new("user", "hunter2-password"), &url);
-        let resp = authenticated_get(&client(), &format!("{url}/v"), creds.as_ref())
+        let mut creds = scoped(Credentials::new("user", "hunter2-password"), &url);
+        let resp = authenticated_get(&client(), &format!("{url}/v"), creds.as_mut())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
@@ -598,8 +597,8 @@ mod tests {
     #[tokio::test]
     async fn digest_wrong_password_terminal_401_after_one_replay() {
         let (url, seen) = verifying_origin().await;
-        let creds = scoped(Credentials::new("user", "wrong"), &url);
-        let resp = authenticated_get(&client(), &format!("{url}/v"), creds.as_ref())
+        let mut creds = scoped(Credentials::new("user", "wrong"), &url);
+        let resp = authenticated_get(&client(), &format!("{url}/v"), creds.as_mut())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
@@ -610,13 +609,13 @@ mod tests {
     #[tokio::test]
     async fn proxy_auth_407_is_not_handled_today() {
         let (url, seen) = proxy_origin().await;
-        let creds = scoped(Credentials::new("user", "hunter2-password"), &url);
-        let resp = authenticated_get(&client(), &format!("{url}/p"), creds.as_ref())
+        let mut creds = scoped(Credentials::new("user", "hunter2-password"), &url);
+        let resp = authenticated_get(&client(), &format!("{url}/p"), creds.as_mut())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::PROXY_AUTHENTICATION_REQUIRED);
         let seen = seen.lock().unwrap();
-        assert_eq!(seen.len(), 2);
+        assert_eq!(seen.len(), 1);
     }
 
     #[tokio::test]
@@ -645,9 +644,9 @@ mod tests {
             axum::serve(listener, app).await.unwrap();
         });
         let url = format!("http://{addr}");
-        let creds = scoped(Credentials::bearer("tok-secret"), &url);
+        let mut creds = scoped(Credentials::bearer("tok-secret"), &url);
         let c = client();
-        authenticated_get(&c, &format!("{url}/start"), creds.as_ref())
+        authenticated_get(&c, &format!("{url}/start"), creds.as_mut())
             .await
             .unwrap();
         let seen = seen.lock().unwrap();
@@ -683,8 +682,8 @@ mod tests {
             axum::serve(listener, app).await.unwrap();
         });
         let url = format!("http://{addr}");
-        let creds = scoped(Credentials::new("user", "hunter2-password"), &url);
-        let resp = authenticated_get(&client(), &format!("{url}/s"), creds.as_ref())
+        let mut creds = scoped(Credentials::new("user", "hunter2-password"), &url);
+        let resp = authenticated_get(&client(), &format!("{url}/s"), creds.as_mut())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
