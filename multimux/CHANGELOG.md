@@ -16,6 +16,10 @@
 - The RTSP push builds its ANNOUNCE session description with `rtsp_runtime::sdp::session_description` and supplies only its `m=` block, instead of assembling `v=`/`o=`/`s=`/`c=` itself; the body is byte-identical (`fixtures/golden/rtsp/rtsp-announce.sdp`).
 - The DASH-IF ingest reads the publisher's MPD and matches uploaded segment URLs with `dash-runtime` instead of transmux's removed MPD model (#2340).
 
+### Fixed
+- `rescale_to_90k` now wraps the rescaled RTP timestamp into the 32-bit range explicitly (RFC 3550 §5.1) instead of relying on `as u32`.
+- `Recorder::lines` and `Recorder::len` recover a poisoned lock via `PoisonError::into_inner` instead of returning an empty golden.
+
 ## [0.18.0] - 2026-11-10
 ### Changed
 - LL-HLS and TS-HLS outputs now share one HLS media-playlist implementation (parameterised by held/insert-priority), removing the duplicated route/playlist code.

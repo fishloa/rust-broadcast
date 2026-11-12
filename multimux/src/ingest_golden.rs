@@ -229,15 +229,20 @@ pub struct Recorder {
 impl Recorder {
     /// Every event recorded so far, in order, as one rendered line each.
     pub fn lines(&self) -> Vec<String> {
-        self.log
+        let log = self
+            .log
             .lock()
-            .map(|log| log.iter().map(|r| r.event.clone()).collect())
-            .unwrap_or_default()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        log.iter().map(|r| r.event.clone()).collect()
     }
 
-    /// How many events have been recorded (0 if the log was poisoned).
+    /// How many events have been recorded.
     pub fn len(&self) -> usize {
-        self.log.lock().map(|log| log.len()).unwrap_or(0)
+        let log = self
+            .log
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        log.len()
     }
 
     /// Whether no event has been recorded yet.
