@@ -8,6 +8,8 @@
 //! - **encode** (`escape`): insert `03` before any byte `<= 0x03` that follows
 //!   a `00 00` pair, and append `03` after a trailing `00 00`.
 
+use alloc::vec::Vec;
+
 /// Unescape an EBSP NAL into RBSP: remove every `00 00 03` → `00 00`.
 pub(crate) fn unescape(escaped: &[u8]) -> Vec<u8> {
     let n = escaped.len();
@@ -27,6 +29,7 @@ pub(crate) fn unescape(escaped: &[u8]) -> Vec<u8> {
     out
 }
 
+#[cfg(feature = "sample-aes")]
 /// Escape RBSP into EBSP: insert `03` before `00..=03` after `00 00`, and after
 /// a trailing `00 00`.
 pub(crate) fn escape(unescaped: &[u8]) -> Vec<u8> {
