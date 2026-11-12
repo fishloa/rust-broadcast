@@ -94,7 +94,6 @@ pub(crate) fn strip_userinfo(url: &Url) -> Result<Url> {
 ///   as [`MultimuxError::Auth`].
 /// - `credentials: None`, or any non-`401` first response, is returned
 ///   as-is.
-
 fn basic_base64(input: &str) -> String {
     const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let bytes = input.as_bytes();
