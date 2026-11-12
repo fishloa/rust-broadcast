@@ -733,10 +733,6 @@ pub async fn run_hls_pull(
                     HlsFetchId::Playlist => return Err(e),
                 }
             }
-            Some(crate::source::pull::FetchOutcome::NotReady(_fetch_id, e)) => {
-                // HLS never uses the NotReady signal; treat it as a failure.
-                return Err(e);
-            }
             Some(crate::source::pull::FetchOutcome::TaskPanic(detail)) => {
                 return Err(MultimuxError::Connect {
                     reason: format!("hls-pull: fetch task failed: {detail}"),

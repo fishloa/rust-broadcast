@@ -56,6 +56,7 @@ pub const TABLE: &[Crate] = &[
         variants: true,
     },
     plain("dash-runtime"),
+    plain("smooth-runtime"),
     plain("dvb-bbframe"),
     plain("dvb-ci-runtime"),
     plain("dvb-ci"),

@@ -75,25 +75,10 @@ pub const TABLE: &[Crate] = &[
     },
     Crate {
         name: "broadcast-smooth",
-        allowed_types: &[(
-            "XmlReader",
-            "private namespace-aware namespace/limits wrapper over quick_xml::NsReader, not a tree",
-        )],
-        allowed_fns: &[
-            (
-                "element_text",
-                "reads one text-only element's character data through the shared walker; not a DOM or an escaper",
-            ),
-            (
-                "xml_error",
-                "maps a quick-xml error to the parser error enum",
-            ),
-            (
-                "xml_message",
-                "builds a positioned parser error from a validation message",
-            ),
-        ],
-        needs_xml_module: true,
+        allowed_types: &[],
+        allowed_fns: &[],
+        // reads through `broadcast_common::xml`; the type/entity/markup rules still apply
+        needs_xml_module: false,
     },
     Crate {
         name: "transmux",

@@ -65,8 +65,6 @@ impl FetchResult {
 }
 
 /// What one fetch future resolved to, before the scheduler attaches its key.
-/// `NotReady` is a typed "retry the same fetch" signal (a tolerated `404`),
-/// distinct from a real failure (M6) — no sentinel error string.
 pub(crate) enum FetchResult {
     /// The fetch resolved to bytes.
     Ready(Vec<u8>),
@@ -77,8 +75,6 @@ pub(crate) enum FetchResult {
         /// The `Retry-After` wait a `429`/`503` asked for, if any.
         retry_after: Option<Duration>,
     },
-    /// The fetch is not ready yet (retry the same fetch).
-    NotReady(MultimuxError),
 }
 
 /// The outcome of one spawned fetch.
@@ -87,12 +83,6 @@ pub(crate) enum FetchOutcome<K> {
     Ready(K, Vec<u8>),
     /// The fetch failed: `(key, error, retry_after)` — the source decides retry vs terminal.
     Failed(K, MultimuxError, Option<Duration>),
-    /// The fetch reported "not ready yet" (a tolerated `404` from a live-edge
-    /// pull source): `(key, error)` — a typed signal the source retries the
-    /// same fetch, distinct from a real [`Failed`](Self::Failed). Carrying it
-    /// as its own variant avoids smuggling retry metadata through a sentinel
-    /// error string (M6).
-    NotReady(K, MultimuxError),
     /// The spawned fetch task itself panicked or was aborted.
     TaskPanic(String),
 }
@@ -102,7 +92,6 @@ impl<K: fmt::Debug> fmt::Debug for FetchOutcome<K> {
         match self {
             FetchOutcome::Ready(k, b) => write!(f, "Ready({k:?}, {} bytes)", b.len()),
             FetchOutcome::Failed(k, e, _) => write!(f, "Failed({k:?}, {e})"),
-            FetchOutcome::NotReady(k, e) => write!(f, "NotReady({k:?}, {e})"),
             FetchOutcome::TaskPanic(e) => write!(f, "TaskPanic({e})"),
         }
     }
@@ -276,7 +265,6 @@ impl<K: Send + 'static> PullScheduler<K> {
                 Some(Ok((key, FetchResult::Failed { error, retry_after }))) => {
                     Some(FetchOutcome::Failed(key, error, retry_after))
                 }
-                Some(Ok((key, FetchResult::NotReady(e)))) => Some(FetchOutcome::NotReady(key, e)),
                 Some(Err(e)) => Some(FetchOutcome::TaskPanic(e.to_string())),
                 None => None,
             };
@@ -532,27 +520,8 @@ mod tests {
         );
     }
 
-    /// M6: the typed `FetchResult::from_result` maps a plain result, and
-    /// `NotReady` is a distinct outcome the join loop can match on without a
-    /// sentinel error string.
-    #[tokio::test(start_paused = true)]
-    async fn a_not_ready_fetch_is_reported_typed_not_as_a_sentinel_error() {
-        let mut s = PullScheduler::<u32>::new(8);
-        s.push(PendingFetch {
-            delay: Duration::ZERO,
-            fut: Box::pin(async {
-                (
-                    9u32,
-                    FetchResult::NotReady(MultimuxError::Connect {
-                        reason: "not ready".into(),
-                    }),
-                )
-            }),
-        });
-        s.pump();
-        let out = s.next(None, Duration::from_millis(5)).await;
-        assert!(matches!(out, Some(FetchOutcome::NotReady(9, _))), "{out:?}");
-        // And `from_result` maps a plain success to `Ready`.
+    #[test]
+    fn from_result_maps_success_to_ready() {
         assert!(matches!(
             FetchResult::from_result(Ok(vec![1, 2])),
             FetchResult::Ready(_)

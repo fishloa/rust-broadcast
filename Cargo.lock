@@ -440,7 +440,6 @@ dependencies = [
  "broadcast-common",
  "broadcast-dash",
  "broadcast-hls",
- "broadcast-smooth",
  "buffering-runtime",
  "cookie",
  "cookie_store",
@@ -464,6 +463,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.1",
+ "smooth-runtime",
  "srt-runtime",
  "test-fixtures",
  "thiserror 2.0.21",
@@ -525,7 +525,6 @@ name = "broadcast-smooth"
 version = "0.1.0"
 dependencies = [
  "broadcast-common",
- "quick-xml",
  "test-fixtures",
  "thiserror 2.0.21",
 ]
@@ -2624,6 +2623,7 @@ dependencies = [
  "sdp-types",
  "serde",
  "serde_json",
+ "smooth-runtime",
  "socket2",
  "srt-runtime",
  "test-fixtures",
@@ -4080,6 +4080,19 @@ name = "smallvec"
 version = "1.16.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "149309498a5f7334b12ddae0cad8aba81ce785fe91755068867e017cf98fee46"
+
+[[package]]
+name = "smooth-runtime"
+version = "0.1.0"
+dependencies = [
+ "broadcast-common",
+ "broadcast-smooth",
+ "test-fixtures",
+ "thiserror 2.0.21",
+ "transmux",
+ "url",
+ "workspace-guards",
+]
 
 [[package]]
 name = "socket2"

@@ -189,3 +189,13 @@ geometry attributes. Same regeneration command as the DASH coverage files above.
 Capture commit: `2aaa8c1da6d76edae46c1f870028eb377f462dc2`. `stpp` is the real
 AVC + TTML CMAF capture, `wvtt` a spec vector, `two-audio` the fixture media
 with a second copy of its audio track.
+
+## Pull-client sample traces (`pull-<client>-<fixture>.txt`)
+
+One line per emitted sample (track id, dts, pts, duration, sync flag, byte length, FNV-1a hash of
+the bytes) from the broadcast-client Smooth source and the multimux `SmoothIngestSession` playing
+`fixtures/smooth/av` and `fixtures/smooth/av-low` through an in-memory fetch. Recorded from the
+code at commit `c7aa2eaca` (branch `feat/smooth-runtime-2370`, tree identical to `main`
+`fa9898e94` for both clients) before the shared engine of issue #2370 existed. Regenerate with
+`SMOOTH_PULL_GOLDEN_BLESS=<dir>` set when running the `smooth_pull_golden` tests. `av-low`'s
+manifest lists a fourth chunk with no fragment file, so both traces end in a failed fetch.

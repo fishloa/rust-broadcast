@@ -1,0 +1,78 @@
+//! Turn a static fixture into a live presentation (`IsLive` plus a DVR window) and
+//! show where a live join starts: which fragments the engine asks for first, and
+//! how far behind the newest one it begins.
+//!
+//! # Usage
+//!
+//! ```bash
+//! cargo run -p smooth-runtime --example play_live
+//! cargo run -p smooth-runtime --example play_live -- --look-ahead 0
+//! ```
+
+use std::path::PathBuf;
+
+use smooth_runtime::{Action, FetchFailure, Output, SmoothClient, SmoothConfig};
+use url::Url;
+
+const FIXTURE_DIR: &str = "../fixtures/smooth/av";
+const ORIGIN: &str = "http://origin.test/";
+const STATIC_ATTRS: &str = "Duration=\"30415941\"";
+const LIVE_ATTRS: &str = "Duration=\"30415941\" IsLive=\"TRUE\" DVRWindowLength=\"20000000\"";
+const DEFAULT_LOOK_AHEAD: usize = 2;
+const RUN_US: u64 = 10_000_000;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut look_ahead = DEFAULT_LOOK_AHEAD;
+    let mut args = std::env::args().skip(1);
+    while let Some(flag) = args.next() {
+        match (flag.as_str(), args.next()) {
+            ("--look-ahead", Some(value)) => look_ahead = value.parse()?,
+            _ => return Err(format!("usage: play_live [--look-ahead <n>] (got {flag})").into()),
+        }
+    }
+
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(FIXTURE_DIR);
+    let manifest = std::fs::read_to_string(dir.join("Manifest"))?.replace(STATIC_ATTRS, LIVE_ATTRS);
+    let config = SmoothConfig {
+        live_join_fragments: look_ahead,
+        ..SmoothConfig::default()
+    };
+    let mut client = SmoothClient::new(Url::parse(&format!("{ORIGIN}Manifest"))?, config);
+    let mut requested = Vec::new();
+    let mut now = 0u64;
+    while now < RUN_US {
+        while let Some(action) = client.poll(now) {
+            match action {
+                Action::FetchManifest { id, .. } => {
+                    client.on_manifest(now, id, manifest.as_bytes())
+                }
+                Action::FetchFragment { id, url, start, .. } => {
+                    requested.push(format!("{} (start {start})", url.path()));
+                    let relative = url
+                        .path()
+                        .trim_start_matches('/')
+                        .replace("%28", "(")
+                        .replace("%29", ")");
+                    match std::fs::read(dir.join(relative)) {
+                        Ok(body) => client.on_fragment(now, id, &body),
+                        Err(_) => client.on_failure(now, id, FetchFailure { status: Some(404) }),
+                    }
+                }
+                _ => {}
+            }
+        }
+        while let Some(output) = client.next_output() {
+            if let Output::Fatal(error) = output {
+                return Err(error.into());
+            }
+        }
+        match client.next_deadline() {
+            Some(t) => now = now.max(t),
+            None => break,
+        }
+    }
+    for line in &requested {
+        println!("{line}");
+    }
+    Ok(())
+}

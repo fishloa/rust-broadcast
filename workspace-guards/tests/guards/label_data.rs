@@ -364,6 +364,17 @@ pub const TABLE: &[Crate] = &[
     // `Failure`, `FailureClass`: data-carrying protocol messages of the client,
     // whose payload a static label would drop (their label-bearing parts,
     // `FailureKind`, `Rejection`, `FatalKind`, `DropCause`, `Notice`, are covered).
+    // `SmoothError`: `thiserror` error. `Action`, `Output`, `Dropped`: data-carrying
+    // protocol messages of the engine, whose payload a static label would drop;
+    // `ManifestFault` is the label-bearing part.
+    Crate {
+        name: "smooth-runtime",
+        scope: Scope::Crate,
+        matcher: Matcher::Loose,
+        skip: &["SmoothError", "Action", "Output", "Dropped"],
+        expected: Some(&["ManifestFault"]),
+        min_enums: None,
+    },
     Crate {
         name: "dash-runtime",
         scope: Scope::Crate,
@@ -1092,8 +1103,7 @@ pub const TABLE: &[Crate] = &[
             "DashInput",
             "FetchTarget",
             "HlsFetchId",
-            "SmoothResourceId",
-            "SmoothAction",
+            "SmoothInput",
             "StreamStatus",
             "ReconnectState",
             "Budget",

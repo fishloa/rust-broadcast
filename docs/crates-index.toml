@@ -407,6 +407,14 @@ what = "The player on top of `broadcast-dash` (the MPD model and parser live the
 crates_io = false
 lifecycle = "active"
 
+[crate.smooth-runtime]
+domain = "live"
+summary = "Sans-IO Smooth Streaming client engine: manifest refresh, stream selection, chunk plans, track discovery, retry, live join and discontinuity."
+standards = "MS-SSTR (Microsoft Open Specifications), client Manifest and fragment responses (transcription in the private repo)"
+what = "The one Smooth pull client that `broadcast-client` and `multimux` both adapt: `SmoothClient` is driven with `poll`, `on_manifest`, `on_fragment` and `on_failure` and drained with `next_output`. It owns manifest fetch and live refresh, `<Protection>` refusal, `StreamIndex` identity across a refresh, stream and quality selection, chunk enumeration, fragment URL resolution, first-fragment track-id discovery, the synthetic init segment, the `tfxd` timestamp base, the encrypted-fragment probe, retry with backoff, live join look-ahead inside the DVR window and discontinuity handling. Manifest syntax is `broadcast-smooth`'s and the codec glue is `transmux`'s. No I/O and no clock reads: every instant is an argument. Not yet published."
+crates_io = false
+lifecycle = "active"
+
 # ------------------------------------------------------------------- servers
 
 [crate.media-plane]

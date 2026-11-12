@@ -64,6 +64,7 @@ mod shutdown_cancel;
 #[cfg(feature = "test-seams")]
 mod smooth_oracle;
 mod smooth_output;
+mod smooth_pull_golden;
 mod spawn_disposition;
 mod spawn_ownership;
 mod split_audio;

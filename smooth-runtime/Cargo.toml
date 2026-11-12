@@ -1,0 +1,35 @@
+[package]
+name         = "smooth-runtime"
+version      = "0.1.0"
+edition      = "2024"
+description  = "Sans-IO Smooth Streaming (MS-SSTR) client engine: manifest fetch/refresh, protection refusal, stream/quality selection, chunk enumeration, fragment URL resolution, init/tfxd handling, encrypted-fragment probe, retry/backoff, live join and discontinuity. No I/O, no clock reads."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords     = ["smooth-streaming", "ms-sstr", "sans-io", "streaming", "manifest"]
+categories   = ["multimedia", "network-programming", "parser-implementations"]
+repository   = "https://github.com/fishloa/rust-broadcast"
+readme       = "README.md"
+exclude      = ["docs/**", "fuzz/**"]
+rust-version.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+broadcast-common  = { path = "../broadcast-common", version = "11.1.0", default-features = false, features = ["std", "xml"] }
+broadcast-smooth   = { path = "../broadcast-smooth", version = "0.1.0" }
+transmux          = { path = "../transmux", version = "0.31.0", default-features = false, features = ["std"] }
+url               = "2"
+thiserror         = "2"
+
+[dev-dependencies]
+test-fixtures     = { path = "../test-fixtures" }
+workspace-guards  = { path = "../workspace-guards" }
+
+[features]
+default = ["std"]
+std = ["broadcast-common/std", "broadcast-smooth/std", "transmux/std", "thiserror/std"]
+
+[lints]
+workspace = true

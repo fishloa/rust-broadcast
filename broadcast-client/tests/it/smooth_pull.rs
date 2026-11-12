@@ -627,3 +627,91 @@ fn smooth_closes_connection_on_non_2xx_response() {
     let _ = h.step();
     assert!(!h.closes.is_empty(), "answered connection was not closed");
 }
+
+const GOLDEN_BLESS_ENV: &str = "SMOOTH_PULL_GOLDEN_BLESS";
+const GOLDEN_STEP_LIMIT: usize = 10_000;
+const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+fn fnv1a(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(FNV_OFFSET_BASIS, |h, b| {
+        (h ^ u64::from(*b)).wrapping_mul(FNV_PRIME)
+    })
+}
+
+fn route_fixture_dir(h: &mut Host, fixture: &str) {
+    fn walk(h: &mut Host, root: &std::path::Path, dir: &std::path::Path) {
+        for entry in std::fs::read_dir(dir).expect("read fixture dir") {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                walk(h, root, &path);
+            } else if path.file_name().is_some_and(|n| n != "PROVENANCE.md") {
+                let rel = path.strip_prefix(root).expect("under root");
+                let url = format!("http://origin.test/{}", rel.to_str().expect("utf8 path"));
+                h.ok(&url, std::fs::read(&path).expect("read fixture"));
+            }
+        }
+    }
+    let root = test_fixtures::path(&format!("smooth/{fixture}"));
+    walk(h, &root, &root);
+}
+
+fn sample_trace(fixture: &str) -> String {
+    let mut h = Host::new(manifest_url(), smooth_config());
+    route_fixture_dir(&mut h, fixture);
+    h.run_until(
+        |evs| {
+            evs.iter()
+                .any(|e| matches!(e, Event::Status(Status::Ended)))
+        },
+        GOLDEN_STEP_LIMIT,
+    );
+    let mut out = String::new();
+    for e in &h.events {
+        match e {
+            Event::Tracks(specs) => {
+                let ids: Vec<u32> = specs.iter().map(|s| s.track_id.value()).collect();
+                out.push_str(&format!("tracks {ids:?}\n"));
+            }
+            Event::Sample { track, sample, .. } => out.push_str(&format!(
+                "sample track={} dts={:?} pts={:?} dur={:?} sync={} len={} fnv={:016x}\n",
+                track.value(),
+                sample.dts,
+                sample.pts,
+                sample.duration,
+                sample.flags.is_sync,
+                sample.data.len(),
+                fnv1a(&sample.data),
+            )),
+            Event::Discontinuity => out.push_str("discontinuity\n"),
+            Event::Error { kind, fatal } => {
+                out.push_str(&format!("error {kind:?} fatal={fatal}\n"))
+            }
+            Event::Status(Status::Ended) => out.push_str("ended\n"),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn check_golden(fixture: &str) {
+    let name = format!("pull-broadcast-client-{fixture}.txt");
+    let actual = sample_trace(fixture);
+    if let Ok(dir) = std::env::var(GOLDEN_BLESS_ENV) {
+        std::fs::write(std::path::Path::new(&dir).join(&name), &actual).expect("write golden");
+        return;
+    }
+    let expected = std::fs::read_to_string(test_fixtures::path(&format!("golden/smooth/{name}")))
+        .expect("read golden");
+    assert_eq!(actual, expected, "{name} differs from the recorded trace");
+}
+
+#[test]
+fn smooth_pull_golden_av() {
+    check_golden("av");
+}
+
+#[test]
+fn smooth_pull_golden_av_low() {
+    check_golden("av-low");
+}
