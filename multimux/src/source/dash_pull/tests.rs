@@ -10,7 +10,7 @@
 use std::future::Future;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -76,6 +76,7 @@ fn xs_datetime(unix_us: i64) -> String {
 struct SkewedClock {
     inner: SystemHostClock,
     skew_us: i64,
+    stalled_us: AtomicU64,
 }
 
 impl SkewedClock {
@@ -83,17 +84,25 @@ impl SkewedClock {
         Arc::new(Self {
             inner: SystemHostClock::new(),
             skew_us,
+            stalled_us: AtomicU64::new(0),
         })
+    }
+
+    /// Time passes for the pull, instantly and on both of its clocks, as if
+    /// the process had been suspended for `us`.
+    fn suspend(&self, us: u64) {
+        self.stalled_us.fetch_add(us, Ordering::SeqCst);
     }
 }
 
 impl HostClock for SkewedClock {
     fn mono_us(&self) -> u64 {
-        self.inner.mono_us()
+        self.inner.mono_us() + self.stalled_us.load(Ordering::SeqCst)
     }
 
     fn unix_us(&self) -> u64 {
         u64::try_from(now_unix_us().saturating_add(self.skew_us)).unwrap_or(0)
+            + self.stalled_us.load(Ordering::SeqCst)
     }
 }
 
@@ -962,9 +971,14 @@ struct LiveOrigin {
     /// segment's availability.
     max_early_us: std::sync::atomic::AtomicI64,
     missing: std::sync::OnceLock<u64>,
+    elapsed_us: std::sync::atomic::AtomicI64,
 }
 
 impl LiveOrigin {
+    fn now_us(&self) -> i64 {
+        now_unix_us() + self.elapsed_us.load(Ordering::SeqCst)
+    }
+
     fn mpd(&self) -> String {
         let utc = if self.shape.utc_timing {
             let scheme = if self.shape.head_utc {
@@ -1059,7 +1073,7 @@ async fn live_handler(
         response
     };
     if name == "time" {
-        let ms = now_unix_us() / 1_000;
+        let ms = origin.now_us() / 1_000;
         let text = jiff::Timestamp::from_millisecond(ms)
             .expect("in range")
             .to_string();
@@ -1110,7 +1124,7 @@ async fn live_handler(
         return reply(AxumStatus::NOT_FOUND, AxumStatus::NOT_FOUND.into_response());
     };
     let available_from = origin.ast_us + i64::try_from(number).expect("small") * SEGMENT_US;
-    let now = now_unix_us();
+    let now = origin.now_us();
     if now < available_from {
         origin.early.fetch_add(1, Ordering::SeqCst);
         origin
@@ -1176,6 +1190,7 @@ async fn serve_live(shape: LiveShape) -> RunningLive {
         early: AtomicUsize::new(0),
         max_early_us: std::sync::atomic::AtomicI64::new(0),
         missing: std::sync::OnceLock::new(),
+        elapsed_us: std::sync::atomic::AtomicI64::new(0),
     });
     let app = Router::new()
         .route("/{name}", get(live_handler))
@@ -1249,6 +1264,64 @@ async fn a_live_presentation_delivers_the_served_segments_byte_exact() {
     assert!(
         video_numbers.windows(2).all(|w| w[1] == w[0] + 1),
         "no segment skipped: {video_numbers:?}"
+    );
+}
+
+const SUSPENDED_US: u64 = 10_000_000;
+const MIN_FORWARD_JUMP_SEGMENTS: u64 = 20;
+
+/// A pull whose process is suspended for longer than the DVR window finds the
+/// segment it wants gone, skips forward to the window's start and carries on
+/// delivering consecutive segments rather than ending or retrying the lost one.
+#[tokio::test]
+async fn a_live_pull_that_falls_behind_the_dvr_window_jumps_forward_and_keeps_playing() {
+    let live = serve_live(LiveShape {
+        utc_timing: false,
+        ..LiveShape::default()
+    })
+    .await;
+    let clock = SkewedClock::new(0);
+    let mut pull = Pull::start(route(live.url()), clock.clone());
+    let ended = pull.until(|d| d.video().len() >= 3 * 25).await;
+    assert!(ended.is_none(), "{ended:?}");
+    let before = live.origin.served(0);
+    let last_before = *before.last().expect("served before the stall");
+
+    live.origin.elapsed_us.fetch_add(
+        i64::try_from(SUSPENDED_US).expect("small"),
+        Ordering::SeqCst,
+    );
+    clock.suspend(SUSPENDED_US);
+    let ended = pull
+        .until(|_| {
+            live.origin
+                .served(0)
+                .iter()
+                .filter(|n| **n > last_before + MIN_FORWARD_JUMP_SEGMENTS)
+                .count()
+                >= 6
+        })
+        .await;
+    assert!(
+        ended.is_none(),
+        "the pull ends instead of jumping: {ended:?}"
+    );
+    drop(pull.stop());
+
+    let served = live.origin.served(0);
+    let jumps: Vec<usize> = (1..served.len())
+        .filter(|i| served[*i] > served[i - 1] + MIN_FORWARD_JUMP_SEGMENTS)
+        .collect();
+    assert!(!jumps.is_empty(), "no jump forward: {served:?}");
+    let head = &served[..jumps[0]];
+    let tail = &served[*jumps.last().expect("a jump")..];
+    assert!(
+        head.windows(2).all(|w| w[1] == w[0] + 1),
+        "no segment skipped before the first jump: {head:?}"
+    );
+    assert!(
+        tail.len() >= 3 && tail.windows(2).all(|w| w[1] == w[0] + 1),
+        "segments after the last jump are consecutive: {tail:?}"
     );
 }
 
