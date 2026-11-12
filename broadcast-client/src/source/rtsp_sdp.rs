@@ -264,3 +264,58 @@ fn supported_payload(
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod golden {
+    use super::*;
+    use core::fmt::Write;
+
+    const GOLDEN: &str = "golden/sdp-tracks/broadcast-client.txt";
+    const REGENERATE_ENV: &str = "REGENERATE_SDP_TRACKS_GOLDEN";
+    const REQUEST_URL: &str = "rtsp://cam.test/live/";
+
+    fn render(name: &str, sdp: &[u8]) -> String {
+        let mut out = format!("== {name}\n");
+        let request_url = Url::parse(REQUEST_URL).unwrap();
+        match parse_tracks(sdp, &request_url, None) {
+            Err(SdpError::Unparsable) => out.push_str("unparsable\n"),
+            Err(SdpError::NothingPlayable { skipped }) => {
+                writeln!(out, "nothing-playable skipped={skipped:?}").unwrap();
+            }
+            Ok(parsed) => {
+                for t in &parsed.tracks {
+                    writeln!(
+                        out,
+                        "track id={} kind={:?} clock={} setup={} channels={}-{} config={:?}",
+                        t.track_id.value(),
+                        t.kind,
+                        t.clock_rate,
+                        t.setup_uri,
+                        t.channel,
+                        t.rtcp_channel,
+                        t.config
+                    )
+                    .unwrap();
+                }
+                writeln!(out, "skipped={:?}", parsed.skipped).unwrap();
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn every_sdp_fixture_matches_the_recorded_interpretation() {
+        let rendered: String = test_fixtures::sdp_track_fixtures()
+            .iter()
+            .map(|(name, body)| render(name, body))
+            .collect();
+        let path = test_fixtures::path(GOLDEN);
+        if std::env::var(REGENERATE_ENV).ok().as_deref() == Some("1") {
+            assert!(std::env::var("CI").is_err(), "refuse to regenerate in CI");
+            std::fs::write(&path, &rendered).unwrap();
+            return;
+        }
+        let expected = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(rendered, expected, "{GOLDEN} differs");
+    }
+}

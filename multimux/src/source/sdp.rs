@@ -312,4 +312,46 @@ a=control:streamid=0\r\n";
             "rtsp://cam.example/base/streamid=0"
         );
     }
+
+    mod golden {
+        use super::super::*;
+        use std::fmt::Write;
+
+        const GOLDEN: &str = "golden/sdp-tracks/multimux.txt";
+        const REGENERATE_ENV: &str = "REGENERATE_SDP_TRACKS_GOLDEN";
+        const REQUEST_URL: &str = "rtsp://cam.test/live/";
+
+        fn describe<T: std::fmt::Debug>(result: &Result<T>) -> String {
+            match result {
+                Ok(value) => format!("{value:?}"),
+                Err(e) => format!("error {e}"),
+            }
+        }
+
+        fn render(name: &str, sdp: &[u8]) -> String {
+            let mut out = format!("== {name}\n");
+            let tracks = parse_tracks_multimux(sdp);
+            writeln!(out, "udp {}", describe(&tracks)).unwrap();
+            let request_url = Url::parse(REQUEST_URL).unwrap();
+            let planned = plan_tracks(&request_url, None, sdp).map(|(_, tracks)| tracks);
+            writeln!(out, "rtsp {}", describe(&planned)).unwrap();
+            out
+        }
+
+        #[test]
+        fn every_sdp_fixture_matches_the_recorded_interpretation() {
+            let rendered: String = test_fixtures::sdp_track_fixtures()
+                .iter()
+                .map(|(name, body)| render(name, body))
+                .collect();
+            let path = test_fixtures::path(GOLDEN);
+            if std::env::var(REGENERATE_ENV).ok().as_deref() == Some("1") {
+                assert!(std::env::var("CI").is_err(), "refuse to regenerate in CI");
+                std::fs::write(&path, &rendered).unwrap();
+                return;
+            }
+            let expected = std::fs::read_to_string(&path).unwrap();
+            assert_eq!(rendered, expected, "{GOLDEN} differs");
+        }
+    }
 }
