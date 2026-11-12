@@ -30,6 +30,10 @@ fn manifests() -> Vec<(String, String)> {
     paths.sort();
     let mut out = Vec::new();
     for path in paths {
+        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if file_name.starts_with("wrm-") {
+            continue;
+        }
         let is_manifest = path.file_name().is_some_and(|n| n == "Manifest")
             || path.extension().is_some_and(|e| e == "xml");
         if is_manifest {
@@ -52,18 +56,11 @@ fn manifests() -> Vec<(String, String)> {
 
 #[test]
 fn every_real_manifest_reparses_equal_and_serializes_to_a_fixed_point() {
+    let mut checked = 0usize;
     for (name, xml) in manifests() {
-        let first = match SmoothManifest::parse(&xml) {
-            Ok(model) => model,
-            // `fixtures/golden/smooth/` also holds PlayReady WRMHEADER
-            // documents (written, never parsed): they are not client
-            // manifests, and the parser must reject them.
-            Err(_) if name.starts_with("golden/smooth/") => {
-                println!("{name}: not a client manifest, rejected");
-                continue;
-            }
-            Err(e) => panic!("{name}: parse failed: {e}"),
-        };
+        let first =
+            SmoothManifest::parse(&xml).unwrap_or_else(|e| panic!("{name}: parse failed: {e}"));
+        checked += 1;
         let rendered = first.to_xml();
         let second = SmoothManifest::parse(&rendered)
             .unwrap_or_else(|e| panic!("{name}: re-parse failed: {e}\n{rendered}"));
@@ -78,6 +75,7 @@ fn every_real_manifest_reparses_equal_and_serializes_to_a_fixed_point() {
             first.streams.len()
         );
     }
+    assert!(checked > 0, "no manifest was checked");
 }
 
 #[test]
