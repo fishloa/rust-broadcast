@@ -137,14 +137,14 @@ impl SmoothClient {
             return;
         }
         let Ok(text) = std::str::from_utf8(bytes) else {
-            return self.manifest_failed(now, ManifestFault::Utf8);
+            return self.manifest_failed(now, ManifestFault::Utf8, 0);
         };
         if manifest_declares_protection(text) {
             return self.fail(SmoothError::ManifestProtected);
         }
         match SmoothManifest::parse(text) {
             Ok(manifest) => self.accept_manifest(&manifest),
-            Err(_) => self.manifest_failed(now, ManifestFault::Parse),
+            Err(_) => self.manifest_failed(now, ManifestFault::Parse, 0),
         }
         self.advance(now);
     }
@@ -157,12 +157,12 @@ impl SmoothClient {
         match fragment_state(bytes) {
             FragmentState::Clear => {}
             FragmentState::Encrypted => return self.fail(SmoothError::FragmentEncrypted),
-            _ => return self.fragment_failed(now, si, chunk, None),
+            _ => return self.fragment_failed(now, si, chunk, None, 0),
         }
         if self.streams[si].local_track_id.is_none() {
             match fragment_track_id(bytes) {
                 Ok(tid) => self.streams[si].local_track_id = Some(tid),
-                Err(_) => return self.fragment_failed(now, si, chunk, None),
+                Err(_) => return self.fragment_failed(now, si, chunk, None, 0),
             }
         }
         self.streams[si].failures = 0;
@@ -182,10 +182,10 @@ impl SmoothClient {
             if failure.is_not_found() {
                 self.outputs.push_back(Output::ManifestNotFound);
             }
-            return self.manifest_failed(now, ManifestFault::Fetch);
+            return self.manifest_failed(now, ManifestFault::Fetch, failure.retry_after_us);
         }
         if let Some((si, chunk)) = self.take_fragment(id) {
-            self.fragment_failed(now, si, chunk, failure.status);
+            self.fragment_failed(now, si, chunk, failure.status, failure.retry_after_us);
             self.advance(now);
         }
     }
@@ -297,17 +297,25 @@ impl SmoothClient {
         });
     }
 
-    fn manifest_failed(&mut self, now: u64, fault: ManifestFault) {
+    fn manifest_failed(&mut self, now: u64, fault: ManifestFault, wait_us: u64) {
         self.manifest_failures += 1;
         if self.manifest_failures >= self.config.max_manifest_failures {
             return self.fail(SmoothError::Manifest(fault));
         }
         self.outputs
             .push_back(Output::Dropped(Dropped::Manifest(fault)));
-        self.manifest_at = Some(now.saturating_add(self.backoff_us(self.manifest_failures)));
+        self.manifest_at =
+            Some(now.saturating_add(self.backoff_us(self.manifest_failures).max(wait_us)));
     }
 
-    fn fragment_failed(&mut self, now: u64, si: usize, chunk: Chunk, status: Option<u16>) {
+    fn fragment_failed(
+        &mut self,
+        now: u64,
+        si: usize,
+        chunk: Chunk,
+        status: Option<u16>,
+        wait_us: u64,
+    ) {
         self.streams[si].failures += 1;
         if self.streams[si].failures >= self.config.max_fragment_failures {
             if !self.is_live {
@@ -322,11 +330,15 @@ impl SmoothClient {
             self.outputs.push_back(Output::Discontinuity);
             return;
         }
-        let missing = FetchFailure { status }.is_not_found();
+        let missing = FetchFailure {
+            status,
+            retry_after_us: 0,
+        }
+        .is_not_found();
         if self.is_live && missing && matches!(self.manifest, ManifestCursor::Idle) {
             self.manifest_at = Some(now);
         }
-        let until = now.saturating_add(self.backoff_us(self.streams[si].failures));
+        let until = now.saturating_add(self.backoff_us(self.streams[si].failures).max(wait_us));
         self.streams[si].cursor = Cursor::Backoff { until, chunk };
     }
 

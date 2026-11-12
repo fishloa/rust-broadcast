@@ -157,7 +157,7 @@ fn resource_fetch(
     crate::source::pull::PendingFetch {
         delay,
         fut: Box::pin(async move {
-            let (result, retry_after_us) = tokio::time::timeout(
+            let (result, retry_after) = tokio::time::timeout(
                 read_timeout,
                 fetch_bytes_capped_with_retry_after(&http, &url, creds.as_ref(), cap),
             )
@@ -169,14 +169,9 @@ fn resource_fetch(
                             "hls-pull: resource {fetch_id:?} read exceeded {read_timeout:?}"
                         ),
                     }),
-                    0,
+                    None,
                 )
             });
-            let retry_after = if retry_after_us > 0 {
-                Some(std::time::Duration::from_micros(retry_after_us))
-            } else {
-                None
-            };
             let result = result.and_then(|bytes| match fetch_id {
                 HlsFetchId::Key(id) if bytes.len() != AES128_KEY_LEN => {
                     Err(hls_runtime::client::Error::BadKeyLength {
@@ -206,20 +201,44 @@ fn playlist_fetch(
     url: String,
     read_timeout: Duration,
 ) -> crate::source::pull::PendingFetch<HlsFetchId> {
+    playlist_fetch_after(http, creds, url, read_timeout, Duration::ZERO)
+}
+
+/// [`playlist_fetch`] dispatched after `delay`, the server's `Retry-After`.
+fn playlist_fetch_after(
+    http: HttpClient,
+    creds: Option<AuthState>,
+    url: String,
+    read_timeout: Duration,
+    delay: Duration,
+) -> crate::source::pull::PendingFetch<HlsFetchId> {
     crate::source::pull::PendingFetch {
-        delay: Duration::ZERO,
+        delay,
         fut: Box::pin(async move {
-            let result =
-                tokio::time::timeout(read_timeout, fetch_bytes(&http, &url, creds.as_ref()))
-                    .await
-                    .unwrap_or_else(|_| {
-                        Err(MultimuxError::Connect {
-                            reason: format!("hls-pull: playlist read exceeded {read_timeout:?}"),
-                        })
-                    });
+            let (result, retry_after) = tokio::time::timeout(
+                read_timeout,
+                fetch_bytes_capped_with_retry_after(
+                    &http,
+                    &url,
+                    creds.as_ref(),
+                    crate::source::MAX_HTTP_BODY_BYTES,
+                ),
+            )
+            .await
+            .unwrap_or_else(|_| {
+                (
+                    Err(MultimuxError::Connect {
+                        reason: format!("hls-pull: playlist read exceeded {read_timeout:?}"),
+                    }),
+                    None,
+                )
+            });
             (
                 HlsFetchId::Playlist,
-                crate::source::pull::FetchResult::from_result(result),
+                match result {
+                    Ok(b) => crate::source::pull::FetchResult::Ready(b),
+                    Err(e) => crate::source::pull::FetchResult::failed_after(e, retry_after),
+                },
             )
         }),
     }
@@ -397,47 +416,31 @@ impl Dialer for HlsPullDialer {
 
 /// Performs `GET url` (answering a Digest challenge if `creds` names one),
 /// returning an error on any non-2xx status.
+#[cfg(test)]
 async fn fetch_bytes(client: &HttpClient, url: &str, creds: Option<&AuthState>) -> Result<Vec<u8>> {
-    fetch_bytes_capped(client, url, creds, crate::source::MAX_HTTP_BODY_BYTES).await
+    fetch_bytes_capped_with_retry_after(client, url, creds, crate::source::MAX_HTTP_BODY_BYTES)
+        .await
+        .0
 }
 
-/// [`fetch_bytes`] with an explicit body cap.
-async fn fetch_bytes_capped(
-    client: &HttpClient,
-    url: &str,
-    creds: Option<&AuthState>,
-    cap: usize,
-) -> Result<Vec<u8>> {
-    let (result, _) = fetch_bytes_capped_with_retry_after(client, url, creds, cap).await;
-    result
-}
-
-/// Like [`fetch_bytes_capped`], but also returns any `Retry-After` delay (microseconds) carried
-/// by a `429`/`503` response, for the caller's retry scheduling.
+/// `GET url` capped at `cap` bytes, also returning any `Retry-After` delay carried by a
+/// `429`/`503` response, for the caller's retry scheduling.
 async fn fetch_bytes_capped_with_retry_after(
     client: &HttpClient,
     url: &str,
     creds: Option<&AuthState>,
     cap: usize,
-) -> (core::result::Result<Vec<u8>, MultimuxError>, u64) {
+) -> (
+    core::result::Result<Vec<u8>, MultimuxError>,
+    Option<Duration>,
+) {
     let response = match authenticated_get(client, url, creds).await {
         Ok(r) => r,
-        Err(e) => return (Err(e), 0),
+        Err(e) => return (Err(e), None),
     };
     let status = response.status();
     if !status.is_success() {
-        let headers: Vec<(String, String)> = response
-            .headers()
-            .iter()
-            .filter_map(|(name, value)| Some((name.to_string(), value.to_str().ok()?.to_string())))
-            .collect();
-        let retry_after_us = if status == reqwest::StatusCode::TOO_MANY_REQUESTS
-            || status == reqwest::StatusCode::SERVICE_UNAVAILABLE
-        {
-            broadcast_client::fetch::retry_after_us(status.as_u16(), &headers, 0, None)
-        } else {
-            0
-        };
+        let retry_after = crate::source::server_retry_after(status, response.headers());
         // 401/403 are permanent (a bad credential or a forbidden resource);
         // every other status is transient and may be retried.
         let err = if status == reqwest::StatusCode::UNAUTHORIZED
@@ -451,11 +454,11 @@ async fn fetch_bytes_capped_with_retry_after(
                 reason: format!("hls-pull: HTTP {status}"),
             }
         };
-        return (Err(err), retry_after_us);
+        return (Err(err), retry_after);
     }
     (
         crate::source::read_body_capped(response, cap, "hls-pull").await,
-        0,
+        None,
     )
 }
 
@@ -569,6 +572,8 @@ pub async fn run_hls_pull(
     // (RFC 8216 §4.3.3.1), not back-to-back at RTT rate — while a ready
     // resource fetch is still serviced the moment it completes (defect 5).
     let mut pacing = PlaylistPacing::default();
+    let mut playlist_url: Option<String> = None;
+    let mut playlist_waits = 0u32;
     // The most recent `WaitMs` hint, bounding how long `next` waits for a
     // result this iteration (not the pacing floor itself — see `pacing`).
     let mut reload_hint: Option<Duration> = None;
@@ -593,6 +598,7 @@ pub async fn run_hls_pull(
                     // Dispatched at the pacing floor when one is pending, so a
                     // fast playlist response is not re-fetched immediately.
                     let floor = pacing.on_push(tokio::time::Instant::now());
+                    playlist_url = Some(url.clone());
                     scheduler.push_at(
                         playlist_fetch(http.clone(), credentials.clone(), url, read_timeout),
                         floor,
@@ -661,6 +667,9 @@ pub async fn run_hls_pull(
         match joined {
             Some(crate::source::pull::FetchOutcome::Ready(fetch_id, bytes)) => {
                 resource_retries.remove(&fetch_id);
+                if fetch_id == HlsFetchId::Playlist {
+                    playlist_waits = 0;
+                }
                 driver.feed((fetch_id, bytes.as_slice()), now);
                 crate::source::advance_route(&driver, route_handle, &mut progress).await;
             }
@@ -730,7 +739,24 @@ pub async fn run_hls_pull(
                             return Err(e);
                         }
                     }
-                    HlsFetchId::Playlist => return Err(e),
+                    HlsFetchId::Playlist => match (retry_after, playlist_url.clone()) {
+                        (Some(wait), Some(url)) if playlist_waits < MAX_RESOURCE_RETRY_ATTEMPTS => {
+                            playlist_waits = playlist_waits.saturating_add(1);
+                            tracing::warn!(
+                                error = %e,
+                                wait = ?wait,
+                                "hls-pull: playlist fetch asked to wait; retrying"
+                            );
+                            scheduler.push_retry(playlist_fetch_after(
+                                http.clone(),
+                                credentials.clone(),
+                                url,
+                                read_timeout,
+                                wait,
+                            ));
+                        }
+                        _ => return Err(e),
+                    },
                 }
             }
             Some(crate::source::pull::FetchOutcome::TaskPanic(detail)) => {
@@ -1810,6 +1836,93 @@ Content-Length: {over}
         );
         let _ = handle;
         assert_samples_reach_the_trunk(&route).await;
+        server.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn run_hls_pull_honours_retry_after_on_a_playlist_503() {
+        use axum::Router;
+        use axum::extract::{Path as AxumPath, State};
+        use axum::response::{IntoResponse, Response as AxumResponse};
+        use axum::routing::get;
+        use std::sync::Mutex as StdMutex;
+
+        let (playlist_text, init, segments) = build_cmaf_fixture();
+
+        #[derive(Clone)]
+        struct State2 {
+            playlist: String,
+            init: Vec<u8>,
+            segments: std::sync::Arc<Vec<Vec<u8>>>,
+            playlist_at: std::sync::Arc<StdMutex<Vec<std::time::Instant>>>,
+        }
+
+        async fn handler(
+            AxumPath(name): AxumPath<String>,
+            State(state): State<State2>,
+        ) -> AxumResponse {
+            if name == "media.m3u8" {
+                let mut at = state.playlist_at.lock().unwrap();
+                at.push(std::time::Instant::now());
+                if at.len() == 1 {
+                    return (
+                        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                        [("retry-after", "2")],
+                    )
+                        .into_response();
+                }
+                return state.playlist.clone().into_response();
+            }
+            if name == "init.mp4" {
+                return state.init.into_response();
+            }
+            if let Some(idx) = name
+                .strip_prefix("seg")
+                .and_then(|s| s.strip_suffix(".m4s"))
+                .and_then(|s| s.parse::<usize>().ok())
+                && let Some(bytes) = state.segments.get(idx)
+            {
+                return bytes.clone().into_response();
+            }
+            axum::http::StatusCode::NOT_FOUND.into_response()
+        }
+
+        let playlist_at = std::sync::Arc::new(StdMutex::new(Vec::new()));
+        let app = Router::new()
+            .route("/{name}", get(handler))
+            .with_state(State2 {
+                playlist: playlist_text,
+                init,
+                segments: std::sync::Arc::new(segments),
+                playlist_at: std::sync::Arc::clone(&playlist_at),
+            });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind ephemeral loopback port");
+        let addr = listener.local_addr().expect("local addr");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("axum server");
+        });
+
+        let route = HlsPullRoute::new("pulled-playlist-wait", format!("http://{addr}/media.m3u8"));
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let result = tokio::time::timeout(
+            Duration::from_secs(60),
+            run_hls_pull(&route, trunk_config(), handshake(), &route_handle),
+        )
+        .await
+        .expect("run_hls_pull must not hang");
+        assert!(
+            result.is_ok(),
+            "a playlist 503 with Retry-After must be retried, not end the session: {result:?}"
+        );
+        let at = playlist_at.lock().unwrap().clone();
+        assert!(at.len() >= 2, "{at:?}");
+        assert!(
+            at[1].duration_since(at[0]) >= Duration::from_secs(2),
+            "the playlist retry came {:?} after the 503",
+            at[1].duration_since(at[0])
+        );
         server.abort();
     }
 

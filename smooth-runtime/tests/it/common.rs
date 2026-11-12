@@ -11,6 +11,7 @@ pub const STEP_LIMIT: usize = 2_000;
 pub enum Reply {
     Body(Vec<u8>),
     Status(u16),
+    Throttled(u16, u64),
     Transport,
 }
 
@@ -91,14 +92,21 @@ impl Host {
         match self.reply(&decoded) {
             Reply::Body(b) if is_manifest => self.client.on_manifest(self.now, id, &b),
             Reply::Body(b) => self.client.on_fragment(self.now, id, &b),
-            Reply::Status(s) => self.fail(id, Some(s)),
-            Reply::Transport => self.fail(id, None),
+            Reply::Status(s) => self.fail(id, Some(s), 0),
+            Reply::Throttled(s, wait_us) => self.fail(id, Some(s), wait_us),
+            Reply::Transport => self.fail(id, None, 0),
         }
     }
 
-    fn fail(&mut self, id: RequestId, status: Option<u16>) {
-        self.client
-            .on_failure(self.now, id, FetchFailure { status });
+    fn fail(&mut self, id: RequestId, status: Option<u16>, retry_after_us: u64) {
+        self.client.on_failure(
+            self.now,
+            id,
+            FetchFailure {
+                status,
+                retry_after_us,
+            },
+        );
     }
 
     fn drain(&mut self) {

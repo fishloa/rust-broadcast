@@ -55,7 +55,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .replace("%29", ")");
                     match std::fs::read(dir.join(relative)) {
                         Ok(body) => client.on_fragment(now, id, &body),
-                        Err(_) => client.on_failure(now, id, FetchFailure { status: Some(404) }),
+                        Err(_) => client.on_failure(
+                            now,
+                            id,
+                            FetchFailure {
+                                status: Some(404),
+                                ..FetchFailure::default()
+                            },
+                        ),
                     }
                 }
                 _ => {}

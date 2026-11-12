@@ -26,7 +26,7 @@ use crate::reconnect::ReconnectSchedule;
 use crate::source::driver::terminal_result;
 use crate::source::http_auth::authenticated_get_with;
 use crate::source::pull::{FetchOutcome, FetchResult, PendingFetch, PullScheduler};
-use crate::source::{BodyError, read_body_bounded};
+use crate::source::{BodyError, read_body_bounded, server_retry_after};
 use broadcast_client::auth::AuthState;
 
 /// How long the loop parks when nothing is in flight and nothing is due.
@@ -201,19 +201,18 @@ impl Request {
     }
 }
 
-fn failed(
+fn failed(fetch: DashFetch, failure: Failure, error: MultimuxError) -> (DashFetch, FetchResult) {
+    failed_after(fetch, failure, error, None)
+}
+
+fn failed_after(
     mut fetch: DashFetch,
     failure: Failure,
     error: MultimuxError,
+    retry_after: Option<Duration>,
 ) -> (DashFetch, FetchResult) {
     fetch.outcome = Outcome::Failed(failure);
-    (
-        fetch,
-        FetchResult::Failed {
-            error,
-            retry_after: None,
-        },
-    )
+    (fetch, FetchResult::Failed { error, retry_after })
 }
 
 fn header_text(headers: &HeaderMap, name: &HeaderName) -> Option<String> {
@@ -305,7 +304,8 @@ pub(super) async fn exchange(net: &Net, req: &Request, sent_us: u64) -> (DashFet
         let error = MultimuxError::Connect {
             reason: format!("dash-pull {}: HTTP {status}", req.what),
         };
-        return failed(fetch, Failure::Status(status.as_u16()), error);
+        let retry_after = server_retry_after(status, headers);
+        return failed_after(fetch, Failure::Status(status.as_u16()), error, retry_after);
     }
     let body = match read_body_bounded(response, req.cap).await {
         Ok(body) => body,
@@ -413,6 +413,7 @@ pub(super) async fn run<S: RouteSink>(
         PullScheduler::new(crate::source::MAX_INFLIGHT_FETCHES);
     let mut retries: BTreeMap<RetryTarget, u64> = BTreeMap::new();
     let mut next_anchor_us = 0u64;
+    let mut server_wait = Duration::ZERO;
 
     loop {
         let now_us = clock.mono_us();
@@ -476,13 +477,14 @@ pub(super) async fn run<S: RouteSink>(
             Some(FetchOutcome::Ready(fetch, body)) => {
                 feed_response(&mut driver, fetch, &body, now_us);
             }
-            Some(FetchOutcome::Failed(fetch, error, _)) => match fetch.outcome {
+            Some(FetchOutcome::Failed(fetch, error, retry_after)) => match fetch.outcome {
                 Outcome::Unauthorized => return Err(error),
                 Outcome::Failed(failure) => {
                     if fetch.target == FetchTarget::Mpd && !driver.session().mpd_accepted() {
                         return Err(error);
                     }
                     let ts = stamp(now_us);
+                    server_wait = retry_after.unwrap_or_default();
                     driver.feed(
                         DashInput::Failed {
                             target: fetch.target,
@@ -501,11 +503,11 @@ pub(super) async fn run<S: RouteSink>(
             None => continue,
         }
         for retry in driver.session_mut().take_retries() {
-            let at = now_us.saturating_add(
-                u64::try_from(backoff(retry.attempt).as_micros()).unwrap_or(u64::MAX),
-            );
+            let wait = backoff(retry.attempt).max(server_wait);
+            let at = now_us.saturating_add(u64::try_from(wait.as_micros()).unwrap_or(u64::MAX));
             retries.insert(retry.target, at);
         }
+        server_wait = Duration::ZERO;
         sink.advance(&driver).await;
     }
 }

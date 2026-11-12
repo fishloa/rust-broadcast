@@ -249,9 +249,10 @@ impl Dialer for SmoothPullDialer {
 struct FetchError {
     status: Option<u16>,
     error: MultimuxError,
+    retry_after: Option<Duration>,
 }
 
-fn status_error(what: &str, status: StatusCode) -> FetchError {
+fn status_error(what: &str, status: StatusCode, retry_after: Option<Duration>) -> FetchError {
     let error = if status == StatusCode::UNAUTHORIZED {
         MultimuxError::Auth {
             reason: format!("smooth-pull {what}: {status}"),
@@ -264,6 +265,7 @@ fn status_error(what: &str, status: StatusCode) -> FetchError {
     FetchError {
         status: Some(status.as_u16()),
         error,
+        retry_after,
     }
 }
 
@@ -278,16 +280,19 @@ async fn fetch_one_bytes(
         .map_err(|error| FetchError {
             status: None,
             error,
+            retry_after: None,
         })?;
     let status = response.status();
     if !status.is_success() {
-        return Err(status_error(what, status));
+        let retry_after = crate::source::server_retry_after(status, response.headers());
+        return Err(status_error(what, status, retry_after));
     }
     crate::source::read_body_capped(response, crate::source::MAX_HTTP_BODY_BYTES, what)
         .await
         .map_err(|error| FetchError {
             status: None,
             error,
+            retry_after: None,
         })
 }
 
@@ -351,13 +356,11 @@ fn pending_fetch(
             .await;
             let (status, result) = match fetched {
                 Ok(Ok(bytes)) => (None, FetchResult::Ready(bytes)),
-                Ok(Err(FetchError { status, error })) => (
+                Ok(Err(FetchError {
                     status,
-                    FetchResult::Failed {
-                        error,
-                        retry_after: None,
-                    },
-                ),
+                    error,
+                    retry_after,
+                })) => (status, FetchResult::Failed { error, retry_after }),
                 Err(_) => (
                     None,
                     FetchResult::Failed {
@@ -464,12 +467,15 @@ pub async fn run_smooth_pull(
                 driver.feed(input, now);
                 crate::source::advance_route(&driver, route_handle, &mut progress).await;
             }
-            Some(crate::source::pull::FetchOutcome::Failed(fetch, e, _)) => {
+            Some(crate::source::pull::FetchOutcome::Failed(fetch, e, retry_after)) => {
                 if fetch.status == Some(StatusCode::UNAUTHORIZED.as_u16()) {
                     return Err(e);
                 }
                 let failure = FetchFailure {
                     status: fetch.status,
+                    retry_after_us: retry_after.map_or(0, |wait| {
+                        u64::try_from(wait.as_micros()).unwrap_or(u64::MAX)
+                    }),
                 };
                 driver.feed(SmoothInput::Failed(fetch.id, failure), now);
                 crate::source::advance_route(&driver, route_handle, &mut progress).await;
@@ -573,11 +579,16 @@ mod tests {
         Some((kind.to_string(), time_str.parse().ok()?))
     }
 
+    type FragmentHits = Arc<std::sync::Mutex<Vec<((String, u64), std::time::Instant)>>>;
+
     #[derive(Clone)]
     struct FixtureState {
         manifest: Arc<String>,
         fragments: Arc<HashMap<(String, u64), Vec<u8>>>,
         stall: Option<(String, u64)>,
+        throttle_once: Option<(String, u64)>,
+        throttled: Arc<std::sync::atomic::AtomicBool>,
+        fragment_hits: FragmentHits,
     }
 
     async fn fixture_handler(
@@ -594,6 +605,18 @@ mod tests {
             std::future::pending::<()>().await;
             unreachable!("pending future never resolves");
         }
+        state
+            .fragment_hits
+            .lock()
+            .expect("lock")
+            .push(((kind.clone(), time), std::time::Instant::now()));
+        if state.throttle_once.as_ref() == Some(&(kind.clone(), time))
+            && !state
+                .throttled
+                .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            return (AxumStatusCode::SERVICE_UNAVAILABLE, [("retry-after", "2")]).into_response();
+        }
         match state.fragments.get(&(kind, time)) {
             Some(bytes) => bytes.clone().into_response(),
             None => AxumStatusCode::NOT_FOUND.into_response(),
@@ -603,6 +626,14 @@ mod tests {
     async fn start_fixture_server(
         stall: Option<(&str, u64)>,
     ) -> (String, tokio::task::JoinHandle<()>, Media) {
+        let (url, server, media, _) = start_throttling_fixture_server(stall, None).await;
+        (url, server, media)
+    }
+
+    async fn start_throttling_fixture_server(
+        stall: Option<(&str, u64)>,
+        throttle_once: Option<(&str, u64)>,
+    ) -> (String, tokio::task::JoinHandle<()>, Media, FragmentHits) {
         let (media, out) = build_smooth_output();
         let video_id = video_track_id(&media);
         let audio_id = audio_track_id(&media);
@@ -619,10 +650,14 @@ mod tests {
             fragments.insert((kind.to_string(), frag.start_time), frag.data.clone());
         }
 
+        let fragment_hits = FragmentHits::default();
         let state = FixtureState {
             manifest: Arc::new(out.manifest.clone()),
             fragments: Arc::new(fragments),
             stall: stall.map(|(k, t)| (k.to_string(), t)),
+            throttle_once: throttle_once.map(|(k, t)| (k.to_string(), t)),
+            throttled: Arc::default(),
+            fragment_hits: Arc::clone(&fragment_hits),
         };
         let app = Router::new()
             .route("/{*path}", get(fixture_handler))
@@ -634,7 +669,12 @@ mod tests {
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.expect("axum server");
         });
-        (format!("http://{addr}/Manifest"), server, media)
+        (
+            format!("http://{addr}/Manifest"),
+            server,
+            media,
+            fragment_hits,
+        )
     }
 
     async fn start_manifest_only_server(
@@ -934,6 +974,43 @@ mod tests {
         assert!(
             result.is_ok(),
             "a static manifest must end cleanly: {result:?}"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn run_smooth_pull_honours_retry_after_on_a_503() {
+        let (media, out) = build_smooth_output();
+        let video_id = video_track_id(&media);
+        let first = out
+            .fragments
+            .iter()
+            .find(|f| f.track_id == TrackId::new(video_id.value()))
+            .expect("a video fragment")
+            .start_time;
+        let (url, server, _media, hits) =
+            start_throttling_fixture_server(None, Some(("video", first))).await;
+        let route = SmoothPullRoute::new("smooth-retry-after", url);
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let result = tokio::time::timeout(
+            Duration::from_secs(60),
+            run_smooth_pull(&route, trunk_config(), handshake(), &route_handle),
+        )
+        .await
+        .expect("run_smooth_pull must not hang");
+        assert!(result.is_ok(), "{result:?}");
+        let times: Vec<std::time::Instant> = hits
+            .lock()
+            .expect("lock")
+            .iter()
+            .filter(|(key, _)| *key == ("video".to_string(), first))
+            .map(|(_, at)| *at)
+            .collect();
+        assert_eq!(times.len(), 2, "{times:?}");
+        assert!(
+            times[1].duration_since(times[0]) >= Duration::from_secs(2),
+            "the retry came {:?} after the 503",
+            times[1].duration_since(times[0])
         );
         server.abort();
     }

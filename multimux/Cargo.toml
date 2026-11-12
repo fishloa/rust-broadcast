@@ -302,6 +302,8 @@ rtc-dtls         = "0.21"
 # every MPD the origin emits as the window slides (#1058). Dev-only;
 # media-doctor does not depend on multimux (no cycle).
 media-doctor     = { path = "../media-doctor", version = "0.15.0", default-features = false, features = ["std"] }
+sha2             = "0.11"
+
 dvb-conformance  = { path = "../dvb-conformance", version = "13.1.0", default-features = false, features = ["std"] }
 # A dependency on ourselves, enabling the tiny `test-seams` feature for every
 # test build. Without it a plain `cargo test -p multimux` (default features)

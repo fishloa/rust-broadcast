@@ -122,6 +122,19 @@ pub(crate) async fn read_body_capped(
         })
 }
 
+/// The wait a `429`/`503` response asked for with `Retry-After` (RFC 9110 §10.2.3), if any.
+pub(crate) fn server_retry_after(
+    status: reqwest::StatusCode,
+    headers: &reqwest::header::HeaderMap,
+) -> Option<std::time::Duration> {
+    let pairs: Vec<(String, String)> = headers
+        .iter()
+        .filter_map(|(name, value)| Some((name.to_string(), value.to_str().ok()?.to_string())))
+        .collect();
+    let wait_us = broadcast_client::fetch::retry_after_us(status.as_u16(), &pairs, 0, None);
+    (wait_us > 0).then(|| std::time::Duration::from_micros(wait_us))
+}
+
 /// Why [`read_body_bounded`] stopped.
 #[derive(Debug)]
 pub(crate) enum BodyError {
