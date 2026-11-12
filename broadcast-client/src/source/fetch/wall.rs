@@ -3,7 +3,7 @@
 /// At the monotonic instant `mono_us` the host UTC clock read `unix_us` microseconds since
 /// 1970-01-01T00:00:00Z (POSIX, no leap seconds). See [`crate::Session::set_wall_clock`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct WallClock {
+pub struct WallClock {
     mono_us: u64,
     unix_us: u64,
 }

@@ -76,10 +76,10 @@ use url::Url;
 use crate::error::{MultimuxError, Result};
 use crate::source::driver::terminal_result;
 use crate::source::http_auth::{
-    ScopedCredentials, authenticated_get, credentials_from_url, resolve_credentials,
-    scope_credentials, strip_userinfo,
+    authenticated_get, credentials_from_url, resolve_credentials, scope_credentials, strip_userinfo,
 };
 use crate::source::pull_target::{PullKind, PullRoute};
+use broadcast_client::auth::AuthState;
 
 /// The synthesized per-stream init segment's `mvhd` timescale — arbitrary
 /// (ISO/IEC 14496-12:2026 §8.2.2). Reuses [`transmux::VIDEO_CLOCK_RATE`] purely so
@@ -802,7 +802,7 @@ enum FetchOne {
 async fn fetch_one_bytes(
     client: &HttpClient,
     url: &str,
-    creds: Option<&ScopedCredentials>,
+    creds: Option<&AuthState>,
     what: &str,
     tolerate_404: bool,
 ) -> Result<FetchOne> {
@@ -819,7 +819,7 @@ async fn fetch_one_bytes(
         .map(FetchOne::Bytes)
 }
 
-fn build_client(route: &SmoothPullRoute) -> Result<(HttpClient, Url, Option<ScopedCredentials>)> {
+fn build_client(route: &SmoothPullRoute) -> Result<(HttpClient, Url, Option<AuthState>)> {
     let parsed = Url::parse(&route.target.url).map_err(|e| MultimuxError::Connect {
         reason: format!(
             "bad Smooth-pull URL {}: {e}",
@@ -861,7 +861,7 @@ type SmoothPendingFetch = crate::source::pull::PendingFetch<SmoothFetch>;
 #[allow(clippy::too_many_arguments)]
 fn pending_fetch(
     http: HttpClient,
-    creds: Option<ScopedCredentials>,
+    creds: Option<AuthState>,
     id: SmoothResourceId,
     t: u64,
     d: u64,
@@ -886,10 +886,18 @@ fn pending_fetch(
                 Ok(Ok(FetchOne::NotReady)) => FetchResult::NotReady(MultimuxError::Connect {
                     reason: format!("smooth-pull {what} ({id:?}) not ready yet"),
                 }),
-                Ok(Err(e)) => FetchResult::Failed(e),
-                Err(_) => FetchResult::Failed(MultimuxError::Connect {
-                    reason: format!("smooth-pull {what} ({id:?}) read exceeded {read_timeout:?}"),
-                }),
+                Ok(Err(e)) => FetchResult::Failed {
+                    error: e,
+                    retry_after: None,
+                },
+                Err(_) => FetchResult::Failed {
+                    error: MultimuxError::Connect {
+                        reason: format!(
+                            "smooth-pull {what} ({id:?}) read exceeded {read_timeout:?}"
+                        ),
+                    },
+                    retry_after: None,
+                },
             };
             let key = SmoothFetch {
                 id,
@@ -1026,7 +1034,7 @@ pub async fn run_smooth_pull(
                 driver.feed((fetch.id, bytes.as_slice()), now);
                 crate::source::advance_route(&driver, route_handle, &mut progress).await;
             }
-            Some(crate::source::pull::FetchOutcome::Failed(_fetch, e)) => {
+            Some(crate::source::pull::FetchOutcome::Failed(_fetch, e, _)) => {
                 // A real fetch failure ends the session.
                 return Err(e);
             }
@@ -1982,7 +1990,7 @@ mod tests {
     async fn fetch_bytes(
         http: &HttpClient,
         url: &str,
-        creds: Option<&ScopedCredentials>,
+        creds: Option<&AuthState>,
         what: &str,
         tolerate_404: bool,
     ) -> Result<Vec<u8>> {

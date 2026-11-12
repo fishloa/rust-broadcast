@@ -50,8 +50,17 @@ impl FetchResult {
     pub fn from_result(r: Result<Vec<u8>, MultimuxError>) -> Self {
         match r {
             Ok(b) => FetchResult::Ready(b),
-            Err(e) => FetchResult::Failed(e),
+            Err(e) => FetchResult::Failed {
+                error: e,
+                retry_after: None,
+            },
         }
+    }
+
+    /// Build a failed result that also carries a server-requested `Retry-After`
+    /// wait (RFC 9110 §10.2.3).
+    pub fn failed_after(error: MultimuxError, retry_after: Option<Duration>) -> Self {
+        FetchResult::Failed { error, retry_after }
     }
 }
 
@@ -62,7 +71,12 @@ pub(crate) enum FetchResult {
     /// The fetch resolved to bytes.
     Ready(Vec<u8>),
     /// The fetch failed.
-    Failed(MultimuxError),
+    Failed {
+        /// The error.
+        error: MultimuxError,
+        /// The `Retry-After` wait a `429`/`503` asked for, if any.
+        retry_after: Option<Duration>,
+    },
     /// The fetch is not ready yet (retry the same fetch).
     NotReady(MultimuxError),
 }
@@ -71,8 +85,8 @@ pub(crate) enum FetchResult {
 pub(crate) enum FetchOutcome<K> {
     /// The fetch resolved: `(key, bytes)`.
     Ready(K, Vec<u8>),
-    /// The fetch failed: `(key, error)` — the source decides retry vs terminal.
-    Failed(K, MultimuxError),
+    /// The fetch failed: `(key, error, retry_after)` — the source decides retry vs terminal.
+    Failed(K, MultimuxError, Option<Duration>),
     /// The fetch reported "not ready yet" (a tolerated `404` from a live-edge
     /// pull source): `(key, error)` — a typed signal the source retries the
     /// same fetch, distinct from a real [`Failed`](Self::Failed). Carrying it
@@ -87,7 +101,7 @@ impl<K: fmt::Debug> fmt::Debug for FetchOutcome<K> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             FetchOutcome::Ready(k, b) => write!(f, "Ready({k:?}, {} bytes)", b.len()),
-            FetchOutcome::Failed(k, e) => write!(f, "Failed({k:?}, {e})"),
+            FetchOutcome::Failed(k, e, _) => write!(f, "Failed({k:?}, {e})"),
             FetchOutcome::NotReady(k, e) => write!(f, "NotReady({k:?}, {e})"),
             FetchOutcome::TaskPanic(e) => write!(f, "TaskPanic({e})"),
         }
@@ -259,7 +273,9 @@ impl<K: Send + 'static> PullScheduler<K> {
             };
             return match joined {
                 Some(Ok((key, FetchResult::Ready(bytes)))) => Some(FetchOutcome::Ready(key, bytes)),
-                Some(Ok((key, FetchResult::Failed(e)))) => Some(FetchOutcome::Failed(key, e)),
+                Some(Ok((key, FetchResult::Failed { error, retry_after }))) => {
+                    Some(FetchOutcome::Failed(key, error, retry_after))
+                }
                 Some(Ok((key, FetchResult::NotReady(e)))) => Some(FetchOutcome::NotReady(key, e)),
                 Some(Err(e)) => Some(FetchOutcome::TaskPanic(e.to_string())),
                 None => None,

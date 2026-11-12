@@ -19,6 +19,7 @@ const WWW_AUTHENTICATE: &str = "www-authenticate";
 const PROXY_AUTHENTICATE: &str = "proxy-authenticate";
 const STATUS_PROXY_AUTH_REQUIRED: u16 = 407;
 const CHALLENGE_SEPARATOR: &str = ", ";
+const PREEMPTIVE_BASIC_CHALLENGE: &str = "Basic realm=\"\"";
 
 /// Whether a request's headers carry credentials for the origin or for a proxy.
 pub(crate) fn carries_credentials(headers: &[(String, String)]) -> bool {
@@ -62,6 +63,23 @@ pub struct AuthState {
     jar: CookieJar,
 }
 
+/// Clones the origin, extra headers, credentials and last challenge; the negotiated authenticator
+/// and the cookie jar are not carried over, so a clone starts a fresh Digest exchange.
+impl Clone for AuthState {
+    fn clone(&self) -> Self {
+        Self {
+            origin: self.origin.clone(),
+            extra_headers: self.extra_headers.clone(),
+            credentials: self.credentials.clone(),
+            authenticator: None,
+            last_challenge: self.last_challenge.clone(),
+            proxy: self.proxy,
+            waiting: self.waiting,
+            jar: CookieJar::new(&self.origin),
+        }
+    }
+}
+
 impl AuthState {
     /// Create auth state.
     pub fn new(origin: Url, extra_headers: Vec<(String, String)>) -> Self {
@@ -99,7 +117,7 @@ impl AuthState {
     }
 
     /// The configured credentials.
-    pub(crate) fn credentials(&self) -> Option<&Credentials> {
+    pub fn credentials(&self) -> Option<&Credentials> {
         self.credentials.as_ref()
     }
 
@@ -118,6 +136,19 @@ impl AuthState {
         self.credentials = Some(creds);
         self.waiting = false;
         was_waiting
+    }
+
+    /// Arms `Credentials::Basic` so [`request_headers`](Self::request_headers) sends it on the first
+    /// request without waiting for a `401` (RFC 7617 permits preemptive Basic). A no-op for any
+    /// other credential, or when an authenticator is already negotiated.
+    pub fn preauthorize_basic(&mut self) {
+        if self.authenticator.is_some() {
+            return;
+        }
+        if let Some(creds @ Credentials::Basic { .. }) = &self.credentials {
+            self.authenticator =
+                Authenticator::from_challenge(PREEMPTIVE_BASIC_CHALLENGE, creds.clone()).ok();
+        }
     }
 
     /// Request headers for a URL.
@@ -288,6 +319,47 @@ mod tests {
         assert!(
             !h2.iter()
                 .any(|(k, _)| k.eq_ignore_ascii_case("authorization"))
+        );
+    }
+
+    #[test]
+    fn basic_is_sent_on_the_first_request_only_to_its_origin_once_preauthorized() {
+        let origin = Url::parse("http://example/live.ts").unwrap();
+        let mut auth = AuthState::new(origin.clone(), vec![]);
+        auth.set_credentials(Credentials::Basic {
+            username: "user".into(),
+            password: "pass".into(),
+        });
+        let authorization = |h: Vec<(String, String)>| {
+            h.into_iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("authorization"))
+                .map(|(_, v)| v)
+        };
+        assert_eq!(authorization(auth.request_headers(&origin, 0)), None);
+        auth.preauthorize_basic();
+        assert_eq!(
+            authorization(auth.request_headers(&origin, 0)).as_deref(),
+            Some("Basic dXNlcjpwYXNz")
+        );
+        let other = Url::parse("http://other.example/live.ts").unwrap();
+        assert_eq!(authorization(auth.request_headers(&other, 0)), None);
+    }
+
+    #[test]
+    fn clone_keeps_credentials_but_not_the_negotiated_authenticator() {
+        let origin = Url::parse("http://example/live.ts").unwrap();
+        let mut auth = AuthState::new(origin.clone(), vec![]);
+        auth.set_credentials(Credentials::Basic {
+            username: "user".into(),
+            password: "pass".into(),
+        });
+        auth.preauthorize_basic();
+        let mut copy = auth.clone();
+        assert_eq!(copy.credentials(), auth.credentials());
+        assert!(
+            copy.request_headers(&origin, 0)
+                .iter()
+                .all(|(k, _)| !k.eq_ignore_ascii_case("authorization"))
         );
     }
 
