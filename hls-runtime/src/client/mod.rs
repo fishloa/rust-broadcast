@@ -29,21 +29,6 @@
 //! `transmux::ll_hls::LlHlsSegmenter` origin) with zero IO dependencies at
 //! all (verified by the `--no-default-features` gate).
 //!
-//! # The `tokio` feature (issue #717 slice 5)
-//!
-//! Enabling the `tokio` cargo feature (NOT default) adds
-//! [`tokio_client::TokioClient`], a thin async shell (tokio + reqwest/rustls)
-//! that drives [`HlsClient`] over real HTTP — blocking-reload/preload-hint
-//! query params, typed byte-range `Range` headers (`headers::Range`),
-//! per-request timeouts, `backon` retry/backoff with jitter on transient
-//! failures, and a `CancellationToken` for shutdown (no polling sleeps; the
-//! core exposes [`HlsClient::next_wait`]/[`HlsClient::poll_timeout`] for
-//! callers that schedule themselves). See [`tokio_client`]'s module docs
-//! for the full behaviour and its `multimux/tests/it/glass_to_glass.rs` for a
-//! loopback-HTTP, sub-second glass-to-glass proof against a real
-//! `multimux`-served LL-HLS origin. This feature is entirely additive — the
-//! sans-IO core above is completely unaffected by it either way.
-//!
 //! # Example
 //!
 //! ```
@@ -64,13 +49,9 @@ mod action;
 mod engine;
 mod error;
 mod output;
-#[cfg(feature = "tokio")]
-pub mod tokio_client;
 mod url;
 
 pub use action::{Action, BlockingReload, KeyId, ResourceId};
 pub use engine::{HlsClient, choose_variant};
 pub use error::{Error, Result};
 pub use output::{MasterSelection, Output, RenditionInfo, VariantInfo, VariantPolicy};
-#[cfg(feature = "tokio")]
-pub use tokio_client::{TokioClient, TokioClientConfig, TokioClientStats, TokioError};

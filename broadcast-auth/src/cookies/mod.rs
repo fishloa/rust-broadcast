@@ -4,6 +4,7 @@
 //! `cookie_store`'s pure `CookieDomain`/`CookiePath`; expiry runs on the session's injected
 //! microsecond clock. `Expires` is ignored; see `private/specs-verified/ietf/broadcast-client/cookies.md` for the documented deviations.
 
+extern crate alloc;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 

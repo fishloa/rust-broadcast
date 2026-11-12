@@ -415,6 +415,8 @@ name = "broadcast-auth"
 version = "0.6.0"
 dependencies = [
  "base64 0.23.1",
+ "cookie",
+ "cookie_store",
  "form_urlencoded",
  "getrandom 0.4.3",
  "headers",

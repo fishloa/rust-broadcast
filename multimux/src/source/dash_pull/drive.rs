@@ -27,7 +27,7 @@ use crate::source::driver::terminal_result;
 use crate::source::http_auth::authenticated_get_with;
 use crate::source::pull::{FetchOutcome, FetchResult, PendingFetch, PullScheduler};
 use crate::source::{BodyError, read_body_bounded, server_retry_after};
-use broadcast_client::auth::AuthState;
+use broadcast_auth::AuthState;
 
 /// How long the loop parks when nothing is in flight and nothing is due.
 const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(5);

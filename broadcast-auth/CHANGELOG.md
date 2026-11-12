@@ -5,6 +5,10 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `AuthState` and its cookie jar moved from `broadcast-client` (sans-IO client API): origin-scoped credentials, multi-line `WWW-Authenticate` handling, Digest stale replay, cookies. `AuthEvent`, `carries_credentials`.
+### Removed
+- (none)
 
 ## [0.6.0] - 2026-11-10
 ### Changed

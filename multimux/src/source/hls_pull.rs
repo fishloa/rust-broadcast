@@ -83,7 +83,7 @@ use crate::source::http_auth::{
     authenticated_get, credentials_from_url, resolve_credentials, scope_credentials, strip_userinfo,
 };
 use crate::source::pull_target::{PullKind, PullRoute};
-use broadcast_client::auth::AuthState;
+use broadcast_auth::AuthState;
 
 /// How long a `run_*_pull` drive loop parks when its session has, momentarily,
 /// neither an outbound request queued nor a fetch in flight — and has not

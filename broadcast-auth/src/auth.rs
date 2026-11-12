@@ -1,16 +1,15 @@
 //! Origin-scoped credentials and challenge handling.
 
+extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 
 use url::Url;
 
-use broadcast_auth::challenge::parse_challenges;
-use broadcast_auth::{Authenticator, Credentials};
+use crate::parse_challenges;
+use crate::{Authenticator, Credentials};
 
 use crate::cookies::CookieJar;
-use crate::headers;
-use crate::{Event, Status};
 
 const COOKIE: &str = "Cookie";
 const AUTHORIZATION: &str = "Authorization";
@@ -21,11 +20,17 @@ const STATUS_PROXY_AUTH_REQUIRED: u16 = 407;
 const CHALLENGE_SEPARATOR: &str = ", ";
 const PREEMPTIVE_BASIC_CHALLENGE: &str = "Basic realm=\"\"";
 
-/// Whether a request's headers carry credentials for the origin or for a proxy.
-pub(crate) fn carries_credentials(headers: &[(String, String)]) -> bool {
-    headers.iter().any(|(k, _)| {
-        k.eq_ignore_ascii_case(AUTHORIZATION) || k.eq_ignore_ascii_case(PROXY_AUTHORIZATION)
-    })
+fn is_reserved_header(name: &str) -> bool {
+    const RESERVED: [&str; 7] = [
+        "authorization",
+        "cookie",
+        "host",
+        "content-length",
+        "transfer-encoding",
+        "connection",
+        "range",
+    ];
+    RESERVED.iter().any(|r| name.eq_ignore_ascii_case(r))
 }
 
 fn authenticator_for(lines: &[String], creds: &Credentials) -> Option<Authenticator> {
@@ -40,6 +45,7 @@ fn authenticator_for(lines: &[String], creds: &Credentials) -> Option<Authentica
 }
 
 /// Result of handling a 401/407.
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum AuthDecision {
     /// Replay the request with credentials.
@@ -48,7 +54,41 @@ pub enum AuthDecision {
     /// lineage so a second stale answer is rejected instead of replayed again.
     ReplayStale,
     /// Wait for credentials.
-    Wait(Vec<Event>),
+    Wait(Vec<AuthEvent>),
+}
+
+/// Event emitted by [`AuthState::handle_unauthorized`] when it cannot replay on its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+#[allow(clippy::large_enum_variant)]
+pub enum AuthEvent {
+    /// Credentials are required from the host.
+    AuthRequired {
+        /// Scheme.
+        scheme: crate::Scheme,
+        /// Realm.
+        realm: Option<String>,
+        /// Origin.
+        origin: Url,
+        /// Resource metadata.
+        resource_metadata: Option<Url>,
+    },
+    /// Credentials were rejected.
+    AuthRejected {
+        /// HTTP status.
+        status: u16,
+    },
+    /// Waiting for credentials.
+    StatusWaitingForCredentials,
+}
+
+/// Whether a request's headers carry credentials for the origin or for a proxy.
+pub fn carries_credentials(headers: &[(String, String)]) -> bool {
+    const AUTHORIZATION: &str = "Authorization";
+    const PROXY_AUTHORIZATION: &str = "Proxy-Authorization";
+    headers.iter().any(|(k, _)| {
+        k.eq_ignore_ascii_case(AUTHORIZATION) || k.eq_ignore_ascii_case(PROXY_AUTHORIZATION)
+    })
 }
 
 /// Origin-scoped auth state.
@@ -157,7 +197,7 @@ impl AuthState {
         let mut headers: Vec<(String, String)> = if same_origin {
             self.extra_headers
                 .iter()
-                .filter(|(k, _)| !headers::is_reserved(k))
+                .filter(|(k, _)| !is_reserved_header(k))
                 .cloned()
                 .collect()
         } else {
@@ -179,13 +219,12 @@ impl AuthState {
                 Credentials::Basic { .. } | Credentials::Digest { .. } => {
                     if let Some(auth) = &mut self.authenticator {
                         let target = &url[url::Position::BeforePath..url::Position::AfterQuery];
-                        let ctx = broadcast_auth::RequestContext::new("GET", target);
+                        let ctx = crate::RequestContext::new("GET", target);
                         if let Ok(val) = auth.authorization(&ctx) {
                             headers.push((name.to_string(), val));
                         }
                     }
                 }
-                _ => {}
             }
         }
         headers
@@ -218,7 +257,7 @@ impl AuthState {
             challenge_lines = select(&[WWW_AUTHENTICATE, PROXY_AUTHENTICATE]);
         }
 
-        let challenges: Vec<broadcast_auth::Challenge> = challenge_lines
+        let challenges: Vec<crate::Challenge> = challenge_lines
             .iter()
             .flat_map(|l| parse_challenges(&[l.as_str()]).challenges)
             .collect();
@@ -241,19 +280,19 @@ impl AuthState {
                 .or_else(|| challenges.first());
             let scheme = chosen
                 .map(|c| c.scheme.clone())
-                .unwrap_or(broadcast_auth::Scheme::Bearer);
+                .unwrap_or(crate::Scheme::Bearer);
             let realm = chosen.and_then(|c| c.realm.clone());
             let resource_metadata = chosen.and_then(|c| c.resource_metadata.clone());
             self.waiting = true;
             self.authenticator = None;
             return AuthDecision::Wait(vec![
-                Event::AuthRequired {
+                AuthEvent::AuthRequired {
                     scheme,
                     realm,
                     origin: self.origin.clone(),
                     resource_metadata,
                 },
-                Event::Status(Status::WaitingForCredentials),
+                AuthEvent::StatusWaitingForCredentials,
             ]);
         }
 
@@ -262,8 +301,8 @@ impl AuthState {
             self.waiting = true;
             self.authenticator = None;
             return AuthDecision::Wait(vec![
-                Event::AuthRejected { status },
-                Event::Status(Status::WaitingForCredentials),
+                AuthEvent::AuthRejected { status },
+                AuthEvent::StatusWaitingForCredentials,
             ]);
         }
 
@@ -283,8 +322,8 @@ impl AuthState {
         self.waiting = true;
         self.authenticator = None;
         AuthDecision::Wait(vec![
-            Event::AuthRejected { status },
-            Event::Status(Status::WaitingForCredentials),
+            AuthEvent::AuthRejected { status },
+            AuthEvent::StatusWaitingForCredentials,
         ])
     }
 }

@@ -6,6 +6,8 @@ documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Removed
+- BREAKING: `client::tokio_client` (`TokioClient`) and the `tokio` client feature wiring, plus its tests. Use the sans-IO `HlsClient` core.
 ### Added
 - `HlsOrigin::set_init_from`: `set_init` for a caller that names the first segment cut against the new init, for segments closed but not yet published.
 

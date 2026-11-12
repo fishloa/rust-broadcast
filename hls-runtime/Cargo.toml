@@ -77,7 +77,6 @@ serde = ["dep:serde"]
 # `HlsClient` core over real HTTP (tokio + reqwest/rustls). NOT default —
 # the core (`client/engine.rs`) stays IO-free regardless of this feature;
 # enabling it only adds the `client::tokio_client` module alongside it.
-tokio = ["std", "dep:tokio", "dep:reqwest", "dep:broadcast-auth", "dep:backon", "dep:headers", "dep:tokio-util"]
 
 [dev-dependencies]
 # Loopback mock HTTP servers for `hls-runtime/tests/it/tokio_client_auth.rs` (tokio is

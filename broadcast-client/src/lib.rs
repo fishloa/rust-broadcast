@@ -5,9 +5,7 @@
 
 extern crate alloc;
 
-pub mod auth;
 mod buffer;
-mod cookies;
 pub mod error;
 
 /// Sans-IO fetch cores (retry/backoff policy and helpers).

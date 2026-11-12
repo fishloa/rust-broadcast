@@ -20,7 +20,7 @@
 //! URL.
 
 use broadcast_auth::Credentials;
-use broadcast_client::auth::{AuthDecision, AuthState};
+use broadcast_auth::{AuthDecision, AuthState};
 use reqwest::header::HeaderName;
 use reqwest::{Client, RequestBuilder, Response, StatusCode};
 use url::Url;
@@ -113,6 +113,7 @@ pub(crate) async fn authenticated_get_with(
     extra_headers: &[(HeaderName, String)],
 ) -> Result<Response> {
     let mut state = auth.cloned();
+    let had_auth = false;
     if let Some(state) = &mut state {
         state.preauthorize_basic();
     }
@@ -128,32 +129,34 @@ pub(crate) async fn authenticated_get_with(
         return Ok(response);
     };
     let own_origin = state.origin().origin();
-    if !matches!(state.credentials(), Some(Credentials::Digest { .. }))
-        || response.status() != StatusCode::UNAUTHORIZED
-        || parsed.origin() != own_origin
-        || response.url().origin() != own_origin
-    {
-        return Ok(response);
-    }
-    let challenge_headers: Vec<(String, String)> = response
+    // Feed response cookies on every response, regardless of status.
+    let response_headers: Vec<(String, String)> = response
         .headers()
         .iter()
         .filter_map(|(k, v)| Some((k.as_str().to_owned(), v.to_str().ok()?.to_owned())))
         .collect();
-    let decision = state.handle_unauthorized(
-        StatusCode::UNAUTHORIZED.as_u16(),
-        &challenge_headers,
-        false,
-        false,
-    );
-    if !matches!(decision, AuthDecision::Replay) {
+    state.receive_cookies(parsed, &response_headers, 0);
+
+    let status = response.status().as_u16();
+    let is_challenge = status == StatusCode::UNAUTHORIZED.as_u16()
+        || status == StatusCode::PROXY_AUTHENTICATION_REQUIRED.as_u16();
+    if !is_challenge || parsed.origin() != own_origin || response.url().origin() != own_origin {
+        return Ok(response);
+    }
+    // Only attempt a credential replay when credentials are configured for
+    // this origin; otherwise leave the challenge response to the caller.
+    if state.credentials().is_none() {
+        return Ok(response);
+    }
+    let decision = state.handle_unauthorized(status, &response_headers, had_auth, false);
+    if !matches!(decision, AuthDecision::Replay | AuthDecision::ReplayStale) {
         return Ok(response);
     }
     build_request(client, url, Some(parsed), Some(state), extra_headers)
         .send()
         .await
         .map_err(|e| MultimuxError::Connect {
-            reason: format!("GET {} (digest retry): {e}", crate::redact::redact_url(url)),
+            reason: format!("GET {} (auth retry): {e}", crate::redact::redact_url(url)),
         })
 }
 
@@ -613,7 +616,7 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::PROXY_AUTHENTICATION_REQUIRED);
         let seen = seen.lock().unwrap();
-        assert_eq!(seen.len(), 1);
+        assert_eq!(seen.len(), 2);
     }
 
     #[tokio::test]
