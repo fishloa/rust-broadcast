@@ -601,7 +601,7 @@ impl broadcast_common::Package for SmoothPackager {
 // Codec resolution
 // ---------------------------------------------------------------------------
 
-type ResolvedCodec = (
+pub type ResolvedCodec = (
     SmoothStreamType,
     &'static str,
     Vec<u8>,
@@ -616,7 +616,7 @@ type ResolvedCodec = (
 ///
 /// Only the [MS-SSTR]-defined H.264 (video) and AAC-LC (audio) codecs are
 /// supported; other codecs return [`Error::InvalidInput`].
-fn resolve_codec(config: &CodecConfig) -> Result<ResolvedCodec> {
+pub fn resolve_codec(config: &CodecConfig) -> Result<ResolvedCodec> {
     match config {
         CodecConfig::Avc { config, .. } => {
             let cpd = SmoothPackager::video_codec_private_data(config);

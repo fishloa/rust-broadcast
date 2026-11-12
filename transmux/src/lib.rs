@@ -428,7 +428,7 @@ pub use segments::{
 #[cfg(feature = "std")]
 pub use smooth::{
     FOURCC_AACL, FOURCC_H264, SMOOTH_TIMESCALE, SmoothFragment, SmoothOutput, SmoothPackager,
-    SmoothStreamType, TFXD_UUID, TfxdBox,
+    SmoothStreamType, TFXD_UUID, TfxdBox, resolve_codec, ResolvedCodec,
 };
 pub use timeline::{
     DEFAULT_JUMP_BACKWARD_US, DEFAULT_JUMP_FORWARD_SLACK_US, JumpDetector, TimelineJumpConfig,
