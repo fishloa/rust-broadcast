@@ -998,8 +998,11 @@ fn trunk_with_avc_track() -> Arc<Trunk> {
 /// `transmux::rtp`'s own (private) `rescale_ts`, computed in `u128` to
 /// avoid overflow for a `from_timescale` far below 90 kHz on a
 /// long-running session's large absolute tick count.
+/// RTP timestamps are modulo 2^32 (RFC 3550 §5.1), so the rescaled
+/// value wraps into the 32-bit range before it is placed in the header.
 fn rescale_to_90k(ticks: u64, from_timescale: u32) -> u32 {
-    rescale_u64(ticks, from_timescale, VIDEO_CLOCK_RATE, Rounding::Nearest) as u32
+    let v = rescale_u64(ticks, from_timescale, VIDEO_CLOCK_RATE, Rounding::Nearest);
+    u32::try_from(v & u64::from(u32::MAX)).expect("masked to 32 bits")
 }
 
 /// Byte offset of the `sequence number` field within the RTP fixed header
@@ -1684,6 +1687,11 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
     fn rescale_to_90k_scales_a_different_timescale() {
         // 1 second at a 1000 Hz timescale -> 1 second at 90 kHz.
         assert_eq!(rescale_to_90k(1000, 1000), VIDEO_CLOCK_RATE);
+    }
+    #[test]
+    fn rescale_to_90k_wraps_modulo_2_pow_32() {
+        let ticks = u64::from(u32::MAX) + 1;
+        assert_eq!(rescale_to_90k(ticks, VIDEO_CLOCK_RATE), 0);
     }
 
     #[test]
