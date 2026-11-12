@@ -179,3 +179,52 @@ fn a_selector_picks_the_requested_video_quality() {
             .any(|u| u.contains("QualityLevels(10000)/Fragments(video=0)"))
     );
 }
+
+const TFXD_TIME_RANGE: std::ops::Range<usize> = 304..312;
+
+#[test]
+fn a_tfxd_time_beyond_i64_drops_the_fragment_without_panicking() {
+    let mut hostile = fixture(&format!("av/{FIRST_VIDEO}"));
+    hostile[TFXD_TIME_RANGE].fill(0xFF);
+    let mut host = av_host(SmoothConfig::default());
+    host.route(FIRST_VIDEO, vec![Reply::Body(hostile)]);
+    host.run_until(|o| o.iter().any(is_ended));
+    assert!(host.has(|o| matches!(o, Output::Dropped(Dropped::Fragment { status: None, .. }))));
+    assert!(host.has(is_ended));
+}
+
+fn av_manifest_with_audio_chunks(chunks: &str) -> Vec<u8> {
+    String::from_utf8(fixture("av/Manifest"))
+        .expect("utf8")
+        .replace(
+            "<c n=\"0\" d=\"10214580\" />\n<c n=\"1\" d=\"9984581\" />\n<c n=\"2\" d=\"10216780\" />",
+            chunks,
+        )
+        .into_bytes()
+}
+
+#[test]
+fn a_stream_whose_timeline_cannot_be_enumerated_ends_the_session_with_a_typed_cause() {
+    let mut host = av_host(SmoothConfig::default());
+    host.route(
+        "Manifest",
+        vec![Reply::Body(av_manifest_with_audio_chunks("<c n=\"0\" />"))],
+    );
+    host.run_until(|o| o.iter().any(|o| is_fatal(o) || is_ended(o)));
+    assert!(host.has(|o| matches!(o, Output::Fatal(SmoothError::Timeline { .. }))));
+}
+
+#[test]
+fn a_zero_timescale_is_never_delivered() {
+    let zero = String::from_utf8(fixture("av/Manifest"))
+        .expect("utf8")
+        .replace(
+            "<SmoothStreamingMedia ",
+            "<SmoothStreamingMedia TimeScale=\"0\" ",
+        );
+    let mut host = av_host(SmoothConfig::default());
+    host.route("Manifest", vec![Reply::Body(zero.into_bytes())]);
+    host.run_until(|o| o.iter().any(|o| is_fatal(o) || is_ended(o)));
+    assert!(!host.has(|o| matches!(o, Output::Tracks(_))));
+    assert!(host.has(|o| matches!(o, Output::Fatal(SmoothError::NoUsableStream))));
+}

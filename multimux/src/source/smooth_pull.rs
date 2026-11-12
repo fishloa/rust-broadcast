@@ -131,28 +131,32 @@ impl SmoothIngestSession {
             self.pending_events.push_back(SessionEvent::Established);
         }
         while let Some(output) = self.client.next_output() {
-            match output {
-                Output::Tracks(tracks) => self.pending_events.push_back(SessionEvent::NewProgram {
+            self.apply(output);
+        }
+    }
+
+    fn apply(&mut self, output: Output) {
+        match output {
+            Output::Tracks(tracks) => self.pending_events.push_back(SessionEvent::NewProgram {
+                program: ProgramId(0),
+                tracks,
+            }),
+            Output::Sample { track, sample } => {
+                self.pending_events.push_back(SessionEvent::Sample {
                     program: ProgramId(0),
-                    tracks,
-                }),
-                Output::Sample { track, sample } => {
-                    self.pending_events.push_back(SessionEvent::Sample {
-                        program: ProgramId(0),
-                        track_id: track,
-                        retention: RetentionClass::Timed,
-                        sample,
-                    });
-                }
-                Output::Discontinuity => {
-                    tracing::warn!("smooth-pull: timeline discontinuity");
-                }
-                Output::Dropped(dropped) => Self::note_dropped(&dropped),
-                Output::Fatal(error) => {
-                    self.failure.get_or_insert_with(|| fatal_error(&error));
-                }
-                _ => {}
+                    track_id: track,
+                    retention: RetentionClass::Timed,
+                    sample,
+                });
             }
+            Output::Discontinuity => {
+                tracing::warn!("smooth-pull: timeline discontinuity");
+            }
+            Output::Dropped(dropped) => Self::note_dropped(&dropped),
+            Output::Fatal(error) => {
+                self.failure.get_or_insert_with(|| fatal_error(&error));
+            }
+            _ => {}
         }
     }
 
@@ -525,6 +529,15 @@ mod tests {
 
     const SYNTHETIC_MOVIE_TIMESCALE: u32 = transmux::VIDEO_CLOCK_RATE;
     use transmux::{Media, SmoothOutput, SmoothPackager, TsDemux};
+
+    #[test]
+    fn a_discontinuity_output_is_logged_and_adds_no_session_event() {
+        let mut session =
+            SmoothIngestSession::new(Url::parse("http://origin.test/Manifest").expect("url"));
+        session.apply(Output::Discontinuity);
+        assert!(session.pending_events.is_empty());
+        assert!(session.failure.is_none());
+    }
 
     fn nz(n: usize) -> NonZeroUsize {
         NonZeroUsize::new(n).expect("test capacity must be non-zero")

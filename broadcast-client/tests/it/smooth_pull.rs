@@ -715,3 +715,32 @@ fn smooth_pull_golden_av() {
 fn smooth_pull_golden_av_low() {
     check_golden("av-low");
 }
+
+#[test]
+fn smooth_select_variant_switches_the_quality_of_later_fragments() {
+    let base = String::from_utf8(body("smooth/av/Manifest")).unwrap();
+    let low = r#"<QualityLevel Index="1" Bitrate="30000" FourCC="H264" MaxWidth="160" MaxHeight="120" CodecPrivateData="00000001674d400deca0a0fd80880000030008000003019078a14cb00000000168ebe3cb20" />"#;
+    let first_chunk = r#"<c n="0" d="10000000" />"#;
+    let base = base.replace(first_chunk, &format!("{low}\n{first_chunk}"));
+    let mut h = Host::new(manifest_url(), smooth_config());
+    route_fragments(&mut h);
+    h.ok(manifest_url(), base.into_bytes());
+    h.run_until(
+        |evs| evs.iter().any(|e| matches!(e, Event::Variants(_))),
+        10_000,
+    );
+    h.session.select_variant(1).expect("select the low variant");
+    h.run_until(
+        |evs| {
+            evs.iter()
+                .any(|e| matches!(e, Event::Status(Status::Ended)))
+                || evs.iter().any(|e| matches!(e, Event::Error { .. }))
+        },
+        10_000,
+    );
+    assert!(
+        h.seen
+            .iter()
+            .any(|s| s.url.contains("QualityLevels(30000)/Fragments(video="))
+    );
+}

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Fixed
+- `StreamIndex::enumerate_chunks`: a `c` with no `@d` and `@r > 1` takes `(next.t - t) / r` as each fragment's duration (it took the whole span, so the run overshot the next explicit `t`), and returns the new `SmoothParseError::IndivisibleRun` when the span is not a whole multiple of `r`.
+- `StreamIndex::enumerate_chunks`: an explicit `c@t` that repeats or steps back before the end of the preceding entry is `SmoothParseError::NonMonotonicTime` also when `@d` is present; it was only checked when `@d` was absent, so the plan refetched a fragment and emitted samples whose dts jumped back.
 - `StreamIndex::enumerate_chunks`: `c@r` is now one-based (MS-SSTR §2.2.2.6): an entry with `r = n` stands for `n` fragments; `r = 0` is rejected with `SmoothParseError::InvalidRepeatCount`. Previously `r` was treated as `r + 1` (DASH SegmentTimeline semantics).
 - `StreamIndex::enumerate_chunks`: a `c` with no `@d` now derives its duration from the next entry's `@t` (start-time coding); the last entry without `@d` and without a following `@t` returns `SmoothParseError::MissingDuration`. Previously `d.unwrap_or(0)` emitted zero-duration chunks.
 - `SmoothManifest::to_xml` writes exactly the model: one `c` per `StreamIndex::chunks_list` entry, each attribute only when set. It no longer invents a `c@n` from the entry's position, and no longer expands a `t` + `r` entry into separate elements, so `parse(to_xml(m)) == m` holds for models without `n` and for repeat runs. `C::numbered` sets `@n` explicitly for a writer that wants it.
