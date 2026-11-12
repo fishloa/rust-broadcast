@@ -4,11 +4,11 @@
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 
-use broadcast_common::timescale::{Rounding, to_micros};
-use crate::TrackId;
-use crate::Sample;
-use crate::TrackSpec;
 use crate::JoinDecision;
+use crate::Sample;
+use crate::TrackId;
+use crate::TrackSpec;
+use broadcast_common::timescale::{Rounding, to_micros};
 
 /// Default backward step that marks a new timeline, microseconds.
 pub const DEFAULT_JUMP_BACKWARD_US: u64 = 1_000_000;
@@ -16,7 +16,7 @@ pub const DEFAULT_JUMP_BACKWARD_US: u64 = 1_000_000;
 /// microseconds.
 pub const DEFAULT_JUMP_FORWARD_SLACK_US: u64 = 5_000_000;
 
-/// Thresholds of the timeline-jump detector, see [`crate::Config::timeline_jump`].
+/// Thresholds of the timeline-jump detector, see `broadcast-client::Config::timeline_jump`.
 ///
 /// Between two consecutive kept samples of a track, with `step = pts - previous pts` converted
 /// to microseconds, a new timeline starts when `step < -backward_us` or
@@ -66,6 +66,10 @@ struct Epoch {
     stale: BTreeSet<TrackId>,
 }
 
+/// Per-track timeline-jump detector.
+///
+/// Detects a new timeline from media alone (origin restart, looping recorder,
+/// channel swap behind one URL) using broadcast-client semantics.
 pub struct JumpDetector {
     config: Option<TimelineJumpConfig>,
     tracks: BTreeMap<TrackId, TrackInfo>,
@@ -260,10 +264,10 @@ impl JumpDetector {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::Unpackage;
     use crate::live_join::DropReason;
-        use crate::live_join::LiveJoin;
-        use crate::ts_demux::TsDemux;
+    use crate::live_join::LiveJoin;
+    use crate::ts_demux::TsDemux;
+    use broadcast_common::Unpackage;
 
     const VIDEO_TS: i64 = 90_000;
     const T0: u64 = 7_000_000;

@@ -545,10 +545,6 @@ const IDR_HOLD_MAX_BYTES: usize = 32 * 1024 * 1024;
 struct MediaAnchor {
     source_90k: u64,
     timeline_ns: u64,
-    /// The last sample PTS seen, in its own track's timescale, with which to
-    /// detect a discontinuity.
-    last_pts: i64,
-    last_timescale: u32,
 }
 
 /// Start-gate safety valve (issue #1425): the gate drops leading video samples
@@ -1253,7 +1249,8 @@ impl ProgramSegmenter {
                 .map(|t| t.timescale)
             && timescale > 0
         {
-            let now_us = self.ingest_origin.elapsed().as_micros() as u64;
+            let now_us =
+                u64::try_from(self.ingest_origin.elapsed().as_micros()).unwrap_or(u64::MAX);
             let re_anchor = match self.anchor {
                 None => true,
                 Some(_) => self.timeline.is_jump(track_id, &sample, None, now_us),
@@ -1263,8 +1260,6 @@ impl ProgramSegmenter {
                 let fresh = MediaAnchor {
                     source_90k: rescale_to_90k(pts, timescale),
                     timeline_ns: self.next_timeline_ns,
-                    last_pts: pts,
-                    last_timescale: timescale,
                 };
                 if self.anchor.is_none() {
                     // No anchor at all yet: this IS the first
@@ -1278,9 +1273,6 @@ impl ProgramSegmenter {
                     // (item 5).
                     self.pending_anchor = Some(fresh);
                 }
-            } else if let Some(a) = self.anchor.as_mut() {
-                a.last_pts = pts;
-                a.last_timescale = timescale;
             }
         }
         let sample = in_declared_timescale(&self.timescale_moves, track_id, sample);
@@ -2283,16 +2275,12 @@ mod tests {
         segmenter.anchor = Some(MediaAnchor {
             source_90k: 0,
             timeline_ns: 0,
-            last_pts: 0,
-            last_timescale: 90_000,
         });
         // A discontinuity observed mid-segment-1: it must NOT retro-stamp
         // segment 1.
         segmenter.pending_anchor = Some(MediaAnchor {
             source_90k: 900_090,
             timeline_ns: 0,
-            last_pts: 900_090,
-            last_timescale: 90_000,
         });
         assert_eq!(
             segmenter.anchor.map(|a| a.source_90k),

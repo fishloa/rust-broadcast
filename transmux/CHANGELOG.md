@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
-- Timeline-jump detector (`timeline` module: `JumpDetector`, `TimelineJumpConfig`) moved from `broadcast-client`; per-track discontinuity detection with configurable thresholds.
+- Timeline-jump detector (`timeline` module): `JumpDetector`, `TimelineJumpConfig`, `DEFAULT_JUMP_BACKWARD_US`, `DEFAULT_JUMP_FORWARD_SLACK_US` moved from `broadcast-client`; per-track discontinuity detection with configurable thresholds.
 ### Fixed
 - `aac_asc::parse_adts_header` now rejects non-ADTS headers: layer must be `00`, sampling frequency index must not be reserved/escape, and `frame_length` must be at least the header length. `adts_header_len` now lives only in `aac_asc` (taking the parsed header); `sample_aes` and `ts_demux` call it instead of keeping their own copies.
 - `TrackAligner::sender_reports_refused`: the 3600 s skew refusal covers every track at once and keeps them `AvSync::Provisional` while the clocks disagree; it is now observable as state (cleared on the next accepted evaluation) and documented in the module docs (audit A9-6).
