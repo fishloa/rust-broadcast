@@ -492,6 +492,7 @@ version = "0.1.0"
 dependencies = [
  "broadcast-common",
  "jiff",
+ "quick-xml",
  "test-fixtures",
  "thiserror 2.0.21",
 ]
