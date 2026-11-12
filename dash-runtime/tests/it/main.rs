@@ -1,3 +1,4 @@
+mod address_fuzz_availability;
 mod availability;
 mod base_url;
 mod client_addressing;
