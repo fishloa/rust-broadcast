@@ -226,28 +226,28 @@ impl PlayPlan {
     }
 
     /// Records the answer to setup `index`. `negotiated` is the `Transport`
-    /// the server answered with; `None` (no `Transport` header) keeps the
-    /// offered pair.
+    /// the server answered with; a 2xx `SETUP` reply must carry one (RFC 2326
+    /// §12.39), so `None` is [`Error::MissingTransport`] and the offered pair
+    /// is never assumed.
     ///
     /// # Errors
     ///
+    /// [`Error::MissingTransport`] when `negotiated` is `None`,
     /// [`Error::UnusableTransport`] when the answer is not interleaved TCP with
     /// two distinct channels, and [`Error::InterleavedChannelCollision`] when
     /// either channel is already taken by an earlier setup. `index` out of
     /// range is [`Error::UnusableTransport`] too.
     pub fn accept_setup(&mut self, index: usize, negotiated: Option<&Transport>) -> Result<()> {
-        let Some(offered) = self.channels.get(index).copied() else {
+        if index >= self.channels.len() {
             return Err(Error::UnusableTransport);
-        };
-        let (channel, rtcp_channel) = match negotiated {
-            None => offered,
-            Some(transport) => transport
-                .first()
-                .filter(|spec| spec.lower_transport == Some(LowerTransport::Tcp))
-                .and_then(|spec| spec.interleaved)
-                .filter(|(rtp, rtcp)| rtp != rtcp)
-                .ok_or(Error::UnusableTransport)?,
-        };
+        }
+        let transport = negotiated.ok_or(Error::MissingTransport)?;
+        let (channel, rtcp_channel) = transport
+            .first()
+            .filter(|spec| spec.lower_transport == Some(LowerTransport::Tcp))
+            .and_then(|spec| spec.interleaved)
+            .filter(|(rtp, rtcp)| rtp != rtcp)
+            .ok_or(Error::UnusableTransport)?;
         let taken = self.channels.iter().take(index).find(|(rtp, rtcp)| {
             [rtp, rtcp]
                 .iter()
@@ -352,6 +352,15 @@ mod tests {
             plan.into_session(String::new()).skipped,
             vec!["rtsp://other.example/x".to_string()]
         );
+    }
+
+    #[test]
+    fn a_setup_answer_without_transport_is_an_error() {
+        let mut plan = plan(None, None, &["trackID=0"], 0).unwrap();
+        assert!(matches!(
+            plan.accept_setup(0, None),
+            Err(Error::MissingTransport)
+        ));
     }
 
     #[test]
