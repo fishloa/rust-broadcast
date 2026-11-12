@@ -140,12 +140,14 @@ impl TimelineIndex {
                     tail,
                 });
             }
-            time = if cut_at_next {
-                entries[i + 1].t.unwrap_or(time)
-            } else {
-                let span = s.d.checked_mul(count).ok_or(AddressError::Overflow)?;
-                time.checked_add(span).ok_or(AddressError::Overflow)?
-            };
+            if i + 1 < entries.len() {
+                time = if cut_at_next {
+                    entries[i + 1].t.unwrap_or(time)
+                } else {
+                    let span = s.d.checked_mul(count).ok_or(AddressError::Overflow)?;
+                    time.checked_add(span).ok_or(AddressError::Overflow)?
+                };
+            }
             number = number.saturating_add(count);
             total += count;
         }
