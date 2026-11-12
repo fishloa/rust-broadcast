@@ -11,6 +11,9 @@ use crate::model::*;
 use crate::parse::{INFINITY_TOKEN, NEGATIVE_INFINITY_TOKEN};
 use crate::xs_datetime::format_xs_datetime;
 
+const ROOT_NAME: &str = "MPD";
+const BARE_ROOT_TAG: &str = "<MPD>";
+const MPD_ROOT_SLACK: usize = 256;
 const PREFIX_SEPARATOR: char = ':';
 const PREFIX_DVB: &str = "dvb";
 const PREFIX_XLINK: &str = "xlink";
@@ -86,19 +89,33 @@ impl Mpd {
     /// practice) and [`MpdError::Invalid`] if a stored instant cannot be
     /// formatted.
     pub fn to_xml(&self) -> Result<String, MpdError> {
-        let bare = self.render(&Prefixes::default())?;
-        let used = Prefixes::emitted_by(&bare)?;
-        if used == Prefixes::default() {
-            Ok(bare)
-        } else {
-            self.render(&used)
-        }
-    }
-
-    fn render(&self, ns: &Prefixes) -> Result<String, MpdError> {
         let mut w = Writer::new_with_indent(Vec::new(), b' ', 2);
         let _ = w.write_event(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)));
-        let mut root = BytesStart::new("MPD");
+        w.write_event(Event::Start(BytesStart::new(ROOT_NAME)))
+            .map_err(io_err)?;
+        let bare_len = w.get_ref().len();
+        self.write_body(&mut w)?;
+        w.write_event(Event::End(BytesEnd::new(ROOT_NAME)))
+            .map_err(io_err)?;
+        let doc = w.into_inner();
+        let root_at = bare_len - BARE_ROOT_TAG.len();
+        let (head_sep, rest) = (&doc[..root_at], &doc[bare_len..]);
+        let used = Prefixes::emitted_by(&String::from_utf8_lossy(&doc[root_at..]))?;
+        let mut root_writer = Writer::new_with_indent(Vec::new(), b' ', 2);
+        root_writer
+            .write_event(Event::Start(self.root_start(&used)?))
+            .map_err(io_err)?;
+        let mut out = Vec::with_capacity(doc.len() + MPD_ROOT_SLACK);
+        out.extend_from_slice(head_sep);
+        out.extend_from_slice(&root_writer.into_inner());
+        out.extend_from_slice(rest);
+        let mut out = String::from_utf8_lossy(&out).into_owned();
+        out.push('\n');
+        Ok(out)
+    }
+
+    fn root_start(&self, ns: &Prefixes) -> Result<BytesStart<'static>, MpdError> {
+        let mut root = BytesStart::new(ROOT_NAME);
         root.push_attribute(("xmlns", NS_MPD));
         if ns.dvb {
             root.push_attribute(("xmlns:dvb", NS_DVB));
@@ -179,9 +196,12 @@ impl Mpd {
         if let Some(v) = self.max_subsegment_duration {
             root.push_attribute(("maxSubsegmentDuration", format_iso8601_duration(v).as_str()));
         }
-        w.write_event(Event::Start(root)).map_err(io_err)?;
+        Ok(root)
+    }
+
+    fn write_body(&self, w: &mut Writer<Vec<u8>>) -> Result<(), MpdError> {
         for b in &self.base_urls {
-            write_base_url(&mut w, b)?;
+            write_base_url(w, b)?;
         }
         for l in &self.locations {
             w.write_event(Event::Start(BytesStart::new("Location")))
@@ -192,31 +212,27 @@ impl Mpd {
                 .map_err(io_err)?;
         }
         for pl in &self.patch_locations {
-            write_patch_location(&mut w, pl)?;
+            write_patch_location(w, pl)?;
         }
         for sd in &self.service_descriptions {
-            write_service_description(&mut w, sd)?;
+            write_service_description(w, sd)?;
         }
         for p in &self.periods {
-            write_period(&mut w, p)?;
+            write_period(w, p)?;
         }
         for d in &self.essential_properties {
-            write_descriptor(&mut w, "EssentialProperty", d)?;
+            write_descriptor(w, "EssentialProperty", d)?;
         }
         for d in &self.supplemental_properties {
-            write_descriptor(&mut w, "SupplementalProperty", d)?;
+            write_descriptor(w, "SupplementalProperty", d)?;
         }
         for u in &self.utc_timings {
-            write_utc_timing(&mut w, u)?;
+            write_utc_timing(w, u)?;
         }
         if let Some(cs) = &self.content_steering {
-            write_content_steering(&mut w, cs)?;
+            write_content_steering(w, cs)?;
         }
-        w.write_event(Event::End(BytesEnd::new("MPD")))
-            .map_err(io_err)?;
-        let mut out = String::from_utf8_lossy(&w.into_inner()).into_owned();
-        out.push('\n');
-        Ok(out)
+        Ok(())
     }
 }
 

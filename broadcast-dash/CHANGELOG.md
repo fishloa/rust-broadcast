@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `MpdFeatures::patch_location`, `event_stream`, `preselection`, `producer_reference_time`, `content_steering`, `resync` and `MpdFeatures::written` (breaking): the elements are modelled, so the flags are redundant and a parse -> write -> parse round trip no longer clears anything.
 
 ### Changed
+- `Mpd::to_xml` renders the document in a single pass: the body is written once and the root start tag with its namespace declarations is spliced in afterwards, instead of rendering the whole document twice (#2419). Output is byte-identical.
 - `Label` and `GroupLabel` (on `AdaptationSet` and `Preselection`) kept only their text: `@id` and `@lang` were dropped on `parse -> to_xml`. They are now `Label { id, lang, text }` (breaking for `AdaptationSet::labels`, `Preselection::labels` and `Preselection::group_labels`, previously `Vec<String>`). An explicit `id="0"` is the default and is not written back, so it parses to the same model but is not byte-identical.
 
 ### Fixed
