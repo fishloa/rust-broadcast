@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Fixed
+- A route's track specs (what the DASH and LL-DASH manifests derive `codecs` from) follow the in-band `SampleCursorItem::TracksChanged` the segment pump reads, and are seeded from the segmenter's start snapshot, instead of being synced from `Trunk::track_generation` ahead of the samples still queued under the previous set (audit A10-7).
 - The RTSP pull warns again when a Sender Report rejection of the same kind recurs after the reports recovered: an RTCP frame that is neither rejected nor skew-refused clears the remembered rejection (audit A10-6).
 - A track change the segmenter cannot apply (no fMP4-muxable track, or a failed rebuild) leaves the published track set and timescale moves at the ones the installed segmenter carries, instead of routing later samples by a set its muxer rejects (audit A10-5).
 - Push outputs (RTMP/SRT/RTSP) renegotiate their track selection on the in-band `SampleCursorItem::TracksChanged`, after every sample published under the previous set has been sent, instead of comparing `Trunk::track_generation` before draining the cursor (audit A10-1).
