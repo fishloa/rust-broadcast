@@ -617,6 +617,29 @@ mod tests {
         format!("{}{}", &mpd[..at], &mpd[end..])
     }
 
+    /// Folds the per-init-generation `initialization` template (issue #2441)
+    /// back to main's bare `init-$RepresentationID$.mp4`, so the `*-main.golden`
+    /// comparisons hold a *historical* pin of main and still differ from it by
+    /// only the token each of them is about.
+    fn without_init_generation(mpd: &str) -> String {
+        let key = "$RepresentationID$";
+        let mut out = mpd.to_string();
+        while let Some(at) = out.find(key) {
+            let rest = &out[at + key.len()..];
+            let Some(suffix) = rest.strip_prefix("-INSTANCE-") else {
+                break;
+            };
+            let Some(close) = suffix.find(".mp4") else {
+                break;
+            };
+            out.replace_range(
+                at + key.len()..at + key.len() + "-INSTANCE-".len() + close + ".mp4".len(),
+                ".mp4",
+            );
+        }
+        out
+    }
+
     fn publish_time_of(mpd: &str) -> String {
         let key = "publishTime=\"";
         let at = mpd.find(key).expect("dynamic MPD carries publishTime") + key.len();
@@ -887,7 +910,7 @@ mod tests {
             "main's frac golden must carry the raw f64 depth: {main}"
         );
         assert_eq!(
-            without_publish_time(&ours).replace(
+            without_init_generation(&without_publish_time(&ours)).replace(
                 "timeShiftBufferDepth=\"PT0.3S\"",
                 "timeShiftBufferDepth=\"PT0.30000000000000004S\""
             ),
@@ -941,7 +964,7 @@ mod tests {
         );
         // Exactly the one intended substitution: PT60S -> PT1M.
         assert_eq!(
-            without_publish_time(&ours).replace(
+            without_init_generation(&without_publish_time(&ours)).replace(
                 "timeShiftBufferDepth=\"PT1M\"",
                 "timeShiftBufferDepth=\"PT60S\""
             ),
@@ -989,7 +1012,7 @@ mod tests {
             "main's golden must carry PT3600S: {main}"
         );
         assert_eq!(
-            without_publish_time(&ours).replace(
+            without_init_generation(&without_publish_time(&ours)).replace(
                 "timeShiftBufferDepth=\"PT1H\"",
                 "timeShiftBufferDepth=\"PT3600S\""
             ),
