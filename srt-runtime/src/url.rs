@@ -291,4 +291,30 @@ mod tests {
             Err(UrlRejection::LatencyNotANumber)
         );
     }
+    #[test]
+    fn invalid_utf8_percent_decode_is_rejected() {
+        assert_eq!(
+            SrtUrl::parse("srt://h:9000?streamid=%FF"),
+            Err(UrlRejection::InvalidUtf8)
+        );
+        assert_eq!(
+            SrtUrl::parse("srt://h:9000?passphrase=%C3%28extra"),
+            Err(UrlRejection::InvalidUtf8)
+        );
+    }
+
+    #[test]
+    fn duplicate_query_key_is_rejected() {
+        assert_eq!(
+            SrtUrl::parse("srt://h:9000?latency=10&latency=20"),
+            Err(UrlRejection::DuplicateKey)
+        );
+    }
+
+    #[test]
+    fn valid_percent_encoded_utf8_streamid_decodes() {
+        let url = SrtUrl::parse("srt://h:9000?streamid=%C3%A9").expect("valid utf8");
+        assert_eq!(url.stream_id.as_deref(), Some("é"));
+    }
+
 }
