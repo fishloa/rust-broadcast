@@ -972,7 +972,11 @@ impl ProgramSegmenter {
         route_handle: &RouteHandle,
     ) -> (usize, usize) {
         while let Some(item) = self.cursor.poll() {
-            if let SampleCursorItem::TracksChanged { generation, tracks } = item {
+            if let SampleCursorItem::TracksChanged { generation, tracks }
+            | SampleCursorItem::TracksLagged {
+                generation, tracks, ..
+            } = item
+            {
                 if generation > self.track_generation {
                     route_handle.set_track_specs(program, tracks.to_vec());
                     let previous_tracks = std::mem::replace(&mut self.published_tracks, tracks);

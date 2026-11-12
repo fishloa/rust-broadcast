@@ -849,11 +849,13 @@ impl WriterHandoverLog {
     }
 }
 
-/// Bound on [`TrackChangeLog`]'s backlog. Only the newest entry is ever
-/// load-bearing (it equals [`Trunk::tracks`]); older ones exist so a cursor
-/// that is a few changes behind still switches configuration at each
-/// boundary rather than jumping to the latest one early.
-const TRACK_CHANGE_LOG_CAPACITY: usize = 32;
+/// Hard cap on [`TrackChangeLog`]'s backlog. Markers are normally evicted by
+/// the `Timed` ring (see [`TrackChangeLog::prune`]: one stays until the
+/// oldest retained sample is at or past the next), so this only bites on
+/// pathological flapping, where a marker is evicted while it still governs
+/// retained samples; a cursor that needed it is then handed
+/// [`SampleCursorItem::TracksLagged`].
+const TRACK_CHANGE_LOG_CAPACITY: usize = 1024;
 
 /// One [`TrunkWriter::set_tracks`] call: the `Timed` publish position at the
 /// moment it happened, so a [`SampleCursor`] reports
@@ -893,6 +895,17 @@ impl TrackChangeLog {
         }
         self.entries.push_back(change);
         self.published += 1;
+    }
+
+    fn prune(&mut self, timed_base: u64) {
+        while self
+            .entries
+            .get(1)
+            .is_some_and(|next| next.timed_at <= timed_base)
+        {
+            self.entries.pop_front();
+            self.base += 1;
+        }
     }
 }
 
@@ -1796,7 +1809,16 @@ impl Trunk {
             timed_consumed: state.timed.base,
             sparse_consumed: state.sparse.base,
             handovers_consumed: state.handovers.base,
-            track_changes_consumed: state.track_changes.base,
+            track_changes_consumed: if state
+                .track_changes
+                .entries
+                .front()
+                .is_some_and(|first| first.timed_at > state.timed.base)
+            {
+                0
+            } else {
+                state.track_changes.base
+            },
             subscribe_timed_at: state.timed.base,
             subscribe_sparse_at: state.sparse.base,
         };
@@ -2292,7 +2314,11 @@ impl TrunkWriter {
     pub fn publish(&self, track_id: TrackId, retention: RetentionClass, sample: Sample) {
         let mut state = self.trunk.lock_state();
         match retention {
-            RetentionClass::Timed => state.timed.push(track_id, sample),
+            RetentionClass::Timed => {
+                state.timed.push(track_id, sample);
+                let timed_base = state.timed.base;
+                state.track_changes.prune(timed_base);
+            }
             RetentionClass::Sparse => state.sparse.push(track_id, sample),
         }
     }
@@ -2343,6 +2369,8 @@ impl TrunkWriter {
             tracks: Arc::clone(&state.tracks),
         };
         state.track_changes.push(change);
+        let timed_base = state.timed.base;
+        state.track_changes.prune(timed_base);
         drop(state);
         self.trunk.progress.notify(usize::MAX);
     }
@@ -2832,16 +2860,29 @@ pub enum SampleCursorItem {
     /// ring). A [`Trunk::subscribe`] cursor sees only changes made after it
     /// subscribed; a [`Trunk::subscribe_from_backlog`] cursor also replays
     /// the changes still resident, so compare `generation` with the one it
-    /// already holds and ignore a stale one. A cursor that falls more than
-    /// the bounded change backlog behind lost the evicted changes: it is
-    /// handed the oldest change still resident at once, without waiting for
-    /// its position in the sample stream, so it learns a complete track set
-    /// (the one in effect from that change on) rather than missing the
-    /// change silently, and then reads the rest in order.
+    /// already holds and ignore a stale one. Markers are retained for as long
+    /// as any retained sample they govern, so a cursor anywhere in the
+    /// retained window receives, before its first sample, the marker
+    /// governing it.
     TracksChanged {
         /// [`Trunk::track_generation`] as of this change.
         generation: u64,
         /// The complete replacement track set.
+        tracks: Arc<[TrackSpec]>,
+    },
+    /// The marker log's hard cap evicted a [`SampleCursorItem::TracksChanged`]
+    /// that still governed samples this cursor had not read. Those `skipped`
+    /// samples (published before the oldest retained marker) are dropped
+    /// rather than risk muxing them under the wrong track set; `tracks` is
+    /// the track set current now, and the cursor then continues with the
+    /// retained markers in order. A consumer treats this as a
+    /// `TracksChanged` to `generation`/`tracks` plus a `Lagged { skipped }`.
+    TracksLagged {
+        /// Exact count of `Timed` samples dropped without a governing marker.
+        skipped: u64,
+        /// [`Trunk::track_generation`] now.
+        generation: u64,
+        /// The current complete track set.
         tracks: Arc<[TrackSpec]>,
     },
 }
@@ -2981,15 +3022,25 @@ impl SampleCursor {
 
         let timed_blocked = pending_handover.is_some_and(|h| self.timed_consumed >= h.timed_at);
 
-        let track_changes_overflowed =
-            !timed_blocked && self.track_changes_consumed < state.track_changes.base;
-        if track_changes_overflowed {
+        if !timed_blocked
+            && self.track_changes_consumed < state.track_changes.base
+            && let Some(first) = state.track_changes.entries.front()
+        {
             self.track_changes_consumed = state.track_changes.base;
+            if self.timed_consumed < first.timed_at {
+                let skipped = first.timed_at.min(state.timed.published) - self.timed_consumed;
+                self.timed_consumed += skipped;
+                return Some(SampleCursorItem::TracksLagged {
+                    skipped,
+                    generation: state.track_generation,
+                    tracks: Arc::clone(&state.tracks),
+                });
+            }
         }
         if !timed_blocked
             && let Some(idx) = ring_offset(self.track_changes_consumed, state.track_changes.base)
             && let Some(change) = state.track_changes.entries.get(idx)
-            && (track_changes_overflowed || change.timed_at <= self.timed_consumed)
+            && change.timed_at <= self.timed_consumed
         {
             self.track_changes_consumed += 1;
             return Some(SampleCursorItem::TracksChanged {
@@ -5710,44 +5761,128 @@ mod tests {
         assert_eq!(later, vec![3]);
     }
 
-    /// **A10-4.** A cursor that fell behind the bounded change log is handed
-    /// the oldest retained track set before any later sample, then the rest
-    /// in order, ending on the newest.
-    #[test]
-    fn a_cursor_behind_the_change_log_learns_the_retained_track_set() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(256), nz(4), nz(4), nz(8), nz(8)));
+    fn track_marker_trunk(timed_capacity: usize) -> (Arc<Trunk>, TrunkWriter) {
+        let trunk = Trunk::new(TrunkConfig::new(
+            nz(timed_capacity),
+            nz(4),
+            nz(4),
+            nz(8),
+            nz(8),
+        ));
         let writer = trunk.writer().unwrap();
-        let mut cursor = trunk.subscribe();
-        let capacity = u64::try_from(TRACK_CHANGE_LOG_CAPACITY).unwrap();
-        let changes = capacity + 8;
+        (trunk, writer)
+    }
+
+    /// **A11-2.** Every retained sample is delivered after the marker that
+    /// governed it when it was published, for a cursor starting at the oldest
+    /// retained sample, across more changes than the old 32-entry log held.
+    #[test]
+    fn a_backlog_cursor_reads_every_sample_under_its_own_marker() {
+        let (trunk, writer) = track_marker_trunk(256);
+        let changes = 40u32;
         for id in 1..=changes {
-            writer.publish(TrackId::new(1), RetentionClass::Timed, sample(0, 1));
-            writer.set_tracks(vec![opaque_track(TrackId::new(u32::try_from(id).unwrap()))]);
+            writer.set_tracks(vec![opaque_track(TrackId::new(id))]);
+            writer.publish(
+                TrackId::new(id),
+                RetentionClass::Timed,
+                sample(u8::try_from(id).unwrap(), 1),
+            );
         }
-        let mut items = Vec::new();
+        let mut cursor = trunk.subscribe_from_backlog();
+        let mut current = 0u32;
+        let mut delivered = 0u32;
         while let Some(item) = cursor.poll() {
-            if !matches!(item, SampleCursorItem::Lagged { .. }) {
-                items.push(item);
+            match item {
+                SampleCursorItem::TracksChanged { tracks, .. } => {
+                    current = tracks[0].track_id.value();
+                }
+                SampleCursorItem::Timed { track_id, .. } => {
+                    assert_eq!(track_id.value(), current, "sample under the wrong set");
+                    delivered += 1;
+                }
+                other => panic!("unexpected item {other:?}"),
             }
         }
-        let oldest_retained = changes - capacity + 1;
-        assert!(
-            matches!(
-                items.first(),
-                Some(SampleCursorItem::TracksChanged { generation, .. })
-                    if *generation == oldest_retained
-            ),
-            "the first item after the loss report must be the oldest retained change"
-        );
-        let generations: Vec<u64> = items
-            .iter()
-            .filter_map(|item| match item {
-                SampleCursorItem::TracksChanged { generation, .. } => Some(*generation),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(generations.last(), Some(&changes));
-        assert!(generations.windows(2).all(|w| w[1] == w[0] + 1));
+        assert_eq!(delivered, changes);
+    }
+
+    /// **A11-2.** A cursor lagging on the sample ring lands on the marker
+    /// governing its first surviving sample, not on the oldest marker.
+    #[test]
+    fn a_lagging_cursor_gets_the_marker_governing_its_first_sample() {
+        let (trunk, writer) = track_marker_trunk(8);
+        let mut cursor = trunk.subscribe();
+        for id in 1..=20u32 {
+            writer.set_tracks(vec![opaque_track(TrackId::new(id))]);
+            writer.publish(TrackId::new(id), RetentionClass::Timed, sample(0, 1));
+        }
+        let mut current = 0u32;
+        let mut delivered = 0u32;
+        while let Some(item) = cursor.poll() {
+            match item {
+                SampleCursorItem::TracksChanged { tracks, .. } => {
+                    current = tracks[0].track_id.value();
+                }
+                SampleCursorItem::Timed { track_id, .. } => {
+                    assert_eq!(track_id.value(), current, "sample under the wrong set");
+                    delivered += 1;
+                }
+                SampleCursorItem::Lagged { .. } => {}
+                other => panic!("unexpected item {other:?}"),
+            }
+        }
+        assert_eq!(delivered, 8);
+    }
+
+    /// **A11-2.** Markers the sample ring has moved past are evicted.
+    #[test]
+    fn markers_are_evicted_once_the_sample_ring_passes_the_next_one() {
+        let (trunk, writer) = track_marker_trunk(4);
+        for id in 1..=100u32 {
+            writer.set_tracks(vec![opaque_track(TrackId::new(id))]);
+            writer.publish(TrackId::new(id), RetentionClass::Timed, sample(0, 1));
+        }
+        let state = trunk.lock_state();
+        assert!(state.track_changes.entries.len() <= 5);
+        assert_eq!(state.track_changes.published, 100);
+    }
+
+    /// **A11-2.** Flapping past the hard cap drops the ungoverned samples
+    /// explicitly and carries the current track set.
+    #[test]
+    fn exceeding_the_marker_cap_reports_tracks_lagged_with_the_current_set() {
+        let capacity = u32::try_from(TRACK_CHANGE_LOG_CAPACITY).unwrap();
+        let changes = capacity + 8;
+        let (trunk, writer) = track_marker_trunk(usize::try_from(changes).unwrap() * 2);
+        let mut cursor = trunk.subscribe();
+        for id in 1..=changes {
+            writer.set_tracks(vec![opaque_track(TrackId::new(id))]);
+            writer.publish(TrackId::new(id), RetentionClass::Timed, sample(0, 1));
+        }
+        let first = cursor.poll().expect("an item");
+        let SampleCursorItem::TracksLagged {
+            skipped,
+            generation,
+            tracks,
+        } = first
+        else {
+            panic!("expected TracksLagged, got {first:?}");
+        };
+        assert_eq!(skipped, 8);
+        assert_eq!(generation, u64::from(changes));
+        assert_eq!(tracks[0].track_id.value(), changes);
+        let mut current = 0u32;
+        while let Some(item) = cursor.poll() {
+            match item {
+                SampleCursorItem::TracksChanged { tracks, .. } => {
+                    current = tracks[0].track_id.value();
+                }
+                SampleCursorItem::Timed { track_id, .. } => {
+                    assert_eq!(track_id.value(), current);
+                }
+                other => panic!("unexpected item {other:?}"),
+            }
+        }
     }
 
     #[test]
