@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- An RTCP Sender Report's RTP timestamp is extended onto the track's own unwrapped 64-bit timeline (RFC 3550 App. A.1) instead of being compared through a 32-bit wrap, so `RtpStreamDepacketiser::sync_start_decode_times` and `TrackAligner` stay correct past 2^31 ticks (6.6 h at 90 kHz); before, the anchor flipped by hours and audio pts went negative for the rest of the session (audit 7 A7-1).
+- A Sender Report with NTP timestamp 0 (an unsynchronised sender, RFC 3550 §6.4.1) is ignored and counted in the new `RtpStreamDepacketiser::rejected_sender_reports`; `sync_start_decode_times` declines to align tracks whose first-sample wallclocks are more than an hour apart, and `TrackAligner` rejects an unrepresentable offset instead of saturating it into a lane shift of billions of seconds (audit 7 A7-2).
 ### Changed
 - `transmux::sdp_track` (module `rtp_sdp`, `std`) is the one reading of an SDP media section as a playable track: `SdpTrack` (kind, `CodecConfig`, clock rate, payload type, `a=control`) of the first payload type on the `m=` line whose own `a=rtpmap`/`a=fmtp` describe H.264 (RFC 6184) or `MPEG4-GENERIC` AAC (RFC 3640); H.264 without parameter sets is a placeholder `avcC`, and the SPS gives the coded size. With `attribute_of_payload`, `rtpmap_encoding_name`, `first_encoding_name` and `is_played_encoding`, it replaces the copies `broadcast-client` and `multimux` kept.
 ### Changed
