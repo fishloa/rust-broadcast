@@ -268,7 +268,6 @@ fn a_model_with_every_field_set_round_trips() {
     mpd.patch_locations = vec![patch, PatchLocation::default()];
     mpd.features.inband_event_stream = true;
     mpd.features.service_description = true;
-    mpd.features.inband_event_stream = true;
     mpd.features.low_latency = true;
     mpd.features.xlink_resolve_to_zero = false;
 
@@ -303,6 +302,18 @@ fn every_field_event_stream(desc: &Descriptor) -> EventStream {
     es.value = Some("v".to_string());
     es.timescale = Some(90_000);
     es.presentation_time_offset = Some(5);
+    let mut query = UrlQueryInfo::default();
+    query.use_mpd_url_query = true;
+    query.query_string = Some("a=b".to_string());
+    query.query_template = Some("$querypart$".to_string());
+    let mut request = RequestParam::default();
+    request.query = query;
+    request.include_in_requests = Some("segment mpd".to_string());
+    request.header_param_source = Some("mpd".to_string());
+    request.same_origin_only = Some(true);
+    request.header = Some("X-Param".to_string());
+    request.xlink = Some(Xlink::default());
+    es.request_params = vec![request, RequestParam::default()];
     es.events = vec![event, bare];
     es.base_urls = vec![base_url];
     es.essential_properties = vec![desc.clone()];
@@ -546,4 +557,17 @@ fn a_preselection_child_the_model_lacks_is_flagged_and_refused_on_write() {
         mpd.to_xml(),
         Err(MpdError::Unsupported(Unsupported::RepresentationBaseChild))
     );
+}
+
+#[test]
+fn an_event_stream_request_param_survives_a_write() {
+    let xml = br#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" minBufferTime="PT1S"><Period id="0"><EventStream schemeIdUri="urn:e"><RequestParam queryTemplate="$querypart$" sameOriginOnly="true"/></EventStream></Period></MPD>"#;
+    let mpd = Mpd::parse(xml).unwrap();
+    let written = mpd.to_xml().unwrap();
+    assert!(written.contains("<RequestParam"), "{written}");
+    assert!(
+        written.contains("queryTemplate=\"$querypart$\""),
+        "{written}"
+    );
+    assert_eq!(Mpd::parse(written.as_bytes()).unwrap(), mpd);
 }

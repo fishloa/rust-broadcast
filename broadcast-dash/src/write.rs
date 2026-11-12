@@ -387,6 +387,9 @@ fn write_event_stream(w: &mut Writer<Vec<u8>>, es: &EventStream) -> Result<(), M
     for b in &es.base_urls {
         write_base_url(w, b)?;
     }
+    for r in &es.request_params {
+        write_request_param(w, r)?;
+    }
     for d in &es.essential_properties {
         write_descriptor(w, "EssentialProperty", d)?;
     }
@@ -941,12 +944,7 @@ fn write_descriptor(w: &mut Writer<Vec<u8>>, name: &str, d: &Descriptor) -> Resu
                 "useMPDUrlQuery",
                 if q.use_mpd_url_query { "true" } else { "false" },
             ));
-            if let Some(v) = &q.query_string {
-                qe.push_attribute(("queryString", v.as_str()));
-            }
-            if let Some(v) = &q.query_template {
-                qe.push_attribute(("queryTemplate", v.as_str()));
-            }
+            push_query_attrs(&mut qe, q);
             w.write_event(Event::Empty(qe)).map_err(io_err)?;
         }
         w.write_event(Event::End(BytesEnd::new(name)))
@@ -955,6 +953,39 @@ fn write_descriptor(w: &mut Writer<Vec<u8>>, name: &str, d: &Descriptor) -> Resu
         w.write_event(Event::Empty(e)).map_err(io_err)?;
     }
     Ok(())
+}
+
+fn push_query_attrs(e: &mut BytesStart<'_>, q: &UrlQueryInfo) {
+    if let Some(v) = &q.query_string {
+        e.push_attribute(("queryString", v.as_str()));
+    }
+    if let Some(v) = &q.query_template {
+        e.push_attribute(("queryTemplate", v.as_str()));
+    }
+}
+
+fn write_request_param(w: &mut Writer<Vec<u8>>, r: &RequestParam) -> Result<(), MpdError> {
+    let mut e = BytesStart::new("RequestParam");
+    if let Some(x) = &r.xlink {
+        write_xlink_attrs(&mut e, x);
+    }
+    if r.query.use_mpd_url_query {
+        e.push_attribute(("useMPDUrlQuery", "true"));
+    }
+    push_query_attrs(&mut e, &r.query);
+    if let Some(v) = &r.include_in_requests {
+        e.push_attribute(("includeInRequests", v.as_str()));
+    }
+    if let Some(v) = &r.header_param_source {
+        e.push_attribute(("headerParamSource", v.as_str()));
+    }
+    if let Some(v) = r.same_origin_only {
+        e.push_attribute(("sameOriginOnly", if v { "true" } else { "false" }));
+    }
+    if let Some(v) = &r.header {
+        e.push_attribute(("header", v.as_str()));
+    }
+    w.write_event(Event::Empty(e)).map_err(io_err)
 }
 
 fn write_xlink_attrs(e: &mut BytesStart<'_>, x: &Xlink) {

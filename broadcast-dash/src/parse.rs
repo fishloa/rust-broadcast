@@ -207,6 +207,14 @@ fn check_count(count: usize, max: usize, limit: Limit) -> Result<(), MpdError> {
     }
 }
 
+fn url_query_info(q: &Elem<Ns>) -> Result<UrlQueryInfo, MpdError> {
+    Ok(UrlQueryInfo {
+        use_mpd_url_query: opt_bool(q, "useMPDUrlQuery")?.unwrap_or(false),
+        query_string: opt_str(q, "queryString"),
+        query_template: opt_str(q, "queryTemplate"),
+    })
+}
+
 fn descriptor(e: &Elem<Ns>) -> Result<Descriptor, MpdError> {
     let scheme_id_uri = e
         .attr("schemeIdUri")
@@ -216,13 +224,7 @@ fn descriptor(e: &Elem<Ns>) -> Result<Descriptor, MpdError> {
         .children
         .iter()
         .find(|c| c.ns == Ns::UrlParam && c.name == "UrlQueryInfo")
-        .map(|q| -> Result<UrlQueryInfo, MpdError> {
-            Ok(UrlQueryInfo {
-                use_mpd_url_query: opt_bool(q, "useMPDUrlQuery")?.unwrap_or(false),
-                query_string: opt_str(q, "queryString"),
-                query_template: opt_str(q, "queryTemplate"),
-            })
-        })
+        .map(url_query_info)
         .transpose()?;
     let pssh = e
         .children
@@ -658,8 +660,23 @@ fn event_stream(e: &Elem<Ns>, ctx: &mut Ctx<'_>) -> Result<EventStream, MpdError
             .map(event)
             .collect::<Result<Vec<_>, _>>()?,
         base_urls: base_urls(e, ctx)?,
+        request_params: e
+            .children_named("RequestParam")
+            .map(request_param)
+            .collect::<Result<Vec<_>, _>>()?,
         essential_properties: descriptors(e, "EssentialProperty")?,
         supplemental_properties: descriptors(e, "SupplementalProperty")?,
+    })
+}
+
+fn request_param(e: &Elem<Ns>) -> Result<RequestParam, MpdError> {
+    Ok(RequestParam {
+        query: url_query_info(e)?,
+        xlink: xlink(e)?,
+        include_in_requests: opt_str(e, "includeInRequests"),
+        header_param_source: opt_str(e, "headerParamSource"),
+        same_origin_only: opt_bool(e, "sameOriginOnly")?,
+        header: opt_str(e, "header"),
     })
 }
 

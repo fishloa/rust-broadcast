@@ -486,10 +486,30 @@ pub struct EventStream {
     pub events: Vec<StreamEvent>,
     /// `BaseURL` alternates.
     pub base_urls: Vec<BaseUrl>,
+    /// `RequestParam` children (`up:ExtendedUrlInfoType`).
+    pub request_params: Vec<RequestParam>,
     /// `EssentialProperty`.
     pub essential_properties: Vec<Descriptor>,
     /// `SupplementalProperty`.
     pub supplemental_properties: Vec<Descriptor>,
+}
+
+/// `RequestParam` (`up:ExtendedUrlInfoType`, ISO/IEC 23009-1 Annex I).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct RequestParam {
+    /// The `UrlQueryInfoType` attributes.
+    pub query: UrlQueryInfo,
+    /// `xlink` reference.
+    pub xlink: Option<Xlink>,
+    /// `@includeInRequests`; `None` when absent (the schema default is `segment`).
+    pub include_in_requests: Option<String>,
+    /// `@headerParamSource`; `None` when absent (the schema default is `segment`).
+    pub header_param_source: Option<String>,
+    /// `@sameOriginOnly`; `None` when absent (the schema default is false).
+    pub same_origin_only: Option<bool>,
+    /// `@header`.
+    pub header: Option<String>,
 }
 
 /// `ProducerReferenceTime@type` (ISO/IEC 23009-1 clause 5.12, Table 33).
