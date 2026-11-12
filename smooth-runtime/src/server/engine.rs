@@ -304,6 +304,46 @@ fn advertised_bitrate(codec: &SmoothCodec) -> u64 {
     }
 }
 
+/// The segments the origin should describe, given the `Trunk` it reads.
+///
+/// A `Trunk` holds the media; which *published* segments a program presents
+/// is the host's own bookkeeping — the same source `multimux` renders its
+/// DASH window from — so the origin asks for it rather than inferring it. A
+/// presence check with no store of its own is the plain adapter.
+pub trait SegmentProvider: Send + Sync {
+    /// The program's published (sequence number, bytes) pairs, oldest first.
+    fn segments(&self) -> Vec<(SegmentSeq, Arc<[u8]>)>;
+}
+
+impl<F> SegmentProvider for F
+where
+    F: Fn() -> Vec<(SegmentSeq, Arc<[u8]>)> + Send + Sync,
+{
+    fn segments(&self) -> Vec<(SegmentSeq, Arc<[u8]>)> {
+        self()
+    }
+}
+
+/// The tracks the origin should describe, given the `Trunk` it reads.
+///
+/// Like [`SegmentProvider`], which track set a program presents is the host's
+/// own bookkeeping (the one its DASH window and HLS origin already use), so
+/// the origin asks for it. A `Trunk`'s own announcement is the plain adapter
+/// for a host that publishes there.
+pub trait TrackProvider: Send + Sync {
+    /// The program's current track specs, in manifest order.
+    fn tracks(&self) -> Vec<TrackSpec>;
+}
+
+impl<F> TrackProvider for F
+where
+    F: Fn() -> Vec<TrackSpec> + Send + Sync,
+{
+    fn tracks(&self) -> Vec<TrackSpec> {
+        self()
+    }
+}
+
 /// The live Smooth origin over one `Trunk`.
 pub struct SmoothOrigin {
     trunk: Arc<Trunk>,
@@ -311,22 +351,42 @@ pub struct SmoothOrigin {
     /// no `Trunk` ring holds, and what a fragment request is re-demuxed
     /// against.
     init: Mutex<Option<Arc<[u8]>>>,
+    /// The program's published segments.
+    provider: Arc<dyn SegmentProvider>,
+    /// The program's current track set, as the host records it.
+    tracks: Arc<dyn TrackProvider>,
 }
 
 impl SmoothOrigin {
     /// An origin over `trunk`; it describes whatever segments the trunk
     /// currently holds, once an init segment is stored and at least one
     /// track is announced.
-    pub fn new(trunk: Arc<Trunk>) -> Self {
+    pub fn new(
+        trunk: Arc<Trunk>,
+        provider: Arc<dyn SegmentProvider>,
+        tracks: Arc<dyn TrackProvider>,
+    ) -> Self {
         Self {
             trunk,
             init: Mutex::new(None),
+            provider,
+            tracks,
         }
     }
 
     /// The `Trunk` this origin reads.
     pub fn trunk(&self) -> &Arc<Trunk> {
         &self.trunk
+    }
+
+    /// The streams this origin currently advertises, in manifest order — the
+    /// vocabulary [`SmoothRequest::parse`] needs to read a request path.
+    /// Empty while the trunk has nothing to describe.
+    pub fn stream_keys(&self) -> Vec<StreamKey> {
+        match self.plan() {
+            Ok(plan) => plan.streams.iter().map(|stream| stream.key).collect(),
+            Err(_) => Vec::new(),
+        }
     }
 
     /// Store the fMP4 init segment the trunk's segments are muxed with — the
@@ -404,24 +464,19 @@ impl SmoothOrigin {
         let init = self.init().ok_or(Unavailable::Waiting {
             retry_no_earlier_than: Timestamp::from_nanos(0),
         })?;
-        let specs = self.trunk.tracks();
+        let specs = self.tracks.tracks();
         if specs.is_empty() {
             return Err(Unavailable::Waiting {
                 retry_no_earlier_than: Timestamp::from_nanos(0),
             });
         }
-        let segments: Vec<(SegmentSeq, Arc<[u8]>)> = self
-            .trunk
-            .segments()
-            .into_iter()
-            .map(|segment| (segment.sequence_number, Arc::from(segment.bytes.as_ref())))
-            .collect();
+        let segments = self.provider.segments();
         if segments.is_empty() {
             return Err(Unavailable::Waiting {
                 retry_no_earlier_than: Timestamp::from_nanos(0),
             });
         }
-        Ok(build_plan(specs.as_ref(), &init, &segments)?)
+        Ok(build_plan(&specs, &init, &segments)?)
     }
 }
 
@@ -624,11 +679,11 @@ impl SmoothOrigin {
             reason: "no init segment is published".to_string(),
         })?;
         let bytes = self
-            .trunk
+            .provider
             .segments()
             .into_iter()
-            .find(|segment| segment.sequence_number == chunk.sequence)
-            .map(|segment| segment.bytes)
+            .find(|(sequence, _)| *sequence == chunk.sequence)
+            .map(|(_, bytes)| bytes)
             .ok_or(SmoothOriginError::Codec {
                 track: stream.interleaved_ordinal,
                 reason: "the fragment's segment has left the window".to_string(),
@@ -848,6 +903,21 @@ mod tests {
     struct Route {
         trunk: Arc<Trunk>,
         init: Vec<u8>,
+        published: Vec<(SegmentSeq, Arc<[u8]>)>,
+        specs: Vec<TrackSpec>,
+    }
+
+    impl Route {
+        /// The track specs this route published.
+        fn specs(&self) -> Vec<TrackSpec> {
+            self.specs.clone()
+        }
+
+        /// The provider handing back this route's published segments.
+        fn published(&self) -> impl Fn() -> Vec<(SegmentSeq, Arc<[u8]>)> + Send + Sync + 'static {
+            let published = self.published.clone();
+            move || published.clone()
+        }
     }
 
     /// Publish `specs` through a real LL-HLS segmenter: `SEGMENTS` two-second
@@ -862,6 +932,7 @@ mod tests {
         let writer = trunk.segment_writer().expect("fresh trunk");
         let init = segmenter.init_segment().expect("init segment");
         let mut published = 0u32;
+        let mut window: Vec<(SegmentSeq, Arc<[u8]>)> = Vec::new();
         for index in 0..SEGMENTS * FRAMES_PER_SEGMENT {
             let dts = i64::from(index) * i64::from(FRAME_DUR);
             for spec in &specs {
@@ -888,14 +959,19 @@ mod tests {
                 segmenter.push(spec.track_id, sample).expect("push");
             }
             for segment in segmenter.take_ready_segments() {
-                publish_segment(&writer, segment, &mut published);
+                publish_segment(&writer, segment, &mut published, &mut window);
             }
         }
         segmenter.flush().expect("flush");
         for segment in segmenter.take_ready_segments() {
-            publish_segment(&writer, segment, &mut published);
+            publish_segment(&writer, segment, &mut published, &mut window);
         }
-        Route { trunk, init }
+        Route {
+            trunk,
+            init,
+            published: window,
+            specs,
+        }
     }
 
     /// Publish one closed segment to the trunk, numbered in publication order.
@@ -903,7 +979,9 @@ mod tests {
         writer: &media_plane::trunk::SegmentWriter,
         segment: transmux::ll_hls::SegmentInfo,
         published: &mut u32,
+        window: &mut Vec<(SegmentSeq, Arc<[u8]>)>,
     ) {
+        let bytes = segment.bytes.clone();
         writer
             .publish_segment(SegmentEntry::new(
                 segment.bytes,
@@ -915,6 +993,7 @@ mod tests {
                 },
             ))
             .expect("publish segment");
+        window.push((SegmentSeq::new(*published + 1), Arc::from(bytes.as_slice())));
         *published += 1;
     }
 
@@ -935,7 +1014,14 @@ mod tests {
 
     /// An origin over `route` with its init segment stored.
     fn origin(route: &Route) -> SmoothOrigin {
-        let origin = SmoothOrigin::new(Arc::clone(&route.trunk));
+        let origin = SmoothOrigin::new(
+            Arc::clone(&route.trunk),
+            Arc::new(route.published()),
+            Arc::new({
+                let specs = route.specs();
+                move || specs.clone()
+            }),
+        );
         origin.set_init(route.init.clone());
         origin
     }
@@ -959,7 +1045,7 @@ mod tests {
     /// `NotFound` — never a fabricated manifest.
     #[test]
     fn an_empty_origin_waits_then_gives_up() {
-        let origin = SmoothOrigin::new(trunk());
+        let origin = SmoothOrigin::new(trunk(), Arc::new(Vec::new), Arc::new(Vec::new));
         let policy = AwaitPolicy::new(Timestamp::from_nanos(10));
         assert!(matches!(
             origin.manifest(Timestamp::from_nanos(0), policy),
@@ -1019,8 +1105,7 @@ mod tests {
     #[test]
     fn the_second_stream_serves_its_own_fragments() {
         let route = publish(vec![audio_spec(1), audio_spec(2)]);
-        let origin = SmoothOrigin::new(Arc::clone(&route.trunk));
-        origin.set_init(route.init.clone());
+        let origin = origin(&route);
         let manifest = manifest(&route);
         let second = &manifest.streams[1];
         let url = second.resolve_fragment_url(second.qualities[0].bitrate, 0);

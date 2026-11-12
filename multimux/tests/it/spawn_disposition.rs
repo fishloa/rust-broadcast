@@ -115,21 +115,6 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
         "spawn_blocking catch-up scan under an owned scan permit; awaited inline, and the permit rides the blocking task",
     ),
     (
-        "output/smooth.rs",
-        132,
-        "spawn_blocking Smooth layout build; awaited inline",
-    ),
-    (
-        "output/smooth.rs",
-        186,
-        "spawn_blocking Smooth layout locate; awaited inline",
-    ),
-    (
-        "output/smooth.rs",
-        235,
-        "spawn_blocking Smooth fragment build; awaited inline",
-    ),
-    (
         "origin/mod.rs",
         1648,
         "Ctrl-C/SIGTERM shutdown watcher; aborted/awaited at process shutdown",

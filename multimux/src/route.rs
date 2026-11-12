@@ -971,7 +971,7 @@ impl ProgramServing {
             .find(|s| s.track_id == track_id)
     }
 
-    fn init_bytes(&self) -> Option<Bytes> {
+    pub(crate) fn init_bytes(&self) -> Option<Bytes> {
         self.ll_hls.init_bytes()
     }
 
@@ -1009,7 +1009,7 @@ impl ProgramServing {
         }
     }
 
-    fn track_specs(&self) -> Vec<TrackSpec> {
+    pub(crate) fn track_specs(&self) -> Vec<TrackSpec> {
         self.dash.track_specs()
     }
 
@@ -1025,7 +1025,7 @@ impl ProgramServing {
         self.tracks_active.load(Ordering::SeqCst)
     }
 
-    fn window_segments(&self) -> Vec<DashWindowSegment> {
+    pub(crate) fn window_segments(&self) -> Vec<DashWindowSegment> {
         self.dash.window_segments()
     }
 
