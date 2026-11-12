@@ -580,15 +580,18 @@ impl DashClient {
             return Ok(());
         }
         let features = mpd.features;
+        let event_streams = mpd.has_event_streams();
+        let preselections = mpd.has_preselections();
+        let patch_location = mpd.has_patch_location();
         self.mpd = Some(mpd);
         self.phase = Phase::Running;
-        if features.event_stream || features.inband_event_stream {
+        if event_streams {
             self.notice_once(Notice::EventStreamIgnored);
         }
-        if features.preselection {
+        if preselections {
             self.notice_once(Notice::PreselectionIgnored);
         }
-        if features.patch_location {
+        if patch_location {
             self.notice_once(Notice::PatchIgnored);
         }
         if dynamic && features.low_latency {

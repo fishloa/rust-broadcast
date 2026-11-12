@@ -1,9 +1,9 @@
 //! The consume-only MPD model (ISO/IEC 23009-1 clause 5.3, Annex B schema).
 //!
 //! Every field is typed; nothing keeps source text for a later passthrough.
-//! Times are Unix microseconds (`*_us`, `i64`) or [`Duration`]. Element
-//! content the core does not act on (`EventStream`, `Preselection`, ...) is
-//! recorded only as a flag in [`MpdFeatures`] so a caller can report it.
+//! Times are Unix microseconds (`*_us`, `i64`) or [`Duration`]. Elements the
+//! core does not act on (`EventStream`, `Preselection`, ...) are still modelled
+//! so [`Mpd::to_xml`] writes back what [`Mpd::parse`] read.
 
 use std::time::Duration;
 
@@ -209,56 +209,24 @@ impl UtcTiming {
     }
 }
 
-/// Which not-acted-on constructs the MPD contained.
+/// Which constructs the MPD contained that the core reports rather than
+/// models element by element.
 ///
-/// Read-only: [`Mpd::to_xml`] emits no element for `patch_location`,
-/// `event_stream`, `preselection`, `producer_reference_time`,
-/// `content_steering` or `resync` (the model keeps only the flag, not the
-/// element), so a parse -> write -> parse clears those six flags. The other
-/// flags are derived from content the writer does emit.
+/// Every flag is derived from content the writer emits, so it survives a parse
+/// -> [`Mpd::to_xml`] -> parse round trip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub struct MpdFeatures {
-    /// `PatchLocation` (5.15).
-    pub patch_location: bool,
-    /// `EventStream` (5.10.2).
-    pub event_stream: bool,
     /// `InbandEventStream` (5.10.3).
     pub inband_event_stream: bool,
-    /// `Preselection` (5.3.11).
-    pub preselection: bool,
     /// `ServiceDescription` (Annex K).
     pub service_description: bool,
-    /// `ProducerReferenceTime` (5.12).
-    pub producer_reference_time: bool,
-    /// `ContentSteering`.
-    pub content_steering: bool,
-    /// `Resync` (5.3.13).
-    pub resync: bool,
     /// An `availabilityTimeOffset`, or `availabilityTimeComplete="false"`,
     /// anywhere: a low-latency presentation.
     pub low_latency: bool,
     /// A Period or AdaptationSet removed because its xlink was
     /// `urn:mpeg:dash:resolve-to-zero:2013`.
     pub xlink_resolve_to_zero: bool,
-}
-
-impl MpdFeatures {
-    /// These flags with the read-only ones (`patch_location`, `event_stream`,
-    /// `preselection`, `producer_reference_time`, `content_steering`,
-    /// `resync`) cleared: what survives a parse -> [`Mpd::to_xml`] -> parse
-    /// round trip, since the writer does not emit elements it does not model.
-    pub fn written(self) -> Self {
-        Self {
-            patch_location: false,
-            event_stream: false,
-            preselection: false,
-            producer_reference_time: false,
-            content_steering: false,
-            resync: false,
-            ..self
-        }
-    }
 }
 
 /// The `RepresentationBase` attributes (5.3.7.2) that AdaptationSet and
@@ -440,6 +408,241 @@ pub struct SegmentLayer {
     pub template: Option<SegmentTemplate>,
 }
 
+/// `Event@status` (ISO/IEC 23009-1 Annex B `EventStatusType`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum EventStatus {
+    /// `none`.
+    None,
+    /// `update`.
+    Update,
+    /// `repeat` (the schema default).
+    #[default]
+    Repeat,
+}
+
+impl EventStatus {
+    /// Stable label (the attribute token).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Update => "update",
+            Self::Repeat => "repeat",
+        }
+    }
+}
+impl_spec_display!(EventStatus);
+
+/// One `Event` of an `EventStream` (ISO/IEC 23009-1 clause 5.10.2, Table 28;
+/// Annex B `EventType`).
+///
+/// An Event whose content is an XML payload (`SelectionInfo`,
+/// `InsertPresentation`, `ReplacePresentation` or a foreign-namespace
+/// element, e.g. an SCTE 35 `Signal`) is parsed with [`StreamEvent::unsupported`]
+/// set and its payload dropped; [`Mpd::to_xml`] then refuses to write the MPD
+/// with [`Unsupported::EventXmlPayload`] instead of silently losing it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct StreamEvent {
+    /// `@presentationTime`, in the EventStream timescale (default 0).
+    pub presentation_time: u64,
+    /// `@duration`, in the EventStream timescale.
+    pub duration: Option<u64>,
+    /// `@id`.
+    pub id: Option<u64>,
+    /// `@status`; `None` when absent (the schema default is `repeat`).
+    pub status: Option<EventStatus>,
+    /// `@messageData` (deprecated since ed.4, prohibited by the ed.6 schema).
+    pub message_data: Option<String>,
+    /// The element's character data, trimmed: a text or base64 message body.
+    pub text: String,
+    /// `SupplementalProperty` children.
+    pub supplemental_properties: Vec<Descriptor>,
+    /// `EssentialProperty` children.
+    pub essential_properties: Vec<Descriptor>,
+    /// `ServiceDescription` children (ed.6 service-description events).
+    pub service_descriptions: Vec<ServiceDescription>,
+    /// Set when the Event carries an XML payload this model cannot hold.
+    pub unsupported: Option<Unsupported>,
+}
+
+/// An `EventStream` (ISO/IEC 23009-1 clause 5.10.2, Table 27; Annex B
+/// `EventStreamType`) of a Period.
+#[derive(Debug, Clone, PartialEq, Default)]
+#[non_exhaustive]
+pub struct EventStream {
+    /// `xlink` reference; the stream is then unresolved.
+    pub xlink: Option<Xlink>,
+    /// `@schemeIdUri`.
+    pub scheme_id_uri: String,
+    /// `@value`.
+    pub value: Option<String>,
+    /// `@timescale`, ticks per second.
+    pub timescale: Option<u32>,
+    /// `@presentationTimeOffset`, in the timescale.
+    pub presentation_time_offset: Option<u64>,
+    /// The `Event` children in document order.
+    pub events: Vec<StreamEvent>,
+    /// `BaseURL` alternates.
+    pub base_urls: Vec<BaseUrl>,
+    /// `EssentialProperty`.
+    pub essential_properties: Vec<Descriptor>,
+    /// `SupplementalProperty`.
+    pub supplemental_properties: Vec<Descriptor>,
+}
+
+/// `ProducerReferenceTime@type` (ISO/IEC 23009-1 clause 5.12, Table 33).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum ProducerReferenceKind {
+    /// `encoder` (the default): the time the encoder produced the sample.
+    #[default]
+    Encoder,
+    /// `captured`: the capture time of the content.
+    Captured,
+    /// `application`: defined by `@applicationScheme`.
+    Application,
+}
+
+impl ProducerReferenceKind {
+    /// Stable label (the attribute token).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Encoder => "encoder",
+            Self::Captured => "captured",
+            Self::Application => "application",
+        }
+    }
+}
+impl_spec_display!(ProducerReferenceKind);
+
+/// A `ProducerReferenceTime` (ISO/IEC 23009-1 clause 5.12, Table 33) of an
+/// AdaptationSet or Representation.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct ProducerReferenceTime {
+    /// `@id`.
+    pub id: u32,
+    /// `@inband` (default false).
+    pub inband: bool,
+    /// `@type`.
+    pub kind: ProducerReferenceKind,
+    /// `@applicationScheme`.
+    pub application_scheme: Option<String>,
+    /// `@wallClockTime`, the lexical form (NTP-style date-time).
+    pub wall_clock_time: String,
+    /// `@presentationTime`, in the Representation timescale.
+    pub presentation_time: u64,
+    /// The `UTCTiming` child naming the wall-clock source.
+    pub utc_timing: Option<UtcTiming>,
+}
+
+/// A `PatchLocation` (ISO/IEC 23009-1 clause 5.15, Table 41): where an MPD
+/// patch is fetched.
+#[derive(Debug, Clone, PartialEq, Default)]
+#[non_exhaustive]
+pub struct PatchLocation {
+    /// The element text (the patch URL).
+    pub url: String,
+    /// `@serviceLocation`.
+    pub service_location: Option<String>,
+    /// `@ttl`, seconds the patch location stays valid.
+    pub ttl: Option<f64>,
+}
+
+/// A `Resync` (ISO/IEC 23009-1 clause 5.3.13, Table 15) resynchronisation
+/// point of an AdaptationSet or Representation.
+#[derive(Debug, Clone, PartialEq, Default)]
+#[non_exhaustive]
+pub struct Resync {
+    /// `@type`, the SAP type 0 to 6 (default 0).
+    pub kind: u8,
+    /// `@dT`, the maximum time offset.
+    pub dt: Option<u32>,
+    /// `@dImax`, the maximum Resync interval.
+    pub d_imax: Option<f64>,
+    /// `@dImin`, the minimum Resync interval.
+    pub d_imin: Option<f64>,
+    /// `@marker`.
+    pub marker: bool,
+}
+
+/// `Preselection@order` (ISO/IEC 23009-1 clause 5.3.11, Table 14).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum PreselectionOrder {
+    /// `undefined` (the default).
+    #[default]
+    Undefined,
+    /// `time-ordered`.
+    TimeOrdered,
+    /// `fully-ordered`.
+    FullyOrdered,
+}
+
+impl PreselectionOrder {
+    /// Stable label (the attribute token).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Undefined => "undefined",
+            Self::TimeOrdered => "time-ordered",
+            Self::FullyOrdered => "fully-ordered",
+        }
+    }
+}
+impl_spec_display!(PreselectionOrder);
+
+/// A `Preselection` (ISO/IEC 23009-1 clause 5.3.11, Table 14) of a Period.
+///
+/// Carries the `RepresentationBase` attributes and the descriptor children
+/// below; other `RepresentationBase` children are not modelled.
+#[derive(Debug, Clone, PartialEq, Default)]
+#[non_exhaustive]
+pub struct Preselection {
+    /// `@id`; `None` when absent (the schema default is `1`).
+    pub id: Option<String>,
+    /// `@preselectionComponents`, whitespace-separated AdaptationSet ids.
+    pub preselection_components: Vec<String>,
+    /// `@lang`.
+    pub lang: Option<String>,
+    /// `@order`; `None` when absent (the schema default is `undefined`).
+    pub order: Option<PreselectionOrder>,
+    /// The `RepresentationBase` attributes.
+    pub common: CommonAttributes,
+    /// `AudioChannelConfiguration`.
+    pub audio_channel_configurations: Vec<Descriptor>,
+    /// `EssentialProperty`.
+    pub essential_properties: Vec<Descriptor>,
+    /// `SupplementalProperty`.
+    pub supplemental_properties: Vec<Descriptor>,
+    /// `Accessibility` descriptors.
+    pub accessibilities: Vec<Descriptor>,
+    /// `Role` descriptors.
+    pub roles: Vec<Descriptor>,
+    /// `Rating` descriptors.
+    pub ratings: Vec<Descriptor>,
+    /// `Viewpoint` descriptors.
+    pub viewpoints: Vec<Descriptor>,
+}
+
+/// A `ContentSteering` (ISO/IEC 23009-1 clause 5.3.1, Table 3; Annex B
+/// `ContentSteeringType`) of the MPD.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct ContentSteering {
+    /// The element text (the steering server URL).
+    pub url: String,
+    /// `@defaultServiceLocation`.
+    pub default_service_location: Option<String>,
+    /// `@queryBeforeStart` (default false).
+    pub query_before_start: bool,
+    /// `@clientRequirement`; `None` when absent (the schema default is true).
+    pub client_requirement: Option<bool>,
+}
+
 /// A `Representation` (5.3.5).
 #[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
@@ -468,6 +671,10 @@ pub struct Representation {
     pub audio_channel_configurations: Vec<Descriptor>,
     /// `InbandEventStream`.
     pub inband_event_streams: Vec<Descriptor>,
+    /// `ProducerReferenceTime`.
+    pub producer_reference_times: Vec<ProducerReferenceTime>,
+    /// `Resync`.
+    pub resyncs: Vec<Resync>,
 }
 
 /// An `AdaptationSet` (5.3.3).
@@ -514,6 +721,10 @@ pub struct AdaptationSet {
     pub audio_channel_configurations: Vec<Descriptor>,
     /// `InbandEventStream`.
     pub inband_event_streams: Vec<Descriptor>,
+    /// `ProducerReferenceTime`.
+    pub producer_reference_times: Vec<ProducerReferenceTime>,
+    /// `Resync`.
+    pub resyncs: Vec<Resync>,
     /// The Representations.
     pub representations: Vec<Representation>,
 }
@@ -549,6 +760,8 @@ pub struct Period {
     pub segment: SegmentLayer,
     /// `AssetIdentifier`.
     pub asset_identifier: Option<Descriptor>,
+    /// `EventStream`.
+    pub event_streams: Vec<EventStream>,
     /// `ImportedMPD` (ISO/IEC 23009-1 ed.6 Table `ImportedMpdType`): the MPD a
     /// `@type="list"` Period presents.
     pub imported_mpd: Option<ImportedMpd>,
@@ -558,6 +771,8 @@ pub struct Period {
     pub supplemental_properties: Vec<Descriptor>,
     /// The AdaptationSets.
     pub adaptation_sets: Vec<AdaptationSet>,
+    /// `Preselection`.
+    pub preselections: Vec<Preselection>,
     /// `ServiceDescription`.
     pub service_descriptions: Vec<ServiceDescription>,
 }
@@ -632,6 +847,8 @@ pub struct Mpd {
     pub base_urls: Vec<BaseUrl>,
     /// `Location` texts.
     pub locations: Vec<String>,
+    /// `PatchLocation`.
+    pub patch_locations: Vec<PatchLocation>,
     /// `ServiceDescription`.
     pub service_descriptions: Vec<ServiceDescription>,
     /// `UTCTiming` elements in document order (alternatives, in preference
@@ -641,8 +858,32 @@ pub struct Mpd {
     pub essential_properties: Vec<Descriptor>,
     /// `SupplementalProperty`.
     pub supplemental_properties: Vec<Descriptor>,
+    /// `ContentSteering`.
+    pub content_steering: Option<ContentSteering>,
     /// The Periods.
     pub periods: Vec<Period>,
     /// Constructs seen but not acted on.
     pub features: MpdFeatures,
+}
+
+impl Mpd {
+    /// Whether the MPD declares an `EventStream` in a Period or an
+    /// `InbandEventStream` anywhere.
+    #[must_use]
+    pub fn has_event_streams(&self) -> bool {
+        self.features.inband_event_stream
+            || self.periods.iter().any(|p| !p.event_streams.is_empty())
+    }
+
+    /// Whether any Period declares a `Preselection`.
+    #[must_use]
+    pub fn has_preselections(&self) -> bool {
+        self.periods.iter().any(|p| !p.preselections.is_empty())
+    }
+
+    /// Whether the MPD declares a `PatchLocation`.
+    #[must_use]
+    pub fn has_patch_location(&self) -> bool {
+        !self.patch_locations.is_empty()
+    }
 }

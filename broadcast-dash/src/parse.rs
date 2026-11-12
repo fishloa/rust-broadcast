@@ -436,6 +436,8 @@ fn representation(e: &Elem<Ns>, ctx: &mut Ctx<'_>) -> Result<Representation, Mpd
         supplemental_properties: descriptors(e, "SupplementalProperty")?,
         audio_channel_configurations: descriptors(e, "AudioChannelConfiguration")?,
         inband_event_streams: descriptors(e, "InbandEventStream")?,
+        producer_reference_times: producer_reference_times(e)?,
+        resyncs: resyncs(e)?,
     })
 }
 
@@ -459,10 +461,7 @@ fn adaptation_set(e: &Elem<Ns>, ctx: &mut Ctx<'_>) -> Result<Option<AdaptationSe
         ctx.features.xlink_resolve_to_zero = true;
         return Ok(None);
     }
-    let start_with_sap = opt_u32(e, "startWithSAP")?
-        .map(|v| u8::try_from(v).ok().filter(|v| *v <= MAX_START_WITH_SAP))
-        .map(|v| v.ok_or_else(|| invalid("startWithSAP", "out of range")))
-        .transpose()?;
+    let start_with_sap = sap_type(e, "startWithSAP")?;
     let mut representations = Vec::new();
     for r in e.children_named("Representation") {
         check_count(
@@ -496,6 +495,8 @@ fn adaptation_set(e: &Elem<Ns>, ctx: &mut Ctx<'_>) -> Result<Option<AdaptationSe
         supplemental_properties: descriptors(e, "SupplementalProperty")?,
         audio_channel_configurations: descriptors(e, "AudioChannelConfiguration")?,
         inband_event_streams: descriptors(e, "InbandEventStream")?,
+        producer_reference_times: producer_reference_times(e)?,
+        resyncs: resyncs(e)?,
         representations,
     }))
 }
@@ -517,6 +518,10 @@ fn period(e: &Elem<Ns>, ctx: &mut Ctx<'_>) -> Result<Option<Period>, MpdError> {
             sets.push(set);
         }
     }
+    let mut event_streams = Vec::new();
+    for s in e.children_named("EventStream") {
+        event_streams.push(event_stream(s, ctx)?);
+    }
     Ok(Some(Period {
         id: opt_str(e, "id"),
         start: opt_duration(e, "start")?,
@@ -526,6 +531,7 @@ fn period(e: &Elem<Ns>, ctx: &mut Ctx<'_>) -> Result<Option<Period>, MpdError> {
         base_urls: base_urls(e, ctx)?,
         segment: segment_layer(e, ctx)?,
         asset_identifier: e.child("AssetIdentifier").map(descriptor).transpose()?,
+        event_streams,
         imported_mpd: e.child("ImportedMPD").map(imported_mpd).transpose()?,
         essential_properties: descriptors(e, "EssentialProperty")?,
         supplemental_properties: descriptors(e, "SupplementalProperty")?,
@@ -534,6 +540,10 @@ fn period(e: &Elem<Ns>, ctx: &mut Ctx<'_>) -> Result<Option<Period>, MpdError> {
             .map(service_description)
             .collect::<Result<Vec<_>, _>>()?,
         adaptation_sets: sets,
+        preselections: e
+            .children_named("Preselection")
+            .map(preselection)
+            .collect::<Result<Vec<_>, _>>()?,
     }))
 }
 
@@ -573,17 +583,179 @@ fn service_description(e: &Elem<Ns>) -> Result<ServiceDescription, MpdError> {
     })
 }
 
+fn utc_timing(e: &Elem<Ns>) -> Result<UtcTiming, MpdError> {
+    let scheme_id_uri = e
+        .attr("schemeIdUri")
+        .ok_or_else(|| invalid("schemeIdUri", "missing on UTCTiming"))?
+        .to_owned();
+    Ok(UtcTiming {
+        scheme: UtcScheme::from_scheme_id_uri(&scheme_id_uri),
+        scheme_id_uri,
+        value: e.attr("value").unwrap_or_default().to_owned(),
+        id: opt_str(e, "id"),
+    })
+}
+
+fn sap_type(e: &Elem<Ns>, name: &'static str) -> Result<Option<u8>, MpdError> {
+    opt_u32(e, name)?
+        .map(|v| {
+            u8::try_from(v)
+                .ok()
+                .filter(|v| *v <= MAX_START_WITH_SAP)
+                .ok_or_else(|| invalid(name, "out of range"))
+        })
+        .transpose()
+}
+
+fn event(e: &Elem<Ns>) -> Result<StreamEvent, MpdError> {
+    let status = match e.attr("status") {
+        None => None,
+        Some("none") => Some(EventStatus::None),
+        Some("update") => Some(EventStatus::Update),
+        Some("repeat") => Some(EventStatus::Repeat),
+        Some(other) => return Err(invalid("Event@status", other)),
+    };
+    let unsupported = e
+        .children
+        .iter()
+        .any(|c| {
+            c.ns != Ns::Mpd
+                || !matches!(
+                    c.name.as_str(),
+                    "SupplementalProperty" | "EssentialProperty" | "ServiceDescription"
+                )
+        })
+        .then_some(Unsupported::EventXmlPayload);
+    Ok(StreamEvent {
+        presentation_time: opt_u64(e, "presentationTime")?.unwrap_or(0),
+        duration: opt_u64(e, "duration")?,
+        id: opt_u64(e, "id")?,
+        status,
+        message_data: opt_str(e, "messageData"),
+        text: e.text.trim().to_owned(),
+        supplemental_properties: descriptors(e, "SupplementalProperty")?,
+        essential_properties: descriptors(e, "EssentialProperty")?,
+        service_descriptions: e
+            .children_named("ServiceDescription")
+            .map(service_description)
+            .collect::<Result<Vec<_>, _>>()?,
+        unsupported,
+    })
+}
+
+fn event_stream(e: &Elem<Ns>, ctx: &mut Ctx<'_>) -> Result<EventStream, MpdError> {
+    Ok(EventStream {
+        xlink: xlink(e)?,
+        scheme_id_uri: e
+            .attr("schemeIdUri")
+            .ok_or_else(|| invalid("schemeIdUri", "missing on EventStream"))?
+            .to_owned(),
+        value: opt_str(e, "value"),
+        timescale: opt_u32(e, "timescale")?,
+        presentation_time_offset: opt_u64(e, "presentationTimeOffset")?,
+        events: e
+            .children_named("Event")
+            .map(event)
+            .collect::<Result<Vec<_>, _>>()?,
+        base_urls: base_urls(e, ctx)?,
+        essential_properties: descriptors(e, "EssentialProperty")?,
+        supplemental_properties: descriptors(e, "SupplementalProperty")?,
+    })
+}
+
+fn producer_reference_time(e: &Elem<Ns>) -> Result<ProducerReferenceTime, MpdError> {
+    let kind = match e.attr("type") {
+        None | Some("encoder") => ProducerReferenceKind::Encoder,
+        Some("captured") => ProducerReferenceKind::Captured,
+        Some("application") => ProducerReferenceKind::Application,
+        Some(other) => return Err(invalid("ProducerReferenceTime@type", other)),
+    };
+    Ok(ProducerReferenceTime {
+        id: opt_u32(e, "id")?.ok_or_else(|| invalid("ProducerReferenceTime@id", "missing"))?,
+        inband: opt_bool(e, "inband")?.unwrap_or(false),
+        kind,
+        application_scheme: opt_str(e, "applicationScheme"),
+        wall_clock_time: e
+            .attr("wallClockTime")
+            .ok_or_else(|| invalid("ProducerReferenceTime@wallClockTime", "missing"))?
+            .to_owned(),
+        presentation_time: opt_u64(e, "presentationTime")?
+            .ok_or_else(|| invalid("ProducerReferenceTime@presentationTime", "missing"))?,
+        utc_timing: e.child("UTCTiming").map(utc_timing).transpose()?,
+    })
+}
+
+fn producer_reference_times(e: &Elem<Ns>) -> Result<Vec<ProducerReferenceTime>, MpdError> {
+    e.children_named("ProducerReferenceTime")
+        .map(producer_reference_time)
+        .collect()
+}
+
+fn resyncs(e: &Elem<Ns>) -> Result<Vec<Resync>, MpdError> {
+    e.children_named("Resync")
+        .map(|r| {
+            Ok(Resync {
+                kind: sap_type(r, "type")?.unwrap_or(0),
+                dt: opt_u32(r, "dT")?,
+                d_imax: opt_f64(r, "dImax")?,
+                d_imin: opt_f64(r, "dImin")?,
+                marker: opt_bool(r, "marker")?.unwrap_or(false),
+            })
+        })
+        .collect()
+}
+
+fn preselection(e: &Elem<Ns>) -> Result<Preselection, MpdError> {
+    let order = match e.attr("order") {
+        None => None,
+        Some("undefined") => Some(PreselectionOrder::Undefined),
+        Some("time-ordered") => Some(PreselectionOrder::TimeOrdered),
+        Some("fully-ordered") => Some(PreselectionOrder::FullyOrdered),
+        Some(other) => return Err(invalid("Preselection@order", other)),
+    };
+    Ok(Preselection {
+        id: opt_str(e, "id"),
+        preselection_components: e
+            .attr("preselectionComponents")
+            .ok_or_else(|| invalid("Preselection@preselectionComponents", "missing"))?
+            .split_ascii_whitespace()
+            .map(str::to_owned)
+            .collect(),
+        lang: opt_str(e, "lang"),
+        order,
+        common: common(e)?,
+        audio_channel_configurations: descriptors(e, "AudioChannelConfiguration")?,
+        essential_properties: descriptors(e, "EssentialProperty")?,
+        supplemental_properties: descriptors(e, "SupplementalProperty")?,
+        accessibilities: descriptors(e, "Accessibility")?,
+        roles: descriptors(e, "Role")?,
+        ratings: descriptors(e, "Rating")?,
+        viewpoints: descriptors(e, "Viewpoint")?,
+    })
+}
+
+fn patch_location(e: &Elem<Ns>) -> Result<PatchLocation, MpdError> {
+    Ok(PatchLocation {
+        url: e.text.trim().to_owned(),
+        service_location: opt_str(e, "serviceLocation"),
+        ttl: opt_f64(e, "ttl")?,
+    })
+}
+
+fn content_steering(e: &Elem<Ns>) -> Result<ContentSteering, MpdError> {
+    Ok(ContentSteering {
+        url: e.text.trim().to_owned(),
+        default_service_location: opt_str(e, "defaultServiceLocation"),
+        query_before_start: opt_bool(e, "queryBeforeStart")?.unwrap_or(false),
+        client_requirement: opt_bool(e, "clientRequirement")?,
+    })
+}
+
 fn scan_features(e: &Elem<Ns>, f: &mut MpdFeatures) {
     if e.ns == Ns::Mpd {
         match e.name.as_str() {
-            "PatchLocation" => f.patch_location = true,
-            "EventStream" => f.event_stream = true,
             "InbandEventStream" => f.inband_event_stream = true,
-            "Preselection" => f.preselection = true,
             "ServiceDescription" => f.service_description = true,
-            "ProducerReferenceTime" => f.producer_reference_time = true,
-            "ContentSteering" => f.content_steering = true,
-            "Resync" => f.resync = true,
             _ => {}
         }
     }
@@ -634,19 +806,10 @@ impl Mpd {
                 ));
             }
         }
-        let mut utc_timings = Vec::new();
-        for u in root.children_named("UTCTiming") {
-            let scheme_id_uri = u
-                .attr("schemeIdUri")
-                .ok_or_else(|| invalid("schemeIdUri", "missing on UTCTiming"))?
-                .to_owned();
-            utc_timings.push(UtcTiming {
-                scheme: UtcScheme::from_scheme_id_uri(&scheme_id_uri),
-                scheme_id_uri,
-                value: u.attr("value").unwrap_or_default().to_owned(),
-                id: opt_str(u, "id"),
-            });
-        }
+        let utc_timings = root
+            .children_named("UTCTiming")
+            .map(utc_timing)
+            .collect::<Result<Vec<_>, _>>()?;
         let base = base_urls(&root, &mut ctx)?;
         let mut features = ctx.features;
         scan_features(&root, &mut features);
@@ -677,6 +840,10 @@ impl Mpd {
                 .children_named("Location")
                 .map(|l| l.text.trim().to_owned())
                 .collect(),
+            patch_locations: root
+                .children_named("PatchLocation")
+                .map(patch_location)
+                .collect::<Result<Vec<_>, _>>()?,
             service_descriptions: root
                 .children_named("ServiceDescription")
                 .map(service_description)
@@ -684,6 +851,10 @@ impl Mpd {
             utc_timings,
             essential_properties: descriptors(&root, "EssentialProperty")?,
             supplemental_properties: descriptors(&root, "SupplementalProperty")?,
+            content_steering: root
+                .child("ContentSteering")
+                .map(content_steering)
+                .transpose()?,
             periods,
             features,
         })

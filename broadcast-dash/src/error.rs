@@ -101,6 +101,8 @@ pub enum Unsupported {
     OpenEndedRange,
     /// A `sidx` reference that points at another `sidx`.
     HierarchicalSidx,
+    /// An `Event` whose content is an XML payload rather than text.
+    EventXmlPayload,
 }
 
 impl Unsupported {
@@ -113,6 +115,7 @@ impl Unsupported {
             Self::DataUrl => "data_url",
             Self::OpenEndedRange => "open_ended_range",
             Self::HierarchicalSidx => "hierarchical_sidx",
+            Self::EventXmlPayload => "event_xml_payload",
         }
     }
 }

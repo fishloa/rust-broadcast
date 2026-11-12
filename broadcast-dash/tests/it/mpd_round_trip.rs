@@ -1,32 +1,41 @@
 use std::time::Duration;
 
 use broadcast_dash::Mpd;
+use broadcast_dash::error::{MpdError, Unsupported};
 use broadcast_dash::limits::Limits;
 use broadcast_dash::model::*;
 use broadcast_dash::utc_timing::UtcScheme;
 
 use super::corpus;
 
-fn without_unwritten_features(mut mpd: Mpd) -> Mpd {
-    mpd.features = mpd.features.written();
-    mpd
+fn refused_event_payload(name: &str, mpd: &Mpd) -> Option<String> {
+    match mpd.to_xml() {
+        Ok(xml) => Some(xml),
+        Err(MpdError::Unsupported(Unsupported::EventXmlPayload)) => None,
+        Err(e) => panic!("{name}: {e}"),
+    }
 }
 
 #[test]
 fn every_parsed_fixture_round_trips_through_the_writer() {
     let mut count = 0usize;
+    let mut refused = 0usize;
     for (name, path) in corpus::corpus() {
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
         let Ok(mpd) = Mpd::parse_with(&bytes, &Limits::default()) else {
             continue;
         };
-        let xml = mpd.to_xml().unwrap_or_else(|e| panic!("{name}: {e}"));
+        let Some(xml) = refused_event_payload(&name, &mpd) else {
+            refused += 1;
+            continue;
+        };
         let again = Mpd::parse_with(xml.as_bytes(), &Limits::default())
             .unwrap_or_else(|e| panic!("{name}: {e}"));
-        assert_eq!(again, without_unwritten_features(mpd), "{name}");
+        assert_eq!(again, mpd, "{name}");
         count += 1;
     }
     assert!(count >= 20, "round-tripped only {count} fixtures");
+    assert!(refused > 0, "no fixture carries an XML Event payload");
 }
 
 #[test]
@@ -246,6 +255,17 @@ fn a_model_with_every_field_set_round_trips() {
     period.adaptation_sets = vec![aset];
 
     mpd.periods = vec![period];
+    let mut steering = ContentSteering::default();
+    steering.url = "https://steer.example/".to_string();
+    steering.default_service_location = Some("cdn-a".to_string());
+    steering.query_before_start = true;
+    steering.client_requirement = Some(false);
+    mpd.content_steering = Some(steering);
+    let mut patch = PatchLocation::default();
+    patch.url = "http://patch.example/p.mpp".to_string();
+    patch.service_location = Some("cdn-a".to_string());
+    patch.ttl = Some(30.5);
+    mpd.patch_locations = vec![patch, PatchLocation::default()];
     mpd.features.inband_event_stream = true;
     mpd.features.service_description = true;
     mpd.features.low_latency = true;
@@ -256,26 +276,160 @@ fn a_model_with_every_field_set_round_trips() {
     assert_eq!(again, mpd);
 }
 
+fn every_field_event_stream(desc: &Descriptor) -> EventStream {
+    let mut sd = ServiceDescription::default();
+    sd.id = Some(3);
+    let mut event = StreamEvent::default();
+    event.presentation_time = 90_000;
+    event.duration = Some(45_000);
+    event.id = Some(7);
+    event.status = Some(EventStatus::Update);
+    event.message_data = Some("AQID".to_string());
+    event.text = "a < b & c".to_string();
+    event.supplemental_properties = vec![desc.clone()];
+    event.essential_properties = vec![desc.clone()];
+    event.service_descriptions = vec![sd];
+    let mut bare = StreamEvent::default();
+    bare.status = Some(EventStatus::None);
+    let mut base_url = BaseUrl::default();
+    base_url.url = "http://events/".to_string();
+    let mut xlink = Xlink::default();
+    xlink.href = "http://events/es.xml".to_string();
+    xlink.actuate = Actuate::OnLoad;
+    let mut es = EventStream::default();
+    es.xlink = Some(xlink);
+    es.scheme_id_uri = "urn:scte:scte35:2013:xml".to_string();
+    es.value = Some("v".to_string());
+    es.timescale = Some(90_000);
+    es.presentation_time_offset = Some(5);
+    es.events = vec![event, bare];
+    es.base_urls = vec![base_url];
+    es.essential_properties = vec![desc.clone()];
+    es.supplemental_properties = vec![desc.clone()];
+    es
+}
+
+fn every_field_producer_reference_time(
+    id: u32,
+    kind: ProducerReferenceKind,
+) -> ProducerReferenceTime {
+    let mut utc = UtcTiming::default();
+    utc.scheme = UtcScheme::Direct;
+    utc.scheme_id_uri = "urn:mpeg:dash:utc:direct:2014".to_string();
+    utc.value = "2020-01-01T00:00:00Z".to_string();
+    utc.id = Some("u".to_string());
+    let mut prt = ProducerReferenceTime::default();
+    prt.id = id;
+    prt.inband = true;
+    prt.kind = kind;
+    prt.application_scheme = Some("urn:app".to_string());
+    prt.wall_clock_time = "1970-01-01T00:00:01.5Z".to_string();
+    prt.presentation_time = 1234;
+    prt.utc_timing = Some(utc);
+    prt
+}
+
+fn every_field_resync() -> Resync {
+    let mut r = Resync::default();
+    r.kind = 2;
+    r.dt = Some(9);
+    r.d_imax = Some(2.5);
+    r.d_imin = Some(0.5);
+    r.marker = true;
+    r
+}
+
+fn every_field_preselection(desc: &Descriptor) -> Preselection {
+    let mut common = CommonAttributes::default();
+    common.profiles = Some("prof".to_string());
+    common.width = Some(1280);
+    common.height = Some(720);
+    common.sar = Some("1:1".to_string());
+    common.frame_rate = Some("25".to_string());
+    common.audio_sampling_rate = Some("48000".to_string());
+    common.mime_type = Some("audio/mp4".to_string());
+    common.codecs = Some("ec-3".to_string());
+    common.max_playout_rate = Some(2.0);
+    common.coding_dependency = Some(true);
+    let mut p = Preselection::default();
+    p.id = Some("pre1".to_string());
+    p.preselection_components = vec!["1".to_string(), "2".to_string()];
+    p.lang = Some("de".to_string());
+    p.order = Some(PreselectionOrder::FullyOrdered);
+    p.common = common;
+    p.audio_channel_configurations = vec![desc.clone()];
+    p.essential_properties = vec![desc.clone()];
+    p.supplemental_properties = vec![desc.clone()];
+    p.accessibilities = vec![desc.clone()];
+    p.roles = vec![desc.clone()];
+    p.ratings = vec![desc.clone()];
+    p.viewpoints = vec![desc.clone()];
+    p
+}
+
 #[test]
-fn unwritten_feature_flags_emit_no_element() {
+fn event_streams_preselections_producer_times_and_resyncs_round_trip() {
+    let mut desc = Descriptor::default();
+    desc.scheme_id_uri = "urn:x".to_string();
+    desc.value = Some("v".to_string());
+    desc.default_kid = Some("kid".to_string());
+    let mut rep = Representation::default();
+    rep.id = "r".to_string();
+    rep.producer_reference_times = vec![
+        every_field_producer_reference_time(1, ProducerReferenceKind::Captured),
+        every_field_producer_reference_time(2, ProducerReferenceKind::Application),
+    ];
+    rep.resyncs = vec![every_field_resync(), Resync::default()];
+    let mut aset = AdaptationSet::default();
+    aset.producer_reference_times = vec![ProducerReferenceTime::default()];
+    aset.resyncs = vec![every_field_resync()];
+    aset.representations = vec![rep];
+    let mut period = Period::default();
+    period.event_streams = vec![every_field_event_stream(&desc), EventStream::default()];
+    period.adaptation_sets = vec![aset];
+    period.preselections = vec![every_field_preselection(&desc), Preselection::default()];
     let mut mpd = Mpd::default();
-    mpd.features.patch_location = true;
-    mpd.features.event_stream = true;
-    mpd.features.preselection = true;
-    mpd.features.producer_reference_time = true;
-    mpd.features.content_steering = true;
-    mpd.features.resync = true;
+    mpd.min_buffer_time = Some(Duration::from_secs(1));
+    mpd.periods = vec![period];
+    mpd.features.service_description = true;
     let xml = mpd.to_xml().unwrap();
-    for name in [
-        "PatchLocation",
-        "EventStream",
-        "Preselection",
-        "ProducerReferenceTime",
-        "ContentSteering",
-        "Resync",
-    ] {
-        assert!(!xml.contains(name), "{name} emitted:\n{xml}");
-    }
+    let again = Mpd::parse(xml.as_bytes()).unwrap();
+    assert_eq!(again, mpd);
+    assert!(mpd.has_event_streams() && mpd.has_preselections());
+}
+
+#[test]
+fn an_event_with_an_xml_payload_is_flagged_and_refused_on_write() {
+    let xml = br#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" minBufferTime="PT1S"><Period id="0"><EventStream schemeIdUri="urn:e"><Event presentationTime="1"><ReplacePresentation uri="http://x"/></Event></EventStream></Period></MPD>"#;
+    let mpd = Mpd::parse(xml).unwrap();
+    let event = &mpd.periods[0].event_streams[0].events[0];
+    assert_eq!(event.unsupported, Some(Unsupported::EventXmlPayload));
+    assert_eq!(
+        mpd.to_xml(),
+        Err(MpdError::Unsupported(Unsupported::EventXmlPayload))
+    );
+}
+
+#[test]
+fn text_events_parse_with_their_body() {
+    let xml = br#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" minBufferTime="PT1S"><Period id="0"><EventStream schemeIdUri="urn:e" timescale="1000" presentationTimeOffset="4"><Event presentationTime="5" duration="2" id="9">  hello  </Event></EventStream></Period></MPD>"#;
+    let mpd = Mpd::parse(xml).unwrap();
+    let es = &mpd.periods[0].event_streams[0];
+    assert_eq!(
+        (es.timescale, es.presentation_time_offset),
+        (Some(1000), Some(4))
+    );
+    let ev = &es.events[0];
+    assert_eq!(
+        (
+            ev.presentation_time,
+            ev.duration,
+            ev.id,
+            ev.text.as_str(),
+            ev.unsupported
+        ),
+        (5, Some(2), Some(9), "hello", None)
+    );
 }
 
 #[test]
