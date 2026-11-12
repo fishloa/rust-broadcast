@@ -466,6 +466,11 @@ pub struct ProgramSegmenter {
     /// [`Self::queue_segment`] once that segment closes, so the following
     /// segment is anchored to the first post-jump sample.
     pending_anchor: Option<MediaAnchor>,
+    /// Per-track timeline-jump detector (broadcast-client semantics), moved
+    /// to transmux.
+    timeline: transmux::JumpDetector,
+    /// Wall-clock origin for delivery times passed to the detector.
+    ingest_origin: Instant,
     /// Start-gate (Apple authoring 7.4 MUST: segments start on a sync/IDR
     /// picture, issue #1425): for a program whose track set contains a video
     /// track, drop every timed sample until the first sync sample of a video
@@ -551,12 +556,6 @@ struct MediaAnchor {
 /// within this many video samples (about 30 s at 60 fps) the gate opens
 /// anyway (with a warning) instead of dropping the program forever.
 const START_GATE_MAX_VIDEO_DROPPED: u64 = 1800;
-
-/// A source-clock jump larger than this between consecutive samples is
-/// treated as a discontinuity and re-anchors the media mapping rather than
-/// being folded into the delta (issue #1083, E). Ten seconds is far beyond
-/// any legitimate inter-sample gap (a 1 fps track's is one).
-const MEDIA_DISCONTINUITY_NS: i64 = 10 * 1_000_000_000;
 
 /// Nanoseconds per second — for converting the segmenter's internal
 /// nanosecond timeline into the 90 kHz media clock.
@@ -877,7 +876,7 @@ impl ProgramSegmenter {
         if !followers.is_empty() || !subtitle_followers.is_empty() {
             seg.record_part_cuts();
         }
-        Some(ProgramSegmenter {
+        let mut ps = ProgramSegmenter {
             timescale_moves,
             // `subscribe_from_backlog`, not `subscribe` (issue #808): the
             // driver's own `feed` call that announced this program's
@@ -924,7 +923,11 @@ impl ProgramSegmenter {
             caption_scan_started: HashMap::new(),
             captions_scan_complete: false,
             part_target_published: None,
-        })
+            timeline: transmux::JumpDetector::new(Some(transmux::TimelineJumpConfig::default())),
+            ingest_origin: Instant::now(),
+        };
+        ps.timeline.on_tracks(&ps.published_tracks);
+        Some(ps)
     }
 
     /// Queue `item` (behind anything already queued from an earlier call,
@@ -1027,6 +1030,7 @@ impl ProgramSegmenter {
                         }
                     }
                     self.track_generation = generation;
+                    self.timeline.on_tracks(&self.published_tracks);
                     self.caption_detectors.clear();
                 }
             } else if let SampleCursorItem::Timed { track_id, sample } = item {
@@ -1249,23 +1253,12 @@ impl ProgramSegmenter {
                 .map(|t| t.timescale)
             && timescale > 0
         {
+            let now_us = self.ingest_origin.elapsed().as_micros() as u64;
             let re_anchor = match self.anchor {
                 None => true,
-                Some(a) => {
-                    // Same track AND a jump larger than any legitimate
-                    // inter-sample gap => discontinuity.
-                    let jump_ns = {
-                        let prev = i128::from(a.last_pts);
-                        let now = i128::from(pts);
-                        let scale = i128::from(timescale);
-                        (now - prev).saturating_mul(i128::from(NANOS_PER_SEC)) / scale
-                    };
-                    let sign_flip = (a.last_pts >= 0) != (pts >= 0);
-                    sign_flip
-                        || (a.last_timescale == timescale
-                            && jump_ns.unsigned_abs() > MEDIA_DISCONTINUITY_NS as u128)
-                }
+                Some(_) => self.timeline.is_jump(track_id, &sample, None, now_us),
             };
+            self.timeline.record(track_id, &sample, None, now_us);
             if re_anchor {
                 let fresh = MediaAnchor {
                     source_90k: rescale_to_90k(pts, timescale),
@@ -3664,7 +3657,7 @@ mod tests {
             StreamingTsHlsSegmenter::new(vec![track_spec(TrackId::new(1))], 1, 8)
                 .expect("valid placeholder TS segmenter"),
         );
-        ProgramSegmenter {
+        let mut ps = ProgramSegmenter {
             timescale_moves: HashMap::new(),
             cursor: trunk.subscribe_from_backlog(),
             segment_writer,
@@ -3697,7 +3690,11 @@ mod tests {
             caption_scan_started: HashMap::new(),
             captions_scan_complete: false,
             part_target_published: None,
-        }
+            timeline: transmux::JumpDetector::new(Some(transmux::TimelineJumpConfig::default())),
+            ingest_origin: Instant::now(),
+        };
+        ps.timeline.on_tracks(&ps.published_tracks);
+        ps
     }
 
     /// Pre-populate `trunk`'s segment log with segments `1..=5`, as if

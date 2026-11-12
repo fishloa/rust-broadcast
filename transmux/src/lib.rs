@@ -191,6 +191,7 @@ pub mod interlace;
 pub mod ir;
 pub mod klv;
 pub mod live_join;
+pub mod timeline;
 pub mod ll_dash;
 pub mod ll_hls;
 pub mod media;
@@ -336,6 +337,7 @@ pub use klv::{
     UAS_LS_KEY, UasLocalSet, ber_oid, checksum_bcc16, encode_ber_oid,
 };
 pub use live_join::{DropReason, JoinDecision, JoinPolicy, JoinState, LiveJoin, RapKind};
+pub use timeline::{DEFAULT_JUMP_BACKWARD_US, DEFAULT_JUMP_FORWARD_SLACK_US, JumpDetector, TimelineJumpConfig};
 #[cfg(feature = "std")]
 pub use ll_dash::LlDashPackager;
 pub use ll_dash::{Chunk, LlSegmenter};
