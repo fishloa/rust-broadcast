@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 ### Changed
+- DASH-IF ingest sans-IO engine moved to `dash-runtime::ingest`; multimux keeps the axum glue and re-exports `dash_runtime::ingest` as `multimux::dashif_ingest`.
+### Removed
+- `multimux/src/dashif_ingest/{mod,session}.rs` moved to `dash-runtime/src/ingest/` (issue #2480).
+### Changed
 <<<<<<< HEAD
 - Timeline discontinuity detection now uses the per-track detector from `transmux` (broadcast-client semantics); the 10 s `MEDIA_DISCONTINUITY_NS` constant is removed.
 =======

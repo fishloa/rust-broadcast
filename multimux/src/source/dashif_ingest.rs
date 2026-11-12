@@ -718,6 +718,7 @@ async fn dashif_handler(
             Ok(Ok(())) => StatusCode::OK.into_response(),
             Ok(Err(SessionError::Ingest(e))) => e.status().into_response(),
             Ok(Err(SessionError::Demux(_))) => StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response(),
+            Ok(Err(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         }
     }

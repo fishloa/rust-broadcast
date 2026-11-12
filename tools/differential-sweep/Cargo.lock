@@ -733,9 +733,12 @@ dependencies = [
  "broadcast-common",
  "broadcast-dash",
  "container-probe",
+ "http",
  "jiff",
+ "media-plane",
  "quick-xml",
  "thiserror",
+ "tracing",
  "transmux",
  "url",
 ]

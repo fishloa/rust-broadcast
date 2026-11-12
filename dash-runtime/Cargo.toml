@@ -20,11 +20,14 @@ rustdoc-args = ["--cfg", "docsrs"]
 broadcast-common = { path = "../broadcast-common", version = "11.0.1", default-features = false, features = ["std", "xml"] }
 broadcast-dash   = { path = "../broadcast-dash", version = "0.1.0" }
 transmux         = { path = "../transmux", version = "0.31.0", default-features = false, features = ["std"] }
+media-plane      = { path = "../media-plane", version = "0.11.0", default-features = false, features = ["std"] }
+http             = "1"
 container-probe  = { path = "../container-probe", version = "0.3.1", default-features = false }
 quick-xml        = { workspace = true }
 url              = "2"
 jiff             = { version = "0.2", default-features = false, features = ["std"] }
 thiserror        = "2"
+tracing          = "0.1"
 
 [dev-dependencies]
 test-fixtures     = { path = "../test-fixtures" }

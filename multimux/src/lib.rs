@@ -4,7 +4,7 @@
 pub(crate) mod catchup;
 pub(crate) mod clock;
 pub mod config;
-pub mod dashif_ingest;
+pub use dash_runtime::ingest as dashif_ingest;
 pub mod dvr;
 pub mod error;
 mod http;
