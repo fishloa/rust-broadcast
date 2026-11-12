@@ -974,8 +974,12 @@ impl ProgramSegmenter {
         while let Some(item) = self.cursor.poll() {
             if let SampleCursorItem::TracksChanged { generation, tracks } = item {
                 if generation > self.track_generation {
-                    self.published_tracks = tracks;
-                    self.apply_track_change(program, trunk, route_handle, generation);
+                    let previous_tracks = std::mem::replace(&mut self.published_tracks, tracks);
+                    let previous_moves = self.timescale_moves.clone();
+                    if !self.apply_track_change(program, trunk, route_handle, generation) {
+                        self.published_tracks = previous_tracks;
+                        self.timescale_moves = previous_moves;
+                    }
                     self.track_generation = generation;
                     self.caption_detectors.clear();
                 }
@@ -1330,7 +1334,7 @@ impl ProgramSegmenter {
         trunk: &Trunk,
         route_handle: &RouteHandle,
         generation: u64,
-    ) {
+    ) -> bool {
         let new_tracks = route_handle.with_declared_audio_profiles(self.published_tracks.to_vec());
         self.timescale_moves = timescale_moves(&self.published_tracks, &new_tracks);
         tracing::info!(
@@ -1385,7 +1389,7 @@ impl ProgramSegmenter {
                             "mid-stream track-set change left no fMP4-muxable track — \
                              keeping the current segmenter"
                         );
-                        return;
+                        return false;
                     }
                     // Flush the old segmenter in place, drain its output and
                     // read its next sequence numbers — the replacement
@@ -1395,7 +1399,7 @@ impl ProgramSegmenter {
                     // rebuild leaves a working fMP4 segmenter, never a
                     // placeholder of another container.
                     let AnySegmenter::Fmp4(old_seg) = &mut self.seg else {
-                        return;
+                        return false;
                     };
                     if let Err(e) = old_seg.flush() {
                         tracing::warn!(error = %e, "old segmenter flush on rebuild failed");
@@ -1478,6 +1482,7 @@ impl ProgramSegmenter {
                                 "fMP4 segmenter rebuild failed — keeping the current \
                                  segmenter, track change dropped"
                             );
+                            return false;
                         }
                     }
                 }
@@ -1531,6 +1536,7 @@ impl ProgramSegmenter {
                                 error = %e,
                                 "TS segmenter rebuild failed — track addition dropped"
                             );
+                            return false;
                         }
                     }
                 }
@@ -1541,9 +1547,11 @@ impl ProgramSegmenter {
                         "mid-stream track-set change on an unsupported container — \
                          new tracks will not be served"
                     );
+                    return false;
                 }
             }
         }
+        true
     }
 
     /// Finalize any trailing buffered partial segment — called once the
@@ -3563,8 +3571,17 @@ mod tests {
             ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("fMP4 segmenter builds");
 
         writer.set_tracks(vec![data_track_spec(TrackId::new(2))]);
-        apply_change(&mut segmenter, &trunk, &route);
+        segmenter.pump(ProgramId(0), &trunk, &route);
         assert!(matches!(segmenter.seg, AnySegmenter::Fmp4(_)));
+        assert_eq!(
+            segmenter
+                .published_tracks
+                .iter()
+                .map(|t| t.track_id)
+                .collect::<Vec<_>>(),
+            vec![TrackId::new(1)],
+            "a refused change must leave the published set the installed segmenter carries"
+        );
 
         // And an empty set (every track removed).
         writer.set_tracks(Vec::new());
