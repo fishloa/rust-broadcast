@@ -333,7 +333,7 @@ payload bytes and timestamps). Digest responses are verified by `broadcast-auth`
 
 ### RTSP track clocks
 
-Each RTSP track's RTP timestamps start at an unrelated random base (RFC 3550 5.1), so the raw sample times of two tracks are not comparable. `source/rtsp_align.rs` (`Aligner`) puts every track on one common timeline before a sample leaves the RTSP source, so the buffer, the playout gate and the host all see aligned pts and dts.
+Each RTSP track's RTP timestamps start at an unrelated random base (RFC 3550 5.1), so the raw sample times of two tracks are not comparable. `transmux::TrackAligner` (`transmux/src/rtp_align.rs`, shared with multimux's RTSP pull) puts every track on one common timeline before a sample leaves the RTSP source, so the buffer, the playout gate and the host all see aligned pts and dts.
 
 - Anchor: the video track. Its pts/dts are never changed. Every other track gets one tick offset (`delta`, in its own timescale) added to pts and dts. Without a video track the first track to deliver is the anchor. Samples of other tracks wait (at most 256) until the anchor's first sample exists; if it never comes the earliest waiting track becomes the anchor.
 - `AvSync::Provisional`: no Sender Report mapping for the track yet. `delta` lines the track's first sample up with the anchor's first sample, so the error is the arrival skew between those two samples.
