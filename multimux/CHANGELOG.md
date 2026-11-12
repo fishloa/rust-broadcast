@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- The RTSP pull and the raw RTP/UDP source read SDP media sections through `transmux::sdp_track` (the rule `broadcast-client` already used): the played payload type is the first listed one with a usable `a=rtpmap`/`a=fmtp` (previously always the first listed, with the section's first `rtpmap`/`fmtp` whatever payload type they named), an H.264 section without `sprop-parameter-sets` is accepted with in-band parameter sets, an audio section whose `a=rtpmap` names another codec is rejected, and the H.264 coded size comes from the SPS. Recorded row by row in `fixtures/golden/sdp-tracks/multimux.txt`.
 ### Added
 - An RTSP pull places its tracks on one timeline with `transmux::TrackAligner`, the rule `broadcast-client` applies: the video track's times pass through, other tracks are offset from RTCP Sender Reports (or the PLAY `RTP-Info` when it names every track), and before either is known each track's first sample lines up with the video's first sample. Tracks whose RTP clocks start at unrelated offsets are now aligned by wall clock instead of each rebased to zero (#2380).
 - An RTSP pull sends `TEARDOWN` (RFC 2326 §10.7) for a playing session when it is cancelled, before the connection closes; `RtspIngestSession::finish` queues it and the shared ingest scaffold writes what a finished session queued on cancel.
@@ -29,6 +31,8 @@
 - The DASH-IF ingest reads the publisher's MPD and matches uploaded segment URLs with `dash-runtime` instead of transmux's removed MPD model (#2340).
 
 ### Fixed
+- An RTSP pull reads the SETUP reply's transport with `take_negotiated_transport()`, so a track whose reply has no `Transport` header fails with a SETUP protocol error instead of inheriting the previous track's channels.
+- An RTSP pull routes interleaved media by the RTP channel the server negotiated for each track, so a server answering `interleaved=1-2` no longer has every frame dropped as an odd channel.
 - `rescale_to_90k` now wraps the rescaled RTP timestamp into the 32-bit range explicitly (RFC 3550 §5.1) instead of relying on `as u32`.
 - `Recorder::lines` and `Recorder::len` recover a poisoned lock via `PoisonError::into_inner` instead of returning an empty golden.
 

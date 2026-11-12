@@ -687,7 +687,9 @@ impl ClientSession {
                         }
                     }
                 }
-                // Capture negotiated transport from SETUP response.
+                if pending.method == Method::Setup {
+                    self.negotiated_transport = None;
+                }
                 if pending.method == Method::Setup
                     && status.is_success()
                     && let Some(t) = header_value(response.header(&headers::TRANSPORT))
@@ -1051,6 +1053,19 @@ mod tests {
             c.take_negotiated_transport().is_none(),
             "a reply without Transport negotiates nothing"
         );
+    }
+
+    #[test]
+    fn a_setup_reply_without_transport_does_not_inherit_the_previous_one() {
+        let mut c = ClientSession::new();
+        setup_request(&mut c);
+        feed(
+            &mut c,
+            "RTSP/1.0 200 OK\nCSeq: 1\nSession: A1\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\n\n",
+        );
+        setup_request(&mut c);
+        feed(&mut c, "RTSP/1.0 200 OK\nCSeq: 2\nSession: A1\n\n");
+        assert!(c.negotiated_transport().is_none());
     }
 
     #[test]

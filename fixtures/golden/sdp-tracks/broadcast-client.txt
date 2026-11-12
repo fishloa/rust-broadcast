@@ -1,0 +1,67 @@
+== golden/rtp/rtp-sdp-conn-v4.sdp
+track id=1 kind=H264 clock=90000 setup=rtsp://cam.test/live/ channels=0-1 config=Avc { config: AVCConfigurationBox { config: AVCDecoderConfigurationRecord { configuration_version: 1, profile_indication: 100, profile_compatibility: 0, level_indication: 13, length_size_minus_one: 3, sps: [AvcSps([103, 100, 0, 13, 172, 217, 65, 65, 251, 1, 16, 0, 0, 3, 0, 16, 0, 0, 3, 3, 32, 241, 66, 153, 96])], pps: [AvcPps([104, 235, 227, 203, 34, 192])], chroma_format: Some(1), bit_depth_luma_minus8: Some(0), bit_depth_chroma_minus8: Some(0), sps_ext: [] } }, width: 320, height: 240 }
+skipped=[]
+== golden/rtp/rtp-sdp-conn-v6.sdp
+nothing-playable skipped=[]
+== golden/rtp/rtp-sdp-h264-aac.sdp
+track id=1 kind=H264 clock=90000 setup=rtsp://cam.test/live/ channels=0-1 config=Avc { config: AVCConfigurationBox { config: AVCDecoderConfigurationRecord { configuration_version: 1, profile_indication: 77, profile_compatibility: 64, level_indication: 13, length_size_minus_one: 3, sps: [AvcSps([103, 77, 64, 13, 236, 160, 160, 253, 128, 136, 0, 0, 3, 0, 8, 0, 0, 3, 1, 144, 120, 161, 76, 176])], pps: [AvcPps([104, 235, 227, 203, 32])], chroma_format: None, bit_depth_luma_minus8: None, bit_depth_chroma_minus8: None, sps_ext: [] } }, width: 320, height: 240 }
+track id=2 kind=Aac clock=44100 setup=rtsp://cam.test/live/ channels=2-3 config=Aac { esds: EsdsBox { es_descriptor: ESDescriptor { es_id: 0, stream_dependence_flag: false, url_flag: false, ocr_stream_flag: false, stream_priority: 0, depends_on_es_id: None, url: None, ocr_es_id: None, decoder_config: Some(DecoderConfigDescriptor { object_type_indication: ObjectTypeIndication(64), stream_type: StreamType(5), up_stream: false, buffer_size_db: 0, max_bitrate: 0, avg_bitrate: 0, decoder_specific_info: Some(DecoderSpecificInfo { data: [18, 8], size_width: 4 }), unknown_descriptors: [], size_width: 4 }), sl_config: Some(SLConfigDescriptor { body: [2], size_width: 4 }), unknown_descriptors: [], size_width: 4 } }, channel_count: 1, sample_rate: 44100, sample_size: 16 }
+skipped=[]
+== golden/rtsp/rtsp-announce.sdp
+nothing-playable skipped=[SkippedMedia { media_index: 0, codec: Some("MP2T"), codec_unsupported: true }]
+== golden/rtsp/sdp-push-mp2t-media.sdp
+unparsable
+== golden/rtsp/sdp-push-mp2t-session.sdp
+nothing-playable skipped=[SkippedMedia { media_index: 0, codec: Some("MP2T"), codec_unsupported: true }]
+== golden/rtsp/sdp-transmux-h264-aac.sdp
+track id=1 kind=H264 clock=90000 setup=rtsp://cam.test/live/ channels=0-1 config=Avc { config: AVCConfigurationBox { config: AVCDecoderConfigurationRecord { configuration_version: 1, profile_indication: 77, profile_compatibility: 64, level_indication: 13, length_size_minus_one: 3, sps: [AvcSps([103, 77, 64, 13, 236, 160, 160, 253, 128, 136, 0, 0, 3, 0, 8, 0, 0, 3, 1, 144, 120, 161, 76, 176])], pps: [AvcPps([104, 235, 227, 203, 32])], chroma_format: None, bit_depth_luma_minus8: None, bit_depth_chroma_minus8: None, sps_ext: [] } }, width: 320, height: 240 }
+track id=2 kind=Aac clock=44100 setup=rtsp://cam.test/live/ channels=2-3 config=Aac { esds: EsdsBox { es_descriptor: ESDescriptor { es_id: 0, stream_dependence_flag: false, url_flag: false, ocr_stream_flag: false, stream_priority: 0, depends_on_es_id: None, url: None, ocr_es_id: None, decoder_config: Some(DecoderConfigDescriptor { object_type_indication: ObjectTypeIndication(64), stream_type: StreamType(5), up_stream: false, buffer_size_db: 0, max_bitrate: 0, avg_bitrate: 0, decoder_specific_info: Some(DecoderSpecificInfo { data: [18, 8], size_width: 4 }), unknown_descriptors: [], size_width: 4 }), sl_config: Some(SLConfigDescriptor { body: [2], size_width: 4 }), unknown_descriptors: [], size_width: 4 } }, channel_count: 1, sample_rate: 44100, sample_size: 16 }
+skipped=[]
+== rtp/baseline-ffmpeg.sdp
+track id=1 kind=H264 clock=90000 setup=rtsp://cam.test/live/ channels=0-1 config=Avc { config: AVCConfigurationBox { config: AVCDecoderConfigurationRecord { configuration_version: 1, profile_indication: 66, profile_compatibility: 192, level_indication: 13, length_size_minus_one: 3, sps: [AvcSps([103, 66, 192, 13, 217, 1, 65, 251, 1, 16, 0, 0, 3, 0, 16, 0, 0, 3, 3, 32, 241, 66, 164, 128])], pps: [AvcPps([104, 203, 131, 203, 32])], chroma_format: None, bit_depth_luma_minus8: None, bit_depth_chroma_minus8: None, sps_ext: [] } }, width: 320, height: 240 }
+skipped=[]
+== rtp/high-ffmpeg.sdp
+track id=1 kind=H264 clock=90000 setup=rtsp://cam.test/live/ channels=0-1 config=Avc { config: AVCConfigurationBox { config: AVCDecoderConfigurationRecord { configuration_version: 1, profile_indication: 100, profile_compatibility: 0, level_indication: 13, length_size_minus_one: 3, sps: [AvcSps([103, 100, 0, 13, 172, 217, 65, 65, 251, 1, 16, 0, 0, 3, 0, 16, 0, 0, 3, 3, 32, 241, 66, 153, 96])], pps: [AvcPps([104, 235, 227, 203, 34, 192])], chroma_format: Some(1), bit_depth_luma_minus8: Some(0), bit_depth_chroma_minus8: Some(0), sps_ext: [] } }, width: 320, height: 240 }
+skipped=[]
+== rtsp/sdp-sample.sdp
+track id=1 kind=H264 clock=90000 setup=rtsp://cam.test/live/trackID=1 channels=0-1 config=Avc { config: AVCConfigurationBox { config: AVCDecoderConfigurationRecord { configuration_version: 1, profile_indication: 0, profile_compatibility: 0, level_indication: 0, length_size_minus_one: 3, sps: [], pps: [], chroma_format: None, bit_depth_luma_minus8: None, bit_depth_chroma_minus8: None, sps_ext: [] } }, width: 0, height: 0 }
+skipped=[SkippedMedia { media_index: 1, codec: Some("PCMU"), codec_unsupported: true }]
+== golden/sdp-tracks/in/aac-no-fmtp.sdp
+nothing-playable skipped=[SkippedMedia { media_index: 0, codec: Some("mpeg4-generic"), codec_unsupported: false }]
+== golden/sdp-tracks/in/aac-wrong-encoding-on-audio.sdp
+nothing-playable skipped=[SkippedMedia { media_index: 0, codec: Some("H264"), codec_unsupported: true }]
+== golden/sdp-tracks/in/audio-only-aac.sdp
+track id=1 kind=Aac clock=48000 setup=rtsp://cam.test/live/trackID=1 channels=0-1 config=Aac { esds: EsdsBox { es_descriptor: ESDescriptor { es_id: 0, stream_dependence_flag: false, url_flag: false, ocr_stream_flag: false, stream_priority: 0, depends_on_es_id: None, url: None, ocr_es_id: None, decoder_config: Some(DecoderConfigDescriptor { object_type_indication: ObjectTypeIndication(64), stream_type: StreamType(5), up_stream: false, buffer_size_db: 0, max_bitrate: 0, avg_bitrate: 0, decoder_specific_info: Some(DecoderSpecificInfo { data: [18, 8], size_width: 4 }), unknown_descriptors: [], size_width: 4 }), sl_config: Some(SLConfigDescriptor { body: [2], size_width: 4 }), unknown_descriptors: [], size_width: 4 } }, channel_count: 1, sample_rate: 44100, sample_size: 16 }
+skipped=[]
+== golden/sdp-tracks/in/h264-fmtp-without-sprop.sdp
+track id=1 kind=H264 clock=90000 setup=rtsp://cam.test/live/trackID=1 channels=0-1 config=Avc { config: AVCConfigurationBox { config: AVCDecoderConfigurationRecord { configuration_version: 1, profile_indication: 0, profile_compatibility: 0, level_indication: 0, length_size_minus_one: 3, sps: [], pps: [], chroma_format: None, bit_depth_luma_minus8: None, bit_depth_chroma_minus8: None, sps_ext: [] } }, width: 0, height: 0 }
+skipped=[]
+== golden/sdp-tracks/in/h264-no-fmtp.sdp
+track id=1 kind=H264 clock=90000 setup=rtsp://cam.test/live/trackID=1 channels=0-1 config=Avc { config: AVCConfigurationBox { config: AVCDecoderConfigurationRecord { configuration_version: 1, profile_indication: 0, profile_compatibility: 0, level_indication: 0, length_size_minus_one: 3, sps: [], pps: [], chroma_format: None, bit_depth_luma_minus8: None, bit_depth_chroma_minus8: None, sps_ext: [] } }, width: 0, height: 0 }
+skipped=[]
+== golden/sdp-tracks/in/h264-no-rtpmap.sdp
+track id=1 kind=H264 clock=90000 setup=rtsp://cam.test/live/trackID=1 channels=0-1 config=Avc { config: AVCConfigurationBox { config: AVCDecoderConfigurationRecord { configuration_version: 1, profile_indication: 66, profile_compatibility: 0, level_indication: 41, length_size_minus_one: 3, sps: [AvcSps([103, 66, 0, 41, 226, 144, 20, 7, 182, 2, 220, 4, 4, 6, 144, 120, 145, 21])], pps: [AvcPps([104, 206, 60, 128])], chroma_format: None, bit_depth_luma_minus8: None, bit_depth_chroma_minus8: None, sps_ext: [] } }, width: 640, height: 480 }
+skipped=[]
+== golden/sdp-tracks/in/multi-pt-fmtp-order.sdp
+track id=1 kind=H264 clock=90000 setup=rtsp://cam.test/live/trackID=1 channels=0-1 config=Avc { config: AVCConfigurationBox { config: AVCDecoderConfigurationRecord { configuration_version: 1, profile_indication: 0, profile_compatibility: 0, level_indication: 0, length_size_minus_one: 3, sps: [], pps: [], chroma_format: None, bit_depth_luma_minus8: None, bit_depth_chroma_minus8: None, sps_ext: [] } }, width: 0, height: 0 }
+skipped=[]
+== golden/sdp-tracks/in/multi-pt-second-usable.sdp
+track id=1 kind=H264 clock=90000 setup=rtsp://cam.test/live/trackID=1 channels=0-1 config=Avc { config: AVCConfigurationBox { config: AVCDecoderConfigurationRecord { configuration_version: 1, profile_indication: 66, profile_compatibility: 0, level_indication: 41, length_size_minus_one: 3, sps: [AvcSps([103, 66, 0, 41, 226, 144, 20, 7, 182, 2, 220, 4, 4, 6, 144, 120, 145, 21])], pps: [AvcPps([104, 206, 60, 128])], chroma_format: None, bit_depth_luma_minus8: None, bit_depth_chroma_minus8: None, sps_ext: [] } }, width: 640, height: 480 }
+skipped=[]
+== golden/sdp-tracks/in/no-media.sdp
+nothing-playable skipped=[]
+== golden/sdp-tracks/in/non-numeric-payload-type.sdp
+track id=1 kind=H264 clock=90000 setup=rtsp://cam.test/live/ channels=0-1 config=Avc { config: AVCConfigurationBox { config: AVCDecoderConfigurationRecord { configuration_version: 1, profile_indication: 66, profile_compatibility: 0, level_indication: 41, length_size_minus_one: 3, sps: [AvcSps([103, 66, 0, 41, 226, 144, 20, 7, 182, 2, 220, 4, 4, 6, 144, 120, 145, 21])], pps: [AvcPps([104, 206, 60, 128])], chroma_format: None, bit_depth_luma_minus8: None, bit_depth_chroma_minus8: None, sps_ext: [] } }, width: 640, height: 480 }
+skipped=[]
+== golden/sdp-tracks/in/rtsp-pull-multimux-body.sdp
+track id=1 kind=H264 clock=90000 setup=rtsp://cam.test/live/streamid=0 channels=0-1 config=Avc { config: AVCConfigurationBox { config: AVCDecoderConfigurationRecord { configuration_version: 1, profile_indication: 66, profile_compatibility: 0, level_indication: 41, length_size_minus_one: 3, sps: [AvcSps([103, 66, 0, 41, 226, 144, 20, 7, 182, 2, 220, 4, 4, 6, 144, 120, 145, 21])], pps: [AvcPps([104, 206, 60, 128])], chroma_format: None, bit_depth_luma_minus8: None, bit_depth_chroma_minus8: None, sps_ext: [] } }, width: 640, height: 480 }
+skipped=[]
+== golden/sdp-tracks/in/text-media.sdp
+nothing-playable skipped=[SkippedMedia { media_index: 0, codec: Some("t140"), codec_unsupported: true }]
+== golden/sdp-tracks/in/two-medias-differing-attributes.sdp
+track id=1 kind=H264 clock=90000 setup=rtsp://cam.test/live/trackID=1 channels=0-1 config=Avc { config: AVCConfigurationBox { config: AVCDecoderConfigurationRecord { configuration_version: 1, profile_indication: 66, profile_compatibility: 0, level_indication: 41, length_size_minus_one: 3, sps: [AvcSps([103, 66, 0, 41, 226, 144, 20, 7, 182, 2, 220, 4, 4, 6, 144, 120, 145, 21])], pps: [AvcPps([104, 206, 60, 128])], chroma_format: None, bit_depth_luma_minus8: None, bit_depth_chroma_minus8: None, sps_ext: [] } }, width: 640, height: 480 }
+track id=2 kind=Aac clock=44100 setup=rtsp://cam.test/live/trackID=2 channels=2-3 config=Aac { esds: EsdsBox { es_descriptor: ESDescriptor { es_id: 0, stream_dependence_flag: false, url_flag: false, ocr_stream_flag: false, stream_priority: 0, depends_on_es_id: None, url: None, ocr_es_id: None, decoder_config: Some(DecoderConfigDescriptor { object_type_indication: ObjectTypeIndication(64), stream_type: StreamType(5), up_stream: false, buffer_size_db: 0, max_bitrate: 0, avg_bitrate: 0, decoder_specific_info: Some(DecoderSpecificInfo { data: [18, 8], size_width: 4 }), unknown_descriptors: [], size_width: 4 }), sl_config: Some(SLConfigDescriptor { body: [2], size_width: 4 }), unknown_descriptors: [], size_width: 4 } }, channel_count: 1, sample_rate: 44100, sample_size: 16 }
+skipped=[]
+== golden/sdp-tracks/in/unsupported-first-then-h264.sdp
+track id=1 kind=H264 clock=90000 setup=rtsp://cam.test/live/trackID=2 channels=0-1 config=Avc { config: AVCConfigurationBox { config: AVCDecoderConfigurationRecord { configuration_version: 1, profile_indication: 66, profile_compatibility: 0, level_indication: 41, length_size_minus_one: 3, sps: [AvcSps([103, 66, 0, 41, 226, 144, 20, 7, 182, 2, 220, 4, 4, 6, 144, 120, 145, 21])], pps: [AvcPps([104, 206, 60, 128])], chroma_format: None, bit_depth_luma_minus8: None, bit_depth_chroma_minus8: None, sps_ext: [] } }, width: 640, height: 480 }
+skipped=[SkippedMedia { media_index: 0, codec: Some("PCMU"), codec_unsupported: true }]

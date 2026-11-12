@@ -7,19 +7,10 @@ use rtsp_runtime::PlayPlan;
 use sdp_types::Media;
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::RtpMediaKind;
-use transmux::rtp_sdp::rtpmap_clock_rate;
-use transmux::{TrackId, aac_config_from_fmtp, avc_config_from_fmtp};
+use transmux::{SdpTrack, TrackId, first_encoding_name, is_played_encoding, sdp_track};
 use url::Url;
 
-const AVC_CONFIGURATION_VERSION: u8 = 1;
-const AVC_LENGTH_SIZE_MINUS_ONE: u8 = 3;
-const UNKNOWN_DIMENSION: u16 = 0;
-const DEFAULT_CLOCK_RATE_HZ: u32 = 90_000;
 const FIRST_CHANNEL: u8 = 0;
-const MEDIA_VIDEO: &str = "video";
-const MEDIA_AUDIO: &str = "audio";
-const ENCODING_H264: &str = "H264";
-const ENCODING_AAC: &str = "MPEG4-GENERIC";
 
 /// Most media sections a session plays; further supported sections are ignored.
 pub(crate) const MAX_TRACKS: usize = 16;
@@ -83,14 +74,9 @@ pub(crate) fn parse_tracks(
         |media_index, media| {
             let info = skipped_media(media_index, media);
             described.push(info.clone());
-            match supported(media) {
-                Some((kind, config, clock_rate, _ready)) => {
-                    candidates.push(Candidate {
-                        media_index,
-                        kind,
-                        config,
-                        clock_rate,
-                    });
+            match sdp_track(media) {
+                Some(track) => {
+                    candidates.push(Candidate { media_index, track });
                     true
                 }
                 None => {
@@ -122,9 +108,9 @@ pub(crate) fn parse_tracks(
         let ordinal = u32::try_from(tracks.len().saturating_add(1)).unwrap_or(u32::MAX);
         tracks.push(TrackInit {
             track_id: TrackId::new(ordinal),
-            kind: candidate.kind,
-            config: candidate.config.clone(),
-            clock_rate: candidate.clock_rate,
+            kind: candidate.track.kind,
+            config: candidate.track.config.clone(),
+            clock_rate: candidate.track.clock_rate,
             setup_uri: setup.control.clone(),
             channel,
             rtcp_channel,
@@ -142,25 +128,14 @@ pub(crate) fn parse_tracks(
 
 struct Candidate {
     media_index: usize,
-    kind: RtpMediaKind,
-    config: CodecConfig,
-    clock_rate: u32,
+    track: SdpTrack,
 }
 
 fn skipped_media(media_index: usize, media: &Media) -> SkippedMedia {
-    let codec = media
-        .fmt
-        .split_whitespace()
-        .next()
-        .and_then(|pt| attribute_of_payload(media, "rtpmap", pt))
-        .and_then(encoding_name)
-        .map(str::to_string);
-    let played = |name: &str| match media.media.as_str() {
-        MEDIA_VIDEO => name.eq_ignore_ascii_case(ENCODING_H264),
-        MEDIA_AUDIO => name.eq_ignore_ascii_case(ENCODING_AAC),
-        _ => false,
-    };
-    let codec_unsupported = codec.as_deref().is_some_and(|name| !played(name));
+    let codec = first_encoding_name(media).map(str::to_string);
+    let codec_unsupported = codec
+        .as_deref()
+        .is_some_and(|name| !is_played_encoding(&media.media, name));
     SkippedMedia {
         media_index,
         codec,
@@ -168,99 +143,57 @@ fn skipped_media(media_index: usize, media: &Media) -> SkippedMedia {
     }
 }
 
-fn encoding_name(rtpmap: &str) -> Option<&str> {
-    rtpmap
-        .split_whitespace()
-        .nth(1)
-        .and_then(|encoding| encoding.split('/').next())
-}
+#[cfg(test)]
+mod golden {
+    use super::*;
+    use core::fmt::Write;
 
-fn attribute_of_payload<'a>(media: &'a Media, name: &str, payload_type: &str) -> Option<&'a str> {
-    media
-        .attributes
-        .iter()
-        .filter(|a| a.attribute == name)
-        .filter_map(|a| a.value.as_deref())
-        .find(|value| value.split_whitespace().next() == Some(payload_type))
-}
+    const GOLDEN: &str = "golden/sdp-tracks/broadcast-client.txt";
+    const REGENERATE_ENV: &str = "REGENERATE_SDP_TRACKS_GOLDEN";
+    const REQUEST_URL: &str = "rtsp://cam.test/live/";
 
-fn supported(media: &Media) -> Option<(RtpMediaKind, CodecConfig, u32, bool)> {
-    media
-        .fmt
-        .split_whitespace()
-        .find_map(|payload_type| supported_payload(media, payload_type))
-}
-
-fn pending_avc_config() -> CodecConfig {
-    CodecConfig::Avc {
-        config: transmux::AVCConfigurationBox::new(transmux::AVCDecoderConfigurationRecord {
-            configuration_version: AVC_CONFIGURATION_VERSION,
-            profile_indication: 0,
-            profile_compatibility: 0,
-            level_indication: 0,
-            length_size_minus_one: AVC_LENGTH_SIZE_MINUS_ONE,
-            sps: Vec::new(),
-            pps: Vec::new(),
-            chroma_format: None,
-            bit_depth_luma_minus8: None,
-            bit_depth_chroma_minus8: None,
-            sps_ext: Vec::new(),
-        }),
-        width: UNKNOWN_DIMENSION,
-        height: UNKNOWN_DIMENSION,
-    }
-}
-
-fn supported_payload(
-    media: &Media,
-    payload_type: &str,
-) -> Option<(RtpMediaKind, CodecConfig, u32, bool)> {
-    let fmtp = attribute_of_payload(media, "fmtp", payload_type);
-    let rtpmap = attribute_of_payload(media, "rtpmap", payload_type);
-    let clock_rate = rtpmap
-        .and_then(rtpmap_clock_rate)
-        .unwrap_or(DEFAULT_CLOCK_RATE_HZ);
-    let encoding_is = |expected: &str| {
-        rtpmap
-            .and_then(encoding_name)
-            .is_none_or(|name| name.eq_ignore_ascii_case(expected))
-    };
-    match media.media.as_str() {
-        MEDIA_VIDEO if encoding_is(ENCODING_H264) => {
-            let Some(fmtp) = fmtp else {
-                let named_h264 = rtpmap.and_then(encoding_name).is_some();
-                return named_h264
-                    .then(|| (RtpMediaKind::H264, pending_avc_config(), clock_rate, false));
-            };
-            if let Ok(avc) = avc_config_from_fmtp(fmtp) {
-                let (width, height) = avc
-                    .config
-                    .sps
-                    .first()
-                    .and_then(|sps| transmux::avc_sps_dimensions(&sps.0))
-                    .unwrap_or((UNKNOWN_DIMENSION, UNKNOWN_DIMENSION));
-                Some((
-                    RtpMediaKind::H264,
-                    CodecConfig::Avc {
-                        config: avc,
-                        width,
-                        height,
-                    },
-                    clock_rate,
-                    true,
-                ))
-            } else if transmux::fmtp_param(fmtp, "sprop-parameter-sets").is_none() {
-                Some((RtpMediaKind::H264, pending_avc_config(), clock_rate, false))
-            } else {
-                None
+    fn render(name: &str, sdp: &[u8]) -> String {
+        let mut out = format!("== {name}\n");
+        let request_url = Url::parse(REQUEST_URL).unwrap();
+        match parse_tracks(sdp, &request_url, None) {
+            Err(SdpError::Unparsable) => out.push_str("unparsable\n"),
+            Err(SdpError::NothingPlayable { skipped }) => {
+                writeln!(out, "nothing-playable skipped={skipped:?}").unwrap();
+            }
+            Ok(parsed) => {
+                for t in &parsed.tracks {
+                    writeln!(
+                        out,
+                        "track id={} kind={:?} clock={} setup={} channels={}-{} config={:?}",
+                        t.track_id.value(),
+                        t.kind,
+                        t.clock_rate,
+                        t.setup_uri,
+                        t.channel,
+                        t.rtcp_channel,
+                        t.config
+                    )
+                    .unwrap();
+                }
+                writeln!(out, "skipped={:?}", parsed.skipped).unwrap();
             }
         }
-        MEDIA_AUDIO if encoding_is(ENCODING_AAC) => Some((
-            RtpMediaKind::Aac,
-            aac_config_from_fmtp(fmtp?).ok()?,
-            clock_rate,
-            true,
-        )),
-        _ => None,
+        out
+    }
+
+    #[test]
+    fn every_sdp_fixture_matches_the_recorded_interpretation() {
+        let rendered: String = test_fixtures::sdp_track_fixtures()
+            .iter()
+            .map(|(name, body)| render(name, body))
+            .collect();
+        let path = test_fixtures::path(GOLDEN);
+        if std::env::var(REGENERATE_ENV).ok().as_deref() == Some("1") {
+            assert!(std::env::var("CI").is_err(), "refuse to regenerate in CI");
+            std::fs::write(&path, &rendered).unwrap();
+            return;
+        }
+        let expected = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(rendered, expected, "{GOLDEN} differs");
     }
 }

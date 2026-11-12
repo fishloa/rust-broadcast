@@ -392,6 +392,11 @@ pub use rtp::{
     VIDEO_CLOCK_RATE, depacketise_klv, packetise_klv,
 };
 pub use rtp_align::{AlignOut, AvSync, SR_SWITCH_TOLERANCE_US, TrackAligner};
+#[cfg(feature = "std")]
+pub use rtp_sdp::{
+    SdpTrack, attribute_of_payload, first_encoding_name, is_played_encoding, rtpmap_encoding_name,
+    sdp_track,
+};
 pub use rtp_sdp::{
     aac_config_from_asc_bytes, aac_config_from_asc_hex, aac_config_from_fmtp, avc_config_from_fmtp,
     avc_config_from_sprop, avc_config_from_sps_pps, fmtp_param, rtpmap_clock_rate,

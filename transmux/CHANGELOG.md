@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
+- `transmux::sdp_track` (module `rtp_sdp`, `std`) is the one reading of an SDP media section as a playable track: `SdpTrack` (kind, `CodecConfig`, clock rate, payload type, `a=control`) of the first payload type on the `m=` line whose own `a=rtpmap`/`a=fmtp` describe H.264 (RFC 6184) or `MPEG4-GENERIC` AAC (RFC 3640); H.264 without parameter sets is a placeholder `avcC`, and the SPS gives the coded size. With `attribute_of_payload`, `rtpmap_encoding_name`, `first_encoding_name` and `is_played_encoding`, it replaces the copies `broadcast-client` and `multimux` kept.
+### Changed
 - `rtp_align` (`TrackAligner`, `AlignOut`, `AvSync`, `SR_SWITCH_TOLERANCE_US`): the sans-IO rule that puts every RTP track of a session on one common timeline from RTCP Sender Reports (RFC 3550 §6.4.1), the `RTP-Info` of the PLAY response, or the first samples before either is known. It moved here from `broadcast-client` so every RTSP pull places its tracks by one rule (#2380).
 - The `onMetaData` body `FlvMux` writes (and, through `on_metadata_body`, the RTMP push publishes) carries `audiosamplerate` from the AAC track's own rate, and `stereo` now follows that track's channel count instead of always being `true` — both are properties Adobe FLV v10.1 §E.5 defines (issue #2369 follow-up). A mono AAC track's FLV file therefore records `stereo: false` where it recorded `true`.
 ### Added
