@@ -23,7 +23,9 @@ const REFRESH_DIVISOR: u64 = 2;
 const FIRST_TRACK_ID: u32 = 1;
 
 fn timescale_of(manifest: &SmoothManifest, index: &StreamIndex) -> Option<u32> {
-    u32::try_from(index.timescale.unwrap_or(manifest.timescale)).ok()
+    u32::try_from(index.timescale.unwrap_or(manifest.timescale))
+        .ok()
+        .filter(|&t| t != 0)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -101,6 +103,27 @@ impl SmoothClient {
     /// How many `QualityLevel`s the first video stream offers (0 before the first manifest).
     pub fn video_quality_count(&self) -> usize {
         self.video_quality_count
+    }
+
+    /// Fetch the first video stream's later fragments at `QualityLevel` `index`
+    /// (an index into [`Output::Qualities`]); false when there is no such level.
+    ///
+    /// Fragments already requested keep their level, and the announced
+    /// `TrackSpec` is not re-announced, so the levels should share a codec
+    /// configuration.
+    pub fn select_video_quality(&mut self, index: usize) -> bool {
+        let Some(stream) = self
+            .streams
+            .iter_mut()
+            .find(|s| s.index.stream_type == StreamType::Video)
+        else {
+            return false;
+        };
+        let Some(quality) = stream.index.qualities.get(index).cloned() else {
+            return false;
+        };
+        stream.quality = quality;
+        true
     }
 
     /// The earliest instant, in microseconds, at which [`Self::poll`] has more to do
@@ -347,16 +370,18 @@ impl SmoothClient {
         if self.started {
             return self.refresh_streams(manifest);
         }
-        if self.build_streams(manifest) {
-            self.started = true;
-            self.is_live = manifest.is_live;
-            self.offer_qualities(manifest);
-        } else {
-            self.fail(SmoothError::NoUsableStream);
+        match self.build_streams(manifest) {
+            Ok(true) => {
+                self.started = true;
+                self.is_live = manifest.is_live;
+                self.offer_qualities(manifest);
+            }
+            Ok(false) => self.fail(SmoothError::NoUsableStream),
+            Err(e) => self.fail(e),
         }
     }
 
-    fn build_streams(&mut self, manifest: &SmoothManifest) -> bool {
+    fn build_streams(&mut self, manifest: &SmoothManifest) -> Result<bool, SmoothError> {
         let mut chose_video = false;
         for index in &manifest.streams {
             if !matches!(index.stream_type, StreamType::Video | StreamType::Audio) {
@@ -374,7 +399,15 @@ impl SmoothClient {
             let Some(timescale) = timescale_of(manifest, index) else {
                 continue;
             };
-            let chunks = index.enumerate_chunks().unwrap_or_default();
+            let chunks = match index.enumerate_chunks() {
+                Ok(chunks) => chunks,
+                Err(e) => {
+                    return Err(SmoothError::Timeline {
+                        stream: self.streams.len(),
+                        reason: e.to_string(),
+                    });
+                }
+            };
             let chunks = if manifest.is_live {
                 live_join(chunks, manifest, self.config.live_join_fragments)
             } else {
@@ -384,7 +417,7 @@ impl SmoothClient {
             stream.plan_from(chunks);
             self.streams.push(stream);
         }
-        !self.streams.is_empty()
+        Ok(!self.streams.is_empty())
     }
 
     fn quality_infos(manifest: &SmoothManifest, index: &StreamIndex) -> Vec<QualityInfo> {

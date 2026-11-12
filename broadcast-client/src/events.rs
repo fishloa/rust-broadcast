@@ -87,39 +87,7 @@ impl StreamKind {
 }
 broadcast_common::impl_spec_display!(StreamKind);
 
-/// How the tracks of an RTSP session are placed on one common timeline, carried by
-/// [`Event::AvSync`].
-///
-/// Each RTSP track's RTP timestamps start at an unrelated random base (RFC 3550 5.1), so the
-/// source maps every track onto the video track's timeline (video sample times are unchanged).
-#[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AvSync {
-    /// No RTCP Sender Report mapping is available for every track yet: each non-video track is
-    /// placed so its first sample lines up with the video track's first sample, which is accurate
-    /// only to the arrival skew between those two samples.
-    Provisional,
-    /// Every track is placed from the NTP to RTP mapping of its RTCP Sender Reports (RFC 3550
-    /// 6.4.1), so the inter-track offset is the senders' own.
-    SenderReport,
-    /// Every track is placed from the `RTP-Info` header of the PLAY response (RFC 2326 12.33):
-    /// each stream's `rtptime` is the RTP timestamp of the same start instant, so the inter-track
-    /// offset is the server's own and no Sender Report can move it.
-    RtpInfo,
-}
-
-impl AvSync {
-    /// Stable label.
-    #[must_use]
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Provisional => "provisional",
-            Self::SenderReport => "sender-report",
-            Self::RtpInfo => "rtp-info",
-        }
-    }
-}
-broadcast_common::impl_spec_display!(AvSync);
+pub use transmux::AvSync;
 
 /// Status values carried by [`Event::Status`].
 #[non_exhaustive]

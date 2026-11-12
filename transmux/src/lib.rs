@@ -214,6 +214,7 @@ pub(crate) mod test_bits;
 pub use rtp_packet::rtcp;
 pub mod rtmp;
 pub mod rtp;
+pub mod rtp_align;
 pub mod rtp_dts;
 pub mod rtp_sdp;
 pub mod rtp_stream;
@@ -390,6 +391,7 @@ pub use rtp::{
     RtpInputStream, RtpMediaKind, RtpOutput, RtpPacket, RtpPacketiser, RtpStream, RtpTimingWarning,
     VIDEO_CLOCK_RATE, depacketise_klv, packetise_klv,
 };
+pub use rtp_align::{AlignOut, AvSync, SR_SWITCH_TOLERANCE_US, TrackAligner};
 #[cfg(feature = "std")]
 pub use rtp_sdp::{
     SdpTrack, attribute_of_payload, first_encoding_name, is_played_encoding, rtpmap_encoding_name,

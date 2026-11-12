@@ -123,6 +123,13 @@ pub enum SmoothParseError {
         /// Index of the offending `c` entry.
         index: usize,
     },
+    /// A `c` entry with no `@d` and `@r > 1` whose span to the next entry's
+    /// `@t` is not a whole multiple of `r` ticks, so its `r` fragments cannot
+    /// share one duration (MS-SSTR §2.2.2.6).
+    IndivisibleRun {
+        /// Index of the offending `c` entry.
+        index: usize,
+    },
     /// A `QualityLevel@CodecPrivateData` hex string exceeded
     /// [`MAX_CODEC_PRIVATE_DATA_HEX_LEN`] (remote alloc-DoS defense), checked
     /// before any decode allocation.
@@ -180,6 +187,9 @@ impl fmt::Display for SmoothParseError {
             }
             SmoothParseError::MissingDuration { index } => {
                 write!(f, "<c> at index {index} duration cannot be derived")
+            }
+            SmoothParseError::IndivisibleRun { index } => {
+                write!(f, "<c> at index {index} run does not divide evenly")
             }
             SmoothParseError::NonMonotonicTime { index } => {
                 write!(f, "<c> at index {index} has non-monotonic time")
@@ -738,6 +748,14 @@ impl StreamIndex {
     /// resets it, otherwise it continues from the previous entry's `t + d`),
     /// each entry contributing `r + 1` occurrences of its own `d`.
     ///
+    /// A `c` without `@d` takes `(next.t - t) / r` as the duration of each of
+    /// its `r` fragments (§2.2.2.6: a run shares one duration), and
+    /// [`SmoothParseError::IndivisibleRun`] when that is not exact.
+    ///
+    /// An explicit `t` earlier than the end of the preceding entry (a repeat
+    /// or a step back) is [`SmoothParseError::NonMonotonicTime`]; a later one
+    /// is a gap and is kept.
+    ///
     /// Returns [`SmoothParseError::ChunkRunTooLong`] if the total chunk count
     /// (summed across every `c`, counting each `r + 1` repetition) would
     /// exceed [`MAX_CHUNK_RUN`], defending against remote alloc-DoS attacks
@@ -749,8 +767,18 @@ impl StreamIndex {
         let list = &self.chunks_list;
         for (i, c) in list.iter().enumerate() {
             if let Some(explicit_t) = c.t {
+                if explicit_t < t {
+                    return Err(SmoothParseError::NonMonotonicTime { index: i });
+                }
                 t = explicit_t;
             }
+            let repeats: u64 = match c.r {
+                None => 1,
+                Some(0) => {
+                    return Err(SmoothParseError::InvalidRepeatCount { r: 0 });
+                }
+                Some(r) => u64::from(r),
+            };
             let d = match c.d {
                 Some(d) => d,
                 None => {
@@ -760,20 +788,17 @@ impl StreamIndex {
                             if nt < t {
                                 return Err(SmoothParseError::NonMonotonicTime { index: i });
                             }
-                            nt - t
+                            let span = nt - t;
+                            if !span.is_multiple_of(repeats) {
+                                return Err(SmoothParseError::IndivisibleRun { index: i });
+                            }
+                            span / repeats
                         }
                         None => {
                             return Err(SmoothParseError::MissingDuration { index: i });
                         }
                     }
                 }
-            };
-            let repeats: u64 = match c.r {
-                None => 1,
-                Some(0) => {
-                    return Err(SmoothParseError::InvalidRepeatCount { r: 0 });
-                }
-                Some(r) => u64::from(r),
             };
             if repeats > MAX_CHUNK_RUN as u64 {
                 return Err(SmoothParseError::ChunkRunTooLong {
@@ -1376,6 +1401,58 @@ mod tests {
             m.streams[0].enumerate_chunks().unwrap_err(),
             SmoothParseError::NonMonotonicTime { .. }
         ));
+    }
+
+    fn single_stream(chunks: &str) -> StreamIndex {
+        let xml = alloc::format!(
+            r#"<SmoothStreamingMedia MajorVersion="2" MinorVersion="0" TimeScale="100"><StreamIndex Type="video" Url="u"><QualityLevel Index="0" Bitrate="1" FourCC="H264"/>{chunks}</StreamIndex></SmoothStreamingMedia>"#
+        );
+        SmoothManifest::parse(&xml).unwrap().streams.remove(0)
+    }
+
+    #[test]
+    fn explicit_t_that_repeats_or_goes_back_is_non_monotonic_with_d_present() {
+        for chunks in [
+            r#"<c t="0" d="100"/><c t="0" d="100"/>"#,
+            r#"<c t="0" d="100"/><c t="50" d="100"/>"#,
+            r#"<c t="200" d="100"/><c t="100" d="100"/>"#,
+        ] {
+            assert_eq!(
+                single_stream(chunks).enumerate_chunks().unwrap_err(),
+                SmoothParseError::NonMonotonicTime { index: 1 },
+                "{chunks}"
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_t_after_a_gap_is_accepted() {
+        assert_eq!(
+            single_stream(r#"<c t="0" d="100"/><c t="300" d="100"/>"#)
+                .enumerate_chunks()
+                .unwrap(),
+            alloc::vec![(0, 100), (300, 100)]
+        );
+    }
+
+    #[test]
+    fn absent_d_with_repeat_divides_the_run_between_explicit_times() {
+        assert_eq!(
+            single_stream(r#"<c t="0" r="3"/><c t="300" d="100"/>"#)
+                .enumerate_chunks()
+                .unwrap(),
+            alloc::vec![(0, 100), (100, 100), (200, 100), (300, 100)]
+        );
+    }
+
+    #[test]
+    fn absent_d_with_repeat_that_does_not_divide_exactly_is_an_error() {
+        assert_eq!(
+            single_stream(r#"<c t="0" r="3"/><c t="301" d="100"/>"#)
+                .enumerate_chunks()
+                .unwrap_err(),
+            SmoothParseError::IndivisibleRun { index: 0 }
+        );
     }
 
     #[test]

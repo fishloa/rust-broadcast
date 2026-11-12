@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- `Session::select_variant` on a Smooth source switches the video `QualityLevel` of the fragments requested afterwards; it used to validate the index and return `Ok` without changing anything.
 ### Changed
 - The RTSP source reads each DESCRIBE media section through `transmux::sdp_track`; its own `parse_tracks`/`supported_payload` interpreter is deleted (output unchanged, pinned by `fixtures/golden/sdp-tracks/broadcast-client.txt`).
 ### Added
@@ -13,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `broadcast_client::fetch::retry_after_us` is public sans-IO retry/backoff policy (RFC 9110 §10.2.3), for use by other pull hosts.
 ### Changed
 - The Smooth source builds `smooth_runtime::FetchFailure` with its new `retry_after_us` field left at `0` (#2393).
+- The RTSP track aligner (Sender Report / `RTP-Info` / provisional placement) is `transmux::TrackAligner`, shared with multimux's RTSP pull; `AvSync` is now `transmux::AvSync`, re-exported unchanged from `broadcast_client` (#2380).
 - BREAKING: the Smooth source is an adapter over the new `smooth-runtime` engine (#2370); the chunk planner, refresh, retry and track logic it carried are gone. Visible changes: the audio track is announced with its own id (`Event::Tracks` is `[1, 2]`, not `[1, 1]`, and audio samples carry track 2); a live manifest refresh no longer re-fetches the last fragment; a fragment that fails to demux is retried like any failed fetch instead of being dropped silently; the live refresh wait is half the last fragment's duration in microseconds, clamped to 0.5 s-5 s.
 - The RTSP source plans its `SETUP`/`PLAY` through `rtsp_runtime::PlayPlan` (control resolution against `Content-Base`, channel pairs, the RTP/RTCP collision check) instead of its own copy; the wire behaviour is unchanged (#2372).
 - BREAKING: the Smooth source parses the client Manifest with `broadcast-smooth`'s `SmoothManifest` instead of `transmux`'s removed `smooth_parse` module (#2356); `transmux::track_spec_from_quality_level` still builds the track spec.
