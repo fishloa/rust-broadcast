@@ -21,6 +21,14 @@ pub enum SmoothError {
     /// The manifest has no Video or Audio `StreamIndex` with a `QualityLevel`.
     #[error("manifest resolves no usable video or audio stream")]
     NoUsableStream,
+    /// A stream's chunk timeline could not be enumerated.
+    #[error("chunk timeline of stream {stream} is unusable: {reason}")]
+    Timeline {
+        /// Index of the stream in the manifest's stream order.
+        stream: usize,
+        /// The manifest parser's error, rendered.
+        reason: String,
+    },
     /// A fragment kept failing on a static presentation.
     #[error("fragment fetch failed (status {status:?})")]
     Fragment {

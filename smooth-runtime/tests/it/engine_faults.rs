@@ -156,3 +156,24 @@ fn a_tfxd_time_beyond_i64_drops_the_fragment_without_panicking() {
     assert!(host.has(|o| matches!(o, Output::Dropped(Dropped::Fragment { status: None, .. }))));
     assert!(host.has(is_ended));
 }
+
+fn av_manifest_with_audio_chunks(chunks: &str) -> Vec<u8> {
+    String::from_utf8(fixture("av/Manifest"))
+        .expect("utf8")
+        .replace(
+            "<c n=\"0\" d=\"10214580\" />\n<c n=\"1\" d=\"9984581\" />\n<c n=\"2\" d=\"10216780\" />",
+            chunks,
+        )
+        .into_bytes()
+}
+
+#[test]
+fn a_stream_whose_timeline_cannot_be_enumerated_ends_the_session_with_a_typed_cause() {
+    let mut host = av_host(SmoothConfig::default());
+    host.route(
+        "Manifest",
+        vec![Reply::Body(av_manifest_with_audio_chunks("<c n=\"0\" />"))],
+    );
+    host.run_until(|o| o.iter().any(|o| is_fatal(o) || is_ended(o)));
+    assert!(host.has(|o| matches!(o, Output::Fatal(SmoothError::Timeline { .. }))));
+}

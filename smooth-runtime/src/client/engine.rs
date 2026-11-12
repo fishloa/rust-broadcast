@@ -335,16 +335,18 @@ impl SmoothClient {
         if self.started {
             return self.refresh_streams(manifest);
         }
-        if self.build_streams(manifest) {
-            self.started = true;
-            self.is_live = manifest.is_live;
-            self.offer_qualities(manifest);
-        } else {
-            self.fail(SmoothError::NoUsableStream);
+        match self.build_streams(manifest) {
+            Ok(true) => {
+                self.started = true;
+                self.is_live = manifest.is_live;
+                self.offer_qualities(manifest);
+            }
+            Ok(false) => self.fail(SmoothError::NoUsableStream),
+            Err(e) => self.fail(e),
         }
     }
 
-    fn build_streams(&mut self, manifest: &SmoothManifest) -> bool {
+    fn build_streams(&mut self, manifest: &SmoothManifest) -> Result<bool, SmoothError> {
         let mut chose_video = false;
         for index in &manifest.streams {
             if !matches!(index.stream_type, StreamType::Video | StreamType::Audio) {
@@ -362,7 +364,15 @@ impl SmoothClient {
             let Some(timescale) = timescale_of(manifest, index) else {
                 continue;
             };
-            let chunks = index.enumerate_chunks().unwrap_or_default();
+            let chunks = match index.enumerate_chunks() {
+                Ok(chunks) => chunks,
+                Err(e) => {
+                    return Err(SmoothError::Timeline {
+                        stream: self.streams.len(),
+                        reason: e.to_string(),
+                    });
+                }
+            };
             let chunks = if manifest.is_live {
                 live_join(chunks, manifest, self.config.live_join_fragments)
             } else {
@@ -372,7 +382,7 @@ impl SmoothClient {
             stream.plan_from(chunks);
             self.streams.push(stream);
         }
-        !self.streams.is_empty()
+        Ok(!self.streams.is_empty())
     }
 
     fn quality_infos(manifest: &SmoothManifest, index: &StreamIndex) -> Vec<QualityInfo> {
