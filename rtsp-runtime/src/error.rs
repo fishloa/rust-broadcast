@@ -118,6 +118,11 @@ pub enum Error {
     #[error("unusable negotiated transport")]
     UnusableTransport,
 
+    /// A 2xx `SETUP` answer carried no usable `Transport` header, which RFC
+    /// 2326 §12.39 requires in the reply.
+    #[error("SETUP answer carried no Transport header")]
+    MissingTransport,
+
     /// The interleaved channel pairs for the tracks of a play flow do not fit
     /// in the `u8` channel space from the requested first channel (§10.12).
     #[error("interleaved channels exhausted")]

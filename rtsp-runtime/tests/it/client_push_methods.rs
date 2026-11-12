@@ -611,6 +611,12 @@ fn control_url_appends_one_track_id_segment() {
     ));
 }
 
+fn request_transport(head: &str) -> Option<String> {
+    head.lines()
+        .find_map(|l| l.strip_prefix("Transport:"))
+        .map(|t| t.trim().to_owned())
+}
+
 #[tokio::test]
 async fn start_play_describes_sets_up_and_plays() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -649,8 +655,15 @@ async fn start_play_describes_sets_up_and_plays() {
                     .unwrap_or("1")
                     .trim()
                     .to_string();
+                let echoed = request_transport(&head)
+                    .map(|t| format!("Transport: {t}\r\n"))
+                    .unwrap_or_default();
                 seen.push(head);
-                let extra = if is_setup { "Session: 1\r\n" } else { "" };
+                let extra = if is_setup {
+                    format!("Session: 1\r\n{echoed}")
+                } else {
+                    String::new()
+                };
                 let body = if request_line.starts_with("DESCRIBE ") {
                     "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=video 0 RTP/AVP 96\r\na=control:trackID=0\r\n"
                 } else {
@@ -739,6 +752,7 @@ async fn spawn_play_server(
                     .unwrap_or("1")
                     .trim()
                     .to_string();
+                let head_for_transport = head.clone();
                 seen.push(head);
                 let response = if request_line.starts_with("DESCRIBE ") {
                     let body = play_sdp(config.media_controls);
@@ -751,6 +765,8 @@ async fn spawn_play_server(
                 } else if request_line.starts_with("SETUP ") {
                     let transport = config
                         .setup_transport
+                        .map(str::to_owned)
+                        .or_else(|| request_transport(&head_for_transport))
                         .map(|t| format!("Transport: {t}\r\n"))
                         .unwrap_or_default();
                     format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: 1\r\n{transport}\r\n")
