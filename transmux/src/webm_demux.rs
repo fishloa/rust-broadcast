@@ -2021,12 +2021,7 @@ mod tests {
         );
 
         // Every input the issue's table pins, through every former path.
-        let cases: [&[u8]; 4] = [
-            &[0x81],
-            &[0xFF],
-            &[0x40, 0x02],
-            &[0x00],
-        ];
+        let cases: [&[u8]; 4] = [&[0x81], &[0xFF], &[0x40, 0x02], &[0x00]];
         for input in cases {
             let expected = read_vint(input).map(|(v, l, _)| (v, l));
             assert_eq!(read_vint_generic(input), expected, "generic {input:?}");
