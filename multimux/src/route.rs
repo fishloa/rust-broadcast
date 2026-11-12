@@ -335,6 +335,9 @@ pub struct DashWindowSegment {
     /// muxable track while it was cut (`#EXT-X-GAP` on HLS, the end of a DASH
     /// Period).
     pub gap: bool,
+    /// The init-segment generation this segment was cut against, for versioned
+    /// init URLs (issue #2441).
+    pub init_generation: media_plane::ids::Generation,
 }
 
 /// What a replacement program continues from its predecessor on the same
@@ -463,6 +466,7 @@ impl DashState {
                         .seq_offset
                         .saturating_add(u64::from(entry.sequence_number.value())),
                     gap: entry.bytes.is_empty(),
+                    init_generation: media_plane::ids::Generation::new(1),
                 });
             }
         }
@@ -2219,9 +2223,16 @@ impl RouteHandle {
     /// the `Trunk`-drained replacement for `MediaStore::window_segments`.
     /// Empty if `program` is not registered.
     pub fn window_segments(&self, program: ProgramId) -> Vec<DashWindowSegment> {
-        self.serving(program)
-            .map(|s| s.window_segments())
-            .unwrap_or_default()
+        if let Some(serving) = self.serving(program) {
+            let ll = serving.ll_hls();
+            let mut w = serving.window_segments();
+            for seg in &mut w {
+                seg.init_generation = ll.init_generation_for(seg.segment_seq);
+            }
+            w
+        } else {
+            Vec::new()
+        }
     }
 
     /// Configured target full-segment duration, seconds — route-wide (every

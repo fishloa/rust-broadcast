@@ -235,14 +235,20 @@ fn period_runs(window: &[crate::route::DashWindowSegment]) -> Vec<PeriodRun<'_>>
     let mut runs = Vec::new();
     let mut start = 0;
     for (at, segment) in window.iter().enumerate() {
-        if segment.gap {
+        let codec_boundary =
+            at > 0 && at > start && segment.init_generation != window[at - 1].init_generation;
+        if segment.gap || codec_boundary {
             if start < at {
                 runs.push(PeriodRun {
                     segments: &window[start..at],
                     ended_by: Some(segment),
                 });
             }
-            start = at + 1;
+            if segment.gap {
+                start = at + 1;
+            } else {
+                start = at;
+            }
         }
     }
     if start < window.len() {
@@ -275,6 +281,10 @@ pub fn render_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<String> 
         if !window.is_empty() {
             return None;
         }
+        let init_gen = route
+            .serving(program)
+            .map(|s| s.ll_hls().current_init_generation())
+            .unwrap_or_else(|| media_plane::ids::Generation::new(1));
         return render_period_document(
             route,
             origin,
@@ -282,11 +292,21 @@ pub fn render_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<String> 
             &route.track_specs(program),
             first_number,
             false,
+            init_gen,
         );
     }
     if let [only] = runs.as_slice()
         && only.ended_by.is_none()
     {
+        let init_gen = window
+            .first()
+            .map(|s| s.init_generation)
+            .or_else(|| {
+                route
+                    .serving(program)
+                    .map(|s| s.ll_hls().current_init_generation())
+            })
+            .unwrap_or_else(|| media_plane::ids::Generation::new(1));
         return render_period_document(
             route,
             origin,
@@ -294,6 +314,7 @@ pub fn render_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<String> 
             &route.track_specs(program),
             first_number,
             true,
+            init_gen,
         );
     }
     let mut mpd: Option<broadcast_dash::Mpd> = None;
@@ -304,9 +325,16 @@ pub fn render_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<String> 
         } else {
             route.track_specs(program)
         };
-        let Some(xml) =
-            render_period_document(route, origin, &window, &specs, first.public_seq, true)
-        else {
+        let init_gen = first.init_generation;
+        let Some(xml) = render_period_document(
+            route,
+            origin,
+            &window,
+            &specs,
+            first.public_seq,
+            true,
+            init_gen,
+        ) else {
             continue;
         };
         let mut parsed = broadcast_dash::Mpd::parse(xml.as_bytes()).ok()?;
@@ -346,6 +374,7 @@ fn render_period_document(
     specs: &[TrackSpec],
     start_number: u64,
     has_segments: bool,
+    init_generation: media_plane::ids::Generation,
 ) -> Option<String> {
     // `@id` forced to DEFAULT_TRACK_ID (see module docs' "Single-rendition
     // model") regardless of which track this route's own PMT numbered it.
@@ -388,6 +417,15 @@ fn render_period_document(
 
     let media = Media::new(vec![Track::new(spec, Vec::new())], timescale);
 
+    let instance = route
+        .serving(crate::route::SPTS_PROGRAM_ID)
+        .map(|s| s.ll_hls().instance())
+        .unwrap_or(1);
+    let init_template = format!(
+        "init-$RepresentationID$-{}-{}.mp4",
+        instance,
+        init_generation.value()
+    );
     let mut packager = DashPackager {
         dynamic: true,
         addressing: Addressing::Number,
@@ -396,7 +434,7 @@ fn render_period_document(
         // here (real DASH template tokens) — left literal so it resolves to
         // "1" (DEFAULT_TRACK_ID), matching the shared resource route's
         // `init-1.mp4`/`seg-1-<N>.m4s` filenames exactly.
-        init_template: "init-$RepresentationID$.mp4".to_string(),
+        init_template,
         media_template: "seg-$RepresentationID$-$Number$.m4s".to_string(),
         availability_start_time: Some(format_iso8601(origin)),
         publish_time: Some(publish_time(origin, window)),
@@ -719,7 +757,15 @@ mod tests {
             .add_segment(crate::route::SPTS_PROGRAM_ID, seg(2, 4.0))
             .expect("add_segment");
         let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-        let actual = render_mpd_at(&route, now).expect("renders");
+        let instance = route
+            .serving(crate::route::SPTS_PROGRAM_ID)
+            .unwrap()
+            .ll_hls()
+            .instance()
+            .to_string();
+        let actual = render_mpd_at(&route, now)
+            .expect("renders")
+            .replace(&instance, "INSTANCE");
         let file = "golden/dash/dash-mpd.golden";
         if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
             std::fs::create_dir_all(&dir).expect("create golden dir");
@@ -752,7 +798,15 @@ mod tests {
                 .expect("add_segment");
         }
         let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-        let actual = render_mpd_at(&route, now).expect("renders");
+        let instance = route
+            .serving(crate::route::SPTS_PROGRAM_ID)
+            .unwrap()
+            .ll_hls()
+            .instance()
+            .to_string();
+        let actual = render_mpd_at(&route, now)
+            .expect("renders")
+            .replace(&instance, "INSTANCE");
         // A 15-segment x 4 s window => timeShiftBufferDepth = 60 s.
         assert!(
             actual.contains("timeShiftBufferDepth=\"PT1M\""),
@@ -796,7 +850,15 @@ mod tests {
                 .expect("add_segment");
         }
         let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-        let ours = render_mpd_at(&route, now).expect("renders");
+        let instance = route
+            .serving(crate::route::SPTS_PROGRAM_ID)
+            .unwrap()
+            .ll_hls()
+            .instance()
+            .to_string();
+        let ours = render_mpd_at(&route, now)
+            .expect("renders")
+            .replace(&instance, "INSTANCE");
         assert!(
             ours.contains("timeShiftBufferDepth=\"PT0.3S\""),
             "a 0.3 s window must spell the jiff PT0.3S, not main's raw f64: {ours}"
@@ -851,7 +913,15 @@ mod tests {
                 .expect("add_segment");
         }
         let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-        let ours = render_mpd_at(&route, now).expect("renders");
+        let instance = route
+            .serving(crate::route::SPTS_PROGRAM_ID)
+            .unwrap()
+            .ll_hls()
+            .instance()
+            .to_string();
+        let ours = render_mpd_at(&route, now)
+            .expect("renders")
+            .replace(&instance, "INSTANCE");
 
         let ours_file =
             std::fs::read_to_string(test_fixtures::path("golden/dash/dash-mpd-window60.golden"))
@@ -897,7 +967,15 @@ mod tests {
                 .expect("add_segment");
         }
         let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-        let ours = render_mpd_at(&route, now).expect("renders");
+        let instance = route
+            .serving(crate::route::SPTS_PROGRAM_ID)
+            .unwrap()
+            .ll_hls()
+            .instance()
+            .to_string();
+        let ours = render_mpd_at(&route, now)
+            .expect("renders")
+            .replace(&instance, "INSTANCE");
         assert!(
             ours.contains("timeShiftBufferDepth=\"PT1H\""),
             "a 3600 s window must spell PT1H: {ours}"
@@ -1128,7 +1206,7 @@ mod tests {
              not time-addressed: {mpd}"
         );
         assert!(mpd.contains("seg-$RepresentationID$-$Number$.m4s"));
-        assert!(mpd.contains("init-$RepresentationID$.mp4"));
+        assert!(mpd.contains("init-$RepresentationID$-"));
     }
 
     /// #1187: `availabilityStartTime` is the program's presentation origin

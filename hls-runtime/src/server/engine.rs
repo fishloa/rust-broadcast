@@ -3122,6 +3122,35 @@ impl HlsOrigin {
             .collect()
     }
 
+    /// The init-segment generation a segment `seq` was cut against.
+    pub fn init_generation_for(&self, seq: SegmentSeq) -> Generation {
+        self.drain();
+        if let Some(g) = locked(&self.window)
+            .segments
+            .iter()
+            .find(|s| s.sequence_number == seq)
+            .map(|s| s.init_gen)
+        {
+            return g;
+        }
+        let g = locked(&self.init).generation_for(seq);
+        if g.value() == 0 {
+            Generation::new(1)
+        } else {
+            g
+        }
+    }
+
+    /// The current init-segment generation.
+    pub fn current_init_generation(&self) -> Generation {
+        let g = locked(&self.init).generation;
+        if g.value() == 0 {
+            Generation::new(1)
+        } else {
+            g
+        }
+    }
+
     /// `(in-progress-or-last-active segment sequence number, its currently
     /// resident live parts)` — the `Trunk`-only replacement for the deleted
     /// `MediaStore::latest_progress`.
