@@ -1,6 +1,6 @@
-#![cfg(feature = "std")]
+#![cfg(feature = "lang")]
 
-use hls_runtime::bcp47_language;
+use broadcast_common::bcp47_language;
 
 #[test]
 fn canonicalises() {

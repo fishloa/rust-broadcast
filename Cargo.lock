@@ -482,6 +482,7 @@ dependencies = [
  "criterion",
  "erased-serde",
  "hex",
+ "iso-639",
  "quick-xml",
  "serde",
 ]
@@ -1774,7 +1775,6 @@ dependencies = [
  "bytes",
  "container-probe",
  "headers",
- "iso-639",
  "jiff",
  "media-doctor",
  "media-plane",

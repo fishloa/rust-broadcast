@@ -51,8 +51,7 @@ skipped=[]
 == golden/sdp-tracks/in/no-media.sdp
 nothing-playable skipped=[]
 == golden/sdp-tracks/in/non-numeric-payload-type.sdp
-track id=1 kind=H264 clock=90000 setup=rtsp://cam.test/live/ channels=0-1 config=Avc { config: AVCConfigurationBox { config: AVCDecoderConfigurationRecord { configuration_version: 1, profile_indication: 66, profile_compatibility: 0, level_indication: 41, length_size_minus_one: 3, sps: [AvcSps([103, 66, 0, 41, 226, 144, 20, 7, 182, 2, 220, 4, 4, 6, 144, 120, 145, 21])], pps: [AvcPps([104, 206, 60, 128])], chroma_format: None, bit_depth_luma_minus8: None, bit_depth_chroma_minus8: None, sps_ext: [] } }, width: 640, height: 480 }
-skipped=[]
+nothing-playable skipped=[SkippedMedia { media_index: 0, codec: Some("H264"), codec_unsupported: false }]
 == golden/sdp-tracks/in/rtsp-pull-multimux-body.sdp
 track id=1 kind=H264 clock=90000 setup=rtsp://cam.test/live/streamid=0 channels=0-1 config=Avc { config: AVCConfigurationBox { config: AVCDecoderConfigurationRecord { configuration_version: 1, profile_indication: 66, profile_compatibility: 0, level_indication: 41, length_size_minus_one: 3, sps: [AvcSps([103, 66, 0, 41, 226, 144, 20, 7, 182, 2, 220, 4, 4, 6, 144, 120, 145, 21])], pps: [AvcPps([104, 206, 60, 128])], chroma_format: None, bit_depth_luma_minus8: None, bit_depth_chroma_minus8: None, sps_ext: [] } }, width: 640, height: 480 }
 skipped=[]
