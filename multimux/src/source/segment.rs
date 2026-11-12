@@ -974,10 +974,11 @@ impl ProgramSegmenter {
         while let Some(item) = self.cursor.poll() {
             if let SampleCursorItem::TracksChanged { generation, tracks } = item {
                 if generation > self.track_generation {
-                    route_handle.set_track_specs(program, tracks.to_vec());
                     let previous_tracks = std::mem::replace(&mut self.published_tracks, tracks);
                     let previous_moves = self.timescale_moves.clone();
-                    if !self.apply_track_change(program, trunk, route_handle, generation) {
+                    if self.apply_track_change(program, trunk, route_handle, generation) {
+                        route_handle.set_track_specs(program, self.published_tracks.to_vec());
+                    } else {
                         self.published_tracks = previous_tracks;
                         self.timescale_moves = previous_moves;
                     }
@@ -3561,10 +3562,21 @@ mod tests {
         let route = RouteHandle::new(1.0, 250, 8);
         let mut segmenter =
             ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("fMP4 segmenter builds");
+        route.publish_program(ProgramId(0), Arc::clone(&trunk));
+        route.set_track_specs(ProgramId(0), segmenter.published_tracks.to_vec());
 
         writer.set_tracks(vec![data_track_spec(TrackId::new(2))]);
         segmenter.pump(ProgramId(0), &trunk, &route);
         assert!(matches!(segmenter.seg, AnySegmenter::Fmp4(_)));
+        assert_eq!(
+            route
+                .track_specs(ProgramId(0))
+                .iter()
+                .map(|t| t.track_id)
+                .collect::<Vec<_>>(),
+            vec![TrackId::new(1)],
+            "a refused change must not reach the route's advertised track specs"
+        );
         assert_eq!(
             segmenter
                 .published_tracks
