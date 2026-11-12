@@ -18,15 +18,6 @@ use crate::util::PacketReader;
 /// PCR clock frequency on which PCR_27mhz ticks (ISO/IEC 13818-1 §2.4.3.5).
 use broadcast_common::clock33::PCR_HZ as PCR_CLOCK_HZ;
 
-/// The PCR modulus on the 27 MHz clock (`2^33 * 300`, ISO/IEC 13818-1
-/// §2.4.3.5): `broadcast_common::clock33::PCR_WRAP_27MHZ`, widened because this
-/// module accumulates unwrapped values in `u128`/`i128`.
-const PCR_MODULUS_27MHZ: u128 = broadcast_common::clock33::PCR_WRAP_27MHZ as u128;
-/// Half the modulus - the threshold distinguishing a genuine wrap from an
-/// out-of-order/duplicate PCR (mirrors `broadcast_common::clock33`'s
-/// half-modulus convention).
-const PCR_MODULUS_27MHZ_HALF: u128 = PCR_MODULUS_27MHZ / 2;
-
 /// Bits carried by one 188-byte TS packet (`TS_PACKET_SIZE * 8`).
 const BITS_PER_PACKET: u64 = (TS_PACKET_SIZE as u64) * 8;
 
@@ -69,7 +60,7 @@ fn estimate_bitrate_mbps(first: Option<(u64, u64)>, last: Option<(u64, u64)>) ->
 /// delta. Tracking per-PID keeps the estimate on a single, consistent clock.
 ///
 /// `first`/`last` store **unwrapped** 27 MHz values (ever-growing, not
-/// reduced mod [`PCR_MODULUS_27MHZ`]) so a capture whose PCR crosses the
+/// reduced mod `broadcast_common::clock33::PCR_WRAP_27MHZ`) so a capture whose PCR crosses the
 /// ~26.5h wrap still yields a monotonic `last - first`; `prev_raw` /
 /// `prev_unwrapped` are the running state [`PcrTrack::push`] needs to detect
 /// the next wrap.
@@ -90,15 +81,8 @@ impl PcrTrack {
         let unwrapped = match self.prev_raw {
             None => pcr_27,
             Some(prev_raw) => {
-                let mut delta = i128::from(pcr_27) - i128::from(prev_raw);
-                // A delta that looks like a huge backward jump is actually a
-                // forward wrap past `PCR_MODULUS_27MHZ`; a huge forward jump
-                // (the symmetric case) is an out-of-order/duplicate PCR, not
-                // a legitimate wrap, so it is left uncorrected (the caller's
-                // `estimate_bitrate_mbps` monotonicity check rejects it).
-                if delta < -(PCR_MODULUS_27MHZ_HALF as i128) {
-                    delta += PCR_MODULUS_27MHZ as i128;
-                }
+                let delta =
+                    broadcast_common::clock33::pcr_signed_distance(prev_raw, pcr_27) as i128;
                 (i128::from(self.prev_unwrapped) + delta) as u64
             }
         };
@@ -136,7 +120,7 @@ pub fn run(path: &str) -> ExitCode {
             // `as_27mhz()` unwraps the 33-bit base / 9-bit extension pair
             // into a single 27 MHz tick count (ISO/IEC 13818-1 §2.4.3.5);
             // `PcrTrack::push` separately unwraps that value's own ~26.5h
-            // rollover (`PCR_MODULUS_27MHZ`, §2.4.2.2) across samples.
+            // rollover (`broadcast_common::clock33::PCR_WRAP_27MHZ`, §2.4.2.2) across samples.
             let pcr_27 = pcr.as_27mhz();
             pcr_tracks
                 .entry(pid.value())
@@ -247,7 +231,7 @@ mod tests {
     #[test]
     fn pcr_track_unwraps_a_forward_wrap() {
         let mut track = PcrTrack::default();
-        let near_top = (PCR_MODULUS_27MHZ - 3) as u64;
+        let near_top = broadcast_common::clock33::PCR_WRAP_27MHZ - 3;
         track.push(1, near_top);
         track.push(2, 2); // wraps forward by 5 ticks: near_top -> 0 -> 2
         let (first_idx, first_v) = track.first.expect("first sample recorded");

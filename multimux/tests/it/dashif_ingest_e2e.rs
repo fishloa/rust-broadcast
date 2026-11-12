@@ -319,7 +319,7 @@ async fn ingested_presentation_is_served_as_valid_llhls() {
 
 #[tokio::test]
 async fn status_codes_follow_section_5_3() {
-    use multimux::dashif_ingest::IngestError;
+    use dash_runtime::ingest::IngestError;
     let rig = Rig::start("/live").await;
     let p = presentation();
 
@@ -497,7 +497,7 @@ async fn auth_basic_challenge_wrong_and_ingest() {
         .unwrap();
     assert_eq!(r.status().as_u16(), 401);
     // Authenticated segment before any MPD still fails (no leak).
-    use multimux::dashif_ingest::IngestError;
+    use dash_runtime::ingest::IngestError;
     let no_manifest = IngestError::NoManifest.status().as_u16();
     let r = rig
         .client

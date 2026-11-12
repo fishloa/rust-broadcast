@@ -1777,24 +1777,12 @@ fn skip_general_constraints_info(r: &mut BitReader) -> Result<()> {
 pub fn rfc6381_avc1(profile_idc: u8, constraint_flags: u8, level_idc: u8) -> String {
     let mut s = String::with_capacity(12);
     s.push_str("avc1.");
-    write_hex_byte(&mut s, profile_idc);
-    write_hex_byte(&mut s, constraint_flags);
-    write_hex_byte(&mut s, level_idc);
+    s.push_str(&broadcast_common::hex::hex_encode_upper(&[
+        profile_idc,
+        constraint_flags,
+        level_idc,
+    ]));
     s
-}
-
-fn write_hex_byte(s: &mut String, byte: u8) {
-    let hi = (byte >> 4) & 0xF;
-    let lo = byte & 0xF;
-    s.push(hex_char(hi));
-    s.push(hex_char(lo));
-}
-
-fn hex_char(nibble: u8) -> char {
-    match nibble {
-        0..=9 => (b'0' + nibble) as char,
-        _ => (b'A' + (nibble - 10)) as char,
-    }
 }
 
 const HVC1_CODEC_STRING_CAPACITY: usize = 48;
@@ -1845,7 +1833,7 @@ pub fn rfc6381_hvc1(info: &HevcSpsInfo) -> String {
                 break;
             }
             s.push('.');
-            write_hex_byte(&mut s, b);
+            s.push_str(&broadcast_common::hex::hex_encode_upper(&[b]));
         }
     }
 
@@ -1885,7 +1873,7 @@ pub fn rfc6381_vvc1(
         if let Some(end) = block.iter().rposition(|&b| b != 0) {
             s.push_str(".CTA-");
             for &b in &block[..=end] {
-                write_hex_byte(&mut s, b);
+                s.push_str(&broadcast_common::hex::hex_encode_upper(&[b]));
             }
         }
     }

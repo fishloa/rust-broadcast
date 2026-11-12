@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `PusiAccumulator::len`/`is_empty`/`is_started` accessors; `PesAssembler` mirrors them.
 
 ## [0.7.1] - 2026-11-10
 ### Added

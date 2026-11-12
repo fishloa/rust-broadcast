@@ -1190,11 +1190,18 @@ fn audio_frame_body(sound_type: u8, data: &[u8]) -> Vec<u8> {
 /// not "start of the stream". They use each [`Sample::dts`]/`pts` directly
 /// (absolute, in the track's own [`crate::pipeline::TrackSpec::timescale`],
 /// per the media-plane architecture) and rescale here instead.
-fn ticks_to_ms(ticks: i64, timescale: u32) -> i64 {
+fn ticks_to_ms(ticks: i64, timescale: u32) -> Result<i64> {
     if timescale == 0 {
-        return 0;
+        return Err(Error::InvalidInput(
+            "FLV mux requires a non-zero track timescale",
+        ));
     }
-    rescale_i64(ticks, timescale, FLV_TIMESCALE, Rounding::TowardZero)
+    Ok(rescale_i64(
+        ticks,
+        timescale,
+        FLV_TIMESCALE,
+        Rounding::TowardZero,
+    ))
 }
 
 /// [`ticks_to_ms`] for a value that must land in an FLV `Timestamp` (the UI24
@@ -1210,7 +1217,7 @@ fn ms_from_ticks(ticks: i64, timescale: u32) -> core::result::Result<u32, FlvErr
             "FLV mux requires a non-zero track timescale",
         )));
     }
-    let ms = ticks_to_ms(ticks, timescale);
+    let ms = ticks_to_ms(ticks, timescale)?;
     if ms < 0 || ms > u32::MAX as i64 {
         return Err(FlvError::Codec(Error::InvalidInput(
             "FLV tag timestamp does not fit the 32-bit millisecond clock",
@@ -1223,7 +1230,7 @@ fn ms_from_ticks(ticks: i64, timescale: u32) -> core::result::Result<u32, FlvErr
 /// before the clock origin) clamps to 0 as before, but a value past the 32-bit
 /// millisecond clock is an error rather than a silent `as u32` wrap (#1129).
 fn clamped_ms(ticks: i64, timescale: u32) -> core::result::Result<u32, FlvError> {
-    u32::try_from(ticks_to_ms(ticks, timescale).max(0)).map_err(|_| {
+    u32::try_from(ticks_to_ms(ticks, timescale)?.max(0)).map_err(|_| {
         FlvError::Codec(Error::InvalidInput(
             "FLV tag timestamp does not fit the 32-bit millisecond clock",
         ))
@@ -1235,7 +1242,7 @@ fn clamped_ms(ticks: i64, timescale: u32) -> core::result::Result<u32, FlvError>
 /// so it is rescaled first; a value that does not fit SI24 is an error rather
 /// than the silent truncation the raw write used to perform.
 fn composition_time_ms(offset: i64, timescale: u32) -> core::result::Result<i32, FlvError> {
-    let ms = ticks_to_ms(offset, timescale);
+    let ms = ticks_to_ms(offset, timescale)?;
     if ms < SI24_MIN as i64 || ms > SI24_MAX as i64 {
         return Err(FlvError::Codec(Error::InvalidInput(
             "FLV CompositionTime does not fit the signed 24-bit field",
@@ -1774,5 +1781,23 @@ mod tests {
             config.config.length_size_minus_one, NAL_LENGTH_SIZE_MINUS_ONE,
             "the emitted avcC must declare the 4-byte length size"
         );
+    }
+
+    #[test]
+    fn a_zero_track_timescale_is_a_typed_error() {
+        // Audit #2462: `ticks_to_ms` returned 0 for timescale 0 while
+        // `ms_from_ticks` (its FLV `Timestamp` sibling) already errored.
+        let e = ticks_to_ms(90_000, 0).expect_err("zero timescale must error");
+        assert!(matches!(
+            e,
+            Error::InvalidInput("FLV mux requires a non-zero track timescale")
+        ));
+        assert!(matches!(
+            ms_from_ticks(90_000, 0),
+            Err(FlvError::Codec(Error::InvalidInput(
+                "FLV mux requires a non-zero track timescale"
+            )))
+        ));
+        assert_eq!(ticks_to_ms(90_000, 90_000), Ok(1000));
     }
 }

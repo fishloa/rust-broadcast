@@ -1,6 +1,12 @@
 # Changelog
 
 ## [Unreleased]
+### Removed
+- `ts_dup` module moved to `mpeg-ts` (legal duplicate TS packet detection, H.222.0 §2.4.3.3); import from `mpeg_ts::ts_dup` instead (#2466).
+### Added
+- `PusiAccumulator::len`/`is_empty`/`is_started` accessors; `PesAssembler` mirrors them.
+### Added
+- `http_date` module (`std` feature): `parse_http_date` (RFC 9110 §5.6.7), moved from `dash-runtime`.
 ### Added
 - `lang` module (`lang` feature): `bcp47_language`, ISO 639-2 -> BCP 47 (RFC 5646) language canonicalisation shared by HLS and DASH, backed by the `iso-639` crate.
 - `xml` module (`xml` feature): `read_tree`, the bounded namespace-aware quick-xml reader that builds a small `xml::Elem` tree under a caller-supplied `xml::Namespace`, moved from `dash-runtime` so the Smooth Streaming manifest reader (#2356) can share it. It refuses DOCTYPE declarations and every entity they would declare, validates text against the XML 1.0 `Char` production, and enforces `XmlLimits` through `XmlBudget`; `xml::XmlError` reports the four ways it stops, and every bound stays the one `xml_chars::XmlLimit` names (#2355).
