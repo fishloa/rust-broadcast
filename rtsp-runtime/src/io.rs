@@ -349,23 +349,6 @@ where
         Ok(())
     }
 
-    /// Sends `payload` as an interleaved (`$`-framed) media packet on `channel`
-    /// (§10.12) — the mirror of the server's
-    /// [`AsyncRtspServer::send_interleaved`], for an RTSP push that delivers
-    /// media interleaved over the control connection. The frame is built by
-    /// [`crate::interleaved::InterleavedFrame::new`] and the write is bounded
-    /// by [`RtspTimeouts::write`].
-    ///
-    /// Before the write this drives the push keepalive (see
-    /// [`poll_keepalive`](Self::poll_keepalive)) and drains any server→client
-    /// bytes already buffered, so a SEND-ONLY pusher that only ever calls this
-    /// method still refreshes its session and does not let the peer's
-    /// responses/notifications fill the socket buffer (RFC 2326 §12.37).
-    ///
-    /// **A `Timeout`/cancelled write leaves a partial `$` frame in the codec's
-    /// write buffer and the connection is dead** — an interleaved frame cannot
-    /// be resynchronised mid-flight, so the caller must reconnect rather than
-    /// retry. Bytes already read stay buffered.
     /// Pulls a stream in one call: `DESCRIBE` (RFC 2326 §10.2), `SETUP` for
     /// each media section with a usable `a=control` (§10.4), then `PLAY` (§10.5).
     ///
