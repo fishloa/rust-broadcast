@@ -4,7 +4,7 @@
 //! and was fixed in W1-R-low-a. Redaction must ALSO keep working on a
 //! URL the `url` parser rejects — redact.rs's documented contract.
 
-use multimux::push::srt::parse_srt_url_for_test;
+use multimux::push::srt::srt_url_outcome_for_test;
 use multimux::redact::{redact_destination, redact_url};
 
 /// CHARACTERISATION (passes on old code too — main already brackets IPv6;
@@ -49,10 +49,10 @@ fn redaction_masks_both_authority_and_tail_of_a_url_the_parser_rejects() {
 
 #[test]
 fn an_srt_query_keeps_the_address_and_streamid_separate() {
-    let (addr, overrides) =
-        parse_srt_url_for_test("srt://[::1]:9000?streamid=live%2Fcam&latency=120").unwrap();
-    assert_eq!(addr, "[::1]:9000");
-    assert_eq!(overrides.stream_id.as_deref(), Some("live/cam"));
+    assert_eq!(
+        srt_url_outcome_for_test("srt://[::1]:9000?streamid=live%2Fcam&latency=120"),
+        "ok addr=[::1]:9000 stream_id=Some(\"live/cam\") latency_ms=Some(120)"
+    );
 }
 
 /// A cannot-be-a-base RTSP push URL (`rtsp:cam` — no `//host`) parses but names

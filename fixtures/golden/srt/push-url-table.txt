@@ -1,0 +1,32 @@
+example.com	ok addr=example.com:9000 stream_id=None latency_ms=None
+srt://example.com	ok addr=example.com:9000 stream_id=None latency_ms=None
+example.com:9001	ok addr=example.com:9001 stream_id=None latency_ms=None
+srt://example.com:9001	ok addr=example.com:9001 stream_id=None latency_ms=None
+[::1]	ok addr=[::1]:9000 stream_id=None latency_ms=None
+srt://[::1]:9000	ok addr=[::1]:9000 stream_id=None latency_ms=None
+::1	err io error during srt url: bad host: InvalidInput
+::1:9000	err io error during srt url: bad host: InvalidInput
+srt://::1	err io error during srt url: bad host: InvalidInput
+srt://user:key@host:9000	err io error during srt url: bad host: InvalidInput
+srt://user@host:9000	err io error during srt url: bad host: InvalidInput
+srt://h:9000?streamid=#!::r=live/cam,m=publish	ok addr=h:9000 stream_id=Some("#!::r=live/cam,m=publish") latency_ms=None
+srt://h:9000?streamid=%23!::r=live%2Fcam%2Cm=publish	ok addr=h:9000 stream_id=Some("#!::r=live/cam,m=publish") latency_ms=None
+srt://h:9000?streamid=100%	ok addr=h:9000 stream_id=Some("100%") latency_ms=None
+srt://h:9000?latency=0	ok addr=h:9000 stream_id=None latency_ms=Some(0)
+srt://h:9000?latency=200	ok addr=h:9000 stream_id=None latency_ms=Some(200)
+srt://h:9000?latency=8000	ok addr=h:9000 stream_id=None latency_ms=Some(8000)
+srt://h:9000?latency=8001	err io error during srt url: latency exceeds the 8000 ms maximum: InvalidInput
+srt://h:9000?latency=99999	err io error during srt url: latency must be an integer number of milliseconds: InvalidInput
+srt://h:9000?latency=notanumber	err io error during srt url: latency must be an integer number of milliseconds: InvalidInput
+srt://h:9000?mode=caller	ok addr=h:9000 stream_id=None latency_ms=None
+srt://h:9000?mode=listener	err io error during srt url: only mode=caller is supported for a push output: InvalidInput
+srt://h:9000?passphrase=secret	err io error during srt url: passphrase/encryption is not supported for a push output: InvalidInput
+srt://h:9000?unknownkey=value	ok addr=h:9000 stream_id=None latency_ms=None
+srt://h:9000/	ok addr=h:9000 stream_id=None latency_ms=None
+srt://h:9000?	ok addr=h:9000 stream_id=None latency_ms=None
+srt://h:9000?streamid=live&	ok addr=h:9000 stream_id=Some("live") latency_ms=None
+	err io error during srt url: bad host: InvalidInput
+srt://	err io error during srt url: bad host: InvalidInput
+:9000	err io error during srt url: bad host: InvalidInput
+host:notaport	err io error during srt url: bad host: InvalidInput
+host:99999	err io error during srt url: bad host: InvalidInput

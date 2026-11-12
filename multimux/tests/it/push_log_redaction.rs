@@ -2,53 +2,27 @@
 //! stream key (path/query) must never reach a log line; the destination is
 //! logged as `scheme://host[:port]/<redacted>`.
 //!
-//! This is its own test binary, with exactly one test, on purpose: `tracing`
-//! caches each callsite's "is anyone listening" verdict process-wide, and
-//! another test thread touching the same callsite concurrently made a
-//! scoped capture subscriber miss events when this lived among the lib tests.
+//! The capture is the one process-wide subscriber
+//! (`support::shared_it::install_tracing_capture`, which every test needing
+//! one shares); a scoped `set_default` cannot serve here, because
+//! `tracing` caches each callsite's "is anyone listening" verdict per thread
+//! and this test's events are logged on tokio worker threads of its own
+//! runtime. The tests that install a subscriber serialize on
+//! `support::shared_it::tracing_lock`, so no two of them interleave, and the
+//! assertions read only this test's own destination lines out of the buffer
+//! (other tests may still log into it, which is why the filter exists).
 
-use std::fmt::Write as _;
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::support::shared_it::nz;
 use media_plane::trunk::{Trunk, TrunkConfig};
 use multimux::config::{PushFormat, ReconnectPolicy};
+use multimux::push::srt::srt_url_outcome_for_test;
 use multimux::push::{
     PushTransport, RtmpTransport, RtmpTransportConfig, RtspTransport, RtspTransportConfig,
     SrtTransport, SrtTransportConfig, drive_push,
 };
 use tokio_util::sync::CancellationToken;
-
-/// Records every tracing event's fields as `name=value ` text.
-struct CaptureEvents(Arc<Mutex<String>>);
-
-impl tracing::Subscriber for CaptureEvents {
-    fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
-        true
-    }
-    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
-        tracing::span::Id::from_u64(1)
-    }
-    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
-    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
-    fn event(&self, event: &tracing::Event<'_>) {
-        struct Fields<'a>(&'a mut String);
-        impl tracing::field::Visit for Fields<'_> {
-            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-                let _ = write!(self.0, "{}={value:?} ", field.name());
-            }
-        }
-        let mut line = String::new();
-        event.record(&mut Fields(&mut line));
-        self.0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push_str(&line);
-    }
-    fn enter(&self, _: &tracing::span::Id) {}
-    fn exit(&self, _: &tracing::span::Id) {}
-}
 
 /// A transport whose connect error echoes the URL it was given — the worst
 /// case a real transport's `Display` could be.
@@ -111,41 +85,62 @@ where
     }
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn push_logs_and_errors_never_contain_the_destination_secrets() {
-    let captured = Arc::new(Mutex::new(String::new()));
-    let _guard = tracing::subscriber::set_default(CaptureEvents(Arc::clone(&captured)));
+#[test]
+fn push_logs_and_errors_never_contain_the_destination_secrets() {
+    // A discarded `srt://` URL's destination is masked as a bare
+    // `<redacted>` (the parser rejects an empty authority), so it carries no
+    // host to filter on; identify its lines by the reason instead.
+    let srt_reason = srt_url_outcome_for_test("srt://?streamid=SECRETSTREAM&passphrase=SECRETPASS");
+    let srt_reason = srt_reason.trim_start_matches("err ").to_string();
 
-    // RTMP and RTSP against a port nothing listens on; SRT with an invalid
-    // URL (the parse failure is the connect error); and a transport whose
-    // error text echoes the whole URL.
-    drive::<RtmpTransport>(
-        "rtmp://admin:hunter2@127.0.0.1:1/app/STREAMKEY123?token=abc",
-        RtmpTransportConfig::default(),
-    )
-    .await;
-    drive::<RtspTransport>(
-        "rtsp://admin:hunter2@127.0.0.1:1/live/STREAMKEY123?token=abc",
-        RtspTransportConfig::default(),
-    )
-    .await;
-    drive::<SrtTransport>(
-        "srt://?streamid=SECRETSTREAM&passphrase=SECRETPASS",
-        SrtTransportConfig::default(),
-    )
-    .await;
-    drive::<EchoesTheUrl>(
-        "rtmp://admin:hunter2@echo.example:1935/app/STREAMKEY123?token=abc",
-        (),
-    )
-    .await;
+    let _serial = crate::support::shared_it::tracing_lock();
+    crate::support::shared_it::install_tracing_capture();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a current-thread runtime");
+    runtime.block_on(async {
+        // RTMP and RTSP against a port nothing listens on; SRT with an invalid
+        // URL (the parse failure is the connect error); and a transport whose
+        // error text echoes the whole URL.
+        drive::<RtmpTransport>(
+            "rtmp://admin:hunter2@127.0.0.1:1/app/STREAMKEY123?token=abc",
+            RtmpTransportConfig::default(),
+        )
+        .await;
+        drive::<RtspTransport>(
+            "rtsp://admin:hunter2@127.0.0.1:1/live/STREAMKEY123?token=abc",
+            RtspTransportConfig::default(),
+        )
+        .await;
+        drive::<SrtTransport>(
+            "srt://?streamid=SECRETSTREAM&passphrase=SECRETPASS",
+            SrtTransportConfig::default(),
+        )
+        .await;
+        drive::<EchoesTheUrl>(
+            "rtmp://admin:hunter2@echo.example:1935/app/STREAMKEY123?token=abc",
+            (),
+        )
+        .await;
+    });
 
-    let logs = captured
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone();
-    assert!(
-        logs.matches("push connect failed").count() >= 8,
+    let all = crate::support::shared_it::captured_events();
+    // The capture is process-wide, so other tests' events are in the buffer
+    // too; this test's evidence is exactly its own destinations' log lines.
+    let logs: String = all
+        .split("message=")
+        .filter(|line| {
+            line.contains("push connect failed")
+                && (line.contains("rtmp://127.0.0.1:1/")
+                    || line.contains("rtsp://127.0.0.1:1/")
+                    || line.contains("echo.example:1935")
+                    || line.contains(srt_reason.as_str()))
+        })
+        .collect();
+    assert_eq!(
+        logs.matches("push connect failed").count(),
+        8,
         "every transport's failed connect must have been logged twice: {logs:?}"
     );
     assert!(logs.contains("rtmp://127.0.0.1:1/<redacted>"), "{logs}");

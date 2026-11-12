@@ -1393,6 +1393,9 @@ pub const TABLE: &[Crate] = &[
             "LossListEntry",   // data-carrying ADT (Single/Range sequence numbers)
             "HandshakeOutput", // data-carrying ADT (handshake SM event, not a wire label)
             "KmRefreshEvent",  // data-carrying ADT (KM refresh driver event, not a wire label)
+            // Why an srt:// URL was rejected — a parse-error classification
+            // (authority, latency, mode), not a spec token.
+            "UrlRejection",
         ],
         expected: None,
         min_enums: None,
