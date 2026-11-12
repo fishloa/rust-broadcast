@@ -120,6 +120,11 @@ async fn manifest(State(route): State<Arc<RouteHandle>>) -> Response {
 /// The request grammar, the stream it names and the fragment's bytes are all
 /// the origin's; re-demuxing and re-muxing are CPU-bound and must not run on
 /// a runtime worker, which [`http::resolve_blocking`] guarantees.
+///
+/// A fragment the origin's window does not hold (a start time older than its
+/// first chunk or later than its last, or a segment that slid away while the
+/// window was being read) answers `404`, exactly as an evicted HLS segment
+/// does; `500` is reserved for a manifest the origin cannot use at all.
 async fn fragment_fallback(State(route): State<Arc<RouteHandle>>, uri: OriginalUri) -> Response {
     let serving = match http::resolve_route_program(&route) {
         Ok(serving) => serving,
@@ -135,7 +140,7 @@ async fn fragment_fallback(State(route): State<Arc<RouteHandle>>, uri: OriginalU
         http::resolve_blocking(&trunk, &origin, request, BLOCKING_RELOAD_TIMEOUT, || ()).await;
     http::into_response_with_message(
         resp,
-        StatusCode::INTERNAL_SERVER_ERROR,
+        StatusCode::NOT_FOUND,
         StatusCode::INTERNAL_SERVER_ERROR,
         |body| match body {
             SmoothBody::Fragment(bytes) => {

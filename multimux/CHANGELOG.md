@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Fixed
+- A Smooth fragment request the origin's window does not hold answers `404`, as an evicted HLS segment does, instead of `500`: the Smooth fallback passed its server-error status as the not-found status too, so every `EgressResponse::NotFound` from the origin (a start time before the window or past its end) became an internal error (issue #2506).
 - An HTTP pull (HLS, DASH, Smooth, TS-over-HTTP) keeps the auth state for the whole session: a cookie an origin sets on the playlist is sent with the segments, and a Digest challenge is negotiated once instead of on every request, because the state is updated in place rather than cloned per request. Cookies are stamped with the pull's own clock instead of `0`.
 - A `407` from an HTTP pull is returned unchanged instead of being retried; there is no proxy-credential configuration, and the origin's credentials are never sent as a proxy's.
 - The challenge-answer flag a pull passes on reports whether the request really carried an `Authorization` header, so a Digest state that has not negotiated its first nonce is not treated as a rejected credential.

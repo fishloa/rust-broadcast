@@ -215,13 +215,34 @@ impl Plan {
             .live(duration, LOOK_AHEAD_FRAGMENT_COUNT)
     }
 
-    /// The chunk of `stream` starting at `start`.
+    /// The chunk of `stream` starting at `start`, or `None` when the window
+    /// holds no chunk of that stream starting there (a fragment older than the
+    /// window's first chunk, or later than its last one).
     fn chunk(&self, stream: StreamKey, start: u64) -> Option<(StreamPlan, ChunkTiming)> {
-        let plan = self.streams.iter().find(|plan| plan.key == stream)?.clone();
+        let plan = self.streams.iter().find(|plan| plan.key == stream)?;
+        if !window_holds(plan, start) {
+            return None;
+        }
         let chunk = plan.chunks.iter().find(|chunk| chunk.start == start)?;
-        let chunk = chunk.clone();
-        Some((plan, chunk))
+        Some((plan.clone(), chunk.clone()))
     }
+}
+
+/// `true` when `start` falls inside the window `plan` describes: at or after
+/// its first chunk and before the end of its last one, each bound computed
+/// with checked arithmetic so no comparison can wrap.
+///
+/// A start outside that span is a fragment the window does not hold — an
+/// older form of "this byte range is gone", the same answer an evicted HLS
+/// segment gets — never a fragment assembled from a neighbouring chunk.
+fn window_holds(plan: &StreamPlan, start: u64) -> bool {
+    let (Some(first), Some(last)) = (plan.chunks.first(), plan.chunks.last()) else {
+        return false;
+    };
+    let Some(end) = last.start.checked_add(last.duration) else {
+        return start >= first.start;
+    };
+    start >= first.start && start < end
 }
 
 /// The `StreamIndex` element for one resolved track: its `Name`/`Url` from the
@@ -656,10 +677,11 @@ impl ServedEgress for SmoothOrigin {
             } => match plan.chunk(stream, start) {
                 Some((stream, chunk)) if bitrate == advertised_bitrate(&stream.codec) => {
                     match self.fragment(&stream, chunk) {
-                        Ok(bytes) => EgressResponse::Ready {
+                        Ok(Some(bytes)) => EgressResponse::Ready {
                             body: SmoothBody::Fragment(bytes),
                             cache: CachePolicy::Immutable,
                         },
+                        Ok(None) => EgressResponse::NotFound,
                         Err(_) => EgressResponse::BadRequest {
                             reason: UNUSABLE_FRAGMENT,
                         },
@@ -675,25 +697,28 @@ impl SmoothOrigin {
     /// Build the fragment for `chunk` of `stream` from the window segment it
     /// came from: demux, take the track, and re-mux one fragment whose `tfxd`
     /// is the manifest's `c@t`.
+    ///
+    /// `Ok(None)` is a fragment the window no longer holds: its segment left
+    /// between describing the window and reading it back, which is the same
+    /// "gone" answer as a start time outside it, not a broken request.
     fn fragment(
         &self,
         stream: &StreamPlan,
         chunk: ChunkTiming,
-    ) -> Result<Vec<u8>, SmoothOriginError> {
+    ) -> Result<Option<Vec<u8>>, SmoothOriginError> {
         let init = self.init().ok_or(SmoothOriginError::Codec {
             track: stream.interleaved_ordinal,
             reason: "no init segment is published".to_string(),
         })?;
-        let bytes = self
+        let Some(bytes) = self
             .provider
             .segments()
             .into_iter()
             .find(|(sequence, _)| *sequence == chunk.sequence)
             .map(|(_, bytes)| bytes)
-            .ok_or(SmoothOriginError::Codec {
-                track: stream.interleaved_ordinal,
-                reason: "the fragment's segment has left the window".to_string(),
-            })?;
+        else {
+            return Ok(None);
+        };
         let media = demux(&init, &bytes).map_err(|reason| SmoothOriginError::Codec {
             track: stream.interleaved_ordinal,
             reason,
@@ -711,7 +736,7 @@ impl SmoothOrigin {
             track: stream.interleaved_ordinal,
             reason: error.to_string(),
         })?;
-        Ok(fragment.data)
+        Ok(Some(fragment.data))
     }
 }
 
@@ -1675,6 +1700,136 @@ mod tests {
             None,
             "a kind the manifest does not advertise is not a request"
         );
+    }
+
+    /// A fragment start outside the window the manifest describes is
+    /// `NotFound`, never a fragment assembled from a neighbouring chunk and
+    /// never an arithmetic panic: one tick before the first chunk and one tick
+    /// after the end of the last are both outside, and so is the largest
+    /// representable start.
+    #[test]
+    fn a_fragment_outside_the_window_is_not_found() {
+        let route = publish(vec![audio_spec(1)]);
+        let origin = origin(&route);
+        let manifest = manifest(&route);
+        let stream = &manifest.streams[0];
+        let bitrate = stream.qualities[0].bitrate;
+        let chunks = stream.enumerate_chunks().expect("chunks");
+        let first = chunks.first().expect("a first chunk").0;
+        let (last_start, last_duration) = chunks.last().copied().expect("a last chunk");
+        let end = last_start.checked_add(last_duration).expect("the end fits");
+        for start in [first.checked_sub(1), Some(end), Some(u64::MAX)]
+            .into_iter()
+            .flatten()
+        {
+            let request = SmoothRequest::Fragment {
+                stream: keys(&route)[0],
+                bitrate,
+                start,
+            };
+            let response = origin.resolve(
+                request,
+                Timestamp::from_nanos(0),
+                AwaitPolicy::new(Timestamp::from_nanos(u64::MAX)),
+            );
+            assert_eq!(
+                response,
+                EgressResponse::NotFound,
+                "start {start} is outside the window"
+            );
+        }
+        for (start, _) in &chunks {
+            let request = SmoothRequest::Fragment {
+                stream: keys(&route)[0],
+                bitrate,
+                start: *start,
+            };
+            assert!(
+                matches!(
+                    origin.resolve(
+                        request,
+                        Timestamp::from_nanos(0),
+                        AwaitPolicy::new(Timestamp::from_nanos(u64::MAX))
+                    ),
+                    EgressResponse::Ready { .. }
+                ),
+                "the window holds a chunk starting at {start}"
+            );
+        }
+    }
+
+    /// A window with no chunk at all holds no start, whatever the value, and
+    /// the bounds comparison never wraps for a chunk whose end is not
+    /// representable.
+    #[test]
+    fn the_window_bounds_are_checked() {
+        let codec = resolve_codec(&CodecConfig::Aac {
+            esds: esds(Some(ASC_48K_STEREO.to_vec())),
+            sample_rate: SAMPLE_RATE,
+            channel_count: CHANNELS,
+            sample_size: AAC_BITS_PER_SAMPLE,
+        })
+        .expect("AAC resolves");
+        let key = StreamKey {
+            kind: SmoothStreamType::Audio,
+            ordinal: 1,
+        };
+        let empty = StreamPlan {
+            key,
+            codec: codec.clone(),
+            interleaved_ordinal: 1,
+            chunks: Vec::new(),
+        };
+        assert!(!window_holds(&empty, 0));
+        let huge = StreamPlan {
+            key,
+            codec,
+            interleaved_ordinal: 1,
+            chunks: vec![ChunkTiming {
+                sequence: SegmentSeq::new(1),
+                start: u64::MAX,
+                duration: 1,
+            }],
+        };
+        assert!(window_holds(&huge, u64::MAX));
+        assert!(!window_holds(&huge, u64::MAX - 1));
+    }
+
+    /// A start inside the window's span but not on an advertised `c@t` (a
+    /// tick between two chunks) is a fragment the window does not hold, so it
+    /// is `NotFound` — never a fragment assembled from a neighbouring chunk.
+    #[test]
+    fn a_start_between_chunks_is_not_found() {
+        let route = publish(vec![audio_spec(1)]);
+        let origin = origin(&route);
+        let manifest = manifest(&route);
+        let stream = &manifest.streams[0];
+        let bitrate = stream.qualities[0].bitrate;
+        let chunks = stream.enumerate_chunks().expect("chunks");
+        let (first, _) = chunks.first().copied().expect("a first chunk");
+        let (second, duration) = chunks.get(1).copied().expect("a second chunk");
+        let between = [
+            first.checked_add(1).expect("a tick after the first chunk"),
+            second
+                .checked_add(duration.checked_div(2).unwrap_or(0))
+                .expect("mid-way through the last chunk"),
+        ];
+        for start in between {
+            let request = SmoothRequest::Fragment {
+                stream: keys(&route)[0],
+                bitrate,
+                start,
+            };
+            assert_eq!(
+                origin.resolve(
+                    request,
+                    Timestamp::from_nanos(0),
+                    AwaitPolicy::new(Timestamp::from_nanos(u64::MAX))
+                ),
+                EgressResponse::NotFound,
+                "no chunk starts at {start}"
+            );
+        }
     }
 
     /// A stream key's name and URL template agree: the template's `Fragments`

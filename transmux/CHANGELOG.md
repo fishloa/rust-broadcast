@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- A short bit-level input is reported in bytes everywhere: the RBSP reader, the `&[u8]` cursor reader the AC-3/DTS headers share, and the shared `BitError` mapping (used by the HDR10+ reader) all go through `broadcast_common::bits::BitError`'s one `BufferTooShort` conversion instead of each computing its own count, in bits for some and bytes for others (issue #2461).
 ### Changed
 - Legal-duplicate TS packet detection now imports `mpeg_ts::ts_dup` instead of `broadcast_common::ts_dup` (#2466).
 - Test-harness `which` now lives in `test-fixtures::process::which`.

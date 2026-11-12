@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `impl From<BitError> for BufferTooShort`: the one conversion from a bit-level failure to the workspace's byte-counted buffer error, so a bit reader's short input is reported in the same unit everywhere. `need`/`have` are whole bytes (a partial byte rounds up in `need`, down in `have`), read the same way whether an adapter reports the bits needed or the absolute position. It also fixes `BitReader::skip_bits` leaving the cursor past the end on a failed skip, so `bits_remaining` stays a real count (issue #2461).
 ### Removed
 - `ts_dup` module moved to `mpeg-ts` (legal duplicate TS packet detection, H.222.0 §2.4.3.3); import from `mpeg_ts::ts_dup` instead (#2466).
 ### Added

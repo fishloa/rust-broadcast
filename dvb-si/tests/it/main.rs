@@ -1,6 +1,7 @@
 mod accessors;
 mod ait_carousel_descriptors;
 mod biop_fixture;
+mod bit_shortfall_units;
 mod carousel_fixture;
 mod collect;
 mod content_genre_table;
