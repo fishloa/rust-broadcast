@@ -28,6 +28,21 @@ impl SystemHostClock {
             opened: Instant::now(),
         }
     }
+
+    /// The host's wall clock read once, for a caller that needs a single
+    /// instant and owns no clock of its own.
+    pub(crate) fn now_us() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| u64::try_from(d.as_micros()).unwrap_or(u64::MAX))
+    }
+}
+
+impl SystemHostClock {
+    /// Microseconds since 1970-01-01T00:00:00Z on the host's own wall clock.
+    pub(crate) fn unix_us(&self) -> u64 {
+        <Self as HostClock>::unix_us(self)
+    }
 }
 
 impl HostClock for SystemHostClock {
@@ -36,9 +51,7 @@ impl HostClock for SystemHostClock {
     }
 
     fn unix_us(&self) -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| u64::try_from(d.as_micros()).unwrap_or(u64::MAX))
+        Self::now_us()
     }
 }
 

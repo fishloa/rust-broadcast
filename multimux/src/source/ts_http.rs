@@ -161,6 +161,7 @@ pub(crate) async fn open_response(route: &TsHttpRoute) -> Result<(TsHttpStream, 
         resolve_credentials(route.target.auth.clone(), credentials_from_url(&parsed)?);
     let clean_url = strip_userinfo(&parsed)?;
     let mut credentials = scope_credentials(credentials, &clean_url);
+    let now_us = crate::clock::SystemHostClock::now_us();
 
     let client = Client::builder()
         .redirect(crate::source::redirect_policy(true))
@@ -168,7 +169,7 @@ pub(crate) async fn open_response(route: &TsHttpRoute) -> Result<(TsHttpStream, 
         .map_err(|e| MultimuxError::Connect {
             reason: format!("reqwest client: {e}"),
         })?;
-    let response = authenticated_get(&client, clean_url.as_str(), credentials.as_mut()).await?;
+    let response = authenticated_get(&client, clean_url.as_str(), &mut credentials, now_us).await?;
     let status = response.status();
     if !status.is_success() {
         return Err(if status == reqwest::StatusCode::UNAUTHORIZED {

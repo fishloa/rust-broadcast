@@ -95,7 +95,7 @@ impl DashFetch {
 #[derive(Clone)]
 pub(super) struct Net {
     pub(super) http: HttpClient,
-    pub(super) credentials: Option<AuthState>,
+    pub(super) credentials: AuthState,
     pub(super) clock: Arc<dyn HostClock>,
     pub(super) read_timeout: Duration,
     pub(super) utc_timeout: Duration,
@@ -227,8 +227,9 @@ async fn send(net: &mut Net, req: &Request) -> Result<reqwest::Response> {
         authenticated_get_with(
             &net.http,
             &req.url,
-            net.credentials.as_mut(),
+            &mut net.credentials,
             &req.headers(),
+            net.clock.unix_us(),
         )
         .await
     } else {
@@ -267,7 +268,11 @@ pub(super) fn ranged_body(
     body.get(start..end).map(<[u8]>::to_vec)
 }
 
-pub(super) async fn exchange(net: &mut Net, req: &Request, sent_us: u64) -> (DashFetch, FetchResult) {
+pub(super) async fn exchange(
+    net: &mut Net,
+    req: &Request,
+    sent_us: u64,
+) -> (DashFetch, FetchResult) {
     let mut fetch = DashFetch::new(req.target, sent_us);
     let response = match send(net, req).await {
         Ok(response) => response,

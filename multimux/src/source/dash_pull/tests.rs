@@ -1570,12 +1570,13 @@ mod exchange {
     const BIG_CAP: usize = 1 << 20;
 
     fn net(read_timeout: Duration, cap: usize) -> Net {
+        let origin = url::Url::parse("http://127.0.0.1:1/").expect("origin");
         Net {
             http: reqwest::Client::builder()
                 .redirect(crate::source::redirect_policy(true))
                 .build()
                 .expect("client"),
-            credentials: None,
+            credentials: broadcast_auth::AuthState::new(origin, Vec::new()),
             clock: SkewedClock::new(0),
             read_timeout,
             utc_timeout: read_timeout,
@@ -1660,16 +1661,16 @@ mod exchange {
     #[tokio::test]
     async fn a_304_is_unchanged_for_the_mpd_and_a_failure_for_anything_else() {
         let (base, server) = serve(status_route(304)).await;
-        let net = net(Duration::from_secs(5), BIG_CAP);
+        let mut net = net(Duration::from_secs(5), BIG_CAP);
         let (mpd, _) = run(
-            &net,
+            &mut net,
             request(format!("{base}/x"), FetchTarget::Mpd, BIG_CAP),
         )
         .await;
         assert_eq!(mpd.outcome, Outcome::Unchanged);
         let (resource, _) = ids();
         let (seg, _) = run(
-            &net,
+            &mut net,
             request(
                 format!("{base}/x"),
                 FetchTarget::Resource(resource),
@@ -1683,7 +1684,7 @@ mod exchange {
 
     #[tokio::test]
     async fn a_401_is_unauthorized_and_other_statuses_are_counted_failures() {
-        let net = net(Duration::from_secs(5), BIG_CAP);
+        let mut net = net(Duration::from_secs(5), BIG_CAP);
         for (status, want) in [
             (401, Outcome::Unauthorized),
             (404, Outcome::Failed(Failure::Status(404))),
@@ -1693,7 +1694,7 @@ mod exchange {
         ] {
             let (base, server) = serve(status_route(status)).await;
             let (fetch, result) = run(
-                &net,
+                &mut net,
                 request(format!("{base}/x"), FetchTarget::Mpd, BIG_CAP),
             )
             .await;
@@ -1709,9 +1710,9 @@ mod exchange {
     #[tokio::test]
     async fn a_401_is_an_authentication_error() {
         let (base, server) = serve(status_route(401)).await;
-        let net = net(Duration::from_secs(5), BIG_CAP);
+        let mut net = net(Duration::from_secs(5), BIG_CAP);
         let (_, result) = run(
-            &net,
+            &mut net,
             request(format!("{base}/x"), FetchTarget::Mpd, BIG_CAP),
         )
         .await;
@@ -1747,9 +1748,9 @@ mod exchange {
             )
             .route("/plain", get(|| async { "mpd" }));
         let (base, server) = serve(app).await;
-        let net = net(Duration::from_secs(5), BIG_CAP);
+        let mut net = net(Duration::from_secs(5), BIG_CAP);
         let (fetch, result) = run(
-            &net,
+            &mut net,
             request(format!("{base}/a"), FetchTarget::Mpd, BIG_CAP),
         )
         .await;
@@ -1772,7 +1773,7 @@ mod exchange {
         assert!(fetch.received_us > 0, "read from the injected clock");
 
         let (plain, _) = run(
-            &net,
+            &mut net,
             request(format!("{base}/plain"), FetchTarget::Mpd, BIG_CAP),
         )
         .await;
@@ -1795,15 +1796,15 @@ mod exchange {
                 }),
             );
         let (base, server) = serve(app).await;
-        let net = net(Duration::from_secs(5), SMALL_CAP);
+        let mut net = net(Duration::from_secs(5), SMALL_CAP);
         let (big, _) = run(
-            &net,
+            &mut net,
             request(format!("{base}/big"), FetchTarget::Mpd, SMALL_CAP),
         )
         .await;
         assert_eq!(big.outcome, Outcome::Failed(Failure::TooLarge));
         let (cut, _) = run(
-            &net,
+            &mut net,
             request(format!("{base}/cut"), FetchTarget::Mpd, SMALL_CAP),
         )
         .await;
@@ -1813,14 +1814,14 @@ mod exchange {
 
     #[tokio::test]
     async fn a_refused_connection_is_transport_and_a_silent_server_is_a_timeout() {
-        let net = net(Duration::from_millis(150), BIG_CAP);
+        let mut net = net(Duration::from_millis(150), BIG_CAP);
         let closed = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind");
         let dead = closed.local_addr().expect("addr");
         drop(closed);
         let (refused, _) = run(
-            &net,
+            &mut net,
             request(format!("http://{dead}/x"), FetchTarget::Mpd, BIG_CAP),
         )
         .await;
@@ -1867,15 +1868,15 @@ mod exchange {
             .route("/x", get(echo))
             .with_state(seen.clone());
         let (base, server) = serve(app).await;
-        let net = net(Duration::from_secs(5), BIG_CAP);
+        let mut net = net(Duration::from_secs(5), BIG_CAP);
         let mut conditional = request(format!("{base}/x"), FetchTarget::Mpd, BIG_CAP);
         conditional.conditional = vec![(header::IF_NONE_MATCH, "\"e1\"".to_owned())];
-        run(&net, conditional).await;
+        run(&mut net, conditional).await;
         let (_, utc) = ids();
         let mut head = request(format!("{base}/x"), FetchTarget::Utc(utc), BIG_CAP);
         head.method = Method::HEAD;
         head.with_credentials = false;
-        let (fetch, result) = run(&net, head).await;
+        let (fetch, result) = run(&mut net, head).await;
         assert_eq!(fetch.outcome, Outcome::Body);
         assert!(matches!(result, FetchResult::Ready(ref b) if b.is_empty()));
         let seen = seen.0.lock().unwrap().clone();
@@ -1908,7 +1909,7 @@ mod exchange {
             .route("/x", get(echo))
             .with_state(seen.clone());
         let (base, server) = serve(app).await;
-        let net = net(Duration::from_secs(5), BIG_CAP);
+        let mut net = net(Duration::from_secs(5), BIG_CAP);
         let (resource, _) = ids();
         let mut req = request(
             format!("{base}/x"),
@@ -1916,7 +1917,7 @@ mod exchange {
             BIG_CAP,
         );
         req.byte_range = Some((10, 20));
-        let (_, result) = run(&net, req).await;
+        let (_, result) = run(&mut net, req).await;
         assert!(matches!(result, FetchResult::Ready(ref b) if b.len() == 20));
         assert_eq!(seen.0.lock().unwrap().as_slice(), ["bytes=10-29"]);
         server.abort();

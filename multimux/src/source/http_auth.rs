@@ -10,17 +10,21 @@
 //! `401`, read the challenge, compute the answer, resend once) so neither
 //! HTTP source hand-rolls Digest: the actual challenge parsing and response
 //! computation is entirely [`broadcast_auth`]'s (issue #663 P3b) — the same
-//! shared model `rtsp-runtime` and `hls_runtime::client::tokio_client`
-//! use, so every credentialed client in the workspace answers a challenge
-//! through the same code.
+//! shared model `rtsp-runtime`, `broadcast-client` and `hls-runtime` use, so
+//! every credentialed client in the workspace answers a challenge through the
+//! same [`AuthState`].
+//!
+//! One [`AuthState`] belongs to a pull session, not to a request: the fetch
+//! helpers take `&mut` and update it in place, so a cookie an origin sets on
+//! the playlist is still sent with the segments, and a Digest challenge is
+//! negotiated once instead of on every fetch.
 //!
 //! Credentials come from the ingest URL's userinfo (RFC 3986 §3.2.1) —
 //! `credentials_from_url`/`strip_userinfo` generalise
 //! [`crate::source::rtsp`]'s own (RTSP-specific) userinfo handling to any
 //! URL.
 
-use broadcast_auth::Credentials;
-use broadcast_auth::{AuthDecision, AuthState};
+use broadcast_auth::{AuthDecision, AuthState, Credentials, carries_credentials};
 use reqwest::header::HeaderName;
 use reqwest::{Client, RequestBuilder, Response, StatusCode};
 use url::Url;
@@ -66,15 +70,16 @@ pub(crate) fn resolve_credentials(
 /// Binds `credentials` (if any) to the origin of `source_url`, the configured source URL with
 /// userinfo already stripped. A credential is sent only to that origin (RFC 6454 §4, issue #1142);
 /// any other host, port or scheme gets an anonymous request.
-pub(crate) fn scope_credentials(
-    credentials: Option<Credentials>,
-    source_url: &Url,
-) -> Option<AuthState> {
-    credentials.map(|credentials| {
-        let mut state = AuthState::new(source_url.clone(), Vec::new());
+///
+/// The returned state is the pull session's one [`AuthState`]: it carries the Digest authenticator
+/// negotiated for the first request and the cookies the origin set, so both persist for every
+/// later request of the same session rather than starting over.
+pub(crate) fn scope_credentials(credentials: Option<Credentials>, source_url: &Url) -> AuthState {
+    let mut state = AuthState::new(source_url.clone(), Vec::new());
+    if let Some(credentials) = credentials {
         state.set_credentials(credentials);
-        state
-    })
+    }
+    state
 }
 
 /// Returns a copy of `url` with its userinfo (username/password) removed, so
@@ -84,24 +89,29 @@ pub(crate) fn strip_userinfo(url: &Url) -> Result<Url> {
     broadcast_auth::strip_userinfo(url).map_err(|e| userinfo_error(e, url))
 }
 
-/// Performs `GET url`, answering a `401` challenge with `auth`'s credentials (if any) before
+/// Performs `GET url` on `auth`, answering a `401` challenge with [`auth`]'s credentials before
 /// returning.
 ///
-/// Each call works on its own clone of `auth`, so concurrent fetches never share a Digest nonce
-/// and every request does its own one-shot replay.
+/// `auth` is the pull session's own state and is updated in place: the cookies the origin sets on
+/// any response are stored for the session's later requests, and a challenge leaves behind the
+/// negotiated authenticator, so a Digest session is answered with one nonce round-trip instead of
+/// renegotiating on every fetch.
 ///
-/// - `Credentials::Basic`/`Bearer` are pre-applied on the first request. A `401` for either is
-///   returned as-is (wrong credentials, not a missing challenge).
+/// - `Credentials::Basic`/`Bearer` are pre-applied on the first request (RFC 7617 permits
+///   preemptive Basic). A `401` for either is returned as-is (wrong credentials, not a missing
+///   challenge).
 /// - `Credentials::Digest` sends the first request bare; on a `401` from the request's own origin
 ///   it replays once with the answer [`AuthState::handle_unauthorized`] prepares.
-/// - `auth: None`, a request to another origin, or any non-`401` first response is returned
-///   as-is.
+/// - A request to another origin, or any non-`401` response, is returned as-is. A `407` is a proxy
+///   challenge, never answered with origin credentials: there is no proxy-credential
+///   configuration here, so it goes back to the caller unchanged.
 pub(crate) async fn authenticated_get(
     client: &Client,
     url: &str,
-    auth: Option<&mut AuthState>,
+    auth: &mut AuthState,
+    now_us: u64,
 ) -> Result<Response> {
-    authenticated_get_with(client, url, auth, &[]).await
+    authenticated_get_with(client, url, auth, &[], now_us).await
 }
 
 /// [`authenticated_get`] with extra request headers (a `Range`, a conditional
@@ -109,49 +119,52 @@ pub(crate) async fn authenticated_get(
 pub(crate) async fn authenticated_get_with(
     client: &Client,
     url: &str,
-    auth: Option<&mut AuthState>,
+    auth: &mut AuthState,
     extra_headers: &[(HeaderName, String)],
+    now_us: u64,
 ) -> Result<Response> {
-    let mut auth = auth;
-    if let Some(state) = &mut auth {
-        state.preauthorize_basic();
-    }
+    auth.preauthorize_basic();
     let parsed = Url::parse(url).ok();
-    let had_auth = auth.as_mut().map(|s| {
-        parsed.as_ref().map(|p| s.request_headers(p, 0).iter().any(|(k, _)| k.eq_ignore_ascii_case("authorization"))).unwrap_or(false)
-    }).unwrap_or(false);
-    let req_auth = match &mut auth { Some(s) => Some(&mut **s), None => None };
-    let response = build_request(client, url, parsed.as_ref(), req_auth, extra_headers)
-        .send()
-        .await
-        .map_err(|e| MultimuxError::Connect {
-            reason: format!("GET {}: {e}", crate::redact::redact_url(url)),
-        })?;
+    let had_auth = parsed
+        .as_ref()
+        .is_some_and(|parsed| carries_credentials(&auth.request_headers(parsed, now_us)));
+    let response = build_request(
+        client,
+        url,
+        parsed.as_ref(),
+        Some(auth),
+        extra_headers,
+        now_us,
+    )
+    .send()
+    .await
+    .map_err(|e| MultimuxError::Connect {
+        reason: format!("GET {}: {e}", crate::redact::redact_url(url)),
+    })?;
 
-    let (Some(state), Some(parsed)) = (auth.as_mut(), parsed.as_ref()) else {
+    let Some(parsed) = parsed.as_ref() else {
         return Ok(response);
     };
-    let own_origin = state.origin().origin();
+    let own_origin = auth.origin().origin();
     let response_headers: Vec<(String, String)> = response
         .headers()
         .iter()
         .filter_map(|(k, v)| Some((k.as_str().to_owned(), v.to_str().ok()?.to_owned())))
         .collect();
-    state.receive_cookies(parsed, &response_headers, 0);
+    auth.receive_cookies(parsed, &response_headers, now_us);
 
     let status = response.status().as_u16();
-    let is_challenge = status == StatusCode::UNAUTHORIZED.as_u16();
-    if !is_challenge || parsed.origin() != own_origin || response.url().origin() != own_origin {
+    if status != StatusCode::UNAUTHORIZED.as_u16()
+        || parsed.origin() != own_origin
+        || response.url().origin() != own_origin
+    {
         return Ok(response);
     }
-    if state.credentials().is_none() {
-        return Ok(response);
-    }
-    let decision = state.handle_unauthorized(status, &response_headers, had_auth, false);
+    let decision = auth.handle_unauthorized(status, &response_headers, had_auth, false);
     if !matches!(decision, AuthDecision::Replay | AuthDecision::ReplayStale) {
         return Ok(response);
     }
-    build_request(client, url, Some(parsed), Some(state), extra_headers)
+    build_request(client, url, Some(parsed), Some(auth), extra_headers, now_us)
         .send()
         .await
         .map_err(|e| MultimuxError::Connect {
@@ -163,12 +176,13 @@ fn build_request(
     client: &Client,
     url: &str,
     parsed: Option<&Url>,
-    state: Option<&mut AuthState>,
+    auth: Option<&mut AuthState>,
     extra_headers: &[(HeaderName, String)],
+    now_us: u64,
 ) -> RequestBuilder {
     let mut req = client.get(url);
-    if let (Some(state), Some(parsed)) = (state, parsed) {
-        for (name, value) in state.request_headers(parsed, 0) {
+    if let (Some(auth), Some(parsed)) = (auth, parsed) {
+        for (name, value) in auth.request_headers(parsed, now_us) {
             req = req.header(name, value);
         }
     }
@@ -187,6 +201,10 @@ mod tests {
     use axum::response::{IntoResponse, Redirect};
     use axum::routing::get;
     use std::sync::{Arc, Mutex};
+
+    /// The cookie clock these tests stamp responses with: any fixed instant
+    /// keeps a cookie with no `Max-Age`/`Expires` live for the whole test.
+    const NOW_US: u64 = 1_000_000;
 
     /// What a loopback origin saw: one entry per request, the `Authorization`
     /// header value (or `None`).
@@ -252,7 +270,7 @@ mod tests {
             .unwrap()
     }
 
-    fn scoped(creds: Credentials, source_url: &str) -> Option<AuthState> {
+    fn scoped(creds: Credentials, source_url: &str) -> AuthState {
         scope_credentials(Some(creds), &Url::parse(source_url).unwrap())
     }
 
@@ -271,7 +289,7 @@ mod tests {
         let c = client();
 
         // Same origin: the token is sent.
-        authenticated_get(&c, &format!("{a_url}/seg"), creds.as_mut())
+        authenticated_get(&c, &format!("{a_url}/seg"), &mut creds, NOW_US)
             .await
             .unwrap();
         assert_eq!(
@@ -280,7 +298,7 @@ mod tests {
         );
 
         // An absolute URL naming another origin: an anonymous request.
-        authenticated_get(&c, &format!("{b_url}/seg"), creds.as_mut())
+        authenticated_get(&c, &format!("{b_url}/seg"), &mut creds, NOW_US)
             .await
             .unwrap();
         assert_eq!(b_seen.lock().unwrap().as_slice(), [None]);
@@ -289,7 +307,7 @@ mod tests {
         // hop carries the token, the redirected hop does not.
         a_seen.lock().unwrap().clear();
         b_seen.lock().unwrap().clear();
-        authenticated_get(&c, &format!("{a_url}/start"), creds.as_mut())
+        authenticated_get(&c, &format!("{a_url}/start"), &mut creds, NOW_US)
             .await
             .unwrap();
         assert_eq!(
@@ -311,7 +329,7 @@ mod tests {
             },
             &a_url,
         );
-        authenticated_get(&client(), &format!("{b_url}/seg"), creds.as_mut())
+        authenticated_get(&client(), &format!("{b_url}/seg"), &mut creds, NOW_US)
             .await
             .unwrap();
         assert_eq!(b_seen.lock().unwrap().as_slice(), [None]);
@@ -327,7 +345,7 @@ mod tests {
         let (b_url, b_seen) = origin(None).await;
         let (a_url, a_seen) = origin(Some(format!("{b_url}/challenge"))).await;
         let mut creds = scoped(Credentials::new("user", "hunter2-password"), &a_url);
-        let response = authenticated_get(&client(), &format!("{a_url}/start"), creds.as_mut())
+        let response = authenticated_get(&client(), &format!("{a_url}/start"), &mut creds, NOW_US)
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
@@ -341,7 +359,7 @@ mod tests {
     async fn a_digest_challenge_from_the_configured_origin_is_answered() {
         let (a_url, a_seen) = origin(None).await;
         let mut creds = scoped(Credentials::new("user", "hunter2-password"), &a_url);
-        authenticated_get(&client(), &format!("{a_url}/challenge"), creds.as_mut())
+        authenticated_get(&client(), &format!("{a_url}/challenge"), &mut creds, NOW_US)
             .await
             .unwrap();
         let seen = a_seen.lock().unwrap();
@@ -410,7 +428,7 @@ mod tests {
             },
             &a_url,
         );
-        let resp = authenticated_get(&client(), &format!("{a_url}/seg"), creds.as_mut())
+        let resp = authenticated_get(&client(), &format!("{a_url}/seg"), &mut creds, NOW_US)
             .await
             .unwrap();
         assert!(resp.status().is_success());
@@ -427,7 +445,7 @@ mod tests {
             },
             &a_url,
         );
-        let resp = authenticated_get(&client(), &format!("{a_url}/seg"), creds.as_mut())
+        let resp = authenticated_get(&client(), &format!("{a_url}/seg"), &mut creds, NOW_US)
             .await
             .unwrap();
         assert!(resp.status().is_success());
@@ -440,7 +458,8 @@ mod tests {
         let (a_url, a_seen) = origin(None).await;
         // Use /challenge which returns 401 with a Digest challenge.
         let mut creds = scoped(Credentials::new("user", "pass"), &a_url);
-        let _ = authenticated_get(&client(), &format!("{a_url}/challenge"), creds.as_mut()).await;
+        let _ =
+            authenticated_get(&client(), &format!("{a_url}/challenge"), &mut creds, NOW_US).await;
         let seen = a_seen.lock().unwrap();
         assert_eq!(seen.len(), 2);
         assert_eq!(seen[0], None);
@@ -457,7 +476,7 @@ mod tests {
             },
             &a_url,
         );
-        authenticated_get(&client(), &format!("{b_url}/seg"), creds.as_mut())
+        authenticated_get(&client(), &format!("{b_url}/seg"), &mut creds, NOW_US)
             .await
             .unwrap();
         assert_eq!(b_seen.lock().unwrap().as_slice(), [None]);
@@ -468,7 +487,7 @@ mod tests {
         let (a_url, a_seen) = origin(None).await;
         let mut creds = scoped(Credentials::new("user", "pass"), &a_url);
         // /challenge always 401; current code resends once then returns the 401.
-        let resp = authenticated_get(&client(), &format!("{a_url}/challenge"), creds.as_mut())
+        let resp = authenticated_get(&client(), &format!("{a_url}/challenge"), &mut creds, NOW_US)
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
@@ -586,7 +605,7 @@ mod tests {
     async fn digest_response_verified_right_password_gets_200() {
         let (url, seen) = verifying_origin().await;
         let mut creds = scoped(Credentials::new("user", "hunter2-password"), &url);
-        let resp = authenticated_get(&client(), &format!("{url}/v"), creds.as_mut())
+        let resp = authenticated_get(&client(), &format!("{url}/v"), &mut creds, NOW_US)
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
@@ -598,7 +617,7 @@ mod tests {
     async fn digest_wrong_password_terminal_401_after_one_replay() {
         let (url, seen) = verifying_origin().await;
         let mut creds = scoped(Credentials::new("user", "wrong"), &url);
-        let resp = authenticated_get(&client(), &format!("{url}/v"), creds.as_mut())
+        let resp = authenticated_get(&client(), &format!("{url}/v"), &mut creds, NOW_US)
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
@@ -606,16 +625,89 @@ mod tests {
         assert_eq!(seen.len(), 2);
     }
 
+    /// A `407` is the proxy's challenge (RFC 9110 §15.5.8), not the origin's, and this crate has no
+    /// proxy-credential configuration: the response goes back to the caller unchanged and the
+    /// origin's credentials are never sent a second time. Biting test: with the proxy challenge
+    /// folded into the origin's 401 path, the request is replayed and the origin sees two requests.
     #[tokio::test]
-    async fn proxy_auth_407_is_not_handled_today() {
+    async fn proxy_auth_407_goes_back_unchanged_without_origin_credentials() {
         let (url, seen) = proxy_origin().await;
         let mut creds = scoped(Credentials::new("user", "hunter2-password"), &url);
-        let resp = authenticated_get(&client(), &format!("{url}/p"), creds.as_mut())
+        let resp = authenticated_get(&client(), &format!("{url}/p"), &mut creds, NOW_US)
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::PROXY_AUTHENTICATION_REQUIRED);
         let seen = seen.lock().unwrap();
-        assert_eq!(seen.len(), 1);
+        assert_eq!(seen.len(), 1, "{seen:?}");
+    }
+
+    /// The sticky cookie jar: a cookie an origin sets on one response is sent with the session's
+    /// next request. Biting test: a per-request `auth.clone()` (or passing `None`'s state through)
+    /// drops the `Set-Cookie` and the second request carries no `Cookie` header.
+    #[tokio::test]
+    async fn a_cookie_set_on_one_response_is_sent_with_the_next_request() {
+        let cookies: Arc<Mutex<Vec<Option<String>>>> = Arc::default();
+        let c = cookies.clone();
+        let app = Router::new().route(
+            "/session",
+            get(move |h: HeaderMap| {
+                let c = c.clone();
+                async move {
+                    let cookie = h
+                        .get(header::COOKIE)
+                        .map(|v| v.to_str().unwrap_or_default().to_string());
+                    c.lock().unwrap().push(cookie.clone());
+                    match cookie {
+                        Some(value) if value.split("; ").any(|pair| pair == "sid=s3cret") => {
+                            AxumStatus::OK.into_response()
+                        }
+                        _ => (AxumStatus::OK, [(header::SET_COOKIE, "sid=s3cret; Path=/")])
+                            .into_response(),
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let url = format!("http://{addr}/session");
+        let mut creds = scope_credentials(None, &Url::parse(&url).unwrap());
+        let client = client();
+
+        let first = authenticated_get(&client, &url, &mut creds, NOW_US)
+            .await
+            .unwrap();
+        assert_eq!(first.status(), AxumStatus::OK);
+        let second = authenticated_get(&client, &url, &mut creds, NOW_US)
+            .await
+            .unwrap();
+        assert_eq!(second.status(), AxumStatus::OK);
+
+        let seen = cookies.lock().unwrap();
+        assert_eq!(seen.as_slice(), [None, Some("sid=s3cret".to_string())]);
+    }
+
+    /// `had_auth` describes the request that was actually sent. Credentials present but never
+    /// sent (a Digest state that has not negotiated its first nonce) must still earn the one
+    /// replay; hard-coding `had_auth = true` biases [`AuthState::handle_unauthorized`] to reject
+    /// the first challenge as a rejected credential.
+    #[tokio::test]
+    async fn a_digest_challenge_is_answered_when_the_first_request_carried_no_authorization() {
+        let (a_url, a_seen) = origin(None).await;
+        let mut creds = scoped(Credentials::new("user", "hunter2-password"), &a_url);
+        let resp = authenticated_get(&client(), &format!("{a_url}/challenge"), &mut creds, NOW_US)
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let seen = a_seen.lock().unwrap();
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        assert_eq!(seen[0], None, "the first request goes out bare");
+        assert!(
+            seen[1].as_deref().is_some_and(|v| v.starts_with("Digest ")),
+            "{seen:?}"
+        );
     }
 
     #[tokio::test]
@@ -646,7 +738,7 @@ mod tests {
         let url = format!("http://{addr}");
         let mut creds = scoped(Credentials::bearer("tok-secret"), &url);
         let c = client();
-        authenticated_get(&c, &format!("{url}/start"), creds.as_mut())
+        authenticated_get(&c, &format!("{url}/start"), &mut creds, NOW_US)
             .await
             .unwrap();
         let seen = seen.lock().unwrap();
@@ -683,7 +775,7 @@ mod tests {
         });
         let url = format!("http://{addr}");
         let mut creds = scoped(Credentials::new("user", "hunter2-password"), &url);
-        let resp = authenticated_get(&client(), &format!("{url}/s"), creds.as_mut())
+        let resp = authenticated_get(&client(), &format!("{url}/s"), &mut creds, NOW_US)
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);

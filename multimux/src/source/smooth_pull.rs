@@ -282,10 +282,11 @@ fn status_error(what: &str, status: StatusCode, retry_after: Option<Duration>) -
 async fn fetch_one_bytes(
     client: &HttpClient,
     url: &str,
-    creds: Option<&mut AuthState>,
+    auth: &mut AuthState,
     what: &str,
+    now_us: u64,
 ) -> std::result::Result<Vec<u8>, FetchError> {
-    let response = authenticated_get(client, url, creds)
+    let response = authenticated_get(client, url, auth, now_us)
         .await
         .map_err(|error| FetchError {
             status: None,
@@ -306,7 +307,7 @@ async fn fetch_one_bytes(
         })
 }
 
-fn build_client(route: &SmoothPullRoute) -> Result<(HttpClient, Url, Option<AuthState>)> {
+fn build_client(route: &SmoothPullRoute) -> Result<(HttpClient, Url, AuthState)> {
     let parsed = Url::parse(&route.target.url).map_err(|e| MultimuxError::Connect {
         reason: format!(
             "bad Smooth-pull URL {}: {e}",
@@ -345,7 +346,8 @@ type SmoothPendingFetch = crate::source::pull::PendingFetch<SmoothFetch>;
 
 fn pending_fetch(
     http: HttpClient,
-    mut creds: Option<AuthState>,
+    auth: AuthState,
+    now_us: u64,
     id: RequestId,
     kind: FetchKind,
     url: String,
@@ -355,13 +357,14 @@ fn pending_fetch(
         FetchKind::Manifest => "manifest",
         FetchKind::Fragment => "fragment",
     };
+    let mut auth = auth;
     crate::source::pull::PendingFetch {
         delay: Duration::ZERO,
         fut: Box::pin(async move {
             use crate::source::pull::FetchResult;
             let fetched = tokio::time::timeout(
                 read_timeout,
-                fetch_one_bytes(&http, &url, creds.as_mut(), what),
+                fetch_one_bytes(&http, &url, &mut auth, what, now_us),
             )
             .await;
             let (status, result) = match fetched {
@@ -434,6 +437,7 @@ pub async fn run_smooth_pull(
             scheduler.push(pending_fetch(
                 http.clone(),
                 credentials.clone(),
+                crate::clock::SystemHostClock::now_us(),
                 id,
                 kind,
                 url.to_string(),
@@ -780,7 +784,7 @@ mod tests {
     async fn drive_session_and_count(
         route: &SmoothPullRoute,
     ) -> Result<(Vec<TrackSpec>, HashMap<TrackId, usize>)> {
-        let (http, clean_url, credentials) = build_client(route)?;
+        let (http, clean_url, mut credentials) = build_client(route)?;
         let mut session = SmoothIngestSession::new(clean_url);
         let mut backlog: VecDeque<Action> = VecDeque::new();
         let mut specs: Vec<TrackSpec> = Vec::new();
@@ -812,8 +816,7 @@ mod tests {
                 continue;
             };
             let now = Timestamp::from_nanos(0);
-            let mut credentials = credentials;
-            let (id, is_manifest, b) = fetch_action(&http, credentials.as_mut(), action).await;
+            let (id, is_manifest, b) = fetch_action(&http, &mut credentials, action).await;
             let input = if is_manifest {
                 SmoothInput::Manifest(id, b.as_slice())
             } else {
@@ -953,8 +956,7 @@ mod tests {
                 continue;
             };
             let now = Timestamp::from_nanos(0);
-            let mut credentials = credentials;
-            let (id, is_manifest, b) = fetch_action(&http, credentials.as_mut(), action).await;
+            let (id, is_manifest, b) = fetch_action(&http, &mut credentials, action).await;
             let input = if is_manifest {
                 SmoothInput::Manifest(id, b.as_slice())
             } else {
@@ -1122,7 +1124,7 @@ mod tests {
 
     async fn fetch_action(
         http: &HttpClient,
-        creds: Option<&mut AuthState>,
+        auth: &mut AuthState,
         action: Action,
     ) -> (RequestId, bool, Vec<u8>) {
         let (id, is_manifest, url) = match action {
@@ -1130,9 +1132,15 @@ mod tests {
             Action::FetchFragment { id, url, .. } => (id, false, url),
             _ => panic!("unexpected action"),
         };
-        let body = fetch_one_bytes(http, url.as_str(), creds, "fetch")
-            .await
-            .unwrap_or_else(|e| panic!("fetch {url}: {}", e.error));
+        let body = fetch_one_bytes(
+            http,
+            url.as_str(),
+            auth,
+            "fetch",
+            crate::clock::SystemHostClock::now_us(),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("fetch {url}: {}", e.error));
         (id, is_manifest, body)
     }
 }
