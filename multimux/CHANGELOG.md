@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- RTSP pull skips unplayable SDP media sections (and foreign-authority controls and sections beyond the track cap) instead of failing the whole route; fails only when nothing is playable. Skipped sections are logged as route warnings.
 
 ### Added
 - LL-DASH renders through the shared DASH renderer (`manifest-ll.mpd` is the standard MPD model with the low-latency fields layered on: `ServiceDescription`/`Latency`, per-segment `availabilityTimeOffset`/`availabilityTimeComplete`, `minimumUpdatePeriod` at the chunk interval), so it gains what only `manifest.mpd` had: the Period split at a gap placeholder and at every init generation, each Period naming the versioned init segment its segments were cut under, and the SCTE-35 `InbandEventStream` declaration. A test pins that both flavours render the same Periods for a window through a gap and a codec change.
