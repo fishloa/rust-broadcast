@@ -14,7 +14,6 @@ pub mod origin;
 pub mod output;
 pub mod prometheus;
 pub mod push;
-pub mod reconnect;
 pub mod redact;
 pub mod registry;
 pub mod route;

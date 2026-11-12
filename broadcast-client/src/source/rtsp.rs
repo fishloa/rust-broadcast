@@ -336,8 +336,7 @@ impl RtspSource {
                 self.flush_depacketiser(now);
                 self.discontinuity_pending |= self.seen_first_sample;
                 self.drop_connection(true);
-                self.attempt = 0;
-                self.phase = Phase::Backoff(now);
+                self.backoff_after_played(now);
             }
         }
     }
@@ -403,6 +402,9 @@ impl RtspSource {
             .saturating_mul(US_PER_MS)
             .saturating_sub(lasted);
         self.attempt = 0;
+        // The connection played, so the retry series restarts from its floor
+        // (the shared timer's healthy-connection rule).
+        self.retry.reset();
         self.discontinuity_pending = true;
         self.events
             .push_back(Event::Status(Status::Reconnecting { attempt: 0 }));
@@ -445,7 +447,6 @@ impl RtspSource {
         self.forget_connection_state();
         self.seen_first_sample = false;
         self.connected_at = now;
-        self.retry.on_connected(now);
         self.last_byte_at = now;
         self.last_sample_at = now;
         let conn = self.alloc_conn();
@@ -1179,7 +1180,7 @@ impl RtspSource {
         self.attempt = self.attempt.saturating_add(1);
         let wait = self.retry.on_disconnected(now);
         self.events.push_back(Event::Status(Status::Reconnecting {
-            attempt: self.attempt,
+            attempt: u64::from(self.retry.attempts()),
         }));
         self.phase = Phase::Backoff(now.saturating_add(us_of(wait)));
     }

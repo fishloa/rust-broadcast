@@ -22,7 +22,6 @@ use super::session::{DashIngestSession, DashInput, FetchTarget, RetryTarget};
 use super::{DashPullDialer, DashPullRoute, build_client};
 use crate::clock::HostClock;
 use crate::error::{MultimuxError, Result};
-use crate::reconnect::ReconnectSchedule;
 use crate::source::driver::terminal_result;
 use crate::source::http_auth::authenticated_get_with;
 use crate::source::pull::{FetchOutcome, FetchResult, PendingFetch, PullScheduler};
@@ -376,8 +375,13 @@ pub(super) fn spawn_fetch(net: &Net, req: Request) -> PendingFetch<DashFetch> {
 }
 
 pub(super) fn backoff(attempt: u32) -> Duration {
-    ReconnectSchedule::from_parts(RETRY_BASE, RETRY_CAP, RETRY_FACTOR)
-        .delay_for_attempt(attempt.saturating_sub(1))
+    broadcast_common::backoff::RetrySchedule::new(
+        RETRY_BASE,
+        RETRY_CAP,
+        RETRY_FACTOR,
+        crate::source::seed_entropy(),
+    )
+    .delay_for_attempt(attempt.saturating_sub(1))
 }
 
 fn stamp(now_us: u64) -> Timestamp {

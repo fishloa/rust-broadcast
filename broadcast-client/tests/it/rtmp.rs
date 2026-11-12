@@ -239,10 +239,15 @@ fn a_missing_stream_is_not_found_closes_and_backs_off_two_seconds() {
     h.advance_to(2 * SEC);
     assert_eq!(h.connects.len(), 2);
     h.collect();
-    h.advance_to(2 * SEC + 4 * SEC - 1);
+    // The second failure waits the 4 s step, jittered below it.
+    h.advance_to(2 * SEC + 4 * SEC * 5 / 6 - 1);
     assert_eq!(h.connects.len(), 2);
     h.advance_to(2 * SEC + 4 * SEC);
-    assert_eq!(h.connects.len(), 3, "the second failure waits four seconds");
+    assert_eq!(
+        h.connects.len(),
+        3,
+        "the second failure waits the 4 s step at most"
+    );
     assert_eq!(h.samples().len(), 0);
 }
 

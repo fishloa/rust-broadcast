@@ -61,6 +61,12 @@ fn gaps_secs(at: &[u64]) -> Vec<u64> {
     at.windows(2).map(|w| (w[1] - w[0]) / SEC).collect()
 }
 
+/// Whether `gaps` walks the default backoff schedule (2 s, 4 s, 8 s): the
+/// first gap is exactly its step and every later one within a sixth below it.
+fn walks_the_default_schedule(gaps: &[u64]) -> bool {
+    gaps.len() == 3 && gaps[0] == 2 && (3..=4).contains(&gaps[1]) && (6..=8).contains(&gaps[2])
+}
+
 fn refused(events: &[Event]) -> Vec<(u16, Option<u64>, Option<String>)> {
     events
         .iter()
@@ -128,7 +134,11 @@ fn ts_http_retry_after_is_capped_at_sixty_seconds() {
 fn ts_http_without_retry_after_keeps_the_normal_backoff() {
     let mut h = ts_host(vec![refusal(503, &[], b"")]);
     let at = request_times(&mut h, 4);
-    assert_eq!(gaps_secs(&at), vec![2, 4, 8]);
+    let gaps = gaps_secs(&at);
+    assert!(
+        walks_the_default_schedule(&gaps),
+        "2 s, 4 s, 8 s (jittered below each step): {gaps:?}"
+    );
 }
 
 #[test]
@@ -145,7 +155,12 @@ fn ts_http_ignores_retry_after_on_other_statuses() {
 fn ts_http_retry_after_does_not_outlive_its_response() {
     let mut h = ts_host(vec![busy("30"), refusal(503, &[], b"")]);
     let at = request_times(&mut h, 3);
-    assert_eq!(gaps_secs(&at), vec![30, 4]);
+    let gaps = gaps_secs(&at);
+    assert_eq!(gaps[0], 30, "the requested wait");
+    assert!(
+        (3..=4).contains(&gaps[1]),
+        "the next backoff step (4 s, jittered below it): {gaps:?}"
+    );
 }
 
 #[test]

@@ -28,31 +28,34 @@ const STATUS_SERVICE_UNAVAILABLE: u16 = 503;
 const HEADER_RETRY_AFTER: &str = "retry-after";
 const HEADER_DATE: &str = "date";
 
-/// The retry schedule: `steps_ms[attempt - 1]`, then `cap_ms` forever, drawn from the workspace's
-/// one capped retry schedule ([`RetrySchedule`], issue #2471), which applies equal jitter: the
-/// delay is the first step exactly, then the step times a term of `[5/6, 1.0)`, so a fleet of
-/// clients retrying one origin does not lockstep, the delay never exceeds the step, and it never
-/// falls more than a sixth below it.
+/// The retry schedule every broadcast-client adapter waits out: `steps_ms[attempt - 1]`, then
+/// `cap_ms` forever, configured as one [`RetrySchedule`] (issue #2471).
 ///
-/// Every entry and the cap are raised to at least one millisecond, so a zero never produces an
-/// unbounded burst of retries at one instant.
+/// The first delay is exactly its step; every later one is the step times a jitter term of
+/// `[5/6, 1.0)`, so a fleet of clients retrying one origin does not lockstep and no delay ever
+/// exceeds its step.
 #[derive(Debug, Clone)]
-pub(crate) struct Backoff {
+pub struct Backoff {
     schedule: RetrySchedule,
 }
 
 impl Backoff {
     /// Build a schedule from `steps_ms` (per-attempt delays), a `cap_ms` used for every later
-    /// attempt and the caller's own `seed` for the jitter. Every entry and the cap are raised to
-    /// at least one millisecond.
+    /// attempt and the caller's own `seed` for the jitter.
+    ///
+    /// Every entry and the cap are raised to at least one millisecond, so a zero never produces an
+    /// unbounded burst of retries at one instant.
     pub(crate) fn new(steps_ms: &[u64], cap_ms: u64, seed: u64) -> Self {
         Self::new_raw(steps_ms, cap_ms, seed)
     }
 
     fn new_raw(steps_ms: &[u64], cap_ms: u64, seed: u64) -> Self {
-        let cap = millis(cap_ms).max(Duration::from_millis(MIN_BACKOFF_MS));
         Self {
-            schedule: RetrySchedule::from_steps(&millis_steps(steps_ms), cap, seed),
+            schedule: RetrySchedule::from_steps(
+                &millis_steps(steps_ms),
+                millis(cap_ms).max(Duration::from_millis(MIN_BACKOFF_MS)),
+                seed,
+            ),
         }
     }
 
@@ -129,8 +132,8 @@ fn duration_us(wait: Duration) -> u64 {
     u64::try_from(wait.as_micros()).unwrap_or(u64::MAX)
 }
 
-/// A step table in milliseconds, every entry raised to at least [`MIN_BACKOFF_MS`] and saturating
-/// at [`Duration::MAX`] rather than wrapping back to a tiny delay.
+/// A step table in milliseconds, saturating at [`Duration::MAX`] rather than wrapping back to a
+/// tiny delay.
 fn millis_steps(steps_ms: &[u64]) -> Vec<Duration> {
     steps_ms
         .iter()
@@ -150,32 +153,28 @@ fn millis(ms: u64) -> Duration {
 /// How long a connection must stay up before the retry series restarts from its floor: a peer
 /// that accepts a connection and drops it seconds later, repeatedly, is a failing peer, so the
 /// backoff (and the attempt counter) only restarts after a connection at least this long.
-pub(crate) const HEALTHY_CONNECTION_US: u64 = 30_000_000;
+pub const HEALTHY_CONNECTION_US: u64 = 30_000_000;
 
-/// The reconnect timer (issue #2471: the workspace carried this rule twice, as multimux's
-/// supervisor `Backoff` and its push `ReconnectEngine`): a [`RetrySchedule`] plus the attempt
-/// counter, the instant the current connection came up, and the rule that only a
-/// [`HEALTHY_CONNECTION_US`]-long connection restarts the series.
+/// The reconnect timer (issue #2471: the workspace carried this rule once in multimux's origin
+/// supervisor and again in its push engine): a [`RetrySchedule`] plus the attempt counter, the
+/// instant the current connection came up, and the rule that only a connection that stayed up for
+/// [`HEALTHY_CONNECTION_US`] restarts the series.
 ///
 /// The caller drives it with its own clock: [`on_connected`](Self::on_connected) and
-/// [`on_disconnected`](Self::on_disconnected) take the instant, and
-/// [`time_until_retry`](Self::time_until_retry) reports what is left of the wait. Nothing here
-/// reads a clock or sleeps.
+/// [`on_disconnected`](Self::on_disconnected) take the instant, and the latter returns the wait to
+/// arm. Nothing here reads a clock or sleeps.
 #[derive(Debug, Clone)]
-pub(crate) struct ReconnectTimer {
+pub struct ReconnectTimer {
     schedule: RetrySchedule,
     attempts: u32,
     connected_at: Option<u64>,
 }
 
 impl ReconnectTimer {
-    pub(crate) fn new(steps_ms: &[u64], cap_ms: u64, seed: u64) -> Self {
+    /// A timer over a step table (millisecond steps, then the cap), jittered from `seed`.
+    pub fn new(steps_ms: &[u64], cap_ms: u64, seed: u64) -> Self {
         Self {
-            schedule: RetrySchedule::from_steps(
-                &millis_steps(steps_ms),
-                millis(cap_ms).max(Duration::from_millis(MIN_BACKOFF_MS)),
-                seed,
-            ),
+            schedule: RetrySchedule::from_steps(&millis_steps(steps_ms), millis(cap_ms), seed),
             attempts: 0,
             connected_at: None,
         }
@@ -183,8 +182,22 @@ impl ReconnectTimer {
 
     /// A connection came up at `now_us`. The attempt counter is not reset here: it restarts only
     /// if this connection stays up for [`HEALTHY_CONNECTION_US`] and then ends.
-    pub(crate) fn on_connected(&mut self, now_us: u64) {
+    pub fn on_connected(&mut self, now_us: u64) {
         self.connected_at = Some(now_us);
+    }
+
+    /// Restart the series from its floor — call after a success, so the next
+    /// outage waits the first step again. The jitter sequence starts over too,
+    /// so the restarted series is the one a fresh timer would draw.
+    pub fn reset(&mut self) {
+        self.attempts = 0;
+        self.connected_at = None;
+        self.schedule = self.schedule.clone().with_offset(0);
+    }
+
+    /// How many attempts the current series has taken since it last restarted.
+    pub fn attempts(&self) -> u32 {
+        self.attempts
     }
 
     /// A connection ended (or a dial-out failed) at `now_us`: start the next wait and return its
@@ -192,7 +205,7 @@ impl ReconnectTimer {
     ///
     /// The delay is the schedule's `[raw*5/6, raw]` band, the first retry being the raw delay
     /// itself.
-    pub(crate) fn on_disconnected(&mut self, now_us: u64) -> Duration {
+    pub fn on_disconnected(&mut self, now_us: u64) -> Duration {
         let healthy = self
             .connected_at
             .take()
@@ -372,6 +385,8 @@ mod tests {
         assert_eq!(backoff.raw_delay_us(0), 2_000_000);
     }
 
+    /// A zero step or cap is floored at one millisecond, so a zero never produces an
+    /// unbounded burst of retries at one instant.
     #[test]
     fn a_zero_step_or_cap_never_bursts() {
         let backoff = Backoff::new(&[0, 5, 0], 0, 0x5EED);

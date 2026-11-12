@@ -1934,17 +1934,25 @@ fn the_retry_delay_doubles_from_half_a_second_to_a_cap() {
         let d = drive::backoff(attempt);
         let raw = Duration::from_millis(raw_ms);
         assert!(
-            d >= raw / 2 && d < raw,
-            "attempt {attempt}: {d:?} outside [{:?}, {raw:?})",
-            raw / 2
+            d >= raw.mul_f64(5.0 / 6.0) && d <= raw,
+            "attempt {attempt}: {d:?} outside [{:?}, {raw:?}]",
+            raw.mul_f64(5.0 / 6.0)
         );
     };
-    in_band(1, 500);
+    assert_eq!(
+        drive::backoff(1),
+        Duration::from_millis(500),
+        "the first step"
+    );
     in_band(2, 1_000);
     in_band(3, 2_000);
     in_band(4, 4_000);
     in_band(5, 4_000);
-    in_band(0, 500);
+    assert_eq!(
+        drive::backoff(0),
+        Duration::from_millis(500),
+        "attempt 0 is the first step"
+    );
     in_band(u32::MAX, 4_000);
 }
 

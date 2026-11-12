@@ -24,7 +24,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "source/file_reader.rs",
-        484,
+        485,
         "spawn_blocking for a blocking file read; awaited inline (owned by the caller)",
     ),
     (

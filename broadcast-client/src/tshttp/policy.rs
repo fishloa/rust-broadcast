@@ -522,11 +522,6 @@ impl TsHttpPolicy {
         self.received_bytes = 0;
         self.finite_done = false;
         self.retry_after_ms = 0;
-        // Every open is a fresh connection, so the healthy-connection rule (only a connection that
-        // stayed up restarts the retry series) and the jitter sequence restart here. The failure
-        // counter `attempt` stays the policy's own label, reportable across a restart.
-        self.retry
-            .on_connected(now_ms.saturating_mul(MICROS_PER_MILLI));
         self.actions.push_back(Action::Open {
             url: self.url.clone(),
         });
@@ -554,9 +549,12 @@ impl TsHttpPolicy {
     }
 
     fn played_ended(&mut self, now_ms: u64) {
+        // A connection that played and then ended is a healthy one: the
+        // failure counter restarts at its floor, and the retry series is
+        // rewound rather than charged for this reconnect — its whole wait is
+        // `min_reconnect_interval_ms`.
         self.attempt = 0;
-        self.retry
-            .on_connected(now_ms.saturating_mul(MICROS_PER_MILLI));
+        self.retry.reset();
         let lasted = now_ms.saturating_sub(self.open_at);
         let after = self.config.min_reconnect_interval_ms.saturating_sub(lasted);
         self.actions

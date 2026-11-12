@@ -452,10 +452,10 @@ fn retry_after_sets_the_wait_for_a_429_and_cookies_from_the_mpd_are_kept() {
         .windows(2)
         .map(|w| (w[1].send_elapsed_us - w[0].send_elapsed_us) / SEC)
         .collect();
-    assert_eq!(
-        gaps,
-        [9, 4],
-        "Retry-After 9 s for the 429; the junk body that follows carries none, so the second backoff step (4 s) applies"
+    assert_eq!(gaps[0], 9, "Retry-After 9 s for the 429");
+    assert!(
+        (3..=4).contains(&gaps[1]),
+        "the junk body that follows carries no Retry-After, so the second backoff step (4 s, jittered below it) applies: {gaps:?}"
     );
     assert!(
         sim.log

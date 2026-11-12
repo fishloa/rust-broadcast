@@ -22,7 +22,15 @@ fn backoff_2_4_8_then_10_forever() {
         c.poll_timeout(dl);
         let _ = c.poll(); // Open
     }
-    assert_eq!(got, vec![2000, 4000, 8000, 10000, 10000, 10000]);
+    // The first step is exactly its configured delay; every later one is
+    // jittered within a sixth below it (the shared schedule, issue #2471).
+    assert_eq!(got[0], 2000);
+    for (step, delay) in [4000u64, 8000, 10000, 10000, 10000].iter().zip(&got[1..]) {
+        assert!(
+            (*delay as f64) >= (*step as f64) * 5.0 / 6.0 && *delay <= *step,
+            "a {step} ms step: {delay} ms"
+        );
+    }
 }
 
 #[test]
@@ -57,9 +65,17 @@ fn played_then_ended_resets_attempt_counter() {
     let dl = c.next_deadline().unwrap();
     c.poll_timeout(dl);
     let _ = c.poll(); // Open
-    // next failure => 2000
+    // next failure => the first step again: exactly 2000 ms, unjittered,
+    // which is what a restarted series shows.
     c.on_error(0);
-    assert_eq!(c.poll(), Some(Action::Reconnect { after_ms: 2000 }));
+    let after_ms = loop {
+        match c.poll() {
+            Some(Action::Reconnect { after_ms }) => break after_ms,
+            Some(_) => continue,
+            None => panic!("no reconnect was queued"),
+        }
+    };
+    assert_eq!(after_ms, 2000);
 }
 
 #[test]
