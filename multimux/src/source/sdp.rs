@@ -120,10 +120,14 @@ pub fn parse_tracks_multimux(sdp: &[u8]) -> Result<Vec<TrackInit>> {
 /// Plans the RTSP `SETUP`/`PLAY` for a DESCRIBE body: every media section
 /// must be a supported codec (any failure is the whole call's error), and a
 /// control URL on another authority is an error rather than a skipped track.
-/// Relative controls resolve against `request_url` itself, as a URI
-/// reference (RFC 3986 §5), the way this source always has: the server's
-/// `Content-Base` is not consulted.
-pub(crate) fn plan_tracks(request_url: &Url, sdp: &[u8]) -> Result<(PlayPlan, Vec<TrackInit>)> {
+/// Relative controls resolve against `content_base` (the DESCRIBE reply's
+/// `Content-Base`, else `Content-Location`), else `request_url` (RFC 2326
+/// Appendix C.1.1).
+pub(crate) fn plan_tracks(
+    request_url: &Url,
+    content_base: Option<&str>,
+    sdp: &[u8],
+) -> Result<(PlayPlan, Vec<TrackInit>)> {
     let text = std::str::from_utf8(sdp).map_err(|e| MultimuxError::Sdp {
         reason: format!("parse: {e}"),
     })?;
@@ -131,7 +135,7 @@ pub(crate) fn plan_tracks(request_url: &Url, sdp: &[u8]) -> Result<(PlayPlan, Ve
     let mut failure: Option<MultimuxError> = None;
     let plan = PlayPlan::from_describe_selecting(
         request_url,
-        Some(request_url.as_str()),
+        content_base,
         None,
         text,
         FIRST_CHANNEL,
@@ -259,13 +263,16 @@ a=control:streamid=0\r\n";
     }
 
     fn plan_for(sdp: &[u8]) -> Result<(PlayPlan, Vec<TrackInit>)> {
-        plan_tracks(&Url::parse("rtsp://cam.example/test").unwrap(), sdp)
+        plan_tracks(&Url::parse("rtsp://cam.example/test").unwrap(), None, sdp)
     }
 
     #[test]
-    fn plan_resolves_controls_against_the_request_url_as_a_reference() {
+    fn plan_resolves_controls_beneath_the_request_url() {
         let (plan, tracks) = plan_for(SDP).unwrap();
-        assert_eq!(plan.setups()[0].control, "rtsp://cam.example/streamid=0");
+        assert_eq!(
+            plan.setups()[0].control,
+            "rtsp://cam.example/test/streamid=0"
+        );
         assert_eq!(plan.play_uri(), "rtsp://cam.example/test");
         assert_eq!(tracks[0].channel, 0);
     }
@@ -290,5 +297,19 @@ a=control:streamid=0\r\n";
             plan_for(sdp.as_bytes()),
             Err(crate::error::MultimuxError::Sdp { .. })
         ));
+    }
+
+    #[test]
+    fn plan_resolves_controls_against_the_content_base() {
+        let (plan, _) = plan_tracks(
+            &Url::parse("rtsp://cam.example/test").unwrap(),
+            Some("rtsp://cam.example/base/"),
+            SDP,
+        )
+        .unwrap();
+        assert_eq!(
+            plan.setups()[0].control,
+            "rtsp://cam.example/base/streamid=0"
+        );
     }
 }

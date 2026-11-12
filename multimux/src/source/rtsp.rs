@@ -299,7 +299,9 @@ impl RtspIngestSession {
                 }
                 match (&self.phase, &method) {
                     (Phase::AwaitDescribe, m) if *m == Method::Describe => {
-                        let (plan, tracks) = plan_tracks(&self.base_url, &body)?;
+                        let content_base = self.session.content_base().map(str::to_owned);
+                        let (plan, tracks) =
+                            plan_tracks(&self.base_url, content_base.as_deref(), &body)?;
                         self.plan = Some(plan);
                         self.tracks = tracks;
                         self.begin_setup(0)?;
@@ -1196,7 +1198,7 @@ mod tests {
             .poll_transmit()
             .expect("DESCRIBE response must queue a SETUP request");
         let setup_text = String::from_utf8(setup_req.to_vec()).unwrap();
-        assert!(setup_text.starts_with("SETUP rtsp://cam.local/trackID=1 RTSP/1.0\r\n"));
+        assert!(setup_text.starts_with("SETUP rtsp://cam.local/stream/trackID=1 RTSP/1.0\r\n"));
         assert!(setup_text.contains("CSeq: 2\r\n"));
         assert!(setup_text.contains("Transport:"));
 
