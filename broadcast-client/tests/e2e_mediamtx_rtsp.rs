@@ -26,7 +26,6 @@ const MEDIAMTX: &str = "mediamtx";
 const FFMPEG: &str = "ffmpeg";
 const FIXTURE: &str = "ts/h264-aac.ts";
 const STREAM_PATH: &str = "live";
-const READY_DEADLINE: Duration = Duration::from_secs(30);
 static SERVER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 const PUBLISHER_WARMUP: Duration = Duration::from_secs(4);
 const SOURCE_LOOPS: &str = "12";
@@ -118,17 +117,6 @@ fn write_config(dir: &Path, rtsp_port: u16) -> PathBuf {
     let path = dir.join("mediamtx.yml");
     fs::write(&path, config).expect("write mediamtx config");
     path
-}
-
-fn wait_for_port(port: u16) {
-    let deadline = Instant::now() + READY_DEADLINE;
-    while TcpStream::connect(("127.0.0.1", port)).is_err() {
-        assert!(
-            Instant::now() < deadline,
-            "mediamtx never listened on {port}"
-        );
-        thread::sleep(Duration::from_millis(50));
-    }
 }
 
 fn spawn_quiet(cmd: &mut Command, dir: &Path) -> Tool {
@@ -427,7 +415,13 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
     let port = free_tcp_port();
     let config = write_config(&dir.0, port);
     let _server = spawn_quiet(Command::new(mediamtx).arg(&config), &dir.0);
-    wait_for_port(port);
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(test_fixtures::process::wait_for_port(
+            std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+        ));
 
     let url = format!("rtsp://127.0.0.1:{port}/{STREAM_PATH}");
     let fixture = test_fixtures::path(FIXTURE);

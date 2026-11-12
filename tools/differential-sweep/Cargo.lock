@@ -336,8 +336,10 @@ dependencies = [
  "erased-serde",
  "hex",
  "iso-639",
+ "jiff",
  "quick-xml",
  "serde",
+ "thiserror",
 ]
 
 [[package]]
