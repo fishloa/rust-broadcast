@@ -6,9 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Removed
+- BREAKING: `broadcast_client::auth`'s own `AuthState`, `AuthDecision`, `AuthEvent` and `carries_credentials` definitions — they live in `broadcast-auth` now, and this module re-exports them, so the paths keep working but the types are `broadcast_auth`'s.
 ### Changed
 - `Retry-After` HTTP-date parsing now uses `broadcast-common::http_date::parse_http_date`.
 ### Changed
+- `AuthState` now comes from `broadcast-auth`; `broadcast-client` keeps no copy.
 - RTSP keepalive now uses `rtsp_runtime::ClientSession`'s schedule (half the declared `Session;timeout=`, the RFC 2326 §12.37 60 s default when none is declared) instead of a local timer with its own default and ceiling, and its method is the one the server advertises.
 - RTP sequence validity now uses `rtp_packet::SeqValidity` instead of a local delta/resync heuristic.
 - RTSP pull uses rtsp-runtime's `MAX_TRACKS` cap instead of a local constant.

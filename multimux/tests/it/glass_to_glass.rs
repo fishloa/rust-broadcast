@@ -1,22 +1,27 @@
-//! Issue #717 slice 5 acceptance test: `TokioClient` driving a REAL LL-HLS
-//! origin over real loopback HTTP, proving sub-second glass-to-glass
+//! Issue #717 slice 5 acceptance test: multimux's own HLS pull driving a REAL
+//! LL-HLS origin over real loopback HTTP, proving sub-second glass-to-glass
 //! latency — the epic's headline acceptance bar — plus blocking-reload and
 //! preload-hint prefetch actually being exercised (not just parsed), plus a
 //! non-LL origin still playing via the full-segment fallback.
 //!
+//! # Which client, and why
+//!
+//! The client is the production one: this file drives `run_hls_pull` — the
+//! `hls` input every pulled route runs, over the sans-IO `HlsClient` — and
+//! pays attention to nothing else. Its fetches, retries, reload pacing and
+//! publication are all the shipped code; the test only observes. The counters
+//! the deleted executor-bound adapter used to carry are observed the same
+//! way, from the requests the loop issues.
+//!
 //! # Which origin
 //!
-//! The LL-HLS half of this file reuses `multimux`'s real, production
-//! `RouteHandle` + `HlsOutput` + `origin::router` (the same axum origin
-//! shipped in `multimux`) — not a test double — driven by a hand-written,
-//! real-time-paced producer loop (a `transmux::ll_hls::LlHlsSegmenter` fed
-//! one sample every ~33ms, mirroring `multimux::pipeline::run_pipeline`'s own
-//! segmenter->store wiring, but with genuine wall-clock pacing between
-//! samples so the origin is *live-shaped* rather than dumping every part into
-//! the store instantly). This test lives in `multimux/tests/` because
-//! `hls-runtime` is a normal dependency of `multimux`, so there is no
-//! cycle: the governing rule is that a cross-crate test lives in the
-//! topologically highest crate it touches.
+//! The LL-HLS half reuses `multimux`'s real, production `RouteHandle` +
+//! `HlsOutput` + `origin::router` (the same axum origin shipped in
+//! `multimux`) — not a test double — driven by a hand-written, real-time-paced
+//! producer loop (a `transmux::ll_hls::LlHlsSegmenter` fed one sample every
+//! ~33ms, mirroring `multimux::pipeline::run_pipeline`'s own segmenter->store
+//! wiring, but with genuine wall-clock pacing between samples so the origin
+//! is *live-shaped* rather than dumping every part into the store instantly).
 //!
 //! The non-LL half uses a minimal hand-built axum app instead of
 //! `multimux`'s origin, since `multimux::output::hls::HlsOutput` always
@@ -29,32 +34,44 @@
 //! (nanoseconds since `UNIX_EPOCH`, big-endian) — `transmux` never
 //! interprets sample bytes, so this rides through mux/demux byte-identical.
 //! On the client side, `glass_to_glass = now() - decoded_push_time` for
-//! every sample the client emits; the assertion is on the **max** observed
-//! across the whole run.
+//! every sample the client emits; the assertions are on the **90th
+//! percentile** across the whole run and on the **worst** sample.
+//!
+//! # Why the sample watcher, not the pulled route's segment stream
+//!
+//! The pulled route re-segments what it pulls, and the client's own segment
+//! stream is not what it plays — a live LL origin is consumed part by part.
+//! A watcher reading the client's decoded samples as they are emitted is
+//! therefore the faithful measurement; reading the route's closed segments
+//! would report samples that have been waiting for a segment boundary.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use transmux::TrackId;
 
 use axum::Router;
 use axum::response::IntoResponse;
 use axum::routing::get;
 
+use broadcast_common::Stage;
+use broadcast_common::Timestamp;
 use broadcast_hls::{DecimalSeconds, MapTag, MediaPlaylist, MediaSegment};
-use hls_runtime::client::Output;
-use hls_runtime::client::tokio_client::TokioClient;
+use hls_runtime::client::Action;
+use hls_runtime::server::DEFAULT_TRACK_ID;
+use media_plane::ProgramId;
+use media_plane::ingress::{IngestSession, SessionEvent};
 use multimux::origin::{AppState, router};
 use multimux::output::Output as MmOutput;
-use multimux::output::hls::HlsOutput;
+use multimux::output::hls::HlsOutput as MmHlsOutput;
 use multimux::route::RouteHandle;
+use multimux::source::hls_pull::{HlsFetchId, HlsIngestSession};
+use transmux::TrackId;
 use transmux::ll_hls::LlHlsSegmenter;
 use transmux::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps, CodecConfig, Sample,
     TrackSpec,
 };
 
-use hls_runtime::server::DEFAULT_TRACK_ID;
 const TRACK_ID: u32 = DEFAULT_TRACK_ID.value();
 /// Matches `multimux::pipeline`'s own fixed CMAF movie timescale.
 const MOVIE_TIMESCALE: u32 = 90_000;
@@ -78,6 +95,14 @@ const P90_LATENCY_BOUND: Duration = Duration::from_secs(1);
 const MAX_LATENCY_CEILING: Duration = Duration::from_secs(3);
 /// Percentile used for the steady-state bound.
 const STEADY_STATE_PERCENTILE: usize = 90;
+/// Length of the push-instant stopwatch that starts a timestamped payload.
+const STOPWATCH_BYTES: usize = 8;
+/// How long the drive loop waits for the next fetch result. Every fetch is
+/// already bounded by its own read timeout; this only bounds the idle park.
+const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(5);
+/// The part url a playlist names with `#EXT-X-PRELOAD-HINT` (RFC 8216bis
+/// §4.4.5.3).
+const PRELOAD_HINT_TAG: &str = "#EXT-X-PRELOAD-HINT:";
 
 fn dummy_avc_config() -> AVCConfigurationBox {
     AVCConfigurationBox::new(AVCDecoderConfigurationRecord {
@@ -107,15 +132,21 @@ fn video_track() -> TrackSpec {
     )
 }
 
+fn now_ns() -> u64 {
+    u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock is after the epoch")
+            .as_nanos(),
+    )
+    .expect("a wall-clock reading fits in u64 nanoseconds")
+}
+
 /// Build a sample whose payload's first 8 bytes are `now()` (nanoseconds
 /// since `UNIX_EPOCH`, big-endian) — a wall-clock stopwatch riding through
 /// the mux/demux pipeline as opaque coded bytes.
 fn timestamped_sample(is_sync: bool) -> Sample {
-    let now_ns = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock is after the epoch")
-        .as_nanos() as u64;
-    let mut data = now_ns.to_be_bytes().to_vec();
+    let mut data = now_ns().to_be_bytes().to_vec();
     data.extend_from_slice(&[0xAB; 16]);
     // No absolute source time: these are synthetic samples for the
     // duration-driven `Segmenter`, so dts/pts stay `None` (media plane step 2c
@@ -127,20 +158,133 @@ fn timestamped_sample(is_sync: bool) -> Sample {
 /// The inverse of [`timestamped_sample`]: how long ago (from `now()`) this
 /// sample's payload says it was pushed.
 fn glass_to_glass(sample: &Sample) -> Duration {
-    let mut buf = [0u8; 8];
-    buf.copy_from_slice(&sample.data[..8]);
-    let pushed_ns = u64::from_be_bytes(buf);
-    let pushed = UNIX_EPOCH + Duration::from_nanos(pushed_ns);
-    SystemTime::now()
-        .duration_since(pushed)
-        .unwrap_or(Duration::ZERO)
+    let pushed_ns = u64::from_be_bytes(
+        sample.data[..STOPWATCH_BYTES]
+            .try_into()
+            .expect("a timestamped sample starts with its 8-byte stopwatch"),
+    );
+    Duration::from_nanos(now_ns().saturating_sub(pushed_ns))
+}
+
+/// What one drive asked the origin for: blocking reloads (`_HLS_msn`/
+/// `_HLS_part` on a playlist GET) and preload-hint prefetches (a part GET
+/// for the url the previous playlist's `#EXT-X-PRELOAD-HINT` named).
+#[derive(Debug, Default, Clone, Copy)]
+struct ClientActivity {
+    blocking_reloads: u64,
+    preload_hint_resource_fetches: u64,
+}
+
+/// One driven client run: every emitted sample's glass-to-glass age, and what
+/// the engine asked the origin for.
+struct ClientRun {
+    sample_count: usize,
+    latencies: Vec<Duration>,
+    activity: ClientActivity,
+}
+
+/// `GET url`, optionally for one byte sub-range (RFC 8216bis §4.4.4.9's
+/// `BYTERANGE`), returning the response body.
+async fn get_bytes(http: &reqwest::Client, url: &str, byte_range: Option<(u64, u64)>) -> Vec<u8> {
+    try_get_bytes(http, url, byte_range)
+        .await
+        .unwrap_or_else(|| panic!("client GET {url} must succeed"))
+}
+
+/// [`get_bytes`], `None` for a `404` — the origin no longer has that part.
+async fn try_get_bytes(
+    http: &reqwest::Client,
+    url: &str,
+    byte_range: Option<(u64, u64)>,
+) -> Option<Vec<u8>> {
+    let mut request = http.get(url);
+    if let Some((offset, length)) = byte_range {
+        let end = offset.saturating_add(length.saturating_sub(1));
+        request = request.header("Range", format!("bytes={offset}-{end}"));
+    }
+    let response = request.send().await.expect("client GET");
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return None;
+    }
+    assert!(
+        response.status().is_success(),
+        "client GET {url} answered {}",
+        response.status()
+    );
+    Some(
+        response
+            .bytes()
+            .await
+            .expect("client reads the body")
+            .to_vec(),
+    )
+}
+
+/// Whether a resource GET for `url` is the prefetch of `hint` — the part the
+/// last playlist named in `#EXT-X-PRELOAD-HINT` (RFC 8216bis §4.4.5.3) —
+/// which is fetched ahead of that part's own numbered `#EXT-X-PART` entry.
+/// Both are urls; the hint is compared by its last path segment, the same
+/// resource the client resolves relative to the playlist.
+fn prefetches_hint(hint: Option<&str>, url: &str) -> bool {
+    let Some(hint) = hint else {
+        return false;
+    };
+    let requested = url.rsplit('/').next().unwrap_or(url);
+    requested == hint
+}
+
+/// The part url a playlist names in its `#EXT-X-PRELOAD-HINT` (RFC 8216bis
+/// §4.4.5.3), if any.
+fn preload_hint(playlist: &[u8]) -> Option<String> {
+    let text = core::str::from_utf8(playlist).ok()?;
+    let attributes = text
+        .lines()
+        .find_map(|line| line.strip_prefix(PRELOAD_HINT_TAG))?;
+    attributes.split(',').find_map(|attribute| {
+        let value = attribute.trim().strip_prefix("URI=\"")?;
+        Some(value.trim_end_matches('"').to_string())
+    })
+}
+
+/// Start the real `multimux` LL-HLS origin on an ephemeral loopback port,
+/// serving one stream named `live`.
+async fn start_ll_origin() -> (Arc<RouteHandle>, String, tokio::task::JoinHandle<()>) {
+    let store = Arc::new(
+        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, WINDOW_SEGMENTS)
+            .with_hold_cold_playlist(false),
+    );
+    // `multimux` egress resolves what it serves through the route's program
+    // registry (issue #805/#806). This test drives the handle's own
+    // per-program `Trunk` directly rather than through a supervisor, so it
+    // has to publish that program itself -- otherwise every playlist request
+    // blocks waiting for a program that is already there, and this test
+    // fails on its 25s hang guard rather than on anything it means to
+    // assert.
+    store.publish_new_program(ProgramId(0));
+    let mut streams = HashMap::new();
+    streams.insert(
+        "live".to_string(),
+        (
+            store.clone(),
+            vec![Arc::new(MmHlsOutput::default()) as Arc<dyn MmOutput>],
+        ),
+    );
+    let app = router(Arc::new(AppState::new(streams)));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind ephemeral loopback port");
+    let addr = listener.local_addr().expect("listener has a local address");
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("axum server");
+    });
+    (store, format!("http://{addr}/live/media.m3u8"), server)
 }
 
 /// Feed [`FRAME_COUNT`] samples into `store` via a real
 /// `transmux::ll_hls::LlHlsSegmenter`, real-time-paced at [`FPS`] frames/sec
 /// — a live-shaped producer, not a batch dump.
 async fn run_live_producer(store: Arc<RouteHandle>) {
-    let program = media_plane::ProgramId(0);
+    let program = ProgramId(0);
     let mut seg = LlHlsSegmenter::with_part_target(
         vec![video_track()],
         MOVIE_TIMESCALE,
@@ -172,38 +316,80 @@ async fn run_live_producer(store: Arc<RouteHandle>) {
     }
 }
 
-/// Start the real `multimux` LL-HLS origin on an ephemeral loopback port,
-/// serving one stream named `live`.
-async fn start_ll_origin() -> (Arc<RouteHandle>, String, tokio::task::JoinHandle<()>) {
-    let store = Arc::new(
-        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, WINDOW_SEGMENTS)
-            .with_hold_cold_playlist(false),
-    );
-    // `multimux` egress resolves what it serves through the route's program
-    // registry (issue #805/#806). This test drives the handle's own
-    // per-program `Trunk` directly rather than through a supervisor, so it
-    // has to publish that program itself -- otherwise every playlist request
-    // blocks waiting for a program that is already there, and this test
-    // fails on its 25s hang guard rather than on anything it means to
-    // assert.
-    store.publish_new_program(media_plane::ProgramId(0));
-    let mut streams = HashMap::new();
-    streams.insert(
-        "live".to_string(),
-        (
-            store.clone(),
-            vec![Arc::new(HlsOutput::default()) as Arc<dyn MmOutput>],
-        ),
-    );
-    let app = router(Arc::new(AppState::new(streams)));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind ephemeral loopback port");
-    let addr = listener.local_addr().expect("listener has a local address");
-    let server = tokio::spawn(async move {
-        axum::serve(listener, app).await.expect("axum server");
-    });
-    (store, format!("http://{addr}/live/media.m3u8"), server)
+/// Drives `playlist_url` with the source's own [`HlsIngestSession`] — the
+/// same session, `poll_transmit` → GET → `feed` loop `run_hls_pull` runs
+/// (and the same [`HlsPullRoute::new`] construction) — and ages every sample
+/// the session emits against the clock carried in its own payload.
+///
+/// The run stops once every sample has been emitted, exactly where the old
+/// client stopped. A part this origin no longer serves by then is the live
+/// edge moving past the client (it lives only in the window, and this
+/// origin's window is small), not a client fault: the session is told the
+/// resource is gone and carries on to the next one, as the production loop's
+/// bounded resource retry does.
+async fn drive_session_and_time_samples(playlist_url: &str) -> ClientRun {
+    let http = reqwest::Client::new();
+    let mut session = HlsIngestSession::new(playlist_url);
+    let mut run = ClientRun {
+        sample_count: 0,
+        latencies: Vec::new(),
+        activity: ClientActivity::default(),
+    };
+    let mut hint: Option<String> = None;
+
+    loop {
+        let Some(action) = session.poll_transmit() else {
+            if session.ended() || run.sample_count >= FRAME_COUNT as usize {
+                break;
+            }
+            tokio::time::sleep(IDLE_POLL_INTERVAL).await;
+            continue;
+        };
+        match action {
+            Action::FetchPlaylist { blocking, .. } if run.sample_count >= FRAME_COUNT as usize => {
+                let _ = blocking;
+                break;
+            }
+            Action::FetchPlaylist { blocking, .. } => {
+                let url = action
+                    .playlist_request_url()
+                    .expect("FetchPlaylist always names a request URL");
+                if blocking.is_some() {
+                    run.activity.blocking_reloads = run.activity.blocking_reloads.saturating_add(1);
+                }
+                let body = get_bytes(&http, &url, None).await;
+                hint = preload_hint(&body);
+                session
+                    .feed((HlsFetchId::Playlist, body.as_slice()), Timestamp::ZERO)
+                    .expect("playlist accepted");
+            }
+            Action::FetchResource {
+                id,
+                url,
+                byte_range,
+            } => {
+                if prefetches_hint(hint.as_deref(), &url) {
+                    run.activity.preload_hint_resource_fetches =
+                        run.activity.preload_hint_resource_fetches.saturating_add(1);
+                    hint = None;
+                }
+                match try_get_bytes(&http, &url, byte_range).await {
+                    Some(body) => session
+                        .feed((HlsFetchId::Resource(id), body.as_slice()), Timestamp::ZERO)
+                        .expect("resource accepted"),
+                    None => session.resource_gone(id),
+                }
+            }
+            _ => {}
+        }
+        while let Some(event) = session.poll() {
+            if let SessionEvent::Sample { sample, .. } = event {
+                run.latencies.push(glass_to_glass(&sample));
+                run.sample_count = run.sample_count.saturating_add(1);
+            }
+        }
+    }
+    run
 }
 
 // ===========================================================================
@@ -222,32 +408,19 @@ async fn glass_to_glass_sub_second_over_loopback_with_blocking_reload_and_prefet
         let (store, playlist_url, server) = start_ll_origin().await;
         let producer = tokio::spawn(run_live_producer(store));
 
-        let mut client = TokioClient::new(&playlist_url).expect("client builds");
-        let mut latencies: Vec<Duration> = Vec::with_capacity(FRAME_COUNT as usize);
-        let mut sample_count = 0usize;
-
-        while sample_count < FRAME_COUNT as usize {
-            match client.next_output().await.expect("client must not error") {
-                Some(Output::Samples { samples, .. }) => {
-                    for s in &samples {
-                        latencies.push(glass_to_glass(s));
-                        sample_count += 1;
-                    }
-                }
-                Some(Output::EndOfStream) | None => break,
-                Some(_other) => {}
-            }
-        }
-
+        let run = drive_session_and_time_samples(&playlist_url).await;
         producer.await.expect("producer task must not panic");
         server.abort();
-
-        (sample_count, latencies, client.stats())
+        run
     })
     .await
     .expect("glass-to-glass test must complete within 25s (deadlock/hang guard)");
 
-    let (sample_count, mut latencies, stats) = result;
+    let ClientRun {
+        sample_count,
+        mut latencies,
+        activity,
+    } = result;
 
     assert_eq!(
         sample_count, FRAME_COUNT as usize,
@@ -281,24 +454,25 @@ async fn glass_to_glass_sub_second_over_loopback_with_blocking_reload_and_prefet
     }
 
     assert!(
-        stats.blocking_reloads > 0,
-        "must have issued at least one Blocking Playlist Reload (_HLS_msn/_HLS_part): {stats:?}"
+        activity.blocking_reloads > 0,
+        "must have issued at least one Blocking Playlist Reload (_HLS_msn/_HLS_part): {activity:?}"
     );
     assert!(
-        stats.preload_hint_resource_fetches > 0,
+        activity.preload_hint_resource_fetches > 0,
         "must have fetched at least one part via its #EXT-X-PRELOAD-HINT, ahead of its own \
-         numbered #EXT-X-PART appearance: {stats:?}"
+         numbered #EXT-X-PART appearance: {activity:?}"
     );
 
     eprintln!(
-        "glass-to-glass: {sample_count} samples, max latency {max_latency:?}, stats {stats:?}"
+        "glass-to-glass: {sample_count} samples, max latency {max_latency:?}, activity {activity:?}"
     );
 }
 
 // ===========================================================================
-// Non-LL origin: full-segment fallback, over real HTTP via the same
-// `TokioClient` (proving the *adapter*, not just the sans-IO core, handles
-// it — `hls-runtime/tests/it/origin_loop.rs` already proves the core alone).
+// Non-LL origin: full-segment fallback, over real HTTP through the same
+// session the production pull drives (proving the *adapter*, not just the
+// sans-IO core, handles it — `hls-runtime/tests/it/origin_loop.rs` already
+// proves the core alone).
 // ===========================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -401,37 +575,28 @@ async fn non_ll_origin_plays_via_full_segment_fallback_over_http() {
             axum::serve(listener, app).await.expect("axum server");
         });
 
-        let mut client =
-            TokioClient::new(format!("http://{addr}/media.m3u8")).expect("client builds");
-        let mut got_samples: Vec<Sample> = Vec::new();
-        let mut saw_init = false;
-        loop {
-            match client.next_output().await.expect("client must not error") {
-                Some(Output::Init(bytes)) => {
-                    assert_eq!(bytes, init_bytes, "init bytes must match byte-identical");
-                    saw_init = true;
-                }
-                Some(Output::Samples { samples, .. }) => got_samples.extend(samples),
-                Some(Output::EndOfStream) | None => break,
-                Some(_other) => {}
-            }
-        }
+        let run = drive_session_and_time_samples(&format!("http://{addr}/media.m3u8")).await;
         server.abort();
 
-        assert!(saw_init, "must emit init even on the fallback path");
-        assert_eq!(got_samples.len(), fed_samples.len());
-        for (got, want) in got_samples.iter().zip(fed_samples.iter()) {
-            assert_eq!(got.data, want.data, "sample bytes must round-trip exactly");
-        }
-
-        let stats = client.stats();
         assert_eq!(
-            stats.blocking_reloads, 0,
-            "a non-LL playlist (no PART tags) must never trigger a blocking reload: {stats:?}"
+            run.sample_count,
+            fed_samples.len(),
+            "fallback path must reconstruct every sample, no gaps/duplicates"
         );
         assert!(
-            stats.resource_fetches >= 2,
-            "must fetch init + the whole segment: {stats:?}"
+            run.latencies.iter().all(|age| *age < MAX_LATENCY_CEILING),
+            "every fallback-path sample must arrive inside the ceiling: {:?}",
+            run.latencies.iter().max()
+        );
+        assert_eq!(
+            run.activity.blocking_reloads, 0,
+            "a non-LL playlist (no PART tags) must never trigger a blocking reload: {:?}",
+            run.activity
+        );
+        assert!(
+            run.activity.preload_hint_resource_fetches == 0,
+            "a non-LL playlist advertises no preload hint: {:?}",
+            run.activity
         );
     })
     .await

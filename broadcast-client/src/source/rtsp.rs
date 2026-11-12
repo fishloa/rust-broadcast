@@ -18,10 +18,10 @@ use transmux::{
 };
 use url::{Host, Url};
 
-use crate::auth::{AuthDecision, AuthState};
 use crate::events::{Action, ErrorKind, Event, Status};
 use crate::redirect;
 use crate::source::rtsp_sdp::{ParsedSdp, SdpError, SkippedMedia, TrackInit, parse_tracks};
+use broadcast_auth::{AuthDecision, AuthState};
 
 const SCHEME_RTSPS: &str = "rtsps";
 const RTSP_DEFAULT_PORT: u16 = 554;
@@ -651,13 +651,11 @@ impl RtspSource {
             .collect();
         match auth.handle_unauthorized(code, &headers, had_credentials, self.stale_replayed) {
             AuthDecision::Wait(events) => {
-                self.events.extend(events);
+                self.events.extend(events.into_iter().map(Event::from));
                 self.phase = Phase::WaitingAuth(req);
             }
-            AuthDecision::Replay => {
-                if !self.send(req) {
-                    self.fail_connection(now);
-                }
+            AuthDecision::Replay if !self.send(req) => {
+                self.fail_connection(now);
             }
             AuthDecision::ReplayStale => {
                 self.stale_replayed = true;
@@ -665,6 +663,7 @@ impl RtspSource {
                     self.fail_connection(now);
                 }
             }
+            _ => {}
         }
     }
 
@@ -681,7 +680,7 @@ impl RtspSource {
         if let AuthDecision::Wait(events) =
             auth.handle_unauthorized(STATUS_UNAUTHORIZED, &headers, true, true)
         {
-            self.events.extend(events);
+            self.events.extend(events.into_iter().map(Event::from));
         }
         self.phase = Phase::WaitingAuth(req);
     }

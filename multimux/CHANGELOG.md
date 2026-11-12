@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- An HTTP pull (HLS, DASH, Smooth, TS-over-HTTP) keeps the auth state for the whole session: a cookie an origin sets on the playlist is sent with the segments, and a Digest challenge is negotiated once instead of on every request, because the state is updated in place rather than cloned per request. Cookies are stamped with the pull's own clock instead of `0`.
+- A `407` from an HTTP pull is returned unchanged instead of being retried; there is no proxy-credential configuration, and the origin's credentials are never sent as a proxy's.
+- The challenge-answer flag a pull passes on reports whether the request really carried an `Authorization` header, so a Digest state that has not negotiated its first nonce is not treated as a rejected credential.
 ### Changed
 - DASH-IF ingest sans-IO engine moved to `dash-runtime::ingest`; multimux keeps the axum glue.
 ### Removed
@@ -11,7 +15,8 @@
 - RTSP keepalive is now `rtsp_runtime::ClientSession`'s schedule driven from `next_deadline`/`on_deadline`, instead of a second timer with its own clamp, and it follows the method the server advertises: the first keepalive is a `GET_PARAMETER` probe whose `Public` answer settles the rest (`OPTIONS` for a server that does not list it).
 - Timeline discontinuity detection now uses the per-track detector from `transmux` (broadcast-client semantics); the 10 s `MEDIA_DISCONTINUITY_NS` constant is removed.
 - RTSP pull skips unplayable SDP media sections (and foreign-authority controls and sections beyond the track cap) instead of failing the whole route; fails only when nothing is playable. Skipped sections are logged as route warnings.
-
+### Removed
+- The `hls-runtime` `tokio` feature is no longer enabled: `hls-runtime` no longer has one.
 ### Added
 - LL-DASH renders through the shared DASH renderer (`manifest-ll.mpd` is the standard MPD model with the low-latency fields layered on: `ServiceDescription`/`Latency`, per-segment `availabilityTimeOffset`/`availabilityTimeComplete`, `minimumUpdatePeriod` at the chunk interval), so it gains what only `manifest.mpd` had: the Period split at a gap placeholder and at every init generation, each Period naming the versioned init segment its segments were cut under, and the SCTE-35 `InbandEventStream` declaration. A test pins that both flavours render the same Periods for a window through a gap and a codec change.
 

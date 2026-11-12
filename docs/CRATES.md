@@ -163,7 +163,7 @@ One credentials model and one challenge-response helper for clients, plus one se
 - **Cargo description:** Shared multi-scheme HTTP/RTSP auth: Basic/Digest (RFC 7235, RFC 2326 §14) via http-auth, Bearer (RFC 6750); one Credentials model + challenge->response helper for rtsp-runtime and multimux's HTTP clients.
 - **Version (in-tree):** 0.6.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 0
 - **Depends on (workspace):** none
-- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`hls-runtime`](#hls-runtime), [`multimux`](#multimux), [`rtsp-runtime`](#rtsp-runtime)
+- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux), [`rtsp-runtime`](#rtsp-runtime)
 - **Links:** [README](../broadcast-auth/README.md) · [CHANGELOG](../broadcast-auth/CHANGELOG.md) · [crates.io](https://crates.io/crates/broadcast-auth) · [docs.rs](https://docs.rs/broadcast-auth)
 
 #### broadcast-common
@@ -617,9 +617,9 @@ The player on top of `broadcast-dash` (the MPD model and parser live there): a l
 A caller-driven LL-HLS playback client (blocking reload, part prefetch, fMP4 demux output) and a sans-IO origin (`server`, feature `std`) that renders playlists and serves init/segment/part bytes straight from a `media-plane` `Trunk`.
 
 - **Standards:** RFC 8216; draft-pantos-hls-rfc8216bis (LL-HLS)
-- **Cargo description:** Sans-IO Low-Latency HLS (RFC 8216bis) client + server engines in one crate (blocking reload, part prefetch, rolling-window origin), with an optional tokio+reqwest IO adapter.
+- **Cargo description:** Sans-IO Low-Latency HLS (RFC 8216bis) client + server engines in one crate (blocking reload, part prefetch, rolling-window origin).
 - **Version (in-tree):** 0.13.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 5
-- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`container-probe`](#container-probe), [`media-plane`](#media-plane), [`mpeg-ts`](#mpeg-ts), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
+- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`container-probe`](#container-probe), [`media-plane`](#media-plane), [`mpeg-ts`](#mpeg-ts), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux)
 - **Links:** [README](../hls-runtime/README.md) · [CHANGELOG](../hls-runtime/CHANGELOG.md) · [crates.io](https://crates.io/crates/hls-runtime) · [docs.rs](https://docs.rs/hls-runtime)
 
@@ -1026,7 +1026,6 @@ flowchart BT
   dvb_tools --> dvb_si
   dvb_tools --> dvb_t2mi
   dvb_vbi --> broadcast_common
-  hls_runtime --> broadcast_auth
   hls_runtime --> media_plane
   media_doctor --> dash_runtime
   media_doctor --> dvb_conformance

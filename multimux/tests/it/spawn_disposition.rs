@@ -35,7 +35,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ("dvr.rs", 603, "spawn_blocking DVR write; awaited inline"),
     (
         "source/pull.rs",
-        200,
+        246,
         "PullScheduler's `inflight` JoinSet (drained on drop); the shared engine for the three pull sources",
     ),
     (
@@ -186,7 +186,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "source/dash_pull/tests.rs",
-        1606,
+        1607,
         "test HTTP server task; aborted at test end",
     ),
 ];

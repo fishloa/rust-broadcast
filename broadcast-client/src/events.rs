@@ -1294,3 +1294,26 @@ impl core::fmt::Debug for Config {
             .finish()
     }
 }
+
+impl From<broadcast_auth::AuthEvent> for Event {
+    fn from(value: broadcast_auth::AuthEvent) -> Self {
+        match value {
+            broadcast_auth::AuthEvent::AuthRequired {
+                scheme,
+                realm,
+                origin,
+                resource_metadata,
+            } => Event::AuthRequired {
+                scheme,
+                realm,
+                origin,
+                resource_metadata,
+            },
+            broadcast_auth::AuthEvent::AuthRejected { status } => Event::AuthRejected { status },
+            broadcast_auth::AuthEvent::StatusWaitingForCredentials => {
+                Event::Status(Status::WaitingForCredentials)
+            }
+            _ => Event::Status(Status::WaitingForCredentials),
+        }
+    }
+}
