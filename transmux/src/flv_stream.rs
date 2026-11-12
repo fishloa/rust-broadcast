@@ -1349,4 +1349,42 @@ mod tests {
             flv.len()
         );
     }
+    #[test]
+    fn bad_previous_tag_size_is_a_typed_error_and_stays_bounded() {
+        let mut flv = flv_header();
+        // one valid (empty) script tag
+        write_tag(&mut flv, 0x12, 0, &[]);
+        // a second tag whose trailing PreviousTagSize is wrong
+        let start = flv.len();
+        write_tag(&mut flv, 0x12, 1, &[]);
+        // overwrite the trailing PreviousTagSize (last 4 bytes of that tag) with junk
+        let tag_len = flv.len() - start;
+        let trailer = flv.len() - 4;
+        flv[trailer..trailer + 4].copy_from_slice(&0xDEAD_BEEFu32.to_be_bytes());
+        // ensure we overwrote within the tag
+        assert!(tag_len >= 4);
+        // more bytes follow
+        flv.extend_from_slice(&vec![0u8; 1024]);
+        let total = flv.len();
+        let mut demux = StreamingFlvDemux::new();
+        let err = demux.feed(&flv).unwrap_err();
+        assert!(matches!(err, FlvError::Tag(_)), "got {err:?}");
+        assert!(
+            demux.pending.len() <= total,
+            "pending {} exceeds fed {}",
+            demux.pending.len(),
+            total
+        );
+    }
+
+    #[test]
+    fn a_tag_split_across_feeds_waits_without_error() {
+        let mut flv = flv_header();
+        write_tag(&mut flv, 0x12, 0, &[]);
+        let mut demux = StreamingFlvDemux::new();
+        // feed only part of the (single) tag body region: header + a few bytes
+        let partial = &flv[..flv.len().min(FLV_HEADER_LEN + 3)];
+        assert!(demux.feed(partial).is_ok());
+    }
+
 }
