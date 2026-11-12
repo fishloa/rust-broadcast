@@ -309,15 +309,11 @@ fn mediastreamvalidator_reports_no_missing_frame_rate_on_the_measured_ts_variant
     }
     media.push_str("#EXT-X-ENDLIST\n");
     std::fs::write(dir.join("media.m3u8"), media).unwrap();
-    let report = dir.join("report.json");
-    let mut cmd = std::process::Command::new("mediastreamvalidator");
-    cmd.current_dir(&dir)
-        .args(["--quiet", "-t", "5", "-O"])
-        .arg(&report)
-        .arg("master.m3u8");
-    test_fixtures::process::output_bounded(&mut cmd, Duration::from_secs(35))
-        .expect("run validator");
-    let text = std::fs::read_to_string(&report).expect("validator report");
+    let json = test_fixtures::process::msv::MsvRun::new(&dir, "master.m3u8")
+        .timeout_secs(5)
+        .deadline(Duration::from_secs(35))
+        .run();
+    let text = json.to_string();
     eprintln!(
         "VALIDATOR mentions FRAME-RATE: {}",
         text.contains("FRAME-RATE")
