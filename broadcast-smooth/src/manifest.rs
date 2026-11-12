@@ -104,6 +104,25 @@ pub enum SmoothParseError {
         /// The chunk count (or a hint of it) that breached the cap.
         count_hint: u64,
     },
+    /// A `c@r` repeat count of zero, which would stand for zero fragments
+    /// (MS-SSTR §2.2.2.6: `r` is one-based).
+    InvalidRepeatCount {
+        /// The offending value.
+        r: u32,
+    },
+    /// A `c` entry whose duration cannot be derived: no explicit `@d`, no
+    /// following `c` carrying an explicit `@t`, and no manifest `Duration`
+    /// to take it from (MS-SSTR §2.2.2.6 start-time coding).
+    MissingDuration {
+        /// Index of the offending `c` entry.
+        index: usize,
+    },
+    /// A `c` entry whose derived duration would be negative: the following
+    /// entry's `@t` is not after this entry's `t` (MS-SSTR §2.2.2.6).
+    NonMonotonicTime {
+        /// Index of the offending `c` entry.
+        index: usize,
+    },
     /// A `QualityLevel@CodecPrivateData` hex string exceeded
     /// [`MAX_CODEC_PRIVATE_DATA_HEX_LEN`] (remote alloc-DoS defense), checked
     /// before any decode allocation.
@@ -156,6 +175,15 @@ impl fmt::Display for SmoothParseError {
                 attr,
                 value,
             } => write!(f, "<{element}>@{attr} has invalid value {value:?}"),
+            SmoothParseError::InvalidRepeatCount { r } => {
+                write!(f, "<c>@r has invalid value {r} (must be >= 1)")
+            }
+            SmoothParseError::MissingDuration { index } => {
+                write!(f, "<c> at index {index} duration cannot be derived")
+            }
+            SmoothParseError::NonMonotonicTime { index } => {
+                write!(f, "<c> at index {index} has non-monotonic time")
+            }
             SmoothParseError::ChunkRunTooLong { count_hint } => {
                 write!(
                     f,
@@ -520,8 +548,8 @@ pub struct C {
     pub t: Option<u64>,
     /// `@d` — this entry's fragment duration, in `TimeScale` ticks.
     pub d: Option<u64>,
-    /// `@r` — repeat count: this entry represents `r + 1` fragments of
-    /// duration `d` (default: one fragment, no repeat). See
+    /// `@r` — repeat count: this entry represents `r` fragments of duration
+    /// `d` (default: one fragment, no repeat). `r = 0` is invalid. See
     /// [`StreamIndex::enumerate_chunks`]'s bounded expansion.
     pub r: Option<u32>,
 }
@@ -556,7 +584,7 @@ impl C {
         self
     }
 
-    /// This entry with `@r`, the repeat count: `r + 1` fragments of duration
+    /// This entry with `@r`, the repeat count: `r` fragments of duration
     /// `d`.
     #[must_use]
     pub fn repeated(mut self, r: u32) -> Self {
@@ -718,12 +746,35 @@ impl StreamIndex {
         let mut out = Vec::new();
         let mut t: u64 = 0;
         let mut total: u64 = 0;
-        for c in &self.chunks_list {
+        let list = &self.chunks_list;
+        for (i, c) in list.iter().enumerate() {
             if let Some(explicit_t) = c.t {
                 t = explicit_t;
             }
-            let d = c.d.unwrap_or(0);
-            let repeats: u64 = c.r.map(|r| u64::from(r).saturating_add(1)).unwrap_or(1);
+            let d = match c.d {
+                Some(d) => d,
+                None => {
+                    let next_t = list.get(i + 1).and_then(|n| n.t);
+                    match next_t {
+                        Some(nt) => {
+                            if nt < t {
+                                return Err(SmoothParseError::NonMonotonicTime { index: i });
+                            }
+                            nt - t
+                        }
+                        None => {
+                            return Err(SmoothParseError::MissingDuration { index: i });
+                        }
+                    }
+                }
+            };
+            let repeats: u64 = match c.r {
+                None => 1,
+                Some(0) => {
+                    return Err(SmoothParseError::InvalidRepeatCount { r: 0 });
+                }
+                Some(r) => u64::from(r),
+            };
             if repeats > MAX_CHUNK_RUN as u64 {
                 return Err(SmoothParseError::ChunkRunTooLong {
                     count_hint: repeats,
@@ -1274,10 +1325,77 @@ mod tests {
             ],
         };
         let chunks = si.enumerate_chunks().expect("enumerate");
+        assert_eq!(chunks, alloc::vec![(0, 1000), (1000, 1000), (2000, 500)]);
+    }
+
+    #[test]
+    fn a1_repeat_r_is_one_based() {
+        let xml = r#"<SmoothStreamingMedia MajorVersion="2" MinorVersion="0" TimeScale="100"><StreamIndex Type="video" Url="u"><QualityLevel Index="0" Bitrate="1" FourCC="H264"/><c t="0" d="100" r="3"/></StreamIndex></SmoothStreamingMedia>"#;
+        let m = SmoothManifest::parse(xml).unwrap();
         assert_eq!(
-            chunks,
-            alloc::vec![(0, 1000), (1000, 1000), (2000, 1000), (3000, 500)]
+            m.streams[0].enumerate_chunks().unwrap(),
+            alloc::vec![(0, 100), (100, 100), (200, 100)]
         );
+    }
+
+    #[test]
+    fn a1_repeat_r_zero_is_invalid() {
+        let xml = r#"<SmoothStreamingMedia MajorVersion="2" MinorVersion="0" TimeScale="100"><StreamIndex Type="video" Url="u"><QualityLevel Index="0" Bitrate="1" FourCC="H264"/><c t="0" d="100" r="0"/></StreamIndex></SmoothStreamingMedia>"#;
+        let m = SmoothManifest::parse(xml).unwrap();
+        assert!(matches!(
+            m.streams[0].enumerate_chunks().unwrap_err(),
+            SmoothParseError::InvalidRepeatCount { r: 0 }
+        ));
+    }
+
+    #[test]
+    fn a2_derives_duration_from_next_t() {
+        let xml = r#"<SmoothStreamingMedia MajorVersion="2" MinorVersion="0" TimeScale="100"><StreamIndex Type="video" Url="u"><QualityLevel Index="0" Bitrate="1" FourCC="H264"/><c t="0"/><c t="100"/><c t="200" d="100"/></StreamIndex></SmoothStreamingMedia>"#;
+        let m = SmoothManifest::parse(xml).unwrap();
+        assert_eq!(
+            m.streams[0].enumerate_chunks().unwrap(),
+            alloc::vec![(0, 100), (100, 100), (200, 100)]
+        );
+    }
+
+    #[test]
+    fn a2_missing_duration_reports_index() {
+        let xml = r#"<SmoothStreamingMedia MajorVersion="2" MinorVersion="0" TimeScale="100"><StreamIndex Type="video" Url="u"><QualityLevel Index="0" Bitrate="1" FourCC="H264"/><c t="0"/></StreamIndex></SmoothStreamingMedia>"#;
+        let m = SmoothManifest::parse(xml).unwrap();
+        assert!(matches!(
+            m.streams[0].enumerate_chunks().unwrap_err(),
+            SmoothParseError::MissingDuration { index: 0 }
+        ));
+    }
+
+    #[test]
+    fn a2_non_monotonic_time_reports_error() {
+        let xml = r#"<SmoothStreamingMedia MajorVersion="2" MinorVersion="0" TimeScale="100"><StreamIndex Type="video" Url="u"><QualityLevel Index="0" Bitrate="1" FourCC="H264"/><c t="100"/><c t="50" d="10"/></StreamIndex></SmoothStreamingMedia>"#;
+        let m = SmoothManifest::parse(xml).unwrap();
+        assert!(matches!(
+            m.streams[0].enumerate_chunks().unwrap_err(),
+            SmoothParseError::NonMonotonicTime { .. }
+        ));
+    }
+
+    #[test]
+    fn a3_protection_header_text() {
+        for (body, expected) in [
+            (r#"abc&amp;def"#, "abc&def"),
+            (r#"ab<!--c-->de"#, "abde"),
+            (r#"ab<![CDATA[<x>]]>cd"#, "ab<x>cd"),
+            (r#"a&#13;b"#, "a\rb"),
+        ] {
+            let xml = format!(
+                r#"<SmoothStreamingMedia><Protection><ProtectionHeader SystemID="x">{body}</ProtectionHeader></Protection></SmoothStreamingMedia>"#
+            );
+            let m = SmoothManifest::parse(&xml).unwrap();
+            assert_eq!(m.protection.unwrap().header.unwrap(), expected);
+        }
+        let m = SmoothManifest::new(vec![]).with_protection("a&b\r\nc");
+        let xml = m.to_xml();
+        let m2 = SmoothManifest::parse(&xml).unwrap();
+        assert_eq!(m2.protection.unwrap().header.unwrap(), "a&b\r\nc");
     }
 
     #[test]

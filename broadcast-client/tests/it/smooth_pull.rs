@@ -195,12 +195,12 @@ fn smooth_fragment_url_substitutes_bitrate_and_start_time() {
 }
 
 #[test]
-fn smooth_timeline_repeat_r_expands_to_r_plus_one_chunks() {
+fn smooth_timeline_repeat_r_expands_to_r_chunks() {
     // manifest with r=1 on first c => 2 chunks same duration
     let base = String::from_utf8(body("smooth/av/Manifest")).unwrap();
     let base = base.replace(
         r#"<c n="0" d="10000000" />"#,
-        r#"<c n="0" d="10000000" r="1" />"#,
+        r#"<c n="0" d="10000000" r="2" />"#,
     );
     let base = base.replace(r#"<c n="1" d="10000000" />"#, "");
     let base = base.replace(r#"<c n="2" d="10000000" />"#, "");

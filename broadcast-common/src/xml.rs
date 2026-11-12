@@ -379,4 +379,11 @@ mod tests {
         assert_eq!(tree.text(), "ab");
         assert_eq!(tree.child("B").unwrap().text(), "c");
     }
+
+    #[test]
+    fn mixed_text_pieces_accumulate() {
+        let tree = read(r#"<Root xmlns="urn:target">abc&amp;defab<![CDATA[<x>]]>cda&#13;b</Root>"#)
+            .unwrap();
+        assert_eq!(tree.text(), "abc&defab<x>cda\rb");
+    }
 }
