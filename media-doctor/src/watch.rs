@@ -971,7 +971,7 @@ pub(crate) mod tests {
     /// A PES packet on `pid` whose payload is an ADTS frame, i.e. audio
     /// framing.
     fn adts_packet(pid: Pid, cc: u8) -> [u8; TS_PACKET_SIZE] {
-        pes_packet(pid, cc, 0xC0, &[0xFF, 0xF1, 0x50, 0x80, 0x00, 0x1F, 0xFC])
+        pes_packet(pid, cc, 0xC0, &[0xFF, 0xF1, 0x50, 0x80, 0x00, 0xE0, 0xFC])
     }
 
     /// A `splice_info_section` with a `splice_insert` on `pid`.
@@ -1548,7 +1548,7 @@ pub(crate) mod tests {
 
         /// One ADTS access unit (0xFFF… sync) in a PES packet.
         fn audio_pes() -> alloc::vec::Vec<u8> {
-            let payload = [0xFFu8, 0xF1, 0x50, 0x80, 0x00, 0x1F, 0xFC];
+            let payload = [0xFFu8, 0xF1, 0x50, 0x80, 0x00, 0xE0, 0xFC];
             let pes_len = 9 + payload.len();
             let mut pes = alloc::vec![0x00, 0x00, 0x01, 0xC0];
             pes.extend_from_slice(&((pes_len - 6) as u16).to_be_bytes());

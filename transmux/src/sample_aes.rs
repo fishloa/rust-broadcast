@@ -76,11 +76,6 @@ pub const H264_SKIP_LEN: usize = 144;
 /// Clear leader after the ADTS header for AAC / after the syncframe start for
 /// AC-3 / E-AC-3 (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §4.1, §5, §6).
 pub const AUDIO_CLEAR_LEADER_LEN: usize = 16;
-/// ADTS fixed+variable header length with no CRC (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §4.1).
-pub const ADTS_HEADER_LEN_NO_CRC: usize = crate::aac_asc::ADTS_HEADER_SIZE;
-/// ADTS header length with CRC protection (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §4.1).
-pub const ADTS_HEADER_LEN_WITH_CRC: usize = 9;
-
 // --------------------------------------------------------------------------
 // Raw AES-128-CBC primitives.
 // --------------------------------------------------------------------------
@@ -377,23 +372,6 @@ fn audio_transform(
     }
 }
 
-/// The ADTS header length (7 or 9 bytes) implied by the `protection_absent` bit
-/// (bit 0 of byte 1) of an ADTS frame (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §4.1).
-///
-/// Returns [`Error::InvalidInput`] if `frame` is too short to hold the header.
-pub fn adts_header_len(frame: &[u8]) -> Result<usize> {
-    if frame.len() < ADTS_HEADER_LEN_NO_CRC {
-        return Err(Error::InvalidInput("ADTS frame shorter than 7-byte header"));
-    }
-    // protection_absent == 1 → no CRC (7-byte header); == 0 → CRC (9 bytes).
-    let protection_absent = frame[1] & 0x01;
-    Ok(if protection_absent == 1 {
-        ADTS_HEADER_LEN_NO_CRC
-    } else {
-        ADTS_HEADER_LEN_WITH_CRC
-    })
-}
-
 /// Sample-AES-encrypt one AAC ADTS frame: ADTS header + 16-byte leader clear,
 /// then 16-byte CBC blocks, `< 16` trailer clear
 /// (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §4). IV is reset per frame (§4.2).
@@ -402,7 +380,8 @@ pub fn aac_encrypt_frame(
     iv: &[u8; BLOCK_LEN],
     frame: &[u8],
 ) -> Result<Vec<u8>> {
-    let hdr = adts_header_len(frame)?;
+    let parsed = crate::aac_asc::parse_adts_header(frame)?;
+    let hdr = crate::aac_asc::adts_header_len(&parsed);
     let mut out = frame.to_vec();
     audio_transform(key, iv, &mut out, hdr + AUDIO_CLEAR_LEADER_LEN, true);
     Ok(out)
@@ -415,7 +394,8 @@ pub fn aac_decrypt_frame(
     iv: &[u8; BLOCK_LEN],
     frame: &[u8],
 ) -> Result<Vec<u8>> {
-    let hdr = adts_header_len(frame)?;
+    let parsed = crate::aac_asc::parse_adts_header(frame)?;
+    let hdr = crate::aac_asc::adts_header_len(&parsed);
     let mut out = frame.to_vec();
     audio_transform(key, iv, &mut out, hdr + AUDIO_CLEAR_LEADER_LEN, false);
     Ok(out)
@@ -839,10 +819,11 @@ mod tests {
     #[test]
     fn aac_round_trip_and_clear_leader() {
         // ADTS frame: byte1 bit0 = 1 → 7-byte header (no CRC).
-        let mut frame = vec![0xFF, 0xF1, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let mut frame = vec![0xFF, 0xF1, 0x00, 0x00, 0x0D, 0x60, 0x00];
         frame.extend((0u8..100).map(|i| i.wrapping_mul(3)));
-        let hdr = adts_header_len(&frame).unwrap();
-        assert_eq!(hdr, ADTS_HEADER_LEN_NO_CRC);
+        let parsed = crate::aac_asc::parse_adts_header(&frame).unwrap();
+        let hdr = crate::aac_asc::adts_header_len(&parsed);
+        assert_eq!(hdr, crate::aac_asc::ADTS_HEADER_SIZE);
 
         let enc = aac_encrypt_frame(&NIST_KEY, &NIST_IV, &frame).unwrap();
         assert_eq!(enc.len(), frame.len(), "AAC length preserved (no padding)");
@@ -859,12 +840,9 @@ mod tests {
     #[test]
     fn adts_header_len_with_crc() {
         // byte1 bit0 = 0 → 9-byte header (CRC present).
-        let frame = vec![0xFF, 0xF0, 0, 0, 0, 0, 0, 0, 0];
-        assert_eq!(adts_header_len(&frame).unwrap(), ADTS_HEADER_LEN_WITH_CRC);
-        assert!(matches!(
-            adts_header_len(&[0xFF]),
-            Err(crate::error::Error::InvalidInput(..))
-        ));
+        let frame = vec![0xFF, 0xF0, 0, 0, 0x01, 0x20, 0, 0, 0];
+        let parsed = crate::aac_asc::parse_adts_header(&frame).unwrap();
+        assert_eq!(crate::aac_asc::adts_header_len(&parsed), 9);
     }
 
     #[test]
