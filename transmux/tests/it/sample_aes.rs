@@ -89,8 +89,8 @@ fn h264_sample_pattern_and_round_trip() {
 /// Test 3 — AAC ADTS frame: header + 16-byte leader clear, CBC body, round-trip.
 #[test]
 fn aac_frame_round_trip_clear_leader() {
-    // byte1 bit0 = 1 → 7-byte header (no CRC).
-    let mut frame = vec![0xFF, 0xF1, 0x00, 0x00, 0x00, 0x00, 0x00];
+    // byte1 bit0 = 1 → 7-byte header (no CRC); frame_length 107 = header + body.
+    let mut frame = vec![0xFF, 0xF1, 0x00, 0x00, 0x0D, 0x60, 0x00];
     frame.extend((0u8..100).map(|i| i.wrapping_mul(3)));
 
     let enc = aac_encrypt_frame(&KEY, &IV, &frame).unwrap();

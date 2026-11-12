@@ -154,15 +154,7 @@ pub(crate) fn collect_pmt_streams(ts: &[u8]) -> Vec<DeclaredStream> {
 /// ADTS-framed (`CodecSignallingCheck`, `media-doctor watch`); it lived as two
 /// identical copies before (audit MD-W10).
 pub(crate) fn has_adts_sync(payload: &[u8]) -> bool {
-    const ADTS_MIN: usize = 7;
-    if payload.len() < ADTS_MIN {
-        return false;
-    }
-    (0..=payload.len() - ADTS_MIN).any(|off| {
-        payload[off] == 0xFF
-            && (payload[off + 1] & 0xF0) == 0xF0
-            && transmux::parse_adts_header(&payload[off..]).is_ok()
-    })
+    (0..payload.len()).any(|off| transmux::parse_adts_header(&payload[off..]).is_ok())
 }
 
 /// Elementary-stream PIDs among `streams` matching `stream_type`, in PMT wire

@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- `has_adts_sync` drops its own syncword pre-test and relies on the strict `transmux::parse_adts_header`, so an AAC-declared PID carrying MP3 frames is now flagged.
 ### Changed
 - `check_dash_mpd` reads MPDs through the new `broadcast-dash` crate (the `dash` feature now enables `dep:broadcast-dash` instead of `dep:dash-runtime`), so the validator depends on the manifest syntax alone, not on a player (#2355).
 ### Fixed
