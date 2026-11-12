@@ -72,3 +72,57 @@ pub fn control_url(base: &url::Url) -> crate::Result<String> {
     }
     Ok(url.to_string())
 }
+
+/// Resolve a per-media / session `a=control` value to a SETUP URI using the
+/// broadcast-client semantics (RFC 2326 §C.1.1): an aggregate control value
+/// (`"*"`) and a missing value both resolve to `base`; any other value is
+/// joined onto `base` and kept only when it shares `request_url`'s authority
+/// (scheme/host/port). Returns `None` when the joined URL crosses authorities.
+pub fn resolve_control(
+    request_url: &url::Url,
+    base: &url::Url,
+    control: Option<&str>,
+) -> Option<String> {
+    fn default_port(scheme: &str) -> u16 {
+        if scheme == "rtsps" {
+            crate::RTSPS_DEFAULT_PORT
+        } else {
+            crate::RTSP_DEFAULT_PORT
+        }
+    }
+    let same_authority = |u: &url::Url| {
+        let rp = request_url
+            .port()
+            .unwrap_or(default_port(request_url.scheme()));
+        let up = u.port().unwrap_or(default_port(u.scheme()));
+        u.scheme() == request_url.scheme() && u.host() == request_url.host() && up == rp
+    };
+    match control {
+        None => Some(request_url.to_string()),
+        Some("*") => Some(base.to_string()),
+        Some(c) => base
+            .join(c)
+            .ok()
+            .filter(|u| same_authority(u))
+            .map(|u| u.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use url::Url;
+
+    #[test]
+    fn control_helper_aggregate_or_missing() {
+        let base = Url::parse("rtsp://cam/base").unwrap();
+        assert_eq!(
+            resolve_control(&base, &base, None).unwrap(),
+            base.to_string()
+        );
+        assert_eq!(
+            resolve_control(&base, &base, Some("*")).unwrap(),
+            base.to_string()
+        );
+    }
+}

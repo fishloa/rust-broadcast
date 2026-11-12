@@ -574,16 +574,7 @@ fn cmaf_hls_playlist_covers_input_once() {
         );
     }
 
-    let validator = {
-        let mut c = Command::new("mediastreamvalidator");
-        c.arg("--version");
-        crate::common::run_bounded(
-            c,
-            crate::common::PROBE_DEADLINE,
-            "mediastreamvalidator --version",
-        )
-        .is_ok_and(|o| o.status.success())
-    };
+    let validator = test_fixtures::process::msv::available();
     if !validator {
         eprintln!("SKIP mediastreamvalidator cross-check: not on PATH");
         return;
@@ -593,27 +584,10 @@ fn cmaf_hls_playlist_covers_input_once() {
     for (n, b) in &segments {
         std::fs::write(dir.join(n), b).unwrap();
     }
-    let json = dir.join("validator.json");
-    let mut cmd = Command::new("mediastreamvalidator");
-    cmd.current_dir(&dir)
-        .args([
-            "--quiet",
-            "-t",
-            &crate::common::MSV_TOOL_TIMEOUT_SECS.to_string(),
-            "-O",
-        ])
-        .arg(&json)
-        .arg("out.m3u8");
-    let run = crate::common::run_bounded(cmd, crate::common::MSV_DEADLINE, "mediastreamvalidator")
-        .expect("run mediastreamvalidator");
-    eprintln!(
-        "mediastreamvalidator exit {:?}\n{}{}",
-        run.status.code(),
-        run.stdout,
-        run.stderr
-    );
-    let v: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&json).expect("validator json")).unwrap();
+    let v = test_fixtures::process::msv::MsvRun::new(&dir, "out.m3u8")
+        .timeout_secs(crate::common::MSV_TOOL_TIMEOUT_SECS as u32)
+        .deadline(crate::common::MSV_DEADLINE)
+        .run();
     let mut errors = Vec::new();
     collect_errors(&v, &mut errors);
     assert!(

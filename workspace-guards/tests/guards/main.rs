@@ -8,6 +8,7 @@ mod handroll_lines;
 mod handroll_needles;
 mod label;
 mod label_data;
+mod msv_runner;
 mod no_dom;
 mod no_dom_data;
 mod non_exhaustive;

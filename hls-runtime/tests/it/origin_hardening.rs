@@ -14,7 +14,6 @@
 
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -29,12 +28,9 @@ use media_plane::ids::{PartIndex, SegmentSeq};
 use media_plane::trunk::{PartEntry, SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
 use transmux::SegmentMeta;
 
-use test_fixtures::process::output_bounded;
-
 /// The validator's own `-t` timeout, seconds.
 const VALIDATOR_TIMEOUT_SECS: u64 = 3;
 /// Hard deadline for a `--version` availability probe.
-const PROBE_DEADLINE: Duration = Duration::from_secs(10);
 /// Margin added to the validator's own `-t` timeout to form the hard kill
 /// deadline (a tool that overruns it is killed and the test fails loudly).
 const VALIDATOR_MARGIN: Duration = Duration::from_secs(30);
@@ -739,15 +735,8 @@ fn validator_unavailable() -> Option<&'static str> {
     if !cfg!(target_os = "macos") {
         return Some("`mediastreamvalidator` is macOS-only and this is not macOS");
     }
-    let present = match output_bounded(
-        Command::new("mediastreamvalidator").arg("--version"),
-        PROBE_DEADLINE,
-    ) {
-        Ok(o) => o.status.success(),
-        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => panic!("{e}"),
-        Err(_) => false,
-    };
-    (!present).then_some("`mediastreamvalidator` is not on PATH (Additional Tools for Xcode)")
+    (!test_fixtures::process::msv::available())
+        .then_some("`mediastreamvalidator` is not on PATH (Additional Tools for Xcode)")
 }
 
 fn scratch(name: &str) -> PathBuf {
@@ -762,32 +751,17 @@ fn scratch(name: &str) -> PathBuf {
 /// Run the validator in `dir` on `entry`; return the MUST-level (requirement
 /// level 1) messages it reports, anywhere in its JSON.
 fn validator_errors(dir: &Path, entry: &str, extra: &[&str]) -> Vec<String> {
-    let out = dir.join("out.json");
-    let status = output_bounded(
-        Command::new("mediastreamvalidator")
-            .current_dir(dir)
-            .args(extra)
-            .args(["--quiet", "-t", &VALIDATOR_TIMEOUT_SECS.to_string(), "-O"])
-            .arg(&out)
-            .arg(entry),
-        Duration::from_secs(VALIDATOR_TIMEOUT_SECS) + VALIDATOR_MARGIN,
-    )
-    .expect("run mediastreamvalidator")
-    .status;
-    assert!(status.success(), "validator exit {status}");
-    // The JSON is machine-written with one `"key" : value` per line; compare
-    // whitespace-free so the exact spacing does not matter.
-    let compact: String = std::fs::read_to_string(&out)
-        .expect("validator json")
+    let json = test_fixtures::process::msv::MsvRun::new(dir, entry)
+        .extra(extra)
+        .timeout_secs(VALIDATOR_TIMEOUT_SECS as u32)
+        .deadline(Duration::from_secs(VALIDATOR_TIMEOUT_SECS) + VALIDATOR_MARGIN)
+        .run();
+    let compact: String = json
+        .to_string()
         .chars()
         .filter(|c| !c.is_whitespace())
         .collect();
     let mut errors = Vec::new();
-    // `errorRequirementLevel` 1 marks RFC "MUST"-level findings (see
-    // media-doctor's `mediastreamvalidator_oracle` calibration notes). Each
-    // finding is one flat `{...}` message object, so the block around the
-    // marker is exactly that message: an object boundary on each side, never
-    // a fixed window that could reach into a neighbour.
     let key = "\"errorRequirementLevel\":1";
     let mut from = 0;
     while let Some(at) = compact[from..].find(key) {

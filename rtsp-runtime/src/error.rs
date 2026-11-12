@@ -102,6 +102,27 @@ pub enum Error {
         what: &'static str,
     },
 
+    /// The SDP body returned by `DESCRIBE` could not be parsed.
+    #[error("invalid SDP: {0}")]
+    InvalidSdp(String),
+
+    /// Two tracks negotiated the same interleaved channel.
+    #[error("interleaved channel collision: {channel}")]
+    InterleavedChannelCollision {
+        /// The channel that collided.
+        channel: u8,
+    },
+
+    /// A `SETUP` answer's `Transport` is not interleaved TCP with two distinct
+    /// channels, or names a setup the plan does not have (RFC 2326 §12.39).
+    #[error("unusable negotiated transport")]
+    UnusableTransport,
+
+    /// The interleaved channel pairs for the tracks of a play flow do not fit
+    /// in the `u8` channel space from the requested first channel (§10.12).
+    #[error("interleaved channels exhausted")]
+    InterleavedChannelExhausted,
+
     /// Authentication failed: no credentials were configured, the challenge
     /// could not be parsed, or the digest computation failed (RFC 2326 §14).
     #[error("authentication failure")]

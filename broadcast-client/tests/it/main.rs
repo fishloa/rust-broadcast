@@ -72,6 +72,7 @@ mod rtsp_chunking;
 mod rtsp_clock_offset;
 mod rtsp_dts;
 mod rtsp_playout;
+mod rtsp_pull_golden;
 mod rtsp_zero_duration;
 mod segment_inactivity;
 mod server_refused;

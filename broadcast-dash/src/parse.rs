@@ -154,7 +154,7 @@ fn opt_time(e: &Elem<Ns>, name: &'static str) -> Result<Option<i64>, MpdError> {
         .transpose()
 }
 
-fn parse_range(name: &'static str, v: &str) -> Result<ByteRange, MpdError> {
+pub(crate) fn parse_range(name: &'static str, v: &str) -> Result<ByteRange, MpdError> {
     let v = v.trim();
     let (first, last) = v.split_once('-').ok_or_else(|| invalid(name, v))?;
     let first = first.parse::<u64>().map_err(|_| invalid(name, v))?;
@@ -224,12 +224,18 @@ fn descriptor(e: &Elem<Ns>) -> Result<Descriptor, MpdError> {
             })
         })
         .transpose()?;
+    let pssh = e
+        .children
+        .iter()
+        .find(|c| c.ns == Ns::Cenc && c.name == "pssh")
+        .map(|c| c.text.trim().to_owned());
     let _ = url_query.as_ref();
     Ok(Descriptor {
         scheme_id_uri,
         value: opt_str(e, "value"),
         id: opt_str(e, "id"),
         default_kid: e.attr_in(Ns::Cenc, "default_KID").map(str::to_owned),
+        pssh,
         url_query,
     })
 }
@@ -403,6 +409,7 @@ fn common(e: &Elem<Ns>) -> Result<CommonAttributes, MpdError> {
         mime_type: opt_str(e, "mimeType"),
         codecs: opt_str(e, "codecs"),
         max_playout_rate: opt_f64(e, "maxPlayoutRate")?,
+        coding_dependency: opt_bool(e, "codingDependency")?,
     })
 }
 
@@ -428,6 +435,7 @@ fn representation(e: &Elem<Ns>, ctx: &mut Ctx<'_>) -> Result<Representation, Mpd
         essential_properties: descriptors(e, "EssentialProperty")?,
         supplemental_properties: descriptors(e, "SupplementalProperty")?,
         audio_channel_configurations: descriptors(e, "AudioChannelConfiguration")?,
+        inband_event_streams: descriptors(e, "InbandEventStream")?,
     })
 }
 
@@ -487,6 +495,7 @@ fn adaptation_set(e: &Elem<Ns>, ctx: &mut Ctx<'_>) -> Result<Option<AdaptationSe
         essential_properties: descriptors(e, "EssentialProperty")?,
         supplemental_properties: descriptors(e, "SupplementalProperty")?,
         audio_channel_configurations: descriptors(e, "AudioChannelConfiguration")?,
+        inband_event_streams: descriptors(e, "InbandEventStream")?,
         representations,
     }))
 }
@@ -520,6 +529,10 @@ fn period(e: &Elem<Ns>, ctx: &mut Ctx<'_>) -> Result<Option<Period>, MpdError> {
         imported_mpd: e.child("ImportedMPD").map(imported_mpd).transpose()?,
         essential_properties: descriptors(e, "EssentialProperty")?,
         supplemental_properties: descriptors(e, "SupplementalProperty")?,
+        service_descriptions: e
+            .children_named("ServiceDescription")
+            .map(service_description)
+            .collect::<Result<Vec<_>, _>>()?,
         adaptation_sets: sets,
     }))
 }
@@ -529,6 +542,34 @@ fn imported_mpd(e: &Elem<Ns>) -> Result<ImportedMpd, MpdError> {
     Ok(ImportedMpd {
         url: e.text.trim().to_owned(),
         earliest_resolution_time_offset: opt_f64(e, "earliestResolutionTimeOffset")?,
+    })
+}
+
+fn service_description(e: &Elem<Ns>) -> Result<ServiceDescription, MpdError> {
+    let latency = e
+        .child("Latency")
+        .map(|l| -> Result<Latency, MpdError> {
+            Ok(Latency {
+                target: opt_u64(l, "target")?,
+                min: opt_u64(l, "min")?,
+                max: opt_u64(l, "max")?,
+                reference_id: opt_u32(l, "referenceId")?,
+            })
+        })
+        .transpose()?;
+    let playback_rate = e
+        .child("PlaybackRate")
+        .map(|p| -> Result<PlaybackRate, MpdError> {
+            Ok(PlaybackRate {
+                min: opt_str(p, "min"),
+                max: opt_str(p, "max"),
+            })
+        })
+        .transpose()?;
+    Ok(ServiceDescription {
+        id: opt_u64(e, "id")?,
+        latency,
+        playback_rate,
     })
 }
 
@@ -636,6 +677,10 @@ impl Mpd {
                 .children_named("Location")
                 .map(|l| l.text.trim().to_owned())
                 .collect(),
+            service_descriptions: root
+                .children_named("ServiceDescription")
+                .map(service_description)
+                .collect::<Result<Vec<_>, _>>()?,
             utc_timings,
             essential_properties: descriptors(&root, "EssentialProperty")?,
             supplemental_properties: descriptors(&root, "SupplementalProperty")?,

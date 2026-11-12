@@ -566,6 +566,13 @@ async fn start_record_fails_a_rejected_request_naming_its_method() {
                 .to_string();
             let response = if text.starts_with("SETUP ") {
                 format!("RTSP/1.0 461 Unsupported Transport\r\nCSeq: {cseq}\r\n\r\n")
+            } else if text.starts_with("DESCRIBE ") {
+                let body = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=video 0 RTP/AVP 96\r\na=control:trackID=0\r\n";
+                format!(
+                    "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nContent-Type: application/sdp\r\nContent-Length: {}\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
             } else {
                 format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n\r\n")
             };
@@ -602,4 +609,485 @@ fn control_url_appends_one_track_id_segment() {
         control_url(&cannot_be_a_base),
         Err(rtsp_runtime::Error::InvalidUrl { .. })
     ));
+}
+
+#[tokio::test]
+async fn start_play_describes_sets_up_and_plays() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        let mut buf = Vec::new();
+        let mut seen: Vec<String> = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            let n = match sock.read(&mut chunk).await {
+                Ok(0) | Err(_) => return seen,
+                Ok(n) => n,
+            };
+            buf.extend_from_slice(&chunk[..n]);
+            while let Some(end) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                let head = String::from_utf8_lossy(&buf[..end]).into_owned();
+                let body_len = head
+                    .lines()
+                    .find_map(|l| {
+                        let (name, value) = l.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())?
+                    })
+                    .unwrap_or(0);
+                if buf.len() < end + 4 + body_len {
+                    break;
+                }
+                buf.drain(..end + 4 + body_len);
+                let request_line = head.lines().next().unwrap_or_default().to_string();
+                let is_setup = request_line.starts_with("SETUP ");
+                let cseq = head
+                    .lines()
+                    .find_map(|l| l.strip_prefix("CSeq:"))
+                    .unwrap_or("1")
+                    .trim()
+                    .to_string();
+                seen.push(head);
+                let extra = if is_setup { "Session: 1\r\n" } else { "" };
+                let body = if request_line.starts_with("DESCRIBE ") {
+                    "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=video 0 RTP/AVP 96\r\na=control:trackID=0\r\n"
+                } else {
+                    ""
+                };
+                let response = if body.is_empty() {
+                    format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n{extra}\r\n")
+                } else {
+                    format!(
+                        "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nContent-Type: application/sdp\r\nContent-Length: {}\r\n{extra}\r\n{}",
+                        body.len(),
+                        body
+                    )
+                };
+                if sock.write_all(response.as_bytes()).await.is_err() {
+                    return seen;
+                }
+            }
+        }
+    });
+
+    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
+    let session = client.start_play(&url, 0).await.unwrap();
+    assert_eq!(session.tracks.len(), 1);
+    assert_eq!(session.tracks[0].channel, 0);
+    client.teardown(url.as_str()).await.unwrap();
+    drop(client);
+
+    let seen = tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .expect("server must finish")
+        .unwrap();
+    let lines: Vec<&str> = seen
+        .iter()
+        .map(|h| h.lines().next().unwrap_or(""))
+        .collect();
+    assert_eq!(
+        lines,
+        vec![
+            format!("DESCRIBE rtsp://{addr}/live/key RTSP/1.0"),
+            format!("SETUP rtsp://{addr}/live/key/trackID=0 RTSP/1.0"),
+            format!("PLAY rtsp://{addr}/live/key RTSP/1.0"),
+            format!("TEARDOWN rtsp://{addr}/live/key RTSP/1.0"),
+        ]
+    );
+}
+
+struct PlayServer {
+    describe_headers: &'static str,
+    media_controls: &'static [&'static str],
+    setup_transport: Option<&'static str>,
+}
+
+fn play_sdp(controls: &[&str]) -> String {
+    let mut sdp = String::from("v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n");
+    for control in controls {
+        sdp.push_str(&format!("m=video 0 RTP/AVP 96\r\na=control:{control}\r\n"));
+    }
+    sdp
+}
+
+async fn spawn_play_server(
+    config: PlayServer,
+) -> (std::net::SocketAddr, tokio::task::JoinHandle<Vec<String>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        let mut seen: Vec<String> = Vec::new();
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            let n = match sock.read(&mut chunk).await {
+                Ok(0) | Err(_) => return seen,
+                Ok(n) => n,
+            };
+            buf.extend_from_slice(&chunk[..n]);
+            while let Some(end) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                let head = String::from_utf8_lossy(&buf[..end]).into_owned();
+                buf.drain(..end + 4);
+                let request_line = head.lines().next().unwrap_or_default().to_string();
+                let cseq = head
+                    .lines()
+                    .find_map(|l| l.strip_prefix("CSeq:"))
+                    .unwrap_or("1")
+                    .trim()
+                    .to_string();
+                seen.push(head);
+                let response = if request_line.starts_with("DESCRIBE ") {
+                    let body = play_sdp(config.media_controls);
+                    format!(
+                        "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n{}Content-Type: application/sdp\r\nContent-Length: {}\r\n\r\n{}",
+                        config.describe_headers.replace("{addr}", &addr.to_string()),
+                        body.len(),
+                        body
+                    )
+                } else if request_line.starts_with("SETUP ") {
+                    let transport = config
+                        .setup_transport
+                        .map(|t| format!("Transport: {t}\r\n"))
+                        .unwrap_or_default();
+                    format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: 1\r\n{transport}\r\n")
+                } else {
+                    format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n\r\n")
+                };
+                if sock.write_all(response.as_bytes()).await.is_err() {
+                    return seen;
+                }
+            }
+        }
+    });
+    (addr, handle)
+}
+
+fn request_lines(seen: &[String]) -> Vec<&str> {
+    seen.iter()
+        .map(|h| h.lines().next().unwrap_or(""))
+        .collect()
+}
+
+#[tokio::test]
+async fn start_play_assigns_consecutive_interleaved_pairs_per_media() {
+    let (addr, server) = spawn_play_server(PlayServer {
+        describe_headers: "",
+        media_controls: &["trackID=0", "trackID=1"],
+        setup_transport: None,
+    })
+    .await;
+    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
+    let session = client.start_play(&url, 0).await.unwrap();
+    let channels: Vec<u8> = session.tracks.iter().map(|t| t.channel).collect();
+    assert_eq!(channels, vec![0, 2]);
+    assert!(session.skipped.is_empty());
+    drop(client);
+
+    let seen = tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .expect("server must finish")
+        .unwrap();
+    assert_eq!(
+        request_lines(&seen),
+        vec![
+            format!("DESCRIBE rtsp://{addr}/live/key RTSP/1.0"),
+            format!("SETUP rtsp://{addr}/live/key/trackID=0 RTSP/1.0"),
+            format!("SETUP rtsp://{addr}/live/key/trackID=1 RTSP/1.0"),
+            format!("PLAY rtsp://{addr}/live/key RTSP/1.0"),
+        ]
+    );
+    assert!(seen[1].contains("interleaved=0-1"), "{}", seen[1]);
+    assert!(seen[2].contains("interleaved=2-3"), "{}", seen[2]);
+}
+
+#[tokio::test]
+async fn start_play_skips_foreign_authority_media() {
+    let (addr, server) = spawn_play_server(PlayServer {
+        describe_headers: "",
+        media_controls: &["trackID=0", "rtsp://other.example/x"],
+        setup_transport: None,
+    })
+    .await;
+    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
+    let session = client.start_play(&url, 0).await.unwrap();
+    assert_eq!(session.tracks.len(), 1);
+    assert_eq!(session.skipped, vec!["rtsp://other.example/x".to_string()]);
+    drop(client);
+
+    let seen = tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .expect("server must finish")
+        .unwrap();
+    let setups = request_lines(&seen)
+        .into_iter()
+        .filter(|l| l.starts_with("SETUP "))
+        .count();
+    assert_eq!(setups, 1);
+}
+
+#[tokio::test]
+async fn start_play_rejects_a_server_reusing_an_interleaved_channel() {
+    let (addr, _server) = spawn_play_server(PlayServer {
+        describe_headers: "",
+        media_controls: &["trackID=0", "trackID=1"],
+        setup_transport: Some("RTP/AVP/TCP;unicast;interleaved=0-1"),
+    })
+    .await;
+    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
+    let err = client.start_play(&url, 0).await.expect_err("collision");
+    assert!(matches!(
+        err,
+        rtsp_runtime::Error::InterleavedChannelCollision { channel: 0 }
+    ));
+}
+
+#[tokio::test]
+async fn start_play_resolves_controls_against_content_base() {
+    let (addr, server) = spawn_play_server(PlayServer {
+        describe_headers: "Content-Base: rtsp://{addr}/base/\r\n",
+        media_controls: &["trackID=0"],
+        setup_transport: None,
+    })
+    .await;
+    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
+    client.start_play(&url, 0).await.unwrap();
+    drop(client);
+
+    let seen = tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .expect("server must finish")
+        .unwrap();
+    assert_eq!(
+        request_lines(&seen)[1],
+        format!("SETUP rtsp://{addr}/base/trackID=0 RTSP/1.0")
+    );
+}
+
+#[tokio::test]
+async fn start_play_fails_when_channels_run_out() {
+    let (addr, _server) = spawn_play_server(PlayServer {
+        describe_headers: "",
+        media_controls: &["trackID=0", "trackID=1"],
+        setup_transport: None,
+    })
+    .await;
+    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
+    let err = client.start_play(&url, 254).await.expect_err("exhausted");
+    assert!(matches!(
+        err,
+        rtsp_runtime::Error::InterleavedChannelExhausted
+    ));
+}
+
+#[test]
+fn resolve_control_refuses_foreign_authority() {
+    let req = url::Url::parse("rtsp://cam/live").unwrap();
+    let base = url::Url::parse("rtsp://other/base").unwrap();
+    assert!(rtsp_runtime::sdp::resolve_control(&req, &base, Some("trackID=1")).is_none());
+}
+
+#[tokio::test]
+async fn start_play_unexpected_response_yields_typed_error() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        let mut chunk = [0u8; 4096];
+        loop {
+            let n = match sock.read(&mut chunk).await {
+                Ok(0) | Err(_) => return,
+                Ok(n) => n,
+            };
+            let text = String::from_utf8_lossy(&chunk[..n]).into_owned();
+            if !text.contains("\r\n\r\n") {
+                continue;
+            }
+            let cseq = text
+                .lines()
+                .find_map(|l| l.strip_prefix("CSeq:"))
+                .unwrap_or("1")
+                .trim()
+                .to_string();
+            let response = if text.starts_with("SETUP ") {
+                format!("RTSP/1.0 461 Unsupported Transport\r\nCSeq: {cseq}\r\n\r\n")
+            } else if text.starts_with("DESCRIBE ") {
+                let body = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=video 0 RTP/AVP 96\r\na=control:trackID=0\r\n";
+                format!(
+                    "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nContent-Type: application/sdp\r\nContent-Length: {}\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+            } else {
+                format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n\r\n")
+            };
+            if sock.write_all(response.as_bytes()).await.is_err() {
+                return;
+            }
+        }
+    });
+    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
+    let err = client.start_play(&url, 0).await.expect_err("461");
+    assert!(matches!(
+        err,
+        rtsp_runtime::Error::UnexpectedResponse { .. }
+    ));
+    drop(server);
+}
+
+#[tokio::test]
+async fn start_record_announce_rejected_sends_only_one_request() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            let n = match sock.read(&mut chunk).await {
+                Ok(0) | Err(_) => return buf,
+                Ok(n) => n,
+            };
+            buf.extend_from_slice(&chunk[..n]);
+            if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                let cseq = String::from_utf8_lossy(&buf)
+                    .lines()
+                    .find_map(|l| l.strip_prefix("CSeq:"))
+                    .unwrap_or("1")
+                    .trim()
+                    .to_string();
+                let _ = sock
+                    .write_all(format!("RTSP/1.0 403 Forbidden\r\nCSeq: {cseq}\r\n\r\n").as_bytes())
+                    .await;
+                return buf;
+            }
+        }
+    });
+
+    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let url = url::Url::parse(&format!("rtsp://user:secret@{addr}/live/key")).unwrap();
+    let err = client.start_record(&url, SDP, 0).await.expect_err("403");
+    assert!(
+        matches!(
+            err,
+            rtsp_runtime::Error::UnexpectedResponse {
+                method: rtsp_runtime::Method::Announce,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+    let seen = tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .expect("server must finish")
+        .unwrap();
+    let text = String::from_utf8_lossy(&seen);
+    let count = text.matches("ANNOUNCE ").count()
+        + text.matches("SETUP ").count()
+        + text.matches("RECORD ").count();
+    assert_eq!(count, 1, "server saw more than one request: {text}");
+    drop(client);
+}
+
+#[tokio::test]
+async fn start_record_channel_255_is_exhausted() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let _ = listener.accept().await;
+    });
+    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
+    let err = client
+        .start_record(&url, SDP, 255)
+        .await
+        .expect_err("exhausted");
+    assert!(
+        matches!(err, rtsp_runtime::Error::InterleavedChannelExhausted),
+        "{err:?}"
+    );
+    drop(server);
+    drop(client);
+}
+
+#[tokio::test]
+async fn start_record_does_not_leak_password_in_request_line() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        let mut buf = Vec::new();
+        let mut seen: Vec<String> = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            let n = match sock.read(&mut chunk).await {
+                Ok(0) | Err(_) => return seen,
+                Ok(n) => n,
+            };
+            buf.extend_from_slice(&chunk[..n]);
+            while let Some(end) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                let head = String::from_utf8_lossy(&buf[..end]).into_owned();
+                let body_len = head
+                    .lines()
+                    .find_map(|l| {
+                        let (name, value) = l.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())?
+                    })
+                    .unwrap_or(0);
+                if buf.len() < end + 4 + body_len {
+                    break;
+                }
+                buf.drain(..end + 4 + body_len);
+                let request_line = head.lines().next().unwrap_or_default().to_string();
+                let is_setup = request_line.starts_with("SETUP ");
+                seen.push(head);
+                let cseq = seen
+                    .last()
+                    .unwrap()
+                    .lines()
+                    .find_map(|l| l.strip_prefix("CSeq:"))
+                    .unwrap_or("1")
+                    .trim()
+                    .to_string();
+                let extra = if is_setup { "Session: 1\r\n" } else { "" };
+                let response = format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n{extra}\r\n");
+                if sock.write_all(response.as_bytes()).await.is_err() {
+                    return seen;
+                }
+            }
+        }
+    });
+
+    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let url = url::Url::parse(&format!("rtsp://user:secret@{addr}/live/key")).unwrap();
+    client.start_record(&url, SDP, 0).await.unwrap();
+    client
+        .teardown(format!("rtsp://{addr}/live/key").as_str())
+        .await
+        .unwrap();
+    drop(client);
+
+    let seen = tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .expect("server must finish")
+        .unwrap();
+    for head in &seen {
+        let line = head.lines().next().unwrap_or("");
+        assert!(
+            !line.contains("secret"),
+            "password leaked in request line: {line}"
+        );
+    }
 }

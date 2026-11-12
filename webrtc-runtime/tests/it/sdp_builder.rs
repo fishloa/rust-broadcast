@@ -160,3 +160,16 @@ fn the_echo_list_names_only_the_chosen_payload_type() {
     let none = offer_codec_attributes(&media, 99);
     assert!(none.is_empty(), "a payload type the offer does not name");
 }
+
+#[test]
+fn wildcard_rtcp_fb_is_echoed() {
+    let mut media = offer_media();
+    media.add_attribute_with_value("rtcp-fb", "* nack");
+    media.add_attribute_with_value("rtcp-fb", "96 pli");
+    media.add_attribute_with_value("rtcp-fb", "97 nack");
+    let echo = offer_codec_attributes(&media, 96);
+    let values: Vec<_> = echo.iter().map(|a| a.value.as_str()).collect();
+    assert!(values.contains(&"* nack"), "{values:?}");
+    assert!(values.contains(&"96 pli"), "{values:?}");
+    assert!(!values.contains(&"97 nack"), "{values:?}");
+}

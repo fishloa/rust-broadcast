@@ -1568,7 +1568,7 @@ mod exchange {
             .await;
             assert_eq!(fetch.outcome, want, "status {status}");
             assert!(
-                matches!(result, FetchResult::Failed(_)),
+                matches!(result, FetchResult::Failed { .. }),
                 "status {status} carries an error"
             );
             server.abort();
@@ -1585,7 +1585,13 @@ mod exchange {
         )
         .await;
         assert!(
-            matches!(result, FetchResult::Failed(MultimuxError::Auth { .. })),
+            matches!(
+                result,
+                FetchResult::Failed {
+                    error: MultimuxError::Auth { .. },
+                    ..
+                }
+            ),
             "a refused credential is Auth, not a retryable Connect"
         );
         server.abort();
@@ -1701,7 +1707,7 @@ mod exchange {
         req.timeout = Duration::from_millis(150);
         let (fetch, result) = drive::spawn_fetch(&net, req).fut.await;
         assert_eq!(fetch.outcome, Outcome::Failed(Failure::Timeout));
-        assert!(matches!(result, FetchResult::Failed(_)));
+        assert!(matches!(result, FetchResult::Failed { .. }));
         server.abort();
     }
 

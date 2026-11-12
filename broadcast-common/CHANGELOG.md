@@ -6,6 +6,7 @@
 - `klv` and `ber` modules: the SMPTE ST 336 KLV triplet (`KlvItem<'a>` with a 16-byte `UniversalLabel` key), `walk_klv_items`/`collect_klv_items`, and the BER length codec (`decode_ber_length`, `encode_ber_length`, `ber_length_size`, `BerLength` which keeps the on-wire length width so a parsed item re-serializes byte-identically), with `KlvError`. Moved from st377-1 so st377-1 (MXF) and transmux (MISB KLV) share one implementation (#2341).
 ### Fixed
 - `ber::encode_ber_length` / `encode_ber_length_as` write their length byte through `len::fit_u8` instead of `u8::try_from(..).unwrap_or(u8::MAX)`, so an over-range value is reported as a `KlvError` rather than silently clamped into the wire (unreachable today: the short-form range is checked first). The `truncation` workspace guard now covers `broadcast-common`, including that clamp idiom.
+- `xml::read_tree` now rejects CDATA sections and non-XML-S whitespace outside the root element; `Elem::text` docs clarify it holds only direct text, not descendants.
 
 ## [11.0.1] - 2026-11-10
 ### Fixed

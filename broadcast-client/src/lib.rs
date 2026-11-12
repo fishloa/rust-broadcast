@@ -5,10 +5,15 @@
 
 extern crate alloc;
 
-pub(crate) mod auth;
+pub mod auth;
 mod buffer;
 mod cookies;
 pub mod error;
+
+/// Sans-IO fetch cores (retry/backoff policy and helpers).
+pub mod fetch {
+    pub use crate::source::fetch::retry::retry_after_us;
+}
 pub mod events;
 mod headers;
 pub mod identity;

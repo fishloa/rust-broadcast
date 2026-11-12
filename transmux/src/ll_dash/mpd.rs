@@ -1,28 +1,24 @@
 //! LL-DASH MPD signalling — the `std`-only half of [`crate::ll_dash`]: the
-//! [`LlDashPackager`] renders a whole-segment MPD with [`DashPackager`], then
-//! rewrites it with `quick-xml` to add the low-latency attributes and
-//! `<ServiceDescription>` (see the parent module's docs for the spec clauses).
+//! [`LlDashPackager`] builds the whole-segment MPD model with [`DashPackager`],
+//! adds the low-latency attributes and `<ServiceDescription>` to it and renders
+//! it through `broadcast-dash` (see the parent module's docs for the spec
+//! clauses).
 
 use alloc::string::{String, ToString};
 
-use quick_xml::NsReader;
-use quick_xml::Writer;
-use quick_xml::events::{BytesEnd, BytesStart, Event};
+use broadcast_dash::utc_timing::UtcScheme;
+use broadcast_dash::{Latency, Mpd, PlaybackRate, ServiceDescription, UtcTiming};
 
 use broadcast_common::Package;
-use broadcast_common::xml_chars::namespace_of;
 
-use crate::dash::{DashPackager, MPD_NAMESPACE};
+use crate::dash::DashPackager;
 use crate::error::{Error, Result};
 use crate::media::Media;
 
-/// Local name of the MPD root element (ISO/IEC 23009-1 §5.3.1.2).
-const MPD_ELEMENT: &str = "MPD";
-/// Local name of `SegmentTemplate` (ISO/IEC 23009-1 §5.3.9.4).
-const SEGMENT_TEMPLATE: &str = "SegmentTemplate";
-/// Reported when the base MPD this packager just rendered fails to re-parse
-/// (an invariant violation, surfaced as an error rather than a panic).
-const BASE_MPD_NOT_WELL_FORMED: &str = "base MPD is not well-formed XML";
+/// `ServiceDescription@id` of the one description this packager emits.
+const SERVICE_DESCRIPTION_ID: u64 = 0;
+/// Milliseconds per second, for rounding to the three-decimal wire form.
+const MILLIS_PER_SECOND: f64 = 1000.0;
 
 // ===========================================================================
 // LlDashPackager — low-latency DASH MPD
@@ -157,99 +153,56 @@ impl Package for LlDashPackager {
     /// Propagates [`DashPackager`] errors (e.g. empty track list, or no
     /// `base.publish_time`: the LL-DASH MPD is always `dynamic`).
     fn package(&mut self, media: &Media) -> Result<String> {
-        let base_xml = self.base.package(media)?;
-        self.inject_ll(&base_xml)
+        let mut mpd = self.base.build_mpd(media)?;
+        self.apply_ll(&mut mpd);
+        mpd.to_xml()
+            .map_err(|_| Error::InvalidInput("MPD serialisation failed"))
     }
 }
 
 impl LlDashPackager {
-    /// Post-process the base MPD XML: add `<ServiceDescription>` (and the
-    /// optional `<UTCTiming>`) as the first children of `<MPD>`, and the LL
-    /// attributes onto every `<SegmentTemplate>`.
-    ///
-    /// The base MPD is re-read with `quick-xml` and re-emitted event by event
-    /// (every untouched tag and attribute passes through verbatim; text is
-    /// trimmed at run edges, see below), so the rewrite never depends on the base writer's line layout.
-    fn inject_ll(&self, xml: &str) -> Result<String> {
-        let ato_str = format_secs(self.availability_time_offset());
-
-        let mut reader = NsReader::from_str(xml);
-        // Whitespace-only text between elements is dropped (the indenting writer
-        // re-lays it out); a text run split by a reference loses its edge spaces,
-        // which is harmless because the base writer only emits base64 text.
-        reader.config_mut().trim_text(true);
-        let mut writer = Writer::new_with_indent(Vec::new(), b' ', 2);
-        // Writing to an in-memory `Vec` cannot fail, so write results are
-        // intentionally discarded.
-        let mut utc_written = false;
-        loop {
-            let (resolved, event) = reader
-                .read_resolved_event()
-                .map_err(|_| Error::InvalidInput(BASE_MPD_NOT_WELL_FORMED))?;
-            let in_mpd = matches!(
-                namespace_of(resolved),
-                Ok(Some(ref ns)) if ns == MPD_NAMESPACE
-            );
-            match event {
-                Event::Eof => break,
-                // 1. availabilityTimeComplete + availabilityTimeOffset on every SegmentTemplate
-                Event::Start(e) if in_mpd && e.local_name().as_ref() == SEGMENT_TEMPLATE => {
-                    let _ = writer.write_event(Event::Start(self.ll_template(&e, &ato_str)));
-                }
-                Event::Empty(e) if in_mpd && e.local_name().as_ref() == SEGMENT_TEMPLATE => {
-                    let _ = writer.write_event(Event::Empty(self.ll_template(&e, &ato_str)));
-                }
-                // 2. Insert <ServiceDescription> immediately after the <MPD ...> open tag.
-                Event::Start(e) if in_mpd && e.local_name().as_ref() == MPD_ELEMENT => {
-                    let _ = writer.write_event(Event::Start(e));
-                    self.write_service_description(&mut writer);
-                }
-                // 3. <UTCTiming> is a direct child of <MPD> but the schema places it
-                //    after <Period>, so emit it once the Period closes.
-                Event::End(e) if in_mpd && e.local_name().as_ref() == "Period" && !utc_written => {
-                    let _ = writer.write_event(Event::End(e));
-                    if let Some((scheme, value)) = &self.utc_timing {
-                        let mut timing = BytesStart::new("UTCTiming");
-                        timing.push_attribute(("schemeIdUri", scheme.as_str()));
-                        timing.push_attribute(("value", value.as_str()));
-                        let _ = writer.write_event(Event::Empty(timing));
-                    }
-                    utc_written = true;
-                }
-                other => {
-                    let _ = writer.write_event(other);
-                }
-            }
+    /// Add the LL-DASH signalling to the whole-segment `mpd`: a
+    /// `ServiceDescription` (and the optional `UTCTiming`) and the two LL
+    /// availability attributes on every `SegmentTemplate`.
+    fn apply_ll(&self, mpd: &mut Mpd) {
+        let ato = round_millis(self.availability_time_offset());
+        for template in mpd
+            .periods
+            .iter_mut()
+            .flat_map(|p| p.adaptation_sets.iter_mut())
+            .flat_map(|a| a.representations.iter_mut())
+            .filter_map(|r| r.segment.template.as_mut())
+        {
+            template.multi.base.availability_time_offset = Some(ato);
+            template.multi.base.availability_time_complete = Some(false);
         }
-        let mut out = String::from_utf8_lossy(&writer.into_inner()).into_owned();
-        out.push('\n');
-        Ok(out)
-    }
 
-    /// `tag` with the two LL attributes appended (after the existing ones).
-    fn ll_template<'a>(&self, tag: &BytesStart<'a>, ato: &str) -> BytesStart<'a> {
-        let mut out = tag.to_owned();
-        out.push_attribute(("availabilityTimeOffset", ato));
-        out.push_attribute(("availabilityTimeComplete", "false"));
-        out
-    }
-
-    /// Write the `<ServiceDescription>` block, then `<UTCTiming>`.
-    fn write_service_description(&self, w: &mut Writer<Vec<u8>>) {
-        let mut sd = BytesStart::new("ServiceDescription");
-        sd.push_attribute(("id", "0"));
-        let _ = w.write_event(Event::Start(sd));
-        let mut latency = BytesStart::new("Latency");
-        latency.push_attribute(("target", self.latency_target_ms.to_string().as_str()));
-        let _ = w.write_event(Event::Empty(latency));
+        let mut latency = Latency::default();
+        latency.target = Some(u64::from(self.latency_target_ms));
+        let mut sd = ServiceDescription::default();
+        sd.id = Some(SERVICE_DESCRIPTION_ID);
+        sd.latency = Some(latency);
         if let Some((min, max)) = self.playback_rate {
-            let mut rate = BytesStart::new("PlaybackRate");
-            rate.push_attribute(("min", format_secs(min).as_str()));
-            rate.push_attribute(("max", format_secs(max).as_str()));
-            let _ = w.write_event(Event::Empty(rate));
+            let mut rate = PlaybackRate::default();
+            rate.min = Some(format_secs(min));
+            rate.max = Some(format_secs(max));
+            sd.playback_rate = Some(rate);
         }
-        let _ = w.write_event(Event::End(BytesEnd::new("ServiceDescription")));
+        mpd.service_descriptions.push(sd);
+
+        if let Some((scheme, value)) = &self.utc_timing {
+            let mut timing = UtcTiming::default();
+            timing.scheme = UtcScheme::from_scheme_id_uri(scheme);
+            timing.scheme_id_uri = scheme.clone();
+            timing.value = value.clone();
+            mpd.utc_timings.push(timing);
+        }
     }
+}
+
+/// Round a seconds value to whole milliseconds.
+fn round_millis(v: f64) -> f64 {
+    (v * MILLIS_PER_SECOND).round() / MILLIS_PER_SECOND
 }
 
 /// Format a non-negative seconds value with up to three decimal places, trailing
@@ -272,45 +225,51 @@ fn format_secs(v: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use broadcast_dash::{AdaptationSet, Period, Representation, SegmentTemplate};
 
-    const NS: &str = "urn:mpeg:dash:schema:mpd:2011";
-
-    fn packager() -> LlDashPackager {
-        LlDashPackager::new(4.0, 1.0, 3000, "2026-01-01T00:00:00Z").unwrap()
+    fn mpd_with_one_template() -> Mpd {
+        let mut rep = Representation::default();
+        rep.segment.template = Some(SegmentTemplate::default());
+        let mut set = AdaptationSet::default();
+        set.representations.push(rep);
+        let mut period = Period::default();
+        period.adaptation_sets.push(set);
+        let mut mpd = Mpd::default();
+        mpd.periods.push(period);
+        mpd
     }
 
     #[test]
-    fn foreign_namespace_look_alikes_are_passed_through_untouched() {
-        let xml = format!(
-            r#"<MPD xmlns="{NS}" xmlns:x="urn:x"><x:MPD/><Period><x:SegmentTemplate/><SegmentTemplate/></Period><x:Period/></MPD>"#
-        );
-        let out = packager().inject_ll(&xml).unwrap();
-        assert_eq!(out.matches("availabilityTimeOffset").count(), 1, "{out}");
-        assert!(out.contains("<x:SegmentTemplate/>"), "{out}");
-        assert_eq!(out.matches("<ServiceDescription").count(), 1, "{out}");
-    }
-
-    #[test]
-    fn a_foreign_mpd_root_gets_no_service_description() {
-        let xml = r#"<MPD xmlns="urn:other"><Period><SegmentTemplate/></Period></MPD>"#;
-        let out = packager().inject_ll(xml).unwrap();
-        assert!(!out.contains("ServiceDescription"), "{out}");
-        assert!(!out.contains("availabilityTimeOffset"), "{out}");
-    }
-
-    #[test]
-    fn utc_timing_follows_only_a_period_in_the_mpd_namespace() {
-        let xml = format!(
-            r#"<MPD xmlns="{NS}" xmlns:x="urn:x"><x:Period></x:Period><Period><SegmentTemplate/></Period></MPD>"#
-        );
-        let out = packager()
-            .with_utc_timing(UTCTIMING_DIRECT_2014, "2026-01-01T00:00:00Z")
-            .inject_ll(&xml)
+    fn apply_ll_sets_the_availability_fields_on_every_template() {
+        let packager = LlDashPackager::new(4.0, 1.0, 3000, "2026-01-01T00:00:00Z").unwrap();
+        let mut mpd = mpd_with_one_template();
+        packager.apply_ll(&mut mpd);
+        let template = mpd.periods[0].adaptation_sets[0].representations[0]
+            .segment
+            .template
+            .as_ref()
             .unwrap();
-        let timing = out.find("<UTCTiming").unwrap();
-        let foreign = out.find("</x:Period>").unwrap();
-        let own = out.rfind("<Period").unwrap();
-        assert!(foreign < own && own < timing, "{out}");
-        assert_eq!(out.matches("<UTCTiming").count(), 1, "{out}");
+        assert_eq!(template.multi.base.availability_time_offset, Some(3.0));
+        assert_eq!(template.multi.base.availability_time_complete, Some(false));
+        assert_eq!(mpd.service_descriptions.len(), 1);
+        assert_eq!(
+            mpd.service_descriptions[0].latency.as_ref().unwrap().target,
+            Some(3000)
+        );
+        assert!(mpd.utc_timings.is_empty());
+    }
+
+    #[test]
+    fn apply_ll_adds_utc_timing_and_playback_rate_when_configured() {
+        let packager = LlDashPackager::new(4.0, 1.0, 3000, "2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_playback_rate(0.96, 1.04)
+            .with_utc_timing(UTCTIMING_DIRECT_2014, "2026-01-01T00:00:00Z");
+        let mut mpd = mpd_with_one_template();
+        packager.apply_ll(&mut mpd);
+        let rate = mpd.service_descriptions[0].playback_rate.as_ref().unwrap();
+        assert_eq!(rate.min.as_deref(), Some("0.96"));
+        assert_eq!(rate.max.as_deref(), Some("1.04"));
+        assert_eq!(mpd.utc_timings[0].value, "2026-01-01T00:00:00Z");
     }
 }

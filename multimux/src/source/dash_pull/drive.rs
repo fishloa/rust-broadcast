@@ -24,9 +24,10 @@ use crate::clock::HostClock;
 use crate::error::{MultimuxError, Result};
 use crate::reconnect::ReconnectSchedule;
 use crate::source::driver::terminal_result;
-use crate::source::http_auth::{ScopedCredentials, authenticated_get_with};
+use crate::source::http_auth::authenticated_get_with;
 use crate::source::pull::{FetchOutcome, FetchResult, PendingFetch, PullScheduler};
 use crate::source::{BodyError, read_body_bounded};
+use broadcast_client::auth::AuthState;
 
 /// How long the loop parks when nothing is in flight and nothing is due.
 const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(5);
@@ -94,7 +95,7 @@ impl DashFetch {
 #[derive(Clone)]
 pub(super) struct Net {
     pub(super) http: HttpClient,
-    pub(super) credentials: Option<ScopedCredentials>,
+    pub(super) credentials: Option<AuthState>,
     pub(super) clock: Arc<dyn HostClock>,
     pub(super) read_timeout: Duration,
     pub(super) utc_timeout: Duration,
@@ -206,7 +207,13 @@ fn failed(
     error: MultimuxError,
 ) -> (DashFetch, FetchResult) {
     fetch.outcome = Outcome::Failed(failure);
-    (fetch, FetchResult::Failed(error))
+    (
+        fetch,
+        FetchResult::Failed {
+            error,
+            retry_after: None,
+        },
+    )
 }
 
 fn header_text(headers: &HeaderMap, name: &HeaderName) -> Option<String> {
@@ -282,7 +289,13 @@ pub(super) async fn exchange(net: &Net, req: &Request, sent_us: u64) -> (DashFet
         let error = MultimuxError::Auth {
             reason: format!("dash-pull {}: {status}", req.what),
         };
-        return (fetch, FetchResult::Failed(error));
+        return (
+            fetch,
+            FetchResult::Failed {
+                error,
+                retry_after: None,
+            },
+        );
     }
     if status == StatusCode::NOT_MODIFIED && req.target == FetchTarget::Mpd {
         fetch.outcome = Outcome::Unchanged;
@@ -463,7 +476,7 @@ pub(super) async fn run<S: RouteSink>(
             Some(FetchOutcome::Ready(fetch, body)) => {
                 feed_response(&mut driver, fetch, &body, now_us);
             }
-            Some(FetchOutcome::Failed(fetch, error)) => match fetch.outcome {
+            Some(FetchOutcome::Failed(fetch, error, _)) => match fetch.outcome {
                 Outcome::Unauthorized => return Err(error),
                 Outcome::Failed(failure) => {
                     if fetch.target == FetchTarget::Mpd && !driver.session().mpd_accepted() {

@@ -17,9 +17,9 @@
 //! # `rtsp://` vs `rtsps://`
 //!
 //! Plain RTSP (`rtsp://`) is carried over TCP on default port **554**
-//! ([`RTSP_DEFAULT_PORT`]). RTSP-over-TLS (`rtsps://`) wraps the TCP stream in a
+//! ([`crate::RTSP_DEFAULT_PORT`]). RTSP-over-TLS (`rtsps://`) wraps the TCP stream in a
 //! TLS session *before* any RTSP is exchanged and uses default port **322**
-//! ([`RTSPS_DEFAULT_PORT`], per the IANA `rtsps` assignment). The TLS entry
+//! ([`crate::RTSPS_DEFAULT_PORT`], per the IANA `rtsps` assignment). The TLS entry
 //! points ([`AsyncRtspClient::connect_tls`], [`AsyncRtspServer::accept_tls`]) are
 //! gated behind the `tls` feature; everything else is behind `tokio`.
 
@@ -28,6 +28,8 @@ use std::time::Duration;
 
 use futures_util::{FutureExt, SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
+
+use crate::PlaySession;
 use tokio::net::TcpStream;
 use tokio_util::codec::Framed;
 
@@ -37,12 +39,6 @@ use crate::codec::{ClientCodec, ServerCodec, ServerFrame, bounded};
 use crate::error::{Error, IoContext, Result};
 use crate::server::{ServerEvent, ServerSession};
 use crate::transport::{Transport, TransportSpec};
-
-/// Default TCP port for `rtsp://` (RFC 2326 §1 / IANA `rtsp`).
-pub const RTSP_DEFAULT_PORT: u16 = 554;
-
-/// Default TCP port for `rtsps://` (RTSP over TLS; IANA `rtsps`).
-pub const RTSPS_DEFAULT_PORT: u16 = 322;
 
 /// Explicit bounds on every awaited IO of the RTSP adapters (W1 SP1.3): no wait
 /// is unbounded.
@@ -337,29 +333,114 @@ where
         sdp: &str,
         interleaved_channel: u8,
     ) -> Result<()> {
-        let uri = url.as_str();
-        let control = crate::sdp::control_url(url)?;
-        let mut spec = TransportSpec::rtp_avp_tcp_interleaved(
-            interleaved_channel,
-            interleaved_channel.wrapping_add(1),
-        );
+        let clean = broadcast_auth::strip_userinfo(url).map_err(Error::from)?;
+        let uri = clean.as_str();
+        let control = crate::sdp::control_url(&clean)?;
+        let rtcp = interleaved_channel
+            .checked_add(1)
+            .ok_or(Error::InterleavedChannelExhausted)?;
+        let mut spec = TransportSpec::rtp_avp_tcp_interleaved(interleaved_channel, rtcp);
         spec.mode = vec![crate::TransportMode::Record];
         let transport = crate::Transport::single(spec);
 
-        for (method, event) in [
-            (Method::Announce, self.announce(uri, sdp).await),
-            (Method::Setup, self.setup(&control, &transport).await),
-            (Method::Record, self.record(uri).await),
-        ] {
-            match event? {
-                ClientEvent::Response { status, .. } if status.is_success() => {}
-                ClientEvent::Response { status, .. } => {
-                    return Err(Error::UnexpectedResponse { method, status });
+        expect_success(Method::Announce, self.announce(uri, sdp).await?)?;
+        expect_success(Method::Setup, self.setup(&control, &transport).await?)?;
+        expect_success(Method::Record, self.record(uri).await?)?;
+        Ok(())
+    }
+
+    /// Sends `payload` as an interleaved (`$`-framed) media packet on `channel`
+    /// (§10.12) — the mirror of the server's
+    /// [`AsyncRtspServer::send_interleaved`], for an RTSP push that delivers
+    /// media interleaved over the control connection. The frame is built by
+    /// [`crate::interleaved::InterleavedFrame::new`] and the write is bounded
+    /// by [`RtspTimeouts::write`].
+    ///
+    /// Before the write this drives the push keepalive (see
+    /// [`poll_keepalive`](Self::poll_keepalive)) and drains any server→client
+    /// bytes already buffered, so a SEND-ONLY pusher that only ever calls this
+    /// method still refreshes its session and does not let the peer's
+    /// responses/notifications fill the socket buffer (RFC 2326 §12.37).
+    ///
+    /// **A `Timeout`/cancelled write leaves a partial `$` frame in the codec's
+    /// write buffer and the connection is dead** — an interleaved frame cannot
+    /// be resynchronised mid-flight, so the caller must reconnect rather than
+    /// retry. Bytes already read stay buffered.
+    /// Pulls a stream in one call: `DESCRIBE` (RFC 2326 §10.2), `SETUP` for
+    /// each media section with a usable `a=control` (§10.4), then `PLAY` (§10.5).
+    ///
+    /// Relative `a=control` values resolve against the `Content-Base` of the
+    /// DESCRIBE response, else its `Content-Location`, else `url` (Appendix
+    /// C.1.1), kept with a trailing slash so a value appends rather than
+    /// replaces the last path segment. A media control that crosses
+    /// `url`'s authority is not set up and is listed in
+    /// [`PlaySession::skipped`]. `PLAY` goes to the session-level `a=control`
+    /// (`*` is the base); an absent session-level control, or one on another
+    /// authority, leaves `PLAY` on `url`.
+    ///
+    /// Each track is offered the interleaved pair `first_channel + 2n` /
+    /// `first_channel + 2n + 1`; the channel the server answers with is the one
+    /// recorded in [`crate::PlayTrack::channel`].
+    ///
+    /// # Errors
+    ///
+    /// [`Error::UnexpectedResponse`] for the first non-2xx answer,
+    /// [`Error::InvalidSdp`] when the body is not UTF-8 or not an SDP,
+    /// [`Error::InterleavedChannelExhausted`] when the pairs no longer fit in a
+    /// `u8`, and [`Error::InterleavedChannelCollision`] when the server
+    /// assigns one channel to two tracks.
+    pub async fn start_play(&mut self, url: &url::Url, first_channel: u8) -> Result<PlaySession> {
+        let clean = broadcast_auth::strip_userinfo(url).map_err(Error::from)?;
+        let (status, body) = match self.describe(clean.as_str()).await? {
+            crate::client::ClientEvent::Response { status, body, .. } => (status, body),
+            other => return Err(Error::UnexpectedEvent { event: other }),
+        };
+        if !status.is_success() {
+            return Err(Error::UnexpectedResponse {
+                method: Method::Describe,
+                status,
+            });
+        }
+        let sdp = String::from_utf8(body).map_err(|e| Error::InvalidSdp(e.to_string()))?;
+        let mut plan = crate::PlayPlan::from_describe(
+            &clean,
+            self.framed.codec_mut().session.content_base(),
+            None,
+            &sdp,
+            first_channel,
+        )?;
+
+        for index in 0..plan.setups().len() {
+            let Some(setup) = plan.setups().get(index) else {
+                break;
+            };
+            let (control, transport) = (setup.control.clone(), setup.transport.clone());
+            match self.setup(&control, &transport).await? {
+                crate::client::ClientEvent::Response { status, .. } if status.is_success() => {}
+                crate::client::ClientEvent::Response { status, .. } => {
+                    return Err(Error::UnexpectedResponse {
+                        method: Method::Setup,
+                        status,
+                    });
                 }
                 other => return Err(Error::UnexpectedEvent { event: other }),
             }
+            let negotiated = self.framed.codec_mut().session.take_negotiated_transport();
+            plan.accept_setup(index, negotiated.as_ref())?;
         }
-        Ok(())
+
+        match self.play(plan.play_uri()).await? {
+            crate::client::ClientEvent::Response { status, .. } if status.is_success() => {}
+            crate::client::ClientEvent::Response { status, .. } => {
+                return Err(Error::UnexpectedResponse {
+                    method: Method::Play,
+                    status,
+                });
+            }
+            other => return Err(Error::UnexpectedEvent { event: other }),
+        }
+
+        Ok(plan.into_session(sdp))
     }
 
     /// Sends `payload` as an interleaved (`$`-framed) media packet on `channel`
@@ -985,6 +1066,14 @@ mod tls_timeout_tests {
             "{:?}",
             r.err()
         );
+    }
+}
+
+fn expect_success(method: Method, event: ClientEvent) -> Result<()> {
+    match event {
+        ClientEvent::Response { status, .. } if status.is_success() => Ok(()),
+        ClientEvent::Response { status, .. } => Err(Error::UnexpectedResponse { method, status }),
+        other => Err(Error::UnexpectedEvent { event: other }),
     }
 }
 
