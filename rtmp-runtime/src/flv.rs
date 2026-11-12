@@ -153,6 +153,10 @@ pub const FLV_FLAG_VIDEO: u8 = 0x01;
 /// Byte width of the file header's fixed part (§E.2): `Signature`(3) +
 /// `Version`(1) + `TypeFlags`(1) + `DataOffset`(4).
 pub const FLV_HEADER_LEN: usize = 9;
+/// Offset of the file header's `TypeFlags` byte (§E.2).
+const FLV_FLAGS_OFFSET: usize = 4;
+/// Offset of the file header's 4-byte `DataOffset` field (§E.2).
+const FLV_DATA_OFFSET_FIELD: usize = 5;
 /// Byte width of the `PreviousTagSize0` field that follows the file header
 /// (§E.2) and of the `PreviousTagSize` field after every tag (§E.4.1).
 pub const FLV_PREV_TAG_SIZE_LEN: usize = 4;
@@ -225,19 +229,35 @@ impl<'a> FlvHeader<'a> {
     }
 }
 
-impl<'a> Parse<'a> for FlvHeader<'a> {
-    type Error = RtmpError;
-
-    fn parse(bytes: &'a [u8]) -> FlvResult<Self> {
+impl FlvHeader<'_> {
+    /// The `DataOffset` the fixed 9-byte header declares (FLV §E.2), after
+    /// checking the signature, without requiring the bytes it points past.
+    /// A streaming reader uses it to bound how much it buffers before the
+    /// whole header has arrived.
+    pub fn declared_data_offset(bytes: &[u8]) -> FlvResult<u32> {
         need_in(bytes, FLV_HEADER_LEN, "FLV header")?;
         if bytes.get(..FLV_SIGNATURE.len()) != Some(FLV_SIGNATURE.as_slice()) {
             return Err(RtmpError::Malformed {
                 what: "FLV header signature",
             });
         }
-        let flags = bytes[4];
-        let data_offset = u32::from_be_bytes(bytes[5..FLV_HEADER_LEN].try_into().unwrap());
-        let data_offset = usize::try_from(data_offset).map_err(|_| RtmpError::Malformed {
+        let field = bytes
+            .get(FLV_DATA_OFFSET_FIELD..FLV_HEADER_LEN)
+            .and_then(|b| <[u8; 4]>::try_from(b).ok())
+            .ok_or(RtmpError::Malformed {
+                what: "FLV header DataOffset",
+            })?;
+        Ok(u32::from_be_bytes(field))
+    }
+}
+
+impl<'a> Parse<'a> for FlvHeader<'a> {
+    type Error = RtmpError;
+
+    fn parse(bytes: &'a [u8]) -> FlvResult<Self> {
+        let declared = FlvHeader::declared_data_offset(bytes)?;
+        let flags = bytes[FLV_FLAGS_OFFSET];
+        let data_offset = usize::try_from(declared).map_err(|_| RtmpError::Malformed {
             what: "FLV header DataOffset",
         })?;
         if data_offset < FLV_HEADER_LEN {

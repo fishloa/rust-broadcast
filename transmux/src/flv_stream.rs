@@ -331,6 +331,28 @@ impl StreamingFlvDemux {
                 // would keep appending to `pending` forever waiting for a
                 // "header" that never completes (#738 T11a review, Important —
                 // remote OOM/DoS).
+                let declared =
+                    match rtmp_runtime::flv::FlvHeader::declared_data_offset(&self.pending) {
+                        Ok(declared) => declared,
+                        Err(_) => {
+                            return Err(FlvError::BadSignature([
+                                self.pending[0],
+                                self.pending[1],
+                                self.pending[2],
+                            ]));
+                        }
+                    };
+                if usize::try_from(declared).unwrap_or(usize::MAX) > MAX_FLV_HEADER_LEN {
+                    return Err(FlvError::HeaderTooLarge {
+                        declared,
+                        max: MAX_FLV_HEADER_LEN,
+                    });
+                }
+                if usize::try_from(declared)
+                    .map_or(true, |d| self.pending.len() < d + PREV_TAG_SIZE_LEN)
+                {
+                    break;
+                }
                 let header = match rtmp_runtime::flv::FlvHeader::parse(&self.pending) {
                     Ok(header) => header,
                     Err(
@@ -346,12 +368,6 @@ impl StreamingFlvDemux {
                         ]));
                     }
                 };
-                if usize::try_from(header.data_offset).unwrap_or(usize::MAX) > MAX_FLV_HEADER_LEN {
-                    return Err(FlvError::HeaderTooLarge {
-                        declared: header.data_offset,
-                        max: MAX_FLV_HEADER_LEN,
-                    });
-                }
                 let skip = header.first_tag_offset();
                 if self.pending.len() < skip {
                     break; // a non-standard larger header hasn't fully arrived
