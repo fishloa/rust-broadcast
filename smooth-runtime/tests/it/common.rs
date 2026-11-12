@@ -115,6 +115,15 @@ impl Host {
         }
     }
 
+    pub fn step(&mut self) -> bool {
+        let Some(action) = self.client.poll(self.now) else {
+            return false;
+        };
+        self.serve(action);
+        self.drain();
+        true
+    }
+
     pub fn run(&mut self) {
         self.run_until(|_| false);
     }

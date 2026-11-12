@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Fixed
+- The Smooth pull forwards the engine's `Output::TracksChanged` as `SessionEvent::TracksChanged` so the trunk's track set follows a quality switch.
 - The RTSP pull logs (warn) the aligner's timeline-step `Discontinuity` and placement-rule `State` outputs instead of dropping them silently; `media_plane::SessionEvent` has no equivalent to forward.
 - The Smooth pull keeps logging the engine's `Output::Discontinuity` rather than forwarding it: `media_plane::SessionEvent` has no discontinuity event, so unlike `broadcast-client` (`Event::Discontinuity`) the trunk gets no marker; pinned by a unit test.
 ### Changed
