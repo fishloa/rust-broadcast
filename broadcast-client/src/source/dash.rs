@@ -242,7 +242,7 @@ pub(crate) struct DashSource {
 }
 
 impl DashSource {
-    pub(crate) fn new(url: &Url, config: &Config, conn_alloc: ConnAlloc) -> Self {
+    pub(crate) fn new(url: &Url, config: &Config, conn_alloc: ConnAlloc, seed: u64) -> Self {
         let mut pull = PullLimits::default();
         pull.policy = Policy::default();
         pull.policy.max_bandwidth = config.variant_policy.max_bandwidth.map(u64::from);
@@ -269,7 +269,7 @@ impl DashSource {
                 manifest: config.max_manifest_bytes,
                 segment: config.max_segment_bytes,
             },
-            backoff: Backoff::new(&config.backoff_ms, config.backoff_cap_ms),
+            backoff: Backoff::new(&config.backoff_ms, config.backoff_cap_ms, seed),
             max_redirects: config.max_redirects,
             max_key_failures: config.max_key_failures,
             mpd_failures: Attempts::default(),

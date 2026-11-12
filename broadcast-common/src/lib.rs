@@ -48,6 +48,7 @@
 
 extern crate alloc;
 
+pub mod backoff;
 #[cfg(feature = "base64")]
 pub mod base64;
 pub mod bcd;

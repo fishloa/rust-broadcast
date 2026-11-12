@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `backoff` module: `RetrySchedule`, the one capped retry schedule the workspace's clients and servers pace a reconnect from (issue #2471). Pure policy with no clock and no allocation: `raw_delay_for_attempt` is the deterministic series and `delay_for_attempt` the retry actually waited. A schedule is either exponential (`min * factor^attempt`, capped) or a literal step table (`from_steps`); jitter is equal-jitter from a fixed term sequence (`with_offset` starts a caller further into it), so the first retry is exactly the configured step, no delay ever exceeds it, the capped band stays jittered, and a fleet spread over the retry interval stays spread. `mix_seed` folds a caller's own entropy into a seed without reading a clock.
 ### Removed
 - `ts_dup` module moved to `mpeg-ts` (legal duplicate TS packet detection, H.222.0 §2.4.3.3); import from `mpeg_ts::ts_dup` instead (#2466).
 ### Added

@@ -20,8 +20,10 @@ use url::{Host, Url};
 
 use crate::events::{Action, ErrorKind, Event, Status};
 use crate::redirect;
+use crate::source::fetch::retry::ReconnectTimer;
 use crate::source::rtsp_sdp::{ParsedSdp, SdpError, SkippedMedia, TrackInit, parse_tracks};
 use broadcast_auth::{AuthDecision, AuthState};
+use broadcast_common::backoff::mix_seed;
 
 const SCHEME_RTSPS: &str = "rtsps";
 const RTSP_DEFAULT_PORT: u16 = 554;
@@ -37,6 +39,12 @@ const STATUS_NOT_FOUND: u16 = 404;
 const STATUS_PROXY_AUTH_REQUIRED: u16 = 407;
 const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
 const CHALLENGE_HEADER: &str = "WWW-Authenticate";
+
+/// A wait as whole microseconds: rounded up, so a jittered sub-microsecond
+/// delay still schedules a wake rather than collapsing to "now".
+fn us_of(wait: core::time::Duration) -> u64 {
+    u64::try_from(wait.as_micros()).unwrap_or(u64::MAX)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Req {
@@ -95,6 +103,10 @@ pub(crate) struct RtspSource {
     seen_first_sample: bool,
     stalled: bool,
     attempt: u64,
+    /// The workspace's one reconnect timer: the backoff series and the rule
+    /// that only a connection that stayed up for its healthy span restarts it
+    /// (issue #2471). Reported through `attempt`, this source's own label.
+    retry: ReconnectTimer,
     connected_at: u64,
     last_byte_at: u64,
     last_sample_at: u64,
@@ -173,6 +185,7 @@ impl RtspSource {
             seen_first_sample: false,
             stalled: false,
             attempt: 0,
+            retry: ReconnectTimer::new(&cfg.backoff_ms, cfg.backoff_cap_ms, mix_seed(now_us)),
             connected_at: now_us,
             last_byte_at: now_us,
             last_sample_at: now_us,
@@ -308,6 +321,7 @@ impl RtspSource {
             return;
         }
         self.connected_at = now;
+        self.retry.on_connected(now);
         self.last_byte_at = now;
         self.last_sample_at = now;
         if !self.send(req) {
@@ -431,6 +445,7 @@ impl RtspSource {
         self.forget_connection_state();
         self.seen_first_sample = false;
         self.connected_at = now;
+        self.retry.on_connected(now);
         self.last_byte_at = now;
         self.last_sample_at = now;
         let conn = self.alloc_conn();
@@ -1162,15 +1177,11 @@ impl RtspSource {
 
     fn fail_before_playing(&mut self, now: u64) {
         self.attempt = self.attempt.saturating_add(1);
-        let after_ms = usize::try_from(self.attempt)
-            .ok()
-            .and_then(|n| n.checked_sub(1))
-            .and_then(|i| self.cfg.backoff_ms.get(i).copied())
-            .unwrap_or(self.cfg.backoff_cap_ms);
+        let wait = self.retry.on_disconnected(now);
         self.events.push_back(Event::Status(Status::Reconnecting {
             attempt: self.attempt,
         }));
-        self.phase = Phase::Backoff(now.saturating_add(after_ms.saturating_mul(US_PER_MS)));
+        self.phase = Phase::Backoff(now.saturating_add(us_of(wait)));
     }
 }
 

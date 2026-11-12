@@ -31,7 +31,18 @@ impl TsHttpClient {
     /// An inconsistent `config` is replaced by [`Config::clamped`] rather
     /// than rejected; call [`Config::validate`] first to detect it.
     pub fn new(url: impl Into<String>, config: Config, now_ms: u64) -> Self {
-        let policy = TsHttpPolicy::new(url, config, now_ms);
+        Self::with_seed(url, config, now_ms, now_ms)
+    }
+
+    /// Create a client whose retry jitter is drawn from `seed` (see
+    /// [`TsHttpPolicy::with_seed`]).
+    pub(crate) fn with_seed(
+        url: impl Into<String>,
+        config: Config,
+        now_ms: u64,
+        seed: u64,
+    ) -> Self {
+        let policy = TsHttpPolicy::with_seed(url, config, now_ms, seed);
         let opens = policy.open_count();
         Self {
             policy,
