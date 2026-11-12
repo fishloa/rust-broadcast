@@ -238,6 +238,30 @@ mod tests {
         );
     }
 
+    /// PMT declares AAC-ADTS on a PID whose payload is MPEG-1 Layer III: the
+    /// 12-bit syncword matches but the layer bits are not `00`, so it is not
+    /// ADTS — flagged.
+    #[test]
+    fn declared_aac_with_mp3_payload_is_flagged() {
+        const AUDIO_PID: Pid = Pid::new(0x102);
+        let mut mp3 = alloc::vec![0xFF, 0xFB, 0x90, 0x00];
+        mp3.resize(32, 0x00);
+        let mut ts = build_pat_pmt_ts(&[(AUDIO_PID.value(), StreamType::AacAdts)]);
+        ts.extend_from_slice(&make_pes_packet(AUDIO_PID, 0, &build_pes(0xC0, &mp3)));
+
+        let mut report = Report::new();
+        CodecSignallingCheck.run(&ts, &mut report);
+        assert!(
+            report
+                .findings()
+                .iter()
+                .any(|f| f.rule_id == "codec-signalling-mismatch"
+                    && f.location.pid == u32::from(AUDIO_PID.value())),
+            "expected codec-signalling-mismatch for an MP3 payload on an AAC PID, got {:?}",
+            report.findings()
+        );
+    }
+
     /// PMT declares AAC-ADTS on a PID carrying a real ADTS-framed frame —
     /// must not be flagged.
     #[test]
