@@ -92,6 +92,8 @@ const SLEEP_ALLOW: &[&str] = &[
     // Cold-hold test: a paused-clock publish delay (virtual time, no condition to await)
     // and a 20 ms hang-guarded poll for a file route to leave 503 once it has announced.
     "cold_playlist_hold.rs",
+    // Catch-up e2e: bounded condition polls on archive/period availability.
+    "catchup_e2e.rs",
 ];
 
 fn test_files() -> Vec<(String, String)> {
