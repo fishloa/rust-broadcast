@@ -189,6 +189,7 @@ use crate::slice_header::{AvcParamSets, AvcPicture};
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
 use broadcast_common::{Demand, Parse, Stage, Timestamp};
+use rtp_packet::{MIN_SEQUENTIAL, RTP_SEQ_MOD_PLUS_ONE, SeqValidity, SeqVerdict};
 
 /// Number of fractional-second units in the 32.32 fixed-point NTP timestamp
 /// format an RTCP Sender Report's `ntp_msw`/`ntp_lsw` carry (RFC 3550 §6.4.1,
@@ -225,38 +226,6 @@ const MAX_AU_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 /// input (audit-ingest #4; `MAX_AU_BUFFER_BYTES` above is one of the fixes),
 /// and RTP is untrusted remote input over UDP, so a fifth was not an option.
 pub const DEFAULT_REORDER_DEPTH: usize = 16;
-
-/// The 16-bit sequence-number space, RFC 3550 §A.1's `RTP_SEQ_MOD` (`#define
-/// RTP_SEQ_MOD (1<<16)` in the RFC's own sample header).
-const RTP_SEQ_MOD: u32 = 1 << 16;
-
-/// `RTP_SEQ_MOD + 1`, the value RFC 3550 §A.1's `init_seq` stores in `bad_seq`
-/// "so seq == bad_seq is false": it is one past the largest representable
-/// sequence number, so no 16-bit `seq` can ever equal it.
-const RTP_SEQ_MOD_PLUS_ONE: u32 = RTP_SEQ_MOD + 1;
-
-/// RFC 3550 §A.1's `MAX_DROPOUT` (3000 there, "based on ... a maximum dropout
-/// of 1 minute"). A jump *ahead* of `max_seq` smaller than this is treated as
-/// an ordinary loss ("in order, with permissible gap"); at or above it the
-/// number is a wild jump needing confirmation.
-const MAX_DROPOUT: u16 = 3000;
-
-/// RFC 3550 §A.1's `MAX_MISORDER` (100 there, "based on a maximum misordering
-/// time of 2 seconds at 50 packets/second"). A number behind `max_seq` by at
-/// most this much is a legal reorder and is accepted; further behind and it is
-/// either a duplicate or part of a wild jump.
-const MAX_MISORDER: u32 = 100;
-
-/// RFC 3550 §A.1's `MIN_SEQUENTIAL`: how many sequential packets a source must
-/// produce before it is declared valid. Two, because the RTCP header check is
-/// strong and a larger number would delay validation when packets are lost.
-const MIN_SEQUENTIAL: u8 = 2;
-
-/// `RTP_SEQ_MOD - MAX_MISORDER`, narrowed to `u16` for the §A.1 comparison
-/// `udelta <= RTP_SEQ_MOD - MAX_MISORDER`. `MAX_MISORDER` (100) is far below
-/// `RTP_SEQ_MOD` (65536), so the subtraction cannot underflow (asserted in this
-/// module's tests).
-const MAX_WILD_JUMP_U16: u16 = (RTP_SEQ_MOD - MAX_MISORDER) as u16;
 
 /// Loss/reorder signal from [`RtpStreamDepacketiser`] (RFC 3550 §5.1
 /// sequence-number semantics; see the module docs' "Loss and reorder
@@ -424,122 +393,8 @@ struct SeqState {
     /// hole fills. Bounded: never holds more than `reorder_depth` entries at
     /// rest (see [`Self::admit`] / [`Self::force_resolve`]).
     held: Vec<(u16, Vec<u8>)>,
-    /// RFC 3550 §A.1's per-source validity state (`max_seq`/`bad_seq`/
-    /// `cycles`/`probation`), kept in one field so "re-initialise the source"
-    /// is a single call and cannot half-reset.
+    /// RFC 3550 §A.1's per-source validity state.
     validity: SeqValidity,
-}
-
-/// RFC 3550 §A.1's per-source validity state — a transcription of the RFC's
-/// `source` fields that `update_seq` reads and writes (`base_seq`/`received`/
-/// `expected_prior` are RTCP-statistics bookkeeping this depacketiser does not
-/// keep, since it emits its own [`RtpLossEvent`] signal instead).
-struct SeqValidity {
-    /// §A.1 `max_seq`: the highest sequence number accepted so far (or the
-    /// most recently seen one while in probation).
-    max_seq: u16,
-    /// §A.1 `bad_seq`: the number that, if the next packet carries it, means
-    /// "two sequential packets" arrived at a wild jump and the source has
-    /// restarted. `RTP_SEQ_MOD + 1` (i.e. not representable) after
-    /// `init_seq`, "so seq == bad_seq is false".
-    bad_seq: u32,
-    /// §A.1 `cycles`: `RTP_SEQ_MOD` per wrapped 64k cycle. Counted and
-    /// exposed for completeness, though this depacketiser's own ordering comes
-    /// from the reorder buffer rather than the cycle count.
-    cycles: u32,
-    /// §A.1 `probation`: non-zero until `MIN_SEQUENTIAL` consecutive packets
-    /// have been seen, so a stray packet cannot declare a source valid.
-    probation: u8,
-}
-
-impl Default for SeqValidity {
-    fn default() -> Self {
-        Self {
-            max_seq: 0,
-            bad_seq: RTP_SEQ_MOD_PLUS_ONE,
-            cycles: 0,
-            probation: 0,
-        }
-    }
-}
-
-impl SeqValidity {
-    /// §A.1's `init_seq(s, seq)`: reset the per-source statistics to a known
-    /// starting point. `bad_seq` is left at the "cannot match" sentinel, since
-    /// that is what `init_seq` does.
-    fn init_seq(&mut self, seq: u16) {
-        self.max_seq = seq;
-        self.bad_seq = RTP_SEQ_MOD_PLUS_ONE;
-        self.cycles = 0;
-        self.probation = 0;
-    }
-
-    /// §A.1's `update_seq(s, seq)`, transcribed arm for arm. Returns
-    /// [`SeqVerdict::Valid`] when §A.1 returns 1 (and a restart when the
-    /// "two sequential packets" rule fired), [`SeqVerdict::WildJumpConsumed`]
-    /// when §A.1 returns 0 having stored `bad_seq` (the packet is discarded but
-    /// arms the confirmation), and [`SeqVerdict::WildJumpIgnored`] when
-    /// §A.1 returns 0 from the probation branch.
-    fn update_seq(&mut self, seq: u16) -> SeqVerdict {
-        // u_int16 udelta = seq - s->max_seq
-        let udelta = seq.wrapping_sub(self.max_seq);
-
-        // "Source is not valid until MIN_SEQUENTIAL packets with sequential
-        // sequence numbers have been received."
-        if self.probation != 0 {
-            if seq == self.max_seq.wrapping_add(1) {
-                self.probation -= 1;
-                self.max_seq = seq;
-                if self.probation == 0 {
-                    self.init_seq(seq);
-                    return SeqVerdict::Valid { restarted: false };
-                }
-            } else {
-                self.probation = MIN_SEQUENTIAL - 1;
-                self.max_seq = seq;
-            }
-            return SeqVerdict::Probation;
-        }
-
-        if udelta < MAX_DROPOUT {
-            // "in order, with permissible gap"
-            if seq < self.max_seq {
-                // "Sequence number wrapped - count another 64K cycle."
-                self.cycles = self.cycles.wrapping_add(RTP_SEQ_MOD);
-            }
-            self.max_seq = seq;
-            SeqVerdict::Valid { restarted: false }
-        } else if udelta <= MAX_WILD_JUMP_U16 {
-            // "the sequence number made a very large jump"
-            if u32::from(seq) == self.bad_seq {
-                // "Two sequential packets -- assume that the other side
-                // restarted without telling us so just re-sync (i.e., pretend
-                // this was the first packet)."
-                self.init_seq(seq);
-                SeqVerdict::Valid { restarted: true }
-            } else {
-                self.bad_seq = u32::from(seq.wrapping_add(1)) & (RTP_SEQ_MOD - 1);
-                SeqVerdict::WildJumpArmed
-            }
-        } else {
-            // "duplicate or reordered packet" — accepted, no state change.
-            SeqVerdict::Valid { restarted: false }
-        }
-    }
-}
-
-/// The outcome of one RFC 3550 §A.1 `update_seq` call.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SeqVerdict {
-    /// §A.1 returned 1: the number is valid. `restarted` is set when the
-    /// "two sequential packets at a wild jump" rule re-synced the source.
-    Valid { restarted: bool },
-    /// §A.1 returned 0 from the probation branch — the source is not yet
-    /// declared valid and the packet is not counted.
-    Probation,
-    /// §A.1 returned 0 having stored `bad_seq` for a wild jump: the packet is
-    /// discarded, and the *next* packet must carry `bad_seq` to re-sync.
-    WildJumpArmed,
 }
 
 /// One [`SeqState::admit`] call's outcome.
@@ -618,26 +473,25 @@ impl SeqState {
                     released: Vec::new(),
                 };
             }
-            SeqVerdict::Valid { restarted } => {
-                if restarted {
-                    // §A.1's "two sequential packets ... just re-sync". The
-                    // new run starts here: adopt it and drop everything the
-                    // old one left, including a hole the buffer was waiting
-                    // on. Nothing about the seam persists (only `init_seq`'s
-                    // state carries over), so the new run is an ordinary
-                    // source from here on however far it climbs — a run that
-                    // passes the old numbering, or the 16-bit wrap, is
-                    // delivered in full, and a later seek resyncs the same
-                    // way.
-                    self.expected = Some(seq.wrapping_add(1));
-                    self.held.clear();
-                    return Admission {
-                        gap: None,
-                        resynced: true,
-                        released: alloc::vec![packet.to_vec()],
-                    };
-                }
+            SeqVerdict::Valid { restarted: true } => {
+                // §A.1's "two sequential packets ... just re-sync". The
+                // new run starts here: adopt it and drop everything the
+                // old one left, including a hole the buffer was waiting
+                // on. Nothing about the seam persists (only `init_seq`'s
+                // state carries over), so the new run is an ordinary
+                // source from here on however far it climbs — a run that
+                // passes the old numbering, or the 16-bit wrap, is
+                // delivered in full, and a later seek resyncs the same
+                // way.
+                self.expected = Some(seq.wrapping_add(1));
+                self.held.clear();
+                return Admission {
+                    gap: None,
+                    resynced: true,
+                    released: alloc::vec![packet.to_vec()],
+                };
             }
+            _ => {}
         }
 
         let expected = self.expected.expect("checked above");

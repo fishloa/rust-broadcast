@@ -27,9 +27,14 @@ mod header;
 #[cfg(feature = "rfc8285")]
 pub mod rfc8285;
 pub mod rtcp;
+pub mod seq;
 
 pub use error::{Error, Result};
 pub use header::{
     FIXED_HEADER_LEN, HeaderExtension, MAX_CSRC_COUNT, MAX_PADDING_COUNT, MAX_PAYLOAD_TYPE,
     RTP_VERSION, RtpPacket,
+};
+pub use seq::{
+    MAX_DROPOUT, MAX_MISORDER, MAX_WILD_JUMP_U16, MIN_SEQUENTIAL, RTP_SEQ_MOD,
+    RTP_SEQ_MOD_PLUS_ONE, SeqValidity, SeqVerdict,
 };

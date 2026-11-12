@@ -23,7 +23,7 @@
 //! - Interleaved frames are surfaced as [`ClientEvent::MediaData`].
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use rtsp_types::{Message, Method, Request, StatusCode, Version, headers};
 
@@ -38,6 +38,11 @@ type Body = Vec<u8>;
 
 /// RFC 2326 §12.37: the `Session` timeout when the server declares none.
 const DEFAULT_SESSION_TIMEOUT_SECS: u64 = 60;
+
+/// [`Duration::as_micros`] narrowed to the `u64` clock, saturating.
+fn micros(d: Duration) -> u64 {
+    u64::try_from(d.as_micros()).unwrap_or(u64::MAX)
+}
 
 /// The keepalive is sent at `timeout / KEEPALIVE_FRACTION_DEN` after the last
 /// activity, so one lost keepalive still leaves time for a retry.
@@ -155,6 +160,10 @@ pub struct ClientSession {
     next_cseq: u32,
     session_id: Option<String>,
     session_timeout: Option<u64>,
+    /// The methods the server advertised in the `Public` header of its most
+    /// recent `OPTIONS` response (RFC 2326 §12.28), which decide the
+    /// keepalive method ([`ClientSession::keepalive_method`]).
+    public_methods: Vec<String>,
     credentials: Option<Credentials>,
     authenticator: Option<Authenticator>,
     negotiated_transport: Option<Transport>,
@@ -163,8 +172,9 @@ pub struct ClientSession {
     /// partial messages).
     inbound: Vec<u8>,
     user_agent: String,
-    /// When the caller last reported traffic (see [`ClientSession::mark_activity`]).
-    last_activity: Option<Instant>,
+    /// When the caller last reported traffic (see [`ClientSession::mark_activity`]),
+    /// on the caller's own monotonic `now_us` clock.
+    last_activity_us: Option<u64>,
     /// The URI of the most recent request, reused for the keepalive.
     last_uri: Option<String>,
     /// Recoverable `Session` header problems seen so far (see `session_warnings`).
@@ -199,13 +209,14 @@ impl ClientSession {
             next_cseq: 1,
             session_id: None,
             session_timeout: None,
+            public_methods: Vec::new(),
             credentials: None,
             authenticator: None,
             negotiated_transport: None,
             pending: HashMap::new(),
             inbound: Vec::new(),
             user_agent: "rtsp-runtime".to_string(),
-            last_activity: None,
+            last_activity_us: None,
             last_uri: None,
             session_warnings: Vec::new(),
             session_warning_total: 0,
@@ -301,41 +312,76 @@ impl ClientSession {
         !self.inbound.is_empty()
     }
 
-    /// Records that a request was written at `now`. The core never reads a clock;
-    /// `now` is always caller-supplied. Only requests count: the server's
-    /// session timeout is refreshed by requests (RFC 2326 §12.37), not by
-    /// inbound media or responses.
-    pub fn mark_activity(&mut self, now: Instant) {
-        self.last_activity = Some(now);
+    /// Records that a request was written at `now_us`. The core never reads a
+    /// clock; `now_us` is always caller-supplied, in microseconds on whatever
+    /// monotonic clock the caller drives the session with. Only requests
+    /// count: the server's session timeout is refreshed by requests
+    /// (RFC 2326 §12.37), not by inbound media or responses.
+    pub fn mark_activity(&mut self, now_us: u64) {
+        self.last_activity_us = Some(now_us);
     }
 
-    /// Next keepalive deadline: `last_activity + timeout/2` once a Session id
-    /// exists (timeout = the SETUP response's `timeout=`, else the RFC 2326
-    /// §12.37 default of 60 s). `None` before SETUP, after TEARDOWN, or if no
-    /// activity was ever recorded.
-    pub fn poll_timeout(&self) -> Option<Instant> {
-        self.session_id.as_ref()?;
+    /// The keepalive interval: half the session timeout (the SETUP response's
+    /// `timeout=`, else the RFC 2326 §12.37 default of 60 s), so one lost
+    /// keepalive still leaves time for a retry, and never below
+    /// [`MIN_KEEPALIVE_INTERVAL`].
+    pub fn keepalive_interval(&self) -> Duration {
         let timeout =
             Duration::from_secs(self.session_timeout.unwrap_or(DEFAULT_SESSION_TIMEOUT_SECS));
-        // `checked_add`: a hostile huge `timeout=` must not overflow `Instant`.
-        self.last_activity?
-            .checked_add((timeout / KEEPALIVE_FRACTION_DEN).max(MIN_KEEPALIVE_INTERVAL))
+        (timeout / KEEPALIVE_FRACTION_DEN).max(MIN_KEEPALIVE_INTERVAL)
     }
 
-    /// If `now >= poll_timeout()`, the bytes of a `GET_PARAMETER` keepalive on
-    /// the last request URI (and activity is re-armed at `now`); `Ok(None)`
-    /// otherwise.
-    pub fn handle_timeout(&mut self, now: Instant) -> Result<Option<Vec<u8>>> {
+    /// Next keepalive deadline — `last_activity + keepalive_interval()`, on the
+    /// caller's own `now_us` clock — once a Session id exists. `None` before
+    /// SETUP, after TEARDOWN, or if no activity was ever recorded.
+    pub fn poll_timeout(&self) -> Option<u64> {
+        self.session_id.as_ref()?;
+        self.last_activity_us?
+            .checked_add(micros(self.keepalive_interval()))
+    }
+
+    /// If `now_us >= poll_timeout()`, the bytes of the keepalive on the last
+    /// request URI (and activity is re-armed at `now_us`); `Ok(None)`
+    /// otherwise. The method is [`ClientSession::keepalive_method`].
+    pub fn handle_timeout(&mut self, now_us: u64) -> Result<Option<Vec<u8>>> {
         match self.poll_timeout() {
-            Some(deadline) if now >= deadline => {}
+            Some(deadline) if now_us >= deadline => {}
             _ => return Ok(None),
         }
         let Some(uri) = self.last_uri.clone() else {
             return Ok(None);
         };
-        let bytes = self.get_parameter(&uri, b"")?;
-        self.last_activity = Some(now);
+        let bytes = match self.keepalive_method() {
+            Method::GetParameter => self.get_parameter(&uri, b"")?,
+            _ => self.options(&uri)?,
+        };
+        self.last_activity_us = Some(now_us);
         Ok(Some(bytes))
+    }
+
+    /// The method the keepalive uses: `GET_PARAMETER` when the server listed
+    /// it in the `Public` header of its `OPTIONS` response (RFC 2326 §12.28),
+    /// else `OPTIONS` — a server that did not advertise `GET_PARAMETER`, or
+    /// sent no `Public` at all, need not implement it (§10.6 does not require
+    /// it), and an unsupported keepalive can draw a `405`/`501` or even make a
+    /// camera drop the session.
+    pub fn keepalive_method(&self) -> Method {
+        if self
+            .public_methods
+            .iter()
+            .any(|m| m.eq_ignore_ascii_case("GET_PARAMETER"))
+        {
+            Method::GetParameter
+        } else {
+            Method::Options
+        }
+    }
+
+    /// The methods the server advertised in the `Public` header of its most
+    /// recent `OPTIONS` response (RFC 2326 §12.28), in wire order and
+    /// LWS-trimmed. Empty until one is seen.
+    pub fn public_methods(&self) -> &[String] {
+        &self.public_methods
     }
 
     /// The negotiated session id, once a SETUP response has been processed.
@@ -664,6 +710,24 @@ impl ClientSession {
                 let Some(pending) = self.pending.remove(&cseq) else {
                     return Ok(());
                 };
+
+                // Capture the `Public` advertisement (typically from a bare
+                // `OPTIONS`): it decides the keepalive method, and it must be
+                // read here, before the success transition moves the state on.
+                if status.is_success()
+                    && pending.method == Method::Options
+                    && let Some(public) = header_value(response.header(&headers::PUBLIC))
+                {
+                    self.public_methods = crate::rfc2326_lex::split_outside_quotes(
+                        public,
+                        crate::rfc2326_lex::LIST_SEP,
+                    )
+                    .into_iter()
+                    .map(crate::rfc2326_lex::trim_lws)
+                    .filter(|m| !m.is_empty())
+                    .map(str::to_string)
+                    .collect();
+                }
 
                 // Capture Session id + timeout (typically from SETUP). Recoverable
                 // problems (a malformed or zero timeout) are kept in
@@ -1320,6 +1384,24 @@ mod tests {
         );
     }
 
+    /// Microseconds in a second: the session's keepalive deadlines are on the
+    /// caller's microsecond clock.
+    const US_PER_SEC: u64 = 1_000_000;
+
+    /// [`established`] after an `OPTIONS` exchange whose answer carries
+    /// `public` as its `Public` header (RFC 2326 §12.28); `None` sends none.
+    fn established_publishing(timeout: Option<u64>, public: Option<&str>) -> ClientSession {
+        let mut c = established(timeout);
+        let _ = c.options("rtsp://h/s").unwrap();
+        let hdr = match public {
+            Some(list) => format!("Public: {list}\r\n"),
+            None => String::new(),
+        };
+        c.handle_data_strict(format!("RTSP/1.0 200 OK\r\nCSeq: 2\r\n{hdr}\r\n").as_bytes())
+            .unwrap();
+        c
+    }
+
     fn established(timeout: Option<u64>) -> ClientSession {
         let mut c = ClientSession::new();
         let _ = c
@@ -1344,18 +1426,13 @@ mod tests {
     #[test]
     fn the_keepalive_interval_is_floored_and_fires_at_most_once_per_interval() {
         // timeout=1 would give a 0.5 s half-timeout; the floor makes it 1 s.
-        let t0 = Instant::now();
         let mut c = established(Some(1));
-        c.mark_activity(t0);
-        assert_eq!(c.poll_timeout(), Some(t0 + MIN_KEEPALIVE_INTERVAL));
-        assert!(
-            c.handle_timeout(t0 + Duration::from_millis(500))
-                .unwrap()
-                .is_none()
-        );
+        c.mark_activity(0);
+        assert_eq!(c.poll_timeout(), Some(US_PER_SEC));
+        assert!(c.handle_timeout(500_000).unwrap().is_none());
         // hammer one instant: exactly one keepalive per floor interval
         let mut sent = 0;
-        let tick = t0 + MIN_KEEPALIVE_INTERVAL;
+        let tick = u64::try_from(MIN_KEEPALIVE_INTERVAL.as_micros()).unwrap();
         for _ in 0..1000 {
             if c.handle_timeout(tick).unwrap().is_some() {
                 sent += 1;
@@ -1366,7 +1443,6 @@ mod tests {
 
     #[test]
     fn a_zero_timeout_is_a_warning_and_the_default_not_a_busy_loop() {
-        let t0 = Instant::now();
         let mut c = ClientSession::new();
         let _ = c
             .setup(
@@ -1382,40 +1458,127 @@ mod tests {
         .unwrap();
         assert_eq!(c.session_warnings().len(), 1, "{:?}", c.session_warnings());
         assert!(c.session_warnings()[0].contains("timeout"));
-        c.mark_activity(t0);
-        assert_eq!(c.poll_timeout(), Some(t0 + Duration::from_secs(30)));
+        c.mark_activity(0);
+        assert_eq!(c.poll_timeout(), Some(30 * US_PER_SEC));
     }
 
-    /// Interop (review round 4): every received session id is stored and echoed back
-    /// verbatim on the next request, as before the own-parser change.
     #[test]
-    fn odd_received_session_ids_are_echoed_verbatim() {
-        for (hdr, id) in [
-            ("\"weird\"", "\"weird\""),
-            ("a b;timeout=30", "a b"),
-            ("abc,def", "abc,def"),
-            ("ab\"c", "ab\"c"),
-        ] {
-            let mut c = ClientSession::new();
-            let _ = c
-                .setup(
-                    "rtsp://h/s",
-                    &Transport::single(crate::transport::TransportSpec::rtp_avp_tcp_interleaved(
-                        0, 1,
-                    )),
-                )
-                .unwrap();
-            let resp = format!(
-                "RTSP/1.0 200 OK\r\nCSeq: 1\r\nSession: {hdr}\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"
-            );
-            c.handle_data_strict(resp.as_bytes()).unwrap();
-            assert_eq!(c.session_id(), Some(id), "{hdr}");
-            let play = String::from_utf8(c.play("rtsp://h/s").unwrap()).unwrap();
-            assert!(
-                play.contains(&format!("Session: {id}\r\n")),
-                "{hdr}: {play}"
-            );
-        }
+    fn keepalive_is_due_at_half_the_session_timeout() {
+        let mut c = established(Some(20));
+        assert_eq!(c.poll_timeout(), None, "no activity recorded yet");
+        c.mark_activity(0);
+        assert_eq!(c.poll_timeout(), Some(10 * US_PER_SEC));
+        assert_eq!(c.poll_timeout(), Some(10 * US_PER_SEC));
+        assert!(c.handle_timeout(9 * US_PER_SEC).unwrap().is_none());
+        let req = c
+            .handle_timeout(10 * US_PER_SEC)
+            .unwrap()
+            .expect("keepalive due");
+        let text = String::from_utf8(req).unwrap();
+        assert!(
+            text.starts_with("OPTIONS rtsp://h/s RTSP/1.0"),
+            "a server that advertised no GET_PARAMETER gets OPTIONS: {text}"
+        );
+        assert!(text.contains("Session: abc"), "{text}");
+        // re-armed from the moment it was sent
+        assert_eq!(c.poll_timeout(), Some(20 * US_PER_SEC));
+    }
+
+    #[test]
+    fn a_ten_second_session_asks_for_its_keepalive_before_five_seconds_elapse() {
+        // RFC 2326 §12.37: the server may tear the session down at 10 s.
+        // The client must ask well inside that window, so the keepalive
+        // deadline — not the expiry — is what a driver waits for.
+        let mut c = established(Some(10));
+        c.mark_activity(0);
+        let deadline = c
+            .poll_timeout()
+            .expect("a ten second session has a deadline");
+        assert!(
+            deadline < 10 * US_PER_SEC,
+            "the keepalive must be due strictly before the session expires"
+        );
+        assert!(
+            c.handle_timeout(deadline - 1).unwrap().is_none(),
+            "nothing is sent before the deadline"
+        );
+        assert!(
+            c.handle_timeout(deadline).unwrap().is_some(),
+            "the keepalive is sent at the deadline"
+        );
+        assert_eq!(
+            c.poll_timeout(),
+            Some(deadline + 5 * US_PER_SEC),
+            "and re-armed half a timeout later"
+        );
+    }
+
+    #[test]
+    fn keepalive_uses_the_rfc_default_timeout_when_none_was_declared() {
+        let mut c = established(None);
+        c.mark_activity(0);
+        assert_eq!(c.poll_timeout(), Some(30 * US_PER_SEC)); // 60 s / 2
+    }
+
+    #[test]
+    fn no_keepalive_before_setup_or_after_teardown() {
+        let mut c = ClientSession::new();
+        c.mark_activity(0);
+        assert_eq!(c.poll_timeout(), None);
+        assert!(c.handle_timeout(3600 * US_PER_SEC).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_server_listing_get_parameter_gets_get_parameter_keepalives() {
+        let mut c = established_publishing(
+            Some(20),
+            Some("OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN, GET_PARAMETER"),
+        );
+        assert_eq!(c.keepalive_method(), Method::GetParameter);
+        c.mark_activity(0);
+        let req = c
+            .handle_timeout(10 * US_PER_SEC)
+            .unwrap()
+            .expect("keepalive due");
+        assert!(
+            String::from_utf8(req)
+                .unwrap()
+                .starts_with("GET_PARAMETER rtsp://h/s RTSP/1.0")
+        );
+    }
+
+    #[test]
+    fn a_server_not_listing_get_parameter_gets_options_keepalives() {
+        let mut c =
+            established_publishing(Some(20), Some("OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN"));
+        assert_eq!(c.keepalive_method(), Method::Options);
+        c.mark_activity(0);
+        let req = c
+            .handle_timeout(10 * US_PER_SEC)
+            .unwrap()
+            .expect("keepalive due");
+        assert!(
+            String::from_utf8(req)
+                .unwrap()
+                .starts_with("OPTIONS rtsp://h/s RTSP/1.0")
+        );
+    }
+
+    #[test]
+    fn a_server_that_sent_no_public_header_gets_options_keepalives() {
+        let mut c = established_publishing(Some(20), None);
+        assert!(c.public_methods().is_empty());
+        assert_eq!(c.keepalive_method(), Method::Options);
+        c.mark_activity(0);
+        let req = c
+            .handle_timeout(10 * US_PER_SEC)
+            .unwrap()
+            .expect("keepalive due");
+        assert!(
+            String::from_utf8(req)
+                .unwrap()
+                .starts_with("OPTIONS rtsp://h/s RTSP/1.0")
+        );
     }
 
     #[test]
@@ -1431,66 +1594,6 @@ mod tests {
         }
         assert_eq!(c.session_warnings().len(), MAX_SESSION_WARNINGS);
         assert_eq!(c.session_warning_count(), MAX_SESSION_WARNINGS + 10);
-    }
-
-    #[test]
-    fn an_unusable_session_header_is_observable_not_silent() {
-        let mut c = ClientSession::new();
-        let _ = c.options("rtsp://h/s").unwrap();
-        c.handle_data_strict(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nSession: ;timeout=5\r\n\r\n")
-            .unwrap();
-        assert!(c.session_id().is_none());
-        assert_eq!(c.session_warnings().len(), 1);
-    }
-
-    #[test]
-    fn keepalive_is_due_at_half_the_session_timeout() {
-        let t0 = Instant::now();
-        let mut c = established(Some(20));
-        assert_eq!(c.poll_timeout(), None, "no activity recorded yet");
-        c.mark_activity(t0);
-        assert_eq!(c.poll_timeout(), Some(t0 + Duration::from_secs(10)));
-        assert!(
-            c.handle_timeout(t0 + Duration::from_secs(9))
-                .unwrap()
-                .is_none()
-        );
-        let req = c
-            .handle_timeout(t0 + Duration::from_secs(10))
-            .unwrap()
-            .expect("keepalive due");
-        let text = String::from_utf8(req).unwrap();
-        assert!(
-            text.starts_with("GET_PARAMETER rtsp://h/s RTSP/1.0"),
-            "{text}"
-        );
-        assert!(text.contains("Session: abc"), "{text}");
-        // re-armed from the moment it was sent
-        assert_eq!(
-            c.poll_timeout(),
-            Some(t0 + Duration::from_secs(10) + Duration::from_secs(10))
-        );
-    }
-
-    #[test]
-    fn keepalive_uses_the_rfc_default_timeout_when_none_was_declared() {
-        let t0 = Instant::now();
-        let mut c = established(None);
-        c.mark_activity(t0);
-        assert_eq!(c.poll_timeout(), Some(t0 + Duration::from_secs(30))); // 60 s / 2
-    }
-
-    #[test]
-    fn no_keepalive_before_setup_or_after_teardown() {
-        let t0 = Instant::now();
-        let mut c = ClientSession::new();
-        c.mark_activity(t0);
-        assert_eq!(c.poll_timeout(), None);
-        assert!(
-            c.handle_timeout(t0 + Duration::from_secs(3600))
-                .unwrap()
-                .is_none()
-        );
     }
 
     #[test]

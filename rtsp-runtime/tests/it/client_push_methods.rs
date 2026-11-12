@@ -15,6 +15,11 @@ use tokio::io::duplex;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
+/// The `Public` value a server that implements the keepalive advertises
+/// (RFC 2326 §12.28); without it the client keeps alive with `OPTIONS`.
+const PUBLIC_GET_PARAMETER: &str =
+    "Public: OPTIONS, ANNOUNCE, SETUP, RECORD, TEARDOWN, GET_PARAMETER";
+
 const URI: &str = "rtsp://127.0.0.1/live";
 
 fn tcp_interleaved() -> Transport {
@@ -201,6 +206,12 @@ async fn a_send_only_pusher_still_emits_a_get_parameter_keepalive() {
         RtspTimeouts::default(),
     );
 
+    // Advertise `GET_PARAMETER`, so the keepalive below is that method.
+    let resp = tokio::join!(
+        client.options(URI),
+        answer_next(&mut peer, Some(PUBLIC_GET_PARAMETER))
+    );
+    assert!(matches!(resp.0.unwrap(), ClientEvent::Response { .. }));
     let resp = tokio::join!(client.announce(URI, SDP), answer_next(&mut peer, None));
     assert!(matches!(resp.0.unwrap(), ClientEvent::Response { .. }));
     let transport = tcp_interleaved();
@@ -281,6 +292,12 @@ async fn a_454_keepalive_response_is_surfaced_not_discarded() {
         RtspTimeouts::default(),
     );
 
+    // Advertise `GET_PARAMETER`, so the keepalive below is that method.
+    let resp = tokio::join!(
+        client.options(URI),
+        answer_next(&mut peer, Some(PUBLIC_GET_PARAMETER))
+    );
+    assert!(matches!(resp.0.unwrap(), ClientEvent::Response { .. }));
     // ANNOUNCE.
     let resp = tokio::join!(client.announce(URI, SDP), answer_next(&mut peer, None));
     assert!(matches!(resp.0.unwrap(), ClientEvent::Response { .. }));

@@ -36,9 +36,6 @@ const STATUS_FORBIDDEN: u16 = 403;
 const STATUS_NOT_FOUND: u16 = 404;
 const STATUS_PROXY_AUTH_REQUIRED: u16 = 407;
 const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
-const KEEPALIVE_DEFAULT_US: u64 = 30 * US_PER_SEC;
-const KEEPALIVE_MAX_US: u64 = 3_600 * US_PER_SEC;
-const KEEPALIVE_DIVISOR: u64 = 2;
 const CHALLENGE_HEADER: &str = "WWW-Authenticate";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,10 +99,13 @@ pub(crate) struct RtspSource {
     last_byte_at: u64,
     last_sample_at: u64,
     next_notice_at: Option<u64>,
+    /// The session engine's keepalive deadline, on this source's own
+    /// caller-supplied `now_us` clock (`None` before SETUP, after TEARDOWN,
+    /// or before a request was written). The interval is never computed
+    /// here: `rtsp-runtime` owns the schedule.
+    keepalive_wake: Option<u64>,
     starved_data_fired: bool,
     starved_nodata_fired: bool,
-    next_keepalive: Option<u64>,
-    keepalive_interval: u64,
     wake_pending: Option<u64>,
     loss_events: u64,
     malformed_frames: u64,
@@ -124,15 +124,6 @@ fn effective_port(url: &Url) -> u16 {
     } else {
         RTSP_DEFAULT_PORT
     })
-}
-
-fn keepalive_interval_for(declared_secs: Option<u64>) -> u64 {
-    match declared_secs {
-        Some(secs) if secs > 0 => {
-            (secs.saturating_mul(US_PER_SEC) / KEEPALIVE_DIVISOR).min(KEEPALIVE_MAX_US)
-        }
-        _ => KEEPALIVE_DEFAULT_US,
-    }
 }
 
 impl RtspSource {
@@ -186,10 +177,9 @@ impl RtspSource {
             last_byte_at: now_us,
             last_sample_at: now_us,
             next_notice_at: None,
+            keepalive_wake: None,
             starved_data_fired: false,
             starved_nodata_fired: false,
-            next_keepalive: None,
-            keepalive_interval: KEEPALIVE_DEFAULT_US,
             wake_pending: None,
             loss_events: 0,
             malformed_frames: 0,
@@ -370,8 +360,8 @@ impl RtspSource {
                 } else {
                     self.connected_at.saturating_add(self.start_us())
                 };
-                if let Some(k) = self.next_keepalive.filter(|_| self.phase == Phase::Playing) {
-                    deadline = deadline.min(k);
+                if let Some(wake) = self.keepalive_wake {
+                    deadline = deadline.min(wake);
                 }
                 Some(deadline)
             }
@@ -474,9 +464,9 @@ impl RtspSource {
         self.tracks_dirty = false;
         self.stalled = false;
         self.next_notice_at = None;
+        self.keepalive_wake = None;
         self.starved_data_fired = false;
         self.starved_nodata_fired = false;
-        self.next_keepalive = None;
     }
 
     fn drop_connection(&mut self, teardown: bool) {
@@ -557,6 +547,7 @@ impl RtspSource {
         if self.phase == Phase::Playing {
             self.stale_replayed = false;
             self.auth_replays = 0;
+            self.note_written(now);
             return;
         }
         let Phase::Awaiting(req) = self.phase else {
@@ -594,6 +585,7 @@ impl RtspSource {
         }
         self.stale_replayed = false;
         self.auth_replays = 0;
+        self.note_written(now);
         let proceeded = match req {
             Req::Describe => self.on_describe_ok(body),
             Req::Setup(index) => self.on_setup_ok(index),
@@ -818,8 +810,6 @@ impl RtspSource {
         self.tracks_dirty = true;
         self.last_byte_at = now;
         self.last_sample_at = now;
-        self.keepalive_interval = keepalive_interval_for(self.client.session_timeout());
-        self.next_keepalive = Some(now.saturating_add(self.keepalive_interval));
     }
 
     fn route(&self, channel: u8) -> Option<(TrackId, bool)> {
@@ -1117,22 +1107,38 @@ impl RtspSource {
         if self.phase != Phase::Playing {
             return;
         }
-        let Some(due) = self.next_keepalive else {
-            return;
-        };
-        if now < due {
+        if self.keepalive_wake.is_some_and(|wake| now < wake) {
             return;
         }
-        self.next_keepalive = now.checked_add(self.keepalive_interval);
         let Some(conn) = self.conn else {
             return;
         };
-        if let Ok(bytes) = self
-            .client
-            .options(control_uri(self.plan.as_ref(), &self.uri))
-        {
-            self.actions.push_back(Action::Send { conn, bytes });
+        match self.client.handle_timeout(now) {
+            Ok(Some(bytes)) => self.actions.push_back(Action::Send { conn, bytes }),
+            Ok(None) => {}
+            Err(_) => {
+                self.drop_connection(true);
+                self.backoff_after_played(now);
+                return;
+            }
         }
+        self.arm_keepalive_wake(now);
+    }
+
+    /// Re-reads the engine's keepalive deadline after a request exchange. The
+    /// engine re-arms on the request it builds, so the new deadline is always
+    /// ahead of `now`; `max(now + 1)` keeps a coarse clock from waking in a
+    /// loop.
+    fn arm_keepalive_wake(&mut self, now: u64) {
+        self.keepalive_wake = self
+            .client
+            .poll_timeout()
+            .map(|due| due.max(now.saturating_add(1)));
+    }
+
+    fn note_written(&mut self, now: u64) {
+        self.client.mark_activity(now);
+        self.arm_keepalive_wake(now);
     }
 
     fn fail_connection(&mut self, now: u64) {
