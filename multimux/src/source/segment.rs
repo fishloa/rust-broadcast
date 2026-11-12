@@ -2381,7 +2381,7 @@ mod tests {
         type Error = Infallible;
 
         fn demand(&self) -> Demand {
-            Demand::new(4096)
+            Demand::new(crate::source::INGEST_DEMAND_BYTES)
         }
 
         fn feed(&mut self, _input: &[u8], _now: Timestamp) -> Result<(), Infallible> {
@@ -2841,7 +2841,7 @@ mod tests {
         type Error = Infallible;
 
         fn demand(&self) -> Demand {
-            Demand::new(4096)
+            Demand::new(crate::source::INGEST_DEMAND_BYTES)
         }
 
         fn feed(&mut self, _input: &[u8], _now: Timestamp) -> Result<(), Infallible> {

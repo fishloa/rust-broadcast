@@ -60,6 +60,8 @@ impl UrlRejection {
             UrlRejection::LatencyNotANumber => "latency-not-a-number",
             UrlRejection::LatencyTooLarge => "latency-too-large",
             UrlRejection::Mode => "mode",
+            UrlRejection::InvalidUtf8 => "invalid-utf8",
+            UrlRejection::DuplicateKey => "duplicate-key",
         }
     }
 }
@@ -110,6 +112,10 @@ pub enum UrlRejection {
     LatencyTooLarge,
     /// A `mode` other than `caller` or `listener`.
     Mode,
+    /// A percent-decoded value was not valid UTF-8.
+    InvalidUtf8,
+    /// The same query key appeared more than once.
+    DuplicateKey,
 }
 
 /// Manual `Debug`: a `passphrase` is a secret and never renders.
@@ -164,18 +170,24 @@ impl SrtUrl {
             passphrase: None,
         };
         if let Some(query) = query {
+            let mut seen: alloc::vec::Vec<&str> = alloc::vec::Vec::new();
             for pair in query.split('&') {
                 if pair.is_empty() {
                     continue;
                 }
                 let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+                if !seen.contains(&key) {
+                    seen.push(key);
+                } else {
+                    return Err(UrlRejection::DuplicateKey);
+                }
                 match key {
-                    "streamid" => parsed.stream_id = Some(percent_decode(value)),
+                    "streamid" => parsed.stream_id = Some(percent_decode(value)?),
                     "latency" => {
                         parsed.latency_ms = Some(parse_latency(value)?);
                     }
                     "mode" => parsed.mode = parse_mode(value).ok_or(UrlRejection::Mode)?,
-                    "passphrase" => parsed.passphrase = Some(percent_decode(value)),
+                    "passphrase" => parsed.passphrase = Some(percent_decode(value)?),
                     _ => {}
                 }
             }
@@ -230,10 +242,9 @@ fn parse_mode(value: &str) -> Option<SrtMode> {
 
 /// Percent-decode a query value. A stray `%` with no valid hex pair is kept
 /// literally rather than dropped.
-fn percent_decode(value: &str) -> String {
-    percent_encoding::percent_decode_str(value)
-        .decode_utf8_lossy()
-        .into_owned()
+fn percent_decode(value: &str) -> Result<String, UrlRejection> {
+    let bytes: alloc::vec::Vec<u8> = percent_encoding::percent_decode_str(value).collect();
+    String::from_utf8(bytes).map_err(|_| UrlRejection::InvalidUtf8)
 }
 
 #[cfg(test)]
@@ -279,5 +290,30 @@ mod tests {
             SrtUrl::parse("srt://h?latency=late"),
             Err(UrlRejection::LatencyNotANumber)
         );
+    }
+    #[test]
+    fn invalid_utf8_percent_decode_is_rejected() {
+        assert_eq!(
+            SrtUrl::parse("srt://h:9000?streamid=%FF"),
+            Err(UrlRejection::InvalidUtf8)
+        );
+        assert_eq!(
+            SrtUrl::parse("srt://h:9000?passphrase=%C3%28extra"),
+            Err(UrlRejection::InvalidUtf8)
+        );
+    }
+
+    #[test]
+    fn duplicate_query_key_is_rejected() {
+        assert_eq!(
+            SrtUrl::parse("srt://h:9000?latency=10&latency=20"),
+            Err(UrlRejection::DuplicateKey)
+        );
+    }
+
+    #[test]
+    fn valid_percent_encoded_utf8_streamid_decodes() {
+        let url = SrtUrl::parse("srt://h:9000?streamid=%C3%A9").expect("valid utf8");
+        assert_eq!(url.stream_id.as_deref(), Some("é"));
     }
 }

@@ -515,9 +515,9 @@ impl Stage for RtspIngestSession {
         if !matches!(self.phase, Phase::Live) {
             return;
         }
-        let Some(next) = self.next_keepalive else {
+        if self.next_keepalive.is_none() {
             return;
-        };
+        }
         // `on_deadline` is only called once `now >= next_deadline`, so by
         // construction the keepalive is due. Re-arm before queueing so a
         // failure to build the request (which returns early) cannot spin.
@@ -525,8 +525,6 @@ impl Stage for RtspIngestSession {
             .keepalive_interval
             .unwrap_or(DEFAULT_KEEPALIVE_INTERVAL);
         self.next_keepalive = Some(std::time::Instant::now() + interval);
-        let _ = next;
-
         // An `OPTIONS` to the session's own base URL keeps the session alive
         // (RFC 2326 §10.1: "the server ... may ... use OPTIONS to keep a
         // session alive"). A build error is logged, not fatal — the client
@@ -538,7 +536,7 @@ impl Stage for RtspIngestSession {
     }
 
     fn demand(&self) -> Demand {
-        Demand::new(4096)
+        Demand::new(crate::source::INGEST_DEMAND_BYTES)
     }
 }
 

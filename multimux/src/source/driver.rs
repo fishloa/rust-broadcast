@@ -355,7 +355,7 @@ mod tests {
         type Out = SessionEvent;
         type Error = Infallible;
         fn demand(&self) -> Demand {
-            Demand::new(4096)
+            Demand::new(crate::source::INGEST_DEMAND_BYTES)
         }
         fn feed(&mut self, _i: &[u8], _n: Timestamp) -> Result<(), Infallible> {
             Ok(())
