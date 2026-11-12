@@ -385,8 +385,12 @@ impl StreamingFlvDemux {
             if remaining.len() < total {
                 break; // tag body / trailing PreviousTagSize not fully arrived
             }
-            let Ok(tag) = rtmp_runtime::flv::FlvTag::parse(remaining) else {
-                break; // the full tag is here, so this only fails on a framing bug
+            let tag = match rtmp_runtime::flv::FlvTag::parse(remaining) {
+                Ok(tag) => tag,
+                Err(err) => {
+                    *cursor += total;
+                    return Err(FlvError::Tag(err));
+                }
             };
             let (tag_type_byte, timestamp) = (tag.tag_type.to_byte(), tag_header.timestamp);
             let body = tag.body;

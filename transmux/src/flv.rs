@@ -264,6 +264,9 @@ pub enum FlvError {
     /// The signature is `"FLV"` but the rest of the header was rejected
     /// (§E.2) — currently a `DataOffset` below the 9-byte header itself.
     Header(RtmpError),
+    /// A tag's trailing `PreviousTagSize` did not match `11 + DataSize`
+    /// (§E.4.1), or another structural tag-header error.
+    Tag(RtmpError),
     /// Underlying parse/serialize error from a reused codec-config builder.
     Codec(Error),
 }
@@ -296,6 +299,7 @@ impl fmt::Display for FlvError {
             }
             FlvError::Codec(e) => write!(f, "FLV codec config: {e}"),
             FlvError::Header(e) => write!(f, "FLV header: {e}"),
+            FlvError::Tag(e) => write!(f, "FLV tag: {e}"),
         }
     }
 }
@@ -470,6 +474,7 @@ impl From<FlvErrorAsError> for Error {
                 FlvError::UnsupportedCodec { .. } => "FLV unsupported codec",
                 FlvError::HeaderTooLarge { .. } => "FLV header DataOffset too large",
                 FlvError::Header(_) => "FLV header DataOffset below the header",
+                FlvError::Tag(_) => "FLV tag parse error",
                 _ => "FLV error",
             }),
         }
