@@ -78,7 +78,7 @@ use url::Url;
 use crate::error::{MultimuxError, Result};
 use crate::source::IngestTimeouts;
 use crate::source::http_auth::{
-    auth_state, authenticated_get, credentials_from_url, resolve_credentials, strip_userinfo,
+    authenticated_get, credentials_from_url, resolve_credentials, scope_credentials, strip_userinfo,
 };
 use crate::source::pull_target::{PullKind, PullRoute};
 use crate::source::ts_program::TsIngestSession;
@@ -160,7 +160,7 @@ pub(crate) async fn open_response(route: &TsHttpRoute) -> Result<(TsHttpStream, 
     let credentials =
         resolve_credentials(route.target.auth.clone(), credentials_from_url(&parsed)?);
     let clean_url = strip_userinfo(&parsed)?;
-    let mut credentials = auth_state(credentials, &clean_url);
+    let credentials = scope_credentials(credentials, &clean_url);
 
     let client = Client::builder()
         .redirect(crate::source::redirect_policy(true))
@@ -168,7 +168,7 @@ pub(crate) async fn open_response(route: &TsHttpRoute) -> Result<(TsHttpStream, 
         .map_err(|e| MultimuxError::Connect {
             reason: format!("reqwest client: {e}"),
         })?;
-    let response = authenticated_get(&client, clean_url.as_str(), credentials.as_mut()).await?;
+    let response = authenticated_get(&client, clean_url.as_str(), credentials.as_ref()).await?;
     let status = response.status();
     if !status.is_success() {
         return Err(if status == reqwest::StatusCode::UNAUTHORIZED {

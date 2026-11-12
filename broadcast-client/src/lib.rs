@@ -5,7 +5,7 @@
 
 extern crate alloc;
 
-pub mod auth;
+pub(crate) mod auth;
 mod buffer;
 mod cookies;
 pub mod error;

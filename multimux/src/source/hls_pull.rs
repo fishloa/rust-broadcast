@@ -66,7 +66,6 @@ use std::time::Duration;
 #[cfg(test)]
 use transmux::TrackId;
 
-use broadcast_client::auth::AuthState;
 use broadcast_common::{Demand, Stage, Timestamp, Unpackage};
 use hls_runtime::client::{Action, HlsClient, KeyId, Output as HlsOutput, ResourceId};
 use media_plane::ingress::{
@@ -81,7 +80,8 @@ use url::Url;
 use crate::error::{MultimuxError, Result};
 use crate::source::driver::terminal_result;
 use crate::source::http_auth::{
-    auth_state, authenticated_get, credentials_from_url, resolve_credentials, strip_userinfo,
+    ScopedCredentials, authenticated_get, credentials_from_url, resolve_credentials,
+    scope_credentials, strip_userinfo,
 };
 use crate::source::pull_target::{PullKind, PullRoute};
 
@@ -144,7 +144,7 @@ fn retry_backoff(attempt: u32) -> Duration {
 /// [`PullScheduler::pump`], not here.
 fn resource_fetch(
     http: HttpClient,
-    creds: Option<AuthState>,
+    creds: Option<ScopedCredentials>,
     fetch_id: HlsFetchId,
     url: String,
     read_timeout: Duration,
@@ -202,7 +202,7 @@ fn resource_fetch(
 /// issue is not transient; see the W14 note below).
 fn playlist_fetch(
     http: HttpClient,
-    creds: Option<AuthState>,
+    creds: Option<ScopedCredentials>,
     url: String,
     read_timeout: Duration,
 ) -> crate::source::pull::PendingFetch<HlsFetchId> {
@@ -397,26 +397,22 @@ impl Dialer for HlsPullDialer {
 
 /// Performs `GET url` (answering a Digest challenge if `creds` names one),
 /// returning an error on any non-2xx status.
-async fn fetch_bytes(client: &HttpClient, url: &str, creds: Option<&AuthState>) -> Result<Vec<u8>> {
-    let creds = creds.cloned();
-    fetch_bytes_capped(
-        client,
-        url,
-        creds.as_ref(),
-        crate::source::MAX_HTTP_BODY_BYTES,
-    )
-    .await
+async fn fetch_bytes(
+    client: &HttpClient,
+    url: &str,
+    creds: Option<&ScopedCredentials>,
+) -> Result<Vec<u8>> {
+    fetch_bytes_capped(client, url, creds, crate::source::MAX_HTTP_BODY_BYTES).await
 }
 
 /// [`fetch_bytes`] with an explicit body cap.
 async fn fetch_bytes_capped(
     client: &HttpClient,
     url: &str,
-    creds: Option<&AuthState>,
+    creds: Option<&ScopedCredentials>,
     cap: usize,
 ) -> Result<Vec<u8>> {
-    let creds = creds.cloned();
-    let (result, _) = fetch_bytes_capped_with_retry_after(client, url, creds.as_ref(), cap).await;
+    let (result, _) = fetch_bytes_capped_with_retry_after(client, url, creds, cap).await;
     result
 }
 
@@ -425,11 +421,10 @@ async fn fetch_bytes_capped(
 async fn fetch_bytes_capped_with_retry_after(
     client: &HttpClient,
     url: &str,
-    creds: Option<&AuthState>,
+    creds: Option<&ScopedCredentials>,
     cap: usize,
 ) -> (core::result::Result<Vec<u8>, MultimuxError>, u64) {
-    let mut creds = creds.cloned();
-    let response = match authenticated_get(client, url, creds.as_mut()).await {
+    let response = match authenticated_get(client, url, creds).await {
         Ok(r) => r,
         Err(e) => return (Err(e), 0),
     };
@@ -506,7 +501,7 @@ impl PlaylistPacing {
     }
 }
 
-fn build_client(route: &HlsPullRoute) -> Result<(HttpClient, Url, Option<AuthState>)> {
+fn build_client(route: &HlsPullRoute) -> Result<(HttpClient, Url, Option<ScopedCredentials>)> {
     let parsed = Url::parse(&route.target.url).map_err(|e| MultimuxError::Connect {
         reason: format!(
             "bad HLS-pull URL {}: {e}",
@@ -516,7 +511,7 @@ fn build_client(route: &HlsPullRoute) -> Result<(HttpClient, Url, Option<AuthSta
     let credentials =
         resolve_credentials(route.target.auth.clone(), credentials_from_url(&parsed)?);
     let clean_url = strip_userinfo(&parsed)?;
-    let credentials = auth_state(credentials, &clean_url);
+    let credentials = scope_credentials(credentials, &clean_url);
     let http = HttpClient::builder()
         .redirect(crate::source::redirect_policy(true))
         .build()
@@ -719,8 +714,8 @@ pub async fn run_hls_pull(
                             // Queued, not spawned: the spawn loop applies
                             // the in-flight bound and the backoff delay.
                             // retry_after travels with the fetch result (see pull::FetchResult).
-                            let delay =
-                                retry_backoff(next_attempt).max(retry_after.unwrap_or_default());
+                            let delay = retry_backoff(next_attempt)
+                                .max(retry_after.unwrap_or_default());
                             scheduler.push_retry(resource_fetch(
                                 http.clone(),
                                 credentials.clone(),
@@ -1105,10 +1100,7 @@ Content-Length: {over}
         let result = run_key_fetch(url).await;
         server.abort();
         match result {
-            crate::source::pull::FetchResult::Failed {
-                error: MultimuxError::Connect { reason },
-                ..
-            } => {
+            crate::source::pull::FetchResult::Failed { error: MultimuxError::Connect { reason }, .. } => {
                 assert!(reason.contains("exceeds"), "{reason}");
             }
             _ => panic!("expected the body cap to reject the key"),
@@ -1342,7 +1334,7 @@ Content-Length: {over}
     async fn drive_session_and_count(
         route: &HlsPullRoute,
     ) -> Result<(Vec<TrackSpec>, HashMap<TrackId, usize>)> {
-        let (http, clean_url, _credentials) = build_client(route)?;
+        let (http, clean_url, credentials) = build_client(route)?;
         let mut session = HlsIngestSession::new(clean_url.to_string());
         let mut backlog: VecDeque<Action> = VecDeque::new();
         let mut specs: Vec<TrackSpec> = Vec::new();
@@ -1379,11 +1371,11 @@ Content-Length: {over}
                 Action::WaitMs(ms) => tokio::time::sleep(Duration::from_millis(ms)).await,
                 Action::FetchPlaylist { .. } => {
                     let url = action.playlist_request_url().expect("playlist URL");
-                    let bytes = fetch_bytes(&http, &url, None).await?;
+                    let bytes = fetch_bytes(&http, &url, credentials.as_ref()).await?;
                     session.feed((HlsFetchId::Playlist, bytes.as_slice()), now)?;
                 }
                 Action::FetchResource { id, url, .. } => {
-                    let bytes = fetch_bytes(&http, &url, None).await?;
+                    let bytes = fetch_bytes(&http, &url, credentials.as_ref()).await?;
                     session.feed((HlsFetchId::Resource(id), bytes.as_slice()), now)?;
                 }
                 _ => {}
