@@ -33,6 +33,8 @@ serde = ["dep:serde", "dep:erased-serde"]
 xml = ["std", "dep:quick-xml"]
 # ISO 639 -> BCP 47 language canonicalisation (`lang` module).
 lang = ["std", "dep:iso-639"]
+# Base64 codec (`base64` module), wrapping the `base64` crate.
+base64 = ["dep:base64"]
 
 [dependencies]
 # Default build stays lean — consumers of broadcast_common pay for nothing they aren't
@@ -45,6 +47,8 @@ hex = { version = "0.4", default-features = false, features = ["alloc"] }
 # ISO 639 code tables (alpha-2/alpha-3 B and T) for canonicalising language codes
 # to BCP 47. Pulled in only by the `lang` feature.
 iso-639 = { version = "0.1", optional = true, default-features = false }
+# Base64 codec backing `base64::*`. `alloc` only; no_std compatible.
+base64 = { version = "0.23", optional = true, default-features = false, features = ["alloc"] }
 # Only pulled in by the `serde` feature — see its comment above. Configured
 # `no_std` (`derive` only, no `std`) so it composes with the no_std build.
 quick-xml = { workspace = true, optional = true }
