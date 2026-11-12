@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- Shared `SpliceTracker` (moved from media-doctor) for SCTE-35 splice_insert open-event tracking.
 
 ## [5.0.1] - 2026-11-10
 ### Fixed

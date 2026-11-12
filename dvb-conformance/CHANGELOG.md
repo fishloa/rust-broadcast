@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `ConformanceMonitor` now accumulates per-indicator event counts, exposed via `indicator_counts()`.
 
 ## [13.1.0] - 2026-11-10
 ### Fixed
