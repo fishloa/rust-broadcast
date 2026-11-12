@@ -23,6 +23,7 @@ required-features = ["cli"]
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "11.0.1", default-features = false }
 mpeg-pes         = { path = "../mpeg-pes", version = "0.7.1", default-features = false }
+dvb-stream       = { path = "../dvb-stream", version = "0.8.1", default-features = false, features = ["udp"] }
 mpeg-ts          = { path = "../mpeg-ts", version = "0.7.1", default-features = false }
 dvb-si           = { path = "../dvb-si", version = "13.1.0", default-features = false, features = ["ts"] }
 dvb-conformance  = { path = "../dvb-conformance", version = "13.1.0", default-features = false }
