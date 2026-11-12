@@ -143,6 +143,12 @@ pub enum MpdError {
         /// Local name of the root element.
         found: String,
     },
+    /// Serialising the model to XML failed.
+    #[error("MPD write failed: {message}")]
+    Write {
+        /// What went wrong.
+        message: String,
+    },
     /// An attribute or element violates the schema rules the core relies on.
     #[error("invalid MPD: {what}: {detail}")]
     Invalid {

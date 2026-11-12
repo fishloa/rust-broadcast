@@ -1,0 +1,226 @@
+DESCRIBE rtsp://cam.test/live/
+CSeq: 1
+Accept: application/sdp
+CSeq: 1
+User-Agent: rtsp-runtime
+===
+SETUP rtsp://cam.test/live/trackID=1
+CSeq: 2
+CSeq: 2
+Transport: RTP/AVP/TCP;unicast;interleaved=0-1
+User-Agent: rtsp-runtime
+===
+SETUP rtsp://cam.test/live/trackID=2
+CSeq: 3
+CSeq: 3
+Session: A1B2C3D4
+Transport: RTP/AVP/TCP;unicast;interleaved=2-3
+User-Agent: rtsp-runtime
+===
+PLAY rtsp://cam.test/live/
+CSeq: 4
+CSeq: 4
+Session: A1B2C3D4
+User-Agent: rtsp-runtime
+===
+SAMPLES
+track=1 dts=-7200 pts=0 sync=true len=3835 fnv=bbc41f73e561020c
+track=2 dts=0 pts=0 sync=true len=314 fnv=851b5cc2d285bd63
+track=2 dts=1024 pts=1024 sync=true len=367 fnv=40e5bf5f337ef8eb
+track=2 dts=2048 pts=2048 sync=true len=222 fnv=bf49627e58bf5d29
+track=2 dts=3072 pts=3072 sync=true len=249 fnv=d1319ca1d8db960b
+track=2 dts=4096 pts=4096 sync=true len=310 fnv=dca0e7c31d81a407
+track=2 dts=5120 pts=5120 sync=true len=308 fnv=4a4aa89144b19462
+track=2 dts=6144 pts=6144 sync=true len=251 fnv=e854e8e7f442dbaf
+track=2 dts=7168 pts=7168 sync=true len=251 fnv=118fc4c7525a669c
+track=2 dts=8192 pts=8192 sync=true len=281 fnv=2e0ea2c5fc293fef
+track=2 dts=9216 pts=9216 sync=true len=289 fnv=19c6068361f07143
+track=2 dts=10240 pts=10240 sync=true len=292 fnv=680e161febf3fa3a
+track=2 dts=11264 pts=11264 sync=true len=281 fnv=82dfd0cbc233985f
+track=2 dts=12288 pts=12288 sync=true len=307 fnv=fd2662059df0bb47
+track=2 dts=13312 pts=13312 sync=true len=291 fnv=238c7a7c36af60f7
+track=2 dts=14336 pts=14336 sync=true len=241 fnv=fbdab6dc2970f3be
+track=2 dts=15360 pts=15360 sync=true len=319 fnv=d3f8a94bf55326aa
+track=2 dts=16384 pts=16384 sync=true len=320 fnv=13e844b96348066d
+track=2 dts=17408 pts=17408 sync=true len=233 fnv=033e163a87d5993a
+track=1 dts=-3600 pts=14400 sync=false len=498 fnv=a230b6639930fa05
+track=1 dts=0 pts=7200 sync=false len=83 fnv=2166e105b5cd730e
+track=1 dts=3600 pts=3600 sync=false len=52 fnv=a765b5f9845b2153
+track=1 dts=7200 pts=10800 sync=false len=43 fnv=0cc83e4cb6267a80
+track=2 dts=18432 pts=18432 sync=true len=257 fnv=cd55e82452e0f102
+track=2 dts=19456 pts=19456 sync=true len=259 fnv=1d211293ed34ffe8
+track=2 dts=20480 pts=20480 sync=true len=266 fnv=b93b1ec86db56a66
+track=2 dts=21504 pts=21504 sync=true len=303 fnv=1d3f64314d094244
+track=2 dts=22528 pts=22528 sync=true len=307 fnv=4f5acb7decca884f
+track=2 dts=23552 pts=23552 sync=true len=270 fnv=9c69136dc47dfa6d
+track=2 dts=24576 pts=24576 sync=true len=232 fnv=4637ad8edb1a91a0
+track=2 dts=25600 pts=25600 sync=true len=291 fnv=1467972112272f47
+track=1 dts=10800 pts=28800 sync=false len=449 fnv=293ddf344f8e993d
+track=1 dts=14400 pts=21600 sync=false len=87 fnv=34341925e5fec9b7
+track=1 dts=18000 pts=18000 sync=false len=34 fnv=9f54db769387a0f7
+track=1 dts=21600 pts=25200 sync=false len=40 fnv=a1b4a36954aaa1cc
+track=2 dts=26624 pts=26624 sync=true len=275 fnv=3287a59d4d961188
+track=2 dts=27648 pts=27648 sync=true len=290 fnv=503387b879a6d56e
+track=2 dts=28672 pts=28672 sync=true len=304 fnv=78281a9af1e18c03
+track=2 dts=29696 pts=29696 sync=true len=260 fnv=ead64e389421b17b
+track=2 dts=30720 pts=30720 sync=true len=300 fnv=b79f2815ee41abfb
+track=2 dts=31744 pts=31744 sync=true len=301 fnv=286294b397fa2319
+track=2 dts=32768 pts=32768 sync=true len=314 fnv=17002f0e995a965a
+track=2 dts=33792 pts=33792 sync=true len=303 fnv=9d70f5e75722049b
+track=1 dts=25200 pts=43200 sync=false len=472 fnv=cf68ddb95697604f
+track=1 dts=28800 pts=36000 sync=false len=94 fnv=eb3c60e36a3e3f20
+track=1 dts=32400 pts=32400 sync=false len=52 fnv=fed6382d7e09654e
+track=1 dts=36000 pts=39600 sync=false len=45 fnv=e461ae98f7edc26a
+track=2 dts=34816 pts=34816 sync=true len=263 fnv=c0bf302e7bded1a4
+track=2 dts=35840 pts=35840 sync=true len=244 fnv=505282706ddcf853
+track=2 dts=36864 pts=36864 sync=true len=258 fnv=86c9f329744a2959
+track=2 dts=37888 pts=37888 sync=true len=263 fnv=320d7ad29e7241c9
+track=2 dts=38912 pts=38912 sync=true len=266 fnv=a65cc66d533781df
+track=2 dts=39936 pts=39936 sync=true len=276 fnv=49d9761ff7952074
+track=1 dts=39600 pts=57600 sync=false len=474 fnv=e368ef007b702e53
+track=1 dts=43200 pts=50400 sync=false len=82 fnv=42a078792b3cd48f
+track=1 dts=46800 pts=46800 sync=false len=43 fnv=8cb7ec2a4bec9038
+track=1 dts=50400 pts=54000 sync=false len=28 fnv=095fb4011804605b
+track=2 dts=40960 pts=40960 sync=true len=278 fnv=7e8effe9860aba9b
+track=2 dts=41984 pts=41984 sync=true len=268 fnv=9c4471dcef979b11
+track=2 dts=43008 pts=43008 sync=true len=325 fnv=5c58da2ecce97033
+track=2 dts=44032 pts=44032 sync=true len=325 fnv=e4f1cb8638d71603
+track=2 dts=45056 pts=45056 sync=true len=283 fnv=2e9a2b4090148c60
+track=2 dts=46080 pts=46080 sync=true len=280 fnv=a86da4e981e6b53b
+track=1 dts=54000 pts=68400 sync=false len=381 fnv=d85839ab8d72c7bf
+track=1 dts=57600 pts=61200 sync=false len=53 fnv=881494cc29f1ee55
+track=1 dts=61200 pts=64800 sync=false len=41 fnv=37b167508b9dadc8
+track=2 dts=47104 pts=47104 sync=true len=263 fnv=3950280cd676773c
+track=2 dts=48128 pts=48128 sync=true len=287 fnv=326acc723a3d5ea2
+track=2 dts=49152 pts=49152 sync=true len=295 fnv=211a0e774bc94109
+track=2 dts=50176 pts=50176 sync=true len=250 fnv=4d4b6abb1eefa967
+track=1 dts=64800 pts=79200 sync=false len=373 fnv=fee00345538ad311
+track=1 dts=68400 pts=72000 sync=false len=56 fnv=130b5440616d8a0b
+track=1 dts=72000 pts=75600 sync=false len=47 fnv=95d931d908ed6a1e
+track=2 dts=51200 pts=51200 sync=true len=259 fnv=d2893ab3f90c2dfa
+track=2 dts=52224 pts=52224 sync=true len=259 fnv=7c5583f9bba5e033
+track=1 dts=75600 pts=82800 sync=false len=256 fnv=0bfc4df364f00e9b
+track=2 dts=53248 pts=53248 sync=true len=283 fnv=0b07cfd32e9572a6
+track=2 dts=54272 pts=54272 sync=true len=315 fnv=d3f2085fe8948bb0
+track=2 dts=55296 pts=55296 sync=true len=266 fnv=bd5c7c2da8afd16a
+track=2 dts=56320 pts=56320 sync=true len=290 fnv=56fcbfe1666d73c2
+track=2 dts=57344 pts=57344 sync=true len=314 fnv=d65f148872ae7bdd
+track=2 dts=58368 pts=58368 sync=true len=259 fnv=fbad2b2aae527072
+track=1 dts=79200 pts=86400 sync=false len=120 fnv=af5b8c0516401df0
+track=2 dts=59392 pts=59392 sync=true len=307 fnv=362cb7b5ba98df79
+track=2 dts=60416 pts=60416 sync=true len=244 fnv=672b8c48016cfc39
+track=2 dts=61440 pts=61440 sync=true len=239 fnv=8283c70e50301f45
+track=2 dts=62464 pts=62464 sync=true len=312 fnv=b99c9fb3d700ef5c
+track=2 dts=63488 pts=63488 sync=true len=254 fnv=4fe3270580bed906
+track=2 dts=64512 pts=64512 sync=true len=261 fnv=11881eb16c647695
+track=1 dts=82800 pts=90000 sync=true len=3486 fnv=e829ef4a64dc011f
+track=2 dts=65536 pts=65536 sync=true len=334 fnv=22867434b4f93371
+track=2 dts=66560 pts=66560 sync=true len=294 fnv=a21169ad222099a4
+track=2 dts=67584 pts=67584 sync=true len=280 fnv=1b2a77db98fd4a90
+track=2 dts=68608 pts=68608 sync=true len=283 fnv=03dc7f717edf13c0
+track=2 dts=69632 pts=69632 sync=true len=238 fnv=3c5b2176946aa9d3
+track=2 dts=70656 pts=70656 sync=true len=247 fnv=947f304f0c3c79b5
+track=2 dts=71680 pts=71680 sync=true len=289 fnv=028ac09745ec6061
+track=2 dts=72704 pts=72704 sync=true len=285 fnv=8dad3057c8d3da08
+track=1 dts=86400 pts=104400 sync=false len=496 fnv=4d82379613c3120b
+track=1 dts=90000 pts=97200 sync=false len=93 fnv=c046d1a3719b4ad6
+track=1 dts=93600 pts=93600 sync=false len=51 fnv=31ac59f5c21ee0d0
+track=1 dts=97200 pts=100800 sync=false len=39 fnv=43d5fae3709ec8a0
+track=2 dts=73728 pts=73728 sync=true len=308 fnv=d338a6c0d3593598
+track=2 dts=74752 pts=74752 sync=true len=274 fnv=7b0a8475c4684cd5
+track=2 dts=75776 pts=75776 sync=true len=262 fnv=012e18ec9453a2fe
+track=2 dts=76800 pts=76800 sync=true len=267 fnv=3175b61df1371a4f
+track=2 dts=77824 pts=77824 sync=true len=268 fnv=7e96b56acadf4a16
+track=2 dts=78848 pts=78848 sync=true len=294 fnv=db497db9793cc3da
+track=2 dts=79872 pts=79872 sync=true len=332 fnv=5997881d7fea667e
+track=2 dts=80896 pts=80896 sync=true len=252 fnv=716e00edc3720071
+track=1 dts=100800 pts=118800 sync=false len=462 fnv=902b16d5e8901ec9
+track=1 dts=104400 pts=111600 sync=false len=77 fnv=0cad87a39e90347b
+track=1 dts=108000 pts=108000 sync=false len=33 fnv=32aa008cf852c1d7
+track=1 dts=111600 pts=115200 sync=false len=26 fnv=b6df90975fd6f6a8
+track=2 dts=81920 pts=81920 sync=true len=276 fnv=6fbb28e0e1ee3699
+track=2 dts=82944 pts=82944 sync=true len=268 fnv=82708fccb714c0db
+track=2 dts=83968 pts=83968 sync=true len=287 fnv=8c7c19c324084e11
+track=2 dts=84992 pts=84992 sync=true len=257 fnv=5338b1da862faf41
+track=2 dts=86016 pts=86016 sync=true len=262 fnv=e12b5711c84bf64e
+track=2 dts=87040 pts=87040 sync=true len=303 fnv=054d7fd6b59b18a3
+track=2 dts=88064 pts=88064 sync=true len=297 fnv=a72866d6b37c0d0f
+track=2 dts=89088 pts=89088 sync=true len=298 fnv=e124bd7cf03e3988
+track=1 dts=115200 pts=133200 sync=false len=425 fnv=f19bb1faa83837b5
+track=1 dts=118800 pts=126000 sync=false len=59 fnv=9902e97af5e610ff
+track=1 dts=122400 pts=122400 sync=false len=33 fnv=97490965ff194c30
+track=1 dts=126000 pts=129600 sync=false len=31 fnv=bb2b72c92611a5aa
+track=2 dts=90112 pts=90112 sync=true len=254 fnv=3b64024958bb40be
+track=2 dts=91136 pts=91136 sync=true len=257 fnv=6aed4ff223de101e
+track=2 dts=92160 pts=92160 sync=true len=280 fnv=20e05cfc6f0bcf15
+track=2 dts=93184 pts=93184 sync=true len=293 fnv=c36a476fba04d284
+track=2 dts=94208 pts=94208 sync=true len=318 fnv=7acffffeadfaf9e6
+track=2 dts=95232 pts=95232 sync=true len=260 fnv=98d2db4d354c095f
+track=2 dts=96256 pts=96256 sync=true len=304 fnv=1dfe279075b220c6
+track=2 dts=97280 pts=97280 sync=true len=285 fnv=712c667ac29a2372
+track=1 dts=129600 pts=147600 sync=false len=462 fnv=06a13dacd640e038
+track=1 dts=133200 pts=140400 sync=false len=62 fnv=1f6dd037b9548d77
+track=1 dts=136800 pts=136800 sync=false len=30 fnv=d06cbced6eac656d
+track=1 dts=140400 pts=144000 sync=false len=37 fnv=3d8992ea4f018fff
+track=2 dts=98304 pts=98304 sync=true len=242 fnv=04489e33ede96223
+track=2 dts=99328 pts=99328 sync=true len=320 fnv=6000e9f1d4981eca
+track=2 dts=100352 pts=100352 sync=true len=271 fnv=f082957e3f02c867
+track=2 dts=101376 pts=101376 sync=true len=260 fnv=1b67051b34b0927a
+track=2 dts=102400 pts=102400 sync=true len=262 fnv=4cf1d67466458709
+track=2 dts=103424 pts=103424 sync=true len=254 fnv=83084dccd7adbbf4
+track=2 dts=104448 pts=104448 sync=true len=324 fnv=98d677c0b69c5b28
+track=2 dts=105472 pts=105472 sync=true len=295 fnv=2dca20cdbd9dfb79
+track=1 dts=144000 pts=162000 sync=false len=480 fnv=208c7070ddcadd09
+track=1 dts=147600 pts=154800 sync=false len=57 fnv=f96b9d7a3d295fcf
+track=1 dts=151200 pts=151200 sync=false len=27 fnv=55aa9b21cefb50f8
+track=1 dts=154800 pts=158400 sync=false len=36 fnv=ab2ad12342466c94
+track=2 dts=106496 pts=106496 sync=true len=249 fnv=2e490e21de58611e
+track=2 dts=107520 pts=107520 sync=true len=250 fnv=7629c67f625a8c04
+track=2 dts=108544 pts=108544 sync=true len=283 fnv=6940373bfc0c521d
+track=2 dts=109568 pts=109568 sync=true len=276 fnv=07242df23b3d7302
+track=2 dts=110592 pts=110592 sync=true len=336 fnv=f822a183becc5988
+track=2 dts=111616 pts=111616 sync=true len=260 fnv=a408664a04fe7c93
+track=2 dts=112640 pts=112640 sync=true len=296 fnv=e8f2f54abd5e0678
+track=2 dts=113664 pts=113664 sync=true len=254 fnv=81b2005fe2db41c9
+track=1 dts=158400 pts=176400 sync=false len=471 fnv=2f40e13fa862b2e6
+track=1 dts=162000 pts=169200 sync=false len=64 fnv=3c1cca28f329ec7e
+track=1 dts=165600 pts=165600 sync=false len=25 fnv=b92009d2abf4b1d0
+track=1 dts=169200 pts=172800 sync=false len=26 fnv=0c604a9ffe4b4b19
+track=2 dts=114688 pts=114688 sync=true len=268 fnv=dc80d38f4653a641
+track=2 dts=115712 pts=115712 sync=true len=285 fnv=6a898f526d79c7be
+track=2 dts=116736 pts=116736 sync=true len=267 fnv=285434830bc9c4de
+track=2 dts=117760 pts=117760 sync=true len=285 fnv=3b6831a2a690b433
+track=2 dts=118784 pts=118784 sync=true len=302 fnv=806a1f28e99ebf90
+track=2 dts=119808 pts=119808 sync=true len=283 fnv=7009de9ed10d19d5
+track=1 dts=172800 pts=180000 sync=true len=3580 fnv=fdc95a786a42b021
+track=2 dts=120832 pts=120832 sync=true len=289 fnv=8286d37d0643b1a8
+track=2 dts=121856 pts=121856 sync=true len=268 fnv=6cc634fc07ae9525
+track=2 dts=122880 pts=122880 sync=true len=277 fnv=2c2c35f4c5b6c1a4
+track=2 dts=123904 pts=123904 sync=true len=254 fnv=630c8fb9aa74bb6e
+track=2 dts=124928 pts=124928 sync=true len=299 fnv=fd963d3b502d1c3d
+track=2 dts=125952 pts=125952 sync=true len=310 fnv=e58d55769130045d
+track=2 dts=126976 pts=126976 sync=true len=260 fnv=485cff96e912f233
+track=2 dts=128000 pts=128000 sync=true len=279 fnv=37c5c152fc236414
+track=1 dts=176400 pts=194400 sync=false len=503 fnv=58b8f0ed6134cba2
+track=1 dts=180000 pts=187200 sync=false len=42 fnv=de25f46730ed39cf
+track=1 dts=183600 pts=183600 sync=false len=47 fnv=7f9981b5f82bf859
+track=1 dts=187200 pts=190800 sync=false len=32 fnv=86caafddb40753b9
+track=2 dts=129024 pts=129024 sync=true len=245 fnv=ec7acf6f87f2139c
+track=2 dts=130048 pts=130048 sync=true len=290 fnv=35badf24714d3e65
+track=2 dts=131072 pts=131072 sync=true len=293 fnv=7858898ceb2416ef
+track=1 dts=190800 pts=208800 sync=false len=446 fnv=244adecddef86be9
+track=1 dts=194400 pts=201600 sync=false len=61 fnv=d2e04f461458dd9c
+track=1 dts=198000 pts=198000 sync=false len=31 fnv=d82b097ea0e7812f
+track=1 dts=201600 pts=205200 sync=false len=31 fnv=12c58fa5bb8b30ed
+track=1 dts=205200 pts=223200 sync=false len=452 fnv=bfa03303fd4aac86
+track=1 dts=208800 pts=216000 sync=false len=60 fnv=082adac97e906f2f
+track=1 dts=212400 pts=212400 sync=false len=31 fnv=b80b9c0ebdabf0fe
+track=1 dts=216000 pts=219600 sync=false len=41 fnv=bdbef1f048688acf
+track=1 dts=219600 pts=237600 sync=false len=453 fnv=06e40e2394a9c035
+track=1 dts=223200 pts=230400 sync=false len=72 fnv=9314f2da13dca79c
+track=1 dts=226800 pts=226800 sync=false len=39 fnv=db3859dd93a8dd47
+track=1 dts=230400 pts=234000 sync=false len=46 fnv=6d25577bde226425
+track=1 dts=234000 pts=252000 sync=false len=421 fnv=6e09f258be29ff15
+track=1 dts=237600 pts=244800 sync=false len=70 fnv=b543a93f193056ec
+track=1 dts=241200 pts=241200 sync=false len=40 fnv=4a08b3c052181de2
+track=1 dts=244800 pts=248400 sync=false len=47 fnv=f2062539a67eb325

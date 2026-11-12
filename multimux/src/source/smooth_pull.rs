@@ -32,10 +32,10 @@ use url::Url;
 use crate::error::{MultimuxError, Result};
 use crate::source::driver::terminal_result;
 use crate::source::http_auth::{
-    ScopedCredentials, authenticated_get, credentials_from_url, resolve_credentials,
-    scope_credentials, strip_userinfo,
+    authenticated_get, credentials_from_url, resolve_credentials, scope_credentials, strip_userinfo,
 };
 use crate::source::pull_target::{PullKind, PullRoute};
+use broadcast_client::auth::AuthState;
 
 const NANOS_PER_MICRO: u64 = 1_000;
 
@@ -270,7 +270,7 @@ fn status_error(what: &str, status: StatusCode) -> FetchError {
 async fn fetch_one_bytes(
     client: &HttpClient,
     url: &str,
-    creds: Option<&ScopedCredentials>,
+    creds: Option<&AuthState>,
     what: &str,
 ) -> std::result::Result<Vec<u8>, FetchError> {
     let response = authenticated_get(client, url, creds)
@@ -291,7 +291,7 @@ async fn fetch_one_bytes(
         })
 }
 
-fn build_client(route: &SmoothPullRoute) -> Result<(HttpClient, Url, Option<ScopedCredentials>)> {
+fn build_client(route: &SmoothPullRoute) -> Result<(HttpClient, Url, Option<AuthState>)> {
     let parsed = Url::parse(&route.target.url).map_err(|e| MultimuxError::Connect {
         reason: format!(
             "bad Smooth-pull URL {}: {e}",
@@ -330,7 +330,7 @@ type SmoothPendingFetch = crate::source::pull::PendingFetch<SmoothFetch>;
 
 fn pending_fetch(
     http: HttpClient,
-    creds: Option<ScopedCredentials>,
+    creds: Option<AuthState>,
     id: RequestId,
     kind: FetchKind,
     url: String,
@@ -351,12 +351,21 @@ fn pending_fetch(
             .await;
             let (status, result) = match fetched {
                 Ok(Ok(bytes)) => (None, FetchResult::Ready(bytes)),
-                Ok(Err(FetchError { status, error })) => (status, FetchResult::Failed(error)),
+                Ok(Err(FetchError { status, error })) => (
+                    status,
+                    FetchResult::Failed {
+                        error,
+                        retry_after: None,
+                    },
+                ),
                 Err(_) => (
                     None,
-                    FetchResult::Failed(MultimuxError::Connect {
-                        reason: format!("smooth-pull {what} read exceeded {read_timeout:?}"),
-                    }),
+                    FetchResult::Failed {
+                        error: MultimuxError::Connect {
+                            reason: format!("smooth-pull {what} read exceeded {read_timeout:?}"),
+                        },
+                        retry_after: None,
+                    },
                 ),
             };
             (SmoothFetch { id, kind, status }, result)
@@ -455,7 +464,7 @@ pub async fn run_smooth_pull(
                 driver.feed(input, now);
                 crate::source::advance_route(&driver, route_handle, &mut progress).await;
             }
-            Some(crate::source::pull::FetchOutcome::Failed(fetch, e)) => {
+            Some(crate::source::pull::FetchOutcome::Failed(fetch, e, _)) => {
                 if fetch.status == Some(StatusCode::UNAUTHORIZED.as_u16()) {
                     return Err(e);
                 }
@@ -1015,7 +1024,7 @@ mod tests {
 
     async fn fetch_action(
         http: &HttpClient,
-        creds: Option<&ScopedCredentials>,
+        creds: Option<&AuthState>,
         action: Action,
     ) -> (RequestId, bool, Vec<u8>) {
         let (id, is_manifest, url) = match action {

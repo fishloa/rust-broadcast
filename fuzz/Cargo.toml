@@ -61,6 +61,7 @@ rmt-flute      = { path = "../rmt-flute" }
 dash-runtime   = { path = "../dash-runtime" }
 smooth-runtime = { path = "../smooth-runtime" }
 url            = "2"
+broadcast-dash = { path = "../broadcast-dash" }
 test-fixtures  = { path = "../test-fixtures" }
 jiff           = { version = "0.2", default-features = false, features = ["std"] }
 ule            = { path = "../ule" }
@@ -553,5 +554,11 @@ doc  = false
 [[bin]]
 name = "ci_runtime_transport"
 path = "fuzz_targets/ci_runtime_transport.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "broadcast_dash_round_trip"
+path = "fuzz_targets/broadcast_dash_round_trip.rs"
 test = false
 doc  = false

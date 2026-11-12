@@ -274,5 +274,6 @@ pub fn effective_common(set: &AdaptationSet, rep: &Representation) -> CommonAttr
         mime_type: r.mime_type.clone().or_else(|| s.mime_type.clone()),
         codecs: r.codecs.clone().or_else(|| s.codecs.clone()),
         max_playout_rate: r.max_playout_rate.or(s.max_playout_rate),
+        coding_dependency: r.coding_dependency.or(s.coding_dependency),
     }
 }

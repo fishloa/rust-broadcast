@@ -16,13 +16,15 @@
 //! ceiling (1000 packets/s x 1316 bytes x 8 bits = ~10.5 Mbit/s, see the
 //! pre-fix run documented below).
 //!
-//! The bound is deliberately *relative* to the bug's own ceiling rather than
-//! an absolute fraction of the 50 Mbit/s target: an absolute floor measures
-//! whatever machine (and whatever load) happens to be running the test, and
-//! fails for reasons unrelated to the change under test, while the bug was
-//! a hard ceiling independent of the configured bandwidth. Twice that
-//! ceiling is still far below what the fixed, non-blocking pacing schedule
-//! sustains on loopback under the default 1 Gbps MAX_BW. (The volume is
+//! The bound is deliberately *relative* to the bug's own ceiling, measured on
+//! the same runtime immediately before the transfer, rather than an absolute
+//! rate: the bug was one timer sleep per packet, so its ceiling is the
+//! machine's timer wake latency at that moment, which grows with load exactly
+//! as the transfer does. A fixed 1000 packets/s ceiling would measure the
+//! machine instead and fail under load for reasons unrelated to the change
+//! under test. Twice the measured ceiling is still far below what the fixed,
+//! non-blocking pacing schedule sustains on loopback under the default 1 Gbps
+//! MAX_BW. (The volume is
 //! fixed rather than "spin-send for 2 wall-clock seconds": an unthrottled
 //! spin loop would turn the test into an open-ended stress test instead of a
 //! rate measurement.)
@@ -45,11 +47,13 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 const PAYLOAD_LEN: usize = 1316;
 const NOMINAL_DURATION: Duration = Duration::from_secs(2);
 const TARGET_BITS_PER_SEC: u64 = 50_000_000; // 50 Mbit/s
-/// The pre-fix `flush_outbound` ceiling: one packet per pacing period, and
-/// the period that tokio's real timer actually ran at was about 1 ms, i.e.
-/// ~1000 packets/s of [`PAYLOAD_LEN`]-byte payloads.
-const PRE_FIX_PACKETS_PER_SEC: u64 = 1_000;
-const PRE_FIX_CEILING_BITS_PER_SEC: f64 = (PRE_FIX_PACKETS_PER_SEC * PAYLOAD_LEN as u64 * 8) as f64;
+/// The LiveCC pacing period the pre-fix `flush_outbound` slept per DATA packet
+/// at the default 1 Gbps MAX_BW (about 10.5 us for [`PAYLOAD_LEN`] bytes).
+const GIGABIT_PACKET_PERIOD: Duration = Duration::from_micros(11);
+/// Sequential sleeps timed to measure what one such sleep really costs on this
+/// runtime right now. Bounds the calibration at about a quarter of a second on
+/// an idle machine, enough to average out a single late wake.
+const CALIBRATION_SLEEPS: u32 = 200;
 /// The achieved rate must clear the pre-fix ceiling by this factor, not just
 /// barely beat it.
 const CEILING_MARGIN: f64 = 2.0;
@@ -117,6 +121,13 @@ async fn sustained_volume_clears_twice_the_pre_fix_pacing_ceiling() {
             (total, receiver)
         });
 
+        let calibration_start = tokio::time::Instant::now();
+        for _ in 0..CALIBRATION_SLEEPS {
+            tokio::time::sleep(GIGABIT_PACKET_PERIOD).await;
+        }
+        let measured_sleep = calibration_start.elapsed() / CALIBRATION_SLEEPS;
+        let pre_fix_ceiling_bits_per_sec = (PAYLOAD_LEN * 8) as f64 / measured_sleep.as_secs_f64();
+
         let start = tokio::time::Instant::now();
         let mut paused = Duration::ZERO;
         for sent in 0..num_payloads {
@@ -139,21 +150,22 @@ async fn sustained_volume_clears_twice_the_pre_fix_pacing_ceiling() {
         );
 
         let achieved_bits_per_sec = (received_count * PAYLOAD_LEN * 8) as f64 / wall.as_secs_f64();
-        let required_bits_per_sec = CEILING_MARGIN * PRE_FIX_CEILING_BITS_PER_SEC;
+        let required_bits_per_sec = CEILING_MARGIN * pre_fix_ceiling_bits_per_sec;
 
         eprintln!(
             "delivered {received_count} payloads ({} bytes) in {wall:?} \
              ({achieved_bits_per_sec:.0} bit/s, {:.1}x the pre-fix ceiling of \
-             {PRE_FIX_CEILING_BITS_PER_SEC:.0} bit/s; {:.1}% of {TARGET_BITS_PER_SEC} bit/s target)",
+             {pre_fix_ceiling_bits_per_sec:.0} bit/s ({measured_sleep:?} per sleep); {:.1}% of \
+             {TARGET_BITS_PER_SEC} bit/s target)",
             received_count * PAYLOAD_LEN,
-            achieved_bits_per_sec / PRE_FIX_CEILING_BITS_PER_SEC,
+            achieved_bits_per_sec / pre_fix_ceiling_bits_per_sec,
             achieved_bits_per_sec / TARGET_BITS_PER_SEC as f64 * 100.0
         );
 
         assert!(
             achieved_bits_per_sec >= required_bits_per_sec,
             "achieved {achieved_bits_per_sec:.0} bit/s, under {CEILING_MARGIN}x the pre-fix \
-             ceiling {PRE_FIX_CEILING_BITS_PER_SEC:.0} bit/s (need >= {required_bits_per_sec:.0} \
+             ceiling {pre_fix_ceiling_bits_per_sec:.0} bit/s (need >= {required_bits_per_sec:.0} \
              bit/s) — pacing is still capping throughput"
         );
 

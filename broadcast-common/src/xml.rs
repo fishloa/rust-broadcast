@@ -60,7 +60,8 @@ pub struct Elem<N> {
     pub attrs: Vec<Attr<N>>,
     /// Its children, in document order.
     pub children: Vec<Elem<N>>,
-    /// Its character data with the children's text already applied.
+    /// Its direct character data (text nodes that are immediate
+    /// children of this element); descendant text is not included.
     pub text: String,
 }
 
@@ -102,7 +103,8 @@ impl<N: Namespace> Elem<N> {
         self.child(name).is_some()
     }
 
-    /// All character data directly inside this element, children's included.
+    /// All direct character data inside this element (descendant text
+    /// is not included).
     #[must_use]
     pub fn text(&self) -> &str {
         &self.text
@@ -237,8 +239,16 @@ pub fn read_tree<N: Namespace>(
             Err(e) => return Err(reader.fail(e.to_string())),
         };
         if let Some(piece) = reader.char_data(&event)? {
-            if stack.is_empty() && !piece.trim().is_empty() {
-                return Err(reader.fail("character data outside the root element"));
+            if stack.is_empty() {
+                if matches!(event, Event::CData(_)) {
+                    return Err(reader.fail("character data outside the root element"));
+                }
+                if piece
+                    .chars()
+                    .any(|c| !matches!(c, ' ' | '\t' | '\r' | '\n'))
+                {
+                    return Err(reader.fail("character data outside the root element"));
+                }
             }
             match stack.last_mut() {
                 Some(Frame::Kept(top)) => top.text.push_str(&piece),
@@ -385,5 +395,44 @@ mod tests {
         let tree = read(r#"<Root xmlns="urn:target">abc&amp;defab<![CDATA[<x>]]>cda&#13;b</Root>"#)
             .unwrap();
         assert_eq!(tree.text(), "abc&defab<x>cda\rb");
+    }
+}
+
+#[cfg(test)]
+mod xml_ws_tests {
+    use super::*;
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Ns {
+        None,
+        Other,
+    }
+    impl Namespace for Ns {
+        const TARGET: Self = Ns::None;
+        const NONE: Self = Ns::None;
+        fn classify(_uri: &str) -> Self {
+            Ns::Other
+        }
+    }
+
+    #[test]
+    fn leading_nbsp_rejected() {
+        let xml = "\u{00A0}<Root/>";
+        let res = read_tree::<Ns>(xml.as_bytes(), "Root", &XmlLimits::default());
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn trailing_cdata_rejected() {
+        let xml = "<Root/><![CDATA[x]]>";
+        let res = read_tree::<Ns>(xml.as_bytes(), "Root", &XmlLimits::default());
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn leading_xml_s_accepted() {
+        let xml = "\r\n\t <Root/>";
+        let res = read_tree::<Ns>(xml.as_bytes(), "Root", &XmlLimits::default());
+        assert!(res.is_ok());
     }
 }

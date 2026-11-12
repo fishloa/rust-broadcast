@@ -24,7 +24,7 @@
 //!
 //! # Why the `avcC` config is captured from the bitstream, not the SDP
 //!
-//! [`crate::source::sdp::parse_sdp_tracks`] (RTSP/raw-RTP-over-UDP) builds
+//! [`crate::source::sdp::parse_tracks_multimux`] (RTSP/raw-RTP-over-UDP) builds
 //! `CodecConfig::Avc` from the SDP's `a=fmtp` `sprop-parameter-sets`
 //! (RFC 6184 §8.2) — the RTSP-world convention. A browser's WHIP offer
 //! generally omits it: WebRTC senders carry SPS/PPS **in-band** instead, as

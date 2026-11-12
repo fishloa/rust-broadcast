@@ -1233,10 +1233,6 @@ mod tests {
     // --- independent oracle: Apple's `mediastreamvalidator` over the served
     //     catch-up playlist and the files it names ---
 
-    use test_fixtures::process::output_bounded;
-
-    /// Hard deadline for the `--version` availability probe.
-    const PROBE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
     /// The validator's own `-t` timeout, seconds.
     const VALIDATOR_TIMEOUT_SECS: u64 = 3;
     /// Margin added to `-t` to form the hard kill deadline.
@@ -1246,33 +1242,21 @@ mod tests {
         if !cfg!(target_os = "macos") {
             return Some("`mediastreamvalidator` is macOS-only and this is not macOS");
         }
-        let present = match output_bounded(
-            std::process::Command::new("mediastreamvalidator").arg("--version"),
-            PROBE_DEADLINE,
-        ) {
-            Ok(o) => o.status.success(),
-            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => panic!("{e}"),
-            Err(_) => false,
-        };
-        (!present).then_some("`mediastreamvalidator` is not on PATH (Additional Tools for Xcode)")
+        if test_fixtures::process::msv::available() {
+            None
+        } else {
+            Some("`mediastreamvalidator` is not on PATH (Additional Tools for Xcode)")
+        }
     }
 
     /// MUST-level (requirement level 1) findings in the validator's JSON.
     fn validator_errors(dir: &std::path::Path, entry: &str) -> Vec<String> {
-        let out = dir.join("out.json");
-        let status = output_bounded(
-            std::process::Command::new("mediastreamvalidator")
-                .current_dir(dir)
-                .args(["--quiet", "-t", &VALIDATOR_TIMEOUT_SECS.to_string(), "-O"])
-                .arg(&out)
-                .arg(entry),
-            std::time::Duration::from_secs(VALIDATOR_TIMEOUT_SECS) + VALIDATOR_MARGIN,
-        )
-        .expect("run mediastreamvalidator")
-        .status;
-        assert!(status.success(), "validator exit {status}");
-        let compact: String = std::fs::read_to_string(&out)
-            .expect("validator json")
+        let json = test_fixtures::process::msv::MsvRun::new(dir, entry)
+            .timeout_secs(VALIDATOR_TIMEOUT_SECS as u32)
+            .deadline(std::time::Duration::from_secs(VALIDATOR_TIMEOUT_SECS) + VALIDATOR_MARGIN)
+            .run();
+        let compact: String = json
+            .to_string()
             .chars()
             .filter(|c| !c.is_whitespace())
             .collect();

@@ -6,8 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `broadcast_client::auth` is public: `AuthState` (origin-scoped credentials, challenge handling, `Clone`, `credentials()`) with `AuthDecision`, and `AuthState::preauthorize_basic` to send Basic on the first request (RFC 7617) instead of after a `401`.
+- `broadcast_client::fetch::retry_after_us` is public sans-IO retry/backoff policy (RFC 9110 §10.2.3), for use by other pull hosts.
 ### Changed
 - BREAKING: the Smooth source is an adapter over the new `smooth-runtime` engine (#2370); the chunk planner, refresh, retry and track logic it carried are gone. Visible changes: the audio track is announced with its own id (`Event::Tracks` is `[1, 2]`, not `[1, 1]`, and audio samples carry track 2); a live manifest refresh no longer re-fetches the last fragment; a fragment that fails to demux is retried like any failed fetch instead of being dropped silently; the live refresh wait is half the last fragment's duration in microseconds, clamped to 0.5 s-5 s.
+- The RTSP source plans its `SETUP`/`PLAY` through `rtsp_runtime::PlayPlan` (control resolution against `Content-Base`, channel pairs, the RTP/RTCP collision check) instead of its own copy; the wire behaviour is unchanged (#2372).
 - BREAKING: the Smooth source parses the client Manifest with `broadcast-smooth`'s `SmoothManifest` instead of `transmux`'s removed `smooth_parse` module (#2356); `transmux::track_spec_from_quality_level` still builds the track spec.
 ### Fixed
 - A DASH source whose MPD is `MPD@type="list"` (ISO/IEC 23009-1 6th edition) fails with the typed unsupported-addressing error instead of a generic playback-timeline failure (#2340).

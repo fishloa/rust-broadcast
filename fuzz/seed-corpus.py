@@ -66,6 +66,10 @@ CORPORA: dict[str, tuple[str, ...]] = {
 # its bytes as numbers, so the same MPDs only seed the neighbourhood of "mostly zero"; its own
 # structure comes from libFuzzer's mutations.
 WHOLE_FILE_GLOBS: dict[str, tuple[str, ...]] = {
+    "broadcast_dash_round_trip": (
+        "fixtures/dash/**/*.mpd",
+        "fixtures/golden/dash/*.mpd",
+    ),
     "dash_mpd_parse": (
         "fixtures/dash/**/*.mpd",
         "fixtures/golden/dash/*.mpd",

@@ -568,10 +568,7 @@ fn collect_codes(value: &serde_json::Value, out: &mut Vec<(i64, String)>) {
 /// Apple's own validator against the live route: every segment's measured
 /// duration must agree with its `EXTINF` (round-9 F2).
 async fn assert_validator_finds_no_duration_mismatch(tag: &str, input: InputSpec) {
-    let probe = std::process::Command::new("mediastreamvalidator")
-        .arg("--version")
-        .output();
-    if probe.is_err() {
+    if !test_fixtures::process::msv::available() {
         eprintln!("{tag}: SKIPPED - mediastreamvalidator is not installed (macOS-only oracle)");
         return;
     }
@@ -582,28 +579,14 @@ async fn assert_validator_finds_no_duration_mismatch(tag: &str, input: InputSpec
         TsHlsIdrFallback::Targets(SHORT_BOUND_TARGETS),
     ));
     server.segments(&name, MIN_VALIDATED_SEGMENTS).await;
-    let json_path =
-        std::env::temp_dir().join(format!("multimux-msv-{name}-{}.json", std::process::id()));
     let url = format!("http://{}/{name}/media.m3u8", server.media);
-    let out = json_path.clone();
-    let run = tokio::task::spawn_blocking(move || {
-        std::process::Command::new("mediastreamvalidator")
-            .args(["--quiet", "-t", VALIDATOR_WINDOW_SECS, "-O"])
-            .arg(&out)
-            .arg(&url)
-            .output()
+    let report = tokio::task::spawn_blocking(move || {
+        test_fixtures::process::msv::MsvRun::new(std::path::Path::new("/"), &url)
+            .timeout_secs(VALIDATOR_WINDOW_SECS.parse().unwrap_or(14))
+            .run()
     })
     .await
-    .expect("join")
-    .expect("run mediastreamvalidator");
-    let text = std::fs::read_to_string(&json_path).unwrap_or_else(|e| {
-        panic!(
-            "{tag}: mediastreamvalidator wrote no JSON ({e}): {}",
-            String::from_utf8_lossy(&run.stderr)
-        )
-    });
-    let _ = std::fs::remove_file(&json_path);
-    let report: serde_json::Value = serde_json::from_str(&text).expect("validator json");
+    .expect("join");
     assert!(
         report["processedSegmentsCount"].as_i64().unwrap_or(0) >= 2,
         "{tag}: the validator processed no segments: {report}"

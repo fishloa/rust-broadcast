@@ -255,3 +255,22 @@ pub fn parse_ntp_timestamp(bytes: &[u8]) -> Result<i64, DateTimeError> {
         .and_then(|us| us.checked_add(micros))
         .ok_or(DateTimeError::Ntp)
 }
+
+/// Format Unix microseconds as an accepted `xs:dateTime` string (UTC, `Z`).
+///
+/// The inverse of [`parse_xs_datetime`] for the model's `*_us` fields: the
+/// parser recovers the same instant from the emitted text.
+pub fn format_xs_datetime(unix_us: i64) -> Result<String, DateTimeError> {
+    let ts = jiff::Timestamp::from_microsecond(unix_us).map_err(|_| DateTimeError::OutOfRange)?;
+    let s = ts.strftime("%Y-%m-%dT%H:%M:%S%.6fZ").to_string();
+    let core = s.trim_end_matches('Z');
+    if let Some(dot) = core.rfind('.') {
+        let head = &core[..dot];
+        let frac = core[dot + 1..].trim_end_matches('0');
+        if frac.is_empty() {
+            return Ok(format!("{}Z", head));
+        }
+        return Ok(format!("{}.{}Z", head, frac));
+    }
+    Ok(s)
+}

@@ -8,6 +8,9 @@ All notable changes to this crate will be documented in this file.
 - `sdp-types` is now a required dependency (it was optional behind `media`): the `sdp` builder is part of the default build.
 
 
+### Fixed
+- `sdp::offer_codec_attributes` now echoes `a=rtcp-fb` attributes whose payload-type token is `*` (RFC 4585 wildcard), in addition to the chosen payload type.
+
 ## [0.7.0] - 2026-11-10
 ### Changed
 - BREAKING: the non-default test-hook feature is renamed `test-support` -> `test-seams`; only a test suite enabling it by name is affected (c6 C6-09).

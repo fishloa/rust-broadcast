@@ -63,7 +63,7 @@ impl Actuate {
 impl_spec_display!(Actuate);
 
 /// An `xlink` reference on a Period, AdaptationSet or SegmentList.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub struct Xlink {
     /// `@xlink:href`.
@@ -73,13 +73,22 @@ pub struct Xlink {
 }
 
 /// A single byte range `first-last` (RFC 7233 2.1), inclusive.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub struct ByteRange {
     /// First byte.
     pub first: u64,
     /// Last byte; `None` for the open-ended form `first-`.
     pub last: Option<u64>,
+}
+
+impl core::fmt::Display for ByteRange {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.last {
+            Some(last) => write!(f, "{}-{}", self.first, last),
+            None => write!(f, "{}-", self.first),
+        }
+    }
 }
 
 impl ByteRange {
@@ -160,6 +169,8 @@ pub struct Descriptor {
     pub id: Option<String>,
     /// `@cenc:default_KID` on `ContentProtection`.
     pub default_kid: Option<String>,
+    /// `cenc:pssh` child text on `ContentProtection`.
+    pub pssh: Option<String>,
     /// The `UrlQueryInfo` child of an `urn:mpeg:dash:urlparam:2014` property.
     pub url_query: Option<UrlQueryInfo>,
 }
@@ -178,7 +189,7 @@ pub struct UrlQueryInfo {
 }
 
 /// A `UTCTiming` element (5.8.4.11).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub struct UtcTiming {
     /// Classified `@schemeIdUri`.
@@ -249,6 +260,8 @@ pub struct CommonAttributes {
     pub codecs: Option<String>,
     /// `@maxPlayoutRate`.
     pub max_playout_rate: Option<f64>,
+    /// `@codingDependency`.
+    pub coding_dependency: Option<bool>,
 }
 
 /// `SegmentBase` / the Segment Base Information fields (Table 16).
@@ -429,6 +442,8 @@ pub struct Representation {
     pub supplemental_properties: Vec<Descriptor>,
     /// `AudioChannelConfiguration`.
     pub audio_channel_configurations: Vec<Descriptor>,
+    /// `InbandEventStream`.
+    pub inband_event_streams: Vec<Descriptor>,
 }
 
 /// An `AdaptationSet` (5.3.3).
@@ -473,6 +488,8 @@ pub struct AdaptationSet {
     pub supplemental_properties: Vec<Descriptor>,
     /// `AudioChannelConfiguration`.
     pub audio_channel_configurations: Vec<Descriptor>,
+    /// `InbandEventStream`.
+    pub inband_event_streams: Vec<Descriptor>,
     /// The Representations.
     pub representations: Vec<Representation>,
 }
@@ -517,6 +534,44 @@ pub struct Period {
     pub supplemental_properties: Vec<Descriptor>,
     /// The AdaptationSets.
     pub adaptation_sets: Vec<AdaptationSet>,
+    /// `ServiceDescription`.
+    pub service_descriptions: Vec<ServiceDescription>,
+}
+
+/// `Latency` child of `ServiceDescription` (Annex K).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct Latency {
+    /// `@target`, milliseconds.
+    pub target: Option<u64>,
+    /// `@min`, milliseconds.
+    pub min: Option<u64>,
+    /// `@max`, milliseconds.
+    pub max: Option<u64>,
+    /// `@referenceId`.
+    pub reference_id: Option<u32>,
+}
+
+/// `PlaybackRate` child of `ServiceDescription` (Annex K).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct PlaybackRate {
+    /// `@min`, lexical form.
+    pub min: Option<String>,
+    /// `@max`, lexical form.
+    pub max: Option<String>,
+}
+
+/// `ServiceDescription` (Annex K).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct ServiceDescription {
+    /// `@id`.
+    pub id: Option<u64>,
+    /// `Latency`.
+    pub latency: Option<Latency>,
+    /// `PlaybackRate`.
+    pub playback_rate: Option<PlaybackRate>,
 }
 
 /// An `MPD` (5.3.1).
@@ -553,6 +608,8 @@ pub struct Mpd {
     pub base_urls: Vec<BaseUrl>,
     /// `Location` texts.
     pub locations: Vec<String>,
+    /// `ServiceDescription`.
+    pub service_descriptions: Vec<ServiceDescription>,
     /// `UTCTiming` elements in document order (alternatives, in preference
     /// order).
     pub utc_timings: Vec<UtcTiming>,

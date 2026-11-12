@@ -83,10 +83,13 @@
 //! crate — the caller supplies them via [`DashPackager::content_protection`]
 //! (e.g. built with [`crate::drm`]'s pssh builders).
 //!
-//! The MPD is emitted with [`quick_xml::Writer`] (every attribute value and
-//! text node is escaped by quick-xml), so this module — like
-//! [`crate::smooth`] — needs the `std` feature
-//! (quick-xml is `std`-only). Reading an MPD back is not this crate's job:
+//! The MPD is built as a [`broadcast_dash::Mpd`] model and rendered by its
+//! `to_xml` (every attribute value and text node is escaped by quick-xml
+//! there), so this module — like [`crate::smooth`] — needs the `std` feature.
+//! Caller-supplied times (`availability_start_time`, `publish_time` and the
+//! live durations) are parsed into the model and re-printed in its canonical
+//! `xs:dateTime` / `xs:duration` form; an unparsable one is an
+//! [`Error::InvalidField`]. Reading an MPD back is not this crate's job:
 //! `dash-runtime` owns the one MPD reader (issue #2340).
 
 use crate::TrackId;
@@ -101,9 +104,9 @@ use crate::media::{Media, Track};
 use crate::pipeline::{CodecConfig, TrackSpec};
 use crate::sps::rfc6381_avc1;
 use broadcast_common::error::InvalidField;
-use broadcast_common::xml_chars::{
-    NO_ATTRS, XmlWriter, close_element as close, empty_element as empty, finish_document as finish,
-    new_writer, open_element as open, text_element, write_declaration,
+use broadcast_dash::{
+    AdaptationSet, Descriptor, Mpd, Period, PresentationType, Representation, SegmentTemplate,
+    SegmentTimeline, TimelineEntry,
 };
 
 /// DASH MPD namespace (ISO/IEC 23009-1 §5.3.1.2 — `urn:mpeg:dash:schema:mpd:2011`).
@@ -171,9 +174,15 @@ const ROLE_SCHEME: &str = "urn:mpeg:dash:role:2011";
 /// commentary / dub track-role modelling yet, so every rendition is "main".
 const ROLE_MAIN: &str = "main";
 
-/// XML namespace declared on `MPD` when a [`ContentProtectionSystem`] carries a
-/// `default_kid` (ISO/IEC 23001-7 Common Encryption, `cenc:default_KID`).
-const CENC_NAMESPACE: &str = "urn:mpeg:cenc:2013";
+/// `MPD@minBufferTime` (ISO/IEC 23009-1 §5.3.1.2 Table 3) this packager declares.
+const MIN_BUFFER_TIME: Duration = Duration::from_secs(2);
+
+/// `Period@id` of the single Period this packager emits.
+const PERIOD_ID: &str = "0";
+
+/// `AdaptationSet@startWithSAP` (ISO/IEC 23009-1 §5.3.3.2): every segment starts
+/// with a stream access point of type 1.
+const START_WITH_SAP: u8 = 1;
 
 /// `schemeIdUri` for the generic CENC/CBCS "common" protection identification
 /// element (ISO/IEC 23009-1 §5.8.4.2, ISO/IEC 23001-7) — the element
@@ -828,12 +837,8 @@ impl DashPackager {
         Ok(info)
     }
 
-    /// Render the MPD XML for the resolved representations.
-    fn render(&self, reprs: &[ReprInfo]) -> Result<String> {
-        let mut writer = new_writer();
-        let w = &mut writer;
-        declaration(w);
-
+    /// Build the MPD model for the resolved representations.
+    fn render(&self, reprs: &[ReprInfo]) -> Result<Mpd> {
         if self.dynamic && self.publish_time.is_none() {
             return Err(Error::InvalidField(InvalidField {
                 field: "MPD@publishTime",
@@ -841,95 +846,71 @@ impl DashPackager {
             }));
         }
 
-        // --- MPD (root) ---
-        let mut mpd_attrs = alloc::vec![
-            ("xmlns", MPD_NAMESPACE.to_string()),
-            ("profiles", self.profiles.clone()),
-            (
-                "type",
-                if self.dynamic { "dynamic" } else { "static" }.to_string(),
-            ),
-            ("minBufferTime", xs_duration(Duration::from_secs(2))),
-        ];
-        // `xmlns:cenc` (ISO/IEC 23001-7) only when a ContentProtection system
-        // actually carries a `default_KID`/`pssh` in that namespace, or a
-        // track is protected (which auto-derives the "common" element that
-        // carries `cenc:default_KID` — issue #564).
-        let cenc_namespace_needed = self
-            .content_protection
-            .iter()
-            .any(|c| c.default_kid.is_some() || c.pssh.is_some())
-            || reprs.iter().any(|r| r.encryption_scheme.is_some());
-        if cenc_namespace_needed {
-            mpd_attrs.push(("xmlns:cenc", CENC_NAMESPACE.to_string()));
-        }
+        let mut mpd = Mpd::default();
+        mpd.profiles = self.profiles.split(',').map(String::from).collect();
+        mpd.kind = if self.dynamic {
+            PresentationType::Dynamic
+        } else {
+            PresentationType::Static
+        };
+        mpd.min_buffer_time = Some(MIN_BUFFER_TIME);
         if self.dynamic {
-            // Live-only attributes (ISO/IEC 23009-1 §5.3.1.2 Table 3), each
-            // emitted verbatim (caller-supplied ISO-8601 / xs:duration) when
-            // present and omitted otherwise.
-            if let Some(ast) = &self.availability_start_time {
-                mpd_attrs.push(("availabilityStartTime", ast.clone()));
-            }
-            if let Some(pt) = &self.publish_time {
-                mpd_attrs.push(("publishTime", pt.clone()));
-            }
-            if let Some(mup) = &self.minimum_update_period {
-                mpd_attrs.push(("minimumUpdatePeriod", mup.clone()));
-            }
-            if let Some(tsbd) = &self.time_shift_buffer_depth {
-                mpd_attrs.push(("timeShiftBufferDepth", tsbd.clone()));
-            }
-            if let Some(spd) = &self.suggested_presentation_delay {
-                mpd_attrs.push(("suggestedPresentationDelay", spd.clone()));
-            }
+            mpd.availability_start_time_us = self
+                .availability_start_time
+                .as_deref()
+                .map(|v| parse_instant("MPD@availabilityStartTime", v))
+                .transpose()?;
+            mpd.publish_time_us = self
+                .publish_time
+                .as_deref()
+                .map(|v| parse_instant("MPD@publishTime", v))
+                .transpose()?;
+            mpd.minimum_update_period = self
+                .minimum_update_period
+                .as_deref()
+                .map(|v| parse_span("MPD@minimumUpdatePeriod", v))
+                .transpose()?;
+            mpd.time_shift_buffer_depth = self
+                .time_shift_buffer_depth
+                .as_deref()
+                .map(|v| parse_span("MPD@timeShiftBufferDepth", v))
+                .transpose()?;
+            mpd.suggested_presentation_delay = self
+                .suggested_presentation_delay
+                .as_deref()
+                .map(|v| parse_span("MPD@suggestedPresentationDelay", v))
+                .transpose()?;
         } else {
             let max_tenths = reprs
                 .iter()
                 .map(|r| div_round(r.total_duration.saturating_mul(10), r.timescale as u64))
                 .max()
                 .unwrap_or(0);
-            mpd_attrs.push((
-                "mediaPresentationDuration",
-                xs_duration(Duration::from_millis(max_tenths.saturating_mul(100))),
-            ));
+            mpd.media_presentation_duration =
+                Some(Duration::from_millis(max_tenths.saturating_mul(100)));
         }
-        open(w, "MPD", &mpd_attrs);
 
-        // --- Period ---
-        open(
-            w,
-            "Period",
-            &[
-                ("id", "0".to_string()),
-                ("start", xs_duration(Duration::ZERO)),
-            ],
-        );
+        let mut period = Period::default();
+        period.id = Some(PERIOD_ID.to_string());
+        period.start = Some(Duration::ZERO);
 
         // One AdaptationSet per (kind, @lang, codec family) — ISO/IEC 23009-1
         // §5.3.3: the Representations inside one AdaptationSet are seamlessly
-        // switchable encodings of the *same* content. Grouping only by kind put
-        // every language of a multi-language service and every audio codec into
-        // one set, so an ABR client would switch between `eng` and `fra` (or AAC
-        // and AC-3) mid-playback on a bandwidth change (audit r05-W28).
+        // switchable encodings of the *same* content (audit r05-W28).
         // `AdaptationSet@id` must be an unsigned integer unique within the
         // Period (ISO/IEC 23009-1:2022 Table 5, printed p. 41). The trick-mode
         // set's id is caller-supplied and referenced by its
         // `SupplementalProperty`, so the regular sets take the next free ids
         // around it (`0`, `1`, …).
         let mut next_id = 0u32;
-        let mut regular_ids: alloc::vec::Vec<u32> = alloc::vec::Vec::new();
+        let mut regular_ids: Vec<u32> = Vec::new();
         for kind in [MediaKind::Video, MediaKind::Audio, MediaKind::Text] {
-            let groups = adaption_set_groups(reprs, kind);
-            for group in groups {
-                let id = loop {
-                    let candidate = next_id;
-                    next_id += 1;
-                    if self.trick_mode.as_ref().is_none_or(|tm| tm.id != candidate) {
-                        break candidate;
-                    }
-                };
+            for group in adaption_set_groups(reprs, kind) {
+                let id = self.next_free_id(&mut next_id);
                 regular_ids.push(id);
-                self.write_adaptation_set(w, kind, &group, &id.to_string());
+                period
+                    .adaptation_sets
+                    .push(self.adaptation_set(kind, &group, id));
                 let dolby: Vec<ReprInfo> = group
                     .iter()
                     .filter_map(|r| {
@@ -940,74 +921,62 @@ impl DashPackager {
                     })
                     .collect();
                 if !dolby.is_empty() {
-                    let dolby_id = loop {
-                        let candidate = next_id;
-                        next_id += 1;
-                        if self.trick_mode.as_ref().is_none_or(|tm| tm.id != candidate) {
-                            break candidate;
-                        }
-                    };
+                    let dolby_id = self.next_free_id(&mut next_id);
                     regular_ids.push(dolby_id);
                     let refs: Vec<&ReprInfo> = dolby.iter().collect();
-                    self.write_adaptation_set(w, kind, &refs, &dolby_id.to_string());
+                    period
+                        .adaptation_sets
+                        .push(self.adaptation_set(kind, &refs, dolby_id));
                 }
             }
         }
 
         // Trick-mode AdaptationSet — ISO/IEC 23009-1 §5.8.5.8 / DASH-IF IOP §3.3.5.
         if let Some(tm) = &self.trick_mode {
-            // Consistency guard: the SupplementalProperty@value names an
-            // AdaptationSet@id that must exist in this Period (ISO/IEC 23009-1
-            // Table 5, printed p. 41 — unique unsigned integer in scope).
+            // The SupplementalProperty@value names an AdaptationSet@id that
+            // must exist in this Period (ISO/IEC 23009-1 Table 5, printed p. 41).
             if !regular_ids.contains(&tm.main_adaptation_set_id) {
                 return Err(Error::TrickModeMainAdaptationSetNotFound {
                     main_adaptation_set_id: tm.main_adaptation_set_id,
                     trick_adaptation_set_id: tm.id,
                 });
             }
-            self.write_trick_adaptation_set(w, tm);
+            period.adaptation_sets.push(self.trick_adaptation_set(tm));
         }
 
-        close(w, "Period");
-        close(w, "MPD");
-        Ok(finish(writer))
+        mpd.periods.push(period);
+        Ok(mpd)
     }
 
-    fn write_adaptation_set(
-        &self,
-        w: &mut XmlWriter,
-        kind: MediaKind,
-        set: &[&ReprInfo],
-        id: &str,
-    ) {
-        let mut attrs = alloc::vec![
-            ("id", id.to_string()),
-            ("contentType", kind.name().to_string()),
-            ("mimeType", kind.mime_type().to_string()),
-            ("segmentAlignment", "true".to_string()),
-            ("startWithSAP", "1".to_string()),
-        ];
+    fn next_free_id(&self, next_id: &mut u32) -> u32 {
+        loop {
+            let candidate = *next_id;
+            *next_id += 1;
+            if self.trick_mode.as_ref().is_none_or(|tm| tm.id != candidate) {
+                return candidate;
+            }
+        }
+    }
+
+    fn adaptation_set(&self, kind: MediaKind, set: &[&ReprInfo], id: u32) -> AdaptationSet {
+        let mut a = AdaptationSet::default();
+        a.id = Some(u64::from(id));
+        a.content_type = Some(kind.name().to_string());
+        a.common.mime_type = Some(kind.mime_type().to_string());
+        a.segment_alignment = true;
+        a.start_with_sap = Some(START_WITH_SAP);
         // `@lang` (ISO/IEC 23009-1 §5.3.3.2, an inherited xml:lang-style
         // attribute) — only when every Representation in the set agrees.
-        if let Some(lang) = common_lang(set) {
-            attrs.push(("lang", lang));
-        }
+        a.lang = common_lang(set);
         // `@par` (picture aspect ratio) — DVB-DASH: ETSI TS 103 285 §4.4.
         // Derived as `(width*sar_w):(height*sar_h)` reduced, only when every
         // Representation in the set yields the same value; otherwise omitted.
         if kind == MediaKind::Video
             && let Some(par) = common_par(set)
         {
-            attrs.push(("par", format!("{}:{}", par.0, par.1)));
+            a.par = Some(format!("{}:{}", par.0, par.1));
         }
-        open(w, "AdaptationSet", &attrs);
 
-        // Base-type elements inherited from `RepresentationBaseType` (ISO/IEC
-        // 23009-1 6th-edition schema) must precede the AdaptationSet-specific
-        // (derived) elements such as `Role` / `Representation`: the schema
-        // extends `RepresentationBaseType` and appends the derived sequence, so
-        // `ContentProtection`, `InbandEventStream`, `EssentialProperty` and
-        // `SupplementalProperty` come first.
         // Auto-derived "common" ContentProtection (ISO/IEC 23001-7 generic
         // CENC signalling element) from the IR's `Track::encryption` — issue
         // #564. Uses the first encrypted Representation's scheme/KID in this
@@ -1017,32 +986,25 @@ impl DashPackager {
             .iter()
             .find_map(|r| r.encryption_scheme.zip(r.encryption_kid))
         {
-            write_content_protection(
-                w,
-                &ContentProtectionSystem {
+            a.content_protections
+                .push(content_protection(&ContentProtectionSystem {
                     scheme_id_uri: MP4_PROTECTION_SCHEME_URI.to_string(),
                     value: Some(scheme.name().to_string()),
                     default_kid: Some(kid),
                     pssh: None,
-                },
-            );
+                }));
         }
-
-        // ContentProtection hooks (§5.8.4.1) — caller-supplied DRM systems.
-        for cp in &self.content_protection {
-            write_content_protection(w, cp);
-        }
+        a.content_protections
+            .extend(self.content_protection.iter().map(content_protection));
 
         // InbandEventStream (§5.3.3 / §5.10.3.3) — advertised on the video
         // AdaptationSet only (see module docs for the placement rationale).
         if kind == MediaKind::Video {
-            for ies in &self.inband_event_streams {
-                let mut ies_attrs = alloc::vec![("schemeIdUri", ies.scheme_id_uri.clone())];
-                if let Some(v) = &ies.value {
-                    ies_attrs.push(("value", v.clone()));
-                }
-                empty(w, "InbandEventStream", &ies_attrs);
-            }
+            a.inband_event_streams.extend(
+                self.inband_event_streams
+                    .iter()
+                    .map(|ies| descriptor(&ies.scheme_id_uri, ies.value.as_deref())),
+            );
         }
 
         // HDR10+ (ST 2094-40): DVB-DASH requires the dynamic metadata in all
@@ -1050,201 +1012,127 @@ impl DashPackager {
         // (ETSI TS 103 285 clause 5), so it is announced only when every
         // Representation carries it.
         if kind == MediaKind::Video && !set.is_empty() && set.iter().all(|r| r.hdr10plus) {
-            empty(
-                w,
-                "SupplementalProperty",
-                &[
-                    ("schemeIdUri", HDR_METADATA_SCHEME.to_string()),
-                    ("value", HDR_METADATA_SMPTE2094_40.to_string()),
-                ],
-            );
+            a.supplemental_properties.push(descriptor(
+                HDR_METADATA_SCHEME,
+                Some(HDR_METADATA_SMPTE2094_40),
+            ));
             if self
                 .profiles
                 .split(',')
                 .any(|p| p.trim().starts_with(DVB_DASH_PROFILE_PREFIX))
             {
-                empty(
-                    w,
-                    "SupplementalProperty",
-                    &[
-                        ("schemeIdUri", DVB_HDR_DMI_SCHEME.to_string()),
-                        ("value", DVB_HDR_DMI_ST2094_40.to_string()),
-                    ],
-                );
+                a.supplemental_properties
+                    .push(descriptor(DVB_HDR_DMI_SCHEME, Some(DVB_HDR_DMI_ST2094_40)));
             }
         }
 
         // Role (ISO/IEC 23009-1 §5.8.5.5, Table 24) — every rendition here is
         // "main" (no alternate/commentary modelling in the IR).
-        empty(
-            w,
-            "Role",
-            &[
-                ("schemeIdUri", ROLE_SCHEME.to_string()),
-                ("value", ROLE_MAIN.to_string()),
-            ],
-        );
+        a.roles.push(descriptor(ROLE_SCHEME, Some(ROLE_MAIN)));
 
-        for r in set {
-            let mut rattrs = alloc::vec![
-                ("id", r.id.clone()),
-                ("mimeType", kind.mime_type().to_string()),
-                ("codecs", r.codecs.clone()),
-                ("bandwidth", r.bandwidth.to_string()),
-            ];
-            if let (Some(wd), Some(ht)) = (r.width, r.height) {
-                rattrs.push(("width", wd.to_string()));
-                rattrs.push(("height", ht.to_string()));
-            }
-            if let Some(fr) = &r.frame_rate {
-                rattrs.push(("frameRate", fr.clone()));
-            }
-            if let Some((sar_w, sar_h)) = r.sar {
-                rattrs.push(("sar", format!("{sar_w}:{sar_h}")));
-            }
-            if let Some(sr) = r.audio_sampling_rate {
-                rattrs.push(("audioSamplingRate", sr.to_string()));
-            }
-            open(w, "Representation", &rattrs);
-
-            if kind == MediaKind::Audio
-                && let Some(ch) = r.audio_channels
-            {
-                empty(
-                    w,
-                    "AudioChannelConfiguration",
-                    &[
-                        ("schemeIdUri", AUDIO_CHANNEL_SCHEME.to_string()),
-                        ("value", ch.to_string()),
-                    ],
-                );
-            }
-
-            self.write_segment_template(w, r);
-
-            close(w, "Representation");
-        }
-
-        close(w, "AdaptationSet");
+        a.representations = set.iter().map(|r| self.representation(kind, r)).collect();
+        a
     }
 
-    /// Write one Representation's `SegmentTemplate` (ISO/IEC 23009-1
+    fn representation(&self, kind: MediaKind, r: &ReprInfo) -> Representation {
+        let mut rep = Representation::default();
+        rep.id = r.id.clone();
+        rep.bandwidth = r.bandwidth;
+        rep.common.mime_type = Some(kind.mime_type().to_string());
+        rep.common.codecs = Some(r.codecs.clone());
+        if let (Some(wd), Some(ht)) = (r.width, r.height) {
+            rep.common.width = Some(wd);
+            rep.common.height = Some(ht);
+        }
+        rep.common.frame_rate = r.frame_rate.clone();
+        rep.common.sar = r.sar.map(|(w, h)| format!("{w}:{h}"));
+        rep.common.audio_sampling_rate = r.audio_sampling_rate.map(|sr| sr.to_string());
+        if kind == MediaKind::Audio
+            && let Some(ch) = r.audio_channels
+        {
+            rep.audio_channel_configurations
+                .push(descriptor(AUDIO_CHANNEL_SCHEME, Some(&ch.to_string())));
+        }
+        rep.segment.template = Some(self.segment_template(r));
+        rep
+    }
+
+    /// One Representation's `SegmentTemplate` (ISO/IEC 23009-1
     /// §5.3.9.4.4), dispatching on [`Self::addressing`]:
     ///
-    /// - [`Addressing::Number`] — `$Number$`, a self-closing element carrying
-    ///   a single nominal `@duration` (the first entry of
-    ///   [`ReprInfo::segment_durations`] when supplied, else the whole-track
-    ///   total — the packager's original single-segment behaviour).
-    /// - [`Addressing::Timeline`] — `$Time$`, with a child `<SegmentTimeline>`
+    /// - [`Addressing::Number`] — `$Number$`, carrying a single nominal
+    ///   `@duration` (the first entry of [`ReprInfo::segment_durations`] when
+    ///   supplied, else the whole-track total — the packager's original
+    ///   single-segment behaviour).
+    /// - [`Addressing::Timeline`] — `$Time$`, with a child `SegmentTimeline`
     ///   (§5.3.9.6) built from [`ReprInfo::segment_durations`] (required; see
     ///   [`Package::package`](broadcast_common::Package::package) validation).
     ///   A multi-segment Representation carries `@duration` XOR
     ///   `SegmentTimeline`, never both (§5.3.9.2.2 L1381), so `@duration` is
     ///   omitted here.
-    fn write_segment_template(&self, w: &mut XmlWriter, r: &ReprInfo) {
+    fn segment_template(&self, r: &ReprInfo) -> SegmentTemplate {
         match self.addressing {
             Addressing::Number => {
                 let duration = match &r.segment_durations {
                     Some(durs) if !durs.is_empty() => durs[0],
                     _ => r.total_duration,
                 };
-                empty(
-                    w,
-                    "SegmentTemplate",
-                    &[
-                        ("timescale", r.timescale.to_string()),
-                        ("duration", duration.to_string()),
-                        ("startNumber", self.start_number.to_string()),
-                        ("initialization", self.init_template.clone()),
-                        ("media", self.media_template.clone()),
-                    ],
-                );
+                self.number_template(r.timescale, duration)
             }
             Addressing::Timeline => {
-                // Validated non-empty in `package()` before `render()` runs.
-                let durations = r
-                    .segment_durations
-                    .as_ref()
-                    .expect("Addressing::Timeline requires segment_durations (validated earlier)");
-                open(
-                    w,
-                    "SegmentTemplate",
-                    &[
-                        ("timescale", r.timescale.to_string()),
-                        ("startNumber", self.start_number.to_string()),
-                        ("initialization", self.init_template.clone()),
-                        ("media", self.media_template_time.clone()),
-                    ],
-                );
-                write_segment_timeline(w, durations);
-                close(w, "SegmentTemplate");
+                let mut st = self.base_template(r.timescale, &self.media_template_time);
+                st.multi.timeline = Some(segment_timeline(
+                    r.segment_durations.as_deref().unwrap_or_default(),
+                ));
+                st
             }
         }
     }
 
-    /// Write a trick-mode `AdaptationSet` — ISO/IEC 23009-1 §5.8.5.8.
-    ///
-    /// Emits:
-    /// ```xml
-    /// <AdaptationSet id="<id>" contentType="video" mimeType="video/mp4"
-    ///                maxPlayoutRate="<n>" codingDependency="false">
-    ///   <SupplementalProperty
-    ///       schemeIdUri="http://dashif.org/guidelines/trickmode"
-    ///       value="<main_id>"/>
-    ///   <Representation …/>
-    ///   <SegmentTemplate …/>
-    /// </AdaptationSet>
-    /// ```
-    fn write_trick_adaptation_set(&self, w: &mut XmlWriter, tm: &TrickModeAdaptationSet) {
-        let mut as_attrs = alloc::vec![
-            ("id", tm.id.to_string()),
-            ("contentType", "video".to_string()),
-            ("mimeType", MIME_VIDEO.to_string()),
-            ("maxPlayoutRate", tm.max_playout_rate.to_string()),
-            ("codingDependency", "false".to_string()),
-        ];
-        // segmentAlignment not required by spec for trick-mode but keep consistent.
-        as_attrs.push(("segmentAlignment", "true".to_string()));
-        open(w, "AdaptationSet", &as_attrs);
+    fn number_template(&self, timescale: u32, duration: u64) -> SegmentTemplate {
+        let mut st = self.base_template(timescale, &self.media_template);
+        st.multi.duration = Some(duration);
+        st
+    }
 
-        // SupplementalProperty declaring the trick-mode relationship.
-        // schemeIdUri = TRICKMODE_SCHEME (http://dashif.org/guidelines/trickmode),
-        // value = the @id of the main video AdaptationSet.
-        empty(
-            w,
-            "SupplementalProperty",
-            &[
-                ("schemeIdUri", TRICKMODE_SCHEME.to_string()),
-                ("value", tm.main_adaptation_set_id.to_string()),
-            ],
-        );
+    fn base_template(&self, timescale: u32, media: &str) -> SegmentTemplate {
+        let mut st = SegmentTemplate::default();
+        st.multi.base.timescale = Some(u64::from(timescale));
+        st.multi.start_number = Some(self.start_number);
+        st.initialization = Some(self.init_template.clone());
+        st.media = Some(media.to_string());
+        st
+    }
+
+    /// A trick-mode `AdaptationSet` — ISO/IEC 23009-1 §5.8.5.8: the
+    /// `SupplementalProperty` (`schemeIdUri` = [`TRICKMODE_SCHEME`], `value` =
+    /// the `@id` of the main video `AdaptationSet`) declares the relationship.
+    fn trick_adaptation_set(&self, tm: &TrickModeAdaptationSet) -> AdaptationSet {
+        let mut a = AdaptationSet::default();
+        a.id = Some(u64::from(tm.id));
+        a.content_type = Some(MediaKind::Video.name().to_string());
+        a.common.mime_type = Some(MIME_VIDEO.to_string());
+        a.common.max_playout_rate = Some(f64::from(tm.max_playout_rate));
+        a.common.coding_dependency = Some(false);
+        a.segment_alignment = true;
+        a.supplemental_properties.push(descriptor(
+            TRICKMODE_SCHEME,
+            Some(&tm.main_adaptation_set_id.to_string()),
+        ));
 
         let r = &tm.repr;
-        let mut rattrs = alloc::vec![
-            ("id", r.id.clone()),
-            ("mimeType", MIME_VIDEO.to_string()),
-            ("codecs", r.codecs.clone()),
-            ("bandwidth", r.bandwidth.to_string()),
-        ];
+        let mut rep = Representation::default();
+        rep.id = r.id.clone();
+        rep.bandwidth = r.bandwidth;
+        rep.common.mime_type = Some(MIME_VIDEO.to_string());
+        rep.common.codecs = Some(r.codecs.clone());
         if let (Some(w_px), Some(h_px)) = (r.width, r.height) {
-            rattrs.push(("width", w_px.to_string()));
-            rattrs.push(("height", h_px.to_string()));
+            rep.common.width = Some(w_px);
+            rep.common.height = Some(h_px);
         }
-        open(w, "Representation", &rattrs);
-        empty(
-            w,
-            "SegmentTemplate",
-            &[
-                ("timescale", r.timescale.to_string()),
-                ("duration", r.total_duration.to_string()),
-                ("startNumber", self.start_number.to_string()),
-                ("initialization", self.init_template.clone()),
-                ("media", self.media_template.clone()),
-            ],
-        );
-        close(w, "Representation");
-
-        close(w, "AdaptationSet");
+        rep.segment.template = Some(self.number_template(r.timescale, r.total_duration));
+        a.representations.push(rep);
+        a
     }
 }
 
@@ -1254,6 +1142,17 @@ impl broadcast_common::Package for DashPackager {
     type Error = Error;
 
     fn package(&mut self, media: &Media) -> Result<String> {
+        self.build_mpd(media)?
+            .to_xml()
+            .map_err(|_| Error::InvalidInput("MPD serialisation failed"))
+    }
+}
+
+impl DashPackager {
+    /// Resolve `media` into the MPD model [`Package::package`](broadcast_common::Package::package)
+    /// serialises; [`crate::LlDashPackager`] adds its low-latency fields to it
+    /// before serialising.
+    pub(crate) fn build_mpd(&self, media: &Media) -> Result<Mpd> {
         if media.tracks.is_empty() {
             return Err(Error::InvalidInput("cannot package a Media with no tracks"));
         }
@@ -1438,25 +1337,44 @@ fn par_of(width: u32, height: u32, sar: (u32, u32)) -> Option<(u32, u32)> {
     Some((u32::try_from(num / g).ok()?, u32::try_from(den / g).ok()?))
 }
 
-/// Write one `ContentProtection` element (ISO/IEC 23009-1 §5.8.4.1),
-/// including its optional `cenc:pssh` child (ISO/IEC 23001-7 §12.1) when
+/// A bare descriptor element: `schemeIdUri` and an optional `value`.
+fn descriptor(scheme_id_uri: &str, value: Option<&str>) -> Descriptor {
+    let mut d = Descriptor::default();
+    d.scheme_id_uri = scheme_id_uri.to_string();
+    d.value = value.map(String::from);
+    d
+}
+
+/// One `ContentProtection` element (ISO/IEC 23009-1 §5.8.4.1), including its
+/// optional `cenc:pssh` child (ISO/IEC 23001-7 §12.1) when
 /// [`ContentProtectionSystem::pssh`] is set.
-fn write_content_protection(w: &mut XmlWriter, cp: &ContentProtectionSystem) {
-    let mut attrs = alloc::vec![("schemeIdUri", cp.scheme_id_uri.clone())];
-    if let Some(v) = &cp.value {
-        attrs.push(("value", v.clone()));
-    }
-    if let Some(kid) = &cp.default_kid {
-        attrs.push(("cenc:default_KID", format_kid(kid)));
-    }
-    match &cp.pssh {
-        Some(pssh) => {
-            open(w, "ContentProtection", &attrs);
-            text_element(w, "cenc:pssh", &crate::rtp::base64_encode(pssh));
-            close(w, "ContentProtection");
-        }
-        None => empty(w, "ContentProtection", &attrs),
-    }
+fn content_protection(cp: &ContentProtectionSystem) -> Descriptor {
+    let mut d = descriptor(&cp.scheme_id_uri, cp.value.as_deref());
+    d.default_kid = cp.default_kid.as_ref().map(format_kid);
+    d.pssh = cp.pssh.as_deref().map(crate::rtp::base64_encode);
+    d
+}
+
+/// Parse a caller-supplied `xs:dateTime` into the model's Unix microseconds.
+fn parse_instant(field: &'static str, value: &str) -> Result<i64> {
+    broadcast_dash::xs_datetime::parse_xs_datetime(value)
+        .map(|t| t.unix_us)
+        .map_err(|_| {
+            Error::InvalidField(InvalidField {
+                field,
+                reason: "not a valid xs:dateTime",
+            })
+        })
+}
+
+/// Parse a caller-supplied `xs:duration` into the model's [`Duration`].
+fn parse_span(field: &'static str, value: &str) -> Result<Duration> {
+    broadcast_dash::duration::parse_iso8601_duration(value).map_err(|_| {
+        Error::InvalidField(InvalidField {
+            field,
+            reason: "not a valid xs:duration",
+        })
+    })
 }
 
 /// Format a 16-byte key ID as the canonical dashed-hex UUID form
@@ -1473,51 +1391,35 @@ fn format_kid(kid: &[u8; 16]) -> String {
     )
 }
 
-/// Write a `<SegmentTimeline>` (ISO/IEC 23009-1 §5.3.9.6) from a flat list of
+/// A `SegmentTimeline` (ISO/IEC 23009-1 §5.3.9.6) from a flat list of
 /// per-segment durations (in the representation's own `@timescale`), in
 /// segment order, starting at `t=0` (the packager's decode timelines all
 /// start at zero — see [`TrackSegments`]).
 ///
-/// Consecutive equal durations are run-length-encoded into a single `<S>`
+/// Consecutive equal durations are run-length-encoded into a single `S`
 /// with `@r` = repeat count minus one (§5.3.9.6 L1746: "`S` = a run of
-/// contiguous equal-duration segments"). `@t` is emitted only on the first
-/// `<S>` — every later run's start time is the spec-default derivation
+/// contiguous equal-duration segments"). `@t` is set only on the first
+/// `S` — every later run's start time is the spec-default derivation
 /// (`prev S@t + prev@d * (prev@r+1)`, L1791), which this list satisfies by
 /// construction (no gaps/discontinuities are modelled here).
-fn write_segment_timeline(w: &mut XmlWriter, durations: &[u64]) {
-    open(w, "SegmentTimeline", NO_ATTRS);
-    let mut t: u64 = 0;
+fn segment_timeline(durations: &[u64]) -> SegmentTimeline {
+    let mut timeline = SegmentTimeline::default();
     let mut idx = 0usize;
-    let mut first = true;
     while idx < durations.len() {
         let d = durations[idx];
         let mut run = 1usize;
         while idx + run < durations.len() && durations[idx + run] == d {
             run += 1;
         }
-        let mut attrs: Vec<(&str, String)> = Vec::new();
-        if first {
-            attrs.push(("t", t.to_string()));
-            first = false;
+        let mut entry = TimelineEntry::new(d);
+        if idx == 0 {
+            entry.t = Some(0);
         }
-        attrs.push(("d", d.to_string()));
-        if run > 1 {
-            attrs.push(("r", (run - 1).to_string()));
-        }
-        empty(w, "S", &attrs);
-        t += d * run as u64;
+        entry.r = i64::try_from(run - 1).unwrap_or(i64::MAX);
+        timeline.entries.push(entry);
         idx += run;
     }
-    close(w, "SegmentTimeline");
-}
-
-// ---------------------------------------------------------------------------
-// quick-xml writer plumbing
-// ---------------------------------------------------------------------------
-
-/// `<?xml version="1.0" encoding="utf-8"?>`.
-fn declaration(w: &mut XmlWriter) {
-    write_declaration(w, "utf-8");
+    timeline
 }
 
 #[cfg(test)]
