@@ -508,54 +508,38 @@ pub async fn drive_push<T: PushTransport>(
             } => {}
         }
 
-        // Renegotiate if the track set changed since the last successful
-        // negotiate/renegotiate on this connection (issue #781's shape).
-        if let Some(e) = egress.as_mut() {
-            let generation = trunk.track_generation();
-            if negotiated_generation != Some(generation) {
-                let tracks_now = trunk.tracks();
-                match e.renegotiate(&tracks_now) {
-                    NegotiationOutcome::Accepted(sel) => {
-                        log_partial_selection(&log_url, tracks_now.len(), &sel);
-                        negotiated_generation = Some(generation);
-                    }
-                    NegotiationOutcome::Refused { reason } => {
-                        // Truthful, in-band refusal (issue #781): keep
-                        // running on whichever selection was last accepted
-                        // — exactly `NegotiationOutcome::Refused`'s own
-                        // documented contract — rather than silently
-                        // adopting the change or tearing the connection
-                        // down over it.
-                        tracing::warn!(
-                            url = %log_url,
-                            reason,
-                            "push renegotiate refused; continuing on the previous track \
-                             selection"
-                        );
-                        negotiated_generation = Some(generation);
-                    }
-                    NegotiationOutcome::Error(err) => {
-                        tracing::warn!(url = %log_url, error = %scrub(&err), "push renegotiate failed; closing");
-                        e.transport_mut().close();
-                        egress = None;
-                        negotiated_generation = None;
-                        engine.on_disconnect();
-                    }
-                    // `NegotiationOutcome` is `#[non_exhaustive]` (defined in
-                    // `media_plane`): a future variant this loop has no
-                    // reaction to yet is treated as "nothing changed" —
-                    // safe by construction, since it means neither
-                    // `Accepted` nor `Refused` nor `Error` fired, so the
-                    // previous selection (whatever it was) keeps running
-                    // unmodified, exactly like an unrecognized
-                    // `AcceptOutcome` elsewhere in this crate.
-                    _ => {}
-                }
-            }
-        }
-
         let mut dropped_while_disconnected = 0u64;
         while let Some(item) = cursor.poll() {
+            if let SampleCursorItem::TracksChanged { generation, tracks } = &item {
+                if let Some(e) = egress.as_mut()
+                    && negotiated_generation.is_none_or(|negotiated| *generation > negotiated)
+                {
+                    match e.renegotiate(tracks) {
+                        NegotiationOutcome::Accepted(sel) => {
+                            log_partial_selection(&log_url, tracks.len(), &sel);
+                            negotiated_generation = Some(*generation);
+                        }
+                        NegotiationOutcome::Refused { reason } => {
+                            tracing::warn!(
+                                url = %log_url,
+                                reason,
+                                "push renegotiate refused; continuing on the previous track \
+                                 selection"
+                            );
+                            negotiated_generation = Some(*generation);
+                        }
+                        NegotiationOutcome::Error(err) => {
+                            tracing::warn!(url = %log_url, error = %scrub(&err), "push renegotiate failed; closing");
+                            e.transport_mut().close();
+                            egress = None;
+                            negotiated_generation = None;
+                            engine.on_disconnect();
+                        }
+                        _ => {}
+                    }
+                }
+                continue;
+            }
             if let SampleCursorItem::Lagged { skipped } | SampleCursorItem::Degraded { skipped } =
                 &item
             {
@@ -621,8 +605,7 @@ pub async fn drive_push<T: PushTransport>(
             match connect_result {
                 Ok(conn) => {
                     let mut e = PushTransportEgress::new(conn, UNSATISFIABLE);
-                    let tracks_now = trunk.tracks();
-                    let generation = trunk.track_generation();
+                    let (generation, tracks_now) = trunk.tracks_with_generation();
                     match e.negotiate(&tracks_now) {
                         NegotiationOutcome::Accepted(sel) => {
                             log_partial_selection(&log_url, tracks_now.len(), &sel);

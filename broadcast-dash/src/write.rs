@@ -17,6 +17,7 @@ const PREFIX_XLINK: &str = "xlink";
 const PREFIX_URLPARAM: &str = "urlparam";
 const PREFIX_CENC: &str = "cenc";
 const PREFIX_XMLNS: &str = "xmlns";
+const PREFIX_XML: &str = "xml";
 const NS_MPD: &str = "urn:mpeg:dash:schema:mpd:2011";
 const NS_DVB: &str = "urn:dvb:dash:dash-extensions:2014-1";
 const NS_CENC: &str = "urn:mpeg:cenc:2013";
@@ -65,7 +66,7 @@ impl Prefixes {
             PREFIX_XLINK => self.xlink = true,
             PREFIX_URLPARAM => self.urlparam = true,
             PREFIX_CENC => self.cenc = true,
-            PREFIX_XMLNS => {}
+            PREFIX_XMLNS | PREFIX_XML => {}
             other => {
                 return Err(MpdError::Invalid {
                     what: "namespace prefix",
@@ -1185,4 +1186,17 @@ fn write_representation(w: &mut Writer<Vec<u8>>, r: &Representation) -> Result<(
     w.write_event(Event::End(BytesEnd::new("Representation")))
         .map_err(io_err)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod prefix_tests {
+    use super::*;
+
+    #[test]
+    fn the_predeclared_xml_prefix_needs_no_declaration() {
+        let mut found = Prefixes::default();
+        found.note("xml:lang").expect("xml is bound by definition");
+        assert_eq!(found, Prefixes::default());
+        assert!(found.note("bogus:attr").is_err());
+    }
 }

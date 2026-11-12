@@ -577,7 +577,8 @@ pub struct PatchLocation {
 #[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct Label {
-    /// `@id`.
+    /// `@id`; `0` is the schema default and is omitted on write, so an explicit
+    /// `id="0"` parses equal but is not written back.
     pub id: u32,
     /// `@lang`.
     pub lang: Option<String>,

@@ -257,6 +257,12 @@ impl AlignDiagnostics {
         }
     }
 
+    fn note_rtcp_accepted(&mut self, ntp_zero_total: u64, skew_refused: bool) {
+        if ntp_zero_total == self.ntp_zero_seen && !skew_refused {
+            self.last_rejection = None;
+        }
+    }
+
     fn note_rejection(&mut self, rejection: Rejection, total: u64) {
         if self.last_rejection == Some(rejection) {
             rejection.repeat(total);
@@ -536,6 +542,10 @@ impl RtspIngestSession {
                         self.rtcp_frames = self.rtcp_frames.saturating_add(1);
                         depa.push_rtcp(track_id, &data);
                         self.aligner.note_rtcp();
+                        self.diagnostics.note_rtcp_accepted(
+                            depa.rejected_sender_reports(),
+                            self.aligner.sender_reports_refused(),
+                        );
                         self.diagnostics.record(
                             &mut self.pending,
                             Vec::new(),
@@ -1123,6 +1133,22 @@ mod tests {
             ]
         );
         assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn a_rejection_after_the_reports_recover_warns_again() {
+        let mut diagnostics = AlignDiagnostics::default();
+        let mut pending = VecDeque::new();
+        let lines = logged(|| {
+            diagnostics.record(&mut pending, Vec::new(), 1, 0);
+            diagnostics.note_rtcp_accepted(1, false);
+            diagnostics.record(&mut pending, Vec::new(), 2, 0);
+        });
+        let warned = lines
+            .iter()
+            .filter(|(level, _)| *level == tracing::Level::WARN)
+            .count();
+        assert_eq!(warned, 2, "{lines:?}");
     }
 
     #[test]
