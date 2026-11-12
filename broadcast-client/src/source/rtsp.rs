@@ -37,7 +37,6 @@ const STATUS_NOT_FOUND: u16 = 404;
 const STATUS_PROXY_AUTH_REQUIRED: u16 = 407;
 const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
 const KEEPALIVE_DEFAULT_US: u64 = 30 * US_PER_SEC;
-const KEEPALIVE_MAX_US: u64 = 3_600 * US_PER_SEC;
 const KEEPALIVE_DIVISOR: u64 = 2;
 const CHALLENGE_HEADER: &str = "WWW-Authenticate";
 
@@ -129,7 +128,7 @@ fn effective_port(url: &Url) -> u16 {
 fn keepalive_interval_for(declared_secs: Option<u64>) -> u64 {
     match declared_secs {
         Some(secs) if secs > 0 => {
-            (secs.saturating_mul(US_PER_SEC) / KEEPALIVE_DIVISOR).min(KEEPALIVE_MAX_US)
+            (secs.saturating_mul(US_PER_SEC) / KEEPALIVE_DIVISOR).max(US_PER_SEC)
         }
         _ => KEEPALIVE_DEFAULT_US,
     }

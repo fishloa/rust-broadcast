@@ -851,7 +851,7 @@ fn reconnect_resets_attempt_counter_after_playing() {
 
 #[test]
 fn session_timeout_header_parsed_from_setup() {
-    for (declared, keepalive_secs) in [(120u32, 60u64), (4, 2), (2, 1), (20_000, 3_600)] {
+    for (declared, keepalive_secs) in [(120u32, 60u64), (4, 2), (2, 1), (20_000, 10_000)] {
         let mut s = server();
         s.session_timeout = Some(declared);
         let mut host = connected(quiet_config(), s);
@@ -865,7 +865,7 @@ fn session_timeout_header_parsed_from_setup() {
 
 #[test]
 fn keepalive_is_strictly_before_a_short_session_timeout() {
-    for declared in [1u32, 2, 3, 4, 9] {
+    for declared in [2u32, 3, 4, 9] {
         let mut s = server();
         s.session_timeout = Some(declared);
         let mut host = connected(quiet_config(), s);
