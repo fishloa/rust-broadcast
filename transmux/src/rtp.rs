@@ -679,7 +679,6 @@ fn sample_pts(track: &crate::media::Track, i: usize) -> u64 {
 /// into the 32-bit range rather than saturating or erroring.
 pub fn rescale_ts(ticks: u64, from: u32, to: u32) -> u32 {
     let v = rescale_u64(ticks, from, to, Rounding::Nearest);
-    // Wrapping conversion: keep the low 32 bits (RFC 3550 §5.1).
     (v & u64::from(u32::MAX)) as u32
 }
 

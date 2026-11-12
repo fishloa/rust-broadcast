@@ -1062,8 +1062,6 @@ fn patch_seq_and_timestamp_parts(
     let mut v = Vec::with_capacity(len);
     v.extend_from_slice(header);
     v.extend_from_slice(payload);
-    // Use rtp-packet's header type to read/modify/write the fields rather
-    // than poking fixed byte offsets.
     let mut pkt = rtp_packet::RtpPacket::parse(&v).ok()?;
     pkt.sequence_number = seq;
     pkt.timestamp = timestamp;
