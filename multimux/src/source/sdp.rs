@@ -38,8 +38,6 @@ fn track_init(media_index: usize, media: &Media) -> Result<TrackInit> {
     })
 }
 
-/// Parse the DESCRIBE SDP body into per-track init, assigning interleaved
-/// channels 0,2,4,… in media order.
 /// Media sections that can be played, in media order, with the track cap applied.
 /// Skipped sections are logged here with their reason, exactly once.
 fn playable_media(session: &Session) -> Vec<(usize, TrackInit)> {
@@ -64,6 +62,8 @@ fn playable_media(session: &Session) -> Vec<(usize, TrackInit)> {
     out
 }
 
+/// Parse the DESCRIBE SDP body into per-track init, assigning interleaved
+/// channels 0,2,4,… in media order.
 pub fn parse_tracks_multimux(sdp: &[u8]) -> Result<Vec<TrackInit>> {
     let session = Session::parse(sdp).map_err(|e| MultimuxError::Sdp {
         reason: format!("parse: {e}"),
@@ -102,11 +102,12 @@ pub(crate) fn plan_tracks(
         media_index: usize,
         track: TrackInit,
     }
-    let playable = playable_media(&Session::parse(text.as_bytes()).map_err(|e| {
-        MultimuxError::Sdp {
-            reason: format!("parse: {e}"),
-        }
-    })?);
+    let playable =
+        playable_media(
+            &Session::parse(text.as_bytes()).map_err(|e| MultimuxError::Sdp {
+                reason: format!("parse: {e}"),
+            })?,
+        );
     let playable_indices: std::collections::BTreeSet<usize> =
         playable.iter().map(|(i, _)| *i).collect();
     let candidates: Vec<Candidate> = playable
@@ -143,7 +144,10 @@ pub(crate) fn plan_tracks(
     }
     let mut tracks: Vec<TrackInit> = Vec::new();
     for (index, setup) in plan.setups().iter().enumerate() {
-        let Some(candidate) = candidates.iter().find(|c| c.media_index == setup.media_index) else {
+        let Some(candidate) = candidates
+            .iter()
+            .find(|c| c.media_index == setup.media_index)
+        else {
             continue;
         };
         let Some((channel, _)) = plan.channels(index) else {
@@ -210,7 +214,10 @@ a=control:streamid=0\r\n";
     #[test]
     fn accepted_media_indices_match_shared_golden() {
         let mut expected = std::collections::BTreeMap::new();
-        let raw = std::fs::read_to_string(test_fixtures::path("golden/sdp-tracks/accepted-indices.txt")).unwrap();
+        let raw = std::fs::read_to_string(test_fixtures::path(
+            "golden/sdp-tracks/accepted-indices.txt",
+        ))
+        .unwrap();
         for line in raw.lines() {
             if let Some((name, idx)) = line.split_once(": ") {
                 expected.insert(name.to_string(), idx.to_string());

@@ -12,7 +12,6 @@ use url::Url;
 
 const FIRST_CHANNEL: u8 = 0;
 
-
 pub(crate) struct ParsedSdp {
     pub(crate) plan: PlayPlan,
     pub(crate) tracks: Vec<TrackInit>,
@@ -186,7 +185,10 @@ mod golden {
     #[test]
     fn accepted_media_indices_match_shared_golden() {
         let mut expected = std::collections::BTreeMap::new();
-        let raw = std::fs::read_to_string(test_fixtures::path("golden/sdp-tracks/accepted-indices.txt")).unwrap();
+        let raw = std::fs::read_to_string(test_fixtures::path(
+            "golden/sdp-tracks/accepted-indices.txt",
+        ))
+        .unwrap();
         for line in raw.lines() {
             if let Some((name, idx)) = line.split_once(": ") {
                 expected.insert(name.to_string(), idx.to_string());
@@ -217,8 +219,11 @@ mod golden {
                 }
                 Err(_) => "NONE".to_string(),
             };
-            // For NothingPlayable all media skipped; accepted set empty -> NONE.
-            let got = if got.is_empty() { "NONE".to_string() } else { got };
+            let got = if got.is_empty() {
+                "NONE".to_string()
+            } else {
+                got
+            };
             let exp = expected.get(&name).cloned().unwrap_or_default();
             assert_eq!(got, exp, "{name}: accepted indices differ");
         }
