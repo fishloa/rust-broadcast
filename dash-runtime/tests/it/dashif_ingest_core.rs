@@ -1,7 +1,7 @@
 use broadcast_common::{Package, Unpackage};
 use dash_runtime::address::template::substitute;
-use multimux::dashif_ingest::classify;
-use multimux::dashif_ingest::{
+use dash_runtime::ingest::classify;
+use dash_runtime::ingest::{
     Addressing, IngestError, IngestMethod, IngestState, ManifestFormat, ManifestGrouping,
     ObjectKind, RequestMeta, SegmentDisposition,
 };

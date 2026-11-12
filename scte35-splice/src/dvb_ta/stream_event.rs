@@ -391,10 +391,7 @@ impl Serialize for StreamEventPayload<'_> {
 /// padding).
 #[must_use]
 pub fn base64_encode(data: &[u8]) -> Vec<u8> {
-    use base64::Engine as _;
-    base64::engine::general_purpose::STANDARD
-        .encode(data)
-        .into_bytes()
+    broadcast_common::base64::base64_encode(data).into_bytes()
 }
 
 #[cfg(test)]

@@ -331,6 +331,7 @@ dependencies = [
 name = "broadcast-common"
 version = "11.1.0"
 dependencies = [
+ "base64 0.23.1",
  "chrono",
  "erased-serde",
  "hex",
@@ -733,9 +734,12 @@ dependencies = [
  "broadcast-common",
  "broadcast-dash",
  "container-probe",
+ "http",
  "jiff",
+ "media-plane",
  "quick-xml",
  "thiserror",
+ "tracing",
  "transmux",
  "url",
 ]
@@ -2734,7 +2738,6 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 name = "scte35-splice"
 version = "5.0.1"
 dependencies = [
- "base64 0.23.1",
  "broadcast-common",
  "serde",
  "thiserror",

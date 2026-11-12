@@ -1,6 +1,6 @@
 use broadcast_common::{Package, Serialize, Stage, Timestamp, Unpackage};
+use dash_runtime::ingest::{DashifIngestSession, IngestObject, ObjectKind};
 use media_plane::ingress::SessionEvent;
-use multimux::dashif_ingest::{DashifIngestSession, IngestObject, ObjectKind};
 use transmux::FragmentTrackData;
 use transmux::dash::DashPackager;
 use transmux::pipeline::{build_init_segment, build_media_segment};
@@ -17,8 +17,7 @@ fn session_basic_flow() {
     let media = demux_media();
     let mut pkg = DashPackager::default();
     let mpd = pkg.package(&media).expect("package");
-    let grouping_check =
-        multimux::dashif_ingest::ManifestGrouping::from_mpd(mpd.as_bytes()).unwrap();
+    let grouping_check = dash_runtime::ingest::ManifestGrouping::from_mpd(mpd.as_bytes()).unwrap();
     let rep_order: Vec<String> = grouping_check
         .switching_sets
         .iter()
@@ -63,7 +62,7 @@ fn session_basic_flow() {
     session
         .feed(
             IngestObject {
-                kind: ObjectKind::Manifest(multimux::dashif_ingest::ManifestFormat::Dash),
+                kind: ObjectKind::Manifest(dash_runtime::ingest::ManifestFormat::Dash),
                 bytes: mpd.as_bytes(),
             },
             ts,
@@ -76,7 +75,7 @@ fn session_basic_flow() {
     session
         .feed(
             IngestObject {
-                kind: ObjectKind::Manifest(multimux::dashif_ingest::ManifestFormat::Dash),
+                kind: ObjectKind::Manifest(dash_runtime::ingest::ManifestFormat::Dash),
                 bytes: mpd.as_bytes(),
             },
             ts,
@@ -88,7 +87,7 @@ fn session_basic_flow() {
     session
         .feed(
             IngestObject {
-                kind: ObjectKind::Manifest(multimux::dashif_ingest::ManifestFormat::Hls),
+                kind: ObjectKind::Manifest(dash_runtime::ingest::ManifestFormat::Hls),
                 bytes: b"#EXTM3U",
             },
             ts,
@@ -107,7 +106,7 @@ fn session_basic_flow() {
     );
     assert!(matches!(
         r,
-        Err(multimux::dashif_ingest::SessionError::Ingest(_))
+        Err(dash_runtime::ingest::SessionError::Ingest(_))
     ));
 
     // header rep 1 only
@@ -196,7 +195,7 @@ fn session_basic_flow() {
     let mut s2 = DashifIngestSession::new();
     s2.feed(
         IngestObject {
-            kind: ObjectKind::Manifest(multimux::dashif_ingest::ManifestFormat::Dash),
+            kind: ObjectKind::Manifest(dash_runtime::ingest::ManifestFormat::Dash),
             bytes: mpd.as_bytes(),
         },
         ts,
@@ -215,7 +214,7 @@ fn session_basic_flow() {
     );
     assert!(matches!(
         r,
-        Err(multimux::dashif_ingest::SessionError::Ingest(_))
+        Err(dash_runtime::ingest::SessionError::Ingest(_))
     ));
 
     // duplicate segment => no extra events
@@ -259,7 +258,7 @@ fn session_basic_flow() {
     );
     assert!(matches!(
         r,
-        Err(multimux::dashif_ingest::SessionError::Ingest(_))
+        Err(dash_runtime::ingest::SessionError::Ingest(_))
     ));
 
     // identical header repeat ignored
@@ -313,7 +312,7 @@ fn session_lmsg() {
     session
         .feed(
             IngestObject {
-                kind: ObjectKind::Manifest(multimux::dashif_ingest::ManifestFormat::Dash),
+                kind: ObjectKind::Manifest(dash_runtime::ingest::ManifestFormat::Dash),
                 bytes: mpd.as_bytes(),
             },
             ts,

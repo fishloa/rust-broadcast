@@ -5,6 +5,7 @@
 pub mod address;
 pub mod client;
 pub mod error;
+pub mod ingest;
 pub mod limits;
 pub mod mpd;
 pub mod selection;
