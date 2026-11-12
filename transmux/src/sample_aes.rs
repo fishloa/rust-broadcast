@@ -994,8 +994,21 @@ mod tests {
         let followed = [0x00u8, 0x00, 0x03, 0x04];
         assert_eq!(crate::rbsp::unescape(&trailing), &[0x01, 0x00, 0x00]);
         assert_eq!(crate::rbsp::unescape(&followed), &[0x00, 0x00, 0x04]);
-        // The parse path itself (`nal::sei_messages` over `BitReader`) pins
-        // its own copy of this rule in `sei_parse_path_unescapes_like_sample_aes_for_the_issue_inputs`.
+        // The SPS/SEI parse path unescapes through `BitReader::with_unescape`
+        // and must reach the same RBSP: a `3`-byte read yields the first three
+        // bytes of exactly these values.
+        let mut reader = crate::bitreader::BitReader::with_unescape(&trailing, "test")
+            .expect("a non-empty NAL always unescapes");
+        assert_eq!(
+            reader.read_bits(24, "test").expect("3 bytes"),
+            u64::from_be_bytes([0, 0, 0, 0, 0, 0x01, 0x00, 0x00])
+        );
+        let mut reader = crate::bitreader::BitReader::with_unescape(&followed, "test")
+            .expect("a non-empty NAL always unescapes");
+        assert_eq!(
+            reader.read_bits(24, "test").expect("3 bytes"),
+            u64::from_be_bytes([0, 0, 0, 0, 0, 0x00, 0x00, 0x04])
+        );
     }
 
     #[test]
