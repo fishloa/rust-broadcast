@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- RTSP pull uses rtsp-runtime's `MAX_TRACKS` cap instead of a local constant.
+- RTSP pull skips an SDP media section whose `m=` format is not a numeric RTP payload type (RFC 4566 §5.14) instead of playing it, matching multimux; the skip is reported in `skipped`.
 ### Fixed
 - A Smooth quality switch to a level with a different SPS/PPS or resolution now succeeds (it was refused as `NoSuchVariant`): the engine's `Output::TracksChanged` surfaces as a new `Event::Tracks`, the event DASH variant switches already use.
 ### Fixed

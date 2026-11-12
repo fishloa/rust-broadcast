@@ -27,7 +27,7 @@ pub use error::{Error, IoContext, MessageKind, Result};
 pub use interleaved::InterleavedFrame;
 #[cfg(feature = "tokio")]
 pub use io::{AsyncRtspClient, AsyncRtspServer, RtspTimeouts};
-pub use play::{PlannedSetup, PlayPlan, PlaySession, PlayTrack, SkippedMedia};
+pub use play::{MAX_TRACKS, PlannedSetup, PlayPlan, PlaySession, PlayTrack, SkippedMedia};
 pub use server::{ServerEvent, ServerSession};
 pub use session_header::SessionHeader;
 pub use state::SessionState;
