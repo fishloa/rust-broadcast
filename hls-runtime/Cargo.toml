@@ -2,7 +2,7 @@
 name         = "hls-runtime"
 version      = "0.13.0"
 edition      = "2024"
-description  = "Sans-IO Low-Latency HLS (RFC 8216bis) client + server engines in one crate (blocking reload, part prefetch, rolling-window origin), with an optional tokio+reqwest IO adapter."
+description  = "Sans-IO Low-Latency HLS (RFC 8216bis) client + server engines in one crate (blocking reload, part prefetch, rolling-window origin)."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords     = ["hls", "llhls", "sans-io", "streaming", "client"]
@@ -41,23 +41,10 @@ serde             = { version = "1", optional = true, default-features = false, 
 # crate's own types carry forward (e.g. `HlsBody::Resource`).
 media-plane       = { path = "../media-plane", version = "0.11.0", optional = true, default-features = false }
 bytes             = { version = "1", optional = true, default-features = false }
-# Only pulled in by the `tokio` feature (issue #717 slice 5) — the sans-IO
-# core (`client/engine.rs`) never depends on either.
-tokio             = { version = "1", optional = true, default-features = false, features = ["time", "macros"] }
-reqwest           = { version = "0.13", optional = true, default-features = false, features = ["rustls"] }
-# Only pulled in by the `tokio` feature: `TokioClient`'s Digest challenge/
-# response (reqwest itself only has Basic/Bearer helpers) delegates to the
-# same shared model `rtsp-runtime` and `multimux`'s HTTP input adapters use
-# (issue #663 P3b/P3c) — see `client::tokio_client`'s module doc.
-broadcast-auth    = { path = "../broadcast-auth", version = "0.6.0", optional = true }
 # RFC 3986 reference resolution (SP3, defect 7) and RFC 3339 dates (SP5): both
 # work in `alloc`-only builds, so the no_std core keeps building for thumbv7em.
 url               = { version = "2", default-features = false }
 jiff              = { version = "0.2", default-features = false, features = ["alloc"] }
-# `tokio` feature only: retries with jitter (SP1.5), typed Range (SP2), cancellation (SP1.4).
-backon            = { version = "1", optional = true, default-features = false, features = ["std"] }
-headers           = { workspace = true, optional = true }
-tokio-util        = { version = "0.7", optional = true, default-features = false, features = ["rt"] }
 
 [features]
 default = ["std"]
@@ -70,14 +57,9 @@ default = ["std"]
 std = ["broadcast-common/std", "broadcast-common/lang", "thiserror/std", "transmux/std", "broadcast-hls/std", "media-plane/std", "mpeg-ts/std", "dep:bytes", "url/std", "jiff/std", "serde?/std"]
 # Derive serde on the public wire/event types (`Action`, `Output`, `ResourceId`, ...).
 serde = ["dep:serde"]
-# `TokioClient` (issue #717 slice 5): an async shell driving the sans-IO
-# `HlsClient` core over real HTTP (tokio + reqwest/rustls). NOT default —
-# the core (`client/engine.rs`) stays IO-free regardless of this feature;
-# enabling it only adds the `client::tokio_client` module alongside it.
-tokio = ["std", "dep:tokio", "dep:reqwest", "dep:broadcast-auth", "dep:backon", "dep:headers", "dep:tokio-util"]
 
 [dev-dependencies]
-# Loopback mock HTTP servers for `hls-runtime/tests/it/tokio_client_auth.rs` (tokio is
+# Loopback mock HTTP servers (tokio is
 # already a dependency; these are features only).
 tokio             = { version = "1", features = ["net", "io-util", "rt", "macros", "time", "test-util"] }
 test-fixtures     = { path = "../test-fixtures" }

@@ -5,7 +5,6 @@ use alloc::collections::VecDeque;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::auth::AuthState;
 use crate::error::Error;
 use crate::events::{Action, Event};
 use crate::playout::Source;
@@ -13,6 +12,7 @@ use crate::source::dash::DashSource;
 use crate::source::fetch::wall::WallClock;
 use crate::source::hls_session::HlsSession;
 use crate::source::smooth::SmoothSource;
+use broadcast_auth::AuthState;
 
 pub(crate) enum Adaptive {
     Hls(Box<HlsSession>),

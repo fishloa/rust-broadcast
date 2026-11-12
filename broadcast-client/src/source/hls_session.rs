@@ -10,13 +10,13 @@ use hls_runtime::client::{MasterSelection, RenditionInfo};
 use transmux::TrackSpec;
 use url::Url;
 
-use crate::auth::AuthState;
 use crate::error::Error;
 use crate::events::{Action, Config, Event, Status};
 use crate::playout::Source;
 use crate::source::fetch::conn::ConnAlloc;
 use crate::source::fetch::wall::WallClock;
 use crate::source::hls::{HlsSource, Role};
+use broadcast_auth::AuthState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AudioMode {

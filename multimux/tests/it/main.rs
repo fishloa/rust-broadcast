@@ -22,6 +22,7 @@ mod harness_guard;
 mod hdr10_route;
 mod hdr10plus_route;
 mod heaac_override;
+mod hls_pull_auth_session;
 mod hls_pull_keys;
 mod hls_pull_live;
 mod http2_h2c;
