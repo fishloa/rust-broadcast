@@ -478,6 +478,7 @@ dependencies = [
 name = "broadcast-common"
 version = "11.1.0"
 dependencies = [
+ "base64 0.23.1",
  "chrono",
  "criterion",
  "erased-serde",
@@ -1089,11 +1090,14 @@ dependencies = [
  "broadcast-common",
  "broadcast-dash",
  "container-probe",
+ "http",
  "jiff",
+ "media-plane",
  "percent-encoding",
  "quick-xml",
  "test-fixtures",
  "thiserror 2.0.21",
+ "tracing",
  "transmux",
  "url",
  "workspace-guards",
@@ -2406,6 +2410,7 @@ dependencies = [
  "dash-runtime",
  "dvb-conformance",
  "dvb-si",
+ "dvb-stream",
  "http-body-util",
  "hyper",
  "hyper-util",

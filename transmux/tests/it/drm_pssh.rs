@@ -3,12 +3,12 @@
 //! Spec basis: `private/specs-verified/mpeg/transmux/drm/public-notes/pssh.md`.
 #![cfg(feature = "std")]
 
+use broadcast_common::base64::base64_decode_lenient as base64_decode;
 use transmux::cenc::ProtectionSystemSpecificHeaderBox;
 use transmux::drm::{
     PLAYREADY_SYSTEM_ID, WIDEVINE_SYSTEM_ID, cenc_kid_to_playready, playready_kid_to_cenc,
     playready_pro, playready_pssh, playready_wrmheader, widevine_pssh, widevine_pssh_data,
 };
-use transmux::rtp::base64_decode;
 
 /// Documented vector (private/specs-verified/mpeg/transmux/drm/public-notes/pssh.md §3.3 pattern):
 /// UUID 01020304-0506-0708-090a-0b0c0d0e0f10.
@@ -96,7 +96,7 @@ fn playready_pro_structure_parses_back() {
     let wrm = String::from_utf16(&units).unwrap();
     assert!(wrm.contains("<WRMHEADER"));
     assert!(wrm.contains(la), "LA_URL present");
-    let expected_value = transmux::rtp::base64_encode(&KID_A_PLAYREADY);
+    let expected_value = broadcast_common::base64::base64_encode(&KID_A_PLAYREADY);
     assert!(wrm.contains(&expected_value), "KID VALUE present");
 
     // Mutating a KID changes the output bytes.

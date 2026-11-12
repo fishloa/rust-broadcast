@@ -271,9 +271,87 @@ fn box_body<'a>(bytes: &'a [u8], four_cc: &[u8; 4]) -> Result<&'a [u8]> {
     Ok(&bytes[8..size])
 }
 
+/// Four-CC of the Movie Fragment Box.
+pub const MOOF: [u8; 4] = *b"moof";
+
+/// Splice serialized event message (`emsg`) boxes immediately after the first
+/// top-level `styp` box of `segment` (the CMAF segment layout
+/// `[styp][emsg*][moof][mdat]`, ISO/IEC 23000-19 §7.3.3). Box boundaries are
+/// parsed, so a 64-bit `largesize` box before `styp` is stepped over correctly.
+/// A segment with no `styp` gets the boxes prepended.
+pub fn insert_event_message_boxes_after_styp(segment: &[u8], emsg_bytes: &[u8]) -> Vec<u8> {
+    if emsg_bytes.is_empty() {
+        return segment.to_vec();
+    }
+    let mut offset = 0usize;
+    while offset < segment.len() {
+        match crate::parse_box(&segment[offset..]) {
+            Ok((box_ref, consumed)) if consumed > 0 => {
+                if box_ref.header.box_type.is(&STYP) {
+                    let mut out = Vec::with_capacity(segment.len() + emsg_bytes.len());
+                    out.extend_from_slice(&segment[..offset + consumed]);
+                    out.extend_from_slice(emsg_bytes);
+                    out.extend_from_slice(&segment[offset + consumed..]);
+                    return out;
+                }
+                offset += consumed;
+            }
+            _ => break,
+        }
+    }
+    let mut out = Vec::with_capacity(segment.len() + emsg_bytes.len());
+    out.extend_from_slice(emsg_bytes);
+    out.extend_from_slice(segment);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn plain_box(four_cc: &[u8; 4], body_len: usize) -> Vec<u8> {
+        let mut b = ((8 + body_len) as u32).to_be_bytes().to_vec();
+        b.extend_from_slice(four_cc);
+        b.extend(std::iter::repeat_n(0u8, body_len));
+        b
+    }
+
+    fn large_box(four_cc: &[u8; 4], body_len: usize) -> Vec<u8> {
+        let mut b = 1u32.to_be_bytes().to_vec();
+        b.extend_from_slice(four_cc);
+        b.extend_from_slice(&((16 + body_len) as u64).to_be_bytes());
+        b.extend(std::iter::repeat_n(0u8, body_len));
+        b
+    }
+
+    #[test]
+    fn event_boxes_go_right_after_styp() {
+        let styp = plain_box(b"styp", 8);
+        let moof = plain_box(b"moof", 4);
+        let emsg = plain_box(b"emsg", 3);
+        let segment = [styp.clone(), moof.clone()].concat();
+        let out = insert_event_message_boxes_after_styp(&segment, &emsg);
+        assert_eq!(out, [styp, emsg, moof].concat());
+    }
+
+    #[test]
+    fn event_boxes_are_prepended_without_styp() {
+        let moof = plain_box(b"moof", 4);
+        let emsg = plain_box(b"emsg", 3);
+        let out = insert_event_message_boxes_after_styp(&moof, &emsg);
+        assert_eq!(out, [emsg, moof].concat());
+    }
+
+    #[test]
+    fn a_largesize_box_before_styp_is_stepped_over() {
+        let lead = large_box(b"free", 5);
+        let styp = plain_box(b"styp", 8);
+        let moof = plain_box(b"moof", 4);
+        let emsg = plain_box(b"emsg", 3);
+        let segment = [lead.clone(), styp.clone(), moof.clone()].concat();
+        let out = insert_event_message_boxes_after_styp(&segment, &emsg);
+        assert_eq!(out, [lead, styp, emsg, moof].concat());
+    }
     use broadcast_common::Serialize;
 
     #[test]

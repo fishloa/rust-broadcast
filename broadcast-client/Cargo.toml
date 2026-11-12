@@ -17,7 +17,7 @@ features = ["serde"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common  = { path = "../broadcast-common", version = "11.0.1", default-features = false, features = ["std", "http-date"] }
+broadcast-common  = { path = "../broadcast-common", version = "11.0.1", default-features = false, features = ["std", "http-date", "lang"] }
 broadcast-auth     = { path = "../broadcast-auth", version = "0.6.0" }
 transmux           = { path = "../transmux", version = "0.31.0", default-features = false, features = ["std"] }
 dvb-si             = { path = "../dvb-si", version = "13.1.0", default-features = false, features = ["ts", "std"] }

@@ -6,6 +6,7 @@ All notable changes to dash-runtime will be documented in this file.
 ### Changed
 - HTTP `Date` parsing moved to `broadcast_common::http_date` (re-exported as `timing::http_date`).
 ### Added
+- `ingest` module: DASH-IF Live Media Ingest (Interface-1) sans-IO engine (`DashifIngestSession`, `classify`, `RequestMeta`, `IngestObject`, ...) moved from `multimux` (issue #2480).
 - `mpd::base_url` (`resolve`, `resolve_chain`, `first_forbidden_char`): RFC 3986 §5 URL-reference and `BaseURL`-chain resolution over `url::Url::join`, moved from `transmux`, whose only caller was this crate; `mpd::urls` now resolves through it instead of `transmux` (#2355).
 ### Fixed
 - `TimelineIndex::build` still computed (and could fail with `AddressError::Overflow` on) the clock advance after the last `S`, where the new value is never used; it is now computed only when another `S` follows.

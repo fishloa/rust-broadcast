@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- `resync` module now re-exports the implementation from `mpeg_ts::resync`; the local algorithm was removed (#2479).
 ### Added
 - `udp::bind_standard` with `udp::SocketSpec` and `udp::MulticastMembership`: the workspace's single datagram bind (UDP socket, `SO_REUSEADDR`, `SO_REUSEPORT` where the platform has it, `SO_RCVBUF`, an optional IPv4/IPv6 multicast join, non-blocking). `MulticastConfig::bind` is now a thin wrapper over it, with the same options and the same "a refused `SO_RCVBUF` is logged and the bind retried without it" behaviour.
 

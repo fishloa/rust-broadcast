@@ -1352,7 +1352,10 @@ fn descriptor(scheme_id_uri: &str, value: Option<&str>) -> Descriptor {
 fn content_protection(cp: &ContentProtectionSystem) -> Descriptor {
     let mut d = descriptor(&cp.scheme_id_uri, cp.value.as_deref());
     d.default_kid = cp.default_kid.as_ref().map(format_kid);
-    d.pssh = cp.pssh.as_deref().map(crate::rtp::base64_encode);
+    d.pssh = cp
+        .pssh
+        .as_deref()
+        .map(broadcast_common::base64::base64_encode);
     d
 }
 

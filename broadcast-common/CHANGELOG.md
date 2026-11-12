@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Removed
+- `ts_dup` module moved to `mpeg-ts` (legal duplicate TS packet detection, H.222.0 §2.4.3.3); import from `mpeg_ts::ts_dup` instead (#2466).
+### Added
+- `PusiAccumulator::len`/`is_empty`/`is_started` accessors; `PesAssembler` mirrors them.
 ### Added
 - `http_date` module (`std` feature): `parse_http_date` (RFC 9110 §5.6.7), moved from `dash-runtime`.
 ### Added
