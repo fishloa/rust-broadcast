@@ -26,5 +26,8 @@ pub mod traits;
 
 pub use error::{Error, Result};
 pub use section::{ClearPayload, SpliceInfoSection};
-pub use tracker::{MAX_OPEN_EVENTS, SpliceObservation, SpliceTracker};
+pub use tracker::{
+    MAX_OPEN_EVENTS, SpliceEvent, SpliceObservation, SpliceSanity, SpliceTracker,
+    judge_splice_time, kind_label, splice_event,
+};
 pub use traits::{CommandDef, SpliceDescriptorDef};
