@@ -12,13 +12,15 @@ use alloc::vec::Vec;
 
 use crate::tshttp::{Config as TsConfig, StarveKind};
 use rtsp_runtime::{ClientEvent, ClientSession, Credentials, Method, PlayPlan, StatusCode};
-use transmux::{CodecConfig, RtpLossEvent, RtpStreamDepacketiser, RtpStreamTrack, Sample, TrackId};
+use transmux::{
+    AlignOut, CodecConfig, RtpLossEvent, RtpStreamDepacketiser, RtpStreamTrack, Sample,
+    TrackAligner, TrackId,
+};
 use url::{Host, Url};
 
 use crate::auth::{AuthDecision, AuthState};
 use crate::events::{Action, ErrorKind, Event, Status};
 use crate::redirect;
-use crate::source::rtsp_align::{Aligner, Out};
 use crate::source::rtsp_sdp::{ParsedSdp, SdpError, SkippedMedia, TrackInit, parse_tracks};
 
 const SCHEME_RTSPS: &str = "rtsps";
@@ -90,7 +92,7 @@ pub(crate) struct RtspSource {
     reported_drops: BTreeSet<(usize, Option<String>)>,
     plan: Option<PlayPlan>,
     depa: Option<RtpStreamDepacketiser>,
-    aligner: Aligner,
+    aligner: TrackAligner,
     pre_sample: Vec<Event>,
     tracks_dirty: bool,
     seen_first_sample: bool,
@@ -174,7 +176,7 @@ impl RtspSource {
             reported_drops: BTreeSet::new(),
             plan: None,
             depa: None,
-            aligner: Aligner::default(),
+            aligner: TrackAligner::default(),
             pre_sample: Vec::new(),
             tracks_dirty: false,
             seen_first_sample: false,
@@ -460,7 +462,7 @@ impl RtspSource {
         self.tracks.clear();
         self.plan = None;
         self.depa = None;
-        self.aligner = Aligner::default();
+        self.aligner = TrackAligner::default();
         self.pre_sample.clear();
         self.tracks_dirty = false;
         self.stalled = false;
@@ -769,7 +771,7 @@ impl RtspSource {
                 .map(|t| RtpStreamTrack::new(t.track_id, t.kind, t.config.clone(), t.clock_rate))
                 .collect(),
         ));
-        self.aligner = Aligner::new(
+        self.aligner = TrackAligner::new(
             &self
                 .tracks
                 .iter()
@@ -989,8 +991,10 @@ impl RtspSource {
         };
         for out in self.aligner.push(depa, track, sample) {
             match out {
-                Out::Sample(track, sample) => self.emit_sample(track, sample, now),
-                Out::Event(event) => self.pre_sample.push(event),
+                AlignOut::Sample(track, sample) => self.emit_sample(track, sample, now),
+                AlignOut::Discontinuity => self.pre_sample.push(Event::Discontinuity),
+                AlignOut::State(state) => self.pre_sample.push(Event::AvSync(state)),
+                _ => {}
             }
         }
     }

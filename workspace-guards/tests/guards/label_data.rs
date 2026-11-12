@@ -1601,6 +1601,9 @@ pub const TABLE: &[Crate] = &[
         // a data-carrying ADT whose variants hold arbitrary payloads (a static label
         // would be lossy and add nothing — use the typed variant instead).
         skip: &[
+            // `rtp_align::AlignOut` (#2380): a data-carrying ADT (`Sample(TrackId, Sample)`),
+            // the result of placing one sample, not a spec code.
+            "AlignOut",
             // `init_segment::DataEntry` (#1908): dispatch enum over the `dref` entry
             // boxes (`url `, `urn `, `imdt`, `snim`), each variant wrapping a full
             // structured box, not a flat spec code.
