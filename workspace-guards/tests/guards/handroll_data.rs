@@ -176,18 +176,11 @@ pub const NEEDLE_CRATES: &[Needles] = &[
     Needles {
         name: "hls-runtime",
         extra: &[],
-        allow: &[
-            (
-                "client/tokio_client.rs",
-                "tokio::time::sleep(",
-                "backon-scheduled retry delay and WaitMs hint, both raced against the CancellationToken in sleep_or_cancelled",
-            ),
-            (
-                "source/rtsp.rs",
-                "Instant::now",
-                "one epoch at construction, so rtsp-runtime's ClientSession keepalive schedule (which owns the Instant clock) converts to and from this source's caller-supplied now_us; never read per poll",
-            ),
-        ],
+        allow: &[(
+            "client/tokio_client.rs",
+            "tokio::time::sleep(",
+            "backon-scheduled retry delay and WaitMs hint, both raced against the CancellationToken in sleep_or_cancelled",
+        )],
     },
     Needles {
         name: "srt-runtime",
@@ -214,18 +207,11 @@ pub const NEEDLE_CRATES: &[Needles] = &[
             "is_expired(",
             "CookieStore",
         ],
-        allow: &[
-            (
-                "client/tokio_client.rs",
-                "tokio::time::sleep(",
-                "backon-scheduled retry delay and WaitMs hint, both raced against the CancellationToken in sleep_or_cancelled",
-            ),
-            (
-                "source/rtsp.rs",
-                "Instant::now",
-                "one epoch at construction, so rtsp-runtime's ClientSession keepalive schedule (which owns the Instant clock) converts to and from this source's caller-supplied now_us; never read per poll",
-            ),
-        ],
+        allow: &[(
+            "client/tokio_client.rs",
+            "tokio::time::sleep(",
+            "backon-scheduled retry delay and WaitMs hint, both raced against the CancellationToken in sleep_or_cancelled",
+        )],
     },
     Needles {
         name: "dash-runtime",

@@ -99,19 +99,11 @@ pub(crate) struct RtspSource {
     last_byte_at: u64,
     last_sample_at: u64,
     next_notice_at: Option<u64>,
-    /// When this source must next ask the engine whether the session's
-    /// keepalive is due, on the caller's `now_us` clock (`None` until the
-    /// engine has a session to keep alive — before SETUP or after TEARDOWN).
-    /// The *interval* is never computed here: `rtsp-runtime` owns the
-    /// schedule (`poll_timeout`), this only decides when to ask.
+    /// The session engine's keepalive deadline, on this source's own
+    /// caller-supplied `now_us` clock (`None` before SETUP, after TEARDOWN,
+    /// or before a request was written). The interval is never computed
+    /// here: `rtsp-runtime` owns the schedule.
     keepalive_wake: Option<u64>,
-    /// The instant this source's caller's `now_us` clock starts from, taken
-    /// once at construction so the engine's `Instant` clock converts to and
-    /// from `now_us`. The source itself reads no clock: a stored epoch cannot
-    /// drift against the caller's schedule the way a per-call read would.
-    clock: std::time::Instant,
-    /// `now_us` of the deadline `keepalive_wake` was derived from.
-    keepalive_wake_at: u64,
     starved_data_fired: bool,
     starved_nodata_fired: bool,
     wake_pending: Option<u64>,
@@ -186,8 +178,6 @@ impl RtspSource {
             last_sample_at: now_us,
             next_notice_at: None,
             keepalive_wake: None,
-            clock: std::time::Instant::now(),
-            keepalive_wake_at: 0,
             starved_data_fired: false,
             starved_nodata_fired: false,
             wake_pending: None,
@@ -1121,11 +1111,10 @@ impl RtspSource {
         if self.keepalive_wake.is_some_and(|wake| now < wake) {
             return;
         }
-        let (Some(at), Some(conn)) = (self.engine_instant(self.keepalive_wake_at), self.conn)
-        else {
+        let Some(conn) = self.conn else {
             return;
         };
-        match self.client.handle_timeout(at) {
+        match self.client.handle_timeout(now) {
             Ok(Some(bytes)) => self.actions.push_back(Action::Send { conn, bytes }),
             Ok(None) => {}
             Err(_) => {
@@ -1137,36 +1126,20 @@ impl RtspSource {
         self.arm_keepalive_wake(now);
     }
 
-    /// Re-reads the engine's keepalive deadline after a request exchange and
-    /// stores the `now_us` at which it must be asked about again. The engine
-    /// re-arms on the request it builds, so the new deadline is always in the
-    /// future; `max(now + 1)` keeps a coarse clock from waking in a loop.
+    /// Re-reads the engine's keepalive deadline after a request exchange. The
+    /// engine re-arms on the request it builds, so the new deadline is always
+    /// ahead of `now`; `max(now + 1)` keeps a coarse clock from waking in a
+    /// loop.
     fn arm_keepalive_wake(&mut self, now: u64) {
-        let due = self
+        self.keepalive_wake = self
             .client
             .poll_timeout()
-            .and_then(|due| self.now_us_since(due));
-        self.keepalive_wake = due.map(|due| {
-            self.keepalive_wake_at = due;
-            due.max(now.saturating_add(1))
-        });
-    }
-
-    fn engine_instant(&self, base: u64) -> Option<std::time::Instant> {
-        self.clock
-            .checked_add(core::time::Duration::from_micros(base))
-    }
-
-    fn now_us_since(&self, due: std::time::Instant) -> Option<u64> {
-        let ahead = due.checked_duration_since(self.clock)?;
-        Some(u64::try_from(ahead.as_nanos().div_euclid(1_000)).unwrap_or(u64::MAX))
+            .map(|due| due.max(now.saturating_add(1)));
     }
 
     fn note_written(&mut self, now: u64) {
-        if let Some(at) = self.engine_instant(now) {
-            self.client.mark_activity(at);
-            self.arm_keepalive_wake(now);
-        }
+        self.client.mark_activity(now);
+        self.arm_keepalive_wake(now);
     }
 
     fn fail_connection(&mut self, now: u64) {

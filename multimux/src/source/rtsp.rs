@@ -147,10 +147,15 @@ pub struct RtspIngestSession {
     phase: Phase,
     outbound: VecDeque<Bytes>,
     pending: VecDeque<SessionEvent>,
-    /// Monotonic session start, the epoch every [`Timestamp`] this stage
-    /// sees is measured from — so a deadline can be turned back into the
-    /// same `std::time::Instant` the session engine compares against.
+    /// Monotonic session start, the epoch the engine's `now_us` deadline is
+    /// measured from. The driver's [`Timestamp`] has no readable epoch and no
+    /// relation to it: a driver woken at `Timestamp(t)` for our deadline `d`
+    /// is woken once `now_us() >= d`.
     started: std::time::Instant,
+    /// The engine's `now_us` at the last [`Stage::on_deadline`], so a
+    /// deadline can be announced on the driver's clock too (see
+    /// [`Self::next_deadline`]).
+    seen_now: Option<u64>,
     /// Interleaved media frames skipped because their RTP payload did not
     /// parse (audit T16, #1144) — see [`Self::malformed_media_frames`].
     malformed_media_frames: u64,
@@ -265,6 +270,10 @@ impl AlignDiagnostics {
         }
     }
 }
+
+/// Nanoseconds in a microsecond: the engine's keepalive clock is
+/// microseconds, the driver's [`Timestamp`] is nanoseconds.
+const NANOS_PER_US: u64 = 1_000;
 
 impl RtspIngestSession {
     /// How many interleaved media frames were skipped because their RTP
@@ -473,7 +482,7 @@ impl RtspIngestSession {
                             tracks: specs,
                         });
                         self.phase = Phase::Live;
-                        self.session.mark_activity(std::time::Instant::now());
+                        self.session.mark_activity(self.now_us());
                     }
                     _ => {
                         // A response for a request phase we've already moved
@@ -543,6 +552,13 @@ impl RtspIngestSession {
         }
         Ok(())
     }
+    /// The engine's `now_us`: this stage's own monotonic clock, anchored at
+    /// `started`, in microseconds. [`Timestamp`] has no readable epoch, so
+    /// the session schedule is measured on this clock rather than the
+    /// driver's (RTSP has no RTP-timestamp timeline that would need theirs).
+    fn now_us(&self) -> u64 {
+        u64::try_from(self.started.elapsed().as_micros()).unwrap_or(u64::MAX)
+    }
 }
 
 impl Stage for RtspIngestSession {
@@ -611,19 +627,24 @@ impl Stage for RtspIngestSession {
         // `None` before SETUP, after TEARDOWN, and before any request of ours
         // was written — the engine owns the whole schedule.
         let due = self.session.poll_timeout()?;
-        Some(Timestamp::from_instant(self.started, due))
+        // Announce it on the driver's clock: the last `now_us` this stage saw
+        // is the most recent `Timestamp` the driver woke it at, so the driver
+        // reaches `now_us >= due` when it reaches `seen + (due - last)`.
+        let last = self.seen_now.unwrap_or_else(|| self.now_us());
+        Some(
+            Timestamp::from_nanos(last)
+                .saturating_add_nanos(due.saturating_sub(last).saturating_mul(NANOS_PER_US)),
+        )
     }
 
-    fn on_deadline(&mut self, now: Timestamp) {
+    fn on_deadline(&mut self, _now: Timestamp) {
+        self.seen_now = Some(self.now_us());
         if !matches!(self.phase, Phase::Live) {
             return;
         }
         // Re-arm before queueing so a build failure cannot spin: the engine
         // re-arms its deadline as soon as it builds the request.
-        match self
-            .session
-            .handle_timeout(self.started + Duration::from_nanos(now.as_nanos()))
-        {
+        match self.session.handle_timeout(self.now_us()) {
             Ok(Some(bytes)) => self.outbound.push_back(Bytes::from(bytes)),
             Ok(None) => {}
             Err(e) => tracing::warn!(error = %e, "rtsp: failed to build the keepalive"),
@@ -733,6 +754,7 @@ impl Dialer for RtspDialer {
             outbound: VecDeque::from(vec![Bytes::from(describe_bytes)]),
             pending: VecDeque::new(),
             started: std::time::Instant::now(),
+            seen_now: None,
             malformed_media_frames: 0,
             rtcp_frames: 0,
             diagnostics: AlignDiagnostics::default(),
@@ -2477,9 +2499,11 @@ mod tests {
                         "",
                     ),
                     "PLAY" => rtsp_response(cseq, "200 OK", "Session: 12345678\r\n", ""),
-                    // Answer keepalives so the peer is provably alive at the
-                    // RTSP layer — but never send any media.
-                    "OPTIONS" => rtsp_response(cseq, "200 OK", "Session: 12345678\r\n", ""),
+                    // Keepalives are genuinely unanswered: this server made
+                    // no `OPTIONS` exchange at all (no `Public` header), so
+                    // its keepalive is `OPTIONS`, and a reply would carry the
+                    // session id of a session it never declared.
+                    "OPTIONS" | KEEPALIVE_METHOD => return None,
                     _ => return None,
                 };
                 Some(resp)
