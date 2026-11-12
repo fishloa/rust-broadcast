@@ -136,7 +136,6 @@ fn a_cut_trailing_tag_body_is_reported() {
 #[test]
 fn header_round_trips_a_non_standard_data_offset() {
     let offset = u32::try_from(FLV_HEADER_LEN).unwrap() + 4;
-    // 9 fixed header bytes + (offset-9) extra bytes + PreviousTagSize0.
     let mut bytes = vec![0u8; usize::try_from(offset).unwrap() + FLV_PREV_TAG_SIZE_LEN];
     bytes[..FLV_SIGNATURE.len()].copy_from_slice(&FLV_SIGNATURE);
     bytes[FLV_SIGNATURE.len()] = FLV_VERSION;
@@ -284,7 +283,6 @@ fn tags_reject_bad_previous_tag_size() {
         body: &[0x00],
     };
     stream.extend_from_slice(&tag.try_to_bytes().unwrap());
-    // corrupt trailing PreviousTagSize
     let tail = stream.len() - FLV_PREV_TAG_SIZE_LEN;
     stream[tail..].copy_from_slice(&0xDEADBEEFu32.to_be_bytes());
     let header = FlvHeader::parse(&stream).unwrap();
