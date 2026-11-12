@@ -2405,6 +2405,7 @@ dependencies = [
  "dash-runtime",
  "dvb-conformance",
  "dvb-si",
+ "dvb-stream",
  "http-body-util",
  "hyper",
  "hyper-util",

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 ### Added
+- Stateless datagram resync helpers `resync`, `resync_confirmed`, `unconfirmed_candidate` moved from `dvb-stream` (lone sync byte accepted when the buffer cannot hold a confirming packet) (#2479).
+### Added
+- `ts_dup` module moved from `broadcast-common` (legal duplicate TS packet detection, H.222.0 §2.4.3.3) (#2466).
+### Added
 - `TS_PACKETS_PER_DATAGRAM` (7) and `TS_BYTES_PER_DATAGRAM` (1316) — the whole-packet TS payload of one IP datagram, the size a TS-over-UDP/SRT/RTP sender writes — and `MAX_DATAGRAM_PAYLOAD` (1472), the Ethernet-MTU datagram they fit. The SRT push, the media-doctor watch test and multimux's UDP ingest test now share them instead of a local `7 * 188` (issue #2369).
 
 ## [0.7.1] - 2026-11-10

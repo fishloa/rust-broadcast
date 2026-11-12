@@ -439,33 +439,8 @@ fn inject_segment_events(trunk: &Trunk, file: &str, body: HlsBody) -> HlsBody {
         return body;
     }
 
-    // Splice the emsg boxes after the styp box, before moof. styp box layout:
-    // first 4 bytes = big-endian u32 size, next 4 bytes = "styp".
     let segment = bytes.as_ref();
-    let spliced = if segment.len() >= 8 && &segment[4..8] == b"styp" {
-        let styp_size =
-            u32::from_be_bytes([segment[0], segment[1], segment[2], segment[3]]) as usize;
-        if styp_size <= segment.len() {
-            let mut out = Vec::with_capacity(segment.len() + emsg_bytes.len());
-            out.extend_from_slice(&segment[..styp_size]);
-            out.extend_from_slice(&emsg_bytes);
-            out.extend_from_slice(&segment[styp_size..]);
-            out
-        } else {
-            // Malformed styp size -- can't identify the split point; prepend
-            // the boxes rather than corrupting the file.
-            let mut out = Vec::with_capacity(segment.len() + emsg_bytes.len());
-            out.extend_from_slice(&emsg_bytes);
-            out.extend_from_slice(segment);
-            out
-        }
-    } else {
-        // No styp box (unexpected for CMAF, but be defensive): prepend.
-        let mut out = Vec::with_capacity(segment.len() + emsg_bytes.len());
-        out.extend_from_slice(&emsg_bytes);
-        out.extend_from_slice(segment);
-        out
-    };
+    let spliced = transmux::insert_event_message_boxes_after_styp(segment, &emsg_bytes);
 
     HlsBody::Resource(Bytes::from(spliced))
 }

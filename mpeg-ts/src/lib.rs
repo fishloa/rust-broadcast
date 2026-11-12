@@ -12,6 +12,7 @@ pub mod pusi;
 pub mod resync;
 pub mod section;
 pub mod ts;
+pub mod ts_dup;
 
 pub use error::{Error, Result};
 pub use owned::OwnedTsPacket;
