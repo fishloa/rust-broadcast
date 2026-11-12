@@ -88,6 +88,11 @@ pub enum Output {
     /// Every stream's first fragment resolved: the track set, one per stream, ids
     /// `1..` in stream order.
     Tracks(Vec<TrackSpec>),
+    /// A track's codec configuration changed because the host switched the video
+    /// `QualityLevel`: the complete replacement track set, same ids and order as
+    /// [`Output::Tracks`]. Emitted once, before the first sample of the new level;
+    /// [`Output::Tracks`] itself is announced only once.
+    TracksChanged(Vec<TrackSpec>),
     /// One demuxed sample, timestamps in its track's timescale.
     Sample {
         /// The track carrying it.

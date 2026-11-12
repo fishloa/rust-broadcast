@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 use broadcast_common::Unpackage;
 use broadcast_smooth::{QualityLevel, SmoothManifest, StreamIndex};
 use transmux::smooth_fragment::fragment_tfxd;
-use transmux::{Fmp4Demux, Sample, TrackId};
+use transmux::{Fmp4Demux, Sample, TrackId, TrackSpec};
 
 use super::action::RequestId;
 
@@ -18,17 +18,26 @@ pub(crate) enum Cursor {
     Backoff { until: u64, chunk: Chunk },
 }
 
+pub(crate) struct HeldFragment {
+    pub(crate) start: u64,
+    pub(crate) body: Vec<u8>,
+    pub(crate) quality: QualityLevel,
+}
+
 pub(crate) struct Stream {
     pub(crate) index: StreamIndex,
     pub(crate) timescale: u32,
     pub(crate) quality: QualityLevel,
+    pub(crate) fetched: QualityLevel,
+    pub(crate) applied: QualityLevel,
+    pub(crate) spec: Option<TrackSpec>,
     pub(crate) plan: VecDeque<Chunk>,
     pub(crate) known_end: u64,
     pub(crate) cursor: Cursor,
     pub(crate) local_track_id: Option<u32>,
     pub(crate) track: Option<TrackId>,
     pub(crate) init: Option<Vec<u8>>,
-    pub(crate) held: Vec<(u64, Vec<u8>)>,
+    pub(crate) held: Vec<HeldFragment>,
     pub(crate) failures: u32,
     pub(crate) refresh_misses: u32,
     pub(crate) abandoned: bool,
@@ -39,6 +48,9 @@ impl Stream {
         Self {
             index,
             timescale,
+            fetched: quality.clone(),
+            applied: quality.clone(),
+            spec: None,
             quality,
             plan: VecDeque::new(),
             known_end: 0,

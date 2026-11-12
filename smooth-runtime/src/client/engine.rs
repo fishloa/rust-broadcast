@@ -14,13 +14,27 @@ use url::Url;
 use super::action::{Action, FetchFailure, RequestId, StreamId};
 use super::config::{SYNTHETIC_MOVIE_TIMESCALE, SmoothConfig};
 use super::output::{Dropped, ManifestFault, Output, QualityInfo};
-use super::stream::{Chunk, Cursor, Stream, demux_fragment, live_join};
+use super::stream::{Chunk, Cursor, HeldFragment, Stream, demux_fragment, live_join};
 use crate::error::SmoothError;
 
 const MICROS_PER_MILLI: u64 = 1_000;
 const MICROS_PER_SEC: u64 = 1_000_000;
 const REFRESH_DIVISOR: u64 = 2;
 const FIRST_TRACK_ID: u32 = 1;
+const FOURCC_AVC: [&str; 2] = ["H264", "AVC1"];
+const FOURCC_HEVC: [&str; 3] = ["H265", "HEVC", "HVC1"];
+const FOURCC_HEVC_ALT: &str = "HEV1";
+
+fn codec_family(four_cc: &str) -> String {
+    let upper = four_cc.to_ascii_uppercase();
+    if FOURCC_AVC.contains(&upper.as_str()) {
+        FOURCC_AVC[0].to_string()
+    } else if FOURCC_HEVC.contains(&upper.as_str()) || upper == FOURCC_HEVC_ALT {
+        FOURCC_HEVC[0].to_string()
+    } else {
+        upper
+    }
+}
 
 fn timescale_of(manifest: &SmoothManifest, index: &StreamIndex) -> Option<u32> {
     u32::try_from(index.timescale.unwrap_or(manifest.timescale))
@@ -117,8 +131,10 @@ impl SmoothClient {
     /// (an index into [`Output::Qualities`]); false when there is no such level.
     ///
     /// Fragments already requested keep their level. Once the tracks are
-    /// announced the `TrackSpec` is fixed, so a level whose codec configuration
-    /// differs from the announced one is refused (false).
+    /// announced, a level of the same codec family is accepted even when its
+    /// codec configuration (parameter sets, resolution) differs: the new
+    /// configuration is announced as [`Output::TracksChanged`] before the first
+    /// sample of the new level. A level of another codec family is refused (false).
     pub fn select_video_quality(&mut self, index: usize) -> bool {
         let Some(si) = self
             .streams
@@ -130,28 +146,23 @@ impl SmoothClient {
         let Some(quality) = self.streams[si].index.qualities.get(index).cloned() else {
             return false;
         };
-        if self.announced && !self.same_codec_config(si, &quality) {
+        if self.announced && !self.switchable(si, &quality) {
             return false;
         }
         self.streams[si].quality = quality;
         true
     }
 
-    fn same_codec_config(&self, si: usize, candidate: &broadcast_smooth::QualityLevel) -> bool {
+    fn switchable(&self, si: usize, candidate: &broadcast_smooth::QualityLevel) -> bool {
         let stream = &self.streams[si];
-        let spec_of = |quality| {
-            track_spec_from_quality_level(
+        codec_family(&stream.applied.four_cc) == codec_family(&candidate.four_cc)
+            && track_spec_from_quality_level(
                 TrackId::new(FIRST_TRACK_ID),
                 stream.timescale,
                 stream.index.stream_type,
-                quality,
+                candidate,
             )
-            .ok()
-        };
-        let (Some(current), Some(next)) = (spec_of(&stream.quality), spec_of(candidate)) else {
-            return false;
-        };
-        current == next
+            .is_ok()
     }
 
     /// The earliest instant, in microseconds, at which [`Self::poll`] has more to do
@@ -218,10 +229,15 @@ impl SmoothClient {
         }
         self.streams[si].failures = 0;
         self.streams[si].cursor = Cursor::Idle;
+        let quality = self.streams[si].fetched.clone();
         if self.announced {
-            self.emit_samples(si, chunk.0, bytes);
+            self.emit_fragment(si, chunk.0, bytes, &quality);
         } else {
-            self.streams[si].held.push((chunk.0, bytes.to_vec()));
+            self.streams[si].held.push(HeldFragment {
+                start: chunk.0,
+                body: bytes.to_vec(),
+                quality,
+            });
             self.try_announce();
         }
         self.advance(now);
@@ -338,6 +354,7 @@ impl SmoothClient {
             return;
         };
         let id = self.mint();
+        self.streams[si].fetched = self.streams[si].quality.clone();
         self.streams[si].cursor = Cursor::InFlight { id, chunk };
         self.actions.push_back(Action::FetchFragment {
             id,
@@ -544,9 +561,14 @@ impl SmoothClient {
                 FIRST_TRACK_ID.saturating_add(u32::try_from(position).unwrap_or(u32::MAX)),
             );
             let local = self.streams[si].local_track_id.unwrap_or(FIRST_TRACK_ID);
-            match self.setup_track(si, local, global) {
+            let quality = self.streams[si]
+                .held
+                .first()
+                .map_or_else(|| self.streams[si].quality.clone(), |h| h.quality.clone());
+            match self.setup_track(si, local, global, &quality) {
                 Ok(spec) => {
                     self.streams[si].track = Some(global);
+                    self.streams[si].spec = Some(spec.clone());
                     specs.push(spec);
                 }
                 Err(reason) => return self.fail(SmoothError::TrackSetup { reason }),
@@ -555,26 +577,65 @@ impl SmoothClient {
         self.announced = true;
         self.outputs.push_back(Output::Tracks(specs));
         for &si in &live {
-            for (start, body) in std::mem::take(&mut self.streams[si].held) {
-                self.emit_samples(si, start, &body);
+            for held in std::mem::take(&mut self.streams[si].held) {
+                self.emit_fragment(si, held.start, &held.body, &held.quality);
             }
         }
     }
 
-    fn setup_track(&mut self, si: usize, local: u32, global: TrackId) -> Result<TrackSpec, String> {
+    fn setup_track(
+        &mut self,
+        si: usize,
+        local: u32,
+        global: TrackId,
+        quality: &broadcast_smooth::QualityLevel,
+    ) -> Result<TrackSpec, String> {
         let stream = &self.streams[si];
         let mut spec = track_spec_from_quality_level(
             TrackId::new(local),
             stream.timescale,
             stream.index.stream_type,
-            &stream.quality,
+            quality,
         )
         .map_err(|e| e.to_string())?;
         let init = build_init_segment(std::slice::from_ref(&spec), SYNTHETIC_MOVIE_TIMESCALE)
             .map_err(|e| e.to_string())?;
         self.streams[si].init = Some(init);
+        self.streams[si].applied = quality.clone();
         spec.track_id = global;
         Ok(spec)
+    }
+
+    fn emit_fragment(
+        &mut self,
+        si: usize,
+        start: u64,
+        body: &[u8],
+        quality: &broadcast_smooth::QualityLevel,
+    ) {
+        if self.streams[si].applied != *quality && !self.reconfigure(si, quality) {
+            return self.outputs.push_back(Output::Dropped(Dropped::Fragment {
+                stream: StreamId(si),
+                status: None,
+            }));
+        }
+        self.emit_samples(si, start, body);
+    }
+
+    fn reconfigure(&mut self, si: usize, quality: &broadcast_smooth::QualityLevel) -> bool {
+        let (Some(local), Some(global)) = (self.streams[si].local_track_id, self.streams[si].track)
+        else {
+            return false;
+        };
+        let Ok(spec) = self.setup_track(si, local, global, quality) else {
+            return false;
+        };
+        if self.streams[si].spec.as_ref() != Some(&spec) {
+            self.streams[si].spec = Some(spec);
+            let specs = self.streams.iter().filter_map(|s| s.spec.clone()).collect();
+            self.outputs.push_back(Output::TracksChanged(specs));
+        }
+        true
     }
 
     fn emit_samples(&mut self, si: usize, start: u64, body: &[u8]) {
