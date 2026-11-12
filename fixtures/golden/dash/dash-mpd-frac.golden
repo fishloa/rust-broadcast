@@ -5,7 +5,7 @@
       <InbandEventStream schemeIdUri="urn:scte:scte35:2013:bin"/>
       <Role schemeIdUri="urn:mpeg:dash:role:2011" value="main"/>
       <Representation id="1" mimeType="video/mp4" codecs="vp8" bandwidth="1" width="1280" height="720">
-        <SegmentTemplate timescale="90000" duration="9000" startNumber="1" initialization="init-$RepresentationID$.mp4" media="seg-$RepresentationID$-$Number$.m4s"/>
+        <SegmentTemplate timescale="90000" duration="9000" startNumber="1" initialization="init-$RepresentationID$-INSTANCE-1.mp4" media="seg-$RepresentationID$-$Number$.m4s"/>
       </Representation>
     </AdaptationSet>
   </Period>
