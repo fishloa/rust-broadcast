@@ -17,13 +17,13 @@ use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
-use crate::dashif_ingest::session::SessionError;
-use crate::dashif_ingest::{DashifIngestSession, IngestObject};
-use crate::dashif_ingest::{ManifestGrouping, RequestMeta, classify};
 use crate::error::MultimuxError;
 use crate::origin;
 use crate::route::RouteHandle;
 use crate::source::DriverProgress;
+use dash_runtime::ingest::session::SessionError;
+use dash_runtime::ingest::{DashifIngestSession, IngestObject};
+use dash_runtime::ingest::{ManifestGrouping, RequestMeta, classify};
 
 use media_plane::ingress::IngestDriver;
 
@@ -38,13 +38,13 @@ const CHANNEL_CAPACITY: usize = 64;
 enum Job {
     /// Buffered (non-segment) object: whole body at once.
     Whole {
-        kind: crate::dashif_ingest::ObjectKind,
+        kind: dash_runtime::ingest::ObjectKind,
         bytes: Bytes,
         resp: oneshot::Sender<Result<(), SessionError>>,
     },
     /// Start a streamed segment (P3b).
     Begin {
-        kind: crate::dashif_ingest::ObjectKind,
+        kind: dash_runtime::ingest::ObjectKind,
         resp: oneshot::Sender<Result<(), SessionError>>,
     },
     /// One body frame of an in-progress segment.
@@ -290,7 +290,7 @@ pub async fn run_dashif_ingest(
         let mut progress = DriverProgress::new();
         let mut rx = rx;
         // In-progress segment handles keyed by representation id (P3b).
-        let mut handles: std::collections::HashMap<String, crate::dashif_ingest::SegmentHandle> =
+        let mut handles: std::collections::HashMap<String, dash_runtime::ingest::SegmentHandle> =
             std::collections::HashMap::new();
         while let Some(job) = rx.recv().await {
             match job {
@@ -307,7 +307,7 @@ pub async fn run_dashif_ingest(
                         Some(e) => Err(e),
                         None if driver.health().is_running() => Ok(()),
                         None => Err(SessionError::Ingest(
-                            crate::dashif_ingest::IngestError::Internal,
+                            dash_runtime::ingest::IngestError::Internal,
                         )),
                     };
                     crate::source::advance_route(&driver, &route_handle_pump, &mut progress).await;
@@ -315,24 +315,24 @@ pub async fn run_dashif_ingest(
                 }
                 Job::Begin { kind, resp } => {
                     let rep_id = match &kind {
-                        crate::dashif_ingest::ObjectKind::Segment {
+                        dash_runtime::ingest::ObjectKind::Segment {
                             representation_id, ..
                         } => representation_id.clone(),
                         _ => {
                             let _ = resp.send(Err(SessionError::Ingest(
-                                crate::dashif_ingest::IngestError::BadRequest,
+                                dash_runtime::ingest::IngestError::BadRequest,
                             )));
                             continue;
                         }
                     };
                     if handles.contains_key(&rep_id) {
                         let _ = resp.send(Err(SessionError::Ingest(
-                            crate::dashif_ingest::IngestError::SegmentInProgress,
+                            dash_runtime::ingest::IngestError::SegmentInProgress,
                         )));
                         continue;
                     }
                     let (number, time) = match &kind {
-                        crate::dashif_ingest::ObjectKind::Segment { number, time, .. } => {
+                        dash_runtime::ingest::ObjectKind::Segment { number, time, .. } => {
                             (*number, *time)
                         }
                         _ => (None, None),
@@ -350,7 +350,7 @@ pub async fn run_dashif_ingest(
                             // Drain events emitted by begin (none) / keep parity.
                             driver.feed(
                                 IngestObject {
-                                    kind: crate::dashif_ingest::ObjectKind::Probe,
+                                    kind: dash_runtime::ingest::ObjectKind::Probe,
                                     bytes: &[],
                                 },
                                 Timestamp::ZERO,
@@ -377,7 +377,7 @@ pub async fn run_dashif_ingest(
                         Some(h) => h,
                         None => {
                             let _ = resp.send(Err(SessionError::Ingest(
-                                crate::dashif_ingest::IngestError::Internal,
+                                dash_runtime::ingest::IngestError::Internal,
                             )));
                             continue;
                         }
@@ -388,7 +388,7 @@ pub async fn run_dashif_ingest(
                     }
                     driver.feed(
                         IngestObject {
-                            kind: crate::dashif_ingest::ObjectKind::Probe,
+                            kind: dash_runtime::ingest::ObjectKind::Probe,
                             bytes: &[],
                         },
                         Timestamp::ZERO,
@@ -401,7 +401,7 @@ pub async fn run_dashif_ingest(
                     let res = match h {
                         Some(h) => driver.session_mut().inner.finish_segment(h),
                         None => Err(SessionError::Ingest(
-                            crate::dashif_ingest::IngestError::Internal,
+                            dash_runtime::ingest::IngestError::Internal,
                         )),
                     };
                     if let Some(g) = driver.session().inner.grouping() {
@@ -409,7 +409,7 @@ pub async fn run_dashif_ingest(
                     }
                     driver.feed(
                         IngestObject {
-                            kind: crate::dashif_ingest::ObjectKind::Probe,
+                            kind: dash_runtime::ingest::ObjectKind::Probe,
                             bytes: &[],
                         },
                         Timestamp::ZERO,
@@ -468,9 +468,9 @@ async fn dashif_handler(
             .into_response();
     }
     let ingest_method = if method == Method::POST {
-        crate::dashif_ingest::IngestMethod::Post
+        dash_runtime::ingest::IngestMethod::Post
     } else {
-        crate::dashif_ingest::IngestMethod::Put
+        dash_runtime::ingest::IngestMethod::Put
     };
 
     let path = req.uri().path().to_string();
@@ -528,13 +528,13 @@ async fn dashif_handler(
     };
     let early_kind = classify(&early_meta, grouping_early.as_ref()).ok();
     let segment = match early_kind {
-        Some(kind @ crate::dashif_ingest::ObjectKind::Segment { .. }) => Some(kind),
+        Some(kind @ dash_runtime::ingest::ObjectKind::Segment { .. }) => Some(kind),
         _ => None,
     };
 
     if let Some(kind) = segment {
         let rep_id = match &kind {
-            crate::dashif_ingest::ObjectKind::Segment {
+            dash_runtime::ingest::ObjectKind::Segment {
                 representation_id, ..
             } => representation_id.clone(),
             // Unreachable by construction (matched above); a typed refusal

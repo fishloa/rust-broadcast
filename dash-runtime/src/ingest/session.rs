@@ -1,6 +1,6 @@
 //! DASH-IF Live Media Ingest (Interface-1) — sans-IO ingest session (increment P2a).
 //!
-//! Mirrors `crate::source::dash_pull::DashIngestSession` for per-Representation
+//! Mirrors multimux's DASH pull ingest session for per-Representation
 //! init bytes + the `local_to_global` track-id remap in fixed MPD order, but
 //! driven by pushed objects (`IngestObject`) instead of a pull plan. One
 //! `Manifest` announces the presentation; `Header`s register tracks; `Segment`s
