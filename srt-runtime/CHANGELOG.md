@@ -5,6 +5,8 @@ All notable changes to `srt-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- `SrtUrl::parse` ignores a query key whose percent-decoding is not UTF-8 like any other unknown key, instead of rejecting the URL.
 ### Added
 - `url::SrtUrl` (feature `std`): the typed `srt://` URL — `host`/`port` (default `DEFAULT_PORT`, 9000), `stream_id`, `latency_ms` (capped at `MAX_LATENCY_MS`, the draft's practical maximum), `mode` and `passphrase` — with `SrtUrl::parse`, and `dial_addr()` for the handshake. A rejection is a typed `url::UrlRejection` naming the part of the grammar that failed, so a caller keeps its own policy (which modes it accepts, whether it allows a passphrase) and its own wording. Accepts `srt://host:port` and a scheme-less `host:port`, bracketed IPv6, and a raw `streamid` containing `#`; rejects userinfo and a bare (ambiguous) IPv6 literal. The parser moved here from `multimux`'s SRT push (issue #2369).
 
