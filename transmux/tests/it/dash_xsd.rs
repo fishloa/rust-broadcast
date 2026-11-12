@@ -3,7 +3,6 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use broadcast_common::{Package, Unpackage};
 use transmux::TrackId;
@@ -53,47 +52,15 @@ fn timeline_segments(media: &Media) -> Vec<TrackSegments> {
         .collect()
 }
 
-fn schema_path() -> Option<PathBuf> {
-    let p = test_fixtures::private_root()?
-        .join("specs/iso_iec_23009-1_dash_2026_ed6_schema/DASH-MPD.xsd");
-    p.exists().then_some(p)
-}
-
-fn xmllint_available() -> bool {
-    Command::new("xmllint")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success() || !o.stderr.is_empty())
-        .unwrap_or(false)
-}
-
 fn validate(schema: &Path, name: &str, mpd: &str) {
-    let tmp = std::env::temp_dir().join(format!("dash_xsd_{}.mpd", name));
-    fs::write(&tmp, mpd).expect("write temp mpd");
-    let out = Command::new("xmllint")
-        .arg("--noout")
-        .arg("--schema")
-        .arg(schema)
-        .arg(&tmp)
-        .output()
-        .expect("run xmllint");
-    if !out.status.success() {
-        panic!(
-            "xmllint rejected {name}:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if let Err(e) = test_fixtures::process::xsd::validate(schema, name, mpd) {
+        panic!("xmllint rejected {name}:\n{e}");
     }
 }
 
 #[test]
 fn dash_mpds_validate_against_iso_schema() {
-    if !xmllint_available() {
-        eprintln!("SKIPPED dash_mpds_validate_against_iso_schema: xmllint not on PATH");
-        return;
-    }
-    let Some(schema) = schema_path() else {
-        eprintln!("SKIPPED dash_mpds_validate_against_iso_schema: private schema not checked out");
+    let Some(schema) = test_fixtures::process::xsd::dash_mpd_schema("dash_mpds_validate") else {
         return;
     };
 

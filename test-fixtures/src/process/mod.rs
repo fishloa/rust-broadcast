@@ -30,6 +30,7 @@ use std::time::Duration;
 use wait_timeout::ChildExt;
 
 pub mod msv;
+pub mod xsd;
 
 static CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
 
