@@ -823,24 +823,7 @@ fn unlace(payload: &[u8], flags: u8) -> Result<Vec<Vec<u8>>> {
 /// with the number of bytes consumed. Unlike [`read_vint_value`] this accepts a
 /// zero length-field, which is what a zero lace size is encoded as.
 fn read_vint_generic(buf: &[u8]) -> Option<(u64, usize)> {
-    let first = *buf.first()?;
-    let mut mask = 0x80u8;
-    let mut len = 1usize;
-    while first & mask == 0 {
-        mask >>= 1;
-        len += 1;
-        if len > 8 {
-            return None;
-        }
-    }
-    if buf.len() < len {
-        return None;
-    }
-    let mut value = u64::from(first & (mask - 1));
-    for &byte in &buf[1..len] {
-        value = (value << 8) | u64::from(byte);
-    }
-    Some((value, len))
+    read_vint(buf).map(|(value, len, _)| (value, len))
 }
 
 /// Read a signed EBML VINT for EBML lacing's size deltas: the value is
