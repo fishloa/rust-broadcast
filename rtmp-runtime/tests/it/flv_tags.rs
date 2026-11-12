@@ -3,7 +3,8 @@
 
 use broadcast_common::{Parse, Serialize};
 use rtmp_runtime::flv::{
-    FLV_HEADER_LEN, FLV_PREV_TAG_SIZE_LEN, FLV_TAG_HEADER_LEN, FlvHeader, FlvTag, TagType,
+    FLV_FLAG_AUDIO, FLV_HEADER_LEN, FLV_PREV_TAG_SIZE_LEN, FLV_SIGNATURE, FLV_TAG_HEADER_LEN,
+    FLV_VERSION, FlvHeader, FlvTag, TagType,
 };
 
 fn fixtures() -> Vec<(&'static str, Vec<u8>)> {
@@ -134,15 +135,19 @@ fn a_cut_trailing_tag_body_is_reported() {
 
 #[test]
 fn header_round_trips_a_non_standard_data_offset() {
-    let mut bytes = FlvHeader::new(true, false).try_to_bytes().unwrap();
     let offset = u32::try_from(FLV_HEADER_LEN).unwrap() + 4;
+    // 9 fixed header bytes + (offset-9) extra bytes + PreviousTagSize0.
+    let mut bytes = vec![0u8; usize::try_from(offset).unwrap() + FLV_PREV_TAG_SIZE_LEN];
+    bytes[..FLV_SIGNATURE.len()].copy_from_slice(&FLV_SIGNATURE);
+    bytes[FLV_SIGNATURE.len()] = FLV_VERSION;
+    bytes[FLV_SIGNATURE.len() + 1] = FLV_FLAG_AUDIO;
     bytes[5..FLV_HEADER_LEN].copy_from_slice(&offset.to_be_bytes());
     let header = FlvHeader::parse(&bytes).unwrap();
     assert_eq!(header.data_offset, offset);
     assert!(!header.has_video);
     assert_eq!(header.try_to_bytes().unwrap(), bytes);
 
-    let first_tag_at = FLV_HEADER_LEN + FLV_PREV_TAG_SIZE_LEN;
+    let first_tag_at = usize::try_from(offset).unwrap() + FLV_PREV_TAG_SIZE_LEN;
     let tag = FlvTag {
         tag_type: TagType::Audio,
         timestamp: 0,
@@ -150,8 +155,6 @@ fn header_round_trips_a_non_standard_data_offset() {
         body: &[0xAF],
     };
     let mut stream = bytes.clone();
-    stream.resize(usize::try_from(offset).unwrap(), 0);
-    stream.extend_from_slice(&[0; FLV_PREV_TAG_SIZE_LEN]);
     stream.extend_from_slice(&tag.try_to_bytes().unwrap());
     assert!(stream.len() > first_tag_at);
     let walked: Vec<_> = rtmp_runtime::flv::tags(&stream, &header).collect();
@@ -257,4 +260,34 @@ fn tags_resync_over_a_header_only_input_yields_no_tags() {
     assert!(walk.tags.is_empty());
     assert!(walk.damaged.is_empty());
     assert_eq!(walk.truncated_tail, None);
+}
+
+#[test]
+fn header_rejects_bad_data_offset() {
+    let mut bytes = FlvHeader::new(true, false).try_to_bytes().unwrap();
+    bytes[5..FLV_HEADER_LEN].copy_from_slice(&8u32.to_be_bytes());
+    assert!(FlvHeader::parse(&bytes).is_err());
+
+    let mut bytes = FlvHeader::new(true, false).try_to_bytes().unwrap();
+    bytes[5..FLV_HEADER_LEN].copy_from_slice(&100u32.to_be_bytes());
+    assert!(FlvHeader::parse(&bytes).is_err());
+}
+
+#[test]
+fn tags_reject_bad_previous_tag_size() {
+    let bytes = FlvHeader::new(false, true).try_to_bytes().unwrap();
+    let mut stream = bytes.clone();
+    let tag = FlvTag {
+        tag_type: TagType::Video,
+        timestamp: 0,
+        stream_id: 0,
+        body: &[0x00],
+    };
+    stream.extend_from_slice(&tag.try_to_bytes().unwrap());
+    // corrupt trailing PreviousTagSize
+    let tail = stream.len() - FLV_PREV_TAG_SIZE_LEN;
+    stream[tail..].copy_from_slice(&0xDEADBEEFu32.to_be_bytes());
+    let header = FlvHeader::parse(&stream).unwrap();
+    let walked: Vec<_> = rtmp_runtime::flv::tags(&stream, &header).collect();
+    assert!(walked.iter().any(|r| r.is_err()));
 }
