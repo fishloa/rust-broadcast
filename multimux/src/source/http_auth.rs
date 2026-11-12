@@ -129,6 +129,10 @@ pub(crate) async fn authenticated_get_with(
     // retry of the same request.
     auth.preauthorize_basic();
     let parsed = Url::parse(url).ok();
+    // Whatever this exchange learns — the cookies its responses set, the
+    // nonce it negotiates — is left in `auth`, which the caller owns for the
+    // whole session: each request starts from the session's state, never from
+    // a fresh copy.
     // What the first request will carry, for `had_auth` below. A Digest state
     // that has not negotiated its nonce yet sends nothing, so this is the
     // request's own credential, not the state's: evaluating it also arms the

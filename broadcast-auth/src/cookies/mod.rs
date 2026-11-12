@@ -8,6 +8,8 @@ extern crate alloc;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
+use std::sync::{Arc, Mutex, MutexGuard};
+
 use cookie::Cookie;
 use cookie_store::{CookieDomain, CookiePath};
 use url::{Origin, Url};
@@ -44,7 +46,21 @@ pub(crate) struct CookieJar {
     origin: Origin,
     host_only: CookieDomain,
     root: CookiePath,
-    cookies: Vec<Stored>,
+    cookies: Arc<Mutex<Vec<Stored>>>,
+}
+
+/// A second handle on this jar: what one writes, the other reads (an
+/// [`AuthState`](crate::AuthState) clone shares its session's cookies, RFC 6265
+/// §5.3).
+impl Clone for CookieJar {
+    fn clone(&self) -> Self {
+        Self {
+            origin: self.origin.clone(),
+            host_only: self.host_only.clone(),
+            root: self.root.clone(),
+            cookies: Arc::clone(&self.cookies),
+        }
+    }
 }
 
 impl CookieJar {
@@ -53,7 +69,7 @@ impl CookieJar {
             origin: origin.origin(),
             host_only: CookieDomain::host_only(origin).unwrap_or(CookieDomain::NotPresent),
             root: CookiePath::new(ROOT_PATH, origin),
-            cookies: Vec::new(),
+            cookies: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -143,23 +159,32 @@ impl CookieJar {
         });
     }
 
-    fn remove(&mut self, name: &str, path: &CookiePath) {
+    /// The stored cookies. A poisoned lock is treated as an empty jar: a
+    /// cookie that could not be read is a missing cookie, never a panic in the
+    /// request path.
+    fn store(&self) -> MutexGuard<'_, Vec<Stored>> {
         self.cookies
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn remove(&mut self, name: &str, path: &CookiePath) {
+        self.store()
             .retain(|c| !(c.name == name && c.path == *path));
     }
 
     fn insert(&mut self, cookie: Stored) {
-        if let Some(slot) = self
-            .cookies
+        let mut store = self.store();
+        if let Some(slot) = store
             .iter_mut()
             .find(|c| c.name == cookie.name && c.path == cookie.path)
         {
             *slot = cookie;
             return;
         }
-        self.cookies.push(cookie);
-        if self.cookies.len() > MAX_COOKIES {
-            self.cookies.remove(0);
+        store.push(cookie);
+        if store.len() > MAX_COOKIES {
+            store.remove(0);
         }
     }
 
@@ -167,10 +192,10 @@ impl CookieJar {
         if url.origin() != self.origin {
             return None;
         }
-        self.cookies.retain(|c| !c.expired_at(now_us));
+        let mut store = self.store();
+        store.retain(|c| !c.expired_at(now_us));
         let secure = url.scheme() == HTTPS;
-        let mut matching: Vec<&Stored> = self
-            .cookies
+        let mut matching: Vec<&Stored> = store
             .iter()
             .filter(|c| (secure || !c.secure) && c.domain.matches(url) && c.path.matches(url))
             .collect();
@@ -203,7 +228,7 @@ impl CookieJar {
     }
 
     pub(crate) fn export(&self, now_us: u64) -> Vec<(String, String)> {
-        self.cookies
+        self.store()
             .iter()
             .filter(|c| !c.expired_at(now_us))
             .map(|c| (c.name.clone(), c.value.clone()))
@@ -214,7 +239,7 @@ impl CookieJar {
 impl core::fmt::Debug for CookieJar {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("CookieJar")
-            .field("cookies", &self.cookies.len())
+            .field("cookies", &self.store().len())
             .finish_non_exhaustive()
     }
 }

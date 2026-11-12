@@ -9,7 +9,8 @@
 //! fetches have heterogeneous keys (`HlsFetchId`, a fragment URL, a Smooth
 //! fragment) and a retry that must re-enter the SAME in-flight bound rather
 //! than bypass it, so the fan-out is a `JoinSet` behind a small explicit
-//! scheduler: `push` (the backlog), `push_at` (a paced fetch with a
+//! scheduler: `push`/`push_lazy` (the backlog, the latter building its future
+//! only when it is dispatched), `push_lazy_at` (a paced fetch with a
 //! not-before floor), `push_retry` (due retries, which take a free slot
 //! before the backlog), `pump` (fill free slots) and `next` (join one,
 //! bounded by the session's own `WaitMs` hint). It is the same structure
@@ -28,7 +29,7 @@
 //! serviced for another 950 ms).
 //!
 //! [`PullScheduler`] keeps both properties: the hint bounds when the *next
-//! paced fetch may start* (via [`PullScheduler::push_at`], a not-before
+//! paced fetch may start* (via [`PullScheduler::push_lazy_at`], a not-before
 //! floor applied on dispatch), and [`PullScheduler::next`] races
 //! `join_next()` against the hint so an in-flight resource fetch is still
 //! returned the moment it completes — the floor delays the paced fetch's
@@ -104,9 +105,22 @@ type FetchFuture<K, R> = Pin<Box<dyn Future<Output = (K, FetchResult<R>)> + Send
 pub(crate) struct PendingFetch<K, R = Vec<u8>> {
     /// How long to wait before this fetch's future is first polled (its
     /// "dispatch"). A retry uses it for its backoff; a paced fetch (see
-    /// [`PullScheduler::push_at`]) uses it for its not-before floor.
+    /// [`PullScheduler::push_lazy_at`]) uses it for its not-before floor.
     pub delay: Duration,
     pub fut: FetchFuture<K, R>,
+}
+
+/// A fetch's future, built at the moment it is dispatched.
+///
+/// A source whose fetch needs live session state (the pull's auth state and
+/// cookies) hands over a closure instead of a built future: the scheduler
+/// calls it in [`PullScheduler::pump`], so the fetch captures the state as it
+/// is then, not as it was when the fetch was queued.
+pub(crate) struct LazyFetch<K, R = Vec<u8>> {
+    /// How long to wait before this fetch may run.
+    pub delay: Duration,
+    /// The future, built when the fetch is dispatched.
+    pub at_dispatch: Box<dyn FnOnce() -> FetchFuture<K, R> + Send>,
 }
 
 /// The single fetch/retry/wait engine for the pull sources.
@@ -122,14 +136,36 @@ pub(crate) struct PullScheduler<K: Send + 'static, R: Send + 'static = Vec<u8>> 
 /// floor never keeps a ready fetch from starting.
 struct QueuedFetch<K, R> {
     due: tokio::time::Instant,
-    fut: FetchFuture<K, R>,
+    fut: QueuedFuture<K, R>,
+}
+
+/// A queued fetch's future: already built, or built when it is dispatched.
+enum QueuedFuture<K, R> {
+    Ready(FetchFuture<K, R>),
+    AtDispatch(Box<dyn FnOnce() -> FetchFuture<K, R> + Send>),
+}
+
+impl<K, R> QueuedFuture<K, R> {
+    fn build(self) -> FetchFuture<K, R> {
+        match self {
+            QueuedFuture::Ready(fut) => fut,
+            QueuedFuture::AtDispatch(build) => build(),
+        }
+    }
 }
 
 impl<K, R> QueuedFetch<K, R> {
     fn after(fetch: PendingFetch<K, R>) -> Self {
         Self {
             due: tokio::time::Instant::now() + fetch.delay,
-            fut: fetch.fut,
+            fut: QueuedFuture::Ready(fetch.fut),
+        }
+    }
+
+    fn after_lazy(fetch: LazyFetch<K, R>) -> Self {
+        Self {
+            due: tokio::time::Instant::now() + fetch.delay,
+            fut: QueuedFuture::AtDispatch(fetch.at_dispatch),
         }
     }
 }
@@ -158,12 +194,22 @@ impl<K: Send + 'static, R: Send + 'static> PullScheduler<K, R> {
         self.backlog.push_back(QueuedFetch::after(fetch));
     }
 
-    /// Queue a *paced* fetch: it is dispatched no earlier than `not_before`
-    /// (a pacing floor — see the module doc's `WaitMs` section). The floor is
-    /// resolved against the current instant here, so later pump/backlog
-    /// churn cannot shorten or lengthen it.
-    pub fn push_at(&mut self, fetch: PendingFetch<K, R>, not_before: Option<tokio::time::Instant>) {
-        let mut queued = QueuedFetch::after(fetch);
+    /// Queue a fetch whose future is built only when it is dispatched; see
+    /// [`LazyFetch`].
+    pub fn push_lazy(&mut self, fetch: LazyFetch<K, R>) {
+        self.backlog.push_back(QueuedFetch::after_lazy(fetch));
+    }
+
+    /// [`Self::push_lazy`], paced: the fetch is dispatched no earlier than
+    /// `not_before` (a pacing floor — see the module doc's `WaitMs` section).
+    /// The floor is resolved against the current instant here, so later
+    /// pump/backlog churn cannot shorten or lengthen it.
+    pub fn push_lazy_at(
+        &mut self,
+        fetch: LazyFetch<K, R>,
+        not_before: Option<tokio::time::Instant>,
+    ) {
+        let mut queued = QueuedFetch::after_lazy(fetch);
         if let Some(not_before) = not_before {
             queued.due = not_before.max(tokio::time::Instant::now());
         }
@@ -197,7 +243,7 @@ impl<K: Send + 'static, R: Send + 'static> PullScheduler<K, R> {
             else {
                 break;
             };
-            self.inflight.spawn(fut);
+            self.inflight.spawn(fut.build());
         }
     }
 
@@ -454,7 +500,7 @@ mod tests {
     /// the floor (previous dispatch + hint), not re-fetched at RTT rate.
     ///
     /// The floor is the previous playlist's dispatch instant (t=0) plus the
-    /// hint (1 s). A fetch pushed with `push_at(.., Some(floor))` records its
+    /// hint (1 s). A fetch pushed with `push_lazy_at(.., Some(floor))` records its
     /// dispatch time inside its own future, so the assertion is on the real
     /// dispatch instant, not on a delivery time.
     ///
@@ -481,12 +527,14 @@ mod tests {
         // Playlist #2 is paced: record when its future actually runs.
         let dispatched: Arc<Mutex<Option<Duration>>> = Arc::new(Mutex::new(None));
         let slot = Arc::clone(&dispatched);
-        s.push_at(
-            PendingFetch {
+        s.push_lazy_at(
+            LazyFetch {
                 delay: Duration::ZERO,
-                fut: Box::pin(async move {
-                    *slot.lock().unwrap() = Some(t0.elapsed());
-                    (2u32, FetchResult::Ready(b"pl2".to_vec()))
+                at_dispatch: Box::new(move || {
+                    Box::pin(async move {
+                        *slot.lock().unwrap() = Some(t0.elapsed());
+                        (2u32, FetchResult::Ready(b"pl2".to_vec()))
+                    })
                 }),
             },
             Some(floor),
@@ -514,7 +562,15 @@ mod tests {
         let mut s = PullScheduler::<u32>::new(8);
         // A paced playlist fetch (dispatched at 1 s) and a resource fetch
         // (dispatched now, completes at 50 ms).
-        s.push_at(fetch_after(1, Duration::ZERO, b"pl"), Some(floor));
+        s.push_lazy_at(
+            LazyFetch {
+                delay: Duration::ZERO,
+                at_dispatch: Box::new(|| {
+                    Box::pin(async move { (1u32, FetchResult::Ready(b"pl".to_vec())) })
+                }),
+            },
+            Some(floor),
+        );
         s.push(fetch_after(2, Duration::from_millis(50), b"seg"));
         s.pump();
         let out = s.next(None, Duration::from_millis(5)).await;

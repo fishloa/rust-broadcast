@@ -91,6 +91,28 @@ pub fn carries_credentials(headers: &[(String, String)]) -> bool {
     })
 }
 
+/// A read handle on one [`AuthState`]'s cookie jar, kept by the caller that
+/// hands the state to a fetch; see [`AuthState::cookie_watch`].
+#[derive(Clone)]
+pub struct CookieWatch {
+    jar: CookieJar,
+}
+
+impl CookieWatch {
+    /// The cookies this watch sees, as `(name, value)`.
+    pub fn cookies(&self, now_us: u64) -> Vec<(String, String)> {
+        self.jar.export(now_us)
+    }
+}
+
+impl core::fmt::Debug for CookieWatch {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("CookieWatch")
+            .field("jar", &self.jar)
+            .finish()
+    }
+}
+
 /// Origin-scoped auth state.
 pub struct AuthState {
     origin: Url,
@@ -103,8 +125,14 @@ pub struct AuthState {
     jar: CookieJar,
 }
 
-/// Clones the origin, extra headers, credentials and last challenge; the negotiated authenticator
-/// and the cookie jar are not carried over, so a clone starts a fresh Digest exchange.
+/// Clones the origin, extra headers, credentials and last challenge, and shares the cookie jar.
+///
+/// The jar is shared rather than copied (RFC 6265 §5.3: a user agent's cookie
+/// store is per session, not per request), so a request made on a clone
+/// receives the session's cookies and the cookies it is answered with are the
+/// session's. The negotiated authenticator is not carried over: the clone's
+/// request negotiates its own, which is what keeps a stale `nc` from being
+/// replayed on a parallel request.
 impl Clone for AuthState {
     fn clone(&self) -> Self {
         Self {
@@ -115,7 +143,7 @@ impl Clone for AuthState {
             last_challenge: self.last_challenge.clone(),
             proxy: self.proxy,
             waiting: self.waiting,
-            jar: CookieJar::new(&self.origin),
+            jar: self.jar.clone(),
         }
     }
 }
@@ -178,18 +206,15 @@ impl AuthState {
         was_waiting
     }
 
-    /// Take `cookies` into this state's jar, so the session carries them into
-    /// its next request.
+    /// A second handle on this state's cookie jar.
     ///
-    /// A pull fetches through tasks, each working on its own copy of the
-    /// session's state (a copy starts with a fresh cookie jar and no
-    /// negotiated authenticator), so the cookies a response set live in the
-    /// copy; they come back here.
-    pub fn adopt_cookies(&mut self, cookies: &[(String, String)]) {
-        if cookies.is_empty() {
-            return;
+    /// A caller that hands its state to a fetch (multimux's pull sources do,
+    /// one task per request) can keep this and read what the fetch has been
+    /// answered with while it runs, or take the `now_us` an expiry needs.
+    pub fn cookie_watch(&self) -> CookieWatch {
+        CookieWatch {
+            jar: self.jar.clone(),
         }
-        self.jar.seed(cookies);
     }
 
     /// Whether a Digest/Basic authenticator has been negotiated, so a request
