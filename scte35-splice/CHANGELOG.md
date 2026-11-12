@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 ### Added
+- `SpliceEvent`, `splice_event`, `judge_splice_time`, `kind_label` and `SpliceSanity`: the cue-sanity engine (cue direction, effective `pts_time + pts_adjustment`, wrap-safe future-vs-past judgement) both live TS monitors now share.
+- `SpliceTracker::observe_section` and `SpliceObservation::event`, so a caller that reassembles its own sections gets the same open/closed tracking and the same decoded cue as the payload-level `feed`.
+### Added
 - Shared `SpliceTracker` (moved from media-doctor) for SCTE-35 splice_insert open-event tracking.
 
 ## [5.0.1] - 2026-11-10

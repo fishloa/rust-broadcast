@@ -135,9 +135,7 @@ mod tests {
         drop_header_only_families(&mut golden_meta, &golden_series);
         let (mut new_meta, new_series) = parse_exposition(&render(&state));
         drop_header_only_families(&mut new_meta, &new_series);
-        const ADDED_SINCE_GOLDEN: &[&str] = &[
-            SCTE35_CUES_TOTAL,
-        ];
+        const ADDED_SINCE_GOLDEN: &[&str] = &[SCTE35_CUES_TOTAL];
         for name in new_meta.keys() {
             assert!(
                 golden_meta.contains_key(name) || ADDED_SINCE_GOLDEN.contains(&name.as_str()),

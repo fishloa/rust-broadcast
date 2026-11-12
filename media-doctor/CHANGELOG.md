@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `media_doctor_scte35_cues_total{timing=...}` and the matching `WatchSnapshot` fields: each SCTE-35 cue is judged against the program's reference decode timestamp, by the same engine `compliance-probe` reports.
 ### Changed
 - Use shared `SpliceTracker` (scte35-splice) and `ConformanceMonitor::indicator_counts()` instead of local copies.
 ### Fixed

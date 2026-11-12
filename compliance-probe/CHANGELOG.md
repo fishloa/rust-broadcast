@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- SCTE-35 cue sanity is the shared `scte35-splice` engine (`splice_event`/`judge_splice_time`) and TR 101 290 accounting is `dvb-conformance`'s own, so `compliance_probe_*` metrics report the same figures `media-doctor` does for the same stream; `Probe::indicator_counts` exposes the counts. Metric names and labels are unchanged.
 
 ## [0.8.0] - 2026-11-10
 ### Fixed

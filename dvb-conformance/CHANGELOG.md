@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 ### Added
+- `ConformanceMonitor::indicator_counts` with the `IndicatorCount` record, so a live monitor publishes exactly the accounting the monitor itself keeps.
+### Added
 - `ConformanceMonitor` now accumulates per-indicator event counts, exposed via `indicator_counts()`.
 
 ## [13.1.0] - 2026-11-10
