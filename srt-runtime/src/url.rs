@@ -170,18 +170,22 @@ impl SrtUrl {
             passphrase: None,
         };
         if let Some(query) = query {
-            let mut seen: alloc::vec::Vec<&str> = alloc::vec::Vec::new();
+            let mut seen: alloc::vec::Vec<String> = alloc::vec::Vec::new();
             for pair in query.split('&') {
                 if pair.is_empty() {
                     continue;
                 }
                 let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-                if !seen.contains(&key) {
-                    seen.push(key);
-                } else {
-                    return Err(UrlRejection::DuplicateKey);
+                let key = percent_decode(key)?;
+                let recognised =
+                    matches!(key.as_str(), "streamid" | "latency" | "mode" | "passphrase");
+                if recognised {
+                    if seen.contains(&key) {
+                        return Err(UrlRejection::DuplicateKey);
+                    }
+                    seen.push(key.clone());
                 }
-                match key {
+                match key.as_str() {
                     "streamid" => parsed.stream_id = Some(percent_decode(value)?),
                     "latency" => {
                         parsed.latency_ms = Some(parse_latency(value)?);
@@ -309,6 +313,19 @@ mod tests {
             SrtUrl::parse("srt://h:9000?latency=10&latency=20"),
             Err(UrlRejection::DuplicateKey)
         );
+    }
+
+    #[test]
+    fn duplicate_query_key_decoded_is_rejected() {
+        assert_eq!(
+            SrtUrl::parse("srt://h:9000?%6Catency=10&latency=20"),
+            Err(UrlRejection::DuplicateKey)
+        );
+    }
+
+    #[test]
+    fn repeated_unknown_query_key_is_ignored() {
+        assert!(SrtUrl::parse("srt://h:9000?foo=1&foo=2").is_ok());
     }
 
     #[test]
