@@ -133,3 +133,30 @@ fn an_unsupported_first_media_does_not_stop_the_second_from_playing() {
     assert!(samples.iter().any(|s| s.0 == 1), "video plays");
     assert!(samples.iter().any(|s| s.0 == 2), "audio plays");
 }
+
+#[test]
+fn samples_held_for_a_video_that_never_arrived_are_emitted_when_the_connection_ends() {
+    let fx = fixture();
+    let audio_index = fx
+        .tracks
+        .iter()
+        .position(|t| t.kind != transmux::rtp::RtpMediaKind::H264)
+        .unwrap();
+    let mut host = Host::new(BASE_URL, Config::default(), Server::new(&fx.sdp));
+    host.connect();
+    let channel = support::rtsp_host::channel_of(audio_index);
+    for packet in &fx.tracks[audio_index].packets {
+        host.deliver(&support::rtsp_host::interleaved(channel, packet));
+        host.drain();
+    }
+    let before = samples_of(&host.events()).len();
+    host.session.reconnect(host.now);
+    host.drain();
+    let after = samples_of(&host.events()).len();
+    assert!(
+        before + after >= fx.tracks[audio_index].samples.len(),
+        "audio delivered {before} + {after} of {}",
+        fx.tracks[audio_index].samples.len()
+    );
+    assert_eq!(before, 0, "held until the anchor track has a sample");
+}

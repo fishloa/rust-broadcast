@@ -806,30 +806,53 @@ struct TrackState {
 }
 
 /// One track's RTCP Sender Report wallclock anchor (RFC 3550 §6.4.1): the NTP
-/// wallclock instant at which the sender's RTP clock read `raw_rtp_ts`.
+/// wallclock instant at which the sender's RTP clock read `rtp_ts`.
 ///
-/// `raw_rtp_ts` is kept in wire (32-bit) form rather than eagerly unwrapped:
-/// an SR can be fed before, interleaved with, or after the access units it
-/// anchors, so it is unwrapped lazily in [`wall_seconds`] against whichever
-/// AU's own unwrapped timestamp needs a wallclock value — always valid
-/// because a real SR's RTP timestamp is at most a few RTCP-interval seconds
-/// from the AUs it anchors, far under half the 32-bit wrap range.
+/// `rtp_ts` lives on the track's own unwrapped (wrap-counted, 64-bit) RTP
+/// timeline: the SR's 32-bit timestamp is extended to the value nearest the
+/// track's latest received timestamp (RFC 3550 App. A.1 style), so the distance
+/// to any access unit stays exact however many `2^32` wraps lie between them.
 struct SrAnchor {
     /// NTP wallclock time, in seconds (32.32 fixed-point `ntp_msw`/`ntp_lsw`
     /// converted to `f64`).
     ntp_seconds: f64,
-    /// The wire-form (32-bit) RTP timestamp corresponding to `ntp_seconds`.
-    raw_rtp_ts: u32,
+    /// The SR's RTP timestamp on the track's unwrapped timeline.
+    rtp_ts: i64,
+    /// `false` while the SR arrived before any timestamp of the track, so
+    /// `rtp_ts` is still the bare wire value; the track's first access unit
+    /// extends it.
+    resolved: bool,
 }
+
+/// Largest wallclock distance between two tracks' first samples that is read
+/// as one sender's own offset. Tracks of one session share a sender, so a
+/// larger spread means an unsynchronised or wrong SR NTP clock, not a real
+/// inter-track offset.
+const MAX_TRACK_WALL_SKEW_SECONDS: f64 = 3600.0;
 
 /// Resolve one access unit's NTP wallclock instant from a track's SR anchor:
 /// `wall(au) = anchor.ntp_seconds + (unwrapped_au_ts − unwrapped_anchor_ts) /
 /// clock_rate` (RFC 3550 §6.4.1's NTP/RTP correlation, generalised from the
-/// SR's own instant to any AU on the same RTP clock).
-fn wall_seconds(anchor: &SrAnchor, clock_rate: u32, au_unwrapped_ts: u64) -> f64 {
-    let au_low = u32::try_from(au_unwrapped_ts & u64::from(u32::MAX)).unwrap_or(0);
-    let delta_ticks = i32::from_ne_bytes(au_low.wrapping_sub(anchor.raw_rtp_ts).to_ne_bytes());
-    anchor.ntp_seconds + f64::from(delta_ticks) / f64::from(clock_rate)
+/// SR's own instant to any AU on the same RTP clock). `None` when the distance
+/// is not representable.
+fn wall_seconds(anchor: &SrAnchor, clock_rate: u32, au_unwrapped_ts: u64) -> Option<f64> {
+    let rate = i128::from(clock_rate);
+    if rate == 0 {
+        return None;
+    }
+    let delta = i128::from(au_unwrapped_ts) - i128::from(anchor.rtp_ts);
+    let whole = i32::try_from(delta.div_euclid(rate)).ok()?;
+    let remainder = u32::try_from(delta.rem_euclid(rate)).ok()?;
+    Some(anchor.ntp_seconds + f64::from(whole) + f64::from(remainder) / f64::from(clock_rate))
+}
+
+/// Extend a 32-bit wire RTP timestamp to the 64-bit value nearest `reference`
+/// on the same unwrapped timeline (RFC 3550 App. A.1 style). Signed, because a
+/// report may name an instant just before the track's first access unit.
+fn extend_near(reference: u64, wire: u32) -> Option<i64> {
+    let low = u32::try_from(reference & u64::from(u32::MAX)).ok()?;
+    let delta = i32::from_ne_bytes(wire.wrapping_sub(low).to_ne_bytes());
+    i64::try_from(reference).ok()?.checked_add(i64::from(delta))
 }
 
 /// An access unit whose duration is not yet known (waiting on the next AU's
@@ -852,6 +875,7 @@ pub struct RtpStreamDepacketiser {
     /// drained via [`Self::poll_loss_event`] — see the module docs' "Loss
     /// and reorder detection" section.
     loss_events: VecDeque<RtpLossEvent>,
+    rejected_sender_reports: u64,
 }
 
 /// Unwrap a 32-bit wire RTP timestamp against the last unwrapped value.
@@ -1077,6 +1101,7 @@ impl RtpStreamDepacketiser {
             tracks,
             stage_ready: VecDeque::new(),
             loss_events: VecDeque::new(),
+            rejected_sender_reports: 0,
         }
     }
 
@@ -1120,13 +1145,34 @@ impl RtpStreamDepacketiser {
     /// any previous anchor for the track (the most recent SR wins); unknown
     /// `track_id`s are silently ignored, matching [`Self::push`].
     pub fn push_sender_report(&mut self, track_id: TrackId, sr: SenderReport) {
-        if let Some(st) = self.state(track_id) {
-            let ntp_seconds = f64::from(sr.ntp_msw) + f64::from(sr.ntp_lsw) / NTP_FRACTION_SCALE;
-            st.sr_anchor = Some(SrAnchor {
-                ntp_seconds,
-                raw_rtp_ts: sr.rtp_timestamp,
-            });
+        let unsynchronised = sr.ntp_msw == 0 && sr.ntp_lsw == 0;
+        let Some(st) = self.state(track_id) else {
+            return;
+        };
+        if unsynchronised {
+            self.rejected_sender_reports += 1;
+            return;
         }
+        let ntp_seconds = f64::from(sr.ntp_msw) + f64::from(sr.ntp_lsw) / NTP_FRACTION_SCALE;
+        let reference = match st.cur_ts {
+            Some(cur) => Some(unwrap_ts(st.last_unwrapped, cur)),
+            None => st.last_unwrapped,
+        };
+        st.sr_anchor = Some(SrAnchor {
+            ntp_seconds,
+            rtp_ts: reference
+                .and_then(|r| extend_near(r, sr.rtp_timestamp))
+                .unwrap_or_else(|| i64::from(sr.rtp_timestamp)),
+            resolved: reference.is_some(),
+        });
+    }
+
+    /// How many Sender Reports [`Self::push_sender_report`] ignored because
+    /// their NTP timestamp was zero (RFC 3550 §6.4.1: the sender's clock is not
+    /// synchronised, so the report maps nothing to wallclock).
+    #[must_use]
+    pub fn rejected_sender_reports(&self) -> u64 {
+        self.rejected_sender_reports
     }
 
     /// Parse `bytes` as a single RTCP Sender Report (RFC 3550 §6.4.1) and feed
@@ -1162,11 +1208,8 @@ impl RtpStreamDepacketiser {
             .filter_map(|(id, st)| {
                 let anchor = st.sr_anchor.as_ref()?;
                 let first_ts = st.first_unwrapped?;
-                Some((
-                    *id,
-                    wall_seconds(anchor, st.clock_rate, first_ts),
-                    st.clock_rate,
-                ))
+                let wall = wall_seconds(anchor, st.clock_rate, first_ts)?;
+                Some((*id, wall, st.clock_rate))
             })
             .collect();
         if anchored.len() < 2 {
@@ -1176,6 +1219,12 @@ impl RtpStreamDepacketiser {
             .iter()
             .map(|(_, wall, _)| *wall)
             .fold(f64::INFINITY, f64::min);
+        if anchored
+            .iter()
+            .any(|(_, wall, _)| wall - origin > MAX_TRACK_WALL_SKEW_SECONDS)
+        {
+            return Vec::new();
+        }
         anchored
             .into_iter()
             .map(|(id, wall, clock_rate)| {
@@ -1250,6 +1299,7 @@ impl RtpStreamDepacketiser {
             st.cur_ts = None;
             st.last_unwrapped = None;
             st.first_unwrapped = None;
+            st.sr_anchor = None;
             st.reordered = false;
             st.seen_pts.clear();
             st.next_seq = 0;
@@ -1557,6 +1607,15 @@ impl RtpStreamDepacketiser {
             st.last_unwrapped = Some(unwrapped);
             if st.first_unwrapped.is_none() {
                 st.first_unwrapped = Some(unwrapped);
+                if let Some(anchor) = st.sr_anchor.as_mut()
+                    && !anchor.resolved
+                {
+                    let wire = u32::try_from(anchor.rtp_ts).unwrap_or(0);
+                    if let Some(extended) = extend_near(unwrapped, wire) {
+                        anchor.rtp_ts = extended;
+                    }
+                    anchor.resolved = true;
+                }
             }
             if st.kind == RtpMediaKind::H264
                 && (st.reordered

@@ -259,18 +259,20 @@ impl TrackAligner {
                 continue;
             };
             let anchor_in_lane = rescale(anchor_first, anchor_scale, lane.timescale);
-            let anchor_sdt_in_lane = rescale(
-                i64::try_from(anchor_sdt).unwrap_or(i64::MAX),
-                anchor_scale,
-                lane.timescale,
-            );
-            let sdt = i64::try_from(sdt).unwrap_or(i64::MAX);
-            lane.target = Some(
-                anchor_in_lane
-                    .saturating_add(sdt)
-                    .saturating_sub(anchor_sdt_in_lane)
-                    .saturating_sub(first),
-            );
+            let (Ok(anchor_sdt), Ok(sdt)) = (i64::try_from(anchor_sdt), i64::try_from(sdt)) else {
+                complete = false;
+                continue;
+            };
+            let anchor_sdt_in_lane = rescale(anchor_sdt, anchor_scale, lane.timescale);
+            let target = anchor_in_lane
+                .checked_add(sdt)
+                .and_then(|t| t.checked_sub(anchor_sdt_in_lane))
+                .and_then(|t| t.checked_sub(first));
+            let Some(target) = target else {
+                complete = false;
+                continue;
+            };
+            lane.target = Some(target);
         }
         self.sr_dirty = !complete;
     }
@@ -395,6 +397,8 @@ mod tests {
     const PAYLOAD_TYPE: u8 = 96;
     const RTP_VERSION_2: u8 = 0x80;
     const MARKER: u8 = 0x80;
+    const LONG_STEP_SECONDS: u32 = 10;
+    const LONG_RUN_FRAMES: u32 = 12_000;
 
     fn dummy_avc() -> CodecConfig {
         CodecConfig::Avc {
@@ -427,16 +431,13 @@ mod tests {
 
     fn sender_report(offset_us: i128, rtp_timestamp: u32) -> Vec<u8> {
         let micros = u64::try_from(offset_us.max(0)).unwrap_or(0);
-        let lsw = u32::try_from(micros * NTP_FRACTION / MICROS).unwrap_or(0);
-        let sr = crate::rtcp::SenderReport::new(
-            SR_SSRC,
-            NTP_SECONDS,
-            lsw,
-            rtp_timestamp,
-            0,
-            0,
-            Vec::new(),
-        );
+        let whole = u32::try_from(micros / MICROS).unwrap_or(0);
+        let lsw = u32::try_from((micros % MICROS) * NTP_FRACTION / MICROS).unwrap_or(0);
+        sender_report_at(NTP_SECONDS + whole, lsw, rtp_timestamp)
+    }
+
+    fn sender_report_at(msw: u32, lsw: u32, rtp_timestamp: u32) -> Vec<u8> {
+        let sr = crate::rtcp::SenderReport::new(SR_SSRC, msw, lsw, rtp_timestamp, 0, 0, Vec::new());
         let mut buf = alloc::vec![0u8; sr.serialized_len()];
         let n = sr.serialize_into(&mut buf).expect("serialize sr");
         buf.truncate(n);
@@ -450,6 +451,7 @@ mod tests {
         other_base: u32,
         video: Vec<i128>,
         other: Vec<i128>,
+        discontinuities: u32,
     }
 
     impl Rig {
@@ -468,6 +470,7 @@ mod tests {
                 other_base,
                 video: Vec::new(),
                 other: Vec::new(),
+                discontinuities: 0,
             }
         }
 
@@ -504,6 +507,9 @@ mod tests {
         }
 
         fn record(&mut self, out: AlignOut) {
+            if matches!(out, AlignOut::Discontinuity) {
+                self.discontinuities += 1;
+            }
             if let AlignOut::Sample(id, sample) = out {
                 let rate = if id == VIDEO {
                     VIDEO_RATE
@@ -519,6 +525,34 @@ mod tests {
                     self.video.push(us);
                 } else {
                     self.other.push(us);
+                }
+            }
+        }
+
+        fn long_frame(&mut self, k: u32, reports: bool) {
+            let lag_ticks =
+                u32::try_from(i128::from(self.other_rate) * LAG_US / i128::from(MICROS))
+                    .expect("lag ticks");
+            let video_ts = VIDEO_BASE.wrapping_add(k.wrapping_mul(LONG_STEP_SECONDS * VIDEO_RATE));
+            let other_sr_ts = self
+                .other_base
+                .wrapping_add(k.wrapping_mul(LONG_STEP_SECONDS * self.other_rate));
+            if reports {
+                let offset_us = i128::from(k) * i128::from(LONG_STEP_SECONDS) * i128::from(MICROS);
+                self.depa
+                    .push_rtcp(VIDEO, &sender_report(offset_us, video_ts));
+                self.depa
+                    .push_rtcp(OTHER, &sender_report(offset_us, other_sr_ts));
+                self.aligner.note_rtcp();
+            }
+            let seq = u16::try_from(k % u32::from(u16::MAX)).expect("seq");
+            let nal = if k == 0 { NAL_IDR } else { NAL_SLICE };
+            for (id, packet) in [
+                (VIDEO, rtp(seq, video_ts, 1, nal)),
+                (OTHER, rtp(seq, other_sr_ts.wrapping_add(lag_ticks), 2, nal)),
+            ] {
+                for sample in self.depa.push(id, &packet).expect("push") {
+                    self.place(id, sample);
                 }
             }
         }
@@ -588,5 +622,55 @@ mod tests {
         assert_eq!(wrapped_gap(5, i64::from(u32::MAX) - 4), 10);
         assert_eq!(wrapped_gap(u32::MAX, 3), -4);
         assert_eq!(wrapped_gap(7, (1_i64 << 32) + 5), 2);
+    }
+
+    #[test]
+    fn sender_reports_keep_tracks_aligned_past_several_rtp_wraps() {
+        for other_rate in [48_000, 90_000] {
+            let mut rig = Rig::new(other_rate, WRAPPING_BASE);
+            for k in 0..LONG_RUN_FRAMES {
+                rig.long_frame(k, true);
+            }
+            assert!(rig.video.len() > 1_000 && rig.other.len() > 1_000);
+            assert_eq!(rig.discontinuities, 0, "rate {other_rate}");
+            for index in 0..rig.other.len().min(rig.video.len()) {
+                assert!(
+                    (rig.gap(index) - LAG_US).abs() < TOLERANCE_US,
+                    "rate {other_rate} sample {index}: gap {}us, want {LAG_US}us",
+                    rig.gap(index)
+                );
+                assert!(rig.other[index] >= 0, "rate {other_rate} sample {index}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_sender_report_with_ntp_zero_is_ignored() {
+        let mut rig = Rig::new(48_000, WRAPPING_BASE);
+        rig.depa.push_rtcp(VIDEO, &sender_report(0, VIDEO_BASE));
+        rig.depa
+            .push_rtcp(OTHER, &sender_report_at(0, 0, WRAPPING_BASE));
+        rig.aligner.note_rtcp();
+        assert_eq!(rig.depa.rejected_sender_reports(), 1);
+        for k in 0..FRAMES {
+            rig.frame(k);
+        }
+        assert_eq!(rig.discontinuities, 0);
+        assert!(rig.gap(0).abs() < TOLERANCE_US, "provisional placement");
+        assert!(rig.other.iter().all(|&us| us >= 0));
+    }
+
+    #[test]
+    fn sender_reports_whose_clocks_are_far_apart_do_not_align() {
+        let mut rig = Rig::new(48_000, WRAPPING_BASE);
+        rig.depa.push_rtcp(VIDEO, &sender_report(0, VIDEO_BASE));
+        rig.depa
+            .push_rtcp(OTHER, &sender_report_at(1, 0, WRAPPING_BASE));
+        rig.aligner.note_rtcp();
+        for k in 0..FRAMES {
+            rig.frame(k);
+        }
+        assert_eq!(rig.discontinuities, 0);
+        assert!(rig.other.iter().all(|&us| us >= 0));
     }
 }

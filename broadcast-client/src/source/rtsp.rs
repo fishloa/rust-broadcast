@@ -989,7 +989,12 @@ impl RtspSource {
             self.emit_sample(track, sample, now);
             return;
         };
-        for out in self.aligner.push(depa, track, sample) {
+        let placed = self.aligner.push(depa, track, sample);
+        self.emit_aligned(placed, now);
+    }
+
+    fn emit_aligned(&mut self, placed: Vec<AlignOut>, now: u64) {
+        for out in placed {
             match out {
                 AlignOut::Sample(track, sample) => self.emit_sample(track, sample, now),
                 AlignOut::Discontinuity => self.pre_sample.push(Event::Discontinuity),
@@ -1036,6 +1041,11 @@ impl RtspSource {
         for (id, sample) in flushed {
             self.align_and_emit(id, sample, now);
         }
+        let Some(depa) = self.depa.as_ref() else {
+            return;
+        };
+        let placed = self.aligner.flush(depa);
+        self.emit_aligned(placed, now);
     }
 
     fn run_timers(&mut self, now: u64) {
