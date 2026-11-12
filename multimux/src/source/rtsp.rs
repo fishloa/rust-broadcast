@@ -152,10 +152,16 @@ pub struct RtspIngestSession {
     /// relation to it: a driver woken at `Timestamp(t)` for our deadline `d`
     /// is woken once `now_us() >= d`.
     started: std::time::Instant,
-    /// The engine's `now_us` at the last [`Stage::on_deadline`], so a
-    /// deadline can be announced on the driver's clock too (see
+    /// The driver's most recent [`Timestamp`] and this stage's `now_us` when
+    /// it was seen: the two clocks are unrelated, so the engine's deadline is
+    /// mapped onto the driver's through this pair (see
     /// [`Self::next_deadline`]).
-    seen_now: Option<u64>,
+    heartbeat: Option<(Timestamp, u64)>,
+    /// Whether this connection has asked the server which keepalive method it
+    /// supports (see [`Self::settle_keepalive_method`]).
+    asked_keepalive_method: bool,
+    /// The engine's `now_us` at which its keepalive is next due.
+    keepalive_wake_at: u64,
     /// Interleaved media frames skipped because their RTP payload did not
     /// parse (audit T16, #1144) — see [`Self::malformed_media_frames`].
     malformed_media_frames: u64,
@@ -482,7 +488,7 @@ impl RtspIngestSession {
                             tracks: specs,
                         });
                         self.phase = Phase::Live;
-                        self.session.mark_activity(self.now_us());
+                        self.arm_keepalive_wake(self.now_us());
                     }
                     _ => {
                         // A response for a request phase we've already moved
@@ -559,6 +565,50 @@ impl RtspIngestSession {
     fn now_us(&self) -> u64 {
         u64::try_from(self.started.elapsed().as_micros()).unwrap_or(u64::MAX)
     }
+
+    /// Asks the server which keepalive method it supports, once per
+    /// connection, as the keepalive's own `GET_PARAMETER`: a success answer's
+    /// `Public` header settles it for the next keepalive (RFC 2326 §12.28),
+    /// and a server that does not implement `GET_PARAMETER` ("`405`/`501`")
+    /// leaves the engine on `OPTIONS`. Only a session whose advertised
+    /// methods are unknown (before the server answered any `OPTIONS`) is
+    /// asked.
+    fn send_keepalive(&mut self, us: u64) {
+        // Re-arm before queueing so a build failure cannot spin: the engine
+        // re-arms its deadline as soon as it builds the request.
+        match self.session.handle_timeout(us) {
+            Ok(Some(bytes)) => self.outbound.push_back(Bytes::from(bytes)),
+            Ok(None) => {}
+            Err(e) => tracing::warn!(error = %e, "rtsp: failed to build the keepalive"),
+        }
+        self.arm_keepalive_wake(us);
+    }
+
+    fn settle_keepalive_method(&mut self, us: u64) {
+        if self.asked_keepalive_method || self.session.keepalive_method() != Method::Options {
+            return;
+        }
+        let uri = self
+            .plan
+            .as_ref()
+            .map_or(self.request_uri.as_str(), |plan| plan.play_uri());
+        match self.session.get_parameter(uri, b"") {
+            Ok(bytes) => self.outbound.push_back(Bytes::from(bytes)),
+            Err(e) => tracing::warn!(error = %e, "rtsp: failed to ask for the Public header"),
+        }
+        self.asked_keepalive_method = true;
+        self.arm_keepalive_wake(us);
+    }
+
+    /// Re-reads the engine's deadline after a request exchange: the engine
+    /// re-arms as soon as it builds the request, so this is always ahead.
+    fn arm_keepalive_wake(&mut self, now: u64) {
+        self.session.mark_activity(now);
+        self.keepalive_wake_at = self
+            .session
+            .poll_timeout()
+            .map_or(0, |due| due.max(now + 1));
+    }
 }
 
 impl Stage for RtspIngestSession {
@@ -627,27 +677,30 @@ impl Stage for RtspIngestSession {
         // `None` before SETUP, after TEARDOWN, and before any request of ours
         // was written — the engine owns the whole schedule.
         let due = self.session.poll_timeout()?;
-        // Announce it on the driver's clock: the last `now_us` this stage saw
-        // is the most recent `Timestamp` the driver woke it at, so the driver
-        // reaches `now_us >= due` when it reaches `seen + (due - last)`.
-        let last = self.seen_now.unwrap_or_else(|| self.now_us());
-        Some(
-            Timestamp::from_nanos(last)
-                .saturating_add_nanos(due.saturating_sub(last).saturating_mul(NANOS_PER_US)),
-        )
+        // Announce it on the driver's clock, which shares no epoch with the
+        // engine's: the driver is at `Timestamp(t)` when this stage's clock
+        // reads `us`, so it reaches `due` at `t + (due - us)`.
+        Some(match self.heartbeat {
+            Some((t, us)) => Timestamp::from_nanos(
+                t.as_nanos()
+                    .saturating_add(due.saturating_sub(us).saturating_mul(NANOS_PER_US)),
+            ),
+            None => Timestamp::from_nanos(due.saturating_mul(NANOS_PER_US)),
+        })
     }
 
-    fn on_deadline(&mut self, _now: Timestamp) {
-        self.seen_now = Some(self.now_us());
+    fn on_deadline(&mut self, now: Timestamp) {
+        let us = self.now_us();
+        self.heartbeat = Some((now, us));
         if !matches!(self.phase, Phase::Live) {
             return;
         }
-        // Re-arm before queueing so a build failure cannot spin: the engine
-        // re-arms its deadline as soon as it builds the request.
-        match self.session.handle_timeout(self.now_us()) {
-            Ok(Some(bytes)) => self.outbound.push_back(Bytes::from(bytes)),
-            Ok(None) => {}
-            Err(e) => tracing::warn!(error = %e, "rtsp: failed to build the keepalive"),
+        // The method probe goes first: it re-arms the deadline from the
+        // request it builds, so the check below reads the fresh one and the
+        // keepalive that follows uses the method the answer settled.
+        self.settle_keepalive_method(us);
+        if self.keepalive_wake_at != 0 && us >= self.keepalive_wake_at {
+            self.send_keepalive(us);
         }
     }
 
@@ -754,7 +807,9 @@ impl Dialer for RtspDialer {
             outbound: VecDeque::from(vec![Bytes::from(describe_bytes)]),
             pending: VecDeque::new(),
             started: std::time::Instant::now(),
-            seen_now: None,
+            heartbeat: None,
+            asked_keepalive_method: false,
+            keepalive_wake_at: 0,
             malformed_media_frames: 0,
             rtcp_frames: 0,
             diagnostics: AlignDiagnostics::default(),
@@ -1856,8 +1911,13 @@ mod tests {
     // --- issue #1083 W8: permanent-failure classification + keepalive ---
 
     /// The RTSP method the session engine's keepalive uses (RFC 2326 §10.6,
-    /// sent by `rtsp_runtime::client::ClientSession::handle_timeout`).
+    /// sent by `rtsp_runtime::client::ClientSession::handle_timeout`) when
+    /// the server advertised it.
     const KEEPALIVE_METHOD: &str = "GET_PARAMETER";
+
+    /// The `Public` header (RFC 2326 §12.28) of a server that implements
+    /// every method; only its presence makes the keepalive `GET_PARAMETER`.
+    const PUBLIC_ALL: &str = "Public: OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN, GET_PARAMETER";
 
     /// Serves one RTSP connection: reads each request's request line, and
     /// answers via `respond`. Returns every request line it saw, stopping
@@ -2040,7 +2100,9 @@ mod tests {
     /// With a server that declares `Session; timeout=2`, an idle `Live`
     /// session must send the keepalive `rtsp-runtime`'s session engine
     /// schedules before the timeout elapses (RFC 2326 §12.37), rather than
-    /// sitting silently until the server tears the session down.
+    /// sitting silently until the server tears the session down. This server
+    /// answers the session-level `OPTIONS` with a `Public` header listing
+    /// `GET_PARAMETER`, so that is the method its interleaved keepalive uses.
     ///
     /// Biting test: make `on_deadline` a no-op (its pre-fix body) and the
     /// server never sees the keepalive, failing the assertion below.
@@ -2074,6 +2136,7 @@ mod tests {
                             "",
                         ),
                         "PLAY" | KEEPALIVE_METHOD => rtsp_response(cseq, "200 OK", session, ""),
+                    "OPTIONS" => rtsp_response(cseq, "200 OK", PUBLIC_ALL, ""),
                         _ => return None,
                     };
                     Some(resp)

@@ -7,9 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
-- RTSP keepalive now uses `rtsp_runtime::ClientSession`'s schedule (half the declared `Session;timeout=`, the RFC 2326 §12.37 60 s default when none is declared) instead of a local timer with its own default and ceiling.
+- RTSP keepalive now uses `rtsp_runtime::ClientSession`'s schedule (half the declared `Session;timeout=`, the RFC 2326 §12.37 60 s default when none is declared) instead of a local timer with its own default and ceiling, and its method is the one the server advertises.
 - RTP sequence validity now uses `rtp_packet::SeqValidity` instead of a local delta/resync heuristic.
-### Changed
 - RTSP pull uses rtsp-runtime's `MAX_TRACKS` cap instead of a local constant.
 - RTSP pull skips an SDP media section whose `m=` format is not a numeric RTP payload type (RFC 4566 §5.14) instead of playing it, matching multimux; the skip is reported in `skipped`.
 - Timeline-jump detection now uses the detector moved to `transmux` (re-exported). `Config::timeline_jump` is now `Option<transmux::TimelineJumpConfig>`; the `broadcast_client::TimelineJumpConfig` re-export remains, but the type path changed (breaking for users naming `broadcast_client::timeline::TimelineJumpConfig`).
@@ -33,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - A DASH source whose MPD is `MPD@type="list"` (ISO/IEC 23009-1 6th edition) fails with the typed unsupported-addressing error instead of a generic playback-timeline failure (#2340).
 
+### Changed
 ## [0.5.0] - 2026-11-10
 ### Changed
 - The test-only feature is renamed `__test-seams` -> `test-seams`, the one spelling the workspace uses for test seams (c6 C6-09).

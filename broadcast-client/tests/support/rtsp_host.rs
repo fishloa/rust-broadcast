@@ -15,8 +15,13 @@ pub const BASE_URL: &str = "rtsp://cam.test/live/";
 pub const DESCRIBE: &str = "DESCRIBE";
 pub const SETUP: &str = "SETUP";
 pub const PLAY: &str = "PLAY";
-/// The keepalive method the RTSP session engine sends (`GET_PARAMETER`).
-pub const KEEPALIVE: &str = "GET_PARAMETER";
+/// What a server advertised (`Public`, RFC 2326 §12.28) that implements the
+/// keepalive answers `OPTIONS` with. With it the keepalive is
+/// `GET_PARAMETER`; a server that lists anything else, or sends no `Public`,
+/// gets `OPTIONS` keepalives.
+pub const OPTIONS: &str = "OPTIONS";
+pub const PUBLIC_ALL: &str =
+    "Public: OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN, GET_PARAMETER";
 pub const TEARDOWN: &str = "TEARDOWN";
 const FIXTURE: &str = "ts/h264-aac.ts";
 const MTU: usize = 1400;
@@ -198,6 +203,9 @@ pub struct Server {
     pub setup_status: Option<u16>,
     pub play_status: Option<u16>,
     pub options_status: u16,
+    /// The `Public` header an `OPTIONS` success answer carries (RFC 2326
+    /// §12.28); `None` sends no `Public`.
+    pub options_public: Option<String>,
     pub udp_transport: bool,
     pub rtp_info: Option<String>,
 }
@@ -220,6 +228,7 @@ impl Server {
             setup_status: None,
             play_status: None,
             options_status: 200,
+            options_public: None,
             udp_transport: false,
             rtp_info: None,
         }
@@ -350,8 +359,14 @@ impl Server {
                     respond(rec.cseq, 200, extra, Vec::new())
                 }
             },
-            KEEPALIVE if self.rotate_options_nonce => self.answer_options_rotating(rec),
-            KEEPALIVE => respond(rec.cseq, self.options_status, Vec::new(), Vec::new()),
+            "OPTIONS" if self.rotate_options_nonce => self.answer_options_rotating(rec),
+            "OPTIONS" | "GET_PARAMETER" => {
+                let extra = match &self.options_public {
+                    Some(list) => vec![(headers::PUBLIC, list.clone())],
+                    None => Vec::new(),
+                };
+                respond(rec.cseq, self.options_status, extra, Vec::new())
+            }
             _ => respond(rec.cseq, 200, Vec::new(), Vec::new()),
         }
     }
@@ -385,6 +400,13 @@ impl Server {
             None => SESSION_ID.to_string(),
         }
     }
+}
+
+/// The digest nonce a request presented, if it carried one.
+fn presented_nonce(rec: &ReqRec) -> Option<String> {
+    let auth = rec.header("authorization")?;
+    let (_, rest) = auth.split_once("nonce=\"")?;
+    rest.split_once('"').map(|(n, _)| n.to_string())
 }
 
 pub fn session_id() -> &'static str {

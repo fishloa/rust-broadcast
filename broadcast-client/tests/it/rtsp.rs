@@ -7,8 +7,8 @@ use broadcast_client::{Action, Config, Credentials, Error, Event, Session, Sourc
 use rtsp_runtime::transport::{LowerTransport, Transport};
 use sdp_types::{Media, MediaType, Origin, TransportProto};
 use support::rtsp_host::{
-    BASE_URL, Chunking, DESCRIBE, Host, KEEPALIVE, MediaFixture, PLAY, SEC, SETUP, Server,
-    TEARDOWN, channel_of, connects, interleaved, quiet_config, samples_of, sender_report_at,
+    BASE_URL, Chunking, DESCRIBE, Host, MediaFixture, OPTIONS, PLAY, SEC, SETUP, Server, TEARDOWN,
+    channel_of, connects, interleaved, quiet_config, samples_of, sender_report_at,
     sender_report_frame, session_id, wakes,
 };
 use url::Url;
@@ -75,12 +75,12 @@ fn tcp_connects(host: &Host) -> usize {
 fn keepalives_at(host: &mut Host, due_us: u64) -> usize {
     host.advance_to(due_us - 1);
     assert_eq!(
-        host.server.count(KEEPALIVE),
+        host.server.count(OPTIONS) + host.server.count("GET_PARAMETER"),
         0,
         "no keepalive before {due_us} us"
     );
     host.advance_to(due_us);
-    host.server.count(KEEPALIVE)
+    host.server.count(OPTIONS) + host.server.count("GET_PARAMETER")
 }
 
 fn sdp_with(medias: Vec<Media>) -> String {
@@ -444,7 +444,7 @@ fn keepalive_sent_at_half_session_timeout_and_reply_405_ignored() {
         .server
         .log
         .iter()
-        .find(|r| r.method == KEEPALIVE)
+        .find(|r| r.method == OPTIONS)
         .expect("keepalive");
     assert_eq!(keepalive.uri, BASE_URL);
     assert_eq!(keepalive.header("session"), Some(session_id()));
@@ -464,9 +464,9 @@ fn keepalive_sent_at_half_session_timeout_and_reply_405_ignored() {
         "a 405 must not tear the connection down"
     );
     host.advance_to(40 * SEC - 1);
-    assert_eq!(host.server.count(KEEPALIVE), 1);
+    assert_eq!(host.server.count(OPTIONS), 1);
     host.advance_to(40 * SEC);
-    assert_eq!(host.server.count(KEEPALIVE), 2, "the keepalive is re-armed");
+    assert_eq!(host.server.count(OPTIONS), 2, "the keepalive is re-armed");
 }
 
 #[test]
@@ -872,7 +872,7 @@ fn keepalive_is_strictly_before_a_short_session_timeout() {
         let expiry = u64::from(declared) * SEC;
         host.advance_to(expiry - 1);
         assert!(
-            host.server.count(KEEPALIVE) >= 1,
+            host.server.count(OPTIONS) >= 1,
             "Session timeout={declared}: no keepalive before expiry"
         );
     }

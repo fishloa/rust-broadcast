@@ -160,6 +160,10 @@ pub struct ClientSession {
     next_cseq: u32,
     session_id: Option<String>,
     session_timeout: Option<u64>,
+    /// The methods the server advertised in the `Public` header of its most
+    /// recent `OPTIONS` response (RFC 2326 §12.28), which decide the
+    /// keepalive method ([`ClientSession::keepalive_method`]).
+    public_methods: Vec<String>,
     credentials: Option<Credentials>,
     authenticator: Option<Authenticator>,
     negotiated_transport: Option<Transport>,
@@ -205,6 +209,7 @@ impl ClientSession {
             next_cseq: 1,
             session_id: None,
             session_timeout: None,
+            public_methods: Vec::new(),
             credentials: None,
             authenticator: None,
             negotiated_transport: None,
@@ -337,7 +342,7 @@ impl ClientSession {
 
     /// If `now_us >= poll_timeout()`, the bytes of the keepalive on the last
     /// request URI (and activity is re-armed at `now_us`); `Ok(None)`
-    /// otherwise.
+    /// otherwise. The method is [`ClientSession::keepalive_method`].
     pub fn handle_timeout(&mut self, now_us: u64) -> Result<Option<Vec<u8>>> {
         match self.poll_timeout() {
             Some(deadline) if now_us >= deadline => {}
@@ -346,9 +351,37 @@ impl ClientSession {
         let Some(uri) = self.last_uri.clone() else {
             return Ok(None);
         };
-        let bytes = self.get_parameter(&uri, b"")?;
+        let bytes = match self.keepalive_method() {
+            Method::GetParameter => self.get_parameter(&uri, b"")?,
+            _ => self.options(&uri)?,
+        };
         self.last_activity_us = Some(now_us);
         Ok(Some(bytes))
+    }
+
+    /// The method the keepalive uses: `GET_PARAMETER` when the server listed
+    /// it in the `Public` header of its `OPTIONS` response (RFC 2326 §12.28),
+    /// else `OPTIONS` — a server that did not advertise `GET_PARAMETER`, or
+    /// sent no `Public` at all, need not implement it (§10.6 does not require
+    /// it), and an unsupported keepalive can draw a `405`/`501` or even make a
+    /// camera drop the session.
+    pub fn keepalive_method(&self) -> Method {
+        if self
+            .public_methods
+            .iter()
+            .any(|m| m.eq_ignore_ascii_case("GET_PARAMETER"))
+        {
+            Method::GetParameter
+        } else {
+            Method::Options
+        }
+    }
+
+    /// The methods the server advertised in the `Public` header of its most
+    /// recent `OPTIONS` response (RFC 2326 §12.28), in wire order and
+    /// LWS-trimmed. Empty until one is seen.
+    pub fn public_methods(&self) -> &[String] {
+        &self.public_methods
     }
 
     /// The negotiated session id, once a SETUP response has been processed.
@@ -677,6 +710,24 @@ impl ClientSession {
                 let Some(pending) = self.pending.remove(&cseq) else {
                     return Ok(());
                 };
+
+                // Capture the `Public` advertisement (typically from a bare
+                // `OPTIONS`): it decides the keepalive method, and it must be
+                // read here, before the success transition moves the state on.
+                if status.is_success()
+                    && pending.method == Method::Options
+                    && let Some(public) = header_value(response.header(&headers::PUBLIC))
+                {
+                    self.public_methods = crate::rfc2326_lex::split_outside_quotes(
+                        public,
+                        crate::rfc2326_lex::LIST_SEP,
+                    )
+                    .into_iter()
+                    .map(crate::rfc2326_lex::trim_lws)
+                    .filter(|m| !m.is_empty())
+                    .map(str::to_string)
+                    .collect();
+                }
 
                 // Capture Session id + timeout (typically from SETUP). Recoverable
                 // problems (a malformed or zero timeout) are kept in
@@ -1337,6 +1388,20 @@ mod tests {
     /// caller's microsecond clock.
     const US_PER_SEC: u64 = 1_000_000;
 
+    /// [`established`] after an `OPTIONS` exchange whose answer carries
+    /// `public` as its `Public` header (RFC 2326 §12.28); `None` sends none.
+    fn established_publishing(timeout: Option<u64>, public: Option<&str>) -> ClientSession {
+        let mut c = established(timeout);
+        let _ = c.options("rtsp://h/s").unwrap();
+        let hdr = match public {
+            Some(list) => format!("Public: {list}\r\n"),
+            None => String::new(),
+        };
+        c.handle_data_strict(format!("RTSP/1.0 200 OK\r\nCSeq: 2\r\n{hdr}\r\n").as_bytes())
+            .unwrap();
+        c
+    }
+
     fn established(timeout: Option<u64>) -> ClientSession {
         let mut c = ClientSession::new();
         let _ = c
@@ -1411,8 +1476,8 @@ mod tests {
             .expect("keepalive due");
         let text = String::from_utf8(req).unwrap();
         assert!(
-            text.starts_with("GET_PARAMETER rtsp://h/s RTSP/1.0"),
-            "{text}"
+            text.starts_with("OPTIONS rtsp://h/s RTSP/1.0"),
+            "a server that advertised no GET_PARAMETER gets OPTIONS: {text}"
         );
         assert!(text.contains("Session: abc"), "{text}");
         // re-armed from the moment it was sent
@@ -1461,6 +1526,59 @@ mod tests {
         c.mark_activity(0);
         assert_eq!(c.poll_timeout(), None);
         assert!(c.handle_timeout(3600 * US_PER_SEC).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_server_listing_get_parameter_gets_get_parameter_keepalives() {
+        let mut c = established_publishing(
+            Some(20),
+            Some("OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN, GET_PARAMETER"),
+        );
+        assert_eq!(c.keepalive_method(), Method::GetParameter);
+        c.mark_activity(0);
+        let req = c
+            .handle_timeout(10 * US_PER_SEC)
+            .unwrap()
+            .expect("keepalive due");
+        assert!(
+            String::from_utf8(req)
+                .unwrap()
+                .starts_with("GET_PARAMETER rtsp://h/s RTSP/1.0")
+        );
+    }
+
+    #[test]
+    fn a_server_not_listing_get_parameter_gets_options_keepalives() {
+        let mut c =
+            established_publishing(Some(20), Some("OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN"));
+        assert_eq!(c.keepalive_method(), Method::Options);
+        c.mark_activity(0);
+        let req = c
+            .handle_timeout(10 * US_PER_SEC)
+            .unwrap()
+            .expect("keepalive due");
+        assert!(
+            String::from_utf8(req)
+                .unwrap()
+                .starts_with("OPTIONS rtsp://h/s RTSP/1.0")
+        );
+    }
+
+    #[test]
+    fn a_server_that_sent_no_public_header_gets_options_keepalives() {
+        let mut c = established_publishing(Some(20), None);
+        assert!(c.public_methods().is_empty());
+        assert_eq!(c.keepalive_method(), Method::Options);
+        c.mark_activity(0);
+        let req = c
+            .handle_timeout(10 * US_PER_SEC)
+            .unwrap()
+            .expect("keepalive due");
+        assert!(
+            String::from_utf8(req)
+                .unwrap()
+                .starts_with("OPTIONS rtsp://h/s RTSP/1.0")
+        );
     }
 
     #[test]
