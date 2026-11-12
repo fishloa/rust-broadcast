@@ -375,10 +375,11 @@ impl SmoothSource {
         if self.client.is_ended() {
             return Ok(());
         }
-        if index >= self.client.video_quality_count() {
-            return Err(Error::NoSuchVariant(index));
+        if self.client.select_video_quality(index) {
+            Ok(())
+        } else {
+            Err(Error::NoSuchVariant(index))
         }
-        Ok(())
     }
 
     pub(crate) fn select_audio(

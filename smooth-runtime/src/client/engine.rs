@@ -105,6 +105,27 @@ impl SmoothClient {
         self.video_quality_count
     }
 
+    /// Fetch the first video stream's later fragments at `QualityLevel` `index`
+    /// (an index into [`Output::Qualities`]); false when there is no such level.
+    ///
+    /// Fragments already requested keep their level, and the announced
+    /// `TrackSpec` is not re-announced, so the levels should share a codec
+    /// configuration.
+    pub fn select_video_quality(&mut self, index: usize) -> bool {
+        let Some(stream) = self
+            .streams
+            .iter_mut()
+            .find(|s| s.index.stream_type == StreamType::Video)
+        else {
+            return false;
+        };
+        let Some(quality) = stream.index.qualities.get(index).cloned() else {
+            return false;
+        };
+        stream.quality = quality;
+        true
+    }
+
     /// The earliest instant, in microseconds, at which [`Self::poll`] has more to do
     /// without any new input.
     pub fn next_deadline(&self) -> Option<u64> {
