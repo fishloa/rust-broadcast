@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Changed
+- The DASH/LL-DASH manifests render their `xs:duration` attributes with `broadcast_dash::duration::xs_duration`, the one writer in the workspace, instead of `transmux::dash::xs_duration` (removed); the rendered bytes are unchanged (#2465).
 - Timeline discontinuity detection now uses the per-track detector from `transmux` (broadcast-client semantics); the 10 s `MEDIA_DISCONTINUITY_NS` constant is removed.
 - RTSP pull skips unplayable SDP media sections (and foreign-authority controls and sections beyond the track cap) instead of failing the whole route; fails only when nothing is playable. Skipped sections are logged as route warnings.
 

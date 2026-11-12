@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- `duration::xs_duration`, the workspace's one `xs:duration` writer (renamed from `format_iso8601_duration`): `transmux`'s MPD writer and `multimux`'s DASH/LL-DASH manifests call this instead of keeping their own copy, so the manifest syntax lives in `broadcast-dash` (#2465).
 - The model now carries the elements it used to keep only as `MpdFeatures` flags, and `Mpd::to_xml` writes them in XSD order, so parse -> write -> parse keeps their content (#2404): `EventStream` and its `StreamEvent` children (`Period::event_streams`, ISO/IEC 23009-1 5.10.2: `schemeIdUri`, `value`, `timescale`, `presentationTimeOffset`, `xlink`, and per Event `presentationTime`, `duration`, `id`, `status`, `messageData`, text body and descriptor/`ServiceDescription` children), `ProducerReferenceTime` (`producer_reference_times` on AdaptationSet and Representation, 5.12, with its `UTCTiming` child), `Resync` (`resyncs`, 5.3.13), `PatchLocation` (`Mpd::patch_locations`, 5.15), `Preselection` (`Period::preselections`, 5.3.11) and `ContentSteering` (`Mpd::content_steering`). `Mpd::has_event_streams`, `has_preselections` and `has_patch_location` replace the removed flags.
 - `Unsupported::EventXmlPayload` and `StreamEvent::unsupported`: an `Event` whose content is XML (`SelectionInfo`, `InsertPresentation`, `ReplacePresentation`, a foreign-namespace payload such as an SCTE 35 `Signal`) still parses, but `Mpd::to_xml` returns that typed error instead of writing the Event without its payload.
 - `Mpd::to_xml`: the MPD writer, the exact inverse of the parser (quick-xml events, no hand-built XML). Every real MPD in the corpus round-trips parse -> write -> parse, a model with every field set round-trips, and the writer reproduces every current `transmux` MPD golden byte-identical; the model gained `cenc:pssh`, `InbandEventStream`, `codingDependency` and `ServiceDescription` (`Latency`, `PlaybackRate`), and `ByteRange` implements `Display` (#2355).
@@ -14,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The MPD read side, extracted from `dash-runtime` so a consumer that only needs manifest syntax does not pull in a client: the `Mpd`/`Period`/`AdaptationSet`/`Representation` model with its three Segment addressing layers, `Mpd::parse`/`parse_with` over the shared bounded `broadcast_common::xml` reader under `limits::Limits`, the descriptor scheme vocabulary and `Role`, the attribute-inheritance rules (`inherit`), the `SegmentTemplate` grammar (`template`), the `UTCTiming` scheme identity (`utc_timing`), the `xs:duration` reader moved out of `transmux` (`duration`) and the `xs:dateTime`/NTP readers (`xs_datetime`) (#2355).
 
 ### Removed
+- `format_iso8601_duration` is now `duration::xs_duration` (#2465).
 - `MpdFeatures::patch_location`, `event_stream`, `preselection`, `producer_reference_time`, `content_steering`, `resync` and `MpdFeatures::written` (breaking): the elements are modelled, so the flags are redundant and a parse -> write -> parse round trip no longer clears anything.
 
 ### Changed
