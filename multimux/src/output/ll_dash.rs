@@ -1,7 +1,7 @@
 //! `LlDashOutput`: the low-latency DASH [`Output`] implementation. This module
 //! only mounts the LL-DASH manifest route; the MPD itself is rendered by the
 //! shared renderer in [`crate::output::dash`], asked for
-//! [`DashFlavour::LowLatency`](crate::output::dash::DashFlavour::LowLatency).
+//! `DashFlavour::LowLatency`.
 
 #[cfg(test)]
 use hls_runtime::server::DEFAULT_TRACK_ID;
