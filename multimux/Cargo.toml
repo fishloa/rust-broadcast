@@ -46,10 +46,10 @@ srt-runtime       = { path = "../srt-runtime",   version = "0.8.1", features = [
 # The LL-HLS origin engine itself (rolling window/store, blocking-reload +
 # part-availability decision logic, playlist rendering — issue #663/#717
 # Stage 2). multimux is now a thin tokio+axum adapter over
-# `hls_runtime::server`; see `output::llhls`. The `tokio` feature also
-# pulls in `hls_runtime::client::tokio_client::TokioClient` — the
-# HLS-pull input (`source::hls_pull`, issue #663 P3c) wraps it rather than
-# re-implementing LL-HLS playback.
+# `hls_runtime::server`; see `output::llhls`. The HLS-pull input
+# (`source::hls_pull`, issue #663 P3c) drives `hls_runtime::client`'s
+# sans-IO `HlsClient` itself (no `tokio` client feature), doing the GETs the
+# engine asks for rather than re-implementing LL-HLS playback.
 # Floor is 0.6, not 0.5: `catchup.rs` uses `server::ClosedSegment` and
 # `HlsOrigin::closed_segments()`, which do not exist in the published
 # 0.5.0 (verified: 0 hits at the hls-runtime-v0.5.0 tag). hls-runtime

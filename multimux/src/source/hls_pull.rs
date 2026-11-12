@@ -4,22 +4,15 @@
 //! (RFC 8216bis) playback engine — feeding real fetch bytes in and turning
 //! its `Output`s into [`SessionEvent`]s.
 //!
-//! # Why this reuses `HlsClient`, not `TokioClient`
+//! # Why this drives the sans-IO `HlsClient`
 //!
-//! Before this port, this module wrapped
-//! `hls_runtime::client::tokio_client::TokioClient` — the executor-bound
-//! adapter that owns its own `reqwest` fetch loop internally. That fit the
-//! pre-5a `connect()`/`next_samples()` shape, but it cannot fit
-//! [`IngestSession`]: `TokioClient` performs its own I/O, so there is nothing
-//! for `Stage::feed`/[`IngestSession::poll_transmit`] to drive. `HlsClient`
-//! is the sans-IO core `TokioClient` itself wraps —
-//! `poll() -> Option<Action>` out, `on_playlist`/`on_resource` in — which is
-//! exactly the [`IngestSession::Request`]/`Stage::In` shape round 3 added.
-//! This module is now the *other* adapter over the same sans-IO engine,
-//! parallel to `TokioClient`, driven by [`media_plane::ingress::IngestDriver`] instead of a bespoke
-//! `connect`/`next_samples` pair — so the actual LL-HLS logic (reload
-//! scheduling, part/segment dedup, fMP4/classic-TS demux) is still owned
-//! entirely by `hls-runtime`, never duplicated here.
+//! [`HlsClient`] is the engine — `poll() -> Option<Action>` out,
+//! `on_playlist`/`on_resource` in — which is exactly the
+//! [`IngestSession::Request`]/`Stage::In` shape this module needs. Its I/O
+//! stays here, driven by [`media_plane::ingress::IngestDriver`], so the actual
+//! LL-HLS logic (reload scheduling, part/segment dedup, fMP4/classic-TS demux)
+//! is owned entirely by `hls-runtime`, never duplicated here, and the fetch
+//! policy (auth, cookies, retries, pacing) is this crate's own.
 //!
 //! # Establishment is genuinely ordinary driving here
 //!
@@ -558,7 +551,7 @@ fn build_client(route: &HlsPullRoute) -> Result<(HttpClient, Url, AuthState)> {
 /// [`media_plane::ingress::IngestDriver::poll_transmit`] → fetch → [`media_plane::ingress::IngestDriver::feed`] until the
 /// origin's playlist reports end-of-stream or a fetch fails outright — the
 /// new drive loop, replacing the pre-5a `HlsPullSource::connect`/
-/// `HlsPullSession::next_samples` pair (and their `TokioClient` wrapper).
+/// `HlsPullSession::next_samples` pair.
 ///
 /// Bounded fan-out: never more than
 /// [`crate::source::MAX_INFLIGHT_FETCHES`] concurrent

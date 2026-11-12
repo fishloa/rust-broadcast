@@ -7,7 +7,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 ### Removed
-- BREAKING: `client::tokio_client` (`TokioClient`) and the `tokio` client feature wiring, plus its tests. Use the sans-IO `HlsClient` core.
+- BREAKING: `client::tokio_client` (`TokioClient`, `TokioClientConfig`, `TokioClientStats`, `TokioError`) and the `tokio` client feature, plus its tests and its now-unused `tokio`, `reqwest`, `broadcast-auth`, `backon`, `headers` and `tokio-util` dependencies. It carried its own copies of the retry, digest and body-cap policy, reachable only from tests; the IO belongs with the crate that drives the engine. Drive the sans-IO `HlsClient` core instead (`poll` out, `on_playlist`/`on_resource` in), as `multimux`'s HLS pull and `multimux/tests/golden_gate.rs`/`glass_to_glass.rs` do.
 ### Added
 - `HlsOrigin::set_init_from`: `set_init` for a caller that names the first segment cut against the new init, for segments closed but not yet published.
 

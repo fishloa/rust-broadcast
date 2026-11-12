@@ -6,9 +6,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 ### Added
-- `AuthState` and its cookie jar moved from `broadcast-client` (sans-IO client API): origin-scoped credentials, multi-line `WWW-Authenticate` handling, Digest stale replay, cookies. `AuthEvent`, `carries_credentials`.
-### Removed
-- (none)
+- `AuthState`, `AuthDecision`, `AuthEvent` and `carries_credentials`: the sans-IO 401/407 challenge-answer flow with its cookie jar, moved here from `broadcast-client` so a client primitive is not reached for through the session crate. `AuthState` scopes credentials to one origin (RFC 6454 §4), tries every line of a multi-line `WWW-Authenticate`, replays once after a Digest `stale=true` re-challenge, and stores `Set-Cookie` (RFC 6265) for the origin's later requests; it is `Clone` only as a way to start a fresh exchange (a clone carries no negotiated authenticator and no cookies). `broadcast-client`, `hls-runtime` and `multimux` all answer challenges through it. `broadcast_client::auth` re-exports the same types.
 
 ## [0.6.0] - 2026-11-10
 ### Changed

@@ -10,8 +10,8 @@
 //! `hls` input every pulled route runs, over the sans-IO `HlsClient` — and
 //! pays attention to nothing else. Its fetches, retries, reload pacing and
 //! publication are all the shipped code; the test only observes. The counters
-//! the deleted `TokioClient` adapter used to carry are observed the same way,
-//! from the requests the loop issues.
+//! the deleted executor-bound adapter used to carry are observed the same
+//! way, from the requests the loop issues.
 //!
 //! # Which origin
 //!
