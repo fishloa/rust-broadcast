@@ -145,21 +145,19 @@ impl Dialer for DashPullDialer {
     }
 }
 
-/// Parse an ISO-8601 UTC timestamp (`YYYY-MM-DDThh:mm:ss[.fff]Z`, the form
-/// `MPD@availabilityStartTime` uses, §5.3.1.2) into Unix seconds. `None` for
-/// any other shape.
-///
-/// Parsed by `jiff::Timestamp` (SP5); a lexical guard requires the UTC `Z`
-/// suffix, so an offset form (`+01:00`) is rejected rather than silently
-/// converted. Whole-second and fractional forms both round-trip.
+/// Parse an `MPD@availabilityStartTime`-style `xs:dateTime` into Unix seconds
+/// through `dash-runtime`'s reader (§5.3.1.2). `None` for any shape its
+/// accepted subset rejects. A lexical `Z` guard keeps offset forms and a
+/// missing zone out: the reader would convert an offset, this field is UTC.
 fn parse_iso8601_utc(s: &str) -> Option<u64> {
-    let s = s.trim();
-    if !s.ends_with('Z') {
+    if !s.trim().ends_with('Z') {
         return None;
     }
-    let ts: jiff::Timestamp = s.parse().ok()?;
-    u64::try_from(ts.as_second()).ok()
+    let parsed = dash_runtime::timing::datetime::parse_xs_datetime(s).ok()?;
+    u64::try_from(parsed.unix_us.div_euclid(MICROS_PER_SECOND)).ok()
 }
+
+const MICROS_PER_SECOND: i64 = 1_000_000;
 
 /// `#[doc(hidden)]` test seam over [`parse_iso8601_utc`].
 #[doc(hidden)]
