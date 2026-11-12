@@ -2031,3 +2031,24 @@ async fn bltrackid_multi_period_audio_only_middle_keeps_track_ids_stable() {
         12 * 12800
     );
 }
+
+#[tokio::test]
+async fn a_client_clock_past_the_dvr_window_jumps_to_the_live_edge_and_continues() {
+    let live = serve_live(LiveShape {
+        tsb_us: 2_000_000,
+        utc_timing: false,
+        ..LiveShape::default()
+    })
+    .await;
+    let mut pull = Pull::start(route(live.url()), SkewedClock::new(-1_000_000));
+    let ended = pull.until(|d| d.video().len() >= 2).await;
+    assert!(ended.is_none(), "{ended:?}");
+    drop(pull.stop());
+    let served = live.origin.served(0);
+    assert!(!served.is_empty(), "no segments served");
+    assert!(
+        *served.first().unwrap() > 80,
+        "did not join near the live edge: {served:?}"
+    );
+    assert!(!served.is_empty());
+}
