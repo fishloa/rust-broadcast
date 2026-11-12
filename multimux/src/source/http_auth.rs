@@ -473,4 +473,219 @@ mod tests {
         let seen = a_seen.lock().unwrap();
         assert_eq!(seen.len(), 2);
     }
+
+    /// Mock origin that verifies the RFC 7616 Digest response against the
+    /// password "hunter2-password" and answers 200 only on a match.
+    async fn verifying_origin() -> (String, Seen) {
+        let seen: Seen = Arc::default();
+        let s = seen.clone();
+        fn sha256_hex(s: &str) -> String {
+            use sha2::{Digest, Sha256};
+            Sha256::digest(s.as_bytes())
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect()
+        }
+        let app = Router::new().route(
+            "/v",
+            get(move |h: HeaderMap| async move {
+                note(&s, &h);
+                let auth = h
+                    .get(header::AUTHORIZATION)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("");
+                if auth.is_empty() {
+                    return (
+                        AxumStatus::UNAUTHORIZED,
+                        [(
+                            header::WWW_AUTHENTICATE,
+                            r#"Digest realm="r", qop="auth", nonce="n1", algorithm=SHA-256"#,
+                        )],
+                    )
+                        .into_response();
+                }
+                let mut username = String::new();
+                let mut realm = String::new();
+                let mut nonce = String::new();
+                let mut uri = String::new();
+                let mut nc = String::new();
+                let mut cnonce = String::new();
+                let mut qop = String::new();
+                let mut response = String::new();
+                let body = auth.strip_prefix("Digest ").unwrap_or(auth);
+                for part in body.split(',') {
+                    let part = part.trim();
+                    if let Some((k, v)) = part.split_once('=') {
+                        let val = v.trim().trim_matches('"').to_string();
+                        match k.trim() {
+                            "username" => username = val,
+                            "realm" => realm = val,
+                            "nonce" => nonce = val,
+                            "uri" => uri = val,
+                            "nc" => nc = val,
+                            "cnonce" => cnonce = val,
+                            "qop" => qop = val,
+                            "response" => response = val,
+                            _ => {}
+                        }
+                    }
+                }
+                let password = "hunter2-password";
+                let ha1 = sha256_hex(&format!("{username}:{realm}:{password}"));
+                let ha2 = sha256_hex(&format!("GET:{uri}"));
+                let expected = sha256_hex(&format!("{ha1}:{nonce}:{nc}:{cnonce}:{qop}:{ha2}"));
+                if expected == response {
+                    AxumStatus::OK.into_response()
+                } else {
+                    (
+                        AxumStatus::UNAUTHORIZED,
+                        [(
+                            header::WWW_AUTHENTICATE,
+                            r#"Digest realm="r", qop="auth", nonce="n1", algorithm=SHA-256"#,
+                        )],
+                    )
+                        .into_response()
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{addr}"), seen)
+    }
+
+    async fn proxy_origin() -> (String, Seen) {
+        let seen: Seen = Arc::default();
+        let s = seen.clone();
+        let app = Router::new().route(
+            "/p",
+            get(move |h: HeaderMap| async move {
+                note(&s, &h);
+                (
+                    AxumStatus::PROXY_AUTHENTICATION_REQUIRED,
+                    [(
+                        header::PROXY_AUTHENTICATE,
+                        r#"Digest realm="r", qop="auth", nonce="n1", algorithm=SHA-256"#,
+                    )],
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{addr}"), seen)
+    }
+
+    #[tokio::test]
+    async fn digest_response_verified_right_password_gets_200() {
+        let (url, seen) = verifying_origin().await;
+        let creds = scoped(Credentials::new("user", "hunter2-password"), &url);
+        let resp = authenticated_get(&client(), &format!("{url}/v"), creds.as_ref())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn digest_wrong_password_terminal_401_after_one_replay() {
+        let (url, seen) = verifying_origin().await;
+        let creds = scoped(Credentials::new("user", "wrong"), &url);
+        let resp = authenticated_get(&client(), &format!("{url}/v"), creds.as_ref())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn proxy_auth_407_is_not_handled_today() {
+        let (url, seen) = proxy_origin().await;
+        let creds = scoped(Credentials::new("user", "hunter2-password"), &url);
+        let resp = authenticated_get(&client(), &format!("{url}/p"), creds.as_ref())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::PROXY_AUTHENTICATION_REQUIRED);
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn same_origin_redirect_reapplies_credentials() {
+        let seen: Seen = Arc::default();
+        let s1 = seen.clone();
+        let s2 = seen.clone();
+        let app = Router::new()
+            .route(
+                "/start",
+                get(move |h: HeaderMap| async move {
+                    note(&s1, &h);
+                    Redirect::to("/seg").into_response()
+                }),
+            )
+            .route(
+                "/seg",
+                get(move |h: HeaderMap| async move {
+                    note(&s2, &h);
+                    AxumStatus::OK
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let url = format!("http://{addr}");
+        let creds = scoped(Credentials::bearer("tok-secret"), &url);
+        let c = client();
+        authenticated_get(&c, &format!("{url}/start"), creds.as_ref())
+            .await
+            .unwrap();
+        let seen = seen.lock().unwrap();
+        assert_eq!(
+            seen.as_slice(),
+            [
+                Some("Bearer tok-secret".to_string()),
+                Some("Bearer tok-secret".to_string())
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_challenge_retries_once() {
+        let seen: Seen = Arc::default();
+        let s = seen.clone();
+        let app = Router::new().route(
+            "/s",
+            get(move |h: HeaderMap| async move {
+                note(&s, &h);
+                (
+                    AxumStatus::UNAUTHORIZED,
+                    [(
+                        header::WWW_AUTHENTICATE,
+                        r#"Digest realm="r", qop="auth", nonce="n2", algorithm=SHA-256, stale=true"#,
+                    )],
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let url = format!("http://{addr}");
+        let creds = scoped(Credentials::new("user", "hunter2-password"), &url);
+        let resp = authenticated_get(&client(), &format!("{url}/s"), creds.as_ref())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+    }
 }

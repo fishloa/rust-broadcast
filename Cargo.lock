@@ -2623,6 +2623,7 @@ dependencies = [
  "sdp-types",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "smooth-runtime",
  "socket2",
  "srt-runtime",
