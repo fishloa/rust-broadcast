@@ -3274,6 +3274,210 @@ mod tests {
         assert!(selected.is_some(), "must still pick a representable track");
     }
 
+    const GAP_AUDIO_TRACK: u32 = 2;
+    const GAP_AUDIO_FRAME_TICKS: i64 = 1_600;
+    const GAP_RESUME_SKIP_FRAMES: u32 = 90;
+    const GAP_SEGMENTS_PER_STAGE: usize = 3;
+    const GAP_EMPTY_FEEDS: usize = 8;
+    const GAP_GOLDEN: &str = "golden/hls/track-gap-live.golden";
+    const GAP_PRESENTATION_ORIGIN_SECS: u64 = 1_700_000_000;
+
+    fn gap_video_audio_specs() -> Vec<TrackSpec> {
+        vec![
+            track_spec(TrackId::new(1)),
+            aac_track_spec(TrackId::new(GAP_AUDIO_TRACK)),
+        ]
+    }
+
+    struct GapSession {
+        pending: std::cell::RefCell<VecDeque<SessionEvent>>,
+        frame: std::cell::Cell<u32>,
+        flowing: std::cell::Cell<bool>,
+    }
+
+    impl GapSession {
+        fn new() -> Self {
+            let mut pending = VecDeque::new();
+            pending.push_back(SessionEvent::Established);
+            pending.push_back(SessionEvent::NewProgram {
+                program: ProgramId(0),
+                tracks: gap_video_audio_specs(),
+            });
+            GapSession {
+                pending: std::cell::RefCell::new(pending),
+                frame: std::cell::Cell::new(0),
+                flowing: std::cell::Cell::new(true),
+            }
+        }
+
+        fn change_tracks(&self, tracks: Vec<TrackSpec>) {
+            let flowing = !tracks.is_empty();
+            self.pending
+                .borrow_mut()
+                .push_back(SessionEvent::TracksChanged {
+                    program: ProgramId(0),
+                    tracks,
+                });
+            if flowing {
+                self.frame.set(self.frame.get() + GAP_RESUME_SKIP_FRAMES);
+            }
+            self.flowing.set(flowing);
+        }
+    }
+
+    impl Stage for GapSession {
+        type In<'a> = &'a [u8];
+        type Out = SessionEvent;
+        type Error = Infallible;
+
+        fn demand(&self) -> Demand {
+            Demand::new(crate::source::INGEST_DEMAND_BYTES)
+        }
+
+        fn feed(&mut self, _input: &[u8], _now: Timestamp) -> Result<(), Infallible> {
+            if !self.flowing.get() {
+                return Ok(());
+            }
+            let i = self.frame.get();
+            self.frame.set(i + 1);
+            let mut pending = self.pending.borrow_mut();
+            pending.push_back(SessionEvent::Sample {
+                program: ProgramId(0),
+                track_id: TrackId::new(1),
+                retention: media_plane::trunk::RetentionClass::Timed,
+                sample: sample_at(i, i.is_multiple_of(30)),
+            });
+            let audio_dts = i64::from(i) * GAP_AUDIO_FRAME_TICKS;
+            pending.push_back(SessionEvent::Sample {
+                program: ProgramId(0),
+                track_id: TrackId::new(GAP_AUDIO_TRACK),
+                retention: media_plane::trunk::RetentionClass::Timed,
+                sample: Sample::new(
+                    vec![0, 0, 0, 1, 0x21],
+                    Some(audio_dts),
+                    Some(audio_dts),
+                    Some(u32::try_from(GAP_AUDIO_FRAME_TICKS).expect("fits")),
+                    true,
+                ),
+            });
+            Ok(())
+        }
+
+        fn poll(&mut self) -> Option<SessionEvent> {
+            self.pending.borrow_mut().pop_front()
+        }
+
+        fn finish(&mut self) -> Result<(), Infallible> {
+            Ok(())
+        }
+    }
+
+    impl IngestSession for GapSession {
+        type Request = bytes::Bytes;
+    }
+
+    struct GapRig {
+        route: RouteHandle,
+        driver: IngestDriver<GapSession>,
+        published: HashSet<ProgramId>,
+        segmenters: HashMap<ProgramId, ProgramSegmenter>,
+    }
+
+    impl GapRig {
+        fn new() -> Self {
+            GapRig {
+                route: RouteHandle::new(1.0, 250, 16),
+                driver: IngestDriver::new(
+                    GapSession::new(),
+                    trunk_config(),
+                    handshake(),
+                    media_plane::DEFAULT_MAX_PROGRAMS,
+                ),
+                published: HashSet::new(),
+                segmenters: HashMap::new(),
+            }
+        }
+
+        fn feed(&mut self) {
+            self.driver
+                .feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+            report_driver_progress(&self.driver, &self.route, &mut self.published);
+            drive_program_segmenters(&self.driver, &self.route, &mut self.segmenters);
+        }
+
+        fn closed_segments(&self) -> usize {
+            self.driver
+                .trunk(ProgramId(0))
+                .map_or(0, |trunk| trunk.segment_len())
+        }
+
+        fn feed_until_segments(&mut self, wanted: usize) {
+            for _ in 0..MAX_BOUNDED_FEEDS {
+                if self.closed_segments() >= wanted {
+                    return;
+                }
+                self.feed();
+            }
+            panic!("{wanted} segments did not close within {MAX_BOUNDED_FEEDS} feeds");
+        }
+
+        fn snapshot(&self, stage: &str, out: &mut String) {
+            let origin = std::time::UNIX_EPOCH + Duration::from_secs(GAP_PRESENTATION_ORIGIN_SECS);
+            out.push_str(&format!("==== {stage}: HLS media playlist ====\n"));
+            let instance = self
+                .route
+                .ll_hls(crate::route::SPTS_PROGRAM_ID)
+                .expect("program published")
+                .instance()
+                .to_string();
+            out.push_str(&render_playlist(&self.route).replace(&instance, "INSTANCE"));
+            out.push_str(&format!("==== {stage}: DASH MPD ====\n"));
+            out.push_str(
+                &crate::output::dash::render_mpd_at(&self.route, origin)
+                    .unwrap_or_else(|| "(no MPD: 503)".to_owned()),
+            );
+            out.push('\n');
+        }
+    }
+
+    fn assert_gap_golden(actual: &str) {
+        if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
+            let path = std::path::Path::new(&dir).join(GAP_GOLDEN);
+            std::fs::create_dir_all(path.parent().expect("golden parent")).expect("create dir");
+            std::fs::write(path, actual).expect("write golden");
+            return;
+        }
+        let expected = std::fs::read_to_string(test_fixtures::path(GAP_GOLDEN)).expect("golden");
+        assert_eq!(
+            actual, expected,
+            "{GAP_GOLDEN} differs from the golden output"
+        );
+    }
+
+    #[test]
+    fn live_route_through_an_empty_track_set_and_back_matches_golden() {
+        let mut rig = GapRig::new();
+        let mut out = String::new();
+
+        rig.feed();
+        rig.feed();
+        rig.feed_until_segments(GAP_SEGMENTS_PER_STAGE);
+        rig.snapshot("1 video+audio", &mut out);
+
+        rig.driver.session().change_tracks(Vec::new());
+        for _ in 0..GAP_EMPTY_FEEDS {
+            rig.feed();
+        }
+        rig.snapshot("2 empty track set", &mut out);
+
+        rig.driver.session().change_tracks(gap_video_audio_specs());
+        let resumed = rig.closed_segments() + GAP_SEGMENTS_PER_STAGE;
+        rig.feed_until_segments(resumed);
+        rig.snapshot("3 video+audio again", &mut out);
+
+        assert_gap_golden(&out);
+    }
+
     // --- T7 (issue #1082): a stalled DVR pin must never block the shared --
     // --- tokio worker thread `pump`/`flush` run on -------------------------
 
