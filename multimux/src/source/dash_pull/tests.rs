@@ -1585,7 +1585,13 @@ mod exchange {
         )
         .await;
         assert!(
-            matches!(result, FetchResult::Failed { error: MultimuxError::Auth { .. }, .. }),
+            matches!(
+                result,
+                FetchResult::Failed {
+                    error: MultimuxError::Auth { .. },
+                    ..
+                }
+            ),
             "a refused credential is Auth, not a retryable Connect"
         );
         server.abort();

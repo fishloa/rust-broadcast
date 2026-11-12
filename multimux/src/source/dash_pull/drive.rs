@@ -206,7 +206,13 @@ fn failed(
     error: MultimuxError,
 ) -> (DashFetch, FetchResult) {
     fetch.outcome = Outcome::Failed(failure);
-    (fetch, FetchResult::Failed { error, retry_after: None })
+    (
+        fetch,
+        FetchResult::Failed {
+            error,
+            retry_after: None,
+        },
+    )
 }
 
 fn header_text(headers: &HeaderMap, name: &HeaderName) -> Option<String> {
@@ -282,7 +288,13 @@ pub(super) async fn exchange(net: &Net, req: &Request, sent_us: u64) -> (DashFet
         let error = MultimuxError::Auth {
             reason: format!("dash-pull {}: {status}", req.what),
         };
-        return (fetch, FetchResult::Failed { error, retry_after: None });
+        return (
+            fetch,
+            FetchResult::Failed {
+                error,
+                retry_after: None,
+            },
+        );
     }
     if status == StatusCode::NOT_MODIFIED && req.target == FetchTarget::Mpd {
         fetch.outcome = Outcome::Unchanged;

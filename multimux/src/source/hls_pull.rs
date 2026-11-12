@@ -713,9 +713,8 @@ pub async fn run_hls_pull(
                             }
                             // Queued, not spawned: the spawn loop applies
                             // the in-flight bound and the backoff delay.
-                            // retry_after travels with the fetch result (see pull::FetchResult).
-                            let delay = retry_backoff(next_attempt)
-                                .max(retry_after.unwrap_or_default());
+                            let delay =
+                                retry_backoff(next_attempt).max(retry_after.unwrap_or_default());
                             scheduler.push_retry(resource_fetch(
                                 http.clone(),
                                 credentials.clone(),
@@ -1100,7 +1099,10 @@ Content-Length: {over}
         let result = run_key_fetch(url).await;
         server.abort();
         match result {
-            crate::source::pull::FetchResult::Failed { error: MultimuxError::Connect { reason }, .. } => {
+            crate::source::pull::FetchResult::Failed {
+                error: MultimuxError::Connect { reason },
+                ..
+            } => {
                 assert!(reason.contains("exceeds"), "{reason}");
             }
             _ => panic!("expected the body cap to reject the key"),

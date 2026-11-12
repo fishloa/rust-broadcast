@@ -886,10 +886,15 @@ fn pending_fetch(
                 Ok(Ok(FetchOne::NotReady)) => FetchResult::NotReady(MultimuxError::Connect {
                     reason: format!("smooth-pull {what} ({id:?}) not ready yet"),
                 }),
-                Ok(Err(e)) => FetchResult::Failed { error: e, retry_after: None },
+                Ok(Err(e)) => FetchResult::Failed {
+                    error: e,
+                    retry_after: None,
+                },
                 Err(_) => FetchResult::Failed {
                     error: MultimuxError::Connect {
-                        reason: format!("smooth-pull {what} ({id:?}) read exceeded {read_timeout:?}"),
+                        reason: format!(
+                            "smooth-pull {what} ({id:?}) read exceeded {read_timeout:?}"
+                        ),
                     },
                     retry_after: None,
                 },
