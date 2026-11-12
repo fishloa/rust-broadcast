@@ -125,4 +125,12 @@ impl Probe {
     pub fn conformance_stats(&self) -> ConformanceStats {
         self.conformance.stats()
     }
+
+    /// The underlying [`dvb_conformance::ConformanceMonitor`]'s accumulated
+    /// per-indicator event counts — the same accounting `media-doctor watch`
+    /// publishes, kept by the monitor itself under `dvb-conformance`.
+    #[must_use]
+    pub fn indicator_counts(&self) -> alloc::vec::Vec<dvb_conformance::IndicatorCount> {
+        self.conformance.indicator_counts()
+    }
 }

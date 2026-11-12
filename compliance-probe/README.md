@@ -114,7 +114,7 @@ Runnable examples: `cargo run -p compliance-probe --example fixture_report`
 | `Probe` (`new`, `with_config(dvb_conformance::Config)`, `feed_ts_packet(&[u8;188], t)`, `conformance_stats`) | Per-packet and per-section checks |
 | `Probe::drain_byte_tap`, `drain_event_cursor`, `note_media_time`; `trunk_bridge::TrunkBridge` (`std`) | One bounded, non-blocking cursor on a `media_plane::ByteTap` (TR 101 290 needs raw wire bytes: a demuxed sample has already dropped the continuity counter) and on a `Trunk`'s `EventCursor` (SCTE-35), never a second copy of the stream |
 | `conformance::PcrSample { pid, drift_ppm, jitter_ppm }` | Per-PID PCR estimate; baseline resets on `discontinuity_indicator` |
-| `scte35::{Scte35Sanity, check_section}` | `Malformed`, `NotSpliceInsert`, `Immediate`, `InFuture`, `InPast`, `Cancelled`, `Encrypted` (a well-formed encrypted section counts `metric_names::SCTE35_ENCRYPTED_TOTAL` = `compliance_probe_scte35_encrypted_total`) |
+| `scte35::{Scte35Sanity, check_section}` | `Malformed`, `NotSpliceInsert`, `Immediate`, `InFuture`, `InPast`, `Cancelled`, `Encrypted` (a well-formed encrypted section counts `metric_names::SCTE35_ENCRYPTED_TOTAL` = `compliance_probe_scte35_encrypted_total`); the cue semantics behind the verdict are `scte35_splice::{splice_event, judge_splice_time}` |
 | `structural::run_structural_checks(ts) -> media_doctor::Report` | `media-doctor`'s diagnostics, findings counted |
 | `metric_names::*` | `compliance_probe_ts_packets_total`, `_tr101290_events_total{indicator,priority}`, `_tr101290_in_sync`, `_pcr_drift_ppm{pid}`, `_pcr_jitter_ppm{pid}`, `_tap_lagged_total`, `_event_cursor_lagged_total`, `_scte35_cues_total`, `_scte35_malformed_total`, `_scte35_immediate_total`, `_scte35_pts_in_past_total`, `_scte35_unresolved_anchor_total`, `_scte35_no_reference_total`, `_structural_findings_total` |
 
@@ -123,9 +123,13 @@ Runnable examples: `cargo run -p compliance-probe --example fixture_report`
 - **Library, not a service.** No threads, sockets or exporters; the `metrics`
   facade is the only output, and its macros are `std`-only (compiled out in a
   `no_std` build).
-- **No second implementation.** TR 101 290 is `dvb-conformance`, structural
-  checks are `media-doctor`, SCTE-35 parsing is `scte35-splice` /
-  `timed-metadata`, PCR wrap arithmetic is `clock33` (`workspace-guards/tests/guards/clock33.rs`).
+- **No second implementation.** TR 101 290 is `dvb-conformance` (including the
+  per-indicator accounting this crate publishes), SCTE-35 cue sanity is
+  `scte35-splice`'s shared tracker — the same engine `media-doctor` runs, so
+  the two tools agree on the same stream by construction
+  (`tests/cross_tool_engines.rs`) — structural checks are `media-doctor`,
+  SCTE-35 parsing is `scte35-splice` / `timed-metadata`, PCR wrap arithmetic is
+  `clock33` (`workspace-guards/tests/guards/clock33.rs`).
 - **Honest gaps.** Every limitation above is stated rather than left as an
   always-zero metric.
 - Public enums carry `name()` and `Display` (`workspace-guards/tests/guards/label.rs`).

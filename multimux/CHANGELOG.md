@@ -12,6 +12,7 @@
 - Blocking-reload timeout policy now lives in `hls-runtime::server` (multimux calls it).
 ### Changed
 - The DASH/LL-DASH manifests render their `xs:duration` attributes with `broadcast_dash::duration::xs_duration`, the one writer in the workspace, instead of `transmux::dash::xs_duration` (removed); the rendered bytes are unchanged (#2465).
+- RTSP keepalive is now `rtsp_runtime::ClientSession`'s schedule driven from `next_deadline`/`on_deadline`, instead of a second timer with its own clamp, and it follows the method the server advertises: the first keepalive is a `GET_PARAMETER` probe whose `Public` answer settles the rest (`OPTIONS` for a server that does not list it).
 - Timeline discontinuity detection now uses the per-track detector from `transmux` (broadcast-client semantics); the 10 s `MEDIA_DISCONTINUITY_NS` constant is removed.
 - RTSP pull skips unplayable SDP media sections (and foreign-authority controls and sections beyond the track cap) instead of failing the whole route; fails only when nothing is playable. Skipped sections are logged as route warnings.
 ### Removed
@@ -79,6 +80,7 @@
 - `rescale_to_90k` now wraps the rescaled RTP timestamp into the 32-bit range explicitly (RFC 3550 §5.1) instead of relying on `as u32`.
 - `Recorder::lines` and `Recorder::len` recover a poisoned lock via `PoisonError::into_inner` instead of returning an empty golden.
 
+### Changed
 ## [0.18.0] - 2026-11-10
 ### Changed
 - LL-HLS and TS-HLS outputs now share one HLS media-playlist implementation (parameterised by held/insert-priority), removing the duplicated route/playlist code.

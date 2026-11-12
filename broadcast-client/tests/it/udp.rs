@@ -443,11 +443,41 @@ fn a_backward_jump_beyond_the_window_is_a_restart_and_a_forward_jump_is_loss() {
     let stats = host.session.datagram_stats();
     assert_eq!(stats.lost, u64::from(window) + 100);
     assert_eq!(stats.resyncs, 0);
-    let behind = rtp_datagram(10, SSRC_A, MP2T_PAYLOAD_TYPE, &ts[..7 * TS_PACKET]);
-    host.datagram(&behind);
+    let mut run = rtp_datagrams(&ts, 7, 10, SSRC_A);
+    run.truncate(4);
+    for d in &run {
+        host.datagram(d);
+    }
     let stats = host.session.datagram_stats();
     assert_eq!(stats.resyncs, 1);
     assert!(host.count(|e| matches!(e, Event::Discontinuity)) >= 1);
+}
+
+/// The input the pre-unification handlers disagreed on: one duplicate
+/// arriving far behind the delivery point, with no run after it. RFC 3550
+/// §A.1 makes that a wild jump — the packet is discarded and `bad_seq` armed
+/// for confirmation — so it must not move the sequence space; the
+/// pre-unification heuristic resynced onto it and reported a discontinuity.
+#[test]
+fn a_single_far_behind_duplicate_is_not_a_restart() {
+    let ts = small();
+    let rtp = rtp_datagrams(&ts, 7, 0, SSRC_A);
+    let mut host = UdpHost::open("rtp://239.1.1.1:5000", Config::default());
+    host.datagram(&rtp[0]);
+    host.datagram(&rtp[1]);
+    host.datagram(&rtp[2]);
+    host.advance_to(2 * UdpConfig::default().reorder_wait_us);
+    let behind = u16::MAX - 200;
+    let misordered = rtp_datagram(
+        behind,
+        SSRC_A,
+        MP2T_PAYLOAD_TYPE,
+        &ts[7 * TS_PACKET..14 * TS_PACKET],
+    );
+    host.datagram(&misordered);
+    let stats = host.session.datagram_stats();
+    assert_eq!(stats.resyncs, 0, "a stray packet is not a restart");
+    assert_eq!(host.count(|e| matches!(e, Event::Discontinuity)), 0);
 }
 
 #[test]

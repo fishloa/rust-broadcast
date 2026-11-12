@@ -22,9 +22,9 @@ use dvb_si::tables::pmt::StreamType;
 use crate::Diagnostic;
 use crate::Report;
 use crate::diagnostics::codec_common::{collect_pmt_streams, pids_with_stream_type};
-use crate::diagnostics::scte35_track::SpliceTracker;
 use crate::report::{Finding, Location, Severity};
 use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
+use scte35_splice::SpliceTracker;
 
 /// Checks SCTE-35 splice insertion consistency across the stream.
 ///
