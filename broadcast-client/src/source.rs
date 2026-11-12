@@ -8,7 +8,6 @@ pub(crate) mod hls_join;
 pub(crate) mod hls_session;
 pub(crate) mod rtmp;
 pub(crate) mod rtsp;
-pub(crate) mod rtsp_align;
 pub(crate) mod rtsp_sdp;
 pub(crate) mod smooth;
 pub(crate) mod srt;

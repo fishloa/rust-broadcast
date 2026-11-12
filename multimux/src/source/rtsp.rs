@@ -145,6 +145,7 @@ pub struct RtspIngestSession {
     tracks: Vec<TrackInit>,
     plan: Option<rtsp_runtime::PlayPlan>,
     depacketiser: Option<transmux::RtpStreamDepacketiser>,
+    aligner: transmux::TrackAligner,
     phase: Phase,
     outbound: VecDeque<Bytes>,
     pending: VecDeque<SessionEvent>,
@@ -165,6 +166,19 @@ pub struct RtspIngestSession {
     malformed_media_frames: u64,
     rtcp_frames: u64,
     torn_down: bool,
+}
+
+fn queue_placed(pending: &mut VecDeque<SessionEvent>, placed: Vec<transmux::AlignOut>) {
+    for out in placed {
+        if let transmux::AlignOut::Sample(track_id, sample) = out {
+            pending.push_back(SessionEvent::Sample {
+                program: ProgramId(0),
+                track_id,
+                retention: RetentionClass::Timed,
+                sample,
+            });
+        }
+    }
 }
 
 /// Default RTSP keepalive interval when a server declares a session timeout
@@ -226,6 +240,27 @@ impl RtspIngestSession {
             Ok(bytes) => self.outbound.push_back(Bytes::from(bytes)),
             Err(e) => tracing::warn!(error = %e, "rtsp: failed to build TEARDOWN"),
         }
+    }
+
+    fn note_rtp_info(&mut self) {
+        let Some(plan) = self.plan.as_ref() else {
+            return;
+        };
+        let times: Vec<(TrackId, u32)> = self
+            .session
+            .take_rtp_info()
+            .into_iter()
+            .filter_map(|entry| {
+                let rtptime = entry.rtptime?;
+                let uri = Url::parse(&entry.uri).ok()?;
+                let index = plan
+                    .setups()
+                    .iter()
+                    .position(|s| Url::parse(&s.control).is_ok_and(|u| u == uri))?;
+                Some((self.tracks.get(index)?.track_id, rtptime))
+            })
+            .collect();
+        self.aligner.note_rtp_info(&times);
     }
 
     fn begin_setup(&mut self, index: usize) -> Result<()> {
@@ -348,6 +383,19 @@ impl RtspIngestSession {
                                     })
                                     .collect(),
                             ));
+                            self.aligner = transmux::TrackAligner::new(
+                                &self
+                                    .tracks
+                                    .iter()
+                                    .map(|t| {
+                                        (
+                                            t.track_id,
+                                            matches!(t.config, transmux::CodecConfig::Avc { .. }),
+                                            t.clock_rate,
+                                        )
+                                    })
+                                    .collect::<Vec<_>>(),
+                            );
                             let play_uri = self
                                 .plan
                                 .as_ref()
@@ -359,6 +407,7 @@ impl RtspIngestSession {
                         }
                     }
                     (Phase::AwaitPlay, m) if *m == Method::Play => {
+                        self.note_rtp_info();
                         self.pending.push_back(SessionEvent::Established);
                         let specs = self
                             .depacketiser
@@ -410,6 +459,7 @@ impl RtspIngestSession {
                     {
                         self.rtcp_frames = self.rtcp_frames.saturating_add(1);
                         depa.push_rtcp(track_id, &data);
+                        self.aligner.note_rtcp();
                     }
                     return Ok(());
                 };
@@ -434,12 +484,8 @@ impl RtspIngestSession {
                     }
                 };
                 for sample in samples {
-                    self.pending.push_back(SessionEvent::Sample {
-                        program: ProgramId(0),
-                        track_id,
-                        retention: RetentionClass::Timed,
-                        sample,
-                    });
+                    let placed = self.aligner.push(depa, track_id, sample);
+                    queue_placed(&mut self.pending, placed);
                 }
             }
             // `ClientEvent` is `#[non_exhaustive]`: a future variant this
@@ -486,12 +532,8 @@ impl Stage for RtspIngestSession {
             match depa.flush(track_id) {
                 Ok(samples) => {
                     for sample in samples {
-                        self.pending.push_back(SessionEvent::Sample {
-                            program: ProgramId(0),
-                            track_id,
-                            retention: RetentionClass::Timed,
-                            sample,
-                        });
+                        let placed = self.aligner.push(depa, track_id, sample);
+                        queue_placed(&mut self.pending, placed);
                     }
                 }
                 Err(e) => {
@@ -500,6 +542,8 @@ impl Stage for RtspIngestSession {
                 }
             }
         }
+        let placed = self.aligner.flush(depa);
+        queue_placed(&mut self.pending, placed);
         self.queue_teardown();
         Ok(())
     }
@@ -633,6 +677,7 @@ impl Dialer for RtspDialer {
             tracks: Vec::new(),
             plan: None,
             depacketiser: None,
+            aligner: transmux::TrackAligner::default(),
             phase: Phase::AwaitDescribe,
             outbound: VecDeque::from(vec![Bytes::from(describe_bytes)]),
             pending: VecDeque::new(),
@@ -2240,5 +2285,179 @@ mod tests {
         // The classification helper still matches; the *bounded count* is
         // what makes one 404 non-fatal, and is exercised end-to-end by
         // `origin::supervisor`'s own tests.
+    }
+
+    mod sr_alignment {
+        use super::*;
+        use broadcast_common::Serialize;
+        use broadcast_common::timescale::{Rounding, to_micros};
+
+        const VIDEO: TrackId = TrackId::new(1);
+        const AUDIO: TrackId = TrackId::new(2);
+        const VIDEO_RATE: u32 = 90_000;
+        const AUDIO_RATE: u32 = 48_000;
+        const VIDEO_BASE: u32 = 4_294_900_000;
+        const AUDIO_BASE: u32 = 123_456;
+        const VIDEO_STEP: u32 = 3_000;
+        const AUDIO_STEP: u32 = 1_024;
+        const AUDIO_LAG_TICKS: u32 = 4_800;
+        const AUDIO_LAG_US: i128 = 100_000;
+        const FRAME_US: i128 = 33_333;
+        const FRAMES: u32 = 8;
+        const VIDEO_CHANNEL: u8 = 0;
+        const AUDIO_CHANNEL: u8 = 2;
+        const SR_SSRC: u32 = 0x1234_5678;
+        const NTP_INSTANT_SECONDS: u32 = 3_900_000_000;
+        const VIDEO_SSRC: u32 = 0xCAFE_BABE;
+        const AUDIO_SSRC: u32 = 0xFEED_F00D;
+        const AAC_AU_HEADERS_LEN_BITS: [u8; 2] = [0x00, 0x10];
+        const AAC_AU_SIZE_4_HEADER: [u8; 2] = [0x00, 0x20];
+
+        fn sdp() -> String {
+            let sprop = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
+            format!(
+                "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n\
+                 m=video 0 RTP/AVP 96\r\na=control:trackID=1\r\n\
+                 a=rtpmap:96 H264/90000\r\n\
+                 a=fmtp:96 packetization-mode=1;sprop-parameter-sets={sprop}\r\n\
+                 m=audio 0 RTP/AVP 97\r\na=control:trackID=2\r\n\
+                 a=rtpmap:97 mpeg4-generic/48000/2\r\n\
+                 a=fmtp:97 streamtype=5;profile-level-id=1;mode=AAC-hbr;config=1190;\
+                 sizelength=13;indexlength=3;indexdeltalength=3\r\n"
+            )
+        }
+
+        fn playing_session() -> RtspIngestSession {
+            let mut dialer = RtspDialer::new("rtsp://cam.local/stream", None);
+            let mut session = dialer.dial().expect("dial");
+            let _ = session.poll_transmit();
+            for (cseq, headers, body) in [
+                (1, "Content-Type: application/sdp\r\n", sdp()),
+                (
+                    2,
+                    "Transport: RTP/AVP/TCP;interleaved=0-1\r\nSession: ABC123;timeout=60\r\n",
+                    String::new(),
+                ),
+                (
+                    3,
+                    "Transport: RTP/AVP/TCP;interleaved=2-3\r\nSession: ABC123;timeout=60\r\n",
+                    String::new(),
+                ),
+                (4, "", String::new()),
+            ] {
+                session
+                    .feed(
+                        &rtsp_response(cseq, "200 OK", headers, &body),
+                        Timestamp::ZERO,
+                    )
+                    .expect("handshake response");
+                let _ = session.poll_transmit();
+            }
+            session
+        }
+
+        fn rtp(pt: u8, seq: u16, ts: u32, ssrc: u32, payload: &[u8]) -> Vec<u8> {
+            let mut pkt = vec![0x80, 0x80 | pt];
+            pkt.extend_from_slice(&seq.to_be_bytes());
+            pkt.extend_from_slice(&ts.to_be_bytes());
+            pkt.extend_from_slice(&ssrc.to_be_bytes());
+            pkt.extend_from_slice(payload);
+            pkt
+        }
+
+        fn frame(channel: u8, bytes: Vec<u8>) -> Vec<u8> {
+            rtsp_runtime::interleaved::InterleavedFrame::new(channel, bytes)
+                .to_bytes()
+                .expect("frame")
+        }
+
+        fn sender_report(channel: u8, rtp_timestamp: u32) -> Vec<u8> {
+            let sr = transmux::rtcp::SenderReport::new(
+                SR_SSRC,
+                NTP_INSTANT_SECONDS,
+                0,
+                rtp_timestamp,
+                0,
+                0,
+                Vec::new(),
+            );
+            let mut buf = vec![0u8; sr.serialized_len()];
+            let n = sr.serialize_into(&mut buf).expect("serialize sr");
+            buf.truncate(n);
+            frame(channel, buf)
+        }
+
+        fn first_times_us(session: &mut RtspIngestSession, with_sr: bool) -> (i128, i128) {
+            let now = Timestamp::ZERO;
+            if with_sr {
+                session
+                    .feed(&sender_report(VIDEO_CHANNEL + 1, VIDEO_BASE), now)
+                    .expect("video sr");
+                session
+                    .feed(&sender_report(AUDIO_CHANNEL + 1, AUDIO_BASE), now)
+                    .expect("audio sr");
+            }
+            for k in 0..FRAMES {
+                let nal: &[u8] = if k == 0 { &[0x65, 0xAA] } else { &[0x41, 0xAA] };
+                let video_ts = VIDEO_BASE.wrapping_add(k * VIDEO_STEP);
+                let seq = u16::try_from(k).expect("seq");
+                session
+                    .feed(
+                        &frame(VIDEO_CHANNEL, rtp(96, seq, video_ts, VIDEO_SSRC, nal)),
+                        now,
+                    )
+                    .expect("video rtp");
+                let mut au = AAC_AU_HEADERS_LEN_BITS.to_vec();
+                au.extend_from_slice(&AAC_AU_SIZE_4_HEADER);
+                au.extend_from_slice(&[1, 2, 3, 4]);
+                let audio_ts = AUDIO_BASE.wrapping_add(AUDIO_LAG_TICKS + k * AUDIO_STEP);
+                session
+                    .feed(
+                        &frame(AUDIO_CHANNEL, rtp(97, seq, audio_ts, AUDIO_SSRC, &au)),
+                        now,
+                    )
+                    .expect("audio rtp");
+            }
+            session.finish().expect("finish");
+            let (mut video, mut audio) = (None, None);
+            while let Some(event) = session.poll() {
+                if let SessionEvent::Sample {
+                    track_id, sample, ..
+                } = event
+                {
+                    let pts = sample.pts.expect("pts");
+                    let us = |rate| to_micros(i128::from(pts), rate, Rounding::TowardZero);
+                    if track_id == VIDEO && video.is_none() {
+                        video = Some(us(VIDEO_RATE));
+                    }
+                    if track_id == AUDIO && audio.is_none() {
+                        audio = Some(us(AUDIO_RATE));
+                    }
+                }
+            }
+            (video.expect("video sample"), audio.expect("audio sample"))
+        }
+
+        #[test]
+        fn sender_reports_place_unrelated_track_clocks_on_one_timeline() {
+            let mut session = playing_session();
+            let (video, audio) = first_times_us(&mut session, true);
+            let gap = audio - video;
+            assert!(
+                (gap - AUDIO_LAG_US).abs() < FRAME_US,
+                "audio trails video by {gap}us, sender reports say {AUDIO_LAG_US}us"
+            );
+        }
+
+        #[test]
+        fn before_any_sender_report_the_first_samples_share_a_timeline() {
+            let mut session = playing_session();
+            let (video, audio) = first_times_us(&mut session, false);
+            assert!(
+                (audio - video).abs() < FRAME_US,
+                "provisional placement lines the first samples up, gap {}us",
+                audio - video
+            );
+        }
     }
 }

@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Added
+- An RTSP pull places its tracks on one timeline with `transmux::TrackAligner`, the rule `broadcast-client` applies: the video track's times pass through, other tracks are offset from RTCP Sender Reports (or the PLAY `RTP-Info` when it names every track), and before either is known each track's first sample lines up with the video's first sample. Tracks whose RTP clocks start at unrelated offsets are now aligned by wall clock instead of each rebased to zero (#2380).
 - An RTSP pull sends `TEARDOWN` (RFC 2326 §10.7) for a playing session when it is cancelled, before the connection closes; `RtspIngestSession::finish` queues it and the shared ingest scaffold writes what a finished session queued on cancel.
 - An RTSP pull feeds interleaved RTCP on the negotiated RTCP channel to the track's depacketiser, which records Sender Report NTP anchors (`RtspIngestSession::rtcp_frames` counts them).
 - `tests/it/ingest_drive_golden.rs` pins the WHIP and RTMP ingest event sequences (`fixtures/golden/ingest/`): the ordered `SessionEvent`s each real publish produces, the program and track specs it lands, and its final health — recorded at the session boundary the #2373 shared drive loop must reproduce. Regenerate with `UPDATE_INGEST_GOLDENS=1`.

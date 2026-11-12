@@ -827,9 +827,9 @@ struct SrAnchor {
 /// clock_rate` (RFC 3550 §6.4.1's NTP/RTP correlation, generalised from the
 /// SR's own instant to any AU on the same RTP clock).
 fn wall_seconds(anchor: &SrAnchor, clock_rate: u32, au_unwrapped_ts: u64) -> f64 {
-    let anchor_unwrapped = unwrap_ts(Some(au_unwrapped_ts), anchor.raw_rtp_ts);
-    let delta_ticks = au_unwrapped_ts as i128 - i128::from(anchor_unwrapped);
-    anchor.ntp_seconds + (delta_ticks as f64) / f64::from(clock_rate)
+    let au_low = u32::try_from(au_unwrapped_ts & u64::from(u32::MAX)).unwrap_or(0);
+    let delta_ticks = i32::from_ne_bytes(au_low.wrapping_sub(anchor.raw_rtp_ts).to_ne_bytes());
+    anchor.ntp_seconds + f64::from(delta_ticks) / f64::from(clock_rate)
 }
 
 /// An access unit whose duration is not yet known (waiting on the next AU's
