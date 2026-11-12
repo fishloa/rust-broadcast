@@ -82,6 +82,7 @@ fn sample_trace(fixture: &str) -> String {
                 id,
                 FetchFailure {
                     status: Some(NOT_FOUND),
+                    ..FetchFailure::default()
                 },
             ),
             Some(ref bytes) if is_manifest => SmoothInput::Manifest(id, bytes),

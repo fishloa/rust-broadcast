@@ -6,6 +6,9 @@
 - An RTSP pull feeds interleaved RTCP on the negotiated RTCP channel to the track's depacketiser, which records Sender Report NTP anchors (`RtspIngestSession::rtcp_frames` counts them).
 - `tests/it/ingest_drive_golden.rs` pins the WHIP and RTMP ingest event sequences (`fixtures/golden/ingest/`): the ordered `SessionEvent`s each real publish produces, the program and track specs it lands, and its final health — recorded at the session boundary the #2373 shared drive loop must reproduce. Regenerate with `UPDATE_INGEST_GOLDENS=1`.
 
+### Fixed
+- Every pull honours the server's `Retry-After` (RFC 9110 §10.2.3) on a `429`/`503`, not only HLS resource fetches: an HLS playlist fetch is retried after the wait instead of ending the session, a DASH retry waits the longer of its backoff and the server's wait, and a Smooth retry passes the wait to `smooth-runtime` (#2393).
+
 ### Changed
 - HTTP pull auth (`ts_http`, `hls_pull`, `dash_pull`, `smooth_pull`) runs on `broadcast_client::auth::AuthState`: origin-scoped credentials, preemptive Basic/Bearer, and the one-shot Digest replay with cross-origin refusal are no longer re-implemented in `source::http_auth` (#2371). Each fetch works on its own clone of the state, so the wire behaviour is unchanged (goldens in `source::http_auth` tests).
 - The RTMP push builds its `onMetaData` with `transmux::on_metadata_body` and decides which tracks FLV can carry with `transmux::flv_track_kind`, so a file `FlvMux` writes and a stream the push publishes describe the same tracks the same way; the transport's own builder and codec check are gone. The published `onMetaData` now carries `audiosamplerate` from the AAC track and a `stereo` flag that follows its channel count (Adobe FLV v10.1 §E.5), and no longer the non-§E.5 `audiochannels`; the live body omits `duration` (it has no known length).

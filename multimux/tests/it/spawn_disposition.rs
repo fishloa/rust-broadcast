@@ -35,7 +35,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ("dvr.rs", 603, "spawn_blocking DVR write; awaited inline"),
     (
         "source/pull.rs",
-        199,
+        200,
         "PullScheduler's `inflight` JoinSet (drained on drop); the shared engine for the three pull sources",
     ),
     (
@@ -166,27 +166,27 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "source/dash_pull/tests.rs",
-        379,
+        402,
         "test server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        650,
+        697,
         "test HTTP server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        807,
+        854,
         "test HTTP server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        1136,
+        1183,
         "test HTTP server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        1486,
+        1533,
         "test HTTP server task; aborted at test end",
     ),
 ];

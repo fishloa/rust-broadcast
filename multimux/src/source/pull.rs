@@ -47,6 +47,7 @@ use crate::error::MultimuxError;
 impl FetchResult {
     /// Map a plain `Result` (the common case — no "not ready" signal) onto a
     /// [`FetchResult`].
+    #[cfg(test)]
     pub fn from_result(r: Result<Vec<u8>, MultimuxError>) -> Self {
         match r {
             Ok(b) => FetchResult::Ready(b),

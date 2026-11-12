@@ -38,6 +38,42 @@ fn retries_wait_out_the_configured_backoff() {
 }
 
 #[test]
+fn a_fragment_retry_waits_out_the_server_retry_after_over_the_backoff() {
+    let good = fixture(&format!("av/{FIRST_VIDEO}"));
+    let mut host = av_host(SmoothConfig {
+        backoff_ms: vec![1_000],
+        ..SmoothConfig::default()
+    });
+    host.route(
+        FIRST_VIDEO,
+        vec![Reply::Throttled(503, 2_000_000), Reply::Body(good)],
+    );
+    host.run_until(|o| o.iter().any(is_ended));
+    let times = host.times_of(FIRST_VIDEO);
+    assert_eq!(times.len(), 2);
+    assert_eq!(times[1] - times[0], 2_000_000);
+}
+
+#[test]
+fn a_manifest_retry_waits_out_the_server_retry_after_over_the_backoff() {
+    let mut host = av_host(SmoothConfig {
+        backoff_ms: vec![1_000],
+        ..SmoothConfig::default()
+    });
+    host.route(
+        "Manifest",
+        vec![
+            Reply::Throttled(429, 3_000_000),
+            Reply::Body(fixture("av/Manifest")),
+        ],
+    );
+    host.run_until(|o| o.iter().any(is_ended));
+    let times = host.times_of("Manifest");
+    assert_eq!(times.len(), 2);
+    assert_eq!(times[1] - times[0], 3_000_000);
+}
+
+#[test]
 fn a_static_fragment_that_never_succeeds_is_fatal_after_the_configured_count() {
     let mut host = av_host(SmoothConfig {
         max_fragment_failures: 3,

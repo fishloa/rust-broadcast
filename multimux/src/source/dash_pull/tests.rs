@@ -274,6 +274,7 @@ struct Hit {
     name: String,
     range: Option<String>,
     status: u16,
+    at: std::time::Instant,
 }
 
 #[derive(Clone)]
@@ -281,6 +282,8 @@ struct FileState {
     dir: PathBuf,
     stall: Option<&'static str>,
     honour_range: bool,
+    throttle_once: Option<&'static str>,
+    throttled: Arc<std::sync::atomic::AtomicBool>,
     hits: Arc<Mutex<Vec<Hit>>>,
 }
 
@@ -302,9 +305,17 @@ async fn file_handler(
             name: name.clone(),
             range: range_text.clone(),
             status: status.as_u16(),
+            at: std::time::Instant::now(),
         });
         response
     };
+    if state.throttle_once == Some(name.as_str()) && !state.throttled.swap(true, Ordering::SeqCst) {
+        let mut response = AxumStatus::SERVICE_UNAVAILABLE.into_response();
+        response
+            .headers_mut()
+            .insert(header::RETRY_AFTER, header::HeaderValue::from_static("2"));
+        return respond(AxumStatus::SERVICE_UNAVAILABLE, response);
+    }
     let Ok(bytes) = std::fs::read(state.dir.join(&name)) else {
         return respond(AxumStatus::NOT_FOUND, AxumStatus::NOT_FOUND.into_response());
     };
@@ -360,6 +371,16 @@ async fn serve_files(
     stall: Option<&'static str>,
     honour_range: bool,
 ) -> FileOrigin {
+    serve_files_throttling(dir, auth, stall, honour_range, None).await
+}
+
+async fn serve_files_throttling(
+    dir: PathBuf,
+    auth: Option<crate::testutil::MockAuthScheme>,
+    stall: Option<&'static str>,
+    honour_range: bool,
+    throttle_once: Option<&'static str>,
+) -> FileOrigin {
     let hits = Arc::new(Mutex::new(Vec::new()));
     let mut app = Router::new()
         .route("/{name}", get(file_handler))
@@ -367,6 +388,8 @@ async fn serve_files(
             dir,
             stall,
             honour_range,
+            throttle_once,
+            throttled: Arc::default(),
             hits: Arc::clone(&hits),
         });
     if let Some(scheme) = auth {
@@ -433,6 +456,30 @@ async fn a_static_timeline_presentation_reaches_the_trunk_byte_exact() {
         &delivered.audio(),
         &expected("", "init-stream1.m4s", &FFMPEG_AUDIO),
         "audio",
+    );
+}
+
+/// A `503` with `Retry-After: 2` on a segment holds its retry back at least
+/// that long, past the backoff's first step.
+#[tokio::test]
+async fn a_segment_retry_waits_out_the_server_retry_after() {
+    let throttled = FFMPEG_VIDEO[0];
+    let origin = serve_files_throttling(fixture(""), None, None, false, Some(throttled)).await;
+    let (_, result) = Pull::start(route(origin.url("manifest.mpd")), SkewedClock::new(0))
+        .finish()
+        .await;
+    result.expect("a static presentation ends cleanly");
+    let hits: Vec<Hit> = origin
+        .hits()
+        .into_iter()
+        .filter(|hit| hit.name == throttled)
+        .collect();
+    assert_eq!(hits.len(), 2, "{hits:?}");
+    assert_eq!(hits[0].status, 503);
+    assert!(
+        hits[1].at.duration_since(hits[0].at) >= Duration::from_secs(2),
+        "the retry came {:?} after the 503",
+        hits[1].at.duration_since(hits[0].at)
     );
 }
 
