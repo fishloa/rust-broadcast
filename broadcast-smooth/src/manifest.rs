@@ -738,6 +738,10 @@ impl StreamIndex {
     /// resets it, otherwise it continues from the previous entry's `t + d`),
     /// each entry contributing `r + 1` occurrences of its own `d`.
     ///
+    /// An explicit `t` earlier than the end of the preceding entry (a repeat
+    /// or a step back) is [`SmoothParseError::NonMonotonicTime`]; a later one
+    /// is a gap and is kept.
+    ///
     /// Returns [`SmoothParseError::ChunkRunTooLong`] if the total chunk count
     /// (summed across every `c`, counting each `r + 1` repetition) would
     /// exceed [`MAX_CHUNK_RUN`], defending against remote alloc-DoS attacks
@@ -749,6 +753,9 @@ impl StreamIndex {
         let list = &self.chunks_list;
         for (i, c) in list.iter().enumerate() {
             if let Some(explicit_t) = c.t {
+                if explicit_t < t {
+                    return Err(SmoothParseError::NonMonotonicTime { index: i });
+                }
                 t = explicit_t;
             }
             let d = match c.d {
@@ -1376,6 +1383,38 @@ mod tests {
             m.streams[0].enumerate_chunks().unwrap_err(),
             SmoothParseError::NonMonotonicTime { .. }
         ));
+    }
+
+    fn single_stream(chunks: &str) -> StreamIndex {
+        let xml = alloc::format!(
+            r#"<SmoothStreamingMedia MajorVersion="2" MinorVersion="0" TimeScale="100"><StreamIndex Type="video" Url="u"><QualityLevel Index="0" Bitrate="1" FourCC="H264"/>{chunks}</StreamIndex></SmoothStreamingMedia>"#
+        );
+        SmoothManifest::parse(&xml).unwrap().streams.remove(0)
+    }
+
+    #[test]
+    fn explicit_t_that_repeats_or_goes_back_is_non_monotonic_with_d_present() {
+        for chunks in [
+            r#"<c t="0" d="100"/><c t="0" d="100"/>"#,
+            r#"<c t="0" d="100"/><c t="50" d="100"/>"#,
+            r#"<c t="200" d="100"/><c t="100" d="100"/>"#,
+        ] {
+            assert_eq!(
+                single_stream(chunks).enumerate_chunks().unwrap_err(),
+                SmoothParseError::NonMonotonicTime { index: 1 },
+                "{chunks}"
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_t_after_a_gap_is_accepted() {
+        assert_eq!(
+            single_stream(r#"<c t="0" d="100"/><c t="300" d="100"/>"#)
+                .enumerate_chunks()
+                .unwrap(),
+            alloc::vec![(0, 100), (300, 100)]
+        );
     }
 
     #[test]
