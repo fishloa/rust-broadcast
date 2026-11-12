@@ -75,6 +75,25 @@ pub(crate) fn ts(start: Instant, now: Instant) -> Timestamp {
 /// field would break them; the scaffold takes it as an argument.
 pub(crate) const DEFAULT_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Writes whatever the finished session still wants sent (an RTSP `TEARDOWN`,
+/// RFC 2326 §10.7) before the connection is dropped on cancel. Each write is
+/// bounded by `write_timeout`; the first failure or timeout abandons the rest,
+/// since the connection is closing either way.
+async fn send_farewell<S, W>(driver: &mut IngestDriver<S>, writer: &mut W, write_timeout: Duration)
+where
+    S: IngestSession + Sync,
+    S::Error: Send + Sync,
+    S::Request: AsRef<[u8]>,
+    W: AsyncWrite + Unpin + Send,
+{
+    while let Some(bytes) = driver.poll_transmit() {
+        let sent = tokio::time::timeout(write_timeout, writer.write_all(bytes.as_ref())).await;
+        if !matches!(sent, Ok(Ok(()))) {
+            return;
+        }
+    }
+}
+
 /// The drive loop. Takes the driver BY VALUE (the terminal tail consumes it
 /// with `into_health`, exactly as `run_rtsp` does).
 ///
@@ -114,6 +133,7 @@ where
         if cancel.is_cancelled() {
             release_route(&driver, route_handle);
             driver.finish();
+            send_farewell(&mut driver, writer, write_timeout).await;
             return MultimuxError::Connect {
                 reason: "cancelled".into(),
             };
@@ -176,6 +196,7 @@ where
         let Some(outcome) = outcome else {
             release_route(&driver, route_handle);
             driver.finish();
+            send_farewell(&mut driver, writer, write_timeout).await;
             return MultimuxError::Connect {
                 reason: "cancelled".into(),
             };
@@ -275,6 +296,8 @@ mod tests {
         announce: bool,
         /// Set once the program has been announced.
         announced: bool,
+        /// Queued by `finish`, like an RTSP `TEARDOWN`.
+        farewell: Option<Bytes>,
     }
 
     impl QuietSession {
@@ -286,6 +309,7 @@ mod tests {
                 tx_per_deadline: Bytes::new(),
                 announce: false,
                 announced: false,
+                farewell: None,
             }
         }
         fn announcing() -> Self {
@@ -303,6 +327,7 @@ mod tests {
                 tx_per_deadline: Bytes::from_static(b"OPTIONS"),
                 announce: false,
                 announced: false,
+                farewell: None,
             }
         }
         fn write_after_announce() -> Self {
@@ -320,6 +345,7 @@ mod tests {
                 tx_per_deadline: Bytes::new(),
                 announce: false,
                 announced: false,
+                farewell: None,
             }
         }
     }
@@ -352,6 +378,9 @@ mod tests {
             self.tx = Some(self.tx_per_deadline.clone());
         }
         fn finish(&mut self) -> Result<(), Infallible> {
+            if let Some(bytes) = self.farewell.take() {
+                self.tx = Some(bytes);
+            }
             Ok(())
         }
     }
@@ -802,5 +831,39 @@ mod tests {
         .expect("the write bound must end the scaffold");
         assert!(matches!(err, MultimuxError::Connect { .. }), "{err:?}");
         assert_eq!(route.active_publisher_len(), 0);
+    }
+
+    #[tokio::test]
+    async fn cancel_sends_what_the_finished_session_queued() {
+        use tokio::io::AsyncReadExt;
+        let (mut w, mut peer) = tokio::io::duplex(64);
+        let route = route();
+        let mut progress = DriverProgress::new();
+        let cancel = CancellationToken::new();
+        let mut session = QuietSession::silent();
+        session.farewell = Some(Bytes::from_static(b"TEARDOWN"));
+        let mut source = Pending;
+        let stopper = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            stopper.cancel();
+        });
+        let err = run_ingest_scaffold(
+            driver(session),
+            &route,
+            &mut progress,
+            cancel,
+            timeouts(Duration::from_secs(30)),
+            Duration::from_secs(1),
+            &mut w,
+            &mut source,
+            MAP,
+        )
+        .await;
+        assert!(matches!(&err, MultimuxError::Connect { reason } if reason == "cancelled"));
+        drop(w);
+        let mut received = Vec::new();
+        peer.read_to_end(&mut received).await.unwrap();
+        assert_eq!(received, b"TEARDOWN");
     }
 }

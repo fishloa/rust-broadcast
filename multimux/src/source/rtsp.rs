@@ -162,6 +162,7 @@ pub struct RtspIngestSession {
     /// Interleaved media frames skipped because their RTP payload did not
     /// parse (audit T16, #1144) — see [`Self::malformed_media_frames`].
     malformed_media_frames: u64,
+    torn_down: bool,
 }
 
 /// Default RTSP keepalive interval when a server declares a session timeout
@@ -194,6 +195,21 @@ impl RtspIngestSession {
     /// the session.
     pub fn malformed_media_frames(&self) -> u64 {
         self.malformed_media_frames
+    }
+
+    fn queue_teardown(&mut self) {
+        if self.torn_down || !matches!(self.phase, Phase::Live) {
+            return;
+        }
+        self.torn_down = true;
+        let uri = self
+            .plan
+            .as_ref()
+            .map_or(self.request_uri.as_str(), |plan| plan.play_uri());
+        match self.session.teardown(uri) {
+            Ok(bytes) => self.outbound.push_back(Bytes::from(bytes)),
+            Err(e) => tracing::warn!(error = %e, "rtsp: failed to build TEARDOWN"),
+        }
     }
 
     fn begin_setup(&mut self, index: usize) -> Result<()> {
@@ -434,7 +450,9 @@ impl Stage for RtspIngestSession {
 
     /// End of input: flush every track's depacketiser (a pending AU is
     /// complete by definition at end of stream — see
-    /// `RtpStreamDepacketiser::flush`). Idempotent.
+    /// `RtpStreamDepacketiser::flush`), then queue one `TEARDOWN` of the
+    /// playing session (RFC 2326 §10.7) for the driver to send before it
+    /// closes the connection. Idempotent.
     fn finish(&mut self) -> Result<()> {
         let Some(depa) = self.depacketiser.as_mut() else {
             return Ok(());
@@ -458,6 +476,7 @@ impl Stage for RtspIngestSession {
                 }
             }
         }
+        self.queue_teardown();
         Ok(())
     }
 
@@ -599,6 +618,7 @@ impl Dialer for RtspDialer {
             started: std::time::Instant::now(),
             keepalive_interval: None,
             malformed_media_frames: 0,
+            torn_down: false,
         })
     }
 }
@@ -1311,6 +1331,49 @@ mod tests {
         assert_eq!(count(&mut session), 2, "both trailing AUs flushed");
         session.finish().unwrap();
         assert_eq!(count(&mut session), 0, "finish is idempotent");
+    }
+
+    #[test]
+    fn finish_queues_one_teardown_for_a_playing_session() {
+        let mut dialer = RtspDialer::new("rtsp://cam.local/stream", None);
+        let mut session = dialer.dial().expect("dial");
+        let _ = session.poll_transmit();
+        for (cseq, headers, body) in [
+            (1, "Content-Type: application/sdp\r\n", sdp_body()),
+            (
+                2,
+                "Transport: RTP/AVP/TCP;interleaved=4-5\r\nSession: ABC123;timeout=60\r\n",
+                String::new(),
+            ),
+            (3, "", String::new()),
+        ] {
+            session
+                .feed(
+                    &rtsp_response(cseq, "200 OK", headers, &body),
+                    Timestamp::ZERO,
+                )
+                .unwrap();
+            let _ = session.poll_transmit();
+        }
+        session.finish().unwrap();
+        let teardown = session.poll_transmit().expect("finish queues a TEARDOWN");
+        let text = String::from_utf8(teardown.to_vec()).unwrap();
+        assert!(
+            text.starts_with("TEARDOWN rtsp://cam.local/stream RTSP/1.0\r\n"),
+            "{text}"
+        );
+        assert!(text.contains("Session: ABC123"), "{text}");
+        session.finish().unwrap();
+        assert!(session.poll_transmit().is_none(), "one TEARDOWN only");
+    }
+
+    #[test]
+    fn finish_before_play_queues_no_teardown() {
+        let mut dialer = RtspDialer::new("rtsp://cam.local/stream", None);
+        let mut session = dialer.dial().expect("dial");
+        let _ = session.poll_transmit();
+        session.finish().unwrap();
+        assert!(session.poll_transmit().is_none());
     }
 
     /// Severing `poll_transmit` (the no-hidden-I/O proof `media_plane::ingress`'s
