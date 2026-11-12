@@ -7,6 +7,11 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 
 use socket2::SockRef;
 
+/// Sharing a multicast port on macOS/BSD needs `SO_REUSEPORT` as well as
+/// `SO_REUSEADDR`; on Linux `SO_REUSEPORT` load-balances datagrams across the
+/// sockets, which a monitor sharing a port with a receiver must not do.
+const SHARE_PORT_NEEDS_REUSE_PORT: bool = cfg!(target_vendor = "apple");
+
 /// Socket options for [`bind_udp`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
@@ -87,7 +92,7 @@ pub fn bind_udp(addr: SocketAddr, config: &UdpConfig) -> io::Result<UdpSocket> {
     };
 
     let mut spec = dvb_stream::udp::SocketSpec::new(SocketAddr::new(bind_ip, addr.port()))
-        .with_reuse(config.reuse_addr, config.reuse_addr);
+        .with_reuse(config.reuse_addr, config.reuse_addr && SHARE_PORT_NEEDS_REUSE_PORT);
     if let Some(bytes) = config.recv_buffer {
         spec = spec.with_recv_buffer_size(bytes);
     }
