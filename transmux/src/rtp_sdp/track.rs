@@ -119,9 +119,7 @@ fn track_of_payload(media: &sdp_types::Media, payload_type: &str) -> Option<SdpT
         |expected: &str| encoding.is_none_or(|name| name.eq_ignore_ascii_case(expected));
     let (kind, config, clock_rate) = match media.media.as_str() {
         MEDIA_VIDEO if encoding_is(ENCODING_H264) => {
-            // H.264 packetization-mode: only 0 (non-interleaved, default) and 1
-            // (single NAL unit mode) are depacketized; mode 2 (interleaved,
-            // RFC 6184 §6.4) is unsupported.
+            // RFC 6184 §6.2-6.4: modes 0 (single NAL unit) and 1 (non-interleaved) only.
             if let Some(fmtp) = fmtp
                 && let Some(mode) = fmtp_param(fmtp, "packetization-mode")
                 && mode != "0"
@@ -161,8 +159,7 @@ fn track_of_payload(media: &sdp_types::Media, payload_type: &str) -> Option<SdpT
         MEDIA_AUDIO if encoding_is(ENCODING_AAC) => {
             let fmtp = fmtp?;
             let config = aac_config_from_fmtp(fmtp).ok()?;
-            // RFC 3640 §3.3.6: only AAC-hbr with sizeLength=13/indexLength=3/
-            // indexDeltaLength=3 is depacketized.
+            // RFC 3640 §3.3.6: AAC-hbr 13/3/3 only.
             let mode = fmtp_param(fmtp, "mode").unwrap_or("AAC-hbr");
             if !mode.eq_ignore_ascii_case("AAC-hbr") {
                 return None;
