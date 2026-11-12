@@ -11,8 +11,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use crate::tshttp::{Config as TsConfig, StarveKind};
-use rtsp_runtime::transport::{LowerTransport, Transport, TransportSpec};
-use rtsp_runtime::{ClientEvent, ClientSession, Credentials, Method, StatusCode};
+use rtsp_runtime::{ClientEvent, ClientSession, Credentials, Method, PlayPlan, StatusCode};
 use transmux::{CodecConfig, RtpLossEvent, RtpStreamDepacketiser, RtpStreamTrack, Sample, TrackId};
 use url::{Host, Url};
 
@@ -25,8 +24,6 @@ use crate::source::rtsp_sdp::{ParsedSdp, SdpError, SkippedMedia, TrackInit, pars
 const SCHEME_RTSPS: &str = "rtsps";
 const RTSP_DEFAULT_PORT: u16 = 554;
 const RTSPS_DEFAULT_PORT: u16 = 322;
-const CONTROL_AGGREGATE: &str = "*";
-const PATH_SEPARATOR: char = '/';
 const FIRST_CONN_ID: u32 = 1;
 const MAX_AUTH_REPLAYS: u32 = 2;
 const MAX_STALL_NOTICES_PER_POLL: u32 = 64;
@@ -91,7 +88,7 @@ pub(crate) struct RtspSource {
     auth_replays: u32,
     tracks: Vec<TrackInit>,
     reported_drops: BTreeSet<(usize, Option<String>)>,
-    aggregate: Option<String>,
+    plan: Option<PlayPlan>,
     depa: Option<RtpStreamDepacketiser>,
     aligner: Aligner,
     pre_sample: Vec<Event>,
@@ -115,8 +112,8 @@ pub(crate) struct RtspSource {
     events: VecDeque<Event>,
 }
 
-fn control_uri<'a>(aggregate: Option<&'a str>, request_uri: &'a str) -> &'a str {
-    aggregate.unwrap_or(request_uri)
+fn control_uri<'a>(plan: Option<&'a PlayPlan>, request_uri: &'a str) -> &'a str {
+    plan.map_or(request_uri, PlayPlan::play_uri)
 }
 
 fn effective_port(url: &Url) -> u16 {
@@ -175,7 +172,7 @@ impl RtspSource {
             auth_replays: 0,
             tracks: Vec::new(),
             reported_drops: BTreeSet::new(),
-            aggregate: None,
+            plan: None,
             depa: None,
             aligner: Aligner::default(),
             pre_sample: Vec::new(),
@@ -461,7 +458,7 @@ impl RtspSource {
 
     fn forget_connection_state(&mut self) {
         self.tracks.clear();
-        self.aggregate = None;
+        self.plan = None;
         self.depa = None;
         self.aligner = Aligner::default();
         self.pre_sample.clear();
@@ -479,7 +476,7 @@ impl RtspSource {
                 && self.client.session_id().is_some()
                 && let Ok(bytes) = self
                     .client
-                    .teardown(control_uri(self.aggregate.as_deref(), &self.uri))
+                    .teardown(control_uri(self.plan.as_ref(), &self.uri))
             {
                 self.actions.push_back(Action::Send { conn, bytes });
             }
@@ -495,20 +492,14 @@ impl RtspSource {
         let built = match req {
             Req::Describe => self.client.describe(&self.uri),
             Req::Setup(index) => {
-                let Some(track) = self.tracks.get(index) else {
+                let Some(setup) = self.plan.as_ref().and_then(|p| p.setups().get(index)) else {
                     return false;
                 };
-                let transport = Transport::single(TransportSpec::rtp_avp_tcp_interleaved(
-                    track.channel,
-                    track.rtcp_channel,
-                ));
-                let uri = track.setup_uri.clone();
+                let (uri, transport) = (setup.control.clone(), setup.transport.clone());
                 let _ = self.client.take_negotiated_transport();
                 self.client.setup(&uri, &transport)
             }
-            Req::Play => self
-                .client
-                .play(control_uri(self.aggregate.as_deref(), &self.uri)),
+            Req::Play => self.client.play(control_uri(self.plan.as_ref(), &self.uri)),
         };
         match built {
             Ok(bytes) => {
@@ -517,43 +508,6 @@ impl RtspSource {
                 true
             }
             Err(_) => false,
-        }
-    }
-
-    fn base_url(&self) -> Url {
-        self.client
-            .content_base()
-            .and_then(|base| self.request_url.join(base).ok())
-            .unwrap_or_else(|| {
-                let mut base = self.request_url.clone();
-                if !base.path().ends_with(PATH_SEPARATOR) {
-                    let path = alloc::format!("{}{PATH_SEPARATOR}", base.path());
-                    base.set_path(&path);
-                }
-                base
-            })
-    }
-
-    fn same_authority(&self, url: &Url) -> bool {
-        let default_port = if self.tls {
-            RTSPS_DEFAULT_PORT
-        } else {
-            RTSP_DEFAULT_PORT
-        };
-        url.scheme() == self.request_url.scheme()
-            && url.host() == self.request_url.host()
-            && url.port().unwrap_or(default_port) == self.port
-    }
-
-    fn resolve_control(&self, control: Option<&str>, base: &Url) -> Option<String> {
-        match control {
-            None => Some(self.uri.clone()),
-            Some(CONTROL_AGGREGATE) => Some(base.to_string()),
-            Some(c) => base
-                .join(c)
-                .ok()
-                .filter(|u| self.same_authority(u))
-                .map(|u| u.to_string()),
         }
     }
 
@@ -732,10 +686,9 @@ impl RtspSource {
     }
 
     fn on_describe_ok(&mut self, body: &[u8]) -> bool {
-        let base = self.base_url();
-        let parsed = parse_tracks(body, |control| self.resolve_control(control, &base));
+        let parsed = parse_tracks(body, &self.request_url, self.client.content_base());
         let ParsedSdp {
-            aggregate,
+            plan,
             tracks,
             skipped,
         } = match parsed {
@@ -759,7 +712,7 @@ impl RtspSource {
             }
         };
         self.report_dropped(&skipped);
-        self.aggregate = aggregate;
+        self.plan = Some(plan);
         self.tracks = tracks;
         self.send(Req::Setup(0))
     }
@@ -790,25 +743,18 @@ impl RtspSource {
     }
 
     fn on_setup_ok(&mut self, index: usize) -> bool {
-        let Some((channel, rtcp_channel)) = self
-            .client
-            .take_negotiated_transport()
-            .as_ref()
-            .and_then(Transport::first)
-            .filter(|spec| spec.lower_transport == Some(LowerTransport::Tcp))
-            .and_then(|spec| spec.interleaved)
-        else {
+        let Some(negotiated) = self.client.take_negotiated_transport() else {
             return false;
         };
-        if channel == rtcp_channel
-            || self.tracks.iter().take(index).any(|t| {
-                [t.channel, t.rtcp_channel].contains(&channel)
-                    || [t.channel, t.rtcp_channel].contains(&rtcp_channel)
-            })
-        {
+        let Some(plan) = self.plan.as_mut() else {
+            return false;
+        };
+        if plan.accept_setup(index, Some(&negotiated)).is_err() {
             return false;
         }
-        let Some(track) = self.tracks.get_mut(index) else {
+        let (Some((channel, rtcp_channel)), Some(track)) =
+            (plan.channels(index), self.tracks.get_mut(index))
+        else {
             return false;
         };
         track.channel = channel;
@@ -1163,7 +1109,7 @@ impl RtspSource {
         };
         if let Ok(bytes) = self
             .client
-            .options(control_uri(self.aggregate.as_deref(), &self.uri))
+            .options(control_uri(self.plan.as_ref(), &self.uri))
         {
             self.actions.push_back(Action::Send { conn, bytes });
         }

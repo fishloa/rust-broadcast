@@ -39,8 +39,9 @@
 //! session down — many servers answer `OPTIONS` with `405` (it is optional,
 //! RFC 2326 §10.1).
 //!
-//! RTCP receiver reports are still not sent: nothing pre-5a did, and this
-//! raw-interleaved ingest does not need them.
+//! Inbound RTCP is fed to the track's depacketiser, whose Sender Report
+//! handling holds the RTP-to-NTP anchor; RTCP receiver reports are still not
+//! sent.
 //!
 //! # `rtsps://` (TLS)
 //!
@@ -64,7 +65,6 @@ use transmux::TrackId;
 use bytes::Bytes;
 use rtsp_runtime::auth::Credentials;
 use rtsp_runtime::client::{ClientEvent, ClientSession};
-use rtsp_runtime::transport::{Transport, TransportSpec};
 use rtsp_runtime::{Method, StatusCode};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::net::TcpStream;
@@ -79,11 +79,7 @@ use media_plane::trunk::{RetentionClass, TrunkConfig};
 use crate::error::{MultimuxError, Result};
 use crate::source::http_auth::{credentials_from_url, resolve_credentials, strip_userinfo};
 use crate::source::pull_target::{PullKind, PullRoute};
-use crate::source::{TrackInit, sdp::parse_sdp_tracks};
-
-/// Interleaved channel offset from a media's RTP channel to its paired RTCP
-/// channel (RFC 2326 §10.12: `interleaved=lo-hi` with `hi = lo + 1`).
-const RTCP_CHANNEL_OFFSET: u8 = 1;
+use crate::source::{TrackInit, sdp::plan_tracks};
 
 /// Default port for a bare `rtsp://host/...` URL with no explicit port.
 const RTSP_DEFAULT_PORT: u16 = rtsp_runtime::RTSP_DEFAULT_PORT;
@@ -147,6 +143,7 @@ pub struct RtspIngestSession {
     base_url: Url,
     request_uri: String,
     tracks: Vec<TrackInit>,
+    plan: Option<rtsp_runtime::PlayPlan>,
     depacketiser: Option<transmux::RtpStreamDepacketiser>,
     phase: Phase,
     outbound: VecDeque<Bytes>,
@@ -166,6 +163,8 @@ pub struct RtspIngestSession {
     /// Interleaved media frames skipped because their RTP payload did not
     /// parse (audit T16, #1144) — see [`Self::malformed_media_frames`].
     malformed_media_frames: u64,
+    rtcp_frames: u64,
+    torn_down: bool,
 }
 
 /// Default RTSP keepalive interval when a server declares a session timeout
@@ -200,16 +199,46 @@ impl RtspIngestSession {
         self.malformed_media_frames
     }
 
+    /// How many interleaved RTCP frames were routed to a track's depacketiser,
+    /// where a Sender Report anchors that track's RTP clock to NTP time
+    /// (RFC 3550 §6.4.1).
+    pub fn rtcp_frames(&self) -> u64 {
+        self.rtcp_frames
+    }
+
+    fn rtcp_track(&self, channel: u8) -> Option<TrackId> {
+        let plan = self.plan.as_ref()?;
+        self.tracks.iter().enumerate().find_map(|(index, track)| {
+            (plan.channels(index)?.1 == channel).then_some(track.track_id)
+        })
+    }
+
+    fn queue_teardown(&mut self) {
+        if self.torn_down || !matches!(self.phase, Phase::Live) {
+            return;
+        }
+        self.torn_down = true;
+        let uri = self
+            .plan
+            .as_ref()
+            .map_or(self.request_uri.as_str(), |plan| plan.play_uri());
+        match self.session.teardown(uri) {
+            Ok(bytes) => self.outbound.push_back(Bytes::from(bytes)),
+            Err(e) => tracing::warn!(error = %e, "rtsp: failed to build TEARDOWN"),
+        }
+    }
+
     fn begin_setup(&mut self, index: usize) -> Result<()> {
-        let track = &self.tracks[index];
-        let uri = resolve_control(&self.base_url, track.control.as_deref())?;
-        let transport = Transport::single(TransportSpec::rtp_avp_tcp_interleaved(
-            track.channel,
-            track.channel.saturating_add(RTCP_CHANNEL_OFFSET),
-        ));
+        let setup = self
+            .plan
+            .as_ref()
+            .and_then(|plan| plan.setups().get(index))
+            .ok_or_else(|| MultimuxError::Sdp {
+                reason: "no planned SETUP for the track".into(),
+            })?;
         let bytes = self
             .session
-            .setup(&uri, &transport)
+            .setup(&setup.control, &setup.transport)
             .map_err(protocol_err("SETUP"))?;
         self.outbound.push_back(Bytes::from(bytes));
         self.phase = Phase::AwaitSetup(index);
@@ -242,41 +271,66 @@ impl RtspIngestSession {
                         );
                         return Ok(());
                     }
-                    return Err(response_error(&method, status));
+                    return Err(
+                        if matches!(status, StatusCode::Unauthorized | StatusCode::Forbidden) {
+                            MultimuxError::Auth {
+                                reason: format!(
+                                    "{}: {status}",
+                                    match method {
+                                        Method::Describe => "DESCRIBE",
+                                        Method::Setup => "SETUP",
+                                        Method::Play => "PLAY",
+                                        _ => "recv",
+                                    }
+                                ),
+                            }
+                        } else {
+                            MultimuxError::Protocol {
+                                phase: match method {
+                                    Method::Describe => "DESCRIBE",
+                                    Method::Setup => "SETUP",
+                                    Method::Play => "PLAY",
+                                    _ => "recv",
+                                },
+                                reason: format!("non-success status {status}"),
+                            }
+                        },
+                    );
                 }
                 match (&self.phase, &method) {
                     (Phase::AwaitDescribe, m) if *m == Method::Describe => {
-                        let tracks = parse_sdp_tracks(&body)?;
+                        let content_base = self.session.content_base().map(str::to_owned);
+                        let (plan, tracks) =
+                            plan_tracks(&self.base_url, content_base.as_deref(), &body)?;
+                        self.plan = Some(plan);
                         self.tracks = tracks;
-                        if self.tracks.is_empty() {
-                            return Err(MultimuxError::Sdp {
-                                reason: "DESCRIBE: SDP declared no media".into(),
-                            });
-                        }
                         self.begin_setup(0)?;
                     }
                     (Phase::AwaitSetup(index), m) if *m == Method::Setup => {
                         let index = *index;
-                        let spec = self
-                            .session
-                            .negotiated_transport()
-                            .and_then(Transport::first)
-                            .ok_or_else(|| MultimuxError::Protocol {
+                        let negotiated =
+                            self.session
+                                .negotiated_transport()
+                                .cloned()
+                                .ok_or_else(|| MultimuxError::Protocol {
+                                    phase: "SETUP",
+                                    reason: format!(
+                                        "track {}: server did not provide negotiated transport",
+                                        self.tracks[index].track_id
+                                    ),
+                                })?;
+                        let plan = self.plan.as_mut().ok_or_else(|| MultimuxError::Sdp {
+                            reason: "SETUP answered before a plan was made".into(),
+                        })?;
+                        plan.accept_setup(index, Some(&negotiated)).map_err(|e| {
+                            MultimuxError::Protocol {
                                 phase: "SETUP",
-                                reason: format!(
-                                    "track {}: server did not provide negotiated transport",
-                                    self.tracks[index].track_id
-                                ),
-                            })?;
-                        let channel =
-                            interleaved_channel(spec).ok_or_else(|| MultimuxError::Protocol {
-                                phase: "SETUP",
-                                reason: format!(
-                                    "track {}: server did not negotiate interleaved TCP transport",
-                                    self.tracks[index].track_id
-                                ),
-                            })?;
-                        self.tracks[index].channel = channel;
+                                reason: format!("track {}: {e}", self.tracks[index].track_id),
+                            }
+                        })?;
+                        if let Some((channel, _)) = plan.channels(index) {
+                            self.tracks[index].channel = channel;
+                        }
                         let next = index + 1;
                         if next < self.tracks.len() {
                             self.begin_setup(next)?;
@@ -294,10 +348,12 @@ impl RtspIngestSession {
                                     })
                                     .collect(),
                             ));
-                            let bytes = self
-                                .session
-                                .play(&self.request_uri)
-                                .map_err(protocol_err("PLAY"))?;
+                            let play_uri = self
+                                .plan
+                                .as_ref()
+                                .map_or(self.request_uri.as_str(), |plan| plan.play_uri());
+                            let bytes =
+                                self.session.play(play_uri).map_err(protocol_err("PLAY"))?;
                             self.outbound.push_back(Bytes::from(bytes));
                             self.phase = Phase::AwaitPlay;
                         }
@@ -349,6 +405,12 @@ impl RtspIngestSession {
                     return Ok(());
                 }
                 let Some(track_id) = route_channel(channel, &self.tracks) else {
+                    if let Some(track_id) = self.rtcp_track(channel)
+                        && let Some(depa) = self.depacketiser.as_mut()
+                    {
+                        self.rtcp_frames = self.rtcp_frames.saturating_add(1);
+                        depa.push_rtcp(track_id, &data);
+                    }
                     return Ok(());
                 };
                 let Some(depa) = self.depacketiser.as_mut() else {
@@ -412,7 +474,9 @@ impl Stage for RtspIngestSession {
 
     /// End of input: flush every track's depacketiser (a pending AU is
     /// complete by definition at end of stream — see
-    /// `RtpStreamDepacketiser::flush`). Idempotent.
+    /// `RtpStreamDepacketiser::flush`), then queue one `TEARDOWN` of the
+    /// playing session (RFC 2326 §10.7) for the driver to send before it
+    /// closes the connection. Idempotent.
     fn finish(&mut self) -> Result<()> {
         let Some(depa) = self.depacketiser.as_mut() else {
             return Ok(());
@@ -436,6 +500,7 @@ impl Stage for RtspIngestSession {
                 }
             }
         }
+        self.queue_teardown();
         Ok(())
     }
 
@@ -568,6 +633,7 @@ impl Dialer for RtspDialer {
             base_url: request_url,
             request_uri,
             tracks: Vec::new(),
+            plan: None,
             depacketiser: None,
             phase: Phase::AwaitDescribe,
             outbound: VecDeque::from(vec![Bytes::from(describe_bytes)]),
@@ -576,6 +642,8 @@ impl Dialer for RtspDialer {
             started: std::time::Instant::now(),
             keepalive_interval: None,
             malformed_media_frames: 0,
+            rtcp_frames: 0,
+            torn_down: false,
         })
     }
 }
@@ -585,43 +653,6 @@ fn session_with_credentials(credentials: Option<Credentials>) -> ClientSession {
     match credentials {
         Some(creds) => ClientSession::new().with_credentials(creds),
         None => ClientSession::new(),
-    }
-}
-
-/// A non-success response status becomes the concrete error the driver
-/// reports (via `Stage::feed`'s `Err`, i.e. `HealthState::Failed`) — a `401`/
-/// `403` maps to [`MultimuxError::Auth`] (matchable), anything else to
-/// [`MultimuxError::Protocol`].
-fn response_error(method: &Method, status: StatusCode) -> MultimuxError {
-    let phase: &'static str = match *method {
-        Method::Describe => "DESCRIBE",
-        Method::Setup => "SETUP",
-        Method::Play => "PLAY",
-        _ => "recv",
-    };
-    if matches!(status, StatusCode::Unauthorized | StatusCode::Forbidden) {
-        MultimuxError::Auth {
-            reason: format!("{phase}: {status}"),
-        }
-    } else {
-        MultimuxError::Protocol {
-            phase,
-            reason: format!("non-success status {status}"),
-        }
-    }
-}
-
-/// Resolves a per-media SETUP URI from the base RTSP URL and its `a=control`
-/// value, per RFC 2326 §C.1.1.
-fn resolve_control(base_url: &Url, control: Option<&str>) -> Result<String> {
-    match control {
-        None | Some("*") => Ok(base_url.to_string()),
-        Some(c) => base_url
-            .join(c)
-            .map(|u| u.to_string())
-            .map_err(|e| MultimuxError::Sdp {
-                reason: format!("bad a=control {c:?}: {e}"),
-            }),
     }
 }
 
@@ -646,16 +677,6 @@ fn protocol_err(phase: &'static str) -> impl Fn(rtsp_runtime::error::Error) -> M
     move |e| MultimuxError::Protocol {
         phase,
         reason: e.to_string(),
-    }
-}
-
-/// Extracts the RTP channel from a transport spec if it is TCP-interleaved.
-fn interleaved_channel(spec: &TransportSpec) -> Option<u8> {
-    use rtsp_runtime::transport::LowerTransport;
-    if spec.lower_transport == Some(LowerTransport::Tcp) {
-        spec.interleaved.map(|(lo, _hi)| lo)
-    } else {
-        None
     }
 }
 
@@ -940,13 +961,6 @@ mod tests {
     }
 
     #[test]
-    fn resolve_control_falls_back_to_base_on_aggregate_or_missing() {
-        let base = Url::parse("rtsp://cam/base").unwrap();
-        assert_eq!(resolve_control(&base, None).unwrap(), base.to_string());
-        assert_eq!(resolve_control(&base, Some("*")).unwrap(), base.to_string());
-    }
-
-    #[test]
     fn connect_addr_defaults_port_554() {
         let base = Url::parse("rtsp://cam.local/stream").unwrap();
         assert_eq!(
@@ -1055,33 +1069,6 @@ mod tests {
     fn rtsp_dialer_sni_server_name_strips_userinfo_and_brackets() {
         let dialer = RtspDialer::new("rtsps://user:pass@[2001:db8::1]:8554/stream", None);
         assert_eq!(dialer.sni_server_name().unwrap(), "2001:db8::1");
-    }
-
-    #[test]
-    fn interleaved_channel_accepts_tcp_with_channels() {
-        use rtsp_runtime::transport::LowerTransport;
-        let mut spec = TransportSpec::default();
-        spec.lower_transport = Some(LowerTransport::Tcp);
-        spec.interleaved = Some((0, 1));
-        assert_eq!(interleaved_channel(&spec), Some(0));
-    }
-
-    #[test]
-    fn interleaved_channel_rejects_udp() {
-        use rtsp_runtime::transport::LowerTransport;
-        let mut spec = TransportSpec::default();
-        spec.lower_transport = Some(LowerTransport::Udp);
-        spec.interleaved = Some((0, 1));
-        assert_eq!(interleaved_channel(&spec), None);
-    }
-
-    #[test]
-    fn interleaved_channel_rejects_missing_interleaved() {
-        use rtsp_runtime::transport::LowerTransport;
-        let mut spec = TransportSpec::default();
-        spec.lower_transport = Some(LowerTransport::Tcp);
-        spec.interleaved = None;
-        assert_eq!(interleaved_channel(&spec), None);
     }
 
     #[test]
@@ -1211,7 +1198,7 @@ mod tests {
             .poll_transmit()
             .expect("DESCRIBE response must queue a SETUP request");
         let setup_text = String::from_utf8(setup_req.to_vec()).unwrap();
-        assert!(setup_text.starts_with("SETUP rtsp://cam.local/trackID=1 RTSP/1.0\r\n"));
+        assert!(setup_text.starts_with("SETUP rtsp://cam.local/stream/trackID=1 RTSP/1.0\r\n"));
         assert!(setup_text.contains("CSeq: 2\r\n"));
         assert!(setup_text.contains("Transport:"));
 
@@ -1369,6 +1356,86 @@ mod tests {
         assert_eq!(count(&mut session), 2, "both trailing AUs flushed");
         session.finish().unwrap();
         assert_eq!(count(&mut session), 0, "finish is idempotent");
+    }
+
+    #[test]
+    fn finish_queues_one_teardown_for_a_playing_session() {
+        let mut dialer = RtspDialer::new("rtsp://cam.local/stream", None);
+        let mut session = dialer.dial().expect("dial");
+        let _ = session.poll_transmit();
+        for (cseq, headers, body) in [
+            (1, "Content-Type: application/sdp\r\n", sdp_body()),
+            (
+                2,
+                "Transport: RTP/AVP/TCP;interleaved=4-5\r\nSession: ABC123;timeout=60\r\n",
+                String::new(),
+            ),
+            (3, "", String::new()),
+        ] {
+            session
+                .feed(
+                    &rtsp_response(cseq, "200 OK", headers, &body),
+                    Timestamp::ZERO,
+                )
+                .unwrap();
+            let _ = session.poll_transmit();
+        }
+        session.finish().unwrap();
+        let teardown = session.poll_transmit().expect("finish queues a TEARDOWN");
+        let text = String::from_utf8(teardown.to_vec()).unwrap();
+        assert!(
+            text.starts_with("TEARDOWN rtsp://cam.local/stream RTSP/1.0\r\n"),
+            "{text}"
+        );
+        assert!(text.contains("Session: ABC123"), "{text}");
+        session.finish().unwrap();
+        assert!(session.poll_transmit().is_none(), "one TEARDOWN only");
+    }
+
+    #[test]
+    fn an_rtcp_frame_on_the_negotiated_rtcp_channel_reaches_the_depacketiser() {
+        let mut dialer = RtspDialer::new("rtsp://cam.local/stream", None);
+        let mut session = dialer.dial().expect("dial");
+        let _ = session.poll_transmit();
+        for (cseq, headers, body) in [
+            (1, "Content-Type: application/sdp\r\n", sdp_body()),
+            (
+                2,
+                "Transport: RTP/AVP/TCP;interleaved=4-5\r\nSession: ABC123;timeout=60\r\n",
+                String::new(),
+            ),
+            (3, "", String::new()),
+        ] {
+            session
+                .feed(
+                    &rtsp_response(cseq, "200 OK", headers, &body),
+                    Timestamp::ZERO,
+                )
+                .unwrap();
+            let _ = session.poll_transmit();
+        }
+        let frame = |channel: u8| {
+            rtsp_runtime::interleaved::InterleavedFrame::new(channel, vec![0x80, 0xC8, 0, 6])
+                .to_bytes()
+                .expect("frame")
+        };
+        session.feed(&frame(5), Timestamp::ZERO).unwrap();
+        assert_eq!(session.rtcp_frames(), 1);
+        session.feed(&frame(7), Timestamp::ZERO).unwrap();
+        assert_eq!(
+            session.rtcp_frames(),
+            1,
+            "an unnegotiated channel is not RTCP"
+        );
+    }
+
+    #[test]
+    fn finish_before_play_queues_no_teardown() {
+        let mut dialer = RtspDialer::new("rtsp://cam.local/stream", None);
+        let mut session = dialer.dial().expect("dial");
+        let _ = session.poll_transmit();
+        session.finish().unwrap();
+        assert!(session.poll_transmit().is_none());
     }
 
     /// Severing `poll_transmit` (the no-hidden-I/O proof `media_plane::ingress`'s

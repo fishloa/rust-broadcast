@@ -6,7 +6,7 @@
 //! [`crate::source::sdp::load_sdp`]); this module owns only the UDP socket
 //! transport (bind + optional multicast join, via the crate-private
 //! `crate::source::udp::bind_udp` helper). The SDP parse itself is the *same*
-//! [`crate::source::sdp::parse_sdp_tracks`] helper
+//! [`crate::source::sdp::parse_tracks_multimux`] helper
 //! [`crate::source::rtsp::RtspDialer`] uses for its DESCRIBE body — there is
 //! no parallel SDP implementation between the two ingest paths — and RTP
 //! depayload is [`transmux::RtpStreamDepacketiser`] (RFC 6184 H.264 / RFC
@@ -43,7 +43,7 @@ use media_plane::trunk::RetentionClass;
 use tokio::net::UdpSocket;
 
 use crate::error::{MultimuxError, Result};
-use crate::source::sdp::{load_sdp, parse_sdp_tracks};
+use crate::source::sdp::{load_sdp, parse_tracks_multimux};
 use crate::source::udp::bind_udp;
 use crate::source::{IngestTimeouts, Source, TrackInit};
 use transmux::{RtpStreamDepacketiser, RtpStreamTrack};
@@ -286,7 +286,7 @@ impl Dialer for RtpUdpDialer {
 
     fn dial(&mut self) -> core::result::Result<RtpUdpIngestSession, MultimuxError> {
         let sdp_bytes = load_sdp(&self.sdp)?;
-        let tracks = parse_sdp_tracks(&sdp_bytes)?;
+        let tracks = parse_tracks_multimux(&sdp_bytes)?;
         Ok(RtpUdpIngestSession::new(tracks))
     }
 }
