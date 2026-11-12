@@ -995,7 +995,11 @@ impl ProgramSegmenter {
         route_handle: &RouteHandle,
     ) -> (usize, usize) {
         while let Some(item) = self.cursor.poll() {
-            if let SampleCursorItem::TracksChanged { generation, tracks } = item {
+            if let SampleCursorItem::TracksChanged { generation, tracks }
+            | SampleCursorItem::TracksLagged {
+                generation, tracks, ..
+            } = item
+            {
                 if generation > self.track_generation {
                     let previous_tracks = std::mem::replace(&mut self.published_tracks, tracks);
                     let previous_moves = self.timescale_moves.clone();

@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Fixed
+- The segment pump and push outputs treat the new `SampleCursorItem::TracksLagged` like a `TracksChanged` to the carried track set (audit A11-2).
 - A route advertises what is being served (audit A11-1): its track specs (DASH `codecs`, HLS master `CODECS`) are set only after the segmenter accepts a track change, so a refused change no longer leaves the route naming codecs the segmenter is not producing. The specs of each init generation are kept, so segments still in the DVR window keep the specs they were cut under.
 - A track set the container cannot mux (empty, or data only) is an explicit gap state of the segmenter instead of a refused codec change: the current segment is closed at the boundary, one gap placeholder segment (target duration, no media) is published, and samples are dropped until a muxable set arrives, which resumes with `EXT-X-DISCONTINUITY` and a rebuilt segmenter that continues the segment numbering. HLS playlists carry `EXT-X-GAP` (RFC 8216bis §4.4.4.7) for the placeholder; the placeholder is one target duration however long the source stays empty.
 - The DASH MPD splits into Periods at a gap: the Period ends where the placeholder begins (`Period@duration`) and the next one starts at its first segment's number with the track set that segment was cut under. A window holding nothing but gap placeholders answers 503. A later Period still names the bare `init-$RepresentationID$.mp4`, which the resource route serves as the current init.
