@@ -52,11 +52,12 @@
 //! own, more authoritative, list). Only a track set with genuinely **no**
 //! representable track is still a `503`.
 //!
-//! # Scope: standard DASH only, LL-DASH is a follow-up
+//! # One renderer, two flavours
 //!
-//! This ships `type="dynamic"` DASH (`minimumUpdatePeriod`/
-//! `timeShiftBufferDepth`/`availabilityStartTime`), **not** LL-DASH — see
-//! [`crate::output::ll_dash`] for that (issue #663 P4.2 / #721).
+//! This module renders both `manifest.mpd` and the LL-DASH `manifest-ll.mpd`:
+//! the MPD is built once and [`DashFlavour`] selects whether the low-latency
+//! fields are added (see [`DashFlavour::LowLatency`]; the route itself is
+//! mounted by [`crate::output::ll_dash`], issue #663 P4.2 / #721 / #2448).
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -173,6 +174,24 @@ impl ServedEgress for MpdOrigin {
 /// §5.3.9.5.3 requires (issue #1058).
 pub(crate) const FIRST_SEGMENT_NUMBER: u64 = 1;
 
+/// Which manifest flavour the shared renderer produces. Either flavour builds
+/// the MPD model the same way: the Period split at a gap placeholder and at
+/// each new init generation, the per-init-generation `initialization` URL and
+/// the SCTE-35 inband event declaration are common to both.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DashFlavour {
+    /// Standard DASH (`manifest.mpd`): no low-latency signalling, refreshed
+    /// once per whole segment (`minimumUpdatePeriod` at the segment target).
+    Standard,
+    /// Low-latency DASH (`manifest-ll.mpd`): adds only the LL fields on top of
+    /// the same MPD — a `ServiceDescription`/`Latency` target derived from the
+    /// part target, per-segment `availabilityTimeOffset` (segment target minus
+    /// chunk) with `availabilityTimeComplete="false"`, and
+    /// `minimumUpdatePeriod` at the chunk interval so a client refreshes the
+    /// MPD as chunks land rather than once per segment.
+    LowLatency,
+}
+
 /// `SegmentTemplate@startNumber`: the public number of the first segment the
 /// route ever served, unchanged by a source reconnect. The numbers keep
 /// counting through the reconnect (the resource route, the HLS playlist and
@@ -221,16 +240,36 @@ fn track_is_representable(spec: &TrackSpec) -> bool {
 /// (nothing recorded yet, or every recorded track is opaque — issue #776).
 fn render_mpd(route: &RouteHandle) -> Option<String> {
     let origin = route.presentation_origin(crate::route::SPTS_PROGRAM_ID)?;
-    render_mpd_at(route, origin)
+    render_mpd_at_with_flavour(route, origin, DashFlavour::Standard)
+}
+
+/// Render `route`'s current window as the low-latency flavour of the MPD, with
+/// `availabilityStartTime` taken from the program's own presentation origin
+/// (`manifest-ll.mpd`, `pub(crate)` wrapper over [`render_ll_dash_mpd_at`]).
+pub(crate) fn render_ll_dash_mpd(route: &RouteHandle) -> Option<String> {
+    let origin = route.presentation_origin(crate::route::SPTS_PROGRAM_ID)?;
+    render_mpd_at_with_flavour(route, origin, DashFlavour::LowLatency)
+}
+
+/// Render `route`'s current window as the low-latency flavour of the MPD with
+/// an explicit presentation `origin` for `availabilityStartTime`, so a test can
+/// freeze the wall-clock value.
+#[doc(hidden)]
+pub fn render_ll_dash_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<String> {
+    render_mpd_at_with_flavour(route, origin, DashFlavour::LowLatency)
 }
 
 /// One Period of the MPD: a run of consecutive media segments, closed by the
-/// gap placeholder that follows it (if any).
+/// gap placeholder or the first segment of the next init generation that
+/// follows it (if any).
 struct PeriodRun<'a> {
     segments: &'a [crate::route::DashWindowSegment],
     ended_by: Option<&'a crate::route::DashWindowSegment>,
 }
 
+/// Split `window` into the runs that each become one Period: a run ends at a
+/// gap placeholder (which belongs to no Period) and where the init generation
+/// changes (the new generation opens the next run).
 fn period_runs(window: &[crate::route::DashWindowSegment]) -> Vec<PeriodRun<'_>> {
     let mut runs = Vec::new();
     let mut start = 0;
@@ -272,6 +311,16 @@ fn period_runs(window: &[crate::route::DashWindowSegment]) -> Vec<PeriodRun<'_>>
 /// cut under.
 #[doc(hidden)]
 pub fn render_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<String> {
+    render_mpd_at_with_flavour(route, origin, DashFlavour::Standard)
+}
+
+/// Render the MPD with an explicit presentation `origin` and `flavour`.
+#[doc(hidden)]
+pub fn render_mpd_at_with_flavour(
+    route: &RouteHandle,
+    origin: SystemTime,
+    flavour: DashFlavour,
+) -> Option<String> {
     let program = crate::route::SPTS_PROGRAM_ID;
     let window = route.window_segments(program);
     let runs = period_runs(&window);
@@ -293,6 +342,7 @@ pub fn render_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<String> 
             first_number,
             false,
             init_gen,
+            flavour,
         );
     }
     if let [only] = runs.as_slice()
@@ -315,6 +365,7 @@ pub fn render_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<String> 
             first_number,
             true,
             init_gen,
+            flavour,
         );
     }
     let mut mpd: Option<broadcast_dash::Mpd> = None;
@@ -334,6 +385,7 @@ pub fn render_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<String> 
             first.public_seq,
             true,
             init_gen,
+            flavour,
         ) else {
             continue;
         };
@@ -367,6 +419,7 @@ fn period_start(public_seq: u64, first_number: u64, nominal_secs: f64) -> Option
     Duration::try_from_secs_f64(nominal_secs * segments as f64).ok()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_period_document(
     route: &RouteHandle,
     origin: SystemTime,
@@ -375,6 +428,7 @@ fn render_period_document(
     start_number: u64,
     has_segments: bool,
     init_generation: media_plane::ids::Generation,
+    flavour: DashFlavour,
 ) -> Option<String> {
     // `@id` forced to DEFAULT_TRACK_ID (see module docs' "Single-rendition
     // model") regardless of which track this route's own PMT numbered it.
@@ -396,7 +450,7 @@ fn render_period_document(
     // change the client's whole number<->time mapping).
     let nominal_ticks =
         ((route.target_duration_secs() * f64::from(timescale)).round() as u64).max(1);
-    let segments = if has_segments {
+    let segments = if has_segments || flavour == DashFlavour::LowLatency {
         vec![TrackSegments {
             track_id: DEFAULT_TRACK_ID,
             durations: vec![nominal_ticks],
@@ -440,7 +494,11 @@ fn render_period_document(
         publish_time: Some(publish_time(origin, window)),
         minimum_update_period: Some(xs_duration_secs_checked(
             "minimum_update_period",
-            target_duration_secs,
+            if flavour == DashFlavour::LowLatency {
+                (route.part_target_ms().max(1) as f64) / 1000.0
+            } else {
+                target_duration_secs
+            },
         )),
         time_shift_buffer_depth: Some(xs_duration_secs_checked(
             "time_shift_buffer_depth",
@@ -461,7 +519,38 @@ fn render_period_document(
             value: None,
         });
 
-    packager.package(&media).ok()
+    let xml = packager.package(&media).ok()?;
+    if flavour == DashFlavour::LowLatency {
+        let part_target_ms = route.part_target_ms().max(1);
+        let chunk_duration_secs = f64::from(part_target_ms) / 1000.0;
+        let latency_target_ms = u32::try_from(u64::from(part_target_ms) * 3).unwrap_or(u32::MAX);
+        let ato = (target_duration_secs - chunk_duration_secs).max(0.0);
+        let ato = (ato * 1000.0).round() / 1000.0;
+        let mut mpd = broadcast_dash::Mpd::parse(xml.as_bytes()).ok()?;
+        for template in mpd
+            .periods
+            .iter_mut()
+            .flat_map(|p| p.adaptation_sets.iter_mut())
+            .flat_map(|a| a.representations.iter_mut())
+            .filter_map(|r| r.segment.template.as_mut())
+        {
+            template.multi.base.availability_time_offset = Some(ato);
+            template.multi.base.availability_time_complete = Some(false);
+        }
+        // ServiceDescription/Latency
+        if mpd.service_descriptions.is_empty() {
+            use broadcast_dash::{Latency, ServiceDescription};
+            let mut latency = Latency::default();
+            latency.target = Some(u64::from(latency_target_ms));
+            let mut sd = ServiceDescription::default();
+            sd.id = Some(0);
+            sd.latency = Some(latency);
+            mpd.service_descriptions.push(sd);
+        }
+        mpd.to_xml().ok()
+    } else {
+        Some(xml)
+    }
 }
 
 /// Format `t` as an ISO-8601 UTC timestamp (`YYYY-MM-DDTHH:MM:SSZ`) — the
