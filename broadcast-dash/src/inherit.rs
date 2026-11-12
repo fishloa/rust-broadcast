@@ -3,7 +3,8 @@
 //! ISO/IEC 23009-1 5.3.9.1: Segment information may be declared at any of the
 //! three levels; an element inherits the attributes and children of the same
 //! element above it, and the lower level wins attribute by attribute.
-//! `@duration` and `SegmentTimeline` are exclusive (5.3.9.2.1) in the
+//! `@duration` and `SegmentTimeline` are exclusive (5.3.9.2.1,
+//! `private/specs-verified/dash/23009-1/05-3-9-segment-information.md`) in the
 //! Representation's *effective* Segment information, so a child timeline and a
 //! parent `@duration` conflict exactly as two attributes on one level do. A
 //! SegmentTemplate and a SegmentList may not both appear along one chain.
@@ -35,7 +36,7 @@ pub enum InheritError {
     TemplateAndList,
     /// `@duration` and `SegmentTimeline` in one Representation's effective
     /// Segment information, on one level or across inherited levels
-    /// (5.3.9.2.1).
+    /// (5.3.9.2.1, `private/specs-verified/dash/23009-1/05-3-9-segment-information.md`).
     #[error("both @duration and SegmentTimeline are present (on one level or across inheritance)")]
     DurationAndTimeline,
 }
