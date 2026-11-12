@@ -5564,14 +5564,10 @@ impl StreamingTsDemux {
                 if cc == state.last_cc
                     && let Some(prev) = state.last_packet
                 {
-                    match broadcast_common::ts_dup::check_duplicate(
-                        &prev,
-                        raw,
-                        state.dup_used_for_last,
-                    ) {
+                    match mpeg_ts::ts_dup::check_duplicate(&prev, raw, state.dup_used_for_last) {
                         // §2.4.3.3's one legal repeat. `dup_used_for_last`
                         // records that this PID has now spent it.
-                        broadcast_common::ts_dup::DuplicateVerdict::Legal => {
+                        mpeg_ts::ts_dup::DuplicateVerdict::Legal => {
                             state.dup_used_for_last = true;
                             state.last_packet = Some(*raw);
                             return CcVerdict::Duplicate;
@@ -5586,7 +5582,7 @@ impl StreamingTsDemux {
                         // stays "spent" (`dup_used_for_last` is NOT reset),
                         // so a 5-packet run reports 3 faults, not an
                         // alternating legal/illegal pattern.
-                        broadcast_common::ts_dup::DuplicateVerdict::IllegalThirdRepeat => {
+                        mpeg_ts::ts_dup::DuplicateVerdict::IllegalThirdRepeat => {
                             if !discontinuity_signalled {
                                 self.events.push_back(DemuxEvent::InputDegraded {
                                     track,

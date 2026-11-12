@@ -423,7 +423,9 @@ pub use sample_groups::{
 };
 pub use segment_cut::{IdrWait, SegmentCutPolicy};
 pub use segmenter::{SegmentMeta, Segmenter};
-pub use segments::{FileTypeBox, MediaDataBox, SegmentTypeBox};
+pub use segments::{
+    FileTypeBox, MediaDataBox, SegmentTypeBox, insert_event_message_boxes_after_styp,
+};
 #[cfg(feature = "std")]
 pub use smooth::{
     FOURCC_AACL, FOURCC_H264, SMOOTH_TIMESCALE, SmoothFragment, SmoothOutput, SmoothPackager,

@@ -174,7 +174,7 @@ impl DuplicateVerdict {
     }
 }
 
-crate::impl_spec_display!(DuplicateVerdict);
+broadcast_common::impl_spec_display!(DuplicateVerdict);
 
 /// Check whether `curr` is a legal duplicate of `prev`, folding in the
 /// "two, and only two" cardinality rule via `dup_already_used`: the

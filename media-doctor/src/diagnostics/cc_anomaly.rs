@@ -12,7 +12,7 @@
 //! (discontinuity_indicator == 1).
 //!
 //! The legal-duplicate byte-identity and cardinality rules are owned by
-//! [`broadcast_common::ts_dup`] — shared with `dvb-conformance` and
+//! [`mpeg_ts::ts_dup`] — shared with `dvb-conformance` and
 //! `ts-fix`, which independently implement the same §2.4.3.3 clause.
 //!
 //! Non-payload-bearing packets (AFC `00` or `10`) do not advance the CC; an
@@ -21,7 +21,7 @@
 use alloc::collections::btree_map::BTreeMap;
 use mpeg_ts::pid::Pid;
 
-use broadcast_common::ts_dup::{DuplicateVerdict, check_duplicate};
+use mpeg_ts::ts_dup::{DuplicateVerdict, check_duplicate};
 
 use crate::Diagnostic;
 use crate::Report;
@@ -49,7 +49,7 @@ struct CcState {
     /// Last continuity counter value on this PID.
     last_cc: u8,
     /// Raw bytes of the last payload-bearing packet seen on this PID. Used
-    /// with [`broadcast_common::ts_dup::check_duplicate`] for the
+    /// with [`mpeg_ts::ts_dup::check_duplicate`] for the
     /// §2.4.3.3 legal-duplicate byte-identity rule (that function owns
     /// locating and exempting the PCR field).
     last_packet: [u8; TS_PACKET_SIZE],

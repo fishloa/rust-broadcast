@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- `udp::bind_udp` now uses `dvb_stream::udp::bind_standard` (shared socket bind) instead of its own socket2 sequence (#2472).
 ### Fixed
 - `has_adts_sync` drops its own syncword pre-test and relies on the strict `transmux::parse_adts_header`, so an AAC-declared PID carrying MP3 frames is now flagged.
 ### Changed

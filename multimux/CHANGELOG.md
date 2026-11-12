@@ -2,11 +2,8 @@
 
 ## [Unreleased]
 ### Changed
-<<<<<<< HEAD
 - Timeline discontinuity detection now uses the per-track detector from `transmux` (broadcast-client semantics); the 10 s `MEDIA_DISCONTINUITY_NS` constant is removed.
-=======
 - RTSP pull skips unplayable SDP media sections (and foreign-authority controls and sections beyond the track cap) instead of failing the whole route; fails only when nothing is playable. Skipped sections are logged as route warnings.
->>>>>>> origin/main
 
 ### Added
 - LL-DASH renders through the shared DASH renderer (`manifest-ll.mpd` is the standard MPD model with the low-latency fields layered on: `ServiceDescription`/`Latency`, per-segment `availabilityTimeOffset`/`availabilityTimeComplete`, `minimumUpdatePeriod` at the chunk interval), so it gains what only `manifest.mpd` had: the Period split at a gap placeholder and at every init generation, each Period naming the versioned init segment its segments were cut under, and the SCTE-35 `InbandEventStream` declaration. A test pins that both flavours render the same Periods for a window through a gap and a codec change.
@@ -14,6 +11,7 @@
 ### Changed
 - **BREAKING:** one HLS output, `output::hls::HlsOutput`, parameterised by `HlsFlavour` (`HlsOutput::low_latency(name)` for LL-HLS over fMP4, `HlsOutput::segmented(name)` for classic TS-HLS), replaces `output::llhls::LlHlsOutput` and `output::ts_hls::TsHlsOutput`; the `llhls` and `ts_hls` modules are removed (#2449). Config output names (`llhls`, `ts_hls`), playlist names and URLs are unchanged.
 ### Fixed
+- `rebuild_index` now walks fMP4 boxes through `transmux::parse_box`, so segments whose `mdat` uses a 64-bit `largesize` (or whose last box runs to EOF) are indexed completely.
 - The segment pump and push outputs treat the new `SampleCursorItem::TracksLagged` like a `TracksChanged` to the carried track set (audit A11-2).
 - A route advertises what is being served (audit A11-1): its track specs (DASH `codecs`, HLS master `CODECS`) are set only after the segmenter accepts a track change, so a refused change no longer leaves the route naming codecs the segmenter is not producing. The specs of each init generation are kept, so segments still in the DVR window keep the specs they were cut under.
 - A track set the container cannot mux (empty, or data only) is an explicit gap state of the segmenter instead of a refused codec change: the current segment is closed at the boundary, one gap placeholder segment (target duration, no media) is published, and samples are dropped until a muxable set arrives, which resumes with `EXT-X-DISCONTINUITY` and a rebuilt segmenter that continues the segment numbering. HLS playlists carry `EXT-X-GAP` (RFC 8216bis §4.4.4.7) for the placeholder; the placeholder is one target duration however long the source stays empty.
