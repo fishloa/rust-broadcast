@@ -563,17 +563,23 @@ fn chunk_timeline(
         let Some(first) = track.samples.first() else {
             continue;
         };
+        // A sample without a `dts` starts at 0; a negative one (only a
+        // rebased B-frame lead-in) has no earlier position to report.
         let timescale = track.spec.timescale.max(1);
-        let absolute = u64::try_from(first.dts.unwrap_or_default().max(0)).unwrap_or(0);
+        let decode_time = first.dts.unwrap_or(0).max(0);
+        let absolute = u64::try_from(decode_time).unwrap_or(u64::MAX);
         let start = chunks
             .last()
             .map(|chunk: &ChunkTiming| chunk.start.saturating_add(chunk.duration))
             .unwrap_or_else(|| to_smooth_ticks(absolute, timescale));
         let sequence_number = sequence.value();
-        let duration = packager
-            .package_track_fragment(track, sequence_number, start)
-            .map(|fragment| fragment.duration)
-            .unwrap_or_default();
+        // The chunk's duration is exactly the fragment's own `trun` sum, so
+        // `Σtrun == c@d` holds by construction; a track the packager refuses
+        // contributes no chunk rather than an empty entry with `d="0"`.
+        let Ok(fragment) = packager.package_track_fragment(track, sequence_number, start) else {
+            continue;
+        };
+        let duration = fragment.duration;
         chunks.push(ChunkTiming {
             sequence: *sequence,
             start,
