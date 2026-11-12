@@ -240,7 +240,14 @@ impl SmoothSource {
     }
 
     fn fail_request(&mut self, req: &Req, status: Option<u16>, now: u64) {
-        self.client.on_failure(now, req.id, FetchFailure { status });
+        self.client.on_failure(
+            now,
+            req.id,
+            FetchFailure {
+                status,
+                ..FetchFailure::default()
+            },
+        );
         self.pump(now);
     }
 
