@@ -445,7 +445,19 @@ fn write_resync(w: &mut Writer<Vec<u8>>, r: &Resync) -> Result<(), MpdError> {
     w.write_event(Event::Empty(e)).map_err(io_err)
 }
 
+fn write_label(w: &mut Writer<Vec<u8>>, name: &str, text: &str) -> Result<(), MpdError> {
+    w.write_event(Event::Start(BytesStart::new(name)))
+        .map_err(io_err)?;
+    w.write_event(Event::Text(BytesText::new(text)))
+        .map_err(io_err)?;
+    w.write_event(Event::End(BytesEnd::new(name)))
+        .map_err(io_err)
+}
+
 fn write_preselection(w: &mut Writer<Vec<u8>>, p: &Preselection) -> Result<(), MpdError> {
+    if let Some(u) = p.unsupported {
+        return Err(MpdError::Unsupported(u));
+    }
     let mut e = BytesStart::new("Preselection");
     if let Some(v) = &p.id {
         e.push_attribute(("id", v.as_str()));
@@ -490,15 +502,60 @@ fn write_preselection(w: &mut Writer<Vec<u8>>, p: &Preselection) -> Result<(), M
     if let Some(v) = p.common.coding_dependency {
         e.push_attribute(("codingDependency", if v { "true" } else { "false" }));
     }
+    if let Some(v) = &p.segment_profiles {
+        e.push_attribute(("segmentProfiles", v.as_str()));
+    }
+    if let Some(v) = &p.container_profiles {
+        e.push_attribute(("containerProfiles", v.as_str()));
+    }
+    if let Some(v) = p.maximum_sap_period {
+        e.push_attribute(("maximumSAPPeriod", format_xs_double(v).as_str()));
+    }
+    if let Some(v) = p.start_with_sap {
+        e.push_attribute(("startWithSAP", v.to_string().as_str()));
+    }
+    if let Some(v) = &p.scan_type {
+        e.push_attribute(("scanType", v.as_str()));
+    }
+    if let Some(v) = p.selection_priority {
+        e.push_attribute(("selectionPriority", v.to_string().as_str()));
+    }
+    if let Some(v) = &p.tag {
+        e.push_attribute(("tag", v.as_str()));
+    }
     w.write_event(Event::Start(e)).map_err(io_err)?;
+    for d in &p.frame_packings {
+        write_descriptor(w, "FramePacking", d)?;
+    }
     for d in &p.audio_channel_configurations {
         write_descriptor(w, "AudioChannelConfiguration", d)?;
+    }
+    for d in &p.content_protections {
+        write_descriptor(w, "ContentProtection", d)?;
+    }
+    if let Some(d) = &p.output_protection {
+        write_descriptor(w, "OutputProtection", d)?;
     }
     for d in &p.essential_properties {
         write_descriptor(w, "EssentialProperty", d)?;
     }
     for d in &p.supplemental_properties {
         write_descriptor(w, "SupplementalProperty", d)?;
+    }
+    for d in &p.inband_event_streams {
+        write_descriptor(w, "InbandEventStream", d)?;
+    }
+    for l in &p.group_labels {
+        write_label(w, "GroupLabel", l)?;
+    }
+    for l in &p.labels {
+        write_label(w, "Label", l)?;
+    }
+    for t in &p.producer_reference_times {
+        write_producer_reference_time(w, t)?;
+    }
+    for r in &p.resyncs {
+        write_resync(w, r)?;
     }
     for d in &p.accessibilities {
         write_descriptor(w, "Accessibility", d)?;

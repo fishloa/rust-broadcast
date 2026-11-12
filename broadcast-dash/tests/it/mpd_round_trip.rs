@@ -268,6 +268,7 @@ fn a_model_with_every_field_set_round_trips() {
     mpd.patch_locations = vec![patch, PatchLocation::default()];
     mpd.features.inband_event_stream = true;
     mpd.features.service_description = true;
+    mpd.features.inband_event_stream = true;
     mpd.features.low_latency = true;
     mpd.features.xlink_resolve_to_zero = false;
 
@@ -364,6 +365,24 @@ fn every_field_preselection(desc: &Descriptor) -> Preselection {
     p.roles = vec![desc.clone()];
     p.ratings = vec![desc.clone()];
     p.viewpoints = vec![desc.clone()];
+    p.tag = Some("tg".to_string());
+    p.selection_priority = Some(4);
+    p.start_with_sap = Some(2);
+    p.scan_type = Some("interlaced".to_string());
+    p.segment_profiles = Some("msdh msix".to_string());
+    p.container_profiles = Some("cmfc".to_string());
+    p.maximum_sap_period = Some(3.5);
+    p.frame_packings = vec![desc.clone()];
+    p.content_protections = vec![desc.clone()];
+    p.output_protection = Some(desc.clone());
+    p.inband_event_streams = vec![desc.clone()];
+    p.group_labels = vec!["group".to_string()];
+    p.labels = vec!["one".to_string(), "two".to_string()];
+    p.producer_reference_times = vec![every_field_producer_reference_time(
+        3,
+        ProducerReferenceKind::Captured,
+    )];
+    p.resyncs = vec![every_field_resync()];
     p
 }
 
@@ -392,6 +411,7 @@ fn event_streams_preselections_producer_times_and_resyncs_round_trip() {
     mpd.min_buffer_time = Some(Duration::from_secs(1));
     mpd.periods = vec![period];
     mpd.features.service_description = true;
+    mpd.features.inband_event_stream = true;
     let xml = mpd.to_xml().unwrap();
     let again = Mpd::parse(xml.as_bytes()).unwrap();
     assert_eq!(again, mpd);
@@ -485,4 +505,45 @@ fn infinite_availability_time_offset_round_trips_on_every_segment_element() {
         "{xml}"
     );
     assert_eq!(Mpd::parse(xml.as_bytes()).unwrap(), mpd);
+}
+
+const PRESELECTION_BASE_MPD: &[u8] = br#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" minBufferTime="PT1S"><Period id="0"><Preselection id="p" tag="t" selectionPriority="3" preselectionComponents="1 2" startWithSAP="1" scanType="progressive" segmentProfiles="msdh" containerProfiles="cmfc" maximumSAPPeriod="2.5"><FramePacking schemeIdUri="urn:fp"/><ContentProtection schemeIdUri="urn:cp"/><OutputProtection schemeIdUri="urn:op"/><InbandEventStream schemeIdUri="urn:ibes"/><GroupLabel>Group</GroupLabel><Label>Hi</Label></Preselection></Period></MPD>"#;
+
+#[test]
+fn preselection_representation_base_survives_a_write() {
+    let mpd = Mpd::parse(PRESELECTION_BASE_MPD).unwrap();
+    let again = Mpd::parse(mpd.to_xml().unwrap().as_bytes()).unwrap();
+    assert_eq!(again, mpd);
+    let xml = mpd.to_xml().unwrap();
+    for needle in [
+        "tag=\"t\"",
+        "selectionPriority=\"3\"",
+        "startWithSAP=\"1\"",
+        "scanType=\"progressive\"",
+        "segmentProfiles=\"msdh\"",
+        "containerProfiles=\"cmfc\"",
+        "maximumSAPPeriod=\"2.5\"",
+        "<Label>Hi</Label>",
+        "<GroupLabel>Group</GroupLabel>",
+        "urn:cp",
+        "urn:fp",
+        "urn:op",
+        "urn:ibes",
+    ] {
+        assert!(xml.contains(needle), "{needle} missing from {xml}");
+    }
+}
+
+#[test]
+fn a_preselection_child_the_model_lacks_is_flagged_and_refused_on_write() {
+    let xml = br#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" minBufferTime="PT1S"><Period id="0"><Preselection preselectionComponents="1"><Switching interval="2"/></Preselection></Period></MPD>"#;
+    let mpd = Mpd::parse(xml).unwrap();
+    assert_eq!(
+        mpd.periods[0].preselections[0].unsupported,
+        Some(Unsupported::RepresentationBaseChild)
+    );
+    assert_eq!(
+        mpd.to_xml(),
+        Err(MpdError::Unsupported(Unsupported::RepresentationBaseChild))
+    );
 }

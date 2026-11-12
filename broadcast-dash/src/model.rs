@@ -597,8 +597,9 @@ impl_spec_display!(PreselectionOrder);
 
 /// A `Preselection` (ISO/IEC 23009-1 clause 5.3.11, Table 14) of a Period.
 ///
-/// Carries the `RepresentationBase` attributes and the descriptor children
-/// below; other `RepresentationBase` children are not modelled.
+/// Carries the `RepresentationBase` attributes and children the model has a
+/// type for; `Switching`, `RandomAccess`, `ContentPopularityRate` and
+/// `SegmentSequenceProperties` set `unsupported` instead of being dropped.
 #[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct Preselection {
@@ -626,6 +627,38 @@ pub struct Preselection {
     pub ratings: Vec<Descriptor>,
     /// `Viewpoint` descriptors.
     pub viewpoints: Vec<Descriptor>,
+    /// `@tag`.
+    pub tag: Option<String>,
+    /// `@selectionPriority`; `None` when absent (the schema default is `1`).
+    pub selection_priority: Option<u32>,
+    /// `@startWithSAP`.
+    pub start_with_sap: Option<u8>,
+    /// `@scanType`.
+    pub scan_type: Option<String>,
+    /// `@segmentProfiles`.
+    pub segment_profiles: Option<String>,
+    /// `@containerProfiles`.
+    pub container_profiles: Option<String>,
+    /// `@maximumSAPPeriod`, seconds.
+    pub maximum_sap_period: Option<f64>,
+    /// `FramePacking`.
+    pub frame_packings: Vec<Descriptor>,
+    /// `ContentProtection`.
+    pub content_protections: Vec<Descriptor>,
+    /// `OutputProtection`.
+    pub output_protection: Option<Descriptor>,
+    /// `InbandEventStream`.
+    pub inband_event_streams: Vec<Descriptor>,
+    /// `GroupLabel` texts.
+    pub group_labels: Vec<String>,
+    /// `Label` texts.
+    pub labels: Vec<String>,
+    /// `ProducerReferenceTime`.
+    pub producer_reference_times: Vec<ProducerReferenceTime>,
+    /// `Resync`.
+    pub resyncs: Vec<Resync>,
+    /// Set when a child the model cannot carry was present.
+    pub unsupported: Option<Unsupported>,
 }
 
 /// A `ContentSteering` (ISO/IEC 23009-1 clause 5.3.1, Table 3; Annex B
