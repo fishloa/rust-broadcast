@@ -221,53 +221,6 @@ pub fn h264_nal_is_encrypted(nal: &[u8]) -> bool {
     nal_type == NAL_TYPE_NON_IDR_SLICE || nal_type == NAL_TYPE_IDR_SLICE
 }
 
-/// Remove H.264 emulation-prevention bytes (unescape `00 00 03 XX` → `00 00 XX`
-/// for `XX ∈ {00,01,02,03}`) from a raw byte-stream NAL
-/// (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §3.5).
-fn h264_unescape(escaped: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(escaped.len());
-    let mut i = 0;
-    while i < escaped.len() {
-        // A 00 00 03 sequence where the byte after 03 is <= 03 is an emulation
-        // prevention byte: drop the 03.
-        if i + 3 < escaped.len()
-            && escaped[i] == 0x00
-            && escaped[i + 1] == 0x00
-            && escaped[i + 2] == 0x03
-            && escaped[i + 3] <= 0x03
-        {
-            out.push(0x00);
-            out.push(0x00);
-            i += 3; // skip the 0x03; the following byte is copied next iteration
-        } else {
-            out.push(escaped[i]);
-            i += 1;
-        }
-    }
-    out
-}
-
-/// Re-insert H.264 emulation-prevention bytes (escape `00 00 XX` → `00 00 03 XX`
-/// for `XX ∈ {00,01,02,03}`, and a trailing `00 00`) over a raw NAL
-/// (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §3.5).
-fn h264_escape(unescaped: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(unescaped.len());
-    let mut zero_run = 0usize; // consecutive 0x00 bytes already emitted
-    for &b in unescaped {
-        if zero_run >= 2 && b <= 0x03 {
-            out.push(0x03);
-            zero_run = 0;
-        }
-        out.push(b);
-        if b == 0x00 {
-            zero_run += 1;
-        } else {
-            zero_run = 0;
-        }
-    }
-    out
-}
-
 /// Apply the H.264 skip-encrypt pattern (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §3.2–§3.3)
 /// to the *unescaped* NAL bytes in place. `encrypt = true` encrypts, `false`
 /// decrypts; the same clear/encrypted block partition is used for both.
@@ -321,12 +274,12 @@ fn h264_transform_pattern(
 /// unescaping) are returned unchanged. The CBC chain is reset to `iv` at the
 /// start of each NAL, then carried across that NAL's encrypted blocks.
 pub fn h264_encrypt_nal(key: &[u8; KEY_LEN], iv: &[u8; BLOCK_LEN], nal: &[u8]) -> Vec<u8> {
-    let mut raw = h264_unescape(nal);
+    let mut raw = crate::rbsp::unescape(nal);
     if !h264_nal_is_encrypted(&raw) {
         return nal.to_vec();
     }
     h264_transform_pattern(key, iv, &mut raw, true);
-    h264_escape(&raw)
+    crate::rbsp::escape(&raw)
 }
 
 /// Sample-AES-decrypt one H.264 NAL unit produced by [`h264_encrypt_nal`],
@@ -335,12 +288,12 @@ pub fn h264_encrypt_nal(key: &[u8; KEY_LEN], iv: &[u8; BLOCK_LEN], nal: &[u8]) -
 /// The CBC chain is reset to `iv` at the start of each NAL, then carried across
 /// that NAL's encrypted blocks (see [`h264_encrypt_nal`] for the chaining rule).
 pub fn h264_decrypt_nal(key: &[u8; KEY_LEN], iv: &[u8; BLOCK_LEN], nal: &[u8]) -> Vec<u8> {
-    let mut raw = h264_unescape(nal);
+    let mut raw = crate::rbsp::unescape(nal);
     if !h264_nal_is_encrypted(&raw) {
         return nal.to_vec();
     }
     h264_transform_pattern(key, iv, &mut raw, false);
-    h264_escape(&raw)
+    crate::rbsp::escape(&raw)
 }
 
 // --------------------------------------------------------------------------
@@ -736,8 +689,8 @@ mod tests {
         // remain (<16) so block2 is NOT encrypted (trailing partial clear).
         // Encrypted region [32,48) must differ; [48,192) and [192,200) clear.
         // Because escaping could shift bytes, compare on the unescaped form:
-        let raw = h264_unescape(&nal);
-        let enc_raw = h264_unescape(&enc);
+        let raw = crate::rbsp::unescape(&nal);
+        let enc_raw = crate::rbsp::unescape(&enc);
         assert_eq!(raw.len(), enc_raw.len());
         assert_ne!(&enc_raw[32..48], &raw[32..48], "block1 must be encrypted");
         assert_eq!(
@@ -778,8 +731,8 @@ mod tests {
         assert!(h264_nal_is_encrypted(&nal));
 
         let enc = h264_encrypt_nal(&NIST_KEY, &NIST_IV, &nal);
-        let raw = h264_unescape(&nal);
-        let enc_raw = h264_unescape(&enc);
+        let raw = crate::rbsp::unescape(&nal);
+        let enc_raw = crate::rbsp::unescape(&enc);
         assert_eq!(raw.len(), enc_raw.len());
         assert_ne!(&enc_raw[32..48], &raw[32..48], "block1 must be encrypted");
         assert_eq!(
@@ -808,7 +761,7 @@ mod tests {
         }
         assert!(nal.len() > H264_MIN_ENCRYPTED_NAL_LEN);
         // Sanity: unescape then re-escape is identity for a valid stream.
-        let round = h264_escape(&h264_unescape(&nal));
+        let round = crate::rbsp::escape(&crate::rbsp::unescape(&nal));
         assert_eq!(round, nal, "escape/unescape not identity on valid NAL");
 
         let enc = h264_encrypt_nal(&NIST_KEY, &NIST_IV, &nal);

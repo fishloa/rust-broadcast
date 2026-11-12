@@ -209,6 +209,7 @@ pub mod progressive_demux;
 pub mod ps_demux;
 pub mod rebase;
 pub mod repackage;
+pub mod rbsp;
 #[cfg(test)]
 pub(crate) mod test_bits;
 pub mod timeline;

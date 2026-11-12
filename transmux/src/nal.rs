@@ -411,7 +411,7 @@ fn sei_varint(rbsp: &[u8], pos: &mut usize) -> Option<u32> {
 /// first truncated message or at `rbsp_trailing_bits`, keeping what was read,
 /// so a malformed SEI yields fewer messages rather than an error.
 pub(crate) fn sei_messages(nal_body: &[u8]) -> Vec<(u32, Vec<u8>)> {
-    let rbsp = crate::bitreader::unescape(nal_body);
+    let rbsp = crate::rbsp::unescape(nal_body);
     let mut out = Vec::new();
     let mut pos = 0usize;
     // `more_rbsp_data()`: anything left other than the single trailing byte.
