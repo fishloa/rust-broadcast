@@ -381,6 +381,8 @@ pub const TABLE: &[Crate] = &[
         matcher: Matcher::Dash,
         skip: &[
             "MpdError",
+            "IngestError",
+            "SessionError",
             "AddressError",
             "PlanError",
             "TimingError",
