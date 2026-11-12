@@ -61,17 +61,16 @@ pub(crate) fn bytes_needed(bit_pos: usize, n: usize) -> usize {
     bit_pos.saturating_add(n).div_ceil(8)
 }
 
-/// Maps a shared [`BitError`] onto this crate's typed errors.
+/// Maps a shared [`BitError`] onto this crate's typed errors: a short buffer
+/// goes through the workspace's one `BitError` -> `BufferTooShort` conversion
+/// (whole bytes), anything else is an `InvalidValue`.
 pub(crate) fn bit_error(what: &'static str, e: BitError) -> Error {
     match e {
-        BitError::OutOfBounds {
-            needed_bits,
-            remaining_bits,
-        } => Error::BufferTooShort(BufferTooShort {
-            need: remaining_bits.div_ceil(8) + needed_bits.div_ceil(8),
-            have: remaining_bits.div_ceil(8),
-            what,
-        }),
+        BitError::OutOfBounds { .. } => {
+            let mut short: BufferTooShort = e.into();
+            short.what = what;
+            Error::BufferTooShort(short)
+        }
         BitError::TooManyBits { requested } => Error::InvalidValue(InvalidValue {
             field: what,
             value: u64::from(requested),
@@ -160,24 +159,27 @@ impl BitReader {
     /// self-referential lifetime).
     pub fn read_bits(&mut self, n: usize, what: &'static str) -> Result<u64> {
         if n > 64 || !self.has_bits(n) {
-            return Err(Error::BufferTooShort(BufferTooShort {
-                need: self.bit_pos + n,
-                have: self.data.len() * 8,
-                what,
-            }));
+            return Err(self.short(n, what));
         }
         if n == 0 {
             return Ok(0);
         }
         let mut pos = self.bit_pos;
-        let val =
-            read_bits_at(&self.data, &mut pos, n).ok_or(Error::BufferTooShort(BufferTooShort {
-                need: self.bit_pos.saturating_add(n),
-                have: self.data.len() * 8,
-                what,
-            }))?;
+        let val = read_bits_at(&self.data, &mut pos, n).ok_or_else(|| self.short(n, what))?;
         self.bit_pos = pos;
         Ok(val)
+    }
+
+    /// Running out of data with `n` bits wanted from the current position:
+    /// `need` is the size of the buffer the read would fit in, `have` the
+    /// buffer's own size, both in whole bytes (a partial byte rounds up),
+    /// named for `what`.
+    fn short(&self, n: usize, what: &'static str) -> Error {
+        Error::BufferTooShort(BufferTooShort {
+            need: self.bit_pos.saturating_add(n).div_ceil(8),
+            have: self.data.len(),
+            what,
+        })
     }
 
     /// Read one bit as a `bool`.
@@ -206,11 +208,7 @@ impl BitReader {
         // loops on the decoded value (`sps.rs`'s SPS walk) never terminates:
         // a ~20-byte hostile SPS hung the demuxer.
         if !self.has_bits(1) {
-            return Err(Error::BufferTooShort(BufferTooShort {
-                need: self.bit_pos + 1,
-                have: self.data.len() * 8,
-                what,
-            }));
+            return Err(self.short(1, what));
         }
         let mut leading_zero_bits: u32 = 0;
         while self.read_bits(1, what)? == 0 {
@@ -226,11 +224,7 @@ impl BitReader {
                 }));
             }
             if !self.has_bits(1) {
-                return Err(Error::BufferTooShort(BufferTooShort {
-                    need: self.bit_pos + 1,
-                    have: self.data.len() * 8,
-                    what,
-                }));
+                return Err(self.short(1, what));
             }
         }
         // The loop exits just past the terminating 1-bit; the
@@ -238,11 +232,7 @@ impl BitReader {
         // leading run of zero this check is trivially true and the result is
         // codeNum 0, matching §9.1.)
         if !self.has_bits(leading_zero_bits as usize) {
-            return Err(Error::BufferTooShort(BufferTooShort {
-                need: self.bit_pos + leading_zero_bits as usize,
-                have: self.data.len() * 8,
-                what,
-            }));
+            return Err(self.short(leading_zero_bits as usize, what));
         }
         let info = self.read_bits(leading_zero_bits as usize, what)?;
         Ok((1u64 << leading_zero_bits) - 1 + info)
@@ -284,6 +274,23 @@ mod tests {
 
     use super::*;
     use alloc::vec;
+
+    /// Every short-buffer path here reports `need`/`have` in whole bytes,
+    /// through the workspace's one `BitError` -> `BufferTooShort` conversion.
+    #[test]
+    fn the_rbsp_reader_reports_bytes() {
+        let mut reader = BitReader::from_rbsp(&[0xFF], "RbspBitReader").expect("one byte");
+        assert_eq!(reader.read_bits(8, "byte").expect("whole byte"), 0xFF);
+        let Error::BufferTooShort(short) = reader.read_bits(12, "twelve_bits").expect_err("eof")
+        else {
+            panic!("expected a short buffer");
+        };
+        assert_eq!(
+            short.need, 3,
+            "the read starts at the end of the one-byte buffer and spans two more"
+        );
+        assert_eq!(short.have, 1, "one byte is present");
+    }
 
     #[test]
     fn unescape_removes_emulation_prevention_bytes() {

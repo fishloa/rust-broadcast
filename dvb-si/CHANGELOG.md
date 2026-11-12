@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- The Satellite Access Table's bit-packed body reader reports a short input in bytes, matching every other `BufferTooShort` in the workspace, instead of absolute bits; its serializer is now `broadcast_common::bits::BitWriter` rather than a second hand-rolled writer, keeping the field-width check the SAT relies on (issue #2461).
 
 ## [13.1.0] - 2026-11-10
 ### Added
