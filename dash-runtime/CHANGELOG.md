@@ -3,6 +3,8 @@
 All notable changes to dash-runtime will be documented in this file.
 
 ## [Unreleased]
+### Changed
+- `mpd::base_url` joins each `BaseURL` chain entry through `broadcast-common::url_ref::resolve`, the workspace's one guarded resolver, and `mpd::base_url::first_forbidden_char` is the shared control-character check plus its own whitespace rule; a space is now refused too, matching the shared resolver (issue #2458).
 ### Added
 - `mpd::base_url` (`resolve`, `resolve_chain`, `first_forbidden_char`): RFC 3986 §5 URL-reference and `BaseURL`-chain resolution over `url::Url::join`, moved from `transmux`, whose only caller was this crate; `mpd::urls` now resolves through it instead of `transmux` (#2355).
 ### Fixed

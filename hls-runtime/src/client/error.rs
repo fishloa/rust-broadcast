@@ -126,6 +126,20 @@ pub enum Error {
         segments: usize,
     },
 
+    /// A playlist reference (a segment, Part, init, key or variant URI) could
+    /// not be resolved against the playlist URL: it carried an ASCII control
+    /// character, or the two did not form a URL (issue #2458). The reference is
+    /// never sanitised and never requested; playback carries on with the rest
+    /// of the playlist.
+    #[error("unresolvable playlist reference {uri:?}: {source}")]
+    UnresolvableReference {
+        /// The reference exactly as the playlist wrote it.
+        uri: String,
+        /// Why it could not be resolved.
+        #[source]
+        source: broadcast_common::url_ref::Error,
+    },
+
     /// [`crate::client::HlsClient::select_variant`] named a variant index that
     /// does not exist, or was called before any master playlist had been seen.
     #[error("no such variant: {index}")]

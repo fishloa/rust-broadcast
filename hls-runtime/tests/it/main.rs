@@ -34,4 +34,5 @@ mod tokio_client_nonfatal;
 mod tokio_client_restart;
 mod tracks_display;
 mod ts_hls_ingest;
+mod url_control_chars;
 mod video_range;

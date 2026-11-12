@@ -3,6 +3,8 @@
 All notable changes to smooth-runtime will be documented in this file.
 
 ## [Unreleased]
+### Changed
+- URL-reference resolution now uses the shared guarded resolver in `broadcast-common::url_ref` (control characters rejected before joining) (issue #2458).
 ### Added
 - `Output::TracksChanged(Vec<TrackSpec>)`: after the tracks are announced, `select_video_quality` accepts any level of the same codec family (H264/AVC1, H265/HEVC) even when its SPS/PPS and resolution differ, and the engine re-announces the full track set once, before the first sample of the new level. A level of another codec family is still refused.
 ### Fixed

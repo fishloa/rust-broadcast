@@ -70,6 +70,8 @@ pub mod time;
 pub mod timescale;
 pub mod traits;
 pub mod ts_dup;
+#[cfg(feature = "url")]
+pub mod url_ref;
 #[cfg(feature = "xml")]
 pub mod xml;
 #[cfg(feature = "xml")]

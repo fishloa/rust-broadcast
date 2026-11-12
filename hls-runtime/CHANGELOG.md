@@ -6,6 +6,8 @@ documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- URL-reference resolution now uses the shared guarded resolver in `broadcast-common::url_ref` (control characters rejected before joining) (issue #2458).
 ### Added
 - `HlsOrigin::set_init_from`: `set_init` for a caller that names the first segment cut against the new init, for segments closed but not yet published.
 ### Removed

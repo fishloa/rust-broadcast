@@ -485,6 +485,7 @@ dependencies = [
  "iso-639",
  "quick-xml",
  "serde",
+ "url",
 ]
 
 [[package]]
