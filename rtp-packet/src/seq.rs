@@ -244,7 +244,13 @@ mod tests {
             RTP_SEQ_MOD - MAX_MISORDER,
             "MAX_MISORDER must be far below RTP_SEQ_MOD"
         );
-        assert!(MAX_DROPOUT <= MAX_WILD_JUMP_U16);
+        // MAX_DROPOUT must stay below the wild-jump threshold, or an
+        // ordinary gap would be read as a restart.
+        assert_eq!(
+            MAX_WILD_JUMP_U16.max(MAX_DROPOUT),
+            MAX_WILD_JUMP_U16,
+            "MAX_DROPOUT must sit below the wild-jump window"
+        );
     }
 
     #[test]
