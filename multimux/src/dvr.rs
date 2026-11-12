@@ -1398,53 +1398,39 @@ impl DvrRecorder {
             return Err("TS index rebuild not yet implemented".to_string());
         }
 
-        // fMP4: walk top-level boxes. Each segment is moof+mdat.
+        // fMP4: each segment is a top-level moof+mdat pair.
         let mut entries = Vec::new();
         let mut offset: usize = 0;
         let init_len = usize::try_from(self.init_len)
             .map_err(|_| "init prelude length does not fit usize".to_string())?;
-        while offset + 8 <= data.len() {
-            let size = u32::from_be_bytes([
-                data[offset],
-                data[offset + 1],
-                data[offset + 2],
-                data[offset + 3],
-            ]) as usize;
-            let box_type = &data[offset + 4..offset + 8];
-            if size < 8 || offset + size > data.len() {
+        while offset < data.len() {
+            let (box_ref, consumed) = match transmux::parse_box(&data[offset..]) {
+                Ok(x) => x,
+                Err(_) => break,
+            };
+            if consumed == 0 {
                 break;
             }
-            if box_type == b"moof" {
+            if box_ref.header.box_type.is(&transmux::segments::MOOF) {
                 let start = (init_len + offset) as u64;
-                let len = size as u64;
-                let mdat_offset = offset + size;
-                let mdat_size = if mdat_offset + 8 <= data.len() {
-                    u32::from_be_bytes([
-                        data[mdat_offset],
-                        data[mdat_offset + 1],
-                        data[mdat_offset + 2],
-                        data[mdat_offset + 3],
-                    ]) as usize
+                let mdat_offset = offset + consumed;
+                let total_len = if mdat_offset < data.len() {
+                    match transmux::parse_box(&data[mdat_offset..]) {
+                        Ok((mdat_box, mdat_consumed))
+                            if mdat_box.header.box_type.is(&transmux::segments::MDAT) =>
+                        {
+                            consumed + mdat_consumed
+                        }
+                        _ => consumed,
+                    }
                 } else {
-                    0
-                };
-                // `+ 8`, not `+ 4`: the slice below reads bytes
-                // [mdat_offset + 4, mdat_offset + 8), so `+ 4 <= len` is not
-                // enough to make it in-bounds. A segment file truncated
-                // between the moof and the mdat four-CC panicked here.
-                let total_len = if mdat_offset + 8 <= data.len()
-                    && &data[mdat_offset + 4..mdat_offset + 8] == b"mdat"
-                    && mdat_size >= 8
-                {
-                    (size + mdat_size) as u64
-                } else {
-                    len
+                    consumed
                 };
                 entries.push(IndexEntry {
                     seq: 0,
                     start_pts_ns: 0,
                     byte_offset: start,
-                    byte_len: total_len,
+                    byte_len: total_len as u64,
                     // Neither is recoverable from the box layout alone (no
                     // sequence number or discontinuity bit is encoded in
                     // fMP4 itself) — see this method's own doc for `seq`'s
@@ -1452,9 +1438,9 @@ impl DvrRecorder {
                     duration_ns: 0,
                     discontinuous: false,
                 });
-                offset += total_len as usize;
+                offset += total_len;
             } else {
-                offset += size;
+                offset += consumed;
             }
         }
         Ok(entries)
@@ -1975,6 +1961,83 @@ mod tests {
         let parsed: Vec<IndexEntry> =
             serde_json::from_slice(&std::fs::read(&idx).unwrap()).unwrap();
         assert_eq!(parsed.len(), 4);
+        cleanup_temp(&tmp);
+    }
+
+    fn publish_raw(writer: &media_plane::trunk::SegmentWriter, seq: u32, bytes: Vec<u8>) {
+        writer
+            .publish_segment(SegmentEntry::new(
+                bytes::Bytes::from(bytes),
+                SegmentSeq::new(seq),
+                Duration::from_secs(1),
+                broadcast_common::Timestamp::from_nanos(0),
+                transmux::SegmentMeta {
+                    discontinuous: false,
+                },
+            ))
+            .unwrap();
+    }
+
+    fn moof_box() -> Vec<u8> {
+        let mut b = 16u32.to_be_bytes().to_vec();
+        b.extend_from_slice(b"moof");
+        b.extend_from_slice(&[0u8; 8]);
+        b
+    }
+
+    /// A segment whose `mdat` uses the 64-bit `largesize` form (size field 1)
+    /// is indexed as one moof+mdat entry, and the walk continues past it.
+    #[test]
+    fn rebuild_index_steps_over_a_largesize_mdat() {
+        let tmp = temp_dir();
+        let trunk = Trunk::new(trunk_config());
+        let writer = trunk.segment_writer().expect("segment writer");
+        let mut recorder =
+            DvrRecorder::new("test".to_string(), dvr_config(&tmp, 5), ".m4s", &trunk)
+                .expect("recorder");
+        recorder.poll_and_persist(Some(b"INIT")).expect("init");
+
+        let mut large_mdat = 1u32.to_be_bytes().to_vec();
+        large_mdat.extend_from_slice(b"mdat");
+        large_mdat.extend_from_slice(&(16u64 + 32).to_be_bytes());
+        large_mdat.extend_from_slice(&[0xAB; 32]);
+        let first = [moof_box(), large_mdat].concat();
+        let mut small_mdat = (8u32 + 4).to_be_bytes().to_vec();
+        small_mdat.extend_from_slice(b"mdat");
+        small_mdat.extend_from_slice(&[0xCD; 4]);
+        let second = [moof_box(), small_mdat].concat();
+        publish_raw(&writer, 0, first.clone());
+        publish_raw(&writer, 1, second.clone());
+        recorder.poll_and_persist(None).expect("persist");
+
+        let entries = recorder.rebuild_index().expect("rebuild");
+        let lens: Vec<u64> = entries.iter().map(|e| e.byte_len).collect();
+        assert_eq!(lens, vec![first.len() as u64, second.len() as u64]);
+        cleanup_temp(&tmp);
+    }
+
+    /// A final `mdat` whose size field is 0 (extends to the end of the file)
+    /// is indexed with the moof.
+    #[test]
+    fn rebuild_index_takes_a_to_eof_mdat_with_its_moof() {
+        let tmp = temp_dir();
+        let trunk = Trunk::new(trunk_config());
+        let writer = trunk.segment_writer().expect("segment writer");
+        let mut recorder =
+            DvrRecorder::new("test".to_string(), dvr_config(&tmp, 5), ".m4s", &trunk)
+                .expect("recorder");
+        recorder.poll_and_persist(Some(b"INIT")).expect("init");
+
+        let mut eof_mdat = 0u32.to_be_bytes().to_vec();
+        eof_mdat.extend_from_slice(b"mdat");
+        eof_mdat.extend_from_slice(&[0xEF; 20]);
+        let segment = [moof_box(), eof_mdat].concat();
+        publish_raw(&writer, 0, segment.clone());
+        recorder.poll_and_persist(None).expect("persist");
+
+        let entries = recorder.rebuild_index().expect("rebuild");
+        let lens: Vec<u64> = entries.iter().map(|e| e.byte_len).collect();
+        assert_eq!(lens, vec![segment.len() as u64]);
         cleanup_temp(&tmp);
     }
 

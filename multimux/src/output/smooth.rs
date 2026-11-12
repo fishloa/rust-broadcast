@@ -855,7 +855,7 @@ fn annex_b_hex(nals: &[&[u8]]) -> String {
         out.extend_from_slice(&START_CODE);
         out.extend_from_slice(nal);
     }
-    broadcast_common::hex::hex_encode(&out).to_uppercase()
+    broadcast_common::hex::hex_encode_upper(&out)
 }
 
 /// Resolve Smooth codec parameters from a [`CodecConfig`], or `None` for a
@@ -913,7 +913,7 @@ fn smooth_codec_params(config: &CodecConfig) -> Option<SmoothCodecParams> {
                 .decoder_config
                 .as_ref()
                 .and_then(|dc| dc.decoder_specific_info.as_ref())
-                .map(|dsi| broadcast_common::hex::hex_encode(&dsi.data).to_uppercase())
+                .map(|dsi| broadcast_common::hex::hex_encode_upper(&dsi.data))
                 .unwrap_or_default(),
         }),
         _ => None,

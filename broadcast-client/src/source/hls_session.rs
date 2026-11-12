@@ -254,7 +254,7 @@ impl HlsSession {
                 (r.autoselect || r.default)
                     && r.language
                         .as_deref()
-                        .is_some_and(|l| language_matches(l, pref))
+                        .is_some_and(|l| broadcast_common::lang::language_matches(pref, l))
             })
         {
             return Some(i);
@@ -498,13 +498,4 @@ impl HlsSession {
 
 fn is_fatal_error(event: &Event) -> bool {
     matches!(event, Event::Error { fatal: true, .. })
-}
-
-fn language_matches(language: &str, preferred: &str) -> bool {
-    let language = language.to_ascii_lowercase();
-    let preferred = preferred.to_ascii_lowercase();
-    language == preferred
-        || language
-            .strip_prefix(preferred.as_str())
-            .is_some_and(|rest| rest.starts_with('-'))
 }

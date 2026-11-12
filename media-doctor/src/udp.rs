@@ -5,7 +5,12 @@
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 
-use socket2::{Domain, Protocol, SockRef, Socket, Type};
+use socket2::SockRef;
+
+/// Sharing a multicast port on macOS/BSD needs `SO_REUSEPORT` as well as
+/// `SO_REUSEADDR`; on Linux `SO_REUSEPORT` load-balances datagrams across the
+/// sockets, which a monitor sharing a port with a receiver must not do.
+const SHARE_PORT_NEEDS_REUSE_PORT: bool = cfg!(target_vendor = "apple");
 
 /// Socket options for [`bind_udp`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -51,7 +56,6 @@ pub fn bind_udp(addr: SocketAddr, config: &UdpConfig) -> io::Result<UdpSocket> {
         }
         ip => (ip, None),
     };
-    // Reject a mismatched interface before any socket exists.
     match (group, config.interface) {
         (Some(IpAddr::V4(_)), Some(MulticastInterface::V6Index(_)))
         | (Some(IpAddr::V6(_)), Some(MulticastInterface::V4(_))) => {
@@ -62,35 +66,47 @@ pub fn bind_udp(addr: SocketAddr, config: &UdpConfig) -> io::Result<UdpSocket> {
         }
         _ => {}
     }
-    let socket = Socket::new(Domain::for_address(addr), Type::DGRAM, Some(Protocol::UDP))?;
-    if config.reuse_addr {
-        socket.set_reuse_address(true)?;
-        // Sharing a multicast port on macOS/BSD needs SO_REUSEPORT too; on
-        // Linux it has load-balancing semantics we do not want.
-        #[cfg(target_vendor = "apple")]
-        socket.set_reuse_port(true)?;
-    }
-    if let Some(bytes) = config.recv_buffer {
-        socket.set_recv_buffer_size(bytes)?;
-    }
-    socket.bind(&SocketAddr::new(bind_ip, addr.port()).into())?;
-    match group {
+
+    let multicast = match group {
         Some(IpAddr::V4(ip)) => {
             let iface = match config.interface {
                 Some(MulticastInterface::V4(i)) => i,
                 _ => Ipv4Addr::UNSPECIFIED,
             };
-            socket.join_multicast_v4(&ip, &iface)?;
+            Some(dvb_stream::udp::MulticastMembership::V4 {
+                group: ip,
+                interface: iface,
+            })
         }
         Some(IpAddr::V6(ip)) => {
             let index = match config.interface {
                 Some(MulticastInterface::V6Index(i)) => i,
                 _ => 0,
             };
-            socket.join_multicast_v6(&ip, index)?;
+            Some(dvb_stream::udp::MulticastMembership::V6 {
+                group: ip,
+                interface: index,
+            })
         }
-        None => {}
+        None => None,
+    };
+
+    let mut spec = dvb_stream::udp::SocketSpec::new(SocketAddr::new(bind_ip, addr.port()))
+        .with_reuse(
+            config.reuse_addr,
+            config.reuse_addr && SHARE_PORT_NEEDS_REUSE_PORT,
+        );
+    if let Some(bytes) = config.recv_buffer {
+        spec = spec.with_recv_buffer_size(bytes);
     }
+    if let Some(m) = multicast {
+        spec = spec.with_multicast(m);
+    }
+    let socket = dvb_stream::udp::bind_standard(spec)?;
+    // `bind_standard` returns a non-blocking socket (for tokio consumers);
+    // media-doctor uses blocking sockets with read timeouts, so restore
+    // blocking mode here.
+    socket.set_nonblocking(false)?;
     Ok(socket.into())
 }
 
@@ -175,6 +191,17 @@ mod tests {
         let mut buf = [0u8; 16];
         let (n, _) = rx.recv_from(&mut buf).unwrap();
         assert_eq!(&buf[..n], b"\x47ts");
+    }
+
+    #[test]
+    fn reuse_addr_allows_a_second_bind_on_the_same_multicast_port() {
+        let cfg = UdpConfig {
+            reuse_addr: true,
+            ..UdpConfig::default()
+        };
+        let first = bind_udp("239.255.42.42:0".parse().unwrap(), &cfg).unwrap();
+        let addr = first.local_addr().unwrap();
+        bind_udp(addr, &cfg).unwrap();
     }
 
     #[test]

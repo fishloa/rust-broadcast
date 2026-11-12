@@ -222,7 +222,7 @@ Wraps the synchronous `SiDemux` and `T2miPump` as `futures::Stream`s over any `A
 - **Cargo description:** Async/tokio stream adapters over dvb-si SiDemux and dvb-t2mi T2miPump.
 - **Version (in-tree):** 0.8.1 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 3
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`dvb-si`](#dvb-si), [`dvb-t2mi`](#dvb-t2mi), [`mpeg-ts`](#mpeg-ts), [`rtp-packet`](#rtp-packet)
-- **Used by (workspace):** [`multimux`](#multimux)
+- **Used by (workspace):** [`media-doctor`](#media-doctor), [`multimux`](#multimux)
 - **Links:** [README](../dvb-stream/README.md) · [CHANGELOG](../dvb-stream/CHANGELOG.md) · [crates.io](https://crates.io/crates/dvb-stream) · [docs.rs](https://docs.rs/dvb-stream)
 
 ### DVB service information, physical-layer framing and conformance
@@ -699,6 +699,8 @@ A pluggable diagnostics harness: each `Diagnostic` checks one rule (sync, PAT/PM
 
 - **Standards:** Checks against ISO/IEC 13818-1, RFC 8216, ISO/IEC 23009-1, SCTE 35
 - **Cargo description:** Media diagnostics harness for DVB/MPEG-TS: pluggable lint-style checks (sync, PAT/PMT versioning, CC anomalies, PCR, PTS/DTS monotonicity, SCTE-35 splice consistency) + HLS playlist validation.
+- **Version (in-tree):** 0.15.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 5
+- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-dash`](#broadcast-dash), [`broadcast-hls`](#broadcast-hls), [`container-probe`](#container-probe), [`dash-runtime`](#dash-runtime), [`dvb-conformance`](#dvb-conformance), [`dvb-si`](#dvb-si), [`dvb-stream`](#dvb-stream), [`mpeg-pes`](#mpeg-pes), [`mpeg-ts`](#mpeg-ts), [`scte35-splice`](#scte35-splice), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
 - **Version (in-tree):** 0.15.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 6
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-dash`](#broadcast-dash), [`broadcast-hls`](#broadcast-hls), [`container-probe`](#container-probe), [`dash-runtime`](#dash-runtime), [`dvb-conformance`](#dvb-conformance), [`dvb-si`](#dvb-si), [`mpeg-pes`](#mpeg-pes), [`mpeg-ts`](#mpeg-ts), [`scte35-splice`](#scte35-splice), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
 - **Used by (workspace):** [`compliance-probe`](#compliance-probe)
@@ -1030,6 +1032,8 @@ flowchart BT
   hls_runtime --> media_plane
   media_doctor --> dash_runtime
   media_doctor --> dvb_conformance
+  media_doctor --> dvb_stream
+  media_doctor --> timed_metadata
   media_plane --> timed_metadata
   media_plane --> transmux
   mp4_emsg --> broadcast_common
