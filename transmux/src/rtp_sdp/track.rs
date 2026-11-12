@@ -159,7 +159,6 @@ fn track_of_payload(media: &sdp_types::Media, payload_type: &str) -> Option<SdpT
         MEDIA_AUDIO if encoding_is(ENCODING_AAC) => {
             let fmtp = fmtp?;
             let config = aac_config_from_fmtp(fmtp).ok()?;
-            // RFC 3640 §3.3.6: AAC-hbr 13/3/3 only.
             let mode = fmtp_param(fmtp, "mode").unwrap_or("AAC-hbr");
             if !mode.eq_ignore_ascii_case("AAC-hbr") {
                 return None;
@@ -198,7 +197,9 @@ fn track_of_payload(media: &sdp_types::Media, payload_type: &str) -> Option<SdpT
 /// `MPEG4-GENERIC` AAC audio (RFC 3640 §4.1). A payload type with no `a=rtpmap` is a static or
 /// unannounced one (RFC 3551 §3) and is taken to be the section's own media type. H.264 without
 /// `sprop-parameter-sets` yields a placeholder `avcC` (parameter sets arrive in-band); AAC needs
-/// its `config`. `None` when no listed payload type is playable.
+/// its `config` and an explicit `indexDeltaLength=3` (RFC 3640 §3.3.6 fixes AAC-hbr at 13/3/3; the
+/// §4.1 default of 0 would make every AU after the first in a packet 13 bits wide, which the
+/// depacketiser's 16-bit AU headers cannot read). `None` when no listed payload type is playable.
 pub fn sdp_track(media: &sdp_types::Media) -> Option<SdpTrack> {
     media
         .fmt
@@ -301,6 +302,15 @@ mod tests {
         let m = media(
             "m=audio 0 RTP/AVP 97\r\na=rtpmap:97 mpeg4-generic/48000/2\r\n\
              a=fmtp:97 mode=AAC-lbr; config=1190; sizeLength=6; indexLength=2; indexDeltaLength=2\r\n",
+        );
+        assert_eq!(sdp_track(&m), None);
+    }
+
+    #[test]
+    fn aac_without_index_delta_length_is_not_playable() {
+        let m = media(
+            "m=audio 0 RTP/AVP 97\r\na=rtpmap:97 mpeg4-generic/44100/2\r\n\
+             a=fmtp:97 streamtype=5;profile-level-id=1;mode=AAC-hbr;sizelength=13;indexlength=3;config=1190\r\n",
         );
         assert_eq!(sdp_track(&m), None);
     }

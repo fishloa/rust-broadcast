@@ -45,3 +45,60 @@ fn an_unknown_quality_index_is_refused() {
     let mut host = host_after_manifest();
     assert!(!host.client.select_video_quality(2));
 }
+
+const ORIGINAL_PPS_TAIL: &str = "ebe3cb20";
+const OTHER_PPS_TAIL: &str = "ebe3cb21";
+const SKIPPED_STREAM: &str = "<StreamIndex Type=\"video\" TimeScale=\"0\" QualityLevels=\"1\" Chunks=\"1\" Url=\"Skipped({bitrate})/Fragments(video={start time})\">\n<QualityLevel Index=\"0\" Bitrate=\"11111\" FourCC=\"H264\" MaxWidth=\"320\" MaxHeight=\"240\" CodecPrivateData=\"00\" />\n<c n=\"0\" d=\"10000000\" />\n</StreamIndex>\n";
+
+fn manifest_with_other_pps_second_level() -> Vec<u8> {
+    String::from_utf8(two_quality_manifest())
+        .expect("utf8")
+        .lines()
+        .map(|l| {
+            if l.contains(SECOND_VIDEO_BITRATE) {
+                l.replace(ORIGINAL_PPS_TAIL, OTHER_PPS_TAIL)
+            } else {
+                l.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        .into_bytes()
+}
+
+#[test]
+fn a_level_with_a_different_codec_config_is_refused_once_announced() {
+    let mut host = Host::new(SmoothConfig::default());
+    host.serve_dir("av");
+    let Some(Action::FetchManifest { id, .. }) = host.client.poll(0) else {
+        panic!("first action is the manifest fetch");
+    };
+    host.client
+        .on_manifest(0, id, &manifest_with_other_pps_second_level());
+    host.run_until(|o| {
+        o.iter()
+            .any(|o| matches!(o, smooth_runtime::Output::Tracks(_)))
+    });
+    assert!(!host.client.select_video_quality(1));
+}
+
+#[test]
+fn the_offered_levels_index_the_stream_that_select_video_quality_switches() {
+    let manifest = String::from_utf8(two_quality_manifest())
+        .expect("utf8")
+        .replace(
+            "<StreamIndex Type=\"video\" QualityLevels=\"1\"",
+            &format!("{SKIPPED_STREAM}<StreamIndex Type=\"video\" QualityLevels=\"1\""),
+        );
+    let mut host = Host::new(SmoothConfig::default());
+    host.serve_dir("av");
+    let Some(Action::FetchManifest { id, .. }) = host.client.poll(0) else {
+        panic!("first action is the manifest fetch");
+    };
+    host.client.on_manifest(0, id, manifest.as_bytes());
+    assert_eq!(host.client.video_quality_count(), 2);
+    assert!(host.client.select_video_quality(1));
+    host.run_until(|o| o.iter().any(|o| is_fatal(o) || is_ended(o)));
+    let selected = format!("QualityLevels({SECOND_VIDEO_BITRATE})/{FIRST_FRAGMENT}");
+    assert!(host.count_requests(&selected) > 0);
+}

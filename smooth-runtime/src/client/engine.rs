@@ -28,6 +28,14 @@ fn timescale_of(manifest: &SmoothManifest, index: &StreamIndex) -> Option<u32> {
         .filter(|&t| t != 0)
 }
 
+fn primary_video(manifest: &SmoothManifest) -> Option<&StreamIndex> {
+    manifest.streams.iter().find(|s| {
+        s.stream_type == StreamType::Video
+            && !s.qualities.is_empty()
+            && timescale_of(manifest, s).is_some()
+    })
+}
+
 #[derive(Debug, Clone, Copy)]
 enum ManifestCursor {
     Idle,
@@ -108,22 +116,42 @@ impl SmoothClient {
     /// Fetch the first video stream's later fragments at `QualityLevel` `index`
     /// (an index into [`Output::Qualities`]); false when there is no such level.
     ///
-    /// Fragments already requested keep their level, and the announced
-    /// `TrackSpec` is not re-announced, so the levels should share a codec
-    /// configuration.
+    /// Fragments already requested keep their level. Once the tracks are
+    /// announced the `TrackSpec` is fixed, so a level whose codec configuration
+    /// differs from the announced one is refused (false).
     pub fn select_video_quality(&mut self, index: usize) -> bool {
-        let Some(stream) = self
+        let Some(si) = self
             .streams
-            .iter_mut()
-            .find(|s| s.index.stream_type == StreamType::Video)
+            .iter()
+            .position(|s| s.index.stream_type == StreamType::Video)
         else {
             return false;
         };
-        let Some(quality) = stream.index.qualities.get(index).cloned() else {
+        let Some(quality) = self.streams[si].index.qualities.get(index).cloned() else {
             return false;
         };
-        stream.quality = quality;
+        if self.announced && !self.same_codec_config(si, &quality) {
+            return false;
+        }
+        self.streams[si].quality = quality;
         true
+    }
+
+    fn same_codec_config(&self, si: usize, candidate: &broadcast_smooth::QualityLevel) -> bool {
+        let stream = &self.streams[si];
+        let spec_of = |quality| {
+            track_spec_from_quality_level(
+                TrackId::new(FIRST_TRACK_ID),
+                stream.timescale,
+                stream.index.stream_type,
+                quality,
+            )
+            .ok()
+        };
+        let (Some(current), Some(next)) = (spec_of(&stream.quality), spec_of(candidate)) else {
+            return false;
+        };
+        current == next
     }
 
     /// The earliest instant, in microseconds, at which [`Self::poll`] has more to do
@@ -382,13 +410,11 @@ impl SmoothClient {
     }
 
     fn build_streams(&mut self, manifest: &SmoothManifest) -> Result<bool, SmoothError> {
-        let mut chose_video = false;
         for index in &manifest.streams {
             if !matches!(index.stream_type, StreamType::Video | StreamType::Audio) {
                 continue;
             }
-            let pick = if index.stream_type == StreamType::Video && !chose_video {
-                chose_video = true;
+            let pick = if primary_video(manifest).is_some_and(|v| std::ptr::eq(v, index)) {
                 self.choose_video_quality(manifest, index)
             } else {
                 0
@@ -453,11 +479,7 @@ impl SmoothClient {
     }
 
     fn offer_qualities(&mut self, manifest: &SmoothManifest) {
-        let Some(video) = manifest
-            .streams
-            .iter()
-            .find(|s| s.stream_type == StreamType::Video)
-        else {
+        let Some(video) = primary_video(manifest) else {
             return;
         };
         let qualities = Self::quality_infos(manifest, video);

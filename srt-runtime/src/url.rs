@@ -176,7 +176,9 @@ impl SrtUrl {
                     continue;
                 }
                 let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-                let key = percent_decode(key)?;
+                let Ok(key) = percent_decode(key) else {
+                    continue;
+                };
                 let recognised =
                     matches!(key.as_str(), "streamid" | "latency" | "mode" | "passphrase");
                 if recognised {
@@ -321,6 +323,12 @@ mod tests {
             SrtUrl::parse("srt://h:9000?%6Catency=10&latency=20"),
             Err(UrlRejection::DuplicateKey)
         );
+    }
+
+    #[test]
+    fn unknown_key_with_invalid_utf8_is_ignored() {
+        let url = SrtUrl::parse("srt://h:9000?%ff=1&latency=120").expect("ignored key");
+        assert_eq!(url.latency_ms, Some(120));
     }
 
     #[test]
