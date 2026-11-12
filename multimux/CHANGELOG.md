@@ -28,6 +28,8 @@
 - The DASH-IF ingest reads the publisher's MPD and matches uploaded segment URLs with `dash-runtime` instead of transmux's removed MPD model (#2340).
 
 ### Fixed
+- An RTSP pull reads the SETUP reply's transport with `take_negotiated_transport()`, so a track whose reply has no `Transport` header fails with a SETUP protocol error instead of inheriting the previous track's channels.
+- An RTSP pull routes interleaved media by the RTP channel the server negotiated for each track, so a server answering `interleaved=1-2` no longer has every frame dropped as an odd channel.
 - `rescale_to_90k` now wraps the rescaled RTP timestamp into the 32-bit range explicitly (RFC 3550 §5.1) instead of relying on `as u32`.
 - `Recorder::lines` and `Recorder::len` recover a poisoned lock via `PoisonError::into_inner` instead of returning an empty golden.
 

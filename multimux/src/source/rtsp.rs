@@ -87,12 +87,9 @@ const RTSP_DEFAULT_PORT: u16 = rtsp_runtime::RTSP_DEFAULT_PORT;
 /// Default port for a bare `rtsps://host/...` URL with no explicit port.
 const RTSPS_DEFAULT_PORT: u16 = rtsp_runtime::RTSPS_DEFAULT_PORT;
 
-/// Map an interleaved RTP channel to its track id (even channels only; RTCP
-/// odd channels return `None`).
+/// Map an interleaved RTP channel to its track id; a track's RTCP channel
+/// matches nothing here.
 pub fn route_channel(channel: u8, tracks: &[TrackInit]) -> Option<TrackId> {
-    if !channel.is_multiple_of(2) {
-        return None;
-    }
     tracks
         .iter()
         .find(|t| t.channel == channel)
@@ -308,21 +305,11 @@ impl RtspIngestSession {
                     }
                     (Phase::AwaitSetup(index), m) if *m == Method::Setup => {
                         let index = *index;
-                        let negotiated =
-                            self.session
-                                .negotiated_transport()
-                                .cloned()
-                                .ok_or_else(|| MultimuxError::Protocol {
-                                    phase: "SETUP",
-                                    reason: format!(
-                                        "track {}: server did not provide negotiated transport",
-                                        self.tracks[index].track_id
-                                    ),
-                                })?;
+                        let negotiated = self.session.take_negotiated_transport();
                         let plan = self.plan.as_mut().ok_or_else(|| MultimuxError::Sdp {
                             reason: "SETUP answered before a plan was made".into(),
                         })?;
-                        plan.accept_setup(index, Some(&negotiated)).map_err(|e| {
+                        plan.accept_setup(index, negotiated.as_ref()).map_err(|e| {
                             MultimuxError::Protocol {
                                 phase: "SETUP",
                                 reason: format!("track {}: {e}", self.tracks[index].track_id),
@@ -951,6 +938,59 @@ mod tests {
         assert_eq!(route_channel(0, &tracks), Some(TrackId::new(1)));
         assert_eq!(route_channel(1, &tracks), None);
         assert_eq!(route_channel(4, &tracks), None);
+    }
+
+    #[test]
+    fn routes_an_odd_rtp_channel_the_server_negotiated() {
+        let tracks = vec![video_track(5)];
+        assert_eq!(route_channel(5, &tracks), Some(TrackId::new(1)));
+        assert_eq!(route_channel(6, &tracks), None);
+    }
+
+    #[test]
+    fn a_setup_reply_without_transport_does_not_reuse_the_previous_tracks_channels() {
+        let sprop = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
+        let media = |n: u8| {
+            format!(
+                "m=video 0 RTP/AVP 96\r\na=control:trackID={n}\r\na=rtpmap:96 H264/90000\r\n\
+                 a=fmtp:96 packetization-mode=1;sprop-parameter-sets={sprop}\r\n"
+            )
+        };
+        let sdp = format!(
+            "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n{}{}",
+            media(1),
+            media(2)
+        );
+        let mut dialer = RtspDialer::new("rtsp://cam.local/stream", None);
+        let mut session = dialer.dial().expect("dial");
+        let _ = session.poll_transmit();
+        let replies = [
+            (1, "Content-Type: application/sdp\r\n", sdp),
+            (
+                2,
+                "Transport: RTP/AVP/TCP;interleaved=4-5\r\nSession: ABC123;timeout=60\r\n",
+                String::new(),
+            ),
+        ];
+        for (cseq, headers, body) in replies {
+            session
+                .feed(
+                    &rtsp_response(cseq, "200 OK", headers, &body),
+                    Timestamp::ZERO,
+                )
+                .unwrap();
+            let _ = session.poll_transmit();
+        }
+        let err = session
+            .feed(
+                &rtsp_response(3, "200 OK", "Session: ABC123\r\n", ""),
+                Timestamp::ZERO,
+            )
+            .expect_err("a SETUP reply with no Transport header is unusable");
+        assert!(
+            matches!(err, MultimuxError::Protocol { phase: "SETUP", .. }),
+            "{err:?}"
+        );
     }
 
     #[test]
