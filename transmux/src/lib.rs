@@ -207,6 +207,7 @@ pub mod pipeline;
 pub mod progressive;
 pub mod progressive_demux;
 pub mod ps_demux;
+pub mod rbsp;
 pub mod rebase;
 pub mod repackage;
 #[cfg(test)]

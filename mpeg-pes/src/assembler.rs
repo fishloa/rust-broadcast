@@ -42,6 +42,24 @@ impl PesAssembler {
         }
     }
 
+    /// Bytes currently buffered in the in-progress unit.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Whether the in-progress unit buffer is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    /// Whether a unit is currently in progress.
+    #[must_use]
+    pub fn is_started(&self) -> bool {
+        self.inner.is_started()
+    }
+
     /// Feed one TS packet's payload for this PID.
     ///
     /// `payload_unit_start` is the packet's `payload_unit_start_indicator`.

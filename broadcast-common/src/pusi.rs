@@ -71,6 +71,24 @@ impl PusiAccumulator {
         self.max_unit_size
     }
 
+    /// Bytes currently buffered in the in-progress unit.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.buf.len()
+    }
+
+    /// Whether the in-progress unit buffer is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.buf.is_empty()
+    }
+
+    /// Whether a unit is currently in progress (started by a PUSI).
+    #[must_use]
+    pub fn is_started(&self) -> bool {
+        self.started
+    }
+
     /// Feed one TS packet's payload for this PID.
     ///
     /// Returns the bytes of the unit a PUSI just closed, if it was non-empty.
