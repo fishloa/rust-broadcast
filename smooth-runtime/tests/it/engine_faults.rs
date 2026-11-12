@@ -143,3 +143,16 @@ fn a_selector_picks_the_requested_video_quality() {
             .any(|u| u.contains("QualityLevels(10000)/Fragments(video=0)"))
     );
 }
+
+const TFXD_TIME_RANGE: std::ops::Range<usize> = 304..312;
+
+#[test]
+fn a_tfxd_time_beyond_i64_drops_the_fragment_without_panicking() {
+    let mut hostile = fixture(&format!("av/{FIRST_VIDEO}"));
+    hostile[TFXD_TIME_RANGE].fill(0xFF);
+    let mut host = av_host(SmoothConfig::default());
+    host.route(FIRST_VIDEO, vec![Reply::Body(hostile)]);
+    host.run_until(|o| o.iter().any(is_ended));
+    assert!(host.has(|o| matches!(o, Output::Dropped(Dropped::Fragment { status: None, .. }))));
+    assert!(host.has(is_ended));
+}

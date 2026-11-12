@@ -98,17 +98,26 @@ pub(crate) fn live_join(
     chunks[first..].to_vec()
 }
 
+#[derive(Debug)]
+pub(crate) enum FragmentFault {
+    Demux,
+    TimeOutOfRange,
+}
+
 pub(crate) fn demux_fragment(
     init: &[u8],
     local_track_id: u32,
     body: &[u8],
     start: u64,
-) -> Result<Vec<Sample>, transmux::Error> {
+) -> Result<Vec<Sample>, FragmentFault> {
     let mut data = Vec::with_capacity(init.len() + body.len());
     data.extend_from_slice(init);
     data.extend_from_slice(body);
-    let media = Fmp4Demux::new().unpackage(data.as_slice())?;
+    let media = Fmp4Demux::new()
+        .unpackage(data.as_slice())
+        .map_err(|_| FragmentFault::Demux)?;
     let desired = fragment_tfxd(body).map_or(start, |t| t.fragment_absolute_time);
+    let desired = i64::try_from(desired).map_err(|_| FragmentFault::TimeOutOfRange)?;
     let mut out = Vec::new();
     for track in media
         .tracks
@@ -118,12 +127,20 @@ pub(crate) fn demux_fragment(
         let Some(first_dts) = track.samples.first().map(|s| s.dts.unwrap_or_default()) else {
             continue;
         };
-        let offset = i64::try_from(desired).unwrap_or(i64::MAX) - first_dts;
+        let offset = desired
+            .checked_sub(first_dts)
+            .ok_or(FragmentFault::TimeOutOfRange)?;
         for mut sample in track.samples {
-            sample.dts = sample.dts.map(|d| d + offset);
-            sample.pts = sample.pts.map(|p| p + offset);
+            sample.dts = shift(sample.dts, offset)?;
+            sample.pts = shift(sample.pts, offset)?;
             out.push(sample);
         }
     }
     Ok(out)
+}
+
+fn shift(time: Option<i64>, offset: i64) -> Result<Option<i64>, FragmentFault> {
+    time.map(|t| t.checked_add(offset)).map_or(Ok(None), |t| {
+        t.map(Some).ok_or(FragmentFault::TimeOutOfRange)
+    })
 }
