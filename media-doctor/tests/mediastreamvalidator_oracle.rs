@@ -73,7 +73,6 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 use broadcast_hls::{
@@ -83,10 +82,7 @@ use broadcast_hls::{
 use serde_json::Value;
 use transmux::cli::{Opts, Output, OutputFormat, run_bytes};
 
-use test_fixtures::process::output_bounded;
-
 /// Hard deadline for a `--version` availability probe.
-const PROBE_DEADLINE: Duration = Duration::from_secs(10);
 /// Margin added to the validator's own `-t` timeout to form the hard kill
 /// deadline (a tool that overruns it is killed and the test fails loudly).
 const VALIDATOR_MARGIN: Duration = Duration::from_secs(30);
@@ -115,14 +111,7 @@ fn scratch_dir(name: &str) -> PathBuf {
 // ── External-tool availability gate ─────────────────────────────────────────
 
 fn validator_available() -> bool {
-    match output_bounded(
-        Command::new("mediastreamvalidator").arg("--version"),
-        PROBE_DEADLINE,
-    ) {
-        Ok(o) => o.status.success(),
-        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => panic!("{e}"),
-        Err(_) => false,
-    }
+    test_fixtures::process::msv::available()
 }
 
 /// Skip this test cleanly, but LOUDLY: a silently-skipped oracle reads as a

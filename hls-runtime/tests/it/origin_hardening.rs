@@ -14,7 +14,6 @@
 
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -29,12 +28,9 @@ use media_plane::ids::{PartIndex, SegmentSeq};
 use media_plane::trunk::{PartEntry, SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
 use transmux::SegmentMeta;
 
-use test_fixtures::process::output_bounded;
-
 /// The validator's own `-t` timeout, seconds.
 const VALIDATOR_TIMEOUT_SECS: u64 = 3;
 /// Hard deadline for a `--version` availability probe.
-const PROBE_DEADLINE: Duration = Duration::from_secs(10);
 /// Margin added to the validator's own `-t` timeout to form the hard kill
 /// deadline (a tool that overruns it is killed and the test fails loudly).
 const VALIDATOR_MARGIN: Duration = Duration::from_secs(30);
@@ -739,15 +735,8 @@ fn validator_unavailable() -> Option<&'static str> {
     if !cfg!(target_os = "macos") {
         return Some("`mediastreamvalidator` is macOS-only and this is not macOS");
     }
-    let present = match output_bounded(
-        Command::new("mediastreamvalidator").arg("--version"),
-        PROBE_DEADLINE,
-    ) {
-        Ok(o) => o.status.success(),
-        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => panic!("{e}"),
-        Err(_) => false,
-    };
-    (!present).then_some("`mediastreamvalidator` is not on PATH (Additional Tools for Xcode)")
+    (!test_fixtures::process::msv::available())
+        .then_some("`mediastreamvalidator` is not on PATH (Additional Tools for Xcode)")
 }
 
 fn scratch(name: &str) -> PathBuf {
