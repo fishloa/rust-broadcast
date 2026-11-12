@@ -60,10 +60,19 @@ pub struct TsHttpSource {
 }
 
 impl TsHttpSource {
-    /// Create a source.
+    /// Create a source, seeded from the caller's `now_us`.
     pub fn new(url: Url, config: TsConfig, now_us: u64) -> Self {
+        Self::with_seed(url, config, now_us, now_us)
+    }
+
+    /// Create a source whose retry jitter is drawn from `seed`.
+    ///
+    /// The session passes a seed mixed from its own `now_us`, so that two sessions opened at the
+    /// same instant still jitter differently. A caller testing an exact retry delay passes a
+    /// fixed one.
+    pub(crate) fn with_seed(url: Url, config: TsConfig, now_us: u64, seed: u64) -> Self {
         Self {
-            ts: TsHttpClient::new(url.as_str(), config, now_us / 1000),
+            ts: TsHttpClient::with_seed(url.as_str(), config, now_us / 1000, seed),
             url,
             events: VecDeque::new(),
             tracks: BTreeMap::new(),

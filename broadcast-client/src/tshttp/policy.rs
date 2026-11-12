@@ -1,8 +1,17 @@
 use alloc::collections::VecDeque;
 use alloc::string::String;
 
+use crate::source::fetch::retry::ReconnectTimer;
 use crate::tshttp::config::Config;
 use crate::tshttp::events::{Action, Event, StarveKind};
+
+const MICROS_PER_MILLI: u64 = 1_000;
+/// The retry jitter's seed [`TsHttpPolicy::new`] uses: a policy takes no clock, so the seed is a
+/// fixed one and two policies built from one configuration replay identically. It is chosen so
+/// that the draws that matter most land exactly on their step — the first four, and the capped
+/// band a long outage sits in — which is why TS-over-HTTP's scripted traces keep their exact
+/// `Reconnect { after_ms }`; [`TsHttpPolicy::with_seed`] takes any other.
+const RETRY_SEED: u64 = 0x5EED_2471;
 
 const STALL_NOTICE_REPEAT_MS: u64 = 1_000;
 const IDENTITY_CODING: &str = "identity";
@@ -34,6 +43,7 @@ pub struct TsHttpPolicy {
     config: Config,
     phase: Phase,
     attempt: u64,
+    retry: ReconnectTimer,
     opens: u64,
     actions: VecDeque<Action>,
     events: VecDeque<Event>,
@@ -57,11 +67,24 @@ impl TsHttpPolicy {
     /// An inconsistent `config` is replaced by [`Config::clamped`] rather
     /// than rejected; call [`Config::validate`] first to detect it.
     pub fn new(url: impl Into<String>, config: Config, now_ms: u64) -> Self {
+        Self::with_seed(url, config, now_ms, RETRY_SEED)
+    }
+
+    /// Create a policy whose retry jitter is drawn from `seed`.
+    ///
+    /// Every decision here is a pure function of the caller's `now_ms`, so two policies made
+    /// from one configuration replay identically unless their seeds differ: a host that runs
+    /// several sessions against one origin passes each a seed mixed from its own instant, and a
+    /// test that asserts an exact delay passes a fixed one.
+    pub fn with_seed(url: impl Into<String>, config: Config, now_ms: u64, seed: u64) -> Self {
+        let config = config.clamped();
+        let retry = ReconnectTimer::new(&config.backoff_ms, config.backoff_cap_ms, seed);
         let mut c = Self {
             url: url.into(),
-            config: config.clamped(),
+            config,
             phase: Phase::Backoff { due: 0 },
             attempt: 0,
+            retry,
             opens: 0,
             actions: VecDeque::new(),
             events: VecDeque::new(),
@@ -506,11 +529,13 @@ impl TsHttpPolicy {
 
     fn fail_before_playing(&mut self, now_ms: u64) {
         self.attempt = self.attempt.saturating_add(1);
-        let after = if (self.attempt as usize) <= self.config.backoff_ms.len() {
-            self.config.backoff_ms[self.attempt as usize - 1]
-        } else {
-            self.config.backoff_cap_ms
-        };
+        let after = u64::try_from(
+            self.retry
+                .on_disconnected(now_ms.saturating_mul(MICROS_PER_MILLI))
+                .as_micros(),
+        )
+        .unwrap_or(u64::MAX)
+        .div_ceil(MICROS_PER_MILLI);
         let after = after.max(self.retry_after_ms);
         self.retry_after_ms = 0;
         self.actions
@@ -524,7 +549,12 @@ impl TsHttpPolicy {
     }
 
     fn played_ended(&mut self, now_ms: u64) {
+        // A connection that played and then ended is a healthy one: the
+        // failure counter restarts at its floor, and the retry series is
+        // rewound rather than charged for this reconnect — its whole wait is
+        // `min_reconnect_interval_ms`.
         self.attempt = 0;
+        self.retry.reset();
         let lasted = now_ms.saturating_sub(self.open_at);
         let after = self.config.min_reconnect_interval_ms.saturating_sub(lasted);
         self.actions

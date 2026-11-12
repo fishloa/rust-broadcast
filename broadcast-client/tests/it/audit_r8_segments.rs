@@ -224,7 +224,25 @@ fn a_structurally_valid_ts_segment_with_no_samples_is_not_a_failure() {
 
 const LIVE_BASE: &str = "http://origin.test/hls";
 const LIVE_BAD_URL: &str = "http://origin.test/hls/bad.ts";
+/// The default backoff schedule (2 s, 4 s, 8 s, then 10 s), in whole seconds.
+///
+/// The schedule's retries are jittered: the first is exactly its step and
+/// every later one is within a sixth below it, so a gap floors at the step's
+/// `*5/6` (1.667 s of the 2 s step) and never exceeds it.
 const DEFAULT_SCHEDULE_SECS: [u64; 7] = [2, 4, 8, 10, 10, 10, 10];
+/// The same schedule's per-step lower bounds, in whole seconds (floor of `step * 5/6`).
+const SCHEDULE_FLOOR_SECS: [u64; 7] = [2, 3, 6, 8, 8, 8, 8];
+
+/// Whether `gaps` walks the default schedule: each gap within
+/// `[step * 5/6, step]`.
+fn walks_the_default_schedule(gaps: &[u64]) -> bool {
+    gaps.len() == SCHEDULE_FLOOR_SECS.len()
+        && gaps
+            .iter()
+            .zip(SCHEDULE_FLOOR_SECS)
+            .zip(DEFAULT_SCHEDULE_SECS)
+            .all(|((gap, floor), step)| *gap >= floor && *gap <= step)
+}
 
 fn live_host(bad: Vec<Reply>, config: Config) -> Host {
     let mut h = Host::new(TS_PLAYLIST_URL, config);
@@ -306,7 +324,11 @@ fn live_failing_segment_walks_the_whole_schedule_across_playlist_reloads() {
     let mut h = live_host(vec![Reply::Status(404)], hls_config());
     h.run_until(played_past_the_gap, STEPS);
     assert!(h.hits(TS_PLAYLIST_URL) > 2, "the playlist kept reloading");
-    assert_eq!(gaps_secs(&h, LIVE_BAD_URL), DEFAULT_SCHEDULE_SECS.to_vec());
+    assert!(
+        walks_the_default_schedule(&gaps_secs(&h, LIVE_BAD_URL)),
+        "{:?}",
+        gaps_secs(&h, LIVE_BAD_URL)
+    );
 }
 
 fn with_cap(cap: u32) -> Config {
@@ -326,7 +348,11 @@ fn vod_failing_segment_walks_the_schedule_without_reloading_the_playlist() {
         t.fatals,
         vec![ErrorKind::SegmentFetchFailed { status: Some(500) }]
     );
-    assert_eq!(gaps_secs(&h, TS_SEG0_URL), DEFAULT_SCHEDULE_SECS.to_vec());
+    assert!(
+        walks_the_default_schedule(&gaps_secs(&h, TS_SEG0_URL)),
+        "{:?}",
+        gaps_secs(&h, TS_SEG0_URL)
+    );
     assert_eq!(
         h.hits(TS_PLAYLIST_URL),
         1,
@@ -354,7 +380,15 @@ fn the_failure_count_is_per_segment_and_resets_only_on_a_delivery() {
     h.run_until(stop_on_end_or_fatal, STEPS);
     let t = tally(&h);
     assert!(t.ended && t.fatals.is_empty(), "{t:?}");
-    assert_eq!(gaps_secs(&h, TS_SEG0_URL), vec![2, 4, 8]);
+    let gaps = gaps_secs(&h, TS_SEG0_URL);
+    assert!(
+        gaps.len() == 3
+            && gaps
+                .iter()
+                .zip([2, 3, 6])
+                .all(|(g, floor)| *g >= floor && *g <= 8),
+        "the first three steps, jittered: {gaps:?}"
+    );
     let second_gap = gaps_secs(&h, TS_SEG1_URL);
     assert_eq!(
         second_gap.first(),
@@ -612,7 +646,15 @@ fn a_delivery_clears_the_segments_failure_count_for_a_reused_media_sequence_numb
     let b1 = format!("{LIVE_BASE}/b1.ts");
     h.route(&b1, vec![Reply::Status(500), Reply::Ok(ts_segment(1))]);
     h.run_until(|_| false, 600);
-    assert_eq!(gaps_secs(&h, &format!("{LIVE_BASE}/a1.ts")), vec![2, 4, 8]);
+    let gaps = gaps_secs(&h, &format!("{LIVE_BASE}/a1.ts"));
+    assert!(
+        gaps.len() == 3
+            && gaps
+                .iter()
+                .zip([2, 3, 6])
+                .all(|(g, floor)| *g >= floor && *g <= 8),
+        "the failed segment walks the first three steps, jittered: {gaps:?}"
+    );
     assert_eq!(
         h.hits(&b1),
         2,

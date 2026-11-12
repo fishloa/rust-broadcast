@@ -8,6 +8,6 @@ pub(crate) mod failures;
 pub(crate) mod inactivity;
 pub(crate) mod inflight;
 pub(crate) mod resume;
-pub(crate) mod retry;
+pub mod retry;
 pub(crate) mod wall;
 pub(crate) mod window;

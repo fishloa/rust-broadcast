@@ -50,8 +50,10 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
+use broadcast_client::fetch::ReconnectTimer;
+use broadcast_common::backoff::{RetrySchedule, mix_seed};
+
 use crate::MultimuxError;
-use crate::reconnect::ReconnectSchedule;
 use crate::route::{HealthState, RouteHandle};
 
 /// Production default backoff: starts at 500 ms, doubles, caps at 30 s.
@@ -59,11 +61,26 @@ const DEFAULT_BACKOFF_MIN: Duration = Duration::from_millis(500);
 const DEFAULT_BACKOFF_MAX: Duration = Duration::from_secs(30);
 const DEFAULT_BACKOFF_FACTOR: f64 = 2.0;
 
-/// How long an attempt must stay [`HealthState::Live`] before its end counts
-/// as a healthy session. A source that goes live and drops within seconds,
-/// repeatedly, is a failing source, so the backoff only restarts from the
-/// floor after a life at least this long.
-const HEALTHY_LIFE: Duration = Duration::from_secs(30);
+/// How many exponential steps the supervisor samples into the shared
+/// timer's step table: past this the raw series has long since saturated at
+/// its cap for any sane factor, so every later attempt takes the cap.
+const EXPONENTIAL_STEPS: u32 = 16;
+
+const MICROS_PER_MILLI: u64 = 1_000;
+
+/// `wait` as whole milliseconds, rounded up so a jittered sub-millisecond
+/// delay still schedules a wake rather than collapsing to "now".
+fn millis_of(wait: Duration) -> u64 {
+    u64::try_from(wait.as_micros())
+        .unwrap_or(u64::MAX)
+        .div_ceil(MICROS_PER_MILLI)
+}
+
+/// The jitter seed a fresh [`Backoff`] draws from: this process's own OS
+/// entropy, so two routes opened together do not reconnect in lockstep.
+fn fresh_seed() -> u64 {
+    mix_seed(crate::source::seed_entropy())
+}
 
 /// How many *consecutive* auth-rejected attempts [`supervise_driver`]
 /// tolerates before declaring the failure permanent (issue #957).
@@ -134,29 +151,49 @@ pub(crate) fn is_permanent_describe_not_found(err: &MultimuxError) -> bool {
     )
 }
 
-/// Capped exponential backoff with jitter, backed by
-/// [`ReconnectSchedule`] (SP1.5): [`Backoff::next`] returns the delay for
-/// *this* attempt, then grows it (capped at `max`) for the next;
-/// [`Backoff::reset`] restores it to `min` after a successful (re)connect so
-/// a long outage doesn't permanently slow down subsequent quick recoveries.
+/// The supervisor's reconnect pacing: broadcast-client's one
+/// [`ReconnectTimer`] (issue #2471 — the workspace keeps this rule in one
+/// place), configured with this crate's exponential schedule.
 ///
-/// The jitter is deliberately part of the delay (a fleet of inputs pointed
-/// at one server must not reconnect in lockstep); a test asserting an exact
-/// delay therefore uses [`Backoff::delay_for_attempt`]'s underlying
-/// [`ReconnectSchedule`] with a fixed seed, not this iterator.
+/// [`Backoff::next`] reports the wait for *this* attempt, then grows the series
+/// (capped at `max`) for the next; [`Backoff::reset`] returns it to the floor
+/// after a healthy life so a long outage does not permanently slow down
+/// subsequent quick recoveries.
+///
+/// The jitter is deliberately part of the delay (a fleet of inputs pointed at
+/// one server must not reconnect in lockstep): the first delay is exactly
+/// `min`, and every later one is within a sixth below its step.
 #[derive(Debug, Clone)]
 pub struct Backoff {
-    schedule: ReconnectSchedule,
-    attempt: u32,
+    timer: ReconnectTimer,
+    /// The exponential series the timer's step table is sampled from.
+    series: RetrySchedule,
+    steps: Vec<u64>,
+    max: Duration,
+    /// Where the timer series stands, in whole milliseconds from its own open;
+    /// [`Backoff::next`] advances it by one wait.
+    now_ms: u64,
 }
 
 impl Backoff {
     /// A backoff starting at `min`, growing by `factor` on every
     /// [`next`](Backoff::next), never exceeding `max`.
     pub fn new(min: Duration, max: Duration, factor: f64) -> Self {
-        Backoff {
-            schedule: ReconnectSchedule::from_parts(min, max, factor),
-            attempt: 0,
+        Self::with_seed(min, max, factor, fresh_seed())
+    }
+
+    /// Exact form of [`Self::new`], for a caller that supplies the jitter seed.
+    pub fn with_seed(min: Duration, max: Duration, factor: f64, seed: u64) -> Self {
+        let series = RetrySchedule::new(min, max, factor, seed);
+        let steps: Vec<u64> = (0..EXPONENTIAL_STEPS)
+            .map(|attempt| millis_of(series.raw_delay_for_attempt(attempt)))
+            .collect();
+        Self {
+            timer: ReconnectTimer::new(&steps, millis_of(max.max(min)), seed),
+            series,
+            steps,
+            max: max.max(min),
+            now_ms: 0,
         }
     }
 
@@ -179,8 +216,10 @@ impl Backoff {
     /// practice.
     #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Duration {
-        let delay = self.schedule.delay_for_attempt(self.attempt);
-        self.attempt = self.attempt.saturating_add(1);
+        let delay = self
+            .timer
+            .on_disconnected(self.now_ms.saturating_mul(MICROS_PER_MILLI));
+        self.now_ms = self.now_ms.saturating_add(millis_of(delay));
         delay
     }
 
@@ -192,13 +231,16 @@ impl Backoff {
     ///
     /// [`ReconnectPolicy::backoff_for`]: crate::config::ReconnectPolicy::backoff_for
     pub fn delay_for_attempt(&self, attempt: u32) -> Duration {
-        self.schedule.delay_for_attempt(attempt)
+        self.series.raw_delay_for_attempt(attempt)
     }
 
     /// Resets the delay back to `min` — call after a successful connect so
     /// the *next* outage starts backing off from the bottom again.
     pub fn reset(&mut self) {
-        self.attempt = 0;
+        let seed = fresh_seed();
+        self.series = RetrySchedule::new(self.series.min(), self.max, DEFAULT_BACKOFF_FACTOR, seed);
+        self.timer = ReconnectTimer::new(&self.steps, millis_of(self.max), seed);
+        self.now_ms = 0;
     }
 }
 
@@ -368,7 +410,9 @@ pub async fn supervise_driver<F, Fut>(
         }
 
         if reached_live {
-            if attempt_started.elapsed() >= HEALTHY_LIFE {
+            if attempt_started.elapsed()
+                >= Duration::from_micros(broadcast_client::fetch::HEALTHY_CONNECTION_US)
+            {
                 attempt_no = 0;
                 backoff.reset();
             } else {
@@ -406,48 +450,42 @@ mod tests {
     /// series repeated `next()` calls produce, and stays total on hostile
     /// parameters instead of panicking in `Duration` arithmetic.
     ///
-    /// SP1.5/m-1: the schedule is equal-jittered and its jitter state mutates
-    /// on each call (`Cell`), so the stateless and stepped views can no longer
-    /// be compared value-for-value — the exact series is
-    /// `multimux/tests/it/reconnect_policy.rs`'s job, on a seeded schedule. This
-    /// asserts the band and totality instead.
+    /// The stateless view is the unjittered bound (`min * factor^attempt`,
+    /// capped); the jittered series is `ReconnectTimer`'s, and its exact
+    /// values are `multimux/tests/it/reconnect_policy.rs`'s job on a seeded
+    /// schedule. This asserts the bound and totality instead.
     #[test]
     fn delay_for_attempt_stays_in_band_and_is_total() {
         let backoff = Backoff::new(Duration::from_millis(500), Duration::from_secs(30), 2.0);
-        // Every attempt stays within the configured band `[min/2, cap)`.
         for attempt in 0..40u32 {
             let d = backoff.delay_for_attempt(attempt);
             assert!(
-                d >= Duration::from_millis(250) && d < Duration::from_secs(30),
-                "attempt {attempt}: {d:?} escaped [250ms, 30s)"
+                d >= Duration::from_millis(500) && d <= Duration::from_secs(30),
+                "attempt {attempt}: {d:?} escaped [500ms, 30s]"
             );
         }
         // Hostile factors never panic and never exceed the cap.
         for factor in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -2.0, 1e300] {
             let hostile = Backoff::new(Duration::from_secs(1), Duration::from_secs(60), factor);
             for attempt in [0u32, 1, 30, u32::MAX] {
-                assert!(hostile.delay_for_attempt(attempt) < Duration::from_secs(60));
+                assert!(hostile.delay_for_attempt(attempt) <= Duration::from_secs(60));
             }
         }
-        // A minimum above the cap is clamped to it at the raw level, so the
-        // equal-jittered result stays below the cap.
+        // A minimum above the cap is the floor (the schedule raises its cap
+        // to the floor), as it was before the shared schedule.
         let inverted = Backoff::new(Duration::from_secs(90), Duration::from_secs(60), 2.0);
-        assert!(inverted.delay_for_attempt(0) < Duration::from_secs(60));
+        assert_eq!(inverted.delay_for_attempt(0), Duration::from_secs(90));
     }
 
-    /// SP1.5/C2: the underlying schedule is deterministic under a fixed seed
-    /// and the cap is answered without stepping a four-billion-item iterator,
-    /// while staying below the cap (equal jitter).
+    /// The underlying schedule is deterministic under a fixed seed and the
+    /// cap is answered without stepping a four-billion-item iterator.
     #[test]
     fn the_underlying_schedule_is_deterministic_under_a_seed() {
         let bl = Backoff::new(Duration::from_millis(500), Duration::from_secs(30), 2.0);
-        // A huge attempt is answered from the cap, not by stepping a
-        // four-billion-item iterator, and stays jittered below it.
-        assert!(bl.delay_for_attempt(u32::MAX) < Duration::from_secs(30));
-        assert!(bl.delay_for_attempt(6) < Duration::from_secs(30));
-        // The floor is honoured on attempt 0 (equal jitter: `[min/2, min)`).
-        assert!(bl.delay_for_attempt(0) >= Duration::from_millis(250));
-        assert!(bl.delay_for_attempt(0) < Duration::from_millis(500));
+        assert!(bl.delay_for_attempt(u32::MAX) <= Duration::from_secs(30));
+        assert!(bl.delay_for_attempt(6) <= Duration::from_secs(30));
+        // The floor is honoured exactly on attempt 0.
+        assert_eq!(bl.delay_for_attempt(0), Duration::from_millis(500));
     }
 
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -474,41 +512,41 @@ mod tests {
         }
     }
 
-    /// SP1.5: `next` grows towards the cap and stays inside the band —
-    /// jittered, so the assertions are bounds, not exact values.
+    /// `next` grows towards the cap and stays inside the band — jittered, so
+    /// the assertions are bounds, not exact values.
     #[test]
     fn backoff_grows_and_caps() {
         let mut b = Backoff::new(Duration::from_millis(10), Duration::from_millis(100), 2.0);
         for i in 0..8 {
             let d = b.next();
             assert!(
-                d >= Duration::from_millis(5) && d < Duration::from_millis(100),
-                "step {i}: {d:?} escaped [min/2, cap)"
+                d >= Duration::from_millis(8) && d <= Duration::from_millis(100),
+                "step {i}: {d:?} escaped [min*5/6, cap]"
             );
         }
-        // C2: at the cap the delay stays equal-jittered inside `[max/2, max)`,
-        // never exactly `max` (add-only jitter would collapse it to the cap).
+        // At the cap the delay stays jittered inside `[max*5/6, max]`, never
+        // collapsing to one constant.
         for _ in 0..8 {
             let d = b.next();
             assert!(
-                d >= Duration::from_millis(50) && d < Duration::from_millis(100),
-                "capped step {d:?} must stay jittered in [50ms, 100ms)"
+                d >= Duration::from_millis(83) && d <= Duration::from_millis(100),
+                "capped step {d:?} must stay jittered in [83ms, 100ms]"
             );
         }
     }
 
-    /// A reset restarts the series at the floor (the raw delay returns to
-    /// `min`, so the equal-jittered delay is back under `min`).
+    /// A reset restarts the series at the floor: the next delay is exactly
+    /// `min` again.
     #[test]
     fn backoff_reset_returns_to_min() {
         let mut b = Backoff::new(Duration::from_millis(10), Duration::from_millis(100), 2.0);
         let _ = b.next();
         let _ = b.next();
         b.reset();
-        let after = b.next();
-        assert!(
-            after >= Duration::from_millis(5) && after < Duration::from_millis(10),
-            "back to min after reset (equal-jittered): got {after:?}"
+        assert_eq!(
+            b.next(),
+            Duration::from_millis(10),
+            "back to min after reset"
         );
     }
 

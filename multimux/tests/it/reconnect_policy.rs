@@ -1,81 +1,115 @@
-//! SP1.5: one `backon`-backed schedule with an explicit attempt bound and a
-//! jitter-bounded cap. `the_schedule_is_jittered_not_hand_arithmetic` FAILS on
-//! the old hand-rolled `powi` backoff (which returns exactly `raw` for every
-//! attempt — deterministic and unjittered), and the cap-spread test FAILS on
-//! the old add-only `backon` jitter (which is exactly `max` at the cap).
+//! SP1.5/#2471: the reconnect pacing multimux's inputs and outputs use is the
+//! workspace's one schedule (broadcast-common's `RetrySchedule`) and one
+//! reconnect rule (broadcast-client's `ReconnectTimer`), configured here with
+//! this crate's production values.
+//! `the_schedule_is_jittered_not_hand_arithmetic` FAILS on a hand-rolled
+//! `powi` backoff (which returns exactly `raw` for every attempt —
+//! deterministic and unjittered), and the cap-spread test FAILS on an
+//! add-only jitter re-clamped at the cap (which is exactly `max` there).
 
 use std::collections::HashSet;
 use std::time::Duration;
 
+use broadcast_common::backoff::RetrySchedule;
 use multimux::config::ReconnectPolicy;
 use multimux::push::ReconnectEngine;
-use multimux::reconnect::ReconnectSchedule;
 
+/// A push output's backoff doubles on every attempt (the policy's documented
+/// series, `RECONNECT_BACKOFF_FACTOR` in `multimux::config`).
+const BACKOFF_FACTOR: f64 = 2.0;
+
+/// The push output's schedule: the policy's bounds and factor, as
+/// `ReconnectPolicy::backoff_for` builds it.
+fn schedule(policy: &ReconnectPolicy) -> RetrySchedule {
+    RetrySchedule::new(
+        Duration::from_millis(policy.initial_backoff_ms),
+        Duration::from_millis(policy.max_backoff_ms),
+        BACKOFF_FACTOR,
+        0x5EED,
+    )
+}
+
+/// The same for the supervisor's production series (500 ms, 30 s, x2).
+fn from_parts(min: Duration, max: Duration, factor: f64) -> RetrySchedule {
+    RetrySchedule::new(min, max, factor, 0x5EED)
+}
+
+fn seeded(min: Duration, max: Duration, factor: f64, seed: u64) -> RetrySchedule {
+    RetrySchedule::new(min, max, factor, seed)
+}
+
+/// The schedule is jittered, and it is the shared one: the first retry is
+/// exactly the configured step (so a caller's first delay is what it
+/// configured), every later delay is inside `[step*5/6, step]`, and a
+/// different seed draws a different sequence.
+///
+/// Revert-check: a hand-rolled `raw * uniform[0.5, 1.0)` (what
+/// `ReconnectSchedule::from_parts` produced before the shared schedule
+/// existed) makes the first delay land below 10 s here.
 #[test]
 fn the_schedule_is_jittered_not_hand_arithmetic() {
-    // The old `powi` code returns exactly the raw value for every attempt —
-    // deterministic and unjittered. Equal jitter multiplies the raw delay by
-    // `uniform[0.5, 1.0)`, so attempt 0 (raw = min = 10 s) lands in
-    // `[5 s, 10 s)`.
-    let a = ReconnectSchedule::from_parts(Duration::from_secs(10), Duration::from_secs(30), 2.0);
+    let a = from_parts(Duration::from_secs(10), Duration::from_secs(30), 2.0);
     let d0 = a.delay_for_attempt(0);
-    assert!(
-        d0 >= Duration::from_secs(5) && d0 < Duration::from_secs(10),
-        "attempt 0 must be equal-jittered into [min/2, min): got {d0:?}"
+    assert_eq!(
+        d0,
+        Duration::from_secs(10),
+        "the first retry is exactly the configured floor"
     );
-    let b = ReconnectSchedule::from_parts_seeded(
+    let b = seeded(
         Duration::from_secs(10),
         Duration::from_secs(30),
         2.0,
         0xDEAD_BEEF,
     );
-    let d0b = b.delay_for_attempt(0);
+    let seq_a: Vec<_> = (0..8).map(|i| a.delay_for_attempt(i)).collect();
+    let seq_b: Vec<_> = (0..8).map(|i| b.delay_for_attempt(i)).collect();
     assert_ne!(
-        d0, d0b,
-        "different seeds must jitter differently: {d0:?} vs {d0b:?}"
+        seq_a, seq_b,
+        "different seeds must jitter differently: {seq_a:?} vs {seq_b:?}"
     );
-    // Every delay stays within `[min/2, max)`.
-    for i in 0..64 {
+    let floor = Duration::from_secs(10).mul_f64(5.0 / 6.0);
+    for i in 1..64 {
         let d = a.delay_for_attempt(i);
         assert!(
-            d >= Duration::from_secs(5) && d < Duration::from_secs(30),
-            "attempt {i}: jitter escaped [min/2, max): {d:?}"
+            d >= floor && d <= Duration::from_secs(30),
+            "attempt {i}: jitter escaped [min*5/6, max]: {d:?}"
         );
     }
 }
 
 #[test]
 fn the_schedule_doubles_from_the_min_and_never_exceeds_the_cap_even_with_jitter() {
-    let s = ReconnectSchedule::from_parts(Duration::from_millis(500), Duration::from_secs(30), 2.0);
+    let s = from_parts(Duration::from_millis(500), Duration::from_secs(30), 2.0);
     for i in 0..64 {
         let d = s.delay_for_attempt(i);
         assert!(
-            d < Duration::from_secs(30),
-            "attempt {i}: {d:?} must stay below the cap"
+            d <= Duration::from_secs(30),
+            "attempt {i}: {d:?} must not exceed the cap"
         );
         assert!(
-            d >= Duration::from_millis(250),
-            "attempt {i}: {d:?} precedes the min/2 floor"
+            d >= Duration::from_millis(416),
+            "attempt {i}: {d:?} precedes the min*5/6 floor"
         );
     }
 }
 
-/// C2: the delay must stay **jittered at the cap**, not collapse to exactly
-/// `max`. With raw saturating at 30 s, an add-only jitter (the old shape)
-/// yields exactly 30 s every time; equal jitter yields a spread in `[15 s, 30 s)`.
+/// The delay must stay **jittered at the cap**, not collapse to exactly
+/// `max`. A jitter added on top of the capped series and then re-clamped to
+/// `max` yields exactly 30 s every time; the shared schedule's terms are
+/// drawn after the cap, so the delay spreads below it.
 ///
-/// Revert-check: restore the add-only `backon` jitter (`.with_jitter().min(max)`)
-/// and every sample is exactly 30 s → `distinct == 1` → FAIL.
+/// Revert-check: re-clamp the jittered value to `max` and every sample is
+/// exactly 30 s → `distinct == 1` → FAIL.
 #[test]
 fn the_delay_stays_jittered_at_the_cap() {
-    let s = ReconnectSchedule::from_parts(Duration::from_millis(500), Duration::from_secs(30), 2.0);
+    let s = from_parts(Duration::from_millis(500), Duration::from_secs(30), 2.0);
     // Attempt 20 is deep in the saturated region (raw = cap).
     let mut distinct = HashSet::new();
     for _ in 0..64 {
         let d = s.delay_for_attempt(20);
         assert!(
-            d >= Duration::from_secs(15) && d < Duration::from_secs(30),
-            "cap delay {d:?} must be equal-jittered into [max/2, max)"
+            d >= Duration::from_secs(25) && d <= Duration::from_secs(30),
+            "cap delay {d:?} must be jittered into [max*5/6, max]"
         );
         distinct.insert(d.as_nanos());
     }
@@ -85,23 +119,17 @@ fn the_delay_stays_jittered_at_the_cap() {
     );
 }
 
-/// C2: a seeded schedule is reproducible, and two schedules made in the same
-/// coarse clock tick do not share a jitter sequence (per-process counter seed
-/// mixing).
+/// A seeded schedule is reproducible, and schedules built from different
+/// entropy do not share a jitter sequence.
+///
+/// `mix_seed` is a pure avalanche (a caller supplies the entropy that must
+/// differ, e.g. `SecureRandom::seed_entropy`), so the two "fresh" schedules
+/// here are seeded the way `Backoff::production_default` seeds them: from
+/// two different entropy values.
 #[test]
 fn seeded_schedules_are_reproducible_and_unseeded_ones_differ() {
-    let a = ReconnectSchedule::from_parts_seeded(
-        Duration::from_millis(500),
-        Duration::from_secs(30),
-        2.0,
-        7,
-    );
-    let b = ReconnectSchedule::from_parts_seeded(
-        Duration::from_millis(500),
-        Duration::from_secs(30),
-        2.0,
-        7,
-    );
+    let a = seeded(Duration::from_millis(500), Duration::from_secs(30), 2.0, 7);
+    let b = seeded(Duration::from_millis(500), Duration::from_secs(30), 2.0, 7);
     let seq_a: Vec<_> = (0..8).map(|i| a.delay_for_attempt(i)).collect();
     let seq_b: Vec<_> = (0..8).map(|i| b.delay_for_attempt(i)).collect();
     assert_eq!(
@@ -109,57 +137,62 @@ fn seeded_schedules_are_reproducible_and_unseeded_ones_differ() {
         "the same seed must reproduce the same sequence"
     );
 
-    // Two independently-seeded schedules created back-to-back must not be
-    // identical (the counter mix defeats a shared coarse-tick seed).
-    let x = ReconnectSchedule::from_parts(Duration::from_millis(500), Duration::from_secs(30), 2.0);
-    let y = ReconnectSchedule::from_parts(Duration::from_millis(500), Duration::from_secs(30), 2.0);
+    let x = seeded(
+        Duration::from_millis(500),
+        Duration::from_secs(30),
+        2.0,
+        broadcast_common::backoff::mix_seed(0),
+    );
+    let y = seeded(
+        Duration::from_millis(500),
+        Duration::from_secs(30),
+        2.0,
+        broadcast_common::backoff::mix_seed(1),
+    );
     let sx: Vec<_> = (0..8).map(|i| x.delay_for_attempt(i)).collect();
     let sy: Vec<_> = (0..8).map(|i| y.delay_for_attempt(i)).collect();
     assert_ne!(
         sx, sy,
-        "two fresh schedules must not share a jitter sequence"
+        "schedules from different entropy must not share a jitter sequence"
     );
 }
 
 #[test]
-fn the_schedule_yields_attempts_past_backons_default_three() {
-    // `backon`'s default `max_times` is 3 (`ExponentialBuilder::new`,
-    // backon 1.6.0 exponential.rs) — the schedule must override it or the
-    // 4th retry would return the cap-sentinel. Ask for attempt 10 and get a
-    // real (capped) delay below the cap, not the exhaustion fallback.
-    let s = ReconnectSchedule::from_parts(Duration::from_secs(1), Duration::from_secs(30), 2.0);
+fn the_schedule_yields_attempts_past_a_short_attempt_bound() {
+    // A schedule answers any attempt, however deep: attempt 10 is a real
+    // (capped, jittered) delay, not an exhaustion sentinel.
+    let s = from_parts(Duration::from_secs(1), Duration::from_secs(30), 2.0);
     let d = s.delay_for_attempt(10);
     assert!(
-        d >= Duration::from_secs(15) && d < Duration::from_secs(30),
-        "attempt 10 must be a real capped+equal-jittered delay: {d:?}"
+        d >= Duration::from_secs(25) && d <= Duration::from_secs(30),
+        "attempt 10 must be a real capped+jittered delay: {d:?}"
     );
 }
 
 #[test]
 fn a_policy_maps_to_the_same_min_and_cap() {
-    // `ReconnectSchedule::from_policy` is the push-output entry point: the
-    // policy's millisecond bounds become the schedule's floor and ceiling.
-    use multimux::config::ReconnectPolicy;
+    // The push-output entry point: the policy's millisecond bounds become the
+    // schedule's floor and ceiling.
     let policy = ReconnectPolicy {
         initial_backoff_ms: 250,
         max_backoff_ms: 4_000,
         max_attempts: None,
     };
-    let s = ReconnectSchedule::from_policy(&policy);
+    let s = schedule(&policy);
     for i in 0..32 {
         let d = s.delay_for_attempt(i);
         assert!(
-            d >= Duration::from_millis(125) && d < Duration::from_millis(4_000),
+            d >= Duration::from_millis(208) && d <= Duration::from_millis(4_000),
             "attempt {i}: {d:?} outside the policy band"
         );
     }
 }
 
 /// m-1: a clone never duplicates the original's jitter sequence (Clone
-/// reseeds), and two independently seeded fresh schedules differ.
+/// reseeds).
 #[test]
 fn a_clone_reseeds_and_fresh_schedules_do_not_share_a_sequence() {
-    let a = ReconnectSchedule::from_parts(Duration::from_millis(500), Duration::from_secs(30), 2.0);
+    let a = from_parts(Duration::from_millis(500), Duration::from_secs(30), 2.0);
     let b = a.clone();
     let seq_a: Vec<_> = (0..8).map(|i| a.delay_for_attempt(i)).collect();
     let seq_b: Vec<_> = (0..8).map(|i| b.delay_for_attempt(i)).collect();

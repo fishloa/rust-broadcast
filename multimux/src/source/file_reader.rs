@@ -420,10 +420,11 @@ impl FileReader {
         // A constant retry interval (factor 1.0), as before: the schedule is
         // the workspace's one backoff implementation, so even the flat case
         // goes through it (SP1.5).
-        let schedule = crate::reconnect::ReconnectSchedule::from_parts(
+        let schedule = broadcast_common::backoff::RetrySchedule::new(
             self.config.retry_interval,
             self.config.retry_interval,
             1.0,
+            crate::source::seed_entropy(),
         );
         for attempt in 0..self.config.max_retries {
             match self.read_probe_demux_once().await {

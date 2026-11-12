@@ -22,7 +22,6 @@ use super::session::{DashIngestSession, DashInput, FetchTarget, RetryTarget};
 use super::{DashPullDialer, DashPullRoute, build_client};
 use crate::clock::HostClock;
 use crate::error::{MultimuxError, Result};
-use crate::reconnect::ReconnectSchedule;
 use crate::source::driver::terminal_result;
 use crate::source::http_auth::authenticated_get_with;
 use crate::source::pull::{FetchOutcome, FetchResult, PendingFetch, PullScheduler};
@@ -256,6 +255,12 @@ async fn send(net: &mut Net, req: &Request) -> Result<reqwest::Response> {
 
 /// The part of a ranged response the caller asked for, or `None` when the
 /// server's answer does not match the request.
+///
+/// A `206 Partial Content` **must** carry a `Content-Range` naming exactly the
+/// requested range (RFC 9110 §15.3.7: a 206's payload is defined by that
+/// header), so one without it is refused rather than judged by its length — the
+/// same rule `broadcast-client`'s fetch core applies. A `200` answered the
+/// whole representation, and the range is sliced out of it.
 pub(super) fn ranged_body(
     status: StatusCode,
     content_range: Option<(u64, u64)>,
@@ -267,7 +272,7 @@ pub(super) fn ranged_body(
         let last = offset
             .checked_add(u64::try_from(length).ok()?)?
             .checked_sub(1)?;
-        let honoured = content_range.is_none_or(|range| range == (offset, last));
+        let honoured = content_range? == (offset, last);
         return (honoured && body.len() == length).then_some(body);
     }
     let start = usize::try_from(offset).ok()?;
@@ -376,8 +381,13 @@ pub(super) fn spawn_fetch(net: &Net, req: Request) -> PendingFetch<DashFetch> {
 }
 
 pub(super) fn backoff(attempt: u32) -> Duration {
-    ReconnectSchedule::from_parts(RETRY_BASE, RETRY_CAP, RETRY_FACTOR)
-        .delay_for_attempt(attempt.saturating_sub(1))
+    broadcast_common::backoff::RetrySchedule::new(
+        RETRY_BASE,
+        RETRY_CAP,
+        RETRY_FACTOR,
+        crate::source::seed_entropy(),
+    )
+    .delay_for_attempt(attempt.saturating_sub(1))
 }
 
 fn stamp(now_us: u64) -> Timestamp {

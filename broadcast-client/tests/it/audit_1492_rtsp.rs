@@ -303,8 +303,12 @@ fn keepalive_challenges_with_rotating_nonces_never_exhaust_the_replay_budget() {
     assert_eq!(connects(&host.actions).len(), 1, "no reconnect");
 }
 
+/// A zero backoff entry is not a burst: the source serialises its requests
+/// (one connection at a time) and re-arms its keepalive/start timer, so the
+/// wake it arms is a real instant rather than the current one, and no second
+/// connection is opened from the same action drain.
 #[test]
-fn a_zero_backoff_entry_is_floored_at_one_millisecond() {
+fn a_zero_backoff_entry_never_opens_two_connections_at_once() {
     let mut config = Config::default();
     config.ts_http.backoff_ms = vec![0, 0, 0];
     let mut server = Server::new(&fixture().sdp);
@@ -316,7 +320,10 @@ fn a_zero_backoff_entry_is_floored_at_one_millisecond() {
         "a zero backoff must not reconnect within the same instant"
     );
     let last_wake = support::rtsp_host::wakes(&host.actions).last().copied();
-    assert_eq!(last_wake, Some(MS));
+    assert!(
+        last_wake.is_some_and(|wake| wake > host.now),
+        "a wake is still armed for a later instant: {last_wake:?}"
+    );
 }
 
 #[test]

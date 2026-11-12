@@ -24,8 +24,12 @@ const BEARER: &str = "rend-token";
 const VIDEO_SAMPLES: usize = 75;
 const AUDIO_SAMPLES: usize = 131;
 const BACKOFF_FIRST_US: u64 = 2 * SEC;
-const BACKOFF_SECOND_US: u64 = 4 * SEC;
-const BACKOFF_THIRD_US: u64 = 8 * SEC;
+/// The schedule's later steps are jittered below their step by up to a
+/// sixth, so a cumulative delay here is bounded rather than exact.
+const BACKOFF_SECOND_MAX_US: u64 = 4 * SEC;
+const BACKOFF_SECOND_MIN_US: u64 = 3 * SEC;
+const BACKOFF_THIRD_MAX_US: u64 = 8 * SEC;
+const BACKOFF_THIRD_MIN_US: u64 = 6 * SEC;
 const SPLIT_STEPS: usize = 10_000;
 
 const MEDIA_EN: &str = "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aud\",NAME=\"English\",LANGUAGE=\"en\",DEFAULT=YES,AUTOSELECT=YES,URI=\"a/index.m3u8\"\n";
@@ -656,15 +660,20 @@ fn audio_failure_does_not_stall_video() {
         .iter()
         .map(|s| s.at_us)
         .collect();
+    assert_eq!(video_playlist_times[0], 0);
     assert_eq!(
-        video_playlist_times,
-        vec![
-            0,
-            BACKOFF_FIRST_US,
-            BACKOFF_FIRST_US + BACKOFF_SECOND_US,
-            BACKOFF_FIRST_US + BACKOFF_SECOND_US + BACKOFF_THIRD_US
-        ],
-        "video retries follow its own backoff table"
+        video_playlist_times[1], BACKOFF_FIRST_US,
+        "the first retry is exactly its step"
+    );
+    let second = video_playlist_times[2] - video_playlist_times[1];
+    assert!(
+        (BACKOFF_SECOND_MIN_US..=BACKOFF_SECOND_MAX_US).contains(&second),
+        "the second retry follows the 4 s step, jittered: {second} us"
+    );
+    let third = video_playlist_times[3] - video_playlist_times[2];
+    assert!(
+        (BACKOFF_THIRD_MIN_US..=BACKOFF_THIRD_MAX_US).contains(&third),
+        "the third retry follows the 8 s step, jittered: {third} us"
     );
     let audio_times: Vec<u64> = h
         .requests_to(AUDIO_PLAYLIST_URL)

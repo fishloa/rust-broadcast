@@ -375,8 +375,12 @@ fn key_wrong_length_calls_on_key_error_and_retries_with_backoff() {
     h.run_to_end();
     let times: Vec<u64> = key_requests(&h, KEY_URL).iter().map(|s| s.at_us).collect();
     assert_eq!(times.len(), 3, "{times:?}");
-    assert_eq!(times[1] - times[0], 2_000 * MS);
-    assert_eq!(times[2] - times[1], 4_000 * MS);
+    assert_eq!(times[1] - times[0], 2_000 * MS, "the first step, exactly");
+    let second = times[2] - times[1];
+    assert!(
+        (3_333 * MS..=4_000 * MS).contains(&second),
+        "the 4 s step, jittered below it: {second} us"
+    );
     assert_eq!(errors(&h.events), vec![(ErrorKind::BadKey, false)]);
     let attempts: Vec<u64> = statuses(&h.events)
         .into_iter()

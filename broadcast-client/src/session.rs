@@ -102,6 +102,15 @@ impl Session {
         Self::open_with_memory(url, config, now_us, None)
     }
 
+    /// The seed every retry jitter in this session is drawn from.
+    ///
+    /// A session reads no clock, so it is a pure function of the caller's `now_us`: two sessions
+    /// opened at one instant behave identically (which is what makes a caller's replay
+    /// reproducible), while sessions opened a microsecond apart jitter apart.
+    fn jitter_seed(now_us: u64) -> u64 {
+        now_us
+    }
+
     /// Open a session seeded with stall memory.
     pub fn open_with_memory(
         url: &str,
@@ -189,15 +198,25 @@ impl Session {
         if let Some(creds) = userinfo {
             auth.set_credentials(creds);
         }
-        let source = TsHttpSource::new(parsed.clone(), config.ts_http.clone(), now_us)
-            .with_hold_limits(HoldLimits::from_config(&config));
+        let source = TsHttpSource::with_seed(
+            parsed.clone(),
+            config.ts_http.clone(),
+            now_us,
+            Session::jitter_seed(now_us),
+        )
+        .with_hold_limits(HoldLimits::from_config(&config));
         let adaptive = if use_hls {
-            Some(Adaptive::Hls(Box::new(HlsSession::new(&parsed, &config))))
+            Some(Adaptive::Hls(Box::new(HlsSession::new(
+                &parsed,
+                &config,
+                Self::jitter_seed(now_us),
+            ))))
         } else if use_dash {
             Some(Adaptive::Dash(Box::new(DashSource::new(
                 &parsed,
                 &config,
                 ConnAlloc::new(),
+                Self::jitter_seed(now_us),
             ))))
         } else if use_smooth {
             Some(Adaptive::Smooth(Box::new(SmoothSource::new(

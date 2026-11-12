@@ -122,7 +122,13 @@ pub(crate) struct HlsSource {
 }
 
 impl HlsSource {
-    pub(crate) fn new(url: &Url, config: &Config, conn_alloc: ConnAlloc, role: Role) -> Self {
+    pub(crate) fn new(
+        url: &Url,
+        config: &Config,
+        conn_alloc: ConnAlloc,
+        role: Role,
+        seed: u64,
+    ) -> Self {
         let mut client = HlsClient::new(url.as_str());
         client.set_variant_policy(config.variant_policy.clone());
         let mut source = Self {
@@ -147,7 +153,7 @@ impl HlsSource {
             skipped_kind: None,
             damaged_reported: false,
             oversize_reported: BTreeSet::new(),
-            backoff: Backoff::new(&config.backoff_ms, config.backoff_cap_ms),
+            backoff: Backoff::new(&config.backoff_ms, config.backoff_cap_ms, seed),
             max_redirects: config.max_redirects,
             flight: InFlight::new(
                 Timeouts {
@@ -1065,6 +1071,9 @@ fn classify(error: &CoreError) -> Option<(ErrorKind, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A fixed jitter seed, so a test asserting an exact retry delay is reproducible.
+    const TEST_SEED: u64 = 0x5EED;
     use crate::source::fetch::body::BodyAcc;
     use crate::source::fetch::resume::{Basis, Parked};
 
@@ -1074,7 +1083,13 @@ mod tests {
     fn source_with_auth() -> (HlsSource, AuthState, Url) {
         let url = Url::parse("http://o.test/p.m3u8").unwrap();
         let auth = AuthState::new(url.clone(), Vec::new());
-        let source = HlsSource::new(&url, &Config::default(), ConnAlloc::new(), Role::Main);
+        let source = HlsSource::new(
+            &url,
+            &Config::default(),
+            ConnAlloc::new(),
+            Role::Main,
+            TEST_SEED,
+        );
         (source, auth, url)
     }
 

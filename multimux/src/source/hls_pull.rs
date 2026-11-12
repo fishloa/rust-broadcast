@@ -123,10 +123,11 @@ fn retry_backoff(attempt: u32) -> Duration {
     // The workspace's one capped-exponential implementation (audit r07-O1 /
     // #1141; SP1.5 moved it onto `backon`); `attempt` here is 1-based,
     // `delay_for_attempt` 0-based.
-    crate::reconnect::ReconnectSchedule::from_parts(
+    broadcast_common::backoff::RetrySchedule::new(
         RESOURCE_RETRY_BASE_DELAY,
         RESOURCE_RETRY_MAX_DELAY,
         RESOURCE_RETRY_FACTOR,
+        crate::source::seed_entropy(),
     )
     .delay_for_attempt(attempt.saturating_sub(1))
 }
@@ -949,11 +950,11 @@ mod tests {
                 .unwrap_or(RESOURCE_RETRY_MAX_DELAY)
                 .min(RESOURCE_RETRY_MAX_DELAY);
             let got = retry_backoff(attempt);
-            // Equal jitter: `raw * [0.5, 1.0)`.
+            // The shared schedule's jitter: `raw * [5/6, 1.0]`.
             assert!(
-                got >= raw / 2 && got < raw + Duration::from_nanos(1),
-                "attempt {attempt}: {got:?} outside [{:?}, {raw:?})",
-                raw / 2
+                got >= raw.mul_f64(5.0 / 6.0) && got <= raw + Duration::from_nanos(1),
+                "attempt {attempt}: {got:?} outside [{:?}, {raw:?}]",
+                raw.mul_f64(5.0 / 6.0)
             );
         }
         // C2: once raw saturates at the cap the delay stays jittered in
@@ -961,8 +962,8 @@ mod tests {
         for _ in 0..40 {
             let d = retry_backoff(20);
             assert!(
-                d >= RESOURCE_RETRY_MAX_DELAY / 2 && d < RESOURCE_RETRY_MAX_DELAY,
-                "capped retry {d:?} must stay jittered in [cap/2, cap)"
+                d >= RESOURCE_RETRY_MAX_DELAY.mul_f64(5.0 / 6.0) && d <= RESOURCE_RETRY_MAX_DELAY,
+                "capped retry {d:?} must stay jittered in [cap*5/6, cap]"
             );
         }
     }

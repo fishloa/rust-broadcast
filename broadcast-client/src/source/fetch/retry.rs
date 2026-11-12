@@ -8,16 +8,19 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::time::Duration;
 
 use crate::Event;
 use crate::events::MAX_SERVER_REFUSED_REASON_BYTES;
 
+use broadcast_common::backoff::RetrySchedule;
 use broadcast_common::http_date::parse_http_date;
 
 use super::wall::WallClock;
 
 const MIN_BACKOFF_MS: u64 = 1;
 const MICROS_PER_MILLI: u64 = 1_000;
+const NANOS_PER_MILLI: u64 = 1_000_000;
 const MICROS_PER_SECOND: u64 = MICROS_PER_MILLI * 1_000;
 const MAX_RETRY_AFTER_SECS: u64 = 60;
 const STATUS_TOO_MANY_REQUESTS: u16 = 429;
@@ -25,37 +28,56 @@ const STATUS_SERVICE_UNAVAILABLE: u16 = 503;
 const HEADER_RETRY_AFTER: &str = "retry-after";
 const HEADER_DATE: &str = "date";
 
-/// The retry schedule: `steps_ms[attempt - 1]`, then `cap_ms` forever. Every entry and the cap are
-/// raised to at least one millisecond, so a zero never produces an unbounded burst of retries at
-/// one instant.
+/// The retry schedule every broadcast-client adapter waits out: `steps_ms[attempt - 1]`, then
+/// `cap_ms` forever, configured as one [`RetrySchedule`] (issue #2471).
+///
+/// The first delay is exactly its step; every later one is the step times a jitter term of
+/// `[5/6, 1.0)`, so a fleet of clients retrying one origin does not lockstep and no delay ever
+/// exceeds its step.
 #[derive(Debug, Clone)]
-pub(crate) struct Backoff {
-    steps_ms: Vec<u64>,
-    cap_ms: u64,
+pub struct Backoff {
+    schedule: RetrySchedule,
 }
 
 impl Backoff {
-    /// Build a schedule from `steps_ms` (per-attempt delays) and a `cap_ms` used for every
-    /// later attempt. Every entry and the cap are raised to at least one millisecond.
-    pub(crate) fn new(steps_ms: &[u64], cap_ms: u64) -> Self {
+    /// Build a schedule from `steps_ms` (per-attempt delays), a `cap_ms` used for every later
+    /// attempt and the caller's own `seed` for the jitter.
+    ///
+    /// Every entry and the cap are raised to at least one millisecond, so a zero never produces an
+    /// unbounded burst of retries at one instant.
+    pub(crate) fn new(steps_ms: &[u64], cap_ms: u64, seed: u64) -> Self {
+        Self::new_raw(steps_ms, cap_ms, seed)
+    }
+
+    fn new_raw(steps_ms: &[u64], cap_ms: u64, seed: u64) -> Self {
         Self {
-            steps_ms: steps_ms
-                .iter()
-                .map(|ms| (*ms).max(MIN_BACKOFF_MS))
-                .collect(),
-            cap_ms: cap_ms.max(MIN_BACKOFF_MS),
+            schedule: RetrySchedule::from_steps(
+                &millis_steps(steps_ms),
+                millis(cap_ms).max(Duration::from_millis(MIN_BACKOFF_MS)),
+                seed,
+            ),
         }
     }
 
-    /// Delay for `attempt` (1-based): `steps_ms[attempt - 1]`, or `cap_ms` once the steps are
-    /// exhausted. Attempts beyond the table keep the cap.
+    /// The unjittered step for `attempt` (1-based): `steps_ms[attempt - 1]`, or `cap_ms` once the
+    /// steps are exhausted. Attempts beyond the table keep the cap.
+    #[cfg(test)]
+    pub(crate) fn raw_delay_us(&self, attempt: u64) -> u64 {
+        // Attempt 0 is a caller that has taken no attempt yet: it takes the first step.
+        let index = u32::try_from(attempt.saturating_sub(1)).unwrap_or(u32::MAX);
+        duration_us(self.schedule.raw_delay_for_attempt(index))
+    }
+
+    /// The jittered delay for `attempt` (1-based): in `[raw_delay_us * 5/6, raw_delay_us]`, and
+    /// exactly `raw_delay_us` for the first.
+    #[cfg(test)]
+    pub(crate) fn jittered_delay_us(&self, attempt: u64) -> u64 {
+        let index = u32::try_from(attempt.saturating_sub(1)).unwrap_or(u32::MAX);
+        duration_us(self.schedule.delay_for_attempt(index))
+    }
     pub(crate) fn delay_us(&self, attempt: u64) -> u64 {
-        let idx = usize::try_from(attempt.saturating_sub(1)).unwrap_or(usize::MAX);
-        self.steps_ms
-            .get(idx)
-            .copied()
-            .unwrap_or(self.cap_ms)
-            .saturating_mul(MICROS_PER_MILLI)
+        let index = u32::try_from(attempt.saturating_sub(1)).unwrap_or(u32::MAX);
+        duration_us(self.schedule.delay_for_attempt(index))
     }
 }
 
@@ -104,8 +126,102 @@ fn header_value<'h>(headers: &'h [(String, String)], name: &str) -> Option<&'h s
         .map(|(_, v)| v.as_str())
 }
 
+/// A wait in whole microseconds, rounded up so a jittered sub-microsecond delay still schedules
+/// a wake rather than collapsing to "now", saturating instead of wrapping.
+fn duration_us(wait: Duration) -> u64 {
+    u64::try_from(wait.as_micros()).unwrap_or(u64::MAX)
+}
+
+/// A step table in milliseconds, saturating at [`Duration::MAX`] rather than wrapping back to a
+/// tiny delay.
+fn millis_steps(steps_ms: &[u64]) -> Vec<Duration> {
+    steps_ms
+        .iter()
+        .map(|ms| millis((*ms).max(MIN_BACKOFF_MS)))
+        .collect()
+}
+
+/// `ms` milliseconds as a [`Duration`], saturating at [`Duration::MAX`] instead of wrapping back
+/// to a tiny delay.
+fn millis(ms: u64) -> Duration {
+    const MILLIS_PER_SECOND: u64 = 1_000;
+    let secs = ms / MILLIS_PER_SECOND;
+    let nanos = u64::from((ms % MILLIS_PER_SECOND) as u32) * NANOS_PER_MILLI;
+    Duration::new(secs, u32::try_from(nanos).unwrap_or(u32::MAX))
+}
+
+/// How long a connection must stay up before the retry series restarts from its floor: a peer
+/// that accepts a connection and drops it seconds later, repeatedly, is a failing peer, so the
+/// backoff (and the attempt counter) only restarts after a connection at least this long.
+pub const HEALTHY_CONNECTION_US: u64 = 30_000_000;
+
+/// The reconnect timer (issue #2471: the workspace carried this rule once in multimux's origin
+/// supervisor and again in its push engine): a [`RetrySchedule`] plus the attempt counter, the
+/// instant the current connection came up, and the rule that only a connection that stayed up for
+/// [`HEALTHY_CONNECTION_US`] restarts the series.
+///
+/// The caller drives it with its own clock: [`on_connected`](Self::on_connected) and
+/// [`on_disconnected`](Self::on_disconnected) take the instant, and the latter returns the wait to
+/// arm. Nothing here reads a clock or sleeps.
+#[derive(Debug, Clone)]
+pub struct ReconnectTimer {
+    schedule: RetrySchedule,
+    attempts: u32,
+    connected_at: Option<u64>,
+}
+
+impl ReconnectTimer {
+    /// A timer over a step table (millisecond steps, then the cap), jittered from `seed`.
+    pub fn new(steps_ms: &[u64], cap_ms: u64, seed: u64) -> Self {
+        Self {
+            schedule: RetrySchedule::from_steps(&millis_steps(steps_ms), millis(cap_ms), seed),
+            attempts: 0,
+            connected_at: None,
+        }
+    }
+
+    /// A connection came up at `now_us`. The attempt counter is not reset here: it restarts only
+    /// if this connection stays up for [`HEALTHY_CONNECTION_US`] and then ends.
+    pub fn on_connected(&mut self, now_us: u64) {
+        self.connected_at = Some(now_us);
+    }
+
+    /// Restart the series from its floor — call after a success, so the next
+    /// outage waits the first step again. The jitter sequence starts over too,
+    /// so the restarted series is the one a fresh timer would draw.
+    pub fn reset(&mut self) {
+        self.attempts = 0;
+        self.connected_at = None;
+        self.schedule = self.schedule.clone().with_offset(0);
+    }
+
+    /// How many attempts the current series has taken since it last restarted.
+    pub fn attempts(&self) -> u32 {
+        self.attempts
+    }
+
+    /// A connection ended (or a dial-out failed) at `now_us`: start the next wait and return its
+    /// length, so the caller can arm a timer without re-deriving it.
+    ///
+    /// The delay is the schedule's `[raw*5/6, raw]` band, the first retry being the raw delay
+    /// itself.
+    pub fn on_disconnected(&mut self, now_us: u64) -> Duration {
+        let healthy = self
+            .connected_at
+            .take()
+            .is_some_and(|since| now_us.saturating_sub(since) >= HEALTHY_CONNECTION_US);
+        if healthy {
+            self.attempts = 0;
+        }
+        let attempt = self.attempts;
+        self.attempts = self.attempts.saturating_add(1);
+        self.schedule.delay_for_attempt(attempt)
+    }
+}
+
 /// Holds the request queue until an instant: the latest hold wins, and the gate lifts itself the
-/// first time it is asked at or after that instant.
+/// first time it is asked at or after that instant. A session's wake-up *pacing* floor (an HLS
+/// `WaitMs`, a retry's own wait) is a different rule from the retry series and stays separate.
 #[derive(Debug, Default)]
 pub(crate) struct RetryGate {
     until: Option<u64>,
@@ -255,37 +371,65 @@ mod tests {
 
     #[test]
     fn each_attempt_takes_its_own_step_then_the_cap() {
-        let backoff = Backoff::new(&[2_000, 4_000, 8_000], 10_000);
-        assert_eq!(backoff.delay_us(1), 2_000_000);
-        assert_eq!(backoff.delay_us(2), 4_000_000);
-        assert_eq!(backoff.delay_us(3), 8_000_000);
-        assert_eq!(backoff.delay_us(4), 10_000_000);
-        assert_eq!(backoff.delay_us(u64::MAX), 10_000_000);
+        let backoff = Backoff::new(&[2_000, 4_000, 8_000], 10_000, 0x5EED);
+        assert_eq!(backoff.raw_delay_us(1), 2_000_000);
+        assert_eq!(backoff.raw_delay_us(2), 4_000_000);
+        assert_eq!(backoff.raw_delay_us(3), 8_000_000);
+        assert_eq!(backoff.raw_delay_us(4), 10_000_000);
+        assert_eq!(backoff.raw_delay_us(u64::MAX), 10_000_000);
     }
 
     #[test]
     fn attempt_zero_takes_the_first_step() {
-        let backoff = Backoff::new(&[2_000, 4_000], 10_000);
-        assert_eq!(backoff.delay_us(0), 2_000_000);
+        let backoff = Backoff::new(&[2_000, 4_000], 10_000, 0x5EED);
+        assert_eq!(backoff.raw_delay_us(0), 2_000_000);
     }
 
+    /// A zero step or cap is floored at one millisecond, so a zero never produces an
+    /// unbounded burst of retries at one instant.
     #[test]
     fn a_zero_step_or_cap_never_bursts() {
-        let backoff = Backoff::new(&[0, 5, 0], 0);
-        assert_eq!(backoff.delay_us(1), MICROS_PER_MILLI);
-        assert_eq!(backoff.delay_us(2), 5 * MICROS_PER_MILLI);
-        assert_eq!(backoff.delay_us(3), MICROS_PER_MILLI);
-        assert_eq!(backoff.delay_us(4), MICROS_PER_MILLI);
+        let backoff = Backoff::new(&[0, 5, 0], 0, 0x5EED);
+        assert_eq!(backoff.raw_delay_us(1), MICROS_PER_MILLI);
+        assert_eq!(backoff.raw_delay_us(2), 5 * MICROS_PER_MILLI);
+        assert_eq!(backoff.raw_delay_us(3), MICROS_PER_MILLI);
+        assert_eq!(backoff.raw_delay_us(4), MICROS_PER_MILLI);
     }
 
     #[test]
     fn an_empty_schedule_is_the_cap_from_the_first_attempt() {
-        assert_eq!(Backoff::new(&[], 7).delay_us(1), 7 * MICROS_PER_MILLI);
+        let backoff = Backoff::new(&[], 7, 0x5EED);
+        assert_eq!(backoff.raw_delay_us(1), 7 * MICROS_PER_MILLI);
+        assert_eq!(backoff.raw_delay_us(0), 7 * MICROS_PER_MILLI);
     }
 
     #[test]
     fn a_huge_step_saturates_instead_of_wrapping() {
-        assert_eq!(Backoff::new(&[u64::MAX], 1).delay_us(1), u64::MAX);
+        let backoff = Backoff::new(&[u64::MAX], 1, 0x5EED);
+        assert_eq!(backoff.raw_delay_us(1), u64::MAX);
+        assert!(backoff.delay_us(1) > 0);
+    }
+
+    /// The schedule is jittered (issue #2471): every attempt draws in
+    /// `[step * 5/6, step)`, so a fleet of clients retrying one origin does not
+    /// lockstep, and no delay ever exceeds the configured step.
+    #[test]
+    fn every_delay_is_jittered_below_its_step_but_not_halved() {
+        let backoff = Backoff::new(&[2_000, 4_000, 8_000], 10_000, 0x5EED);
+        let mut seen = alloc::collections::BTreeSet::new();
+        for attempt in 0..32 {
+            let raw = backoff.raw_delay_us(attempt);
+            for _ in 0..8 {
+                let delay = backoff.jittered_delay_us(attempt);
+                let low = raw * 5 / 6;
+                assert!(
+                    delay >= low && delay <= raw,
+                    "attempt {attempt}: {delay} us outside [{low}, {raw}]"
+                );
+                seen.insert(delay);
+            }
+        }
+        assert!(seen.len() > 1, "one constant delay is not a jittered one");
     }
 
     const NOW: u64 = 7_000_000;
@@ -466,21 +610,6 @@ mod tests {
     }
 
     #[test]
-    fn an_http_date_is_ignored_for_statuses_that_ignore_retry_after() {
-        let h = date_pair("Mon, 26 Oct 2026 08:39:34 GMT", RESPONSE_DATE);
-        for status in [200, 302, 404, 500, 502, 504] {
-            assert_eq!(retry(status, &h), 0, "{status}");
-        }
-    }
-
-    #[test]
-    fn delta_seconds_do_not_need_an_anchor_and_ignore_it() {
-        let h = header("Retry-After", "5");
-        assert_eq!(retry_after_us(503, &h, NOW, Some(&anchored())), 5_000_000);
-        assert_eq!(retry(503, &h), 5_000_000);
-    }
-
-    #[test]
     fn a_gate_holds_until_its_instant_and_lifts_there() {
         let mut gate = RetryGate::default();
         assert!(gate.lifted(0), "an unheld gate is open");
@@ -516,5 +645,69 @@ mod tests {
         assert!(!gate.lifted(10));
         assert!(!gate.lifted(20));
         assert!(gate.lifted(100));
+    }
+
+    /// The instant `us` before `Instant::now()`, derived without reading any clock (this crate
+    /// holds no `std::time` import): the schedule only ever compares instants by subtraction.
+    fn us_ago(us: u64) -> u64 {
+        u64::MAX - us
+    }
+
+    #[test]
+    fn a_reconnect_timer_takes_its_steps_in_order() {
+        let mut timer = ReconnectTimer::new(&[2_000, 4_000], 10_000, 0x5EED);
+        let first = timer.on_disconnected(0);
+        assert_eq!(first, Duration::from_secs(2), "the first step, exactly");
+        let second = timer.on_disconnected(1_000_000);
+        assert!(
+            second >= Duration::from_secs(2) && second <= Duration::from_secs(4),
+            "{second:?}"
+        );
+        let third = timer.on_disconnected(2_000_000);
+        assert!(
+            third >= Duration::from_secs(4) && third <= Duration::from_secs(10),
+            "{third:?}"
+        );
+    }
+
+    #[test]
+    fn only_a_connection_that_stayed_up_for_the_healthy_span_restarts_the_series() {
+        let mut timer = ReconnectTimer::new(&[1_000], 30_000, 0x5EED);
+        let mut last = Duration::ZERO;
+        for _ in 0..8 {
+            timer.on_connected(0);
+            last = timer.on_disconnected(us_ago(1_000));
+        }
+        assert!(
+            last >= Duration::from_millis(500),
+            "a connection that drops at once keeps counting up: {last:?}"
+        );
+        timer.on_connected(0);
+        let restarted = timer.on_disconnected(HEALTHY_CONNECTION_US);
+        assert!(
+            restarted >= Duration::from_millis(500) && restarted < Duration::from_secs(2),
+            "a healthy connection restarts the series at its first step: {restarted:?}"
+        );
+        timer.on_connected(HEALTHY_CONNECTION_US);
+        let wait = timer.on_disconnected(us_ago(HEALTHY_CONNECTION_US));
+        assert!(
+            wait < Duration::from_secs(2),
+            "a connection that stayed up past the healthy span restarts the series: {wait:?}"
+        );
+    }
+
+    #[test]
+    fn an_http_date_is_ignored_for_statuses_that_ignore_retry_after() {
+        let h = date_pair("Mon, 26 Oct 2026 08:39:34 GMT", RESPONSE_DATE);
+        for status in [200, 302, 404, 500, 502, 504] {
+            assert_eq!(retry(status, &h), 0, "{status}");
+        }
+    }
+
+    #[test]
+    fn delta_seconds_do_not_need_an_anchor_and_ignore_it() {
+        let h = header("Retry-After", "5");
+        assert_eq!(retry_after_us(503, &h, NOW, Some(&anchored())), 5_000_000);
+        assert_eq!(retry(503, &h), 5_000_000);
     }
 }

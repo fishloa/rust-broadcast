@@ -60,6 +60,8 @@ pub mod whip;
 use std::time::Duration;
 use transmux::TrackId;
 
+pub(crate) use crate::secure_random::seed_entropy;
+
 /// Read-size hint every MPEG-2 TS transport reports via
 /// [`broadcast_common::Stage::demand`], and the read-buffer size the
 /// datagram transports allocate — comfortably above a typical 7×188-byte

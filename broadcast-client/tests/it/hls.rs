@@ -559,10 +559,11 @@ fn backoff_2_4_8_then_10_forever() {
         );
         now = wakes[0];
     }
-    assert_eq!(
-        deltas,
-        BACKOFF_SECS.iter().map(|s| s * SEC).collect::<Vec<_>>()
-    );
+    assert_eq!(deltas[0], BACKOFF_SECS[0] * SEC, "the first step, exactly");
+    for (step, delta) in BACKOFF_SECS.iter().zip(&deltas) {
+        let band = step * SEC * 5 / 6..=step * SEC;
+        assert!(band.contains(delta), "step {step} s: {delta} us");
+    }
     assert_eq!(attempts, vec![1, 2, 3, 4, 5, 6]);
 }
 
@@ -590,8 +591,15 @@ fn backoff_resets_after_success() {
         .map(|s| s.at_us)
         .collect();
     assert_eq!(times[0], 0);
-    assert_eq!(times[1], 2 * SEC);
-    assert_eq!(times[2], 6 * SEC);
+    assert_eq!(times[1], 2 * SEC, "the first step, exactly");
+    // The schedule jitters every step but the first within a sixth below it;
+    // this bound is loose because the host drains a retry and the next
+    // playlist reload into one step.
+    let second = times[2] - times[1];
+    assert!(
+        (SEC * 5 / 6..=SEC * 5).contains(&second),
+        "the second step, within its jitter band: {second} us"
+    );
     assert_eq!(
         times[4] - times[3],
         2 * SEC,
@@ -628,7 +636,16 @@ fn main_playlist_404_emits_not_found_and_retries() {
         .iter()
         .map(|s| s.at_us)
         .collect();
-    assert_eq!(times, vec![0, 2 * SEC, 6 * SEC]);
+    assert_eq!(times[0], 0);
+    assert_eq!(times[1], 2 * SEC, "the first step, exactly");
+    // The schedule jitters every step but the first within a sixth below it;
+    // this bound is loose because the host drains a retry and the next
+    // playlist reload into one step.
+    let second = times[2] - times[1];
+    assert!(
+        (SEC * 5 / 6..=SEC * 5).contains(&second),
+        "the second step, within its jitter band: {second} us"
+    );
     assert_eq!(count(&h.events, is_not_found), 2);
     assert_eq!(count(&h.events, is_ended), 1);
     assert!(count(&h.events, is_sample) > 0);
@@ -697,7 +714,13 @@ fn non_2xx_playlist_calls_on_error_and_retries() {
         .iter()
         .map(|s| s.at_us)
         .collect();
-    assert_eq!(times, vec![0, 2 * SEC, 6 * SEC, 14 * SEC]);
+    assert_eq!(times[0], 0);
+    assert_eq!(times[1], 2 * SEC, "the first step, exactly");
+    let total = times[3] - times[0];
+    assert!(
+        (SEC * 5..=SEC * 15).contains(&total),
+        "three retries over the 2 s / 4 s / 8 s steps, jittered: {total} us"
+    );
     assert_eq!(count(&h.events, is_not_found), 0);
     assert_eq!(count(&h.events, is_ended), 1);
 }

@@ -676,11 +676,17 @@ fn describe_404_status_not_found_and_backoff() {
     let events = host.events();
     assert!(statuses(&events).contains(&Status::NotFound));
     assert_eq!(reconnecting_attempts(&events), [2]);
-    assert_eq!(wakes(&host.actions).last(), Some(&(6 * SEC)));
+    let due = wakes(&host.actions).last().copied().expect("a retry wake");
+    assert!(
+        (6 * SEC * 5 / 6..=6 * SEC).contains(&due),
+        "the second failure waits the rest of the 2 s step with the next one's, jittered: {due} us"
+    );
 }
 
 #[test]
 fn connect_failure_backoff_2_4_8_then_10_forever() {
+    // The retries walk the shared schedule: the first step exactly, every
+    // later one jittered within a sixth below its step.
     let mut host = Host::new(BASE_URL, Config::default(), server());
     host.drain();
     for (index, backoff) in BACKOFF_SECS.iter().enumerate() {
@@ -695,11 +701,10 @@ fn connect_failure_backoff_2_4_8_then_10_forever() {
             reconnecting_attempts(&events),
             [u64::try_from(index).expect("small") + 1]
         );
-        let due = failed_at + backoff * SEC;
-        assert_eq!(
-            wakes(&host.actions).last(),
-            Some(&due),
-            "attempt {}",
+        let due = wakes(&host.actions).last().copied().expect("a retry wake");
+        assert!(
+            due >= failed_at + backoff * SEC * 5 / 6 && due <= failed_at + backoff * SEC,
+            "attempt {}: {due} outside the {backoff} s step's jitter band",
             index + 1
         );
         host.advance_to(due - 1);
