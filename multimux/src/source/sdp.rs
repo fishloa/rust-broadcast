@@ -3,7 +3,7 @@
 
 use crate::error::{MultimuxError, Result};
 use crate::source::TrackInit;
-use rtsp_runtime::PlayPlan;
+use rtsp_runtime::{MAX_TRACKS, PlayPlan};
 use sdp_types::{Media, Session};
 use transmux::TrackId;
 use transmux::sdp_track;
@@ -38,24 +38,48 @@ fn track_init(media_index: usize, media: &Media) -> Result<TrackInit> {
     })
 }
 
+/// Media sections that can be played, in media order, with the track cap applied.
+/// Skipped sections are logged here with their reason, exactly once.
+fn playable_media(session: &Session) -> Vec<(usize, TrackInit)> {
+    let mut out = Vec::new();
+    for (media_index, media) in session.medias.iter().enumerate() {
+        if out.len() >= MAX_TRACKS {
+            tracing::warn!(
+                media_index,
+                "rtsp: skipped a media section beyond the track cap"
+            );
+            continue;
+        }
+        match track_init(media_index, media) {
+            Ok(track) => out.push((media_index, track)),
+            Err(e) => tracing::warn!(
+                error = %e,
+                media_index,
+                "rtsp: skipped an unplayable media section"
+            ),
+        }
+    }
+    out
+}
+
 /// Parse the DESCRIBE SDP body into per-track init, assigning interleaved
 /// channels 0,2,4,… in media order.
 pub fn parse_tracks_multimux(sdp: &[u8]) -> Result<Vec<TrackInit>> {
     let session = Session::parse(sdp).map_err(|e| MultimuxError::Sdp {
         reason: format!("parse: {e}"),
     })?;
-    let mut tracks = Vec::new();
-    let mut channel = 0u8;
-    for (media_index, media) in session.medias.iter().enumerate() {
-        let mut track = track_init(media_index, media)?;
-        track.channel = channel;
-        tracks.push(track);
-        channel = channel.saturating_add(CHANNEL_STEP);
-    }
-    if tracks.is_empty() {
+    let playable = playable_media(&session);
+    if playable.is_empty() {
         return Err(MultimuxError::Sdp {
             reason: "SDP has no supported media".into(),
         });
+    }
+    let mut tracks = Vec::new();
+    let mut channel = 0u8;
+    for (_, mut track) in playable {
+        track.channel = channel;
+        tracks.push(track);
+        channel = channel.saturating_add(CHANNEL_STEP);
     }
     Ok(tracks)
 }
@@ -74,8 +98,22 @@ pub(crate) fn plan_tracks(
     let text = std::str::from_utf8(sdp).map_err(|e| MultimuxError::Sdp {
         reason: format!("parse: {e}"),
     })?;
-    let mut tracks: Vec<TrackInit> = Vec::new();
-    let mut failure: Option<MultimuxError> = None;
+    struct Candidate {
+        media_index: usize,
+        track: TrackInit,
+    }
+    let playable =
+        playable_media(
+            &Session::parse(text.as_bytes()).map_err(|e| MultimuxError::Sdp {
+                reason: format!("parse: {e}"),
+            })?,
+        );
+    let playable_indices: std::collections::BTreeSet<usize> =
+        playable.iter().map(|(i, _)| *i).collect();
+    let candidates: Vec<Candidate> = playable
+        .into_iter()
+        .map(|(media_index, track)| Candidate { media_index, track })
+        .collect();
     let plan = PlayPlan::from_describe_selecting(
         request_url,
         content_base,
@@ -83,21 +121,7 @@ pub(crate) fn plan_tracks(
         text,
         FIRST_CHANNEL,
         usize::MAX,
-        |media_index, media| {
-            if failure.is_some() {
-                return false;
-            }
-            match track_init(media_index, media) {
-                Ok(track) => {
-                    tracks.push(track);
-                    true
-                }
-                Err(e) => {
-                    failure = Some(e);
-                    false
-                }
-            }
-        },
+        |media_index, _| playable_indices.contains(&media_index),
     )
     .map_err(|e| MultimuxError::Sdp {
         reason: match e {
@@ -105,23 +129,38 @@ pub(crate) fn plan_tracks(
             other => other.to_string(),
         },
     })?;
-    if let Some(e) = failure {
-        return Err(e);
+    for skipped in plan.skipped() {
+        tracing::warn!(
+            media_index = skipped.media_index,
+            control = %skipped.control,
+            "rtsp: skipped a media section whose control is on another authority"
+        );
+    }
+    for media_index in plan.over_limit() {
+        tracing::warn!(
+            media_index,
+            "rtsp: skipped a media section beyond the track cap"
+        );
+    }
+    let mut tracks: Vec<TrackInit> = Vec::new();
+    for (index, setup) in plan.setups().iter().enumerate() {
+        let Some(candidate) = candidates
+            .iter()
+            .find(|c| c.media_index == setup.media_index)
+        else {
+            continue;
+        };
+        let Some((channel, _)) = plan.channels(index) else {
+            continue;
+        };
+        let mut track = candidate.track.clone();
+        track.channel = channel;
+        tracks.push(track);
     }
     if tracks.is_empty() {
         return Err(MultimuxError::Sdp {
             reason: "SDP has no supported media".into(),
         });
-    }
-    if !plan.skipped().is_empty() {
-        return Err(MultimuxError::Sdp {
-            reason: "control rejected".into(),
-        });
-    }
-    for (index, track) in tracks.iter_mut().enumerate() {
-        if let Some((channel, _)) = plan.channels(index) {
-            track.channel = channel;
-        }
     }
     Ok((plan, tracks))
 }
@@ -170,6 +209,34 @@ a=control:streamid=0\r\n";
             t.payload_type, 96,
             "the m=video line's fmt payload type must be captured"
         );
+    }
+
+    #[test]
+    fn accepted_media_indices_match_shared_golden() {
+        let mut expected = std::collections::BTreeMap::new();
+        let raw = std::fs::read_to_string(test_fixtures::path(
+            "golden/sdp-tracks/accepted-indices.txt",
+        ))
+        .unwrap();
+        for line in raw.lines() {
+            if let Some((name, idx)) = line.split_once(": ") {
+                expected.insert(name.to_string(), idx.to_string());
+            }
+        }
+        let url = url::Url::parse("rtsp://cam.test/live/").unwrap();
+        for (name, body) in test_fixtures::sdp_track_fixtures() {
+            let got = match plan_tracks(&url, None, &body) {
+                Ok((plan, _)) => plan
+                    .setups()
+                    .iter()
+                    .map(|s| s.media_index.to_string())
+                    .collect::<Vec<_>>()
+                    .join(","),
+                Err(_) => "NONE".to_string(),
+            };
+            let exp = expected.get(&name).cloned().unwrap_or_default();
+            assert_eq!(got, exp, "{name}: accepted indices differ");
+        }
     }
 
     #[test]
@@ -222,7 +289,7 @@ a=control:streamid=0\r\n";
     }
 
     #[test]
-    fn plan_rejects_a_control_on_another_authority() {
+    fn plan_skips_a_control_on_another_authority() {
         let sdp = String::from_utf8(SDP.to_vec())
             .unwrap()
             .replace("streamid=0", "rtsp://other.example/x");
@@ -233,14 +300,22 @@ a=control:streamid=0\r\n";
     }
 
     #[test]
-    fn plan_rejects_an_unsupported_media_instead_of_skipping_it() {
-        let sdp = String::from_utf8(SDP.to_vec())
-            .unwrap()
-            .replace("m=video", "m=text");
+    fn plan_skips_an_unsupported_media_instead_of_failing_the_call() {
+        let sdp = String::from_utf8(SDP.to_vec()).unwrap();
+        let sdp = sdp.replace("m=video", "m=text");
         assert!(matches!(
             plan_for(sdp.as_bytes()),
             Err(crate::error::MultimuxError::Sdp { .. })
         ));
+    }
+
+    #[test]
+    fn plan_skips_leading_unsupported_then_plans_h264() {
+        let sdp = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=text 0 RTP/AVP 96\r\na=control:streamid=meta\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=fmtp:96 packetization-mode=1; sprop-parameter-sets=Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==\r\na=control:streamid=0\r\n";
+        let (plan, tracks) = plan_for(sdp.as_bytes()).unwrap();
+        assert_eq!(tracks.len(), 1);
+        assert_eq!(tracks[0].channel, 0);
+        assert_eq!(plan.setups().len(), 1);
     }
 
     #[test]

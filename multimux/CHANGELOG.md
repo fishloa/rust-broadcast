@@ -3,6 +3,7 @@
 ## [Unreleased]
 ### Changed
 - HTTP pulls feed response cookies to `AuthState` and pass real proxy/stale info (no hard-coded `false`).
+- RTSP pull skips unplayable SDP media sections (and foreign-authority controls and sections beyond the track cap) instead of failing the whole route; fails only when nothing is playable. Skipped sections are logged as route warnings.
 ### Removed
 - `hls-runtime` `tokio` feature no longer enabled.
 

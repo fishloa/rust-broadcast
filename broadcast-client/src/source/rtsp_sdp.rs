@@ -3,7 +3,7 @@
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use rtsp_runtime::PlayPlan;
+use rtsp_runtime::{MAX_TRACKS, PlayPlan};
 use sdp_types::Media;
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::RtpMediaKind;
@@ -11,9 +11,6 @@ use transmux::{SdpTrack, TrackId, first_encoding_name, is_played_encoding, sdp_t
 use url::Url;
 
 const FIRST_CHANNEL: u8 = 0;
-
-/// Most media sections a session plays; further supported sections are ignored.
-pub(crate) const MAX_TRACKS: usize = 16;
 
 pub(crate) struct ParsedSdp {
     pub(crate) plan: PlayPlan,
@@ -75,9 +72,13 @@ pub(crate) fn parse_tracks(
             let info = skipped_media(media_index, media);
             described.push(info.clone());
             match sdp_track(media) {
-                Some(track) => {
+                Some(track) if track.payload_type.is_some() => {
                     candidates.push(Candidate { media_index, track });
                     true
+                }
+                Some(_) => {
+                    skipped.push(info);
+                    false
                 }
                 None => {
                     skipped.push(info);
@@ -179,6 +180,53 @@ mod golden {
             }
         }
         out
+    }
+
+    #[test]
+    fn accepted_media_indices_match_shared_golden() {
+        let mut expected = std::collections::BTreeMap::new();
+        let raw = std::fs::read_to_string(test_fixtures::path(
+            "golden/sdp-tracks/accepted-indices.txt",
+        ))
+        .unwrap();
+        for line in raw.lines() {
+            if let Some((name, idx)) = line.split_once(": ") {
+                expected.insert(name.to_string(), idx.to_string());
+            }
+        }
+        let request_url = url::Url::parse("rtsp://cam.test/live/").unwrap();
+        for (name, body) in test_fixtures::sdp_track_fixtures() {
+            let media_count = sdp_types::Session::parse(&body)
+                .map(|s| s.medias.len())
+                .unwrap_or(0);
+            let mut skipped_indices = std::collections::BTreeSet::new();
+            let got = match parse_tracks(&body, &request_url, None) {
+                Ok(parsed) => {
+                    for s in &parsed.skipped {
+                        skipped_indices.insert(s.media_index);
+                    }
+                    (0..media_count)
+                        .filter(|i| !skipped_indices.contains(i))
+                        .map(|i| i.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                }
+                Err(SdpError::NothingPlayable { skipped }) => {
+                    for s in &skipped {
+                        skipped_indices.insert(s.media_index);
+                    }
+                    "NONE".to_string()
+                }
+                Err(_) => "NONE".to_string(),
+            };
+            let got = if got.is_empty() {
+                "NONE".to_string()
+            } else {
+                got
+            };
+            let exp = expected.get(&name).cloned().unwrap_or_default();
+            assert_eq!(got, exp, "{name}: accepted indices differ");
+        }
     }
 
     #[test]
