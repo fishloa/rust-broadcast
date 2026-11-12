@@ -729,11 +729,6 @@ pub(crate) const ADTS_BLOCK_POSITION_SIZE: usize = 2;
 /// `protection_absent == 0` (ISO/IEC 13818-7 §6.2, `adts_error_check()`).
 pub(crate) const ADTS_CRC_SIZE: usize = 2;
 
-/// Minimum valid sampling-frequency index in an ADTS header: indices
-/// `0x0..=0xC` are defined (ISO/IEC 14496-3 §1.6.3.3 Table 1.10); `0xD` and
-/// `0xE` are reserved and `0xF` is the explicit-rate escape.
-const ADTS_MAX_VALID_SAMPLING_FREQUENCY_INDEX: u8 = 0xC;
-
 pub fn parse_adts_header(bytes: &[u8]) -> Result<AdtsHeader> {
     need_in(bytes, ADTS_HEADER_SIZE, "ADTS")?;
     if bytes[0] != 0xFF || (bytes[1] & 0xF0) != 0xF0 {
@@ -743,7 +738,6 @@ pub fn parse_adts_header(bytes: &[u8]) -> Result<AdtsHeader> {
             reason: "must be 0xFFF",
         }));
     }
-    // layer must be 00 (ISO/IEC 13818-7 §6.2.1).
     if (bytes[1] & ADTS_LAYER_MASK_BITS) != 0 {
         return Err(Error::InvalidValue(InvalidValue {
             field: "adts_layer",
@@ -754,42 +748,27 @@ pub fn parse_adts_header(bytes: &[u8]) -> Result<AdtsHeader> {
     let (b2, b3, b4, b5, b6) = (bytes[2], bytes[3], bytes[4], bytes[5], bytes[6]);
     let protection_absent = (bytes[1] & 0x01) != 0;
     let sampling_frequency_index_raw = (b2 >> 2) & 0x0F;
-    let sampling_frequency_index = SamplingFrequencyIndex::from(sampling_frequency_index_raw);
-    if sampling_frequency_index_raw > ADTS_MAX_VALID_SAMPLING_FREQUENCY_INDEX
-        || matches!(sampling_frequency_index, SamplingFrequencyIndex::Reserved(_) | SamplingFrequencyIndex::Escape)
-    {
-        return Err(Error::InvalidValue(InvalidValue {
-            field: "sampling_frequency_index",
-            value: sampling_frequency_index_raw as u64,
-            reason: "reserved or escape value",
-        }));
-    }
     let num_raw_data_blocks = b6 & 3;
     let frame_length = (((b3 & 3) as u16) << 11) | ((b4 as u16) << 3) | ((b5 >> 5) as u16);
-    // Minimum header length for this frame (CRC position table when present).
-    let min_header_len = if protection_absent {
-        ADTS_HEADER_SIZE
-    } else {
-        ADTS_HEADER_SIZE
-            + ADTS_BLOCK_POSITION_SIZE * num_raw_data_blocks as usize
-            + ADTS_CRC_SIZE
+
+    let hdr = AdtsHeader {
+        protection_absent,
+        profile: (b2 >> 6) & 3,
+        sampling_frequency_index: sampling_frequency_index_raw,
+        channel_configuration: ((b2 & 1) << 2) | ((b3 >> 6) & 3),
+        frame_length,
+        buffer_fullness: (((b5 & 0x1F) as u16) << 6) | ((b6 >> 2) as u16),
+        num_raw_data_blocks,
     };
-    if (frame_length as usize) < min_header_len {
+
+    if (frame_length as usize) < adts_header_len(&hdr) {
         return Err(Error::InvalidValue(InvalidValue {
             field: "adts_frame_length",
             value: frame_length as u64,
             reason: "smaller than header length",
         }));
     }
-    Ok(AdtsHeader {
-        protection_absent,
-        profile: (b2 >> 6) & 3,
-        sampling_frequency_index: sampling_frequency_index.raw(),
-        channel_configuration: ((b2 & 1) << 2) | ((b3 >> 6) & 3),
-        frame_length,
-        buffer_fullness: (((b5 & 0x1F) as u16) << 6) | ((b6 >> 2) as u16),
-        num_raw_data_blocks,
-    })
+    Ok(hdr)
 }
 
 /// The ADTS header length (fixed + variable + CRC/position words) for a parsed
@@ -1167,5 +1146,61 @@ mod tests {
         let mut b = AudioSpecificConfig::parse(&KNOWN).unwrap();
         b.channel_configuration = ChannelConfiguration::Stereo;
         assert_ne!(o, b.try_to_bytes().unwrap());
+    }
+}
+
+#[cfg(test)]
+mod drift_agreement {
+    use super::*;
+
+    #[test]
+    fn adts_agrees_with_container_probe() {
+        let frame_len = (ADTS_HEADER_SIZE + 10) as u16;
+        let mut frame = alloc::vec![0u8; frame_len as usize];
+        frame[..ADTS_HEADER_SIZE].copy_from_slice(&build_adts_header(1, 4, 2, frame_len));
+        let mut buf = alloc::vec::Vec::new();
+        for _ in 0..20 {
+            buf.extend_from_slice(&frame);
+        }
+        let p = container_probe::probe(&buf);
+        assert!(matches!(
+            p,
+            container_probe::Probe::Identified {
+                format: container_probe::Format::AdtsAac,
+                ..
+            }
+        ));
+        assert!(parse_adts_header(&buf).is_ok());
+
+        let mp3_frame = [0xFFu8, 0xFB, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let mut buf2 = alloc::vec::Vec::new();
+        for _ in 0..20 {
+            buf2.extend_from_slice(&mp3_frame);
+        }
+        let p2 = container_probe::probe(&buf2);
+        assert!(!matches!(
+            p2,
+            container_probe::Probe::Identified {
+                format: container_probe::Format::AdtsAac,
+                ..
+            }
+        ));
+        assert!(parse_adts_header(&mp3_frame).is_err());
+    }
+
+    #[test]
+    fn mp3_layer_iii_header_rejected() {
+        let hdr = [0xFFu8, 0xFB, 0x90, 0x00, 0x00, 0x00, 0x00];
+        let err = parse_adts_header(&hdr).unwrap_err();
+        assert!(matches!(err, crate::error::Error::InvalidValue(v) if v.field == "adts_layer"));
+    }
+
+    #[test]
+    fn frame_length_below_header_length_rejected() {
+        let hdr = [0xFFu8, 0xF1, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let err = parse_adts_header(&hdr).unwrap_err();
+        assert!(
+            matches!(err, crate::error::Error::InvalidValue(v) if v.field == "adts_frame_length")
+        );
     }
 }

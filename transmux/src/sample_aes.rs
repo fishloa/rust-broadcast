@@ -76,11 +76,6 @@ pub const H264_SKIP_LEN: usize = 144;
 /// Clear leader after the ADTS header for AAC / after the syncframe start for
 /// AC-3 / E-AC-3 (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §4.1, §5, §6).
 pub const AUDIO_CLEAR_LEADER_LEN: usize = 16;
-/// ADTS fixed+variable header length with no CRC (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §4.1).
-pub const ADTS_HEADER_LEN_NO_CRC: usize = crate::aac_asc::ADTS_HEADER_SIZE;
-/// ADTS header length with CRC protection (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §4.1).
-pub const ADTS_HEADER_LEN_WITH_CRC: usize = 9;
-
 // --------------------------------------------------------------------------
 // Raw AES-128-CBC primitives.
 // --------------------------------------------------------------------------
@@ -376,7 +371,6 @@ fn audio_transform(
         cbc_decrypt_blocks_in_place(key, iv, blocks);
     }
 }
-
 
 /// Sample-AES-encrypt one AAC ADTS frame: ADTS header + 16-byte leader clear,
 /// then 16-byte CBC blocks, `< 16` trailer clear
@@ -829,7 +823,7 @@ mod tests {
         frame.extend((0u8..100).map(|i| i.wrapping_mul(3)));
         let parsed = crate::aac_asc::parse_adts_header(&frame).unwrap();
         let hdr = crate::aac_asc::adts_header_len(&parsed);
-        assert_eq!(hdr, ADTS_HEADER_LEN_NO_CRC);
+        assert_eq!(hdr, crate::aac_asc::ADTS_HEADER_SIZE);
 
         let enc = aac_encrypt_frame(&NIST_KEY, &NIST_IV, &frame).unwrap();
         assert_eq!(enc.len(), frame.len(), "AAC length preserved (no padding)");
@@ -848,7 +842,7 @@ mod tests {
         // byte1 bit0 = 0 → 9-byte header (CRC present).
         let frame = vec![0xFF, 0xF0, 0, 0, 0x01, 0x20, 0, 0, 0];
         let parsed = crate::aac_asc::parse_adts_header(&frame).unwrap();
-        assert_eq!(crate::aac_asc::adts_header_len(&parsed), ADTS_HEADER_LEN_WITH_CRC);
+        assert_eq!(crate::aac_asc::adts_header_len(&parsed), 9);
     }
 
     #[test]

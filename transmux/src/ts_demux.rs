@@ -241,7 +241,8 @@ use mpeg_ts::resync::TsResync;
 use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 
 use crate::aac_asc::{
-    ADTS_BLOCK_POSITION_SIZE, ADTS_CRC_SIZE, ADTS_HEADER_SIZE, AdtsHeader, AudioSpecificConfig, SamplingFrequencyIndex, adts_header_len, parse_adts_header,
+    ADTS_BLOCK_POSITION_SIZE, ADTS_CRC_SIZE, ADTS_HEADER_SIZE, AdtsHeader, AudioSpecificConfig,
+    SamplingFrequencyIndex, adts_header_len, parse_adts_header,
 };
 use crate::ac3::{
     AC3_SAMPLES_PER_SYNCFRAME, AC3_SYNCWORD, Ac3SyncframeInfo, EAC3_STRMTYP_DEPENDENT,
@@ -1124,7 +1125,6 @@ fn split_adts_frames(payload: &[u8]) -> Vec<(&[u8], AdtsHeader)> {
         .map(|(_, f, h)| (f, h))
         .collect()
 }
-
 
 /// The AAC sample bytes of one whole ADTS frame: every `raw_data_block()`
 /// with the position table and CRC words removed. Single-block and
@@ -8758,7 +8758,7 @@ pub(crate) mod tests {
         // units however long each one is. Re-derived from the fixture's own
         // shape, not from the demux's internals; a backlog rescan would instead
         // be ACCESS_UNITS^2/2 = 125 000.
-        let expected = 2_121_473u64;
+        let expected = ACCESS_UNITS as u64 * 2;
         assert_eq!(
             probes, expected,
             "the AAC probe must scan only the newest access unit              ({ACCESS_UNITS} accesses => {expected} probes: one pass + one              sync scan each); {probes} recorded"
