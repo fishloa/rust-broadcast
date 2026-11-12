@@ -50,7 +50,7 @@ fn track_summary(media: &Media) -> Vec<(String, usize, Vec<usize>)> {
 /// `(tag type, timestamp, body)` for every tag an FLV byte stream carries,
 /// walked with `rtmp-runtime`'s strict tag walker (no hand-rolled framing).
 fn flv_tags(flv: &[u8]) -> Vec<(u8, u32, Vec<u8>)> {
-    let header = <rtmp_runtime::flv::FlvHeader as Parse>::parse(flv).expect("FLV header");
+    let header = <rtmp_runtime::flv::FlvHeader<'_> as Parse>::parse(flv).expect("FLV header");
     rtmp_runtime::flv::tags(flv, &header)
         .map(|tag| tag.map(|tag| (tag.tag_type.to_byte(), tag.timestamp, tag.body.to_vec())))
         .collect::<Result<Vec<_>, _>>()
@@ -249,7 +249,7 @@ fn a_zero_chunk_size_is_rejected() {
 /// strict tag walker (no hand-rolled framing here), as `(tag type, body)`.
 fn flv_mux_tags(media: &Media) -> Vec<(u8, Vec<u8>)> {
     let flv = FlvMux::new().package(media).expect("IR → FLV");
-    let header = <rtmp_runtime::flv::FlvHeader as Parse>::parse(&flv).expect("FLV header");
+    let header = <rtmp_runtime::flv::FlvHeader<'_> as Parse>::parse(&flv).expect("FLV header");
     rtmp_runtime::flv::tags(&flv, &header)
         .map(|tag| tag.map(|tag| (tag.tag_type.to_byte(), tag.body.to_vec())))
         .collect::<Result<Vec<_>, _>>()

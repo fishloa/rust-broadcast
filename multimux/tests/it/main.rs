@@ -56,6 +56,7 @@ mod reconnect_policy;
 #[cfg(all(feature = "whip", feature = "whep", feature = "test-hooks"))]
 mod rtmp_read_failure;
 mod rtsp_ingest;
+mod rtsp_pull_golden;
 mod sdp_session;
 mod secret_hygiene;
 mod server_timeouts;

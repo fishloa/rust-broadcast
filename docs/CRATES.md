@@ -482,7 +482,7 @@ Demuxes any supported container into one neutral IR (`Media` / `Track`) and muxe
 - **Standards:** ISO/IEC 14496-12:2026 / -15 / -30, ISO/IEC 23000-19 (CMAF), ISO/IEC 23009-1 (DASH), ISO/IEC 23001-7 (CENC), ISO/IEC 13818-1, RFC 8216, RFC 3550, MS-SSTR, GY/T 420-2025 (AVS2/AVS3/Audio Vivid in ISOBMFF); editions mostly unverified (several ISO texts are paid and not vendored)
 - **Cargo description:** Any-to-any media container muxing hub: demux TS, fMP4/CMAF, MPEG-PS, WebM, FLV, or RTMP into one neutral IR and mux to CMAF/fMP4, progressive MP4, TS, DASH, low-latency DASH, HLS, low-latency HLS, Smooth Streaming, or RTMP. CENC/CBCS encrypt+decrypt, SSAI splice, RTP/RTCP, and an fMP4/CMAF conformance validator; parses codec config headers only, samples stay opaque. no_std + alloc, except the XML manifest paths (DASH/Smooth/PlayReady), which need the std feature.
 - **Version (in-tree):** 0.31.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 3
-- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`broadcast-smooth`](#broadcast-smooth), [`cc-data`](#cc-data), [`container-probe`](#container-probe), [`dvb-si`](#dvb-si), [`mp4-emsg`](#mp4-emsg), [`mpeg-pes`](#mpeg-pes), [`mpeg-ps`](#mpeg-ps), [`mpeg-ts`](#mpeg-ts), [`rtmp-runtime`](#rtmp-runtime), [`rtp-packet`](#rtp-packet)
+- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-dash`](#broadcast-dash), [`broadcast-hls`](#broadcast-hls), [`broadcast-smooth`](#broadcast-smooth), [`cc-data`](#cc-data), [`container-probe`](#container-probe), [`dvb-si`](#dvb-si), [`mp4-emsg`](#mp4-emsg), [`mpeg-pes`](#mpeg-pes), [`mpeg-ps`](#mpeg-ps), [`mpeg-ts`](#mpeg-ts), [`rtmp-runtime`](#rtmp-runtime), [`rtp-packet`](#rtp-packet)
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`dash-runtime`](#dash-runtime), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux)
 - **Links:** [README](../transmux/README.md) · [CHANGELOG](../transmux/CHANGELOG.md) · [crates.io](https://crates.io/crates/transmux) · [docs.rs](https://docs.rs/transmux)
 
@@ -498,7 +498,7 @@ The read side of DASH, kept below the container hub: a bounded, namespace-aware 
 - **Cargo description:** MPEG-DASH (ISO/IEC 23009-1) manifest syntax: the MPD model, its bounded parser, the SegmentTemplate substitution grammar and the xs:duration reader. Parsing only, no client.
 - **Version (in-tree):** 0.1.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
-- **Used by (workspace):** [`dash-runtime`](#dash-runtime), [`media-doctor`](#media-doctor)
+- **Used by (workspace):** [`dash-runtime`](#dash-runtime), [`media-doctor`](#media-doctor), [`transmux`](#transmux)
 - **Links:** [README](../broadcast-dash/README.md) · [CHANGELOG](../broadcast-dash/CHANGELOG.md)
 
 #### buffering-runtime
@@ -995,7 +995,6 @@ flowchart BT
   compliance_probe --> media_doctor
   compliance_probe --> media_plane
   container_probe --> broadcast_common
-  dash_runtime --> broadcast_dash
   dash_runtime --> transmux
   dvb_bbframe --> broadcast_common
   dvb_ci --> dvb_si
@@ -1052,6 +1051,7 @@ flowchart BT
   timed_metadata --> dvb_vbi
   timed_metadata --> mp4_emsg
   timed_metadata --> scte35_splice
+  transmux --> broadcast_dash
   transmux --> broadcast_hls
   transmux --> broadcast_smooth
   transmux --> cc_data

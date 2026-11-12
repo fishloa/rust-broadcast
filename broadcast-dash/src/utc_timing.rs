@@ -21,7 +21,7 @@ pub const SCHEME_HTTP_NTP: &str = "urn:mpeg:dash:utc:http-ntp:2014";
 pub const SCHEME_DIRECT: &str = "urn:mpeg:dash:utc:direct:2014";
 
 /// A `UTCTiming` scheme (Table 35).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
 pub enum UtcScheme {
     /// NTP servers; not acted on (no UDP in a sans-IO core).
@@ -37,6 +37,7 @@ pub enum UtcScheme {
     /// `GET`, body is an NTP timestamp.
     HttpNtp,
     /// `@value` is the time.
+    #[default]
     Direct,
     /// A scheme this core does not know.
     Unknown,

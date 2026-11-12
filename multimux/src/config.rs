@@ -1475,7 +1475,7 @@ fn validate_multicast_group(group: &str) -> Result<()> {
 /// non-emptiness of the path itself: the file may not exist yet at
 /// config-validation time (mirrors how an RTSP URL's reachability is never
 /// checked here either), and is read + parsed fresh at connect time by
-/// [`crate::source::sdp::load_sdp`]/`parse_sdp_tracks`.
+/// [`crate::source::sdp::load_sdp`]/`parse_tracks_multimux`.
 fn validate_sdp(sdp: &str) -> Result<()> {
     if sdp.is_empty() {
         return Err(MultimuxError::ConfigInvalid {

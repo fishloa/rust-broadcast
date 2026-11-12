@@ -11,6 +11,7 @@ pub mod model;
 mod parse;
 pub mod template;
 pub mod utc_timing;
+mod write;
 pub mod xs_datetime;
 
 pub use error::{Limit, MpdError, Unsupported};

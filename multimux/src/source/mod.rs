@@ -1188,7 +1188,7 @@ pub struct TrackInit {
     /// channel framing outside RTSP). RTSP ignores this field today (it
     /// routes by interleaved channel instead) but it is populated
     /// identically for both ingest paths since both go through the same
-    /// [`sdp::parse_sdp_tracks`].
+    /// [`sdp::parse_tracks_multimux`].
     pub payload_type: u8,
 }
 
