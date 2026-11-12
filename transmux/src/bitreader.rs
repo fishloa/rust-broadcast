@@ -13,24 +13,6 @@ use alloc::vec::Vec;
 use broadcast_common::bits::{BitError, BitWriter};
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 
-/// Unescape a NAL unit byte stream into an RBSP: remove every `00 00 03` → `00 00`.
-pub(crate) fn unescape(nal: &[u8]) -> Vec<u8> {
-    let n = nal.len();
-    let mut out = Vec::with_capacity(n);
-    let mut i = 0;
-    while i < n {
-        if i + 2 < n && nal[i] == 0 && nal[i + 1] == 0 && nal[i + 2] == 3 {
-            out.push(0);
-            out.push(0);
-            i += 3;
-        } else {
-            out.push(nal[i]);
-            i += 1;
-        }
-    }
-    out
-}
-
 /// Read `n` (<= 64) bits MSB-first from `data` at `*bit_pos`, advancing it.
 ///
 /// The one cursor-style reader shared by the per-module header decoders
@@ -152,7 +134,7 @@ impl BitReader {
     /// Create a new reader from a NAL unit body (after the NAL header),
     /// with emulation-prevention byte removal.
     pub fn with_unescape(nal_body: &[u8], what: &'static str) -> Result<Self> {
-        let rbsp = unescape(nal_body);
+        let rbsp = crate::rbsp::unescape(nal_body);
         if rbsp.is_empty() {
             return Err(Error::BufferTooShort(BufferTooShort {
                 need: 1,
@@ -306,14 +288,14 @@ mod tests {
     #[test]
     fn unescape_removes_emulation_prevention_bytes() {
         let nal = [0x00, 0x00, 0x03, 0x04, 0x00, 0x00];
-        let rbsp = unescape(&nal);
+        let rbsp = crate::rbsp::unescape(&nal);
         assert_eq!(rbsp, &[0x00, 0x00, 0x04, 0x00, 0x00]);
     }
 
     #[test]
     fn unescape_no_epb_passthrough() {
         let nal = [0x01, 0x02, 0x03, 0x04];
-        let rbsp = unescape(&nal);
+        let rbsp = crate::rbsp::unescape(&nal);
         assert_eq!(rbsp, nal);
     }
 
