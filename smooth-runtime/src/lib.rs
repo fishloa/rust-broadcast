@@ -11,6 +11,12 @@
 //! look-ahead and discontinuity. Manifest syntax is `broadcast-smooth`'s; codec
 //! glue and fMP4 demux are `transmux`'s.
 //!
+//! The pull side is [`SmoothClient`]; the **serving** side is
+//! [`server::SmoothOrigin`] (feature `std`), which renders a live Manifest from
+//! a `media_plane::Trunk` and resolves fragment requests — the same split
+//! `hls-runtime` makes between its client and its `server` module, with
+//! `multimux` an adapter over it.
+//!
 //! The shape follows `dash-runtime`'s `DashClient`: the host drives it with
 //! [`SmoothClient::poll`] (what to fetch next), [`SmoothClient::on_manifest`],
 //! [`SmoothClient::on_fragment`] and [`SmoothClient::on_failure`], and drains

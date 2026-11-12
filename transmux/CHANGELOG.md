@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- `smooth::resolve_codec` returns `smooth::SmoothCodec` (stream type, FourCC, `CodecPrivateData`, SPS geometry, AudioSpecificConfig sampling rate and channels) instead of an anonymous tuple, and `smooth::to_smooth_ticks` is public — the one codec resolver for a Smooth manifest, shared by the packager and `smooth-runtime`'s live origin (issue #2453).
 - `insert_event_message_boxes_after_styp` splices serialized `emsg` boxes after the first top-level `styp` box using parsed box boundaries (a 64-bit `largesize` box before it is stepped over), and `segments::MOOF`, the Movie Fragment Box four-CC.
 - Timeline-jump detector (`timeline` module): `JumpDetector`, `TimelineJumpConfig`, `DEFAULT_JUMP_BACKWARD_US`, `DEFAULT_JUMP_FORWARD_SLACK_US` moved from `broadcast-client`; per-track discontinuity detection with configurable thresholds.
 ### Fixed

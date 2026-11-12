@@ -423,7 +423,7 @@ impl SmoothOrigin {
     }
 
     /// Render the live client Manifest, or why it cannot be rendered yet
-    /// ([`EgressResponse::Wait`]) or at all ([`EgressResponse::BadRequest`]).
+    /// (`EgressResponse::Await`) or at all (`EgressResponse::BadRequest`).
     pub fn manifest(&self, now: Timestamp, await_policy: AwaitPolicy) -> EgressResponse<String> {
         match self.plan() {
             Ok(plan) => EgressResponse::Ready {

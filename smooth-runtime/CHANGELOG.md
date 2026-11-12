@@ -4,6 +4,8 @@ All notable changes to smooth-runtime will be documented in this file.
 
 ## [Unreleased]
 ### Added
+- `server::SmoothOrigin` (feature `std`, issue #2453): the live Smooth Streaming origin engine, the server-side counterpart of `SmoothClient`. Given a `media_plane::Trunk`, the program's `SegmentProvider`/`TrackProvider` and its init segment, it renders the MS-SSTR client Manifest through `broadcast_smooth::SmoothManifest::live(..)`/`to_xml` and resolves `SmoothRequest::Fragment` to re-muxed fragment bytes, answering `EgressResponse::Ready`/`Await`/`BadRequest`/`NotFound` without I/O or a clock read. Codec parameters come from `transmux::resolve_codec`, the resolver the packager uses, so the manifest advertises what the fragments carry.
+- `server::SmoothOrigin::stream_keys`/`fragments`, and `SmoothRequest::parse`: the streams a manifest advertises and the request grammar (`QualityLevels(BITRATE)/Fragments(KIND=START)`) that names them. A second stream of a kind is named `TYPE_N`, as the packager names it, so two audio tracks stay distinct.
 - `Output::TracksChanged(Vec<TrackSpec>)`: after the tracks are announced, `select_video_quality` accepts any level of the same codec family (H264/AVC1, H265/HEVC) even when its SPS/PPS and resolution differ, and the engine re-announces the full track set once, before the first sample of the new level. A level of another codec family is still refused.
 ### Fixed
 - The quality list offered to the host and the stream it switches are the same stream even when an earlier video stream is skipped.
