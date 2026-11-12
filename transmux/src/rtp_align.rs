@@ -105,6 +105,7 @@ pub struct TrackAligner {
     state: Option<AvSync>,
     held: Vec<(TrackId, Sample)>,
     sr_dirty: bool,
+    skew_rejections: u64,
 }
 
 fn rescale(ticks: i64, from: u32, to: u32) -> i64 {
@@ -163,6 +164,14 @@ impl TrackAligner {
     /// Call after feeding an RTCP packet to the depacketiser so new Sender Reports are re-read.
     pub fn note_rtcp(&mut self) {
         self.sr_dirty = true;
+    }
+
+    /// How many times a fresh set of Sender Reports was refused because the tracks' NTP clocks
+    /// were more than an hour apart ([`RtpStreamDepacketiser::try_sync_start_decode_times`]); the
+    /// tracks then stay on their provisional placement until the next Sender Report.
+    #[must_use]
+    pub fn skew_rejections(&self) -> u64 {
+        self.skew_rejections
     }
 
     /// Places `sample`; may hold early non-anchor samples until the anchor track has one.
@@ -242,7 +251,14 @@ impl TrackAligner {
         if !self.sr_dirty {
             return;
         }
-        let times: BTreeMap<TrackId, u64> = depa.sync_start_decode_times().into_iter().collect();
+        let times: BTreeMap<TrackId, u64> = match depa.try_sync_start_decode_times() {
+            Ok(times) => times.into_iter().collect(),
+            Err(_) => {
+                self.skew_rejections = self.skew_rejections.saturating_add(1);
+                self.sr_dirty = false;
+                return;
+            }
+        };
         let Some((&anchor_sdt, anchor_scale)) = times
             .get(&anchor)
             .zip(self.lanes.get(&anchor).map(|l| l.timescale))
@@ -672,5 +688,12 @@ mod tests {
         }
         assert_eq!(rig.discontinuities, 0);
         assert!(rig.other.iter().all(|&us| us >= 0));
+        assert_eq!(
+            rig.aligner.skew_rejections(),
+            1,
+            "counted once, not once per sample"
+        );
+        let skew = rig.depa.try_sync_start_decode_times().unwrap_err();
+        assert!(skew.skew_seconds > 3600.0, "{}", skew.skew_seconds);
     }
 }

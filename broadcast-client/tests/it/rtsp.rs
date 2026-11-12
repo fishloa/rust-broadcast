@@ -8,8 +8,8 @@ use rtsp_runtime::transport::{LowerTransport, Transport};
 use sdp_types::{Media, MediaType, Origin, TransportProto};
 use support::rtsp_host::{
     BASE_URL, Chunking, DESCRIBE, Host, MediaFixture, OPTIONS, PLAY, SEC, SETUP, Server, TEARDOWN,
-    channel_of, connects, interleaved, quiet_config, samples_of, sender_report_frame, session_id,
-    wakes,
+    channel_of, connects, interleaved, quiet_config, samples_of, sender_report_at,
+    sender_report_frame, session_id, wakes,
 };
 use url::Url;
 
@@ -360,6 +360,16 @@ fn media_only(events: &[Event]) -> Vec<Event> {
             e
         })
         .collect()
+}
+
+#[test]
+fn a_sender_report_with_ntp_zero_is_counted_as_rejected() {
+    let mut host = playing();
+    assert_eq!(host.session.rtcp_rejected_count(), 0);
+    host.deliver(&sender_report_at(channel_of(0) + 1, 1, 0.0, 0));
+    host.deliver(&sender_report_at(channel_of(1) + 1, 2, 0.0, 0));
+    assert_eq!(host.session.rtcp_rejected_count(), 2);
+    assert_eq!(host.session.rtcp_packet_count(), 2);
 }
 
 #[test]

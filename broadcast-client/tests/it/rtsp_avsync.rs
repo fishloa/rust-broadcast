@@ -92,6 +92,7 @@ struct Outcome {
     audio_samples: Vec<(f64, u64)>,
     last_sr_us: u64,
     audio_skew_written: Option<f64>,
+    rtcp_rejected: u64,
 }
 
 /// Writes one sender report per lane and returns each lane's `(video, written audio skew)`:
@@ -287,6 +288,7 @@ fn run_scenario(
         audio_samples: Vec::new(),
         last_sr_us: 0,
         audio_skew_written: None,
+        rtcp_rejected: host.session.rtcp_rejected_count(),
     };
     let mut is_video = BTreeMap::new();
     let mut audio_samples = Vec::new();
@@ -369,6 +371,17 @@ fn assert_audio_on_sender_report_timeline(o: &Outcome, skew: f64) {
 /// designed correction lands one sample after the re-anchor; this allows a few more for the
 /// aligner's slew to converge, still far short of the re-anchor's own distance in the run.
 const SETTLED_SAMPLES: usize = 16;
+
+const WRONG_CLOCK_SKEW_SECONDS: f64 = 7_200.0;
+
+#[test]
+fn a_sender_report_clock_hours_off_is_counted_not_silent() {
+    let skewed = run(Some(WRONG_CLOCK_SKEW_SECONDS));
+    assert_eq!(skewed.rtcp_rejected, 1, "one fresh set, refused once");
+    assert_eq!(skewed.discontinuities, 0);
+    assert_eq!(run(None).rtcp_rejected, 0);
+    assert_eq!(run(Some(0.0)).rtcp_rejected, 0);
+}
 
 #[test]
 fn audio_follows_a_later_sender_report_that_moves_its_clock() {
