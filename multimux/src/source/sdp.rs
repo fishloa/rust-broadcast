@@ -3,7 +3,7 @@
 
 use crate::error::{MultimuxError, Result};
 use crate::source::TrackInit;
-use rtsp_runtime::PlayPlan;
+use rtsp_runtime::{MAX_TRACKS, PlayPlan};
 use sdp_types::{Media, Session};
 use transmux::TrackId;
 use transmux::sdp_track;
@@ -47,7 +47,12 @@ pub fn parse_tracks_multimux(sdp: &[u8]) -> Result<Vec<TrackInit>> {
     let mut tracks = Vec::new();
     let mut channel = 0u8;
     for (media_index, media) in session.medias.iter().enumerate() {
-        let mut track = track_init(media_index, media)?;
+        if tracks.len() >= MAX_TRACKS {
+            break;
+        }
+        let Ok(mut track) = track_init(media_index, media) else {
+            continue;
+        };
         track.channel = channel;
         tracks.push(track);
         channel = channel.saturating_add(CHANNEL_STEP);
@@ -74,28 +79,26 @@ pub(crate) fn plan_tracks(
     let text = std::str::from_utf8(sdp).map_err(|e| MultimuxError::Sdp {
         reason: format!("parse: {e}"),
     })?;
-    let mut tracks: Vec<TrackInit> = Vec::new();
-    let mut failure: Option<MultimuxError> = None;
+    struct Candidate {
+        media_index: usize,
+        track: TrackInit,
+    }
+    let mut candidates: Vec<Candidate> = Vec::new();
     let plan = PlayPlan::from_describe_selecting(
         request_url,
         content_base,
         None,
         text,
         FIRST_CHANNEL,
-        usize::MAX,
-        |media_index, media| {
-            if failure.is_some() {
-                return false;
+        MAX_TRACKS,
+        |media_index, media| match track_init(media_index, media) {
+            Ok(track) => {
+                candidates.push(Candidate { media_index, track });
+                true
             }
-            match track_init(media_index, media) {
-                Ok(track) => {
-                    tracks.push(track);
-                    true
-                }
-                Err(e) => {
-                    failure = Some(e);
-                    false
-                }
+            Err(e) => {
+                tracing::warn!(error = %e, media_index, "rtsp: skipped an unplayable media section");
+                false
             }
         },
     )
@@ -105,23 +108,35 @@ pub(crate) fn plan_tracks(
             other => other.to_string(),
         },
     })?;
-    if let Some(e) = failure {
-        return Err(e);
+    for skipped in plan.skipped() {
+        tracing::warn!(
+            media_index = skipped.media_index,
+            control = %skipped.control,
+            "rtsp: skipped a media section whose control is on another authority"
+        );
+    }
+    for media_index in plan.over_limit() {
+        tracing::warn!(
+            media_index,
+            "rtsp: skipped a media section beyond the track cap"
+        );
+    }
+    let mut tracks: Vec<TrackInit> = Vec::new();
+    for (index, setup) in plan.setups().iter().enumerate() {
+        let Some(candidate) = candidates.iter().find(|c| c.media_index == setup.media_index) else {
+            continue;
+        };
+        let Some((channel, _)) = plan.channels(index) else {
+            continue;
+        };
+        let mut track = candidate.track.clone();
+        track.channel = channel;
+        tracks.push(track);
     }
     if tracks.is_empty() {
         return Err(MultimuxError::Sdp {
             reason: "SDP has no supported media".into(),
         });
-    }
-    if !plan.skipped().is_empty() {
-        return Err(MultimuxError::Sdp {
-            reason: "control rejected".into(),
-        });
-    }
-    for (index, track) in tracks.iter_mut().enumerate() {
-        if let Some((channel, _)) = plan.channels(index) {
-            track.channel = channel;
-        }
     }
     Ok((plan, tracks))
 }
@@ -222,7 +237,7 @@ a=control:streamid=0\r\n";
     }
 
     #[test]
-    fn plan_rejects_a_control_on_another_authority() {
+    fn plan_skips_a_control_on_another_authority() {
         let sdp = String::from_utf8(SDP.to_vec())
             .unwrap()
             .replace("streamid=0", "rtsp://other.example/x");
@@ -233,10 +248,11 @@ a=control:streamid=0\r\n";
     }
 
     #[test]
-    fn plan_rejects_an_unsupported_media_instead_of_skipping_it() {
-        let sdp = String::from_utf8(SDP.to_vec())
-            .unwrap()
-            .replace("m=video", "m=text");
+    fn plan_skips_an_unsupported_media_instead_of_failing_the_call() {
+        let sdp = String::from_utf8(SDP.to_vec()).unwrap();
+        // Add an H.264 video section after the (now unsupported) text section.
+        // Single unsupported section -> nothing playable.
+        let sdp = sdp.replace("m=video", "m=text");
         assert!(matches!(
             plan_for(sdp.as_bytes()),
             Err(crate::error::MultimuxError::Sdp { .. })

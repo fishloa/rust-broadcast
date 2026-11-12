@@ -3,7 +3,7 @@
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use rtsp_runtime::PlayPlan;
+use rtsp_runtime::{MAX_TRACKS, PlayPlan};
 use sdp_types::Media;
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::RtpMediaKind;
@@ -12,8 +12,6 @@ use url::Url;
 
 const FIRST_CHANNEL: u8 = 0;
 
-/// Most media sections a session plays; further supported sections are ignored.
-pub(crate) const MAX_TRACKS: usize = 16;
 
 pub(crate) struct ParsedSdp {
     pub(crate) plan: PlayPlan,

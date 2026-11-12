@@ -99,7 +99,10 @@ fn sdp_body() -> Vec<u8> {
          m=video 0 RTP/AVP 96\r\n\
          a=rtpmap:96 H264/90000\r\n\
          a=fmtp:96 packetization-mode=1;sprop-parameter-sets={SPROP}\r\n\
-         a=control:streamid=0\r\n"
+         a=control:streamid=0\r\n\
+         m=application 0 RTP/AVP 100\r\n\
+         a=rtpmap:100 vnd.onvif.metadata/90000\r\n\
+         a=control:streamid=meta\r\n"
     )
     .into_bytes()
 }
