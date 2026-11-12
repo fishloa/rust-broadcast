@@ -18,7 +18,7 @@ default = ["std"]
 # `std` links the standard library. Without it the crate is `#![no_std]` and
 # needs only `alloc`. chrono's wall-clock and the std `Error` glue are std-only;
 # the parse/serialize/CRC/BCD/MJD core is fully no_std.
-std = ["chrono?/std", "chrono?/clock", "serde?/std", "erased-serde?/std", "dep:jiff", "jiff?/std", "dep:thiserror"]
+std = ["chrono?/std", "chrono?/clock", "serde?/std", "erased-serde?/std"]
 # MJD↔calendar conversion for the UTC time codec. Off = the BCD/duration
 # helpers remain available; only the chrono-typed UTC functions are gated.
 chrono = ["dep:chrono"]
@@ -34,6 +34,10 @@ xml = ["std", "dep:quick-xml"]
 # ISO 639 -> BCP 47 language canonicalisation (`lang` module).
 lang = ["std", "dep:iso-639"]
 
+# HTTP-date parsing (`http_date` module, RFC 9110 §5.6.7), for HTTP clients
+# reading `Date` and `Retry-After`.
+http-date = ["std", "dep:jiff", "dep:thiserror"]
+
 [dependencies]
 # Default build stays lean — consumers of broadcast_common pay for nothing they aren't
 # already paying for downstream. `chrono` is pulled only when the `chrono`
@@ -45,7 +49,7 @@ hex = { version = "0.4", default-features = false, features = ["alloc"] }
 # ISO 639 code tables (alpha-2/alpha-3 B and T) for canonicalising language codes
 # to BCP 47. Pulled in only by the `lang` feature.
 iso-639 = { version = "0.1", optional = true, default-features = false }
-# HTTP-date parsing (RFC 9110 §5.6.7). std-only, pulled in by the `std` feature.
+# HTTP-date parsing (RFC 9110 §5.6.7). Pulled in only by the `http-date` feature.
 jiff = { version = "0.2", default-features = false, features = ["std"], optional = true }
 # Only pulled in by the `serde` feature — see its comment above. Configured
 # `no_std` (`derive` only, no `std`) so it composes with the no_std build.

@@ -1,3 +1,5 @@
+#![cfg(feature = "http-date")]
+
 //! The HTTP `Date` reader (RFC 9110 5.6.7): three accepted forms, the POSIX
 //! two-digit-year window, and rejection of garbage.
 

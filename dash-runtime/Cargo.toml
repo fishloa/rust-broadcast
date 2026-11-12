@@ -17,7 +17,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "11.0.1", default-features = false, features = ["std", "xml"] }
+broadcast-common = { path = "../broadcast-common", version = "11.0.1", default-features = false, features = ["std", "xml", "http-date"] }
 broadcast-dash   = { path = "../broadcast-dash", version = "0.1.0" }
 transmux         = { path = "../transmux", version = "0.31.0", default-features = false, features = ["std"] }
 container-probe  = { path = "../container-probe", version = "0.3.1", default-features = false }
