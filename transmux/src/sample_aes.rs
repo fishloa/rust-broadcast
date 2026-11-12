@@ -994,6 +994,19 @@ mod tests {
         let followed = [0x00u8, 0x00, 0x03, 0x04];
         assert_eq!(crate::rbsp::unescape(&trailing), &[0x01, 0x00, 0x00]);
         assert_eq!(crate::rbsp::unescape(&followed), &[0x00, 0x00, 0x04]);
+        // `h264_encrypt_nal` unescapes with the Sample-AES rule; on a NAL it
+        // cannot encrypt it returns the input untouched, so the two escaping
+        // choices are observable through the public entry point only on an
+        // encryptable NAL, which the round-trip test below covers.
+        let mut encryptable: Vec<u8> = vec![0x65];
+        encryptable.extend_from_slice(&trailing);
+        for i in 0..96u8 {
+            encryptable.push(i.wrapping_mul(7).wrapping_add(1));
+        }
+        let enc = h264_encrypt_nal(&NIST_KEY, &NIST_IV, &encryptable);
+        let dec = h264_decrypt_nal(&NIST_KEY, &NIST_IV, &enc);
+        assert_eq!(dec, encryptable);
+        assert_ne!(enc, encryptable, "the NAL really was encrypted");
         // The SPS/SEI parse path unescapes through `BitReader::with_unescape`
         // and must reach the same RBSP: a `3`-byte read yields the first three
         // bytes of exactly these values.
