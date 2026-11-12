@@ -10,7 +10,6 @@ use tower::ServiceExt;
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
 use multimux::output::hls::HlsOutput;
-use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
 
 fn llhls_route_declared(declared: u64) -> Arc<RouteHandle> {

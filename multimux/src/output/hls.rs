@@ -114,17 +114,16 @@ impl HlsOutput {
             playlist_name: playlist_name.into(),
         }
     }
+    /// The LL-HLS output (`llhls` in a route config): fMP4 parts with
+    /// blocking reload, plus the audio, subtitle and I-frame playlists, its
+    /// media playlist served as `playlist_name`.
     pub fn low_latency(playlist_name: impl Into<String>) -> Self {
         Self::new(HlsFlavour::LowLatency, playlist_name)
     }
-    pub fn llhls(playlist_name: impl Into<String>) -> Self {
-        Self::low_latency(playlist_name)
-    }
+    /// The classic TS-HLS output (`ts_hls` in a route config): whole MPEG-TS
+    /// segments, no parts, its media playlist served as `playlist_name`.
     pub fn segmented(playlist_name: impl Into<String>) -> Self {
         Self::new(HlsFlavour::Segmented, playlist_name)
-    }
-    pub fn ts_hls(playlist_name: impl Into<String>) -> Self {
-        Self::segmented(playlist_name)
     }
 }
 

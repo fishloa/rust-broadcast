@@ -26,7 +26,6 @@ use multimux::origin::{AppState, router};
 use multimux::output::Output;
 use multimux::output::OutputKind;
 use multimux::output::hls::HlsOutput;
-use multimux::output::hls::HlsOutput;
 use multimux::registry::SchemeRegistry;
 use multimux::route::RouteHandle;
 use multimux::serve_with_registry_on;
