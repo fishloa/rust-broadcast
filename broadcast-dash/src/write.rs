@@ -857,7 +857,6 @@ fn write_representation(w: &mut Writer<Vec<u8>>, r: &Representation) -> Result<(
     }
 
     w.write_event(Event::Start(e)).map_err(io_err)?;
-    if r.common.audio_sampling_rate.is_some() {}
     for d in &r.audio_channel_configurations {
         write_descriptor(w, "AudioChannelConfiguration", d)?;
     }
