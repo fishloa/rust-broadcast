@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Added
+- `impl From<BitError> for BufferTooShort`: the one conversion from a bit-level failure to the workspace's byte-counted buffer error, so a bit reader's short input is reported in the same unit everywhere. `need`/`have` are whole bytes (a partial byte rounds up in `need`, down in `have`), read the same way whether an adapter reports the bits needed or the absolute position. It also fixes `BitReader::skip_bits` leaving the cursor past the end on a failed skip, so `bits_remaining` stays a real count (issue #2461).
 - `backoff` module: `RetrySchedule`, the one capped retry schedule the workspace's clients and servers pace a reconnect from (issue #2471). Pure policy with no clock and no allocation: `raw_delay_for_attempt` is the deterministic series and `delay_for_attempt` the retry actually waited. A schedule is either exponential (`min * factor^attempt`, capped) or a literal step table (`from_steps`); jitter is equal-jitter from a fixed term sequence (`with_offset` starts a caller further into it), so the first retry is exactly the configured step, no delay ever exceeds it, the capped band stays jittered, and a fleet spread over the retry interval stays spread. `mix_seed` folds a caller's own entropy into a seed without reading a clock.
 ### Removed
 - `ts_dup` module moved to `mpeg-ts` (legal duplicate TS packet detection, H.222.0 §2.4.3.3); import from `mpeg_ts::ts_dup` instead (#2466).

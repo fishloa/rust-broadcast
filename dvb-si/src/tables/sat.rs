@@ -58,19 +58,20 @@ impl<'a> BitReader<'a> {
     fn bits_consumed(&self) -> usize {
         self.inner.bits_read()
     }
-    // `need`/`have` are absolute bits, this crate's `Error::BufferTooShort`
-    // convention for the SAT.
+    // `need`/`have` are whole bytes, the unit of every
+    // `Error::BufferTooShort` in the workspace: `need` is the byte the read
+    // must reach, `have` the whole bytes the body holds.
     fn overrun(&self, bits: usize) -> Error {
         Error::BufferTooShort(broadcast_common::error::BufferTooShort {
-            need: self.inner.bits_read() + bits,
-            have: self.inner.total_bits(),
+            need: (self.inner.bits_read() + bits).div_ceil(8),
+            have: self.inner.total_bits() / 8,
             what: "SatSection bit reader overrun",
         })
     }
     fn read_u(&mut self, bits: u8) -> Result<u64> {
         self.inner
             .read_bits(u32::from(bits))
-            .map_err(|_| self.overrun(bits as usize))
+            .map_err(|_| self.overrun(usize::from(bits)))
     }
     fn read_i(&mut self, bits: u8) -> Result<i64> {
         let raw = self.read_u(bits)?;
@@ -87,49 +88,45 @@ impl<'a> BitReader<'a> {
     }
     fn skip(&mut self, bits: u8) -> Result<()> {
         self.inner
-            .skip_bits(bits as usize)
-            .map_err(|_| self.overrun(bits as usize))
+            .skip_bits(usize::from(bits))
+            .map_err(|_| self.overrun(usize::from(bits)))
     }
 }
 
-// This writer stays hand-rolled (it ORs bits into a zero-initialised buffer
-// at an arbitrary bit offset). Unlike its original form it NEVER silently
-// truncates: `write_u`/`write_i` reject a value wider than the field with
-// `Error::FieldOverflow` (#1129 class), so a count such as
-// `frag.delivery_system_ids.len()` into a 10-bit field, or an over-range
-// reserved run, is an error instead of a wrapped, misframed section.
+// The writer is [`broadcast_common::bits::BitWriter`], the one MSB-first
+// writer in the workspace. This adapter keeps the SAT's own contract on top
+// of it: a value wider than its field is `Error::FieldOverflow` (#1129
+// class, so a count such as `frag.delivery_system_ids.len()` into a 10-bit
+// field is an error instead of a wrapped, misframed section), and a run that
+// does not fit the output is `Error::BufferTooShort` in whole bytes, never a
+// silent truncation.
 struct BitWriter<'a> {
-    buf: &'a mut [u8],
-    bit_pos: usize,
+    inner: broadcast_common::bits::BitWriter<'a>,
 }
 
 impl<'a> BitWriter<'a> {
     fn new(buf: &'a mut [u8]) -> Self {
-        Self { buf, bit_pos: 0 }
+        Self {
+            inner: broadcast_common::bits::BitWriter::new(buf),
+        }
     }
     fn bits_written(&self) -> usize {
-        self.bit_pos
+        self.inner.bits_written()
+    }
+    fn overrun(&self, bits: usize) -> Error {
+        Error::BufferTooShort(
+            broadcast_common::bits::BitError::OutOfBounds {
+                needed_bits: bits,
+                remaining_bits: self.inner.capacity_bits() - self.inner.bits_written(),
+            }
+            .into(),
+        )
     }
     fn write_u(&mut self, bits: u8, val: u64) -> Result<()> {
         broadcast_common::len::fit_bits(val, u32::from(bits), "SatSection field")?;
-        let bits = bits as usize;
-        if self.bit_pos + bits > self.buf.len() * 8 {
-            return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
-                    need: self.bit_pos + bits,
-                    have: self.buf.len() * 8,
-                    what: "SatSection bit writer overrun",
-                },
-            ));
-        }
-        for i in 0..bits {
-            let byte_idx = (self.bit_pos + i) / 8;
-            let bit_idx = 7 - ((self.bit_pos + i) % 8);
-            let bit_val = ((val >> (bits - 1 - i)) & 1) as u8;
-            self.buf[byte_idx] |= bit_val << bit_idx;
-        }
-        self.bit_pos += bits;
-        Ok(())
+        self.inner
+            .write_bits(val, u32::from(bits))
+            .map_err(|_| self.overrun(usize::from(bits)))
     }
     fn write_i(&mut self, bits: u8, val: i64) -> Result<()> {
         // Two's-complement range of a `bits`-wide signed field.
@@ -143,20 +140,13 @@ impl<'a> BitWriter<'a> {
             }
             .into());
         }
-        self.write_u(bits, val as u64 & ((1u64 << bits) - 1))
+        let mask = (1u64 << bits) - 1;
+        self.write_u(bits, val as u64 & mask)
     }
     fn write_zero(&mut self, bits: u8) -> Result<()> {
-        if self.bit_pos + bits as usize > self.buf.len() * 8 {
-            return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
-                    need: self.bit_pos + bits as usize,
-                    have: self.buf.len() * 8,
-                    what: "SatSection bit writer overrun",
-                },
-            ));
-        }
-        self.bit_pos += bits as usize;
-        Ok(())
+        self.inner
+            .write_bits(0, u32::from(bits))
+            .map_err(|_| self.overrun(usize::from(bits)))
     }
 }
 
@@ -1312,8 +1302,8 @@ fn sat_parse_position_v2(r: &mut BitReader<'_>) -> Result<SatBody> {
             if r.remaining_bits() < ORBITAL_BITS {
                 return Err(Error::BufferTooShort(
                     broadcast_common::error::BufferTooShort {
-                        need: ORBITAL_BITS,
-                        have: r.remaining_bits(),
+                        need: (ORBITAL_BITS).div_ceil(8),
+                        have: r.remaining_bits() / 8,
                         what: "SatSection PositionV2 Orbital fields",
                     },
                 ));
@@ -1331,8 +1321,8 @@ fn sat_parse_position_v2(r: &mut BitReader<'_>) -> Result<SatBody> {
             if r.remaining_bits() < SGP4_BITS {
                 return Err(Error::BufferTooShort(
                     broadcast_common::error::BufferTooShort {
-                        need: SGP4_BITS,
-                        have: r.remaining_bits(),
+                        need: (SGP4_BITS).div_ceil(8),
+                        have: r.remaining_bits() / 8,
                         what: "SatSection PositionV2 SGP4 fields",
                     },
                 ));
@@ -1385,8 +1375,8 @@ fn sat_parse_cell_fragment(r: &mut BitReader<'_>) -> Result<SatBody> {
             if r.remaining_bits() < CENTER_BITS {
                 return Err(Error::BufferTooShort(
                     broadcast_common::error::BufferTooShort {
-                        need: CENTER_BITS,
-                        have: r.remaining_bits(),
+                        need: (CENTER_BITS).div_ceil(8),
+                        have: r.remaining_bits() / 8,
                         what: "SatSection CellFragment centre",
                     },
                 ));
@@ -1413,8 +1403,8 @@ fn sat_parse_cell_fragment(r: &mut BitReader<'_>) -> Result<SatBody> {
         if r.remaining_bits() < dsid_count * 32 {
             return Err(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
-                    need: dsid_count * 32,
-                    have: r.remaining_bits(),
+                    need: (dsid_count * 32).div_ceil(8),
+                    have: r.remaining_bits() / 8,
                     what: "SatSection CellFragment delivery_system_ids",
                 },
             ));
@@ -1429,8 +1419,8 @@ fn sat_parse_cell_fragment(r: &mut BitReader<'_>) -> Result<SatBody> {
         if r.remaining_bits() < nds_count * NDS_ENTRY_BITS {
             return Err(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
-                    need: nds_count * NDS_ENTRY_BITS,
-                    have: r.remaining_bits(),
+                    need: (nds_count * NDS_ENTRY_BITS).div_ceil(8),
+                    have: r.remaining_bits() / 8,
                     what: "SatSection CellFragment new_delivery_systems",
                 },
             ));
@@ -1454,8 +1444,8 @@ fn sat_parse_cell_fragment(r: &mut BitReader<'_>) -> Result<SatBody> {
         if r.remaining_bits() < ods_count * NDS_ENTRY_BITS {
             return Err(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
-                    need: ods_count * NDS_ENTRY_BITS,
-                    have: r.remaining_bits(),
+                    need: (ods_count * NDS_ENTRY_BITS).div_ceil(8),
+                    have: r.remaining_bits() / 8,
                     what: "SatSection CellFragment obsolescent_delivery_systems",
                 },
             ));
@@ -1495,8 +1485,8 @@ fn sat_parse_time_association(r: &mut BitReader<'_>) -> Result<SatBody> {
     if r.remaining_bits() < TIME_ASSOC_MIN_BITS {
         return Err(Error::BufferTooShort(
             broadcast_common::error::BufferTooShort {
-                need: TIME_ASSOC_MIN_BITS,
-                have: r.remaining_bits(),
+                need: (TIME_ASSOC_MIN_BITS).div_ceil(8),
+                have: r.remaining_bits() / 8,
                 what: "SatSection TimeAssociation body",
             },
         ));
@@ -1552,8 +1542,8 @@ fn sat_parse_beamhopping_time_plan(r: &mut BitReader<'_>, data: &[u8]) -> Result
                 if r.remaining_bits() < MODE0_BITS {
                     return Err(Error::BufferTooShort(
                         broadcast_common::error::BufferTooShort {
-                            need: MODE0_BITS,
-                            have: r.remaining_bits(),
+                            need: (MODE0_BITS).div_ceil(8),
+                            have: r.remaining_bits() / 8,
                             what: "SatSection Beamhopping Mode0",
                         },
                     ));
@@ -1578,8 +1568,8 @@ fn sat_parse_beamhopping_time_plan(r: &mut BitReader<'_>, data: &[u8]) -> Result
                 if r.remaining_bits() < MODE1_HEADER_BITS {
                     return Err(Error::BufferTooShort(
                         broadcast_common::error::BufferTooShort {
-                            need: MODE1_HEADER_BITS,
-                            have: r.remaining_bits(),
+                            need: (MODE1_HEADER_BITS).div_ceil(8),
+                            have: r.remaining_bits() / 8,
                             what: "SatSection Beamhopping Mode1 header",
                         },
                     ));
@@ -1591,8 +1581,8 @@ fn sat_parse_beamhopping_time_plan(r: &mut BitReader<'_>, data: &[u8]) -> Result
                 if r.remaining_bits() < bit_map_size as usize {
                     return Err(Error::BufferTooShort(
                         broadcast_common::error::BufferTooShort {
-                            need: bit_map_size as usize,
-                            have: r.remaining_bits(),
+                            need: (bit_map_size as usize).div_ceil(8),
+                            have: r.remaining_bits() / 8,
                             what: "SatSection Beamhopping Mode1 bitmap",
                         },
                     ));
@@ -1617,8 +1607,8 @@ fn sat_parse_beamhopping_time_plan(r: &mut BitReader<'_>, data: &[u8]) -> Result
                 if r.remaining_bits() < MODE2_BITS {
                     return Err(Error::BufferTooShort(
                         broadcast_common::error::BufferTooShort {
-                            need: MODE2_BITS,
-                            have: r.remaining_bits(),
+                            need: (MODE2_BITS).div_ceil(8),
+                            have: r.remaining_bits() / 8,
                             what: "SatSection Beamhopping Mode2",
                         },
                     ));
@@ -1699,8 +1689,8 @@ fn sat_parse_position_v3(r: &mut BitReader<'_>) -> Result<SatBody> {
     if r.remaining_bits() < POS_V3_HEADER_BITS {
         return Err(Error::BufferTooShort(
             broadcast_common::error::BufferTooShort {
-                need: POS_V3_HEADER_BITS,
-                have: r.remaining_bits(),
+                need: (POS_V3_HEADER_BITS).div_ceil(8),
+                have: r.remaining_bits() / 8,
                 what: "SatSection PositionV3 body header",
             },
         ));
@@ -1725,8 +1715,8 @@ fn sat_parse_position_v3(r: &mut BitReader<'_>) -> Result<SatBody> {
             if r.remaining_bits() < METADATA_FIXED_BITS {
                 return Err(Error::BufferTooShort(
                     broadcast_common::error::BufferTooShort {
-                        need: METADATA_FIXED_BITS,
-                        have: r.remaining_bits(),
+                        need: (METADATA_FIXED_BITS).div_ceil(8),
+                        have: r.remaining_bits() / 8,
                         what: "SatSection PositionV3 metadata",
                     },
                 ));
@@ -1748,8 +1738,8 @@ fn sat_parse_position_v3(r: &mut BitReader<'_>) -> Result<SatBody> {
                 if r.remaining_bits() < USABLE_TIME_BITS {
                     return Err(Error::BufferTooShort(
                         broadcast_common::error::BufferTooShort {
-                            need: USABLE_TIME_BITS,
-                            have: r.remaining_bits(),
+                            need: (USABLE_TIME_BITS).div_ceil(8),
+                            have: r.remaining_bits() / 8,
                             what: "SatSection PositionV3 usable_start_time",
                         },
                     ));
@@ -1772,8 +1762,8 @@ fn sat_parse_position_v3(r: &mut BitReader<'_>) -> Result<SatBody> {
                 if r.remaining_bits() < USABLE_TIME_BITS {
                     return Err(Error::BufferTooShort(
                         broadcast_common::error::BufferTooShort {
-                            need: USABLE_TIME_BITS,
-                            have: r.remaining_bits(),
+                            need: (USABLE_TIME_BITS).div_ceil(8),
+                            have: r.remaining_bits() / 8,
                             what: "SatSection PositionV3 usable_stop_time",
                         },
                     ));
@@ -1821,8 +1811,8 @@ fn sat_parse_position_v3(r: &mut BitReader<'_>) -> Result<SatBody> {
             if r.remaining_bits() < entry_bits {
                 return Err(Error::BufferTooShort(
                     broadcast_common::error::BufferTooShort {
-                        need: entry_bits,
-                        have: r.remaining_bits(),
+                        need: (entry_bits).div_ceil(8),
+                        have: r.remaining_bits() / 8,
                         what: "SatSection PositionV3 ephemeris_data entry",
                     },
                 ));
@@ -1867,8 +1857,8 @@ fn sat_parse_position_v3(r: &mut BitReader<'_>) -> Result<SatBody> {
             if r.remaining_bits() < COV_BITS {
                 return Err(Error::BufferTooShort(
                     broadcast_common::error::BufferTooShort {
-                        need: COV_BITS,
-                        have: r.remaining_bits(),
+                        need: (COV_BITS).div_ceil(8),
+                        have: r.remaining_bits() / 8,
                         what: "SatSection PositionV3 covariance",
                     },
                 ));

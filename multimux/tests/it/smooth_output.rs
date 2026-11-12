@@ -1280,3 +1280,57 @@ async fn smooth_responses_carry_no_cache() {
         NO_CACHE
     );
 }
+
+/// A fragment the live window does not hold answers `404`, never a `500` and
+/// never a panic: one tick before the window's first chunk and one tick after
+/// the end of its last are both outside it. The addresses are the manifest's
+/// own `c@t` values shifted by one tick, so each request is exactly as
+/// well-formed as the ones that do resolve.
+#[tokio::test]
+async fn a_fragment_outside_the_window_is_not_found() {
+    let store = publish_route(vec![video_track_spec()]);
+    let app = build_app(store, Arc::new(SmoothOutput));
+    let manifest_xml = body_string(
+        app.clone()
+            .oneshot(get("/cam/Manifest"))
+            .await
+            .expect("router"),
+    )
+    .await;
+    let manifest = SmoothManifest::parse(&manifest_xml).expect("manifest parses");
+    let stream = &manifest.streams[0];
+    let bitrate = stream.qualities[0].bitrate;
+    let chunks = stream.enumerate_chunks().expect("chunks");
+    let (last_start, last_duration) = chunks.last().copied().expect("a last chunk");
+    let end = last_start.checked_add(last_duration).expect("the end fits");
+    let outside = [
+        ("after the last chunk", end),
+        ("the largest start", u64::MAX),
+    ];
+    for (what, start) in outside {
+        let url = stream.resolve_fragment_url(bitrate, start);
+        let resp = app
+            .clone()
+            .oneshot(get(&format!("/cam/{url}")))
+            .await
+            .expect("router call");
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "a start {what} ({start}) is not in the window"
+        );
+    }
+    for (start, _) in &chunks {
+        let url = stream.resolve_fragment_url(bitrate, *start);
+        let resp = app
+            .clone()
+            .oneshot(get(&format!("/cam/{url}")))
+            .await
+            .expect("router call");
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "the window holds a chunk starting at {start}"
+        );
+    }
+}
