@@ -13918,4 +13918,58 @@ pub(crate) mod tests {
             );
         }
     }
+
+    /// Audit #2459: the pre-PMT replay holds payloads in whole TS *packets*, so
+    /// a continuation before a PID's first PUSI is common there. The shadowed
+    /// `feed_pes_bounded` counters ignored such a continuation (`pes_bytes`
+    /// stayed 0) while the assembler had in fact started buffering it from the
+    /// replayed PUSI, so the 4 MiB cap never tripped and the buffer grew
+    /// unbounded; the reassembler's own bookkeeping bounds it.
+    #[test]
+    fn replayed_payloads_before_a_pusi_are_capped_like_any_other_pes() {
+        const PMT_PID: Pid = Pid::new(0x1000);
+        const ES_PID: Pid = Pid::new(0x1100);
+        let mut demux = StreamingTsDemux::new();
+        // No PAT yet: the ES PID's payloads arrive before any PMT can name
+        // them and land in `unattributed`.
+        let pmt = psi_section_packets(PMT_PID, 0, 0x02, &pmt_body(ES_PID, 0x1B));
+        let mut pes = unbounded_pes(ES_STREAM_ID_AUDIO, &[0xAA; 16]);
+        pes.resize(TS_PACKET_SIZE - 4, 0xAA);
+        const UNATTRIBUTED_BYTES_HEADROOM: usize = 8;
+        let mut cc: u8 = 0;
+        let mut payloads = Vec::new();
+        payloads.push((true, pes));
+        // Fill the replay buffer past both caps: every buffered payload is one
+        // full TS payload, so `MAX_UNATTRIBUTED_BYTES` alone stops just short
+        // of `MAX_PES_BUFFER_BYTES`.
+        let fill = MAX_PES_BUFFER_BYTES / (TS_PACKET_SIZE - 4)
+            + MAX_UNATTRIBUTED_BYTES / (TS_PACKET_SIZE - 4)
+            + UNATTRIBUTED_BYTES_HEADROOM;
+        for _ in 0..fill {
+            payloads.push((false, alloc::vec![0xBB; TS_PACKET_SIZE - 4]));
+        }
+        // Each buffered payload is one TS packet's worth of bytes, so every
+        // packet after the first is a continuation: the shape the shadowed
+        // counter mishandled.
+        for (pusi, payload) in &payloads {
+            let mut pkt = [0xFFu8; TS_PACKET_SIZE];
+            pkt[0] = 0x47;
+            pkt[1] = ((ES_PID.value() >> 8) as u8 & PID_HI_MASK) | if *pusi { 0x40 } else { 0 };
+            pkt[2] = (ES_PID.value() & 0xFF) as u8;
+            pkt[3] = 0x10 | cc;
+            cc = cc.wrapping_add(1);
+            pkt[4..4 + payload.len()].copy_from_slice(payload);
+            demux.feed(&pkt);
+        }
+        demux.feed(&psi_section_packets(Pid::new(0), 0, 0x00, &pat_body()));
+        demux.feed(&pmt); // the replay runs now
+        let len = match &demux.streams.get(&ES_PID).map(|s| &s.carrier) {
+            Some(Carrier::Pes(a)) => a.len(),
+            _ => 0,
+        };
+        assert_eq!(
+            len, 0,
+            "a replayed PES past MAX_PES_BUFFER_BYTES is dropped, not kept"
+        );
+    }
 }

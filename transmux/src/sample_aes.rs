@@ -985,4 +985,39 @@ mod tests {
             "0x00000000000000000000000000000005"
         );
     }
+
+    #[test]
+    fn rbsp_unescape_matches_every_former_caller_on_the_issue_inputs() {
+        // Audit #2456: Sample-AES kept the `03` of these inputs while the
+        // bitreader/SEI path dropped it.
+        let trailing = [0x01u8, 0x00, 0x00, 0x03];
+        let followed = [0x00u8, 0x00, 0x03, 0x04];
+        assert_eq!(crate::rbsp::unescape(&trailing), &[0x01, 0x00, 0x00]);
+        assert_eq!(crate::rbsp::unescape(&followed), &[0x00, 0x00, 0x04]);
+        // The parse path itself (`nal::sei_messages` over `BitReader`) pins
+        // its own copy of this rule in `sei_parse_path_unescapes_like_sample_aes_for_the_issue_inputs`.
+    }
+
+    #[test]
+    fn rbsp_escape_round_trips_a_nal_ending_in_00_00_03() {
+        // A slice NAL whose cabac_zero_words leave a trailing `00 00 03`
+        // (ITU-T H.264 §7.4.1): re-escaping must reproduce the input byte for
+        // byte, not append a second `03`.
+        let mut nal: Vec<u8> = vec![0x65];
+        for i in 0..96u8 {
+            nal.push(i.wrapping_mul(7).wrapping_add(1));
+        }
+        nal.extend_from_slice(&[0x00, 0x00, 0x03]);
+        assert!(h264_nal_is_encrypted(&nal));
+        let unescaped = crate::rbsp::unescape(&nal);
+        assert!(unescaped.ends_with(&[0x00, 0x00]));
+        assert_eq!(
+            crate::rbsp::escape(&unescaped),
+            nal,
+            "escape(unescape(x)) must be byte-identical"
+        );
+        let enc = h264_encrypt_nal(&NIST_KEY, &NIST_IV, &nal);
+        let dec = h264_decrypt_nal(&NIST_KEY, &NIST_IV, &enc);
+        assert_eq!(dec, nal, "Sample-AES round trip must reproduce the NAL");
+    }
 }

@@ -820,8 +820,8 @@ fn unlace(payload: &[u8], flags: u8) -> Result<Vec<Vec<u8>>> {
 }
 
 /// Read an unsigned EBML VINT as a *value* (marker bit stripped), returning it
-/// with the number of bytes consumed. Unlike [`read_vint_value`] this accepts a
-/// zero length-field, which is what a zero lace size is encoded as.
+/// with the number of bytes consumed. A view over [`read_vint`], so it accepts
+/// the same widths (including the width-8 field a zero lace size uses).
 fn read_vint_generic(buf: &[u8]) -> Option<(u64, usize)> {
     read_vint(buf).map(|(value, len, _)| (value, len))
 }
@@ -1999,5 +1999,57 @@ mod tests {
             config.config.length_size_minus_one,
             NAL_LENGTH_SIZE_MINUS_ONE
         );
+    }
+
+    #[test]
+    fn every_vint_reader_agrees_on_a_width_8_zero_length_field() {
+        // Audit #2460: the four copies disagreed on the width derived from a
+        // first byte with no marker bit among its top seven (`0x01`): the
+        // `read_vint_generic` scan gave up (`None`, width > 8) while
+        // `read_signed_vint` derived width 8 and then read the value from the
+        // same `None`, so an EBML-laced block whose first lace size was such
+        // a field errored with the wrong reason. One reader now answers all
+        // four views.
+        let zero_width_8 = [0x01u8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let (value, len, all_ones) = read_vint(&zero_width_8).expect("width 8");
+        assert_eq!((value, len, all_ones), (0, 8, false));
+        assert_eq!(read_vint_generic(&zero_width_8), Some((value, len)));
+        assert_eq!(read_vint_value(&zero_width_8), Some((value, len)));
+        assert_eq!(
+            read_signed_vint(&zero_width_8),
+            Some((ebml_lace_delta_bias(len).saturating_neg(), len))
+        );
+
+        // Every input the issue's table pins, through every former path.
+        let cases: [&[u8]; 4] = [
+            &[0x81],
+            &[0xFF],
+            &[0x40, 0x02],
+            &[0x00],
+        ];
+        for input in cases {
+            let expected = read_vint(input).map(|(v, l, _)| (v, l));
+            assert_eq!(read_vint_generic(input), expected, "generic {input:?}");
+            assert_eq!(read_vint_value(input), expected, "value {input:?}");
+        }
+    }
+
+    #[test]
+    fn ebml_laced_block_reads_a_width_8_first_lace_size() {
+        // Audit #2460: `read_vint_generic` rejected the width-8 lace size and
+        // the block failed as "truncated EBML lace size", before any length
+        // check could run. The canonical reader decodes it, so the block now
+        // reaches the zero-length-frame rule the size actually violates.
+        let payload = [
+            0x00u8, // frame_count - 1
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // lace size 0, width 8
+            0xAA, 0xBB,
+        ];
+        assert!(matches!(
+            unlace(&payload, BLOCK_FLAG_LACING_EBML),
+            Err(Error::InvalidInput(
+                "webm block: laced frame has zero length"
+            ))
+        ));
     }
 }

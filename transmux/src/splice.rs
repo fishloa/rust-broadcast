@@ -219,6 +219,9 @@ fn match_tracks(a: &Media, b: &Media) -> Result<Vec<usize>> {
                 "splice: matched tracks have incompatible codecs",
             ));
         }
+        if at.spec.timescale == 0 || bt.spec.timescale == 0 {
+            return Err(Error::InvalidInput("timescale must be non-zero"));
+        }
         if at.spec.timescale != bt.spec.timescale {
             return Err(Error::InvalidInput(
                 "splice: matched tracks have incompatible timescales",

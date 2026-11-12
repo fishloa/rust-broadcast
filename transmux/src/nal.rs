@@ -1367,4 +1367,24 @@ mod tests {
             let _ = caption_cc_data(codec, &bad_lp, true);
         }
     }
+
+    #[test]
+    fn sei_parse_path_unescapes_like_sample_aes_for_the_issue_inputs() {
+        // Audit #2456: the SEI walk (`sei_messages` -> `EbspBytes` ->
+        // `rbsp::unescape`) and Sample-AES must drop the same `03`.
+        let body = [
+            0x06, 0x04, 0x00, 0x00, 0x03, 0x04, // recovery_point: type 6, size 4
+            0x80, // rbsp_trailing_bits
+        ];
+        let messages = sei_messages(&body);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].0, 6);
+        assert_eq!(
+            messages[0].1,
+            [0x00u8, 0x00, 0x04, 0x80],
+            "the EPB after 00 00 is dropped, so the payload stays 4 bytes"
+        );
+        let followed = [0x00u8, 0x00, 0x03, 0x04];
+        assert_eq!(crate::rbsp::unescape(&followed), &[0x00, 0x00, 0x04]);
+    }
 }

@@ -1782,4 +1782,22 @@ mod tests {
             "the emitted avcC must declare the 4-byte length size"
         );
     }
+
+    #[test]
+    fn a_zero_track_timescale_is_a_typed_error() {
+        // Audit #2462: `ticks_to_ms` returned 0 for timescale 0 while
+        // `ms_from_ticks` (its FLV `Timestamp` sibling) already errored.
+        let e = ticks_to_ms(90_000, 0).expect_err("zero timescale must error");
+        assert!(matches!(
+            e,
+            Error::InvalidInput("FLV mux requires a non-zero track timescale")
+        ));
+        assert!(matches!(
+            ms_from_ticks(90_000, 0),
+            Err(FlvError::Codec(Error::InvalidInput(
+                "FLV mux requires a non-zero track timescale"
+            )))
+        ));
+        assert_eq!(ticks_to_ms(90_000, 90_000), Ok(1000));
+    }
 }

@@ -605,4 +605,14 @@ mod tests {
         let lcm_overflows = (A as u128) * (B as u128) * (C as u128);
         assert!(lcm_overflows > u64::MAX as u128);
     }
+
+    #[test]
+    fn trimming_a_zero_timescale_media_is_a_typed_error() {
+        // Audit #2462: a zero timescale was silently read as 1 Hz here.
+        let m = media(&[0, 1000]);
+        assert!(matches!(
+            m.trim(0, 2),
+            Err(Error::InvalidInput("timescale must be non-zero"))
+        ));
+    }
 }
