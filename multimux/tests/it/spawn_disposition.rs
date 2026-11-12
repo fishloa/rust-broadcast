@@ -151,27 +151,32 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "source/dash_pull/tests.rs",
-        411,
+        418,
         "test server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        706,
+        447,
+        "test server task; aborted at test end",
+    ),
+    (
+        "source/dash_pull/tests.rs",
+        772,
         "test HTTP server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        863,
+        929,
         "test HTTP server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        1198,
+        1264,
         "test HTTP server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        1607,
+        1673,
         "test HTTP server task; aborted at test end",
     ),
 ];
