@@ -7,9 +7,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 ### Added
+- `HlsOrigin::set_init_from`: `set_init` for a caller that names the first segment cut against the new init, for segments closed but not yet published.
 ### Removed
 - `bcp47_language` (moved to `broadcast-common::lang::bcp47_language`).
-- `HlsOrigin::set_init_from`: `set_init` for a caller that names the first segment cut against the new init, for segments closed but not yet published.
 
 
 ## [0.13.0] - 2026-11-10

@@ -1254,14 +1254,7 @@ fn lang_from_es_info(descriptors: &[u8]) -> Option<String> {
         .into_iter()
         .map(|l| l.language)
         .find(|l| l.bytes().all(|b| b.is_ascii_alphabetic()))?;
-    #[cfg(feature = "lang")]
-    {
-        broadcast_common::bcp47_language(&raw)
-    }
-    #[cfg(not(feature = "lang"))]
-    {
-        Some(raw)
-    }
+    broadcast_common::bcp47_language(&raw)
 }
 
 /// Partition `reprs`' entries of `kind` into AdaptationSets, one per

@@ -22,7 +22,6 @@ pub fn bcp47_language(iso639_2: &str) -> Option<String> {
     if code.len() != 3 || !code.bytes().all(|b| b.is_ascii_lowercase()) {
         return None;
     }
-    // Private-use range and the reserved singleton codes pass through verbatim.
     if code == "und" || code == "mul" || code == "mis" || code == "zxx" {
         return Some(code);
     }

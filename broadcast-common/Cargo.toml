@@ -32,7 +32,7 @@ serde = ["dep:serde", "dep:erased-serde"]
 # std-only, because quick-xml is.
 xml = ["std", "dep:quick-xml"]
 # ISO 639 -> BCP 47 language canonicalisation (`lang` module).
-lang = ["dep:iso-639"]
+lang = ["std", "dep:iso-639"]
 
 [dependencies]
 # Default build stays lean — consumers of broadcast_common pay for nothing they aren't
