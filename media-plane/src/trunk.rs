@@ -2833,9 +2833,11 @@ pub enum SampleCursorItem {
     /// subscribed; a [`Trunk::subscribe_from_backlog`] cursor also replays
     /// the changes still resident, so compare `generation` with the one it
     /// already holds and ignore a stale one. A cursor that falls more than
-    /// the bounded change backlog behind skips the evicted changes (the
-    /// `Timed` `Lagged` report already says samples were lost) but always
-    /// still reports the newest.
+    /// the bounded change backlog behind lost the evicted changes: it is
+    /// handed the oldest change still resident at once, without waiting for
+    /// its position in the sample stream, so it learns a complete track set
+    /// (the one in effect from that change on) rather than missing the
+    /// change silently, and then reads the rest in order.
     TracksChanged {
         /// [`Trunk::track_generation`] as of this change.
         generation: u64,
@@ -2979,13 +2981,15 @@ impl SampleCursor {
 
         let timed_blocked = pending_handover.is_some_and(|h| self.timed_consumed >= h.timed_at);
 
-        if self.track_changes_consumed < state.track_changes.base {
+        let track_changes_overflowed =
+            !timed_blocked && self.track_changes_consumed < state.track_changes.base;
+        if track_changes_overflowed {
             self.track_changes_consumed = state.track_changes.base;
         }
         if !timed_blocked
             && let Some(idx) = ring_offset(self.track_changes_consumed, state.track_changes.base)
             && let Some(change) = state.track_changes.entries.get(idx)
-            && change.timed_at <= self.timed_consumed
+            && (track_changes_overflowed || change.timed_at <= self.timed_consumed)
         {
             self.track_changes_consumed += 1;
             return Some(SampleCursorItem::TracksChanged {
@@ -5704,6 +5708,46 @@ mod tests {
             }
         }
         assert_eq!(later, vec![3]);
+    }
+
+    /// **A10-4.** A cursor that fell behind the bounded change log is handed
+    /// the oldest retained track set before any later sample, then the rest
+    /// in order, ending on the newest.
+    #[test]
+    fn a_cursor_behind_the_change_log_learns_the_retained_track_set() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(256), nz(4), nz(4), nz(8), nz(8)));
+        let writer = trunk.writer().unwrap();
+        let mut cursor = trunk.subscribe();
+        let capacity = u64::try_from(TRACK_CHANGE_LOG_CAPACITY).unwrap();
+        let changes = capacity + 8;
+        for id in 1..=changes {
+            writer.publish(TrackId::new(1), RetentionClass::Timed, sample(0, 1));
+            writer.set_tracks(vec![opaque_track(TrackId::new(u32::try_from(id).unwrap()))]);
+        }
+        let mut items = Vec::new();
+        while let Some(item) = cursor.poll() {
+            if !matches!(item, SampleCursorItem::Lagged { .. }) {
+                items.push(item);
+            }
+        }
+        let oldest_retained = changes - capacity + 1;
+        assert!(
+            matches!(
+                items.first(),
+                Some(SampleCursorItem::TracksChanged { generation, .. })
+                    if *generation == oldest_retained
+            ),
+            "the first item after the loss report must be the oldest retained change"
+        );
+        let generations: Vec<u64> = items
+            .iter()
+            .filter_map(|item| match item {
+                SampleCursorItem::TracksChanged { generation, .. } => Some(*generation),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(generations.last(), Some(&changes));
+        assert!(generations.windows(2).all(|w| w[1] == w[0] + 1));
     }
 
     #[test]
