@@ -15,6 +15,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `rtmp_runtime::flv`: the Adobe FLV v10.1 Annex E header and tag codec (`FlvHeader`, `TagType`, `FlvTag<'a>`, the strict `tags()` walk, `Parse`/`Serialize` with byte-exact round trips on the committed FLV fixtures), `no_std` + `alloc`. It replaces the crate-private FLV writer the server and client used, and transmux frames FLV through it, so the workspace has one FLV tag codec (#2342). A final tag whose trailing `PreviousTagSize` is cut off is accepted (the field is redundant, §E.4.1); a cut tag body is an error. New fuzz target `rtmp_flv_tags`.
 - `rtmp_runtime::flv::tags_resync(input, header) -> ResyncWalk`: the tolerant walk beside the strict `tags()`, tested in `tests/it/flv_tags.rs` over the committed FLV captures (a damaged tag is skipped and its offset reported, a cut-off final tag is flagged, a header with no tags yields none). It keeps the tags after a damaged span (skipping a span whose tag chain does not hold to the next consistent one, reported in `damaged`), reports a final tag whose body overruns the input as `truncated_tail` instead of dropping the good prefix, and accepts a final tag missing only its redundant trailing `PreviousTagSize`. It is the workspace's one FLV tag walker: `transmux`'s `FlvDemux` adapts its result, and transmux's own resync logic is gone.
 
+### Fixed
+- `flv::FlvHeader` serialize now writes the `DataOffset - 9` extra header bytes the parser skipped, so a non-standard `DataOffset` round-trips byte-exactly; `FlvTag::parse` rejects a trailing `PreviousTagSize` that disagrees with `11 + DataSize`.
+
 ## [0.9.1] - 2026-11-10
 ### Added
 - The sans-IO core (handshake, chunk stream, AMF0, messages, client and server sessions) builds `no_std` + `alloc`; only the `tokio` adapter needs `std`. This lets `transmux` depend on rtmp-runtime for its RTMP spokes (#2339).
