@@ -47,13 +47,15 @@ use mpeg_ts::ts::SectionReassembler;
 pub const MAX_OPEN_EVENTS: usize = 1024;
 
 /// What one non-cancelled `splice_insert` did to the open set.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpliceObservation {
     /// The event's `splice_event_id`.
     pub event_id: u32,
     /// An "out" arrived while the same event was already open with no
     /// intervening "in".
     pub duplicate_open: bool,
+    /// The cue itself, decoded enough to judge its target times.
+    pub event: SpliceEvent,
 }
 
 /// Section reassembly + open-event tracking for one SCTE-35 PID.
@@ -115,6 +117,7 @@ impl SpliceTracker {
         Some(SpliceObservation {
             event_id: si.splice_event_id,
             duplicate_open,
+            event: splice_event(&clear.command, section.pts_adjustment)?,
         })
     }
 
@@ -271,10 +274,7 @@ mod tests {
         SpliceTracker::default()
     }
 
-    fn splice_insert(
-        pts_time: Option<u64>,
-        out_of_network: bool,
-    ) -> alloc::vec::Vec<u8> {
+    fn splice_insert(pts_time: Option<u64>, out_of_network: bool) -> alloc::vec::Vec<u8> {
         let si = SpliceInsert {
             splice_event_id: 7,
             out_of_network_indicator: out_of_network,
@@ -355,7 +355,11 @@ mod tests {
         let raw = splice_insert(Some(90_000), true);
         let sis = SpliceInfoSection::parse(&raw).expect("parse");
         assert!(!t.observe_section(&sis, &raw).expect("first").duplicate_open);
-        assert!(!t.observe_section(&sis, &raw).expect("retransmission").duplicate_open);
+        assert!(
+            !t.observe_section(&sis, &raw)
+                .expect("retransmission")
+                .duplicate_open
+        );
     }
 
     #[test]
@@ -396,8 +400,11 @@ mod tests {
         };
         let mut section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
         section.pts_adjustment = 90_000 * 8;
-        let event = splice_event(&section.clear.as_ref().expect("clear").command, section.pts_adjustment)
-            .expect("a splice_insert");
+        let event = splice_event(
+            &section.clear.as_ref().expect("clear").command,
+            section.pts_adjustment,
+        )
+        .expect("a splice_insert");
         assert_eq!(event.times, [90_000 * 11]);
         assert_eq!(event.kind(), "break_start");
     }
