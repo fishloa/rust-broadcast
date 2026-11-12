@@ -30,6 +30,9 @@ broadcast-hls     = { path = "../broadcast-hls", version = "0.7.0" }
 # The Smooth client Manifest model, used by `source::smooth_pull` and
 # `output::smooth` directly (issue #2356).
 broadcast-smooth  = { path = "../broadcast-smooth", version = "0.1.0" }
+# The MPD model: a Period split on a gap (`output::dash`) composes the periods
+# of per-run `DashPackager` documents.
+broadcast-dash    = { path = "../broadcast-dash", version = "0.1.0" }
 smooth-runtime    = { path = "../smooth-runtime", version = "0.1.0" }
 rtsp-runtime      = { path = "../rtsp-runtime",  version = "0.11.0", features = ["tokio"] }
 # RTMP push ingest (`source::rtmp`, issue #738): the `tokio` feature pulls

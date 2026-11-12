@@ -499,7 +499,7 @@ The read side of DASH, kept below the container hub: a bounded, namespace-aware 
 - **Cargo description:** MPEG-DASH (ISO/IEC 23009-1) manifest syntax: the MPD model, its bounded parser, the SegmentTemplate substitution grammar and the xs:duration reader. Parsing only, no client.
 - **Version (in-tree):** 0.1.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
-- **Used by (workspace):** [`dash-runtime`](#dash-runtime), [`media-doctor`](#media-doctor), [`transmux`](#transmux)
+- **Used by (workspace):** [`dash-runtime`](#dash-runtime), [`media-doctor`](#media-doctor), [`multimux`](#multimux), [`transmux`](#transmux)
 - **Links:** [README](../broadcast-dash/README.md) · [CHANGELOG](../broadcast-dash/CHANGELOG.md)
 
 #### buffering-runtime
@@ -722,7 +722,7 @@ Ingest RTSP, RTP/UDP, TS over UDP or HTTP, SRT, HLS/DASH/Smooth pull, RTMP push 
 - **Standards:** Composes the live and container crates (RTSP, RTP, SRT, RTMP, HLS, DASH, Smooth, WHIP/WHEP)
 - **Cargo description:** Multi-input (RTSP/RTP/TS-UDP/TS-HTTP/SRT/HLS-pull/DASH-pull/Smooth-pull/RTMP/file), multi-output (LL-HLS/DASH/LL-DASH/Smooth/TS-HLS/catch-up + SRT/RTMP/RTSP push) just-in-time repackaging HTTP origin (library: tokio + axum), with shared output auth and an external scheme plugin registry.
 - **Version (in-tree):** 0.18.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 7
-- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-client`](#broadcast-client), [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`broadcast-smooth`](#broadcast-smooth), [`caption-convert`](#caption-convert), [`container-probe`](#container-probe), [`dash-runtime`](#dash-runtime), [`dvb-si`](#dvb-si), [`dvb-stream`](#dvb-stream), [`hls-runtime`](#hls-runtime), [`media-plane`](#media-plane), [`mpeg-ts`](#mpeg-ts), [`rtmp-runtime`](#rtmp-runtime), [`rtp-packet`](#rtp-packet), [`rtsp-runtime`](#rtsp-runtime), [`smooth-runtime`](#smooth-runtime), [`srt-runtime`](#srt-runtime), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux), [`webrtc-runtime`](#webrtc-runtime)
+- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-client`](#broadcast-client), [`broadcast-common`](#broadcast-common), [`broadcast-dash`](#broadcast-dash), [`broadcast-hls`](#broadcast-hls), [`broadcast-smooth`](#broadcast-smooth), [`caption-convert`](#caption-convert), [`container-probe`](#container-probe), [`dash-runtime`](#dash-runtime), [`dvb-si`](#dvb-si), [`dvb-stream`](#dvb-stream), [`hls-runtime`](#hls-runtime), [`media-plane`](#media-plane), [`mpeg-ts`](#mpeg-ts), [`rtmp-runtime`](#rtmp-runtime), [`rtp-packet`](#rtp-packet), [`rtsp-runtime`](#rtsp-runtime), [`smooth-runtime`](#smooth-runtime), [`srt-runtime`](#srt-runtime), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux), [`webrtc-runtime`](#webrtc-runtime)
 - **Used by (workspace):** [`multimux-cli`](#multimux-cli)
 - **Links:** [README](../multimux/README.md) · [CHANGELOG](../multimux/CHANGELOG.md) · [docs + spec pointer](../multimux/docs/) · [crates.io](https://crates.io/crates/multimux) · [docs.rs](https://docs.rs/multimux)
 
