@@ -406,6 +406,15 @@ pub struct ProgramSegmenter {
     /// generation advances past this, [`Self::apply_track_change`] admits
     /// new tracks into (or rebuilds) the segmenter.
     track_generation: u64,
+    /// The track set the samples being drained were published under: the
+    /// trunk's set at construction, replaced at each in-band
+    /// [`SampleCursorItem::TracksChanged`]. Never read from the trunk, which
+    /// may already be ahead of the cursor.
+    published_tracks: Arc<[TrackSpec]>,
+    /// Set when an fMP4 rebuild re-armed [`Self::start_gate_open`] mid-stream:
+    /// the gate then holds back only video, so audio that is not part of the
+    /// change keeps flowing.
+    gate_video_only: bool,
     /// Parts/segments this segmenter could not hand to `segment_writer` on a
     /// previous call (a segment's `ArchiveOverrun::StallIngest` pin had not
     /// caught up yet), oldest first — see
@@ -745,7 +754,7 @@ impl ProgramSegmenter {
         if tracks.is_empty() {
             return None;
         }
-        let timescale_moves = timescale_moves(trunk, &tracks);
+        let timescale_moves = timescale_moves(&trunk.tracks(), &tracks);
         let segment_writer = trunk.segment_writer()?;
         // Seeded from `next_sequence_number` rather than the plain
         // `with_part_target` constructor's implicit `1`: this `Trunk` may
@@ -864,6 +873,8 @@ impl ProgramSegmenter {
             mark_next_discontinuous: false,
             next_timeline_ns: 0,
             track_generation: trunk.track_generation(),
+            published_tracks: trunk.tracks(),
+            gate_video_only: false,
             pending: VecDeque::new(),
             pending_since: None,
             anchor: None,
@@ -945,26 +956,28 @@ impl ProgramSegmenter {
     /// every segmenter to drive `crate::prometheus::PARTS_PRODUCED_TOTAL`/
     /// `SEGMENTS_PRODUCED_TOTAL`.
     ///
-    /// Before draining samples, checks whether the trunk's track set changed
-    /// since construction (issue #781): if [`Trunk::track_generation`]
-    /// advanced, admits new tracks into the segmenter or, for fMP4 (which has
-    /// no in-place `add_track`), rebuilds the segmenter at the segment
-    /// boundary.
+    /// A track-set change (issue #781) arrives in-band as
+    /// [`SampleCursorItem::TracksChanged`], ordered against the samples: every
+    /// sample before it is segmented under the previous track set, every one
+    /// after under the new. The segmenter admits new tracks in place or, for
+    /// fMP4 (which has no in-place `add_track`), flushes the old segmenter and
+    /// rebuilds it at that boundary; the rebuild gates only video until the new
+    /// level's first sync sample, so audio keeps flowing.
     pub fn pump(
         &mut self,
         program: ProgramId,
         trunk: &Trunk,
         route_handle: &RouteHandle,
     ) -> (usize, usize) {
-        let current_gen = trunk.track_generation();
-        if current_gen > self.track_generation {
-            self.apply_track_change(program, trunk, route_handle);
-            self.track_generation = current_gen;
-            self.caption_detectors.clear();
-        }
-
         while let Some(item) = self.cursor.poll() {
-            if let SampleCursorItem::Timed { track_id, sample } = item {
+            if let SampleCursorItem::TracksChanged { generation, tracks } = item {
+                if generation > self.track_generation {
+                    self.published_tracks = tracks;
+                    self.apply_track_change(program, trunk, route_handle, generation);
+                    self.track_generation = generation;
+                    self.caption_detectors.clear();
+                }
+            } else if let SampleCursorItem::Timed { track_id, sample } = item {
                 if self
                     .subtitle_followers
                     .iter()
@@ -979,17 +992,22 @@ impl ProgramSegmenter {
                     }
                     continue;
                 }
-                self.observe_captions(trunk, track_id, &sample.data, sample.dts);
+                self.observe_captions(track_id, &sample.data, sample.dts);
                 // Start-gate (Apple authoring 7.4 MUST: segments start on a
                 // sync/IDR picture, issue #1425): for a program whose track set
                 // contains a video track, drop every timed sample until the
                 // first sync sample of a video track has been seen. Runs
                 // BEFORE the media-anchor block so dropped samples never pin
                 // timeline 0.
-                let has_video_track = trunk.tracks().iter().any(|t| t.config.is_video());
-                if has_video_track && !self.start_gate_open {
-                    let is_video_sample = trunk
-                        .tracks()
+                let tracks = Arc::clone(&self.published_tracks);
+                let has_video_track = tracks.iter().any(|t| t.config.is_video());
+                let passes_video_only_gate = self.gate_video_only
+                    && !tracks
+                        .iter()
+                        .find(|t| t.track_id == track_id)
+                        .is_some_and(|t| t.config.is_video());
+                if has_video_track && !self.start_gate_open && !passes_video_only_gate {
+                    let is_video_sample = tracks
                         .iter()
                         .find(|t| t.track_id == track_id)
                         .map(|t| t.config.is_video())
@@ -997,8 +1015,7 @@ impl ProgramSegmenter {
                     let opens_gate = is_video_sample
                         && gate_opens_on(
                             route_handle,
-                            trunk
-                                .tracks()
+                            tracks
                                 .iter()
                                 .find(|t| t.track_id == track_id)
                                 .map(|t| &t.config),
@@ -1026,8 +1043,7 @@ impl ProgramSegmenter {
                         self.start_gate_dropped += 1;
                         if is_video_sample {
                             self.start_gate_video_dropped += 1;
-                            let timescale = trunk
-                                .tracks()
+                            let timescale = tracks
                                 .iter()
                                 .find(|t| t.track_id == track_id)
                                 .map_or(0, |t| t.timescale);
@@ -1050,7 +1066,7 @@ impl ProgramSegmenter {
                                     self.start_gate_opened_logged = true;
                                     self.idr_hold_bytes = 0;
                                     for (held_track, held) in std::mem::take(&mut self.idr_hold) {
-                                        self.ingest_sample(trunk, held_track, held);
+                                        self.ingest_sample(held_track, held);
                                     }
                                 }
                             }
@@ -1062,6 +1078,7 @@ impl ProgramSegmenter {
                         continue;
                     }
                     self.start_gate_open = true;
+                    self.gate_video_only = false;
                     self.idr_hold.clear();
                     self.idr_hold_bytes = 0;
                     if !self.start_gate_opened_logged {
@@ -1074,7 +1091,7 @@ impl ProgramSegmenter {
                         self.start_gate_opened_logged = true;
                     }
                 }
-                self.ingest_sample(trunk, track_id, sample);
+                self.ingest_sample(track_id, sample);
             } else if let SampleCursorItem::Lagged { skipped } = item {
                 tracing::warn!(
                     program = program.0,
@@ -1116,16 +1133,10 @@ impl ProgramSegmenter {
         }
     }
 
-    fn observe_captions(
-        &mut self,
-        trunk: &Trunk,
-        track_id: TrackId,
-        data: &[u8],
-        dts: Option<i64>,
-    ) {
+    fn observe_captions(&mut self, track_id: TrackId, data: &[u8], dts: Option<i64>) {
         let declared = &mut self.captions_declared;
+        let tracks = &self.published_tracks;
         let detector = self.caption_detectors.entry(track_id).or_insert_with(|| {
-            let tracks = trunk.tracks();
             let spec = tracks.iter().find(|t| t.track_id == track_id)?;
             let detector = CaptionDetector::for_config(&spec.config)?;
             *declared = declared_caption_services(&spec.es_info_descriptors);
@@ -1141,8 +1152,7 @@ impl ProgramSegmenter {
         if self.captions_scan_complete {
             return;
         }
-        let timescale = trunk
-            .tracks()
+        let timescale = tracks
             .iter()
             .find(|t| t.track_id == track_id)
             .map(|t| t.timescale);
@@ -1159,7 +1169,7 @@ impl ProgramSegmenter {
 
     /// Anchor the media timeline on `sample` and push it through the
     /// segmenter.
-    fn ingest_sample(&mut self, trunk: &Trunk, track_id: TrackId, sample: Sample) {
+    fn ingest_sample(&mut self, track_id: TrackId, sample: Sample) {
         if let Some(follower) = self
             .followers
             .iter_mut()
@@ -1177,8 +1187,8 @@ impl ProgramSegmenter {
         // report the source clock the SCTE-35 events are on, not the
         // segmenter's own restart-from-zero timeline.
         if let Some(pts) = sample.pts
-            && let Some(timescale) = trunk
-                .tracks()
+            && let Some(timescale) = self
+                .published_tracks
                 .iter()
                 .find(|t| t.track_id == track_id)
                 .map(|t| t.timescale)
@@ -1317,11 +1327,12 @@ impl ProgramSegmenter {
         program: ProgramId,
         trunk: &Trunk,
         route_handle: &RouteHandle,
+        generation: u64,
     ) {
-        let new_tracks = route_handle.with_declared_audio_profiles(trunk.tracks().to_vec());
-        self.timescale_moves = timescale_moves(trunk, &new_tracks);
+        let new_tracks = route_handle.with_declared_audio_profiles(self.published_tracks.to_vec());
+        self.timescale_moves = timescale_moves(&self.published_tracks, &new_tracks);
         tracing::info!(
-            generation = trunk.track_generation(),
+            generation,
             track_count = new_tracks.len(),
             "mid-stream track-set change detected — admitting into segmenter"
         );
@@ -1437,6 +1448,7 @@ impl ProgramSegmenter {
                             // (issue #1425): a fresh segmenter must not emit a
                             // segment until the first video sync sample again.
                             self.start_gate_open = false;
+                            self.gate_video_only = true;
                             self.start_gate_dropped = 0;
                             self.start_gate_video_dropped = 0;
                             self.start_gate_opened_logged = false;
@@ -1721,8 +1733,10 @@ fn in_declared_timescale(
     }
 }
 
-fn timescale_moves(trunk: &Trunk, declared: &[TrackSpec]) -> HashMap<TrackId, (u32, u32)> {
-    let published = trunk.tracks();
+fn timescale_moves(
+    published: &[TrackSpec],
+    declared: &[TrackSpec],
+) -> HashMap<TrackId, (u32, u32)> {
     declared
         .iter()
         .filter_map(|d| {
@@ -2340,6 +2354,11 @@ mod tests {
     /// (below) to mux successfully — this shape also still satisfies every
     /// existing fMP4-path test in this module, which never inspects sample
     /// content.
+    fn apply_change(segmenter: &mut ProgramSegmenter, trunk: &Trunk, route: &RouteHandle) {
+        segmenter.published_tracks = trunk.tracks();
+        segmenter.apply_track_change(ProgramId(0), trunk, route, trunk.track_generation());
+    }
+
     fn sample_at(i: u32, is_sync: bool) -> Sample {
         let nal = [0x65u8, 0xAAu8.wrapping_add(i as u8), (i % 256) as u8];
         let mut data = (nal.len() as u32).to_be_bytes().to_vec();
@@ -3277,6 +3296,8 @@ mod tests {
             mark_next_discontinuous: false,
             next_timeline_ns: 0,
             track_generation: trunk.track_generation(),
+            published_tracks: trunk.tracks(),
+            gate_video_only: false,
             pending: VecDeque::new(),
             pending_since: None,
             anchor: None,
@@ -3406,7 +3427,7 @@ mod tests {
         let mut segmenter = bare_segmenter(&trunk);
         let route = RouteHandle::new(1.0, 250, 8).with_container(Container::MpegTs);
 
-        segmenter.apply_track_change(ProgramId(0), &trunk, &route);
+        apply_change(&mut segmenter, &trunk, &route);
 
         for i in 0..90u32 {
             segmenter
@@ -3473,7 +3494,7 @@ mod tests {
             track_spec(TrackId::new(1)),
             data_track_spec(TrackId::new(2)),
         ]);
-        segmenter.apply_track_change(ProgramId(0), &trunk, &route);
+        apply_change(&mut segmenter, &trunk, &route);
         let AnySegmenter::Fmp4(rebuilt) = &segmenter.seg else {
             panic!("an fMP4 route must keep producing fMP4 after a track change");
         };
@@ -3527,12 +3548,12 @@ mod tests {
             ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("fMP4 segmenter builds");
 
         writer.set_tracks(vec![data_track_spec(TrackId::new(2))]);
-        segmenter.apply_track_change(ProgramId(0), &trunk, &route);
+        apply_change(&mut segmenter, &trunk, &route);
         assert!(matches!(segmenter.seg, AnySegmenter::Fmp4(_)));
 
         // And an empty set (every track removed).
         writer.set_tracks(Vec::new());
-        segmenter.apply_track_change(ProgramId(0), &trunk, &route);
+        apply_change(&mut segmenter, &trunk, &route);
         assert!(matches!(segmenter.seg, AnySegmenter::Fmp4(_)));
     }
 
@@ -3563,7 +3584,7 @@ mod tests {
         let mut changed = track_spec(TrackId::new(1));
         changed.timescale = 45_000;
         writer.set_tracks(vec![changed.clone()]);
-        segmenter.apply_track_change(ProgramId(0), &trunk, &route);
+        apply_change(&mut segmenter, &trunk, &route);
 
         for i in 45..90u32 {
             segmenter
@@ -3597,7 +3618,7 @@ mod tests {
         }
         segmenter2.publish_ready();
         writer2.set_tracks(vec![track_spec(TrackId::new(1))]);
-        segmenter2.apply_track_change(ProgramId(0), &trunk2, &route2);
+        apply_change(&mut segmenter2, &trunk2, &route2);
         for i in 45..90u32 {
             segmenter2
                 .seg
@@ -3647,7 +3668,7 @@ mod tests {
         }
         segmenter.publish_ready();
         writer.set_tracks(respec);
-        segmenter.apply_track_change(ProgramId(0), &trunk, &route);
+        apply_change(&mut segmenter, &trunk, &route);
         for i in 45..90u32 {
             segmenter
                 .seg
@@ -4274,6 +4295,117 @@ mod tests {
         segmenter.pump(ProgramId(0), &trunk, &route);
         assert_eq!(segmenter.start_gate_dropped, 6);
         assert_eq!(segmenter.start_gate_video_dropped, 3);
+        assert!(segmenter.start_gate_open);
+    }
+
+    const GEN1_MARK: u8 = 0xDD;
+    const GEN2_MARK: u8 = 0xEE;
+
+    fn marked_sample(i: u32, is_sync: bool, mark: u8) -> Sample {
+        let nal = [0x65u8, mark, (i % 256) as u8];
+        let mut data = (nal.len() as u32).to_be_bytes().to_vec();
+        data.extend_from_slice(&nal);
+        Sample::new(
+            data,
+            Some(i64::from(i) * i64::from(FRAME_DUR)),
+            Some(i64::from(i) * i64::from(FRAME_DUR)),
+            Some(FRAME_DUR),
+            is_sync,
+        )
+    }
+
+    fn marks_in(bytes: &[u8]) -> (bool, bool) {
+        let has = |mark: u8| bytes.windows(2).any(|w| w == [0x65, mark]);
+        (has(GEN1_MARK), has(GEN2_MARK))
+    }
+
+    /// **A9-4.** Samples published before `set_tracks` are muxed under the
+    /// old track set even when the segmenter first runs after both the
+    /// samples and the change are already in the ring.
+    #[test]
+    fn samples_published_before_a_track_change_are_not_muxed_under_the_new_set() {
+        use media_plane::trunk::{RetentionClass, TrunkConfig};
+        let trunk = Trunk::new(TrunkConfig::new(nz(256), nz(64), nz(16), nz(8), nz(64)));
+        let writer = trunk.writer().expect("writer");
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
+        let mut segments = trunk.subscribe_segments();
+
+        for i in 0..45u32 {
+            let sample = marked_sample(i, i == 0, GEN1_MARK);
+            writer.publish(TrackId::new(1), RetentionClass::Timed, sample);
+        }
+        writer.set_tracks(vec![
+            track_spec(TrackId::new(1)),
+            data_track_spec(TrackId::new(2)),
+        ]);
+        for i in 45..120u32 {
+            let sample = marked_sample(i, i % 30 == 0, GEN2_MARK);
+            writer.publish(TrackId::new(1), RetentionClass::Timed, sample);
+        }
+        segmenter.pump(ProgramId(0), &trunk, &route);
+
+        let mut checked = 0;
+        let mut saw = (false, false);
+        while let Some(item) = segments.poll() {
+            if let media_plane::trunk::SegmentCursorItem::Segment(entry) = item {
+                let marks = marks_in(&entry.bytes);
+                assert!(
+                    !(marks.0 && marks.1),
+                    "segment {} mixes samples of both track sets",
+                    entry.sequence_number
+                );
+                saw = (saw.0 || marks.0, saw.1 || marks.1);
+                checked += 1;
+            }
+        }
+        assert!(
+            checked >= 2,
+            "expected segments from both sets, saw {checked}"
+        );
+        assert_eq!(saw, (true, true), "both generations must reach a segment");
+    }
+
+    /// **A9-3.** A video-only config change on an fMP4 route must not gate
+    /// the audio track: audio published after the change and before the new
+    /// video level's first sync sample is kept.
+    #[test]
+    fn audio_keeps_flowing_across_a_video_only_track_change() {
+        use media_plane::trunk::{RetentionClass, TrunkConfig};
+        let trunk = Trunk::new(TrunkConfig::new(nz(256), nz(64), nz(16), nz(8), nz(64)));
+        let writer = trunk.writer().expect("writer");
+        let video = track_spec(TrackId::new(1));
+        let audio = aac_track_spec(TrackId::new(2));
+        writer.set_tracks(vec![video.clone(), audio.clone()]);
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
+        writer.publish(
+            TrackId::new(1),
+            RetentionClass::Timed,
+            marked_sample(0, true, GEN1_MARK),
+        );
+        segmenter.pump(ProgramId(0), &trunk, &route);
+        assert!(segmenter.start_gate_open);
+
+        let mut changed = video.clone();
+        if let CodecConfig::Avc { width, .. } = &mut changed.config {
+            *width = 1280;
+        }
+        writer.set_tracks(vec![changed, audio]);
+        for i in 0..3u32 {
+            writer.publish(TrackId::new(2), RetentionClass::Timed, sample_at(i, true));
+        }
+        writer.publish(
+            TrackId::new(1),
+            RetentionClass::Timed,
+            marked_sample(1, true, GEN2_MARK),
+        );
+        segmenter.pump(ProgramId(0), &trunk, &route);
+        assert_eq!(
+            segmenter.start_gate_dropped, 0,
+            "audio must not be dropped by the video start gate after a video-only change"
+        );
         assert!(segmenter.start_gate_open);
     }
 }

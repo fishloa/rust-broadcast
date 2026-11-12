@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ingress::ListenDriver::listener`: read access to the listener a driver owns.
 
 ### Fixed
+- `SampleCursorItem::TracksChanged { generation, tracks }`: `TrunkWriter::set_tracks` is now an in-band event in the `Timed` stream, so a consumer switches track set exactly between the last sample published under the old set and the first under the new one, instead of racing `Trunk::track_generation` against the ring (audit A9-4).
 - `AdmittedDriver::with_session`/`session_parts` now check admission before touching `progress`, so an unknown/reaped id returns `None` without inserting a progress entry.
 
 ## [0.11.0] - 2026-11-10

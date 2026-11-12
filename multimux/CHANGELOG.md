@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 ### Fixed
+- `ProgramSegmenter` switches track set on the in-band `SampleCursorItem::TracksChanged` rather than by comparing `Trunk::track_generation` before draining, so samples published before a Smooth quality switch are never muxed under the new init (audit A9-4).
+- An fMP4 rebuild after a track change gates only video until the new level's first sync sample; audio no longer dropped for that interval (audit A9-3).
+- The RTSP pull warns about rejected Sender Reports only when the rejection starts or its reason changes, and logs the rest at debug, instead of one warning per Sender Report (audit A9-5).
 - The Smooth pull forwards the engine's `Output::TracksChanged` as `SessionEvent::TracksChanged` so the trunk's track set follows a quality switch.
 - The RTSP pull logs (warn) each Sender Report it ignored for NTP time zero and each set refused for tracks more than an hour apart; a repeated timeline-step discontinuity warns once and the repeats log at debug instead of flooding, and `queue_placed` no longer returns a count only a test read (the tests assert the log output).
 - The RTSP pull logs (warn) the aligner's timeline-step `Discontinuity` and placement-rule `State` outputs instead of dropping them silently; `media_plane::SessionEvent` has no equivalent to forward.

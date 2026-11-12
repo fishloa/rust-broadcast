@@ -849,6 +849,53 @@ impl WriterHandoverLog {
     }
 }
 
+/// Bound on [`TrackChangeLog`]'s backlog. Only the newest entry is ever
+/// load-bearing (it equals [`Trunk::tracks`]); older ones exist so a cursor
+/// that is a few changes behind still switches configuration at each
+/// boundary rather than jumping to the latest one early.
+const TRACK_CHANGE_LOG_CAPACITY: usize = 32;
+
+/// One [`TrunkWriter::set_tracks`] call: the `Timed` publish position at the
+/// moment it happened, so a [`SampleCursor`] reports
+/// [`SampleCursorItem::TracksChanged`] exactly between the last sample
+/// published under the previous track set and the first published under this
+/// one.
+#[derive(Debug, Clone)]
+struct TrackChange {
+    timed_at: u64,
+    generation: u64,
+    tracks: Arc<[TrackSpec]>,
+}
+
+/// Bounded, append-ordered log of [`TrackChange`] markers; `base`/`published`
+/// mean exactly what they do in [`ClassLog`].
+struct TrackChangeLog {
+    entries: VecDeque<TrackChange>,
+    base: u64,
+    published: u64,
+    capacity: usize,
+}
+
+impl TrackChangeLog {
+    fn new(capacity: usize) -> Self {
+        TrackChangeLog {
+            entries: VecDeque::with_capacity(capacity),
+            base: 0,
+            published: 0,
+            capacity,
+        }
+    }
+
+    fn push(&mut self, change: TrackChange) {
+        if self.entries.len() == self.capacity {
+            self.entries.pop_front();
+            self.base += 1;
+        }
+        self.entries.push_back(change);
+        self.published += 1;
+    }
+}
+
 /// One finished media segment recorded by the segment log, in playlist
 /// order.
 ///
@@ -1429,6 +1476,7 @@ struct TrunkState {
     /// Positions at which a [`TrunkWriter`] was re-issued after a previous
     /// one was dropped — see [`Trunk::writer`] and `WriterHandover`.
     handovers: WriterHandoverLog,
+    track_changes: TrackChangeLog,
     /// The program's current complete track set — see
     /// [`TrunkWriter::set_tracks`] for why this is always a full replacement
     /// snapshot, never a delta. `Arc<[TrackSpec]>` rather than a bare `Vec`
@@ -1535,6 +1583,7 @@ impl Trunk {
                 events: EventLog::new(config.event_capacity.get()),
                 parts: PartLog::new(config.part_capacity.get()),
                 handovers: WriterHandoverLog::new(WRITER_HANDOVER_LOG_CAPACITY),
+                track_changes: TrackChangeLog::new(TRACK_CHANGE_LOG_CAPACITY),
                 tracks: Arc::from(Vec::new()),
                 track_generation: 0,
             }),
@@ -1675,6 +1724,7 @@ impl Trunk {
             timed_consumed: state.timed.published,
             sparse_consumed: state.sparse.published,
             handovers_consumed: state.handovers.published,
+            track_changes_consumed: state.track_changes.published,
             subscribe_timed_at: state.timed.published,
             subscribe_sparse_at: state.sparse.published,
         }
@@ -1733,6 +1783,7 @@ impl Trunk {
             timed_consumed: state.timed.base,
             sparse_consumed: state.sparse.base,
             handovers_consumed: state.handovers.base,
+            track_changes_consumed: state.track_changes.base,
             subscribe_timed_at: state.timed.base,
             subscribe_sparse_at: state.sparse.base,
         }
@@ -2265,6 +2316,12 @@ impl TrunkWriter {
         let mut state = self.trunk.lock_state();
         state.tracks = Arc::from(tracks);
         state.track_generation += 1;
+        let change = TrackChange {
+            timed_at: state.timed.published,
+            generation: state.track_generation,
+            tracks: Arc::clone(&state.tracks),
+        };
+        state.track_changes.push(change);
         drop(state);
         self.trunk.progress.notify(usize::MAX);
     }
@@ -2746,6 +2803,24 @@ pub enum SampleCursorItem {
         /// cursor's last successful check of that log.
         skipped: u64,
     },
+    /// [`TrunkWriter::set_tracks`] ran at this point in the `Timed` stream:
+    /// every `Timed` sample returned before this item was published under
+    /// the previous track set, every one after it under `tracks`. A consumer
+    /// that muxes samples must switch configuration here, never on observing
+    /// [`Trunk::track_generation`] advance (which is unordered against the
+    /// ring). A [`Trunk::subscribe`] cursor sees only changes made after it
+    /// subscribed; a [`Trunk::subscribe_from_backlog`] cursor also replays
+    /// the changes still resident, so compare `generation` with the one it
+    /// already holds and ignore a stale one. A cursor that falls more than
+    /// the bounded change backlog behind skips the evicted changes (the
+    /// `Timed` `Lagged` report already says samples were lost) but always
+    /// still reports the newest.
+    TracksChanged {
+        /// [`Trunk::track_generation`] as of this change.
+        generation: u64,
+        /// The complete replacement track set.
+        tracks: Arc<[TrackSpec]>,
+    },
 }
 
 /// A subscribed reader of a [`Trunk`]'s sample ring. Obtained via
@@ -2767,6 +2842,8 @@ pub struct SampleCursor {
     /// `sparse_consumed`, against [`WriterHandoverLog`] instead of a
     /// `ClassLog`.
     handovers_consumed: u64,
+    /// How many [`TrackChange`] markers this cursor has reported or skipped.
+    track_changes_consumed: u64,
     /// This cursor's own `timed_consumed`/`sparse_consumed` at the moment it
     /// subscribed — fixed for the cursor's whole lifetime. A
     /// `WriterHandover` recorded at or before this position represents a
@@ -2879,6 +2956,23 @@ impl SampleCursor {
             return Some(SampleCursorItem::Discontinuity);
         }
 
+        let timed_blocked = pending_handover.is_some_and(|h| self.timed_consumed >= h.timed_at);
+
+        if self.track_changes_consumed < state.track_changes.base {
+            self.track_changes_consumed = state.track_changes.base;
+        }
+        if !timed_blocked
+            && let Some(idx) = ring_offset(self.track_changes_consumed, state.track_changes.base)
+            && let Some(change) = state.track_changes.entries.get(idx)
+            && change.timed_at <= self.timed_consumed
+        {
+            self.track_changes_consumed += 1;
+            return Some(SampleCursorItem::TracksChanged {
+                generation: change.generation,
+                tracks: Arc::clone(&change.tracks),
+            });
+        }
+
         let sparse_blocked = pending_handover.is_some_and(|h| self.sparse_consumed >= h.sparse_at);
         if !sparse_blocked {
             let sparse_idx =
@@ -2892,7 +2986,6 @@ impl SampleCursor {
             }
         }
 
-        let timed_blocked = pending_handover.is_some_and(|h| self.timed_consumed >= h.timed_at);
         if !timed_blocked {
             let timed_idx =
                 ring_offset(self.timed_consumed, state.timed.base).unwrap_or(usize::MAX);
@@ -5565,6 +5658,36 @@ mod tests {
             trunk.track_generation(),
             2,
             "generation must advance by exactly one per set_tracks call"
+        );
+    }
+
+    #[test]
+    fn tracks_changed_is_ordered_against_samples_whenever_the_cursor_reads() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(16), nz(4), nz(4), nz(8), nz(8)));
+        let writer = trunk.writer().unwrap();
+        let mut cursor = trunk.subscribe_from_backlog();
+        writer.set_tracks(vec![opaque_track(TrackId::new(1))]);
+        writer.publish(TrackId::new(1), RetentionClass::Timed, sample(1, 4));
+        writer.publish(TrackId::new(1), RetentionClass::Timed, sample(2, 4));
+        writer.set_tracks(vec![opaque_track(TrackId::new(2))]);
+        writer.publish(TrackId::new(2), RetentionClass::Timed, sample(3, 4));
+
+        let mut seen = Vec::new();
+        while let Some(item) = cursor.poll() {
+            match item {
+                SampleCursorItem::TracksChanged { generation, tracks } => {
+                    seen.push(format!("gen{generation}:{}", tracks[0].track_id.value()));
+                }
+                SampleCursorItem::Timed { track_id, sample } => {
+                    seen.push(format!("t{}:{}", track_id.value(), sample.data[0]));
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(
+            seen,
+            ["gen1:1", "t1:1", "t1:2", "gen2:2", "t2:3"],
+            "every sample must be read under the track set it was published under"
         );
     }
 

@@ -229,6 +229,7 @@ fn drain_samples(trunk: &Arc<Trunk>) -> Vec<(TrackId, i64)> {
             | Some(SampleCursorItem::Degraded { .. }) => {
                 panic!("reader must not drop timed samples nor use the sparse ring")
             }
+            Some(SampleCursorItem::TracksChanged { .. }) => {}
             None => break,
             // Any future cursor item is a loss/other report the reader never
             // produces — treat it as a test failure, not silent data loss.
