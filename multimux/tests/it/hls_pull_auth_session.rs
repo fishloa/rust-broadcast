@@ -251,15 +251,25 @@ async fn played_samples(
                     }
                 }
                 if let Some(sample) = played {
-                    return sample;
+                    return Ok(sample);
                 }
-                tokio::task::yield_now().await;
+                tokio::select! {
+                    biased;
+                    result = &mut pulled => return Err(result),
+                    () = tokio::task::yield_now() => {}
+                }
             }
         })
         .await;
-        if sample_outcome.is_err() {
-            let _ = (&mut pulled).await;
-            return Some("the route published no media".to_string());
+        match sample_outcome {
+            Err(_) => return Some("the route published no media".to_string()),
+            Ok(Err(result)) => {
+                return Some(match result {
+                    Ok(()) => "the pull ended before publishing media".to_string(),
+                    Err(error) => error.to_string(),
+                });
+            }
+            Ok(Ok(_)) => {}
         }
         match &mut pulled.await {
             Ok(()) => None,
