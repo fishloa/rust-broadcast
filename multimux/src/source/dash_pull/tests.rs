@@ -1287,9 +1287,10 @@ async fn a_live_pull_that_falls_behind_the_dvr_window_jumps_forward_and_keeps_pl
     let before = live.origin.served(0);
     let last_before = *before.last().expect("served before the stall");
 
-    live.origin
-        .elapsed_us
-        .fetch_add(i64::try_from(SUSPENDED_US).expect("small"), Ordering::SeqCst);
+    live.origin.elapsed_us.fetch_add(
+        i64::try_from(SUSPENDED_US).expect("small"),
+        Ordering::SeqCst,
+    );
     clock.suspend(SUSPENDED_US);
     let ended = pull
         .until(|_| {
@@ -1301,7 +1302,10 @@ async fn a_live_pull_that_falls_behind_the_dvr_window_jumps_forward_and_keeps_pl
                 >= 6
         })
         .await;
-    assert!(ended.is_none(), "the pull ends instead of jumping: {ended:?}");
+    assert!(
+        ended.is_none(),
+        "the pull ends instead of jumping: {ended:?}"
+    );
     drop(pull.stop());
 
     let served = live.origin.served(0);
