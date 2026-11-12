@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- LL-DASH renders through the shared DASH renderer (`manifest-ll.mpd` is the standard MPD model with the low-latency fields layered on: `ServiceDescription`/`Latency`, per-segment `availabilityTimeOffset`/`availabilityTimeComplete`, `minimumUpdatePeriod` at the chunk interval), so it gains what only `manifest.mpd` had: the Period split at a gap placeholder and at every init generation, each Period naming the versioned init segment its segments were cut under, and the SCTE-35 `InbandEventStream` declaration. A test pins that both flavours render the same Periods for a window through a gap and a codec change.
+
 ### Changed
 - **BREAKING:** one HLS output, `output::hls::HlsOutput`, parameterised by `HlsFlavour` (`HlsOutput::low_latency(name)` for LL-HLS over fMP4, `HlsOutput::segmented(name)` for classic TS-HLS), replaces `output::llhls::LlHlsOutput` and `output::ts_hls::TsHlsOutput`; the `llhls` and `ts_hls` modules are removed (#2449). Config output names (`llhls`, `ts_hls`), playlist names and URLs are unchanged.
 ### Fixed

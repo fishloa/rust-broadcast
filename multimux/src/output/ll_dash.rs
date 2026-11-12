@@ -1,73 +1,10 @@
-//! `LlDashOutput`: the low-latency DASH [`Output`] implementation (issue
-//! #663 P4.2, #721) — renders `manifest-ll.mpd`, a **true chunked-transfer**
-//! LL-DASH MPD (ISO/IEC 23009-1 + DASH-IF Low-Latency Live Interoperability,
-//! "LL IOP") built from [`transmux::LlDashPackager`], whose `SegmentTemplate`
-//! addresses **whole** segments (`$Number$`, the same `seg-{track}-{seq}.m4s`
-//! filenames [`crate::output::dash`]'s `manifest.mpd` already uses) with
-//! `@availabilityTimeOffset`/`availabilityTimeComplete="false"` signalling
-//! that a segment's bytes start flowing before it nominally completes.
-//! Resolved through the same one adapter every other output uses
-//! (`crate::http::resolve_blocking`/`crate::http::into_response`).
-//!
-//! # Distinct manifest name (not a mode flag on `manifest.mpd`)
-//!
-//! LL-DASH is served at its own path, `/manifest-ll.mpd`, rather than
-//! branching `manifest.mpd` on a query flag — a route can enable both `dash`
-//! and `ll_dash` simultaneously (a DVR-capable player fetches `manifest.mpd`;
-//! a live/low-latency player fetches `manifest-ll.mpd`), and the two
-//! [`Output`]s stay independently toggleable per [`crate::config::Route::outputs`]
-//! like every other output pair.
-//!
-//! # True chunked-transfer delivery (not a parts-signalling fallback)
-//!
-//! A DASH `SegmentTemplate` addresses one URI per **whole** segment — there
-//! is no per-chunk addressing in the MPD itself. Low latency instead comes
-//! from serving that one URI **before** the segment is complete: the origin
-//! opens an HTTP response as soon as the segment's first bytes exist and
-//! keeps it open (HTTP chunked transfer-encoding), writing more bytes as the
-//! shared route's live parts arrive, until the segment closes.
-//! `crate::origin::resource`'s shared dynamic-file route implements this
-//! (see its private `stream_in_progress_segment`): a `seg-{track}-{seq}.m4s`
-//! request that doesn't yet resolve to a *closed* segment is retried against
-//! the route's `part-{track}-{seq}.{idx}.m4s` entries — the exact same
-//! partial-segment bytes [`crate::output::hls`] already serves for
-//! LL-HLS — concatenated in order as a streamed body, rather than 404ing.
-//! Once the segment closes, later requests for the same URI resolve
-//! immediately from the route's whole-segment bytes with a normal
-//! `Content-Length` (the ordinary, non-streaming path every other output
-//! already uses).
-//!
-//! Reusing the LL-HLS part bytes (rather than driving a second,
-//! chunk-shaped [`transmux::LlSegmenter`] from raw samples) means this
-//! design's CMAF chunks are each a bare `moof`+`mdat` (no leading `styp` on
-//! the segment's first part — see [`transmux::ll_hls::PartInfo`]), whereas a
-//! *closed* segment's bytes (served once complete) do carry the leading
-//! `styp`/`ftyp`-adjacent segment-type box. This asymmetry is intentional:
-//! reusing the already-produced, already-tested part bytes is far simpler
-//! than standing up a second parallel segmenter fed from raw samples, and
-//! the headless dash.js-LL acceptance test (`multimux/tests/lldash_dashjs.rs`)
-//! is the arbiter of whether real LL-DASH clients tolerate it — see that
-//! test's module docs for the validated result.
-//!
-//! # Why `availabilityTimeOffset` is genuinely non-zero here
-//!
-//! Unlike the discrete-parts design this module previously shipped (issue
-//! #663 P4.2's first cut, which addressed individual `part-*.m4s` files and
-//! could only honestly claim `availabilityTimeOffset="0"` since a part was
-//! only ever exposed once complete), this module's whole-segment URI *does*
-//! become partially available before the segment nominally completes: the
-//! chunked-transfer response starts flowing as soon as the first part exists.
-//! [`transmux::LlDashPackager::availability_time_offset`] (`segment_duration`
-//! minus `chunk_duration`, DASH-IF LL IOP) is therefore a truthful figure,
-//! not a fabricated one.
-//!
-//! # DVR window
-//!
-//! Because whole (closed) segments stay in the shared route's rolling
-//! window exactly like [`crate::output::dash`]'s regular MPD, this design can
-//! (and does) advertise a real `timeShiftBufferDepth` — unlike the old
-//! parts-only design, which covered only the live edge.
+//! `LlDashOutput`: the low-latency DASH [`Output`] implementation. This module
+//! only mounts the LL-DASH manifest route; the MPD itself is rendered by the
+//! shared renderer in [`crate::output::dash`], asked for
+//! `DashFlavour::LowLatency`.
 
+#[cfg(test)]
+use hls_runtime::server::DEFAULT_TRACK_ID;
 use std::sync::Arc;
 use std::time::SystemTime;
 #[cfg(test)]
@@ -77,33 +14,19 @@ use axum::Router;
 use axum::extract::State;
 use axum::response::Response;
 use axum::routing::get;
-use broadcast_common::Package;
-use hls_runtime::server::DEFAULT_TRACK_ID;
-use transmux::{Addressing, LlDashPackager, Media, Track, TrackSegments};
 
 use crate::origin::resource::cors_preflight;
-use crate::output::dash::{
-    format_iso8601, select_representable_track, serve_mpd, xs_duration_secs_checked,
-};
+use crate::output::dash::serve_mpd;
 use crate::output::{Output, OutputKind};
 use crate::route::RouteHandle;
 
-/// Filename this output serves its manifest at (`/{stream}/manifest-ll.mpd`)
-/// — distinct from [`crate::output::dash`]'s `manifest.mpd` so a route can
-/// enable both simultaneously (see the module docs).
+/// Filename the LL-DASH manifest is served at (`/{stream}/manifest-ll.mpd`),
+/// distinct from the standard flavour's `manifest.mpd` so one route can offer
+/// both.
 pub const LL_DASH_MANIFEST_NAME: &str = "manifest-ll.mpd";
 
-/// Heuristic target end-to-end latency, in units of the route's part target
-/// (`ServiceDescription/Latency@target`, ISO/IEC 23009-1 §5.13.2) — DASH-IF LL
-/// IOP guidance targets a few chunk/part durations of glass-to-glass latency
-/// to absorb normal jitter; not a literal spec-mandated constant, just a
-/// documented, part-duration-derived default (never an unexplained magic
-/// millisecond figure).
-const LATENCY_TARGET_PART_MULTIPLE: u64 = 3;
-
-/// The low-latency DASH [`Output`]: `manifest-ll.mpd` only. Init/segment
-/// bytes are the origin's shared resource route (chunked-transfer while a
-/// segment is in progress) — see the module docs.
+/// The low-latency DASH [`Output`]: `manifest-ll.mpd` only. Init and media
+/// bytes come from the origin's shared resource route.
 pub struct LlDashOutput;
 
 impl Output for LlDashOutput {
@@ -123,122 +46,24 @@ impl Output for LlDashOutput {
     }
 }
 
-/// `GET /manifest-ll.mpd` — `503 Service Unavailable` until the route has a
-/// representable track (mirrors `crate::output::dash`'s `manifest.mpd`
-/// handler and its issue #776 fix).
+/// `GET /manifest-ll.mpd` — the shared [`serve_mpd`] handler over the
+/// low-latency flavour of the MPD renderer (`503` until a track is
+/// representable).
 async fn manifest(State(route): State<Arc<RouteHandle>>) -> Response {
     serve_mpd(route, render_ll_dash_mpd).await
 }
 
-/// Render the live LL-DASH MPD for `route`'s current window +
-/// in-progress segment, via [`transmux::LlDashPackager`]. `None` if no track
-/// is representable (mirrors `crate::output::dash::render_mpd`'s issue #776
-/// fix via [`select_representable_track`]), if the packager rejects the
-/// built [`Media`], or if the route's configured part target exceeds its
-/// segment target (nonsensical config — `LlDashPackager::new` rejects a
-/// chunk duration longer than the segment it chunks).
+/// Tell the shared renderer to build this route's MPD as the low-latency
+/// flavour (see [`render_mpd_at_with_flavour`](crate::output::dash::render_mpd_at_with_flavour)).
 fn render_ll_dash_mpd(route: &RouteHandle) -> Option<String> {
-    let origin = route.presentation_origin(crate::route::SPTS_PROGRAM_ID)?;
-    render_ll_dash_mpd_at(route, origin)
+    crate::output::dash::render_ll_dash_mpd(route)
 }
 
-/// Render the LL-DASH MPD with an explicit presentation `origin` for `availabilityStartTime`
-/// (same freeze hook as `crate::output::dash::render_mpd_at`).
+/// Render the LL-DASH MPD for `route` with an explicit `origin` for
+/// `availabilityStartTime`, so a test can freeze the wall-clock value.
 #[doc(hidden)]
 pub fn render_ll_dash_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<String> {
-    let specs = route.track_specs(crate::route::SPTS_PROGRAM_ID);
-    // Single-rendition model (see `crate::output::dash`'s module docs):
-    // describe exactly one Representation, `@id` forced to DEFAULT_TRACK_ID.
-    let mut spec = select_representable_track(&specs)?;
-    spec.track_id = DEFAULT_TRACK_ID;
-    let timescale = spec.timescale.max(1);
-
-    // `$Number$` addresses whole segments (see module docs). startNumber is
-    // the program's FIRST segment, fixed for its life, exactly like
-    // `crate::output::dash::render_mpd` (ISO/IEC 23009-1 §5.3.9.5.3: with a
-    // fixed `availabilityStartTime` a sliding startNumber makes the client
-    // derive a live edge of segments that do not exist -- issue #1058).
-    let window = route.window_segments(crate::route::SPTS_PROGRAM_ID);
-    let start_number = crate::output::dash::start_number(route);
-
-    let target_duration_secs = route.target_duration_secs();
-    let nominal_duration_ticks =
-        ((target_duration_secs * f64::from(timescale)).round() as u64).max(1);
-    let part_target_ms = route.part_target_ms().max(1);
-    let chunk_duration_secs = f64::from(part_target_ms) / 1000.0;
-    let latency_target_ms =
-        u32::try_from(u64::from(part_target_ms) * LATENCY_TARGET_PART_MULTIPLE).unwrap_or(u32::MAX);
-
-    let media = Media::new(vec![Track::new(spec, Vec::new())], timescale);
-
-    let mut packager = match LlDashPackager::new(
-        target_duration_secs,
-        chunk_duration_secs,
-        latency_target_ms,
-        format_iso8601(origin),
-    ) {
-        Ok(p) => p,
-        Err(e) => {
-            // Unreachable after `Config::validate`: it rejects a
-            // non-positive/non-finite `target_duration_secs` AND a
-            // `part_target_ms/1000` chunk larger than the segment. A config that
-            // reaches here with a rejection was not validated. Log loudly and
-            // trip a debug assert rather than 404 the manifest silently.
-            debug_assert!(
-                false,
-                "LlDashPackager::new rejected a validated config: {e}"
-            );
-            tracing::error!(
-                error = %e,
-                "LL-DASH packager rejected a duration that `Config::validate` should have              rejected"
-            );
-            return None;
-        }
-    };
-    packager.base.addressing = Addressing::Number;
-    packager.base.start_number = start_number;
-    // `$RepresentationID$` is substituted by the DASH *client*, not here
-    // (real DASH template tokens) -- left literal so it resolves to "1"
-    // (DEFAULT_TRACK_ID), matching the shared resource route's
-    // `init-1.mp4`/`seg-1-<N>.m4s` filenames exactly (the same whole-segment
-    // shape `crate::output::dash` uses -- see module docs for why LL-DASH no
-    // longer needs its own filename scheme).
-    let instance = route
-        .serving(crate::route::SPTS_PROGRAM_ID)
-        .map(|s| s.ll_hls().instance())
-        .unwrap_or(1);
-    let init_gen = route
-        .serving(crate::route::SPTS_PROGRAM_ID)
-        .map(|s| s.ll_hls().current_init_generation())
-        .unwrap_or_else(|| media_plane::ids::Generation::new(1));
-    packager.base.init_template = format!(
-        "init-$RepresentationID$-{}-{}.mp4",
-        instance,
-        init_gen.value()
-    );
-    packager.base.media_template = "seg-$RepresentationID$-$Number$.m4s".to_string();
-    // Tuned to the chunk/part interval, not the whole-segment target -- an
-    // LL-DASH client should re-poll roughly as often as a new chunk can
-    // appear.
-    packager.base.publish_time = Some(crate::output::dash::publish_time(origin, &window));
-    packager.base.minimum_update_period = Some(xs_duration_secs_checked(
-        "minimum_update_period",
-        chunk_duration_secs,
-    ));
-    // Unlike the old parts-only design (module docs), whole closed segments
-    // stay in the route's rolling window, so a real DVR window can be
-    // advertised -- same computation as `crate::output::dash::render_mpd`.
-    let time_shift_buffer_depth_secs = target_duration_secs * (window.len().max(1) as f64);
-    packager.base.time_shift_buffer_depth = Some(xs_duration_secs_checked(
-        "time_shift_buffer_depth",
-        time_shift_buffer_depth_secs,
-    ));
-    packager.base.segments = vec![TrackSegments {
-        track_id: DEFAULT_TRACK_ID,
-        durations: vec![nominal_duration_ticks],
-    }];
-
-    packager.package(&media).ok()
+    crate::output::dash::render_ll_dash_mpd_at(route, origin)
 }
 
 #[cfg(test)]
@@ -255,6 +80,7 @@ mod tests {
         )
         .await;
     }
+
     use axum::http::{StatusCode, header};
 
     use transmux::ll_hls::PartInfo;
@@ -275,6 +101,72 @@ mod tests {
             duration,
             segment_seq: seq,
             part_count: 2,
+        }
+    }
+
+    /// Every `initialization="..."` template in `mpd`, in document order.
+    fn init_templates(mpd: &str) -> Vec<&str> {
+        mpd.match_indices("initialization=\"")
+            .map(|(at, key)| {
+                let rest = &mpd[at + key.len()..];
+                &rest[..rest.find('"').expect("closing quote")]
+            })
+            .collect()
+    }
+
+    /// `mpd` reduced to the MPD model both flavours share: the LL-only
+    /// `ServiceDescription` dropped, and every per-segment availability
+    /// attribute and the `minimumUpdatePeriod` value removed (each is a
+    /// `name="value"` attribute, so the whole attribute goes). What remains is
+    /// the Periods — their start/duration, init URL and startNumber — which a
+    /// folded standard and a folded low-latency render must spell identically.
+    fn without_flavour_fields(mpd: &str) -> String {
+        let mut folded = mpd.to_string();
+        if let Some(start) = mpd.find("<ServiceDescription") {
+            let end = start
+                + mpd[start..]
+                    .find("</ServiceDescription>")
+                    .expect("closing tag")
+                + "</ServiceDescription>".len();
+            folded = format!("{}{}", &mpd[..start], &mpd[end..]);
+        }
+        for name in LL_ONLY_ATTRIBUTES {
+            folded = without_attribute(&folded, name);
+        }
+        folded
+    }
+
+    /// The attributes only the low-latency flavour writes on the MPD itself
+    /// and on its `SegmentTemplate`s.
+    const LL_ONLY_ATTRIBUTES: [&str; 3] = [
+        "availabilityTimeOffset",
+        "availabilityTimeComplete",
+        "minimumUpdatePeriod",
+    ];
+
+    /// `mpd` with the `name="value"` attribute removed wherever it appears,
+    /// and the blank line the dropped `ServiceDescription` leaves behind.
+    fn without_attribute(mpd: &str, name: &str) -> String {
+        let key = format!(" {name}=\"");
+        let mut out = String::with_capacity(mpd.len());
+        let mut rest = mpd;
+        while let Some(at) = rest.find(&key) {
+            out.push_str(&rest[..at]);
+            match rest[at + key.len()..].find('"') {
+                Some(close) => rest = &rest[at + key.len() + close + 1..],
+                None => rest = "",
+            }
+        }
+        out.push_str(rest);
+        out.replace("\n  \n  <Period ", "\n  <Period ")
+    }
+
+    /// A gap placeholder: the source had no muxable track while this segment
+    /// was cut, so it carries no bytes.
+    fn gap_seg(seq: u32, duration: f64) -> transmux::ll_hls::SegmentInfo {
+        transmux::ll_hls::SegmentInfo {
+            bytes: Vec::new(),
+            ..seg(seq, duration)
         }
     }
 
@@ -533,6 +425,103 @@ mod tests {
             resp.status(),
             StatusCode::SERVICE_UNAVAILABLE,
             "a route with no program announced yet must be 503 (not ready), not 404 (gone)"
+        );
+    }
+
+    /// Issue #2448 acceptance: a window holding a gap (the source dropped every
+    /// track) and segments from two init generations must render the SAME
+    /// Periods under both flavours — one Period ending where the gap begins,
+    /// one per init generation, each naming its own versioned init URL — and
+    /// the low-latency flavour must add only its LL fields on top.
+    #[test]
+    fn an_ll_dash_window_over_a_gap_and_a_codec_change_renders_the_standard_periods_plus_ll() {
+        let program = crate::route::SPTS_PROGRAM_ID;
+        let route = RouteHandle::new(4.0, 500, 8);
+        route.publish_new_program(program);
+        route.set_init(program, vec![0xAA; 8]);
+        route.set_track_specs(program, vec![video_spec(TrackId::new(1))]);
+        for seq in 1..=3 {
+            route
+                .add_segment(program, seg(seq, 4.0))
+                .expect("add_segment");
+        }
+        route.set_init(program, vec![0xBB; 8]);
+        for seq in 4..=5 {
+            route
+                .add_segment(program, seg(seq, 4.0))
+                .expect("add_segment");
+        }
+        route
+            .add_segment(program, gap_seg(6, 4.0))
+            .expect("add_segment");
+        for seq in 7..=8 {
+            route
+                .add_segment(program, seg(seq, 4.0))
+                .expect("add_segment");
+        }
+
+        let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        let standard =
+            crate::output::dash::render_mpd_at(&route, now).expect("standard flavour renders");
+        let low_latency = render_ll_dash_mpd_at(&route, now).expect("low-latency flavour renders");
+
+        assert_eq!(
+            without_flavour_fields(&low_latency),
+            without_flavour_fields(&standard),
+            "the low-latency MPD must carry exactly the standard MPD's Periods: {low_latency}"
+        );
+
+        for (flavour, mpd) in [("standard", &standard), ("low-latency", &low_latency)] {
+            assert_eq!(mpd.matches("<Period ").count(), 3, "{flavour}: {mpd}");
+            assert!(
+                mpd.contains("<Period id=\"0\" start=\"PT0S\" duration=\"PT12S\">"),
+                "{flavour}: the first Period must be its init generation's, ending at the codec change: {mpd}"
+            );
+            assert!(
+                mpd.contains("<Period id=\"1\" start=\"PT12S\" duration=\"PT8S\">"),
+                "{flavour}: the second Period must end where the gap begins: {mpd}"
+            );
+            assert!(
+                mpd.contains("<Period id=\"2\" start=\"PT24S\">"),
+                "{flavour}: a gap ends a Period and the next segments open a new one: {mpd}"
+            );
+            let inits = init_templates(mpd);
+            assert_eq!(inits.len(), 3, "{flavour}: {mpd}");
+            assert_ne!(
+                inits[0], inits[1],
+                "{flavour}: the Periods either side of the codec change name their own init: {mpd}"
+            );
+            assert_eq!(
+                inits[1], inits[2],
+                "{flavour}: the Period after the gap stays on the second generation's init: {mpd}"
+            );
+            assert!(
+                inits[0].ends_with("-1.mp4") && inits[1].ends_with("-2.mp4"),
+                "{flavour}: {{RepresentationID}} then the instance and the generation the \
+                 Period's segments were cut under: {mpd}"
+            );
+            assert!(
+                mpd.contains("urn:scte:scte35:2013:bin"),
+                "{flavour}: both flavours declare the SCTE-35 event stream: {mpd}"
+            );
+        }
+
+        assert!(
+            !standard.contains("<ServiceDescription") && !standard.contains("availabilityTime"),
+            "the standard flavour carries none of the LL fields: {standard}"
+        );
+        assert!(
+            low_latency.contains("<ServiceDescription") && low_latency.contains("<Latency target="),
+            "{low_latency}"
+        );
+        assert!(
+            low_latency.contains("availabilityTimeOffset=\"3.5\"")
+                && low_latency.contains("availabilityTimeComplete=\"false\""),
+            "{low_latency}"
+        );
+        assert!(
+            low_latency.contains("minimumUpdatePeriod=\"PT0.5S\""),
+            "minimumUpdatePeriod must follow the chunk interval: {low_latency}"
         );
     }
 }
