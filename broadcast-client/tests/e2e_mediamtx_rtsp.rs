@@ -40,17 +40,25 @@ const COMMON_TIMELINE_BOUND_SECONDS: f64 = 0.2;
 const AAC_FRAME_TICKS: i64 = 1024;
 /// AAC-LC rate of `FIXTURE`, per `fixtures/ts/PROVENANCE.md` (`h264-aac.ts`: AAC-LC 44100 Hz 1ch).
 const FIXTURE_AUDIO_RATE_HZ: f64 = 44_100.0;
+/// Test-only fault injection: seconds added to every audio sample's emitted time before the A/V
+/// checks, simulating an audio-vs-video step. Unset means no step.
+const INJECT_AUDIO_STEP_ENV: &str = "E2E_INJECT_AUDIO_STEP_S";
 const SR_MIN_LEN: usize = 20;
 const RTCP_PT_SR: u8 = 200;
 const NTP_FRACTION: f64 = 4_294_967_296.0;
-const SR_FAITHFUL_AAC_FRAMES: f64 = 2.0;
-/// Outer bound only. The server's own Sender Reports jitter with CPU load (idle runs span about
-/// -0.006..0.014 s), so two AAC frames is the tightest bound a real mediamtx+ffmpeg run can hold:
-/// still well inside the frame-or-more mapping error the #1568 fault produces. The precise guard
-/// for audio not being on the SR wallclock video is on is `tests/it/rtsp_avsync.rs`, which pins
-/// that fault hermetically without a network.
+/// Fraction of one AAC frame the emitted audio-vs-video timeline may sit from the Sender Report
+/// mapping. Both tracks are compared against the same wallclock reference, so an honest run
+/// measures 0.0000 s; the fault class guarded (#1568, a frame or more of A/V step) therefore must
+/// fail, and a sub-frame bound keeps a one-frame step (about 23 ms) outside it.
+const SR_FAITHFUL_AAC_FRAMES: f64 = 0.5;
 const SR_FAITHFUL_SECONDS: f64 =
     SR_FAITHFUL_AAC_FRAMES * AAC_FRAME_TICKS as f64 / FIXTURE_AUDIO_RATE_HZ;
+/// AAC frames the server's own audio and video Sender Report origins may move against each other
+/// before the faithfulness check is skipped as unjudgeable. The server's reports jitter with CPU
+/// load (idle runs span about 0.004..0.010 s), which is independent of what the client emits.
+const SR_REFERENCE_DRIFT_AAC_FRAMES: f64 = 2.0;
+const SR_REFERENCE_DRIFT_SECONDS: f64 =
+    SR_REFERENCE_DRIFT_AAC_FRAMES * AAC_FRAME_TICKS as f64 / FIXTURE_AUDIO_RATE_HZ;
 /// A deviation the unit test needs to sit clearly outside `SR_FAITHFUL_SECONDS`.
 const BEYOND_BOUND_FACTOR: f64 = 1.5;
 /// A deviation the unit test needs to sit clearly inside `SR_FAITHFUL_SECONDS`.
@@ -325,6 +333,13 @@ fn sr_av_reference_drift(audio: &[(f64, f64)], video: &[(f64, f64)]) -> f64 {
             (lo.min(d), hi.max(d))
         });
     (hi - lo).max(0.0)
+}
+
+fn injected_audio_step_seconds() -> f64 {
+    std::env::var(INJECT_AUDIO_STEP_ENV)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.0)
 }
 
 fn micros(start: Instant) -> u64 {
@@ -772,7 +787,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
             });
         anchor.insert(tid, key_pts - key_rel);
     }
-    let mut decode_offsets: Vec<f64> = Vec::new();
+    let injected_audio_step = injected_audio_step_seconds();
     let mut sr_vs_arrival: std::collections::BTreeMap<bool, Vec<f64>> =
         std::collections::BTreeMap::new();
     let mut sr_origin_sets: std::collections::BTreeMap<bool, Vec<(f64, f64)>> =
@@ -790,7 +805,8 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
         let arrival = wire
             .arrival_of(channel, rel)
             .unwrap_or_else(|| panic!("no RTP packet for track {tid} at relative tick {rel}"));
-        let seconds = pts as f64 / f64::from(track_timescale[&tid]);
+        let seconds = pts as f64 / f64::from(track_timescale[&tid])
+            + if video { 0.0 } else { injected_audio_step };
         offsets
             .entry(video)
             .or_default()
@@ -805,13 +821,6 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
             .entry(video)
             .or_default()
             .push(wall - arrival as f64 / 1e6);
-        if video {
-            let order = &wire.order[&channel];
-            let at = order.partition_point(|&r| r != rel);
-            let decode_rel = order[at..].iter().copied().min().unwrap_or(rel);
-            let dts_seconds = (pts - (rel - decode_rel)) as f64 / f64::from(track_timescale[&tid]);
-            decode_offsets.push(dts_seconds - arrival as f64 / 1e6);
-        }
     }
     let audio_offset = median(
         offsets
@@ -848,7 +857,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
         );
     }
     let reference_spread = sr_av_reference_drift(&sr_origin_sets[&false], &sr_origin_sets[&true]);
-    let reference_consistent = reference_spread <= SR_FAITHFUL_SECONDS;
+    let reference_consistent = reference_spread <= SR_REFERENCE_DRIFT_SECONDS;
     eprintln!(
         "SRFAITHFUL[{label}] emitted-timeline-minus-SR-mapping audio-vs-video={sr_faithfulness:.4} sr-av-reference-drift={reference_spread:.4}"
     );
@@ -873,10 +882,9 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
     eprintln!(
         "SRARRIVAL[{label}] SR wall minus client arrival, audio-vs-video={sr_minus_arrival:.4}"
     );
-    let av_offset_pts = audio_offset - video_offset;
-    let av_offset = audio_offset - median(&mut decode_offsets);
+    let av_offset = audio_offset - video_offset;
     eprintln!(
-        "AVSYNC[{label}] states={sync_states:?} first_audio_minus_first_video_s={first_gap:.4} av_offset_s={av_offset:.4} av_offset_by_video_pts_s={av_offset_pts:.4} (median pts-minus-RTP-arrival: audio {audio_offset:.4}, video {video_offset:.4}) emission_lag_s={emission_lag:.4} (info only)"
+        "AVSYNC[{label}] states={sync_states:?} first_audio_minus_first_video_s={first_gap:.4} av_offset_s={av_offset:.4} (median pts-minus-RTP-arrival: audio {audio_offset:.4}, video {video_offset:.4}) emission_lag_s={emission_lag:.4} (info only)"
     );
     let expected_first_gap = expected_first_gap(states.last().copied(), video_sent_early_s);
     assert!(
