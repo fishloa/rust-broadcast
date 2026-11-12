@@ -605,7 +605,7 @@ impl Stage for RtmpIngestSession {
     }
 
     fn demand(&self) -> Demand {
-        Demand::new(4096)
+        Demand::new(crate::source::INGEST_DEMAND_BYTES)
     }
 }
 

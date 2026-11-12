@@ -39,6 +39,10 @@ pub mod rtp_udp;
 pub mod rtsp;
 pub mod sdp;
 pub mod segment;
+
+/// Default demand (in bytes) a source asks the pipeline to feed per
+/// iteration.
+pub(crate) const INGEST_DEMAND_BYTES: usize = 4096;
 pub mod smooth_pull;
 pub(crate) mod split_audio;
 pub(crate) mod split_subtitle;
@@ -856,7 +860,7 @@ mod driver_progress_tests {
         type Error = std::convert::Infallible;
 
         fn demand(&self) -> Demand {
-            Demand::new(4096)
+            Demand::new(INGEST_DEMAND_BYTES)
         }
 
         fn feed(&mut self, _input: &[u8], _now: Timestamp) -> Result<(), Self::Error> {
@@ -1028,7 +1032,7 @@ mod driver_progress_tests {
             type Error = std::convert::Infallible;
 
             fn demand(&self) -> Demand {
-                Demand::new(4096)
+                Demand::new(INGEST_DEMAND_BYTES)
             }
 
             fn feed(&mut self, _input: &[u8], _now: Timestamp) -> Result<(), Self::Error> {

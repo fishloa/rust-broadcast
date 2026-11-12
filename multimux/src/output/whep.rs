@@ -1002,7 +1002,7 @@ fn trunk_with_avc_track() -> Arc<Trunk> {
 /// value wraps into the 32-bit range before it is placed in the header.
 fn rescale_to_90k(ticks: u64, from_timescale: u32) -> u32 {
     let v = rescale_u64(ticks, from_timescale, VIDEO_CLOCK_RATE, Rounding::Nearest);
-    u32::try_from(v & u64::from(u32::MAX)).expect("masked to 32 bits")
+    u32::try_from(v & u64::from(u32::MAX)).unwrap_or(0)
 }
 
 /// Byte offset of the `sequence number` field within the RTP fixed header

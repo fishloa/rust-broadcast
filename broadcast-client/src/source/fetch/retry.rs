@@ -59,13 +59,6 @@ impl Backoff {
     }
 }
 
-/// The wait a `429`/`503` response asks for with `Retry-After` (RFC 9110 10.2.3), clamped to 60 s;
-/// `0` for any other status, a missing header, a value that is neither delta-seconds nor an
-/// HTTP-date, or an HTTP-date in the past.
-///
-/// An HTTP-date counts from "now" as the host's wall clock reads it (`wall` mapped at `now_us`),
-/// else from the response's own `Date` header (the server's idea of now, so a skewed server clock
-/// cancels out), else it is ignored.
 /// Parse a `Retry-After` header for a `429`/`503` response (RFC 9110 §10.2.3), returning the
 /// wait in microseconds. Returns `0` for any other status, a missing or unparseable header, or a
 /// past HTTP-date. An HTTP-date is measured against the host wall clock when `wall` is given,
