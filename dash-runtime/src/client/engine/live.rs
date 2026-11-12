@@ -390,25 +390,33 @@ impl DashClient {
         if !self.live_open() {
             return;
         }
+        let mut failed: Vec<(usize, DropCause)> = Vec::new();
         let tail_us = self
             .periods
             .get(self.issue)
             .map(|p| {
                 p.lanes
                     .iter()
-                    .filter_map(|l| l.current())
-                    .filter_map(|r| {
-                        let p = r.plan.as_ref()?;
-                        let last = p.len()?.checked_sub(1)?;
-                        match p.get(last) {
+                    .enumerate()
+                    .filter_map(|(li, l)| {
+                        let r = l.current()?;
+                        let plan = r.plan.as_ref()?;
+                        let last = plan.len()?.checked_sub(1)?;
+                        match plan.get(last) {
                             Ok(s) => s.map(|s| s.duration_us),
-                            Err(_) => None,
+                            Err(e) => {
+                                failed.push((li, DropCause::Addressing(address_name(&e))));
+                                None
+                            }
                         }
                     })
                     .max()
                     .unwrap_or(0)
             })
             .unwrap_or(0);
+        for (li, cause) in failed {
+            self.drop_rep(self.issue, li, cause);
+        }
         let wait = u64::try_from(tail_us.max(0)).unwrap_or(u64::MAX);
         self.force_refresh_after(now_us, wait);
     }
