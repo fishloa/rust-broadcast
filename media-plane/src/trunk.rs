@@ -1777,8 +1777,21 @@ impl Trunk {
     /// protocol. Supported reader count is **single-digit by design**; do
     /// not call this once per connection.
     pub fn subscribe_from_backlog(self: &Arc<Self>) -> SampleCursor {
+        self.subscribe_from_backlog_with_tracks().0
+    }
+
+    /// [`Trunk::subscribe_from_backlog`] plus the [`Trunk::track_generation`]
+    /// and [`Trunk::tracks`] current at the instant the cursor was created,
+    /// all read under one lock acquisition. A `set_tracks` can therefore never
+    /// fall between the cursor's position and the returned generation: every
+    /// [`SampleCursorItem::TracksChanged`] the cursor will report has a
+    /// generation at or below the returned one only if it was already
+    /// resident at subscribe time, and every later one is strictly above it.
+    pub fn subscribe_from_backlog_with_tracks(
+        self: &Arc<Self>,
+    ) -> (SampleCursor, u64, Arc<[TrackSpec]>) {
         let state = self.lock_state();
-        SampleCursor {
+        let cursor = SampleCursor {
             trunk: Arc::clone(self),
             timed_consumed: state.timed.base,
             sparse_consumed: state.sparse.base,
@@ -1786,7 +1799,8 @@ impl Trunk {
             track_changes_consumed: state.track_changes.base,
             subscribe_timed_at: state.timed.base,
             subscribe_sparse_at: state.sparse.base,
-        }
+        };
+        (cursor, state.track_generation, Arc::clone(&state.tracks))
     }
 
     /// Diagnostic: entries currently resident in the `Timed` ring. Never
@@ -2094,6 +2108,13 @@ impl Trunk {
     /// program carries.
     pub fn tracks(&self) -> Arc<[TrackSpec]> {
         Arc::clone(&self.lock_state().tracks)
+    }
+
+    /// [`Trunk::track_generation`] and [`Trunk::tracks`] read under one lock
+    /// acquisition, so the pair is always one `set_tracks` call's result.
+    pub fn tracks_with_generation(&self) -> (u64, Arc<[TrackSpec]>) {
+        let state = self.lock_state();
+        (state.track_generation, Arc::clone(&state.tracks))
     }
 
     /// Bumped by exactly one on every [`TrunkWriter::set_tracks`] call
@@ -5659,6 +5680,30 @@ mod tests {
             2,
             "generation must advance by exactly one per set_tracks call"
         );
+    }
+
+    /// **A10-3.** The snapshot's generation and tracks are one `set_tracks`
+    /// call's result, and the cursor reports exactly the changes after it.
+    #[test]
+    fn backlog_subscription_snapshots_cursor_generation_and_tracks_together() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(16), nz(4), nz(4), nz(8), nz(8)));
+        let writer = trunk.writer().unwrap();
+        writer.set_tracks(vec![opaque_track(TrackId::new(1))]);
+        writer.set_tracks(vec![opaque_track(TrackId::new(2))]);
+        let (mut cursor, generation, tracks) = trunk.subscribe_from_backlog_with_tracks();
+        assert_eq!(generation, 2);
+        assert_eq!(tracks[0].track_id, TrackId::new(2));
+        assert_eq!(trunk.tracks_with_generation().0, generation);
+        writer.set_tracks(vec![opaque_track(TrackId::new(3))]);
+        let mut later = Vec::new();
+        while let Some(item) = cursor.poll() {
+            if let SampleCursorItem::TracksChanged { generation, .. } = item
+                && generation > 2
+            {
+                later.push(generation);
+            }
+        }
+        assert_eq!(later, vec![3]);
     }
 
     #[test]
