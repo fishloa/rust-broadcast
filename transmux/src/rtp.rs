@@ -145,12 +145,12 @@ pub const NAL_TYPE_IDR: u8 = 5;
 // --- AAC AU header section (RFC 3640 §3.3.6, mode AAC-hbr) ------------------
 
 /// `sizeLength` for AAC-hbr — AU-size field width in bits (RFC 3640 §3.3.6).
-const AAC_SIZE_LENGTH: u32 = 13;
+pub const AAC_SIZE_LENGTH: u32 = 13;
 /// `indexLength` for AAC-hbr — AU-index field width in bits (RFC 3640 §3.3.6).
-const AAC_INDEX_LENGTH: u32 = 3;
+pub const AAC_INDEX_LENGTH: u32 = 3;
 /// `indexDeltaLength` for AAC-hbr — AU-index-delta field width in bits.
 #[cfg(feature = "std")]
-const AAC_INDEX_DELTA_LENGTH: u32 = 3;
+pub const AAC_INDEX_DELTA_LENGTH: u32 = 3;
 /// One AAC-hbr AU-header is `sizeLength + indexLength = 16` bits = 2 bytes.
 const AAC_AU_HEADER_LEN: usize = 2;
 /// Width of the AU-headers-length prefix (16-bit, RFC 3640 §3.2.1).
