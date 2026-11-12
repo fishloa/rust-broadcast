@@ -87,6 +87,7 @@ pub fn newest_complete(plan: &SegmentPlan, utc_now_us: i128) -> Option<u64> {
             plan.leading_true(bound, |s| {
                 s.available_from_us.is_some_and(|a| a <= utc_now_us)
             })
+            .unwrap_or(0)
         }
     };
     count.checked_sub(1)
@@ -97,9 +98,11 @@ pub fn newest_complete(plan: &SegmentPlan, utc_now_us: i128) -> Option<u64> {
 #[must_use]
 pub fn oldest_in_window(plan: &SegmentPlan, utc_now_us: i128) -> Option<u64> {
     let newest = newest_complete(plan, utc_now_us)?;
-    let expired = plan.leading_true(newest + 1, |s| {
-        s.available_until_us.is_some_and(|u| u < utc_now_us)
-    });
+    let expired = plan
+        .leading_true(newest + 1, |s| {
+            s.available_until_us.is_some_and(|u| u < utc_now_us)
+        })
+        .unwrap_or(0);
     (expired <= newest).then_some(expired)
 }
 
@@ -119,6 +122,9 @@ pub fn join_index(plan: &SegmentPlan, utc_now_us: i128, delay_us: i128) -> Optio
     let w = window(plan, utc_now_us)?;
     let (ast, _) = plan.avail_parts()?;
     let t = join_time_us(utc_now_us, delay_us, ast, plan.period_start_us());
-    let at = plan.index_at_or_before(t).unwrap_or(w.oldest);
+    let at = match plan.index_at_or_before(t) {
+        Ok(Some(i)) => i,
+        _ => w.oldest,
+    };
     Some(at.clamp(w.oldest, w.newest))
 }

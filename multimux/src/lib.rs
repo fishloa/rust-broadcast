@@ -8,6 +8,9 @@ pub mod dashif_ingest;
 pub mod dvr;
 pub mod error;
 mod http;
+#[cfg(feature = "test-seams")]
+#[doc(hidden)]
+pub mod ingest_golden;
 pub mod origin;
 pub mod output;
 pub mod prometheus;

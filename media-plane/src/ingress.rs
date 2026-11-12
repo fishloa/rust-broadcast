@@ -355,6 +355,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::num::{NonZeroU32, NonZeroUsize};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 use transmux::TrackId;
 
 use broadcast_common::{Stage, Timestamp};
@@ -762,6 +764,11 @@ pub struct IngestDriver<S: IngestSession> {
     /// matter how large a flood of refused programs is.
     refused_programs: u64,
     health: HealthState<S::Error>,
+    /// Whether the last [`Self::feed`] delivered input from the peer. A
+    /// transport-timer wake or a control signal leaves this `false`, which is
+    /// what lets an admitted-session driver tell "the publisher spoke" from
+    /// "the session merely woke" without the caller having to.
+    touched: bool,
 }
 
 impl<S: IngestSession> IngestDriver<S> {
@@ -788,6 +795,7 @@ impl<S: IngestSession> IngestDriver<S> {
             writers: HashMap::new(),
             refused_programs: 0,
             health: HealthState::Establishing,
+            touched: false,
         }
     }
 
@@ -821,6 +829,7 @@ impl<S: IngestSession> IngestDriver<S> {
     /// A no-op once the session has reached a terminal state — it is never
     /// fed again.
     pub fn feed(&mut self, input: S::In<'_>, now: Timestamp) {
+        self.touched = false;
         if !self.health.is_running() {
             return;
         }
@@ -907,6 +916,18 @@ impl<S: IngestSession> IngestDriver<S> {
     /// This session's current health.
     pub fn health(&self) -> &HealthState<S::Error> {
         &self.health
+    }
+
+    /// Whether the last [`Self::feed`] carried input from the peer — see
+    /// [`Self::note_activity`].
+    pub fn took_input(&self) -> bool {
+        self.touched
+    }
+
+    /// Mark this driver as having heard from the peer, for a caller that fed
+    /// it by a path other than [`Self::feed`].
+    pub fn note_activity(&mut self) {
+        self.touched = true;
     }
 
     /// Consume this driver, yielding its final [`HealthState`] **by value** —
@@ -1296,6 +1317,12 @@ impl<L: Listener> ListenDriver<L> {
         self.sessions.len()
     }
 
+    /// The listener underneath, for a caller that drives its readiness
+    /// directly (a test's own accept gating).
+    pub fn listener(&self) -> &L {
+        &self.listener
+    }
+
     /// The bound this driver enforces, from the underlying [`Listener`].
     pub fn max_sessions(&self) -> usize {
         self.listener.max_sessions()
@@ -1472,6 +1499,275 @@ impl<L: Listener> ListenDriver<L> {
         } else {
             self.sessions.remove(&id).map(|d| d.health)
         }
+    }
+}
+
+/// Each admitted session's own clock origin for a [`ListenDriver`] loop.
+///
+/// The handshake deadline ([`HandshakePolicy::establish_by`]) is an absolute
+/// instant on the clock a session is fed, so one route-start clock would reap
+/// every publisher that connects later than the budget after the route began
+/// (audit r07-C6, issue #1083). A session's `now` is measured from its own
+/// admission; a session never admitted (which should not happen) falls back to
+/// the route's start.
+pub(crate) struct SessionClocks {
+    route_start: Instant,
+    admitted: HashMap<SessionId, Instant>,
+}
+
+impl SessionClocks {
+    pub(crate) fn new(route_start: Instant) -> Self {
+        SessionClocks {
+            route_start,
+            admitted: HashMap::new(),
+        }
+    }
+
+    /// Record session `id`'s admission at `at`.
+    pub(crate) fn admit(&mut self, id: SessionId, at: Instant) {
+        self.admitted.insert(id, at);
+    }
+
+    /// The timestamp to feed session `id` at wall-clock instant `at`.
+    pub(crate) fn now(&self, id: SessionId, at: Instant) -> Timestamp {
+        Timestamp::from_instant(
+            self.admitted.get(&id).copied().unwrap_or(self.route_start),
+            at,
+        )
+    }
+
+    /// Forget every session `live` no longer reports.
+    /// The instant session `id` was admitted at.
+    pub(crate) fn admit_base(&self, id: SessionId) -> Instant {
+        self.admitted.get(&id).copied().unwrap_or(self.route_start)
+    }
+
+    pub(crate) fn retain(&mut self, live: impl Fn(&SessionId) -> bool) {
+        self.admitted.retain(|id, _| live(id));
+    }
+}
+
+/// Owns a [`ListenDriver`] and the per-session bookkeeping every
+/// concurrently-admitting `run_*` loop has otherwise had to hand-write: one
+/// driver per admitted session, a fresh `Progress` each from its first
+/// event, a fresh clock origin per admission, and the release-then-reap
+/// sequence that frees a finished session's `max_sessions` slot.
+///
+/// # Why here, and what stays with the protocol
+///
+/// The loop this drives has the same shape for every push protocol: admit
+/// what the listener (or its accept pump) has ready, start one read per
+/// session, feed whatever it returns, publish and segment the session's
+/// programs, reap it if it went terminal, otherwise start its next read.
+/// The *read itself* does not: an RTMP session reads parsed event batches
+/// over a socket, a WHIP session reads one decrypted RTP datagram and owns
+/// its `webrtc-runtime` media transport. So the read is a caller-supplied
+/// future (the caller's own, started when a session is admitted), and
+/// everything around it lives here once.
+///
+/// # The clock origin is per admission, not per route
+///
+/// [`IngestDriver::feed`]'s `now` is measured from the session's own
+/// admission, never the route's start: [`HandshakePolicy::establish_by`] is
+/// an absolute instant on that clock, so one route-wide origin would reap a
+/// publisher that joined while another was still establishing.
+pub struct AdmittedDriver<L: Listener, P> {
+    driver: ListenDriver<L>,
+    progress: HashMap<SessionId, P>,
+    clocks: SessionClocks,
+    last_activity: HashMap<SessionId, Instant>,
+    active: Arc<AtomicUsize>,
+}
+
+impl<L: Listener, P: Default> AdmittedDriver<L, P> {
+    /// Wrap `driver`, measuring every session's clock from `start` and
+    /// holding one plain `P` per admitted session.
+    pub fn new(driver: ListenDriver<L>, start: Instant) -> Self {
+        Self {
+            driver,
+            progress: HashMap::new(),
+            clocks: SessionClocks::new(start),
+            last_activity: HashMap::new(),
+            active: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    /// The live admitted-session counter — an `Arc` clone of it, for a caller
+    /// that also publishes it (a metric, a log line).
+    pub fn active_sessions(&self) -> Arc<AtomicUsize> {
+        Arc::clone(&self.active)
+    }
+
+    /// Sessions still admitted.
+    pub fn session_count(&self) -> usize {
+        self.driver.session_count()
+    }
+
+    /// The listener underneath, for a caller that drives its readiness
+    /// directly (a test's own accept gating).
+    pub fn listener(&self) -> &L {
+        self.driver.listener()
+    }
+
+    /// Whether session `id`'s last feed carried input from the peer — the
+    /// "publisher spoke" signal an idle bound measures from (a transport
+    /// timer wake or a control signal is not activity).
+    pub fn took_input(&self, id: SessionId) -> bool {
+        self.driver.driver(id).is_some_and(IngestDriver::took_input)
+    }
+
+    /// Session `id`'s driver, if still admitted.
+    pub fn driver(&self, id: SessionId) -> Option<&IngestDriver<L::Session>> {
+        self.driver.driver(id)
+    }
+
+    /// Session `id`'s driver, mutably (to hand out a transport handle, say) —
+    /// see [`ListenDriver::driver_mut`].
+    pub fn driver_mut(&mut self, id: SessionId) -> Option<&mut IngestDriver<L::Session>> {
+        self.driver.driver_mut(id)
+    }
+
+    /// Accept whatever the listener has ready, up to `max_sessions`, and
+    /// return the newly admitted sessions. `Err` is the listener's own accept
+    /// failure (the route's listen socket died) and should end the route; a
+    /// connection refused because the bound is full is dropped by the driver
+    /// and simply not returned.
+    ///
+    pub fn accept(&mut self) -> Result<Vec<SessionId>, L::Error> {
+        Ok(self
+            .accept_with(|_| ())?
+            .into_iter()
+            .map(|(id, ())| id)
+            .collect())
+    }
+
+    /// [`Self::accept`], running `reserve` for every newly admitted session
+    /// (with its driver in hand) before it is handed back: a caller's own
+    /// admission-time work — handing out a transport handle, staging a test
+    /// fault — that must not be mistaken for the admission itself. The
+    /// driver's books are opened by [`Self::register`], not here.
+    pub fn accept_with<R>(
+        &mut self,
+        mut reserve: impl FnMut(&mut IngestDriver<L::Session>) -> R,
+    ) -> Result<Vec<(SessionId, R)>, L::Error> {
+        let mut admitted = Vec::new();
+        loop {
+            match self.driver.poll_accept() {
+                AcceptOutcome::Idle | AcceptOutcome::Refused => return Ok(admitted),
+                AcceptOutcome::Error(e) => return Err(e),
+                AcceptOutcome::Admitted(id) => {
+                    if let Some(prepared) = self.driver.driver_mut(id).map(&mut reserve) {
+                        admitted.push((id, prepared));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Open session `id`'s books: a fresh progress entry, its clock origin and
+    /// the live-session gauge. Call once per session, after its admission-time
+    /// work ([`Self::accept_with`]).
+    pub fn register(&mut self, id: SessionId, now: Instant) {
+        self.progress.insert(id, P::default());
+        self.clocks.admit(id, now);
+        self.last_activity.insert(id, now);
+        self.active.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Note that session `id` was active at `now` (a datagram arrived), which
+    /// is what [`Self::idle_deadline`] measures from.
+    pub fn touch(&mut self, id: SessionId, now: Instant) {
+        if let Some(last) = self.last_activity.get_mut(&id) {
+            *last = now;
+        }
+    }
+
+    /// The instant session `id` ends for want of activity: `idle` after it was
+    /// last touched, as a wall-clock instant (what a transport timeout takes).
+    pub fn idle_deadline(&self, id: SessionId, idle: Duration) -> Instant {
+        self.last_activity
+            .get(&id)
+            .copied()
+            .unwrap_or_else(|| self.clocks.admit_base(id))
+            + idle
+    }
+
+    /// Drop the clock origin of every session that is already gone, so a
+    /// long-lived route keeps no entry per publisher it ever served.
+    pub fn prune_clocks(&mut self) {
+        let live: Vec<SessionId> = self.progress.keys().copied().collect();
+        self.clocks.retain(|id| live.contains(id));
+    }
+
+    /// Session `id`'s driver and its own progress state, for work that needs
+    /// both at once (the publish-and-segment step): runs `f` with them and
+    /// returns its result. `None` for a session already reaped.
+    pub fn with_session<R>(
+        &mut self,
+        id: SessionId,
+        f: impl FnOnce(&IngestDriver<L::Session>, &mut P) -> R,
+    ) -> Option<R> {
+        let state = self.progress.entry(id).or_default();
+        self.driver.driver(id).map(|driver| f(driver, state))
+    }
+
+    /// Session `id`'s driver and its own progress state, both borrowable
+    /// across an `.await` (the publish-and-segment step is async) — the same
+    /// pair as [`Self::with_session`], for a caller whose step must await.
+    pub fn session_parts(&mut self, id: SessionId) -> Option<(&IngestDriver<L::Session>, &mut P)> {
+        let state = self.progress.entry(id).or_default();
+        self.driver.driver(id).map(|driver| (driver, state))
+    }
+
+    /// The instant to feed session `id` with: `clock` measured from that
+    /// session's own admission (a caller-supplied wall clock, so a test can
+    /// move time deterministically).
+    pub fn now(&self, id: SessionId, clock: Instant) -> Timestamp {
+        self.clocks.now(id, clock)
+    }
+
+    /// Feed session `id` with what its read returned, publish what it
+    /// produced, and reap it if it is now terminal. Returns `true` when the
+    /// session is gone.
+    ///
+    /// `advance` runs BEFORE the reap, never after: a session's last programs
+    /// and segments must reach the route while it still owns them.
+    pub fn feed(&mut self, id: SessionId, input: <L::Session as Stage>::In<'_>, now: Timestamp) {
+        if let Some(driver) = self.driver.driver_mut(id) {
+            driver.feed(input, now);
+        }
+    }
+
+    /// End session `id` cleanly (end of input or a `DELETE`); callers release
+    /// and reap through [`Self::reap`] afterwards.
+    pub fn finish(&mut self, id: SessionId) {
+        if let Some(driver) = self.driver.driver_mut(id) {
+            driver.finish();
+        }
+    }
+
+    /// How many sessions are admitted right now.
+    pub fn len(&self) -> usize {
+        self.progress.len()
+    }
+
+    /// Whether no session is admitted.
+    pub fn is_empty(&self) -> bool {
+        self.progress.is_empty()
+    }
+
+    /// Reap session `id` if it is terminal, freeing its `max_sessions` slot
+    /// and its clock origin. Returns `true` when it is gone; `false` for a
+    /// session still live or already reaped.
+    pub fn reap(&mut self, id: SessionId) -> bool {
+        let reaped = self.driver.reap_if_terminal(id).is_some();
+        if reaped {
+            self.progress.remove(&id);
+            self.last_activity.remove(&id);
+            self.active.fetch_sub(1, Ordering::SeqCst);
+            self.clocks.retain(|other| *other != id);
+        }
+        reaped
     }
 }
 
@@ -2348,6 +2644,127 @@ mod tests {
         fn poll_accept(&mut self) -> Result<Option<ScriptedSession>, FakeError> {
             Ok(Some(ScriptedSession::new(vec![])))
         }
+    }
+
+    /// A listener serving one session per [`Self::release`], then idle.
+    struct QueuedListener {
+        paused: std::cell::Cell<bool>,
+        max_sessions: usize,
+    }
+
+    impl QueuedListener {
+        fn release(&self) {
+            self.paused.set(false);
+        }
+    }
+
+    impl Listener for QueuedListener {
+        type Session = ScriptedSession;
+        type Error = FakeError;
+
+        fn max_sessions(&self) -> usize {
+            self.max_sessions
+        }
+
+        fn poll_accept(&mut self) -> Result<Option<ScriptedSession>, FakeError> {
+            Ok((!self.paused.replace(true)).then(|| ScriptedSession::new(vec![])))
+        }
+    }
+
+    /// The bookkeeping shared by every concurrently-admitting ingest loop.
+    /// Mutation-checked against the two hand-written loops this replaces: a
+    /// route-wide clock origin (rather than per admission) and a reap that
+    /// skips the live-session gauge are each caught here.
+    #[test]
+    fn admitted_driver_measures_each_session_from_its_own_admission_and_frees_its_slot() {
+        use std::time::{Duration, Instant};
+
+        let start = Instant::now();
+        let mut admitted: AdmittedDriver<QueuedListener, ()> = AdmittedDriver::new(
+            run_listen(
+                QueuedListener {
+                    paused: std::cell::Cell::new(false),
+                    max_sessions: 2,
+                },
+                trunk_config(),
+                handshake(),
+                max_programs(),
+            ),
+            start,
+        );
+        let active = admitted.active_sessions();
+
+        let first = admitted.accept().expect("accept");
+        assert_eq!(first.len(), 1, "one queued session is admitted");
+        admitted.register(first[0], start);
+        assert_eq!(active.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        // A 150 s into the route's life, B joins; A's clock is from A's own
+        // admission, B's from B's (never the route's start).
+        let at = |secs: u64| start + Duration::from_secs(secs);
+        admitted.listener().release();
+        let second = admitted.accept().expect("accept");
+        admitted.register(second[0], at(150));
+        assert_eq!(active.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(
+            admitted.now(first[0], at(150)),
+            Timestamp::from_nanos(150_000_000_000)
+        );
+        assert_eq!(
+            admitted.now(second[0], at(155)),
+            Timestamp::from_nanos(5_000_000_000)
+        );
+
+        // An unrecognised session falls back to the route's start.
+        assert_eq!(
+            admitted.now(SessionId(99), at(7)),
+            Timestamp::from_nanos(7_000_000_000)
+        );
+
+        // Ending a session frees its slot; its books go with it.
+        admitted.finish(first[0]);
+        assert!(admitted.reap(first[0]), "a finished session is reaped");
+        assert_eq!(active.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(admitted.session_count(), 1);
+        assert!(!admitted.reap(first[0]), "reaping twice is a no-op");
+
+        // A live session's reap is a no-op too — nothing is removed early.
+        assert!(!admitted.reap(second[0]));
+        assert_eq!(admitted.session_count(), 1);
+
+        // Idle is measured from the last activity, never the admission.
+        admitted.touch(second[0], at(200));
+        assert_eq!(
+            admitted.idle_deadline(second[0], Duration::from_secs(10)),
+            at(210)
+        );
+    }
+
+    #[test]
+    fn prune_clocks_forgets_every_session_still_live() {
+        use std::time::Instant;
+
+        let start = Instant::now();
+        let mut admitted: AdmittedDriver<QueuedListener, ()> = AdmittedDriver::new(
+            run_listen(
+                QueuedListener {
+                    paused: std::cell::Cell::new(false),
+                    max_sessions: 1,
+                },
+                trunk_config(),
+                handshake(),
+                max_programs(),
+            ),
+            start,
+        );
+        let id = admitted.accept().expect("accept")[0];
+        admitted.register(id, start);
+        let at = start + std::time::Duration::from_secs(1);
+        admitted.finish(id);
+        admitted.reap(id);
+        // A reaped session keeps no clock: it falls back to the route start.
+        admitted.prune_clocks();
+        assert_eq!(admitted.now(id, at), Timestamp::from_nanos(1_000_000_000));
     }
 
     #[test]

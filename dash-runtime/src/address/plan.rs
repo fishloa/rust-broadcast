@@ -641,7 +641,10 @@ impl SegmentPlan {
     pub fn iter(&self) -> impl Iterator<Item = SegmentRef> + '_ {
         let mut i = 0u64;
         std::iter::from_fn(move || {
-            let r = self.get(i).ok().flatten()?;
+            let r = match self.get(i) {
+                Ok(Some(s)) => s,
+                _ => return None,
+            };
             i += 1;
             Some(r)
         })
@@ -669,11 +672,13 @@ impl SegmentPlan {
             .avail
             .as_ref()
             .map(|a| init_available_from(a.ast_us, self.period_start_us));
-        let until = self
-            .len()
-            .and_then(|n| n.checked_sub(1))
-            .and_then(|last| self.get(last).ok().flatten())
-            .and_then(|s| s.available_until_us);
+        let until =
+            self.len()
+                .and_then(|n| n.checked_sub(1))
+                .and_then(|last| match self.get(last) {
+                    Ok(Some(s)) => s.available_until_us,
+                    _ => None,
+                });
         ResourceRef {
             reference: reference.to_owned(),
             byte_range: range,
@@ -684,45 +689,46 @@ impl SegmentPlan {
 
     /// Index of the last segment whose Period-relative start is at or before
     /// `period_time_us`; `None` before the first segment.
-    #[must_use]
-    pub fn index_at_or_before(&self, period_time_us: i128) -> Option<u64> {
+    pub fn index_at_or_before(&self, period_time_us: i128) -> Result<Option<u64>, AddressError> {
         let n = self.len();
         let (mut lo, mut hi) = (0u64, n.unwrap_or(u64::MAX / 2));
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
-            match self.get(mid).ok().flatten() {
-                Some(s) if s.start_us <= period_time_us => lo = mid + 1,
-                Some(_) | None => hi = mid,
+            match self.get(mid) {
+                Ok(Some(s)) if s.start_us <= period_time_us => lo = mid + 1,
+                Ok(Some(_)) | Ok(None) | Err(_) => hi = mid,
             }
         }
-        lo.checked_sub(1)
+        Ok(lo.checked_sub(1))
     }
 
     /// Availability start of the segment at `index`.
-    #[must_use]
-    pub fn available_from_us(&self, index: u64) -> Option<i128> {
-        self.get(index).ok().flatten()?.available_from_us
+    pub fn available_from_us(&self, index: u64) -> Result<Option<i128>, AddressError> {
+        Ok(self.get(index)?.and_then(|s| s.available_from_us))
     }
 
     /// Availability end of the segment at `index`.
-    #[must_use]
-    pub fn available_until_us(&self, index: u64) -> Option<i128> {
-        self.get(index).ok().flatten()?.available_until_us
+    pub fn available_until_us(&self, index: u64) -> Result<Option<i128>, AddressError> {
+        Ok(self.get(index)?.and_then(|s| s.available_until_us))
     }
 
     /// The first index, and the number of segments, for which `pred` holds on
     /// a monotone-in-index predicate over `[0, bound)`: the count of leading
     /// indices where `pred` is true.
-    pub(crate) fn leading_true(&self, bound: u64, pred: impl Fn(&SegmentRef) -> bool) -> u64 {
+    pub(crate) fn leading_true(
+        &self,
+        bound: u64,
+        pred: impl Fn(&SegmentRef) -> bool,
+    ) -> Result<u64, AddressError> {
         let (mut lo, mut hi) = (0u64, bound);
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
-            match self.get(mid).ok().flatten() {
-                Some(s) if pred(&s) => lo = mid + 1,
-                _ => hi = mid,
+            match self.get(mid) {
+                Ok(Some(s)) if pred(&s) => lo = mid + 1,
+                Ok(Some(_)) | Ok(None) | Err(_) => hi = mid,
             }
         }
-        lo
+        Ok(lo)
     }
 
     pub(crate) fn constant_duration(&self) -> Option<u64> {

@@ -21,7 +21,7 @@ async fn publish_roundtrip(bind: &str, url_host: &str) {
     };
     let port = server.local_addr().unwrap().port();
     let accepted = tokio::spawn(async move {
-        let mut conn = server.accept().await.unwrap();
+        let mut conn = server.accept().await.unwrap().into_connection();
         let mut seen = Vec::new();
         while let Some(batch) = conn.next_events().await.unwrap() {
             seen.extend(batch);
@@ -88,7 +88,7 @@ async fn a_server_that_rejects_publish_surfaces_connection_refused() {
     .unwrap();
     let port = server.local_addr().unwrap().port();
     tokio::spawn(async move {
-        let mut conn = server.accept().await.unwrap();
+        let mut conn = server.accept().await.unwrap().into_connection();
         while let Ok(Some(_)) = conn.next_events().await {}
     });
     let target = RtmpTarget::parse(&format!("rtmp://127.0.0.1:{port}/live/wrong")).unwrap();

@@ -1,7 +1,15 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `tests/it/ingest_drive_golden.rs` pins the WHIP and RTMP ingest event sequences (`fixtures/golden/ingest/`): the ordered `SessionEvent`s each real publish produces, the program and track specs it lands, and its final health — recorded at the session boundary the #2373 shared drive loop must reproduce. Regenerate with `UPDATE_INGEST_GOLDENS=1`.
+
 ### Changed
+- The RTMP push builds its `onMetaData` with `transmux::on_metadata_body` and decides which tracks FLV can carry with `transmux::flv_track_kind`, so a file `FlvMux` writes and a stream the push publishes describe the same tracks the same way; the transport's own builder and codec check are gone. The published `onMetaData` now carries `audiosamplerate` from the AAC track and a `stereo` flag that follows its channel count (Adobe FLV v10.1 §E.5), and no longer the non-§E.5 `audiochannels`; the live body omits `duration` (it has no known length).
+- The SRT push parses its `srt://` URL with `srt_runtime::SrtUrl` and applies only its own policy (Caller mode, no passphrase); the push's hand-written parser, its percent decoder and its port/latency constants are gone. The accepted set and the error text are unchanged (`fixtures/golden/srt/push-url-table.txt` matches without regeneration), and `SrtUrlOverrides` is replaced by `srt_runtime::SrtUrl` (`mode` and `passphrase` are now parsed as values rather than rejected by the parser).
+- The push transports' wire bytes are pinned by `tests/it/push_wire_goldens.rs` (the RTMP `onMetaData`, sequence-header and first media bodies, and the `srt://` URL parse table), recorded before the code moved out of this crate (issue #2369).
+- The WHIP and RTMP ingest loops share one admitted-session driver (`media_plane::ingress::AdmittedDriver`): acceptance, the per-session clock origin, the publish-then-reap sequence and the idle clock are one implementation instead of two copies. The WHIP loop's hand-written idle-clock map is gone (its gauge now reports the driver's live sessions), and the RTMP loop keeps only its own read future and protocol session.
+- The RTMP ingest session's own `RtmpConnection` now drives rtmp-runtime's erased connection (`from_stream_erased`), so the golden tests replay the captured `rtmp/obs-publish.bin` publish through a real connection over an in-memory pipe (rtmp-runtime's `AsyncRtmpServer::accept` now returns the new `AcceptedRtmpConnection`).
 - BREAKING: the Smooth pull source is an adapter over the new `smooth-runtime` engine (#2370). `SmoothAction`, `SmoothResourceId` and `StreamIdx` are replaced by `smooth_runtime::Action` and `SmoothInput`. It gains live-join look-ahead, discontinuity handling and the engine's retry/backoff (a failing fragment is retried with backoff, then skipped on a live presentation or ends a static one; a manifest failure is retried before ending the session). Timestamps are now placed at each fragment's `tfxd` start in the stream's own timescale; the old session restarted every fragment at 0 and declared video 90 kHz while its durations were in the manifest timescale. A `401` still ends the session at once.
 - `FetchResult::NotReady`/`FetchOutcome::NotReady` are removed from the shared pull scheduler: nothing builds them now that the Smooth source's tolerated-404 loop is gone.
 - The UDP-family ingest sources bind through `dvb_stream::udp::bind_standard`, the workspace's one UDP bind, instead of a crate-local `socket2` setup: same options (`SO_REUSEADDR`, `SO_REUSEPORT` where it exists, `SO_RCVBUF` with the 4 MiB default, the IPv4/IPv6 multicast join), and a refused `SO_RCVBUF` is still logged and the bind carried on.
@@ -12,6 +20,10 @@
 - The RTSP push sends RFC 2250 §2 MP2T packets built by `transmux::rtp::Mp2tPacketiser` and records through `rtsp_runtime::AsyncRtspClient::start_record`; multimux now supplies only the SDP media section and the 90 kHz timestamp (its one clock read). Its own RTP header writer, MP2T splitting, control-URL derivation and ANNOUNCE/SETUP/RECORD choreography are gone. The wire is byte-identical: `fixtures/golden/rtsp/push-wire.golden` records every request and interleaved packet from before the move and matches without regeneration (#2368).
 - The RTSP push builds its ANNOUNCE session description with `rtsp_runtime::sdp::session_description` and supplies only its `m=` block, instead of assembling `v=`/`o=`/`s=`/`c=` itself; the body is byte-identical (`fixtures/golden/rtsp/rtsp-announce.sdp`).
 - The DASH-IF ingest reads the publisher's MPD and matches uploaded segment URLs with `dash-runtime` instead of transmux's removed MPD model (#2340).
+
+### Fixed
+- `rescale_to_90k` now wraps the rescaled RTP timestamp into the 32-bit range explicitly (RFC 3550 §5.1) instead of relying on `as u32`.
+- `Recorder::lines` and `Recorder::len` recover a poisoned lock via `PoisonError::into_inner` instead of returning an empty golden.
 
 ## [0.18.0] - 2026-11-10
 ### Changed
@@ -25,6 +37,7 @@
 - A media-playlist request (the primary, audio, subtitle and I-frame playlists) made before the route has announced its program is held, up to the blocking-reload timeout (5 s), until the program exists (and then, for the primary playlist, until the first segment closes), instead of an immediate `503`; a give-up is a `503` with `Retry-After: 1`. `Config::hold_cold_playlist = false` keeps the immediate `503`.
 - The DVR polled only when a new segment had closed, so an fMP4 init change with no new closed segment waited for the next close before the period rolled; the poll now also runs when the route's newest init differs from the one the recorder archived.
 ### Added
+- `tests/it/ingest_drive_golden.rs` pins the WHIP and RTMP ingest event sequences (`fixtures/golden/ingest/`): the ordered `SessionEvent`s each real publish produces, the program and track specs it lands, and its final health — recorded at the session boundary the #2373 shared drive loop must reproduce. Regenerate with `UPDATE_INGEST_GOLDENS=1`.
 - `OutputAuthSpec::Forwarded::trusted_proxies`: the IPs and CIDR blocks allowed to set the forwarded-user header. Omitted means loopback only (`127.0.0.0/8` and `::1`).
 - `Config::hold_cold_playlist` (default `true`) and `RouteHandle::with_hold_cold_playlist`.
 - `DvrRecorder::needs_poll_for_init`: `needs_poll` that also reports an init segment the recorder has not archived.

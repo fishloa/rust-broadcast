@@ -118,7 +118,7 @@ mod tests {
         let bytes = std::fs::read(test_fixtures::path(&format!("ts/{}", fixture))).unwrap();
         let mut state = WatchState::new();
         let mut clock = Duration::ZERO;
-        for datagram in bytes.chunks(7 * 188) {
+        for datagram in bytes.chunks(mpeg_ts::TS_BYTES_PER_DATAGRAM) {
             state.feed_datagram(datagram, clock);
             clock += Duration::from_millis(1);
         }

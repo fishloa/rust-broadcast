@@ -18,6 +18,7 @@
 
 use std::io;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -123,12 +124,15 @@ impl AsyncRtmpServer {
 
     /// Accepts the next inbound connection and wraps it with a fresh
     /// [`ServerSession`] built from this server's [`ServerConfig`].
-    pub async fn accept(&self) -> io::Result<RtmpConnection> {
-        let (stream, _peer) = self.listener.accept().await?;
-        Ok(RtmpConnection::from_stream(
-            stream,
-            ServerSession::new(self.config.clone()),
-            self.timeouts,
+    pub async fn accept(&self) -> io::Result<AcceptedRtmpConnection> {
+        let (stream, peer) = self.listener.accept().await?;
+        Ok(AcceptedRtmpConnection::new(
+            RtmpConnection::from_stream_erased(
+                stream,
+                ServerSession::new(self.config.clone()),
+                self.timeouts,
+            ),
+            peer,
         ))
     }
 
@@ -229,20 +233,69 @@ impl<S: AsyncRead + AsyncWrite + Unpin, T: RtmpSession> Driver<S, T> {
     }
 }
 
-/// One accepted RTMP connection: a stream (a [`TcpStream`] by default) driving a
-/// [`ServerSession`].
+/// An erased, transport-agnostic inbound byte stream: an accepted TCP socket,
+/// a TLS stream wrapping one, or a test's in-memory pipe.
+pub trait RtmpStream: AsyncRead + AsyncWrite + Unpin + Send {}
+
+impl<T: AsyncRead + AsyncWrite + Unpin + Send> RtmpStream for T {}
+
+/// `RtmpConnection`'s default stream type — the erased form — so a caller
+/// naming one `RtmpConnection` does not name its transport.
+pub type BoxStream = Pin<Box<dyn RtmpStream>>;
+
+/// A connection [`AsyncRtmpServer::accept`] just took off its listen socket:
+/// the publisher's address (which its erased stream cannot report) and the
+/// connection itself.
+pub struct AcceptedRtmpConnection {
+    peer: SocketAddr,
+    conn: RtmpConnection,
+}
+
+impl core::fmt::Debug for AcceptedRtmpConnection {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("AcceptedRtmpConnection")
+            .field("peer", &self.peer)
+            .finish_non_exhaustive()
+    }
+}
+
+impl AcceptedRtmpConnection {
+    /// Wrap an already-accepted connection with the peer it came from.
+    pub fn new(conn: RtmpConnection, peer: SocketAddr) -> Self {
+        Self { peer, conn }
+    }
+
+    /// The remote address of the publisher.
+    pub fn peer_addr(&self) -> SocketAddr {
+        self.peer
+    }
+
+    /// The connection, ready for [`RtmpConnection::next_events`].
+    pub fn into_connection(self) -> RtmpConnection {
+        self.conn
+    }
+}
+
+/// One accepted RTMP connection: a stream (an erased [`BoxStream`] by
+/// default) driving a [`ServerSession`].
 ///
 /// [`next_events`](Self::next_events) is the whole surface: read a chunk,
 /// drive the session, write the reply, return the events.
 #[derive(Debug)]
-pub struct RtmpConnection<S = TcpStream> {
+pub struct RtmpConnection<S = BoxStream> {
     driver: Driver<S, ServerSession>,
 }
 
-impl RtmpConnection<TcpStream> {
-    /// The remote address of the connected publisher.
-    pub fn peer_addr(&self) -> io::Result<SocketAddr> {
-        self.driver.framed.get_ref().peer_addr()
+impl RtmpConnection<BoxStream> {
+    /// Wrap any connected stream, erasing its type — the constructor
+    /// [`AsyncRtmpServer::accept`] uses, so one `RtmpConnection` names the
+    /// connection whatever the transport.
+    pub fn from_stream_erased<S>(stream: S, session: ServerSession, timeouts: RtmpTimeouts) -> Self
+    where
+        S: RtmpStream + 'static,
+    {
+        let erased: BoxStream = Box::pin(stream);
+        Self::from_stream(erased, session, timeouts)
     }
 }
 
@@ -484,7 +537,11 @@ mod tests {
             replied_bytes
         });
 
-        let mut conn = server.accept().await.expect("accept the client connection");
+        let mut conn = server
+            .accept()
+            .await
+            .expect("accept the client connection")
+            .into_connection();
         let mut events = Vec::new();
         while let Some(batch) = conn
             .next_events()
@@ -549,7 +606,7 @@ mod tests {
         // the handshake/connect/createStream/publish exchange as the client
         // sends.
         let server_task = tokio::spawn(async move {
-            let mut conn = server.accept().await.expect("accept");
+            let mut conn = server.accept().await.expect("accept").into_connection();
             // Collect the raw FLV bodies in arrival order, so the test can
             // check both the count AND the payload bytes/order (a
             // header-compression bug that still yields 2 events would
