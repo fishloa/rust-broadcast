@@ -2009,7 +2009,7 @@ mod tests {
         build_ts_bytes, handshake, track_spec, trunk_config,
     };
     use broadcast_common::{Demand, Stage};
-    use hls_runtime::server::{DEFAULT_TRACK_ID, HlsBody, HlsRequest};
+    use hls_runtime::server::{Container, DEFAULT_TRACK_ID, HlsBody, HlsRequest};
     use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
     use media_plane::ingress::{IngestDriver, IngestSession, SessionEvent};
     use std::collections::{HashSet, VecDeque};
@@ -3488,8 +3488,12 @@ mod tests {
 
     impl GapRig {
         fn new() -> Self {
+            Self::new_with_container(Container::Fmp4)
+        }
+
+        fn new_with_container(container: Container) -> Self {
             GapRig {
-                route: RouteHandle::new(1.0, 250, 16),
+                route: RouteHandle::new(1.0, 250, 16).with_container(container),
                 driver: IngestDriver::new(
                     GapSession::new(),
                     trunk_config(),
@@ -3597,6 +3601,38 @@ mod tests {
         );
 
         assert_gap_golden(&out);
+    }
+
+    #[test]
+    fn ts_hls_route_through_an_empty_track_set_and_back_shows_gap() {
+        let mut rig = GapRig::new_with_container(Container::MpegTs);
+        rig.feed();
+        rig.feed();
+        rig.feed_until_segments(GAP_SEGMENTS_PER_STAGE);
+
+        rig.driver.session().change_tracks(Vec::new());
+        for _ in 0..GAP_EMPTY_FEEDS {
+            rig.feed();
+        }
+        let gap_playlist = render_playlist(&rig.route);
+        assert!(gap_playlist.contains("#EXT-X-GAP"), "{gap_playlist}");
+
+        // numbering continues: collect media sequence numbers
+        let before: Vec<&str> = gap_playlist
+            .lines()
+            .filter(|l| l.starts_with("#EXTINF"))
+            .collect();
+        let _ = before;
+
+        rig.driver.session().change_tracks(gap_video_audio_specs());
+        let resumed = rig.closed_segments() + GAP_SEGMENTS_PER_STAGE;
+        rig.feed_until_segments(resumed);
+        let resumed_playlist = render_playlist(&rig.route);
+        assert!(
+            resumed_playlist.contains("#EXT-X-DISCONTINUITY\n"),
+            "{resumed_playlist}"
+        );
+        assert!(gap_playlist.contains("#EXT-X-GAP"), "{gap_playlist}");
     }
 
     // --- T7 (issue #1082): a stalled DVR pin must never block the shared --
