@@ -5567,11 +5567,7 @@ impl StreamingTsDemux {
                 if cc == state.last_cc
                     && let Some(prev) = state.last_packet
                 {
-                    match mpeg_ts::ts_dup::check_duplicate(
-                        &prev,
-                        raw,
-                        state.dup_used_for_last,
-                    ) {
+                    match mpeg_ts::ts_dup::check_duplicate(&prev, raw, state.dup_used_for_last) {
                         // §2.4.3.3's one legal repeat. `dup_used_for_last`
                         // records that this PID has now spent it.
                         mpeg_ts::ts_dup::DuplicateVerdict::Legal => {

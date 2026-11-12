@@ -342,8 +342,8 @@ fn cc_anomaly_m6_duplicate_legal_dups_not_flagged() {
 /// `mpeg_ts::ts_dup`, independently of `CcAnomalyCheck`'s own use
 /// of it — the oracle the assertions above cross-check against.
 fn count_legal_duplicates(ts: &[u8]) -> (usize, usize) {
-    use mpeg_ts::ts_dup::{DuplicateVerdict, check_duplicate};
     use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
+    use mpeg_ts::ts_dup::{DuplicateVerdict, check_duplicate};
     use std::collections::BTreeMap;
 
     struct St {
