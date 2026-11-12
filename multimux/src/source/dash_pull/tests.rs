@@ -1158,12 +1158,22 @@ fn live_expected(rep: u32, numbers: &[u64]) -> Vec<Sample> {
 
 const FEW_SEGMENTS: usize = 8;
 
+/// The `timeShiftBufferDepth` of a pull whose oracle assumes every segment is
+/// fetched in order. A pull that falls further behind the live edge than this
+/// jumps forward by design, which this oracle does not model; the value is how
+/// long a loaded machine may stall the pull before that happens.
+const STALL_TOLERANT_TSB_US: i64 = 120_000_000;
+
 /// A live `$Number$` presentation over a real socket: the pull joins near the
 /// live edge, and the samples that reach the `Trunk` are, in order and byte for
 /// byte, those of the segments the origin served.
 #[tokio::test]
 async fn a_live_presentation_delivers_the_served_segments_byte_exact() {
-    let live = serve_live(LiveShape::default()).await;
+    let live = serve_live(LiveShape {
+        tsb_us: STALL_TOLERANT_TSB_US,
+        ..LiveShape::default()
+    })
+    .await;
     let mut pull = Pull::start(route(live.url()), SkewedClock::new(0));
     let ended = pull.until(|d| d.video().len() >= FEW_SEGMENTS * 25).await;
     assert!(ended.is_none(), "a live pull does not end: {ended:?}");
