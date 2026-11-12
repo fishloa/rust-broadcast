@@ -29,7 +29,7 @@ use tower::ServiceExt;
 
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
-use multimux::output::llhls::LlHlsOutput;
+use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
 use transmux::ll_hls::PartInfo;
 use transmux::pipeline::Sample;
@@ -87,7 +87,7 @@ async fn end_to_end_pipeline_serves_valid_llhls() {
         "cam".to_string(),
         (
             store.clone(),
-            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            vec![Arc::new(HlsOutput::default()) as Arc<dyn Output>],
         ),
     );
     let app = router(Arc::new(AppState::new(streams)));
@@ -160,7 +160,7 @@ fn part(seq: u32, idx: u32) -> PartInfo {
     }
 }
 
-/// Bites the blocking-reload wakeup path (`output::llhls`'s internal `wait_for_progress`):
+/// Bites the blocking-reload wakeup path (`output::hls`'s internal `wait_for_progress`):
 /// without the `watch`-based wakeup + re-render, a `_HLS_msn`/`_HLS_part`
 /// request for a not-yet-available part would either serve the stale
 /// playlist (missing the new part) or hang to `BLOCKING_RELOAD_TIMEOUT`
@@ -178,7 +178,7 @@ async fn blocking_reload_resolves_when_part_arrives() {
         "cam".to_string(),
         (
             store.clone(),
-            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            vec![Arc::new(HlsOutput::default()) as Arc<dyn Output>],
         ),
     );
     let app = router(Arc::new(AppState::new(streams)));
@@ -226,7 +226,7 @@ async fn blocking_reload_resolves_when_part_arrives() {
     // the bare URI — that URI also appears in the always-emitted
     // `#EXT-X-PRELOAD-HINT:TYPE=PART,URI="part-1-1.1.m4s"` line for the
     // next-expected part, which is present even before `add_part(1, 1)` runs
-    // (see `multimux::output::llhls::media_playlist_m3u8`). Only a genuine PART line
+    // (see `multimux::output::hls::media_playlist_m3u8`). Only a genuine PART line
     // proves the new part was actually rendered.
     // (The playlist's part names carry the origin's instance token:
     // `part-1-{instance}-1.1.m4s`.)

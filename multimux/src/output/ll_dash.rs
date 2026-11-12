@@ -30,7 +30,7 @@
 //! (see its private `stream_in_progress_segment`): a `seg-{track}-{seq}.m4s`
 //! request that doesn't yet resolve to a *closed* segment is retried against
 //! the route's `part-{track}-{seq}.{idx}.m4s` entries — the exact same
-//! partial-segment bytes [`crate::output::llhls`] already serves for
+//! partial-segment bytes [`crate::output::hls`] already serves for
 //! LL-HLS — concatenated in order as a streamed body, rather than 404ing.
 //! Once the segment closes, later requests for the same URI resolve
 //! immediately from the route's whole-segment bytes with a normal
@@ -524,7 +524,7 @@ mod tests {
 
     /// MUTATION VERIFIED (issue #805 task 4): a route with no program
     /// announced yet must answer `503`, not `404` — see
-    /// `output::llhls`'s identical test for the mutation this guards.
+    /// `output::hls`'s identical test for the mutation this guards.
     #[tokio::test]
     async fn manifest_not_yet_announced_is_503_not_404() {
         let route = Arc::new(RouteHandle::new(4.0, 500, 4));

@@ -111,7 +111,7 @@ const SEGMENT_ABUSE_FUTURE_BOUND: u32 = 4;
 
 /// RAII guard bumping/dropping [`crate::prometheus::ACTIVE_BLOCKING_REQUESTS`]
 /// for the lifetime of a genuine blocking wait ([`crate::http::resolve_blocking`]'s
-/// `on_enter_wait`, both here and in `output::llhls`) — incremented on
+/// `on_enter_wait`, both here and in `output::hls`) — incremented on
 /// construction, decremented on drop, so the gauge stays accurate even if the
 /// awaited future is itself dropped (e.g. the client disconnects mid-wait),
 /// not just on a normal return.
@@ -1033,7 +1033,7 @@ mod tests {
     /// MUTATION VERIFIED (issue #805 task 4): a route with no program
     /// announced yet (a bare `RouteHandle::new`, never
     /// `publish_new_program`/`publish_program`d) must answer `503`, not
-    /// `404` -- see `output::llhls`'s identical test for the mutation this
+    /// `404` -- see `output::hls`'s identical test for the mutation this
     /// guards (`http::resolve_route_program`'s `NotYetAnnounced` arm).
     #[tokio::test]
     async fn dynamic_file_not_yet_announced_is_503_not_404() {

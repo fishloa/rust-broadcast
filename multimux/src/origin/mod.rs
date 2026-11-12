@@ -11,7 +11,7 @@
 //!   "multi-output nest collision" this module fixes).
 //! - each configured output's **manifest routes**
 //!   ([`crate::output::Output::manifest_routes`]) — `master.m3u8`/
-//!   `media.m3u8` for LL-HLS ([`crate::output::llhls`]), `manifest.mpd` for
+//!   `media.m3u8` for LL-HLS ([`crate::output::hls`]), `manifest.mpd` for
 //!   DASH ([`crate::output::dash`]).
 //!
 //! Also mounts three root-level (not `/{stream}/`-scoped) operability
@@ -88,7 +88,7 @@ const OUTPUT_AUTH_REALM: &str = "multimux";
 ///   rather than erroring the connection, so it composes directly with
 ///   axum's `Infallible`-error `Router` with no `HandleErrorLayer`. Must stay
 ///   above the LL-HLS blocking-reload cap (5 s —
-///   `output::llhls`/`origin::resource`'s own `BLOCKING_RELOAD_TIMEOUT`) so
+///   `output::hls`/`origin::resource`'s own `BLOCKING_RELOAD_TIMEOUT`) so
 ///   a legitimate long-poll `_HLS_msn`/`_HLS_part` blocking request is never
 ///   killed by this layer instead of resolving normally or falling back at
 ///   its own 5 s cap — [`crate::config::Config::validate`] enforces this.
@@ -354,7 +354,9 @@ pub fn limit_budget_test_app(ordinary: usize, queue: Duration) -> Router {
         "cam1".to_string(),
         (
             store,
-            vec![Arc::new(crate::output::llhls::LlHlsOutput::default()) as Arc<dyn Output>],
+            vec![Arc::new(crate::output::hls::HlsOutput::low_latency(
+                crate::output::hls::DEFAULT_PLAYLIST_NAME,
+            )) as Arc<dyn Output>],
         ),
     );
     let state = AppState::new(streams).with_limits(HttpLimits {
@@ -2390,7 +2392,7 @@ async fn shutdown_signal() {
 mod tests {
     use super::*;
     use crate::dvr::DvrConfig;
-    use crate::output::llhls::LlHlsOutput;
+    use crate::output::hls::HlsOutput;
     use crate::route::HealthState;
     use crate::route::RouteHandle;
     use crate::testutil::body_string;
@@ -2412,7 +2414,9 @@ mod tests {
             "cam1".to_string(),
             (
                 store,
-                vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+                vec![Arc::new(HlsOutput::low_latency(
+                    crate::output::hls::DEFAULT_PLAYLIST_NAME,
+                )) as Arc<dyn Output>],
             ),
         );
         Arc::new(AppState::new(streams))
@@ -2468,7 +2472,9 @@ mod tests {
             name.to_string(),
             (
                 store,
-                vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+                vec![Arc::new(HlsOutput::low_latency(
+                    crate::output::hls::DEFAULT_PLAYLIST_NAME,
+                )) as Arc<dyn Output>],
             ),
         );
         Arc::new(AppState::new(streams))
@@ -2512,7 +2518,7 @@ mod tests {
         assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
     }
 
-    // --- "unknown stream" 404 tests, moved from `output::llhls`'s handlers:
+    // --- "unknown stream" 404 tests, moved from `output::hls`'s handlers:
     // a stream name absent from `state.streams` matches no nested output
     // router at all, so every route under it 404s — same externally-visible
     // behaviour as the pre-refactor per-handler `contains_key` check, now
@@ -2603,7 +2609,9 @@ mod tests {
             "cam1".to_string(),
             (
                 store,
-                vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+                vec![Arc::new(HlsOutput::low_latency(
+                    crate::output::hls::DEFAULT_PLAYLIST_NAME,
+                )) as Arc<dyn Output>],
             ),
         );
         let app = router(Arc::new(AppState::new(streams)));
@@ -2625,7 +2633,9 @@ mod tests {
             "vod".to_string(),
             (
                 store,
-                vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+                vec![Arc::new(HlsOutput::low_latency(
+                    crate::output::hls::DEFAULT_PLAYLIST_NAME,
+                )) as Arc<dyn Output>],
             ),
         );
         let app = router(Arc::new(AppState::new(streams)));
@@ -2665,7 +2675,9 @@ mod tests {
             "metrics-probe".to_string(),
             (
                 store,
-                vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+                vec![Arc::new(HlsOutput::low_latency(
+                    crate::output::hls::DEFAULT_PLAYLIST_NAME,
+                )) as Arc<dyn Output>],
             ),
         );
         let state = Arc::new(AppState::new(streams));
@@ -2793,7 +2805,9 @@ mod tests {
             (
                 store,
                 vec![
-                    Arc::new(LlHlsOutput::default()) as Arc<dyn Output>,
+                    Arc::new(HlsOutput::low_latency(
+                        crate::output::hls::DEFAULT_PLAYLIST_NAME,
+                    )) as Arc<dyn Output>,
                     Arc::new(crate::output::dash::DashOutput) as Arc<dyn Output>,
                 ],
             ),
@@ -2973,7 +2987,9 @@ mod tests {
             (
                 store.clone(),
                 vec![
-                    Arc::new(LlHlsOutput::default()) as Arc<dyn Output>,
+                    Arc::new(HlsOutput::low_latency(
+                        crate::output::hls::DEFAULT_PLAYLIST_NAME,
+                    )) as Arc<dyn Output>,
                     Arc::new(crate::output::dash::DashOutput) as Arc<dyn Output>,
                     Arc::new(crate::output::ll_dash::LlDashOutput) as Arc<dyn Output>,
                 ],
@@ -3077,7 +3093,7 @@ mod tests {
 
     /// The shared response-header middleware treats `.mpd` the same as
     /// `.m3u8` (`no-cache`) and everything else as immutable — proving the
-    /// generalisation from `output::llhls`'s old per-output middleware
+    /// generalisation from `output::hls`'s old per-output middleware
     /// (which only ever checked `.m3u8`) actually covers DASH too.
     #[tokio::test]
     async fn manifest_and_resource_responses_carry_expected_cache_control_and_cors() {
@@ -3112,7 +3128,9 @@ mod tests {
             (
                 store,
                 vec![
-                    Arc::new(LlHlsOutput::default()) as Arc<dyn Output>,
+                    Arc::new(HlsOutput::low_latency(
+                        crate::output::hls::DEFAULT_PLAYLIST_NAME,
+                    )) as Arc<dyn Output>,
                     Arc::new(crate::output::dash::DashOutput) as Arc<dyn Output>,
                 ],
             ),
@@ -3197,7 +3215,9 @@ mod tests {
             (
                 store,
                 vec![
-                    Arc::new(LlHlsOutput::default()) as Arc<dyn Output>,
+                    Arc::new(HlsOutput::low_latency(
+                        crate::output::hls::DEFAULT_PLAYLIST_NAME,
+                    )) as Arc<dyn Output>,
                     Arc::new(crate::output::dash::DashOutput) as Arc<dyn Output>,
                 ],
             ),
@@ -3353,7 +3373,9 @@ mod tests {
             "cam1".to_string(),
             (
                 store,
-                vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+                vec![Arc::new(HlsOutput::low_latency(
+                    crate::output::hls::DEFAULT_PLAYLIST_NAME,
+                )) as Arc<dyn Output>],
             ),
         );
         let app = router(Arc::new(AppState::new(streams).with_limits(HttpLimits {
@@ -3421,7 +3443,9 @@ mod tests {
             "cam1".to_string(),
             (
                 store,
-                vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+                vec![Arc::new(HlsOutput::low_latency(
+                    crate::output::hls::DEFAULT_PLAYLIST_NAME,
+                )) as Arc<dyn Output>],
             ),
         );
         let limits = HttpLimits {
@@ -3522,7 +3546,9 @@ mod tests {
             "cam1".to_string(),
             (
                 store,
-                vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+                vec![Arc::new(HlsOutput::low_latency(
+                    crate::output::hls::DEFAULT_PLAYLIST_NAME,
+                )) as Arc<dyn Output>],
             ),
         );
         let limits = HttpLimits {
@@ -3620,7 +3646,9 @@ mod tests {
             "cam1".to_string(),
             (
                 store,
-                vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+                vec![Arc::new(HlsOutput::low_latency(
+                    crate::output::hls::DEFAULT_PLAYLIST_NAME,
+                )) as Arc<dyn Output>],
             ),
         );
         streams

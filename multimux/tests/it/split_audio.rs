@@ -26,7 +26,7 @@ use crate::support::shared_it::nz;
 use multimux::config::{AudioTrackSelector, Config};
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
-use multimux::output::llhls::LlHlsOutput;
+use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
 use multimux::source::segment::ProgramSegmenter;
 
@@ -318,7 +318,7 @@ fn app_for(route: Arc<RouteHandle>) -> Router {
         STREAM.to_string(),
         (
             route,
-            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            vec![Arc::new(HlsOutput::default()) as Arc<dyn Output>],
         ),
     );
     router(Arc::new(AppState::new(streams)))

@@ -1352,7 +1352,7 @@ fn validate_playlist_name(name: &str) -> Result<()> {
             reason: format!("must not contain a slash, got {name:?}"),
         });
     }
-    // `LlHlsOutput::manifest_routes` mounts `master.m3u8` and `playlist_name`
+    // `HlsOutput::manifest_routes` mounts `master.m3u8` and `playlist_name`
     // as two separate axum routes on the same per-stream router; the same
     // name for both would panic axum at router-build time (a route
     // conflict) rather than fail with a clean config error, so reject it
@@ -2188,7 +2188,7 @@ pub struct Config {
     /// Per-request HTTP timeout, in seconds (issue #663 P5, audit-concurrency
     /// #3) — see [`crate::origin::HttpLimits::request_timeout`]. Must exceed
     /// 5.0 (the LL-HLS blocking-reload cap,
-    /// `output::llhls`/`origin::resource`'s `BLOCKING_RELOAD_TIMEOUT`) or a
+    /// `output::hls`/`origin::resource`'s `BLOCKING_RELOAD_TIMEOUT`) or a
     /// legitimate long-poll blocking request would be cut off by this layer
     /// before it ever gets the chance to resolve or fall back on its own —
     /// enforced by [`Config::validate`].
@@ -2216,11 +2216,11 @@ pub struct Config {
     /// The media-playlist filename served at `/{stream}/{playlist_name}`
     /// (issue #663 "configurable `playlist_name`") — `master.m3u8`'s
     /// `#EXT-X-STREAM-INF` reference follows suit
-    /// (`crate::output::llhls::LlHlsOutput::new`). Applies to whichever of
+    /// (`crate::output::hls::HlsOutput::low_latency`). Applies to whichever of
     /// [`OutputKind::LlHls`]/[`OutputKind::TsHls`] a route configures (issue
     /// #887: the two are mutually exclusive on one route, so this is never
     /// ambiguous). Defaults to
-    /// [`crate::output::llhls::DEFAULT_PLAYLIST_NAME`] (`"media.m3u8"`),
+    /// [`crate::output::hls::DEFAULT_PLAYLIST_NAME`] (`"media.m3u8"`),
     /// preserving every existing config's behaviour unchanged. `master.m3u8`
     /// itself is not configurable, and DASH's `manifest.mpd` is unaffected.
     /// Validated non-empty, `.m3u8`-suffixed, and slash-free by
@@ -2343,7 +2343,7 @@ impl PreboundBinds {
 }
 
 /// Default [`Config::playlist_name`] when a config omits the field:
-/// [`crate::output::llhls::DEFAULT_PLAYLIST_NAME`], preserving every
+/// [`crate::output::hls::DEFAULT_PLAYLIST_NAME`], preserving every
 /// pre-#663 config's `/media.m3u8` behaviour unchanged.
 /// Default [`Config::concurrency_queue_timeout_secs`] — the limit's own
 /// default, so the two cannot drift.
@@ -2352,7 +2352,7 @@ fn default_concurrency_queue_timeout_secs() -> f64 {
 }
 
 fn default_playlist_name() -> String {
-    crate::output::llhls::DEFAULT_PLAYLIST_NAME.to_string()
+    crate::output::hls::DEFAULT_PLAYLIST_NAME.to_string()
 }
 
 /// Default [`Config::program_date_time`] when a config omits the field:
@@ -2393,7 +2393,7 @@ impl Default for Config {
 
 /// Lower bound [`Config::validate`] enforces on `request_timeout_secs`: the
 /// LL-HLS engine's own blocking-reload cap (5 s —
-/// `output::llhls`/`origin::resource`'s `BLOCKING_RELOAD_TIMEOUT`). The
+/// `output::hls`/`origin::resource`'s `BLOCKING_RELOAD_TIMEOUT`). The
 /// global HTTP timeout must stay strictly above it, or the global layer
 /// would cut off a legitimate long-poll blocking request before the LL-HLS
 /// engine's own cap ever gets a chance to resolve it or fall back.

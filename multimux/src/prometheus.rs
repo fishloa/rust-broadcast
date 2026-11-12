@@ -14,7 +14,7 @@
 //!   retried).
 //! - `multimux_active_blocking_requests` (`ACTIVE_BLOCKING_REQUESTS`) —
 //!   gauge (no route label — the LL-HLS output's blocking-wait helpers don't
-//!   currently know their own route name; see `output::llhls`): count of
+//!   currently know their own route name; see `output::hls`): count of
 //!   LL-HLS blocking-reload/preload-hint requests (RFC 8216bis §6.2.5.2,
 //!   §6.2.2) currently parked awaiting new data.
 //! - `multimux_http_requests_total` / `multimux_http_request_duration_seconds`

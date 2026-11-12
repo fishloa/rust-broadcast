@@ -18,7 +18,7 @@ use transmux::ts_demux::TsDemux;
 
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
-use multimux::output::llhls::LlHlsOutput;
+use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
 use multimux::source::segment::ProgramSegmenter;
 
@@ -136,7 +136,7 @@ pub fn route_app_with_profiles(
         STREAM.to_string(),
         (
             route,
-            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            vec![Arc::new(HlsOutput::default()) as Arc<dyn Output>],
         ),
     );
     router(Arc::new(AppState::new(streams)))

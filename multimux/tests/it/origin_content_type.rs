@@ -12,7 +12,7 @@ use tower::ServiceExt;
 
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
-use multimux::output::llhls::LlHlsOutput;
+use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
 use transmux::ll_hls::PartInfo;
 
@@ -69,7 +69,7 @@ fn app_for(route: Arc<RouteHandle>) -> axum::Router {
         "cam".to_string(),
         (
             route,
-            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            vec![Arc::new(HlsOutput::default()) as Arc<dyn Output>],
         ),
     );
     router(Arc::new(AppState::new(streams)))

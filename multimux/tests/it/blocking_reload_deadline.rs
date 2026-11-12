@@ -16,7 +16,7 @@ use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
-use multimux::output::llhls::LlHlsOutput;
+use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
 
 const SPROP: &str = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
@@ -89,7 +89,7 @@ fn app(store: &Arc<RouteHandle>) -> axum::Router {
         "cam".to_string(),
         (
             store.clone(),
-            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            vec![Arc::new(HlsOutput::default()) as Arc<dyn Output>],
         ),
     );
     router(Arc::new(AppState::new(streams).with_limits(

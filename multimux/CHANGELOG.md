@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+
+### Changed
+- **BREAKING:** one HLS output, `output::hls::HlsOutput`, parameterised by `HlsFlavour` (`HlsOutput::low_latency(name)` for LL-HLS over fMP4, `HlsOutput::segmented(name)` for classic TS-HLS), replaces `output::llhls::LlHlsOutput` and `output::ts_hls::TsHlsOutput`; the `llhls` and `ts_hls` modules are removed (#2449). Config output names (`llhls`, `ts_hls`), playlist names and URLs are unchanged.
 ### Fixed
 - The segment pump and push outputs treat the new `SampleCursorItem::TracksLagged` like a `TracksChanged` to the carried track set (audit A11-2).
 - A route advertises what is being served (audit A11-1): its track specs (DASH `codecs`, HLS master `CODECS`) are set only after the segmenter accepts a track change, so a refused change no longer leaves the route naming codecs the segmenter is not producing. The specs of each init generation are kept, so segments still in the DVR window keep the specs they were cut under.

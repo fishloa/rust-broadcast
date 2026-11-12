@@ -15,7 +15,7 @@ use media_plane::ProgramId;
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
 use multimux::output::dash::DashOutput;
-use multimux::output::llhls::LlHlsOutput;
+use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
 use transmux::TrackId;
 use transmux::ll_hls::SegmentInfo;
@@ -54,7 +54,7 @@ fn make_app() -> (axum::Router, Arc<RouteHandle>) {
         (
             store.clone(),
             vec![
-                Arc::new(LlHlsOutput::default()) as Arc<dyn Output>,
+                Arc::new(HlsOutput::default()) as Arc<dyn Output>,
                 Arc::new(DashOutput) as Arc<dyn Output>,
             ],
         ),

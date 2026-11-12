@@ -25,8 +25,8 @@ use multimux::dvr::DvrConfig;
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
 use multimux::output::OutputKind;
-use multimux::output::llhls::LlHlsOutput;
-use multimux::output::ts_hls::TsHlsOutput;
+use multimux::output::hls::HlsOutput;
+use multimux::output::hls::HlsOutput;
 use multimux::registry::SchemeRegistry;
 use multimux::route::RouteHandle;
 use multimux::serve_with_registry_on;
@@ -64,7 +64,7 @@ async fn arrival_pdt_on_media_and_iframe() {
         "cam".to_string(),
         (
             store.clone(),
-            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            vec![Arc::new(HlsOutput::default()) as Arc<dyn Output>],
         ),
     );
     let app = router(Arc::new(AppState::new(streams)));
@@ -134,7 +134,7 @@ async fn off_emits_no_pdt() {
         "cam".to_string(),
         (
             store.clone(),
-            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            vec![Arc::new(HlsOutput::default()) as Arc<dyn Output>],
         ),
     );
     let app = router(Arc::new(AppState::new(streams)));
@@ -166,7 +166,9 @@ async fn ts_hls_route_carries_pdt() {
         "cam".to_string(),
         (
             store.clone(),
-            vec![Arc::new(TsHlsOutput::default()) as Arc<dyn Output>],
+            vec![Arc::new(HlsOutput::segmented(
+                multimux::output::hls::DEFAULT_PLAYLIST_NAME,
+            )) as Arc<dyn Output>],
         ),
     );
     let app = router(Arc::new(AppState::new(streams)));
@@ -227,7 +229,7 @@ async fn pdt_validator_clean() {
         "cam".to_string(),
         (
             store.clone(),
-            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            vec![Arc::new(HlsOutput::default()) as Arc<dyn Output>],
         ),
     );
     let app = router(Arc::new(AppState::new(streams)));
