@@ -1249,11 +1249,12 @@ pub fn xs_duration(d: Duration) -> String {
 /// `ISO_639_language_descriptor` parser — ETSI EN 300 468 §6.2.19). `None` for
 /// a non-TS source or when no alphabetic code is present.
 fn lang_from_es_info(descriptors: &[u8]) -> Option<String> {
-    crate::ir::AudioMetadata::from_es_info(descriptors)
+    let raw = crate::ir::AudioMetadata::from_es_info(descriptors)
         .languages
         .into_iter()
         .map(|l| l.language)
-        .find(|l| l.bytes().all(|b| b.is_ascii_alphabetic()))
+        .find(|l| l.bytes().all(|b| b.is_ascii_alphabetic()))?;
+    broadcast_common::bcp47_language(&raw)
 }
 
 /// Partition `reprs`' entries of `kind` into AdaptationSets, one per
@@ -1351,7 +1352,10 @@ fn descriptor(scheme_id_uri: &str, value: Option<&str>) -> Descriptor {
 fn content_protection(cp: &ContentProtectionSystem) -> Descriptor {
     let mut d = descriptor(&cp.scheme_id_uri, cp.value.as_deref());
     d.default_kid = cp.default_kid.as_ref().map(format_kid);
-    d.pssh = cp.pssh.as_deref().map(crate::rtp::base64_encode);
+    d.pssh = cp
+        .pssh
+        .as_deref()
+        .map(broadcast_common::base64::base64_encode);
     d
 }
 

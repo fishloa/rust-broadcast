@@ -333,9 +333,11 @@ dependencies = [
 name = "broadcast-common"
 version = "11.1.0"
 dependencies = [
+ "base64 0.23.1",
  "chrono",
  "erased-serde",
  "hex",
+ "iso-639",
  "quick-xml",
  "serde",
 ]
@@ -1277,7 +1279,6 @@ dependencies = [
  "broadcast-hls",
  "bytes",
  "container-probe",
- "iso-639",
  "jiff",
  "media-plane",
  "mpeg-ts",
@@ -1846,6 +1847,7 @@ dependencies = [
  "container-probe",
  "dvb-conformance",
  "dvb-si",
+ "dvb-stream",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -2729,7 +2731,6 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 name = "scte35-splice"
 version = "5.0.1"
 dependencies = [
- "base64 0.23.1",
  "broadcast-common",
  "serde",
  "thiserror",

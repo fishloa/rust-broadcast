@@ -63,7 +63,7 @@ fn has_discontinuity(pkt: &[u8]) -> bool {
 /// alongside `dvb-conformance`, `media-doctor`, and this crate's own
 /// `ops::continuity::ContinuityOp`.
 fn is_legal_duplicate(prev: &[u8], curr: &[u8]) -> bool {
-    broadcast_common::ts_dup::is_legal_duplicate_pair(prev, curr)
+    mpeg_ts::ts_dup::is_legal_duplicate_pair(prev, curr)
 }
 
 #[test]

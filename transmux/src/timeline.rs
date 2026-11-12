@@ -4,8 +4,11 @@
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 
+use crate::JoinDecision;
+use crate::Sample;
+use crate::TrackId;
+use crate::TrackSpec;
 use broadcast_common::timescale::{Rounding, to_micros};
-use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 
 /// Default backward step that marks a new timeline, microseconds.
 pub const DEFAULT_JUMP_BACKWARD_US: u64 = 1_000_000;
@@ -13,7 +16,7 @@ pub const DEFAULT_JUMP_BACKWARD_US: u64 = 1_000_000;
 /// microseconds.
 pub const DEFAULT_JUMP_FORWARD_SLACK_US: u64 = 5_000_000;
 
-/// Thresholds of the timeline-jump detector, see [`crate::Config::timeline_jump`].
+/// Thresholds of the timeline-jump detector, see `broadcast-client::Config::timeline_jump`.
 ///
 /// Between two consecutive kept samples of a track, with `step = pts - previous pts` converted
 /// to microseconds, a new timeline starts when `step < -backward_us` or
@@ -63,7 +66,11 @@ struct Epoch {
     stale: BTreeSet<TrackId>,
 }
 
-pub(crate) struct JumpDetector {
+/// Per-track timeline-jump detector.
+///
+/// Detects a new timeline from media alone (origin restart, looping recorder,
+/// channel swap behind one URL) using broadcast-client semantics.
+pub struct JumpDetector {
     config: Option<TimelineJumpConfig>,
     tracks: BTreeMap<TrackId, TrackInfo>,
     audio_order: Vec<TrackId>,
@@ -76,7 +83,7 @@ pub(crate) struct JumpDetector {
 }
 
 impl JumpDetector {
-    pub(crate) fn new(config: Option<TimelineJumpConfig>) -> Self {
+    pub fn new(config: Option<TimelineJumpConfig>) -> Self {
         Self {
             config,
             tracks: BTreeMap::new(),
@@ -90,7 +97,7 @@ impl JumpDetector {
         }
     }
 
-    pub(crate) fn on_tracks(&mut self, specs: &[TrackSpec]) {
+    pub fn on_tracks(&mut self, specs: &[TrackSpec]) {
         self.tracks.clear();
         self.audio_order.clear();
         for spec in specs {
@@ -114,18 +121,18 @@ impl JumpDetector {
         self.last.retain(|t, _| present.contains_key(t));
     }
 
-    pub(crate) fn set_rendered(&mut self, tracks: Option<&[TrackId]>) {
+    pub fn set_rendered(&mut self, tracks: Option<&[TrackId]>) {
         self.rendered = tracks.map(|t| t.iter().copied().collect());
     }
 
-    pub(crate) fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.last.clear();
         self.post_reset.clear();
         self.epoch = None;
         self.handled = false;
     }
 
-    pub(crate) fn begin_epoch(&mut self, jumped: TrackId, sample: &Sample) {
+    pub fn begin_epoch(&mut self, jumped: TrackId, sample: &Sample) {
         let (Some(cfg), Some(pts), Some(info)) =
             (self.config, sample.pts, self.tracks.get(&jumped).copied())
         else {
@@ -148,7 +155,7 @@ impl JumpDetector {
         });
     }
 
-    pub(crate) fn screen(&mut self, track: TrackId, sample: &Sample) -> bool {
+    pub fn screen(&mut self, track: TrackId, sample: &Sample) -> bool {
         let Some(epoch) = self.epoch.as_mut() else {
             return true;
         };
@@ -169,12 +176,12 @@ impl JumpDetector {
         false
     }
 
-    pub(crate) fn note_reset(&mut self) {
+    pub fn note_reset(&mut self) {
         self.post_reset.clear();
         self.handled = true;
     }
 
-    pub(crate) fn already_handled(&self) -> bool {
+    pub fn already_handled(&self) -> bool {
         self.handled
     }
 
@@ -206,7 +213,7 @@ impl JumpDetector {
         to_micros(i128::from(pts), timescale, Rounding::TowardZero)
     }
 
-    pub(crate) fn is_jump(
+    pub fn is_jump(
         &self,
         track: TrackId,
         sample: &Sample,
@@ -227,7 +234,7 @@ impl JumpDetector {
         step < -i128::from(cfg.backward_us) || step > elapsed + i128::from(cfg.forward_slack_us)
     }
 
-    pub(crate) fn record(
+    pub fn record(
         &mut self,
         track: TrackId,
         sample: &Sample,
@@ -257,8 +264,10 @@ impl JumpDetector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::live_join::DropReason;
+    use crate::live_join::LiveJoin;
+    use crate::ts_demux::TsDemux;
     use broadcast_common::Unpackage;
-    use transmux::{DropReason, LiveJoin, TsDemux};
 
     const VIDEO_TS: i64 = 90_000;
     const T0: u64 = 7_000_000;

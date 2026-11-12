@@ -327,6 +327,26 @@ fn concat_is_contiguous_and_preserves_bytes() {
     assert_eq!(res.discontinuity_points[0].presentation_time, ta_end);
 }
 
+#[test]
+fn concat_with_a_zero_track_timescale_is_a_typed_error() {
+    // Audit #2462: `rescale_ticks` returned its input unchanged for a zero
+    // timescale, silently splicing two incomparable clocks together.
+    let a = media_of(video_track(1, 0xA0, 6, 3000, 3), 90_000);
+    let mut spec = avc_spec(1);
+    spec.timescale = 0;
+    let samples = (0..4).map(|i| sample(0xB0, i, 3000, i == 0)).collect();
+    let b = Media::new(vec![Track::new(spec, samples)], 1000);
+    assert!(
+        matches!(
+            concat(&a, &b),
+            Err(transmux::error::Error::InvalidInput(
+                "timescale must be non-zero"
+            ))
+        ),
+        "a zero timescale must be a typed error, not a silent identity rescale"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Test 2 — concat end-to-end tfdt monotonic through the segmenter/muxer.
 // ---------------------------------------------------------------------------

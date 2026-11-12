@@ -48,6 +48,8 @@
 
 extern crate alloc;
 
+#[cfg(feature = "base64")]
+pub mod base64;
 pub mod bcd;
 pub mod ber;
 pub mod bits;
@@ -58,6 +60,8 @@ pub mod erased;
 pub mod error;
 pub mod hex;
 pub mod klv;
+#[cfg(feature = "lang")]
+pub mod lang;
 pub mod len;
 pub mod mux;
 pub mod parity;
@@ -67,13 +71,14 @@ pub mod stage;
 pub mod time;
 pub mod timescale;
 pub mod traits;
-pub mod ts_dup;
 #[cfg(feature = "xml")]
 pub mod xml;
 #[cfg(feature = "xml")]
 pub mod xml_chars;
 
 pub use cenc::CencScheme;
+#[cfg(feature = "lang")]
+pub use lang::bcp47_language;
 pub use mux::{Decrypt, Encrypt, Package, Unpackage};
 pub use stage::{Demand, Stage, Timestamp};
 pub use traits::{Parse, Serialize};

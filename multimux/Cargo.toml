@@ -76,7 +76,7 @@ dvb-stream        = { path = "../dvb-stream",     version = "0.8.1", features = 
 # resolving 9.0/9.1 fails to compile it today. The pin below is 9.3, above
 # that floor, tracking the current published line; same caret bucket, so it
 # is not an epoch change.
-broadcast-common  = { path = "../broadcast-common", version = "11.0.1" }
+broadcast-common  = { path = "../broadcast-common", version = "11.1.0", features = ["lang"] }
 # The media-plane ingress traits this crate's sources port onto (plan step
 # 5a): `Dialer`/`Listener`/`IngestSession`/`IngestDriver`/`ListenDriver`, and
 # the `Trunk` every ported session publishes into.

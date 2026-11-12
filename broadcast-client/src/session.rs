@@ -29,8 +29,8 @@ use crate::source::smooth::SmoothSource;
 use crate::source::srt::Notice;
 use crate::source::ts_http::TsHttpSource;
 use crate::source::ts_http_hold::{HoldLimits, StreamKind};
-use crate::timeline::JumpDetector;
 use broadcast_auth::AuthState;
+use transmux::JumpDetector;
 use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 
 use crate::tshttp::Action as TsAction;

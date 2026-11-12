@@ -6,7 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- Legal-duplicate TS packet detection now imports `mpeg_ts::ts_dup` instead of `broadcast_common::ts_dup` (#2466).
+### Added
+- `insert_event_message_boxes_after_styp` splices serialized `emsg` boxes after the first top-level `styp` box using parsed box boundaries (a 64-bit `largesize` box before it is stepped over), and `segments::MOOF`, the Movie Fragment Box four-CC.
+- Timeline-jump detector (`timeline` module): `JumpDetector`, `TimelineJumpConfig`, `DEFAULT_JUMP_BACKWARD_US`, `DEFAULT_JUMP_FORWARD_SLACK_US` moved from `broadcast-client`; per-track discontinuity detection with configurable thresholds.
 ### Fixed
+- Emulation-prevention unescape/escape unified into `rbsp` module; Sample-AES round trip is now byte-identical for NALs ending in `00 00 03` (#2456).
+- EBML VINT readers unified in `webm_demux` (#2460).
+- PES buffer cap now uses `PesAssembler` bookkeeping (#2459).
+- Zero timescale is a typed error at `repackage`/`splice`/`flv` wrappers (#2462).
+- DASH `AdaptationSet@lang` is now canonicalised to a BCP 47 tag via `broadcast-common::lang::bcp47_language`, so `fre`/`fra` share one AdaptationSet.
 - `aac_asc::parse_adts_header` now rejects non-ADTS headers: layer must be `00`, sampling frequency index must not be reserved/escape, and `frame_length` must be at least the header length. `adts_header_len` now lives only in `aac_asc` (taking the parsed header); `sample_aes` and `ts_demux` call it instead of keeping their own copies.
 - `TrackAligner::sender_reports_refused`: the 3600 s skew refusal covers every track at once and keeps them `AvSync::Provisional` while the clocks disagree; it is now observable as state (cleared on the next accepted evaluation) and documented in the module docs (audit A9-6).
 - The 3600 s wallclock-skew refusal in `RtpStreamDepacketiser::sync_start_decode_times` was invisible: a wrong NTP clock on one track silently left the tracks `Provisional`, and `TrackAligner` re-ran the sync computation (a `Vec` allocation) on every sample. New `RtpStreamDepacketiser::try_sync_start_decode_times` returns `Err(WallSkewExceeded { skew_seconds })` for it (`sync_start_decode_times` keeps its signature), `TrackAligner::skew_rejections` counts each refused set of Sender Reports, and the aligner stops re-evaluating until the next Sender Report.

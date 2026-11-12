@@ -84,9 +84,9 @@ use broadcast_common::timescale::{Rounding, rescale_u64};
 use transmux::TrackId;
 
 use broadcast_common::Timestamp;
+use broadcast_common::bcp47_language;
 use dvb_si::descriptors::atsc_caption_service::AtscCaptionService;
 use hls_runtime::server::Container;
-use hls_runtime::server::bcp47_language;
 use media_plane::ids::{PartIndex, SegmentSeq};
 use media_plane::ingress::{IngestDriver, IngestSession, ProgramId};
 use media_plane::trunk::{
@@ -466,6 +466,11 @@ pub struct ProgramSegmenter {
     /// [`Self::queue_segment`] once that segment closes, so the following
     /// segment is anchored to the first post-jump sample.
     pending_anchor: Option<MediaAnchor>,
+    /// Per-track timeline-jump detector (broadcast-client semantics), moved
+    /// to transmux.
+    timeline: transmux::JumpDetector,
+    /// Wall-clock origin for delivery times passed to the detector.
+    ingest_origin: Instant,
     /// Start-gate (Apple authoring 7.4 MUST: segments start on a sync/IDR
     /// picture, issue #1425): for a program whose track set contains a video
     /// track, drop every timed sample until the first sync sample of a video
@@ -540,10 +545,6 @@ const IDR_HOLD_MAX_BYTES: usize = 32 * 1024 * 1024;
 struct MediaAnchor {
     source_90k: u64,
     timeline_ns: u64,
-    /// The last sample PTS seen, in its own track's timescale, with which to
-    /// detect a discontinuity.
-    last_pts: i64,
-    last_timescale: u32,
 }
 
 /// Start-gate safety valve (issue #1425): the gate drops leading video samples
@@ -551,12 +552,6 @@ struct MediaAnchor {
 /// within this many video samples (about 30 s at 60 fps) the gate opens
 /// anyway (with a warning) instead of dropping the program forever.
 const START_GATE_MAX_VIDEO_DROPPED: u64 = 1800;
-
-/// A source-clock jump larger than this between consecutive samples is
-/// treated as a discontinuity and re-anchors the media mapping rather than
-/// being folded into the delta (issue #1083, E). Ten seconds is far beyond
-/// any legitimate inter-sample gap (a 1 fps track's is one).
-const MEDIA_DISCONTINUITY_NS: i64 = 10 * 1_000_000_000;
 
 /// Nanoseconds per second — for converting the segmenter's internal
 /// nanosecond timeline into the 90 kHz media clock.
@@ -877,7 +872,7 @@ impl ProgramSegmenter {
         if !followers.is_empty() || !subtitle_followers.is_empty() {
             seg.record_part_cuts();
         }
-        Some(ProgramSegmenter {
+        let mut ps = ProgramSegmenter {
             timescale_moves,
             // `subscribe_from_backlog`, not `subscribe` (issue #808): the
             // driver's own `feed` call that announced this program's
@@ -924,7 +919,11 @@ impl ProgramSegmenter {
             caption_scan_started: HashMap::new(),
             captions_scan_complete: false,
             part_target_published: None,
-        })
+            timeline: transmux::JumpDetector::new(Some(transmux::TimelineJumpConfig::default())),
+            ingest_origin: Instant::now(),
+        };
+        ps.timeline.on_tracks(&ps.published_tracks);
+        Some(ps)
     }
 
     /// Queue `item` (behind anything already queued from an earlier call,
@@ -1027,6 +1026,7 @@ impl ProgramSegmenter {
                         }
                     }
                     self.track_generation = generation;
+                    self.timeline.on_tracks(&self.published_tracks);
                     self.caption_detectors.clear();
                 }
             } else if let SampleCursorItem::Timed { track_id, sample } = item {
@@ -1249,29 +1249,17 @@ impl ProgramSegmenter {
                 .map(|t| t.timescale)
             && timescale > 0
         {
+            let now_us =
+                u64::try_from(self.ingest_origin.elapsed().as_micros()).unwrap_or(u64::MAX);
             let re_anchor = match self.anchor {
                 None => true,
-                Some(a) => {
-                    // Same track AND a jump larger than any legitimate
-                    // inter-sample gap => discontinuity.
-                    let jump_ns = {
-                        let prev = i128::from(a.last_pts);
-                        let now = i128::from(pts);
-                        let scale = i128::from(timescale);
-                        (now - prev).saturating_mul(i128::from(NANOS_PER_SEC)) / scale
-                    };
-                    let sign_flip = (a.last_pts >= 0) != (pts >= 0);
-                    sign_flip
-                        || (a.last_timescale == timescale
-                            && jump_ns.unsigned_abs() > MEDIA_DISCONTINUITY_NS as u128)
-                }
+                Some(_) => self.timeline.is_jump(track_id, &sample, None, now_us),
             };
+            self.timeline.record(track_id, &sample, None, now_us);
             if re_anchor {
                 let fresh = MediaAnchor {
                     source_90k: rescale_to_90k(pts, timescale),
                     timeline_ns: self.next_timeline_ns,
-                    last_pts: pts,
-                    last_timescale: timescale,
                 };
                 if self.anchor.is_none() {
                     // No anchor at all yet: this IS the first
@@ -1285,9 +1273,6 @@ impl ProgramSegmenter {
                     // (item 5).
                     self.pending_anchor = Some(fresh);
                 }
-            } else if let Some(a) = self.anchor.as_mut() {
-                a.last_pts = pts;
-                a.last_timescale = timescale;
             }
         }
         let sample = in_declared_timescale(&self.timescale_moves, track_id, sample);
@@ -2290,16 +2275,12 @@ mod tests {
         segmenter.anchor = Some(MediaAnchor {
             source_90k: 0,
             timeline_ns: 0,
-            last_pts: 0,
-            last_timescale: 90_000,
         });
         // A discontinuity observed mid-segment-1: it must NOT retro-stamp
         // segment 1.
         segmenter.pending_anchor = Some(MediaAnchor {
             source_90k: 900_090,
             timeline_ns: 0,
-            last_pts: 900_090,
-            last_timescale: 90_000,
         });
         assert_eq!(
             segmenter.anchor.map(|a| a.source_90k),
@@ -3664,7 +3645,7 @@ mod tests {
             StreamingTsHlsSegmenter::new(vec![track_spec(TrackId::new(1))], 1, 8)
                 .expect("valid placeholder TS segmenter"),
         );
-        ProgramSegmenter {
+        let mut ps = ProgramSegmenter {
             timescale_moves: HashMap::new(),
             cursor: trunk.subscribe_from_backlog(),
             segment_writer,
@@ -3697,7 +3678,11 @@ mod tests {
             caption_scan_started: HashMap::new(),
             captions_scan_complete: false,
             part_target_published: None,
-        }
+            timeline: transmux::JumpDetector::new(Some(transmux::TimelineJumpConfig::default())),
+            ingest_origin: Instant::now(),
+        };
+        ps.timeline.on_tracks(&ps.published_tracks);
+        ps
     }
 
     /// Pre-populate `trunk`'s segment log with segments `1..=5`, as if
@@ -4839,5 +4824,149 @@ mod tests {
             "audio must not be dropped by the video start gate after a video-only change"
         );
         assert!(segmenter.start_gate_open);
+    }
+
+    /// Issue #2469: `ProgramSegmenter` decides a re-anchor from the
+    /// timeline-jump detector now living in `transmux` — the media timeline
+    /// plus the delivery time between two samples. These tests feed it real
+    /// `Trunk` samples and assert on its production output: each closed
+    /// segment's start on the source 90 kHz clock, the value
+    /// [`SegmentWriter::note_segment_start`] records for
+    /// [`Trunk::segment_start_time`] (what a segmented SCTE-35 `emsg`
+    /// resolves through).
+    ///
+    /// A `segment_start_time` call made between two pushes may be hoisted
+    /// past the second one, so every snapshot below is taken after all the
+    /// pushes have happened.
+    struct JumpRig {
+        trunk: Arc<Trunk>,
+        writer: media_plane::trunk::TrunkWriter,
+        route: RouteHandle,
+        segmenter: ProgramSegmenter,
+    }
+
+    impl JumpRig {
+        fn new() -> Self {
+            use media_plane::trunk::TrunkConfig;
+            let trunk = Trunk::new(TrunkConfig::new(nz(256), nz(64), nz(16), nz(8), nz(8)));
+            let writer = trunk.writer().expect("writer");
+            writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+            let route = RouteHandle::new(1.0, 250, 8);
+            let segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
+            Self {
+                trunk,
+                writer,
+                route,
+                segmenter,
+            }
+        }
+
+        /// Push `count` frames from frame index `first`, with a sync sample
+        /// every [`GOP`] frames, through the production `pump` path.
+        fn push_frames(&mut self, first: u32, count: u32, pts_at: impl Fn(u32) -> i64) {
+            use media_plane::trunk::RetentionClass;
+            for i in first..first + count {
+                let pts = pts_at(i);
+                let mut sample = sample_at(i, i.is_multiple_of(GOP));
+                sample.pts = Some(pts);
+                sample.dts = Some(pts);
+                self.writer
+                    .publish(TrackId::new(1), RetentionClass::Timed, sample);
+                self.segmenter.pump(ProgramId(0), &self.trunk, &self.route);
+            }
+        }
+
+        /// The reported start of segments `1..=last` on the source clock.
+        fn source_starts(&mut self, last: u32) -> Vec<Option<u64>> {
+            self.segmenter.flush();
+            (1..=last)
+                .map(|seq| {
+                    self.trunk
+                        .segment_start_time(SegmentSeq::new(seq))
+                        .map(|t| t.0)
+                })
+                .collect()
+        }
+    }
+
+    /// One segment per second: 30 fps frames with a sync sample every 30.
+    const GOP: u32 = 30;
+
+    fn gapless_pts(i: u32) -> i64 {
+        i64::from(i) * i64::from(FRAME_DUR)
+    }
+
+    fn on_90k(pts: i64) -> u64 {
+        u64::try_from(pts).expect("test clocks stay positive")
+    }
+
+    /// (a) A video track whose PTS steps back 2 s mid-stream re-anchors: the
+    /// first segment after the step starts at the stepped-back source clock,
+    /// not at the pre-step clock continued forward. A 3 s step would put the
+    /// post-step clock below zero, where the sample clock is clamped.
+    #[test]
+    fn a_backward_pts_step_reanchors_the_segments_source_clock() {
+        let mut rig = JumpRig::new();
+        rig.push_frames(0, 60, gapless_pts);
+        let back = 2 * i64::from(transmux::VIDEO_CLOCK_RATE);
+        rig.push_frames(60, 60, |i| gapless_pts(i) - back);
+
+        assert_eq!(
+            rig.source_starts(3),
+            vec![Some(0), Some(90_000), Some(on_90k(gapless_pts(60) - back))],
+            "the segment after a 2 s backward PTS step must restart from the stepped-back \
+             source clock (frame 60 PTS minus 2 s), not continue the pre-step line at 180000"
+        );
+    }
+
+    /// (b) A forward PTS step of 8 s with well under a second of delivery
+    /// time between the two samples re-anchors: the segment after the step
+    /// starts at the jumped-to source clock. Both samples go in through the
+    /// same in-process pump loop, so the detector measures a delivery gap far
+    /// below its 5 s slack.
+    #[test]
+    fn a_forward_pts_step_reanchors_the_segments_source_clock() {
+        let mut rig = JumpRig::new();
+        rig.push_frames(0, 60, gapless_pts);
+        let forward = 8 * i64::from(transmux::VIDEO_CLOCK_RATE);
+        rig.push_frames(60, 60, |i| gapless_pts(i) + forward);
+
+        assert_eq!(
+            rig.source_starts(3),
+            vec![
+                Some(0),
+                Some(90_000),
+                Some(on_90k(gapless_pts(60) + forward))
+            ],
+            "the segment after an 8 s forward PTS step must restart from the jumped-to source \
+             clock (frame 60 PTS plus 8 s)"
+        );
+    }
+
+    /// (c) Continuous 30 fps video with ordinary B-frame reordering — PTS out
+    /// of order by a frame or two while the DTS stays monotonic — is one
+    /// timeline: no re-anchor, so every segment's reported start follows the
+    /// pre-step picture's own PTS and the starts stay exactly one segment
+    /// duration apart.
+    #[test]
+    fn b_frame_reordering_does_not_reanchor() {
+        let mut rig = JumpRig::new();
+        let reordered = |i: u32| -> i64 {
+            let display_offset = match i % 3 {
+                0 => 1,
+                1 => -2,
+                _ => -1,
+            };
+            gapless_pts(i) + i64::from(display_offset * 1_000)
+        };
+        rig.push_frames(0, 60, reordered);
+        rig.push_frames(60, 60, reordered);
+
+        assert_eq!(
+            rig.source_starts(3),
+            vec![Some(1_000), Some(91_000), Some(181_000)],
+            "B-frame reordering must not re-anchor: the starts follow the first picture of each \
+             segment (frame 0, 30, 60 at +1 ms per the reorder) and stay 90000 apart"
+        );
     }
 }
