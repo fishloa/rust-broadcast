@@ -419,11 +419,11 @@ fn adaptation_sets_split_by_language_and_codec() {
         .collect();
     assert_eq!(audio_langs.len(), 2, "two audio AdaptationSets");
     assert!(
-        audio_langs.contains(&Some("eng")),
+        audio_langs.contains(&Some("en")),
         "eng set: {audio_langs:?}"
     );
     assert!(
-        audio_langs.contains(&Some("fra")),
+        audio_langs.contains(&Some("fr")),
         "fra set: {audio_langs:?}"
     );
 
@@ -442,6 +442,45 @@ fn adaptation_sets_split_by_language_and_codec() {
 
 /// Same language, same codec family → one AdaptationSet (the switchable encodings
 /// case), and the ordering/structure of a single-audio stream is unchanged.
+#[test]
+fn bibliographic_and_terminology_codes_share_one_adaptation_set() {
+    let base = demux_media();
+    let video = base
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
+        .expect("video track")
+        .clone();
+    let audio = base
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
+        .expect("audio track")
+        .clone();
+
+    let mut a1 = audio.clone();
+    a1.spec.track_id = TrackId::new(2);
+    a1.spec.es_info_descriptors = lang_es_info(b"fre");
+    let mut a2 = audio.clone();
+    a2.spec.track_id = TrackId::new(3);
+    a2.spec.es_info_descriptors = lang_es_info(b"fra");
+
+    let media = transmux::media::Media::new(vec![video, a1, a2], 90_000);
+    let mut pkg = DashPackager::default();
+    let xml = pkg.package(&media).expect("MPD");
+
+    let root = parse_xml(&xml);
+    let period = root.find("Period").expect("Period");
+    let audio_sets: Vec<&Element> = period
+        .find_all("AdaptationSet")
+        .into_iter()
+        .filter(|s| s.attr("contentType") == Some("audio"))
+        .collect();
+    assert_eq!(audio_sets.len(), 1, "fre and fra are one language");
+    assert_eq!(audio_sets[0].attr("lang"), Some("fr"));
+    assert_eq!(audio_sets[0].find_all("Representation").len(), 2);
+}
+
 #[test]
 fn adaptation_sets_merge_same_language_and_codec() {
     let base = demux_media();
@@ -478,7 +517,7 @@ fn adaptation_sets_merge_same_language_and_codec() {
         .iter()
         .find(|s| s.attr("contentType") == Some("audio"))
         .expect("audio set");
-    assert_eq!(audio_set.attr("lang"), Some("eng"), "@lang on the set");
+    assert_eq!(audio_set.attr("lang"), Some("en"), "@lang on the set");
     assert_eq!(
         audio_set.find_all("Representation").len(),
         2,
@@ -559,7 +598,7 @@ fn adaptation_sets_have_unique_ids_and_split_by_codec_family() {
         .collect();
     assert_eq!(audio.len(), 2, "AAC and AC-3 are separate sets:\n{xml}");
     for s in &audio {
-        assert_eq!(s.attr("lang"), Some("eng"), "same language, same @lang");
+        assert_eq!(s.attr("lang"), Some("en"), "same language, same @lang");
         assert_eq!(s.find_all("Representation").len(), 1);
     }
     let codecs: Vec<&str> = audio

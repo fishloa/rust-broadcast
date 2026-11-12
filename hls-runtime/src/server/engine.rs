@@ -91,6 +91,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::Duration;
 use transmux::TrackId;
 
+use broadcast_common::bcp47_language;
 use broadcast_common::{Timestamp, Unpackage};
 use broadcast_hls::{
     ByteRange, ClosedCaptionsRef, DecimalSeconds, FrameRate, LowLatencyConfig, MapTag,
@@ -4020,42 +4021,6 @@ impl ServedEgress for HlsOrigin {
             HlsRequest::Resource { name } => self.resolve_resource(&name, now, await_policy),
         }
     }
-}
-
-/// Canonicalise an ISO 639-2 language code into a BCP 47 (RFC 5646) primary
-/// language subtag, as required by RFC 8216bis `EXT-X-MEDIA` `LANGUAGE`.
-///
-/// HLS `LANGUAGE` must be an RFC 5646 (BCP 47) language tag; in BCP 47 the
-/// primary subtag is the ISO 639-1 two-letter code when one exists, otherwise
-/// the ISO 639-2/T (== ISO 639-3) three-letter code. ISO 639-2/B
-/// bibliographic codes (`fre`, `ger`, `dut`, `chi`, ...) are not valid BCP 47
-/// subtags and are mapped to their terminology (T) equivalents first.
-///
-/// `qaa`..`qtz` (private use), `und`, `mul`, `mis` and `zxx` pass through
-/// unchanged. Unknown or malformed codes return `None`.
-pub fn bcp47_language(iso639_2: &str) -> Option<String> {
-    let code = iso639_2.trim().to_ascii_lowercase();
-    if code.len() != 3 || !code.bytes().all(|b| b.is_ascii_lowercase()) {
-        return None;
-    }
-    // Private-use range and the reserved singleton codes pass through verbatim.
-    if code == "und" || code == "mul" || code == "mis" || code == "zxx" {
-        return Some(code);
-    }
-    if code.starts_with('q') {
-        let bytes = code.as_bytes();
-        if (b'a'..=b't').contains(&bytes[1]) && bytes[2].is_ascii_lowercase() {
-            return Some(code);
-        }
-    }
-    let lang = iso_639::Language::from_str(&code)?;
-    if let Some(a2) = lang.alpha2() {
-        return Some(a2.to_string());
-    }
-    if let Some(t) = lang.alpha3_t() {
-        return Some(t.to_string());
-    }
-    lang.alpha3_b().map(|b| b.to_string())
 }
 
 /// Relative URI from one playlist to another (RFC 3986 relative reference),
