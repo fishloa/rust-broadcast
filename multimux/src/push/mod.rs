@@ -510,7 +510,16 @@ pub async fn drive_push<T: PushTransport>(
 
         let mut dropped_while_disconnected = 0u64;
         while let Some(item) = cursor.poll() {
-            if let SampleCursorItem::TracksChanged { generation, tracks } = &item {
+            if let SampleCursorItem::TracksChanged { generation, tracks }
+            | SampleCursorItem::TracksLagged {
+                generation, tracks, ..
+            } = &item
+            {
+                if let SampleCursorItem::TracksLagged { skipped, .. } = &item {
+                    metrics
+                        .samples_dropped
+                        .fetch_add(*skipped, Ordering::Relaxed);
+                }
                 if let Some(e) = egress.as_mut()
                     && negotiated_generation.is_none_or(|negotiated| *generation > negotiated)
                 {
