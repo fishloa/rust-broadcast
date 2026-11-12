@@ -1457,12 +1457,24 @@ fn rescale_for_ordering(ticks: u64, timescale: u64) -> u64 {
 fn build_es_payload(plan: &EsPlan, sample: &Sample) -> Result<Vec<u8>> {
     match plan.kind {
         EsKind::Avc => {
-            let au = build_annexb_au(&sample.data, sample.flags.is_sync, &plan.avc_sps_pps)?;
+            let au = build_annexb_au(
+                &sample.data,
+                sample.flags.is_sync,
+                &plan.avc_sps_pps,
+                |n| !n.is_empty() && (n[0] & H264_NAL_TYPE_MASK) == H264_NAL_SPS,
+                |n| n.first().map(|b| b & H264_NAL_TYPE_MASK) == Some(H264_NAL_AUD),
+            )?;
             ensure_avc_aud(au)
         }
         EsKind::Hevc => {
             let au =
-                build_hevc_annexb_au(&sample.data, sample.flags.is_sync, &plan.hevc_vps_sps_pps)?;
+                build_annexb_au(
+                    &sample.data,
+                    sample.flags.is_sync,
+                    &plan.hevc_vps_sps_pps,
+                    |n| nal_unit_type(NalCodec::Hevc, n) == Some(HEVC_NAL_SPS),
+                    |n| nal_unit_type(NalCodec::Hevc, n) == Some(HEVC_NAL_AUD),
+                )?;
             ensure_hevc_aud(au)
         }
         EsKind::Aac => {
@@ -1504,61 +1516,22 @@ fn build_es_payload(plan: &EsPlan, sample: &Sample) -> Result<Vec<u8>> {
 /// byte-identical NAL-for-NAL. Inserted parameter sets are placed after a leading
 /// Access Unit Delimiter (ISO/IEC 14496-10 §7.4.1.2.3 AU order), each with a
 /// 4-byte start code — the canonical Annex B form the demuxer re-splits.
-fn build_annexb_au(length_prefixed: &[u8], is_sync: bool, sps_pps: &[Vec<u8>]) -> Result<Vec<u8>> {
-    let nals = iter_length_prefixed_nals(length_prefixed)?;
-
-    let needs_params = is_sync
-        && !sps_pps.is_empty()
-        && !nals
-            .iter()
-            .any(|n| !n.is_empty() && (n[0] & H264_NAL_TYPE_MASK) == H264_NAL_SPS);
-
-    if !needs_params {
-        // Straight, byte-exact rewrite of the existing NAL sequence.
-        return length_prefixed_to_annexb(length_prefixed);
-    }
-
-    // Insert the parameter sets after a leading AUD (if any), before the slices.
-    let mut out = Vec::with_capacity(length_prefixed.len() + total_param_len(sps_pps));
-    let mut inserted = false;
-    for nal in &nals {
-        let nal_type = nal.first().map(|b| b & H264_NAL_TYPE_MASK);
-        if !inserted && nal_type != Some(H264_NAL_AUD) {
-            append_param_sets(&mut out, sps_pps);
-            inserted = true;
-        }
-        out.extend_from_slice(&[0, 0, 0, 1]);
-        out.extend_from_slice(nal);
-    }
-    if !inserted {
-        // Access unit was only an AUD (degenerate) — still emit the params.
-        append_param_sets(&mut out, sps_pps);
-    }
-    Ok(out)
-}
-
-/// Convert a length-prefixed HEVC video sample to an Annex B access unit,
-/// prepending the parameter sets `vps_sps_pps` (VPS + SPS + PPS, in that AU
-/// order — ITU-T H.265 §7.4.2.1) to an `is_sync` (IRAP keyframe) access unit
-/// that does not already carry an SPS, so the TS video AU is independently
-/// decodable (issue #627).
-///
-/// Mirrors [`build_annexb_au`] for HEVC's 2-byte NAL header (ITU-T H.265
-/// §7.3.1.2) and `nal_unit_type` classification instead of AVC's 1-byte
-/// header: when the IR sample already carries its parameter sets in-band, the
-/// length↔Annex B round-trip stays byte-identical NAL-for-NAL.
-fn build_hevc_annexb_au(
+fn build_annexb_au<F, G>(
     length_prefixed: &[u8],
     is_sync: bool,
-    vps_sps_pps: &[Vec<u8>],
-) -> Result<Vec<u8>> {
+    param_sets: &[Vec<u8>],
+    is_sps: F,
+    is_aud: G,
+) -> Result<Vec<u8>>
+where
+    F: Fn(&[u8]) -> bool,
+    G: Fn(&[u8]) -> bool,
+{
     let nals = iter_length_prefixed_nals(length_prefixed)?;
 
     let needs_params = is_sync
-        && !vps_sps_pps.is_empty()
-        && !nals
-            .iter()
-            .any(|n| nal_unit_type(NalCodec::Hevc, n) == Some(HEVC_NAL_SPS));
+        && !param_sets.is_empty()
+        && !nals.iter().any(|n| is_sps(n));
 
     if !needs_params {
         // Straight, byte-exact rewrite of the existing NAL sequence.
@@ -1566,12 +1539,11 @@ fn build_hevc_annexb_au(
     }
 
     // Insert the parameter sets after a leading AUD (if any), before the slices.
-    let mut out = Vec::with_capacity(length_prefixed.len() + total_param_len(vps_sps_pps));
+    let mut out = Vec::with_capacity(length_prefixed.len() + total_param_len(param_sets));
     let mut inserted = false;
     for nal in &nals {
-        let nal_type = nal_unit_type(NalCodec::Hevc, nal);
-        if !inserted && nal_type != Some(HEVC_NAL_AUD) {
-            append_param_sets(&mut out, vps_sps_pps);
+        if !inserted && !is_aud(nal) {
+            append_param_sets(&mut out, param_sets);
             inserted = true;
         }
         out.extend_from_slice(&[0, 0, 0, 1]);
@@ -1579,7 +1551,7 @@ fn build_hevc_annexb_au(
     }
     if !inserted {
         // Access unit was only an AUD (degenerate) — still emit the params.
-        append_param_sets(&mut out, vps_sps_pps);
+        append_param_sets(&mut out, param_sets);
     }
     Ok(out)
 }
@@ -1646,37 +1618,13 @@ fn ensure_hevc_aud(mut au: Vec<u8>) -> Result<Vec<u8>> {
 /// The AVC `nal_unit_type` of the first NAL in an Annex B buffer, or `None`
 /// when the buffer is empty (a zero-length sample has no NAL at all).
 fn first_avc_nal_type(annexb: &[u8]) -> Option<u8> {
-    annexb_first_nal(annexb).and_then(|n| n.first().map(|b| b & H264_NAL_TYPE_MASK))
+    crate::annexb::iter_annexb_nals(annexb).next().and_then(|n| n.first().map(|b| b & H264_NAL_TYPE_MASK))
 }
 
 /// The HEVC `nal_unit_type` of the first NAL in an Annex B buffer (2-byte NAL
 /// header, H.265 §7.3.1.2), or `None` when the buffer is empty.
 fn first_hevc_nal_type(annexb: &[u8]) -> Option<u8> {
-    annexb_first_nal(annexb).and_then(|n| nal_unit_type(NalCodec::Hevc, n))
-}
-
-/// Slice the first Annex B NAL (after its start code) out of `annexb`.
-/// Accepts both the 4-byte and the 3-byte start code a source stream may use.
-fn annexb_first_nal(annexb: &[u8]) -> Option<&[u8]> {
-    let skip = if annexb.starts_with(&ANNEXB_START_CODE) {
-        ANNEXB_START_CODE.len()
-    } else if annexb.starts_with(&[0, 0, 1]) {
-        3
-    } else {
-        0
-    };
-    let rest = annexb.get(skip..)?;
-    let end = rest
-        .windows(3)
-        .position(|w| w == [0, 0, 1])
-        .unwrap_or(rest.len());
-    // A 4-byte start code's trailing zero is left at the end of the slice.
-    let end = if rest.get(end.wrapping_sub(1)) == Some(&0) && end > 0 {
-        end - 1
-    } else {
-        end
-    };
-    rest.get(..end)
+    crate::annexb::iter_annexb_nals(annexb).next().and_then(|n| nal_unit_type(NalCodec::Hevc, n))
 }
 
 /// Build a PAT section (one program → `pmt_pid`) with its trailing CRC_32.
