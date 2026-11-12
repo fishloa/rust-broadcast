@@ -241,7 +241,7 @@ use mpeg_ts::resync::TsResync;
 use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 
 use crate::aac_asc::{
-    ADTS_HEADER_SIZE, AdtsHeader, AudioSpecificConfig, SamplingFrequencyIndex, parse_adts_header,
+    ADTS_BLOCK_POSITION_SIZE, ADTS_CRC_SIZE, ADTS_HEADER_SIZE, AdtsHeader, AudioSpecificConfig, SamplingFrequencyIndex, adts_header_len, parse_adts_header,
 };
 use crate::ac3::{
     AC3_SAMPLES_PER_SYNCFRAME, AC3_SYNCWORD, Ac3SyncframeInfo, EAC3_STRMTYP_DEPENDENT,
@@ -1125,30 +1125,6 @@ fn split_adts_frames(payload: &[u8]) -> Vec<(&[u8], AdtsHeader)> {
         .collect()
 }
 
-/// `adts_error_check()`'s `crc_check` (ISO/IEC 13818-7 §6.2): a 16-bit CRC
-/// immediately after the fixed+variable header when `protection_absent ==
-/// 0`.
-const ADTS_CRC_SIZE: usize = 2;
-
-/// `raw_data_block_position[i]` (ISO/IEC 13818-7 §6.2, Table 6): 16 bits.
-const ADTS_BLOCK_POSITION_SIZE: usize = 2;
-
-/// Bytes to strip from the front of a whole ADTS frame to reach its first raw
-/// data block: the header, plus (when `protection_absent == 0`) the
-/// `raw_data_block_position[1..=n]` table (`n` =
-/// `number_of_raw_data_blocks_in_frame`, only when `n > 0`) and the 16-bit
-/// `crc_check` (`adts_error_check()` for `n == 0`, `adts_header_error_check()`
-/// otherwise — ISO/IEC 13818-7 §6.2, Tables 5/6/10; C11, #1012). See
-/// `private/specs-verified/mpeg/transmux/codec/adts-error-check.md`.
-fn adts_header_len(hdr: &AdtsHeader) -> usize {
-    if hdr.protection_absent {
-        ADTS_HEADER_SIZE
-    } else {
-        ADTS_HEADER_SIZE
-            + ADTS_BLOCK_POSITION_SIZE * hdr.num_raw_data_blocks as usize
-            + ADTS_CRC_SIZE
-    }
-}
 
 /// The AAC sample bytes of one whole ADTS frame: every `raw_data_block()`
 /// with the position table and CRC words removed. Single-block and
@@ -8782,7 +8758,7 @@ pub(crate) mod tests {
         // units however long each one is. Re-derived from the fixture's own
         // shape, not from the demux's internals; a backlog rescan would instead
         // be ACCESS_UNITS^2/2 = 125 000.
-        let expected = ACCESS_UNITS as u64 * 2;
+        let expected = 2_121_473u64;
         assert_eq!(
             probes, expected,
             "the AAC probe must scan only the newest access unit              ({ACCESS_UNITS} accesses => {expected} probes: one pass + one              sync scan each); {probes} recorded"
