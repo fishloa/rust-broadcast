@@ -1,7 +1,7 @@
 //! The HTTP `Date` reader (RFC 9110 5.6.7): three accepted forms, the POSIX
 //! two-digit-year window, and rejection of garbage.
 
-use dash_runtime::timing::http_date::{HttpDateError, parse_http_date};
+use broadcast_common::http_date::{HttpDateError, parse_http_date};
 
 const SECOND: i64 = 1_000_000;
 

@@ -57,6 +57,8 @@ pub mod crc32_mpeg2;
 pub mod erased;
 pub mod error;
 pub mod hex;
+#[cfg(feature = "std")]
+pub mod http_date;
 pub mod klv;
 #[cfg(feature = "lang")]
 pub mod lang;

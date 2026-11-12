@@ -8,7 +8,7 @@ use thiserror::Error;
 
 pub mod availability;
 pub mod clock;
-pub mod http_date;
+pub use broadcast_common::http_date;
 pub mod live_edge;
 pub mod period;
 pub mod utc_timing;

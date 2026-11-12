@@ -1,4 +1,4 @@
-//! HTTP `Date` and `Retry-After` date readers (RFC 9110 5.6.7).
+//! HTTP `Date` and `Retry-After` date readers (RFC 9110 §5.6.7).
 //!
 //! Calendar arithmetic is jiff's `strptime`; nothing here reads a clock.
 
@@ -16,7 +16,7 @@ pub enum HttpDateError {
     HttpDate,
 }
 
-/// Parse an HTTP-date (RFC 9110 5.6.7) to Unix microseconds: the preferred
+/// Parse an HTTP-date (RFC 9110 §5.6.7) to Unix microseconds: the preferred
 /// IMF-fixdate and the two obsolete forms a recipient must still accept, the
 /// RFC 850 form (two-digit years follow jiff's POSIX window: 69-99 are 19xx,
 /// 00-68 are 20xx, so no clock is needed) and the asctime form (always UTC).

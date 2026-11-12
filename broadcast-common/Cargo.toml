@@ -18,7 +18,7 @@ default = ["std"]
 # `std` links the standard library. Without it the crate is `#![no_std]` and
 # needs only `alloc`. chrono's wall-clock and the std `Error` glue are std-only;
 # the parse/serialize/CRC/BCD/MJD core is fully no_std.
-std = ["chrono?/std", "chrono?/clock", "serde?/std", "erased-serde?/std"]
+std = ["chrono?/std", "chrono?/clock", "serde?/std", "erased-serde?/std", "dep:jiff", "jiff?/std", "dep:thiserror"]
 # MJD↔calendar conversion for the UTC time codec. Off = the BCD/duration
 # helpers remain available; only the chrono-typed UTC functions are gated.
 chrono = ["dep:chrono"]
@@ -45,9 +45,12 @@ hex = { version = "0.4", default-features = false, features = ["alloc"] }
 # ISO 639 code tables (alpha-2/alpha-3 B and T) for canonicalising language codes
 # to BCP 47. Pulled in only by the `lang` feature.
 iso-639 = { version = "0.1", optional = true, default-features = false }
+# HTTP-date parsing (RFC 9110 §5.6.7). std-only, pulled in by the `std` feature.
+jiff = { version = "0.2", default-features = false, features = ["std"], optional = true }
 # Only pulled in by the `serde` feature — see its comment above. Configured
 # `no_std` (`derive` only, no `std`) so it composes with the no_std build.
 quick-xml = { workspace = true, optional = true }
+thiserror = { version = "2", optional = true }
 serde = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 erased-serde = { version = "0.4", default-features = false, features = ["alloc"], optional = true }
 
