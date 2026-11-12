@@ -699,10 +699,8 @@ A pluggable diagnostics harness: each `Diagnostic` checks one rule (sync, PAT/PM
 
 - **Standards:** Checks against ISO/IEC 13818-1, RFC 8216, ISO/IEC 23009-1, SCTE 35
 - **Cargo description:** Media diagnostics harness for DVB/MPEG-TS: pluggable lint-style checks (sync, PAT/PMT versioning, CC anomalies, PCR, PTS/DTS monotonicity, SCTE-35 splice consistency) + HLS playlist validation.
-- **Version (in-tree):** 0.15.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 5
-- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-dash`](#broadcast-dash), [`broadcast-hls`](#broadcast-hls), [`container-probe`](#container-probe), [`dash-runtime`](#dash-runtime), [`dvb-conformance`](#dvb-conformance), [`dvb-si`](#dvb-si), [`dvb-stream`](#dvb-stream), [`mpeg-pes`](#mpeg-pes), [`mpeg-ts`](#mpeg-ts), [`scte35-splice`](#scte35-splice), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
 - **Version (in-tree):** 0.15.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 6
-- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-dash`](#broadcast-dash), [`broadcast-hls`](#broadcast-hls), [`container-probe`](#container-probe), [`dash-runtime`](#dash-runtime), [`dvb-conformance`](#dvb-conformance), [`dvb-si`](#dvb-si), [`mpeg-pes`](#mpeg-pes), [`mpeg-ts`](#mpeg-ts), [`scte35-splice`](#scte35-splice), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
+- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-dash`](#broadcast-dash), [`broadcast-hls`](#broadcast-hls), [`container-probe`](#container-probe), [`dash-runtime`](#dash-runtime), [`dvb-conformance`](#dvb-conformance), [`dvb-si`](#dvb-si), [`dvb-stream`](#dvb-stream), [`mpeg-pes`](#mpeg-pes), [`mpeg-ts`](#mpeg-ts), [`scte35-splice`](#scte35-splice), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
 - **Used by (workspace):** [`compliance-probe`](#compliance-probe)
 - **Links:** [README](../media-doctor/README.md) · [CHANGELOG](../media-doctor/CHANGELOG.md) · [crates.io](https://crates.io/crates/media-doctor) · [docs.rs](https://docs.rs/media-doctor)
 
@@ -1033,7 +1031,6 @@ flowchart BT
   media_doctor --> dash_runtime
   media_doctor --> dvb_conformance
   media_doctor --> dvb_stream
-  media_doctor --> timed_metadata
   media_plane --> timed_metadata
   media_plane --> transmux
   mp4_emsg --> broadcast_common
