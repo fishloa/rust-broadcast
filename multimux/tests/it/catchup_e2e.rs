@@ -1,8 +1,11 @@
 use std::time::Duration;
 
+const WINDOW_SECS: f64 = 1.0;
+
 use crate::support::listener::bind_tcp;
 use crate::support::shared_it::{fixture_string, poll_until_extinf};
 use axum::http::StatusCode;
+use broadcast_hls::MediaPlaylist;
 use multimux::config::{Config, InputSpec, Route};
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
@@ -48,22 +51,6 @@ fn file_config(bind: std::net::SocketAddr, path: String, tmp: &std::path::Path) 
     }
 }
 
-fn segment_uris(playlist: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut rest = playlist;
-    while let Some(i) = rest.find("seg-") {
-        let seg = &rest[i..];
-        let end = seg.find(".m4s").map(|e| e + ".m4s".len()).unwrap_or(0);
-        if end > 0 {
-            out.push(seg[..end].to_string());
-            rest = &seg[end..];
-        } else {
-            rest = &seg[1..];
-        }
-    }
-    out
-}
-
 #[tokio::test]
 async fn catchup_output_end_to_end() {
     let tmp = std::env::temp_dir().join(format!("catchup-e2e-{}", std::process::id()));
@@ -85,11 +72,17 @@ async fn catchup_output_end_to_end() {
     let body = poll_until_extinf(&client, &playlist_url).await;
     assert!(body.contains("#EXTINF:"), "playlist: {body}");
 
-    // Wait for a few segments so the window has something to trim.
+    // Request a catch-up window and the full playlist back to back until both
+    // share one live edge, then check the window is exactly the trailing run of
+    // the full playlist whose span before the edge segment fits the window.
+    let windowed_url = format!("{playlist_url}?window_secs=1");
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    let mut full = body;
-    while tokio::time::Instant::now() < deadline {
-        let b = client
+    let (full, windowed) = loop {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "full and windowed playlists never shared a live edge"
+        );
+        let full_text = client
             .get(&playlist_url)
             .send()
             .await
@@ -97,24 +90,7 @@ async fn catchup_output_end_to_end() {
             .text()
             .await
             .unwrap();
-        if b.matches("#EXTINF").count() >= 3 {
-            full = b;
-            break;
-        }
-        full = b;
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    assert!(
-        full.matches("#EXTINF").count() >= 2,
-        "need >=2 segments: {full}"
-    );
-
-    // Request a catch-up window and check it covers that window and no more.
-    let windowed_url = format!("{playlist_url}?window_secs=1");
-    let mut windowed = String::new();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    while tokio::time::Instant::now() < deadline {
-        let b = client
+        let windowed_text = client
             .get(&windowed_url)
             .send()
             .await
@@ -122,30 +98,46 @@ async fn catchup_output_end_to_end() {
             .text()
             .await
             .unwrap();
-        if b.contains("#EXTINF:") {
-            windowed = b;
-            break;
+        let full = MediaPlaylist::parse(&full_text).expect("full catch-up playlist parses");
+        let windowed =
+            MediaPlaylist::parse(&windowed_text).expect("windowed catch-up playlist parses");
+        let same_edge =
+            full.segments.last().map(|s| &s.uri) == windowed.segments.last().map(|s| &s.uri);
+        if same_edge && full.segments.len() >= 3 {
+            break (full, windowed);
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    let mut keep_from = full.segments.len() - 1;
+    let mut span = 0.0_f64;
+    for (i, segment) in full.segments[..keep_from].iter().enumerate().rev() {
+        span += segment.duration.get();
+        if span > WINDOW_SECS {
+            break;
+        }
+        keep_from = i;
     }
-    assert!(!windowed.is_empty(), "windowed playlist empty");
+    let expected: Vec<&str> = full.segments[keep_from..]
+        .iter()
+        .map(|s| s.uri.as_str())
+        .collect();
+    let got: Vec<&str> = windowed.segments.iter().map(|s| s.uri.as_str()).collect();
     assert_eq!(
-        full.matches("#EXTINF").count() - windowed.matches("#EXTINF").count(),
-        1,
-        "a 1s window must trim exactly one segment off the full playlist: windowed={}, full={}",
-        windowed.matches("#EXTINF").count(),
-        full.matches("#EXTINF").count()
+        got, expected,
+        "window_secs=1 must keep exactly the trailing 1 s of the archive"
+    );
+    assert!(
+        got.len() < full.segments.len(),
+        "the window must trim at least one segment: full={}",
+        full.segments.len()
     );
 
     // Fetch every referenced segment: served and right container.
-    for uri in segment_uris(&windowed) {
-        let rel = if uri.starts_with("catchup/") {
-            uri.clone()
-        } else {
-            format!("catchup/{uri}")
-        };
-        let url = format!("http://{bind_addr}/cam/{rel}");
-        let resp = client.get(&url).send().await.unwrap();
+    for segment in &windowed.segments {
+        let url = reqwest::Url::parse(&playlist_url)
+            .and_then(|base| base.join(&segment.uri))
+            .expect("segment URI resolves against the playlist URL");
+        let resp = client.get(url.clone()).send().await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK, "GET {url}");
         let bytes = resp.bytes().await.unwrap();
         assert!(!bytes.is_empty(), "empty segment {url}");
