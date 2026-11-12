@@ -333,10 +333,28 @@ pub(crate) fn into_response<B>(
     not_found_status: StatusCode,
     render_ready: impl FnOnce(B) -> Response,
 ) -> Response {
+    into_response_with_message(
+        resp,
+        not_found_status,
+        StatusCode::BAD_REQUEST,
+        render_ready,
+    )
+}
+
+/// [`into_response`] for a route whose `BadRequest` answer is *not* the
+/// client's fault: an egress that returns `BadRequest` because it cannot
+/// describe what it holds (rather than because the request is malformed)
+/// reports it as the caller's chosen `refused_status`.
+pub(crate) fn into_response_with_message<B>(
+    resp: EgressResponse<B>,
+    not_found_status: StatusCode,
+    refused_status: StatusCode,
+    render_ready: impl FnOnce(B) -> Response,
+) -> Response {
     match resp {
         EgressResponse::Ready { body, .. } => render_ready(body),
         EgressResponse::NotFound => not_found_status.into_response(),
-        EgressResponse::BadRequest { .. } => StatusCode::BAD_REQUEST.into_response(),
+        EgressResponse::BadRequest { .. } => refused_status.into_response(),
         // `EgressResponse` is `#[non_exhaustive]`, and `Await` should never
         // reach here (`resolve_blocking` only ever returns once `resolve`
         // stops answering it, or its own deadline has passed and

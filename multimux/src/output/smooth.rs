@@ -88,12 +88,17 @@ async fn manifest(State(route): State<Arc<RouteHandle>>) -> Response {
         || (),
     )
     .await;
-    http::into_response(resp, StatusCode::SERVICE_UNAVAILABLE, |body| match body {
-        SmoothBody::Manifest(xml) => {
-            ([(header::CONTENT_TYPE, MANIFEST_CONTENT_TYPE)], xml).into_response()
-        }
-        _ => StatusCode::NOT_FOUND.into_response(),
-    })
+    http::into_response_with_message(
+        resp,
+        StatusCode::SERVICE_UNAVAILABLE,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        |body| match body {
+            SmoothBody::Manifest(xml) => {
+                ([(header::CONTENT_TYPE, MANIFEST_CONTENT_TYPE)], xml).into_response()
+            }
+            _ => StatusCode::NOT_FOUND.into_response(),
+        },
+    )
 }
 
 /// Fallback route: catches Smooth fragment URLs which have the shape
@@ -116,12 +121,17 @@ async fn fragment_fallback(State(route): State<Arc<RouteHandle>>, uri: OriginalU
     };
     let resp =
         http::resolve_blocking(&trunk, &origin, request, BLOCKING_RELOAD_TIMEOUT, || ()).await;
-    http::into_response(resp, StatusCode::NOT_FOUND, |body| match body {
-        SmoothBody::Fragment(bytes) => {
-            ([(header::CONTENT_TYPE, FRAGMENT_CONTENT_TYPE)], bytes).into_response()
-        }
-        _ => StatusCode::NOT_FOUND.into_response(),
-    })
+    http::into_response_with_message(
+        resp,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        |body| match body {
+            SmoothBody::Fragment(bytes) => {
+                ([(header::CONTENT_TYPE, FRAGMENT_CONTENT_TYPE)], bytes).into_response()
+            }
+            _ => StatusCode::NOT_FOUND.into_response(),
+        },
+    )
 }
 
 /// The bytes the shared resource route serves for the segment numbered
