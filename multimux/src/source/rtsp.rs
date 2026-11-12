@@ -28,16 +28,17 @@
 //!
 //! # Keepalive
 //!
-//! A periodic `OPTIONS` keepalive is sent while the session is `Live`,
-//! driven off [`Stage::on_deadline`] (the seam
-//! `media_plane::ingress`'s own docs name for exactly this). The interval
-//! is half the `Session;timeout=N` the server declared in its SETUP response
-//! (RFC 2326 §12.37), clamped to `[KEEPALIVE_MIN, KEEPALIVE_MAX]`; a server
-//! that declared no timeout borrows [`DEFAULT_KEEPALIVE_INTERVAL`]
-//! (30 s) rather than being left to the server's own (often absent) expiry.
-//! A non-success reply to that `OPTIONS` is ignored rather than tearing the
-//! session down — many servers answer `OPTIONS` with `405` (it is optional,
-//! RFC 2326 §10.1).
+//! The keepalive schedule is `rtsp-runtime`'s, not this crate's: the session
+//! engine derives the deadline from the `Session;timeout=` its SETUP response
+//! declared (RFC 2326 §12.37) and falls back to the RFC's own default when
+//! the server declares none, and this stage only drives it —
+//! [`Stage::next_deadline`] asks
+//! [`rtsp_runtime::client::ClientSession::poll_timeout`] when it is due and
+//! [`Stage::on_deadline`] queues the request
+//! [`rtsp_runtime::client::ClientSession::handle_timeout`] builds. A
+//! non-success reply to that keepalive is ignored rather than tearing the
+//! session down — both `GET_PARAMETER` and `OPTIONS` are optional methods,
+//! and servers answer them with `405` (§10.6, §10.1).
 //!
 //! Inbound RTCP is fed to the track's depacketiser, whose Sender Report
 //! handling holds the RTP-to-NTP anchor; RTCP receiver reports are still not
@@ -146,18 +147,21 @@ pub struct RtspIngestSession {
     phase: Phase,
     outbound: VecDeque<Bytes>,
     pending: VecDeque<SessionEvent>,
-    /// Wall-clock instant of the next `OPTIONS` keepalive, once the session
-    /// is `Live` and the server declared a `Session;timeout=N` (RFC 2326
-    /// §12.37). `None` until then — a server that does not enforce a session
-    /// timeout needs no keepalive, and sending one early is wrong.
-    next_keepalive: Option<std::time::Instant>,
-    /// Monotonic session start, so `on_deadline`'s `Timestamp` can be turned
-    /// back into a wall-clock instant.
+    /// Monotonic session start, the epoch the engine's `now_us` deadline is
+    /// measured from. The driver's [`Timestamp`] has no readable epoch and no
+    /// relation to it: a driver woken at `Timestamp(t)` for our deadline `d`
+    /// is woken once `now_us() >= d`.
     started: std::time::Instant,
-    /// How long to wait between keepalives — half the server's declared
-    /// timeout, so a keepalive always lands well before expiry even with
-    /// jitter (RFC 2326 §12.37 leaves the interval to the client).
-    keepalive_interval: Option<Duration>,
+    /// The driver's most recent [`Timestamp`] and this stage's `now_us` when
+    /// it was seen: the two clocks are unrelated, so the engine's deadline is
+    /// mapped onto the driver's through this pair (see
+    /// [`Self::next_deadline`]).
+    heartbeat: Option<(Timestamp, u64)>,
+    /// Whether this connection has asked the server which keepalive method it
+    /// supports (see [`Self::settle_keepalive_method`]).
+    asked_keepalive_method: bool,
+    /// The engine's `now_us` at which its keepalive is next due.
+    keepalive_wake_at: u64,
     /// Interleaved media frames skipped because their RTP payload did not
     /// parse (audit T16, #1144) — see [`Self::malformed_media_frames`].
     malformed_media_frames: u64,
@@ -273,28 +277,9 @@ impl AlignDiagnostics {
     }
 }
 
-/// Default RTSP keepalive interval when a server declares a session timeout
-/// but the config does not override one. Half of the commonly-declared 60 s
-/// is 30 s — comfortably inside a `Session;timeout=60` window.
-pub const DEFAULT_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
-
-/// Lower bound on the keepalive interval, whatever a server declares — a
-/// declared `Session;timeout=0` (or `1`) must not produce sub-second
-/// `OPTIONS` spam.
-pub const KEEPALIVE_MIN: Duration = Duration::from_secs(5);
-
-/// Upper bound on the keepalive interval. A server declaring a huge timeout
-/// (or a hostile `18446744073709551615`) must not overflow
-/// `Instant::checked_add` or leave the session effectively un-kept-alive.
-pub const KEEPALIVE_MAX: Duration = Duration::from_secs(3600);
-
-/// The keepalive interval for a server-declared `Session;timeout=N` seconds:
-/// half the timeout (so a keepalive always lands well before expiry, RFC 2326
-/// §12.37), clamped to `[KEEPALIVE_MIN, KEEPALIVE_MAX]`.
-fn keepalive_interval_for(declared_secs: u64) -> Duration {
-    let half = Duration::from_secs(declared_secs) / 2;
-    half.clamp(KEEPALIVE_MIN, KEEPALIVE_MAX)
-}
+/// Nanoseconds in a microsecond: the engine's keepalive clock is
+/// microseconds, the driver's [`Timestamp`] is nanoseconds.
+const NANOS_PER_US: u64 = 1_000;
 
 impl RtspIngestSession {
     /// How many interleaved media frames were skipped because their RTP
@@ -384,17 +369,19 @@ impl RtspIngestSession {
                 ..
             } => {
                 if !status.is_success() {
-                    // A non-success reply to a keepalive `OPTIONS` must NOT
-                    // tear down an established session (issue #1083 C2): many
-                    // servers answer `OPTIONS` with `405 Method Not Allowed`
-                    // (it is optional, RFC 2326 §10.1) or `501`, and a
-                    // transient `5xx`/`401` mid-stream is not a reason to drop
-                    // a live ingest. Any other non-success response is still
-                    // fatal, exactly as before.
-                    if method == Method::Options && matches!(self.phase, Phase::Live) {
+                    // A non-success reply to the keepalive must NOT tear down
+                    // an established session (issue #1083 C2): `GET_PARAMETER`
+                    // and `OPTIONS` are both optional, a server may answer
+                    // either with `405`/`501`, and a transient `5xx`/`401`
+                    // mid-stream is not a reason to drop a live ingest. Any
+                    // other non-success response is still fatal, exactly as
+                    // before.
+                    if matches!(method, Method::Options | Method::GetParameter)
+                        && matches!(self.phase, Phase::Live)
+                    {
                         tracing::debug!(
                             status = %status,
-                            "rtsp: ignoring a non-success reply to a keepalive OPTIONS"
+                            "rtsp: ignoring a non-success reply to the keepalive"
                         );
                         return Ok(());
                     }
@@ -501,27 +488,7 @@ impl RtspIngestSession {
                             tracks: specs,
                         });
                         self.phase = Phase::Live;
-                        // Arm the keepalive from the SETUP-declared session
-                        // timeout (issue #1083 W8). A server that enforces
-                        // `Session;timeout=60` (Live555-based cameras) tears
-                        // the session down at 60 s without one; a server that
-                        // declared no timeout needs none.
-                        //
-                        // The declared timeout is untrusted wire input: a
-                        // hostile `Session: x;timeout=18446744073709551615`
-                        // would overflow `Instant + Duration` and PANIC the
-                        // ingest task, and `timeout=0` (or `1`) would spam
-                        // `OPTIONS` at sub-second intervals. Clamp the half-
-                        // timeout into [KEEPALIVE_MIN, KEEPALIVE_MAX] and use
-                        // `checked_add` so a value near the clock's end is
-                        // handled, not fatal.
-                        let interval = self
-                            .session
-                            .session_timeout()
-                            .map(keepalive_interval_for)
-                            .unwrap_or(DEFAULT_KEEPALIVE_INTERVAL);
-                        self.keepalive_interval = Some(interval);
-                        self.next_keepalive = std::time::Instant::now().checked_add(interval);
+                        self.arm_keepalive_wake(self.now_us());
                     }
                     _ => {
                         // A response for a request phase we've already moved
@@ -591,6 +558,57 @@ impl RtspIngestSession {
         }
         Ok(())
     }
+    /// The engine's `now_us`: this stage's own monotonic clock, anchored at
+    /// `started`, in microseconds. [`Timestamp`] has no readable epoch, so
+    /// the session schedule is measured on this clock rather than the
+    /// driver's (RTSP has no RTP-timestamp timeline that would need theirs).
+    fn now_us(&self) -> u64 {
+        u64::try_from(self.started.elapsed().as_micros()).unwrap_or(u64::MAX)
+    }
+
+    /// Asks the server which keepalive method it supports, once per
+    /// connection, as the keepalive's own `GET_PARAMETER`: a success answer's
+    /// `Public` header settles it for the next keepalive (RFC 2326 §12.28),
+    /// and a server that does not implement `GET_PARAMETER` ("`405`/`501`")
+    /// leaves the engine on `OPTIONS`. Only a session whose advertised
+    /// methods are unknown (before the server answered any `OPTIONS`) is
+    /// asked.
+    fn send_keepalive(&mut self, us: u64) {
+        // Re-arm before queueing so a build failure cannot spin: the engine
+        // re-arms its deadline as soon as it builds the request.
+        match self.session.handle_timeout(us) {
+            Ok(Some(bytes)) => self.outbound.push_back(Bytes::from(bytes)),
+            Ok(None) => {}
+            Err(e) => tracing::warn!(error = %e, "rtsp: failed to build the keepalive"),
+        }
+        self.arm_keepalive_wake(us);
+    }
+
+    fn settle_keepalive_method(&mut self, us: u64) {
+        if self.asked_keepalive_method || self.session.keepalive_method() != Method::Options {
+            return;
+        }
+        let uri = self
+            .plan
+            .as_ref()
+            .map_or(self.request_uri.as_str(), |plan| plan.play_uri());
+        match self.session.get_parameter(uri, b"") {
+            Ok(bytes) => self.outbound.push_back(Bytes::from(bytes)),
+            Err(e) => tracing::warn!(error = %e, "rtsp: failed to ask for the Public header"),
+        }
+        self.asked_keepalive_method = true;
+        self.arm_keepalive_wake(us);
+    }
+
+    /// Re-reads the engine's deadline after a request exchange: the engine
+    /// re-arms as soon as it builds the request, so this is always ahead.
+    fn arm_keepalive_wake(&mut self, now: u64) {
+        self.session.mark_activity(now);
+        self.keepalive_wake_at = self
+            .session
+            .poll_timeout()
+            .map_or(0, |due| due.max(now + 1));
+    }
 }
 
 impl Stage for RtspIngestSession {
@@ -656,33 +674,33 @@ impl Stage for RtspIngestSession {
     }
 
     fn next_deadline(&self) -> Option<Timestamp> {
-        // Only a Live session with a server-declared session timeout has a
-        // keepalive to keep (issue #1083 W8).
-        let at = self.next_keepalive?;
-        Some(Timestamp::from_instant(self.started, at))
+        // `None` before SETUP, after TEARDOWN, and before any request of ours
+        // was written — the engine owns the whole schedule.
+        let due = self.session.poll_timeout()?;
+        // Announce it on the driver's clock, which shares no epoch with the
+        // engine's: the driver is at `Timestamp(t)` when this stage's clock
+        // reads `us`, so it reaches `due` at `t + (due - us)`.
+        Some(match self.heartbeat {
+            Some((t, us)) => Timestamp::from_nanos(
+                t.as_nanos()
+                    .saturating_add(due.saturating_sub(us).saturating_mul(NANOS_PER_US)),
+            ),
+            None => Timestamp::from_nanos(due.saturating_mul(NANOS_PER_US)),
+        })
     }
 
-    fn on_deadline(&mut self, _now: Timestamp) {
+    fn on_deadline(&mut self, now: Timestamp) {
+        let us = self.now_us();
+        self.heartbeat = Some((now, us));
         if !matches!(self.phase, Phase::Live) {
             return;
         }
-        if self.next_keepalive.is_none() {
-            return;
-        }
-        // `on_deadline` is only called once `now >= next_deadline`, so by
-        // construction the keepalive is due. Re-arm before queueing so a
-        // failure to build the request (which returns early) cannot spin.
-        let interval = self
-            .keepalive_interval
-            .unwrap_or(DEFAULT_KEEPALIVE_INTERVAL);
-        self.next_keepalive = Some(std::time::Instant::now() + interval);
-        // An `OPTIONS` to the session's own base URL keeps the session alive
-        // (RFC 2326 §10.1: "the server ... may ... use OPTIONS to keep a
-        // session alive"). A build error is logged, not fatal — the client
-        // would rather miss one keepalive than tear the session down over it.
-        match self.session.options(&self.request_uri) {
-            Ok(bytes) => self.outbound.push_back(Bytes::from(bytes)),
-            Err(e) => tracing::warn!(error = %e, "rtsp: failed to build OPTIONS keepalive"),
+        // The method probe goes first: it re-arms the deadline from the
+        // request it builds, so the check below reads the fresh one and the
+        // keepalive that follows uses the method the answer settled.
+        self.settle_keepalive_method(us);
+        if self.keepalive_wake_at != 0 && us >= self.keepalive_wake_at {
+            self.send_keepalive(us);
         }
     }
 
@@ -788,9 +806,10 @@ impl Dialer for RtspDialer {
             phase: Phase::AwaitDescribe,
             outbound: VecDeque::from(vec![Bytes::from(describe_bytes)]),
             pending: VecDeque::new(),
-            next_keepalive: None,
             started: std::time::Instant::now(),
-            keepalive_interval: None,
+            heartbeat: None,
+            asked_keepalive_method: false,
+            keepalive_wake_at: 0,
             malformed_media_frames: 0,
             rtcp_frames: 0,
             diagnostics: AlignDiagnostics::default(),
@@ -1891,11 +1910,31 @@ mod tests {
 
     // --- issue #1083 W8: permanent-failure classification + keepalive ---
 
+    /// The RTSP method the session engine's keepalive uses (RFC 2326 §10.6,
+    /// sent by `rtsp_runtime::client::ClientSession::handle_timeout`) when
+    /// the server advertised it.
+    const KEEPALIVE_METHOD: &str = "GET_PARAMETER";
+
+    /// The `Public` header (RFC 2326 §12.28) of a server that implements
+    /// every method; only its presence makes the keepalive `GET_PARAMETER`.
+    const PUBLIC_ALL: &str = "Public: OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN, GET_PARAMETER";
+
     /// Serves one RTSP connection: reads each request's request line, and
-    /// answers via `respond`. Returns every request line it saw.
+    /// answers via `respond`. Returns every request line it saw, stopping
+    /// once a keepalive (`GET_PARAMETER`, the session engine's liveness ping)
+    /// arrives unless `answer_keepalives` asks for it to be answered and the
+    /// connection served on.
     async fn serve_requests(
+        sock: tokio::net::TcpStream,
+        respond: impl FnMut(&str, u32) -> Option<Vec<u8>>,
+    ) -> Vec<String> {
+        serve_requests_answering_keepalives(sock, respond, false).await
+    }
+
+    async fn serve_requests_answering_keepalives(
         mut sock: tokio::net::TcpStream,
         mut respond: impl FnMut(&str, u32) -> Option<Vec<u8>>,
+        answer_keepalives: bool,
     ) -> Vec<String> {
         let mut seen = Vec::new();
         let mut buf = Vec::new();
@@ -1924,7 +1963,7 @@ mod tests {
                     .and_then(|v| v.trim().parse().ok())
                     .unwrap_or(0);
                 seen.push(format!("{method} {cseq}"));
-                if method == "OPTIONS" {
+                if method == KEEPALIVE_METHOD && !answer_keepalives {
                     // Stop as soon as a keepalive is observed — the point of
                     // this test is that one arrives at all.
                     return seen;
@@ -2058,14 +2097,19 @@ mod tests {
         let _ = server.await;
     }
 
-    /// With a server that declares `Session; timeout=2`, the client must send
-    /// a periodic `OPTIONS` keepalive (RFC 2326 §10.1) rather than sitting
-    /// silently until the server tears the session down.
+    /// With a server that declares `Session; timeout=2`, an idle `Live`
+    /// session must send the keepalive `rtsp-runtime`'s session engine
+    /// schedules before the timeout elapses (RFC 2326 §12.37), rather than
+    /// sitting silently until the server tears the session down. This server
+    /// answers the session-level `OPTIONS` with a `Public` header listing
+    /// `GET_PARAMETER`, so that is the method its interleaved keepalive uses.
     ///
     /// Biting test: make `on_deadline` a no-op (its pre-fix body) and the
-    /// server never sees an OPTIONS, failing the assertion below.
+    /// server never sees the keepalive, failing the assertion below.
     #[tokio::test]
-    async fn rtsp_sends_an_options_keepalive_when_the_server_declares_a_timeout() {
+    async fn rtsp_sends_a_keepalive_when_the_server_declares_a_timeout() {
+        let seen_keepalive = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let keepalive_flag = seen_keepalive.clone();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind loopback");
@@ -2074,23 +2118,31 @@ mod tests {
         let server = tokio::spawn(async move {
             let (sock, _) = listener.accept().await.expect("accept");
             let sdp = sdp_body();
-            serve_requests(sock, move |method, cseq| {
-                let session = "Session: 12345678; timeout=2\r\n";
-                let resp = match method {
-                    "DESCRIBE" => {
-                        rtsp_response(cseq, "200 OK", "Content-Type: application/sdp\r\n", &sdp)
+            serve_requests_answering_keepalives(
+                sock,
+                move |method, cseq| {
+                    if method == KEEPALIVE_METHOD {
+                        seen_keepalive.store(true, std::sync::atomic::Ordering::SeqCst);
                     }
-                    "SETUP" => rtsp_response(
-                        cseq,
-                        "200 OK",
-                        "Session: 12345678; timeout=2\r\nTransport: RTP/AVP/TCP;interleaved=0-1\r\n",
-                        "",
-                    ),
-                    "PLAY" | "OPTIONS" => rtsp_response(cseq, "200 OK", session, ""),
-                    _ => return None,
-                };
-                Some(resp)
-            })
+                    let session = "Session: 12345678; timeout=2\r\n";
+                    let resp = match method {
+                        "DESCRIBE" => {
+                            rtsp_response(cseq, "200 OK", "Content-Type: application/sdp\r\n", &sdp)
+                        }
+                        "SETUP" => rtsp_response(
+                            cseq,
+                            "200 OK",
+                            "Session: 12345678; timeout=2\r\nTransport: RTP/AVP/TCP;interleaved=0-1\r\n",
+                            "",
+                        ),
+                        "PLAY" | KEEPALIVE_METHOD => rtsp_response(cseq, "200 OK", session, ""),
+                    "OPTIONS" => rtsp_response(cseq, "200 OK", PUBLIC_ALL, ""),
+                        _ => return None,
+                    };
+                    Some(resp)
+                },
+                true,
+            )
             .await
         });
 
@@ -2113,15 +2165,16 @@ mod tests {
             )
             .await
         });
-        let seen = tokio::time::timeout(std::time::Duration::from_secs(20), server)
-            .await
-            .expect("the server must observe requests within the hang guard")
-            .expect("server task");
+        let observed = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            while !keepalive_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await;
         run.abort();
-        assert!(
-            seen.iter().any(|r| r.starts_with("OPTIONS")),
-            "the client must have sent an OPTIONS keepalive within the 2s session timeout; \
-             requests seen: {seen:?}"
+        server.abort();
+        observed.expect(
+            "the client must have sent a GET_PARAMETER keepalive within the 2s session timeout",
         );
     }
 
@@ -2412,18 +2465,70 @@ mod tests {
 
     // --- issue #1083 C: keepalive hardening + bounded DESCRIBE-404 ---
 
-    /// A hostile `Session;timeout` value must not panic (overflow) or produce
-    /// sub-second `OPTIONS` spam — the interval is clamped.
+    /// A hostile `Session;timeout` value must not overflow the keepalive
+    /// deadline, and a tiny one must not produce sub-second `OPTIONS` spam —
+    /// both are the engine's floor (`MIN_KEEPALIVE_INTERVAL`), so this stage
+    /// inherits them by driving `poll_timeout`/`handle_timeout` at all.
     ///
-    /// Biting test: drop the `clamp`/`checked_add` and a
-    /// `timeout=18446744073709551615` header panics the ingest task.
-    #[test]
-    fn keepalive_interval_is_clamped_for_hostile_timeouts() {
-        assert_eq!(keepalive_interval_for(0), KEEPALIVE_MIN);
-        assert_eq!(keepalive_interval_for(1), KEEPALIVE_MIN);
-        assert_eq!(keepalive_interval_for(u64::MAX), KEEPALIVE_MAX);
-        // A normal 60 s timeout yields half of it.
-        assert_eq!(keepalive_interval_for(60), Duration::from_secs(30));
+    /// Biting test: build the deadline as `Instant + timeout/2` without the
+    /// engine's floor/`checked_add` and the `timeout=18446744073709551615`
+    /// case panics instead of scheduling a keepalive.
+    #[tokio::test]
+    async fn hostile_session_timeouts_do_not_overflow_or_spam() {
+        for declared in ["18446744073709551615", "0", "1", "60"] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind loopback");
+            let addr = listener.local_addr().expect("addr");
+            let header = format!("Session: 12345678; timeout={declared}\r\n");
+            let server = tokio::spawn(async move {
+                let (sock, _) = listener.accept().await.expect("accept");
+                let sdp = sdp_body();
+                serve_requests(sock, move |method, cseq| {
+                    let resp = match method {
+                        "DESCRIBE" => {
+                            rtsp_response(cseq, "200 OK", "Content-Type: application/sdp\r\n", &sdp)
+                        }
+                        "SETUP" => rtsp_response(
+                            cseq,
+                            "200 OK",
+                            &format!("{header}Transport: RTP/AVP/TCP;interleaved=0-1\r\n"),
+                            "",
+                        ),
+                        "PLAY" | KEEPALIVE_METHOD => rtsp_response(cseq, "200 OK", &header, ""),
+                        _ => return None,
+                    };
+                    Some(resp)
+                })
+                .await
+            });
+            let route = RtspRoute::new("hostile", format!("rtsp://{addr}/stream")).with_timeouts(
+                crate::source::IngestTimeouts {
+                    connect: std::time::Duration::from_secs(5),
+                    read: std::time::Duration::from_secs(5),
+                },
+            );
+            let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
+            let run = tokio::spawn(async move {
+                run_rtsp(
+                    &route,
+                    trunk_config(),
+                    handshake(),
+                    &route_handle,
+                    tokio_util::sync::CancellationToken::new(),
+                )
+                .await
+            });
+            let observed = tokio::time::timeout(std::time::Duration::from_secs(20), server)
+                .await
+                .expect("the server must observe requests within the hang guard")
+                .expect("server task");
+            run.abort();
+            assert!(
+                observed.iter().any(|r| r.starts_with("PLAY")),
+                "timeout={declared}: the session must reach PLAY, saw {observed:?}"
+            );
+        }
     }
 
     /// A server that completes the handshake and answers keepalives but
@@ -2457,9 +2562,11 @@ mod tests {
                         "",
                     ),
                     "PLAY" => rtsp_response(cseq, "200 OK", "Session: 12345678\r\n", ""),
-                    // Answer keepalives so the peer is provably alive at the
-                    // RTSP layer — but never send any media.
-                    "OPTIONS" => rtsp_response(cseq, "200 OK", "Session: 12345678\r\n", ""),
+                    // Keepalives are genuinely unanswered: this server made
+                    // no `OPTIONS` exchange at all (no `Public` header), so
+                    // its keepalive is `OPTIONS`, and a reply would carry the
+                    // session id of a session it never declared.
+                    "OPTIONS" | KEEPALIVE_METHOD => return None,
                     _ => return None,
                 };
                 Some(resp)
@@ -2510,16 +2617,18 @@ mod tests {
         // Drive the session to Live by hand.
         session.phase = Phase::Live;
 
-        let result = session.handle_event(ClientEvent::Response {
-            cseq: 9,
-            method: Method::Options,
-            status: StatusCode::MethodNotAllowed,
-            body: Vec::new(),
-        });
-        assert!(
-            result.is_ok(),
-            "a 405 to a keepalive OPTIONS must be ignored, not fatal: {result:?}"
-        );
+        for method in [Method::Options, Method::GetParameter] {
+            let result = session.handle_event(ClientEvent::Response {
+                cseq: 9,
+                method: method.clone(),
+                status: StatusCode::MethodNotAllowed,
+                body: Vec::new(),
+            });
+            assert!(
+                result.is_ok(),
+                "a 405 to a keepalive {method:?} must be ignored, not fatal: {result:?}"
+            );
+        }
 
         // Any OTHER non-success response in the same phase is still fatal.
         let err = session.handle_event(ClientEvent::Response {
