@@ -224,30 +224,6 @@ impl Mpd {
             }
             w.write_event(Event::Empty(e)).map_err(io_err)?;
         }
-        if self.features.patch_location {
-            w.write_event(Event::Empty(BytesStart::new("PatchLocation")))
-                .map_err(io_err)?;
-        }
-        if self.features.event_stream {
-            w.write_event(Event::Empty(BytesStart::new("EventStream")))
-                .map_err(io_err)?;
-        }
-        if self.features.preselection {
-            w.write_event(Event::Empty(BytesStart::new("Preselection")))
-                .map_err(io_err)?;
-        }
-        if self.features.producer_reference_time {
-            w.write_event(Event::Empty(BytesStart::new("ProducerReferenceTime")))
-                .map_err(io_err)?;
-        }
-        if self.features.content_steering {
-            w.write_event(Event::Empty(BytesStart::new("ContentSteering")))
-                .map_err(io_err)?;
-        }
-        if self.features.resync {
-            w.write_event(Event::Empty(BytesStart::new("Resync")))
-                .map_err(io_err)?;
-        }
         w.write_event(Event::End(BytesEnd::new("MPD")))
             .map_err(io_err)?;
         let mut out = String::from_utf8_lossy(&w.into_inner()).into_owned();

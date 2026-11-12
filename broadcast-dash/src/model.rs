@@ -210,6 +210,12 @@ impl UtcTiming {
 }
 
 /// Which not-acted-on constructs the MPD contained.
+///
+/// Read-only: [`Mpd::to_xml`] emits no element for `patch_location`,
+/// `event_stream`, `preselection`, `producer_reference_time`,
+/// `content_steering` or `resync` (the model keeps only the flag, not the
+/// element), so a parse -> write -> parse clears those six flags. The other
+/// flags are derived from content the writer does emit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub struct MpdFeatures {
