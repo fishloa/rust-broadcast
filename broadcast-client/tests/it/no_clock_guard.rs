@@ -32,23 +32,11 @@ fn scanned_files() -> Vec<(String, String)> {
         .collect()
 }
 
-/// Not on the DASH path, so outside this guard's scope by design: the RTSP
-/// pull takes one `Instant` epoch at construction so the shared
-/// `rtsp_runtime::ClientSession` keepalive schedule can be converted to and
-/// from its caller's `now_us` — an `Instant` cannot be built from a
-/// caller-supplied `u64` any other way. It uses that epoch only for the
-/// RTSP session timeout (RFC 2326 §12.37), never for an HTTP fetch, a
-/// retry, a backoff or any other DASH decision.
-const OUT_OF_SCOPE: &[&str] = &["broadcast-client/src/source/rtsp.rs"];
-
 fn hits_in(files: &[(String, String)]) -> Vec<String> {
     let skipped = out_of_line_test_modules(files);
     let mut out = Vec::new();
     for (path, src) in files {
         if skipped.contains(path) {
-            continue;
-        }
-        if OUT_OF_SCOPE.iter().any(|scope| path == scope) {
             continue;
         }
         for (n, line) in non_test_source(src).lines().enumerate() {
