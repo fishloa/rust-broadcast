@@ -72,6 +72,7 @@ mod subtitle_webvtt;
 #[path = "../support/mod.rs"]
 mod support;
 mod time_codec;
+mod ts_hls_gap_oracle;
 mod ts_hls_idr;
 mod ts_hls_idr_fallback;
 #[cfg(feature = "test-seams")]
