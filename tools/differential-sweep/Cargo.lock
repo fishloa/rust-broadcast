@@ -280,6 +280,8 @@ name = "broadcast-auth"
 version = "0.6.0"
 dependencies = [
  "base64 0.23.1",
+ "cookie",
+ "cookie_store",
  "form_urlencoded",
  "getrandom 0.4.3",
  "headers",
@@ -331,12 +333,15 @@ dependencies = [
 name = "broadcast-common"
 version = "11.1.0"
 dependencies = [
+ "base64 0.23.1",
  "chrono",
  "erased-serde",
  "hex",
  "iso-639",
+ "jiff",
  "quick-xml",
  "serde",
+ "thiserror",
 ]
 
 [[package]]
@@ -733,9 +738,12 @@ dependencies = [
  "broadcast-common",
  "broadcast-dash",
  "container-probe",
+ "http",
  "jiff",
+ "media-plane",
  "quick-xml",
  "thiserror",
+ "tracing",
  "transmux",
  "url",
 ]
@@ -1272,22 +1280,16 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 name = "hls-runtime"
 version = "0.13.0"
 dependencies = [
- "backon",
- "broadcast-auth",
  "broadcast-common",
  "broadcast-hls",
  "bytes",
  "container-probe",
- "headers",
  "jiff",
  "media-plane",
  "mpeg-ts",
- "reqwest",
  "serde",
  "thiserror",
  "timed-metadata",
- "tokio",
- "tokio-util",
  "transmux",
  "url",
 ]
@@ -1850,6 +1852,7 @@ dependencies = [
  "container-probe",
  "dvb-conformance",
  "dvb-si",
+ "dvb-stream",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -2733,7 +2736,6 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 name = "scte35-splice"
 version = "5.0.1"
 dependencies = [
- "base64 0.23.1",
  "broadcast-common",
  "mpeg-ts",
  "serde",

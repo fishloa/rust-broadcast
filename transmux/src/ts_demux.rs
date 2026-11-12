@@ -2058,7 +2058,7 @@ fn initial_carrier(codec: Codec) -> Carrier {
         Codec::Data(stream_type) if data_carriage(stream_type) == DataCarriage::Sections => {
             Carrier::Section(SectionReassembler::default())
         }
-        _ => Carrier::Pes(PesAssembler::new()),
+        _ => Carrier::Pes(PesAssembler::with_max_unit_size(MAX_PES_BUFFER_BYTES)),
     }
 }
 
@@ -2074,10 +2074,6 @@ struct StreamState {
     codec: Codec,
     descriptors: Vec<u8>,
     carrier: Carrier,
-    /// Bytes accumulated in `carrier`'s `Carrier::Pes` assembler since the
-    /// last `payload_unit_start` — enforces [`MAX_PES_BUFFER_BYTES`]. Always
-    /// `0` and unused for `Carrier::Section` streams.
-    pes_bytes: usize,
     /// Previous access unit's resolved `(pts, dts)` — the base a PES carrying
     /// none of its own is interpolated *forward* from (see
     /// [`StreamState::frame_period`]).
@@ -2202,7 +2198,6 @@ impl StreamState {
     /// [`StreamingTsDemux::restart_timeline`]); the resolved track stays.
     fn restart_timeline(&mut self) {
         self.carrier = initial_carrier(self.codec);
-        self.pes_bytes = 0;
         self.fallback = (0, 0);
         self.frame_period = None;
         self.last_stamped_dts = None;
@@ -4486,22 +4481,24 @@ fn feed_pes_bounded(
     } else {
         stream.pes_received = stream.pes_received.saturating_add(payload.len());
     }
-    if pusi {
-        stream.pes_bytes = payload.len();
-    } else if stream.pes_bytes > 0 {
-        // Only accumulate once a real `payload_unit_start` has been seen for
-        // this PID — mirrors `PesAssembler::feed`'s own "ignore a
-        // continuation before the first start" rule (relevant for the
-        // `unattributed`-replay path, whose buffered payloads can begin
-        // mid-PES), so this counter never diverges from what the assembler
-        // is actually buffering.
-        stream.pes_bytes = stream.pes_bytes.saturating_add(payload.len());
-    }
+    let was_started = assembler.is_started();
+    let prev_len = assembler.len();
+    let projected = if pusi {
+        payload.len()
+    } else if was_started {
+        prev_len.saturating_add(payload.len())
+    } else {
+        0
+    };
+    let overflow = if pusi {
+        payload.len() > MAX_PES_BUFFER_BYTES
+    } else {
+        was_started && prev_len.saturating_add(payload.len()) > MAX_PES_BUFFER_BYTES
+    };
     let completed = assembler.feed(pusi, payload);
-    if stream.pes_bytes > MAX_PES_BUFFER_BYTES {
-        let dropped_bytes = stream.pes_bytes as u64;
+    if overflow {
+        let dropped_bytes = projected as u64;
         let _ = assembler.flush();
-        stream.pes_bytes = 0;
         clear_audio_carry(stream, events);
         let track = match stream.track.as_ref() {
             Some(TrackState::Live(live)) => Some(live.track_id),
@@ -5567,14 +5564,10 @@ impl StreamingTsDemux {
                 if cc == state.last_cc
                     && let Some(prev) = state.last_packet
                 {
-                    match broadcast_common::ts_dup::check_duplicate(
-                        &prev,
-                        raw,
-                        state.dup_used_for_last,
-                    ) {
+                    match mpeg_ts::ts_dup::check_duplicate(&prev, raw, state.dup_used_for_last) {
                         // §2.4.3.3's one legal repeat. `dup_used_for_last`
                         // records that this PID has now spent it.
-                        broadcast_common::ts_dup::DuplicateVerdict::Legal => {
+                        mpeg_ts::ts_dup::DuplicateVerdict::Legal => {
                             state.dup_used_for_last = true;
                             state.last_packet = Some(*raw);
                             return CcVerdict::Duplicate;
@@ -5589,7 +5582,7 @@ impl StreamingTsDemux {
                         // stays "spent" (`dup_used_for_last` is NOT reset),
                         // so a 5-packet run reports 3 faults, not an
                         // alternating legal/illegal pattern.
-                        broadcast_common::ts_dup::DuplicateVerdict::IllegalThirdRepeat => {
+                        mpeg_ts::ts_dup::DuplicateVerdict::IllegalThirdRepeat => {
                             if !discontinuity_signalled {
                                 self.events.push_back(DemuxEvent::InputDegraded {
                                     track,
@@ -5763,7 +5756,6 @@ impl StreamingTsDemux {
             last_payload_full: false,
             pes_declared_len: 0,
             pes_received: 0,
-            pes_bytes: 0,
             fallback: (0, 0),
             frame_period: None,
             last_stamped_dts: None,
@@ -7032,7 +7024,17 @@ pub(crate) mod tests {
         // Each continuation packet contributes `PACKET_PAYLOAD_LEN` (184)
         // bytes; comfortably more than `MAX_PES_BUFFER_BYTES / 184` packets
         // are fed so the cap must trip well before the loop ends.
+        // Start an in-progress PES on this PID so the continuation flood
+        // below actually accumulates (a bare continuation before any PUSI is
+        // ignored, mirroring PesAssembler).
         let mut cc: u8 = 0;
+        let mut pkt = [0xFFu8; TS_PACKET_SIZE];
+        pkt[0] = 0x47;
+        pkt[1] = 0x40 | (((ES_PID.value() >> 8) as u8) & PID_HI_MASK);
+        pkt[2] = (ES_PID.value() & 0xFF) as u8;
+        pkt[3] = 0x10 | (cc & 0x0F);
+        cc = cc.wrapping_add(1);
+        demux.feed(&pkt);
         let mut hit_cap = false;
         for _ in 0..30_000u32 {
             let mut pkt = [0xFFu8; TS_PACKET_SIZE];
@@ -7055,11 +7057,11 @@ pub(crate) mod tests {
             "expected MAX_PES_BUFFER_BYTES to trip well within 30000 continuation \
              packets (never grow unbounded)"
         );
-        assert_eq!(
-            demux.streams.get(&ES_PID).unwrap().pes_bytes,
-            0,
-            "pes_bytes must reset to 0 once the cap trips"
-        );
+        let cap_len = match &demux.streams.get(&ES_PID).unwrap().carrier {
+            Carrier::Pes(a) => a.len(),
+            Carrier::Section(_) => 0,
+        };
+        assert_eq!(cap_len, 0, "carrier must reset to 0 once the cap trips");
 
         // Resync proof: a fresh payload_unit_start after the overflow is
         // accepted normally (the assembler was reset, not wedged).
@@ -7072,7 +7074,13 @@ pub(crate) mod tests {
         pkt[4] = 0; // pointer/no-op first byte for a PES (not a pointer_field — PES has none)
         demux.feed(&pkt);
         assert_eq!(
-            demux.streams.get(&ES_PID).unwrap().pes_bytes,
+            {
+                let s = demux.streams.get(&ES_PID).unwrap();
+                match &s.carrier {
+                    Carrier::Pes(a) => a.len(),
+                    Carrier::Section(_) => 0,
+                }
+            },
             PACKET_PAYLOAD_LEN,
             "a fresh payload_unit_start must be accepted and start a new count"
         );
@@ -9928,7 +9936,7 @@ pub(crate) mod tests {
     /// bit-for-bit: unescape, swap the leading `ue(v)`, drop the old
     /// alignment, re-pad after the stop bit, re-escape (§7.4.1.1).
     fn pps_with_id(pps: &[u8], id: u64) -> Vec<u8> {
-        let rbsp = crate::bitreader::unescape(&pps[1..]);
+        let rbsp = crate::rbsp::unescape(&pps[1..]);
         let bits: Vec<bool> = rbsp
             .iter()
             .flat_map(|b| (0..8).rev().map(move |i| (b >> i) & 1 == 1))
@@ -13905,5 +13913,51 @@ pub(crate) mod tests {
                 "{label}: the hostile tail must have actually been carried (max {max_carry})"
             );
         }
+    }
+
+    /// Audit #2459: `feed_pes_bounded` kept its own `pes_bytes` counter next
+    /// to `PesAssembler`'s buffer, and the two drifted on the `unattributed`
+    /// replay path — whole TS packets are replayed there, so the assembler can
+    /// start a unit from a continuation the counter never saw begin, and its
+    /// own 4 MiB floor stops the buffer the same way for every caller. The
+    /// reassembler's length is the one answer, and it is what the cap reads.
+    #[test]
+    fn the_pre_pmt_replay_caps_a_pes_with_the_assembler_floor() {
+        const PMT_PID: Pid = Pid::new(0x1000);
+        const ES_PID: Pid = Pid::new(0x1100);
+        let mut demux = StreamingTsDemux::new();
+        let pmt = psi_section_packets(PMT_PID, 0, 0x02, &pmt_body(ES_PID, 0x1B));
+        // No PAT yet: these payloads land in `unattributed`, and the lead is a
+        // continuation so the unit really starts mid-stream.
+        let mut frames = Vec::new();
+        frames.push((false, alloc::vec![0xBB; TS_PACKET_SIZE - 4]));
+        frames.push((true, unbounded_pes(ES_STREAM_ID_AUDIO, &[0xAA; 16])));
+        const HEADROOM: usize = 8;
+        let fill =
+            (MAX_PES_BUFFER_BYTES + MAX_UNATTRIBUTED_BYTES) / (TS_PACKET_SIZE - 4) + HEADROOM;
+        for _ in 0..fill {
+            frames.push((false, alloc::vec![0xBB; TS_PACKET_SIZE - 4]));
+        }
+        let mut cc: u8 = 0;
+        for (pusi, payload) in &frames {
+            let mut pkt = [0xFFu8; TS_PACKET_SIZE];
+            pkt[0] = 0x47;
+            pkt[1] = ((ES_PID.value() >> 8) as u8 & PID_HI_MASK) | if *pusi { 0x40 } else { 0 };
+            pkt[2] = (ES_PID.value() & 0xFF) as u8;
+            pkt[3] = 0x10 | cc;
+            cc = cc.wrapping_add(1);
+            pkt[4..4 + payload.len()].copy_from_slice(payload);
+            demux.feed(&pkt);
+        }
+        demux.feed(&psi_section_packets(Pid::new(0), 0, 0x00, &pat_body()));
+        demux.feed(&pmt); // the replay runs now
+        let held = match demux.streams.get(&ES_PID).map(|s| &s.carrier) {
+            Some(Carrier::Pes(a)) => a.len(),
+            _ => 0,
+        };
+        assert!(
+            held <= MAX_PES_BUFFER_BYTES,
+            "the replayed PES must not be held past the cap (held {held})"
+        );
     }
 }

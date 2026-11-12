@@ -3,7 +3,7 @@
 [![crates.io](https://img.shields.io/crates/v/hls-runtime.svg)](https://crates.io/crates/hls-runtime)
 [![docs.rs](https://img.shields.io/docsrs/hls-runtime)](https://docs.rs/hls-runtime)
 
-Sans-IO Low-Latency HLS (RFC 8216bis) client and origin engines in one crate: a driveable playback client, and an origin that renders playlists and resolves blocking-reload requests straight from a `media_plane::Trunk`. An optional `tokio` + `reqwest` adapter provides real HTTP for the client.
+Sans-IO Low-Latency HLS (RFC 8216bis) client and origin engines in one crate: a driveable playback client, and an origin that renders playlists and resolves blocking-reload requests straight from a `media_plane::Trunk`. The client does no I/O at all: the crate that drives it performs the GETs the engine asks for.
 
 Formerly published as `ll-hls-runtime` (last release 0.3.1 under that name); search for either name.
 
@@ -28,7 +28,6 @@ hls-runtime = "0.13"
 | IETF RFC 8216 HLS | RFC 8216 (private repo: `private/specs-verified/ietf/specs/ietf_rfc8216_hls.txt`) | Classic TS-segment HLS playback (HLS v3 form) | Partial | Client only |
 | Apple HLS timed metadata | private repo: `private/specs-verified/hls/apple/apple_hls_timed_metadata.html` | SCTE-35 cues rendered as `EXT-X-DATERANGE` via `timed-metadata` | Partial | |
 | IETF RFC 3986 reference resolution, RFC 3339 dates | RFC 3986, RFC 3339 | Relative URL joins (`url`), program-date-time (`jiff`) | Full | Not hand-rolled |
-| IETF RFC 7617 / 7616 / 6750 | not vendored | `TokioClient` authentication through `broadcast-auth`; credentials go only to the playlist's origin | Full, behind `tokio` | |
 
 ## Features
 
@@ -36,7 +35,6 @@ hls-runtime = "0.13"
 |---|---|---|
 | `std` | yes | Enables `server` (needs `media_plane::Trunk`, which is `std`), plus `bytes`, `url/std`, `jiff/std`. Without it the client core is `#![no_std]` + `alloc`. |
 | `serde` | no | `Serialize` on the public action, output and id types. |
-| `tokio` | no | `client::tokio_client::TokioClient`: async shell over tokio and reqwest (rustls). Blocking-reload query parameters, typed `Range`, per-request and connect timeouts, `backon` retry with jitter (no retry of a 4xx other than 408 and 429), a `CancellationToken`, and Basic, Bearer or Digest through `broadcast-auth`. Implies `std`. |
 
 ## Quick start
 
@@ -103,7 +101,7 @@ Sans-IO (no clock read, no socket, in the core), `#![forbid(unsafe_code)]`, `no_
 
 ## Related crates
 
-Depends on `broadcast-hls` (playlist syntax), `transmux` (demux, `TrackId`), `media-plane` (`Trunk`, `ServedEgress`), `timed-metadata` (`EXT-X-DATERANGE`) and, for `tokio`, `broadcast-auth`. `multimux` is the reference adapter: it serves every LL-HLS route through one `HlsOrigin` per program over axum and tokio.
+Depends on `broadcast-hls` (playlist syntax), `transmux` (demux, `TrackId`), `media-plane` (`Trunk`, `ServedEgress`) and `timed-metadata` (`EXT-X-DATERANGE`). `multimux` is the reference adapter: it serves every LL-HLS route through one `HlsOrigin` per program over axum and tokio, and drives the client engine as its HLS-pull input.
 
 ## MSRV and licence
 

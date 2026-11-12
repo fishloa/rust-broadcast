@@ -11,7 +11,6 @@ use hls_runtime::client::{
 use transmux::TrackId;
 use url::Url;
 
-use crate::auth::AuthState;
 use crate::error::Error;
 use crate::events::{AUDIO_TRACK_ID_OFFSET, Action, Config, ErrorKind, Event, Status};
 use crate::source::fetch::conn::ConnAlloc;
@@ -23,6 +22,7 @@ use crate::source::fetch::resume::{HeadOutcome, Stash, accept_head};
 use crate::source::fetch::retry::{Backoff, RefusedCapture, RetryGate, retry_after_us};
 use crate::source::fetch::wall::WallClock;
 use crate::source::fetch::window::{Lane, Lanes, Window};
+use broadcast_auth::AuthState;
 
 const MICROS_PER_MILLI: u64 = 1_000;
 const STATUS_FORBIDDEN: u16 = 403;
@@ -861,7 +861,7 @@ impl HlsSource {
     fn send(&mut self, mut req: Req, auth: &mut AuthState, now: u64) {
         self.flush_refused();
         let headers = auth.request_headers(&req.url, now);
-        req.authed = crate::auth::carries_credentials(&headers);
+        req.authed = broadcast_auth::carries_credentials(&headers);
         self.flight
             .start(req, headers, METHOD_GET, now, &mut self.actions);
     }

@@ -1,9 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- `udp::bind_udp` now uses `dvb_stream::udp::bind_standard` (shared socket bind) instead of its own socket2 sequence (#2472).
 ### Added
 - `media_doctor_scte35_cues_total{timing=...}` and the matching `WatchSnapshot` fields: each SCTE-35 cue is judged against the program's reference decode timestamp, by the same engine `compliance-probe` reports.
-### Changed
 - Use shared `SpliceTracker` (scte35-splice) and `ConformanceMonitor::indicator_counts()` instead of local copies.
 ### Fixed
 - `has_adts_sync` drops its own syncword pre-test and relies on the strict `transmux::parse_adts_header`, so an AAC-declared PID carrying MP3 frames is now flagged.

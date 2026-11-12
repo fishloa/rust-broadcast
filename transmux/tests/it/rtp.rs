@@ -6,13 +6,13 @@
 
 #[cfg(feature = "std")]
 use crate::sdp_session;
+#[cfg(feature = "std")]
+use broadcast_common::base64::base64_decode_lenient as base64_decode;
 use broadcast_common::{Package, Serialize, Unpackage};
 #[cfg(feature = "std")]
 use transmux::RtpOutput;
 use transmux::TrackId;
 use transmux::pipeline::CodecConfig;
-#[cfg(feature = "std")]
-use transmux::rtp::base64_decode;
 use transmux::{
     Media, NAL_TYPE_IDR, RtpDepacketiser, RtpInput, RtpInputStream, RtpMediaKind, RtpPacket,
     RtpPacketiser, VIDEO_CLOCK_RATE,

@@ -1,25 +1,13 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use test_fixtures::process::wait_for_port;
 
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
 use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
 use tokio::net::TcpListener;
-
-async fn wait_for_port(addr: std::net::SocketAddr) {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        if tokio::net::TcpStream::connect(addr).await.is_ok() {
-            return;
-        }
-        if tokio::time::Instant::now() >= deadline {
-            panic!("nothing accepted a connection on {addr}");
-        }
-        tokio::task::yield_now().await;
-    }
-}
 
 fn make_state() -> Arc<AppState> {
     let store = Arc::new(

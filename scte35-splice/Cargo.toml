@@ -16,15 +16,14 @@ exclude      = ["docs/**"]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "11.0.1", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "11.0.1", default-features = false, features = ["base64"] }
 mpeg-ts = { path = "../mpeg-ts", version = "0.7.1", default-features = false }
 thiserror = { version = "2", default-features = false }
 serde      = { version = "1", default-features = false, optional = true, features = ["derive", "alloc"] }
-# Base-64 for `dvb_ta::base64_encode` (SP5); `alloc` only, so the crate stays no_std.
-base64     = { version = "0.23", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+base64     = { version = "0.23", default-features = false, features = ["alloc"] }
 dvb-t2mi   = { path = "../dvb-t2mi", features = ["ts"] }
 mpeg-ts    = { path = "../mpeg-ts", version = "0.7.1" }
 test-fixtures = { path = "../test-fixtures" }

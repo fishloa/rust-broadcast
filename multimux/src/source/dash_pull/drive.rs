@@ -27,7 +27,7 @@ use crate::source::driver::terminal_result;
 use crate::source::http_auth::authenticated_get_with;
 use crate::source::pull::{FetchOutcome, FetchResult, PendingFetch, PullScheduler};
 use crate::source::{BodyError, read_body_bounded, server_retry_after};
-use broadcast_client::auth::AuthState;
+use broadcast_auth::AuthState;
 
 /// How long the loop parks when nothing is in flight and nothing is due.
 const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(5);
@@ -95,7 +95,7 @@ impl DashFetch {
 #[derive(Clone)]
 pub(super) struct Net {
     pub(super) http: HttpClient,
-    pub(super) credentials: Option<AuthState>,
+    pub(super) credentials: AuthState,
     pub(super) clock: Arc<dyn HostClock>,
     pub(super) read_timeout: Duration,
     pub(super) utc_timeout: Duration,
@@ -212,7 +212,14 @@ fn failed_after(
     retry_after: Option<Duration>,
 ) -> (DashFetch, FetchResult) {
     fetch.outcome = Outcome::Failed(failure);
-    (fetch, FetchResult::Failed { error, retry_after })
+    (
+        fetch,
+        FetchResult::Failed {
+            error,
+            learned: Vec::new(),
+            retry_after,
+        },
+    )
 }
 
 fn header_text(headers: &HeaderMap, name: &HeaderName) -> Option<String> {
@@ -222,13 +229,14 @@ fn header_text(headers: &HeaderMap, name: &HeaderName) -> Option<String> {
         .map(|v| v.trim().to_owned())
 }
 
-async fn send(net: &Net, req: &Request) -> Result<reqwest::Response> {
+async fn send(net: &mut Net, req: &Request) -> Result<reqwest::Response> {
     if req.with_credentials {
         authenticated_get_with(
             &net.http,
             &req.url,
-            net.credentials.as_ref(),
+            &mut net.credentials,
             &req.headers(),
+            net.clock.unix_us(),
         )
         .await
     } else {
@@ -267,7 +275,11 @@ pub(super) fn ranged_body(
     body.get(start..end).map(<[u8]>::to_vec)
 }
 
-pub(super) async fn exchange(net: &Net, req: &Request, sent_us: u64) -> (DashFetch, FetchResult) {
+pub(super) async fn exchange(
+    net: &mut Net,
+    req: &Request,
+    sent_us: u64,
+) -> (DashFetch, FetchResult) {
     let mut fetch = DashFetch::new(req.target, sent_us);
     let response = match send(net, req).await {
         Ok(response) => response,
@@ -292,6 +304,7 @@ pub(super) async fn exchange(net: &Net, req: &Request, sent_us: u64) -> (DashFet
             fetch,
             FetchResult::Failed {
                 error,
+                learned: Vec::new(),
                 retry_after: None,
             },
         );
@@ -344,12 +357,12 @@ pub(super) async fn exchange(net: &Net, req: &Request, sent_us: u64) -> (DashFet
 }
 
 pub(super) fn spawn_fetch(net: &Net, req: Request) -> PendingFetch<DashFetch> {
-    let net = net.clone();
+    let mut net = net.clone();
     PendingFetch {
         delay: Duration::ZERO,
         fut: Box::pin(async move {
             let sent_us = net.clock.mono_us();
-            match tokio::time::timeout(req.timeout, exchange(&net, &req, sent_us)).await {
+            match tokio::time::timeout(req.timeout, exchange(&mut net, &req, sent_us)).await {
                 Ok(done) => done,
                 Err(_) => {
                     let error = MultimuxError::Connect {
@@ -477,7 +490,7 @@ pub(super) async fn run<S: RouteSink>(
             Some(FetchOutcome::Ready(fetch, body)) => {
                 feed_response(&mut driver, fetch, &body, now_us);
             }
-            Some(FetchOutcome::Failed(fetch, error, retry_after)) => match fetch.outcome {
+            Some(FetchOutcome::Failed(fetch, error, _, retry_after)) => match fetch.outcome {
                 Outcome::Unauthorized => return Err(error),
                 Outcome::Failed(failure) => {
                     if fetch.target == FetchTarget::Mpd && !driver.session().mpd_accepted() {

@@ -606,7 +606,7 @@ struct CcState {
     dup_used: bool,
     initialised: bool,
     /// Raw bytes of the last payload-bearing packet seen on this PID. Used
-    /// with [`broadcast_common::ts_dup::check_duplicate`] to test the
+    /// with [`mpeg_ts::ts_dup::check_duplicate`] to test the
     /// H.222.0 §2.4.3.3 "legal duplicate" byte-identity rule (that function
     /// owns locating and exempting the PCR field). Empty until the first
     /// packet is recorded.
@@ -1308,7 +1308,7 @@ impl ConformanceMonitor {
                 // only `cc == state.last_cc` (as this code used to) would
                 // accept ANY packet repeating the previous CC, silently
                 // swallowing genuine continuity faults (issue #956).
-                use broadcast_common::ts_dup::{DuplicateVerdict, check_duplicate};
+                use mpeg_ts::ts_dup::{DuplicateVerdict, check_duplicate};
 
                 let verdict = check_duplicate(&state.last_packet, raw, state.dup_used);
                 let is_duplicate = !matches!(verdict, DuplicateVerdict::NotDuplicate);

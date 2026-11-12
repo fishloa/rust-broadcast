@@ -2,6 +2,7 @@
 //!
 //! `Domain` and `Expires` are ignored; see `private/specs-verified/ietf/broadcast-client/cookies.md` for the documented deviations.
 
+extern crate alloc;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 

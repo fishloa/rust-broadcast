@@ -2,9 +2,11 @@
 #![forbid(unsafe_code)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+mod auth;
 mod authenticator;
 pub mod challenge;
 mod constant_time;
+mod cookies;
 mod credentials;
 mod error;
 mod request;
@@ -13,6 +15,7 @@ pub mod signed_url;
 mod trusted_proxy;
 mod userinfo;
 
+pub use auth::{AuthDecision, AuthEvent, AuthState, CookieWatch, carries_credentials};
 pub use authenticator::{Authenticator, respond};
 pub use challenge::{BearerError, Challenge, ParsedChallenges, Scheme, parse_challenges};
 pub use constant_time::constant_time_eq;

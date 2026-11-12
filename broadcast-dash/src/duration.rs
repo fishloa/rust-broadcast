@@ -83,7 +83,7 @@ pub fn parse_iso8601_duration(s: &str) -> Result<Duration> {
 /// nine-digit fractional part only when the duration has sub-second
 /// nanoseconds.
 #[must_use]
-pub fn format_iso8601_duration(d: Duration) -> String {
+pub fn xs_duration(d: Duration) -> String {
     let secs = d.as_secs();
     let _ = secs;
     let signed = jiff::SignedDuration::try_from(d).unwrap_or(jiff::SignedDuration::MAX);
@@ -237,13 +237,35 @@ mod tests {
     }
 
     #[test]
+    fn xs_duration_saturates_instead_of_panicking_beyond_i64_seconds() {
+        let max =
+            jiff::fmt::temporal::SpanPrinter::new().duration_to_string(&jiff::SignedDuration::MAX);
+        assert_eq!(xs_duration(Duration::MAX), max);
+        assert_eq!(xs_duration(Duration::from_secs(i64::MAX as u64 + 1)), max);
+        assert_ne!(xs_duration(Duration::from_secs(i64::MAX as u64)), "PT0S");
+    }
+
+    #[test]
+    fn xs_duration_is_the_shortest_iso_8601_form() {
+        assert_eq!(xs_duration(Duration::from_secs(2)), "PT2S");
+        assert_eq!(xs_duration(Duration::ZERO), "PT0S");
+        assert_eq!(xs_duration(Duration::from_millis(2500)), "PT2.5S");
+        assert_eq!(xs_duration(Duration::from_secs(90)), "PT1M30S");
+        assert_eq!(xs_duration(Duration::from_secs(3600)), "PT1H");
+        for d in [
+            Duration::from_millis(100),
+            Duration::from_secs(7200),
+            Duration::new(61, 500_000_000),
+        ] {
+            assert_eq!(parse_iso8601_duration(&xs_duration(d)).unwrap(), d);
+        }
+    }
+
+    #[test]
     fn format_round_trips() {
         for s in ["PT0S", "PT4S", "PT1H2M3.5S", "P1DT2H"] {
             let d = parse_iso8601_duration(s).unwrap();
-            assert_eq!(
-                parse_iso8601_duration(&format_iso8601_duration(d)).unwrap(),
-                d
-            );
+            assert_eq!(parse_iso8601_duration(&xs_duration(d)).unwrap(), d);
         }
     }
 }
