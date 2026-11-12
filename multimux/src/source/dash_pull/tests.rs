@@ -1158,10 +1158,11 @@ fn live_expected(rep: u32, numbers: &[u64]) -> Vec<Sample> {
 
 const FEW_SEGMENTS: usize = 8;
 
-/// The `timeShiftBufferDepth` of a pull whose oracle assumes every segment is
-/// fetched in order. A pull that falls further behind the live edge than this
-/// jumps forward by design, which this oracle does not model; the value is how
-/// long a loaded machine may stall the pull before that happens.
+/// The `timeShiftBufferDepth` of a live pull whose oracle assumes every segment
+/// is requested in order and a missing one is retried before it is given up. A
+/// pull that falls further behind the live edge than this jumps forward by
+/// design, which those oracles do not model; the value is how long a loaded
+/// machine may stall the pull before that happens.
 const STALL_TOLERANT_TSB_US: i64 = 120_000_000;
 
 /// A live `$Number$` presentation over a real socket: the pull joins near the
@@ -1336,7 +1337,7 @@ async fn a_garbage_first_mpd_fails_the_attempt() {
 #[tokio::test]
 async fn a_segment_that_never_appears_is_given_up_and_playback_continues() {
     let live = serve_live(LiveShape {
-        tsb_us: 12_000_000,
+        tsb_us: STALL_TOLERANT_TSB_US,
         missing_ahead: Some(4),
         ..LiveShape::default()
     })
