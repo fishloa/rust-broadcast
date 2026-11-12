@@ -91,12 +91,12 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "output/whep.rs",
-        1540,
+        1543,
         "WHEP signalling server; JOINED before run_whep returns (port-release ordering)",
     ),
     (
         "output/whep.rs",
-        1562,
+        1565,
         "WHEP viewer session on the run's session TaskTracker (close()+wait() on cancel)",
     ),
     (
