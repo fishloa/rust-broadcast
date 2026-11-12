@@ -989,13 +989,13 @@ impl LiveOrigin {
         numbers
     }
 
-    fn requests_for(&self, number: u64) -> usize {
-        let suffix = format!("-{number:05}.m4s");
+    fn requests_for(&self, rep: u32, number: u64) -> usize {
+        let name = format!("seg-{rep}-{number:05}.m4s");
         self.hits
             .lock()
             .expect("lock")
             .iter()
-            .filter(|h| h.name.starts_with("seg-") && h.name.ends_with(&suffix))
+            .filter(|h| h.name == name)
             .count()
     }
 }
@@ -1158,12 +1158,23 @@ fn live_expected(rep: u32, numbers: &[u64]) -> Vec<Sample> {
 
 const FEW_SEGMENTS: usize = 8;
 
+/// The `timeShiftBufferDepth` of a live pull whose oracle assumes every segment
+/// is requested in order and a missing one is retried before it is given up. A
+/// pull that falls further behind the live edge than this jumps forward by
+/// design, which those oracles do not model; the value is how long a loaded
+/// machine may stall the pull before that happens.
+const STALL_TOLERANT_TSB_US: i64 = 120_000_000;
+
 /// A live `$Number$` presentation over a real socket: the pull joins near the
 /// live edge, and the samples that reach the `Trunk` are, in order and byte for
 /// byte, those of the segments the origin served.
 #[tokio::test]
 async fn a_live_presentation_delivers_the_served_segments_byte_exact() {
-    let live = serve_live(LiveShape::default()).await;
+    let live = serve_live(LiveShape {
+        tsb_us: STALL_TOLERANT_TSB_US,
+        ..LiveShape::default()
+    })
+    .await;
     let mut pull = Pull::start(route(live.url()), SkewedClock::new(0));
     let ended = pull.until(|d| d.video().len() >= FEW_SEGMENTS * 25).await;
     assert!(ended.is_none(), "a live pull does not end: {ended:?}");
@@ -1326,7 +1337,7 @@ async fn a_garbage_first_mpd_fails_the_attempt() {
 #[tokio::test]
 async fn a_segment_that_never_appears_is_given_up_and_playback_continues() {
     let live = serve_live(LiveShape {
-        tsb_us: 12_000_000,
+        tsb_us: STALL_TOLERANT_TSB_US,
         missing_ahead: Some(4),
         ..LiveShape::default()
     })
@@ -1348,7 +1359,7 @@ async fn a_segment_that_never_appears_is_given_up_and_playback_continues() {
         .get()
         .expect("a segment was made missing");
     assert!(
-        live.origin.requests_for(missing) > 1,
+        live.origin.requests_for(0, missing) > 1,
         "the missing segment was retried before it was given up"
     );
     assert!(live.origin.served(0).iter().all(|n| *n != missing));
