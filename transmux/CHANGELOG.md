@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- `insert_emsg_after_styp` (and aliases) splices serialized `emsg` boxes after the first top-level `styp` box using parsed box boundaries (handles 64-bit `largesize` and to-EOF boxes).
 - Timeline-jump detector (`timeline` module): `JumpDetector`, `TimelineJumpConfig`, `DEFAULT_JUMP_BACKWARD_US`, `DEFAULT_JUMP_FORWARD_SLACK_US` moved from `broadcast-client`; per-track discontinuity detection with configurable thresholds.
 ### Fixed
 - DASH `AdaptationSet@lang` is now canonicalised to a BCP 47 tag via `broadcast-common::lang::bcp47_language`, so `fre`/`fra` share one AdaptationSet.

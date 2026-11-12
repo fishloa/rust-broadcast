@@ -1398,53 +1398,38 @@ impl DvrRecorder {
             return Err("TS index rebuild not yet implemented".to_string());
         }
 
-        // fMP4: walk top-level boxes. Each segment is moof+mdat.
+        // fMP4: walk top-level boxes via transmux's box parser (handles
+        // 64-bit largesize and to-EOF boxes). Each segment is moof+mdat.
         let mut entries = Vec::new();
         let mut offset: usize = 0;
         let init_len = usize::try_from(self.init_len)
             .map_err(|_| "init prelude length does not fit usize".to_string())?;
-        while offset + 8 <= data.len() {
-            let size = u32::from_be_bytes([
-                data[offset],
-                data[offset + 1],
-                data[offset + 2],
-                data[offset + 3],
-            ]) as usize;
-            let box_type = &data[offset + 4..offset + 8];
-            if size < 8 || offset + size > data.len() {
+        while offset < data.len() {
+            let (box_ref, consumed) = match transmux::parse_box(&data[offset..]) {
+                Ok(x) => x,
+                Err(_) => break,
+            };
+            if consumed == 0 {
                 break;
             }
-            if box_type == b"moof" {
+            if box_ref.header.box_type.is(b"moof") {
                 let start = (init_len + offset) as u64;
-                let len = size as u64;
-                let mdat_offset = offset + size;
-                let mdat_size = if mdat_offset + 8 <= data.len() {
-                    u32::from_be_bytes([
-                        data[mdat_offset],
-                        data[mdat_offset + 1],
-                        data[mdat_offset + 2],
-                        data[mdat_offset + 3],
-                    ]) as usize
+                let mdat_offset = offset + consumed;
+                let total_len = if mdat_offset < data.len() {
+                    match transmux::parse_box(&data[mdat_offset..]) {
+                        Ok((mdat_box, mdat_consumed)) if mdat_box.header.box_type.is(b"mdat") => {
+                            consumed + mdat_consumed
+                        }
+                        _ => consumed,
+                    }
                 } else {
-                    0
-                };
-                // `+ 8`, not `+ 4`: the slice below reads bytes
-                // [mdat_offset + 4, mdat_offset + 8), so `+ 4 <= len` is not
-                // enough to make it in-bounds. A segment file truncated
-                // between the moof and the mdat four-CC panicked here.
-                let total_len = if mdat_offset + 8 <= data.len()
-                    && &data[mdat_offset + 4..mdat_offset + 8] == b"mdat"
-                    && mdat_size >= 8
-                {
-                    (size + mdat_size) as u64
-                } else {
-                    len
+                    consumed
                 };
                 entries.push(IndexEntry {
                     seq: 0,
                     start_pts_ns: 0,
                     byte_offset: start,
-                    byte_len: total_len,
+                    byte_len: total_len as u64,
                     // Neither is recoverable from the box layout alone (no
                     // sequence number or discontinuity bit is encoded in
                     // fMP4 itself) — see this method's own doc for `seq`'s
@@ -1452,9 +1437,9 @@ impl DvrRecorder {
                     duration_ns: 0,
                     discontinuous: false,
                 });
-                offset += total_len as usize;
+                offset += total_len;
             } else {
-                offset += size;
+                offset += consumed;
             }
         }
         Ok(entries)

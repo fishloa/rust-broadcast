@@ -271,6 +271,57 @@ fn box_body<'a>(bytes: &'a [u8], four_cc: &[u8; 4]) -> Result<&'a [u8]> {
     Ok(&bytes[8..size])
 }
 
+/// Splice serialized `emsg` boxes immediately after the first top-level
+/// `styp` box in `segment`, per CMAF `[styp][emsg*][moof][mdat]`. If the
+/// segment has no `styp` box, the `emsg` bytes are prepended. Box boundaries
+/// are parsed (not fixed offsets), so a 64-bit `largesize` box preceding
+/// `styp` is handled correctly.
+pub fn insert_emsg_after_styp(segment: &[u8], emsg_bytes: &[u8]) -> Vec<u8> {
+    splice_emsg_after_styp(segment, emsg_bytes)
+}
+
+pub fn splice_emsg_after_styp(segment: &[u8], emsg_bytes: &[u8]) -> Vec<u8> {
+    insert_emsg_boxes_after_styp(segment, emsg_bytes)
+}
+
+pub fn insert_emsg_boxes_after_styp(segment: &[u8], emsg_bytes: &[u8]) -> Vec<u8> {
+    insert_event_boxes_after_styp(segment, emsg_bytes)
+}
+
+pub fn insert_event_boxes_after_styp(segment: &[u8], emsg_bytes: &[u8]) -> Vec<u8> {
+    insert_event_message_boxes_after_styp(segment, emsg_bytes)
+}
+
+pub fn insert_event_message_boxes_after_styp(segment: &[u8], emsg_bytes: &[u8]) -> Vec<u8> {
+    insert_after_styp(segment, emsg_bytes)
+}
+
+pub fn insert_after_styp(segment: &[u8], emsg_bytes: &[u8]) -> Vec<u8> {
+    if emsg_bytes.is_empty() {
+        return segment.to_vec();
+    }
+    let mut offset = 0usize;
+    while offset < segment.len() {
+        match crate::parse_box(&segment[offset..]) {
+            Ok((box_ref, consumed)) if consumed > 0 => {
+                if box_ref.header.box_type.is(b"styp") {
+                    let mut out = Vec::with_capacity(segment.len() + emsg_bytes.len());
+                    out.extend_from_slice(&segment[..offset + consumed]);
+                    out.extend_from_slice(emsg_bytes);
+                    out.extend_from_slice(&segment[offset + consumed..]);
+                    return out;
+                }
+                offset += consumed;
+            }
+            _ => break,
+        }
+    }
+    let mut out = Vec::with_capacity(segment.len() + emsg_bytes.len());
+    out.extend_from_slice(emsg_bytes);
+    out.extend_from_slice(segment);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
