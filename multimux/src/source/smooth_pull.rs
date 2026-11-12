@@ -141,6 +141,12 @@ impl SmoothIngestSession {
                 program: ProgramId(0),
                 tracks,
             }),
+            Output::TracksChanged(tracks) => {
+                self.pending_events.push_back(SessionEvent::TracksChanged {
+                    program: ProgramId(0),
+                    tracks,
+                });
+            }
             Output::Sample { track, sample } => {
                 self.pending_events.push_back(SessionEvent::Sample {
                     program: ProgramId(0),

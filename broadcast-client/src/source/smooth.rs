@@ -210,7 +210,9 @@ impl SmoothSource {
                 }));
             }
             Output::ManifestNotFound => self.events.push_back(Event::Status(Status::NotFound)),
-            Output::Tracks(specs) => self.events.push_back(Event::Tracks(specs)),
+            Output::Tracks(specs) | Output::TracksChanged(specs) => {
+                self.events.push_back(Event::Tracks(specs));
+            }
             Output::Sample { track, sample } => self.events.push_back(Event::Sample {
                 track,
                 sample,
