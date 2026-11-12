@@ -21,8 +21,10 @@ pub mod dvb_ta;
 pub mod error;
 pub mod section;
 pub mod time;
+pub mod tracker;
 pub mod traits;
 
 pub use error::{Error, Result};
 pub use section::{ClearPayload, SpliceInfoSection};
+pub use tracker::{MAX_OPEN_EVENTS, SpliceObservation, SpliceTracker};
 pub use traits::{CommandDef, SpliceDescriptorDef};
