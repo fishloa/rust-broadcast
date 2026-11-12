@@ -30,4 +30,5 @@ mod subtitle_renditions;
 mod target_duration_freeze;
 mod tracks_display;
 mod ts_hls_ingest;
+mod url_control_chars;
 mod video_range;

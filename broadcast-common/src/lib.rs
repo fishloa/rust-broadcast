@@ -74,6 +74,8 @@ pub mod stage;
 pub mod time;
 pub mod timescale;
 pub mod traits;
+#[cfg(feature = "url")]
+pub mod url_ref;
 #[cfg(feature = "xml")]
 pub mod xml;
 #[cfg(feature = "xml")]

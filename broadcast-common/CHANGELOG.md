@@ -8,6 +8,8 @@
 ### Added
 - `http_date` module (`std` feature): `parse_http_date` (RFC 9110 §5.6.7), moved from `dash-runtime`.
 ### Added
+- `url_ref` module (`url` feature): guarded RFC 3986 reference resolution wrapping `url::Url::join`, rejecting ASCII control characters before joining (issue #2458).
+### Added
 - `lang` module (`lang` feature): `bcp47_language`, ISO 639-2 -> BCP 47 (RFC 5646) language canonicalisation shared by HLS and DASH, backed by the `iso-639` crate.
 - `xml` module (`xml` feature): `read_tree`, the bounded namespace-aware quick-xml reader that builds a small `xml::Elem` tree under a caller-supplied `xml::Namespace`, moved from `dash-runtime` so the Smooth Streaming manifest reader (#2356) can share it. It refuses DOCTYPE declarations and every entity they would declare, validates text against the XML 1.0 `Char` production, and enforces `XmlLimits` through `XmlBudget`; `xml::XmlError` reports the four ways it stops, and every bound stays the one `xml_chars::XmlLimit` names (#2355).
 - `klv` and `ber` modules: the SMPTE ST 336 KLV triplet (`KlvItem<'a>` with a 16-byte `UniversalLabel` key), `walk_klv_items`/`collect_klv_items`, and the BER length codec (`decode_ber_length`, `encode_ber_length`, `ber_length_size`, `BerLength` which keeps the on-wire length width so a parsed item re-serializes byte-identically), with `KlvError`. Moved from st377-1 so st377-1 (MXF) and transmux (MISB KLV) share one implementation (#2341).

@@ -28,6 +28,8 @@
 
 use url::Url;
 
+use broadcast_common::url_ref;
+
 /// Scheme of the synthetic root (never leaves this module's results).
 const SYNTHETIC_SCHEME: &str = "transmux-relative";
 /// The synthetic root a base-less resolution joins against.
@@ -44,7 +46,7 @@ const SYNTHETIC_BASE: &str = "transmux-relative:///";
 /// request line or header into anything that later assembles an HTTP request
 /// from the resolved URL (CRLF injection).
 pub fn first_forbidden_char(s: &str) -> Option<char> {
-    s.chars().find(|c| c.is_control() || c.is_whitespace())
+    url_ref::first_forbidden_char(s).or_else(|| s.chars().find(|c| c.is_whitespace()))
 }
 
 /// Resolve `reference` against `base` (RFC 3986 §5.2 as the `url` crate
@@ -95,7 +97,7 @@ pub fn resolve_chain(base: Option<&Url>, chain: &[String], reference: &str) -> O
         if is_absolute_path_reference(entry) {
             absolute_path = true;
         }
-        current = current.join(entry).ok()?;
+        current = url_ref::resolve(&current, entry).ok()?;
     }
     Some(render(&current, absolute_path))
 }

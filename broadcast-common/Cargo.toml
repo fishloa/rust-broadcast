@@ -39,6 +39,9 @@ base64 = ["dep:base64"]
 # HTTP-date parsing (`http_date` module, RFC 9110 §5.6.7), for HTTP clients
 # reading `Date` and `Retry-After`.
 http-date = ["std", "dep:jiff", "dep:thiserror"]
+# RFC 3986 reference resolution (guarded): wraps the `url` crate's `Url::join`,
+# rejecting ASCII control characters before joining (issue #2458).
+url = ["dep:url"]
 
 [dependencies]
 # Default build stays lean — consumers of broadcast_common pay for nothing they aren't
@@ -55,6 +58,8 @@ iso-639 = { version = "0.1", optional = true, default-features = false }
 base64 = { version = "0.23", optional = true, default-features = false, features = ["alloc"] }
 # HTTP-date parsing (RFC 9110 §5.6.7). Pulled in only by the `http-date` feature.
 jiff = { version = "0.2", default-features = false, features = ["std"], optional = true }
+# RFC 3986 reference resolution, behind the `url` feature (no_std + alloc).
+url = { version = "2", optional = true, default-features = false }
 # Only pulled in by the `serde` feature — see its comment above. Configured
 # `no_std` (`derive` only, no `std`) so it composes with the no_std build.
 quick-xml = { workspace = true, optional = true }
