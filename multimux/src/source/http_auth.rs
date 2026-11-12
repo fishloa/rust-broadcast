@@ -19,9 +19,10 @@
 //! [`crate::source::rtsp`]'s own (RTSP-specific) userinfo handling to any
 //! URL.
 
-use broadcast_auth::{Authenticator, Credentials, RequestContext};
-use reqwest::header::{AUTHORIZATION, HeaderName, WWW_AUTHENTICATE};
-use reqwest::{Client, Response, StatusCode};
+use broadcast_auth::Credentials;
+use broadcast_client::auth::{AuthDecision, AuthState};
+use reqwest::header::HeaderName;
+use reqwest::{Client, RequestBuilder, Response, StatusCode};
 use url::Url;
 
 use crate::error::{MultimuxError, Result};
@@ -62,46 +63,17 @@ pub(crate) fn resolve_credentials(
     config_auth.or(url_credentials)
 }
 
-/// A credential bound to the origin it was configured for (RFC 6454 §4:
-/// scheme, host, port).
-///
-/// Pull sources fetch many URLs — playlist entries, segment URIs, manifest
-/// `BaseURL`s — and any of them may be absolute and name another host. The
-/// credential belongs to the configured source only, so it is attached to a
-/// request only when the request's origin is exactly the source's origin
-/// (issue #1142): a different host, port or scheme gets an anonymous request.
-#[derive(Clone)]
-pub(crate) struct ScopedCredentials {
-    credentials: Credentials,
-    origin: url::Origin,
-}
-
-impl ScopedCredentials {
-    /// Whether `url` addresses the origin these credentials are bound to.
-    fn applies_to(&self, url: &str) -> bool {
-        Url::parse(url).is_ok_and(|u| u.origin() == self.origin)
-    }
-}
-
-/// Manual `Debug`: only the origin renders, never the credential.
-impl std::fmt::Debug for ScopedCredentials {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ScopedCredentials")
-            .field("origin", &self.origin.ascii_serialization())
-            .field("credentials", &"<redacted>")
-            .finish()
-    }
-}
-
-/// Binds `credentials` (if any) to the origin of `source_url` — the
-/// configured source URL, userinfo already stripped.
+/// Binds `credentials` (if any) to the origin of `source_url`, the configured source URL with
+/// userinfo already stripped. A credential is sent only to that origin (RFC 6454 §4, issue #1142);
+/// any other host, port or scheme gets an anonymous request.
 pub(crate) fn scope_credentials(
     credentials: Option<Credentials>,
     source_url: &Url,
-) -> Option<ScopedCredentials> {
-    credentials.map(|credentials| ScopedCredentials {
-        credentials,
-        origin: source_url.origin(),
+) -> Option<AuthState> {
+    credentials.map(|credentials| {
+        let mut state = AuthState::new(source_url.clone(), Vec::new());
+        state.set_credentials(credentials);
+        state
     })
 }
 
@@ -112,26 +84,24 @@ pub(crate) fn strip_userinfo(url: &Url) -> Result<Url> {
     broadcast_auth::strip_userinfo(url).map_err(|e| userinfo_error(e, url))
 }
 
-/// Performs `GET url`, answering a `401` challenge with `credentials` (if
-/// any) before returning.
+/// Performs `GET url`, answering a `401` challenge with `auth`'s credentials (if any) before
+/// returning.
 ///
-/// - `Credentials::Basic`/`Bearer` are pre-applied on the very first request
-///   (no round-trip needed — RFC 7617/RFC 6750). A `401` for either of these
-///   is returned as-is (it means wrong credentials, not a missing
-///   challenge).
-/// - `Credentials::Digest` sends the first request bare; only if the server
-///   answers `401` **with** a `WWW-Authenticate` header does this compute
-///   the `Authorization` response (via [`Authenticator`]) and resend once. A
-///   `401` with no such header, or a challenge/response failure, is surfaced
-///   as [`MultimuxError::Auth`].
-/// - `credentials: None`, or any non-`401` first response, is returned
+/// Each call works on its own clone of `auth`, so concurrent fetches never share a Digest nonce
+/// and every request does its own one-shot replay.
+///
+/// - `Credentials::Basic`/`Bearer` are pre-applied on the first request. A `401` for either is
+///   returned as-is (wrong credentials, not a missing challenge).
+/// - `Credentials::Digest` sends the first request bare; on a `401` from the request's own origin
+///   it replays once with the answer [`AuthState::handle_unauthorized`] prepares.
+/// - `auth: None`, a request to another origin, or any non-`401` first response is returned
 ///   as-is.
 pub(crate) async fn authenticated_get(
     client: &Client,
     url: &str,
-    credentials: Option<&ScopedCredentials>,
+    auth: Option<&AuthState>,
 ) -> Result<Response> {
-    authenticated_get_with(client, url, credentials, &[]).await
+    authenticated_get_with(client, url, auth, &[]).await
 }
 
 /// [`authenticated_get`] with extra request headers (a `Range`, a conditional
@@ -139,73 +109,71 @@ pub(crate) async fn authenticated_get(
 pub(crate) async fn authenticated_get_with(
     client: &Client,
     url: &str,
-    credentials: Option<&ScopedCredentials>,
+    auth: Option<&AuthState>,
     extra_headers: &[(HeaderName, String)],
 ) -> Result<Response> {
-    // Credentials never leave the origin they were configured for.
-    let credentials = credentials
-        .filter(|scoped| scoped.applies_to(url))
-        .map(|scoped| &scoped.credentials);
-    let build = |c: &Client| {
-        let mut req = c.get(url);
-        req = match credentials {
-            Some(Credentials::Basic { username, password }) => {
-                req.basic_auth(username, Some(password))
-            }
-            Some(Credentials::Bearer { token }) => req.bearer_auth(token),
-            _ => req,
-        };
-        for (name, value) in extra_headers {
-            req = req.header(name, value);
-        }
-        req
-    };
-
-    let response = build(client)
+    let mut state = auth.cloned();
+    if let Some(state) = &mut state {
+        state.preauthorize_basic();
+    }
+    let parsed = Url::parse(url).ok();
+    let response = build_request(client, url, parsed.as_ref(), state.as_mut(), extra_headers)
         .send()
         .await
         .map_err(|e| MultimuxError::Connect {
             reason: format!("GET {}: {e}", crate::redact::redact_url(url)),
         })?;
 
-    let Some(creds @ Credentials::Digest { .. }) = credentials else {
+    let (Some(state), Some(parsed)) = (state.as_mut(), parsed.as_ref()) else {
         return Ok(response);
     };
-    if response.status() != StatusCode::UNAUTHORIZED {
+    let own_origin = state.origin().origin();
+    if !matches!(state.credentials(), Some(Credentials::Digest { .. }))
+        || response.status() != StatusCode::UNAUTHORIZED
+        || parsed.origin() != own_origin
+        || response.url().origin() != own_origin
+    {
         return Ok(response);
     }
-    // A challenge from a host a redirect led to is not answered with this
-    // source's credentials.
-    if !scoped_origin_matches(url, response.url()) {
-        return Ok(response);
-    }
-    let Some(challenge) = response
+    let challenge_headers: Vec<(String, String)> = response
         .headers()
-        .get(WWW_AUTHENTICATE)
-        .and_then(|v| v.to_str().ok())
-    else {
+        .iter()
+        .filter_map(|(k, v)| Some((k.as_str().to_owned(), v.to_str().ok()?.to_owned())))
+        .collect();
+    let decision = state.handle_unauthorized(
+        StatusCode::UNAUTHORIZED.as_u16(),
+        &challenge_headers,
+        false,
+        false,
+    );
+    if !matches!(decision, AuthDecision::Replay) {
         return Ok(response);
-    };
-
-    let value = Authenticator::from_challenge(challenge, creds.clone())
-        .and_then(|mut a| a.authorization(&RequestContext::new("GET", url)))
-        .map_err(|e| MultimuxError::Auth {
-            reason: format!("digest response: {e}"),
-        })?;
-
-    let mut retry = client.get(url).header(AUTHORIZATION, value);
-    for (name, value) in extra_headers {
-        retry = retry.header(name, value);
     }
-    retry.send().await.map_err(|e| MultimuxError::Connect {
-        reason: format!("GET {} (digest retry): {e}", crate::redact::redact_url(url)),
-    })
+    build_request(client, url, Some(parsed), Some(state), extra_headers)
+        .send()
+        .await
+        .map_err(|e| MultimuxError::Connect {
+            reason: format!("GET {} (digest retry): {e}", crate::redact::redact_url(url)),
+        })
 }
 
-/// Whether the response's final URL is on the same origin as the request URL
-/// (i.e. no cross-origin redirect was followed).
-fn scoped_origin_matches(request_url: &str, final_url: &Url) -> bool {
-    Url::parse(request_url).is_ok_and(|u| u.origin() == final_url.origin())
+fn build_request(
+    client: &Client,
+    url: &str,
+    parsed: Option<&Url>,
+    state: Option<&mut AuthState>,
+    extra_headers: &[(HeaderName, String)],
+) -> RequestBuilder {
+    let mut req = client.get(url);
+    if let (Some(state), Some(parsed)) = (state, parsed) {
+        for (name, value) in state.request_headers(parsed, 0) {
+            req = req.header(name, value);
+        }
+    }
+    for (name, value) in extra_headers {
+        req = req.header(name, value);
+    }
+    req
 }
 
 #[cfg(test)]
@@ -282,7 +250,7 @@ mod tests {
             .unwrap()
     }
 
-    fn scoped(creds: Credentials, source_url: &str) -> Option<ScopedCredentials> {
+    fn scoped(creds: Credentials, source_url: &str) -> Option<AuthState> {
         scope_credentials(Some(creds), &Url::parse(source_url).unwrap())
     }
 
@@ -334,15 +302,13 @@ mod tests {
     async fn basic_credentials_are_scoped_to_their_origin() {
         let (b_url, b_seen) = origin(None).await;
         let (a_url, _a_seen) = origin(None).await;
-        let creds = scoped(Credentials::new("user", "hunter2-password"), &a_url);
-        // `Credentials::new` is Digest-flavoured, so use an explicit Basic.
-        let creds = creds.map(|mut s| {
-            s.credentials = Credentials::Basic {
+        let creds = scoped(
+            Credentials::Basic {
                 username: "user".into(),
                 password: "hunter2-password".into(),
-            };
-            s
-        });
+            },
+            &a_url,
+        );
         authenticated_get(&client(), &format!("{b_url}/seg"), creds.as_ref())
             .await
             .unwrap();

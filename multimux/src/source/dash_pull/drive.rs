@@ -24,9 +24,10 @@ use crate::clock::HostClock;
 use crate::error::{MultimuxError, Result};
 use crate::reconnect::ReconnectSchedule;
 use crate::source::driver::terminal_result;
-use crate::source::http_auth::{ScopedCredentials, authenticated_get_with};
+use crate::source::http_auth::authenticated_get_with;
 use crate::source::pull::{FetchOutcome, FetchResult, PendingFetch, PullScheduler};
 use crate::source::{BodyError, read_body_bounded};
+use broadcast_client::auth::AuthState;
 
 /// How long the loop parks when nothing is in flight and nothing is due.
 const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(5);
@@ -94,7 +95,7 @@ impl DashFetch {
 #[derive(Clone)]
 pub(super) struct Net {
     pub(super) http: HttpClient,
-    pub(super) credentials: Option<ScopedCredentials>,
+    pub(super) credentials: Option<AuthState>,
     pub(super) clock: Arc<dyn HostClock>,
     pub(super) read_timeout: Duration,
     pub(super) utc_timeout: Duration,

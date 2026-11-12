@@ -80,10 +80,10 @@ use url::Url;
 use crate::error::{MultimuxError, Result};
 use crate::source::driver::terminal_result;
 use crate::source::http_auth::{
-    ScopedCredentials, authenticated_get, credentials_from_url, resolve_credentials,
-    scope_credentials, strip_userinfo,
+    authenticated_get, credentials_from_url, resolve_credentials, scope_credentials, strip_userinfo,
 };
 use crate::source::pull_target::{PullKind, PullRoute};
+use broadcast_client::auth::AuthState;
 
 /// How long a `run_*_pull` drive loop parks when its session has, momentarily,
 /// neither an outbound request queued nor a fetch in flight — and has not
@@ -144,7 +144,7 @@ fn retry_backoff(attempt: u32) -> Duration {
 /// [`PullScheduler::pump`], not here.
 fn resource_fetch(
     http: HttpClient,
-    creds: Option<ScopedCredentials>,
+    creds: Option<AuthState>,
     fetch_id: HlsFetchId,
     url: String,
     read_timeout: Duration,
@@ -202,7 +202,7 @@ fn resource_fetch(
 /// issue is not transient; see the W14 note below).
 fn playlist_fetch(
     http: HttpClient,
-    creds: Option<ScopedCredentials>,
+    creds: Option<AuthState>,
     url: String,
     read_timeout: Duration,
 ) -> crate::source::pull::PendingFetch<HlsFetchId> {
@@ -397,11 +397,7 @@ impl Dialer for HlsPullDialer {
 
 /// Performs `GET url` (answering a Digest challenge if `creds` names one),
 /// returning an error on any non-2xx status.
-async fn fetch_bytes(
-    client: &HttpClient,
-    url: &str,
-    creds: Option<&ScopedCredentials>,
-) -> Result<Vec<u8>> {
+async fn fetch_bytes(client: &HttpClient, url: &str, creds: Option<&AuthState>) -> Result<Vec<u8>> {
     fetch_bytes_capped(client, url, creds, crate::source::MAX_HTTP_BODY_BYTES).await
 }
 
@@ -409,7 +405,7 @@ async fn fetch_bytes(
 async fn fetch_bytes_capped(
     client: &HttpClient,
     url: &str,
-    creds: Option<&ScopedCredentials>,
+    creds: Option<&AuthState>,
     cap: usize,
 ) -> Result<Vec<u8>> {
     let (result, _) = fetch_bytes_capped_with_retry_after(client, url, creds, cap).await;
@@ -421,7 +417,7 @@ async fn fetch_bytes_capped(
 async fn fetch_bytes_capped_with_retry_after(
     client: &HttpClient,
     url: &str,
-    creds: Option<&ScopedCredentials>,
+    creds: Option<&AuthState>,
     cap: usize,
 ) -> (core::result::Result<Vec<u8>, MultimuxError>, u64) {
     let response = match authenticated_get(client, url, creds).await {
@@ -501,7 +497,7 @@ impl PlaylistPacing {
     }
 }
 
-fn build_client(route: &HlsPullRoute) -> Result<(HttpClient, Url, Option<ScopedCredentials>)> {
+fn build_client(route: &HlsPullRoute) -> Result<(HttpClient, Url, Option<AuthState>)> {
     let parsed = Url::parse(&route.target.url).map_err(|e| MultimuxError::Connect {
         reason: format!(
             "bad HLS-pull URL {}: {e}",
