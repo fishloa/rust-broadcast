@@ -830,6 +830,15 @@ struct SrAnchor {
 /// inter-track offset.
 const MAX_TRACK_WALL_SKEW_SECONDS: f64 = 3600.0;
 
+/// Sender Reports anchored two tracks of one session more than an hour apart
+/// in wallclock, so [`RtpStreamDepacketiser::try_sync_start_decode_times`]
+/// refused to align them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WallSkewExceeded {
+    /// The wallclock spread between the earliest and latest anchored track.
+    pub skew_seconds: f64,
+}
+
 /// Resolve one access unit's NTP wallclock instant from a track's SR anchor:
 /// `wall(au) = anchor.ntp_seconds + (unwrapped_au_ts − unwrapped_anchor_ts) /
 /// clock_rate` (RFC 3550 §6.4.1's NTP/RTP correlation, generalised from the
@@ -1202,6 +1211,18 @@ impl RtpStreamDepacketiser {
     /// independent-rebase-to-0 behaviour: the caller should only apply the
     /// returned `start_decode_time` to tracks it names.
     pub fn sync_start_decode_times(&self) -> Vec<(TrackId, u64)> {
+        self.try_sync_start_decode_times().unwrap_or_default()
+    }
+
+    /// [`Self::sync_start_decode_times`] that reports the one refusal that is
+    /// not "not enough anchored tracks": the anchored tracks' wallclocks are
+    /// more than an hour apart, which means a wrong NTP clock on one of them.
+    ///
+    /// # Errors
+    /// [`WallSkewExceeded`] with the offending spread.
+    pub fn try_sync_start_decode_times(
+        &self,
+    ) -> core::result::Result<Vec<(TrackId, u64)>, WallSkewExceeded> {
         let anchored: Vec<(TrackId, f64, u32)> = self
             .tracks
             .iter()
@@ -1213,19 +1234,22 @@ impl RtpStreamDepacketiser {
             })
             .collect();
         if anchored.len() < 2 {
-            return Vec::new();
+            return Ok(Vec::new());
         }
         let origin = anchored
             .iter()
             .map(|(_, wall, _)| *wall)
             .fold(f64::INFINITY, f64::min);
-        if anchored
+        let latest = anchored
             .iter()
-            .any(|(_, wall, _)| wall - origin > MAX_TRACK_WALL_SKEW_SECONDS)
-        {
-            return Vec::new();
+            .map(|(_, wall, _)| *wall)
+            .fold(f64::NEG_INFINITY, f64::max);
+        if latest - origin > MAX_TRACK_WALL_SKEW_SECONDS {
+            return Err(WallSkewExceeded {
+                skew_seconds: latest - origin,
+            });
         }
-        anchored
+        Ok(anchored
             .into_iter()
             .map(|(id, wall, clock_rate)| {
                 let raw_ticks = ((wall - origin) * f64::from(clock_rate)).max(0.0);
@@ -1236,7 +1260,7 @@ impl RtpStreamDepacketiser {
                 let ticks = (raw_ticks + 0.5) as u64;
                 (id, ticks)
             })
-            .collect()
+            .collect())
     }
 
     /// Feed one RTP packet for `track_id`. Returns any [`Sample`]s that

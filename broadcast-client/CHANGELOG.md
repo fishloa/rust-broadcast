@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - A Smooth quality switch to a level with a different SPS/PPS or resolution now succeeds (it was refused as `NoSuchVariant`): the engine's `Output::TracksChanged` surfaces as a new `Event::Tracks`, the event DASH variant switches already use.
 ### Fixed
+- `Session::rtcp_rejected_count`: the RTSP source's Sender Reports that were unusable (NTP time zero, or a set refused for tracks more than an hour apart in wallclock), which were previously counted nowhere a caller could read.
 - The RTSP source flushes its track aligner when a connection ends, drops or is reconnected, so samples held back while waiting for the video anchor are delivered instead of lost (audit 7 A7-4).
 - `Session::select_variant` on a Smooth source switches the video `QualityLevel` of the fragments requested afterwards; it used to validate the index and return `Ok` without changing anything.
 ### Changed

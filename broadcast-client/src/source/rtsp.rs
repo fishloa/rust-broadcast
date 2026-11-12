@@ -221,6 +221,13 @@ impl RtspSource {
         self.rtcp_frames
     }
 
+    pub(crate) fn rtcp_rejected(&self) -> u64 {
+        self.depa
+            .as_ref()
+            .map_or(0, RtpStreamDepacketiser::rejected_sender_reports)
+            .saturating_add(self.aligner.skew_rejections())
+    }
+
     pub(crate) fn poll(&mut self, now: u64, auth: &AuthState) {
         if self.phase == Phase::Closed {
             return;

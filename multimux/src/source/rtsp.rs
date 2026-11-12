@@ -162,33 +162,69 @@ pub struct RtspIngestSession {
     /// parse (audit T16, #1144) — see [`Self::malformed_media_frames`].
     malformed_media_frames: u64,
     rtcp_frames: u64,
+    diagnostics: AlignDiagnostics,
     torn_down: bool,
 }
 
-fn queue_placed(pending: &mut VecDeque<SessionEvent>, placed: Vec<transmux::AlignOut>) -> usize {
-    let mut notices = 0;
-    for out in placed {
-        match out {
-            transmux::AlignOut::Sample(track_id, sample) => {
-                pending.push_back(SessionEvent::Sample {
-                    program: ProgramId(0),
-                    track_id,
-                    retention: RetentionClass::Timed,
-                    sample,
-                });
+#[derive(Default)]
+struct AlignDiagnostics {
+    discontinuities: u64,
+    ntp_zero_seen: u64,
+    skew_seen: u64,
+}
+
+impl AlignDiagnostics {
+    fn record(
+        &mut self,
+        pending: &mut VecDeque<SessionEvent>,
+        placed: Vec<transmux::AlignOut>,
+        ntp_zero_total: u64,
+        skew_total: u64,
+    ) {
+        for out in placed {
+            match out {
+                transmux::AlignOut::Sample(track_id, sample) => {
+                    pending.push_back(SessionEvent::Sample {
+                        program: ProgramId(0),
+                        track_id,
+                        retention: RetentionClass::Timed,
+                        sample,
+                    });
+                }
+                transmux::AlignOut::Discontinuity => {
+                    self.discontinuities = self.discontinuities.saturating_add(1);
+                    if self.discontinuities == 1 {
+                        tracing::warn!(
+                            "rtsp: the A/V timeline stepped (track alignment discontinuity)"
+                        );
+                    } else {
+                        tracing::debug!(
+                            total = self.discontinuities,
+                            "rtsp: the A/V timeline stepped again"
+                        );
+                    }
+                }
+                transmux::AlignOut::State(state) => {
+                    tracing::warn!(?state, "rtsp: the A/V placement rule changed");
+                }
+                _ => {}
             }
-            transmux::AlignOut::Discontinuity => {
-                notices += 1;
-                tracing::warn!("rtsp: the A/V timeline stepped (track alignment discontinuity)");
-            }
-            transmux::AlignOut::State(state) => {
-                notices += 1;
-                tracing::warn!(?state, "rtsp: the A/V placement rule changed");
-            }
-            _ => {}
+        }
+        if ntp_zero_total > self.ntp_zero_seen {
+            self.ntp_zero_seen = ntp_zero_total;
+            tracing::warn!(
+                total = ntp_zero_total,
+                "rtsp: ignored a Sender Report with NTP time zero (the sender's clock is unsynchronised)"
+            );
+        }
+        if skew_total > self.skew_seen {
+            self.skew_seen = skew_total;
+            tracing::warn!(
+                total = skew_total,
+                "rtsp: Sender Reports place the tracks more than an hour apart; keeping provisional A/V placement"
+            );
         }
     }
-    notices
 }
 
 /// Default RTSP keepalive interval when a server declares a session timeout
@@ -460,6 +496,12 @@ impl RtspIngestSession {
                         self.rtcp_frames = self.rtcp_frames.saturating_add(1);
                         depa.push_rtcp(track_id, &data);
                         self.aligner.note_rtcp();
+                        self.diagnostics.record(
+                            &mut self.pending,
+                            Vec::new(),
+                            depa.rejected_sender_reports(),
+                            self.aligner.skew_rejections(),
+                        );
                     }
                     return Ok(());
                 };
@@ -485,7 +527,12 @@ impl RtspIngestSession {
                 };
                 for sample in samples {
                     let placed = self.aligner.push(depa, track_id, sample);
-                    queue_placed(&mut self.pending, placed);
+                    self.diagnostics.record(
+                        &mut self.pending,
+                        placed,
+                        depa.rejected_sender_reports(),
+                        self.aligner.skew_rejections(),
+                    );
                 }
             }
             // `ClientEvent` is `#[non_exhaustive]`: a future variant this
@@ -533,7 +580,12 @@ impl Stage for RtspIngestSession {
                 Ok(samples) => {
                     for sample in samples {
                         let placed = self.aligner.push(depa, track_id, sample);
-                        queue_placed(&mut self.pending, placed);
+                        self.diagnostics.record(
+                            &mut self.pending,
+                            placed,
+                            depa.rejected_sender_reports(),
+                            self.aligner.skew_rejections(),
+                        );
                     }
                 }
                 Err(e) => {
@@ -543,7 +595,12 @@ impl Stage for RtspIngestSession {
             }
         }
         let placed = self.aligner.flush(depa);
-        queue_placed(&mut self.pending, placed);
+        self.diagnostics.record(
+            &mut self.pending,
+            placed,
+            depa.rejected_sender_reports(),
+            self.aligner.skew_rejections(),
+        );
         self.queue_teardown();
         Ok(())
     }
@@ -686,6 +743,7 @@ impl Dialer for RtspDialer {
             keepalive_interval: None,
             malformed_media_frames: 0,
             rtcp_frames: 0,
+            diagnostics: AlignDiagnostics::default(),
             torn_down: false,
         })
     }
@@ -963,15 +1021,89 @@ mod tests {
         NonZeroUsize::new(n).unwrap()
     }
 
+    #[derive(Clone, Default)]
+    struct Warnings(std::sync::Arc<std::sync::Mutex<Vec<(tracing::Level, String)>>>);
+
+    impl tracing::Subscriber for Warnings {
+        fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+        fn event(&self, event: &tracing::Event<'_>) {
+            struct Message(String);
+            impl tracing::field::Visit for Message {
+                fn record_debug(
+                    &mut self,
+                    field: &tracing::field::Field,
+                    value: &dyn std::fmt::Debug,
+                ) {
+                    if field.name() == "message" {
+                        self.0 = format!("{value:?}");
+                    }
+                }
+            }
+            let mut message = Message(String::new());
+            event.record(&mut message);
+            self.0
+                .lock()
+                .unwrap()
+                .push((*event.metadata().level(), message.0));
+        }
+        fn enter(&self, _: &tracing::span::Id) {}
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+
+    fn logged(run: impl FnOnce()) -> Vec<(tracing::Level, String)> {
+        let warnings = Warnings::default();
+        tracing::subscriber::with_default(warnings.clone(), run);
+        let guard = warnings.0.lock().unwrap();
+        guard.clone()
+    }
+
     #[test]
-    fn queue_placed_reports_timeline_steps_and_state_changes() {
+    fn a_repeated_discontinuity_warns_once_and_logs_the_rest_at_debug() {
+        let mut diagnostics = AlignDiagnostics::default();
         let mut pending = VecDeque::new();
-        let placed = vec![
-            transmux::AlignOut::State(transmux::AvSync::Provisional),
-            transmux::AlignOut::Discontinuity,
-        ];
-        assert_eq!(queue_placed(&mut pending, placed), 2);
+        let lines = logged(|| {
+            for _ in 0..3 {
+                diagnostics.record(&mut pending, vec![transmux::AlignOut::Discontinuity], 0, 0);
+            }
+        });
+        let levels: Vec<_> = lines.iter().map(|(level, _)| *level).collect();
+        assert_eq!(
+            levels,
+            [
+                tracing::Level::WARN,
+                tracing::Level::DEBUG,
+                tracing::Level::DEBUG
+            ]
+        );
         assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn rejected_sender_reports_warn_once_per_new_rejection() {
+        let mut diagnostics = AlignDiagnostics::default();
+        let mut pending = VecDeque::new();
+        let lines = logged(|| {
+            diagnostics.record(&mut pending, Vec::new(), 1, 0);
+            diagnostics.record(&mut pending, Vec::new(), 1, 0);
+            diagnostics.record(&mut pending, Vec::new(), 1, 1);
+            diagnostics.record(&mut pending, Vec::new(), 2, 1);
+        });
+        let warned: Vec<_> = lines
+            .iter()
+            .filter(|(level, _)| *level == tracing::Level::WARN)
+            .map(|(_, message)| message.as_str())
+            .collect();
+        assert_eq!(warned.len(), 3, "{warned:?}");
+        assert!(warned[0].contains("NTP time zero"), "{warned:?}");
+        assert!(warned[1].contains("more than an hour apart"), "{warned:?}");
+        assert!(warned[2].contains("NTP time zero"), "{warned:?}");
     }
 
     fn trunk_config() -> TrunkConfig {

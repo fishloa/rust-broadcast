@@ -103,6 +103,9 @@ pub enum Unsupported {
     HierarchicalSidx,
     /// An `Event` whose content is an XML payload rather than text.
     EventXmlPayload,
+    /// A `Preselection` child the model does not carry: `Switching`,
+    /// `RandomAccess`, `ContentPopularityRate` or `SegmentSequenceProperties`.
+    RepresentationBaseChild,
 }
 
 impl Unsupported {
@@ -116,6 +119,7 @@ impl Unsupported {
             Self::OpenEndedRange => "open_ended_range",
             Self::HierarchicalSidx => "hierarchical_sidx",
             Self::EventXmlPayload => "event_xml_payload",
+            Self::RepresentationBaseChild => "representation_base_child",
         }
     }
 }

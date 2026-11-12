@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Fixed
+- The 3600 s wallclock-skew refusal in `RtpStreamDepacketiser::sync_start_decode_times` was invisible: a wrong NTP clock on one track silently left the tracks `Provisional`, and `TrackAligner` re-ran the sync computation (a `Vec` allocation) on every sample. New `RtpStreamDepacketiser::try_sync_start_decode_times` returns `Err(WallSkewExceeded { skew_seconds })` for it (`sync_start_decode_times` keeps its signature), `TrackAligner::skew_rejections` counts each refused set of Sender Reports, and the aligner stops re-evaluating until the next Sender Report.
 - An RTCP Sender Report's RTP timestamp is extended onto the track's own unwrapped 64-bit timeline (RFC 3550 App. A.1) instead of being compared through a 32-bit wrap, so `RtpStreamDepacketiser::sync_start_decode_times` and `TrackAligner` stay correct past 2^31 ticks (6.6 h at 90 kHz); before, the anchor flipped by hours and audio pts went negative for the rest of the session (audit 7 A7-1).
 - A Sender Report with NTP timestamp 0 (an unsynchronised sender, RFC 3550 §6.4.1) is ignored and counted in the new `RtpStreamDepacketiser::rejected_sender_reports`; `sync_start_decode_times` declines to align tracks whose first-sample wallclocks are more than an hour apart, and `TrackAligner` rejects an unrepresentable offset instead of saturating it into a lane shift of billions of seconds (audit 7 A7-2).
 ### Changed

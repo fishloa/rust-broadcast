@@ -789,3 +789,20 @@ fn sidx_zero_size_reference_is_skipped_but_still_advances_the_timeline() {
     assert_eq!(out[0].range.first, 100);
     assert_eq!(out[0].time, 5, "the skipped reference still spans 5 ticks");
 }
+
+const HALF_RANGE: u64 = 1 << 63;
+
+#[test]
+fn negative_r_cut_by_next_t_does_not_overflow_on_a_huge_duration() {
+    let ix = TimelineIndex::build(
+        &timeline(&[
+            (Some(0), None, HALF_RANGE, -1),
+            (Some(u64::MAX - 1), None, 1, 0),
+        ]),
+        1,
+        None,
+    )
+    .unwrap();
+    assert_eq!(ix.len(), 3);
+    assert_eq!(ix.segment(2).unwrap().time, u64::MAX - 1);
+}

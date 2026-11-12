@@ -207,6 +207,14 @@ fn check_count(count: usize, max: usize, limit: Limit) -> Result<(), MpdError> {
     }
 }
 
+fn url_query_info(q: &Elem<Ns>) -> Result<UrlQueryInfo, MpdError> {
+    Ok(UrlQueryInfo {
+        use_mpd_url_query: opt_bool(q, "useMPDUrlQuery")?.unwrap_or(false),
+        query_string: opt_str(q, "queryString"),
+        query_template: opt_str(q, "queryTemplate"),
+    })
+}
+
 fn descriptor(e: &Elem<Ns>) -> Result<Descriptor, MpdError> {
     let scheme_id_uri = e
         .attr("schemeIdUri")
@@ -216,13 +224,7 @@ fn descriptor(e: &Elem<Ns>) -> Result<Descriptor, MpdError> {
         .children
         .iter()
         .find(|c| c.ns == Ns::UrlParam && c.name == "UrlQueryInfo")
-        .map(|q| -> Result<UrlQueryInfo, MpdError> {
-            Ok(UrlQueryInfo {
-                use_mpd_url_query: opt_bool(q, "useMPDUrlQuery")?.unwrap_or(false),
-                query_string: opt_str(q, "queryString"),
-                query_template: opt_str(q, "queryTemplate"),
-            })
-        })
+        .map(url_query_info)
         .transpose()?;
     let pssh = e
         .children
@@ -658,8 +660,23 @@ fn event_stream(e: &Elem<Ns>, ctx: &mut Ctx<'_>) -> Result<EventStream, MpdError
             .map(event)
             .collect::<Result<Vec<_>, _>>()?,
         base_urls: base_urls(e, ctx)?,
+        request_params: e
+            .children_named("RequestParam")
+            .map(request_param)
+            .collect::<Result<Vec<_>, _>>()?,
         essential_properties: descriptors(e, "EssentialProperty")?,
         supplemental_properties: descriptors(e, "SupplementalProperty")?,
+    })
+}
+
+fn request_param(e: &Elem<Ns>) -> Result<RequestParam, MpdError> {
+    Ok(RequestParam {
+        query: url_query_info(e)?,
+        xlink: xlink(e)?,
+        include_in_requests: opt_str(e, "includeInRequests"),
+        header_param_source: opt_str(e, "headerParamSource"),
+        same_origin_only: opt_bool(e, "sameOriginOnly")?,
+        header: opt_str(e, "header"),
     })
 }
 
@@ -713,6 +730,20 @@ fn preselection(e: &Elem<Ns>) -> Result<Preselection, MpdError> {
         Some("fully-ordered") => Some(PreselectionOrder::FullyOrdered),
         Some(other) => return Err(invalid("Preselection@order", other)),
     };
+    let unsupported = e
+        .children
+        .iter()
+        .any(|c| {
+            c.ns == Ns::Mpd
+                && matches!(
+                    c.name.as_str(),
+                    "Switching"
+                        | "RandomAccess"
+                        | "ContentPopularityRate"
+                        | "SegmentSequenceProperties"
+                )
+        })
+        .then_some(Unsupported::RepresentationBaseChild);
     Ok(Preselection {
         id: opt_str(e, "id"),
         preselection_components: e
@@ -731,7 +762,29 @@ fn preselection(e: &Elem<Ns>) -> Result<Preselection, MpdError> {
         roles: descriptors(e, "Role")?,
         ratings: descriptors(e, "Rating")?,
         viewpoints: descriptors(e, "Viewpoint")?,
+        tag: opt_str(e, "tag"),
+        selection_priority: opt_u32(e, "selectionPriority")?,
+        start_with_sap: sap_type(e, "startWithSAP")?,
+        scan_type: opt_str(e, "scanType"),
+        segment_profiles: opt_str(e, "segmentProfiles"),
+        container_profiles: opt_str(e, "containerProfiles"),
+        maximum_sap_period: opt_f64(e, "maximumSAPPeriod")?,
+        frame_packings: descriptors(e, "FramePacking")?,
+        content_protections: descriptors(e, "ContentProtection")?,
+        output_protection: e.child("OutputProtection").map(descriptor).transpose()?,
+        inband_event_streams: descriptors(e, "InbandEventStream")?,
+        group_labels: labels(e, "GroupLabel"),
+        labels: labels(e, "Label"),
+        producer_reference_times: producer_reference_times(e)?,
+        resyncs: resyncs(e)?,
+        unsupported,
     })
+}
+
+fn labels(e: &Elem<Ns>, name: &str) -> Vec<String> {
+    e.children_named(name)
+        .map(|l| l.text.trim().to_owned())
+        .collect()
 }
 
 fn patch_location(e: &Elem<Ns>) -> Result<PatchLocation, MpdError> {

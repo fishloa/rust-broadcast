@@ -706,6 +706,13 @@ impl Session {
         self.rtsp.as_ref().map_or(0, |r| r.rtcp_frames())
     }
 
+    /// Sender Reports the RTSP source could not use in this session: those carrying NTP time zero
+    /// (an unsynchronised sender) plus each fresh set refused because the tracks' NTP clocks were
+    /// more than an hour apart. Either leaves audio and video on their provisional placement.
+    pub fn rtcp_rejected_count(&self) -> u64 {
+        self.rtsp.as_ref().map_or(0, |r| r.rtcp_rejected())
+    }
+
     /// Set credentials.
     ///
     /// # Errors
