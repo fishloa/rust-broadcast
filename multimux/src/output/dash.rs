@@ -55,8 +55,8 @@
 //! # One renderer, two flavours
 //!
 //! This module renders both `manifest.mpd` and the LL-DASH `manifest-ll.mpd`:
-//! the MPD is built once and [`DashFlavour`] selects whether the low-latency
-//! fields are added (see [`DashFlavour::LowLatency`]; the route itself is
+//! the MPD is built once and `DashFlavour` selects whether the low-latency
+//! fields are added (see `DashFlavour::LowLatency`; the route itself is
 //! mounted by [`crate::output::ll_dash`], issue #663 P4.2 / #721 / #2448).
 
 use std::sync::Arc;
@@ -179,7 +179,7 @@ pub(crate) const FIRST_SEGMENT_NUMBER: u64 = 1;
 /// each new init generation, the per-init-generation `initialization` URL and
 /// the SCTE-35 inband event declaration are common to both.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum DashFlavour {
+pub(crate) enum DashFlavour {
     /// Standard DASH (`manifest.mpd`): no low-latency signalling, refreshed
     /// once per whole segment (`minimumUpdatePeriod` at the segment target).
     Standard,
@@ -316,7 +316,7 @@ pub fn render_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<String> 
 
 /// Render the MPD with an explicit presentation `origin` and `flavour`.
 #[doc(hidden)]
-pub fn render_mpd_at_with_flavour(
+pub(crate) fn render_mpd_at_with_flavour(
     route: &RouteHandle,
     origin: SystemTime,
     flavour: DashFlavour,
