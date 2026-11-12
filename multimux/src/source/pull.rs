@@ -60,7 +60,10 @@ impl FetchResult {
     /// Build a failed result that also carries a server-requested `Retry-After`
     /// wait (RFC 9110 §10.2.3).
     pub fn failed_after(error: MultimuxError, retry_after: Option<Duration>) -> Self {
-        FetchResult::Failed { error, retry_after }
+        FetchResult::Failed {
+            error,
+            retry_after,
+        }
     }
 }
 

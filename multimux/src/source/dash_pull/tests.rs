@@ -1705,7 +1705,7 @@ mod exchange {
         let (base, server) = serve(silent).await;
         let mut req = request(format!("{base}/x"), FetchTarget::Mpd, BIG_CAP);
         req.timeout = Duration::from_millis(150);
-        let (fetch, result) = drive::spawn_fetch(&net, req).fut.await;
+        let (fetch, result) = drive::spawn_fetch(&mut net, req).fut.await;
         assert_eq!(fetch.outcome, Outcome::Failed(Failure::Timeout));
         assert!(matches!(result, FetchResult::Failed { .. }));
         server.abort();
