@@ -169,7 +169,7 @@ fn wildcard_rtcp_fb_is_echoed() {
     media.add_attribute_with_value("rtcp-fb", "97 nack");
     let echo = offer_codec_attributes(&media, 96);
     let values: Vec<_> = echo.iter().map(|a| a.value.as_str()).collect();
-    assert!(values.iter().any(|v| *v == "* nack"), "{values:?}");
-    assert!(values.iter().any(|v| *v == "96 pli"), "{values:?}");
-    assert!(!values.iter().any(|v| *v == "97 nack"), "{values:?}");
+    assert!(values.contains(&"* nack"), "{values:?}");
+    assert!(values.contains(&"96 pli"), "{values:?}");
+    assert!(!values.contains(&"97 nack"), "{values:?}");
 }
