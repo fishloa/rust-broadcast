@@ -11,7 +11,7 @@ use tokio::net::UdpSocket;
 
 use crate::error::MultimuxError;
 use crate::source::client_host::{EventIngest, SessionLabels, SessionStep, UdpHost};
-use crate::source::{IngestTimeouts, Source};
+use crate::source::{Source, Timeouts};
 
 /// An MPEG-2 TS-over-UDP route: bind address (+ optional multicast group) —
 /// no control plane, no out-of-band SDP (the PMT carries the track set
@@ -27,7 +27,7 @@ pub struct TsUdpRoute {
     /// Socket options for the bind (SP1.6); the default (all unset except
     /// `reuse_address: false`) reproduces the pre-SP1.6 bind.
     socket: crate::source::udp::UdpBindOptions,
-    timeouts: IngestTimeouts,
+    timeouts: Timeouts,
     /// A socket bound by the caller (SP7.1): a test binds `127.0.0.1:0`, reads
     /// the live address, and hands the socket in, so `bind` uses it directly
     /// and never races reserve-then-rebind. `None` (the production shape)
@@ -58,7 +58,7 @@ impl TsUdpRoute {
             addr: addr.into(),
             multicast_group,
             socket: crate::source::udp::UdpBindOptions::default(),
-            timeouts: IngestTimeouts::default(),
+            timeouts: Timeouts::default(),
             prebound: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
@@ -81,7 +81,7 @@ impl TsUdpRoute {
             addr,
             multicast_group: None,
             socket: crate::source::udp::UdpBindOptions::default(),
-            timeouts: IngestTimeouts::default(),
+            timeouts: Timeouts::default(),
             prebound: std::sync::Arc::new(std::sync::Mutex::new(Some(socket))),
         }
     }
@@ -103,9 +103,9 @@ impl TsUdpRoute {
         self
     }
 
-    /// Overrides the default [`IngestTimeouts`].
+    /// Overrides the default [`Timeouts`].
     #[must_use]
-    pub fn with_timeouts(mut self, timeouts: IngestTimeouts) -> Self {
+    pub fn with_timeouts(mut self, timeouts: Timeouts) -> Self {
         self.timeouts = timeouts;
         self
     }
@@ -140,7 +140,7 @@ impl TsUdpRoute {
 }
 
 /// Opens `route`'s socket through a relay-mode [`broadcast_client::Session`] and drives it until a
-/// read stall (bounded by [`IngestTimeouts::read`]). Returns the error that ended the loop
+/// read stall (bounded by [`Timeouts::read_idle`]). Returns the error that ended the loop
 /// (always a read-side error); the caller (the route supervisor) reconnects on it.
 ///
 /// A caller-supplied pre-bound socket ([`TsUdpRoute::with_socket`]) is consumed **once**: the
@@ -277,10 +277,11 @@ mod tests {
     async fn a_source_that_goes_silent_fails_at_the_read_timeout() {
         const READ_TIMEOUT: Duration = Duration::from_secs(2);
         let socket = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
-        let route = TsUdpRoute::with_socket("cam-ts", socket).with_timeouts(IngestTimeouts {
-            connect: Duration::from_secs(5),
-            read: READ_TIMEOUT,
-        });
+        let route = TsUdpRoute::with_socket("cam-ts", socket).with_timeouts(
+            broadcast_common::timeouts::Timeouts::default()
+                .with_connect(Duration::from_secs(5))
+                .with_read_idle(READ_TIMEOUT),
+        );
         let handle = route_handle();
         let error = tokio::time::timeout(
             Duration::from_secs(10),

@@ -164,11 +164,11 @@ pub(crate) struct SessionLabels {
 }
 
 impl SessionLabels {
-    pub(crate) fn new(what: &'static str, timeouts: crate::source::IngestTimeouts) -> Self {
+    pub(crate) fn new(what: &'static str, timeouts: broadcast_common::timeouts::Timeouts) -> Self {
         Self {
             what,
             connect: timeouts.connect,
-            read: timeouts.read,
+            read: timeouts.read_idle,
             not_found_phase: None,
             session_retries: false,
         }
@@ -955,7 +955,7 @@ mod tests {
         let mut config = Config::relay();
         config.kind = broadcast_client::SourceKind::Udp;
         config.udp.reorder_packets = 0;
-        let labels = SessionLabels::new("ts/udp", crate::source::IngestTimeouts::default());
+        let labels = SessionLabels::new("ts/udp", broadcast_common::timeouts::Timeouts::default());
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
         let error = SessionStep::open(
             "udp://127.0.0.1:5000",
@@ -983,7 +983,7 @@ mod tests {
         use transmux::TrackId;
 
         let ring = |n: usize| std::num::NonZeroUsize::new(n).expect("non-zero ring");
-        let labels = SessionLabels::new("ts/http", crate::source::IngestTimeouts::default());
+        let labels = SessionLabels::new("ts/http", broadcast_common::timeouts::Timeouts::default());
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
         let mut step = SessionStep::open(
             "http://127.0.0.1:1/stream.ts",

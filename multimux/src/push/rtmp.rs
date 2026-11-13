@@ -47,14 +47,10 @@ pub struct RtmpTransportConfig {
     pub app: String,
     /// Publishing name (stream key).
     pub stream_key: String,
-    /// Bound on the connect + handshake (audit run 7, W17); `None` uses
-    /// `RTMP_CONNECT_TIMEOUT` (15 s). Exposed so a test (or an operator with
-    /// an unusually slow peer) can override it.
-    pub connect_timeout: Option<std::time::Duration>,
-    /// Bound on one outbound write (SP6.1, defect 4); `None` uses
-    /// `broadcast_common::timeouts::Timeouts::default().write` (10 s). Exposed so a
-    /// test can use a tighter bound against a peer that stopped reading.
-    pub write_timeout: Option<std::time::Duration>,
+    /// Bounds on every awaited IO the push performs (SP6.1, defect 4; audit run
+    /// 7, W17): the connect and handshake, and each outbound write. A test, or
+    /// an operator with an unusually slow peer, overrides them here.
+    pub timeouts: broadcast_common::timeouts::Timeouts,
 }
 
 /// Manual `Debug`: the stream key is a publish secret and never renders
@@ -64,8 +60,7 @@ impl std::fmt::Debug for RtmpTransportConfig {
         f.debug_struct("RtmpTransportConfig")
             .field("app", &self.app)
             .field("stream_key", &"<redacted>")
-            .field("connect_timeout", &self.connect_timeout)
-            .field("write_timeout", &self.write_timeout)
+            .field("timeouts", &self.timeouts)
             .finish()
     }
 }
@@ -75,8 +70,7 @@ impl Default for RtmpTransportConfig {
         Self {
             app: "live".to_string(),
             stream_key: String::new(),
-            connect_timeout: None,
-            write_timeout: None,
+            timeouts: broadcast_common::timeouts::Timeouts::default(),
         }
     }
 }
@@ -114,17 +108,8 @@ impl PushTransport for RtmpTransport {
             .map_err(|e| RtmpPushError::Connect(format!("bad rtmp URL: {e}")))?;
 
         // Every IO the adapter performs is bounded (SP6.1, defect 4):
-        // connect/handshake by `connect_timeout` (audit run 7, W17) and each
-        // write by `write_timeout`.
-        let mut timeouts = broadcast_common::timeouts::Timeouts::default();
-        if let Some(d) = config.connect_timeout {
-            timeouts = timeouts.with_connect(d).with_handshake(d);
-        }
-        if let Some(d) = config.write_timeout {
-            timeouts = timeouts.with_write(d);
-        }
-
-        let mut client = rtmp_runtime::io::AsyncRtmpClient::connect(&target, timeouts)
+        // connect/handshake and each write by `config.timeouts` (audit run 7, W17).
+        let mut client = rtmp_runtime::io::AsyncRtmpClient::connect(&target, config.timeouts)
             .await
             .map_err(|e| RtmpPushError::Connect(e.to_string()))?;
         client
@@ -400,8 +385,9 @@ mod tests {
         let cfg = RtmpTransportConfig {
             app: "live".to_string(),
             stream_key: "test".to_string(),
-            connect_timeout: Some(std::time::Duration::from_millis(200)),
-            write_timeout: None,
+            timeouts: broadcast_common::timeouts::Timeouts::default()
+                .with_connect(std::time::Duration::from_millis(200))
+                .with_handshake(std::time::Duration::from_millis(200)),
         };
         let url = format!("rtmp://{addr}/live/test");
         let started = std::time::Instant::now();

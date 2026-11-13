@@ -1,6 +1,7 @@
 //! The values multimux shares between tasks of a multi-thread runtime stay `Send + Sync`: a
 //! `Cell`/`Rc` added to one of them fails to compile here instead of at a distant `spawn`.
 
+use broadcast_common::timeouts::Timeouts;
 use multimux::config::Config;
 use multimux::origin::AppState;
 use multimux::output::catchup::CatchupOutput;
@@ -10,7 +11,6 @@ use multimux::output::ll_dash::LlDashOutput;
 use multimux::output::smooth::SmoothOutput;
 use multimux::registry::SchemeRegistry;
 use multimux::route::RouteHandle;
-use multimux::source::IngestTimeouts;
 use multimux::source::dash_pull::DashPullRoute;
 use multimux::source::hls_pull::HlsPullRoute;
 use multimux::source::rtsp::RtspRoute;
@@ -27,7 +27,7 @@ fn the_config_and_registries_are_shared_across_tasks() {
     assert_send_sync::<AppState>();
     assert_send_sync::<RouteHandle>();
     assert_send_sync::<MultimuxError>();
-    assert_send_sync::<IngestTimeouts>();
+    assert_send_sync::<Timeouts>();
 }
 
 #[test]

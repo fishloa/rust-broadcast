@@ -261,7 +261,7 @@
 //! **Why a deadline rather than an attempt or pump-iteration cap** (the two
 //! alternatives, both rejected): the failure mode is wall-clock — "the peer
 //! stopped talking" — which is exactly what `multimux`'s already-proven
-//! `IngestTimeouts::connect` (`DEFAULT_CONNECT_TIMEOUT`, 10 s) bounds today,
+//! the ingest `Timeouts::connect` (`DEFAULT_CONNECT_TIMEOUT`, 10 s) bounds today,
 //! so this matches a shape known to work on real cameras and encoders. An
 //! iteration cap would be a proxy that misfires in both directions: a real
 //! RTSP handshake is DESCRIBE + SETUP × N + PLAY where **N comes from the

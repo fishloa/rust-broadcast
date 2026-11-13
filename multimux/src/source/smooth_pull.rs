@@ -54,7 +54,7 @@ impl crate::source::pull_target::PullDrive for SmoothPullKind {
 }
 
 fn session_config(route: &SmoothPullRoute) -> Config {
-    let read_us = u64::try_from(route.target.timeouts.read.as_micros())
+    let read_us = u64::try_from(route.target.timeouts.read_idle.as_micros())
         .unwrap_or(u64::MAX)
         .max(MICROS_PER_MILLI);
     let mut config = Config::relay();
@@ -148,7 +148,6 @@ mod tests {
             crate::source::SEGMENTED_EVENT_QUEUE_BYTES
         );
     }
-    use crate::source::IngestTimeouts;
     use axum::Router;
     use axum::extract::{Path as AxumPath, State};
     use axum::http::StatusCode as AxumStatusCode;
@@ -603,7 +602,7 @@ mod tests {
     /// Biting test (issue #663 P5 / #738-#739 ingest-hardening lesson): a
     /// server that resolves the manifest + both streams' first fragments but
     /// then stalls on a later fragment must fail within
-    /// `IngestTimeouts::read`, not hang forever.
+    /// `Timeouts::read_idle`, not hang forever.
     #[tokio::test]
     async fn read_times_out_against_a_server_that_stalls_on_a_later_fragment() {
         let (media, out) = build_smooth_output();
@@ -621,10 +620,11 @@ mod tests {
         let stall_time = audio_frags[1].start_time;
 
         let (url, server, _media2) = start_fixture_server(Some(("audio", stall_time))).await;
-        let route = SmoothPullRoute::new("smooth-stalled", url).with_timeouts(IngestTimeouts {
-            connect: Duration::from_secs(5),
-            read: Duration::from_secs(1),
-        });
+        let route = SmoothPullRoute::new("smooth-stalled", url).with_timeouts(
+            broadcast_common::timeouts::Timeouts::default()
+                .with_connect(Duration::from_secs(5))
+                .with_read_idle(Duration::from_secs(1)),
+        );
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
         // DISCRIMINATOR (issue #826): must prove the operation returns
         // through the CONFIGURED read timeout, not via any longer system
@@ -645,7 +645,7 @@ mod tests {
         )
         .await
         .expect(
-            "run_smooth_pull must return via IngestTimeouts::read, not via \
+            "run_smooth_pull must return via Timeouts::read_idle, not via \
              the outer assertion window",
         );
         assert!(

@@ -186,27 +186,27 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "source/dash_pull/tests.rs",
-        197,
+        196,
         "test pull task; cancelled and aborted by the harness",
     ),
     (
         "source/dash_pull/tests.rs",
-        212,
+        211,
         "test collector task; stopped by the harness",
     ),
     (
         "source/dash_pull/tests.rs",
-        457,
+        456,
         "test server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        486,
+        485,
         "test server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        811,
+        810,
         "test HTTP server task; aborted at test end",
     ),
     (
