@@ -8,9 +8,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Removed
 - BREAKING: `io::RtmpTimeouts`; the adapters take `broadcast_common::timeouts::Timeouts` (the same four fields and defaults), shared with the RTSP and SRT adapters (#2514).
 ### Changed
+- BREAKING: `RtmpTarget::stream_key` and `app` are percent-decoded (they were raw), and `AsyncRtmpClient::connect` refuses an `rtmps` target (plain TCP to a TLS port would leak the key; use `from_stream` over TLS) (#2588).
 - **BREAKING**: `RtmpConnection`'s default stream type is now the erased `BoxStream` (a TCP socket, a TLS stream over one, or any other byte stream), so a caller naming one `RtmpConnection` no longer names its transport. `AsyncRtmpServer::accept` returns the new `AcceptedRtmpConnection` (the publisher's address, which an erased stream cannot report, plus the connection) instead of a `RtmpConnection`; call `into_connection()` for the connection itself.
 
 ### Added
+- `target::RtmpTarget` accepts `rtmps://` (`RtmpTarget::tls`, default port `RTMPS_DEFAULT_PORT` 443, `SCHEME_RTMP`/`SCHEME_RTMPS`), percent-decodes the app and stream-key path (RFC 3986 §2.1; the query stays as written), and refuses a key that is only a query (`RtmpUrlError::PathNotUtf8` for undecodable text). A new `target` feature (implied by `tokio`) exposes the URL grammar without sockets (#2588).
 - `io::RtmpStream`, `io::BoxStream` and `RtmpConnection::from_stream_erased`: wrap any connected stream, so a session can be driven over something other than a TCP socket (an in-memory pipe in a test, a TLS stream in a host) without a second connection type.
 - `flv::FlvTagHeader` (`parse`, `total_len`, `Serialize`): the 11-byte FLV tag header on its own, so an incremental reader can size a tag before its body arrives. `FlvTag::parse` and the tolerant walk decode the header through it, and `transmux`'s streaming FLV demuxer uses it instead of hand-rolled `u32::from_be_bytes` reads.
 - `amf0::amf0_values(&[Amf0Value]) -> Result<Vec<u8>>`: encode several bare AMF0 values as one message body (the shape an FLV `onMetaData` script tag has). `transmux`'s FLV muxer writes its script tag through it.

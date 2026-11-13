@@ -1,14 +1,21 @@
-//! `rtmp://host[:port]/app/stream-key` -> typed target, built with the `url` crate.
+//! `rtmp[s]://host[:port]/app/stream-key` -> typed target, built with the `url` crate.
 //! Replaces `format!("rtmp://{host}:{port}/{app}")`, which produces `rtmp://::1:1935/live`
 //! for an IPv6 address (defect 8) and leaks userinfo/query into `tcUrl`.
 
+#[cfg(feature = "tokio")]
 use std::net::{IpAddr, SocketAddr};
 
 use url::{Host, Url};
 
 /// IANA-assigned RTMP port, used when the URL names none.
 pub const RTMP_DEFAULT_PORT: u16 = 1935;
-const SCHEME: &str = "rtmp";
+/// Port an `rtmps://` URL without one connects to: RTMP over TLS is carried on
+/// the HTTPS port (443), the de-facto deployment (no IANA assignment exists).
+pub const RTMPS_DEFAULT_PORT: u16 = 443;
+/// URL scheme of plain RTMP.
+pub const SCHEME_RTMP: &str = "rtmp";
+/// URL scheme of RTMP over TLS.
+pub const SCHEME_RTMPS: &str = "rtmps";
 
 /// A parsed RTMP publish target.
 #[derive(Clone, PartialEq, Eq)]
@@ -19,13 +26,20 @@ pub struct RtmpTarget {
     /// (`resolve` handles it, `lookup_host` accepts literals); only a bracketed IPv6
     /// literal becomes `Host::Ipv6`.
     pub host: Host<String>,
-    /// TCP port; 1935 when the URL has none.
+    /// TCP port; 1935 (`rtmp`) or 443 (`rtmps`) when the URL has none.
     pub port: u16,
-    /// The RTMP `app`.
+    /// Whether the scheme is `rtmps`: the connection must run over TLS, which
+    /// the caller supplies (the tokio adapter's [`AsyncRtmpClient::connect`]
+    /// opens plain TCP and refuses a TLS target).
+    ///
+    /// [`AsyncRtmpClient::connect`]: crate::io::AsyncRtmpClient::connect
+    pub tls: bool,
+    /// The RTMP `app`, percent-decoded (RFC 3986 §2.1).
     pub app: String,
-    /// Remaining path plus `?query`, raw (not percent-decoded).
+    /// The path remainder, percent-decoded (RFC 3986 §2.1), plus `?query` kept
+    /// as written: the query is an opaque string the origin parses itself.
     pub stream_key: String,
-    /// `rtmp://host[:port]/app`, IPv6 bracketed, userinfo/query/fragment removed.
+    /// `rtmp[s]://host[:port]/app`, IPv6 bracketed, userinfo/query/fragment removed.
     pub tc_url: String,
 }
 
@@ -51,8 +65,11 @@ pub enum RtmpUrlError {
     #[error("invalid URL: {0}")]
     Parse(String),
     /// The scheme is not `rtmp`.
-    #[error("unsupported scheme {0:?} (only rtmp)")]
+    #[error("unsupported scheme {0:?} (only rtmp and rtmps)")]
     Scheme(String),
+    /// A percent-decoded path segment is not valid UTF-8.
+    #[error("percent-decoded path is not valid UTF-8")]
+    PathNotUtf8,
     /// The URL has no host.
     #[error("URL has no host")]
     NoHost,
@@ -65,17 +82,20 @@ pub enum RtmpUrlError {
 }
 
 impl RtmpTarget {
-    /// Parses `rtmp://host[:port]/app/stream-key[?query]`.
+    /// Parses `rtmp[s]://host[:port]/app/stream-key[?query]`. The app is the
+    /// first path segment; the stream key is the rest of the path, with the
+    /// query appended as written. Path text is percent-decoded (RFC 3986
+    /// §2.1: `a%20b` names `a b`); a key that is only a query is no key.
     pub fn parse(url: &str) -> Result<Self, RtmpUrlError> {
         let base = parse_base(url)?;
         let mut segs = base.path_segments().ok_or(RtmpUrlError::NoApp)?;
-        let app = segs
-            .next()
-            .filter(|s| !s.is_empty())
-            .ok_or(RtmpUrlError::NoApp)?
-            .to_string();
+        let app = decode(
+            segs.next()
+                .filter(|s| !s.is_empty())
+                .ok_or(RtmpUrlError::NoApp)?,
+        )?;
         let rest: Vec<&str> = segs.collect();
-        let mut key = rest.join("/");
+        let mut key = decode(&rest.join("/"))?;
         if key.is_empty() {
             return Err(RtmpUrlError::NoStreamKey);
         }
@@ -94,6 +114,7 @@ impl RtmpTarget {
 
     fn build(base: &Url, app: &str, stream_key: &str) -> Result<Self, RtmpUrlError> {
         let host = base.host().ok_or(RtmpUrlError::NoHost)?.to_owned();
+        let tls = base.scheme() == SCHEME_RTMPS;
         let mut tc = base.clone();
         tc.set_path(&format!("/{app}"));
         tc.set_query(None);
@@ -102,7 +123,12 @@ impl RtmpTarget {
         let _ = tc.set_password(None);
         Ok(RtmpTarget {
             host,
-            port: base.port().unwrap_or(RTMP_DEFAULT_PORT),
+            port: base.port().unwrap_or(if tls {
+                RTMPS_DEFAULT_PORT
+            } else {
+                RTMP_DEFAULT_PORT
+            }),
+            tls,
             app: app.to_string(),
             stream_key: stream_key.to_string(),
             tc_url: tc.to_string(),
@@ -110,6 +136,7 @@ impl RtmpTarget {
     }
 
     /// Resolved socket addresses (DNS only for `Host::Domain`).
+    #[cfg(feature = "tokio")]
     pub async fn resolve(&self) -> std::io::Result<Vec<SocketAddr>> {
         match &self.host {
             Host::Ipv4(a) => Ok(vec![SocketAddr::new(IpAddr::V4(*a), self.port)]),
@@ -123,10 +150,17 @@ impl RtmpTarget {
 
 fn parse_base(url: &str) -> Result<Url, RtmpUrlError> {
     let u = Url::parse(url).map_err(|e| RtmpUrlError::Parse(e.to_string()))?;
-    if u.scheme() != SCHEME {
+    if u.scheme() != SCHEME_RTMP && u.scheme() != SCHEME_RTMPS {
         return Err(RtmpUrlError::Scheme(u.scheme().to_string()));
     }
     Ok(u)
+}
+
+fn decode(raw: &str) -> Result<String, RtmpUrlError> {
+    percent_encoding::percent_decode_str(raw)
+        .decode_utf8()
+        .map(std::borrow::Cow::into_owned)
+        .map_err(|_| RtmpUrlError::PathNotUtf8)
 }
 
 #[cfg(test)]
@@ -212,6 +246,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "tokio")]
     #[tokio::test]
     async fn resolve_uses_the_literal_address_without_dns() {
         let t = RtmpTarget::parse("rtmp://[::1]:1935/live/key").unwrap();
@@ -224,5 +259,48 @@ mod tests {
             t.resolve().await.unwrap(),
             vec!["127.0.0.1:1".parse::<SocketAddr>().unwrap()]
         );
+    }
+
+    /// `rtmps` is a real scheme (RTMP over TLS, default port 443).
+    #[test]
+    fn rtmps_is_accepted_with_the_tls_default_port() {
+        let t = RtmpTarget::parse("rtmps://h.example/live/key").unwrap();
+        assert!(t.tls);
+        assert_eq!(t.port, RTMPS_DEFAULT_PORT);
+        assert_eq!(t.tc_url, "rtmps://h.example/live");
+        let t = RtmpTarget::parse("rtmps://h.example:8443/live/key").unwrap();
+        assert_eq!(t.port, 8443);
+        assert!(!RtmpTarget::parse("rtmp://h.example/live/key").unwrap().tls);
+    }
+
+    /// RFC 3986 §2.1: percent-encoded path octets are decoded; the query stays
+    /// as written. A key that is only a query is no key.
+    #[test]
+    fn path_text_is_percent_decoded_and_the_query_is_kept_raw() {
+        let t = RtmpTarget::parse("rtmp://h/li%20ve/a/b%20c?token=a%26b").unwrap();
+        assert_eq!(t.app, "li ve");
+        assert_eq!(t.stream_key, "a/b c?token=a%26b");
+        assert!(matches!(
+            RtmpTarget::parse("rtmp://h/live/?token=x"),
+            Err(RtmpUrlError::NoStreamKey)
+        ));
+        assert!(matches!(
+            RtmpTarget::parse("rtmp://h/live/%FF"),
+            Err(RtmpUrlError::PathNotUtf8)
+        ));
+    }
+
+    #[cfg(feature = "tokio")]
+    #[tokio::test]
+    async fn the_plain_tcp_adapter_refuses_a_tls_target() {
+        let t = RtmpTarget::parse("rtmps://127.0.0.1:1/live/key").unwrap();
+        let err = crate::io::AsyncRtmpClient::connect(
+            &t,
+            broadcast_common::timeouts::Timeouts::default(),
+        )
+        .await
+        .err()
+        .expect("a refusal");
+        assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
     }
 }
