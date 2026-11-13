@@ -1520,13 +1520,9 @@ async fn a_conditional_refresh_is_sent_and_its_304_is_absorbed() {
         .await;
     assert!(ended.is_none(), "{ended:?}");
     let before = pull.now().video().len();
-    tokio::time::sleep(Duration::from_millis(600)).await;
-    let after = pull.now().video().len();
+    let ended = pull.until(|d| d.video().len() > before).await;
     drop(pull.stop());
-    assert!(
-        after > before,
-        "still playing after the 304s ({before} -> {after})"
-    );
+    assert!(ended.is_none(), "still playing after the 304s: {ended:?}");
 }
 
 /// A refresh answered with something that is not an MPD does not end a live
@@ -1545,8 +1541,8 @@ async fn a_garbage_mpd_refresh_does_not_end_a_live_pull() {
         .await;
     assert!(ended.is_none(), "the pull survived the bad MPDs: {ended:?}");
     let before = pull.now().video().len();
-    tokio::time::sleep(Duration::from_millis(800)).await;
-    assert!(pull.now().video().len() > before, "and kept playing");
+    let kept_playing = pull.until(|d| d.video().len() > before).await;
+    assert!(kept_playing.is_none(), "and kept playing: {kept_playing:?}");
     drop(pull.stop());
 }
 
@@ -1668,7 +1664,7 @@ async fn utc_timing_requests_carry_no_credentials_but_every_other_request_does()
 #[tokio::test]
 async fn bltrackid_multi_period_audio_only_middle_keeps_track_ids_stable() {
     let src = test_fixtures::path("dash/multiperiod-restart");
-    let dir = std::env::temp_dir().join("bltrackid-pin");
+    let dir = std::env::temp_dir().join(format!("bltrackid-pin-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("mkdir");
     for entry in std::fs::read_dir(&src).expect("read src") {

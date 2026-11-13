@@ -540,7 +540,8 @@ async fn nonexistent_path_yields_read_error() {
 #[tokio::test]
 async fn empty_file_is_reported_as_too_short_to_identify() {
     // Write a truly empty temp file so the probe sees zero bytes.
-    let dir = std::env::temp_dir().join("multimux-file-reader-empty");
+    let dir =
+        std::env::temp_dir().join(format!("multimux-file-reader-empty-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let empty = dir.join("empty.bin");
     std::fs::write(&empty, b"").unwrap();
@@ -570,7 +571,10 @@ async fn random_bytes_yield_a_probe_error_never_panic() {
     // A file of random bytes must not panic the reader; it fails with a
     // probe-class error (which for uniformly random bytes is UnknownProbe or
     // Ambiguous/Insufficient, depending on what happened to line up).
-    let dir = std::env::temp_dir().join("multimux-file-reader-random");
+    let dir = std::env::temp_dir().join(format!(
+        "multimux-file-reader-random-{}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     let random = dir.join("random.bin");
     // 64 KiB of a fixed pseudo-random pattern.
@@ -730,7 +734,10 @@ async fn second_reader_over_same_trunk_fails_with_writer_unavailable() {
 
 #[tokio::test]
 async fn oversized_file_yields_file_too_large() {
-    let dir = std::env::temp_dir().join("multimux-file-reader-oversize");
+    let dir = std::env::temp_dir().join(format!(
+        "multimux-file-reader-oversize-{}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     let big = dir.join("big.bin");
     // 1 KiB of bytes, under a 512-byte cap.

@@ -152,25 +152,26 @@ async fn catchup_output_end_to_end() {
     // Request a window that has been evicted -> documented error status (404).
     // Wait for period 1 to appear (retention rolls), then p0 is evicted.
     let vod1 = format!("http://{bind_addr}/cam/vod/p1.m3u8");
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    let mut period_1_appeared = false;
     while tokio::time::Instant::now() < deadline {
         if let Ok(resp) = client.get(&vod1).send().await
             && resp.status() == StatusCode::OK
         {
+            period_1_appeared = true;
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    let evicted = client
-        .get(format!("http://{bind_addr}/cam/vod/p0.m3u8"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(
-        evicted.status(),
-        StatusCode::NOT_FOUND,
-        "evicted period must be 404"
-    );
+    assert!(period_1_appeared, "period 1 never appeared: {vod1}");
+    let vod0 = format!("http://{bind_addr}/cam/vod/p0.m3u8");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    let mut status = client.get(&vod0).send().await.unwrap().status();
+    while status != StatusCode::NOT_FOUND && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        status = client.get(&vod0).send().await.unwrap().status();
+    }
+    assert_eq!(status, StatusCode::NOT_FOUND, "evicted period must be 404");
 
     server.abort();
     let _ = std::fs::remove_dir_all(&tmp);

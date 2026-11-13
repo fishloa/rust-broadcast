@@ -2613,12 +2613,10 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
         let cancel = CancellationToken::new();
         let active_sessions = Arc::new(AtomicUsize::new(1));
         let silence_timeout = Duration::from_millis(200);
-        // Comfortably more than the correct end time (~`silence_timeout`)
-        // and comfortably less than what a bug extending life via the spam
-        // would need (`spam_duration + silence_timeout`) — see this test's
-        // own doc.
-        let assert_bound = Duration::from_millis(400);
-        let spam_duration = silence_timeout * 3;
+        // The strays never stop until the session is gone, so a bug that extends life on each
+        // stray never ends the session at all; the correct end is ~`silence_timeout` after
+        // admission. The bound is a hang guard far above that, so scheduler delay cannot trip it.
+        let assert_bound = Duration::from_secs(30);
 
         let handle = tokio::spawn(run_whep_session_with_silence_timeout(
             admitted,
@@ -2638,17 +2636,14 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
         // at the stray socket's address.
         const DTLS_LOOKING: &[u8] = &[0x16, 0x00, 0, 0, 0, 0, 0, 0];
 
-        // Spams concurrently with the session task above (both started at
-        // the same instant) rather than before awaiting it — the whole
-        // point is that `assert_bound` below is too tight for a bug that
-        // extends life on each stray to still finish in time.
+        // Spams concurrently with the session task above, for as long as it lives (aborted
+        // below).
         let spam = tokio::spawn(async move {
             let stray_std = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
             stray_std.set_nonblocking(true).unwrap();
             let stray = UdpSocket::from_std(stray_std).unwrap();
-            let deadline = Instant::now() + spam_duration;
             let mut i: u32 = 0;
-            while Instant::now() < deadline {
+            loop {
                 let payload = if i.is_multiple_of(2) {
                     RANDOM_BYTES
                 } else {

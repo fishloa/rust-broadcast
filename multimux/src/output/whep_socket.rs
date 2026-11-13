@@ -51,6 +51,8 @@ pub(crate) struct SharedSocket {
     next_key: AtomicU64,
     #[cfg(test)]
     dropped: Arc<AtomicU64>,
+    #[cfg(test)]
+    handled: Arc<AtomicU64>,
     task: JoinHandle<()>,
 }
 
@@ -71,10 +73,12 @@ impl SharedSocket {
             queues: HashMap::new(),
         }));
         let dropped = Arc::new(AtomicU64::new(0));
+        let handled = Arc::new(AtomicU64::new(0));
         let task = tokio::spawn(receive_loop(
             Arc::clone(&socket),
             Arc::clone(&router),
             Arc::clone(&dropped),
+            Arc::clone(&handled),
         ));
         Ok(Self {
             socket,
@@ -83,6 +87,8 @@ impl SharedSocket {
             next_key: AtomicU64::new(0),
             #[cfg(test)]
             dropped,
+            #[cfg(test)]
+            handled,
             task,
         })
     }
@@ -101,6 +107,12 @@ impl SharedSocket {
     #[cfg(test)]
     fn dropped(&self) -> u64 {
         self.dropped.load(Ordering::Relaxed)
+    }
+
+    /// Datagrams the receive loop has finished with: classified, and queued or dropped.
+    #[cfg(test)]
+    fn handled(&self) -> u64 {
+        self.handled.load(Ordering::Acquire)
     }
 
     /// Route datagrams naming `local_ufrag` to a new viewer. `None` when
@@ -128,7 +140,12 @@ impl SharedSocket {
     }
 }
 
-async fn receive_loop(socket: Arc<UdpSocket>, router: Arc<Mutex<Router>>, dropped: Arc<AtomicU64>) {
+async fn receive_loop(
+    socket: Arc<UdpSocket>,
+    router: Arc<Mutex<Router>>,
+    dropped: Arc<AtomicU64>,
+    handled: Arc<AtomicU64>,
+) {
     let mut buf = [0u8; RECV_BUFFER_BYTES];
     loop {
         let Ok((len, peer)) = socket.recv_from(&mut buf).await else {
@@ -142,16 +159,16 @@ async fn receive_loop(socket: Arc<UdpSocket>, router: Arc<Mutex<Router>>, droppe
                 .classify(data, peer)
                 .and_then(|key| router.queues.get(&key).cloned())
         };
-        let Some(queue) = queue else {
-            continue;
-        };
-        let datagram = Inbound {
-            peer,
-            bytes: Bytes::copy_from_slice(data),
-        };
-        if let Err(mpsc::error::TrySendError::Full(_)) = queue.try_send(datagram) {
-            dropped.fetch_add(1, Ordering::Relaxed);
+        if let Some(queue) = queue {
+            let datagram = Inbound {
+                peer,
+                bytes: Bytes::copy_from_slice(data),
+            };
+            if let Err(mpsc::error::TrySendError::Full(_)) = queue.try_send(datagram) {
+                dropped.fetch_add(1, Ordering::Relaxed);
+            }
         }
+        handled.fetch_add(1, Ordering::Release);
     }
 }
 
@@ -249,7 +266,7 @@ mod tests {
 
     const LOCALHOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
     const DTLS_RECORD: [u8; 4] = [22, 254, 253, 0];
-    const WAIT: Duration = Duration::from_secs(5);
+    const HANDLED_DEADLINE: Duration = Duration::from_secs(60);
 
     fn check(username: &str) -> Vec<u8> {
         let mut message = Message::new();
@@ -262,6 +279,21 @@ mod tests {
             ])
             .expect("build a binding request");
         message.raw
+    }
+
+    /// Waits until the receive loop has finished with `count` datagrams. Every assertion below
+    /// reads a viewer's queue only after this, so a "nothing else arrived" check covers every
+    /// datagram that was sent, however the scheduler orders the senders and the loop.
+    async fn wait_handled(shared: &SharedSocket, count: u64) {
+        let deadline = tokio::time::Instant::now() + HANDLED_DEADLINE;
+        while shared.handled() < count {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the receive loop handled {} of {count} datagrams",
+                shared.handled()
+            );
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
     }
 
     async fn client() -> UdpSocket {
@@ -308,13 +340,12 @@ mod tests {
         peer.send_to(&DTLS_RECORD, shared.local_addr())
             .await
             .expect("send dtls");
+        wait_handled(&shared, 2).await;
         for _ in 0..2 {
-            let got = tokio::time::timeout(WAIT, b_rx.recv())
-                .await
-                .expect("b receives")
-                .expect("open");
+            let got = b_rx.try_recv().expect("b has the datagram");
             assert_eq!(got.peer, peer.local_addr().expect("addr"));
         }
+        assert!(b_rx.try_recv().is_err(), "b has nothing else");
         assert!(a_rx.try_recv().is_err());
     }
 
@@ -337,10 +368,8 @@ mod tests {
             .send_to(&check("aaaaaaaa:peer"), shared.local_addr())
             .await
             .expect("send");
-        let got = tokio::time::timeout(WAIT, a_rx.recv())
-            .await
-            .expect("a receives")
-            .expect("open");
+        wait_handled(&shared, 3).await;
+        let got = a_rx.try_recv().expect("a has the real check");
         assert_eq!(got.peer, mapped.local_addr().expect("addr"));
         assert!(a_rx.try_recv().is_err(), "only the real check arrived");
     }
@@ -369,10 +398,10 @@ mod tests {
             .send_to(&check("bbbbbbbb:p"), shared.local_addr())
             .await
             .expect("send");
-        let got = tokio::time::timeout(WAIT, fast_rx.recv())
-            .await
-            .expect("the other viewer is still served")
-            .expect("open");
+        wait_handled(&shared, (SESSION_INBOUND_QUEUE * 2 + 2) as u64).await;
+        let got = fast_rx
+            .try_recv()
+            .expect("the other viewer is still served");
         assert_eq!(got.peer, fast_peer.local_addr().expect("addr"));
         assert!(shared.dropped() > 0, "the full queue dropped datagrams");
     }
