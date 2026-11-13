@@ -555,7 +555,7 @@ const DEFAULT_MEDIA_SEQUENCE: u64 = 0;
 ///
 /// `init_uri` maps a segment's [`InitRef`] to the `#EXT-X-MAP` URI to advertise
 /// (RFC 8216bis §4.4.4.5, required for fMP4 — see
-/// `hls_runtime::server::Container`'s own doc); `None` for the `MpegTs`
+/// `transmux::Container`'s own doc); `None` for the `MpegTs`
 /// container, which needs no map. Every segment carries its **own** run's map:
 /// `broadcast-hls` renders it where it changes, right after the
 /// `EXT-X-DISCONTINUITY` the run boundary already carries, so an archived run

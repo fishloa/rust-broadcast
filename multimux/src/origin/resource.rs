@@ -86,13 +86,10 @@ pub(crate) const WEBVTT_CONTENT_TYPE: &str = "text/vtt";
 /// a `MpegTs` container serves no init resource at all, so a resource on an
 /// `MpegTs` route is a `.ts` segment in practice. Anything else falls back
 /// to `video/mp4` for forward compatibility with a future container.
-pub(crate) fn resource_content_type(
-    container: hls_runtime::server::Container,
-    name: &str,
-) -> &'static str {
+pub(crate) fn resource_content_type(container: transmux::Container, name: &str) -> &'static str {
     match container {
-        hls_runtime::server::Container::MpegTs => TS_CONTENT_TYPE,
-        hls_runtime::server::Container::WebVtt => WEBVTT_CONTENT_TYPE,
+        transmux::Container::MpegTs => TS_CONTENT_TYPE,
+        transmux::Container::WebVtt => WEBVTT_CONTENT_TYPE,
         _ if name.ends_with(".m4s") => ISO_SEGMENT_CONTENT_TYPE,
         _ => MP4_CONTENT_TYPE,
     }
@@ -194,7 +191,7 @@ async fn dynamic_file(
     } else if let Some(tid) = track_id_from_filename(&file)
         && let Some(subtitle) = serving.subtitle_by_track(transmux::TrackId::new(tid))
     {
-        container = hls_runtime::server::Container::WebVtt;
+        container = transmux::Container::WebVtt;
         (subtitle.trunk, subtitle.origin)
     } else {
         (serving.trunk(), serving.ll_hls())
@@ -245,7 +242,7 @@ async fn dynamic_file(
 fn resource_body_response(
     headers: &HeaderMap,
     body: hls_runtime::server::HlsBody,
-    container: hls_runtime::server::Container,
+    container: transmux::Container,
     name: &str,
 ) -> Response {
     match body {
@@ -659,9 +656,9 @@ mod tests {
 
     use super::*;
     use crate::route::RouteHandle;
-    use hls_runtime::server::Container;
     use media_plane::trunk::TrunkConfig;
     use timed_metadata::{MediaTime, TimeAnchor};
+    use transmux::Container;
     use transmux::ll_hls::{PartInfo, SegmentInfo};
 
     fn part(seq: u32, idx: u32) -> PartInfo {

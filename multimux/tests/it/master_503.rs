@@ -40,7 +40,7 @@ fn llhls_route_with_segment() -> Arc<RouteHandle> {
 }
 
 fn ts_route_undeclared_unpublished() -> Arc<RouteHandle> {
-    use hls_runtime::server::Container;
+    use transmux::Container;
     Arc::new(RouteHandle::new(4.0, 500, 4).with_container(Container::MpegTs))
 }
 
@@ -133,7 +133,7 @@ async fn master_200_after_first_segment_uses_measured() {
 }
 
 fn published_without_segment(output: &Arc<dyn Output>) -> Arc<RouteHandle> {
-    use hls_runtime::server::Container;
+    use transmux::Container;
     let mut route = RouteHandle::new(4.0, 500, 4);
     if output.kind() == multimux::output::OutputKind::TsHls {
         route = route.with_container(Container::MpegTs);

@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `transmux::Container` (`Fmp4`, `MpegTs`, `WebVtt`) with `name()` and `segment_extension()`: which container a segmenter cuts and an origin serves, defined once here; moved from `hls_runtime::server` (issue #2554).
 
 ## [0.31.0] - 2026-11-10
 ### Added

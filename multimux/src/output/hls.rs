@@ -214,7 +214,7 @@ impl Output for HlsOutput {
         // URIs are fixed and an unused slot answers 404.
         if self.flavour == HlsFlavour::LowLatency
             && route.subtitles_enabled()
-            && route.container() == hls_runtime::server::Container::Fmp4
+            && route.container() == transmux::Container::Fmp4
         {
             for slot in 0..MAX_SUBTITLE_RENDITIONS {
                 let st = HlsState {
@@ -934,7 +934,7 @@ mod ts_tests {
     use super::*;
     use crate::route::RouteHandle;
     use crate::testutil::body_string;
-    use hls_runtime::server::Container;
+    use transmux::Container;
     use transmux::ll_hls::SegmentInfo;
 
     /// A non-whole-second duration (4.2s, not 4.0s): `broadcast_hls`'s own
