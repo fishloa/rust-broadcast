@@ -1101,7 +1101,12 @@ fn decode_hevc_sps_inner(
             && general_constraint_indicator_flags & PTL_INTERLACED_SOURCE_BIT != 0,
     };
     let mut vui_colour = HevcVuiColour::default();
-    let (num_units_in_tick, time_scale, fps, hrd_fixed_pic_rate) = parse_hevc_sps_to_vui_timing(
+    let HevcWalkTiming {
+        num_units_in_tick,
+        time_scale,
+        fps,
+        hrd_fixed_pic_rate,
+    } = parse_hevc_sps_to_vui_timing(
         &mut r,
         sps_max_sub_layers_minus1,
         &mut interlace,
@@ -1265,9 +1270,9 @@ fn parse_hevc_sps_to_vui_timing(
     sps_max_sub_layers_minus1: u8,
     interlace: &mut HevcInterlaceSps,
     colour: &mut HevcVuiColour,
-) -> (Option<u32>, Option<u32>, Option<f32>, Option<u32>) {
+) -> HevcWalkTiming {
     parse_hevc_sps_to_vui_timing_inner(r, sps_max_sub_layers_minus1, interlace, colour)
-        .unwrap_or((None, None, None, None))
+        .unwrap_or_default()
 }
 
 /// The VUI display facts the H.265 walk collects (each stays at its default
@@ -1284,18 +1289,32 @@ struct HevcVuiColour {
     default_display_offsets: Option<(u64, u64, u64, u64)>,
 }
 
+/// The VUI timing facts the H.265 walk returns: `vui_num_units_in_tick`,
+/// `vui_time_scale`, the convention-tier frame rate they imply (f32, the
+/// legacy field) and the normative tier's `fixed_pic_rate` HRD flag.
+#[derive(Default, Clone, Copy, Debug, PartialEq)]
+struct HevcWalkTiming {
+    /// `vui_num_units_in_tick` (§E.2.1).
+    num_units_in_tick: Option<u32>,
+    /// `vui_time_scale` (§E.2.1).
+    time_scale: Option<u32>,
+    /// `time_scale / num_units_in_tick` as the convention-tier frame rate.
+    fps: Option<f32>,
+    /// The HRD `fixed_pic_rate_*_flag` of the normative tier, when present.
+    hrd_fixed_pic_rate: Option<u32>,
+}
+
 /// Largest `num_negative_pics`/`num_positive_pics` (H.265 §7.4.8: at most
 /// `sps_max_dec_pic_buffering_minus1`, itself at most `MaxDpbSize - 1` = 15;
 /// 16 is a generous bound that still caps hostile input).
 const HEVC_MAX_RPS_PICS: u64 = 16;
 
-#[allow(clippy::type_complexity)]
 fn parse_hevc_sps_to_vui_timing_inner(
     r: &mut BitReader,
     sps_max_sub_layers_minus1: u8,
     interlace: &mut HevcInterlaceSps,
     colour: &mut HevcVuiColour,
-) -> crate::error::Result<(Option<u32>, Option<u32>, Option<f32>, Option<u32>)> {
+) -> crate::error::Result<HevcWalkTiming> {
     // log2_max_pic_order_cnt_lsb_minus4  ue(v)
     let log2_max_poc_lsb = r.read_ue("log2_max_pic_order_cnt_lsb_minus4")?;
 
@@ -1514,7 +1533,7 @@ fn parse_hevc_sps_to_vui_timing_inner(
     // vui_parameters_present_flag  u(1)
     let vui_present = r.read_flag("vui_parameters_present_flag")?;
     if !vui_present {
-        return Ok((None, None, None, None));
+        return Ok(HevcWalkTiming::default());
     }
 
     // vui_parameters() — ITU-T H.265 §E.2.1.  Walk in syntax order to reach
@@ -1566,7 +1585,7 @@ fn parse_hevc_sps_to_vui_timing_inner(
     // vui_timing_info_present_flag  u(1)
     let timing_present = r.read_flag("vui_timing_info_present_flag")?;
     if !timing_present {
-        return Ok((None, None, None, None));
+        return Ok(HevcWalkTiming::default());
     }
 
     let num_units = r.read_bits(32, "vui_num_units_in_tick")? as u32;
@@ -1596,7 +1615,12 @@ fn parse_hevc_sps_to_vui_timing_inner(
         None
     };
 
-    Ok((Some(num_units), Some(ts), fps, hrd_fixed))
+    Ok(HevcWalkTiming {
+        num_units_in_tick: Some(num_units),
+        time_scale: Some(ts),
+        fps,
+        hrd_fixed_pic_rate: hrd_fixed,
+    })
 }
 
 // ---------------------------------------------------------------------------

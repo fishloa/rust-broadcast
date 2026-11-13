@@ -79,8 +79,8 @@ use multimux::serve_with_registry_on;
 
 use crate::support::listener;
 use crate::support::shared_it::{fixture_path, poll_until_extinf};
-use crate::support::udp_origin::{UdpTsOrigin, spawn_udp_ts_origin};
-use listener::{bind_tcp, bind_udp};
+use crate::support::udp_origin::{UdpTsOrigin, bind_udp, spawn_udp_ts_origin};
+use listener::bind_tcp;
 
 /// The real ffmpeg-captured RTMP publish (`app=live`, `stream_key=testkey`,
 /// H.264+AAC) -- see `../fixtures/ts/PROVENANCE.md`.
@@ -103,13 +103,6 @@ fn reserve_tcp_addr() -> SocketAddr {
     let addr = listener.local_addr().expect("local addr");
     drop(listener);
     addr
-}
-
-/// Bind `127.0.0.1:0` for UDP and return the live address + the still-bound
-/// socket, so a `TsUdp` route consumes it via `Config::prebound` instead of
-/// racing reserve-then-rebind (SP7.1).
-async fn bind_udp_addr() -> (SocketAddr, tokio::net::UdpSocket) {
-    bind_udp().await
 }
 
 /// One LL-HLS-only route named `"cam"`, bound at `bind`, ingesting `input` --
@@ -200,7 +193,7 @@ async fn get_non_empty(client: &reqwest::Client, url: &str) -> bytes::Bytes {
 #[tokio::test]
 async fn ts_udp_dispatch_serves_real_media_end_to_end() {
     let (bind_addr, bind_listener) = bind_tcp();
-    let (udp_addr, udp_socket) = bind_udp_addr().await;
+    let (udp_addr, udp_socket) = bind_udp().await;
     let mut config = base_config(
         bind_addr,
         InputSpec::TsUdp {
@@ -1110,7 +1103,7 @@ async fn ll_dash_manifest_served_without_explicit_set_track_specs() {
 #[tokio::test]
 async fn ts_udp_dash_manifest_returns_503_before_tracks_are_known() {
     let (bind_addr, bind_listener) = bind_tcp();
-    let (udp_addr, udp_socket) = bind_udp_addr().await;
+    let (udp_addr, udp_socket) = bind_udp().await;
     let mut config = base_config(
         bind_addr,
         InputSpec::TsUdp {

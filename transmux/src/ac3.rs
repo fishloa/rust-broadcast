@@ -1748,7 +1748,6 @@ pub(crate) mod tests {
     /// Build an E-AC-3 `bsi()` for a frame, per §E.1.2.2. Only the fields the
     /// crate reads are ever nonzero; `mixmdate` is left 0 so the walk is the
     /// short path (the mixdata variants are exercised by the fixture below).
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn eac3_bsi(
         strmtyp: u8,
         substreamid: u8,

@@ -6,8 +6,7 @@ use transmux::{FlvDemux, Media};
 
 pub use test_harness::rtmp_play_peer as play_peer;
 
-#[allow(unused_imports)]
-pub use play_peer::{PeerConfig, PlayPeer, Seen};
+pub use play_peer::{PeerConfig, PlayPeer};
 
 pub const MS: u64 = 1_000;
 pub const SEC: u64 = 1_000_000;

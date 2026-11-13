@@ -94,7 +94,6 @@ pub struct CitSection<'a> {
 
 impl<'a> CitSection<'a> {
     /// Construct a CIT section with the spec `reserved` fill.
-    #[allow(clippy::too_many_arguments)]
     #[must_use]
     pub fn new(
         private_indicator: bool,

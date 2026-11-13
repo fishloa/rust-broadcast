@@ -449,7 +449,6 @@ fn process_pes(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn push_timestamp(
     samples: &mut Vec<TimestampSample>,
     packet_index: u64,

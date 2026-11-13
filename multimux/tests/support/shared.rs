@@ -3,8 +3,6 @@
 //! asks and handed to every later one. Tests that mutate rig state must not
 //! use it.
 
-#![allow(dead_code)]
-
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};

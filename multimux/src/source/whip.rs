@@ -195,7 +195,7 @@ struct WhipInfra {
     /// Cancels the signalling server when the route is dropped, so the bound
     /// port is released.
     cancel: tokio_util::sync::CancellationToken,
-    /// Tracks the signalling-server task.
+    /// Tracks the signalling-server task so `Drop` can drain it.
     tracker: tokio_util::task::TaskTracker,
     /// Count of `MediaTransport::handle_timeout` fires driven by the timer
     /// arm (per route — a global would leak across tests).
@@ -221,14 +221,10 @@ struct WhipInfra {
     force_timer_error: Arc<StdMutex<Option<String>>>,
 }
 
-impl WhipInfra {
-    /// Stop the signalling server and wait for it to drain (releasing the
-    /// bound port). Used by `Drop` and by the accept-lifecycle tests.
-    #[allow(dead_code)]
-    async fn shutdown(&self) {
+impl Drop for WhipInfra {
+    fn drop(&mut self) {
         self.cancel.cancel();
         self.tracker.close();
-        self.tracker.wait().await;
     }
 }
 
@@ -346,8 +342,8 @@ impl WhipRoute {
                 });
                 let cancel = tokio_util::sync::CancellationToken::new();
                 let serve_cancel = cancel.clone();
-                let tracked = tokio_util::task::TaskTracker::new();
-                tracked.spawn(async move {
+                let tracker = tokio_util::task::TaskTracker::new();
+                tracker.spawn(async move {
                     if let Err(e) =
                         crate::origin::serve_hyper_util(listener, whip_router(state), serve_cancel)
                             .await
@@ -363,7 +359,7 @@ impl WhipRoute {
                     rtp_packets: Arc::new(AtomicU64::new(0)),
                     active_sessions,
                     cancel,
-                    tracker: tracked,
+                    tracker,
                     timer_fires: Arc::new(AtomicU64::new(0)),
                     timer_notify: Arc::new(Notify::new()),
                     admit_notify,

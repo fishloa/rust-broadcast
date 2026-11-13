@@ -1,0 +1,3 @@
+# Owner decision 2026-11-13: spec-field constructors and hot-path helpers that mirror wire fields take
+# their fields positionally; this is the workspace limit instead of per-function allows.
+too-many-arguments-threshold = 12

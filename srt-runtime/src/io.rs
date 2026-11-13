@@ -757,7 +757,6 @@ impl SrtSocket {
     /// Rendezvous): a dedicated-socket forwarder feeding the same
     /// `Driver::rx` path a listener-accepted connection uses (issue #1029),
     /// seeded from the peer's ISN and handshake timestamp (TSBPD rule 12).
-    #[allow(clippy::too_many_arguments)]
     fn established(
         socket: Arc<UdpSocket>,
         peer: std::net::SocketAddr,

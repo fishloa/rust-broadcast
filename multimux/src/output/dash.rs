@@ -434,7 +434,6 @@ fn period_start(public_seq: u64, first_number: u64, nominal_secs: f64) -> Option
     Duration::try_from_secs_f64(nominal_secs * segments as f64).ok()
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_period_document(
     route: &RouteHandle,
     origin: SystemTime,

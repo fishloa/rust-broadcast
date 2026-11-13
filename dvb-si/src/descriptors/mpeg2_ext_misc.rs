@@ -630,7 +630,6 @@ impl JxsVideo {
     /// `reserved(7)` all ones, `zero_bits` zero, no mastering display, no private
     /// data. Set the remaining public fields directly to override.
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         horizontal_size: u16,
         vertical_size: u16,
