@@ -166,7 +166,7 @@ impl MediaMtx {
         // just-spawned process needs to parse its config and bind before
         // it does, and a bare `connect()` immediately after `spawn()` races
         // that (observed: "Connection refused" 100% of the time).
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
         loop {
             if std::net::TcpStream::connect(("127.0.0.1", rtsp_port)).is_ok() {
                 break;

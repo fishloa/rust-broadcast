@@ -199,7 +199,7 @@ fn ffmpeg_melodie_pasp_colr() {
         println!("SKIP: ffmpeg absent");
         return;
     }
-    let tmp = std::env::temp_dir().join("phase4a2_m.mp4");
+    let tmp = std::env::temp_dir().join(format!("phase4a2_m_{}.mp4", std::process::id()));
     let status = std::process::Command::new("ffmpeg")
         .args([
             "-v",
@@ -249,7 +249,7 @@ fn ffmpeg_krone_pasp() {
         println!("SKIP: ffmpeg absent");
         return;
     }
-    let tmp = std::env::temp_dir().join("phase4a2_k.mp4");
+    let tmp = std::env::temp_dir().join(format!("phase4a2_k_{}.mp4", std::process::id()));
     let status = std::process::Command::new("ffmpeg")
         .args([
             "-v",
