@@ -127,7 +127,7 @@ fuzz_target!(|data: &[u8]| {
     let mpd = pick_mpd(&MPDS, head[1], head[2], head[3], &mut rest);
 
     let url = format!("{BASE_URL}{MPD_NAME}");
-    let mut client = DashClient::new(url, dash, cfg);
+    let mut client = DashClient::new(dash_runtime::client::DashClientConfig::new(url).with_dash(dash).with_limits(cfg));
     let mut pending: VecDeque<Action> = VecDeque::new();
     let mut terminal = false;
     let mut chunks = rest

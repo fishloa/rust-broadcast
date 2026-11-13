@@ -354,11 +354,54 @@ fn continuity_signals(set: &broadcast_dash::AdaptationSet, previous: &str) -> bo
     set.supplemental_properties.iter().any(named) || set.essential_properties.iter().any(named)
 }
 
-impl DashClient {
-    /// A client for the MPD at `mpd_url`. Performs no I/O.
+/// What a [`DashClient`] is configured by: the MPD it follows, the playback
+/// configuration and the pull limits.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct DashClientConfig {
+    /// The MPD URL to follow.
+    pub mpd_url: String,
+    /// Playback configuration.
+    pub dash: DashConfig,
+    /// Bounds on what the client pulls.
+    pub limits: PullLimits,
+}
+
+impl DashClientConfig {
+    /// A config following `mpd_url` with default [`DashConfig`] and
+    /// [`PullLimits`].
+    pub fn new(mpd_url: impl Into<String>) -> Self {
+        DashClientConfig {
+            mpd_url: mpd_url.into(),
+            dash: DashConfig::default(),
+            limits: PullLimits::default(),
+        }
+    }
+
+    /// Replace [`DashClientConfig::dash`].
     #[must_use]
-    pub fn new(mpd_url: impl Into<String>, dash: DashConfig, limits: PullLimits) -> Self {
-        let mpd_url = mpd_url.into();
+    pub fn with_dash(mut self, dash: DashConfig) -> Self {
+        self.dash = dash;
+        self
+    }
+
+    /// Replace [`DashClientConfig::limits`].
+    #[must_use]
+    pub fn with_limits(mut self, limits: PullLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+}
+
+impl DashClient {
+    /// A client for the MPD in `config`. Performs no I/O.
+    #[must_use]
+    pub fn new(config: DashClientConfig) -> Self {
+        let DashClientConfig {
+            mpd_url,
+            dash,
+            limits,
+        } = config;
         let doc_url = Url::parse(&mpd_url).ok();
         let mpd_query = doc_url.as_ref().and_then(|u| u.query()).map(str::to_owned);
         Self {

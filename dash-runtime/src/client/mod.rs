@@ -41,7 +41,7 @@
 //! ```
 //! use dash_runtime::client::{Action, DashClient, DashConfig, PullLimits};
 //!
-//! let mut client = DashClient::new("https://origin.example/vod/manifest.mpd", DashConfig::default(), PullLimits::default());
+//! let mut client = DashClient::new(dash_runtime::client::DashClientConfig::new("https://origin.example/vod/manifest.mpd").with_dash(DashConfig::default()).with_limits(PullLimits::default()));
 //! let Some(Action::FetchMpd { url, .. }) = client.poll(0) else { unreachable!() };
 //! assert_eq!(url, "https://origin.example/vod/manifest.mpd");
 //! // The MPD is requested once until the caller reports a failure and retries.
@@ -59,7 +59,7 @@ mod utc_sampler;
 
 pub use action::{Action, MpdValidators, RepId, ResourceId, UtcId, UtcMethod};
 pub use config::{DashClockPolicy, DashConfig, DashConfigError, PullLimits, PullLimitsError};
-pub use engine::{DashClient, StateSize};
+pub use engine::{DashClient, DashClientConfig, StateSize};
 pub use error::{Error, Failure, FailureClass, FailureKind, FatalKind, Rejection, Result};
 pub use meta::{ResponseMeta, UtcResponse};
 pub use output::{AudioRendition, DropCause, ManifestSelection, Notice, Output, VariantInfo};

@@ -108,7 +108,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut config = PullLimits::default();
     config.max_inflight_segments = args.window;
     config.validate()?;
-    let mut client = DashClient::new(&url, DashConfig::default(), config);
+    let mut client = DashClient::new(
+        dash_runtime::client::DashClientConfig::new(&url)
+            .with_dash(DashConfig::default())
+            .with_limits(config),
+    );
 
     let mut pending: VecDeque<Action> = VecDeque::new();
     let mut samples: BTreeMap<u32, (usize, f64)> = BTreeMap::new();

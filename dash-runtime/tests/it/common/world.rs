@@ -223,7 +223,11 @@ impl Sim {
         origin: Box<dyn Origin>,
     ) -> Self {
         Self {
-            client: DashClient::new(url, dash, limits),
+            client: DashClient::new(
+                dash_runtime::client::DashClientConfig::new(url)
+                    .with_dash(dash)
+                    .with_limits(limits),
+            ),
             world,
             origin,
             pending: Vec::new(),

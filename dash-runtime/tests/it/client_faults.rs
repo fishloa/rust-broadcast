@@ -281,7 +281,11 @@ fn a_body_over_the_size_cap_is_a_counted_failure() {
 #[test]
 fn a_caller_reported_oversize_is_counted_like_any_other_failure() {
     use dash_runtime::client::{Action, DashClient, Failure};
-    let mut c = DashClient::new(FFMPEG, DashConfig::default(), cfg());
+    let mut c = DashClient::new(
+        dash_runtime::client::DashClientConfig::new(FFMPEG)
+            .with_dash(DashConfig::default())
+            .with_limits(cfg()),
+    );
     let Some(Action::FetchMpd { .. }) = c.poll(0) else {
         panic!("mpd first")
     };

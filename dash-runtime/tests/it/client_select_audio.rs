@@ -119,9 +119,9 @@ fn an_index_outside_the_audio_list_is_refused_and_changes_nothing() {
 #[test]
 fn nothing_can_be_selected_before_the_period_plays() {
     let mut c = DashClient::new(
-        URL,
-        dash_runtime::client::DashConfig::default(),
-        PullLimits::default(),
+        dash_runtime::client::DashClientConfig::new(URL)
+            .with_dash(dash_runtime::client::DashConfig::default())
+            .with_limits(PullLimits::default()),
     );
     assert_eq!(c.select_audio(Some(0)), Err(Error::NotSwitchable));
     assert_eq!(c.select_audio(None), Err(Error::NotSwitchable));

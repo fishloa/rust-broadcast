@@ -54,7 +54,11 @@ struct Live {
 
 impl Live {
     fn start(dash: DashConfig, mpd: &str, meta: &ResponseMeta<'_>) -> Self {
-        let mut client = DashClient::new(DOC, dash, PullLimits::default());
+        let mut client = DashClient::new(
+            dash_runtime::client::DashClientConfig::new(DOC)
+                .with_dash(dash)
+                .with_limits(PullLimits::default()),
+        );
         let now = 0;
         client.set_wall_clock(now, (AST_UNIX_S + 60) * SECOND);
         let Some(Action::FetchMpd { url, .. }) = client.poll(now) else {
@@ -232,7 +236,11 @@ fn a_non_http_final_url_is_never_adopted() {
 #[test]
 fn a_foreign_final_url_of_a_static_mpd_is_not_adopted_when_pinned() {
     let mpd = static_mpd("", "seg$Number$.m4s");
-    let mut client = DashClient::new(DOC, pinned(), PullLimits::default());
+    let mut client = DashClient::new(
+        dash_runtime::client::DashClientConfig::new(DOC)
+            .with_dash(pinned())
+            .with_limits(PullLimits::default()),
+    );
     let Some(Action::FetchMpd { .. }) = client.poll(0) else {
         panic!("mpd")
     };
@@ -250,7 +258,11 @@ fn a_foreign_final_url_of_a_static_mpd_is_not_adopted_when_pinned() {
 
 fn static_urls_and_outcome(base: &str, media: &str) -> (Vec<String>, Vec<DropCause>) {
     let mpd = static_mpd(base, media);
-    let mut client = DashClient::new(DOC, DashConfig::default(), PullLimits::default());
+    let mut client = DashClient::new(
+        dash_runtime::client::DashClientConfig::new(DOC)
+            .with_dash(DashConfig::default())
+            .with_limits(PullLimits::default()),
+    );
     let Some(Action::FetchMpd { .. }) = client.poll(0) else {
         panic!("mpd")
     };
@@ -297,7 +309,11 @@ fn a_data_url_template_is_never_requested_and_reports_data_url() {
 #[test]
 fn a_data_url_init_is_never_requested() {
     let mpd = static_mpd("", "seg$Number$.m4s").replace("init.mp4", "data:video/mp4;base64,AAAA");
-    let mut client = DashClient::new(DOC, DashConfig::default(), PullLimits::default());
+    let mut client = DashClient::new(
+        dash_runtime::client::DashClientConfig::new(DOC)
+            .with_dash(DashConfig::default())
+            .with_limits(PullLimits::default()),
+    );
     let Some(Action::FetchMpd { .. }) = client.poll(0) else {
         panic!("mpd")
     };
