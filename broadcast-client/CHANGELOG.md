@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Smooth sessions jitter their fragment and manifest retries like every other source: the session passes its jitter seed to the engine (`SmoothConfig::jitter_seed`); the first retry still waits exactly its step (#2589).
 ### Added
+- `Config::with_timeouts(Timeouts)` and `tshttp::Config::with_timeouts`: one `Timeouts` mapped onto the session's bounds by `Config::kind`, with the per-protocol meaning documented once (HLS: `read_idle` bounds playlist/segment/key requests; DASH and Smooth: manifest and segment requests; SRT: `connect` is the handshake bound; every other kind: `connect` is the stall policy's start timeout and `read_idle` its reconnect threshold). Every bound is floored at 1 ms (#2590).
 - `SrtConfig::timeouts` and `SrtConfig::with_timeouts`: the SRT handshake and peer-idle bounds read and set as `broadcast_common::timeouts::Timeouts` (`handshake`, `read_idle`), so a host maps its own timeouts once instead of converting to the `_ms` fields (#2514).
 - `Config::max_queued_bytes` (default 256 MiB, `DEFAULT_MAX_QUEUED_BYTES`; `0` is `InvalidConfig`): a byte budget on the queued `Event::Sample` payloads next to `max_queued_events`. A host that does not drain loses the oldest samples (counted by `dropped_events`, each burst leaving one `Event::Discontinuity`) once either bound is exceeded.
 - `Config::utc_timing_credentials` (on by default): whether a DASH session sends its credentials to a `UTCTiming` server on the session origin; a relay turns it off.

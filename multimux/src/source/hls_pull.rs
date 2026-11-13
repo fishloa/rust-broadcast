@@ -37,7 +37,6 @@ const RESOURCE_RETRY_CAP_MS: u64 = 30_000;
 /// slack only lets a short error page through to be rejected by length instead of by the cap.
 const MAX_KEY_BODY_BYTES: usize = 4096;
 
-const MICROS_PER_MILLI: u64 = 1_000;
 const WHAT: &str = "hls-pull";
 
 /// A remote (LL-)HLS Media Playlist to pull: its URL, which may carry
@@ -79,15 +78,10 @@ fn retry_schedule_ms() -> Vec<u64> {
 }
 
 fn session_config(route: &HlsPullRoute) -> Config {
-    let read_us = u64::try_from(route.target.timeouts.read_idle.as_micros())
-        .unwrap_or(u64::MAX)
-        .max(MICROS_PER_MILLI);
     let mut config = Config::relay();
     config.kind = SourceKind::Hls;
+    let mut config = config.with_timeouts(route.target.timeouts);
     config.max_queued_bytes = crate::source::SEGMENTED_EVENT_QUEUE_BYTES;
-    config.request_timeout_us = read_us;
-    config.segment_timeout_us = read_us;
-    config.hls_key_timeout_us = read_us;
     config.max_manifest_bytes = crate::source::MAX_HTTP_BODY_BYTES;
     config.max_segment_bytes = crate::source::MAX_HTTP_BODY_BYTES;
     config.max_key_bytes = MAX_KEY_BODY_BYTES;
