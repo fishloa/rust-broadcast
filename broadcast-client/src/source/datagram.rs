@@ -285,8 +285,14 @@ impl Datagram {
                     field: "udp.source",
                 });
             }
+            if config.interface_index.is_some() && (ip.is_ipv4() || config.interface.is_some()) {
+                return Err(Error::InvalidConfig {
+                    field: "udp.interface_index",
+                });
+            }
             Some(MulticastJoin {
                 interface: config.interface,
+                interface_index: config.interface_index,
                 source: config.source,
             })
         } else {
@@ -298,6 +304,11 @@ impl Datagram {
             if config.interface.is_some() {
                 return Err(Error::InvalidConfig {
                     field: "udp.interface",
+                });
+            }
+            if config.interface_index.is_some() {
+                return Err(Error::InvalidConfig {
+                    field: "udp.interface_index",
                 });
             }
             None

@@ -7,7 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
-- `Config::relay()`: a preset for a host that forwards samples instead of playing them (no initial-tracks hold, no start-pending wait, no timeline-jump screening); `Event::Tracks` specs keep their `program_number`, which a relay uses to split a multi-programme stream.
+- `UdpConfig::interface_index` and `MulticastJoin::interface_index`: join an IPv6 multicast group on an interface named by index (valid only for an IPv6 group, not together with `interface`).
+- `Config::relay()`: a preset for a host that forwards samples instead of playing them (no start-pending wait, no timeline-jump screening; the initial-tracks hold stays); `Event::Tracks` specs keep their `program_number`, which a relay uses to split a multi-programme stream.
 ### Removed
 - BREAKING: `broadcast_client::auth`'s own `AuthState`, `AuthDecision`, `AuthEvent` and `carries_credentials` definitions — they live in `broadcast-auth` now, and this module re-exports them, so the paths keep working but the types are `broadcast_auth`'s.
 ### Changed
