@@ -6,9 +6,9 @@
 //! [`crate::source::sdp::load_sdp`]); this module owns only the UDP socket
 //! transport (bind + optional multicast join, via the crate-private
 //! `crate::source::udp::bind_udp` helper). The SDP parse itself is the *same*
-//! [`crate::source::sdp::parse_tracks_multimux`] helper
-//! [`crate::source::rtsp::RtspDialer`] uses for its DESCRIBE body — there is
-//! no parallel SDP implementation between the two ingest paths — and RTP
+//! [`crate::source::sdp::parse_tracks_multimux`] helper reads the SDP through
+//! `transmux::sdp_track`, the interpretation the RTSP source's session uses for its
+//! DESCRIBE body, and RTP
 //! depayload is [`transmux::RtpStreamDepacketiser`] (RFC 6184 H.264 / RFC
 //! 3640 AAC), exactly as the RTSP source uses it.
 //!

@@ -389,11 +389,7 @@ pub async fn run_srt_caller(
         &format!("srt://{remote}"),
         config,
         None,
-        SessionLabels {
-            what: "srt",
-            connect: route.timeouts.connect,
-            read: route.timeouts.read,
-        },
+        SessionLabels::new("srt", route.timeouts),
         std::sync::Arc::clone(route_handle),
         true,
     )?;

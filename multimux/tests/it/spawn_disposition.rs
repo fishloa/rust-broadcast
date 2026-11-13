@@ -35,12 +35,17 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ("dvr.rs", 603, "spawn_blocking DVR write; awaited inline"),
     (
         "source/client_host.rs",
-        223,
+        252,
         "one HTTP request task per Action::HttpRequest of the session; owned by SessionStep, which aborts it on Action::Close and aborts every outstanding one on drop",
     ),
     (
         "source/client_host.rs",
-        289,
+        299,
+        "one TCP read task per Action::TcpConnect of the session; owned by SessionStep, which aborts it on Action::Close and aborts every outstanding one on drop",
+    ),
+    (
+        "source/client_host.rs",
+        349,
         "one datagram receive task per Action::UdpBind of the session; owned by SessionStep, which aborts it on Action::Close and aborts every outstanding one on drop",
     ),
     (

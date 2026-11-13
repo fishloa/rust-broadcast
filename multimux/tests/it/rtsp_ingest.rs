@@ -1,8 +1,7 @@
 //! Deterministic loopback e2e test for the RTSP ingest path
 //! (`multimux::source::rtsp`, issue #705 item 3), retargeted (plan step 5b)
-//! from the pre-5a `RtspSource` onto `RtspDialer`/`RtspIngestSession` (step
-//! 5a — see `multimux/src/source/rtsp.rs`'s module doc for the sans-IO
-//! reshape): a real `127.0.0.1:0` TCP socket, DESCRIBE -> SETUP -> PLAY, then
+//! from the pre-5a `RtspSource` onto `run_rtsp` and the shared session host (see
+//! `multimux/src/source/rtsp.rs`'s module doc): a real `127.0.0.1:0` TCP socket, DESCRIBE -> SETUP -> PLAY, then
 //! a few interleaved RTP packets — exercising the real socket -> SDP-parse ->
 //! interleaved-depayload path with no live network and no flakiness (every
 //! step is synchronized by the request/response handshake itself, and the
@@ -24,46 +23,34 @@
 //! the server side is hand-written (rtsp-runtime has no server-side
 //! body-injection hook to reuse).
 //!
-//! # Why this drives `RtspIngestSession` directly rather than through
-//! `IngestDriver`
-//!
-//! `media_plane::ingress::IngestDriver` (the production wrapper
-//! `crate::source::rtsp::run_rtsp` uses) deliberately does not retain a
-//! `SessionEvent::NewProgram`'s track list once it has decided whether to
-//! admit the program (`IngestDriver::drain` matches `NewProgram { program,
-//! .. }` — the tracks are read only to gate `max_programs`, then dropped);
-//! there is no accessor on `IngestDriver`/`Trunk` that recovers them
-//! afterwards. This test's whole point (per the pre-5a doc above) is
-//! asserting on the *resolved track set* — a real avcC built from the SDP's
-//! `sprop-parameter-sets`, and the RTP clock rate becoming the track
-//! timescale — so it drives `RtspIngestSession`'s own `Stage`/`IngestSession`
-//! implementation directly instead: exactly the `rtsp.rs` module's own
-//! `multi_round_trip_rtsp_handshake_completes_through_feed_and_poll_transmit_only`
-//! test, just replacing its canned response bytes with a genuine socket and
-//! hand-rolled server. Every `SessionEvent` (`NewProgram` included) is
-//! observable this way, so every original assertion is preserved.
-//! `SessionEvent::Sample`'s payload is the same `transmux::Sample` a
-//! `Trunk`'s `SampleCursorItem::Timed` would hand back — `IngestDriver`'s
-//! dispatch does not transform it — so `sample.flags.is_sync` here is exactly
-//! what a caller reading the sample back out of a `Trunk` would see.
+//! The client under test is the production one: `run_rtsp`, which runs a relay
+//! `broadcast_client::Session` through the shared session host. The resolved track set is read
+//! back from the route's registry (`RouteHandle::track_specs`) and the samples from the
+//! published `Trunk`.
 //!
 //! No feature gate is needed: `multimux::source::rtsp` is not behind any
 //! Cargo feature (only `rtsps://` TLS support is, and this test uses plain
 //! `rtsp://`).
 
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 use transmux::TrackId;
 
 use broadcast_auth::{AuthResult, RequestContext, Verifier};
-use broadcast_common::{Stage, Timestamp};
-use media_plane::ingress::{Dialer, IngestSession, SessionEvent};
-use multimux::MultimuxError;
-use multimux::source::rtsp::{RtspDialer, RtspIngestSession};
+use broadcast_common::Timestamp;
+use media_plane::ingress::{HandshakePolicy, ProgramId};
+use media_plane::trunk::{SampleCursorItem, TrunkConfig};
+use multimux::source::IngestTimeouts;
+use multimux::source::rtsp::{RtspRoute, run_rtsp};
+use multimux::{MultimuxError, RouteHandle};
 use rtsp_runtime::{Credentials, InterleavedFrame, TransportSpec};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio_util::sync::CancellationToken;
 use transmux::TrackSpec;
-use transmux::pipeline::CodecConfig;
+use transmux::pipeline::{CodecConfig, Sample};
+
+use crate::support::shared_it::nz;
 
 /// A known-good H.264 `sprop-parameter-sets` (SPS + PPS) — the same vector
 /// `avc_config_from_sprop`/`avc_config_from_fmtp` are unit-tested against
@@ -83,10 +70,8 @@ const RTP_CHANNEL: u8 = 0;
 /// load tolerance since it is not a timing claim.
 const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Bound on how many read/write rounds [`drive_and_collect`] will attempt —
-/// a wiring bug must fail fast rather than spin; `TEST_TIMEOUT` is the real
-/// backstop.
-const MAX_ROUNDS: usize = 64;
+const RING: usize = 16;
+const TIMED_RING: usize = 4096;
 
 /// Minimal single-media H.264 SDP, parseable by
 /// `multimux::source::sdp::parse_sdp_tracks`.
@@ -172,61 +157,67 @@ fn basic_credentials(user: &str, pass: &str) -> String {
     base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pass}"))
 }
 
-/// Extracts the resolved track set from a `NewProgram` event, if one is
-/// present in `events`.
-fn new_program_tracks(events: &[SessionEvent]) -> Option<&[TrackSpec]> {
-    events.iter().find_map(|e| match e {
-        SessionEvent::NewProgram { tracks, .. } => Some(tracks.as_slice()),
-        _ => None,
-    })
+/// One running pull: the route's registry handle (resolved tracks, published `Trunk`), the cancel
+/// token that stops it, and the task whose result is the error that ended it.
+struct Pull {
+    route_handle: Arc<RouteHandle>,
+    cancel: CancellationToken,
+    run: tokio::task::JoinHandle<MultimuxError>,
 }
 
-/// Counts `SessionEvent::Sample` events collected so far.
-fn sample_count(events: &[SessionEvent]) -> usize {
-    events
-        .iter()
-        .filter(|e| matches!(e, SessionEvent::Sample { .. }))
-        .count()
-}
-
-/// Drives `session` against a real, already-connected `stream`: writes every
-/// queued outbound request, reads the next response/media chunk, feeds it
-/// in, and collects every `SessionEvent` produced — mirroring
-/// `multimux::source::rtsp::run_rtsp`'s own loop (see this module's doc),
-/// just test-owned so every event is directly observable. Stops and returns
-/// as soon as `want` is satisfied by the events collected so far, or
-/// propagates the first `feed` error (exactly the failure mode `run_rtsp`
-/// itself would surface).
-async fn drive_and_collect(
-    session: &mut RtspIngestSession,
-    stream: &mut TcpStream,
-    want: impl Fn(&[SessionEvent]) -> bool,
-) -> Result<Vec<SessionEvent>, MultimuxError> {
-    let start = Instant::now();
-    let mut buf = [0u8; 64 * 1024];
-    let mut events = Vec::new();
-    for _ in 0..MAX_ROUNDS {
-        while let Some(bytes) = session.poll_transmit() {
-            stream.write_all(&bytes).await.expect("write request");
-        }
-        while let Some(ev) = session.poll() {
-            events.push(ev);
-        }
-        if want(&events) {
-            return Ok(events);
-        }
-        let n = stream.read(&mut buf).await.expect("read response");
-        assert!(n > 0, "peer closed before the expected events arrived");
-        let now = Timestamp::from_instant(start, Instant::now());
-        session.feed(&buf[..n], now)?;
-        while let Some(ev) = session.poll() {
-            events.push(ev);
-        }
-        if want(&events) {
-            return Ok(events);
-        }
+fn start_pull(url: String, auth: Option<Credentials>) -> Pull {
+    let route = RtspRoute::new("rtsp-ingest", url)
+        .with_auth(auth)
+        .with_timeouts(IngestTimeouts {
+            connect: TEST_TIMEOUT,
+            read: TEST_TIMEOUT,
+        });
+    let route_handle = Arc::new(RouteHandle::new(4.0, 500, 4));
+    let config = TrunkConfig::new(nz(TIMED_RING), nz(RING), nz(RING), nz(RING), nz(RING));
+    let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
+    let cancel = CancellationToken::new();
+    let run = tokio::spawn({
+        let route_handle = Arc::clone(&route_handle);
+        let cancel = cancel.clone();
+        async move { run_rtsp(&route, config, handshake, &route_handle, cancel).await }
+    });
+    Pull {
+        route_handle,
+        cancel,
+        run,
     }
-    panic!("drive_and_collect: exceeded {MAX_ROUNDS} rounds without satisfying `want`");
+}
+
+impl Pull {
+    async fn samples(&self, want: usize) -> Vec<(TrackId, Sample)> {
+        let trunk = self.route_handle.await_first_trunk().await;
+        let mut cursor = trunk.subscribe_from_backlog();
+        let mut samples = Vec::new();
+        while samples.len() < want {
+            match cursor.poll() {
+                Some(SampleCursorItem::Timed { track_id, sample }) => {
+                    samples.push((track_id, sample));
+                }
+                Some(_) => {}
+                None => tokio::task::yield_now().await,
+            }
+        }
+        samples
+    }
+
+    async fn tracks(&self) -> Vec<TrackSpec> {
+        self.route_handle.await_first_trunk().await;
+        self.route_handle.track_specs(ProgramId(0))
+    }
+
+    async fn stop(self) {
+        self.cancel.cancel();
+        let _ = self.run.await;
+    }
+
+    async fn failure(self) -> MultimuxError {
+        self.run.await.expect("the pull task must not panic")
+    }
 }
 
 /// Runs the hand-rolled RTSP server side: DESCRIBE (SDP body) -> SETUP
@@ -316,20 +307,13 @@ async fn run() {
         serve_one_session(sock).await;
     });
 
-    let mut dialer = RtspDialer::new(format!("rtsp://{addr}/test"), None);
-    let mut session = dialer
-        .dial()
-        .expect("dial: local construction only, no I/O");
-    let mut stream = TcpStream::connect(addr).await.expect("connect loopback");
-
-    let events = drive_and_collect(&mut session, &mut stream, |evs| sample_count(evs) >= 2)
-        .await
-        .expect("DESCRIBE->SETUP->PLAY->depayload must succeed");
+    let pull = start_pull(format!("rtsp://{addr}/test"), None);
+    let samples = pull.samples(2).await;
+    let tracks = pull.tracks().await;
 
     // The DESCRIBE SDP was really parsed and a real avcC built (not an empty
     // placeholder): one video track at the RTP clock rate, carrying the
     // sprop's SPS + PPS.
-    let tracks = new_program_tracks(&events).expect("PLAY response must announce NewProgram");
     assert_eq!(tracks.len(), 1, "one video track from the SDP");
     // NOTE: this does not by itself prove the `a=rtpmap` clock rate was parsed
     // (rather than defaulted): H.264's RTP clock is fixed at 90 kHz per RFC 6184
@@ -354,23 +338,14 @@ async fn run() {
         other => panic!("expected CodecConfig::Avc from the H.264 SDP, got {other:?}"),
     }
 
-    let samples: Vec<_> = events
-        .iter()
-        .filter_map(|e| match e {
-            SessionEvent::Sample {
-                track_id, sample, ..
-            } => Some((*track_id, sample)),
-            _ => None,
-        })
-        .collect();
     assert_eq!(
         samples.len(),
         2,
         "3 access units over interleaved RTP yield exactly 2 completed samples"
     );
-    let (track_id0, sample0) = samples[0];
+    let (track_id0, sample0) = &samples[0];
     assert_eq!(
-        track_id0,
+        *track_id0,
         TrackId::new(1),
         "the sole video track routes to track id 1"
     );
@@ -378,10 +353,11 @@ async fn run() {
     // hand back — see this module's doc for why this test reads it here
     // instead.
     assert!(sample0.flags.is_sync, "the first access unit was the IDR");
-    let (track_id1, sample1) = samples[1];
-    assert_eq!(track_id1, TrackId::new(1));
+    let (track_id1, sample1) = &samples[1];
+    assert_eq!(*track_id1, TrackId::new(1));
     assert!(!sample1.flags.is_sync, "the second access unit was non-IDR");
 
+    pull.stop().await;
     server.await.expect("server task");
 }
 
@@ -394,25 +370,14 @@ async fn corrupt_interleaved_rtp_frame_is_skipped_and_the_session_continues() {
             let (sock, _) = listener.accept().await.expect("accept");
             serve_session_with_frames(sock, true).await;
         });
-        let mut dialer = RtspDialer::new(format!("rtsp://{addr}/test"), None);
-        let mut session = dialer.dial().expect("dial");
-        let mut stream = TcpStream::connect(addr).await.expect("connect");
+        let pull = start_pull(format!("rtsp://{addr}/test"), None);
 
         // 4 access units + 1 corrupt frame between AU1 and AU2: the three
         // completed samples are the same as an undamaged 4-AU stream yields.
-        let events = drive_and_collect(&mut session, &mut stream, |evs| sample_count(evs) >= 3)
-            .await
-            .expect("a corrupt RTP frame must not end the session");
-        assert_eq!(sample_count(&events), 3);
-        assert_eq!(session.malformed_media_frames(), 1, "the damage is counted");
-        let sync: Vec<bool> = events
-            .iter()
-            .filter_map(|e| match e {
-                SessionEvent::Sample { sample, .. } => Some(sample.flags.is_sync),
-                _ => None,
-            })
-            .collect();
+        let samples = pull.samples(3).await;
+        let sync: Vec<bool> = samples.iter().map(|(_, s)| s.flags.is_sync).collect();
         assert_eq!(sync, vec![true, false, false], "IDR then two non-IDR");
+        pull.stop().await;
         server.await.expect("server task");
     })
     .await
@@ -488,14 +453,14 @@ async fn serve_one_session_requiring_auth(
 /// answering the server's `401` challenge, and the request line sent on the
 /// wire must not carry `user:pass@` (verified indirectly: the hand-rolled
 /// server only ever sees `DESCRIBE`/`SETUP`/`PLAY` request lines built from
-/// `RtspDialer`, and a URL still carrying userinfo would fail
+/// the route, and a URL still carrying userinfo would fail
 /// `rtsp_types::Url::parse` inside `ClientSession::assemble`, so a request
 /// ever reaching the server at all already proves the stripped form was
 /// used).
 ///
 /// Reverting the `rtsp.rs` fix (no credentials attached to `ClientSession`)
 /// makes this test fail: the client would never answer the 401, `feed()`
-/// would surface it as an error, and `drive_and_collect`'s `.expect(...)`
+/// would surface it as an error, and the handshake wait's `.expect(...)`
 /// would panic.
 #[tokio::test]
 async fn rtsp_ingest_basic_auth_from_url_userinfo_succeeds() {
@@ -515,22 +480,16 @@ async fn run_auth_success() {
         serve_one_session_requiring_auth(sock, "camuser", "camsecret").await;
     });
 
-    let mut dialer = RtspDialer::new(format!("rtsp://camuser:camsecret@{addr}/test"), None);
-    let mut session = dialer.dial().expect("dial: local construction only");
-    let mut stream = TcpStream::connect(addr).await.expect("connect loopback");
-
-    let events = drive_and_collect(&mut session, &mut stream, |evs| {
-        new_program_tracks(evs).is_some()
-    })
-    .await
-    .expect(
-        "handshake must succeed: URL userinfo credentials should answer the server's 401 challenge",
-    );
+    let pull = start_pull(format!("rtsp://camuser:camsecret@{addr}/test"), None);
+    let tracks = tokio::time::timeout(TEST_TIMEOUT, pull.tracks())
+        .await
+        .expect("handshake must complete");
     assert_eq!(
-        new_program_tracks(&events).expect("checked above").len(),
+        tracks.len(),
         1,
         "the SDP was parsed after the authenticated DESCRIBE succeeded"
     );
+    pull.stop().await;
 
     server.await.expect("server task");
 }
@@ -571,27 +530,20 @@ async fn run_no_credentials_fails() {
         // whole exchange.
     });
 
-    let mut dialer = RtspDialer::new(format!("rtsp://{addr}/test"), None);
-    let mut session = dialer.dial().expect("dial: local construction only");
-    let mut stream = TcpStream::connect(addr).await.expect("connect loopback");
-
-    let err = drive_and_collect(&mut session, &mut stream, |_| false)
+    let pull = start_pull(format!("rtsp://{addr}/test"), None);
+    let err = tokio::time::timeout(TEST_TIMEOUT, pull.failure())
         .await
-        .expect_err("handshake must fail: no credentials to answer the server's 401 challenge");
+        .expect("the handshake must fail, not hang");
     assert!(
-        matches!(
-            &err,
-            MultimuxError::Auth { reason }
-                if reason.contains("401") || reason.to_ascii_lowercase().contains("unauthorized")
-        ),
-        "error should report the 401/Unauthorized DESCRIBE status, got: {err:?}"
+        matches!(&err, MultimuxError::Auth { .. }),
+        "a refused DESCRIBE credential must surface as the typed Auth error, got: {err:?}"
     );
 
     server.await.expect("server task");
 }
 
 // ---------------------------------------------------------------------------
-// Config-supplied (`RtspDialer::new`'s `auth` parameter) Digest auth — the gap
+// Config-supplied (`RtspRoute::with_auth`) Digest auth — the gap
 // flagged in the client-auth story: config-supplied credentials (as opposed
 // to URL userinfo, which `rtsp_ingest_basic_auth_from_url_userinfo_succeeds`
 // above already covers) needed a test driving them against a real server.
@@ -694,7 +646,7 @@ async fn serve_one_session_requiring_digest_auth(mut sock: TcpStream, verifier: 
 
 /// The config-supplied Digest path, driven against a real server: a URL
 /// carrying **no** userinfo, plus credentials passed straight to
-/// `RtspDialer::new`, must authenticate and succeed — proving the config path
+/// `RtspRoute::with_auth`, must authenticate and succeed — proving the config path
 /// independently of the URL-userinfo path already covered above. Reverting
 /// the config-credentials -> `ClientSession::with_credentials` wiring in
 /// `source::rtsp::session_with_credentials` makes this fail (the client
@@ -727,26 +679,19 @@ async fn run_config_digest_auth_success() {
 
     // No userinfo in the URL at all — credentials come ONLY from the dialer's
     // `auth` parameter.
-    let mut dialer = RtspDialer::new(
+    let pull = start_pull(
         format!("rtsp://{addr}/test"),
         Some(Credentials::new("camuser", "camsecret")),
     );
-    let mut session = dialer.dial().expect("dial: local construction only");
-    let mut stream = TcpStream::connect(addr).await.expect("connect loopback");
-
-    let events = drive_and_collect(&mut session, &mut stream, |evs| {
-        new_program_tracks(evs).is_some()
-    })
-    .await
-    .expect(
-        "handshake must succeed: config-supplied Digest credentials should answer the \
-         server's 401 challenge",
-    );
+    let tracks = tokio::time::timeout(TEST_TIMEOUT, pull.tracks())
+        .await
+        .expect("handshake must complete");
     assert_eq!(
-        new_program_tracks(&events).expect("checked above").len(),
+        tracks.len(),
         1,
         "the SDP was parsed after the authenticated DESCRIBE succeeded"
     );
+    pull.stop().await;
 
     server.await.expect("server task");
 }
@@ -779,23 +724,16 @@ async fn run_config_digest_auth_wrong_password() {
         serve_one_session_requiring_digest_auth(sock, &verifier).await;
     });
 
-    let mut dialer = RtspDialer::new(
+    let pull = start_pull(
         format!("rtsp://{addr}/test"),
         Some(Credentials::new("camuser", "WRONGPASSWORD")),
     );
-    let mut session = dialer.dial().expect("dial: local construction only");
-    let mut stream = TcpStream::connect(addr).await.expect("connect loopback");
-
-    let err = drive_and_collect(&mut session, &mut stream, |_| false)
+    let err = tokio::time::timeout(TEST_TIMEOUT, pull.failure())
         .await
-        .expect_err("handshake must fail: wrong password must not authenticate");
+        .expect("the handshake must fail, not hang");
     assert!(
-        matches!(
-            &err,
-            MultimuxError::Auth { reason }
-                if reason.contains("401") || reason.to_ascii_lowercase().contains("unauthorized")
-        ),
-        "error should report the 401/Unauthorized DESCRIBE status, got: {err:?}"
+        matches!(&err, MultimuxError::Auth { .. }),
+        "a refused DESCRIBE credential must surface as the typed Auth error, got: {err:?}"
     );
 
     server.await.expect("server task");

@@ -3,13 +3,17 @@
 
 use crate::error::{MultimuxError, Result};
 use crate::source::TrackInit;
-use rtsp_runtime::{MAX_TRACKS, PlayPlan};
+use rtsp_runtime::MAX_TRACKS;
+#[cfg(test)]
+use rtsp_runtime::PlayPlan;
 use sdp_types::{Media, Session};
 use transmux::TrackId;
 use transmux::sdp_track;
+#[cfg(test)]
 use url::Url;
 
 /// First interleaved RTP channel of an RTSP pull.
+#[cfg(test)]
 const FIRST_CHANNEL: u8 = 0;
 
 /// Interleaved channels are assigned in steps of 2 (RTP even, RTCP = +1).
@@ -90,6 +94,7 @@ pub fn parse_tracks_multimux(sdp: &[u8]) -> Result<Vec<TrackInit>> {
 /// Relative controls resolve against `content_base` (the DESCRIBE reply's
 /// `Content-Base`, else `Content-Location`), else `request_url` (RFC 2326
 /// Appendix C.1.1).
+#[cfg(test)]
 pub(crate) fn plan_tracks(
     request_url: &Url,
     content_base: Option<&str>,

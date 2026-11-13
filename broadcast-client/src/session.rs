@@ -504,6 +504,7 @@ impl Session {
         }
         if let Some(r) = self.rtsp.as_mut() {
             self.now_us = now_us;
+            self.payload_bytes = self.payload_bytes.saturating_add(bytes.len() as u64);
             let lost = r.on_data(conn, bytes, now_us, &mut self.auth);
             self.flush_rtsp();
             if !bytes.is_empty() {
@@ -659,8 +660,9 @@ impl Session {
         }
     }
 
-    /// Transport-stream payload bytes the session has accepted from its source: HTTP body bytes
-    /// of a TS-over-HTTP session, and the payloads a UDP, RTP or SRT session delivers after
+    /// Payload bytes the session has accepted from its source: HTTP body bytes of a
+    /// TS-over-HTTP session, every byte an RTSP connection delivers (replies and interleaved
+    /// media), and the payloads a UDP, RTP or SRT session delivers after
     /// alignment checks, reordering and decryption. Control traffic (SRT keepalives, ACKs) and
     /// dropped datagrams do not count, so a host that measures stalls by this counter is not
     /// kept alive by a peer that only keeps the link up.

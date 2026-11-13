@@ -54,6 +54,12 @@ pub(crate) trait IngestStep<S: IngestSession>: Send {
         window: Duration,
     ) -> impl Future<Output = StepOutcome> + Send;
 
+    /// Lets the source say goodbye before the connection is dropped on cancel (an RTSP
+    /// `TEARDOWN`); the default has nothing to send.
+    fn farewell(&mut self) -> impl Future<Output = ()> + Send {
+        async {}
+    }
+
     /// The error for "no bytes for `read`". A source whose historical error
     /// text differs overrides this.
     fn stalled(&self, read: Duration) -> MultimuxError {
@@ -134,6 +140,7 @@ where
             release_route(&driver, route_handle);
             driver.finish();
             send_farewell(&mut driver, writer, write_timeout).await;
+            source.farewell().await;
             return MultimuxError::Connect {
                 reason: "cancelled".into(),
             };
@@ -197,6 +204,7 @@ where
             release_route(&driver, route_handle);
             driver.finish();
             send_farewell(&mut driver, writer, write_timeout).await;
+            source.farewell().await;
             return MultimuxError::Connect {
                 reason: "cancelled".into(),
             };

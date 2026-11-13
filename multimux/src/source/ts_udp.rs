@@ -207,11 +207,7 @@ pub async fn run_ts_udp(
         &url,
         config,
         None,
-        SessionLabels {
-            what: WHAT,
-            connect: route.timeouts.connect,
-            read: route.timeouts.read,
-        },
+        SessionLabels::new(WHAT, route.timeouts),
         std::sync::Arc::clone(route_handle),
         true,
     );
