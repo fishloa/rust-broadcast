@@ -147,6 +147,9 @@ const DEFAULT_EVENT_CAPACITY: usize = 64;
 /// many parts one open segment realistically holds.
 const DEFAULT_PART_CAPACITY: usize = 64;
 
+/// Default for [`RouteHandle::with_max_concurrent_warms`].
+pub const DEFAULT_MAX_CONCURRENT_WARMS: usize = 8;
+
 /// [`RouteHandle::name`]'s value until [`RouteHandle::with_name`] sets a real
 /// one — matches `crate::origin::mod`'s own `"unknown"` fallback token for an
 /// unrecognized route in its HTTP-path metrics labelling, so a route driven
@@ -522,6 +525,9 @@ pub(crate) struct ProgramServing {
     pub(crate) smooth: std::sync::OnceLock<Arc<crate::output::smooth::SmoothServing>>,
     /// Rendered MPDs, valid for one [`MpdStamp`].
     mpd_cache: Mutex<MpdCache>,
+    /// The route's bound on concurrent [`ServedEgress::prepare`](media_plane::egress::ServedEgress::prepare)
+    /// runs on the blocking pool, shared by every egress of the route.
+    warms: Arc<tokio::sync::Semaphore>,
     /// Test probe: MPD renders actually performed (cache misses).
     #[cfg(test)]
     pub(crate) mpd_renders: std::sync::atomic::AtomicUsize,
@@ -723,6 +729,7 @@ impl ProgramServing {
         closed_caption_overrides: Vec<hls_runtime::server::ClosedCaptionDecl>,
         split_audio: bool,
         hold_cold_playlist: bool,
+        warms: Arc<tokio::sync::Semaphore>,
     ) -> Result<Arc<Self>, hls_runtime::server::HlsOriginBuildError> {
         let media_sequence_offset = epoch.seq_offset;
         let mut builder = HlsOrigin::builder(Arc::clone(&trunk))
@@ -836,6 +843,7 @@ impl ProgramServing {
 
         Ok(Arc::new(ProgramServing {
             mpd_cache: Mutex::new(MpdCache::default()),
+            warms,
             #[cfg(test)]
             mpd_renders: std::sync::atomic::AtomicUsize::new(0),
             trunk,
@@ -864,6 +872,10 @@ impl ProgramServing {
                 hold_cold_playlist,
             },
         }))
+    }
+
+    pub(crate) fn warms(&self) -> &tokio::sync::Semaphore {
+        &self.warms
     }
 
     /// This program's `Trunk` — the same `Arc` `crate::http::resolve_route_program`
@@ -1341,6 +1353,8 @@ impl ProgramServing {
 pub struct RouteHandle {
     /// This route's catch-up scan permits; built by the first catch-up request.
     catchup_scans: std::sync::OnceLock<Arc<tokio::sync::Semaphore>>,
+    /// See [`Self::with_max_concurrent_warms`].
+    warms: Arc<tokio::sync::Semaphore>,
     health: Mutex<HealthState>,
     target_duration_secs: f64,
     part_target_ms: u32,
@@ -1467,6 +1481,7 @@ impl RouteHandle {
         let window_segments = NonZeroUsize::new(window_segments).unwrap_or(NonZeroUsize::MIN);
         RouteHandle {
             catchup_scans: std::sync::OnceLock::new(),
+            warms: Arc::new(tokio::sync::Semaphore::new(DEFAULT_MAX_CONCURRENT_WARMS)),
             health: Mutex::new(HealthState::Connecting),
             target_duration_secs,
             part_target_ms,
@@ -1518,6 +1533,19 @@ impl RouteHandle {
     /// Defaults to [`Container::Fmp4`] if never called.
     pub fn with_container(mut self, container: Container) -> Self {
         self.container = container;
+        self
+    }
+
+    /// Bounds how many cold-egress warm-ups (`ServedEgress::prepare`: the
+    /// I-frame and bitrate scans of a new HLS segment, the first Smooth plan)
+    /// this route runs on the blocking pool at once; another route's warm-ups
+    /// are unaffected. Clamped up to `1`. Defaults to
+    /// [`DEFAULT_MAX_CONCURRENT_WARMS`]; routes set it from
+    /// [`crate::config::Config::max_concurrent_warms_per_route`]. Applies to
+    /// programs published after the call.
+    #[must_use]
+    pub fn with_max_concurrent_warms(mut self, permits: usize) -> Self {
+        self.warms = Arc::new(tokio::sync::Semaphore::new(permits.max(1)));
         self
     }
 
@@ -1853,6 +1881,7 @@ impl RouteHandle {
             self.closed_caption_overrides.clone(),
             !self.audio_rendition_sources.is_empty(),
             self.hold_cold_playlist,
+            Arc::clone(&self.warms),
         ) {
             Ok(serving) => serving,
             Err(e) => {

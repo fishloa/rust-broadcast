@@ -112,6 +112,7 @@ async fn manifest(State(route): State<Arc<RouteHandle>>) -> Response {
     }
     let resp = http::resolve_blocking(
         &trunk,
+        serving.warms(),
         &smooth.origin,
         SmoothRequest::Manifest,
         BLOCKING_RELOAD_TIMEOUT,
@@ -163,6 +164,7 @@ async fn fragment_fallback(State(route): State<Arc<RouteHandle>>, uri: OriginalU
     }
     let resp = http::resolve_blocking(
         &trunk,
+        serving.warms(),
         &smooth.origin,
         request,
         BLOCKING_RELOAD_TIMEOUT,

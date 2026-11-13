@@ -2207,6 +2207,11 @@ pub struct Config {
     /// Must be positive.
     #[serde(default = "default_max_blocking_reloads_per_route")]
     pub max_blocking_reloads_per_route: usize,
+    /// Maximum cold-egress warm-ups (`ServedEgress::prepare`) one route runs on
+    /// the blocking pool at once — see [`crate::route::RouteHandle::with_max_concurrent_warms`].
+    /// Must be positive.
+    #[serde(default = "default_max_concurrent_warms_per_route")]
+    pub max_concurrent_warms_per_route: usize,
     /// Maximum accepted request body size, in bytes — see
     /// [`crate::origin::HttpLimits::max_request_body_bytes`].
     pub max_request_body_bytes: usize,
@@ -2356,6 +2361,11 @@ impl PreboundBinds {
 /// Default [`Config::playlist_name`] when a config omits the field:
 /// [`crate::output::hls::DEFAULT_PLAYLIST_NAME`], preserving every
 /// pre-#663 config's `/media.m3u8` behaviour unchanged.
+/// Default [`Config::max_concurrent_warms_per_route`].
+fn default_max_concurrent_warms_per_route() -> usize {
+    crate::route::DEFAULT_MAX_CONCURRENT_WARMS
+}
+
 /// Default [`Config::max_blocking_reloads_per_route`].
 fn default_max_blocking_reloads_per_route() -> usize {
     crate::origin::DEFAULT_MAX_BLOCKING_RELOADS_PER_ROUTE
@@ -2392,6 +2402,7 @@ impl Default for Config {
             request_timeout_secs: crate::origin::DEFAULT_REQUEST_TIMEOUT.as_secs_f64(),
             max_concurrent_requests: crate::origin::DEFAULT_MAX_CONCURRENT_REQUESTS,
             max_blocking_reloads_per_route: default_max_blocking_reloads_per_route(),
+            max_concurrent_warms_per_route: default_max_concurrent_warms_per_route(),
             max_request_body_bytes: crate::origin::DEFAULT_MAX_REQUEST_BODY_BYTES,
             concurrency_queue_timeout_secs: crate::origin::DEFAULT_QUEUE_TIMEOUT.as_secs_f64(),
             ingest_connect_timeout_secs: crate::source::DEFAULT_CONNECT_TIMEOUT.as_secs_f64(),
@@ -2560,6 +2571,12 @@ impl Config {
         if self.max_concurrent_requests == 0 {
             return Err(MultimuxError::ConfigInvalid {
                 field: "max_concurrent_requests",
+                reason: "must be positive".into(),
+            });
+        }
+        if self.max_concurrent_warms_per_route == 0 {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "max_concurrent_warms_per_route",
                 reason: "must be positive".into(),
             });
         }
