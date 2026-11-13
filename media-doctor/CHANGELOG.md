@@ -1,27 +1,20 @@
 # Changelog
 
 ## [Unreleased]
-### Added
-- `hls-program-date-time-invalid` (Warning): an `#EXT-X-PROGRAM-DATE-TIME` that is not an ISO 8601 date-time (a bare date, say) is reported at its line from the playlist parser's new `MediaPlaylist::diagnostics` instead of failing the playlist (#2591).
 ### Changed
 - `udp::bind_udp` now uses `dvb_stream::udp::bind_standard` (shared socket bind) instead of its own socket2 sequence (#2472).
-### Added
-- `media_doctor_scte35_cues_total{timing=...}` and the matching `WatchSnapshot` fields: each SCTE-35 cue is judged against the program's reference decode timestamp, by the same engine `compliance-probe` reports.
-- Use shared `SpliceTracker` (scte35-splice) and `ConformanceMonitor::indicator_counts()` instead of local copies.
-### Fixed
-- `has_adts_sync` drops its own syncword pre-test and relies on the strict `transmux::parse_adts_header`, so an AAC-declared PID carrying MP3 frames is now flagged.
-### Changed
 - `check_dash_mpd` reads MPDs through the new `broadcast-dash` crate (the `dash` feature now enables `dep:broadcast-dash` instead of `dep:dash-runtime`), so the validator depends on the manifest syntax alone, not on a player (#2355).
-### Fixed
-- A `MPD@type="list"` MPD (ISO/IEC 23009-1 6th edition) is no longer reported with `dash-period-no-adaptation-sets` for Periods that import an MPD (`ImportedMPD`) or with `dash-static-mpd-missing-duration`; both were false positives.
-### Changed
 - `check_dash_mpd` reads MPDs with `dash_runtime::mpd` (new dependency, under `std`) instead of transmux's MPD model, which was removed (#2340). Its findings are pinned on every MPD fixture and the ISO/IEC 23009-1 examples.
 
-## [0.15.0] - 2026-11-10
 ### Added
+- `hls-program-date-time-invalid` (Warning): an `#EXT-X-PROGRAM-DATE-TIME` that is not an ISO 8601 date-time (a bare date, say) is reported at its line from the playlist parser's new `MediaPlaylist::diagnostics` instead of failing the playlist (#2591).
+- `media_doctor_scte35_cues_total{timing=...}` and the matching `WatchSnapshot` fields: each SCTE-35 cue is judged against the program's reference decode timestamp, by the same engine `compliance-probe` reports.
+- Use shared `SpliceTracker` (scte35-splice) and `ConformanceMonitor::indicator_counts()` instead of local copies.
 - `check_container_codec` reports `hvcc-array-nal-type` (an `hvcC` array that is not VPS/SPS/PPS/prefix SEI/suffix SEI) and `hvc1-array-completeness` (an `hvc1` entry whose `array_completeness` is not 1 on parameter-set arrays and 0 elsewhere) as warnings, ISO/IEC 14496-15:2017 §8.3.3.1.1 and §8.4.1.1.1 (#1915).
 
 ### Fixed
+- `has_adts_sync` drops its own syncword pre-test and relies on the strict `transmux::parse_adts_header`, so an AAC-declared PID carrying MP3 frames is now flagged.
+- A `MPD@type="list"` MPD (ISO/IEC 23009-1 6th edition) is no longer reported with `dash-period-no-adaptation-sets` for Periods that import an MPD (`ImportedMPD`) or with `dash-static-mpd-missing-duration`; both were false positives.
 - No false `dash-static-mpd-missing-duration` when the last `Period` carries `@duration` or the MPD carries `@minimumUpdatePeriod` (ISO/IEC 23009-1 Table 3) (#1925).
 - `avcc-sps-mismatch` / `hvcc-sps-mismatch` flag a record level only when it is below the SPS level; a level at or above it is conformant (ISO/IEC 14496-15:2017 §5.3.3.1.1 / §8.3.3.1.1) (#1926).
 - `PatPmtVersionCheck` drops a PMT that fails its CRC-32 instead of reporting a spurious `pmt-version` change (#1927).
@@ -31,6 +24,10 @@
 - `CcAnomalyCheck` flags an adaptation-only packet whose CC is not the PID's unincremented previous value (ISO/IEC 13818-1 §2.4.3.3) (#1934).
 - An unparseable `#EXT-X-TARGETDURATION` or `#EXTINF` is no longer read as `0`, which flagged every conformant `#EXTINF` as exceeding the target (#1935).
 - The ISOBMFF sniff behind the container-codec checks accepts a file that starts with a compressed `!mov` or `!mof` box (ISO/IEC 14496-12:2026 §8.16); the checks themselves need the box inflated and report nothing for it (#1910).
+
+### Dependencies
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12, `broadcast-hls` 0.6 -> 0.7, `container-probe` 0.3 -> 0.4, `dvb-conformance` 13 -> 14, `dvb-si` 13 -> 14, `mpeg-pes` 0.7 -> 0.8, `mpeg-ts` 0.7 -> 0.8, `scte35-splice` 5 -> 6, `timed-metadata` 0.9 -> 0.10, `transmux` 0.30 -> 0.31.
+- New sibling dependencies: `broadcast-dash` 0.1, `dash-runtime` 0.4, `dvb-stream` 0.9.
 
 ## [0.14.0] - 2026-11-07
 ### Documentation

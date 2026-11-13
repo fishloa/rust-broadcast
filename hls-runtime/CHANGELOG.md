@@ -6,33 +6,27 @@ documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-### Changed
-- The client's RFC 3339 tests exercise `broadcast_hls::ProgramDateTime::parse`, the parser the client actually uses, instead of a test-only `jiff::Timestamp` copy that rejected the zone-less and whitespace-padded values the production parser accepts (the test-only parser is gone) (#2591).
 ### Removed
 - BREAKING: `server::Container` moved to `transmux::Container` (same variants and methods, `segment_extension` now public); `HlsOriginBuilder` and the origin take and report that type (issue #2554).
-### Removed
 - BREAKING: `client::tokio_client` (`TokioClient`, `TokioClientConfig`, `TokioClientStats`, `TokioError`) and the `tokio` client feature, plus its tests and its now-unused `tokio`, `reqwest`, `broadcast-auth`, `backon`, `headers` and `tokio-util` dependencies. It carried its own copies of the retry, digest and body-cap policy, reachable only from tests; the IO belongs with the crate that drives the engine. Drive the sans-IO `HlsClient` core instead (`poll` out, `on_playlist`/`on_resource` in), as `multimux`'s HLS pull and `multimux/tests/golden_gate.rs`/`glass_to_glass.rs` do.
+- `bcp47_language` (moved to `broadcast-common::lang::bcp47_language`).
+
+### Changed
+- The client's RFC 3339 tests exercise `broadcast_hls::ProgramDateTime::parse`, the parser the client actually uses, instead of a test-only `jiff::Timestamp` copy that rejected the zone-less and whitespace-padded values the production parser accepts (the test-only parser is gone) (#2591).
+- BREAKING: `HlsClient::new(url)` takes a `client::HlsClientConfig` (`HlsClientConfig::new(url).with_variant_policy(..).with_playlist_base(..)`), and `HlsClient::set_variant_policy` is removed in favour of the config's `variant_policy` (`set_playlist_base` stays: a redirect changes the base mid-stream) (#2514).
+- BREAKING: every `HlsOriginBuilder` setter is named `with_*` (`with_target_duration_secs`, `with_window_segments`, `with_container`, `with_low_latency`, `with_hold_cold_playlist`, `with_media_sequence_offset`, `with_discontinuity_sequence`, `with_instance`, `with_program_date_time_arrival`, `with_declared_bandwidth_bps`, `with_audio_renditions`, `with_audio_sibling_origins`, `with_subtitle_renditions`, `with_subtitle_sibling_origins`, `with_playlist_uri`, `with_rendition_siblings`, `with_closed_captions_none`, `with_closed_caption_overrides`), matching `TrunkConfig`, `IngestConfig` and the other engine configs (#2514).
+- URL-reference resolution now uses the shared guarded resolver in `broadcast-common::url_ref` (control characters rejected before joining) (issue #2458).
+- The classic TS-segment detection reads the sync byte from `mpeg_ts::ts::TS_SYNC_BYTE` instead of declaring its own copy; the crate now depends on `mpeg-ts` (c6 C6-07).
+- BREAKING (behaviour): a Media Playlist request (primary, audio, subtitle and I-frame) without `_HLS_msn`/`_HLS_part` made before the playlist holds a closed segment is answered `EgressResponse::Await` until the first segment closes, then with the playlist, and `NotFound` once the caller's `AwaitPolicy` expires (the adapter's 503, RFC 8216bis section 6.2.5.2). Clients that ignore Partial Segments (ffmpeg, VLC) cannot open a playlist with no `EXTINF` and do not retry (#1754). `hold_cold_playlist(false)` restores the previous immediate answer; `_HLS_msn`/`_HLS_part` requests are unchanged.
+
 ### Added
 - `HlsOrigin` caches each rendered media and I-frame playlist per state stamp (the trunk's publish counter, the origin's setter epoch, the drained head, and the same for rendition siblings): concurrent requests share one render instead of each re-rendering (#2526). `HlsOrigin::render_epoch` exposes the setter epoch.
 - `HlsOrigin` implements `ServedEgress::is_warm`/`prepare`: the I-frame and bitrate byte scans of a newly published segment run in `prepare`, which a host calls on a blocking thread, so no async worker waits on the drain gate.
 - `BLOCKING_RELOAD_TARGET_DURATIONS`, `BLOCKING_RELOAD_TIMEOUT` and `playlist_reload_timeout` moved here from `multimux` (RFC 8216bis §6.2.5.2).
-### Changed
-- BREAKING: `HlsClient::new(url)` takes a `client::HlsClientConfig` (`HlsClientConfig::new(url).with_variant_policy(..).with_playlist_base(..)`), and `HlsClient::set_variant_policy` is removed in favour of the config's `variant_policy` (`set_playlist_base` stays: a redirect changes the base mid-stream) (#2514).
-- BREAKING: every `HlsOriginBuilder` setter is named `with_*` (`with_target_duration_secs`, `with_window_segments`, `with_container`, `with_low_latency`, `with_hold_cold_playlist`, `with_media_sequence_offset`, `with_discontinuity_sequence`, `with_instance`, `with_program_date_time_arrival`, `with_declared_bandwidth_bps`, `with_audio_renditions`, `with_audio_sibling_origins`, `with_subtitle_renditions`, `with_subtitle_sibling_origins`, `with_playlist_uri`, `with_rendition_siblings`, `with_closed_captions_none`, `with_closed_caption_overrides`), matching `TrunkConfig`, `IngestConfig` and the other engine configs (#2514).
-- URL-reference resolution now uses the shared guarded resolver in `broadcast-common::url_ref` (control characters rejected before joining) (issue #2458).
-### Added
 - `HlsOrigin::set_init_from`: `set_init` for a caller that names the first segment cut against the new init, for segments closed but not yet published.
-### Removed
-- `bcp47_language` (moved to `broadcast-common::lang::bcp47_language`).
-
-
-## [0.13.0] - 2026-11-10
-### Added
 - `HlsOriginBuilder::discontinuity_sequence(u64)` and `HlsOrigin::discontinuity_sequence_after()`: an origin that replaces another starts its `EXT-X-DISCONTINUITY-SEQUENCE` where the previous one ended.
 - `HlsOriginBuilder::hold_cold_playlist(bool)` and `HOLD_COLD_PLAYLIST_DEFAULT` (`true`).
-### Changed
-- The classic TS-segment detection reads the sync byte from `mpeg_ts::ts::TS_SYNC_BYTE` instead of declaring its own copy; the crate now depends on `mpeg-ts` (c6 C6-07).
-- BREAKING (behaviour): a Media Playlist request (primary, audio, subtitle and I-frame) without `_HLS_msn`/`_HLS_part` made before the playlist holds a closed segment is answered `EgressResponse::Await` until the first segment closes, then with the playlist, and `NotFound` once the caller's `AwaitPolicy` expires (the adapter's 503, RFC 8216bis section 6.2.5.2). Clients that ignore Partial Segments (ffmpeg, VLC) cannot open a playlist with no `EXTINF` and do not retry (#1754). `hold_cold_playlist(false)` restores the previous immediate answer; `_HLS_msn`/`_HLS_part` requests are unchanged.
+
 ### Fixed
 - Client: a failed omitted-offset `EXT-X-BYTERANGE` segment or part is re-requested with its own range, not one continued from a cursor the first request advanced; a restart clears the stored ranges.
 - Client: a discontinuity revealed when a segment closes after all its parts were delivered is signalled late instead of dropped.
@@ -43,8 +37,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Origin: a segment keeps its `EXT-X-PROGRAM-DATE-TIME` when the playlist window holds more segments than the trunk's `event_capacity`. The start the writer reported is read when the segment drains into the window (the window's own bound), not from `Trunk::segment_start_time` at render time, whose boundary table is bounded by `event_capacity`; older segments lost their date time (or fell back to the arrival clock, if configured).
 - Origin: the open segment is found when the segmenter's first segment is numbered above 1.
 - Origin: a bare `_HLS_msn` reload (media and I-frame playlists) is satisfied from the rendered window, so a playlist answered as satisfied lists that segment.
+
 ### Tests
 - Client: after a genuine restart the media-sequence high-water mark is the new numbering's, so a later forward jump with no overlap and no `PROGRAM-DATE-TIME` is not read as a second restart (pinned; the stale mark was cleared by the variant-switch fix).
+
+### Dependencies
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12, `broadcast-hls` 0.6 -> 0.7, `container-probe` 0.3 -> 0.4, `media-plane` 0.10 -> 0.11, `timed-metadata` 0.9 -> 0.10, `transmux` 0.30 -> 0.31.
+- New sibling dependencies: `mpeg-ts` 0.8.
 
 ## [0.12.0] - 2026-11-07
 ### Changed

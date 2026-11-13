@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `seq` module: RFC 3550 §A.1 `SeqValidity`/`SeqVerdict` and constants, the single implementation used by transmux and broadcast-client.
 
+### Dependencies
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12.
+
 ## [0.6.0] - 2026-11-07
 ### Fixed
 - Serializers report a too-small output buffer as the new `Error::OutputBufferTooSmall { need, have }` (with `From<broadcast_common::len::OutputBufferTooSmall>`) instead of the input-side `Error::BufferTooShort` (c6 C6-02).

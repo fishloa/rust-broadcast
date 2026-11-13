@@ -8,10 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Changed
 - BREAKING: a malformed `#EXT-X-PROGRAM-DATE-TIME` no longer fails `MediaPlaylist::parse`: the tag is dropped (its segment has no `program_date_time`) and recorded in the new `MediaPlaylist::diagnostics` (`ParseDiagnostic { kind: ParseDiagnosticKind::InvalidProgramDateTime, line_no, line }`, never serialised). `ProgramDateTime::parse` itself stays strict (#2591).
-### Changed
 - BREAKING: `ProgramDateTime::parse` rejects a bare date (`2026-10-02`): RFC 8216 §4.3.2.6 asks for an ISO 8601 date-time. A zone-less date-time is still accepted and taken as UTC (#2591).
 
-## [0.7.0] - 2026-11-10
 ### Added
 - `MasterPlaylist::dangling_group_references` lists the groups a variant names that no `#EXT-X-MEDIA` declares, for validators (#1948).
 - `OpenSegment::discontinuous`: an `#EXT-X-DISCONTINUITY` ahead of the live-edge parts is kept on parse and rendered back (#1943).
@@ -19,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - `MediaPlaylist::parse` no longer drops an `#EXT-X-DISCONTINUITY` that precedes the open segment's parts (#1943).
 - BREAKING (behaviour): `MasterPlaylist::to_m3u8` no longer fails with "group not found" for an `#EXT-X-STREAM-INF` whose AUDIO/VIDEO/SUBTITLES/CLOSED-CAPTIONS group has no `#EXT-X-MEDIA`; parse keeps the reference and render emits it unchanged, so a non-conformant third-party playlist round-trips byte-identical (#1948). Callers that relied on `to_m3u8` as a validator must now call `dangling_group_references()`.
+
+### Dependencies
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12.
 
 ## [0.6.0] - 2026-11-07
 ### Documentation

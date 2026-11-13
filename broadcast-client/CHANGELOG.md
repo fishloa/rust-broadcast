@@ -6,8 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Removed
+- BREAKING: `broadcast_client::auth`'s own `AuthState`, `AuthDecision`, `AuthEvent` and `carries_credentials` definitions — they live in `broadcast-auth` now, and this module re-exports them, so the paths keep working but the types are `broadcast_auth`'s.
+
 ### Changed
 - Smooth sessions jitter their fragment and manifest retries like every other source: the session passes its jitter seed to the engine (`SmoothConfig::jitter_seed`); the first retry still waits exactly its step (#2589).
+- URL userinfo is read with `broadcast_auth::credentials_from_url` and removed with `strip_userinfo`; the private duplicate (`take_userinfo`) is deleted. Behaviour is unchanged for `user:pass@`; the control-character check still applies (#2587).
+- `Session::payload_bytes()` also counts every response body byte of an HLS, DASH or Smooth session.
+- An RTSP session announces its `Event::Tracks` (from the DESCRIBE SDP) when PLAY is answered instead of with the first access unit, so a host sees the programme before any media arrives.
+- `SrtConfig::latency_ms` accepts any value: a latency below 120 ms is no longer an `InvalidConfig` (the negotiated latency is the larger of the two peers' values).
+- `Retry-After` HTTP-date parsing now uses `broadcast-common::http_date::parse_http_date`.
+- `AuthState` now comes from `broadcast-auth`; `broadcast-client` keeps no copy.
+- RTSP keepalive now uses `rtsp_runtime::ClientSession`'s schedule (half the declared `Session;timeout=`, the RFC 2326 §12.37 60 s default when none is declared) instead of a local timer with its own default and ceiling, and its method is the one the server advertises.
+- RTP sequence validity now uses `rtp_packet::SeqValidity` instead of a local delta/resync heuristic.
+- `source::fetch::wall::WallClock` is `broadcast_common::time::WallClock` (the shared `time::MonoUtc` anchor mapping) rather than a second copy of the same arithmetic; `Session::set_wall_clock` and the `Retry-After` reading are unchanged.
+- RTSP pull uses rtsp-runtime's `MAX_TRACKS` cap instead of a local constant.
+- RTSP pull skips an SDP media section whose `m=` format is not a numeric RTP payload type (RFC 4566 §5.14) instead of playing it, matching multimux; the skip is reported in `skipped`.
+- Timeline-jump detection now uses the detector moved to `transmux` (re-exported). `Config::timeline_jump` is now `Option<transmux::TimelineJumpConfig>`; the `broadcast_client::TimelineJumpConfig` re-export remains, but the type path changed (breaking for users naming `broadcast_client::timeline::TimelineJumpConfig`).
+- The RTSP source reads each DESCRIBE media section through `transmux::sdp_track`; its own `parse_tracks`/`supported_payload` interpreter is deleted (output unchanged, pinned by `fixtures/golden/sdp-tracks/broadcast-client.txt`).
+- The Smooth source builds `smooth_runtime::FetchFailure` with its new `retry_after_us` field left at `0` (#2393).
+- The RTSP track aligner (Sender Report / `RTP-Info` / provisional placement) is `transmux::TrackAligner`, shared with multimux's RTSP pull; `AvSync` is now `transmux::AvSync`, re-exported unchanged from `broadcast_client` (#2380).
+- BREAKING: the Smooth source is an adapter over the new `smooth-runtime` engine (#2370); the chunk planner, refresh, retry and track logic it carried are gone. Visible changes: the audio track is announced with its own id (`Event::Tracks` is `[1, 2]`, not `[1, 1]`, and audio samples carry track 2); a live manifest refresh no longer re-fetches the last fragment; a fragment that fails to demux is retried like any failed fetch instead of being dropped silently; the live refresh wait is half the last fragment's duration in microseconds, clamped to 0.5 s-5 s.
+- The RTSP source plans its `SETUP`/`PLAY` through `rtsp_runtime::PlayPlan` (control resolution against `Content-Base`, channel pairs, the RTP/RTCP collision check) instead of its own copy; the wire behaviour is unchanged (#2372).
+- BREAKING: the Smooth source parses the client Manifest with `broadcast-smooth`'s `SmoothManifest` instead of `transmux`'s removed `smooth_parse` module (#2356); `transmux::track_spec_from_quality_level` still builds the track spec.
+- The test-only feature is renamed `__test-seams` -> `test-seams`, the one spelling the workspace uses for test seams (c6 C6-09).
+
 ### Added
 - `skills/broadcast-client-basics/SKILL.md`: a Symposium agent skill shipped in the published package, so an AI coding agent working in a project that depends on `broadcast-client` gets usage guidance covering the host loop over `Session`, `Config`, source selection, auth/cookies/retry, the event queue limits, features and the common pitfalls.
 - `Config::with_timeouts(Timeouts)` and `tshttp::Config::with_timeouts`: one `Timeouts` mapped onto the session's bounds by `Config::kind`, with the per-protocol meaning documented once (HLS: `read_idle` bounds playlist/segment/key requests; DASH and Smooth: manifest and segment requests; SRT: `connect` is the handshake bound; every other kind: `connect` is the stall policy's start timeout and `read_idle` its reconnect threshold). Every bound is floored at 1 ms (#2590).
@@ -22,50 +45,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ErrorKind::SrtPeerIdle` (non-fatal) when the SRT peer goes silent past `peer_idle_timeout_ms`, and `ErrorKind::ends_connection()` naming the errors that end the connection the session was reading.
 - `UdpConfig::interface_index` and `MulticastJoin::interface_index`: join an IPv6 multicast group on an interface named by index (valid only for an IPv6 group, not together with `interface`).
 - `Config::relay()`: a preset for a host that forwards samples instead of playing them (no start-pending wait, no timeline-jump screening; the initial-tracks hold stays); `Event::Tracks` specs keep their `program_number`, which a relay uses to split a multi-programme stream.
-### Removed
-- BREAKING: `broadcast_client::auth`'s own `AuthState`, `AuthDecision`, `AuthEvent` and `carries_credentials` definitions — they live in `broadcast-auth` now, and this module re-exports them, so the paths keep working but the types are `broadcast_auth`'s.
-### Changed
-- URL userinfo is read with `broadcast_auth::credentials_from_url` and removed with `strip_userinfo`; the private duplicate (`take_userinfo`) is deleted. Behaviour is unchanged for `user:pass@`; the control-character check still applies (#2587).
-- `Session::payload_bytes()` also counts every response body byte of an HLS, DASH or Smooth session.
-- An RTSP session announces its `Event::Tracks` (from the DESCRIBE SDP) when PLAY is answered instead of with the first access unit, so a host sees the programme before any media arrives.
-- `SrtConfig::latency_ms` accepts any value: a latency below 120 ms is no longer an `InvalidConfig` (the negotiated latency is the larger of the two peers' values).
-- `Retry-After` HTTP-date parsing now uses `broadcast-common::http_date::parse_http_date`.
-### Changed
-- `AuthState` now comes from `broadcast-auth`; `broadcast-client` keeps no copy.
-- RTSP keepalive now uses `rtsp_runtime::ClientSession`'s schedule (half the declared `Session;timeout=`, the RFC 2326 §12.37 60 s default when none is declared) instead of a local timer with its own default and ceiling, and its method is the one the server advertises.
-- RTP sequence validity now uses `rtp_packet::SeqValidity` instead of a local delta/resync heuristic.
-- `source::fetch::wall::WallClock` is `broadcast_common::time::WallClock` (the shared `time::MonoUtc` anchor mapping) rather than a second copy of the same arithmetic; `Session::set_wall_clock` and the `Retry-After` reading are unchanged.
-- RTSP pull uses rtsp-runtime's `MAX_TRACKS` cap instead of a local constant.
-- RTSP pull skips an SDP media section whose `m=` format is not a numeric RTP payload type (RFC 4566 §5.14) instead of playing it, matching multimux; the skip is reported in `skipped`.
-- Timeline-jump detection now uses the detector moved to `transmux` (re-exported). `Config::timeline_jump` is now `Option<transmux::TimelineJumpConfig>`; the `broadcast_client::TimelineJumpConfig` re-export remains, but the type path changed (breaking for users naming `broadcast_client::timeline::TimelineJumpConfig`).
+- `broadcast_client::auth` is public: `AuthState` (origin-scoped credentials, challenge handling, `Clone`, `credentials()`) with `AuthDecision`, and `AuthState::preauthorize_basic` to send Basic on the first request (RFC 7617) instead of after a `401`.
+- `broadcast_client::fetch::retry_after_us` is public sans-IO retry/backoff policy (RFC 9110 §10.2.3), for use by other pull hosts.
+
 ### Fixed
 - RTMP URLs are parsed by `rtmp_runtime::target::RtmpTarget` (the second parser in `source/rtmp.rs` and the duplicated default-port constants are deleted); behaviour follows rtmp-runtime's grammar: `rtmps` default port 443, percent-decoded path (#2588).
 - A `206` `Content-Range` is parsed by one RFC 9110 §14.4 parser (`broadcast_common::content_range`) instead of three: `bytes 5-20/10` is refused for a ranged fetch (it was accepted), `bytes 0-9/*` is a finite ts/http body of 10 bytes (it was not), and stray whitespace inside the value is invalid (ts/http accepted it) (#2586).
 - A redirect `Location` (HTTP and RTSP) carrying a control character or space is no longer followed: it resolves through `broadcast_common::url_ref::resolve` instead of the raw `Url::join`, which deleted a TAB/CR/LF and followed a different URL than the header names (RFC 3986 §2) (#2585).
 - A Smooth quality switch to a level with a different SPS/PPS or resolution now succeeds (it was refused as `NoSuchVariant`): the engine's `Output::TracksChanged` surfaces as a new `Event::Tracks`, the event DASH variant switches already use.
-### Fixed
 - `Session::rtcp_rejected_count`: the RTSP source's Sender Reports that were unusable (NTP time zero, or a set refused for tracks more than an hour apart in wallclock), which were previously counted nowhere a caller could read.
 - The RTSP source flushes its track aligner when a connection ends, drops or is reconnected, so samples held back while waiting for the video anchor are delivered instead of lost (audit 7 A7-4).
 - `Session::select_variant` on a Smooth source switches the video `QualityLevel` of the fragments requested afterwards; it used to validate the index and return `Ok` without changing anything.
-### Changed
-- The RTSP source reads each DESCRIBE media section through `transmux::sdp_track`; its own `parse_tracks`/`supported_payload` interpreter is deleted (output unchanged, pinned by `fixtures/golden/sdp-tracks/broadcast-client.txt`).
-### Added
-- `broadcast_client::auth` is public: `AuthState` (origin-scoped credentials, challenge handling, `Clone`, `credentials()`) with `AuthDecision`, and `AuthState::preauthorize_basic` to send Basic on the first request (RFC 7617) instead of after a `401`.
-- `broadcast_client::fetch::retry_after_us` is public sans-IO retry/backoff policy (RFC 9110 §10.2.3), for use by other pull hosts.
-### Changed
-- The Smooth source builds `smooth_runtime::FetchFailure` with its new `retry_after_us` field left at `0` (#2393).
-- The RTSP track aligner (Sender Report / `RTP-Info` / provisional placement) is `transmux::TrackAligner`, shared with multimux's RTSP pull; `AvSync` is now `transmux::AvSync`, re-exported unchanged from `broadcast_client` (#2380).
-- BREAKING: the Smooth source is an adapter over the new `smooth-runtime` engine (#2370); the chunk planner, refresh, retry and track logic it carried are gone. Visible changes: the audio track is announced with its own id (`Event::Tracks` is `[1, 2]`, not `[1, 1]`, and audio samples carry track 2); a live manifest refresh no longer re-fetches the last fragment; a fragment that fails to demux is retried like any failed fetch instead of being dropped silently; the live refresh wait is half the last fragment's duration in microseconds, clamped to 0.5 s-5 s.
-- The RTSP source plans its `SETUP`/`PLAY` through `rtsp_runtime::PlayPlan` (control resolution against `Content-Base`, channel pairs, the RTP/RTCP collision check) instead of its own copy; the wire behaviour is unchanged (#2372).
-- BREAKING: the Smooth source parses the client Manifest with `broadcast-smooth`'s `SmoothManifest` instead of `transmux`'s removed `smooth_parse` module (#2356); `transmux::track_spec_from_quality_level` still builds the track spec.
-### Fixed
 - A DASH source whose MPD is `MPD@type="list"` (ISO/IEC 23009-1 6th edition) fails with the typed unsupported-addressing error instead of a generic playback-timeline failure (#2340).
-
-### Changed
-## [0.5.0] - 2026-11-10
-### Changed
-- The test-only feature is renamed `__test-seams` -> `test-seams`, the one spelling the workspace uses for test seams (c6 C6-09).
-### Fixed
 - The join-point screen compares audio ends with the video join point wrap-safely (`clock33::pcr_signed_distance`). transmux unrolls each PID's PTS from its own first value, so a 2^33 wrap between the first audio and the first video PES put audio a whole wrap above video, every pre-join audio end passed, and `Start` came up to the audio-behind-video skew early.
 - Every sample handed to the host has its end reported to the buffer controller in the same call. Samples released by `on_closed` (the TS demux tail, the RTSP depacketiser flush), `poll` (RTSP/RTMP timers, the TS track hold), `reconnect` and `next_event` used to be reported only at the next `on_data` chunk, so the controller judged the lead short of what the host held.
 - An RTSP or RTMP connection loss is hinted to the buffer controller as `SourceEnded` / `SourceError`, as the TS path already did; a starvation right after the close was charged to the stall memory as `DataArriving`, ratcheting the target. The hint is sent only when the source will announce a `Discontinuity` (and so `Reconnected`) before the next connection's media.
@@ -73,6 +64,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An RTSP connection lost to a protocol error inside `on_data` (no `on_closed` follows) is hinted to the buffer controller as `SourceError`, like a close; it sent no hint, so a starvation right after was charged to the stall memory as `DataArriving`.
 - `Session::buffer_input_log_seed` reports the seed the session's current controller was built with (a live connection after a finite one starts from the dropped controller's aged stall memory), not the seed the session was opened with; a log of the later connection replays from the right memory.
 - The live video media end reported to the buffer controller is the end of the contiguous presentation-order run, not the highest PTS seen plus a frame: with B-frames the latter ran up to the reorder depth (5 frames on the TF1 capture) ahead of the pictures delivered, so a start or resume was judged on media that had not arrived. A hole in the run is skipped once no later sample can fill it (`pts >= dts` for every picture still to come). The finite (VOD/HLS) path keeps the highest-PTS end.
+
+### Dependencies
+- Sibling dependencies move to new caret epochs: `broadcast-auth` 0.6 -> 0.7, `broadcast-common` 11 -> 12, `broadcast-hls` 0.6 -> 0.7, `buffering-runtime` 0.2 -> 0.3, `dash-runtime` 0.3 -> 0.4, `dvb-si` 13 -> 14, `hls-runtime` 0.12 -> 0.13, `mpeg-ts` 0.7 -> 0.8, `rtmp-runtime` 0.9 -> 0.10, `rtp-packet` 0.6 -> 0.7, `rtsp-runtime` 0.10 -> 0.11, `srt-runtime` 0.8 -> 0.9, `transmux` 0.30 -> 0.31.
+- New sibling dependencies: `smooth-runtime` 0.1.
 
 ## [0.4.0] - 2026-11-08
 ### Added

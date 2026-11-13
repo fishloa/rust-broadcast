@@ -5,16 +5,18 @@ All notable changes to `rtsp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-### Changed
-- BREAKING: `io::default_tls_client_config` returns `Result<ClientConfig>` (new `Error::TlsConfig`) instead of panicking when the crypto provider refuses the safe default protocol versions (#2591).
-### Added
-- `ServerSession::try_new` (a fallible `Session` id source) and `Error::RandomSource`: when the OS random source is unavailable the `SETUP` that needs an id returns that error and creates no session, instead of panicking. `AsyncRtspServer::accept` and `RtspServerConfig::default` use it; their `# Panics` section is gone (#2591).
-### Changed
-- BREAKING: `ServerSession::new` takes a session-id source that is `Send + Sync` (it was `Send`), so a `ServerSession` is `Sync` and can be shared behind an `Arc`; a test pins it (issue #2533).
 ### Removed
 - BREAKING: the `connect_with`, `connect_with_timeouts`, `connect_tls_with`, `connect_tls_with_timeouts`, `accept_tls_with_timeouts` and `with_stream_timeouts` ladder. `AsyncRtspClient::connect(addr, config)`, `connect_tls(addr, server_name, tls, config)`, `with_stream(stream, config)` and `AsyncRtspServer::accept_tls(stream, tls, config)` / `with_stream(stream, config)` take the config; `connect(addr)` and `connect_tls(addr, name, tls)` without one now pass `RtspClientConfig::default()` (#2514).
 - BREAKING: `RtspTimeouts`; the adapters take `broadcast_common::timeouts::Timeouts` (the same four fields and defaults), shared with the RTMP and SRT adapters (#2514).
+
+### Changed
+- BREAKING: `io::default_tls_client_config` returns `Result<ClientConfig>` (new `Error::TlsConfig`) instead of panicking when the crypto provider refuses the safe default protocol versions (#2591).
+- BREAKING: `ServerSession::new` takes a session-id source that is `Send + Sync` (it was `Send`), so a `ServerSession` is `Sync` and can be shared behind an `Arc`; a test pins it (issue #2533).
+- The RTSP session keepalive schedule is the only one: `poll_timeout`/`handle_timeout` derive the deadline from the SETUP-declared `Session;timeout=` (RFC 2326 §12.37, 60 s default) and now drive every adapter, which no longer keep timers of their own.
+- A `3xx` or `454 Session Not Found` response now resets the session (id, transport, timeout, authenticator) and the caller must `SETUP` again.
+
 ### Added
+- `ServerSession::try_new` (a fallible `Session` id source) and `Error::RandomSource`: when the OS random source is unavailable the `SETUP` that needs an id returns that error and creates no session, instead of panicking. `AsyncRtspServer::accept` and `RtspServerConfig::default` use it; their `# Panics` section is gone (#2591).
 - `RtspClientConfig { session, timeouts }` and `RtspServerConfig { session, timeouts }` (`new`, `with_session`, `with_timeouts`, `Default`, `From<ClientSession>`/`From<ServerSession>`): every client and server constructor takes `impl Into<..Config>` (#2514).
 - `MAX_TRACKS` (16): the track cap owned by rtsp-runtime, used by `PlayPlan` consumers.
 - `AsyncRtspClient::start_record(url, sdp, interleaved_channel)` runs the whole publish flow: `ANNOUNCE` (RFC 2326 §10.3), `SETUP` on the track's control URL in `mode=record` (§10.4, §12.39) and `RECORD` (§10.11), returning `Error::UnexpectedResponse { method, status }` for the first request a server rejects and `Error::UnexpectedEvent` when a request draws anything but a response, so a pushing caller supplies only its SDP and its payload.
@@ -24,6 +26,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `PlayPlan` (module `play`, re-exported with `PlannedSetup`, `SkippedMedia`, `PlayTrack`, `PlaySession`): the sans-IO core of the pull flow. `PlayPlan::from_describe` turns a `DESCRIBE` answer into the `SETUP` list (absolute control URIs, interleaved channel pairs), the skipped foreign-authority media and the `PLAY` URI; `from_describe_selecting` also takes a per-media filter and falls back to the request URL for a foreign session control; `accept_setup` records each `SETUP` answer and rejects a reused channel (RTP or RTCP) or a non-interleaved-TCP answer. `AsyncRtspClient::start_play` is a thin driver of it, and a sans-IO host drives the same plan. `PlayTrack`/`PlaySession` moved here (still re-exported).
 - `Error::UnusableTransport`.
 - `Error::InterleavedChannelCollision { channel }` (the server assigned one interleaved channel to two tracks), `Error::InterleavedChannelExhausted` (the channel pairs no longer fit in a `u8` from the requested first channel) and `Error::InvalidSdp` (a `DESCRIBE` body that is not UTF-8 or not an SDP).
+- `ClientSession::keepalive_method`/`public_methods`: the keepalive uses `GET_PARAMETER` only when the server listed it in the `Public` header of its `OPTIONS` response (RFC 2326 §12.28), and `OPTIONS` otherwise — a server that never advertised it need not implement it, and an unsupported keepalive can draw a `405`/`501` or drop a camera's session.
+- `ServerSession::with_describe_sdp` (the `DESCRIBE` body, `Content-Type: application/sdp`) and `with_server_ports` (the `server_port` pair a UDP `SETUP` reply advertises); an `OPTIONS` reply now carries `Public` listing the implemented methods (audit B).
 
 ### Fixed
 - A `Content-Base`/`Content-Location` carrying a control character is ignored instead of being repaired into another URL by the raw `Url::join`; it resolves through `broadcast_common::url_ref::resolve` (RFC 3986 §2) (#2585).
@@ -35,19 +39,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `AsyncRtspClient::start_record` now sends `ANNOUNCE`, `SETUP` and `RECORD` one at a time, checking each response before sending the next, so a rejected `ANNOUNCE` no longer leaks `SETUP`/`RECORD`.
 - `AsyncRtspClient::start_record` uses checked arithmetic for the RTCP interleaved channel and returns `Error::InterleavedChannelExhausted` on overflow (matching the play flow) instead of wrapping.
 - `AsyncRtspClient::start_record` and `start_play` (and `PlayPlan`) strip userinfo from the request URI, so credentials travel only in the `Authorization` header.
-
-### Changed
-- The RTSP session keepalive schedule is the only one: `poll_timeout`/`handle_timeout` derive the deadline from the SETUP-declared `Session;timeout=` (RFC 2326 §12.37, 60 s default) and now drive every adapter, which no longer keep timers of their own.
-
-### Added
-- `ClientSession::keepalive_method`/`public_methods`: the keepalive uses `GET_PARAMETER` only when the server listed it in the `Public` header of its `OPTIONS` response (RFC 2326 §12.28), and `OPTIONS` otherwise — a server that never advertised it need not implement it, and an unsupported keepalive can draw a `405`/`501` or drop a camera's session.
-
-## [0.11.0] - 2026-11-10
-### Changed
-- A `3xx` or `454 Session Not Found` response now resets the session (id, transport, timeout, authenticator) and the caller must `SETUP` again.
-### Added
-- `ServerSession::with_describe_sdp` (the `DESCRIBE` body, `Content-Type: application/sdp`) and `with_server_ports` (the `server_port` pair a UDP `SETUP` reply advertises); an `OPTIONS` reply now carries `Public` listing the implemented methods (audit B).
-### Fixed
 - A reversed `port`/`client_port`/`server_port`/`interleaved` range (`5001-5000`, `3-1`) is a `Transport` parse error instead of being accepted.
 - BREAKING: `Error::MissingCSeq` is removed. `ServerSession::handle_request` answers a request with no parseable `CSeq` with a `400 Bad Request` (RFC 2326 §12.17 makes `CSeq` mandatory, and nothing can be echoed) and carries on, instead of returning an error that ended the connection; the variant had no other user.
 - The server picks the first `Transport` spec in the list it can serve and answers `461` only when none is supported; one unmodelled spec (`RTP/SAVP`) used to fail the whole header.
@@ -58,6 +49,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `ClientSession::handle_data` applies the 1 MiB inbound cap to the bytes left buffered after decoding, so one read of many valid frames is processed frame by frame; a single frame or message over the bound is still rejected.
 - `Session` `timeout=` is parsed as `delta-seconds` in a `u64` (up to 19 digits); a value above `u32::MAX` used to fall to the 60 s default.
 - `AsyncRtspClient`'s send-side drain keeps a decode error and returns it from the next read as itself; it used to be swallowed, and the next read reported a bogus `UnexpectedEof`.
+
+### Dependencies
+- Sibling dependencies move to new caret epochs: `broadcast-auth` 0.6 -> 0.7.
+- New sibling dependencies: `broadcast-common` 12.
 
 ## [0.10.0] - 2026-11-08
 ### Changed

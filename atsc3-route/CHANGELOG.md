@@ -6,11 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-
-## [0.5.0] - 2026-11-10
-
 ### Changed
 - Dependency/epoch bump only (follows broadcast-common, rmt-flute); no functional change.
+
+### Dependencies
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12, `rmt-flute` 0.8 -> 0.9.
 
 ## [0.4.0] - 2026-11-07
 ### Changed

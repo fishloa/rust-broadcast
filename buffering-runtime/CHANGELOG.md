@@ -6,15 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-
-## [0.2.2] - 2026-11-10
 ### Changed
 - `Error` derives its `Display` from `thiserror` like the workspace's other error enums; the messages are unchanged, and the crate gains a `thiserror` dependency (c6 C6-14).
+
 ### Fixed
 - A track registered while `Playing` (an audio switch, a PMT update) no longer turns off starvation detection: while playing the effective end is taken over the tracks that have delivered, and the registered-but-silent rule gates only a start or resume. A global delivery stall in that window used to let the renderer clock run past the data with no `Pause` (DESIGN 0.7f).
 - PCR-less mode feeds the jitter estimator one track's own end series (the first track to deliver; another takes over with a fresh baseline only once it is unregistered or silent), not the minimum over tracks. With a second track joining more than `discontinuity_us` behind, every chunk read as a discontinuity, rebaselined and dropped the unregistered tracks, and the stream never started (DESIGN 0.7f).
 - A restored stall memory keeps its exact age when the controller's first clock reading is smaller than that age (a host clock starting at 0 per session): the anchor was `now - age` clamped at 0, so the peak was held and decayed up to `age` too late.
 - `BufferController::on_track_media` clamps a `now_us` earlier than the latest instant seen to that instant, as `on_hint` does. A stepped-back caller clock stamped a track's first delivery in the past, so the silence rule read the track as silent at once, excluded it from the minimum and let a start or resume go ahead on the other tracks alone.
+
+### Dependencies
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12.
 
 ## [0.2.1] - 2026-11-08
 ### Added

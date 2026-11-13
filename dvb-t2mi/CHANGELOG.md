@@ -1,10 +1,11 @@
 # Changelog
 
 ## [Unreleased]
-
-## [13.1.0] - 2026-11-10
 ### Changed
 - The `crc` module doc now states that the T2-MI trailer check is CRC-32/MPEG-2 and calls `broadcast_common::crc32_mpeg2`; the code is unchanged (c6 C6-12).
+
+### Dependencies
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12, `dvb-bbframe` 13 -> 14, `mpeg-ts` 0.7 -> 0.8.
 
 ## [13.0.0] - 2026-11-07
 ### Removed

@@ -5,6 +5,11 @@ All notable changes to `dvb-ci` are documented here. The format follows
 versioning.
 
 ## [Unreleased]
+### Changed
+- Major-class release for epoch purity only: no API or behaviour change in this crate; its sibling dependencies move to new caret epochs.
+
+### Dependencies
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12, `dvb-si` 13 -> 14, `mpeg-ts` 0.7 -> 0.8.
 
 ## [0.11.0] - 2026-11-07
 ### Removed
