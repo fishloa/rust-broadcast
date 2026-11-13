@@ -47,13 +47,13 @@ pub const TABLE: &[Crate] = &[
             ),
             (
                 "src/io.rs",
-                "bind_with",
+                "bind",
                 1,
                 "listener routing pump on the listener's TaskTracker; cancelled with the listener's CancellationToken when the handle and every accepted socket drop",
             ),
             (
                 "src/io.rs",
-                "bind_with",
+                "bind",
                 2,
                 "listener core on the listener's TaskTracker; cancelled with the listener's CancellationToken when the handle and every accepted socket drop",
             ),

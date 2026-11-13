@@ -198,10 +198,12 @@ impl PushTransport for RtspTransport {
         // Every IO the adapter performs is bounded by `config.timeouts`
         // (SP6.1, defect 4): the OPTIONS exchange below and every later
         // ANNOUNCE/SETUP/RECORD and interleaved write.
-        let mut client =
-            rtsp_runtime::AsyncRtspClient::connect_with_timeouts(&addr, session, config.timeouts)
-                .await
-                .map_err(|e| RtspPushError::Connect(e.to_string()))?;
+        let mut client = rtsp_runtime::AsyncRtspClient::connect(
+            &addr,
+            rtsp_runtime::RtspClientConfig::new(session).with_timeouts(config.timeouts),
+        )
+        .await
+        .map_err(|e| RtspPushError::Connect(e.to_string()))?;
 
         match client.options(&clean_url).await {
             Ok(ClientEvent::Response { status, .. }) if status.is_success() => {}
@@ -756,10 +758,10 @@ mod tests {
             }
         });
 
-        let mut client = rtsp_runtime::AsyncRtspClient::connect_with_timeouts(
+        let mut client = rtsp_runtime::AsyncRtspClient::connect(
             &addr,
-            ClientSession::new(),
-            broadcast_common::timeouts::Timeouts::default(),
+            rtsp_runtime::RtspClientConfig::new(ClientSession::new())
+                .with_timeouts(broadcast_common::timeouts::Timeouts::default()),
         )
         .await
         .expect("connect");

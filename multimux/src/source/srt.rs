@@ -167,10 +167,7 @@ impl SrtRoute {
     }
 
     fn handshake_config(&self) -> HandshakeConfig {
-        let mut cfg = HandshakeConfig {
-            stream_id: self.stream_id.clone(),
-            ..HandshakeConfig::default()
-        };
+        let mut cfg = HandshakeConfig::default().with_stream_id(self.stream_id.clone());
         if let Some(latency) = self.latency_ms {
             cfg.latency_ms = latency;
         }
@@ -605,10 +602,7 @@ mod tests {
         let listener_addr = "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap();
         let mut listener = SrtListener::bind(
             listener_addr,
-            HandshakeConfig {
-                latency_ms: LOW_LATENCY_MS,
-                ..HandshakeConfig::default()
-            },
+            HandshakeConfig::default().with_latency_ms(LOW_LATENCY_MS),
         )
         .await
         .expect("listener bind");

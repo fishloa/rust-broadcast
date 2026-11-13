@@ -30,15 +30,13 @@ fn crypto_config(passphrase: &str, key_len: usize) -> HandshakeConfig {
         32 => EncryptionField::Aes256,
         _ => EncryptionField::Aes128,
     };
-    HandshakeConfig {
-        encryption_field,
-        crypto: Some(CryptoConfig {
+    HandshakeConfig::default()
+        .with_encryption_field(encryption_field)
+        .with_crypto(Some(CryptoConfig {
             passphrase: passphrase.as_bytes().to_vec(),
             salt: SALT,
             sek: vec![0x22u8; key_len],
-        }),
-        ..HandshakeConfig::default()
-    }
+        }))
 }
 
 async fn recv_at_least(discard: &TokioUdpSocket, want_len: usize, timeout: Duration) -> Vec<u8> {
@@ -287,22 +285,22 @@ async fn tokio_key_refresh_keeps_delivering() {
             refresh_period: 50,
             pre_announcement_period: 5,
         };
-        let loaded_host_config = || HandshakeConfig {
-            latency_ms: LOADED_HOST_LATENCY_MS,
-            ..crypto_config(PASSPHRASE, 16)
-        };
+        let loaded_host_config =
+            || (crypto_config(PASSPHRASE, 16)).with_latency_ms(LOADED_HOST_LATENCY_MS);
         let io = IoConfig::default().with_km_refresh_thresholds(thresholds);
-        let mut listener = SrtListener::bind_with("127.0.0.1:0", loaded_host_config(), io)
-            .await
-            .unwrap();
+        let mut listener = SrtListener::bind(
+            "127.0.0.1:0",
+            srt_runtime::io::SrtConfig::new(loaded_host_config()).with_io(io),
+        )
+        .await
+        .unwrap();
         let bound = listener.local_addr().unwrap();
         let accept_jh = tokio::spawn(async move { listener.accept().await.unwrap() });
-        let mut caller = SrtSocket::connect_with(
+        let mut caller = SrtSocket::connect(
             format!("127.0.0.1:{}", bound.port())
                 .parse::<SocketAddr>()
                 .unwrap(),
-            loaded_host_config(),
-            io,
+            srt_runtime::io::SrtConfig::new(loaded_host_config()).with_io(io),
         )
         .await
         .unwrap();
@@ -396,9 +394,11 @@ async fn rendezvous_with_libsrt(key_len: usize, seed: u8) {
                 format!("127.0.0.1:{lib_port}")
                     .parse::<SocketAddr>()
                     .unwrap(),
-                crypto_patient_config(PASSPHRASE, key_len),
-                IoConfig::default()
-                    .with_timeouts(SRT_TIMEOUTS.with_handshake(Duration::from_secs(20))),
+                srt_runtime::io::SrtConfig::new(crypto_patient_config(PASSPHRASE, key_len))
+                    .with_io(
+                        IoConfig::default()
+                            .with_timeouts(SRT_TIMEOUTS.with_handshake(Duration::from_secs(20))),
+                    ),
             ),
         )
         .await
@@ -450,9 +450,14 @@ async fn rendezvous_wrong_passphrase_is_refused() {
                 format!("127.0.0.1:{lib_port}")
                     .parse::<SocketAddr>()
                     .unwrap(),
-                crypto_patient_config("wrong-passphrase-xxxxxxxx", 16),
-                IoConfig::default()
-                    .with_timeouts(SRT_TIMEOUTS.with_handshake(Duration::from_secs(20))),
+                srt_runtime::io::SrtConfig::new(crypto_patient_config(
+                    "wrong-passphrase-xxxxxxxx",
+                    16,
+                ))
+                .with_io(
+                    IoConfig::default()
+                        .with_timeouts(SRT_TIMEOUTS.with_handshake(Duration::from_secs(20))),
+                ),
             ),
         )
         .await
@@ -486,8 +491,7 @@ async fn tokio_rendezvous_pair_encrypted_round_trip() {
             SrtSocket::rendezvous_from_socket(
                 sock_a,
                 format!("127.0.0.1:{port_b}").parse::<SocketAddr>().unwrap(),
-                cfg_a,
-                io_a,
+                srt_runtime::io::SrtConfig::new(cfg_a).with_io(io_a),
             )
             .await
         });
@@ -495,8 +499,7 @@ async fn tokio_rendezvous_pair_encrypted_round_trip() {
             SrtSocket::rendezvous_from_socket(
                 sock_b,
                 format!("127.0.0.1:{port_a}").parse::<SocketAddr>().unwrap(),
-                cfg_b,
-                io_b,
+                srt_runtime::io::SrtConfig::new(cfg_b).with_io(io_b),
             )
             .await
         });

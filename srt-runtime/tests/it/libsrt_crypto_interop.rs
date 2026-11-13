@@ -72,18 +72,15 @@ fn is_timeout(e: &std::io::Error) -> bool {
 }
 
 fn crypto_config(passphrase: &str) -> HandshakeConfig {
-    HandshakeConfig {
-        encryption_field: EncryptionField::Aes128,
-        // One handshake tick per read timeout: retransmit every `POLL`.
-        retransmit_after_ticks: 1,
-        max_retries: 1_000,
-        crypto: Some(CryptoConfig {
+    HandshakeConfig::default()
+        .with_encryption_field(EncryptionField::Aes128)
+        .with_retransmit_after_ticks(1)
+        .with_max_retries(1_000)
+        .with_crypto(Some(CryptoConfig {
             passphrase: passphrase.as_bytes().to_vec(),
             salt: SALT,
             sek: SEK.to_vec(),
-        }),
-        ..HandshakeConfig::default()
-    }
+        }))
 }
 
 enum CallerResult {
@@ -149,13 +146,7 @@ fn libsrt_listener_accepts_our_key_material_and_decrypts_our_data() {
     let peer: SocketAddr = format!("127.0.0.1:{listen_port}").parse().unwrap();
     let config = crypto_config(PASSPHRASE);
     let isn = 0x0123_4567 & 0x7FFF_FFFF;
-    let mut hs = CallerHandshake::new(
-        0x0BAD_CAFE,
-        HandshakeConfig {
-            initial_seq_number: isn,
-            ..config
-        },
-    );
+    let mut hs = CallerHandshake::new(0x0BAD_CAFE, config.with_initial_seq_number(isn));
     let negotiated = match drive_caller(&mut hs, &sock, peer) {
         CallerResult::Connected(p) => p,
         CallerResult::Rejected(r) => panic!(
@@ -239,15 +230,13 @@ fn our_listener_recovers_libsrts_sek_and_decrypts_its_data() {
     let mut hs = ListenerHandshake::new(
         0x0C0F_FEE0,
         0x1357_9BDF,
-        HandshakeConfig {
-            crypto: Some(CryptoConfig {
+        HandshakeConfig::default()
+            .with_crypto(Some(CryptoConfig {
                 passphrase: PASSPHRASE.as_bytes().to_vec(),
                 salt: [0; SALT_LEN],
                 sek: Vec::new(),
-            }),
-            encryption_field: EncryptionField::Aes128,
-            ..HandshakeConfig::default()
-        },
+            }))
+            .with_encryption_field(EncryptionField::Aes128),
     );
 
     let deadline = Instant::now() + HANDSHAKE_DEADLINE;
