@@ -7,10 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- `TrunkConfig::waiter_capacity` (default `DEFAULT_WAITER_CAPACITY`, set with `TrunkConfig::with_waiter_capacity`): the bound on concurrent `Trunk::listen` registrations is its own setting instead of `part_capacity`, so a programme is no longer limited to 64 parked blocking-reload requests (#2523).
+- `SampleCursor::next` and `Trunk::data_listener`: a sample, event, track-set change or writer hand-off notifies the trunk once, and a consumer awaits it instead of polling; an idle cursor takes no trunk lock (#2524).
 - `Trunk::tracks_with_generation` and `Trunk::subscribe_from_backlog_with_tracks`: the track generation and set (and, for the latter, a backlog cursor) read under one lock acquisition.
 - `ingress::AdmittedDriver`: the bookkeeping every concurrently-admitting push-ingest loop had hand-written — one `IngestDriver` per admitted session (`accept`/`accept_with`/`register`), each session's clock measured from its own admission rather than the route's start, `feed`/`finish` plus a release-then-reap step that frees the session's `max_sessions` slot, and an idle clock (`touch`/`idle_deadline`) measured only from input the session actually took in. The multiplexing WHIP and RTMP ingest loops now share it instead of each carrying a copy.
 - `ingress::ListenDriver::listener`: read access to the listener a driver owns.
 
+### Changed
+- `Trunk::waiter_slot_freed` takes `&Arc<Trunk>` and returns the new `SlotFreedFuture` (a `Future` with `wait_deadline`, replacing the re-exported `EventListener` alias): a woken waiter that answers without taking the slot wakes the next parked one, so one freed slot drains every parked waiter.
 ### Fixed
 - Track-change markers are evicted by the `Timed` ring rather than by their own small log: a marker stays until the oldest retained sample is at or past the next, so a cursor starting anywhere in the retained window reads each sample under its governing marker, never the oldest retained one (audit A11-2). `TRACK_CHANGE_LOG_CAPACITY` is now a 1024-entry hard cap for pathological flapping; a cursor that needed a marker it evicted gets the new `SampleCursorItem::TracksLagged { skipped, generation, tracks }`, which drops the ungoverned samples and carries the current track set.
 - A `SampleCursor` that fell more than the track-change log behind is now handed the oldest retained `SampleCursorItem::TracksChanged` at once instead of reaching it only after the samples before its position, so it learns a complete track set rather than missing the evicted changes silently (audit A10-4).

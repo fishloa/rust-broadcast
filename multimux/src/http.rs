@@ -137,13 +137,6 @@ pub(crate) fn master_playlist_response(
     }
 }
 
-/// Fallback poll interval when [`Trunk::listen`] has no free waiter slot
-/// (`media_plane::trunk::TrunkConfig::part_capacity` already saturated by
-/// other parked requests) — bounded by the caller's own `timeout` regardless,
-/// so a burst of blocking requests beyond the slot cap degrades to polling
-/// rather than either busy-spinning or leaking an unbounded wait.
-const NO_SLOT_BACKOFF: Duration = Duration::from_millis(20);
-
 /// Resolve `request` against `egress`, holding a blocking-reload-style wait
 /// (RFC 8216bis §6.2.5.2) up to `timeout` while [`ServedEgress::resolve`]
 /// answers [`EgressResponse::Await`] — the caller-driven wait loop
@@ -167,10 +160,11 @@ const NO_SLOT_BACKOFF: Duration = Duration::from_millis(20);
 /// Bounded twice over: by `timeout` (an absolute deadline, composed via
 /// [`AwaitPolicy`] so `resolve` itself stops answering `Await` once it
 /// passes — see [`EgressResponse::pending`]'s own doc), and by
-/// [`Trunk::listen`]'s own waiter-slot cap (a burst of requests beyond it
-/// falls back to a capped poll rather than parking unboundedly) — this is
-/// the concrete mechanism satisfying "bound anything that accumulates,
-/// including parked `Await` requests".
+/// [`Trunk::listen`]'s waiter cap (`TrunkConfig::waiter_capacity`). A
+/// request beyond the cap parks on [`Trunk::waiter_slot_freed`], raced
+/// against its own deadline, and never sleep-polls — this is the concrete
+/// mechanism satisfying "bound anything that accumulates, including parked
+/// `Await` requests".
 pub(crate) async fn resolve_blocking<E, G>(
     trunk: &Arc<Trunk>,
     egress: &E,
@@ -241,10 +235,12 @@ where
         // case the answer changed between the first `resolve` above and this
         // registration landing.
         let listener = trunk.listen();
-        let now = Timestamp::from_instant(base.into_std(), Instant::now().into_std());
-        match egress.resolve(request.clone(), now, policy) {
-            EgressResponse::Await { .. } => *waited = true,
-            other => return other,
+        if listener.is_some() {
+            let now = Timestamp::from_instant(base.into_std(), Instant::now().into_std());
+            match egress.resolve(request.clone(), now, policy) {
+                EgressResponse::Await { .. } => *waited = true,
+                other => return other,
+            }
         }
 
         let remaining = deadline_instant.saturating_duration_since(Instant::now());
@@ -267,7 +263,9 @@ where
                 let _ = tokio::time::timeout(remaining, listener).await;
             }
             None => {
-                tokio::time::sleep(remaining.min(NO_SLOT_BACKOFF)).await;
+                if let Some(freed) = trunk.waiter_slot_freed() {
+                    let _ = tokio::time::timeout(remaining, freed).await;
+                }
             }
         }
     }
@@ -487,6 +485,110 @@ pub(crate) fn range_response(headers: &HeaderMap, bytes: Bytes, content_type: &s
 #[cfg(test)]
 mod tests {
     use super::*;
+    use media_plane::TrunkConfig;
+    use media_plane::egress::CachePolicy;
+    use media_plane::trunk::PartEntry;
+    use std::num::NonZeroUsize;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    fn nz(n: usize) -> NonZeroUsize {
+        NonZeroUsize::new(n).expect("test capacity must be non-zero")
+    }
+
+    struct GatedEgress {
+        ready: AtomicBool,
+        resolves: AtomicUsize,
+    }
+
+    impl ServedEgress for GatedEgress {
+        type Request = ();
+        type Body = ();
+
+        fn resolve(&self, (): (), now: Timestamp, policy: AwaitPolicy) -> EgressResponse<()> {
+            self.resolves.fetch_add(1, Ordering::SeqCst);
+            if self.ready.load(Ordering::SeqCst) {
+                EgressResponse::Ready {
+                    body: (),
+                    cache: CachePolicy::NoCache,
+                }
+            } else {
+                EgressResponse::pending(policy, now, now)
+            }
+        }
+    }
+
+    const PARKED_REQUESTS: usize = 200;
+    const IDLE_WINDOW: Duration = Duration::from_millis(300);
+    const BLOCKING_TIMEOUT: Duration = Duration::from_secs(20);
+    const RESOLVES_PER_REQUEST_BEFORE_PARKING: usize = 2;
+
+    /// Park `PARKED_REQUESTS` blocking requests on one trunk, stay idle, then
+    /// publish a part: every request is answered, and none of them re-resolved
+    /// (re-rendered) while parked.
+    async fn assert_all_parked_requests_answer_without_polling(config: TrunkConfig) {
+        let trunk = Trunk::new(config);
+        let part_writer = trunk.segment_writer().expect("segment writer");
+        let egress = Arc::new(GatedEgress {
+            ready: AtomicBool::new(false),
+            resolves: AtomicUsize::new(0),
+        });
+        let tasks: Vec<_> = (0..PARKED_REQUESTS)
+            .map(|_| {
+                let (trunk, egress) = (Arc::clone(&trunk), Arc::clone(&egress));
+                tokio::spawn(async move {
+                    resolve_blocking(&trunk, egress.as_ref(), (), BLOCKING_TIMEOUT, || ()).await
+                })
+            })
+            .collect();
+
+        tokio::time::sleep(IDLE_WINDOW).await;
+        let resolves_while_idle = egress.resolves.load(Ordering::SeqCst);
+        assert!(
+            resolves_while_idle <= PARKED_REQUESTS * RESOLVES_PER_REQUEST_BEFORE_PARKING,
+            "parked requests re-resolved while idle: {resolves_while_idle}"
+        );
+
+        egress.ready.store(true, Ordering::SeqCst);
+        part_writer.publish_part(PartEntry::new(
+            Bytes::from_static(b"p"),
+            media_plane::ids::SegmentSeq::new(1),
+            media_plane::ids::PartIndex::new(0),
+            Duration::from_millis(500),
+            true,
+        ));
+
+        for task in tasks {
+            let resp = tokio::time::timeout(Duration::from_secs(10), task)
+                .await
+                .expect("a parked request must be answered after the publish")
+                .expect("request task");
+            assert!(matches!(resp, EgressResponse::Ready { .. }));
+        }
+    }
+
+    /// #2523: more concurrent blocking requests than the part ring holds all
+    /// park on the trunk's wake instead of sleep-polling.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn more_blocking_requests_than_part_capacity_all_park_and_answer() {
+        assert_all_parked_requests_answer_without_polling(TrunkConfig::new(
+            nz(8),
+            nz(8),
+            nz(4),
+            nz(8),
+            nz(64),
+        ))
+        .await;
+    }
+
+    /// #2523: a request with no waiter slot parks on `waiter_slot_freed`, not
+    /// a sleep-poll, and is answered once slots cycle.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn requests_beyond_the_waiter_cap_park_and_answer() {
+        assert_all_parked_requests_answer_without_polling(
+            TrunkConfig::new(nz(8), nz(8), nz(4), nz(8), nz(64)).with_waiter_capacity(nz(2)),
+        )
+        .await;
+    }
 
     fn status_for(range: &str) -> StatusCode {
         let mut h = HeaderMap::new();
