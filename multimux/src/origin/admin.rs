@@ -1464,6 +1464,15 @@ mod tests {
         let _routes = registry.list_routes();
     }
 
+    /// Lets every spawned task run until it is blocked. On the current-thread test runtime this
+    /// is exact (no timers are involved), so a "has not finished yet" check after it cannot
+    /// pass merely because a loaded machine had not scheduled the task.
+    async fn settle() {
+        for _ in 0..32 {
+            tokio::task::yield_now().await;
+        }
+    }
+
     fn rtsp_route(name: &str, url: &str) -> Route {
         Route {
             name: name.to_string(),
@@ -1494,7 +1503,7 @@ mod tests {
             let registry = Arc::clone(&registry);
             async move { registry.add_route(rtsp_route("a", "rtsp://host/a")).await }
         });
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        settle().await;
         assert!(!slow.is_finished(), "route a's scan is held open");
 
         tokio::time::timeout(
@@ -1541,7 +1550,7 @@ mod tests {
             let registry = Arc::clone(&registry);
             async move { registry.add_route(rtsp_route("x", "rtsp://host/x")).await }
         });
-        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        settle().await;
         assert!(
             !add.is_finished() && registry.hooks.log.lock().is_empty(),
             "the add must wait for the drain, not scan the archive under it"
@@ -1659,12 +1668,12 @@ mod tests {
                     .await
             }
         });
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        settle().await;
         let reload = tokio::spawn({
             let registry = Arc::clone(&registry);
             async move { registry.reload().await }
         });
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        settle().await;
 
         gate.notify_one();
         add.await.expect("task").expect("add z");
