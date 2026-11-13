@@ -1864,14 +1864,17 @@ fn spawn_whep_outputs(
             // A `test-hooks` caller may have bound this exact listen address
             // itself and handed the live listener in (`Config::prebound`), so
             // the route consumes it rather than racing reserve-then-rebind.
-            let route_cfg = Arc::new(match config.prebound_tcp(listen) {
-                Some(listener) => crate::output::whep::WhepRoute::with_listener(
-                    "whep",
-                    listener,
-                    crate::output::whep::DEFAULT_WHEP_MAX_SESSIONS,
-                ),
-                None => crate::output::whep::WhepRoute::new(listen.clone()),
-            });
+            let route_cfg = Arc::new(
+                match config.prebound_tcp(listen) {
+                    Some(listener) => crate::output::whep::WhepRoute::with_listener(
+                        "whep",
+                        listener,
+                        crate::output::whep::DEFAULT_WHEP_MAX_SESSIONS,
+                    ),
+                    None => crate::output::whep::WhepRoute::new(listen.clone()),
+                }
+                .with_media_sockets_per_ip(config.whep_media_sockets_per_ip),
+            );
             let output_auth = output_auth.clone();
             handles.push(spawn_following(&store, cancel, move |trunk, cancel| {
                 let (route_cfg, output_auth) = (Arc::clone(&route_cfg), output_auth.clone());

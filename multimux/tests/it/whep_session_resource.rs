@@ -407,3 +407,35 @@ async fn ice_restart_answers_new_credentials_and_etag() {
     h.cancel.cancel();
     let _ = tokio::time::timeout(Duration::from_secs(10), h.handle).await;
 }
+
+/// The route binds exactly the configured number of media sockets, and the viewers are spread
+/// over them evenly: each answer's host candidate names the socket its viewer sends through.
+#[tokio::test]
+async fn a_route_binds_the_configured_number_of_media_sockets() {
+    const SOCKETS: usize = 3;
+    const ROUNDS: usize = 2;
+    let h = multimux::output::whep::serve_whep_run_probed_with_sockets_for_test(
+        SOCKETS * ROUNDS,
+        SOCKETS,
+    )
+    .await;
+    let mut per_port: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for _ in 0..SOCKETS * ROUNDS {
+        let resp = post_offer(h.addr).await;
+        assert_eq!(resp.status, 201, "{}", resp.body);
+        let candidate = resp
+            .body
+            .lines()
+            .find_map(|l| l.strip_prefix("a=candidate:"))
+            .expect("the answer carries a host candidate");
+        let port = candidate
+            .split_whitespace()
+            .nth(5)
+            .expect("port")
+            .to_string();
+        *per_port.entry(port).or_default() += 1;
+    }
+    assert_eq!(per_port.len(), SOCKETS, "{per_port:?}");
+    assert!(per_port.values().all(|n| *n == ROUNDS), "{per_port:?}");
+    h.cancel.cancel();
+}
