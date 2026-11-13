@@ -20,7 +20,10 @@ fn bearer_of(req: &client::HttpRequest) -> Option<String> {
 }
 
 fn established_client(location: &str) -> WhipClient {
-    let mut c = WhipClient::new(ENDPOINT.into(), Some(TOKEN.into()));
+    let mut c = WhipClient::new(
+        webrtc_runtime::session::client::ClientConfig::new(ENDPOINT.into())
+            .with_bearer_token(TOKEN.into()),
+    );
     let _ = c.offer(SDP_OFFER.to_vec()).unwrap();
     c.on_response(
         client::HttpResponse::new(StatusCode::CREATED)
@@ -37,7 +40,10 @@ fn established_client(location: &str) -> WhipClient {
 }
 
 fn established_player(location: &str) -> WhepPlayer {
-    let mut p = WhepPlayer::new(ENDPOINT.into(), Some(TOKEN.into()));
+    let mut p = WhepPlayer::new(
+        webrtc_runtime::session::client::ClientConfig::new(ENDPOINT.into())
+            .with_bearer_token(TOKEN.into()),
+    );
     let _ = p.offer(SDP_OFFER.to_vec()).unwrap();
     p.on_response(
         player::HttpResponse::new(StatusCode::CREATED)
@@ -106,8 +112,14 @@ fn whep_player_sends_the_bearer_only_to_its_own_origin() {
 
 #[test]
 fn debug_never_prints_the_bearer_token_or_turn_credential() {
-    let c = WhipClient::new(ENDPOINT.into(), Some(TOKEN.into()));
-    let p = WhepPlayer::new(ENDPOINT.into(), Some(TOKEN.into()));
+    let c = WhipClient::new(
+        webrtc_runtime::session::client::ClientConfig::new(ENDPOINT.into())
+            .with_bearer_token(TOKEN.into()),
+    );
+    let p = WhepPlayer::new(
+        webrtc_runtime::session::client::ClientConfig::new(ENDPOINT.into())
+            .with_bearer_token(TOKEN.into()),
+    );
     for text in [format!("{c:?}"), format!("{p:?}")] {
         assert!(!text.contains(TOKEN), "{text}");
         assert!(text.contains("redacted"), "{text}");
