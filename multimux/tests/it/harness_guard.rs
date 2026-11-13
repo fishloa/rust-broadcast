@@ -52,6 +52,7 @@ const PORT_HELPER_ALLOW: &[(&str, &str, &str)] = &[(
 /// sanctioned bounded-wait helper.
 const SLEEP_ALLOW: &[&str] = &[
     "accept_lifecycle.rs",
+    "soak_whep_peers.rs",
     "admin_api.rs",
     "dispatch_ingest.rs",
     "file_reader.rs",
