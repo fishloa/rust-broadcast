@@ -10,7 +10,7 @@ use multimux::config::{Config, InputSpec};
 use multimux::registry::SchemeRegistry;
 use multimux::{MultimuxError, serve_with_registry_on};
 
-use super::listener::{bind_tcp, bind_udp};
+use super::listener::bind_tcp;
 
 const TS_PACKET_SIZE: usize = 188;
 const DATAGRAM_TS_PACKETS: usize = 7;
@@ -20,6 +20,17 @@ pub struct UdpTsOrigin {
     pub server: tokio::task::JoinHandle<Result<(), MultimuxError>>,
     pub stop: Arc<AtomicBool>,
     pub sender: tokio::task::JoinHandle<()>,
+}
+
+/// Bind `127.0.0.1:0` for UDP, returning the concrete address and the
+/// still-bound socket — hand the socket to a route via `Config::prebound`
+/// (`test-hooks`) so no test reserves a port and races to re-bind it.
+pub async fn bind_udp() -> (SocketAddr, tokio::net::UdpSocket) {
+    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("bind 127.0.0.1:0 udp");
+    let addr = socket.local_addr().expect("local addr");
+    (addr, socket)
 }
 
 /// Serves `make_config(bind, TsUdp input)` and loops `fixture` into its UDP socket, one datagram

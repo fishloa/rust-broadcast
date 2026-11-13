@@ -160,7 +160,7 @@ pub(crate) fn is_invalid_config(err: &MultimuxError) -> bool {
 /// [`ReconnectTimer`] (issue #2471 — the workspace keeps this rule in one
 /// place), configured with this crate's exponential schedule.
 ///
-/// [`Backoff::next`] reports the wait for *this* attempt, then grows the series
+/// [`Backoff::next_delay`] reports the wait for *this* attempt, then grows the series
 /// (capped at `max`) for the next; [`Backoff::reset`] returns it to the floor
 /// after a healthy life so a long outage does not permanently slow down
 /// subsequent quick recoveries.
@@ -176,13 +176,13 @@ pub struct Backoff {
     steps: Vec<u64>,
     max: Duration,
     /// Where the timer series stands, in whole milliseconds from its own open;
-    /// [`Backoff::next`] advances it by one wait.
+    /// [`Backoff::next_delay`] advances it by one wait.
     now_ms: u64,
 }
 
 impl Backoff {
     /// A backoff starting at `min`, growing by `factor` on every
-    /// [`next`](Backoff::next), never exceeding `max`.
+    /// [`next_delay`](Backoff::next_delay), never exceeding `max`.
     pub fn new(min: Duration, max: Duration, factor: f64) -> Self {
         Self::with_seed(min, max, factor, fresh_seed())
     }
@@ -213,14 +213,7 @@ impl Backoff {
 
     /// Returns the delay to wait for *this* attempt, then grows the
     /// internal delay (capped at `max`) for the next call.
-    ///
-    /// `#[allow(clippy::should_implement_trait)]`: this is deliberately
-    /// named `next` (not `next_delay` or similar) to read naturally at the
-    /// supervisor's call site (`backoff.next()`); `Backoff` is not an
-    /// `Iterator` (it never ends) so there's no real risk of confusion in
-    /// practice.
-    #[allow(clippy::should_implement_trait)]
-    pub fn next(&mut self) -> Duration {
+    pub fn next_delay(&mut self) -> Duration {
         let delay = self
             .timer
             .on_disconnected(self.now_ms.saturating_mul(MICROS_PER_MILLI));
@@ -229,7 +222,7 @@ impl Backoff {
     }
 
     /// The delay for attempt number `attempt` (0-based) without touching the
-    /// running state. The stateless form of repeated [`Self::next`] calls —
+    /// running state. The stateless form of repeated [`Self::next_delay`] calls —
     /// [`ReconnectPolicy::backoff_for`] (push outputs) uses this so the
     /// workspace has one capped-exponential implementation, not a shift-based
     /// copy beside it (audit r07-O1).
@@ -433,7 +426,7 @@ pub async fn supervise_driver<F, Fut>(
             break;
         }
 
-        let delay = backoff.next();
+        let delay = backoff.next_delay();
         tracing::warn!(
             delay_ms = delay.as_millis() as u64,
             attempt = attempt_no,
@@ -525,7 +518,7 @@ mod tests {
     fn backoff_grows_and_caps() {
         let mut b = Backoff::new(Duration::from_millis(10), Duration::from_millis(100), 2.0);
         for i in 0..8 {
-            let d = b.next();
+            let d = b.next_delay();
             assert!(
                 d >= Duration::from_millis(8) && d <= Duration::from_millis(100),
                 "step {i}: {d:?} escaped [min*5/6, cap]"
@@ -534,7 +527,7 @@ mod tests {
         // At the cap the delay stays jittered inside `[max*5/6, max]`, never
         // collapsing to one constant.
         for _ in 0..8 {
-            let d = b.next();
+            let d = b.next_delay();
             assert!(
                 d >= Duration::from_millis(83) && d <= Duration::from_millis(100),
                 "capped step {d:?} must stay jittered in [83ms, 100ms]"
@@ -547,11 +540,11 @@ mod tests {
     #[test]
     fn backoff_reset_returns_to_min() {
         let mut b = Backoff::new(Duration::from_millis(10), Duration::from_millis(100), 2.0);
-        let _ = b.next();
-        let _ = b.next();
+        let _ = b.next_delay();
+        let _ = b.next_delay();
         b.reset();
         assert_eq!(
-            b.next(),
+            b.next_delay(),
             Duration::from_millis(10),
             "back to min after reset"
         );
@@ -782,9 +775,7 @@ mod tests {
                 route_handle.set_health(HealthState::Live);
                 // Block forever so the supervisor observes Live and stops
                 // counting attempts.
-                std::future::pending::<()>().await;
-                #[allow(unreachable_code)]
-                Ok(())
+                std::future::pending::<Result<(), MultimuxError>>().await
             }
         };
         let cancel = tokio_util::sync::CancellationToken::new();
