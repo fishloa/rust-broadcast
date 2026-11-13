@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - RTSP pull skips an SDP media section whose `m=` format is not a numeric RTP payload type (RFC 4566 §5.14) instead of playing it, matching multimux; the skip is reported in `skipped`.
 - Timeline-jump detection now uses the detector moved to `transmux` (re-exported). `Config::timeline_jump` is now `Option<transmux::TimelineJumpConfig>`; the `broadcast_client::TimelineJumpConfig` re-export remains, but the type path changed (breaking for users naming `broadcast_client::timeline::TimelineJumpConfig`).
 ### Fixed
+- A `206` `Content-Range` is parsed by one RFC 9110 §14.4 parser (`broadcast_common::content_range`) instead of three: `bytes 5-20/10` is refused for a ranged fetch (it was accepted), `bytes 0-9/*` is a finite ts/http body of 10 bytes (it was not), and stray whitespace inside the value is invalid (ts/http accepted it) (#2586).
 - A Smooth quality switch to a level with a different SPS/PPS or resolution now succeeds (it was refused as `NoSuchVariant`): the engine's `Output::TracksChanged` surfaces as a new `Event::Tracks`, the event DASH variant switches already use.
 ### Fixed
 - `Session::rtcp_rejected_count`: the RTSP source's Sender Reports that were unusable (NTP time zero, or a set refused for tracks more than an hour apart in wallclock), which were previously counted nowhere a caller could read.

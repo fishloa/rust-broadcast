@@ -14,8 +14,8 @@ use alloc::vec::Vec;
 
 use broadcast_common::http_date::parse_http_date;
 use headers::{
-    AcceptRanges, ContentEncoding, ContentLength, ContentRange, Date, ETag, HeaderMapExt, IfRange,
-    LastModified, Range,
+    AcceptRanges, ContentEncoding, ContentLength, Date, ETag, HeaderMapExt, IfRange, LastModified,
+    Range,
 };
 use http::header::{DATE, LAST_MODIFIED};
 use http::{HeaderMap, HeaderName, HeaderValue};
@@ -118,11 +118,11 @@ impl Basis {
                 })
             }
             STATUS_PARTIAL_CONTENT => {
-                let (start, end) = map.typed_get::<ContentRange>()?.bytes_range()?;
+                let range = super::body::content_range(headers)?;
                 Some(Self {
                     validator,
-                    start,
-                    end: Some(end),
+                    start: range.first,
+                    end: Some(range.last),
                 })
             }
             _ => None,
@@ -167,21 +167,14 @@ impl Basis {
                 {
                     return Resumed::Mismatch;
                 }
-                let Some(range) = map.typed_get::<ContentRange>() else {
-                    return Resumed::Mismatch;
-                };
-                let Some((first, last)) = range.bytes_range() else {
+                let Some(range) = super::body::content_range(headers) else {
                     return Resumed::Mismatch;
                 };
                 let wanted = self.start.checked_add(received);
-                if wanted != Some(first)
-                    || last < first
-                    || self.end.is_some_and(|end| end != last)
-                    || range.bytes_len().is_some_and(|total| last >= total)
-                {
+                if wanted != Some(range.first) || self.end.is_some_and(|end| end != range.last) {
                     return Resumed::Mismatch;
                 }
-                self.end = Some(last);
+                self.end = Some(range.last);
                 Resumed::Continue
             }
             _ => Resumed::Mismatch,

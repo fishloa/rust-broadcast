@@ -15,8 +15,6 @@ const RETRY_SEED: u64 = 0x5EED_2471;
 
 const STALL_NOTICE_REPEAT_MS: u64 = 1_000;
 const IDENTITY_CODING: &str = "identity";
-// RFC 9110 14.1 range unit, 14.4 Content-Range; `http` requires std, so this no_std crate names its own.
-const RANGE_UNIT_BYTES: &str = "bytes";
 const HEADER_CONTENT_ENCODING: &str = "content-encoding";
 const HEADER_CONTENT_LENGTH: &str = "content-length";
 const HEADER_CONTENT_RANGE: &str = "content-range";
@@ -222,31 +220,13 @@ impl TsHttpPolicy {
             if vals.iter().any(|x| x.trim() != v0) {
                 return (false, 0);
             }
-            let Some(rest) = v0.strip_prefix(RANGE_UNIT_BYTES) else {
+            let Some(range) = broadcast_common::content_range::ContentRange::parse(v0) else {
                 return (false, 0);
             };
-            let rest = rest.trim_start();
-            let Some(slash) = rest.find('/') else {
-                return (false, 0);
-            };
-            let range_part = rest[..slash].trim();
-            let total = rest[slash + 1..].trim();
-            let Some(total) = Self::parse_u64(total) else {
-                return (false, 0);
-            };
-            let Some(dash) = range_part.find('-') else {
-                return (false, 0);
-            };
-            let Some(a) = Self::parse_u64(&range_part[..dash]) else {
-                return (false, 0);
-            };
-            let Some(b) = Self::parse_u64(&range_part[dash + 1..]) else {
-                return (false, 0);
-            };
-            if b < a || b >= total {
-                return (false, 0);
+            match range.len() {
+                Some(len) => (true, len),
+                None => (false, 0),
             }
-            (true, b - a + 1)
         } else {
             (false, 0)
         }
