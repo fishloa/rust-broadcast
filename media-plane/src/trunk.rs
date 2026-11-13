@@ -2290,6 +2290,11 @@ pub struct SlotFreedFuture {
 
 impl SlotFreedFuture {
     /// Block the calling thread until a slot frees or `deadline` passes.
+    ///
+    /// # Blocking
+    ///
+    /// Parks the thread: never call it on an async worker. Await this future
+    /// instead (it implements `Future`), or run this on a blocking thread.
     pub fn wait_deadline(mut self, deadline: Instant) -> Option<()> {
         let listener = self.listener.take()?;
         let woken = listener.wait_deadline(deadline);
@@ -2376,6 +2381,12 @@ impl ProgressListener {
     /// [`Timestamp::from_instant`]'s inverse — the caller holds the base
     /// `Instant` it built its `Timestamp`s from) and pass that here, so this
     /// call can never park past the caller's own bound.
+    ///
+    /// # Blocking
+    ///
+    /// Parks the thread: never call it on an async worker. Await this
+    /// listener instead (it implements `Future`), or run this on a blocking
+    /// thread.
     ///
     /// Deliberately no unbounded `wait()` is exposed here — only this
     /// deadline-bound form and the `Future` impl below (whose bound is
@@ -2606,6 +2617,12 @@ pub struct SegmentWriter {
 
 impl SegmentWriter {
     /// Publish one finished segment, in playlist order.
+    ///
+    /// # Blocking
+    ///
+    /// With an [`ArchiveOverrun::StallIngest`] pin this call parks the thread
+    /// (up to `STALL_INGEST_MAX_WAIT`), so never call it on an async worker:
+    /// use [`Self::try_publish_segment`], which never blocks.
     ///
     /// Never blocks and never rejects for **every non-pinning**
     /// [`SegmentCursor`] and for every pinning cursor using

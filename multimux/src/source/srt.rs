@@ -428,9 +428,16 @@ pub async fn run_srt_listener_once(
     trunk_config: TrunkConfig,
     handshake: HandshakePolicy,
     route_handle: &std::sync::Arc<crate::route::RouteHandle>,
-    _cancel: tokio_util::sync::CancellationToken,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<()> {
-    let sock = accept_listener(route).await?;
+    let sock = tokio::select! {
+        accepted = accept_listener(route) => accepted?,
+        () = cancel.cancelled() => {
+            return Err(MultimuxError::Connect {
+                reason: "cancelled".into(),
+            });
+        }
+    };
     drive_socket(
         sock,
         route.timeouts.read,
@@ -748,6 +755,35 @@ mod tests {
             "the dial must be bounded by the CONFIGURED connect timeout, not \
              srt-runtime's internal retry budget: took {:?}",
             started.elapsed()
+        );
+    }
+
+    /// Cancelling a listener route that is waiting for its Caller ends the
+    /// wait at once, instead of relying on the supervisor dropping the future.
+    #[tokio::test]
+    async fn cancel_ends_the_wait_for_a_caller() {
+        let reserved = tokio::net::UdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("reserve port");
+        let addr = reserved.local_addr().expect("local addr");
+        drop(reserved);
+        let route = SrtRoute::new_listener("cam-srt", addr.to_string());
+        let route_handle = Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let canceller = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            canceller.cancel();
+        });
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            run_srt_listener_once(&route, trunk_config(), handshake(), &route_handle, cancel),
+        )
+        .await
+        .expect("cancel must end the wait for a Caller");
+        assert!(
+            matches!(result, Err(MultimuxError::Connect { ref reason }) if reason == "cancelled"),
+            "{result:?}"
         );
     }
 }

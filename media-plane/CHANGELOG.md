@@ -6,7 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- The docs of `SegmentWriter::publish_segment`, `ProgressListener::wait_deadline` and `SlotFreedFuture::wait_deadline` state that they park the calling thread and must not run on an async worker (issue #2533).
 ### Added
+- `benches/trunk_parked_readers`: publish cost and wake latency with 1 to 1024 readers parked on `SampleCursor::next` (#2515).
 - `Trunk::generation`: a counter bumped by every part, segment, event, track-set, segment-start and time-anchor publish (never a sample), for caching a render keyed by the state it was made from.
 - `ServedEgress::is_warm` and `ServedEgress::prepare` (default always warm / no-op): an egress with heavy first-use work says so, so an async host runs `prepare` on a blocking thread instead of on the worker that woke the request.
 - `TrunkConfig::waiter_capacity` (default `DEFAULT_WAITER_CAPACITY`, set with `TrunkConfig::with_waiter_capacity`): the bound on concurrent `Trunk::listen` registrations is its own setting instead of `part_capacity`, so a programme is no longer limited to 64 parked blocking-reload requests (#2523).

@@ -87,7 +87,7 @@ pub(crate) const DEFAULT_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 /// since the connection is closing either way.
 async fn send_farewell<S, W>(driver: &mut IngestDriver<S>, writer: &mut W, write_timeout: Duration)
 where
-    S: IngestSession + Sync,
+    S: IngestSession,
     S::Error: Send + Sync,
     S::Request: AsRef<[u8]>,
     W: AsyncWrite + Unpin + Send,
@@ -127,7 +127,7 @@ pub(crate) async fn run_ingest_scaffold<S, W, T>(
     map_failed: fn(S::Error) -> MultimuxError,
 ) -> MultimuxError
 where
-    S: IngestSession + Sync,
+    S: IngestSession,
     S::Error: Send + Sync,
     S::Request: AsRef<[u8]>,
     W: AsyncWrite + Unpin + Send,

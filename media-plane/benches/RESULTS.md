@@ -117,3 +117,26 @@ The reverted diff is kept out of tree; the ordering guard test stays (it also
 passes on the single-lock code by construction and will bite any future split).
 
 (Task 5)
+
+## Parked readers (`benches/trunk_parked_readers.rs`)
+
+1 publisher publishing a `188*7`-byte sample every 500 us (2000 publishes), N
+threads each awaiting `SampleCursor::next` (parked between samples, woken by
+the trunk's data wake). Publish cost is the wall time of one `publish` call;
+wake latency is publish-to-receive of the same sample. Same machine as above
+(24 logical cores); `cargo bench --locked -p media-plane --bench trunk_parked_readers`.
+
+| readers | publish p50 ns | publish p99 ns | wake p50 us | wake p99 us |
+|---|---|---|---|---|
+| 1    | 1125    | 9208    | 5    | 22    |
+| 16   | 37417   | 71584   | 100  | 173   |
+| 64   | 135708  | 252458  | 449  | 691   |
+| 256  | 728834  | 1429791 | 2116 | 9008  |
+| 1024 | 2997500 | 5047833 | 8349 | 27270 |
+
+Publish cost is linear in parked readers at about 3 us per reader (each wake
+unparks an OS thread here; with tokio tasks the per-waiter cost is a
+scheduler enqueue, not a syscall). Readers on tasks rather than threads are
+what `multimux/tests/it/soak_load.rs` measures: 1000 LL-HLS viewers and 200
+cursor consumers on one trunk, p99 response-after-publish 21 ms and p99
+sample delivery 7 ms in a debug build.
