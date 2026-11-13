@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - The `test-support` feature (the `ts_session::test_support` helpers for a host's tests) is documented in the README feature table (#2582).
 - The docs of `SegmentWriter::publish_segment`, `ProgressListener::wait_deadline` and `SlotFreedFuture::wait_deadline` state that they park the calling thread and must not run on an async worker (issue #2533).
-- `Trunk::waiter_slot_freed` takes `&Arc<Trunk>` and returns the new `SlotFreedFuture` (a `Future` with `wait_deadline`, replacing the re-exported `EventListener` alias): a woken waiter that answers without taking the slot wakes the next parked one, so one freed slot drains every parked waiter.
+- BREAKING: `Trunk::waiter_slot_freed` takes `&Arc<Trunk>` and returns the new `SlotFreedFuture` (a `Future` with `wait_deadline`, replacing the re-exported `EventListener` alias): a woken waiter that answers without taking the slot wakes the next parked one, so one freed slot drains every parked waiter.
 
 ### Added
 - `segmenter::program` (feature `std`): `ProgramSegmenter`, `SegmenterConfig`, `SegmenterEvent`, `SiblingTrunks`, `TsHlsIdrFallback` and `TsHlsIdrStatus`, the per-program segmenter that cuts a `Trunk`'s samples into parts and segments, moved from multimux (#2554).

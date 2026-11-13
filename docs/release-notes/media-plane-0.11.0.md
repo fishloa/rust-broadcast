@@ -37,7 +37,7 @@ Version: 0.10.0 -> 0.11.0.
 ### Changed
 - The `test-support` feature (the `ts_session::test_support` helpers for a host's tests) is documented in the README feature table (#2582).
 - The docs of `SegmentWriter::publish_segment`, `ProgressListener::wait_deadline` and `SlotFreedFuture::wait_deadline` state that they park the calling thread and must not run on an async worker (issue #2533).
-- `Trunk::waiter_slot_freed` takes `&Arc<Trunk>` and returns the new `SlotFreedFuture` (a `Future` with `wait_deadline`, replacing the re-exported `EventListener` alias): a woken waiter that answers without taking the slot wakes the next parked one, so one freed slot drains every parked waiter.
+- BREAKING: `Trunk::waiter_slot_freed` takes `&Arc<Trunk>` and returns the new `SlotFreedFuture` (a `Future` with `wait_deadline`, replacing the re-exported `EventListener` alias): a woken waiter that answers without taking the slot wakes the next parked one, so one freed slot drains every parked waiter.
 
 ### Removed
 - BREAKING: the four-positional `IngestDriver::new(session, trunk_config, handshake, max_programs)` and `ListenDriver::new(listener, ..)`; both take `(session_or_listener, IngestConfig)` (#2514).
