@@ -182,15 +182,12 @@ pub struct UntSection<'a> {
 
 impl<'a> UntSection<'a> {
     /// Construct a UNT section with the spec `reserved` fill.
-    #[must_use]
     #[allow(clippy::too_many_arguments)]
+    #[must_use]
     pub fn new(
         action_type: UntActionType,
         oui_hash: u8,
-        version_number: u8,
-        current_next_indicator: bool,
-        section_number: u8,
-        last_section_number: u8,
+        section: crate::tables::SectionVersion,
         oui: u32,
         processing_order: u8,
         common_descriptors: UntDescriptorLoop<'a>,
@@ -199,10 +196,10 @@ impl<'a> UntSection<'a> {
         Self {
             action_type,
             oui_hash,
-            version_number,
-            current_next_indicator,
-            section_number,
-            last_section_number,
+            version_number: section.version_number,
+            current_next_indicator: section.current_next_indicator,
+            section_number: section.section_number,
+            last_section_number: section.last_section_number,
             oui,
             processing_order,
             common_descriptors,
@@ -533,10 +530,7 @@ mod tests {
             UntSection::new(
                 UntActionType::SystemSoftwareUpdate,
                 0,
-                1,
-                true,
-                0,
-                0,
+                crate::tables::SectionVersion::new(1, true, 0, 0),
                 oui,
                 0,
                 UntDescriptorLoop::new(&[]),
@@ -563,10 +557,7 @@ mod tests {
         let unt = UntSection::new(
             UntActionType::SystemSoftwareUpdate,
             oui_hash,
-            7,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(7, true, 0, 0),
             oui,
             0x00,
             UntDescriptorLoop::new(common_descs),
@@ -605,10 +596,7 @@ mod tests {
         let unt = UntSection::new(
             UntActionType::SystemSoftwareUpdate,
             0x5B,
-            1,
-            false,
-            1,
-            2,
+            crate::tables::SectionVersion::new(1, false, 1, 2),
             0x00015A,
             0x01,
             UntDescriptorLoop::new(&[]),
@@ -628,10 +616,7 @@ mod tests {
         let unt = UntSection::new(
             UntActionType::SystemSoftwareUpdate,
             0x5B,
-            15,
-            true,
-            2,
-            5,
+            crate::tables::SectionVersion::new(15, true, 2, 5),
             0x00015A,
             0x02,
             UntDescriptorLoop::new(&[0x66, 0x04, 0x00, 0x0A, 0x00, 0x00]),
@@ -684,10 +669,7 @@ mod tests {
         let unt = UntSection::new(
             UntActionType::SystemSoftwareUpdate,
             0x5B,
-            15,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(15, true, 0, 0),
             0x00015A,
             0x02,
             UntDescriptorLoop::new(&[]),
@@ -736,10 +718,7 @@ mod tests {
         let unt = UntSection::new(
             UntActionType::SystemSoftwareUpdate,
             0x5B,
-            3,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(3, true, 0, 0),
             0x00015A,
             0x00,
             UntDescriptorLoop::new(&[]),
@@ -782,10 +761,7 @@ mod tests {
         let unt = UntSection::new(
             UntActionType::SystemSoftwareUpdate,
             0x5B,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             0x00015A,
             0x00,
             UntDescriptorLoop::new(&[]),
@@ -813,10 +789,7 @@ mod tests {
         let unt = UntSection::new(
             UntActionType::SystemSoftwareUpdate,
             0x5B,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             0x00015A,
             0x00,
             UntDescriptorLoop::new(&[]),
@@ -853,10 +826,7 @@ mod tests {
         let unt = UntSection::new(
             UntActionType::SystemSoftwareUpdate,
             0,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             0,
             0,
             UntDescriptorLoop::new(&desc),
@@ -875,10 +845,7 @@ mod tests {
         let unt = UntSection::new(
             UntActionType::SystemSoftwareUpdate,
             0,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             0,
             0,
             UntDescriptorLoop::new(&desc),

@@ -25,7 +25,7 @@
 //! # use mpeg_ts::pid::Pid;
 //! # // A minimal one-stream PMT built through the serializer (doctest only —
 //! # // nothing of this ships in the library).
-//! # let pmt = PmtSection::new(1, 0, true, 0, 0, Pid::new(0x0100), DescriptorLoop::new(&[]),
+//! # let pmt = PmtSection::new(1, dvb_si::tables::SectionVersion::new(0, true, 0, 0),  Pid::new(0x0100),  DescriptorLoop::new(&[]),
 //! #     vec![PmtStream::new(StreamType::H264, Pid::new(0x0101), DescriptorLoop::new(&[]))]);
 //! # let mut section = vec![0u8; pmt.serialized_len()];
 //! # pmt.serialize_into(&mut section).unwrap();

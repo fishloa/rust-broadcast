@@ -69,24 +69,20 @@ pub struct NitSection<'a> {
 impl<'a> NitSection<'a> {
     /// Construct a NIT section with the spec `reserved` fill.
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         kind: NitKind,
         network_id: u16,
-        version_number: u8,
-        current_next_indicator: bool,
-        section_number: u8,
-        last_section_number: u8,
+        section: crate::tables::SectionVersion,
         network_descriptors: DescriptorLoop<'a>,
         transport_streams: Vec<TransportStreamEntry<'a>>,
     ) -> Self {
         Self {
             kind,
             network_id,
-            version_number,
-            current_next_indicator,
-            section_number,
-            last_section_number,
+            version_number: section.version_number,
+            current_next_indicator: section.current_next_indicator,
+            section_number: section.section_number,
+            last_section_number: section.last_section_number,
             network_descriptors,
             transport_streams,
             bits: super::SectionBits::dvb(),
@@ -299,10 +295,7 @@ mod tests {
         let nit = NitSection::new(
             NitKind::Actual,
             0x0020,
-            3,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(3, true, 0, 0),
             DescriptorLoop::new(&net_desc),
             vec![
                 TransportStreamEntry::new(0x1234, 0x0020, DescriptorLoop::new(&ts_desc)),
@@ -344,10 +337,7 @@ mod tests {
         let nit = NitSection::new(
             NitKind::Actual,
             0x0001,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             DescriptorLoop::new(&[]),
             vec![],
         );
@@ -381,10 +371,7 @@ mod tests {
         let nit = NitSection::new(
             NitKind::Actual,
             1,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             DescriptorLoop::new(&net_desc),
             vec![],
         );
@@ -401,10 +388,7 @@ mod tests {
         let nit = NitSection::new(
             NitKind::Actual,
             1,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             DescriptorLoop::new(&net_desc),
             vec![],
         );

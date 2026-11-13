@@ -325,10 +325,7 @@ mod tests {
 
         let pmt = PmtSection::new(
             1,
-            0,
-            true,
-            0,
-            0,
+            dvb_si::tables::SectionVersion::new(0, true, 0, 0),
             Pid::new(0x0100),
             DescriptorLoop::new(&prog_info),
             Vec::new(),
@@ -363,10 +360,7 @@ mod tests {
         let wire_version = |version: u8| {
             let pmt = PmtSection::new(
                 1,
-                version,
-                true,
-                0,
-                0,
+                dvb_si::tables::SectionVersion::new(version, true, 0, 0),
                 Pid::new(0x0100),
                 DescriptorLoop::new(&[]),
                 Vec::new(),

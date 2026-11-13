@@ -15,7 +15,13 @@ use broadcast_common::{Parse, Serialize};
 use dvb_si::tables::sat::*;
 
 fn section(stid: u8, body: SatBody) -> Vec<u8> {
-    let sat = SatSection::new(stid, true, 1, 0, true, 0, 0, body);
+    let sat = SatSection::new(
+        stid,
+        true,
+        1,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
+        body,
+    );
     let mut buf = vec![0u8; sat.serialized_len()];
     sat.serialize_into(&mut buf).unwrap();
     buf
@@ -255,7 +261,13 @@ fn position_v3_reserved_runs() {
 #[test]
 fn over_range_reserved_run_is_an_error_not_a_wrap() {
     let b = time_association(0xF, 0x40); // 6-bit run given 0x40
-    let sat = SatSection::new(2, true, 1, 0, true, 0, 0, SatBody::TimeAssociation(b));
+    let sat = SatSection::new(
+        2,
+        true,
+        1,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
+        SatBody::TimeAssociation(b),
+    );
     let mut buf = vec![0u8; sat.serialized_len()];
     assert!(matches!(
         &(sat.serialize_into(&mut buf)),

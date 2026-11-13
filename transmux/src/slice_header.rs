@@ -514,7 +514,6 @@ mod tests {
         nal(3, 8, w.trailing())
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn slice(
         ref_idc: u8,
         idr: bool,

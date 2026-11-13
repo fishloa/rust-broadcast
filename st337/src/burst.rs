@@ -344,7 +344,6 @@ impl<'a> Burst<'a> {
     /// [`Error::ExtendedPreambleMismatch`] if `extended.is_some()` disagrees
     /// with `data_type == `[`EXTENDED_DATA_TYPE_MARKER`]; [`Error::PayloadTooLarge`]
     /// if the resulting bit count would exceed [`MAX_LENGTH_CODE_BITS`].
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         data_type: u8,
         data_mode: DataMode,
