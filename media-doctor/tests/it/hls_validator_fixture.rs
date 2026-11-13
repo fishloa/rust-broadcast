@@ -594,3 +594,33 @@ fn unparseable_targetduration_does_not_inflate_extinf_findings() {
         report.findings()
     );
 }
+
+/// A bad `EXT-X-PROGRAM-DATE-TIME` (a bare date) does not fail the playlist: it is reported as
+/// `hls-program-date-time-invalid` at its line and nothing else is wrong.
+#[test]
+fn a_bare_date_program_date_time_is_a_warning_at_its_line() {
+    let text = "\
+#EXTM3U
+#EXT-X-VERSION:7
+#EXT-X-TARGETDURATION:4
+#EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-PROGRAM-DATE-TIME:2026-10-02
+#EXTINF:4.0,
+seg0.m4s
+#EXT-X-ENDLIST
+";
+    let mut report = Report::new();
+    check_hls_playlist(text, &mut report);
+
+    let hits = findings(&report, "hls-program-date-time-invalid");
+    assert_eq!(hits.len(), 1, "{:?}", report.findings());
+    assert_eq!(
+        hits[0].location.packet, 5,
+        "the finding names the tag's line"
+    );
+    assert!(
+        findings(&report, "hls-parse-error").is_empty(),
+        "{:?}",
+        report.findings()
+    );
+}

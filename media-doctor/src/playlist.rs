@@ -18,6 +18,7 @@
 //! | `hls-preload-hint-with-endlist` | Error | PRELOAD-HINT in a playlist with ENDLIST | §4.4.5.3 |
 //! | `hls-skip-without-can-skip-until` | Error | EXT-X-SKIP without CAN-SKIP-UNTIL in SERVER-CONTROL | §4.4.5.2, §4.4.3.8 |
 //! | `hls-malformed-daterange` | Error | DATERANGE line fails `DateRange::parse_tag_line` | §4.4.5.1 |
+//! | `hls-program-date-time-invalid` | Warning | EXT-X-PROGRAM-DATE-TIME is not an ISO 8601 date-time (a bare date is not one): the parser drops the tag and the segment has no program date time | RFC 8216 §4.3.2.6 |
 
 use crate::report::Report;
 

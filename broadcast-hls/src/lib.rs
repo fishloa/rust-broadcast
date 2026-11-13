@@ -195,6 +195,40 @@ impl PreloadHintType {
 
 broadcast_common::impl_spec_display!(PreloadHintType);
 
+/// What a [`ParseDiagnostic`] reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParseDiagnosticKind {
+    /// An `#EXT-X-PROGRAM-DATE-TIME` value that is not an ISO 8601 date-time (RFC 8216 §4.3.2.6;
+    /// a bare date is one): the tag was dropped and its segment has no
+    /// [`MediaSegment::program_date_time`].
+    InvalidProgramDateTime,
+}
+
+impl ParseDiagnosticKind {
+    /// The kind's stable lowercase label.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::InvalidProgramDateTime => "invalid_program_date_time",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(ParseDiagnosticKind);
+
+/// A defect [`MediaPlaylist::parse`] tolerated instead of failing the playlist: the offending
+/// tag was dropped and parsing went on. Read from [`MediaPlaylist::diagnostics`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ParseDiagnostic {
+    /// What was wrong.
+    pub kind: ParseDiagnosticKind,
+    /// 1-based line number of the dropped tag.
+    pub line_no: usize,
+    /// The dropped line, verbatim.
+    pub line: String,
+}
+
 /// `#EXT-X-RENDITION-REPORT` (RFC 8216bis §4.4.5.4) — a pointer to the
 /// current state of an associated Rendition's own Media Playlist, so an
 /// LL-HLS client following one Rendition can discover how far another has
@@ -705,6 +739,9 @@ pub struct MediaPlaylist {
     pub target_duration: u32,
     /// `#EXT-X-MEDIA-SEQUENCE`
     pub media_sequence: u64,
+    /// Defects the parser tolerated (see [`ParseDiagnostic`]): a parse artefact that is never
+    /// serialised, empty for a playlist built in code.
+    pub diagnostics: Vec<ParseDiagnostic>,
     /// `#EXT-X-DISCONTINUITY-SEQUENCE` (RFC 8216 §4.3.3.3) — the count of
     /// discontinuities that have already rolled off the front of a live
     /// sliding-window playlist and are no longer represented by any in-window
@@ -1894,6 +1931,7 @@ impl MediaPlaylist {
         let mut pending_pre_tags: Vec<String> = Vec::new();
         // Typed `#EXT-X-PROGRAM-DATE-TIME` for the next segment (issue #1423).
         let mut pending_program_date_time: Option<ProgramDateTime> = None;
+        let mut diagnostics: Vec<ParseDiagnostic> = Vec::new();
 
         for (idx, raw_line) in input.lines().enumerate() {
             let line_no = idx + 1;
@@ -2122,14 +2160,16 @@ impl MediaPlaylist {
                     extra_attrs,
                 });
             } else if let Some(rest) = line.strip_prefix("#EXT-X-PROGRAM-DATE-TIME:") {
-                let pdt =
-                    ProgramDateTime::parse(rest.trim()).map_err(|_| crate::Error::HlsParse {
+                // A value that is not an ISO 8601 date-time does not fail the playlist: the tag is
+                // dropped (its segment has no program date time) and reported.
+                match ProgramDateTime::parse(rest.trim()) {
+                    Ok(pdt) => pending_program_date_time = Some(pdt),
+                    Err(_) => diagnostics.push(ParseDiagnostic {
+                        kind: ParseDiagnosticKind::InvalidProgramDateTime,
                         line_no,
                         line: line.to_string(),
-                        reason: "EXT-X-PROGRAM-DATE-TIME value is not a valid ISO 8601 date/time"
-                            .to_string(),
-                    })?;
-                pending_program_date_time = Some(pdt);
+                    }),
+                }
             } else if let Some(rest) = line.strip_prefix("#EXT") {
                 let _ = rest;
                 // A well-formed but unrecognized tag: preserve verbatim
@@ -2244,6 +2284,7 @@ impl MediaPlaylist {
             version,
             target_duration,
             media_sequence,
+            diagnostics,
             discontinuity_sequence,
             always_emit_discontinuity_sequence: saw_discontinuity_sequence,
             segments,

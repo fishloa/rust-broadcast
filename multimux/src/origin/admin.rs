@@ -420,7 +420,12 @@ impl RouteRegistry {
     /// `archive_floor` is the highest sequence number the route's DVR archive
     /// already holds (`crate::dvr::archive_seq_floor`, computed by the async
     /// caller since it reads the archive from disk).
-    fn spawn_route(&self, route: &Route, archive_floor: u32) -> crate::Result<RouteRuntime> {
+    fn spawn_route(
+        &self,
+        route: &Route,
+        archive_floor: u32,
+        continues: Option<&RouteHandle>,
+    ) -> crate::Result<RouteRuntime> {
         let outputs: Vec<Arc<dyn Output>> = route
             .outputs
             .iter()
@@ -465,6 +470,9 @@ impl RouteRegistry {
             .with_audio_profiles(route.audio_profiles.clone())
             .with_subtitles(route.subtitles),
         );
+        if let Some(old) = continues {
+            store.continue_from(old);
+        }
         let route_cancel = tokio_util::sync::CancellationToken::new();
         // Spawn the FALLIBLE ingest task first (audit run 7, A2): it is the
         // only step here that can return `Err` (an unknown `Custom` tag, or a
@@ -530,7 +538,7 @@ impl RouteRegistry {
         let archive_floor = self.archive_floor(&route).await;
         let _guard = self.mutation_lock.lock().await;
         self.check_name_free(&route)?;
-        let runtime = self.spawn_route(&route, archive_floor)?;
+        let runtime = self.spawn_route(&route, archive_floor, None)?;
         let status = RouteStatus::from_runtime(&runtime);
         // The runtime is NOT installed yet. Wrap it so any early return or
         // unwind from here on cancels its push/WHEP tasks and aborts its
@@ -759,8 +767,16 @@ impl RouteRegistry {
         // already drained, so on a failure they are started again from their old
         // configuration (`restore_retired`): a failed reload leaves the same routes running.
         let mut prepared: Vec<(Route, PendingRuntime)> = Vec::new();
-        for (route, archive_floor) in added_routes.iter().chain(changed_routes.iter()).zip(floors) {
-            match self.spawn_route(route, archive_floor) {
+        // An added route continues nothing; a changed one continues the runtime it replaces.
+        let continues = std::iter::repeat_n(None, added_routes.len())
+            .chain(retired_stores.iter().map(|store| Some(store.as_ref())));
+        for ((route, archive_floor), continues) in added_routes
+            .iter()
+            .chain(changed_routes.iter())
+            .zip(floors)
+            .zip(continues)
+        {
+            match self.spawn_route(route, archive_floor, continues) {
                 Ok(runtime) => prepared.push((route.clone(), PendingRuntime::new(runtime))),
                 Err(e) => {
                     drop(prepared);
@@ -900,9 +916,11 @@ impl RouteRegistry {
     /// stopped, and rebuilds the router around them. A route that cannot be started again is
     /// logged and left out of the registry.
     async fn restore_retired(&self, routes: &[Route], stores: &[Arc<RouteHandle>]) {
-        for route in routes {
-            let floor = archive_floor_of(route).await;
-            match self.spawn_route(route, floor) {
+        for (route, store) in routes.iter().zip(stores) {
+            let floor = archive_floor_of(route)
+                .await
+                .max(store.media_sequence_floor());
+            match self.spawn_route(route, floor, Some(store)) {
                 Ok(runtime) => {
                     self.inner.write().insert(
                         route.name.clone(),
