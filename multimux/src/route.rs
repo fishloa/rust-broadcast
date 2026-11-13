@@ -768,13 +768,14 @@ impl ProgramServing {
         let mut sibling_origins: Vec<Arc<hls_runtime::server::HlsOrigin>> =
             Vec::with_capacity(sibling_decls.len());
         for (idx, decl) in sibling_decls.iter().enumerate() {
-            let sibling_trunk = Arc::new(Trunk::new(TrunkConfig::new(
-                nz(DEFAULT_TIMED_CAPACITY),
-                nz(DEFAULT_SPARSE_CAPACITY),
-                window_segments,
-                nz(DEFAULT_EVENT_CAPACITY),
-                nz(DEFAULT_PART_CAPACITY),
-            )));
+            let sibling_trunk = Arc::new(Trunk::new(
+                TrunkConfig::default()
+                    .with_timed_capacity(nz(DEFAULT_TIMED_CAPACITY))
+                    .with_sparse_capacity(nz(DEFAULT_SPARSE_CAPACITY))
+                    .with_segment_capacity(window_segments)
+                    .with_event_capacity(nz(DEFAULT_EVENT_CAPACITY))
+                    .with_part_capacity(nz(DEFAULT_PART_CAPACITY)),
+            ));
             let track_id = transmux::TrackId::new(u32::try_from(idx + 2).unwrap_or(u32::MAX));
             let mut ab = HlsOrigin::builder(Arc::clone(&sibling_trunk))
                 .target_duration_secs(target_duration_secs)
@@ -989,13 +990,14 @@ impl ProgramServing {
         let params = self.sibling_params;
         let mut built = Vec::with_capacity(decls.len());
         for (slot, (decl, identity)) in decls.iter().zip(identities).enumerate() {
-            let trunk = Trunk::new(TrunkConfig::new(
-                nz(DEFAULT_TIMED_CAPACITY),
-                nz(DEFAULT_SPARSE_CAPACITY),
-                params.window_segments,
-                nz(DEFAULT_EVENT_CAPACITY),
-                nz(DEFAULT_PART_CAPACITY),
-            ));
+            let trunk = Trunk::new(
+                TrunkConfig::default()
+                    .with_timed_capacity(nz(DEFAULT_TIMED_CAPACITY))
+                    .with_sparse_capacity(nz(DEFAULT_SPARSE_CAPACITY))
+                    .with_segment_capacity(params.window_segments)
+                    .with_event_capacity(nz(DEFAULT_EVENT_CAPACITY))
+                    .with_part_capacity(nz(DEFAULT_PART_CAPACITY)),
+            );
             let mut builder = HlsOrigin::builder(Arc::clone(&trunk))
                 .target_duration_secs(params.target_duration_secs)
                 .window_segments(params.window_segments)
@@ -2050,13 +2052,12 @@ impl RouteHandle {
     /// module's own doc describes is structurally impossible now, not just
     /// avoided by convention).
     pub fn publish_new_program(&self, program: ProgramId) -> Arc<Trunk> {
-        let trunk_config = TrunkConfig::new(
-            nz(DEFAULT_TIMED_CAPACITY),
-            nz(DEFAULT_SPARSE_CAPACITY),
-            self.window_segments_cap,
-            nz(DEFAULT_EVENT_CAPACITY),
-            nz(DEFAULT_PART_CAPACITY),
-        );
+        let trunk_config = TrunkConfig::default()
+            .with_timed_capacity(nz(DEFAULT_TIMED_CAPACITY))
+            .with_sparse_capacity(nz(DEFAULT_SPARSE_CAPACITY))
+            .with_segment_capacity(self.window_segments_cap)
+            .with_event_capacity(nz(DEFAULT_EVENT_CAPACITY))
+            .with_part_capacity(nz(DEFAULT_PART_CAPACITY));
         let trunk = Trunk::new(trunk_config);
         self.publish_program(program, Arc::clone(&trunk));
         trunk
@@ -2471,12 +2472,18 @@ mod program_registry_tests {
     /// samples/segments/parts/events, only check `Arc` identity through the
     /// registry.
     fn test_trunk() -> Arc<Trunk> {
-        Trunk::new(TrunkConfig::new(nz(1), nz(1), nz(1), nz(1), nz(1)))
+        Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(1))
+                .with_sparse_capacity(nz(1))
+                .with_segment_capacity(nz(1))
+                .with_event_capacity(nz(1))
+                .with_part_capacity(nz(1)),
+        )
     }
 
     /// MUTATION VERIFIED: changing `publish_program` to insert a
-    /// freshly-constructed `Trunk::new(TrunkConfig::new(nz(1), nz(1), nz(1),
-    /// nz(1), nz(1)))`-backed bundle instead of the `trunk` argument it was
+    /// freshly-constructed `Trunk::new(TrunkConfig::default().with_timed_capacity(nz(1)).with_sparse_capacity(nz(1)).with_segment_capacity(nz(1)).with_event_capacity(/// nz(1)).with_part_capacity(nz(1)))`-backed bundle instead of the `trunk` argument it was
     /// actually given makes this test fail:
     /// `assert_eq!(Arc::as_ptr(&resolved.trunk()), Arc::as_ptr(&trunk))` fails
     /// (via `ProgramServing::trunk()`), comparing two genuinely different heap

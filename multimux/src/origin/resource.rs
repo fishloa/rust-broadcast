@@ -1096,7 +1096,12 @@ mod tests {
     /// directly and publish a SCTE-35 event into it.
     fn event_trunk() -> Arc<Trunk> {
         let nz = |n: usize| std::num::NonZeroUsize::new(n).unwrap();
-        let config = TrunkConfig::new(nz(8), nz(8), nz(8), nz(8), nz(8));
+        let config = TrunkConfig::default()
+            .with_timed_capacity(nz(8))
+            .with_sparse_capacity(nz(8))
+            .with_segment_capacity(nz(8))
+            .with_event_capacity(nz(8))
+            .with_part_capacity(nz(8));
         let trunk = Trunk::new(config);
         let writer = trunk.writer().expect("writer");
         let seg_writer = trunk.segment_writer().expect("segment writer");
@@ -1199,7 +1204,14 @@ mod tests {
     #[test]
     fn inject_segment_events_gives_id_less_events_distinct_ids() {
         let nz = |n: usize| std::num::NonZeroUsize::new(n).unwrap();
-        let trunk = Trunk::new(TrunkConfig::new(nz(8), nz(8), nz(8), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(8))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(8))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().expect("writer");
         let seg_writer = trunk.segment_writer().expect("segment writer");
         seg_writer.set_time_anchor(TimeAnchor {

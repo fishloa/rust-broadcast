@@ -24,7 +24,14 @@ fn nz(n: usize) -> NonZeroUsize {
 }
 
 fn publish_with_readers(readers: usize, iters: u64) -> Duration {
-    let trunk = Trunk::new(TrunkConfig::new(nz(4096), nz(64), nz(8), nz(64), nz(64)));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(4096))
+            .with_sparse_capacity(nz(64))
+            .with_segment_capacity(nz(8))
+            .with_event_capacity(nz(64))
+            .with_part_capacity(nz(64)),
+    );
     let writer = trunk.writer().expect("first writer");
     let stop = Arc::new(AtomicBool::new(false));
     let handles: Vec<_> = (0..readers)

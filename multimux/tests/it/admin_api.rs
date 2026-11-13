@@ -156,7 +156,12 @@ impl Dialer for InstantDialer {
 async fn run_instant(route_handle: Arc<RouteHandle>) -> multimux::Result<()> {
     let mut dialer = InstantDialer;
     let session = dialer.dial().unwrap_or_else(|never| match never {});
-    let trunk_config = TrunkConfig::new(nz(64), nz(16), nz(8), nz(64), nz(64));
+    let trunk_config = TrunkConfig::default()
+        .with_timed_capacity(nz(64))
+        .with_sparse_capacity(nz(16))
+        .with_segment_capacity(nz(8))
+        .with_event_capacity(nz(64))
+        .with_part_capacity(nz(64));
     let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
     let mut driver: IngestDriver<InstantSession> = IngestDriver::new(
         session,
@@ -177,7 +182,12 @@ async fn run_instant(route_handle: Arc<RouteHandle>) -> multimux::Result<()> {
 async fn run_hold(route_handle: Arc<RouteHandle>) -> multimux::Result<()> {
     let mut dialer = InstantDialer;
     let session = dialer.dial().unwrap_or_else(|never| match never {});
-    let trunk_config = TrunkConfig::new(nz(64), nz(16), nz(8), nz(64), nz(64));
+    let trunk_config = TrunkConfig::default()
+        .with_timed_capacity(nz(64))
+        .with_sparse_capacity(nz(16))
+        .with_segment_capacity(nz(8))
+        .with_event_capacity(nz(64))
+        .with_part_capacity(nz(64));
     let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
     let mut driver: IngestDriver<InstantSession> = IngestDriver::new(
         session,

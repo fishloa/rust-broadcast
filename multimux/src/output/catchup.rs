@@ -638,7 +638,12 @@ mod tests {
             let nz = |n: usize| NonZeroUsize::new(n).unwrap();
             let mut driver = IngestDriver::new(
                 TsIngestSession::new(),
-                media_plane::trunk::TrunkConfig::new(nz(8), nz(8), nz(64), nz(8), nz(8)),
+                media_plane::trunk::TrunkConfig::default()
+                    .with_timed_capacity(nz(8))
+                    .with_sparse_capacity(nz(8))
+                    .with_segment_capacity(nz(64))
+                    .with_event_capacity(nz(8))
+                    .with_part_capacity(nz(8)),
                 HandshakePolicy::establish_by(broadcast_common::Timestamp::from_nanos(u64::MAX)),
                 DEFAULT_MAX_PROGRAMS,
             );

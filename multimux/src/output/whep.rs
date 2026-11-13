@@ -459,13 +459,14 @@ impl WhepServeState {
     #[cfg(feature = "test-hooks")]
     fn without_trunk(tx: mpsc::Sender<AdmittedWhep>, max_sessions: usize) -> Self {
         WhepServeState {
-            trunk: Trunk::new(media_plane::trunk::TrunkConfig::new(
-                std::num::NonZeroUsize::new(4).unwrap(),
-                std::num::NonZeroUsize::new(4).unwrap(),
-                std::num::NonZeroUsize::new(4).unwrap(),
-                std::num::NonZeroUsize::new(4).unwrap(),
-                std::num::NonZeroUsize::new(4).unwrap(),
-            )),
+            trunk: Trunk::new(
+                media_plane::trunk::TrunkConfig::default()
+                    .with_timed_capacity(std::num::NonZeroUsize::new(4).unwrap())
+                    .with_sparse_capacity(std::num::NonZeroUsize::new(4).unwrap())
+                    .with_segment_capacity(std::num::NonZeroUsize::new(4).unwrap())
+                    .with_event_capacity(std::num::NonZeroUsize::new(4).unwrap())
+                    .with_part_capacity(std::num::NonZeroUsize::new(4).unwrap()),
+            ),
             tx,
             active_sessions: Arc::new(AtomicUsize::new(0)),
             max_sessions,
@@ -995,13 +996,14 @@ fn whep_avc_track_spec() -> TrackSpec {
 /// for its real sessions.
 #[cfg(feature = "test-hooks")]
 fn trunk_with_avc_track() -> Arc<Trunk> {
-    let trunk = Trunk::new(media_plane::trunk::TrunkConfig::new(
-        std::num::NonZeroUsize::new(4).unwrap(),
-        std::num::NonZeroUsize::new(4).unwrap(),
-        std::num::NonZeroUsize::new(4).unwrap(),
-        std::num::NonZeroUsize::new(4).unwrap(),
-        std::num::NonZeroUsize::new(4).unwrap(),
-    ));
+    let trunk = Trunk::new(
+        media_plane::trunk::TrunkConfig::default()
+            .with_timed_capacity(std::num::NonZeroUsize::new(4).unwrap())
+            .with_sparse_capacity(std::num::NonZeroUsize::new(4).unwrap())
+            .with_segment_capacity(std::num::NonZeroUsize::new(4).unwrap())
+            .with_event_capacity(std::num::NonZeroUsize::new(4).unwrap())
+            .with_part_capacity(std::num::NonZeroUsize::new(4).unwrap()),
+    );
     let writer = trunk.writer().expect("fresh trunk has a writer");
     writer.set_tracks(vec![whep_avc_track_spec()]);
     drop(writer);
@@ -1912,13 +1914,14 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
     }
 
     fn empty_trunk() -> Arc<Trunk> {
-        Trunk::new(media_plane::trunk::TrunkConfig::new(
-            nz(4),
-            nz(4),
-            nz(4),
-            nz(4),
-            nz(4),
-        ))
+        Trunk::new(
+            media_plane::trunk::TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(4))
+                .with_part_capacity(nz(4)),
+        )
     }
 
     fn basic_verifier(username: &str, password: &str) -> Arc<Verifier> {

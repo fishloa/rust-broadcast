@@ -93,13 +93,14 @@ fn sample_at(pts: i64, is_sync: bool) -> Sample {
 /// Build a real trunk filled with `frames` samples starting at `pts_origin`,
 /// driven through the production `ProgramSegmenter::pump`.
 fn build_real_trunk(pts_origin: i64, frames: u32) -> (Arc<RouteHandle>, Arc<Trunk>) {
-    let trunk = Trunk::new(TrunkConfig::new(
-        std::num::NonZeroUsize::new(4096).unwrap(),
-        std::num::NonZeroUsize::new(64).unwrap(),
-        std::num::NonZeroUsize::new(64).unwrap(),
-        std::num::NonZeroUsize::new(64).unwrap(),
-        std::num::NonZeroUsize::new(64).unwrap(),
-    ));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(std::num::NonZeroUsize::new(4096).unwrap())
+            .with_sparse_capacity(std::num::NonZeroUsize::new(64).unwrap())
+            .with_segment_capacity(std::num::NonZeroUsize::new(64).unwrap())
+            .with_event_capacity(std::num::NonZeroUsize::new(64).unwrap())
+            .with_part_capacity(std::num::NonZeroUsize::new(64).unwrap()),
+    );
     let writer = trunk.writer().expect("trunk writer");
     writer.set_tracks(vec![track_spec()]);
 

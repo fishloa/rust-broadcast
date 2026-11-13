@@ -696,13 +696,14 @@ mod tests {
     ) {
         use std::num::NonZeroUsize;
         let nz = |n| NonZeroUsize::new(n).unwrap();
-        let trunk = media_plane::trunk::Trunk::new(media_plane::trunk::TrunkConfig::new(
-            nz(64),
-            nz(64),
-            nz(64),
-            nz(64),
-            nz(64),
-        ));
+        let trunk = media_plane::trunk::Trunk::new(
+            media_plane::trunk::TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(64))
+                .with_event_capacity(nz(64))
+                .with_part_capacity(nz(64)),
+        );
         let writer = trunk.writer().expect("the writer is free");
         writer.set_tracks(vec![avc_spec(TrackId::new(1))]);
         (trunk, writer)

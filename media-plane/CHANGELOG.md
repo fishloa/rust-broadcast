@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Removed
+- BREAKING: `TrunkConfig::new` (five positional `NonZeroUsize`, any reorder compiled). Start from `TrunkConfig::default()` (64 timed, 16 sparse, 8 segment, 64 event, 64 part entries) and set what differs with `with_timed_capacity`, `with_sparse_capacity`, `with_segment_capacity`, `with_event_capacity`, `with_part_capacity` (and the existing `with_waiter_capacity`) (#2514).
 ### Changed
 - The docs of `SegmentWriter::publish_segment`, `ProgressListener::wait_deadline` and `SlotFreedFuture::wait_deadline` state that they park the calling thread and must not run on an async worker (issue #2533).
 ### Added

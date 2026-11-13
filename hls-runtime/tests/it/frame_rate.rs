@@ -20,7 +20,14 @@ fn nz(n: usize) -> NonZeroUsize {
 }
 
 fn origin() -> HlsOrigin {
-    let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(64))
+            .with_sparse_capacity(nz(8))
+            .with_segment_capacity(nz(8))
+            .with_event_capacity(nz(8))
+            .with_part_capacity(nz(64)),
+    );
     HlsOrigin::builder(trunk)
         .target_duration_secs(4.0)
         .window_segments(nz(4))
@@ -98,7 +105,14 @@ fn maximum_across_video_tracks_wins() {
 
 #[test]
 fn set_init_reset_clears_frame_rate() {
-    let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(64))
+            .with_sparse_capacity(nz(8))
+            .with_segment_capacity(nz(8))
+            .with_event_capacity(nz(8))
+            .with_part_capacity(nz(64)),
+    );
     let origin = HlsOrigin::builder(trunk)
         .target_duration_secs(4.0)
         .window_segments(nz(4))
@@ -155,7 +169,14 @@ fn ts_origin_fed_with(
     }
     segmenter.finish().expect("finish");
 
-    let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(64), nz(8), nz(64)));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(64))
+            .with_sparse_capacity(nz(8))
+            .with_segment_capacity(nz(64))
+            .with_event_capacity(nz(8))
+            .with_part_capacity(nz(64)),
+    );
     let writer = trunk.segment_writer().expect("segment writer");
     let origin = HlsOrigin::builder(Arc::clone(&trunk))
         .container(Container::MpegTs)
@@ -361,7 +382,14 @@ struct Feed {
 
 impl Feed {
     fn new(specs: &[TrackSpec]) -> Feed {
-        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(64), nz(8), nz(64)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(64))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(64)),
+        );
         let writer = trunk.segment_writer().expect("segment writer");
         let origin = HlsOrigin::builder(trunk)
             .container(Container::MpegTs)

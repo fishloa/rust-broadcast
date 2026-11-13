@@ -56,8 +56,12 @@ use media_plane::{RetentionClass, SampleCursorItem, Trunk, TrunkConfig};
 use transmux::{DemuxEvent, StreamingTsDemux};
 
 let nz = |n| NonZeroUsize::new(n).unwrap();
-// timed, sparse, segment, event and part ring capacities.
-let trunk = Trunk::new(TrunkConfig::new(nz(4096), nz(64), nz(32), nz(32), nz(16)));
+let trunk = Trunk::new(TrunkConfig::default()
+    .with_timed_capacity(nz(4096))
+    .with_sparse_capacity(nz(64))
+    .with_segment_capacity(nz(32))
+    .with_event_capacity(nz(32))
+    .with_part_capacity(nz(16)));
 let writer = trunk.writer().expect("the first writer is always granted");
 let mut cursor = trunk.subscribe(); // live tail: reads what is published from now on
 

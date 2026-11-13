@@ -200,13 +200,12 @@ const DRIVER_PART_CAPACITY: usize = 64;
 pub(crate) fn driver_trunk_config(window_segments: usize) -> media_plane::trunk::TrunkConfig {
     let window_segments =
         std::num::NonZeroUsize::new(window_segments).unwrap_or(std::num::NonZeroUsize::MIN);
-    media_plane::trunk::TrunkConfig::new(
-        source_nz(DRIVER_TIMED_CAPACITY),
-        source_nz(DRIVER_SPARSE_CAPACITY),
-        window_segments,
-        source_nz(DRIVER_EVENT_CAPACITY),
-        source_nz(DRIVER_PART_CAPACITY),
-    )
+    media_plane::trunk::TrunkConfig::default()
+        .with_timed_capacity(source_nz(DRIVER_TIMED_CAPACITY))
+        .with_sparse_capacity(source_nz(DRIVER_SPARSE_CAPACITY))
+        .with_segment_capacity(window_segments)
+        .with_event_capacity(source_nz(DRIVER_EVENT_CAPACITY))
+        .with_part_capacity(source_nz(DRIVER_PART_CAPACITY))
 }
 
 /// Timed-ring depth for a pull source's `Trunk`. A pull source delivers a
@@ -224,13 +223,12 @@ const PULL_TIMED_CAPACITY: usize = 2048;
 pub(crate) fn pull_trunk_config(window_segments: usize) -> media_plane::trunk::TrunkConfig {
     let window_segments =
         std::num::NonZeroUsize::new(window_segments).unwrap_or(std::num::NonZeroUsize::MIN);
-    media_plane::trunk::TrunkConfig::new(
-        source_nz(PULL_TIMED_CAPACITY),
-        source_nz(DRIVER_SPARSE_CAPACITY),
-        window_segments,
-        source_nz(DRIVER_EVENT_CAPACITY),
-        source_nz(DRIVER_PART_CAPACITY),
-    )
+    media_plane::trunk::TrunkConfig::default()
+        .with_timed_capacity(source_nz(PULL_TIMED_CAPACITY))
+        .with_sparse_capacity(source_nz(DRIVER_SPARSE_CAPACITY))
+        .with_segment_capacity(window_segments)
+        .with_event_capacity(source_nz(DRIVER_EVENT_CAPACITY))
+        .with_part_capacity(source_nz(DRIVER_PART_CAPACITY))
 }
 
 /// Builds a production [`media_plane::ingress::HandshakePolicy`] bounding a
@@ -426,7 +424,12 @@ mod driver_progress_tests {
     }
 
     fn trunk_config() -> TrunkConfig {
-        TrunkConfig::new(nz(4), nz(4), nz(4), nz(4), nz(4))
+        TrunkConfig::default()
+            .with_timed_capacity(nz(4))
+            .with_sparse_capacity(nz(4))
+            .with_segment_capacity(nz(4))
+            .with_event_capacity(nz(4))
+            .with_part_capacity(nz(4))
     }
 
     /// A session that queues `Established` at construction, then a single

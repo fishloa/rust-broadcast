@@ -1717,7 +1717,12 @@ mod tests {
     }
 
     fn trunk_config() -> TrunkConfig {
-        TrunkConfig::new(nz(4), nz(4), nz(8), nz(4), nz(4))
+        TrunkConfig::default()
+            .with_timed_capacity(nz(4))
+            .with_sparse_capacity(nz(4))
+            .with_segment_capacity(nz(8))
+            .with_event_capacity(nz(4))
+            .with_part_capacity(nz(4))
     }
 
     fn dummy_segment(seq: u32, byte: u8) -> SegmentEntry {
@@ -2906,7 +2911,12 @@ mod tests {
 
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
-            TrunkConfig::new(nz2(8), nz2(8), nz2(64), nz2(8), nz2(8)),
+            TrunkConfig::default()
+                .with_timed_capacity(nz2(8))
+                .with_sparse_capacity(nz2(8))
+                .with_segment_capacity(nz2(64))
+                .with_event_capacity(nz2(8))
+                .with_part_capacity(nz2(8)),
             HandshakePolicy::establish_by(broadcast_common::Timestamp::from_nanos(u64::MAX)),
             DEFAULT_MAX_PROGRAMS,
         );
@@ -3046,7 +3056,12 @@ mod tests {
 
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
-            TrunkConfig::new(nz2(8), nz2(8), nz2(64), nz2(8), nz2(8)),
+            TrunkConfig::default()
+                .with_timed_capacity(nz2(8))
+                .with_sparse_capacity(nz2(8))
+                .with_segment_capacity(nz2(64))
+                .with_event_capacity(nz2(8))
+                .with_part_capacity(nz2(8)),
             HandshakePolicy::establish_by(broadcast_common::Timestamp::from_nanos(u64::MAX)),
             DEFAULT_MAX_PROGRAMS,
         );
@@ -3519,7 +3534,14 @@ mod tests {
         let tmp = temp_dir();
         // Segment-log capacity 1: publishing seg 2 needs to evict seg 1,
         // which the recorder's still-un-consumed `Stall` pin blocks.
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(1), nz(4), nz(4)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(1))
+                .with_event_capacity(nz(4))
+                .with_part_capacity(nz(4)),
+        );
         let mut cfg = dvr_config(&tmp, 5);
         cfg.overrun = ArchiveOverrunSerde::Stall;
         // `.ts`, not `.m4s`: sidesteps the fMP4 "no init yet" early return

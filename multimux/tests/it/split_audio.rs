@@ -104,13 +104,14 @@ fn index_selectors(n: u32) -> Vec<AudioTrackSelector> {
 }
 
 fn new_trunk() -> Arc<Trunk> {
-    Trunk::new(TrunkConfig::new(
-        nz(RING),
-        nz(64),
-        nz(WINDOWS_USIZE),
-        nz(64),
-        nz(RING),
-    ))
+    Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(RING))
+            .with_sparse_capacity(nz(64))
+            .with_segment_capacity(nz(WINDOWS_USIZE))
+            .with_event_capacity(nz(64))
+            .with_part_capacity(nz(RING)),
+    )
 }
 
 const WINDOWS_USIZE: usize = WINDOW_SEGMENTS;

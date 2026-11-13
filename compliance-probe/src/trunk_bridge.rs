@@ -203,7 +203,14 @@ mod tests {
     }
 
     fn small_trunk() -> Arc<Trunk> {
-        Trunk::new(TrunkConfig::new(nz(8), nz(8), nz(8), nz(8), nz(8)))
+        Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(8))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(8))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        )
     }
 
     /// W-CP-3: a target more than half of 2^33 ticks (about 13.3 hours at

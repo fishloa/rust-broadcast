@@ -109,7 +109,7 @@ fuzz_target!(|data: &[u8]| {
     let session = FuzzSession {
         pending: VecDeque::new(),
     };
-    let trunk_config = TrunkConfig::new(nz(8), nz(4), nz(4), nz(4), nz(4));
+    let trunk_config = TrunkConfig::default().with_timed_capacity(nz(8)).with_sparse_capacity(nz(4)).with_segment_capacity(nz(4)).with_event_capacity(nz(4)).with_part_capacity(nz(4));
     let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
     // `max_programs` (issue #803) bounds how many `Trunk`s one session may
     // mint -- the fifth unbounded-allocation vector this workspace has had.

@@ -24,7 +24,14 @@ fn nz(n: usize) -> NonZeroUsize {
 }
 
 fn trunk_with(cap: usize) -> (Arc<Trunk>, SegmentWriter) {
-    let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(64), nz(8), nz(cap)));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(64))
+            .with_sparse_capacity(nz(8))
+            .with_segment_capacity(nz(64))
+            .with_event_capacity(nz(8))
+            .with_part_capacity(nz(cap)),
+    );
     let writer = trunk.segment_writer().expect("writer");
     (trunk, writer)
 }

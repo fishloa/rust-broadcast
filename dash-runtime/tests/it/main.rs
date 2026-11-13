@@ -1,4 +1,3 @@
-mod send_sync;
 mod address_fuzz_availability;
 mod availability;
 mod base_url;
@@ -38,6 +37,7 @@ mod live_world;
 mod mpd_fixtures;
 mod no_clock_guard;
 mod selection;
+mod send_sync;
 mod static_fixtures;
 mod template_match;
 mod timeline_zero_duration;

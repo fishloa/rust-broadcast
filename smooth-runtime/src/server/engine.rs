@@ -1141,24 +1141,26 @@ mod tests {
     }
 
     fn trunk() -> Arc<Trunk> {
-        Trunk::new(TrunkConfig::new(
-            NonZeroUsize::new(8).expect("non-zero"),
-            NonZeroUsize::new(8).expect("non-zero"),
-            NonZeroUsize::new(8).expect("non-zero"),
-            NonZeroUsize::new(8).expect("non-zero"),
-            NonZeroUsize::new(8).expect("non-zero"),
-        ))
+        Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(NonZeroUsize::new(8).expect("non-zero"))
+                .with_sparse_capacity(NonZeroUsize::new(8).expect("non-zero"))
+                .with_segment_capacity(NonZeroUsize::new(8).expect("non-zero"))
+                .with_event_capacity(NonZeroUsize::new(8).expect("non-zero"))
+                .with_part_capacity(NonZeroUsize::new(8).expect("non-zero")),
+        )
     }
 
     /// A trunk whose segment log holds every test segment.
     fn big_trunk() -> Arc<Trunk> {
-        Trunk::new(TrunkConfig::new(
-            NonZeroUsize::new(64).expect("non-zero"),
-            NonZeroUsize::new(64).expect("non-zero"),
-            NonZeroUsize::new(64).expect("non-zero"),
-            NonZeroUsize::new(64).expect("non-zero"),
-            NonZeroUsize::new(64).expect("non-zero"),
-        ))
+        Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(NonZeroUsize::new(64).expect("non-zero"))
+                .with_sparse_capacity(NonZeroUsize::new(64).expect("non-zero"))
+                .with_segment_capacity(NonZeroUsize::new(64).expect("non-zero"))
+                .with_event_capacity(NonZeroUsize::new(64).expect("non-zero"))
+                .with_part_capacity(NonZeroUsize::new(64).expect("non-zero")),
+        )
     }
 
     /// Everything a published route holds: the trunk and its init segment.

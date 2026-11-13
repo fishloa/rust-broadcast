@@ -273,7 +273,12 @@ mod tests {
     }
 
     fn trunk_config() -> TrunkConfig {
-        TrunkConfig::new(nz(64), nz(16), nz(8), nz(8), nz(8))
+        TrunkConfig::default()
+            .with_timed_capacity(nz(64))
+            .with_sparse_capacity(nz(16))
+            .with_segment_capacity(nz(8))
+            .with_event_capacity(nz(8))
+            .with_part_capacity(nz(8))
     }
 
     fn handshake() -> HandshakePolicy {
@@ -475,7 +480,12 @@ mod tests {
         route: &HlsPullRoute,
     ) -> (Result<()>, Vec<TrackSpec>, HashMap<TrackId, usize>) {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
-        let config = TrunkConfig::new(nz(COUNT_TIMED_RING), nz(16), nz(16), nz(16), nz(16));
+        let config = TrunkConfig::default()
+            .with_timed_capacity(nz(COUNT_TIMED_RING))
+            .with_sparse_capacity(nz(16))
+            .with_segment_capacity(nz(16))
+            .with_event_capacity(nz(16))
+            .with_part_capacity(nz(16));
         // HANG GUARD (issue #826): only fails "never finishes" rather than hanging CI.
         let result = tokio::time::timeout(
             Duration::from_secs(60),

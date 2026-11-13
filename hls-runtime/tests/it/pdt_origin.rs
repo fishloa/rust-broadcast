@@ -19,7 +19,14 @@ fn nz(n: usize) -> NonZeroUsize {
 }
 
 fn trunk_with() -> (Arc<Trunk>, SegmentWriter) {
-    let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(64))
+            .with_sparse_capacity(nz(8))
+            .with_segment_capacity(nz(8))
+            .with_event_capacity(nz(8))
+            .with_part_capacity(nz(64)),
+    );
     let writer = trunk.segment_writer().expect("writer");
     (trunk, writer)
 }
@@ -193,7 +200,14 @@ fn discontinuity_sequence_zero_on_fresh_live_playlist() {
 fn discontinuity_sequence_zero_on_iframe_playlist() {
     // use origin_fmp4 style
     let (trunk, writer) = {
-        let t = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(64), nz(8), nz(64)));
+        let t = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(64))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(64)),
+        );
         let w = t.segment_writer().expect("writer");
         (t, w)
     };
@@ -293,7 +307,14 @@ const SEGMENT_PERIOD_MS: i64 = 4_000;
 /// window, not from the bounded `segment_starts` table at render time.
 #[test]
 fn pdt_survives_a_window_larger_than_the_event_capacity() {
-    let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(2), nz(64)));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(64))
+            .with_sparse_capacity(nz(8))
+            .with_segment_capacity(nz(8))
+            .with_event_capacity(nz(2))
+            .with_part_capacity(nz(64)),
+    );
     let writer = trunk.segment_writer().expect("writer");
     writer.set_time_anchor(TimeAnchor {
         pts_90k: 0,

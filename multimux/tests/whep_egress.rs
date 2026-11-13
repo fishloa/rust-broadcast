@@ -519,13 +519,12 @@ mod instant {
     async fn run(route_handle: Arc<RouteHandle>) -> multimux::Result<()> {
         let mut dialer = Dial;
         let session = dialer.dial().unwrap_or_else(|never| match never {});
-        let trunk_config = TrunkConfig::new(
-            std::num::NonZeroUsize::new(64).unwrap(),
-            std::num::NonZeroUsize::new(16).unwrap(),
-            std::num::NonZeroUsize::new(8).unwrap(),
-            std::num::NonZeroUsize::new(64).unwrap(),
-            std::num::NonZeroUsize::new(64).unwrap(),
-        );
+        let trunk_config = TrunkConfig::default()
+            .with_timed_capacity(std::num::NonZeroUsize::new(64).unwrap())
+            .with_sparse_capacity(std::num::NonZeroUsize::new(16).unwrap())
+            .with_segment_capacity(std::num::NonZeroUsize::new(8).unwrap())
+            .with_event_capacity(std::num::NonZeroUsize::new(64).unwrap())
+            .with_part_capacity(std::num::NonZeroUsize::new(64).unwrap());
         let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
         let mut driver: IngestDriver<Session> = IngestDriver::new(
             session,

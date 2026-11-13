@@ -42,7 +42,12 @@ fn nz(n: usize) -> NonZeroUsize {
 }
 
 fn trunk_config() -> TrunkConfig {
-    TrunkConfig::new(nz(4096), nz(16), nz(8), nz(8), nz(8))
+    TrunkConfig::default()
+        .with_timed_capacity(nz(4096))
+        .with_sparse_capacity(nz(16))
+        .with_segment_capacity(nz(8))
+        .with_event_capacity(nz(8))
+        .with_part_capacity(nz(8))
 }
 
 fn handshake() -> HandshakePolicy {

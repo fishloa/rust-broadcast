@@ -671,7 +671,7 @@ pub enum RetentionClass {
 ///   contradicted `transmux::ProgressiveDemux::new`'s deliberate
 ///   panic-to-fallible change, which is exactly the kind of
 ///   two-crates-apart inconsistency that makes an API feel arbitrary.
-/// - **A fallible `TrunkConfig::new -> Result<Self, _>`** (the
+/// - **A fallible `TrunkConfig` constructor returning `Result<Self, _>`** (the
 ///   `ProgressiveDemux` shape): correct, but strictly worse *here*.
 ///   `ProgressiveDemux` already returns `Result` as part of its `Stage`
 ///   contract and already has an `Error` type; `TrunkConfig` has neither, so
@@ -720,28 +720,65 @@ pub struct TrunkConfig {
 /// Default for [`TrunkConfig::waiter_capacity`].
 pub const DEFAULT_WAITER_CAPACITY: NonZeroUsize = NonZeroUsize::MIN.saturating_add(65_535);
 
-impl TrunkConfig {
-    /// Build a config with all five ring capacities. Nothing is validated
-    /// here, and nothing needs to be: [`NonZeroUsize`] makes the only
-    /// invalid value unrepresentable rather than merely rejected — see
-    /// [this type's own docs](TrunkConfig#why-every-capacity-is-a-nonzerousize-not-a-validated-usize)
-    /// for why that beats both the panic this replaced and a fallible
-    /// constructor.
-    pub fn new(
-        timed_capacity: NonZeroUsize,
-        sparse_capacity: NonZeroUsize,
-        segment_capacity: NonZeroUsize,
-        event_capacity: NonZeroUsize,
-        part_capacity: NonZeroUsize,
-    ) -> Self {
+/// Defaults for [`TrunkConfig`]: modest rings suited to one live programme.
+const DEFAULT_TIMED_CAPACITY: NonZeroUsize = NonZeroUsize::MIN.saturating_add(63);
+const DEFAULT_SPARSE_CAPACITY: NonZeroUsize = NonZeroUsize::MIN.saturating_add(15);
+const DEFAULT_SEGMENT_CAPACITY: NonZeroUsize = NonZeroUsize::MIN.saturating_add(7);
+const DEFAULT_EVENT_CAPACITY: NonZeroUsize = NonZeroUsize::MIN.saturating_add(63);
+const DEFAULT_PART_CAPACITY: NonZeroUsize = NonZeroUsize::MIN.saturating_add(63);
+
+impl Default for TrunkConfig {
+    /// 64 timed, 16 sparse, 8 segment, 64 event and 64 part entries, and
+    /// [`DEFAULT_WAITER_CAPACITY`] waiters. Nothing is validated and nothing
+    /// needs to be: [`NonZeroUsize`] makes the only invalid value
+    /// unrepresentable — see
+    /// [this type's own docs](TrunkConfig#why-every-capacity-is-a-nonzerousize-not-a-validated-usize).
+    fn default() -> Self {
         TrunkConfig {
-            timed_capacity,
-            sparse_capacity,
-            segment_capacity,
-            event_capacity,
-            part_capacity,
+            timed_capacity: DEFAULT_TIMED_CAPACITY,
+            sparse_capacity: DEFAULT_SPARSE_CAPACITY,
+            segment_capacity: DEFAULT_SEGMENT_CAPACITY,
+            event_capacity: DEFAULT_EVENT_CAPACITY,
+            part_capacity: DEFAULT_PART_CAPACITY,
             waiter_capacity: DEFAULT_WAITER_CAPACITY,
         }
+    }
+}
+
+impl TrunkConfig {
+    /// Replace [`TrunkConfig::timed_capacity`].
+    #[must_use]
+    pub fn with_timed_capacity(mut self, capacity: NonZeroUsize) -> Self {
+        self.timed_capacity = capacity;
+        self
+    }
+
+    /// Replace [`TrunkConfig::sparse_capacity`].
+    #[must_use]
+    pub fn with_sparse_capacity(mut self, capacity: NonZeroUsize) -> Self {
+        self.sparse_capacity = capacity;
+        self
+    }
+
+    /// Replace [`TrunkConfig::segment_capacity`].
+    #[must_use]
+    pub fn with_segment_capacity(mut self, capacity: NonZeroUsize) -> Self {
+        self.segment_capacity = capacity;
+        self
+    }
+
+    /// Replace [`TrunkConfig::event_capacity`].
+    #[must_use]
+    pub fn with_event_capacity(mut self, capacity: NonZeroUsize) -> Self {
+        self.event_capacity = capacity;
+        self
+    }
+
+    /// Replace [`TrunkConfig::part_capacity`].
+    #[must_use]
+    pub fn with_part_capacity(mut self, capacity: NonZeroUsize) -> Self {
+        self.part_capacity = capacity;
+        self
     }
 
     /// Replace [`TrunkConfig::waiter_capacity`].
@@ -3516,7 +3553,14 @@ mod tests {
     /// next publish.
     #[test]
     fn many_listen_waiters_beyond_part_capacity_all_wake_on_publish() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.segment_writer().unwrap();
         let (wakes, waker) = counting_waker();
         let mut cx = Context::from_waker(&waker);
@@ -3543,7 +3587,13 @@ mod tests {
     #[test]
     fn woken_slot_freed_waiter_hands_the_wake_to_the_next() {
         let trunk = Trunk::new(
-            TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(4)).with_waiter_capacity(nz(1)),
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(4))
+                .with_waiter_capacity(nz(1)),
         );
         let held = trunk.listen().expect("the sole slot");
         let (wakes, waker) = counting_waker();
@@ -3570,7 +3620,14 @@ mod tests {
     /// lock and is woken by a sample publish.
     #[test]
     fn idle_cursor_next_takes_no_lock_and_wakes_on_sample() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().unwrap();
         let mut cursor = trunk.subscribe();
         let (wakes, waker) = counting_waker();
@@ -3593,7 +3650,7 @@ mod tests {
     }
 
     /// `NonZeroUsize` from a literal capacity, for readability at the ~30
-    /// `TrunkConfig::new` call sites below. Panicking on `0` here is correct
+    /// `TrunkConfig` call sites below. Panicking on `0` here is correct
     /// and is *not* the behaviour the deleted `zero_*_capacity_panics` tests
     /// asserted: this is a test helper rejecting a typo in test source, not
     /// the library accepting then rejecting a zero at run time — the library
@@ -3631,7 +3688,14 @@ mod tests {
     /// with a wrapped or duplicate number.
     #[test]
     fn segment_sequence_at_u32_max_saturates_and_rejects_the_next() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.segment_writer().unwrap();
         writer.publish_segment(segment_entry(1, u32::MAX)).unwrap();
         let max = SegmentSeq::new(u32::MAX);
@@ -3703,7 +3767,14 @@ mod tests {
     /// re-run to confirm the failure, then reverted.
     #[test]
     fn multiple_cursors_see_every_sample_in_order_with_no_dup_or_loss() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(100), nz(10), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(100))
+                .with_sparse_capacity(nz(10))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let mut c1 = trunk.subscribe();
         let mut c2 = trunk.subscribe();
         let mut c3 = trunk.subscribe();
@@ -3736,7 +3807,14 @@ mod tests {
     /// panic.
     #[test]
     fn every_entry_point_survives_a_poisoned_state_lock() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(8), nz(8), nz(8), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(8))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(8))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let mut samples = trunk.subscribe();
         let mut segments = trunk.subscribe_segments();
         let mut events = trunk.subscribe_events();
@@ -3807,7 +3885,14 @@ mod tests {
     /// re-run to confirm the failure, then reverted.
     #[test]
     fn slow_reader_lags_but_writer_completes_regardless() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(10), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(10))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let mut slow = trunk.subscribe();
         let writer = trunk.writer().unwrap();
 
@@ -3847,7 +3932,14 @@ mod tests {
     /// confirm the failure, then reverted.
     #[test]
     fn lag_is_reported_with_an_accurate_skipped_count() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(3), nz(10), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(3))
+                .with_sparse_capacity(nz(10))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let mut cursor = trunk.subscribe();
         let writer = trunk.writer().unwrap();
 
@@ -3882,7 +3974,14 @@ mod tests {
     /// confirm the failure, then reverted.
     #[test]
     fn sparse_reader_loses_data_reports_degraded_distinguishable_from_timed_lagged() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(2), nz(2), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(2))
+                .with_sparse_capacity(nz(2))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let mut cursor = trunk.subscribe();
         let writer = trunk.writer().unwrap();
 
@@ -3924,7 +4023,14 @@ mod tests {
     /// failure, then reverted.
     #[test]
     fn ring_is_bounded_under_flood_on_both_classes() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(3), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(3))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().unwrap();
 
         for i in 0u32..50_000 {
@@ -3973,7 +4079,14 @@ mod tests {
     /// reverted.
     #[test]
     fn subscribe_from_backlog_replays_exact_resident_entries_both_classes() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(100), nz(100), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(100))
+                .with_sparse_capacity(nz(100))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().unwrap();
 
         // Published *before* the cursor exists — subscribe() would never see
@@ -4043,7 +4156,14 @@ mod tests {
     /// then reverted.
     #[test]
     fn subscribe_from_backlog_reports_lagged_when_backlog_already_overwritten() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(3), nz(10), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(3))
+                .with_sparse_capacity(nz(10))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().unwrap();
 
         // Capacity 3, publish 9: only bytes 6,7,8 remain resident; 0..6 are
@@ -4095,7 +4215,14 @@ mod tests {
     /// to confirm the failure, then reverted.
     #[test]
     fn payload_is_shared_not_copied_across_cursors() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(8), nz(8), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(8))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let mut c1 = trunk.subscribe();
         let mut c2 = trunk.subscribe();
         let mut c3 = trunk.subscribe();
@@ -4137,7 +4264,14 @@ mod tests {
 
     #[test]
     fn second_writer_is_refused() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let _first = trunk.writer().unwrap();
         assert!(
             trunk.writer().is_none(),
@@ -4156,7 +4290,14 @@ mod tests {
     /// and re-run to confirm the failure, then reverted.
     #[test]
     fn second_segment_writer_is_refused() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let _first = trunk.segment_writer().unwrap();
         assert!(
             trunk.segment_writer().is_none(),
@@ -4182,7 +4323,14 @@ mod tests {
     /// and re-run to confirm the failure, then reverted.
     #[test]
     fn sample_and_segment_writers_can_be_held_simultaneously() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let samples = trunk.writer().unwrap();
         let segments = trunk.segment_writer().expect(
             "the segment/part writer must still be takeable while the sample/event writer is held",
@@ -4215,7 +4363,14 @@ mod tests {
     /// return. Recompiled and re-run to confirm the failure, then reverted.
     #[test]
     fn segmenter_holds_sample_cursor_and_segment_writer_at_once() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(8), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(8))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
 
         // The ingest driver's own handle — a different component, a
         // different ring group.
@@ -4274,7 +4429,14 @@ mod tests {
 
     #[test]
     fn subscribe_starts_from_now_not_from_history() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().unwrap();
         writer.publish(TrackId::new(1), RetentionClass::Timed, sample(1, 4));
         writer.publish(TrackId::new(1), RetentionClass::Timed, sample(2, 4));
@@ -4302,7 +4464,14 @@ mod tests {
     /// index 1. Recompiled and re-run to confirm the failure, then reverted.
     #[test]
     fn multiple_segment_cursors_see_every_segment_in_order_with_no_dup_or_loss() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(100), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(100))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let mut c1 = trunk.subscribe_segments();
         let mut c2 = trunk.subscribe_segments();
         let mut c3 = trunk.subscribe_segments();
@@ -4340,7 +4509,14 @@ mod tests {
     /// `1020`). Recompiled and re-run to confirm the failure, then reverted.
     #[test]
     fn non_pinning_slow_segment_reader_lags_but_writer_completes_regardless() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let mut slow = trunk.subscribe_segments();
         let writer = trunk.segment_writer().unwrap();
 
@@ -4380,7 +4556,14 @@ mod tests {
     /// failure, then reverted.
     #[test]
     fn pinning_reader_receives_every_segment_while_non_pinning_reader_lags() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(2), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(2))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let mut slow = trunk.subscribe_segments(); // non-pinning: will lag
         let mut archive = trunk.pin_segments(ArchiveOverrun::StallIngest); // pinning: must lose nothing
         let writer = Arc::new(trunk.segment_writer().unwrap());
@@ -4468,7 +4651,14 @@ mod tests {
     /// failure, then reverted.
     #[test]
     fn pinning_is_bounded_an_unacking_consumer_cannot_grow_memory_without_limit() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         // Default policy (`Gap`) pinning cursor that never polls at all —
         // the worst case for memory growth: a dead/wedged archive consumer.
         let _archive = trunk.pin_segments(ArchiveOverrun::default());
@@ -4496,7 +4686,14 @@ mod tests {
     /// re-run to confirm the failure, then reverted.
     #[test]
     fn archive_overrun_gap_evicts_and_reports_gap() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(2), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(2))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let mut archive = trunk.pin_segments(ArchiveOverrun::Gap);
         let writer = trunk.segment_writer().unwrap();
 
@@ -4536,7 +4733,14 @@ mod tests {
     /// reverted.
     #[test]
     fn archive_overrun_stall_ingest_actually_blocks_the_writer() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(1), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(1))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let mut archive = trunk.pin_segments(ArchiveOverrun::StallIngest);
         let writer = Arc::new(trunk.segment_writer().unwrap());
 
@@ -4583,7 +4787,14 @@ mod tests {
     /// "it returned" alone cannot tell a lost wake from a delivered one).
     #[test]
     fn stalled_publisher_probe_tracks_a_parked_publish_segment() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(1), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(1))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = Arc::new(trunk.segment_writer().unwrap());
         let mut pin = trunk.pin_segments(ArchiveOverrun::StallIngest);
         writer.publish_segment(segment_entry(1, 1)).unwrap();
@@ -4609,7 +4820,14 @@ mod tests {
     /// cursor polls on the same Trunk must proceed (the Condvar releases the lock).
     #[test]
     fn sample_publish_proceeds_while_a_segment_publisher_is_stalled() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(1), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(1))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let seg_writer = Arc::new(trunk.segment_writer().unwrap());
         let writer = trunk.writer().unwrap();
         let mut pin = trunk.pin_segments(ArchiveOverrun::StallIngest);
@@ -4635,7 +4853,14 @@ mod tests {
     /// Recompiled and re-run to confirm the failure, then reverted.
     #[test]
     fn archive_overrun_terminate_drops_the_cursor() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(2), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(2))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let mut archive = trunk.pin_segments(ArchiveOverrun::Terminate);
         let writer = trunk.segment_writer().unwrap();
 
@@ -4677,7 +4902,14 @@ mod tests {
     /// Recompiled and re-run to confirm the failure, then reverted.
     #[test]
     fn segment_bytes_are_shared_not_copied_across_cursors() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(8), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(8))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let mut c1 = trunk.subscribe_segments();
         let mut c2 = trunk.subscribe_segments();
         let mut c3 = trunk.subscribe_segments();
@@ -4770,7 +5002,14 @@ mod tests {
     /// confirm the failure, then reverted.
     #[test]
     fn events_between_returns_exactly_the_half_open_range() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().unwrap();
 
         for (id, ticks) in [(1u32, 1_000u64), (2, 2_000), (3, 3_000), (4, 4_000)] {
@@ -4797,7 +5036,14 @@ mod tests {
     /// to confirm the failure, then reverted.
     #[test]
     fn segment_relative_event_resolves_at_publish_time_when_boundary_already_known() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         // Two separate writers, held at once: `note_segment_start` lives on
         // the segmenter's `SegmentWriter`, `publish_event` on the ingest
         // driver's `TrunkWriter` — exactly the split this step introduces.
@@ -4838,7 +5084,14 @@ mod tests {
     /// reverted.
     #[test]
     fn segment_relative_event_resolves_to_the_named_segment_not_whichever_is_open() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().unwrap();
         let segment_writer = trunk.segment_writer().unwrap();
         let mut cursor = trunk.subscribe_events();
@@ -4911,7 +5164,14 @@ mod tests {
     /// Recompiled and re-run to confirm the failure, then reverted.
     #[test]
     fn reused_segment_number_resolves_against_its_most_recent_boundary() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().unwrap();
         let segment_writer = trunk.segment_writer().unwrap();
 
@@ -4960,7 +5220,14 @@ mod tests {
     /// failure, then reverted.
     #[test]
     fn utc_only_event_stays_unanchored_until_a_time_anchor_arrives() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().unwrap();
         let segment_writer = trunk.segment_writer().unwrap();
         let mut cursor = trunk.subscribe_events();
@@ -5036,7 +5303,14 @@ mod tests {
     fn a_33_bit_pts_wrap_does_not_corrupt_event_log_ordering() {
         const PTS_WRAP: u64 = 1u64 << 33;
 
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().unwrap();
         let mut timeline = timed_metadata::Timeline::new();
 
@@ -5096,7 +5370,14 @@ mod tests {
     /// the failure, then reverted.
     #[test]
     fn event_log_is_bounded_under_flood() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(3), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(3))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().unwrap();
 
         for i in 0u32..50_000 {
@@ -5119,7 +5400,14 @@ mod tests {
     /// failure, then reverted.
     #[test]
     fn event_cursor_lag_is_reported_with_an_accurate_skipped_count_writer_never_blocks() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(3), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(3))
+                .with_part_capacity(nz(8)),
+        );
         let mut cursor = trunk.subscribe_events();
         let writer = trunk.writer().unwrap();
 
@@ -5335,7 +5623,14 @@ mod tests {
     /// after the event — and never appears at media time 0.
     #[test]
     fn pre_origin_utc_event_stays_unresolved_through_the_trunk() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().unwrap();
         let segment_writer = trunk.segment_writer().unwrap();
         // Event published BEFORE the anchor (resolved in `set_time_anchor`).
@@ -5403,7 +5698,14 @@ mod tests {
         const SEGMENTS: u32 = 1_000;
         const PARTS_PER_SEGMENT: u32 = 4;
         let ring = usize::try_from(SEGMENTS * PARTS_PER_SEGMENT).unwrap();
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(ring)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(ring)),
+        );
         let writer = trunk.segment_writer().unwrap();
         for seg in 0..SEGMENTS {
             for part in 0..PARTS_PER_SEGMENT {
@@ -5481,7 +5783,14 @@ mod tests {
     /// newest winning `part_bytes`, and the index never outgrows the ring.
     #[test]
     fn part_index_tracks_eviction_and_reused_segment_numbers() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(5)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(5)),
+        );
         let writer = trunk.segment_writer().unwrap();
         // Ring of 5: (7,0) (7,1) (7,2) (8,0) (8,1) ...
         for (seg, part, byte) in [(7, 0, 10), (7, 1, 11), (7, 2, 12), (8, 0, 20), (8, 1, 21)] {
@@ -5538,7 +5847,14 @@ mod tests {
     /// re-run to confirm the failure, then reverted.
     #[test]
     fn part_is_addressable_and_readable_before_its_parent_segment_closes() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.segment_writer().unwrap();
 
         // Segment 9 has never been closed — no `publish_segment` call for it
@@ -5582,7 +5898,14 @@ mod tests {
     ///    `0xCC` bytes instead of the awaited part's `0xAB` bytes.
     #[test]
     fn waiter_is_woken_when_the_awaited_part_lands_and_resolves_to_it() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = Arc::new(trunk.segment_writer().unwrap());
 
         // Register BEFORE re-checking/waiting — the documented no-missed-
@@ -5643,7 +5966,14 @@ mod tests {
     /// to confirm the failure, then reverted.
     #[test]
     fn waiter_whose_target_never_arrives_is_bounded_not_parked_forever() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let listener = trunk.listen().unwrap();
 
         let start = std::time::Instant::now();
@@ -5684,7 +6014,14 @@ mod tests {
     /// than backed by an invented mutation.
     #[test]
     fn writer_never_blocks_with_a_registered_never_serviced_waiter() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = Arc::new(trunk.segment_writer().unwrap());
 
         // Registered, kept alive for the whole test, and never waited on or
@@ -5723,7 +6060,13 @@ mod tests {
     fn waiter_set_is_bounded_a_flood_of_listen_calls_cannot_grow_without_limit() {
         let cap = nz(4).get();
         let trunk = Trunk::new(
-            TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(4)).with_waiter_capacity(nz(cap)),
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(4))
+                .with_waiter_capacity(nz(cap)),
         );
 
         // Fill exactly to the cap, keeping every registration alive.
@@ -5778,7 +6121,14 @@ mod tests {
     /// failure, then reverted.
     #[test]
     fn freeing_a_waiter_slot_does_not_wake_an_unrelated_progress_waiter() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
 
         let a = trunk.listen().expect("first registration succeeds");
         // `b` is a `progress` waiter (its listener is registered on the shared
@@ -5802,7 +6152,13 @@ mod tests {
     fn a_parked_slot_freed_waiter_wakes_when_a_slot_is_freed() {
         let cap = nz(4).get();
         let trunk = Trunk::new(
-            TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(4)).with_waiter_capacity(nz(cap)),
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(4))
+                .with_waiter_capacity(nz(cap)),
         );
 
         // Fill to the cap so `waiter_slot_freed` returns a real listener.
@@ -5847,7 +6203,13 @@ mod tests {
         let cap = nz(4).get();
         for _ in 0..200 {
             let trunk = Trunk::new(
-                TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(4)).with_waiter_capacity(nz(cap)),
+                TrunkConfig::default()
+                    .with_timed_capacity(nz(4))
+                    .with_sparse_capacity(nz(4))
+                    .with_segment_capacity(nz(4))
+                    .with_event_capacity(nz(8))
+                    .with_part_capacity(nz(4))
+                    .with_waiter_capacity(nz(cap)),
             );
             let mut held: Vec<ProgressListener> = Vec::new();
             for _ in 0..cap {
@@ -5909,7 +6271,14 @@ mod tests {
     #[test]
     fn parts_remain_addressable_after_segment_close_until_ordinary_eviction_reclaims_them() {
         let part_cap = nz(4).get();
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(part_cap)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(part_cap)),
+        );
         let writer = trunk.segment_writer().unwrap();
 
         writer.publish_part(part_entry(0xAB, 1, 0));
@@ -5954,7 +6323,14 @@ mod tests {
     /// failure, then reverted.
     #[test]
     fn fresh_trunk_has_no_tracks_and_generation_zero() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         assert_eq!(trunk.tracks().len(), 0, "nothing has ever set a track set");
         assert_eq!(trunk.track_generation(), 0);
     }
@@ -5971,7 +6347,14 @@ mod tests {
     /// the failure, then reverted.
     #[test]
     fn set_tracks_replaces_the_whole_set_and_bumps_generation_by_one_per_call() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().unwrap();
 
         writer.set_tracks(vec![opaque_track(TrackId::new(1))]);
@@ -6012,7 +6395,14 @@ mod tests {
     /// call's result, and the cursor reports exactly the changes after it.
     #[test]
     fn backlog_subscription_snapshots_cursor_generation_and_tracks_together() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(16), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(16))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().unwrap();
         writer.set_tracks(vec![opaque_track(TrackId::new(1))]);
         writer.set_tracks(vec![opaque_track(TrackId::new(2))]);
@@ -6033,13 +6423,14 @@ mod tests {
     }
 
     fn track_marker_trunk(timed_capacity: usize) -> (Arc<Trunk>, TrunkWriter) {
-        let trunk = Trunk::new(TrunkConfig::new(
-            nz(timed_capacity),
-            nz(4),
-            nz(4),
-            nz(8),
-            nz(8),
-        ));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(timed_capacity))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().unwrap();
         (trunk, writer)
     }
@@ -6158,7 +6549,14 @@ mod tests {
 
     #[test]
     fn tracks_changed_is_ordered_against_samples_whenever_the_cursor_reads() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(16), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(16))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().unwrap();
         let mut cursor = trunk.subscribe_from_backlog();
         writer.set_tracks(vec![opaque_track(TrackId::new(1))]);
@@ -6199,7 +6597,14 @@ mod tests {
     /// `1`. Recompiled and re-run to confirm the failure, then reverted.
     #[test]
     fn generation_is_stable_across_unrelated_activity() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().unwrap();
 
         writer.set_tracks(vec![opaque_track(TrackId::new(1))]);
@@ -6230,7 +6635,14 @@ mod tests {
     /// reverted.
     #[test]
     fn set_tracks_wakes_a_registered_listener() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = Arc::new(trunk.writer().unwrap());
 
         // Register BEFORE the change — the documented no-missed-wakeup
@@ -6259,7 +6671,14 @@ mod tests {
     /// panic into a permanent one).
     #[test]
     fn subscriber_side_panic_while_holding_the_lock_does_not_poison_later_calls() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().unwrap();
 
         let trunk_for_panic = Arc::clone(&trunk);
@@ -6290,7 +6709,14 @@ mod tests {
     #[test]
     fn segment_never_overtakes_its_samples_under_a_split_lock() {
         const ROUNDS: u32 = 2_000;
-        let trunk = Trunk::new(TrunkConfig::new(nz(4096), nz(4), nz(4096), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4096))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4096))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().unwrap();
         let seg_writer = trunk.segment_writer().unwrap();
         let mut seg_samples = trunk.subscribe();
@@ -6363,7 +6789,14 @@ mod tests {
     /// a recompiled/rerun in-place edit like this module's other entries.
     #[test]
     fn try_publish_segment_lets_a_single_thread_drain_its_own_pin() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(1), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(10))
+                .with_sparse_capacity(nz(10))
+                .with_segment_capacity(nz(1))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.segment_writer().unwrap();
         let mut cursor = trunk.pin_segments(ArchiveOverrun::StallIngest);
 
@@ -6411,7 +6844,14 @@ mod tests {
     /// pin) into a bounded delay instead of a permanent hang.
     #[test]
     fn publish_segment_blocking_path_is_bounded_not_permanent() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(1), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(10))
+                .with_sparse_capacity(nz(10))
+                .with_segment_capacity(nz(1))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.segment_writer().unwrap();
         // A pin that is never, ever drained on this single thread.
         let mut cursor = trunk.pin_segments(ArchiveOverrun::StallIngest);
@@ -6476,7 +6916,14 @@ mod tests {
     /// then restored.
     #[test]
     fn writer_handover_keeps_subscribers_reading_across_a_reconnect() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(10))
+                .with_sparse_capacity(nz(10))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let mut cursor = trunk.subscribe();
 
         {
@@ -6522,7 +6969,14 @@ mod tests {
 
     #[test]
     fn back_to_back_writer_reissues_with_no_data_between_report_one_discontinuity() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(10))
+                .with_sparse_capacity(nz(10))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let mut cursor = trunk.subscribe();
         {
             let a = trunk.writer().expect("first take succeeds");
@@ -6560,7 +7014,14 @@ mod tests {
     /// and re-run to confirm the failure, then reverted.
     #[test]
     fn discontinuity_gates_both_classes_not_just_the_one_that_catches_up_first() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(10))
+                .with_sparse_capacity(nz(10))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let mut cursor = trunk.subscribe();
         {
             let a = trunk.writer().expect("first take succeeds");
@@ -6596,7 +7057,14 @@ mod tests {
     /// writer B can never be taken at all.
     #[test]
     fn segment_writer_handover_keeps_subscriber_reading_across_a_reconnect() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(10), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(10))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let mut cursor = trunk.subscribe_segments();
 
         {
@@ -6628,7 +7096,14 @@ mod tests {
     /// a regression guard for the invariant the re-issue fix sits next to.
     #[test]
     fn writer_still_refused_while_the_first_is_alive() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let _writer_a = trunk.writer().expect("first take succeeds");
         assert!(
             trunk.writer().is_none(),
@@ -6661,7 +7136,14 @@ mod tests {
         // Timed/Sparse rings sized so they never themselves evict anything
         // across this test — the only overflow exercised here is the
         // (much smaller, fixed) handover backlog.
-        let trunk = Trunk::new(TrunkConfig::new(nz(1_000), nz(1_000), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(1_000))
+                .with_sparse_capacity(nz(1_000))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let mut cursor = trunk.subscribe();
 
         let total_takes = WRITER_HANDOVER_LOG_CAPACITY + 5;
@@ -6720,7 +7202,14 @@ mod tests {
     /// then reverted.
     #[test]
     fn part_bytes_reused_segment_number_returns_the_most_recent() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         {
             let w = trunk.segment_writer().unwrap();
             w.publish_part(PartEntry::new(
@@ -6764,7 +7253,14 @@ mod tests {
     /// Recompiled and re-run to confirm the failure, then reverted.
     #[test]
     fn events_in_open_reused_segment_not_hidden_by_a_stale_next_boundary() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().unwrap();
         let sw = trunk.segment_writer().unwrap();
         sw.note_segment_start(SegmentSeq::new(1), MediaTime(0));
@@ -6803,7 +7299,14 @@ mod tests {
     /// Recompiled and re-run to confirm the failure, then reverted.
     #[test]
     fn try_publish_segment_does_not_terminate_a_pin_for_an_eviction_that_never_happened() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(1), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(10))
+                .with_sparse_capacity(nz(10))
+                .with_segment_capacity(nz(1))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let w = trunk.segment_writer().unwrap();
         let _stall = trunk.pin_segments(ArchiveOverrun::StallIngest);
         let mut term = trunk.pin_segments(ArchiveOverrun::Terminate);
@@ -6831,7 +7334,14 @@ mod tests {
     /// pending-segment queue needs (issue #1082's T7/T6 findings).
     #[test]
     fn expire_stalled_pins_terminates_on_demand_without_blocking() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(1), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(10))
+                .with_sparse_capacity(nz(10))
+                .with_segment_capacity(nz(1))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let w = trunk.segment_writer().unwrap();
         let mut stall = trunk.pin_segments(ArchiveOverrun::StallIngest);
 
@@ -6886,7 +7396,14 @@ mod tests {
     /// fix.
     #[test]
     fn parts_in_segment_finds_open_segments_parts_even_after_a_later_segments_part_arrives() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let w = trunk.segment_writer().unwrap();
         w.publish_part(PartEntry::new(
             Bytes::from_static(b"a"),
@@ -6929,7 +7446,14 @@ mod tests {
 
     #[test]
     fn segment_start_time_returns_reported_start() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(4), nz(4)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(4))
+                .with_part_capacity(nz(4)),
+        );
         let writer = trunk.segment_writer().unwrap();
         writer.note_segment_start(SegmentSeq::new(7), MediaTime(12345));
         assert_eq!(
@@ -6940,7 +7464,14 @@ mod tests {
 
     #[test]
     fn segment_start_time_unknown_seq_is_none() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(4), nz(4)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(4))
+                .with_part_capacity(nz(4)),
+        );
         let writer = trunk.segment_writer().unwrap();
         writer.note_segment_start(SegmentSeq::new(7), MediaTime(12345));
         assert_eq!(trunk.segment_start_time(SegmentSeq::new(8)), None);
@@ -6949,7 +7480,14 @@ mod tests {
     #[test]
     fn segment_start_time_evicted_returns_none() {
         // event_capacity == 2 => segment_starts capacity == 2.
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(2), nz(4)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(2))
+                .with_part_capacity(nz(4)),
+        );
         let writer = trunk.segment_writer().unwrap();
         writer.note_segment_start(SegmentSeq::new(1), MediaTime(100));
         writer.note_segment_start(SegmentSeq::new(2), MediaTime(200));
@@ -6968,7 +7506,14 @@ mod tests {
 
     #[test]
     fn segment_start_time_two_segments_distinct() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(4), nz(4)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(4))
+                .with_part_capacity(nz(4)),
+        );
         let writer = trunk.segment_writer().unwrap();
         writer.note_segment_start(SegmentSeq::new(1), MediaTime(1000));
         writer.note_segment_start(SegmentSeq::new(2), MediaTime(2000));

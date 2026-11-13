@@ -35,7 +35,14 @@ fn nz(n: usize) -> NonZeroUsize {
 /// renderer defaults `CAN-BLOCK-RELOAD=YES`) a Blocking Playlist Reload for
 /// the next request.
 fn canned_playlist() -> String {
-    let trunk = Trunk::new(TrunkConfig::new(nz(16), nz(4), nz(8), nz(4), nz(16)));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(16))
+            .with_sparse_capacity(nz(4))
+            .with_segment_capacity(nz(8))
+            .with_event_capacity(nz(4))
+            .with_part_capacity(nz(16)),
+    );
     let writer = trunk
         .segment_writer()
         .expect("first (and only) segment writer");

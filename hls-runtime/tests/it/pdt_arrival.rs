@@ -19,7 +19,14 @@ fn nz(n: usize) -> NonZeroUsize {
 }
 
 fn trunk_with() -> (Arc<Trunk>, SegmentWriter) {
-    let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(64))
+            .with_sparse_capacity(nz(8))
+            .with_segment_capacity(nz(8))
+            .with_event_capacity(nz(8))
+            .with_part_capacity(nz(64)),
+    );
     let writer = trunk.segment_writer().expect("writer");
     (trunk, writer)
 }
@@ -259,7 +266,14 @@ fn clock_called_exactly_once() {
 #[test]
 fn iframe_pdt_equals_media_pdt() {
     // fMP4 fixture setup mirroring iframe_playlist.rs.
-    let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(64), nz(8), nz(64)));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(64))
+            .with_sparse_capacity(nz(8))
+            .with_segment_capacity(nz(64))
+            .with_event_capacity(nz(8))
+            .with_part_capacity(nz(64)),
+    );
     let writer = trunk.segment_writer().expect("writer");
     let clock = Arc::new(|| NOW_MS) as Arc<dyn Fn() -> i64 + Send + Sync>;
     let origin = HlsOrigin::builder(Arc::clone(&trunk))

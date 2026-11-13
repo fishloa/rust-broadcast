@@ -1,9 +1,9 @@
-#[cfg(feature = "media")]
-mod send_sync;
 mod dtls_fingerprint;
 mod golden_http;
 mod sdp_builder;
 mod secret_hygiene;
+#[cfg(feature = "media")]
+mod send_sync;
 mod session_state;
 #[cfg(feature = "media")]
 mod srtp_rfc3711_vectors;

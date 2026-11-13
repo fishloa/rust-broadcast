@@ -769,7 +769,12 @@ pub async fn serve_for_test_with_read_load() -> (
 fn trunk_config_for_test() -> TrunkConfig {
     use std::num::NonZeroUsize;
     let nz = |n: usize| NonZeroUsize::new(n).unwrap();
-    TrunkConfig::new(nz(64), nz(16), nz(8), nz(8), nz(8))
+    TrunkConfig::default()
+        .with_timed_capacity(nz(64))
+        .with_sparse_capacity(nz(16))
+        .with_segment_capacity(nz(8))
+        .with_event_capacity(nz(8))
+        .with_part_capacity(nz(8))
 }
 
 fn handshake_for_test() -> HandshakePolicy {

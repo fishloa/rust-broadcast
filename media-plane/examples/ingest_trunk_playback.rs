@@ -124,7 +124,12 @@ fn main() {
         announced: false,
         pending: VecDeque::new(),
     };
-    let trunk_config = TrunkConfig::new(nz(1024), nz(64), nz(32), nz(32), nz(16));
+    let trunk_config = TrunkConfig::default()
+        .with_timed_capacity(nz(1024))
+        .with_sparse_capacity(nz(64))
+        .with_segment_capacity(nz(32))
+        .with_event_capacity(nz(32))
+        .with_part_capacity(nz(16));
     let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
     // `max_programs` bounds how many `Trunk`s one session may mint (the fifth
     // unbounded-allocation vector this workspace has had). A single capture

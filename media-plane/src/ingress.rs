@@ -1799,7 +1799,12 @@ mod tests {
     /// Minimal config every test's `Trunk`s share — capacities are irrelevant
     /// to these tests beyond "large enough that nothing evicts mid-test".
     fn trunk_config() -> TrunkConfig {
-        TrunkConfig::new(nz(64), nz(16), nz(8), nz(8), nz(8))
+        TrunkConfig::default()
+            .with_timed_capacity(nz(64))
+            .with_sparse_capacity(nz(16))
+            .with_segment_capacity(nz(8))
+            .with_event_capacity(nz(8))
+            .with_part_capacity(nz(8))
     }
 
     /// A handshake deadline far enough out that it never fires — for the
