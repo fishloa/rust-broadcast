@@ -21,13 +21,14 @@ use crate::source::datagram::Datagram;
 use crate::source::fetch::conn::ConnAlloc;
 use crate::source::fetch::wall::WallClock;
 use crate::source::hls_session::HlsSession;
-use crate::source::rtmp::{RTMPS_DEFAULT_PORT, RtmpSource, SCHEME_RTMP, SCHEME_RTMPS};
+use crate::source::rtmp::{RtmpSource, SCHEME_RTMP, SCHEME_RTMPS};
 use crate::source::rtsp::RtspSource;
 use crate::source::smooth::SmoothSource;
 use crate::source::srt::Notice;
 use crate::source::ts_http::TsHttpSource;
 use crate::source::ts_http_hold::{HoldLimits, StreamKind};
 use broadcast_auth::AuthState;
+use rtmp_runtime::target::RTMPS_DEFAULT_PORT;
 use transmux::JumpDetector;
 use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 

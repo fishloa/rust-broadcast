@@ -290,7 +290,17 @@ pub struct AsyncRtmpClient<S = TcpStream> {
 
 impl AsyncRtmpClient<TcpStream> {
     /// DNS + TCP connect bounded by `timeouts.connect`; `publish` is NOT started.
+    ///
+    /// An `rtmps` target is refused: this adapter opens plain TCP, and sending
+    /// RTMP in the clear to a TLS port (443) would leak the stream key. Wrap a
+    /// TLS stream and use [`AsyncRtmpClient::from_stream`] instead.
     pub async fn connect(target: &RtmpTarget, timeouts: Timeouts) -> io::Result<Self> {
+        if target.tls {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "rtmps needs a TLS stream: wrap one and use AsyncRtmpClient::from_stream",
+            ));
+        }
         let stream = tokio::time::timeout(timeouts.connect, async {
             let addrs = target.resolve().await?;
             TcpStream::connect(&addrs[..]).await

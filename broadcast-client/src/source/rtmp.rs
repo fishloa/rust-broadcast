@@ -16,8 +16,8 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use crate::tshttp::{Config as TsConfig, TsHttpPolicy};
-use percent_encoding::percent_decode_str;
 use rtmp_runtime::client::{ClientConfig, ClientEvent, ClientMode, ClientSession};
+use rtmp_runtime::target::RtmpTarget;
 use transmux::{DemuxEvent, StreamingFlvDemux, TrackId, TrackSpec};
 use url::{Host, Url};
 
@@ -26,13 +26,13 @@ use crate::events::{Action, ErrorKind, Event, MAX_SERVER_REFUSED_REASON_BYTES, S
 
 pub(crate) const SCHEME_RTMP: &str = "rtmp";
 pub(crate) const SCHEME_RTMPS: &str = "rtmps";
-pub(crate) const RTMP_DEFAULT_PORT: u16 = 1935;
-pub(crate) const RTMPS_DEFAULT_PORT: u16 = 443;
-const PATH_SEPARATOR: char = '/';
 const FIRST_CONN_ID: u32 = 1;
 const MICROS_PER_MILLI: u64 = 1_000;
 const STATUS_STREAM_NOT_FOUND: &str = "NetStream.Play.StreamNotFound";
 
+/// The parsed target: [`rtmp_runtime::target::RtmpTarget`] (which owns the RTMP URL grammar:
+/// `rtmp`/`rtmps`, default ports, percent-decoding) with the host as the text a connect
+/// action carries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Target {
     pub(crate) host: String,
@@ -43,62 +43,20 @@ pub(crate) struct Target {
     pub(crate) tc_url: String,
 }
 
-/// Split `rtmp[s]://host[:port]/app/stream[?query]`: the app is the first path segment, the stream
-/// name the rest of the path and the query.
 pub(crate) fn parse_target(url: &Url) -> Result<Target, Error> {
-    let tls = url.scheme() == SCHEME_RTMPS;
-    let host = match url.host() {
-        Some(Host::Domain(d)) => d.to_string(),
-        Some(Host::Ipv4(a)) => a.to_string(),
-        Some(Host::Ipv6(a)) => a.to_string(),
-        None => return Err(Error::InvalidUrl("missing host".to_string())),
+    let target = RtmpTarget::parse(url.as_str()).map_err(|e| Error::InvalidUrl(e.to_string()))?;
+    let host = match &target.host {
+        Host::Domain(d) => d.clone(),
+        Host::Ipv4(a) => a.to_string(),
+        Host::Ipv6(a) => a.to_string(),
     };
-    let port = url.port().unwrap_or(if tls {
-        RTMPS_DEFAULT_PORT
-    } else {
-        RTMP_DEFAULT_PORT
-    });
-    let path = url.path().trim_start_matches(PATH_SEPARATOR);
-    let (app_raw, rest) = path.split_once(PATH_SEPARATOR).unwrap_or((path, ""));
-    let decode = |raw: &str| {
-        percent_decode_str(raw)
-            .decode_utf8()
-            .map(|s| s.into_owned())
-            .map_err(|_| Error::InvalidUrl("rtmp path is not valid UTF-8".to_string()))
-    };
-    let app = decode(app_raw)?;
-    let mut stream = decode(rest)?;
-    if let Some(query) = url.query() {
-        stream.push('?');
-        stream.push_str(query);
-    }
-    if app.is_empty() || stream.is_empty() || stream.starts_with('?') {
-        return Err(Error::InvalidUrl(
-            "rtmp URL needs an app and a stream name".to_string(),
-        ));
-    }
-    let authority = match url.port() {
-        Some(p) => alloc::format!("{host}:{p}"),
-        None => host.clone(),
-    };
-    let host_in_url = if host.contains(':') {
-        alloc::format!("[{host}]")
-    } else {
-        host.clone()
-    };
-    let authority = if host.contains(':') {
-        authority.replacen(&host, &host_in_url, 1)
-    } else {
-        authority
-    };
-    let tc_url = alloc::format!("{}://{authority}/{app}", url.scheme());
     Ok(Target {
         host,
-        port,
-        tls,
-        app,
-        stream,
-        tc_url,
+        port: target.port,
+        tls: target.tls,
+        app: target.app,
+        stream: target.stream_key,
+        tc_url: target.tc_url,
     })
 }
 

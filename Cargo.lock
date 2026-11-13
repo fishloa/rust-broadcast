@@ -3631,6 +3631,7 @@ dependencies = [
  "broadcast-common",
  "bytes",
  "futures-util",
+ "percent-encoding",
  "serde",
  "serde_json",
  "subtle",
