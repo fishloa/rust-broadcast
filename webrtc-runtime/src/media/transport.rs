@@ -35,7 +35,7 @@ use crate::media::gather::StunGather;
 // ---------------------------------------------------------------------------
 
 /// RFC 5764 §5.1.2: a first byte of 0 or 1 is STUN.
-const DEMUX_STUN_MAX: u8 = 1;
+pub(super) const DEMUX_STUN_MAX: u8 = 1;
 /// RFC 5764 §5.1.2: a first byte of 20-63 (inclusive) is DTLS.
 const DEMUX_DTLS_MIN: u8 = 20;
 const DEMUX_DTLS_MAX: u8 = 63;

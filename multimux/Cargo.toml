@@ -271,6 +271,8 @@ transmux = { path = "../transmux", version = "0.31.0", features = ["sample-aes"]
 # `test-seams`: webrtc-runtime's hidden fault-injection hooks (inert without
 # `media`, so this pulls nothing extra into builds that do not enable whip/whep).
 webrtc-runtime   = { path = "../webrtc-runtime", version = "0.7.0", default-features = false, features = ["test-seams"] }
+# Builds the STUN connectivity checks the WHEP shared-socket tests send.
+rtc-stun         = "0.21"
 # `test-util`: the paused, manually advanced clock the push-flush tests use
 # instead of sleeping (feature-only; no new version in the lock).
 tokio            = { version = "1", features = ["test-util"] }

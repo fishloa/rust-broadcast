@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Changed
+- WHEP viewers of a route share one UDP media socket per advertised IP (bound on the first viewer) instead of binding one each: every viewer's answer carries the shared address as its candidate, a receive loop asks `webrtc_runtime::media::SocketDemux` which viewer each datagram belongs to, and each viewer has a bounded queue that drops its newest datagrams when full without delaying the others. An ICE restart registers the new local ufrag with the shared socket (issue #2529).
 - WHEP packetises each sample once per route instead of once per viewer: the route keeps the last 64 samples' RTP packets, and each viewer only sets its own sequence number, timestamp, SSRC and payload type on a copy before SRTP (issue #2529).
 - A WHEP session's UDP receive buffer is 1500 bytes (one Ethernet MTU) instead of 64 KiB.
 - Each admitted WHIP session runs on its own task, which owns its `MediaTransport`, its ICE/DTLS timers and its idle deadline; the route's publisher receives only the outcomes it must act on over a bounded channel, so a slow publisher or a stalled session no longer holds up another session's reads. A session whose publisher ends it is aborted, which closes its media socket at once. This completes the one-task-per-session work for RTMP and WHIP (issue #2525).
