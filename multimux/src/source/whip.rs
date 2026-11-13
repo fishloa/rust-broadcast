@@ -83,10 +83,9 @@ use std::time::{Duration, Instant};
 use transmux::TrackId;
 
 use broadcast_common::{Demand, Parse as _, Serialize as _, Stage, Timestamp};
-use futures_util::StreamExt;
-use futures_util::stream::FuturesUnordered;
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::{Notify, OnceCell, mpsc};
+use tokio::task::JoinSet;
 
 use media_plane::ingress::{
     AdmittedDriver, HandshakePolicy, IngestSession, ListenDriver, Listener, ProgramId,
@@ -1514,7 +1513,6 @@ enum ReadOutcome {
 
 /// What one [`read_one`] hands back to [`run_whip`]'s loop.
 struct ReadDone {
-    id: SessionId,
     /// The transport, returned so the next [`read_one`] owns it again (SP6.3).
     media: MediaTransport,
     outcome: ReadOutcome,
@@ -1610,18 +1608,16 @@ async fn fire_timer<S: DatagramIo>(
     }
 }
 
-/// Awaits the next UDP datagram for session `id`, bounded by `idle_deadline`
+/// Awaits the next UDP datagram of one session, bounded by `idle_deadline`
 /// (an absolute instant when the session may end for lack of inbound
 /// datagrams — set from the last datagram so a transport-timer wake never
 /// re-arms it): decrypts through `media` (ICE/DTLS/SRTP), drains and sends
 /// every outbound datagram [`MediaTransport::poll_transmit`] now wants sent,
 /// and reconstructs wire bytes for every [`MediaEvent::Rtp`] observed. The
 /// [`MediaTransport`] is owned outright and returned in the outcome so the
-/// next [`read_one`] takes it again (SP6.3). Boxed so [`run_whip`] can hold
-/// many of these, one per admitted session, in one [`FuturesUnordered`] —
-/// mirrors `crate::source::rtmp::read_one`.
+/// next [`read_one`] takes it again (SP6.3). [`run_session`] loops it on the
+/// session's own task.
 fn read_one<S: DatagramIo>(
-    id: SessionId,
     socket: Arc<S>,
     mut media: MediaTransport,
     idle_deadline: Instant,
@@ -1638,7 +1634,6 @@ fn read_one<S: DatagramIo>(
         let ctl = control.take();
         if ctl.terminated {
             return ReadDone {
-                id,
                 media,
                 outcome: ReadOutcome::Terminated,
                 last_fire,
@@ -1668,7 +1663,6 @@ fn read_one<S: DatagramIo>(
         if crate::webrtc_session::timer_due(deadline, last_fire, now) {
             let outcome = fire_timer(&mut media, socket.as_ref(), &shared).await;
             return ReadDone {
-                id,
                 media,
                 outcome,
                 last_fire: Some(now),
@@ -1744,7 +1738,6 @@ fn read_one<S: DatagramIo>(
             () = control.notified() => ReadOutcome::Control,
         };
         ReadDone {
-            id,
             media,
             outcome,
             last_fire,
@@ -1790,26 +1783,55 @@ fn sleep_until_opt(deadline: Option<Instant>) -> Pin<Box<dyn Future<Output = ()>
     }
 }
 
-/// Builds session `id`'s next [`read_one`] (or `None` when the driver no
-/// longer holds it).
-fn rearm(
-    admitted: &AdmittedDriver<WhipListener, DriverProgress>,
-    infra: &WhipInfra,
+/// Read outcomes one session may have queued for the route's publisher
+/// before its read task waits.
+const OUTCOMES_PER_SESSION: usize = 4;
+
+/// Session `id`'s own task: owns the [`MediaTransport`] and runs [`read_one`]
+/// in a loop, so one session's reads, ICE/DTLS timers and idle deadline never
+/// wait on another's or on the route's publisher. Only outcomes the publisher
+/// must act on (RTP to feed, or the end of the session) are sent over `tx`, a
+/// bounded channel; a timer wake or a `PATCH` is handled here.
+///
+/// The idle bound is measured from the last datagram that carried media (the
+/// session's own clock, set at admission), so a timer wake or a trickle
+/// `PATCH` never extends it and a vanished publisher is reaped by inactivity
+/// alone.
+async fn run_session<S: DatagramIo>(
     id: SessionId,
-    media: MediaTransport,
-    idle_deadline: Instant,
-    last_fire: Option<Instant>,
-) -> Option<BoxedRead> {
-    let session = admitted.driver(id)?.session();
-    Some(read_one(
-        id,
-        session.socket_handle(),
-        media,
-        idle_deadline,
-        last_fire,
-        session.control_handle(),
-        ReadShared::of(infra),
-    ))
+    socket: Arc<S>,
+    mut media: MediaTransport,
+    control: Arc<SessionControl>,
+    shared: ReadShared,
+    read_timeout: Duration,
+    tx: mpsc::Sender<(SessionId, ReadOutcome)>,
+) {
+    let mut last_input = clock_now();
+    let mut last_fire = None;
+    loop {
+        let done = read_one(
+            Arc::clone(&socket),
+            media,
+            last_input + read_timeout,
+            last_fire,
+            Arc::clone(&control),
+            shared.clone(),
+        )
+        .await;
+        media = done.media;
+        last_fire = done.last_fire;
+        let outcome = done.outcome;
+        match &outcome {
+            ReadOutcome::Timer | ReadOutcome::Control => continue,
+            ReadOutcome::Events(wire) if !wire.is_empty() => last_input = clock_now(),
+            ReadOutcome::Events(_) => continue,
+            _ => {}
+        }
+        let terminal = !matches!(outcome, ReadOutcome::Events(_));
+        if tx.send((id, outcome)).await.is_err() || terminal {
+            return;
+        }
+    }
 }
 
 /// Publish and segment session `id`'s programs once its read made progress,
@@ -1879,11 +1901,10 @@ pub(crate) async fn run_whip_with_clock(
         ),
         start,
     );
-    // The transport's own next timer, per session, carried across reads so
-    // its `MIN_TIMER_INTERVAL` floor is measured from the real previous fire
-    // (issue #1150).
-    let mut last_fire: HashMap<SessionId, Option<Instant>> = HashMap::new();
-    let mut reads: FuturesUnordered<BoxedRead> = FuturesUnordered::new();
+    let (outcomes_tx, mut outcomes) =
+        mpsc::channel(route.max_sessions.max(1) * OUTCOMES_PER_SESSION);
+    let mut readers: JoinSet<()> = JoinSet::new();
+    let mut reader_handles: HashMap<SessionId, tokio::task::AbortHandle> = HashMap::new();
 
     loop {
         tokio::select! {
@@ -1892,9 +1913,8 @@ pub(crate) async fn run_whip_with_clock(
             () = infra.admit_notify.notified() => {
                 admitted.prune_clocks();
             }
-            Some(ReadDone { id, media, outcome, last_fire: fired }) = reads.next(), if !reads.is_empty() => {
+            Some((id, outcome)) = outcomes.recv() => {
                 let now = admitted.now(id, clock());
-                last_fire.insert(id, fired);
                 match outcome {
                     ReadOutcome::Events(events) => {
                         for wire in &events {
@@ -1929,24 +1949,13 @@ pub(crate) async fn run_whip_with_clock(
                     }
                 }
                 if admitted.reap(id) {
-                    last_fire.remove(&id);
+                    if let Some(handle) = reader_handles.remove(&id) {
+                        handle.abort();
+                    }
                     // The capacity slot reserved BEFORE this session's media
                     // setup (issue r07-C11) is released here, or every
                     // session that ever completes leaves it occupied forever.
                     active_sessions.fetch_sub(1, Ordering::SeqCst);
-                } else {
-                    // The idle bound is measured from the last datagram the
-                    // session actually took in (a transport-timer wake and a
-                    // trickle `PATCH` both leave the driver untouched), so a
-                    // vanished publisher is reaped by inactivity alone.
-                    if admitted.took_input(id) {
-                        admitted.touch(id, clock());
-                    }
-                    let idle_deadline = admitted.idle_deadline(id, read_timeout);
-                    let last = last_fire.get(&id).copied().flatten();
-                    if let Some(next) = rearm(&admitted, &infra, id, media, idle_deadline, last) {
-                        reads.push(next);
-                    }
                 }
             }
         }
@@ -1987,17 +1996,18 @@ pub(crate) async fn run_whip_with_clock(
             infra.admitted_total.fetch_add(1, Ordering::SeqCst);
             infra.admit_count_notify.notify_waiters();
             admitted.register(id, clock());
-            last_fire.insert(id, None);
-            let idle_deadline = admitted.idle_deadline(id, read_timeout);
-            reads.push(read_one(
+            reader_handles.insert(
                 id,
-                socket,
-                media,
-                idle_deadline,
-                None,
-                control,
-                ReadShared::of(&infra),
-            ));
+                readers.spawn(run_session(
+                    id,
+                    socket,
+                    media,
+                    control,
+                    ReadShared::of(&infra),
+                    read_timeout,
+                    outcomes_tx.clone(),
+                )),
+            );
         }
     }
 }
@@ -2164,7 +2174,6 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
         // the timer arm can fire.
         let idle_deadline = Instant::now() + Duration::from_secs(3600);
         let fut = read_one(
-            SessionId(0),
             socket,
             media,
             idle_deadline,
@@ -2258,7 +2267,6 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
         for i in 0..4000 {
             let deadline = media.poll_timeout();
             let done = read_one(
-                SessionId(0),
                 Arc::clone(&socket),
                 media,
                 idle_deadline,
@@ -2888,5 +2896,103 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
              change (e.g. the WP2.1 router move) must be listed in the \
              multimux CHANGELOG"
         );
+    }
+
+    /// A socket that never receives a datagram: a publisher gone silent.
+    struct SilentSocket;
+
+    impl DatagramIo for SilentSocket {
+        fn recv_from<'a>(
+            &'a self,
+            _buf: &'a mut [u8],
+        ) -> impl Future<Output = std::io::Result<(usize, std::net::SocketAddr)>> + Send + 'a
+        {
+            std::future::pending()
+        }
+        fn send_to<'a>(
+            &'a self,
+            buf: &'a [u8],
+            _target: std::net::SocketAddr,
+        ) -> impl Future<Output = std::io::Result<usize>> + Send + 'a {
+            std::future::ready(Ok(buf.len()))
+        }
+    }
+
+    fn idle_media() -> MediaTransport {
+        MediaTransport::new(
+            MediaTransportConfig {
+                local_addr: "127.0.0.1:0".parse().unwrap(),
+                local_ice_ufrag: crate::secure_random::token(8),
+                local_ice_pwd: crate::secure_random::token(24),
+                remote_ice_ufrag: crate::secure_random::token(8),
+                remote_ice_pwd: crate::secure_random::token(24),
+                remote_fingerprint: OFFER_FINGERPRINT.into(),
+                is_controlling: false,
+                local_setup: SetupRole::Passive,
+                stun_server: None,
+                max_remote_candidates: MAX_REMOTE_CANDIDATES,
+            },
+            clock_now(),
+        )
+        .unwrap()
+    }
+
+    fn spawn_silent_session(
+        id: u64,
+        read_timeout: Duration,
+        tx: &mpsc::Sender<(SessionId, ReadOutcome)>,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(run_session(
+            SessionId(id),
+            Arc::new(SilentSocket),
+            idle_media(),
+            SessionControl::new(),
+            test_shared(),
+            read_timeout,
+            tx.clone(),
+        ))
+    }
+
+    /// A session that hears nothing ends on its own deadline, measured from
+    /// its admission, and reports it over the channel.
+    #[tokio::test(start_paused = true)]
+    async fn an_idle_session_times_out_on_its_own_deadline() {
+        const IDLE: Duration = Duration::from_secs(5);
+        let (tx, mut outcomes) = mpsc::channel(OUTCOMES_PER_SESSION);
+        let task = spawn_silent_session(1, IDLE, &tx);
+        tokio::time::sleep(IDLE - Duration::from_secs(1)).await;
+        assert!(
+            outcomes.try_recv().is_err(),
+            "the session ended before its idle deadline"
+        );
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let (id, outcome) = outcomes.recv().await.expect("the timed-out outcome");
+        assert_eq!(id, SessionId(1));
+        assert!(matches!(outcome, ReadOutcome::TimedOut), "{outcome:?}");
+        task.await
+            .expect("the session task ends after a terminal outcome");
+    }
+
+    /// Two sessions of one route run independently: one that times out
+    /// delivers its outcome while the other is still silent, and the
+    /// route's publisher need not be receiving for either to progress.
+    #[tokio::test(start_paused = true)]
+    async fn a_stalled_session_does_not_hold_up_another() {
+        const SHORT: Duration = Duration::from_secs(5);
+        const LONG: Duration = Duration::from_secs(3600);
+        let (tx, mut outcomes) = mpsc::channel(OUTCOMES_PER_SESSION);
+        let stalled = spawn_silent_session(1, LONG, &tx);
+        let other = spawn_silent_session(2, SHORT, &tx);
+        tokio::time::sleep(SHORT + Duration::from_secs(1)).await;
+        other.await.expect("the short session ended on its own");
+        let (id, outcome) = outcomes.try_recv().expect("the short session reported");
+        assert_eq!(id, SessionId(2));
+        assert!(matches!(outcome, ReadOutcome::TimedOut), "{outcome:?}");
+        assert!(
+            outcomes.try_recv().is_err(),
+            "the stalled session is still waiting"
+        );
+        assert!(!stalled.is_finished());
+        stalled.abort();
     }
 }
