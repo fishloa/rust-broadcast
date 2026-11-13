@@ -2211,6 +2211,13 @@ pub struct Config {
     /// Must be positive.
     #[serde(default = "default_max_concurrent_warms_per_route")]
     pub max_concurrent_warms_per_route: usize,
+    /// UDP media sockets a WHEP output binds per advertised IP; its viewers are spread over them
+    /// round-robin. More sockets spread the viewers' SRTP sends across cores (one socket's send
+    /// path serialises them: with 1000 real viewers on one socket the slowest received 54% of
+    /// the frames) at the cost of one file descriptor and one receive task per socket. Must be
+    /// positive; see [`crate::output::whep::WhepRoute::with_media_sockets_per_ip`].
+    #[serde(default = "default_whep_media_sockets_per_ip")]
+    pub whep_media_sockets_per_ip: usize,
     /// Maximum accepted request body size, in bytes — see
     /// [`crate::origin::HttpLimits::max_request_body_bytes`].
     pub max_request_body_bytes: usize,
@@ -2360,6 +2367,13 @@ impl PreboundBinds {
 /// Default [`Config::playlist_name`] when a config omits the field:
 /// [`crate::output::hls::DEFAULT_PLAYLIST_NAME`], preserving every
 /// pre-#663 config's `/media.m3u8` behaviour unchanged.
+/// Default [`Config::whep_media_sockets_per_ip`].
+pub const DEFAULT_WHEP_MEDIA_SOCKETS_PER_IP: usize = 8;
+
+fn default_whep_media_sockets_per_ip() -> usize {
+    DEFAULT_WHEP_MEDIA_SOCKETS_PER_IP
+}
+
 /// Default [`Config::max_concurrent_warms_per_route`].
 fn default_max_concurrent_warms_per_route() -> usize {
     crate::route::DEFAULT_MAX_CONCURRENT_WARMS
@@ -2402,6 +2416,7 @@ impl Default for Config {
             max_concurrent_requests: crate::origin::DEFAULT_MAX_CONCURRENT_REQUESTS,
             max_blocking_reloads_per_route: default_max_blocking_reloads_per_route(),
             max_concurrent_warms_per_route: default_max_concurrent_warms_per_route(),
+            whep_media_sockets_per_ip: default_whep_media_sockets_per_ip(),
             max_request_body_bytes: crate::origin::DEFAULT_MAX_REQUEST_BODY_BYTES,
             concurrency_queue_timeout_secs: crate::origin::DEFAULT_QUEUE_TIMEOUT.as_secs_f64(),
             ingest_connect_timeout_secs: crate::source::DEFAULT_CONNECT_TIMEOUT.as_secs_f64(),
@@ -2573,6 +2588,12 @@ impl Config {
                 reason: "must be positive".into(),
             });
         }
+        if self.whep_media_sockets_per_ip == 0 {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "whep_media_sockets_per_ip",
+                reason: "must be positive".into(),
+            });
+        }
         if self.max_concurrent_warms_per_route == 0 {
             return Err(MultimuxError::ConfigInvalid {
                 field: "max_concurrent_warms_per_route",
@@ -2699,6 +2720,27 @@ mod tests {
             }}"#
         );
         serde_json::from_str(&json).unwrap()
+    }
+
+    /// The WHEP media socket count defaults to 8, is read from the JSON key and is rejected at
+    /// zero, naming its field.
+    #[test]
+    fn the_whep_media_socket_count_defaults_parses_and_rejects_zero() {
+        let default: Config = serde_json::from_str(r#"{"routes": []}"#).unwrap();
+        assert_eq!(default.whep_media_sockets_per_ip, 8);
+        let set: Config =
+            serde_json::from_str(r#"{"routes": [], "whep_media_sockets_per_ip": 3}"#).unwrap();
+        assert_eq!(set.whep_media_sockets_per_ip, 3);
+        let mut zero = config_with_input(
+            r#"{ "type": "rtsp", "url": "rtsp://127.0.0.1:554/s" }"#,
+            false,
+        );
+        zero.validate().expect("the default is valid");
+        zero.whep_media_sockets_per_ip = 0;
+        assert!(matches!(
+            zero.validate(),
+            Err(MultimuxError::ConfigInvalid { field, .. }) if field == "whep_media_sockets_per_ip"
+        ));
     }
 
     /// Secure-by-default ingest (#1142): a listener that admits a publisher
