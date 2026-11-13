@@ -429,6 +429,59 @@ mod tests {
         let _ = server.await;
     }
 
+    /// A non-success DESCRIBE answer other than 401/403/404 is reported as the protocol error
+    /// naming the method and the status the server sent, promptly, so an operator sees the
+    /// server's answer instead of a media timeout.
+    #[tokio::test]
+    async fn rtsp_describe_503_surfaces_the_status_promptly() {
+        const READ: Duration = Duration::from_secs(30);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback");
+        let addr = listener.local_addr().expect("local addr");
+        let server = tokio::spawn(async move {
+            let (sock, _) = listener.accept().await.expect("accept");
+            serve_requests(sock, |_method, cseq| {
+                Some(rtsp_response(cseq, "503 Service Unavailable", "", ""))
+            })
+            .await
+        });
+        let route = RtspRoute::new("unavailable", format!("rtsp://{addr}/stream")).with_timeouts(
+            crate::source::IngestTimeouts {
+                connect: Duration::from_secs(5),
+                read: READ,
+            },
+        );
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
+        let started = std::time::Instant::now();
+        let err = tokio::time::timeout(
+            Duration::from_secs(10),
+            run_rtsp(
+                &route,
+                trunk_config(),
+                handshake(),
+                &route_handle,
+                tokio_util::sync::CancellationToken::new(),
+            ),
+        )
+        .await
+        .expect("the refusal must end the run long before the media timeout");
+        assert!(
+            matches!(
+                &err,
+                MultimuxError::Protocol { phase, reason }
+                    if *phase == "DESCRIBE" && reason == "non-success status Service Unavailable"
+            ),
+            "got {err:?}"
+        );
+        assert!(
+            !crate::origin::supervisor::is_permanent_describe_not_found(&err),
+            "a transient refusal is not permanent"
+        );
+        assert!(started.elapsed() < READ);
+        let _ = server.await;
+    }
+
     /// A `404` on DESCRIBE (a wrong URL path) must surface as the exact
     /// `MultimuxError::Protocol { phase: "DESCRIBE", reason: "non-success
     /// status Not Found" }` that `is_permanent_describe_not_found` matches.
