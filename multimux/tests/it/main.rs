@@ -58,6 +58,7 @@ mod rtsp_ingest;
 mod rtsp_pull_golden;
 mod sdp_session;
 mod secret_hygiene;
+mod send_sync;
 mod server_timeouts;
 mod shutdown_cancel;
 #[cfg(feature = "test-seams")]

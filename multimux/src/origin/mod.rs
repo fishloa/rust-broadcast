@@ -4501,7 +4501,7 @@ mod tests {
         // (asynchronous) socket bind has ample time to land before the first
         // datagram that matters arrives.
         let ts_bytes =
-            crate::source::ts_program::test_support::build_ts_bytes(TrackId::new(1), 0xAB, 60);
+            media_plane::ts_session::test_support::build_ts_bytes(TrackId::new(1), 0xAB, 60);
         let sender = tokio::net::UdpSocket::bind("127.0.0.1:0")
             .await
             .expect("bind sender");

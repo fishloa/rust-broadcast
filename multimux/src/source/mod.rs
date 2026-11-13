@@ -47,7 +47,6 @@ pub(crate) mod split_audio;
 pub(crate) mod split_subtitle;
 pub mod srt;
 pub mod ts_http;
-pub mod ts_program;
 pub mod ts_udp;
 pub mod udp;
 // WHIP push input (issue #740) — needs `webrtc_runtime::media`, MSRV 1.88 (see
@@ -64,12 +63,10 @@ use transmux::rtp::RtpMediaKind;
 
 pub(crate) use crate::secure_random::seed_entropy;
 
-/// Read-size hint every MPEG-2 TS transport reports via
-/// [`broadcast_common::Stage::demand`], and the read-buffer size the
-/// datagram transports allocate — comfortably above a typical 7×188-byte
-/// (1316-byte) TS-over-UDP payload and any legal UDP datagram (65 507 bytes
-/// over IPv4), so a single `recv` always captures a whole datagram.
-pub const MAX_TS_READ: usize = 65_536;
+/// Counts samples the TS pre-resolution backlog dropped on overflow.
+pub(crate) fn count_ts_backlog_dropped(dropped: u64) {
+    metrics::counter!(crate::prometheus::TS_BACKLOG_DROPPED_TOTAL).increment(dropped);
+}
 
 /// Hard cap on concurrently in-flight HTTP fetches a pull source
 /// (`hls_pull`/`dash_pull`/`smooth_pull`, plan step 5a round 3) keeps open at
@@ -230,7 +227,7 @@ pub(crate) fn pull_trunk_config(window_segments: usize) -> media_plane::trunk::T
 /// caller cannot observe in advance, since it doesn't exist until `run_*` is
 /// actually called. Expressing the deadline as "nanoseconds since a start
 /// near zero" (matching this crate's own test fixtures, e.g.
-/// `ts_program::test_support::handshake`) rather than a predicted absolute
+/// `media_plane::ts_session::test_support::handshake`) rather than a predicted absolute
 /// instant sidesteps that: both clocks start within microseconds of each
 /// other in practice (this function runs immediately before the `run_*` call
 /// it bounds), which is immaterial against a multi-second `timeout`.
@@ -619,7 +616,7 @@ mod driver_progress_tests {
                 if self.feed_count == 2 {
                     self.pending.push_back(SessionEvent::NewProgram {
                         program: ProgramId(0),
-                        tracks: vec![crate::source::ts_program::test_support::track_spec(
+                        tracks: vec![media_plane::ts_session::test_support::track_spec(
                             TrackId::new(1),
                         )],
                     });
@@ -706,10 +703,10 @@ mod advance_route_tests {
 
     use super::*;
     use crate::route::{ProgramResolution, RouteHandle, SPTS_PROGRAM_ID};
-    use crate::source::ts_program::TsIngestSession;
-    use crate::source::ts_program::test_support::{build_ts_bytes, handshake, trunk_config};
     use broadcast_common::Timestamp;
     use media_plane::ingress::IngestDriver;
+    use media_plane::ts_session::TsIngestSession;
+    use media_plane::ts_session::test_support::{build_ts_bytes, handshake, trunk_config};
 
     /// MUTATION VERIFIED: changing `advance_route`'s body to call only
     /// `report_driver_progress` (dropping the

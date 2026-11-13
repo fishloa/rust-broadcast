@@ -501,7 +501,7 @@ impl FlvEvents {
                     // A track resolving *after* establishment is a
                     // genuinely non-conformant encoder (Annex E requires the
                     // sequence header before any media for that track) —
-                    // ignored, mirroring `ts_program::ProgramTracker`'s own
+                    // ignored, mirroring `media_plane::ts_session::ProgramTracker`'s own
                     // "unrouted track" policy for a post-connect PMT bump.
                 }
                 DemuxEvent::Sample {
@@ -522,7 +522,7 @@ impl FlvEvents {
                     }
                     // A sample for a track not in `known_track_ids` (only
                     // possible for the non-conformant late-track case noted
-                    // above) is dropped, exactly like `ts_program`'s
+                    // above) is dropped, exactly like `media_plane::ts_session`'s
                     // unrouted-track policy.
                 }
                 // A mid-stream codec-config change (a new `avcC`/ASC sequence
@@ -908,7 +908,7 @@ pub(crate) async fn run_rtmp_with_clock(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::source::ts_program::test_support::{handshake, trunk_config};
+    use media_plane::ts_session::test_support::{handshake, trunk_config};
     use rtmp_runtime::server::ServerSession;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{TcpListener, TcpStream};
