@@ -898,6 +898,9 @@ pub const TABLE: &[Crate] = &[
             "MergePolicy",
             // Structured `thiserror` error enum — no spec label.
             "MergeError",
+            // --- file_source.rs ---
+            // Structured `thiserror` error for file probe/demux/playout failures.
+            "FileReaderError",
             // --- byte_tap.rs ---
             // Bare enum, but purely descriptive metadata about *this crate's own*
             // pipeline position (wire vs. post-transform), not a token from any
@@ -1117,7 +1120,6 @@ pub const TABLE: &[Crate] = &[
             "IngestError",
             "SessionError",
             "AddSegmentError",
-            "FileReaderError",
             "RtmpPushError",
             "RtspPushError",
             "SendMediaError",

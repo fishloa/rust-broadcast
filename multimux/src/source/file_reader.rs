@@ -3,7 +3,7 @@
 //! produces.
 //!
 //! This is a **plain tokio task**, not a
-//! [`Dialer`](media_plane::ingress::Dialer)/[`IngestSession`]:
+//! [`Dialer`](media_plane::ingress::Dialer)/[`IngestSession`](media_plane::ingress::IngestSession):
 //! there is no connection to dial and no reconnect semantics to honour. The
 //! design it implements is `docs/superpowers/specs/2026-08-11-linear-playout-design.md`
 //! §"`multimux/src/source/file_reader.rs`", issue #748.
