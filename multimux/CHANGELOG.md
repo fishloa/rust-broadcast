@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Changed
+- The session host yields to the runtime every 256 session events it hands to the driver, and the segmenter drives at most 512 queued samples per program per pass (`source::advance_route` yields between passes), so a large queued burst no longer holds a worker thread, or starves a current-thread runtime, for its whole length.
 - Smooth pull uses one process-wide HTTP client (one connection pool and TLS root store) instead of building a client per connection attempt (issue #2533).
 - A segment served with SCTE-35 `emsg` boxes spliced in is spliced once per program (the last 16 are kept) instead of copied and rebuilt on every request (issue #2533).
 - A listener-mode SRT route waiting for its Caller ends the wait when its cancel token fires, instead of relying on the supervisor dropping the future (issue #2533).

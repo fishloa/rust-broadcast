@@ -35,6 +35,10 @@ use crate::source::ts_program::ProgramTracker;
 
 const MESSAGE_QUEUE: usize = 64;
 
+/// Events handed to the driver between two yields to the runtime, so a large queued burst cannot
+/// hold a worker thread (or starve a current-thread runtime) for its whole length.
+const EVENT_DRAIN_YIELD_EVERY: usize = 256;
+
 /// Splits the session's track and sample events per programme, with the same programme policy
 /// every transport shares ([`ProgramTracker`]).
 pub(crate) struct EventIngest {
@@ -463,10 +467,15 @@ impl SessionStep {
         }
     }
 
-    fn drain_events(&mut self, driver: &mut IngestDriver<EventIngest>) -> Verdict {
+    async fn drain_events(&mut self, driver: &mut IngestDriver<EventIngest>) -> Verdict {
         let now = ts(self.start, Instant::now());
         let mut verdict = Verdict::Continue;
+        let mut drained = 0usize;
         while let Some(event) = self.session.next_event() {
+            drained += 1;
+            if drained.is_multiple_of(EVENT_DRAIN_YIELD_EVERY) {
+                tokio::task::yield_now().await;
+            }
             match event {
                 Event::Tracks(_) | Event::Sample { .. } => {
                     self.media_seen = true;
@@ -631,7 +640,7 @@ impl IngestStep<EventIngest> for SessionStep {
             return StepOutcome::Failed(e);
         }
         let mut received = false;
-        let mut verdict = self.drain_events(driver);
+        let mut verdict = self.drain_events(driver).await;
         if matches!(verdict, Verdict::Continue) {
             let now = self.now_us();
             while self.wakes.first().is_some_and(|at| *at <= now) {
@@ -649,7 +658,7 @@ impl IngestStep<EventIngest> for SessionStep {
             if let Err(e) = self.perform_actions().await {
                 return StepOutcome::Failed(e);
             }
-            verdict = self.drain_events(driver);
+            verdict = self.drain_events(driver).await;
         }
         match verdict {
             Verdict::Failed(e) => StepOutcome::Failed(e),
@@ -963,6 +972,52 @@ mod tests {
                 MultimuxError::ConfigInvalid { field, .. } if *field == "udp.reorder_packets"
             ),
             "{error:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_large_queued_event_burst_does_not_starve_another_task() {
+        use crate::source::ts_program::test_support::{build_ts_bytes, handshake};
+        use broadcast_client::Action;
+        use transmux::TrackId;
+
+        let ring = |n: usize| std::num::NonZeroUsize::new(n).expect("non-zero ring");
+        let labels = SessionLabels::new("ts/http", crate::source::IngestTimeouts::default());
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
+        let mut step = SessionStep::open(
+            "http://127.0.0.1:1/stream.ts",
+            Config::relay(),
+            None,
+            labels,
+            route_handle,
+            false,
+        )
+        .expect("open");
+        let conn = loop {
+            match step.session.poll(0) {
+                Some(Action::HttpRequest { conn, .. }) => break conn,
+                Some(_) => {}
+                None => panic!("the session issued no request"),
+            }
+        };
+        let frames = 4 * EVENT_DRAIN_YIELD_EVERY as u32;
+        step.session.on_response(conn, 200, &[], 1);
+        step.session
+            .on_data(conn, &build_ts_bytes(TrackId::new(1), 0xAB, frames), 2);
+        let mut driver = IngestDriver::new(
+            EventIngest::new(),
+            media_plane::trunk::TrunkConfig::new(ring(8192), ring(64), ring(8), ring(8), ring(8)),
+            handshake(),
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        );
+        let ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = std::sync::Arc::clone(&ran);
+        tokio::spawn(async move { flag.store(true, std::sync::atomic::Ordering::SeqCst) });
+        let verdict = step.drain_events(&mut driver).await;
+        assert!(matches!(verdict, Verdict::Fed));
+        assert!(
+            ran.load(std::sync::atomic::Ordering::SeqCst),
+            "draining a large burst must yield to the runtime"
         );
     }
 }
