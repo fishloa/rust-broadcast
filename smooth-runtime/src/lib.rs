@@ -39,5 +39,6 @@ pub use client::{
 pub use error::SmoothError;
 #[cfg(feature = "std")]
 pub use server::{
-    FragmentLocation, SmoothBody, SmoothOrigin, SmoothOriginError, SmoothRequest, StreamKey,
+    FragmentLocation, SmoothBody, SmoothOrigin, SmoothOriginConfig, SmoothOriginError,
+    SmoothRequest, StreamKey,
 };

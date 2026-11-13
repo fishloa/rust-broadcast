@@ -46,6 +46,6 @@
 mod engine;
 
 pub use engine::{
-    FragmentLocation, SegmentProvider, SmoothBody, SmoothOrigin, SmoothOriginError, SmoothRequest,
-    StreamKey, TrackProvider,
+    FragmentLocation, SegmentProvider, SmoothBody, SmoothOrigin, SmoothOriginConfig,
+    SmoothOriginError, SmoothRequest, StreamKey, TrackProvider,
 };
