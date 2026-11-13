@@ -1,6 +1,6 @@
 //! Per-crate data for the `spawn_sites` guard: the runtime crates whose tokio
 //! adapters spawn tasks (or, with an empty list, are asserted to spawn none).
-//! Every entry is line-pinned with its owner and cancel path. Add a line for a
+//! Every entry is keyed by file, enclosing fn and spawn ordinal within the fn, with its owner and cancel path. Add a line for a
 //! new runtime crate.
 
 use crate::spawn_sites::Crate;
@@ -35,47 +35,56 @@ pub const TABLE: &[Crate] = &[
         sites: &[
             (
                 "src/io.rs",
-                971,
+                "spawn",
+                1,
                 "connection driver task; its JoinHandle is stored in SrtSocket and aborted in Drop",
             ),
             (
                 "src/io.rs",
-                2104,
+                "spawn_dedicated_socket_forwarder",
+                1,
                 "listener-side forwarder; owned by a TaskGuard that aborts it on drop",
             ),
             (
                 "src/io.rs",
-                2412,
+                "bind_with",
+                1,
                 "listener routing pump on the listener's TaskTracker; cancelled with the listener's CancellationToken when the handle and every accepted socket drop",
             ),
             (
                 "src/io.rs",
-                2420,
+                "bind_with",
+                2,
                 "listener core on the listener's TaskTracker; cancelled with the listener's CancellationToken when the handle and every accepted socket drop",
             ),
             (
                 "src/io.rs",
-                3516,
+                "the_run_loop_wakes_at_deadlines_not_on_a_fixed_two_ms_tick",
+                1,
                 "test-only: inside `#[cfg(all(test, feature = \"tokio\"))] mod adapter_tests`, which the shared lexer cannot yet blank (a feature term); the test owns and awaits or aborts the task",
             ),
             (
                 "src/io.rs",
-                3789,
+                "a_pending_handshake_is_retransmitted_by_the_listener_tick_alone",
+                1,
                 "test-only: inside `#[cfg(all(test, feature = \"tokio\"))] mod adapter_tests`, which the shared lexer cannot yet blank (a feature term); the test owns and awaits or aborts the task",
             ),
             (
                 "src/io.rs",
-                4529,
+                "dropping_an_accepted_socket_removes_its_route_entry",
+                1,
                 "test-only: inside `#[cfg(all(test, feature = \"tokio\"))] mod adapter_tests`, which the shared lexer cannot yet blank (a feature term); the test owns and awaits or aborts the task",
             ),
             (
                 "src/io.rs",
-                4734,
+                "run_stops_taking_app_payloads_once_the_window_is_full",
+                1,
                 "test-only: inside `#[cfg(all(test, feature = \"tokio\"))] mod adapter_tests`, which the shared lexer cannot yet blank (a feature term); the test owns and awaits or aborts the task",
             ),
             (
                 "src/io.rs",
-                5022,
+                "a_driver_ending_because_its_handle_is_gone_sends_shutdown",
+                1,
                 "test-only: inside `#[cfg(all(test, feature = \"tokio\"))] mod adapter_tests`, which the shared lexer cannot yet blank (a feature term); the test owns and awaits or aborts the task",
             ),
         ],

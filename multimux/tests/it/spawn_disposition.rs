@@ -1,8 +1,9 @@
 //! SP1.4 spawn-disposition guard (W2b-1 Task 7).
 //!
 //! Every non-test `tokio::spawn` / `spawn_blocking` / `thread::spawn` / `…
-//! .spawn(` in `src/**` must appear in the line-pinned [`DISPOSITION`] table
-//! with its owner and cancellation path. A NEW untracked spawn fails this test,
+//! .spawn(` in `src/**` must appear in the [`DISPOSITION`] table, keyed by file,
+//! enclosing `fn` and the spawn's ordinal within that fn (so a refactor that
+//! only moves lines never breaks it), with its owner and cancellation path. A NEW untracked spawn fails this test,
 //! so "every spawn has a disposition" cannot silently rot.
 //!
 //! The scanner strips `#[cfg(test)] mod` bodies using the same whole-file
@@ -15,208 +16,259 @@
 use std::fs;
 use std::path::Path;
 
-/// `(file suffix, 1-based line, owner + cancellation-path reason)`.
-const DISPOSITION: &[(&str, u32, &str)] = &[
+/// `(file suffix, enclosing fn name, 1-based ordinal of the spawn among the
+/// spawns inside that fn in that file, owner + cancellation-path reason)`.
+const DISPOSITION: &[(&str, &str, u32, &str)] = &[
     (
         "source/file_reader.rs",
-        408,
+        "spawn",
+        1,
         "FileReader::spawn -> SpawnedReader (owns a CancellationToken; Drop cancels)",
     ),
     (
         "source/file_reader.rs",
-        485,
+        "read_probe_demux_once",
+        1,
         "spawn_blocking for a blocking file read; awaited inline (owned by the caller)",
     ),
     (
         "route.rs",
-        1250,
+        "poll_dvr",
+        1,
         "spawn_blocking DVR persist; awaited inline",
     ),
     (
         "http.rs",
-        239,
+        "ensure_warm",
+        1,
         "spawn_blocking egress warm-up (ServedEgress::prepare) under a WARMS permit; awaited inline (owned by the request)",
     ),
-    ("dvr.rs", 603, "spawn_blocking DVR write; awaited inline"),
+    (
+        "dvr.rs",
+        "archive_seq_floor",
+        1,
+        "spawn_blocking DVR write; awaited inline",
+    ),
     (
         "source/client_host.rs",
-        333,
+        "perform_actions",
+        1,
         "one HTTP request task per Action::HttpRequest of the session; owned by SessionStep, which aborts it on Action::Close and aborts every outstanding one on drop",
     ),
     (
         "source/client_host.rs",
-        380,
+        "perform_actions",
+        2,
         "one TCP read task per Action::TcpConnect of the session; owned by SessionStep, which aborts it on Action::Close and aborts every outstanding one on drop",
     ),
     (
         "source/client_host.rs",
-        430,
+        "register_socket",
+        1,
         "one datagram receive task per Action::UdpBind of the session; owned by SessionStep, which aborts it on Action::Close and aborts every outstanding one on drop",
     ),
     (
         "push/rtsp.rs",
-        307,
+        "close",
+        1,
         "RTSP push `close` best-effort TEARDOWN: spawned on the current runtime handle (`Handle::try_current`, skipped outside one), the JoinHandle is stored on the transport and an already-running one is aborted on a superseding close, bounded by TEARDOWN_TIMEOUT",
     ),
-    ("source/rtmp.rs", 317, "RTMP accept pump TaskTracker"),
     (
         "source/rtmp.rs",
-        753,
+        "ensure_infra",
+        1,
+        "RTMP accept pump TaskTracker",
+    ),
+    (
+        "source/rtmp.rs",
+        "serve_for_test_with_read_load",
+        1,
         "RTMP run task; owned by the route supervisor handle",
     ),
     (
         "source/rtmp.rs",
-        762,
+        "serve_for_test_with_read_load",
+        2,
         "RTMP accept pump; owned by the route supervisor handle",
     ),
     (
         "source/rtmp.rs",
-        903,
+        "run_rtmp_with_clock",
+        1,
         "one read task per admitted RTMP session, on the run loop's JoinSet (dropped with run_rtmp, which aborts every reader); each ends itself on a terminal read or when the outcome channel closes",
     ),
     (
         "source/whip.rs",
-        349,
+        "ensure_infra",
+        1,
         "WHIP signalling server TaskTracker (WhipInfra)",
     ),
     (
         "source/whip.rs",
-        615,
+        "serve_read_load_inner",
+        1,
         "WHIP run task; owned by the route supervisor handle",
     ),
     (
         "source/whip.rs",
-        629,
+        "serve_read_load_inner",
+        2,
         "WHIP accept pump; owned by the route supervisor handle",
     ),
     (
         "source/whip.rs",
-        1998,
+        "run_whip_with_clock",
+        1,
         "one read task per admitted WHIP session, on the run loop's JoinSet (dropped with run_whip, which aborts every reader) with its AbortHandle aborted when the publisher reaps the session; ends itself on a terminal read or when the outcome channel closes",
     ),
     (
         "source/dashif_ingest.rs",
-        349,
+        "run_dashif_ingest",
+        1,
         "DASH-IF ingest pump task; owned by run_dashif_ingest (aborted on serve exit)",
     ),
     (
         "output/whep.rs",
-        831,
+        "serve_whep_for_test_saturated_accept",
+        1,
         "WHEP saturated-accept test harness server; cancelled by the returned token",
     ),
     (
         "output/whep.rs",
-        887,
+        "serve_whep_run_for_test",
+        1,
         "serve_whep_run_for_test -> run_whep_with_tracker; cancelled by the returned token",
     ),
     (
         "output/whep.rs",
-        925,
+        "serve_whep_run_probed_for_test",
+        1,
         "serve_whep_run_probed_for_test -> run_whep_on_probed; cancelled by the returned WhepRunHarness token (test-hooks only)",
     ),
     (
         "output/whep.rs",
-        1640,
+        "run_whep_on_probed",
+        1,
         "WHEP signalling server; JOINED before run_whep returns (port-release ordering)",
     ),
     (
         "output/whep.rs",
-        1662,
+        "run_whep_on_probed",
+        2,
         "WHEP viewer session on the run's session TaskTracker (close()+wait() on cancel)",
     ),
     (
         "output/whep_socket.rs",
-        78,
+        "bind",
+        1,
         "the shared media socket's receive loop; owned by its SharedSocket, whose Drop aborts it when the route's state (and every attached viewer) is gone",
     ),
     (
         "origin/mod.rs",
-        652,
+        "serve_impl_with_task_gauge",
+        1,
         "per-connection task on the listener's TaskTracker (serve_hyper_util reaps finished tasks)",
     ),
     (
         "origin/mod.rs",
-        761,
+        "serve_hyper_util_service",
+        1,
         "per-connection task on the listener's TaskTracker (serve_hyper_util reaps finished tasks)",
     ),
     (
         "output/smooth.rs",
-        279,
+        "prepare",
+        1,
         "spawn_blocking for a Smooth plan or fragment build, bounded by the program's MAX_CONCURRENT_BUILDS semaphore (permit moved into the closure); awaited inline (owned by the request)",
     ),
     (
         "output/catchup.rs",
-        347,
+        "run_scan_on",
+        1,
         "spawn_blocking catch-up scan under an owned scan permit; awaited inline, and the permit rides the blocking task",
     ),
     (
         "origin/mod.rs",
-        1662,
+        "serve_with_registry_impl",
+        1,
         "Ctrl-C/SIGTERM shutdown watcher; aborted/awaited at process shutdown",
     ),
     (
         "origin/mod.rs",
-        1838,
+        "spawn_following",
+        1,
         "spawn_following -> follow_trunk; the returned JoinHandle is owned by the caller and dropped on route teardown (async drop cancels)",
     ),
     (
         "origin/mod.rs",
-        2359,
+        "spawn_supervised_with",
+        1,
         "supervise_driver; spawned under the route cancellation token",
     ),
     (
         "origin/admin.rs",
-        1264,
+        "serve_with_admin",
+        1,
         "external shutdown-signal watcher; aborted by hand at admin teardown",
     ),
     (
         "origin/admin.rs",
-        1276,
+        "serve_with_admin",
+        2,
         "shutdown-watch task translating the signal channel into the token; aborted by hand at teardown",
     ),
     (
         "origin/admin.rs",
-        1282,
+        "serve_with_admin",
+        3,
         "admin listener server task; joined/aborted at admin teardown",
     ),
     (
         "source/smooth_pull_golden.rs",
-        79,
+        "serve_fixture",
+        1,
         "test server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        196,
+        "start",
+        1,
         "test pull task; cancelled and aborted by the harness",
     ),
     (
         "source/dash_pull/tests.rs",
-        211,
+        "start",
+        2,
         "test collector task; stopped by the harness",
     ),
     (
         "source/dash_pull/tests.rs",
-        456,
+        "serve_files_throttling",
+        1,
         "test server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        485,
+        "serve_ranged_without_content_range",
+        1,
         "test server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        810,
+        "handler",
+        1,
         "test HTTP server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        969,
+        "mpd_here_media_there",
+        1,
         "test HTTP server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        1311,
+        "serve_live",
+        1,
         "test HTTP server task; aborted at test end",
     ),
 ];
@@ -501,6 +553,75 @@ const SPAWN_NEEDLES: &[&str] = &[
     ".spawn(",
 ];
 
+/// The name a line declares with `fn`, if any.
+fn declared_fn(text: &str) -> Option<&str> {
+    let mut rest = text;
+    while let Some(at) = rest.find("fn ") {
+        let before_ok = rest[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
+        let after = &rest[at + 3..];
+        let name_len = after
+            .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .unwrap_or(after.len());
+        if before_ok && name_len > 0 {
+            return Some(&after[..name_len]);
+        }
+        rest = after;
+    }
+    None
+}
+
+/// Every spawn site as `(file, enclosing fn, ordinal within that fn, line)`.
+/// A spawn before any `fn` is attributed to `<top>`.
+fn spawn_sites(files: &[(String, String)]) -> Vec<(String, String, u32, usize)> {
+    let mut found = Vec::new();
+    for (path, src) in files {
+        let mut current = "<top>".to_string();
+        let mut ordinal = 0u32;
+        for (line_no, text) in surviving_lines(src) {
+            if text.trim_start().starts_with("//") {
+                continue;
+            }
+            if let Some(name) = declared_fn(&text) {
+                current = name.to_string();
+                ordinal = 0;
+            }
+            if SPAWN_NEEDLES.iter().any(|needle| text.contains(needle)) {
+                ordinal += 1;
+                found.push((path.clone(), current.clone(), ordinal, line_no));
+            }
+        }
+    }
+    found
+}
+
+/// Untracked sites and stale table entries for `found` against `table`.
+fn problems(
+    found: &[(String, String, u32, usize)],
+    table: &[(&str, &str, u32, &str)],
+) -> (Vec<String>, Vec<String>) {
+    let matches = |path: &str, name: &str, ord: u32, entry: &(&str, &str, u32, &str)| {
+        Path::new(path).ends_with(entry.0) && entry.1 == name && entry.2 == ord
+    };
+    let untracked = found
+        .iter()
+        .filter(|(path, name, ord, _)| !table.iter().any(|e| matches(path, name, *ord, e)))
+        .map(|(path, name, ord, line)| format!("{path}:{line} (fn {name}, spawn #{ord})"))
+        .collect();
+    let stale = table
+        .iter()
+        .filter(|e| {
+            !found
+                .iter()
+                .any(|(path, name, ord, _)| matches(path, name, *ord, e))
+        })
+        .map(|(f, name, ord, _)| format!("{f}: fn {name}, spawn #{ord}"))
+        .collect();
+    (untracked, stale)
+}
+
 #[test]
 fn every_non_test_spawn_has_a_pinned_disposition() {
     let mut files = Vec::new();
@@ -508,46 +629,46 @@ fn every_non_test_spawn_has_a_pinned_disposition() {
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
         &mut files,
     );
-    let mut found: Vec<(String, usize)> = Vec::new();
-    for (path, src) in &files {
-        for (line_no, text) in surviving_lines(src) {
-            if text.trim_start().starts_with("//") {
-                continue;
-            }
-            if SPAWN_NEEDLES.iter().any(|needle| text.contains(needle)) {
-                found.push((path.clone(), line_no));
-            }
-        }
-    }
-
-    let mut unexplained = Vec::new();
-    for (path, line) in &found {
-        let ok = DISPOSITION
-            .iter()
-            .any(|(f, l, _)| Path::new(path).ends_with(f) && *l as usize == *line);
-        if !ok {
-            unexplained.push(format!("{path}:{line}"));
-        }
-    }
+    let found = spawn_sites(&files);
+    let (untracked, stale) = problems(&found, DISPOSITION);
     assert!(
-        unexplained.is_empty(),
+        untracked.is_empty(),
         "untracked spawn sites (add a DISPOSITION entry with owner + cancel path):\n{}",
-        unexplained.join("\n")
+        untracked.join("\n")
     );
-    // Every pinned entry must still name a real spawn, so the table cannot rot
-    // past a removed/renamed spawn.
-    let mut stale = Vec::new();
-    for (f, l, _) in DISPOSITION {
-        let hit = found
-            .iter()
-            .any(|(path, line)| Path::new(path).ends_with(f) && *l as usize == *line);
-        if !hit {
-            stale.push(format!("{f}:{l}"));
-        }
-    }
     assert!(
         stale.is_empty(),
         "DISPOSITION entries no longer match a real spawn (update the table):\n{}",
         stale.join("\n")
     );
+}
+
+/// The guard bites: an unlisted spawn is reported, a listed one that moved to
+/// other lines still matches, and one that disappeared is reported stale.
+#[test]
+fn the_guard_is_stable_under_line_moves_and_bites_on_new_and_gone_spawns() {
+    let file = |body: &str| vec![("src/a.rs".to_string(), body.to_string())];
+    let table: &[(&str, &str, u32, &str)] = &[("a.rs", "run", 1, "owner")];
+    let base = "fn run() {\n    tokio::spawn(async {});\n}\n";
+
+    let (untracked, stale) = problems(&spawn_sites(&file(base)), table);
+    assert!(untracked.is_empty() && stale.is_empty());
+
+    let shifted = format!("\n\n\n// moved\n{base}");
+    let (untracked, stale) = problems(&spawn_sites(&file(&shifted)), table);
+    assert!(
+        untracked.is_empty() && stale.is_empty(),
+        "blank lines must not matter"
+    );
+
+    let extra = "fn run() {\n    tokio::spawn(async {});\n    tokio::spawn(async {});\n}\n";
+    let (untracked, _) = problems(&spawn_sites(&file(extra)), table);
+    assert_eq!(untracked.len(), 1, "a second spawn in the fn is unlisted");
+
+    let other = format!("{base}fn other() {{\n    tokio::spawn(async {{}});\n}}\n");
+    let (untracked, _) = problems(&spawn_sites(&file(&other)), table);
+    assert_eq!(untracked.len(), 1, "a spawn in a new fn is unlisted");
+
+    let (_, stale) = problems(&spawn_sites(&file("fn run() {}\n")), table);
+    assert_eq!(stale.len(), 1, "a listed spawn that is gone is stale");
 }
