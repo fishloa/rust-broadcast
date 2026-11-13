@@ -1456,11 +1456,11 @@ pub struct RouteHandle {
     audio_renditions: Vec<hls_runtime::server::AudioRenditionDecl>,
     /// Source track per audio rendition for the opt-in split-mux (issue
     /// #1428 slice 2b); empty means no split.
-    audio_rendition_sources: Vec<crate::config::AudioTrackSelector>,
+    audio_rendition_sources: Vec<transmux::audio_profile::AudioTrackSelector>,
     /// `NAME`/`LANGUAGE` overrides for detected closed captions (issue #1428).
     closed_caption_overrides: Vec<hls_runtime::server::ClosedCaptionDecl>,
     /// Operator-declared HE-AAC profile per audio track (issue #1428).
-    audio_profiles: Vec<crate::config::AudioProfileOverride>,
+    audio_profiles: Vec<transmux::audio_profile::AudioProfileOverride>,
     /// Serve teletext subtitle pages as WebVTT renditions (issue #1428).
     subtitles: bool,
     /// Notifies waiters when a new program is published via
@@ -1696,7 +1696,7 @@ impl RouteHandle {
     #[must_use]
     pub fn with_audio_rendition_sources(
         mut self,
-        value: Vec<crate::config::AudioTrackSelector>,
+        value: Vec<transmux::audio_profile::AudioTrackSelector>,
     ) -> Self {
         self.audio_rendition_sources = value;
         self
@@ -1729,18 +1729,38 @@ impl RouteHandle {
     /// Declares the HE-AAC profile of audio tracks (issue #1428) — a consuming
     /// builder; an empty list leaves every track as the source states it.
     #[must_use]
-    pub fn with_audio_profiles(mut self, value: Vec<crate::config::AudioProfileOverride>) -> Self {
+    pub fn with_audio_profiles(
+        mut self,
+        value: Vec<transmux::audio_profile::AudioProfileOverride>,
+    ) -> Self {
         self.audio_profiles = value;
         self
     }
 
     /// `tracks` with this route's declared HE-AAC profiles applied
-    /// ([`crate::source::audio_profile::apply`]).
+    /// ([`transmux::audio_profile::apply_overrides`]), logging what did not apply.
     pub(crate) fn with_declared_audio_profiles(&self, tracks: Vec<TrackSpec>) -> Vec<TrackSpec> {
-        crate::source::audio_profile::apply(&self.name, &self.audio_profiles, tracks)
+        let applied = transmux::audio_profile::apply_overrides(&self.audio_profiles, tracks);
+        for declared in &applied.unmatched {
+            tracing::warn!(
+                route = self.name.as_str(),
+                selector = %declared.track,
+                "audio_profiles entry matches no audio track; ignoring until one appears"
+            );
+        }
+        for (declared, error) in &applied.refused {
+            tracing::warn!(
+                route = self.name.as_str(),
+                selector = %declared.track,
+                profile = %declared.audio_profile,
+                %error,
+                "audio_profiles entry cannot be applied to this track; leaving it as the source states it"
+            );
+        }
+        applied.tracks
     }
 
-    pub(crate) fn audio_rendition_sources(&self) -> &[crate::config::AudioTrackSelector] {
+    pub(crate) fn audio_rendition_sources(&self) -> &[transmux::audio_profile::AudioTrackSelector] {
         &self.audio_rendition_sources
     }
 

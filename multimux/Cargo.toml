@@ -19,7 +19,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 # `flv_sequence_header_payloads` / `flv_frame_payloads`, which do not
 # exist in 0.23.0 (verified at the tag). Published multimux 0.8.0 shipped
 # with the understated `"0.23"` bound.
-transmux          = { path = "../transmux",     version = "0.31.0" }
+transmux          = { path = "../transmux",     version = "0.31.0", features = ["serde"] }
 # Smooth manifest rendering (`output::smooth`) and the Smooth-pull encryption
 # probe: the single XML dependency of the crates that read or write XML.
 quick-xml         = { workspace = true }
