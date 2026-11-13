@@ -406,6 +406,8 @@ struct GapState {
 /// [`crate::source::advance_route`] facade instead.
 pub struct ProgramSegmenter {
     cursor: SampleCursor,
+    /// The last [`Self::pump`] stopped at its per-call item budget with samples still queued.
+    backlogged: bool,
     /// Per track whose declared timescale differs from the `Trunk`'s (an
     /// `audio_profiles` HE-AAC override moves it to the output rate): the
     /// `(trunk, declared)` timescales its samples are re-expressed between
@@ -552,6 +554,10 @@ struct MediaAnchor {
 /// within this many video samples (about 30 s at 60 fps) the gate opens
 /// anyway (with a warning) instead of dropping the program forever.
 const START_GATE_MAX_VIDEO_DROPPED: u64 = 1800;
+
+/// Cursor items one [`ProgramSegmenter::pump`] call processes before it returns, leaving the rest
+/// queued for the next call, so the caller can yield to the runtime between batches.
+const PUMP_BATCH_ITEMS: usize = 512;
 
 /// Nanoseconds per second — for converting the segmenter's internal
 /// nanosecond timeline into the 90 kHz media clock.
@@ -873,6 +879,7 @@ impl ProgramSegmenter {
             seg.record_part_cuts();
         }
         let mut ps = ProgramSegmenter {
+            backlogged: false,
             timescale_moves,
             // `subscribe_from_backlog`, not `subscribe` (issue #808): the
             // driver's own `feed` call that announced this program's
@@ -993,7 +1000,36 @@ impl ProgramSegmenter {
         trunk: &Trunk,
         route_handle: &RouteHandle,
     ) -> (usize, usize) {
-        while let Some(item) = self.cursor.poll() {
+        let mut totals = (0, 0);
+        loop {
+            let (parts, segments) = self.pump_batch(program, trunk, route_handle);
+            totals.0 += parts;
+            totals.1 += segments;
+            if !self.backlogged {
+                return totals;
+            }
+        }
+    }
+
+    /// [`Self::pump`] for at most [`PUMP_BATCH_ITEMS`] queued items, leaving the rest queued and
+    /// setting `backlogged` so the caller can yield to the runtime before the next batch.
+    fn pump_batch(
+        &mut self,
+        program: ProgramId,
+        trunk: &Trunk,
+        route_handle: &RouteHandle,
+    ) -> (usize, usize) {
+        let mut drained = 0usize;
+        self.backlogged = false;
+        loop {
+            if drained == PUMP_BATCH_ITEMS {
+                self.backlogged = true;
+                break;
+            }
+            let Some(item) = self.cursor.poll() else {
+                break;
+            };
+            drained += 1;
             if let SampleCursorItem::TracksChanged { generation, tracks }
             | SampleCursorItem::TracksLagged {
                 generation, tracks, ..
@@ -1910,11 +1946,16 @@ fn rescale_to_90k(pts: i64, timescale: u32) -> u64 {
 /// Only increments when the total is nonzero (an idle call with nothing new
 /// to publish must not spuriously bump a counter meant to reflect real
 /// throughput).
+///
+/// Each segmenter processes at most [`PUMP_BATCH_ITEMS`] queued items per call; the returned
+/// `bool` is `true` while any segmenter still has samples queued, and the caller calls again
+/// (yielding to the runtime in between, as [`crate::source::advance_route`] does). The terminal
+/// flush waits for the last of those calls.
 pub(crate) fn drive_program_segmenters<S: IngestSession>(
     driver: &IngestDriver<S>,
     route_handle: &RouteHandle,
     segmenters: &mut HashMap<ProgramId, ProgramSegmenter>,
-) {
+) -> bool {
     for program in driver.programs() {
         if segmenters.contains_key(&program) {
             continue;
@@ -1949,12 +1990,13 @@ pub(crate) fn drive_program_segmenters<S: IngestSession>(
         let Some(trunk) = driver.trunk(program) else {
             continue;
         };
-        let (parts, segments) = segmenter.pump(program, trunk, route_handle);
+        let (parts, segments) = segmenter.pump_batch(program, trunk, route_handle);
         parts_total += parts;
         segments_total += segments;
     }
 
-    if !driver.health().is_running() {
+    let more = segmenters.values().any(|s| s.backlogged);
+    if !more && !driver.health().is_running() {
         for segmenter in segmenters.values_mut() {
             let (parts, segments) = segmenter.flush();
             parts_total += parts;
@@ -1976,6 +2018,7 @@ pub(crate) fn drive_program_segmenters<S: IngestSession>(
         )
         .increment(segments_total as u64);
     }
+    more
 }
 
 #[cfg(test)]
@@ -2091,6 +2134,64 @@ mod tests {
             playlist.contains("#EXTINF:") || playlist.contains("#EXT-X-PART:"),
             "the route's own HlsOrigin must serve real closed segments/parts, \
              resolved exactly the way egress resolves them: {playlist}"
+        );
+    }
+
+    fn burst_driver(frames: u32) -> IngestDriver<TsIngestSession> {
+        let ring = |n: usize| std::num::NonZeroUsize::new(n).expect("non-zero ring");
+        let mut driver = IngestDriver::new(
+            TsIngestSession::new(),
+            media_plane::trunk::TrunkConfig::new(ring(8192), ring(64), ring(8), ring(8), ring(8)),
+            handshake(),
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        );
+        driver.feed(
+            &build_ts_bytes(TrackId::new(1), 0xAB, frames),
+            Timestamp::ZERO,
+        );
+        driver
+    }
+
+    #[test]
+    fn a_large_queued_burst_is_segmented_in_bounded_batches() {
+        let route = RouteHandle::new(1.0, 250, 8);
+        let driver = burst_driver(3 * PUMP_BATCH_ITEMS as u32);
+        let mut published = HashSet::new();
+        let mut segmenters = HashMap::new();
+        report_driver_progress(&driver, &route, &mut published);
+        let mut calls = 1;
+        while drive_program_segmenters(&driver, &route, &mut segmenters) {
+            calls += 1;
+            assert!(calls < 64, "the backlog never drains");
+        }
+        assert!(
+            calls >= 3,
+            "3 batches of queued samples must take at least 3 calls, took {calls}"
+        );
+    }
+
+    #[test]
+    fn a_small_burst_is_segmented_in_one_call() {
+        let route = RouteHandle::new(1.0, 250, 8);
+        let driver = burst_driver(30);
+        let mut published = HashSet::new();
+        let mut segmenters = HashMap::new();
+        report_driver_progress(&driver, &route, &mut published);
+        assert!(!drive_program_segmenters(&driver, &route, &mut segmenters));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_large_queued_burst_does_not_starve_another_task() {
+        let route = RouteHandle::new(1.0, 250, 8);
+        let driver = burst_driver(3 * PUMP_BATCH_ITEMS as u32);
+        let mut state = crate::source::DriverProgress::new();
+        let ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = Arc::clone(&ran);
+        tokio::spawn(async move { flag.store(true, std::sync::atomic::Ordering::SeqCst) });
+        crate::source::advance_route(&driver, &route, &mut state).await;
+        assert!(
+            ran.load(std::sync::atomic::Ordering::SeqCst),
+            "advance_route must yield between batches of a large burst"
         );
     }
 
@@ -3646,6 +3747,7 @@ mod tests {
                 .expect("valid placeholder TS segmenter"),
         );
         let mut ps = ProgramSegmenter {
+            backlogged: false,
             timescale_moves: HashMap::new(),
             cursor: trunk.subscribe_from_backlog(),
             segment_writer,
