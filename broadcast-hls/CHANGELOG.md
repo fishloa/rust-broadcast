@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.7.0] - 2026-11-14
 ### Changed
 - BREAKING: a malformed `#EXT-X-PROGRAM-DATE-TIME` no longer fails `MediaPlaylist::parse`: the tag is dropped (its segment has no `program_date_time`) and recorded in the new `MediaPlaylist::diagnostics` (`ParseDiagnostic { kind: ParseDiagnosticKind::InvalidProgramDateTime, line_no, line }`, never serialised). `ProgramDateTime::parse` itself stays strict (#2591).
 - BREAKING: `ProgramDateTime::parse` rejects a bare date (`2026-10-02`): RFC 8216 §4.3.2.6 asks for an ISO 8601 date-time. A zone-less date-time is still accepted and taken as UTC (#2591).

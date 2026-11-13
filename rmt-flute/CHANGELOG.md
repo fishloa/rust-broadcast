@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.9.0] - 2026-11-14
 ### Changed
 - BREAKING: `LctHeader` gained the `reserved: u8` field and `NormCmd` the `reserved: [u8; 3]` field (struct literals need them; senders write 0); `ExtTime::to_content` returns `Result<Vec<u8>>` and `ExtTime::to_extension` returns `Result<HeaderExtension>`.
 

@@ -3,6 +3,8 @@
 All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
+
+## [0.7.0] - 2026-11-14
 ### Changed
 - BREAKING: `Client::new(endpoint_url, bearer_token)` (`WhipClient`, `WhepPlayer`) takes a `session::client::ClientConfig` (`ClientConfig::new(endpoint_url).with_bearer_token(token)`), the same `Config` + `with_*` shape as the other engines (#2514).
 - BREAKING: the non-default test-hook feature is renamed `test-support` -> `test-seams`; only a test suite enabling it by name is affected (c6 C6-09).

@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.18.0] - 2026-11-14
 ### Removed
 - BREAKING: `config::{AudioTrackSelector, AudioProfile, AudioProfileOverride}` moved to `transmux::audio_profile` (same serde forms); the route logs declarations that did not apply as before (issue #2554).
 - BREAKING: `source::dashif_ingest::{MAX_OBJECT_BYTES, MAX_BUFFERED_OBJECT_BYTES, BUFFERED_BUDGET_BYTES}`; the defaults are `dash_runtime::ingest::DEFAULT_*` and a route carries a `DashifIngestConfig` (#2514).

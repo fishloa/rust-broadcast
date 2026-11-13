@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.7.0] - 2026-11-14
 ### Breaking
 - `Error`'s BER/KLV variants (`BerIndefiniteLength`, `BerLengthTooLong`, `FixedBerLengthTooSmall`) are removed; every BER/KLV failure is now `Error::Klv(broadcast_common::klv::KlvError)`, which carries the same cases. Match on `Error::Klv(..)` instead.
 

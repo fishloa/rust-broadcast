@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.31.0] - 2026-11-14
 ### Changed
 - Legal-duplicate TS packet detection now imports `mpeg_ts::ts_dup` instead of `broadcast_common::ts_dup` (#2466).
 - Test-harness `which` now lives in `test-fixtures::process::which`.

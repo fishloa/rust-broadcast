@@ -5,6 +5,8 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.7.0] - 2026-11-14
 ### Changed
 - BREAKING: `Verifier::new` returns `Result<Verifier>`; building a Digest verifier when the OS random source is unavailable is the new `Error::RandomSource` instead of a panic. There is no panicking variant (#2591).
 

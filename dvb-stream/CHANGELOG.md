@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.9.0] - 2026-11-14
 ### Changed
 - `resync` module now re-exports the implementation from `mpeg_ts::resync`; the local algorithm was removed (#2479).
 

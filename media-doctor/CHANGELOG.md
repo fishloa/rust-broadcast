@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.15.0] - 2026-11-14
 ### Changed
 - `udp::bind_udp` now uses `dvb_stream::udp::bind_standard` (shared socket bind) instead of its own socket2 sequence (#2472).
 - `check_dash_mpd` reads MPDs through the new `broadcast-dash` crate (the `dash` feature now enables `dep:broadcast-dash` instead of `dep:dash-runtime`), so the validator depends on the manifest syntax alone, not on a player (#2355).

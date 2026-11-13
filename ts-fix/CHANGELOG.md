@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.9.0] - 2026-11-14
 ### Changed
 - Legal-duplicate TS packet detection now imports `mpeg_ts::ts_dup` instead of `broadcast_common::ts_dup` (#2466).
 - Internal: the service-extract filter state is boxed (clippy `large_enum_variant` after `SectionReassembler` grew a continuity-counter field).

@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.1.0] - 2026-11-14
 Initial release: Microsoft Smooth Streaming (MS-SSTR) client Manifest syntax, parse and write,
 moved out of `transmux` so the manifest has one model shared by the packager, the client and the
 origin (#2356). Plain `std` (the shared XML reader is std-only); `manifest` is a named feature, on with `std`.

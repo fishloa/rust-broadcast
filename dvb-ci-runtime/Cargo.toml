@@ -21,10 +21,10 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-dvb-ci     = { path = "../dvb-ci", version = "0.11.0" }
-dvb-si     = { path = "../dvb-si", version = "13.1.0", default-features = false }
-mpeg-ts    = { path = "../mpeg-ts", version = "0.7.1", default-features = false, features = ["std"] }
-broadcast-common = { path = "../broadcast-common", version = "11.0.1", default-features = false }
+dvb-ci     = { path = "../dvb-ci", version = "0.12.0" }
+dvb-si     = { path = "../dvb-si", version = "14.0.0", default-features = false }
+mpeg-ts    = { path = "../mpeg-ts", version = "0.8.0", default-features = false, features = ["std"] }
+broadcast-common = { path = "../broadcast-common", version = "12.0.0", default-features = false }
 thiserror  = { version = "2" }
 libc       = { version = "0.2.191", optional = true } # `libc::Ioctl` (used in linux.rs) first appears in 0.2.108
 rustix     = { version = "1", default-features = false, features = ["std", "event", "fs"], optional = true } # `rustix::event::poll` replaces `libc::poll` (de-hand-roll SP6.7)

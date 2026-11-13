@@ -55,7 +55,7 @@ All in `ControllerConfig::DEFAULT` (also `Default`): initial target **1.8 s** (o
 
 ```toml
 [dependencies]
-buffering-runtime = "0.2"
+buffering-runtime = "0.3"
 ```
 
 ```rust

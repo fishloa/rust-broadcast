@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [12.0.0] - 2026-11-14
 ### Removed
 - BREAKING: `ts_dup` module moved to `mpeg-ts` (legal duplicate TS packet detection, H.222.0 §2.4.3.3); import from `mpeg_ts::ts_dup` instead (#2466).
 

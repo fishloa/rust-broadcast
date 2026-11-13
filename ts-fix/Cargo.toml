@@ -1,6 +1,6 @@
 [package]
 name         = "ts-fix"
-version      = "0.8.1"
+version      = "0.9.0"
 edition      = "2024"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-broadcast"
@@ -11,11 +11,11 @@ categories   = ["parser-implementations", "multimedia::video"]
 readme       = "README.md"
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "11.0.1", default-features = false }
-mpeg-ts   = { path = "../mpeg-ts",  version = "0.7.1", default-features = false }
-mpeg-pes  = { path = "../mpeg-pes", version = "0.7.1", default-features = false }
-dvb-si    = { path = "../dvb-si",   version = "13.1.0",   default-features = false }
-dvb-conformance = { path = "../dvb-conformance", version = "13.1.0", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "12.0.0", default-features = false }
+mpeg-ts   = { path = "../mpeg-ts",  version = "0.8.0", default-features = false }
+mpeg-pes  = { path = "../mpeg-pes", version = "0.8.0", default-features = false }
+dvb-si    = { path = "../dvb-si",   version = "14.0.0",   default-features = false }
+dvb-conformance = { path = "../dvb-conformance", version = "14.0.0", default-features = false }
 thiserror = { version = "2",        default-features = false }
 # Only the `ts-fix` binary uses clap; the library uses no `std` path at all.
 # Unconditional, it made `#![no_std]` unreachable — the crate root carried the
@@ -41,7 +41,7 @@ required-features = ["cli"]
 # `--no-default-features` lane whenever nothing else had built the binary.
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
-scte35-splice = { path = "../scte35-splice", version = "5.0.1", default-features = false }
+scte35-splice = { path = "../scte35-splice", version = "6.0.0", default-features = false }
 
 [package.metadata.docs.rs]
 all-features = true

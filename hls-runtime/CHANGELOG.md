@@ -6,6 +6,8 @@ documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.13.0] - 2026-11-14
 ### Removed
 - BREAKING: `server::Container` moved to `transmux::Container` (same variants and methods, `segment_extension` now public); `HlsOriginBuilder` and the origin take and report that type (issue #2554).
 - BREAKING: `client::tokio_client` (`TokioClient`, `TokioClientConfig`, `TokioClientStats`, `TokioError`) and the `tokio` client feature, plus its tests and its now-unused `tokio`, `reqwest`, `broadcast-auth`, `backon`, `headers` and `tokio-util` dependencies. It carried its own copies of the retry, digest and body-cap policy, reachable only from tests; the IO belongs with the crate that drives the engine. Drive the sans-IO `HlsClient` core instead (`poll` out, `on_playlist`/`on_resource` in), as `multimux`'s HLS pull and `multimux/tests/golden_gate.rs`/`glass_to_glass.rs` do.

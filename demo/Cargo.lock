@@ -51,13 +51,25 @@ dependencies = [
 
 [[package]]
 name = "broadcast-common"
-version = "11.0.1"
+version = "12.0.0"
 dependencies = [
+ "base64",
  "chrono",
  "erased-serde",
  "hex",
+ "iso-639",
  "quick-xml",
  "serde",
+]
+
+[[package]]
+name = "broadcast-dash"
+version = "0.1.0"
+dependencies = [
+ "broadcast-common",
+ "jiff",
+ "quick-xml",
+ "thiserror",
 ]
 
 [[package]]
@@ -67,6 +79,14 @@ dependencies = [
  "broadcast-common",
  "jiff",
  "serde",
+ "thiserror",
+]
+
+[[package]]
+name = "broadcast-smooth"
+version = "0.1.0"
+dependencies = [
+ "broadcast-common",
  "thiserror",
 ]
 
@@ -112,7 +132,7 @@ dependencies = [
 
 [[package]]
 name = "cc-data"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -237,7 +257,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-conformance"
-version = "13.1.0"
+version = "14.0.0"
 dependencies = [
  "broadcast-common",
  "dvb-si",
@@ -265,7 +285,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-si"
-version = "13.1.0"
+version = "14.0.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -279,7 +299,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-subtitle"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -531,6 +551,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "iso-639"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad7d3f647f560b2e5c7d7da6d9326223893247feb3e086a388a14654683aa2f2"
+
+[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -609,8 +635,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
+name = "mio"
+version = "1.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1788edb87fdc09c7e26304471e2f5be8cdefb1b6930d6e3985fc02ff53bf86ee"
+dependencies = [
+ "libc",
+ "wasi",
+ "windows-sys",
+]
+
+[[package]]
 name = "mp4-emsg"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -619,7 +656,7 @@ dependencies = [
 
 [[package]]
 name = "mpeg-pes"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -628,7 +665,7 @@ dependencies = [
 
 [[package]]
 name = "mpeg-ps"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "broadcast-common",
  "mpeg-pes",
@@ -638,7 +675,7 @@ dependencies = [
 
 [[package]]
 name = "mpeg-ts"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -756,8 +793,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rtmp-runtime"
+version = "0.10.0"
+dependencies = [
+ "broadcast-common",
+ "subtle",
+ "thiserror",
+]
+
+[[package]]
 name = "rtp-packet"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -778,10 +824,10 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "scte35-splice"
-version = "5.0.1"
+version = "6.0.0"
 dependencies = [
- "base64",
  "broadcast-common",
+ "mpeg-ts",
  "serde",
  "thiserror",
 ]
@@ -866,6 +912,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "149309498a5f7334b12ddae0cad8aba81ce785fe91755068867e017cf98fee46"
 
 [[package]]
+name = "socket2"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
+dependencies = [
+ "libc",
+ "windows-sys",
+]
+
+[[package]]
 name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -916,6 +972,7 @@ version = "0.1.0"
 dependencies = [
  "hex",
  "serde_json",
+ "tokio",
  "wait-timeout",
 ]
 
@@ -947,6 +1004,19 @@ checksum = "abc840c238154d58f9e86b2792261edfde565a17696e1cda1a449de27979801a"
 dependencies = [
  "displaydoc",
  "zerovec",
+]
+
+[[package]]
+name = "tokio"
+version = "1.54.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b52fd3255258d26fac7264ab5a76b53c13367136dc011d3d6ad4f8ed070396a3"
+dependencies = [
+ "libc",
+ "mio",
+ "pin-project-lite",
+ "socket2",
+ "windows-sys",
 ]
 
 [[package]]
@@ -986,7 +1056,9 @@ dependencies = [
  "aes",
  "base64",
  "broadcast-common",
+ "broadcast-dash",
  "broadcast-hls",
+ "broadcast-smooth",
  "bytes",
  "cbc",
  "cc-data",
@@ -1000,6 +1072,7 @@ dependencies = [
  "mpeg-ps",
  "mpeg-ts",
  "quick-xml",
+ "rtmp-runtime",
  "rtp-packet",
  "sdp-types",
  "serde",
@@ -1062,6 +1135,12 @@ checksum = "09ac3b126d3914f9849036f826e054cbabdc8519970b8998ddaf3b5bd3c65f11"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "wasi"
+version = "0.11.1+wasi-snapshot-preview1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 
 [[package]]
 name = "wasm-bindgen"
@@ -1162,6 +1241,15 @@ name = "windows-strings"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7837d08f69c77cf6b07689544538e017c1bfcf57e34b4c0ff58e6c2cd3b37091"
+dependencies = [
+ "windows-link",
+]
+
+[[package]]
+name = "windows-sys"
+version = "0.61.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
 dependencies = [
  "windows-link",
 ]

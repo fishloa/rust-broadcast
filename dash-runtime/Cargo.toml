@@ -17,12 +17,12 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "11.1.0", default-features = false, features = ["std", "xml", "http-date", "lang", "url"] }
+broadcast-common = { path = "../broadcast-common", version = "12.0.0", default-features = false, features = ["std", "xml", "http-date", "lang", "url"] }
 broadcast-dash   = { path = "../broadcast-dash", version = "0.1.0" }
 transmux         = { path = "../transmux", version = "0.31.0", default-features = false, features = ["std"] }
 media-plane      = { path = "../media-plane", version = "0.11.0", default-features = false, features = ["std"] }
 http             = "1"
-container-probe  = { path = "../container-probe", version = "0.3.1", default-features = false }
+container-probe  = { path = "../container-probe", version = "0.4.0", default-features = false }
 quick-xml        = { workspace = true }
 url              = "2"
 jiff             = { version = "0.2", default-features = false, features = ["std"] }

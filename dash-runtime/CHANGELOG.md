@@ -3,6 +3,8 @@
 All notable changes to dash-runtime will be documented in this file.
 
 ## [Unreleased]
+
+## [0.4.0] - 2026-11-14
 ### Changed
 - BREAKING: `DashifIngestSession::new()` takes a `DashifIngestConfig`; the `Default` impl is removed (#2514).
 - BREAKING: `DashClient::new(url, dash, limits)` takes a `client::DashClientConfig` (`DashClientConfig::new(url).with_dash(..).with_limits(..)`) (#2514).

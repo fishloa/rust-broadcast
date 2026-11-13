@@ -110,7 +110,7 @@ CBC undo.
 
 ```toml
 [dependencies]
-dvb-csa = { version = "0.6", features = ["bitsliced"] }
+dvb-csa = { version = "0.7", features = ["bitsliced"] }
 ```
 
 ```rust

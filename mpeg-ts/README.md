@@ -51,7 +51,7 @@ stream conformance (see `dvb-conformance`), or do any I/O.
 `serde` is opt-in and off by default; enable it explicitly:
 
 ```toml
-mpeg-ts = { version = "0.7", features = ["serde"] }
+mpeg-ts = { version = "0.8", features = ["serde"] }
 ```
 
 The crate is `#![no_std]` + `alloc` and `#![forbid(unsafe_code)]`;
@@ -59,7 +59,7 @@ The crate is `#![no_std]` + `alloc` and `#![forbid(unsafe_code)]`;
 
 ```toml
 [dependencies]
-mpeg-ts = "0.7"
+mpeg-ts = "0.8"
 # embedded:
 # mpeg-ts = { version = "0.5", default-features = false }
 ```

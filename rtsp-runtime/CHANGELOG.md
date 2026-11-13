@@ -5,6 +5,8 @@ All notable changes to `rtsp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.11.0] - 2026-11-14
 ### Removed
 - BREAKING: the `connect_with`, `connect_with_timeouts`, `connect_tls_with`, `connect_tls_with_timeouts`, `accept_tls_with_timeouts` and `with_stream_timeouts` ladder. `AsyncRtspClient::connect(addr, config)`, `connect_tls(addr, server_name, tls, config)`, `with_stream(stream, config)` and `AsyncRtspServer::accept_tls(stream, tls, config)` / `with_stream(stream, config)` take the config; `connect(addr)` and `connect_tls(addr, name, tls)` without one now pass `RtspClientConfig::default()` (#2514).
 - BREAKING: `RtspTimeouts`; the adapters take `broadcast_common::timeouts::Timeouts` (the same four fields and defaults), shared with the RTMP and SRT adapters (#2514).

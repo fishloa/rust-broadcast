@@ -3,6 +3,8 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+
+## [0.10.0] - 2026-11-14
 ### Changed
 - `PTS_HZ` is a re-export of `broadcast_common::clock33::PTS_HZ` instead of a second definition; its path and value are unchanged (#2343).
 

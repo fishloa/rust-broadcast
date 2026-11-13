@@ -21,13 +21,13 @@ required-features = ["cli"]
 # binary (it used to be masked by an earlier all-features build in the same CI
 # job sharing one target dir).
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "11.0.1", default-features = false }
-mpeg-pes         = { path = "../mpeg-pes", version = "0.7.1", default-features = false }
-dvb-stream       = { path = "../dvb-stream", version = "0.8.1", default-features = false, features = ["udp"], optional = true }
-mpeg-ts          = { path = "../mpeg-ts", version = "0.7.1", default-features = false }
-dvb-si           = { path = "../dvb-si", version = "13.1.0", default-features = false, features = ["ts"] }
-dvb-conformance  = { path = "../dvb-conformance", version = "13.1.0", default-features = false }
-scte35-splice    = { path = "../scte35-splice", version = "5.0.1", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "12.0.0", default-features = false }
+mpeg-pes         = { path = "../mpeg-pes", version = "0.8.0", default-features = false }
+dvb-stream       = { path = "../dvb-stream", version = "0.9.0", default-features = false, features = ["udp"], optional = true }
+mpeg-ts          = { path = "../mpeg-ts", version = "0.8.0", default-features = false }
+dvb-si           = { path = "../dvb-si", version = "14.0.0", default-features = false, features = ["ts"] }
+dvb-conformance  = { path = "../dvb-conformance", version = "14.0.0", default-features = false }
+scte35-splice    = { path = "../scte35-splice", version = "6.0.0", default-features = false }
 timed-metadata   = { path = "../timed-metadata", version = "0.10.0", default-features = false }
 transmux         = { path = "../transmux", version = "0.31.0", default-features = false }
 # HLS (M3U8) playlist syntax (issue #878): the validator parses playlists
@@ -38,7 +38,7 @@ broadcast-hls    = { path = "../broadcast-hls", version = "0.7.0", default-featu
 # / audit MD-W7): a file that is a TS but does not start on a packet boundary,
 # or uses the 192-byte M2TS / 204-byte RS framing, must still be routed to the
 # TS diagnostics. Only the binary needs it, so it is behind `cli`.
-container-probe  = { path = "../container-probe", version = "0.3.1", optional = true, default-features = false }
+container-probe  = { path = "../container-probe", version = "0.4.0", optional = true, default-features = false }
 # The DASH validator's MPD reader (issue #2340): dash-runtime owns the only
 # MPD reader outside transmux, which keeps MPD writing.
 dash-runtime     = { path = "../dash-runtime", version = "0.4.0", optional = true }
@@ -98,9 +98,9 @@ ssai-runtime = { path = "../ssai-runtime", default-features = false }
 # tests follow (issue #1112). `dvb-si` is already a normal dependency, so this
 # adds no crate to the graph; the feature set is raised for the section
 # builders only in test builds.
-dvb-si = { path = "../dvb-si", version = "13.1.0", default-features = false, features = ["ts"] }
+dvb-si = { path = "../dvb-si", version = "14.0.0", default-features = false, features = ["ts"] }
 # `mpeg-ts`'s `SectionPacketiser` wraps those sections into real TS packets.
-mpeg-ts = { path = "../mpeg-ts", version = "0.7.1", default-features = false }
+mpeg-ts = { path = "../mpeg-ts", version = "0.8.0", default-features = false }
 
 [package.metadata.docs.rs]
 all-features = true

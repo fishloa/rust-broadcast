@@ -5,6 +5,8 @@ All notable changes to `rtmp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.10.0] - 2026-11-14
 ### Removed
 - BREAKING: `io::RtmpTimeouts`; the adapters take `broadcast_common::timeouts::Timeouts` (the same four fields and defaults), shared with the RTSP and SRT adapters (#2514).
 

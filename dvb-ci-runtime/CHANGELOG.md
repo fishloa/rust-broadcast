@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.20.0] - 2026-11-14
 ### Changed
 - BREAKING (minor, constructor only): `resource::Mmi` now holds chain state, so the unit-struct literal `Mmi` no longer compiles; use `Mmi::default()` (#1931).
 - Added `CaError::NotSent` (the enum is `#[non_exhaustive]`).

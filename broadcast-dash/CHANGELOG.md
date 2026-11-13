@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.1.0] - 2026-11-14
 Initial release: MPEG-DASH (ISO/IEC 23009-1) MPD manifest syntax, parse and write, below
 `transmux` (writer) and `dash-runtime` (client), so a consumer that only needs manifest syntax
 does not pull in a client or the muxing hub (#2355).

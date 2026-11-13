@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [14.0.0] - 2026-11-14
 ### Changed
 - BREAKING: the long-form table constructors `AitSection::new`, `CitSection::new`, `EitSection::new`, `IntSection::new`, `MpeIfecSection::new`, `NitSection::new`, `PmtSection::new`, `RctSection::new`, `RntSection::new`, `SatSection::new`, `SdtSection::new` and `UntSection::new` take one `tables::SectionVersion` (`version_number`, `current_next_indicator`, `section_number`, `last_section_number`; build it with `SectionVersion::new`) in place of those four positional arguments (#2612).
 - The carousel CRC32 descriptor module doc now states that its `CRC_32` is the same CRC-32/MPEG-2 as `broadcast_common::crc32_mpeg2` and that the check calls it; the code is unchanged (c6 C6-12).

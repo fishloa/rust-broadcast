@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.8.0] - 2026-11-14
 ### Fixed
 - The `Max M`/`Max S` sliding-window sum is re-based on its ring once per window, so the incremental `+= new - outgoing` rounding no longer accumulates over a long run.
 - A rejected push leaves the meter exactly as it was. `push_f32`, `push_f64` and `push_stereo_planar_f32` validate every channel and frame before filtering any, and `TruePeakMeter::push_f32_slice`/`push_f64_slice` validate the whole slice first; they used to keep the frames before the bad sample (or the earlier channels' filter state), which a retry of the corrected input then counted twice.

@@ -3,6 +3,8 @@
 All notable changes to dvb-mabr will be documented in this file.
 
 ## [Unreleased]
+
+## [0.5.0] - 2026-11-14
 ### Changed
 - Major-class release for epoch purity only: no API or behaviour change in this crate; its sibling dependencies move to new caret epochs.
 

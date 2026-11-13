@@ -5,6 +5,8 @@ All notable changes to `srt-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.9.0] - 2026-11-14
 ### Removed
 - BREAKING: `SrtSocket::{connect_with, connect_from_with, rendezvous_with}` and `SrtListener::bind_with`; pass `SrtConfig::new(handshake).with_io(io)` to `connect`, `connect_from`, `rendezvous` and `bind`. `connect_from_socket` and `rendezvous_from_socket` take the config in place of the separate handshake and io arguments (#2514).
 

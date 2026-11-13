@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.4.0] - 2026-11-14
 ### Added
 - The ISOBMFF prober and `segment::{media_fragment, progressive_movie}` recognise the compressed top-level boxes of ISO/IEC 14496-12:2026 §8.16: `!mov` counts as `moov` (progressive layout), `!mof` as `moof` (fragmented layout / media fragment), and either may be the first box. Nothing is inflated; an `otyp` after `ftyp`/`styp` is walked as an ordinary box (#1910).
 
