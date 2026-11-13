@@ -337,8 +337,12 @@ pub fn render_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<String> 
 /// - `@id` is the Period's ordinal in the presentation (§5.3.2.2: unique, present and unchanged
 ///   in a dynamic MPD);
 /// - `@start` is its first segment's nominal MPD start, `(number - startNumber) * @duration`
-///   of the presentation's numbering, and a Period followed by another in the window carries
-///   `@duration` up to that one's `@start` or to the gap that ended it (§5.3.2.1);
+///   of the presentation's numbering, and a Period followed by another or by a gap carries
+///   `@duration` to the end of its last listed segment (§5.3.2.1; an early terminated Period when
+///   a replaced program's unfinished last segment leaves a hole before the next `@start`);
+/// - a replaced program's Period stays listed, with its own init URL, while its segments are in
+///   the window (see `ProgramServing::dash_window_segments`), so nothing inside the time-shift
+///   buffer is withdrawn (§5.3.9.5.3);
 /// - `SegmentTemplate@startNumber` is its first segment's number and
 ///   `@presentationTimeOffset` that segment's media start in the template's timescale, so the
 ///   first segment presents at the Period start (§5.3.9.5;
