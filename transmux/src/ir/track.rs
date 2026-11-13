@@ -261,7 +261,6 @@ pub struct TrackEncryption {
 impl TrackEncryption {
     /// Build a track's crypto carrier from its scheme, `tenc` defaults, and
     /// per-sample IV/subsample entries in decode order.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         scheme: crate::cenc::CencScheme,
         tenc: crate::cenc::TrackEncryptionBox,
