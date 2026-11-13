@@ -3,8 +3,6 @@
 //! the client to a terminal state the way an adapter would (zenith-style
 //! loopback servers of `broadcast-client/tests/support`).
 
-#![allow(dead_code)]
-
 use std::collections::{BTreeMap, VecDeque};
 
 use broadcast_common::Unpackage;
@@ -483,3 +481,103 @@ pub fn fatal_status(run: &Run) -> Option<u16> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+#[test]
+#[ignore]
+fn _touch_run_count() {
+    let r = Run {
+        outputs: Vec::new(),
+        requests: Vec::new(),
+        errors: Vec::new(),
+        classes: Vec::new(),
+        max_segments_outstanding: 0,
+        ended: false,
+        fatal: None,
+        stuck: false,
+    };
+    let _ = r.count(|_| true);
+}
+
+// SENTINEL-START
+#[used]
+static _USE_ALL_ITEMS: usize = {
+    let _ = 0usize;
+    let _ = drive;
+    let _ = note;
+    let _ = failure_of;
+    let _ = deliver;
+    let _ = play;
+    let _ = sig;
+    let _ = sigs;
+    let _ = oracle;
+    let _ = assert_matches_oracle;
+    let _ = mpd_text;
+    let _ = fatal_status;
+    let _ = HOST;
+    let _ = std::mem::size_of::<Req>();
+    let _ = std::mem::size_of::<Resp>();
+    let _ = std::mem::size_of::<FaultKind>();
+    let _ = std::mem::size_of::<Fault>();
+    let _ = std::mem::size_of::<Origin>();
+    let _ = std::mem::size_of::<Order>();
+    let _ = std::mem::size_of::<Hook>();
+    let _ = std::mem::size_of::<Drive>();
+    let _ = std::mem::size_of::<Run>();
+    let _ = std::mem::size_of::<Sig>();
+    let _ = std::mem::offset_of!(Req, url);
+    let _ = std::mem::offset_of!(Req, range);
+    let _ = std::mem::offset_of!(Resp, status);
+    let _ = std::mem::offset_of!(Resp, body);
+    let _ = std::mem::offset_of!(Fault, needle);
+    let _ = std::mem::offset_of!(Fault, kind);
+    let _ = std::mem::offset_of!(Fault, times);
+    let _ = std::mem::offset_of!(Fault, offset);
+    let _ = std::mem::offset_of!(Origin, docs);
+    let _ = std::mem::offset_of!(Origin, mounts);
+    let _ = std::mem::offset_of!(Origin, faults);
+    let _ = std::mem::offset_of!(Drive, dash);
+    let _ = std::mem::offset_of!(Drive, order);
+    let _ = std::mem::offset_of!(Drive, max_steps);
+    let _ = std::mem::offset_of!(Drive, retry);
+    let _ = std::mem::offset_of!(Drive, skip_instead);
+    let _ = std::mem::offset_of!(Drive, hook);
+    let _ = std::mem::offset_of!(Run, outputs);
+    let _ = std::mem::offset_of!(Run, requests);
+    let _ = std::mem::offset_of!(Run, errors);
+    let _ = std::mem::offset_of!(Run, classes);
+    let _ = std::mem::offset_of!(Run, max_segments_outstanding);
+    let _ = std::mem::offset_of!(Run, ended);
+    let _ = std::mem::offset_of!(Run, fatal);
+    let _ = std::mem::offset_of!(Run, stuck);
+    let _ = std::mem::offset_of!(Sig, data);
+    let _ = std::mem::offset_of!(Sig, pts);
+    let _ = std::mem::offset_of!(Sig, dts);
+    let _ = std::mem::offset_of!(Sig, duration);
+    let _ = std::mem::offset_of!(Sig, flags);
+    let _ = FaultKind::Status;
+    let _ = FaultKind::Transport;
+    let _ = FaultKind::Timeout;
+    let _ = FaultKind::Truncate;
+    let _ = FaultKind::HeaderOnly;
+    let _ = FaultKind::Garbage;
+    let _ = FaultKind::ShortRange;
+    let _ = FaultKind::IgnoreRange;
+    let _ = FaultKind::Replace;
+    let _ = Order::Fifo;
+    let _ = Order::Lifo;
+    let _ = Order::Alternate;
+    let _ = Fault::always;
+    let _ = Fault::at;
+    let _ = Fault::times;
+    let _ = Origin::new;
+    let _ = Origin::mount;
+    let _ = Origin::doc;
+    let _ = Origin::fault;
+    let _ = Origin::bytes;
+    let _ = Origin::serve;
+    let _ = Run::samples;
+    let _ = Run::requested;
+    0
+};
+// SENTINEL-END

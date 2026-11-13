@@ -74,11 +74,8 @@ struct RepData {
 /// [`DashifIngestSession::begin_segment`] / `push_segment_bytes` /
 /// `finish_segment`.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct SegmentHandle {
     rep_id: String,
-    number: Option<u64>,
-    time: Option<u64>,
     skip: bool,
     buf: Vec<u8>,
 }
@@ -346,8 +343,6 @@ impl DashifIngestSession {
 
         Ok(SegmentHandle {
             rep_id: rep_id.to_string(),
-            number,
-            time,
             skip: disp == super::SegmentDisposition::Duplicate,
             buf: Vec::new(),
         })

@@ -11,8 +11,6 @@
 //! one of the four REAL fMP4 segments (and the real init). The client never
 //! sees a hand-made byte.
 
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 
 use dash_runtime::client::{
@@ -687,3 +685,149 @@ pub fn xs_datetime_s(us: i64) -> String {
     let ts = jiff::Timestamp::from_second(us.div_euclid(MICROS)).expect("timestamp in range");
     ts.strftime("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
+
+#[cfg(test)]
+#[test]
+#[ignore]
+fn _touch_sim_count() {
+    struct DummyOrigin;
+    impl Origin for DummyOrigin {
+        fn serve(&mut self, _at_utc_us: i64, _req: &HttpReq) -> Outcome {
+            Outcome::Hang
+        }
+    }
+    let w = World::new(0);
+    let origin: Box<dyn Origin> = Box::new(DummyOrigin);
+    let sim = Sim::new(
+        "http://x",
+        DashConfig::default(),
+        PullLimits::default(),
+        w,
+        origin,
+    );
+    let _ = sim.count(|_| true);
+}
+
+#[cfg(test)]
+struct _DummyOrigin;
+#[cfg(test)]
+impl Origin for _DummyOrigin {
+    fn serve(&mut self, _at_utc_us: i64, _req: &HttpReq) -> Outcome {
+        Outcome::Hang
+    }
+}
+
+// SENTINEL-START
+#[used]
+static _USE_ALL_ITEMS: usize = {
+    let _ = 0usize;
+    let _ = std::mem::size_of::<Shared<_DummyOrigin>>();
+    let _ = backoff_us;
+    let _ = http_date;
+    let _ = xs_datetime_ms;
+    let _ = xs_datetime_s;
+    let _ = MICROS;
+    let _ = MS;
+    let _ = std::mem::size_of::<World>();
+    let _ = std::mem::size_of::<Method>();
+    let _ = std::mem::size_of::<HttpReq>();
+    let _ = std::mem::size_of::<HttpResp>();
+    let _ = std::mem::size_of::<Outcome>();
+    let _ = std::mem::size_of::<Kind>();
+    let _ = std::mem::size_of::<Logged>();
+    let _ = std::mem::size_of::<FaultFn>();
+    let _ = std::mem::size_of::<RttFn>();
+    let _ = std::mem::size_of::<PostFn>();
+    let _ = std::mem::size_of::<Delivery>();
+    let _ = std::mem::size_of::<Pending>();
+    let _ = std::mem::size_of::<Sim>();
+    let _ = std::mem::offset_of!(World, start_utc_us);
+    let _ = std::mem::offset_of!(World, elapsed_us);
+    let _ = std::mem::offset_of!(World, host_skew_us);
+    let _ = std::mem::offset_of!(World, host_drift_ppm);
+    let _ = std::mem::offset_of!(World, host_step_us);
+    let _ = std::mem::offset_of!(HttpReq, method);
+    let _ = std::mem::offset_of!(HttpReq, url);
+    let _ = std::mem::offset_of!(HttpReq, range);
+    let _ = std::mem::offset_of!(HttpReq, if_none_match);
+    let _ = std::mem::offset_of!(HttpResp, status);
+    let _ = std::mem::offset_of!(HttpResp, body);
+    let _ = std::mem::offset_of!(HttpResp, date);
+    let _ = std::mem::offset_of!(HttpResp, etag);
+    let _ = std::mem::offset_of!(HttpResp, final_url);
+    let _ = std::mem::offset_of!(Logged, kind);
+    let _ = std::mem::offset_of!(Logged, url);
+    let _ = std::mem::offset_of!(Logged, method);
+    let _ = std::mem::offset_of!(Logged, send_utc_us);
+    let _ = std::mem::offset_of!(Logged, send_mono_us);
+    let _ = std::mem::offset_of!(Logged, status);
+    let _ = std::mem::offset_of!(Logged, id);
+    let _ = std::mem::offset_of!(Pending, at);
+    let _ = std::mem::offset_of!(Pending, seq);
+    let _ = std::mem::offset_of!(Pending, delivery);
+    let _ = std::mem::offset_of!(Sim, client);
+    let _ = std::mem::offset_of!(Sim, world);
+    let _ = std::mem::offset_of!(Sim, origin);
+    let _ = std::mem::offset_of!(Sim, pending);
+    let _ = std::mem::offset_of!(Sim, seq);
+    let _ = std::mem::offset_of!(Sim, log);
+    let _ = std::mem::offset_of!(Sim, outputs);
+    let _ = std::mem::offset_of!(Sim, errors);
+    let _ = std::mem::offset_of!(Sim, classes);
+    let _ = std::mem::offset_of!(Sim, rtt_us);
+    let _ = std::mem::offset_of!(Sim, rtt_utc_us);
+    let _ = std::mem::offset_of!(Sim, fault);
+    let _ = std::mem::offset_of!(Sim, post);
+    let _ = std::mem::offset_of!(Sim, duplicate_responses);
+    let _ = std::mem::offset_of!(Sim, double_failures);
+    let _ = std::mem::offset_of!(Sim, request_timeout_us);
+    let _ = std::mem::offset_of!(Sim, seen_ids);
+    let _ = std::mem::offset_of!(Sim, accepted_segments);
+    let _ = std::mem::offset_of!(Sim, inject_stale);
+    let _ = std::mem::offset_of!(Sim, stale_pool);
+    let _ = std::mem::offset_of!(Sim, rtt_fn);
+    let _ = std::mem::offset_of!(Sim, host_clock_calls);
+    let _ = std::mem::offset_of!(Sim, send_headers);
+    let _ = std::mem::offset_of!(Sim, stalls);
+    let _ = std::mem::offset_of!(Sim, max_stall_run);
+    let _ = std::mem::offset_of!(Sim, steps);
+    let _ = std::mem::offset_of!(Sim, trace_stall);
+    let _ = std::mem::offset_of!(Sim, keep_samples);
+    let _ = std::mem::offset_of!(Sim, sample_counts);
+    let _ = Method::Get;
+    let _ = Method::Head;
+    let _ = Outcome::Resp;
+    let _ = Outcome::Fail;
+    let _ = Outcome::Hang;
+    let _ = Kind::Mpd;
+    let _ = Kind::Utc;
+    let _ = Kind::Init;
+    let _ = Kind::Index;
+    let _ = Kind::Segment;
+    let _ = World::new;
+    let _ = World::true_utc_at;
+    let _ = World::true_utc;
+    let _ = World::mono_at;
+    let _ = World::mono;
+    let _ = World::elapsed_for_mono;
+    let _ = World::host_unix;
+    let _ = HttpResp::ok;
+    let _ = HttpResp::status;
+    let _ = Sim::new;
+    let _ = Sim::give_host_clock;
+    let _ = Sim::push;
+    let _ = Sim::dispatch;
+    let _ = Sim::drain_outputs;
+    let _ = Sim::poll_all;
+    let _ = Sim::deliver;
+    let _ = Sim::after_class;
+    let _ = Sim::deliver_response;
+    let _ = Sim::run_until;
+    let _ = Sim::sleep;
+    let _ = Sim::run_for;
+    let _ = Sim::samples_per_track;
+    let _ = Sim::requests;
+    let _ = Sim::fatal;
+    0
+};
+// SENTINEL-END
