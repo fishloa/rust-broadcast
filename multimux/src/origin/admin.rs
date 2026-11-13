@@ -447,13 +447,22 @@ impl RouteRegistry {
                 )
             })
             .collect::<crate::Result<Vec<_>>>()?;
-        let route_config = RouteConfig::default()
-            .with_target_duration_secs(self.ctx.base_config.target_duration_secs)
-            .with_part_target_ms(self.ctx.base_config.part_target_ms)
-            .with_window_segments(self.ctx.base_config.window_segments)
+        let store = Arc::new(
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(self.ctx.base_config.target_duration_secs)
+                    .with_part_target_ms(self.ctx.base_config.part_target_ms)
+                    .with_window_segments(self.ctx.base_config.window_segments),
+            )
+            .with_archive_floor(archive_floor)
+            .with_name(route.name.clone())
             .with_container(super::route_container(route))
             .with_ts_cut_policy(route.ts_hls_cut.into())
             .with_ts_idr_fallback(route.ts_hls_idr_fallback)
+            // Issue #900 — see the identical fix (and its own doc) in
+            // `super::serve_with_registry_impl`'s per-route loop; this is
+            // the admin-API (`POST /admin/routes`/reload) equivalent.
+            .with_dvr(route.dvr.clone())
             .with_program_date_time(self.ctx.base_config.program_date_time)
             .with_hold_cold_playlist(self.ctx.base_config.hold_cold_playlist)
             .with_declared_bandwidth_bps(route.declared_bandwidth_bps)
@@ -461,11 +470,7 @@ impl RouteRegistry {
             .with_closed_caption_overrides(route.closed_caption_overrides.clone())
             .with_audio_rendition_sources(route.audio_rendition_sources.clone())
             .with_audio_profiles(route.audio_profiles.clone())
-            .with_subtitles(route.subtitles);
-        let store = Arc::new(
-            RouteHandle::new(route_config)
-                .with_archive_floor(archive_floor)
-                .with_name(route.name.clone()),
+            .with_subtitles(route.subtitles),
         );
         if let Some(old) = continues {
             store.continue_from(old);
