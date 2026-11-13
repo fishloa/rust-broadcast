@@ -1,104 +1,31 @@
-//! RTSP ingest source (ported onto the media-plane ingress traits at plan
-//! step 5a) — DESCRIBE/SETUP/PLAY over interleaved TCP, depayloaded into
-//! timed [`transmux::Sample`]s.
+//! RTSP ingest source: DESCRIBE/SETUP/PLAY over interleaved TCP (or TLS for `rtsps://`),
+//! driven by a relay-mode [`broadcast_client::Session`] through the shared session host
+//! (`crate::source::client_host`).
 //!
-//! # The sans-IO reshape, for real RTSP — this module is the test of it
-//!
-//! [`RtspDialer::dial`] performs **no I/O**: it parses the URL, resolves
-//! credentials, and builds exactly one thing — the DESCRIBE request bytes —
-//! via [`rtsp_runtime::client::ClientSession`], the sans-IO RTSP engine
-//! `rtsp-runtime` already ships (its request builders *return* the bytes to
-//! send; `handle_data` consumes replies and returns typed events; the RFC
-//! 2326 Appendix A.1 state machine lives inside it, never touching a
-//! socket). [`RtspIngestSession`] wraps that engine directly — no
-//! `AsyncRtspClient`, no owned `TcpStream` — so the *entire* DESCRIBE → SETUP
-//! (× N tracks) → PLAY handshake completes through the ordinary
-//! [`IngestSession::poll_transmit`]/[`Stage::feed`] pump: [`run_rtsp`] (the
-//! multimux-side driver that owns the real socket) writes whatever
-//! `poll_transmit` returns, reads the reply, and hands it to `feed`, which
-//! either queues the next request or emits [`SessionEvent::Established`].
-//!
-//! This confirms `media_plane::ingress`'s central design bet: a "genuinely
-//! multi-round-trip" protocol does **not** need a blocking `dial()` or an
-//! executor-bridge thread, *provided* a sans-IO engine already exists to
-//! delegate to. `rtsp-runtime` is that engine for RTSP. (Contrast
-//! [`crate::source::ts_http`]/[`crate::source::srt`]'s caller mode, which
-//! have no such sans-IO core and therefore *do* need the bridge — see their
-//! own module docs.)
-//!
-//! # Keepalive
-//!
-//! The keepalive schedule is `rtsp-runtime`'s, not this crate's: the session
-//! engine derives the deadline from the `Session;timeout=` its SETUP response
-//! declared (RFC 2326 §12.37) and falls back to the RFC's own default when
-//! the server declares none, and this stage only drives it —
-//! [`Stage::next_deadline`] asks
-//! [`rtsp_runtime::client::ClientSession::poll_timeout`] when it is due and
-//! [`Stage::on_deadline`] queues the request
-//! [`rtsp_runtime::client::ClientSession::handle_timeout`] builds. A
-//! non-success reply to that keepalive is ignored rather than tearing the
-//! session down — both `GET_PARAMETER` and `OPTIONS` are optional methods,
-//! and servers answer them with `405` (§10.6, §10.1).
-//!
-//! Inbound RTCP is fed to the track's depacketiser, whose Sender Report
-//! handling holds the RTP-to-NTP anchor; RTCP receiver reports are still not
-//! sent.
+//! The session owns the protocol: the `rtsp-runtime` engine, Basic/Digest auth, redirects, the
+//! keepalive schedule (from the `Session;timeout=` the SETUP reply declared, RFC 2326 §12.37),
+//! interleaved RTP/RTCP depayload, Sender-Report A/V alignment and the `TEARDOWN`. The host opens
+//! its TCP/TLS connection, writes what the session sends, and says goodbye on cancel.
 //!
 //! # `rtsps://` (TLS)
 //!
-//! The session/`Stage` logic above is completely transport-agnostic (it only
-//! ever sees bytes), so [`run_rtsp`] wires TLS in at the socket layer alone:
-//! for an `rtsps://` route it TCP-connects then performs a `tokio_rustls`
-//! handshake (trusting the public-CA `webpki-roots` bundle via
-//! `rtsp_runtime::io::default_tls_client_config`, exactly like
-//! [`rtsp_runtime::io::AsyncRtspClient::connect_tls_with`] does for
-//! `rtsp-runtime`'s own client), producing the same `AsyncRead + AsyncWrite`
-//! duplex stream a plain `rtsp://` connect would — the sans-IO driver loop
-//! never has to know which one it got. Gated behind this crate's `tls`
-//! feature (default-on); with it disabled, an `rtsps://` route fails fast
-//! with a clear runtime error naming the missing feature, never falling back
-//! to an unencrypted socket (issue #804).
+//! The session only ever exchanges plaintext bytes; the host performs the TLS handshake
+//! (trusting the public-CA `webpki-roots` bundle via
+//! `rtsp_runtime::io::default_tls_client_config`). Gated behind this crate's `tls` feature
+//! (default-on); with it disabled, an `rtsps://` route fails with a clear error naming the
+//! missing feature, never falling back to an unencrypted socket (issue #804).
 
-use std::collections::VecDeque;
-use std::time::Duration;
-use transmux::TrackId;
+use std::convert::Infallible;
 
-use bytes::Bytes;
-use rtsp_runtime::auth::Credentials;
-use rtsp_runtime::client::{ClientEvent, ClientSession};
-use rtsp_runtime::{Method, StatusCode};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
-use tokio::net::TcpStream;
-use url::Url;
+use broadcast_client::{Config, SourceKind};
+use media_plane::ingress::{HandshakePolicy, IngestDriver};
+use media_plane::trunk::TrunkConfig;
 
-use broadcast_common::{Demand, Stage, Timestamp};
-use media_plane::ingress::{
-    Dialer, HandshakePolicy, IngestDriver, IngestSession, ProgramId, SessionEvent,
-};
-use media_plane::trunk::{RetentionClass, TrunkConfig};
-
-use crate::error::{MultimuxError, Result};
-use crate::source::http_auth::{credentials_from_url, resolve_credentials, strip_userinfo};
+use crate::error::MultimuxError;
+use crate::source::client_host::{EventIngest, SessionLabels, SessionStep, TlsHost};
 use crate::source::pull_target::{PullKind, PullRoute};
-use crate::source::{TrackInit, sdp::plan_tracks};
 
-/// Default port for a bare `rtsp://host/...` URL with no explicit port.
-const RTSP_DEFAULT_PORT: u16 = rtsp_runtime::RTSP_DEFAULT_PORT;
-
-/// Default port for a bare `rtsps://host/...` URL with no explicit port.
-const RTSPS_DEFAULT_PORT: u16 = rtsp_runtime::RTSPS_DEFAULT_PORT;
-
-/// Map an interleaved RTP channel to its track id; a track's RTCP channel
-/// matches nothing here.
-pub fn route_channel(channel: u8, tracks: &[TrackInit]) -> Option<TrackId> {
-    tracks
-        .iter()
-        .find(|t| t.channel == channel)
-        .map(|t| t.track_id)
-}
-
-/// An RTSP route: a name (for logging/metrics) plus its source URL. Replaces
-/// the old (pre-5a) `RtspSource`; [`run_rtsp`] is the new drive loop.
+/// An RTSP route: a name (for logging/metrics) plus its source URL.
 pub type RtspRoute = PullRoute<RtspKind>;
 
 /// The [`PullKind`] of a [`RtspRoute`].
@@ -124,887 +51,15 @@ impl crate::source::pull_target::PullDrive for RtspKind {
     }
 }
 
-/// Which handshake request [`RtspIngestSession`] is currently waiting a
-/// response for — the state `poll_transmit`/`feed` walk through instead of
-/// `RtspDialer::dial` blocking on it.
-enum Phase {
-    AwaitDescribe,
-    AwaitSetup(usize),
-    AwaitPlay,
-    Live,
-}
+const WHAT: &str = "rtsp";
+const DESCRIBE_PHASE: &str = "DESCRIBE";
 
-/// A live RTSP [`IngestSession`]: wraps `rtsp-runtime`'s sans-IO
-/// [`ClientSession`] directly (no socket) — see the module doc.
-pub struct RtspIngestSession {
-    session: ClientSession,
-    base_url: Url,
-    request_uri: String,
-    tracks: Vec<TrackInit>,
-    plan: Option<rtsp_runtime::PlayPlan>,
-    depacketiser: Option<transmux::RtpStreamDepacketiser>,
-    aligner: transmux::TrackAligner,
-    phase: Phase,
-    outbound: VecDeque<Bytes>,
-    pending: VecDeque<SessionEvent>,
-    /// Monotonic session start, the epoch the engine's `now_us` deadline is
-    /// measured from. The driver's [`Timestamp`] has no readable epoch and no
-    /// relation to it: a driver woken at `Timestamp(t)` for our deadline `d`
-    /// is woken once `now_us() >= d`.
-    started: std::time::Instant,
-    /// The driver's most recent [`Timestamp`] and this stage's `now_us` when
-    /// it was seen: the two clocks are unrelated, so the engine's deadline is
-    /// mapped onto the driver's through this pair (see
-    /// [`Self::next_deadline`]).
-    heartbeat: Option<(Timestamp, u64)>,
-    /// Whether this connection has asked the server which keepalive method it
-    /// supports (see [`Self::settle_keepalive_method`]).
-    asked_keepalive_method: bool,
-    /// The engine's `now_us` at which its keepalive is next due.
-    keepalive_wake_at: u64,
-    /// Interleaved media frames skipped because their RTP payload did not
-    /// parse (audit T16, #1144) — see [`Self::malformed_media_frames`].
-    malformed_media_frames: u64,
-    rtcp_frames: u64,
-    diagnostics: AlignDiagnostics,
-    torn_down: bool,
-}
-
-#[derive(Default)]
-struct AlignDiagnostics {
-    discontinuities: u64,
-    ntp_zero_seen: u64,
-    skew_seen: u64,
-    last_rejection: Option<Rejection>,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Rejection {
-    NtpZero,
-    Skew,
-}
-
-impl Rejection {
-    fn warn(self, total: u64) {
-        match self {
-            Rejection::NtpZero => tracing::warn!(
-                total,
-                "rtsp: ignored a Sender Report with NTP time zero (the sender's clock is unsynchronised)"
-            ),
-            Rejection::Skew => tracing::warn!(
-                total,
-                "rtsp: Sender Reports place the tracks more than an hour apart; keeping provisional A/V placement"
-            ),
-        }
-    }
-
-    fn repeat(self, total: u64) {
-        match self {
-            Rejection::NtpZero => {
-                tracing::debug!(
-                    total,
-                    "rtsp: ignored another Sender Report with NTP time zero"
-                )
-            }
-            Rejection::Skew => tracing::debug!(
-                total,
-                "rtsp: Sender Reports still place the tracks more than an hour apart"
-            ),
-        }
-    }
-}
-
-impl AlignDiagnostics {
-    fn record(
-        &mut self,
-        pending: &mut VecDeque<SessionEvent>,
-        placed: Vec<transmux::AlignOut>,
-        ntp_zero_total: u64,
-        skew_total: u64,
-    ) {
-        for out in placed {
-            match out {
-                transmux::AlignOut::Sample(track_id, sample) => {
-                    pending.push_back(SessionEvent::Sample {
-                        program: ProgramId(0),
-                        track_id,
-                        retention: RetentionClass::Timed,
-                        sample,
-                    });
-                }
-                transmux::AlignOut::Discontinuity => {
-                    self.discontinuities = self.discontinuities.saturating_add(1);
-                    if self.discontinuities == 1 {
-                        tracing::warn!(
-                            "rtsp: the A/V timeline stepped (track alignment discontinuity)"
-                        );
-                    } else {
-                        tracing::debug!(
-                            total = self.discontinuities,
-                            "rtsp: the A/V timeline stepped again"
-                        );
-                    }
-                }
-                transmux::AlignOut::State(state) => {
-                    tracing::warn!(?state, "rtsp: the A/V placement rule changed");
-                }
-                _ => {}
-            }
-        }
-        if ntp_zero_total > self.ntp_zero_seen {
-            self.ntp_zero_seen = ntp_zero_total;
-            self.note_rejection(Rejection::NtpZero, ntp_zero_total);
-        }
-        if skew_total > self.skew_seen {
-            self.skew_seen = skew_total;
-            self.note_rejection(Rejection::Skew, skew_total);
-        }
-    }
-
-    fn note_rtcp_accepted(&mut self, ntp_zero_total: u64, skew_refused: bool) {
-        if ntp_zero_total == self.ntp_zero_seen && !skew_refused {
-            self.last_rejection = None;
-        }
-    }
-
-    fn note_rejection(&mut self, rejection: Rejection, total: u64) {
-        if self.last_rejection == Some(rejection) {
-            rejection.repeat(total);
-        } else {
-            self.last_rejection = Some(rejection);
-            rejection.warn(total);
-        }
-    }
-}
-
-/// Nanoseconds in a microsecond: the engine's keepalive clock is
-/// microseconds, the driver's [`Timestamp`] is nanoseconds.
-const NANOS_PER_US: u64 = 1_000;
-
-impl RtspIngestSession {
-    /// How many interleaved media frames were skipped because their RTP
-    /// payload did not parse. A corrupt frame inside an otherwise valid `$`
-    /// frame costs only itself: it is counted here (and logged), never ends
-    /// the session.
-    pub fn malformed_media_frames(&self) -> u64 {
-        self.malformed_media_frames
-    }
-
-    /// How many interleaved RTCP frames were routed to a track's depacketiser,
-    /// where a Sender Report anchors that track's RTP clock to NTP time
-    /// (RFC 3550 §6.4.1).
-    pub fn rtcp_frames(&self) -> u64 {
-        self.rtcp_frames
-    }
-
-    fn rtcp_track(&self, channel: u8) -> Option<TrackId> {
-        let plan = self.plan.as_ref()?;
-        self.tracks.iter().enumerate().find_map(|(index, track)| {
-            (plan.channels(index)?.1 == channel).then_some(track.track_id)
-        })
-    }
-
-    fn queue_teardown(&mut self) {
-        if self.torn_down || !matches!(self.phase, Phase::Live) {
-            return;
-        }
-        self.torn_down = true;
-        let uri = self
-            .plan
-            .as_ref()
-            .map_or(self.request_uri.as_str(), |plan| plan.play_uri());
-        match self.session.teardown(uri) {
-            Ok(bytes) => self.outbound.push_back(Bytes::from(bytes)),
-            Err(e) => tracing::warn!(error = %e, "rtsp: failed to build TEARDOWN"),
-        }
-    }
-
-    fn note_rtp_info(&mut self) {
-        let Some(plan) = self.plan.as_ref() else {
-            return;
-        };
-        let times: Vec<(TrackId, u32)> = self
-            .session
-            .take_rtp_info()
-            .into_iter()
-            .filter_map(|entry| {
-                let rtptime = entry.rtptime?;
-                let uri = Url::parse(&entry.uri).ok()?;
-                let index = plan
-                    .setups()
-                    .iter()
-                    .position(|s| Url::parse(&s.control).is_ok_and(|u| u == uri))?;
-                Some((self.tracks.get(index)?.track_id, rtptime))
-            })
-            .collect();
-        self.aligner.note_rtp_info(&times);
-    }
-
-    fn begin_setup(&mut self, index: usize) -> Result<()> {
-        let setup = self
-            .plan
-            .as_ref()
-            .and_then(|plan| plan.setups().get(index))
-            .ok_or_else(|| MultimuxError::Sdp {
-                reason: "no planned SETUP for the track".into(),
-            })?;
-        let bytes = self
-            .session
-            .setup(&setup.control, &setup.transport)
-            .map_err(protocol_err("SETUP"))?;
-        self.outbound.push_back(Bytes::from(bytes));
-        self.phase = Phase::AwaitSetup(index);
-        Ok(())
-    }
-
-    fn handle_event(&mut self, event: ClientEvent) -> Result<()> {
-        match event {
-            ClientEvent::AuthRetry { request, .. } => {
-                self.outbound.push_back(Bytes::from(request));
-            }
-            ClientEvent::Response {
-                status,
-                body,
-                method,
-                ..
-            } => {
-                if !status.is_success() {
-                    // A non-success reply to the keepalive must NOT tear down
-                    // an established session (issue #1083 C2): `GET_PARAMETER`
-                    // and `OPTIONS` are both optional, a server may answer
-                    // either with `405`/`501`, and a transient `5xx`/`401`
-                    // mid-stream is not a reason to drop a live ingest. Any
-                    // other non-success response is still fatal, exactly as
-                    // before.
-                    if matches!(method, Method::Options | Method::GetParameter)
-                        && matches!(self.phase, Phase::Live)
-                    {
-                        tracing::debug!(
-                            status = %status,
-                            "rtsp: ignoring a non-success reply to the keepalive"
-                        );
-                        return Ok(());
-                    }
-                    return Err(
-                        if matches!(status, StatusCode::Unauthorized | StatusCode::Forbidden) {
-                            MultimuxError::Auth {
-                                reason: format!(
-                                    "{}: {status}",
-                                    match method {
-                                        Method::Describe => "DESCRIBE",
-                                        Method::Setup => "SETUP",
-                                        Method::Play => "PLAY",
-                                        _ => "recv",
-                                    }
-                                ),
-                            }
-                        } else {
-                            MultimuxError::Protocol {
-                                phase: match method {
-                                    Method::Describe => "DESCRIBE",
-                                    Method::Setup => "SETUP",
-                                    Method::Play => "PLAY",
-                                    _ => "recv",
-                                },
-                                reason: format!("non-success status {status}"),
-                            }
-                        },
-                    );
-                }
-                match (&self.phase, &method) {
-                    (Phase::AwaitDescribe, m) if *m == Method::Describe => {
-                        let content_base = self.session.content_base().map(str::to_owned);
-                        let (plan, tracks) =
-                            plan_tracks(&self.base_url, content_base.as_deref(), &body)?;
-                        self.plan = Some(plan);
-                        self.tracks = tracks;
-                        self.begin_setup(0)?;
-                    }
-                    (Phase::AwaitSetup(index), m) if *m == Method::Setup => {
-                        let index = *index;
-                        let negotiated = self.session.take_negotiated_transport();
-                        let plan = self.plan.as_mut().ok_or_else(|| MultimuxError::Sdp {
-                            reason: "SETUP answered before a plan was made".into(),
-                        })?;
-                        plan.accept_setup(index, negotiated.as_ref()).map_err(|e| {
-                            MultimuxError::Protocol {
-                                phase: "SETUP",
-                                reason: format!("track {}: {e}", self.tracks[index].track_id),
-                            }
-                        })?;
-                        if let Some((channel, _)) = plan.channels(index) {
-                            self.tracks[index].channel = channel;
-                        }
-                        let next = index + 1;
-                        if next < self.tracks.len() {
-                            self.begin_setup(next)?;
-                        } else {
-                            self.depacketiser = Some(transmux::RtpStreamDepacketiser::new(
-                                self.tracks
-                                    .iter()
-                                    .map(|t| {
-                                        transmux::RtpStreamTrack::new(
-                                            t.track_id,
-                                            t.kind,
-                                            t.config.clone(),
-                                            t.clock_rate,
-                                        )
-                                    })
-                                    .collect(),
-                            ));
-                            self.aligner = transmux::TrackAligner::new(
-                                &self
-                                    .tracks
-                                    .iter()
-                                    .map(|t| {
-                                        (
-                                            t.track_id,
-                                            matches!(t.config, transmux::CodecConfig::Avc { .. }),
-                                            t.clock_rate,
-                                        )
-                                    })
-                                    .collect::<Vec<_>>(),
-                            );
-                            let play_uri = self
-                                .plan
-                                .as_ref()
-                                .map_or(self.request_uri.as_str(), |plan| plan.play_uri());
-                            let bytes =
-                                self.session.play(play_uri).map_err(protocol_err("PLAY"))?;
-                            self.outbound.push_back(Bytes::from(bytes));
-                            self.phase = Phase::AwaitPlay;
-                        }
-                    }
-                    (Phase::AwaitPlay, m) if *m == Method::Play => {
-                        self.note_rtp_info();
-                        self.pending.push_back(SessionEvent::Established);
-                        let specs = self
-                            .depacketiser
-                            .as_ref()
-                            .expect("depacketiser built before PLAY is sent")
-                            .track_specs();
-                        self.pending.push_back(SessionEvent::NewProgram {
-                            program: ProgramId(0),
-                            tracks: specs,
-                        });
-                        self.phase = Phase::Live;
-                        self.arm_keepalive_wake(self.now_us());
-                    }
-                    _ => {
-                        // A response for a request phase we've already moved
-                        // past (e.g. a stray retransmit) — ignore rather than
-                        // error, mirroring how `handle_data` already
-                        // correlates by CSeq.
-                    }
-                }
-            }
-            ClientEvent::MediaData { channel, data } => {
-                if !matches!(self.phase, Phase::Live) {
-                    return Ok(());
-                }
-                let Some(track_id) = route_channel(channel, &self.tracks) else {
-                    if let Some(track_id) = self.rtcp_track(channel)
-                        && let Some(depa) = self.depacketiser.as_mut()
-                    {
-                        self.rtcp_frames = self.rtcp_frames.saturating_add(1);
-                        depa.push_rtcp(track_id, &data);
-                        self.aligner.note_rtcp();
-                        self.diagnostics.note_rtcp_accepted(
-                            depa.rejected_sender_reports(),
-                            self.aligner.sender_reports_refused(),
-                        );
-                        self.diagnostics.record(
-                            &mut self.pending,
-                            Vec::new(),
-                            depa.rejected_sender_reports(),
-                            self.aligner.skew_rejections(),
-                        );
-                    }
-                    return Ok(());
-                };
-                let Some(depa) = self.depacketiser.as_mut() else {
-                    return Ok(());
-                };
-                // A frame that does not depayload is skipped and counted: the
-                // `$` framing was intact, so the next frame is still readable
-                // and one corrupt RTP packet must not end the session (audit
-                // T16, #1144).
-                let samples = match depa.push(track_id, &data) {
-                    Ok(samples) => samples,
-                    Err(e) => {
-                        self.malformed_media_frames += 1;
-                        tracing::warn!(
-                            error = %e,
-                            channel,
-                            total = self.malformed_media_frames,
-                            "rtsp: skipped a malformed interleaved RTP frame"
-                        );
-                        return Ok(());
-                    }
-                };
-                for sample in samples {
-                    let placed = self.aligner.push(depa, track_id, sample);
-                    self.diagnostics.record(
-                        &mut self.pending,
-                        placed,
-                        depa.rejected_sender_reports(),
-                        self.aligner.skew_rejections(),
-                    );
-                }
-            }
-            // `ClientEvent` is `#[non_exhaustive]`: a future variant this
-            // session has no reaction to yet is ignored, not a hard error.
-            _ => {}
-        }
-        Ok(())
-    }
-    /// The engine's `now_us`: this stage's own monotonic clock, anchored at
-    /// `started`, in microseconds. [`Timestamp`] has no readable epoch, so
-    /// the session schedule is measured on this clock rather than the
-    /// driver's (RTSP has no RTP-timestamp timeline that would need theirs).
-    fn now_us(&self) -> u64 {
-        u64::try_from(self.started.elapsed().as_micros()).unwrap_or(u64::MAX)
-    }
-
-    /// Asks the server which keepalive method it supports, once per
-    /// connection, as the keepalive's own `GET_PARAMETER`: a success answer's
-    /// `Public` header settles it for the next keepalive (RFC 2326 §12.28),
-    /// and a server that does not implement `GET_PARAMETER` ("`405`/`501`")
-    /// leaves the engine on `OPTIONS`. Only a session whose advertised
-    /// methods are unknown (before the server answered any `OPTIONS`) is
-    /// asked.
-    fn send_keepalive(&mut self, us: u64) {
-        // Re-arm before queueing so a build failure cannot spin: the engine
-        // re-arms its deadline as soon as it builds the request.
-        match self.session.handle_timeout(us) {
-            Ok(Some(bytes)) => self.outbound.push_back(Bytes::from(bytes)),
-            Ok(None) => {}
-            Err(e) => tracing::warn!(error = %e, "rtsp: failed to build the keepalive"),
-        }
-        self.arm_keepalive_wake(us);
-    }
-
-    fn settle_keepalive_method(&mut self, us: u64) {
-        if self.asked_keepalive_method || self.session.keepalive_method() != Method::Options {
-            return;
-        }
-        let uri = self
-            .plan
-            .as_ref()
-            .map_or(self.request_uri.as_str(), |plan| plan.play_uri());
-        match self.session.get_parameter(uri, b"") {
-            Ok(bytes) => self.outbound.push_back(Bytes::from(bytes)),
-            Err(e) => tracing::warn!(error = %e, "rtsp: failed to ask for the Public header"),
-        }
-        self.asked_keepalive_method = true;
-        self.arm_keepalive_wake(us);
-    }
-
-    /// Re-reads the engine's deadline after a request exchange: the engine
-    /// re-arms as soon as it builds the request, so this is always ahead.
-    fn arm_keepalive_wake(&mut self, now: u64) {
-        self.session.mark_activity(now);
-        self.keepalive_wake_at = self
-            .session
-            .poll_timeout()
-            .map_or(0, |due| due.max(now + 1));
-    }
-}
-
-impl Stage for RtspIngestSession {
-    type In<'a> = &'a [u8];
-    type Out = SessionEvent;
-    type Error = MultimuxError;
-
-    fn feed(&mut self, input: &[u8], _now: Timestamp) -> Result<()> {
-        // Everything decoded before a terminal protocol error is still handled
-        // (audit T16, #1144); only then does the error end the session.
-        let outcome = self.session.handle_data(input);
-        for event in outcome.events {
-            self.handle_event(event)?;
-        }
-        match outcome.error {
-            Some(e) => Err(protocol_err("recv")(e)),
-            None => Ok(()),
-        }
-    }
-
-    fn poll(&mut self) -> Option<SessionEvent> {
-        self.pending.pop_front()
-    }
-
-    /// End of input: flush every track's depacketiser (a pending AU is
-    /// complete by definition at end of stream — see
-    /// `RtpStreamDepacketiser::flush`), then queue one `TEARDOWN` of the
-    /// playing session (RFC 2326 §10.7) for the driver to send before it
-    /// closes the connection. Idempotent.
-    fn finish(&mut self) -> Result<()> {
-        let Some(depa) = self.depacketiser.as_mut() else {
-            return Ok(());
-        };
-        for spec in depa.track_specs() {
-            let track_id = spec.track_id;
-            match depa.flush(track_id) {
-                Ok(samples) => {
-                    for sample in samples {
-                        let placed = self.aligner.push(depa, track_id, sample);
-                        self.diagnostics.record(
-                            &mut self.pending,
-                            placed,
-                            depa.rejected_sender_reports(),
-                            self.aligner.skew_rejections(),
-                        );
-                    }
-                }
-                Err(e) => {
-                    self.malformed_media_frames += 1;
-                    tracing::warn!(error = %e, %track_id, "rtsp: end-of-input flush failed");
-                }
-            }
-        }
-        let placed = self.aligner.flush(depa);
-        self.diagnostics.record(
-            &mut self.pending,
-            placed,
-            depa.rejected_sender_reports(),
-            self.aligner.skew_rejections(),
-        );
-        self.queue_teardown();
-        Ok(())
-    }
-
-    fn next_deadline(&self) -> Option<Timestamp> {
-        // `None` before SETUP, after TEARDOWN, and before any request of ours
-        // was written — the engine owns the whole schedule.
-        let due = self.session.poll_timeout()?;
-        // Announce it on the driver's clock, which shares no epoch with the
-        // engine's: the driver is at `Timestamp(t)` when this stage's clock
-        // reads `us`, so it reaches `due` at `t + (due - us)`.
-        Some(match self.heartbeat {
-            Some((t, us)) => Timestamp::from_nanos(
-                t.as_nanos()
-                    .saturating_add(due.saturating_sub(us).saturating_mul(NANOS_PER_US)),
-            ),
-            None => Timestamp::from_nanos(due.saturating_mul(NANOS_PER_US)),
-        })
-    }
-
-    fn on_deadline(&mut self, now: Timestamp) {
-        let us = self.now_us();
-        self.heartbeat = Some((now, us));
-        if !matches!(self.phase, Phase::Live) {
-            return;
-        }
-        // The method probe goes first: it re-arms the deadline from the
-        // request it builds, so the check below reads the fresh one and the
-        // keepalive that follows uses the method the answer settled.
-        self.settle_keepalive_method(us);
-        if self.keepalive_wake_at != 0 && us >= self.keepalive_wake_at {
-            self.send_keepalive(us);
-        }
-    }
-
-    fn demand(&self) -> Demand {
-        Demand::new(crate::source::INGEST_DEMAND_BYTES)
-    }
-}
-
-impl IngestSession for RtspIngestSession {
-    type Request = Bytes;
-
-    fn poll_transmit(&mut self) -> Option<Bytes> {
-        self.outbound.pop_front()
-    }
-}
-
-/// Constructs an [`RtspIngestSession`] and queues its first handshake
-/// request (DESCRIBE) — **no I/O**: see the module doc.
-pub struct RtspDialer {
-    url: String,
-    auth: Option<Credentials>,
-}
-
-impl RtspDialer {
-    /// Build a dialer for `url` (`rtsp://`/`rtsps://`), with optional
-    /// config-supplied credentials taking precedence over URL userinfo.
-    pub fn new(url: impl Into<String>, auth: Option<Credentials>) -> Self {
-        RtspDialer {
-            url: url.into(),
-            auth,
-        }
-    }
-
-    /// The `host:port` [`run_rtsp`] must TCP-connect to — computed here
-    /// (pure, no I/O) so the driver never needs to re-parse the URL.
-    pub fn connect_addr(&self) -> Result<String> {
-        let base = Url::parse(&self.url).map_err(|e| MultimuxError::Connect {
-            reason: format!(
-                "bad rtsp(s) URL {}: {e}",
-                crate::redact::redact_url(&self.url)
-            ),
-        })?;
-        let clean = strip_userinfo(&base)?;
-        connect_addr(&clean)
-    }
-
-    /// Whether `run_rtsp` needs a TLS-wrapped connection (`rtsps://`).
-    pub fn is_tls(&self) -> Result<bool> {
-        let base = Url::parse(&self.url).map_err(|e| MultimuxError::Connect {
-            reason: format!(
-                "bad rtsp(s) URL {}: {e}",
-                crate::redact::redact_url(&self.url)
-            ),
-        })?;
-        scheme_is_tls(&strip_userinfo(&base)?)
-    }
-
-    /// The SNI server name `run_rtsp` presents during an `rtsps://` TLS
-    /// handshake: this URL's host with IPv6 brackets stripped
-    /// (`[2001:db8::1]` -> `2001:db8::1`, which is what rustls'
-    /// `ServerName::try_from` accepts), hostnames and IPv4 literals
-    /// unchanged. Userinfo is stripped first, like its `connect_addr`/
-    /// `is_tls` siblings.
-    pub fn sni_server_name(&self) -> Result<String> {
-        let base = Url::parse(&self.url).map_err(|e| MultimuxError::Connect {
-            reason: format!(
-                "bad rtsp(s) URL {}: {e}",
-                crate::redact::redact_url(&self.url)
-            ),
-        })?;
-        sni_server_name(&strip_userinfo(&base)?)
-    }
-}
-
-impl Dialer for RtspDialer {
-    type Session = RtspIngestSession;
-    type Error = MultimuxError;
-
-    fn dial(&mut self) -> Result<RtspIngestSession> {
-        let base_url = Url::parse(&self.url).map_err(|e| MultimuxError::Connect {
-            reason: format!(
-                "bad rtsp(s) URL {}: {e}",
-                crate::redact::redact_url(&self.url)
-            ),
-        })?;
-        let credentials = resolve_credentials(self.auth.clone(), credentials_from_url(&base_url)?);
-        let request_url = strip_userinfo(&base_url)?;
-        let request_uri = request_url.to_string();
-
-        let mut session = session_with_credentials(credentials);
-        let describe_bytes = session
-            .describe(&request_uri)
-            .map_err(protocol_err("DESCRIBE"))?;
-
-        Ok(RtspIngestSession {
-            session,
-            base_url: request_url,
-            request_uri,
-            tracks: Vec::new(),
-            plan: None,
-            depacketiser: None,
-            aligner: transmux::TrackAligner::default(),
-            phase: Phase::AwaitDescribe,
-            outbound: VecDeque::from(vec![Bytes::from(describe_bytes)]),
-            pending: VecDeque::new(),
-            started: std::time::Instant::now(),
-            heartbeat: None,
-            asked_keepalive_method: false,
-            keepalive_wake_at: 0,
-            malformed_media_frames: 0,
-            rtcp_frames: 0,
-            diagnostics: AlignDiagnostics::default(),
-            torn_down: false,
-        })
-    }
-}
-
-/// Builds a fresh [`ClientSession`], attaching `credentials` if present.
-fn session_with_credentials(credentials: Option<Credentials>) -> ClientSession {
-    match credentials {
-        Some(creds) => ClientSession::new().with_credentials(creds),
-        None => ClientSession::new(),
-    }
-}
-
-/// Derives the `host:port` connect address from the base URL, defaulting to
-/// [`RTSP_DEFAULT_PORT`]/[`RTSPS_DEFAULT_PORT`].
-fn connect_addr(url: &Url) -> Result<String> {
-    let default_port = if scheme_is_tls(url)? {
-        RTSPS_DEFAULT_PORT
-    } else {
-        RTSP_DEFAULT_PORT
-    };
-    let host = url.host_str().ok_or_else(|| MultimuxError::Connect {
-        reason: format!("rtsp(s) URL has no host: {url}"),
-    })?;
-    let port = url.port().unwrap_or(default_port);
-    Ok(format!("{host}:{port}"))
-}
-
-/// Maps an `rtsp-runtime` error from a request/response phase into
-/// [`MultimuxError::Protocol`].
-fn protocol_err(phase: &'static str) -> impl Fn(rtsp_runtime::error::Error) -> MultimuxError {
-    move |e| MultimuxError::Protocol {
-        phase,
-        reason: e.to_string(),
-    }
-}
-
-/// Decides which connected-client kind a base RTSP URL needs.
-fn scheme_is_tls(url: &Url) -> Result<bool> {
-    match url.scheme() {
-        "rtsp" => Ok(false),
-        "rtsps" => Ok(true),
-        other => Err(MultimuxError::Connect {
-            reason: format!("not an rtsp(s) URL scheme: {other}"),
-        }),
-    }
-}
-
-/// Derives the SNI server name for an `rtsps://` TLS handshake from a base
-/// `rtsp(s)://` URL, stripping brackets from IPv6 literals. `Url::host_str()`
-/// returns IPv6 addresses in bracketed form (per RFC 3986 authority syntax,
-/// e.g. `"[2001:db8::1]"`), but rustls `ServerName::try_from()` rejects the
-/// brackets. This function extracts the host and strips a leading `[` and
-/// trailing `]` if present, leaving hostnames and IPv4 addresses unchanged.
-fn sni_server_name(url: &Url) -> Result<String> {
-    // Safe to `Display` `url` directly: every caller passes the already
-    // userinfo-stripped URL (see `RtspDialer::sni_server_name`).
-    let host = url.host_str().ok_or_else(|| MultimuxError::Connect {
-        reason: format!("rtsp(s) URL has no host: {url}"),
-    })?;
-    let sni = host
-        .strip_prefix('[')
-        .and_then(|h| h.strip_suffix(']'))
-        .unwrap_or(host);
-    Ok(sni.to_string())
-}
-
-/// A connected transport's read/write halves, boxed so [`run_rtsp`]'s drive
-/// loop can be written once and fed either a plain [`TcpStream`]'s halves or
-/// a TLS stream's — see the module doc's "`rtsps://` (TLS)" section.
-type BoxedRead = Box<dyn AsyncRead + Send + Unpin>;
-type BoxedWrite = Box<dyn AsyncWrite + Send + Unpin>;
-
-/// Connects a plain `rtsp://` (TCP) transport to `addr`.
-async fn connect_plain(addr: &str) -> Result<(BoxedRead, BoxedWrite)> {
-    let stream = TcpStream::connect(addr)
-        .await
-        .map_err(|e| MultimuxError::Connect {
-            reason: format!("rtsp connect {addr}: {e}"),
-        })?;
-    let (rd, wr) = stream.into_split();
-    Ok((Box::new(rd), Box::new(wr)))
-}
-
-/// Connects an `rtsps://` (RTSP-over-TLS) transport to `addr`, verifying the
-/// server against `config` and presenting `server_name` for SNI/certificate
-/// validation — the same TCP-connect-then-`tokio_rustls`-handshake sequence
-/// [`rtsp_runtime::io::AsyncRtspClient::connect_tls_with`] performs, minus
-/// the `AsyncRtspClient` wrapper this crate's sans-IO driver loop (see the
-/// module doc) has no use for: `run_rtsp` only ever needs the connected
-/// duplex stream, split for its own `poll_transmit`/`feed` pump. Split via
-/// `tokio::io::split` (a `TlsStream` has no `into_split`, unlike
-/// [`TcpStream`]).
-#[cfg(feature = "tls")]
-async fn connect_tls_with_config(
-    addr: &str,
-    server_name: &str,
-    config: rustls::ClientConfig,
-) -> Result<(BoxedRead, BoxedWrite)> {
-    let tcp = TcpStream::connect(addr)
-        .await
-        .map_err(|e| MultimuxError::Connect {
-            reason: format!("rtsp connect {addr}: {e}"),
-        })?;
-    let connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(config));
-    let dns = rustls::pki_types::ServerName::try_from(server_name.to_string()).map_err(|e| {
-        MultimuxError::Connect {
-            reason: format!("invalid TLS server name {server_name:?}: {e}"),
-        }
-    })?;
-    let stream = connector
-        .connect(dns, tcp)
-        .await
-        .map_err(|e| MultimuxError::Connect {
-            reason: format!("rtsp TLS handshake {addr}: {e}"),
-        })?;
-    let (rd, wr) = tokio::io::split(stream);
-    Ok((Box::new(rd), Box::new(wr)))
-}
-
-/// Connects an `rtsps://` transport to `addr`, trusting the public-CA
-/// `webpki-roots` bundle ([`rtsp_runtime::io::default_tls_client_config`]) —
-/// the config every real (non-test) caller uses; see
-/// [`connect_tls_with_config`] for a caller-supplied trust store (this
-/// module's own TLS loopback tests use one trusting a self-signed fixture
-/// cert, since no public CA ever signs a `127.0.0.1` loopback cert).
-#[cfg(feature = "tls")]
-async fn connect_tls(addr: &str, server_name: &str) -> Result<(BoxedRead, BoxedWrite)> {
-    connect_tls_with_config(
-        addr,
-        server_name,
-        rtsp_runtime::io::default_tls_client_config(),
-    )
-    .await
-}
-
-/// Without this crate's `tls` feature, an `rtsps://` route fails fast with a
-/// clear runtime error naming the missing feature — it never falls back to
-/// an unencrypted socket (issue #804).
-#[cfg(not(feature = "tls"))]
-async fn connect_tls(addr: &str, _server_name: &str) -> Result<(BoxedRead, BoxedWrite)> {
-    Err(MultimuxError::Connect {
-        reason: format!(
-            "rtsps:// (TLS) requires multimux's `tls` feature; cannot connect to {addr}"
-        ),
-    })
-}
-
-/// The RTSP source's [`IngestStep`](crate::source::driver::IngestStep): the
-/// bounded read off the connection, feeding the driver.
-pub(crate) struct RtspStep {
-    pub rd: BoxedRead,
-    pub buf: Vec<u8>,
-    pub start: tokio::time::Instant,
-}
-
-impl crate::source::driver::IngestStep<RtspIngestSession> for RtspStep {
-    async fn step(
-        &mut self,
-        driver: &mut media_plane::ingress::IngestDriver<RtspIngestSession>,
-        window: Duration,
-    ) -> crate::source::driver::StepOutcome {
-        use crate::source::driver::StepOutcome;
-        match tokio::time::timeout(window, self.rd.read(&mut self.buf)).await {
-            Ok(Ok(0)) => StepOutcome::Eof,
-            Ok(Ok(n)) => {
-                let now = Timestamp::from_instant(
-                    self.start.into_std(),
-                    tokio::time::Instant::now().into_std(),
-                );
-                driver.feed(&self.buf[..n], now);
-                StepOutcome::Received
-            }
-            Ok(Err(e)) => StepOutcome::Failed(MultimuxError::Protocol {
-                phase: "recv",
-                reason: e.to_string(),
-            }),
-            Err(_) => StepOutcome::Idle,
-        }
-    }
-}
-
-/// Binds a connection (TCP for `rtsp://`, TLS-over-TCP for `rtsps://`) to
-/// `route` and drives an [`RtspIngestSession`] through [`IngestDriver`] until
-/// the connection closes or fails — the new drive loop, replacing the pre-5a
-/// `RtspSource::connect`/`RtspSession::next_samples` pair.
+/// Opens `route` in a relay-mode session and drives it until the connection ends or fails. Never
+/// returns `Ok`: a stream that ends is reported as an error and the route supervisor reconnects.
 ///
-/// `route_handle` is the driver-backed registry side of issue #805 task 2:
-/// after every [`IngestDriver::feed`], `crate::source::report_driver_progress`
-/// flips `route_handle` to [`crate::route::HealthState::Live`] the first time
-/// this session establishes, and publishes each newly-announced program's
-/// `Trunk` into `route_handle`'s registry.
+/// `route_handle` is the driver-backed registry side of issue #805 task 2: after every fed
+/// event `crate::source::report_driver_progress` flips it live and publishes each programme's
+/// `Trunk`.
 pub async fn run_rtsp(
     route: &RtspRoute,
     trunk_config: TrunkConfig,
@@ -1012,66 +67,59 @@ pub async fn run_rtsp(
     route_handle: &std::sync::Arc<crate::route::RouteHandle>,
     cancel: tokio_util::sync::CancellationToken,
 ) -> MultimuxError {
-    let mut dialer = RtspDialer::new(route.target.url.clone(), route.target.auth.clone());
-    let addr = match dialer.connect_addr() {
-        Ok(a) => a,
-        Err(e) => return e,
-    };
-    let is_tls = match dialer.is_tls() {
-        Ok(b) => b,
-        Err(e) => return e,
-    };
-    let connect_timeout = route.target.timeouts.connect;
-    let connected = if is_tls {
-        let server_name = match dialer.sni_server_name() {
-            Ok(s) => s,
-            Err(e) => return e,
-        };
-        tokio::time::timeout(connect_timeout, connect_tls(&addr, &server_name)).await
-    } else {
-        tokio::time::timeout(connect_timeout, connect_plain(&addr)).await
-    };
-    let (rd, mut wr) = match connected {
-        Ok(Ok(streams)) => streams,
-        Ok(Err(e)) => return e,
-        Err(_) => {
-            return MultimuxError::Connect {
-                reason: format!("rtsp connect {addr}: no response within {connect_timeout:?}"),
-            };
-        }
-    };
-    let session = match dialer.dial() {
-        Ok(s) => s,
+    run_rtsp_with(
+        route,
+        trunk_config,
+        handshake,
+        route_handle,
+        cancel,
+        TlsHost::default(),
+    )
+    .await
+}
+
+pub(crate) async fn run_rtsp_with(
+    route: &RtspRoute,
+    trunk_config: TrunkConfig,
+    handshake: HandshakePolicy,
+    route_handle: &std::sync::Arc<crate::route::RouteHandle>,
+    cancel: tokio_util::sync::CancellationToken,
+    tls: TlsHost,
+) -> MultimuxError {
+    let timeouts = route.target.timeouts;
+    let mut config = Config::relay();
+    config.kind = SourceKind::Rtsp;
+    config.ts_http = crate::source::ts_http::policy_config(timeouts);
+    let step = SessionStep::open(
+        &route.target.url,
+        config,
+        route.target.auth.clone(),
+        SessionLabels::new(WHAT, timeouts).not_found_in_phase(DESCRIBE_PHASE),
+        std::sync::Arc::clone(route_handle),
+        false,
+    );
+    let mut step = match step {
+        Ok(step) => step.with_tls(tls),
         Err(e) => return e,
     };
     let driver = IngestDriver::new(
-        session,
+        EventIngest::new(),
         trunk_config,
         handshake,
-        // Bound the Trunks one session may mint (media-plane #803). Routes here
-        // carry a single programme today; the default ceiling covers an MPTS.
         media_plane::DEFAULT_MAX_PROGRAMS,
     );
-    // The read half + scratch buffer, and the shared drive loop (SP6.1).
-    // `wr` is the write half the scaffold drains `poll_transmit` into, bounded
-    // by `DEFAULT_WRITE_TIMEOUT` (defect 4: the pre-migration loop's
-    // `wr.write_all` had no bound).
-    let mut step = RtspStep {
-        rd,
-        buf: vec![0u8; 64 * 1024],
-        start: tokio::time::Instant::now(),
-    };
     let mut progress = crate::source::DriverProgress::new();
+    let mut sink = tokio::io::sink();
     crate::source::driver::run_ingest_scaffold(
         driver,
         route_handle,
         &mut progress,
         cancel,
-        route.target.timeouts,
+        timeouts,
         crate::source::driver::DEFAULT_WRITE_TIMEOUT,
-        &mut wr,
+        &mut sink,
         &mut step,
-        |e| e,
+        |never: Infallible| match never {},
     )
     .await
 }
@@ -1079,326 +127,20 @@ pub async fn run_rtsp(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use media_plane::ingress::HealthState;
-    use std::num::NonZeroUsize;
-    use tokio::io::AsyncWriteExt as _;
-    use transmux::avc_config_from_sprop;
-    use transmux::pipeline::CodecConfig;
-    use transmux::rtp::RtpMediaKind;
-
-    fn nz(n: usize) -> NonZeroUsize {
-        NonZeroUsize::new(n).unwrap()
-    }
-
-    #[derive(Clone, Default)]
-    struct Warnings(std::sync::Arc<std::sync::Mutex<Vec<(tracing::Level, String)>>>);
-
-    impl tracing::Subscriber for Warnings {
-        fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
-            true
-        }
-        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
-            tracing::span::Id::from_u64(1)
-        }
-        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
-        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
-        fn event(&self, event: &tracing::Event<'_>) {
-            struct Message(String);
-            impl tracing::field::Visit for Message {
-                fn record_debug(
-                    &mut self,
-                    field: &tracing::field::Field,
-                    value: &dyn std::fmt::Debug,
-                ) {
-                    if field.name() == "message" {
-                        self.0 = format!("{value:?}");
-                    }
-                }
-            }
-            let mut message = Message(String::new());
-            event.record(&mut message);
-            self.0
-                .lock()
-                .unwrap()
-                .push((*event.metadata().level(), message.0));
-        }
-        fn enter(&self, _: &tracing::span::Id) {}
-        fn exit(&self, _: &tracing::span::Id) {}
-    }
-
-    fn logged(run: impl FnOnce()) -> Vec<(tracing::Level, String)> {
-        let warnings = Warnings::default();
-        tracing::subscriber::with_default(warnings.clone(), run);
-        let guard = warnings.0.lock().unwrap();
-        guard.clone()
-    }
-
-    #[test]
-    fn a_repeated_discontinuity_warns_once_and_logs_the_rest_at_debug() {
-        let mut diagnostics = AlignDiagnostics::default();
-        let mut pending = VecDeque::new();
-        let lines = logged(|| {
-            for _ in 0..3 {
-                diagnostics.record(&mut pending, vec![transmux::AlignOut::Discontinuity], 0, 0);
-            }
-        });
-        let levels: Vec<_> = lines.iter().map(|(level, _)| *level).collect();
-        assert_eq!(
-            levels,
-            [
-                tracing::Level::WARN,
-                tracing::Level::DEBUG,
-                tracing::Level::DEBUG
-            ]
-        );
-        assert!(pending.is_empty());
-    }
-
-    #[test]
-    fn a_rejection_after_the_reports_recover_warns_again() {
-        let mut diagnostics = AlignDiagnostics::default();
-        let mut pending = VecDeque::new();
-        let lines = logged(|| {
-            diagnostics.record(&mut pending, Vec::new(), 1, 0);
-            diagnostics.note_rtcp_accepted(1, false);
-            diagnostics.record(&mut pending, Vec::new(), 2, 0);
-        });
-        let warned = lines
-            .iter()
-            .filter(|(level, _)| *level == tracing::Level::WARN)
-            .count();
-        assert_eq!(warned, 2, "{lines:?}");
-    }
-
-    #[test]
-    fn rejected_sender_reports_warn_on_transitions_only() {
-        let mut diagnostics = AlignDiagnostics::default();
-        let mut pending = VecDeque::new();
-        let lines = logged(|| {
-            diagnostics.record(&mut pending, Vec::new(), 1, 0);
-            diagnostics.record(&mut pending, Vec::new(), 2, 0);
-            diagnostics.record(&mut pending, Vec::new(), 3, 0);
-            diagnostics.record(&mut pending, Vec::new(), 3, 1);
-            diagnostics.record(&mut pending, Vec::new(), 3, 2);
-            diagnostics.record(&mut pending, Vec::new(), 4, 2);
-        });
-        let warned: Vec<_> = lines
-            .iter()
-            .filter(|(level, _)| *level == tracing::Level::WARN)
-            .map(|(_, message)| message.as_str())
-            .collect();
-        assert_eq!(warned.len(), 3, "{warned:?}");
-        assert!(warned[0].contains("NTP time zero"), "{warned:?}");
-        assert!(warned[1].contains("more than an hour apart"), "{warned:?}");
-        assert!(warned[2].contains("NTP time zero"), "{warned:?}");
-    }
+    use std::time::Duration;
+    use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
     fn trunk_config() -> TrunkConfig {
+        let nz = |n: usize| std::num::NonZeroUsize::new(n).unwrap();
         TrunkConfig::new(nz(64), nz(16), nz(8), nz(8), nz(8))
     }
 
     fn handshake() -> HandshakePolicy {
-        HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX))
-    }
-
-    fn video_track(channel: u8) -> TrackInit {
-        let avc = avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==").unwrap();
-        TrackInit {
-            track_id: TrackId::new(1),
-            kind: RtpMediaKind::H264,
-            config: CodecConfig::Avc {
-                config: avc,
-                width: 0,
-                height: 0,
-            },
-            clock_rate: 90_000,
-            control: None,
-            channel,
-            payload_type: 96,
-        }
+        HandshakePolicy::establish_by(broadcast_common::Timestamp::from_nanos(u64::MAX))
     }
 
     #[test]
-    fn routes_even_channel_to_track_ignores_rtcp() {
-        let tracks = vec![video_track(0)];
-        assert_eq!(route_channel(0, &tracks), Some(TrackId::new(1)));
-        assert_eq!(route_channel(1, &tracks), None);
-        assert_eq!(route_channel(4, &tracks), None);
-    }
-
-    #[test]
-    fn routes_an_odd_rtp_channel_the_server_negotiated() {
-        let tracks = vec![video_track(5)];
-        assert_eq!(route_channel(5, &tracks), Some(TrackId::new(1)));
-        assert_eq!(route_channel(6, &tracks), None);
-    }
-
-    #[test]
-    fn a_setup_reply_without_transport_does_not_reuse_the_previous_tracks_channels() {
-        let sprop = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
-        let media = |n: u8| {
-            format!(
-                "m=video 0 RTP/AVP 96\r\na=control:trackID={n}\r\na=rtpmap:96 H264/90000\r\n\
-                 a=fmtp:96 packetization-mode=1;sprop-parameter-sets={sprop}\r\n"
-            )
-        };
-        let sdp = format!(
-            "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n{}{}",
-            media(1),
-            media(2)
-        );
-        let mut dialer = RtspDialer::new("rtsp://cam.local/stream", None);
-        let mut session = dialer.dial().expect("dial");
-        let _ = session.poll_transmit();
-        let replies = [
-            (1, "Content-Type: application/sdp\r\n", sdp),
-            (
-                2,
-                "Transport: RTP/AVP/TCP;interleaved=4-5\r\nSession: ABC123;timeout=60\r\n",
-                String::new(),
-            ),
-        ];
-        for (cseq, headers, body) in replies {
-            session
-                .feed(
-                    &rtsp_response(cseq, "200 OK", headers, &body),
-                    Timestamp::ZERO,
-                )
-                .unwrap();
-            let _ = session.poll_transmit();
-        }
-        let err = session
-            .feed(
-                &rtsp_response(3, "200 OK", "Session: ABC123\r\n", ""),
-                Timestamp::ZERO,
-            )
-            .expect_err("a SETUP reply with no Transport header is unusable");
-        assert!(
-            matches!(err, MultimuxError::Protocol { phase: "SETUP", .. }),
-            "{err:?}"
-        );
-    }
-
-    #[test]
-    fn routes_second_media_even_channel() {
-        let tracks = vec![video_track(0), video_track(2)];
-        assert_eq!(route_channel(2, &tracks), Some(TrackId::new(1)));
-        assert_eq!(route_channel(3, &tracks), None);
-    }
-
-    #[test]
-    fn connect_addr_defaults_port_554() {
-        let base = Url::parse("rtsp://cam.local/stream").unwrap();
-        assert_eq!(
-            connect_addr(&base).unwrap(),
-            format!("cam.local:{RTSP_DEFAULT_PORT}")
-        );
-    }
-
-    #[test]
-    fn connect_addr_parses_explicit_port() {
-        let base = Url::parse("rtsp://cam.local:8554/stream").unwrap();
-        assert_eq!(connect_addr(&base).unwrap(), "cam.local:8554");
-    }
-
-    #[test]
-    fn connect_addr_handles_ipv6_userinfo_port() {
-        let base = Url::parse("rtsp://user:pass@[2001:db8::1]:8554/stream").unwrap();
-        assert_eq!(connect_addr(&base).unwrap(), "[2001:db8::1]:8554");
-    }
-
-    #[test]
-    fn connect_addr_defaults_rtsps_port_322() {
-        let base = Url::parse("rtsps://cam.local/stream").unwrap();
-        assert_eq!(
-            connect_addr(&base).unwrap(),
-            format!("cam.local:{RTSPS_DEFAULT_PORT}")
-        );
-        assert_eq!(connect_addr(&base).unwrap(), "cam.local:322");
-    }
-
-    #[test]
-    fn connect_addr_rejects_non_rtsp_scheme() {
-        let base = Url::parse("http://cam.local/stream").unwrap();
-        assert!(matches!(
-            connect_addr(&base),
-            Err(crate::error::MultimuxError::Connect { .. })
-        ));
-    }
-
-    #[test]
-    fn scheme_is_tls_false_for_rtsp() {
-        let base = Url::parse("rtsp://cam.local/stream").unwrap();
-        assert!(!scheme_is_tls(&base).unwrap());
-    }
-
-    #[test]
-    fn scheme_is_tls_true_for_rtsps() {
-        let base = Url::parse("rtsps://cam.local/stream").unwrap();
-        assert!(scheme_is_tls(&base).unwrap());
-    }
-
-    #[test]
-    fn scheme_is_tls_rejects_other_scheme() {
-        let base = Url::parse("http://cam.local/stream").unwrap();
-        assert!(matches!(
-            scheme_is_tls(&base),
-            Err(crate::error::MultimuxError::Connect { .. })
-        ));
-    }
-
-    /// MUTATION VERIFIED: changing the `strip_prefix('[')`/`strip_suffix(']')`
-    /// pair to only `strip_prefix('[')` (i.e. leaving the trailing `]`) makes
-    /// this fail with `assertion `left == right` failed / left:
-    /// "2001:db8::1]" / right: "2001:db8::1"` — the exact IPv6-bracket case
-    /// this function exists for (see its own doc: rustls `ServerName::try_from`
-    /// rejects the brackets).
-    #[test]
-    fn sni_server_name_strips_ipv6_brackets() {
-        let url = Url::parse("rtsps://[2001:db8::1]:8554/stream").unwrap();
-        assert_eq!(sni_server_name(&url).unwrap(), "2001:db8::1");
-    }
-
-    /// MUTATION VERIFIED: replacing the function body with
-    /// `Ok(format!("[{host}]"))` (always bracketing) makes this fail with
-    /// `assertion `left == right` failed / left: "[cam.local]" / right:
-    /// "cam.local"` — a plain hostname must pass through unchanged.
-    #[test]
-    fn sni_server_name_hostname_unchanged() {
-        let url = Url::parse("rtsps://cam.local/stream").unwrap();
-        assert_eq!(sni_server_name(&url).unwrap(), "cam.local");
-    }
-
-    /// MUTATION VERIFIED: same mutation as above (always bracketing) makes
-    /// this fail with `assertion `left == right` failed / left:
-    /// "[192.0.2.4]" / right: "192.0.2.4"` — an IPv4 literal must also pass
-    /// through unchanged (only the bracketed-IPv6 form is stripped).
-    #[test]
-    fn sni_server_name_ipv4_unchanged() {
-        let url = Url::parse("rtsps://192.0.2.4:8554/stream").unwrap();
-        assert_eq!(sni_server_name(&url).unwrap(), "192.0.2.4");
-    }
-
-    /// The `RtspDialer::sni_server_name` method wrapper strips userinfo like
-    /// its `connect_addr`/`is_tls` siblings — proven by the fact userinfo
-    /// (`user:pass@`) does not appear in, and does not break, the derived
-    /// name.
-    ///
-    /// MUTATION VERIFIED: replacing the method body with
-    /// `Ok(base.host_str().unwrap_or_default().to_string())` (returning the
-    /// raw host, skipping the free-function `sni_server_name` call this
-    /// method exists to delegate to) makes this fail with `assertion `left
-    /// == right` failed / left: "[2001:db8::1]" / right: "2001:db8::1"` —
-    /// proving the method really does route through the bracket-stripping
-    /// logic, not just re-derive the host itself.
-    #[test]
-    fn rtsp_dialer_sni_server_name_strips_userinfo_and_brackets() {
-        let dialer = RtspDialer::new("rtsps://user:pass@[2001:db8::1]:8554/stream", None);
-        assert_eq!(dialer.sni_server_name().unwrap(), "2001:db8::1");
-    }
-
-    #[test]
-    fn rtsp_dialer_debug_redacts_credentials_via_route() {
+    fn rtsp_route_debug_redacts_credentials() {
         let route = RtspRoute::new("cam1", "rtsp://user:secretpass@host/s");
         let debug = format!("{route:?}");
         assert!(
@@ -1408,46 +150,21 @@ mod tests {
         assert!(debug.contains("***@host"), "debug: {debug}");
     }
 
-    /// Biting test: the connect-time error path for a URL that fails
-    /// `Url::parse` must not leak the raw credentialed string — this drives
-    /// `RtspDialer::connect_addr`'s very first fallible step (before any real
-    /// I/O) with a URL malformed enough to fail parsing while still carrying
-    /// `user:pass@`. Ported from the pre-5a `RtspSource::connect` version of
-    /// this test: the redaction happens in `RtspDialer::connect_addr`/`dial`
-    /// now, but it is exactly the same security-relevant property (raw
-    /// credentials must never appear in an error string) on the same "bad
-    /// URL" input, so it stays a plain sync `#[test]` rather than needing
-    /// `#[tokio::test]` — `connect_addr` performs no I/O at all.
-    #[test]
-    fn connect_bad_url_error_redacts_credentials() {
-        // A userinfo-bearing URL with an invalid (space-containing, thus
-        // unparsable) host — fails `Url::parse` before any network I/O.
-        let dialer = RtspDialer::new("rtsp://user:secretpass@bad host/s", None);
-        let msg = match dialer.connect_addr() {
-            Ok(_) => panic!("bad host must fail to parse"),
-            Err(e) => e.to_string(),
-        };
+    #[tokio::test]
+    async fn a_bad_url_error_redacts_credentials() {
+        let route = RtspRoute::new("bad", "rtsp://user:secretpass@bad host/s");
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
+        let error = run_rtsp(
+            &route,
+            trunk_config(),
+            handshake(),
+            &route_handle,
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await;
+        let msg = error.to_string();
         assert!(!msg.contains("user"), "error leaked username: {msg}");
         assert!(!msg.contains("secretpass"), "error leaked password: {msg}");
-    }
-
-    // --- The central test: real RTSP DESCRIBE/SETUP/PLAY, entirely through
-    // poll_transmit()/feed() — no socket, no executor bridge. -------------
-
-    /// A minimal, valid single-track SDP body (RFC 4566), the same fixture
-    /// the pre-5a RTP/RTSP tests used.
-    fn sdp_body() -> String {
-        let sprop = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
-        format!(
-            "v=0\r\n\
-             o=- 0 0 IN IP4 127.0.0.1\r\n\
-             s=-\r\n\
-             t=0 0\r\n\
-             m=video 0 RTP/AVP 96\r\n\
-             a=control:trackID=1\r\n\
-             a=rtpmap:96 H264/90000\r\n\
-             a=fmtp:96 packetization-mode=1;sprop-parameter-sets={sprop}\r\n"
-        )
     }
 
     /// Builds a real RTSP/1.0 response (RFC 2326 §6): status line + headers
@@ -1464,346 +181,21 @@ mod tests {
             .into_bytes()
     }
 
-    /// The centrepiece test: dial() only constructs (asserted via the exact
-    /// DESCRIBE bytes it queues); the whole DESCRIBE → SETUP → PLAY
-    /// handshake then completes purely through `poll_transmit`/`feed`, one
-    /// request in flight at a time, ending in `SessionEvent::Established` +
-    /// a `NewProgram` trunk, and a subsequent interleaved RTP frame produces
-    /// a real depayloaded `Sample` in that `Trunk`.
-    ///
-    /// MUTATION-CHECKED (by inspection of the assertions, each independently
-    /// falsifiable):
-    /// - swallowing `Established`/`NewProgram` in `handle_event`'s
-    ///   `AwaitPlay` arm would fail `driver.health()` staying `Establishing`.
-    /// - severing `poll_transmit` (returning `None` always) would fail the
-    ///   very first assertion (no DESCRIBE bytes to send) — the no-hidden-IO
-    ///   proof `media_plane::ingress`'s own suite uses for the same purpose.
-    /// - collapsing SETUP's per-track channel assignment (e.g. hardcoding
-    ///   channel 0) would still pass here (single track), but the interleaved
-    ///   frame is sent on the *server-negotiated* channel from the SETUP
-    ///   response below (channel 4, not the client's proposed 0), so a
-    ///   session that ignored the negotiated transport and routed by its own
-    ///   proposed channel would fail to route the media at all — proving
-    ///   `route_channel` uses what the server actually returned.
-    #[tokio::test]
-    async fn multi_round_trip_rtsp_handshake_completes_through_feed_and_poll_transmit_only() {
-        let mut dialer = RtspDialer::new("rtsp://cam.local/stream", None);
-        let session = dialer
-            .dial()
-            .expect("dial: local construction only, no I/O");
-        let mut driver = IngestDriver::new(
-            session,
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
-        );
-        assert!(matches!(driver.health(), HealthState::Establishing));
-
-        // 1. DESCRIBE went out; nothing else queued.
-        let describe_req = driver
-            .poll_transmit()
-            .expect("dial() must have queued the DESCRIBE request");
-        assert!(
-            driver.poll_transmit().is_none(),
-            "only one request in flight at a time"
-        );
-        let describe_text = String::from_utf8(describe_req.to_vec()).unwrap();
-        assert!(describe_text.starts_with("DESCRIBE rtsp://cam.local/stream RTSP/1.0\r\n"));
-        assert!(describe_text.contains("CSeq: 1\r\n"));
-
-        // 2. Feed a real DESCRIBE response (SDP body) -> SETUP goes out.
-        let describe_resp = rtsp_response(
-            1,
-            "200 OK",
-            "Content-Type: application/sdp\r\n",
-            &sdp_body(),
-        );
-        driver.feed(&describe_resp, Timestamp::ZERO);
-        assert!(matches!(driver.health(), HealthState::Establishing));
-        let setup_req = driver
-            .poll_transmit()
-            .expect("DESCRIBE response must queue a SETUP request");
-        let setup_text = String::from_utf8(setup_req.to_vec()).unwrap();
-        assert!(setup_text.starts_with("SETUP rtsp://cam.local/stream/trackID=1 RTSP/1.0\r\n"));
-        assert!(setup_text.contains("CSeq: 2\r\n"));
-        assert!(setup_text.contains("Transport:"));
-
-        // 3. Feed a real SETUP response, negotiating interleaved channel 4/5
-        // (deliberately NOT the client's proposed 0/1) -> PLAY goes out.
-        let setup_resp = rtsp_response(
-            2,
-            "200 OK",
-            "Transport: RTP/AVP/TCP;interleaved=4-5\r\nSession: ABC123;timeout=60\r\n",
-            "",
-        );
-        driver.feed(&setup_resp, Timestamp::from_nanos(1));
-        assert!(matches!(driver.health(), HealthState::Establishing));
-        let play_req = driver
-            .poll_transmit()
-            .expect("SETUP response must queue a PLAY request");
-        let play_text = String::from_utf8(play_req.to_vec()).unwrap();
-        assert!(play_text.starts_with("PLAY rtsp://cam.local/stream RTSP/1.0\r\n"));
-        assert!(play_text.contains("Session: ABC123"));
-
-        // 4. Feed a real PLAY response -> Established + NewProgram.
-        let play_resp = rtsp_response(3, "200 OK", "", "");
-        driver.feed(&play_resp, Timestamp::from_nanos(2));
-        assert!(
-            matches!(driver.health(), HealthState::Live),
-            "after the final handshake reply the session must be Live: {:?}",
-            driver.health()
-        );
-        let trunk = driver
-            .trunk(ProgramId(0))
-            .cloned()
-            .expect("PLAY response must announce NewProgram(0)");
-        let mut cursor = trunk.subscribe();
-
-        // 5. A real interleaved RTP frame, on the *server-negotiated*
-        // channel (4), produces a depayloaded Sample in the Trunk.
-        let nal = [0x65u8, 0xAA, 0xBB];
-        let mut rtp_pkt = Vec::new();
-        rtp_pkt.push(0x80); // V=2
-        rtp_pkt.push(0x80 | 96); // marker + PT 96
-        rtp_pkt.extend_from_slice(&1u16.to_be_bytes()); // seq
-        rtp_pkt.extend_from_slice(&1000u32.to_be_bytes()); // timestamp
-        rtp_pkt.extend_from_slice(&0xCAFEBABEu32.to_be_bytes()); // SSRC
-        rtp_pkt.extend_from_slice(&nal);
-        let frame = rtsp_runtime::interleaved::InterleavedFrame::new(4, rtp_pkt)
-            .to_bytes()
-            .expect("serialize interleaved frame");
-        // A second frame with a later timestamp so the depacketiser closes
-        // out the first access unit.
-        let nal2 = [0x41u8, 0xCC];
-        let mut rtp_pkt2 = Vec::new();
-        rtp_pkt2.push(0x80);
-        rtp_pkt2.push(96);
-        rtp_pkt2.extend_from_slice(&2u16.to_be_bytes());
-        rtp_pkt2.extend_from_slice(&4000u32.to_be_bytes());
-        rtp_pkt2.extend_from_slice(&0xCAFEBABEu32.to_be_bytes());
-        rtp_pkt2.extend_from_slice(&nal2);
-        let frame2 = rtsp_runtime::interleaved::InterleavedFrame::new(4, rtp_pkt2)
-            .to_bytes()
-            .expect("serialize interleaved frame 2");
-        // A third frame: the depacketiser needs the *next* AU's timestamp to
-        // finalise the previous one's duration (mirrors the pre-5a
-        // `rtp_udp`/RTSP tests' 3-packet-for-2-samples shape), so the second
-        // AU (nal2) only closes once this one arrives.
-        let nal3 = [0x41u8, 0xDD];
-        let mut rtp_pkt3 = Vec::new();
-        rtp_pkt3.push(0x80);
-        rtp_pkt3.push(96);
-        rtp_pkt3.extend_from_slice(&3u16.to_be_bytes());
-        rtp_pkt3.extend_from_slice(&7000u32.to_be_bytes());
-        rtp_pkt3.extend_from_slice(&0xCAFEBABEu32.to_be_bytes());
-        rtp_pkt3.extend_from_slice(&nal3);
-        let frame3 = rtsp_runtime::interleaved::InterleavedFrame::new(4, rtp_pkt3)
-            .to_bytes()
-            .expect("serialize interleaved frame 3");
-
-        driver.feed(&frame, Timestamp::from_nanos(3));
-        driver.feed(&frame2, Timestamp::from_nanos(4));
-        driver.feed(&frame3, Timestamp::from_nanos(5));
-
-        let item = cursor
-            .poll()
-            .expect("a depayloaded sample must reach the Trunk");
-        match item {
-            media_plane::trunk::SampleCursorItem::Timed { track_id, sample } => {
-                assert_eq!(track_id, TrackId::new(1));
-                assert!(sample.flags.is_sync, "the IDR NAL must be marked sync");
-            }
-            other => panic!("expected Timed, got {other:?}"),
-        }
+    /// A minimal, valid single-track SDP body (RFC 4566), the same fixture
+    /// the pre-5a RTP/RTSP tests used.
+    fn sdp_body() -> String {
+        let sprop = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
+        format!(
+            "v=0\r\n\
+             o=- 0 0 IN IP4 127.0.0.1\r\n\
+             s=-\r\n\
+             t=0 0\r\n\
+             m=video 0 RTP/AVP 96\r\n\
+             a=control:trackID=1\r\n\
+             a=rtpmap:96 H264/90000\r\n\
+             a=fmtp:96 packetization-mode=1;sprop-parameter-sets={sprop}\r\n"
+        )
     }
-
-    /// End of input must flush the trailing AU (a marker-terminated AU held
-    /// one-AU-late for its duration, plus an AU still in the reassembly
-    /// buffer). Before the flush `finish` was a no-op: neither was emitted.
-    #[test]
-    fn finish_flushes_pending_and_partial_trailing_access_units() {
-        let mut dialer = RtspDialer::new("rtsp://cam.local/stream", None);
-        let mut session = dialer.dial().expect("dial");
-        let _ = session.poll_transmit();
-        session
-            .feed(
-                &rtsp_response(
-                    1,
-                    "200 OK",
-                    "Content-Type: application/sdp\r\n",
-                    &sdp_body(),
-                ),
-                Timestamp::ZERO,
-            )
-            .unwrap();
-        let _ = session.poll_transmit();
-        session
-            .feed(
-                &rtsp_response(
-                    2,
-                    "200 OK",
-                    "Transport: RTP/AVP/TCP;interleaved=4-5\r\nSession: ABC123;timeout=60\r\n",
-                    "",
-                ),
-                Timestamp::ZERO,
-            )
-            .unwrap();
-        let _ = session.poll_transmit();
-        session
-            .feed(&rtsp_response(3, "200 OK", "", ""), Timestamp::ZERO)
-            .unwrap();
-        let rtp = |seq: u16, ts: u32, marker: bool, nal: &[u8]| {
-            let mut p = vec![0x80, if marker { 0x80 | 96 } else { 96 }];
-            p.extend_from_slice(&seq.to_be_bytes());
-            p.extend_from_slice(&ts.to_be_bytes());
-            p.extend_from_slice(&0xCAFEBABEu32.to_be_bytes());
-            p.extend_from_slice(nal);
-            rtsp_runtime::interleaved::InterleavedFrame::new(4, p)
-                .to_bytes()
-                .expect("frame")
-        };
-        session
-            .feed(&rtp(1, 1000, true, &[0x65, 0xAA]), Timestamp::ZERO)
-            .unwrap();
-        session
-            .feed(&rtp(2, 4000, false, &[0x41, 0xBB]), Timestamp::ZERO)
-            .unwrap();
-        let count = |s: &mut RtspIngestSession| {
-            let mut n = 0;
-            while let Some(ev) = s.poll() {
-                if matches!(ev, SessionEvent::Sample { .. }) {
-                    n += 1;
-                }
-            }
-            n
-        };
-        assert_eq!(count(&mut session), 0, "nothing emitted yet");
-        session.finish().unwrap();
-        assert_eq!(count(&mut session), 2, "both trailing AUs flushed");
-        session.finish().unwrap();
-        assert_eq!(count(&mut session), 0, "finish is idempotent");
-    }
-
-    #[test]
-    fn finish_queues_one_teardown_for_a_playing_session() {
-        let mut dialer = RtspDialer::new("rtsp://cam.local/stream", None);
-        let mut session = dialer.dial().expect("dial");
-        let _ = session.poll_transmit();
-        for (cseq, headers, body) in [
-            (1, "Content-Type: application/sdp\r\n", sdp_body()),
-            (
-                2,
-                "Transport: RTP/AVP/TCP;interleaved=4-5\r\nSession: ABC123;timeout=60\r\n",
-                String::new(),
-            ),
-            (3, "", String::new()),
-        ] {
-            session
-                .feed(
-                    &rtsp_response(cseq, "200 OK", headers, &body),
-                    Timestamp::ZERO,
-                )
-                .unwrap();
-            let _ = session.poll_transmit();
-        }
-        session.finish().unwrap();
-        let teardown = session.poll_transmit().expect("finish queues a TEARDOWN");
-        let text = String::from_utf8(teardown.to_vec()).unwrap();
-        assert!(
-            text.starts_with("TEARDOWN rtsp://cam.local/stream RTSP/1.0\r\n"),
-            "{text}"
-        );
-        assert!(text.contains("Session: ABC123"), "{text}");
-        session.finish().unwrap();
-        assert!(session.poll_transmit().is_none(), "one TEARDOWN only");
-    }
-
-    #[test]
-    fn an_rtcp_frame_on_the_negotiated_rtcp_channel_reaches_the_depacketiser() {
-        let mut dialer = RtspDialer::new("rtsp://cam.local/stream", None);
-        let mut session = dialer.dial().expect("dial");
-        let _ = session.poll_transmit();
-        for (cseq, headers, body) in [
-            (1, "Content-Type: application/sdp\r\n", sdp_body()),
-            (
-                2,
-                "Transport: RTP/AVP/TCP;interleaved=4-5\r\nSession: ABC123;timeout=60\r\n",
-                String::new(),
-            ),
-            (3, "", String::new()),
-        ] {
-            session
-                .feed(
-                    &rtsp_response(cseq, "200 OK", headers, &body),
-                    Timestamp::ZERO,
-                )
-                .unwrap();
-            let _ = session.poll_transmit();
-        }
-        let frame = |channel: u8| {
-            rtsp_runtime::interleaved::InterleavedFrame::new(channel, vec![0x80, 0xC8, 0, 6])
-                .to_bytes()
-                .expect("frame")
-        };
-        session.feed(&frame(5), Timestamp::ZERO).unwrap();
-        assert_eq!(session.rtcp_frames(), 1);
-        session.feed(&frame(7), Timestamp::ZERO).unwrap();
-        assert_eq!(
-            session.rtcp_frames(),
-            1,
-            "an unnegotiated channel is not RTCP"
-        );
-    }
-
-    #[test]
-    fn finish_before_play_queues_no_teardown() {
-        let mut dialer = RtspDialer::new("rtsp://cam.local/stream", None);
-        let mut session = dialer.dial().expect("dial");
-        let _ = session.poll_transmit();
-        session.finish().unwrap();
-        assert!(session.poll_transmit().is_none());
-    }
-
-    /// Severing `poll_transmit` (the no-hidden-I/O proof `media_plane::ingress`'s
-    /// own suite uses): if `IngestSession::poll_transmit` were never drained,
-    /// the DESCRIBE bytes would simply sit unread — this asserts the
-    /// dialer's queued request is *only* observable through `poll_transmit`,
-    /// never as a side effect of `dial()` or `feed()` alone.
-    #[test]
-    fn dial_alone_performs_no_io_the_request_only_appears_via_poll_transmit() {
-        let mut dialer = RtspDialer::new("rtsp://cam.local/stream", None);
-        let mut session = dialer.dial().expect("local construction only");
-        // Before poll_transmit is ever called, the session has produced no
-        // SessionEvent (no Established, nothing) — dial() truly did nothing
-        // beyond construct + queue.
-        assert!(session.poll().is_none());
-        assert!(session.poll_transmit().is_some());
-    }
-
-    /// A non-success DESCRIBE response (e.g. a stalled/misconfigured camera
-    /// returning 404) must fail the session (`Stage::feed`'s `Err`), driving
-    /// `HealthState::Failed` — not silently hang in `Establishing` forever.
-    #[test]
-    fn non_success_describe_response_fails_the_session() {
-        let mut dialer = RtspDialer::new("rtsp://cam.local/stream", None);
-        let session = dialer.dial().unwrap();
-        let mut driver = IngestDriver::new(
-            session,
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
-        );
-        let _describe = driver.poll_transmit().unwrap();
-        let not_found = rtsp_response(1, "404 Not Found", "", "");
-        driver.feed(&not_found, Timestamp::ZERO);
-        assert!(
-            matches!(driver.health(), HealthState::Failed(_)),
-            "a non-success DESCRIBE must fail the session: {:?}",
-            driver.health()
-        );
-    }
-
-    // --- issue #804: rtsps:// (TLS) wiring ---------------------------------
 
     /// Fail-safe property: an `rtsps://` route must never fall back to an
     /// unencrypted socket, even though establishing TLS against this
@@ -1910,14 +302,9 @@ mod tests {
 
     // --- issue #1083 W8: permanent-failure classification + keepalive ---
 
-    /// The RTSP method the session engine's keepalive uses (RFC 2326 §10.6,
-    /// sent by `rtsp_runtime::client::ClientSession::handle_timeout`) when
-    /// the server advertised it.
     const KEEPALIVE_METHOD: &str = "GET_PARAMETER";
 
-    /// The `Public` header (RFC 2326 §12.28) of a server that implements
-    /// every method; only its presence makes the keepalive `GET_PARAMETER`.
-    const PUBLIC_ALL: &str = "Public: OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN, GET_PARAMETER";
+    const PUBLIC_ALL: &str = "Public: OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN, GET_PARAMETER\r\n";
 
     /// Serves one RTSP connection: reads each request's request line, and
     /// answers via `respond`. Returns every request line it saw, stopping
@@ -2178,35 +565,83 @@ mod tests {
         );
     }
 
+    /// Cancelling a playing route sends one `TEARDOWN` (RFC 2326 §10.7) before the connection is
+    /// dropped, so the server releases its session instead of waiting for its timeout.
+    #[tokio::test]
+    async fn cancelling_a_playing_route_sends_a_teardown() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback");
+        let addr = listener.local_addr().expect("local addr");
+        let (played_tx, played) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (sock, _) = listener.accept().await.expect("accept");
+            let sdp = sdp_body();
+            let mut played_tx = Some(played_tx);
+            serve_requests(sock, move |method, cseq| {
+                let resp = match method {
+                    "DESCRIBE" => {
+                        rtsp_response(cseq, "200 OK", "Content-Type: application/sdp\r\n", &sdp)
+                    }
+                    "SETUP" => rtsp_response(
+                        cseq,
+                        "200 OK",
+                        "Session: 12345678\r\nTransport: RTP/AVP/TCP;interleaved=0-1\r\n",
+                        "",
+                    ),
+                    "PLAY" => {
+                        if let Some(tx) = played_tx.take() {
+                            let _ = tx.send(());
+                        }
+                        rtsp_response(cseq, "200 OK", "Session: 12345678\r\n", "")
+                    }
+                    "TEARDOWN" => rtsp_response(cseq, "200 OK", "Session: 12345678\r\n", ""),
+                    _ => return None,
+                };
+                Some(resp)
+            })
+            .await
+        });
+
+        let route = RtspRoute::new("teardown", format!("rtsp://{addr}/stream")).with_timeouts(
+            crate::source::IngestTimeouts {
+                connect: Duration::from_secs(5),
+                read: Duration::from_secs(30),
+            },
+        );
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let run = tokio::spawn({
+            let cancel = cancel.clone();
+            async move { run_rtsp(&route, trunk_config(), handshake(), &route_handle, cancel).await }
+        });
+        tokio::time::timeout(Duration::from_secs(30), played)
+            .await
+            .expect("the server must see PLAY")
+            .expect("PLAY signal");
+        cancel.cancel();
+        let ended = tokio::time::timeout(Duration::from_secs(30), run)
+            .await
+            .expect("a cancelled route must stop")
+            .expect("run task");
+        assert!(matches!(ended, MultimuxError::Connect { .. }), "{ended:?}");
+        let seen = tokio::time::timeout(Duration::from_secs(30), server)
+            .await
+            .expect("the server must see the TEARDOWN and finish")
+            .expect("server task");
+        assert_eq!(
+            seen.iter().filter(|r| r.starts_with("TEARDOWN")).count(),
+            1,
+            "exactly one TEARDOWN: {seen:?}"
+        );
+    }
+
     #[cfg(feature = "tls")]
     mod tls_tests {
-        //! A genuine `tokio_rustls` loopback TLS server + client, proving
-        //! [`super::connect_tls_with_config`] (the exact helper `run_rtsp`'s
-        //! `rtsps://` path calls, via [`super::connect_tls`]) performs a real
-        //! TLS handshake and carries a real DESCRIBE/SETUP/PLAY/depayload
-        //! exchange — the TLS analogue of this file's plain-`rtsp://`
-        //! centrepiece test
-        //! (`multi_round_trip_rtsp_handshake_completes_through_feed_and_poll_transmit_only`),
-        //! and mirroring `multimux/tests/it/rtsp_ingest.rs`'s real-socket
-        //! loopback pattern.
-        //!
-        //! Uses a caller-supplied trust config (rather than
-        //! `default_tls_client_config`'s public-CA `webpki-roots` bundle)
-        //! because no public CA ever signs a `127.0.0.1` loopback
-        //! certificate — this is exactly the flexibility
-        //! `connect_tls_with_config` exists to provide underneath the
-        //! fixed-trust-store `connect_tls` wrapper `run_rtsp` actually calls.
-
         use super::*;
         use std::sync::Arc;
-        use std::time::Duration;
-        use tokio::net::TcpListener;
+        use tokio::net::{TcpListener, TcpStream};
 
-        /// Self-signed `CN=localhost` cert/key fixture
-        /// (`fixtures/tls/localhost-{cert,key}.der`, see
-        /// `fixtures/tls/PROVENANCE.md`) — the same pair
-        /// `rtsp-runtime`'s own `tests/it/io_loopback.rs::tls_full_session_over_loopback`
-        /// uses to run a real TLS handshake over `127.0.0.1` loopback.
         fn cert_der() -> Vec<u8> {
             test_fixtures::read("tls/localhost-cert.der")
         }
@@ -2214,18 +649,9 @@ mod tests {
             test_fixtures::read("tls/localhost-key.der")
         }
 
-        /// A hang guard, not a speed assertion (issue #807): every
-        /// real-socket step below is wrapped in this so a wiring bug fails
-        /// in seconds instead of hanging CI forever. Raised from 10s to 60s
-        /// for the same load-tolerance reason (issue #826).
         const HANG_GUARD: Duration = Duration::from_secs(60);
 
         fn tls_provider() -> Arc<rustls::crypto::CryptoProvider> {
-            // Explicit provider, not the process-global default: another
-            // crate in the same build (e.g. `reqwest`'s `aws-lc-rs`) can
-            // already have installed one, and the plain `::builder()` then
-            // has no unambiguous default and panics — mirrors
-            // `rtsp_runtime::io::default_tls_client_config`'s own doc.
             Arc::new(rustls::crypto::aws_lc_rs::default_provider())
         }
 
@@ -2241,9 +667,6 @@ mod tests {
                 .expect("server config")
         }
 
-        /// A client trust store containing *only* the fixture's self-signed
-        /// cert — the loopback-test analogue of `default_tls_client_config`'s
-        /// public-CA bundle.
         fn client_config_trusting_fixture() -> rustls::ClientConfig {
             use rustls::pki_types::CertificateDer;
             let mut roots = rustls::RootCertStore::empty();
@@ -2257,11 +680,6 @@ mod tests {
                 .with_no_client_auth()
         }
 
-        /// Reads off `sock` until one complete RTSP request (headers only)
-        /// is buffered — a synchronization boundary only; this test never
-        /// needs to parse the request's contents (the responses below use
-        /// fixed `CSeq`s, matching a fresh `ClientSession`'s own monotonic
-        /// counter, exactly like this file's centrepiece hand-fed test).
         async fn read_request_boundary<S: AsyncRead + Unpin>(sock: &mut S) {
             let mut buf = Vec::new();
             let mut chunk = [0u8; 1024];
@@ -2280,10 +698,6 @@ mod tests {
             sock.flush().await.expect("flush response");
         }
 
-        /// Builds a minimal RFC 3550 §5.1 RTP packet carrying one NAL unit
-        /// verbatim (RFC 6184 §5.1) — same shape as this file's centrepiece
-        /// test's inline packets and `multimux/tests/it/rtsp_ingest.rs`'s
-        /// `h264_rtp_packet` helper.
         fn h264_rtp_packet(seq: u16, timestamp: u32, marker: bool, nal: &[u8]) -> Vec<u8> {
             const PT_H264_DYNAMIC: u8 = 96;
             const SSRC: u32 = 0xCAFE_BABE;
@@ -2303,11 +717,6 @@ mod tests {
             pkt
         }
 
-        /// Real self-signed-cert loopback TLS server: DESCRIBE (SDP) ->
-        /// SETUP (interleaved channel 0-1) -> PLAY -> three interleaved RTP
-        /// access units — mirrors `multimux/tests/it/rtsp_ingest.rs`'s
-        /// `serve_one_session`, just over `tokio_rustls` instead of plain
-        /// TCP.
         async fn serve_one_tls_session(tcp: TcpStream) {
             let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server_config()));
             let mut tls = acceptor.accept(tcp).await.expect("TLS handshake (server)");
@@ -2329,10 +738,6 @@ mod tests {
             let play_resp = "RTSP/1.0 200 OK\r\nCSeq: 3\r\nSession: TLSTEST\r\n\r\n";
             write_response(&mut tls, play_resp.as_bytes()).await;
 
-            // AU0 @1000 (IDR), AU1 @4000, AU2 @7000: the depacketiser only
-            // knows a sample's duration once the *next* AU's timestamp
-            // arrives, so 3 AUs yield exactly 1 completed (IDR) sample —
-            // exactly enough for this test's assertion.
             let idr = [0x65u8, 0xAA, 0xBB];
             let non1 = [0x41u8, 0xAA, 0xBB];
             let non2 = [0x41u8, 0xCC, 0xDD];
@@ -2344,126 +749,73 @@ mod tests {
                     .expect("serialize interleaved frame");
                 write_response(&mut tls, &frame).await;
             }
-            // Keep the TLS connection open until the client has drained
-            // every frame — cleanup, not a synchronization sleep (the
-            // client's own assertions, bounded by `HANG_GUARD`, are what
-            // actually gate the test).
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            let mut sink = [0u8; 1024];
+            while matches!(tls.read(&mut sink).await, Ok(n) if n > 0) {}
         }
 
-        /// The TLS analogue of this module's plain-`rtsp://` centrepiece
-        /// test: a genuine `tokio_rustls` handshake against a real
-        /// self-signed-cert loopback server, then a real DESCRIBE -> SETUP
-        /// -> PLAY -> depayload exchange over the encrypted socket, using
-        /// the exact `connect_tls_with_config` helper `run_rtsp`'s
-        /// `rtsps://` path calls (via `connect_tls`) — proving TLS is
-        /// genuinely negotiated (a plaintext byte stream could never
-        /// complete this handshake against a TLS-only server) and that real
-        /// media streams over it, not merely that the URL is accepted.
-        ///
-        /// MUTATION VERIFIED: replacing this test's `connect_tls_with_config`
-        /// call with `connect_plain(&addr.to_string())` (skipping the TLS
-        /// handshake entirely) does *not* fail at the client's own
-        /// `.expect("client TLS handshake")` — a bare TCP connect succeeds
-        /// fine, since `connect_plain` never attempts TLS. The failure
-        /// surfaces one step later, exactly where a real "no TLS" bug would
-        /// actually be caught: `serve_one_tls_session`'s `TlsAcceptor::accept`
-        /// panics trying to parse the client's plaintext DESCRIBE bytes as a
-        /// TLS record (`Custom { kind: InvalidData, error:
-        /// InvalidMessage(InvalidContentType) }`), the server task's
-        /// connection drops, and the test's own read loop then fails at
-        /// `assert!(n > 0, "peer closed before a sample arrived")`.
+        /// A genuine `tokio_rustls` handshake against a real self-signed-cert loopback server,
+        /// then a real DESCRIBE -> SETUP -> PLAY -> depayload exchange over the encrypted
+        /// socket: TLS is negotiated (a plaintext stream could never complete the handshake
+        /// against a TLS-only server) and real media reaches the Trunk.
         #[tokio::test]
-        async fn rtsps_dialer_negotiates_real_tls_and_streams() {
+        async fn rtsps_route_negotiates_real_tls_and_streams() {
             let listener = TcpListener::bind("127.0.0.1:0")
                 .await
                 .expect("bind loopback");
             let addr = listener.local_addr().expect("local addr");
-
             let server = tokio::spawn(async move {
                 let (tcp, _) = listener.accept().await.expect("accept");
                 serve_one_tls_session(tcp).await;
             });
 
-            let mut dialer = RtspDialer::new(format!("rtsps://{addr}/stream"), None);
-            let session = dialer
-                .dial()
-                .expect("dial: local construction only, no I/O");
-            let mut driver = IngestDriver::new(
-                session,
-                trunk_config(),
-                handshake(),
-                media_plane::DEFAULT_MAX_PROGRAMS,
-            );
-
-            let (mut rd, mut wr) = tokio::time::timeout(
-                HANG_GUARD,
-                connect_tls_with_config(
-                    &addr.to_string(),
-                    "localhost",
-                    client_config_trusting_fixture(),
-                ),
-            )
-            .await
-            .expect("client TLS connect must not hang")
-            .expect("client TLS handshake");
-
-            let start = std::time::Instant::now();
-            let mut buf = vec![0u8; 64 * 1024];
-            let mut cursor = None;
-            let mut sample_track: Option<(u32, bool)> = None;
-
-            for _ in 0..32 {
-                while let Some(bytes) = driver.poll_transmit() {
-                    wr.write_all(&bytes).await.expect("write request over TLS");
-                }
-                if cursor.is_none()
-                    && let Some(trunk) = driver.trunk(ProgramId(0))
-                {
-                    // `subscribe_from_backlog`, not `subscribe`: the IDR may be
-                    // published in the same feed as later AUs, i.e. before this
-                    // cursor exists, and `subscribe` would start past it.
-                    cursor = Some(trunk.subscribe_from_backlog());
-                }
-                if let Some(c) = cursor.as_mut() {
-                    while let Some(item) = c.poll() {
-                        if let media_plane::trunk::SampleCursorItem::Timed { track_id, sample } =
-                            item
-                        {
-                            // Record only the FIRST sample: the assertion below is
-                            // about the first access unit, and one poll batch may
-                            // carry several (depends on read chunking).
-                            sample_track.get_or_insert((track_id.value(), sample.flags.is_sync));
-                        }
-                    }
-                }
-                if sample_track.is_some() {
-                    break;
-                }
-                let n = tokio::time::timeout(HANG_GUARD, rd.read(&mut buf))
+            let route = RtspRoute::new("tls", format!("rtsps://localhost:{}/stream", addr.port()))
+                .with_timeouts(crate::source::IngestTimeouts {
+                    connect: HANG_GUARD,
+                    read: HANG_GUARD,
+                });
+            let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
+            let cancel = tokio_util::sync::CancellationToken::new();
+            let run = tokio::spawn({
+                let route_handle = std::sync::Arc::clone(&route_handle);
+                let cancel = cancel.clone();
+                async move {
+                    run_rtsp_with(
+                        &route,
+                        trunk_config(),
+                        handshake(),
+                        &route_handle,
+                        cancel,
+                        TlsHost {
+                            config: Some(client_config_trusting_fixture()),
+                        },
+                    )
                     .await
-                    .expect("read over TLS must not hang")
-                    .expect("read over TLS");
-                assert!(n > 0, "peer closed before a sample arrived");
-                let now = Timestamp::from_instant(start, std::time::Instant::now());
-                driver.feed(&buf[..n], now);
-            }
+                }
+            });
 
-            assert!(
-                matches!(driver.health(), HealthState::Live),
-                "DESCRIBE/SETUP/PLAY must complete over the TLS transport: {:?}",
-                driver.health()
-            );
-            let (track_id, is_sync) =
-                sample_track.expect("a depayloaded sample must reach the Trunk over TLS");
-            assert_eq!(track_id, 1, "the sole video track routes to track id 1");
-            assert!(is_sync, "the first access unit was the IDR");
-
-            server.await.expect("server task");
+            let trunk = tokio::time::timeout(HANG_GUARD, route_handle.await_first_trunk())
+                .await
+                .expect("DESCRIBE/SETUP/PLAY must complete over the TLS transport");
+            let mut cursor = trunk.subscribe_from_backlog();
+            let first = tokio::time::timeout(HANG_GUARD, async {
+                loop {
+                    if let Some(media_plane::trunk::SampleCursorItem::Timed { track_id, sample }) =
+                        cursor.poll()
+                    {
+                        return (track_id.value(), sample.flags.is_sync);
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("a depayloaded sample must reach the Trunk over TLS");
+            assert_eq!(first.0, 1, "the sole video track routes to track id 1");
+            assert!(first.1, "the first access unit was the IDR");
+            cancel.cancel();
+            let _ = tokio::time::timeout(HANG_GUARD, run).await;
+            server.abort();
         }
     }
-
-    // --- issue #1083 C: keepalive hardening + bounded DESCRIBE-404 ---
 
     /// A hostile `Session;timeout` value must not overflow the keepalive
     /// deadline, and a tiny one must not produce sub-second `OPTIONS` spam —
@@ -2595,242 +947,10 @@ mod tests {
         .expect("run_rtsp must return (not hang) once the read timeout elapses");
 
         assert!(
-            matches!(&err, MultimuxError::Protocol { phase, reason }
-                if *phase == "recv" && reason.contains("no data within")),
+            matches!(&err, MultimuxError::Connect { reason }
+                if reason.contains("no data within")),
             "a media-silent session must fail with the read-timeout error, got {err:?}"
         );
         server.abort();
-    }
-
-    /// A `405 Method Not Allowed` reply to the keepalive `OPTIONS` must NOT
-    /// tear a `Live` session down — `OPTIONS` is optional (RFC 2326 §10.1)
-    /// and many servers refuse it. Tested directly against `handle_event` so
-    /// the assertion is exact (a real-server test would race the session
-    /// teardown against the server's own read-idle return).
-    ///
-    /// Biting test: remove the `method == Options && Live` tolerance and
-    /// `handle_event` returns `Err`.
-    #[test]
-    fn a_non_success_keepalive_reply_is_ignored_while_live() {
-        let mut dialer = RtspDialer::new("rtsp://cam.local/stream", None);
-        let mut session = dialer.dial().expect("dial builds the session");
-        // Drive the session to Live by hand.
-        session.phase = Phase::Live;
-
-        for method in [Method::Options, Method::GetParameter] {
-            let result = session.handle_event(ClientEvent::Response {
-                cseq: 9,
-                method: method.clone(),
-                status: StatusCode::MethodNotAllowed,
-                body: Vec::new(),
-            });
-            assert!(
-                result.is_ok(),
-                "a 405 to a keepalive {method:?} must be ignored, not fatal: {result:?}"
-            );
-        }
-
-        // Any OTHER non-success response in the same phase is still fatal.
-        let err = session.handle_event(ClientEvent::Response {
-            cseq: 10,
-            method: Method::Play,
-            status: StatusCode::InternalServerError,
-            body: Vec::new(),
-        });
-        assert!(
-            matches!(err, Err(crate::error::MultimuxError::Protocol { .. })),
-            "a non-success reply to a non-keepalive request must still be fatal"
-        );
-    }
-
-    /// A single `404` on DESCRIBE is no longer declared permanent — a relay
-    /// answering 404 until its publisher is up must be retried, and only a
-    /// bounded run of them fails the route (issue #1083, C3).
-    #[test]
-    fn a_single_describe_404_is_not_permanent() {
-        let err = MultimuxError::Protocol {
-            phase: "DESCRIBE",
-            reason: "non-success status Not Found".into(),
-        };
-        assert!(crate::origin::supervisor::is_permanent_describe_not_found(
-            &err
-        ));
-        // The classification helper still matches; the *bounded count* is
-        // what makes one 404 non-fatal, and is exercised end-to-end by
-        // `origin::supervisor`'s own tests.
-    }
-
-    mod sr_alignment {
-        use super::*;
-        use broadcast_common::Serialize;
-        use broadcast_common::timescale::{Rounding, to_micros};
-
-        const VIDEO: TrackId = TrackId::new(1);
-        const AUDIO: TrackId = TrackId::new(2);
-        const VIDEO_RATE: u32 = 90_000;
-        const AUDIO_RATE: u32 = 48_000;
-        const VIDEO_BASE: u32 = 4_294_900_000;
-        const AUDIO_BASE: u32 = 123_456;
-        const VIDEO_STEP: u32 = 3_000;
-        const AUDIO_STEP: u32 = 1_024;
-        const AUDIO_LAG_TICKS: u32 = 4_800;
-        const AUDIO_LAG_US: i128 = 100_000;
-        const FRAME_US: i128 = 33_333;
-        const FRAMES: u32 = 8;
-        const VIDEO_CHANNEL: u8 = 0;
-        const AUDIO_CHANNEL: u8 = 2;
-        const SR_SSRC: u32 = 0x1234_5678;
-        const NTP_INSTANT_SECONDS: u32 = 3_900_000_000;
-        const VIDEO_SSRC: u32 = 0xCAFE_BABE;
-        const AUDIO_SSRC: u32 = 0xFEED_F00D;
-        const AAC_AU_HEADERS_LEN_BITS: [u8; 2] = [0x00, 0x10];
-        const AAC_AU_SIZE_4_HEADER: [u8; 2] = [0x00, 0x20];
-
-        fn sdp() -> String {
-            let sprop = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
-            format!(
-                "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n\
-                 m=video 0 RTP/AVP 96\r\na=control:trackID=1\r\n\
-                 a=rtpmap:96 H264/90000\r\n\
-                 a=fmtp:96 packetization-mode=1;sprop-parameter-sets={sprop}\r\n\
-                 m=audio 0 RTP/AVP 97\r\na=control:trackID=2\r\n\
-                 a=rtpmap:97 mpeg4-generic/48000/2\r\n\
-                 a=fmtp:97 streamtype=5;profile-level-id=1;mode=AAC-hbr;config=1190;\
-                 sizelength=13;indexlength=3;indexdeltalength=3\r\n"
-            )
-        }
-
-        fn playing_session() -> RtspIngestSession {
-            let mut dialer = RtspDialer::new("rtsp://cam.local/stream", None);
-            let mut session = dialer.dial().expect("dial");
-            let _ = session.poll_transmit();
-            for (cseq, headers, body) in [
-                (1, "Content-Type: application/sdp\r\n", sdp()),
-                (
-                    2,
-                    "Transport: RTP/AVP/TCP;interleaved=0-1\r\nSession: ABC123;timeout=60\r\n",
-                    String::new(),
-                ),
-                (
-                    3,
-                    "Transport: RTP/AVP/TCP;interleaved=2-3\r\nSession: ABC123;timeout=60\r\n",
-                    String::new(),
-                ),
-                (4, "", String::new()),
-            ] {
-                session
-                    .feed(
-                        &rtsp_response(cseq, "200 OK", headers, &body),
-                        Timestamp::ZERO,
-                    )
-                    .expect("handshake response");
-                let _ = session.poll_transmit();
-            }
-            session
-        }
-
-        fn rtp(pt: u8, seq: u16, ts: u32, ssrc: u32, payload: &[u8]) -> Vec<u8> {
-            let mut pkt = vec![0x80, 0x80 | pt];
-            pkt.extend_from_slice(&seq.to_be_bytes());
-            pkt.extend_from_slice(&ts.to_be_bytes());
-            pkt.extend_from_slice(&ssrc.to_be_bytes());
-            pkt.extend_from_slice(payload);
-            pkt
-        }
-
-        fn frame(channel: u8, bytes: Vec<u8>) -> Vec<u8> {
-            rtsp_runtime::interleaved::InterleavedFrame::new(channel, bytes)
-                .to_bytes()
-                .expect("frame")
-        }
-
-        fn sender_report(channel: u8, rtp_timestamp: u32) -> Vec<u8> {
-            let sr = transmux::rtcp::SenderReport::new(
-                SR_SSRC,
-                NTP_INSTANT_SECONDS,
-                0,
-                rtp_timestamp,
-                0,
-                0,
-                Vec::new(),
-            );
-            let mut buf = vec![0u8; sr.serialized_len()];
-            let n = sr.serialize_into(&mut buf).expect("serialize sr");
-            buf.truncate(n);
-            frame(channel, buf)
-        }
-
-        fn first_times_us(session: &mut RtspIngestSession, with_sr: bool) -> (i128, i128) {
-            let now = Timestamp::ZERO;
-            if with_sr {
-                session
-                    .feed(&sender_report(VIDEO_CHANNEL + 1, VIDEO_BASE), now)
-                    .expect("video sr");
-                session
-                    .feed(&sender_report(AUDIO_CHANNEL + 1, AUDIO_BASE), now)
-                    .expect("audio sr");
-            }
-            for k in 0..FRAMES {
-                let nal: &[u8] = if k == 0 { &[0x65, 0xAA] } else { &[0x41, 0xAA] };
-                let video_ts = VIDEO_BASE.wrapping_add(k * VIDEO_STEP);
-                let seq = u16::try_from(k).expect("seq");
-                session
-                    .feed(
-                        &frame(VIDEO_CHANNEL, rtp(96, seq, video_ts, VIDEO_SSRC, nal)),
-                        now,
-                    )
-                    .expect("video rtp");
-                let mut au = AAC_AU_HEADERS_LEN_BITS.to_vec();
-                au.extend_from_slice(&AAC_AU_SIZE_4_HEADER);
-                au.extend_from_slice(&[1, 2, 3, 4]);
-                let audio_ts = AUDIO_BASE.wrapping_add(AUDIO_LAG_TICKS + k * AUDIO_STEP);
-                session
-                    .feed(
-                        &frame(AUDIO_CHANNEL, rtp(97, seq, audio_ts, AUDIO_SSRC, &au)),
-                        now,
-                    )
-                    .expect("audio rtp");
-            }
-            session.finish().expect("finish");
-            let (mut video, mut audio) = (None, None);
-            while let Some(event) = session.poll() {
-                if let SessionEvent::Sample {
-                    track_id, sample, ..
-                } = event
-                {
-                    let pts = sample.pts.expect("pts");
-                    let us = |rate| to_micros(i128::from(pts), rate, Rounding::TowardZero);
-                    if track_id == VIDEO && video.is_none() {
-                        video = Some(us(VIDEO_RATE));
-                    }
-                    if track_id == AUDIO && audio.is_none() {
-                        audio = Some(us(AUDIO_RATE));
-                    }
-                }
-            }
-            (video.expect("video sample"), audio.expect("audio sample"))
-        }
-
-        #[test]
-        fn sender_reports_place_unrelated_track_clocks_on_one_timeline() {
-            let mut session = playing_session();
-            let (video, audio) = first_times_us(&mut session, true);
-            let gap = audio - video;
-            assert!(
-                (gap - AUDIO_LAG_US).abs() < FRAME_US,
-                "audio trails video by {gap}us, sender reports say {AUDIO_LAG_US}us"
-            );
-        }
-
-        #[test]
-        fn before_any_sender_report_the_first_samples_share_a_timeline() {
-            let mut session = playing_session();
-            let (video, audio) = first_times_us(&mut session, false);
-            assert!(
-                (audio - video).abs() < FRAME_US,
-                "provisional placement lines the first samples up, gap {}us",
-                audio - video
-            );
-        }
     }
 }

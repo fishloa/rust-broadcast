@@ -97,11 +97,7 @@ pub async fn run_ts_http(
         &route.target.url,
         config,
         route.target.auth.clone(),
-        SessionLabels {
-            what: WHAT,
-            connect: timeouts.connect,
-            read: timeouts.read,
-        },
+        SessionLabels::new(WHAT, timeouts),
         std::sync::Arc::clone(route_handle),
         true,
     )?;

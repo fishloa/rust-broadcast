@@ -798,6 +798,26 @@ fn stall_5s_notice_and_30s_reconnect_with_teardown_abort() {
 }
 
 #[test]
+fn the_tracks_are_announced_when_play_is_answered_before_any_media() {
+    let mut host = playing();
+    let events = host.events();
+    let announced = events
+        .iter()
+        .position(|e| matches!(e, Event::Tracks(_)))
+        .expect("Tracks at PLAY");
+    assert!(
+        !events[..announced]
+            .iter()
+            .any(|e| matches!(e, Event::Sample { .. })),
+        "no sample precedes the announcement"
+    );
+    assert!(
+        !events.iter().any(|e| matches!(e, Event::Sample { .. })),
+        "no media has been delivered yet"
+    );
+}
+
+#[test]
 fn server_closes_after_play_reconnects_at_once_with_discontinuity() {
     let mut host = playing();
     let first = finish_stream_after(&mut host, MIN_RECONNECT);

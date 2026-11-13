@@ -826,6 +826,8 @@ impl RtspSource {
         self.tracks_dirty = true;
         self.last_byte_at = now;
         self.last_sample_at = now;
+        self.announce_discontinuity();
+        self.announce_tracks();
     }
 
     fn route(&self, channel: u8) -> Option<(TrackId, bool)> {

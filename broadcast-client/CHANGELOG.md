@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - BREAKING: `broadcast_client::auth`'s own `AuthState`, `AuthDecision`, `AuthEvent` and `carries_credentials` definitions — they live in `broadcast-auth` now, and this module re-exports them, so the paths keep working but the types are `broadcast_auth`'s.
 ### Changed
+- An RTSP session announces its `Event::Tracks` (from the DESCRIBE SDP) when PLAY is answered instead of with the first access unit, so a host sees the programme before any media arrives.
 - `SrtConfig::latency_ms` accepts any value: a latency below 120 ms is no longer an `InvalidConfig` (the negotiated latency is the larger of the two peers' values).
 - `Retry-After` HTTP-date parsing now uses `broadcast-common::http_date::parse_http_date`.
 ### Changed

@@ -1,17 +1,26 @@
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 
-use broadcast_common::{Stage, Timestamp};
-use media_plane::ingress::{Dialer, IngestSession, SessionEvent};
-use multimux::MultimuxError;
-use multimux::source::rtsp::{RtspDialer, RtspIngestSession};
+use broadcast_common::Timestamp;
+use media_plane::ingress::HandshakePolicy;
+use media_plane::trunk::{SampleCursorItem, TrunkConfig};
+use multimux::RouteHandle;
+use multimux::source::IngestTimeouts;
+use multimux::source::rtsp::{RtspRoute, run_rtsp};
 use rtsp_runtime::{InterleavedFrame, TransportSpec};
+use tokio_util::sync::CancellationToken;
+use transmux::pipeline::Sample;
+
+use crate::support::shared_it::nz;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 const SPROP: &str = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
 const RTP_CHANNEL: u8 = 0;
 const TEST_TIMEOUT: Duration = Duration::from_secs(60);
-const MAX_ROUNDS: usize = 64;
+const WANTED_SAMPLES: usize = 2;
+const RING: usize = 16;
+const TIMED_RING: usize = 4096;
 
 const DEST_PLACEHOLDER: &str = "<loopback>";
 
@@ -117,36 +126,21 @@ async fn serve_one_session(sock: TcpStream) -> Vec<String> {
     requests
 }
 
-async fn drive_and_collect(
-    session: &mut RtspIngestSession,
-    stream: &mut TcpStream,
-    want: impl Fn(&[SessionEvent]) -> bool,
-) -> Result<Vec<SessionEvent>, MultimuxError> {
-    let start = Instant::now();
-    let mut buf = [0u8; 64 * 1024];
-    let mut events = Vec::new();
-    for _ in 0..MAX_ROUNDS {
-        while let Some(bytes) = session.poll_transmit() {
-            stream.write_all(&bytes).await.expect("write request");
-        }
-        while let Some(ev) = session.poll() {
-            events.push(ev);
-        }
-        if want(&events) {
-            return Ok(events);
-        }
-        let n = stream.read(&mut buf).await.expect("read response");
-        assert!(n > 0, "peer closed before the expected events arrived");
-        let now = Timestamp::from_instant(start, Instant::now());
-        session.feed(&buf[..n], now)?;
-        while let Some(ev) = session.poll() {
-            events.push(ev);
-        }
-        if want(&events) {
-            return Ok(events);
+async fn collect_samples(
+    route_handle: &RouteHandle,
+    want: usize,
+) -> Vec<(transmux::TrackId, Sample)> {
+    let trunk = route_handle.await_first_trunk().await;
+    let mut cursor = trunk.subscribe_from_backlog();
+    let mut samples = Vec::new();
+    while samples.len() < want {
+        match cursor.poll() {
+            Some(SampleCursorItem::Timed { track_id, sample }) => samples.push((track_id, sample)),
+            Some(_) => {}
+            None => tokio::task::yield_now().await,
         }
     }
-    panic!("drive_and_collect: exceeded {MAX_ROUNDS} rounds");
+    samples
 }
 
 #[tokio::test]
@@ -159,33 +153,29 @@ async fn rtsp_pull_golden() {
             serve_one_session(sock).await
         });
 
-        let mut dialer = RtspDialer::new(format!("rtsp://{addr}/test"), None);
-        let mut session = dialer.dial().expect("dial");
-        let mut stream = TcpStream::connect(addr).await.expect("connect");
+        let route =
+            RtspRoute::new("golden", format!("rtsp://{addr}/test")).with_timeouts(IngestTimeouts {
+                connect: TEST_TIMEOUT,
+                read: TEST_TIMEOUT,
+            });
+        let route_handle = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let config = TrunkConfig::new(nz(TIMED_RING), nz(RING), nz(RING), nz(RING), nz(RING));
+        let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
+        let cancel = CancellationToken::new();
+        let run = tokio::spawn({
+            let route_handle = Arc::clone(&route_handle);
+            let cancel = cancel.clone();
+            async move { run_rtsp(&route, config, handshake, &route_handle, cancel).await }
+        });
 
-        let events = drive_and_collect(&mut session, &mut stream, |evs| {
-            evs.iter()
-                .filter(|e| matches!(e, SessionEvent::Sample { .. }))
-                .count()
-                >= 2
-        })
-        .await
-        .expect("rtsp pull must succeed");
+        let samples = collect_samples(&route_handle, WANTED_SAMPLES).await;
+        cancel.cancel();
+        let _ = run.await;
 
         let requests = tokio::time::timeout(TEST_TIMEOUT, server)
             .await
             .expect("server task")
             .expect("server task");
-
-        let samples: Vec<_> = events
-            .iter()
-            .filter_map(|e| match e {
-                SessionEvent::Sample {
-                    track_id, sample, ..
-                } => Some((*track_id, sample)),
-                _ => None,
-            })
-            .collect();
 
         let mut rendered = String::new();
         for req in &requests {

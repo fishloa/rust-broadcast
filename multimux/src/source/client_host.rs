@@ -20,7 +20,8 @@ use broadcast_client::{Action, Config, Event, Session, Status, UdpMode};
 use broadcast_common::{Demand, Stage, Timestamp};
 use futures_util::StreamExt;
 use media_plane::ingress::{IngestDriver, IngestSession, SessionEvent};
-use tokio::net::UdpSocket;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::net::{TcpStream, UdpSocket};
 use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 use tokio::time::Instant;
@@ -122,9 +123,28 @@ enum Message {
 
 /// What a failed or stalled attempt is reported as, chosen by the source.
 pub(crate) struct SessionLabels {
-    pub(crate) what: &'static str,
-    pub(crate) connect: Duration,
-    pub(crate) read: Duration,
+    what: &'static str,
+    connect: Duration,
+    read: Duration,
+    not_found_phase: Option<&'static str>,
+}
+
+impl SessionLabels {
+    pub(crate) fn new(what: &'static str, timeouts: crate::source::IngestTimeouts) -> Self {
+        Self {
+            what,
+            connect: timeouts.connect,
+            read: timeouts.read,
+            not_found_phase: None,
+        }
+    }
+
+    /// Reports a "not found" answer as the protocol error of `phase` that the route supervisor
+    /// treats as permanent after repeated attempts, instead of an ordinary connect failure.
+    pub(crate) fn not_found_in_phase(mut self, phase: &'static str) -> Self {
+        self.not_found_phase = Some(phase);
+        self
+    }
 }
 
 pub(crate) struct SessionStep {
@@ -136,7 +156,9 @@ pub(crate) struct SessionStep {
     rx: mpsc::Receiver<Message>,
     requests: BTreeMap<u32, AbortHandle>,
     sockets: BTreeMap<u32, std::sync::Arc<UdpSocket>>,
+    writers: BTreeMap<u32, BoxedWrite>,
     udp: UdpHost,
+    tls: TlsHost,
     wake_at: Option<u64>,
     route_handle: std::sync::Arc<crate::route::RouteHandle>,
     feed_si: bool,
@@ -182,7 +204,9 @@ impl SessionStep {
             rx,
             requests: BTreeMap::new(),
             sockets: BTreeMap::new(),
+            writers: BTreeMap::new(),
             udp: UdpHost::default(),
+            tls: TlsHost::default(),
             wake_at: None,
             route_handle,
             feed_si,
@@ -200,6 +224,11 @@ impl SessionStep {
 
     pub(crate) fn with_udp(mut self, udp: UdpHost) -> Self {
         self.udp = udp;
+        self
+    }
+
+    pub(crate) fn with_tls(mut self, tls: TlsHost) -> Self {
+        self.tls = tls;
         self
     }
 
@@ -255,14 +284,38 @@ impl SessionStep {
                         self.session.on_closed(conn, Some(e.to_string()), now);
                     }
                 },
+                Action::TcpConnect {
+                    conn,
+                    host,
+                    port,
+                    tls,
+                    ..
+                } => match self
+                    .tls
+                    .connect(&host, port, tls, self.labels.connect)
+                    .await
+                {
+                    Ok((reader, writer)) => {
+                        let task = tokio::spawn(read_stream(reader, conn, self.tx.clone()));
+                        self.requests.insert(conn, task.abort_handle());
+                        self.writers.insert(conn, writer);
+                        self.session.on_connected(conn);
+                    }
+                    Err(e) => self.fail_connection(conn, e),
+                },
                 Action::Send { conn, bytes } => {
-                    if let Some(socket) = self.sockets.get(&conn)
+                    if let Some(writer) = self.writers.get_mut(&conn) {
+                        if let Err(e) = write_bounded(writer, &bytes).await {
+                            self.fail_connection(conn, e);
+                        }
+                    } else if let Some(socket) = self.sockets.get(&conn)
                         && let Err(e) = socket.send(&bytes).await
                     {
                         self.transport_error = Some(e.to_string());
                     }
                 }
                 Action::Close { conn } => {
+                    self.writers.remove(&conn);
                     self.sockets.remove(&conn);
                     if let Some(task) = self.requests.remove(&conn) {
                         task.abort();
@@ -282,6 +335,13 @@ impl SessionStep {
             }
         }
         Ok(())
+    }
+
+    fn fail_connection(&mut self, conn: u32, error: String) {
+        self.transport_error = Some(error.clone());
+        self.writers.remove(&conn);
+        let now = self.now_us();
+        self.session.on_closed(conn, Some(error), now);
     }
 
     fn register_socket(&mut self, conn: u32, socket: UdpSocket) {
@@ -317,6 +377,7 @@ impl SessionStep {
             Message::Closed { conn, error } => {
                 self.requests.remove(&conn);
                 self.sockets.remove(&conn);
+                self.writers.remove(&conn);
                 if error.is_some() {
                     self.transport_error.clone_from(&error);
                 }
@@ -343,7 +404,13 @@ impl SessionStep {
                 Event::Finite { .. } => self.finite = true,
                 Event::Status(Status::Ended) => verdict = verdict.max(Verdict::Ended),
                 Event::Status(Status::NotFound) => {
-                    verdict = verdict.max(Verdict::Failed(self.http_error(404)));
+                    verdict = verdict.max(Verdict::Failed(match self.labels.not_found_phase {
+                        Some(phase) => MultimuxError::Protocol {
+                            phase,
+                            reason: "non-success status Not Found".into(),
+                        },
+                        None => self.http_error(404),
+                    }));
                 }
                 Event::ServerRefused { status, .. }
                 | Event::Forbidden { status }
@@ -479,6 +546,13 @@ impl IngestStep<EventIngest> for SessionStep {
     fn stalled(&self, read: Duration) -> MultimuxError {
         MultimuxError::Connect {
             reason: format!("{} stream read: no data within {read:?}", self.labels.what),
+        }
+    }
+
+    async fn farewell(&mut self) {
+        self.session.close();
+        if let Err(e) = self.perform_actions().await {
+            tracing::debug!(error = %e, "{}: farewell not delivered", self.labels.what);
         }
     }
 }
@@ -631,4 +705,116 @@ async fn connect_udp(host: &str, port: u16) -> std::io::Result<UdpSocket> {
     let socket = UdpSocket::bind(local).await?;
     socket.connect(peer).await?;
     Ok(socket)
+}
+
+type BoxedRead = Box<dyn AsyncRead + Send + Unpin>;
+type BoxedWrite = Box<dyn AsyncWrite + Send + Unpin>;
+
+const TCP_READ_BUFFER: usize = 64 * 1024;
+
+async fn write_bounded(writer: &mut BoxedWrite, bytes: &[u8]) -> Result<(), String> {
+    let write_timeout = crate::source::driver::DEFAULT_WRITE_TIMEOUT;
+    match tokio::time::timeout(write_timeout, writer.write_all(bytes)).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => Err(format!("write: {e}")),
+        Err(_) => Err(format!(
+            "write: one protocol message not accepted within {write_timeout:?}"
+        )),
+    }
+}
+
+async fn read_stream(mut reader: BoxedRead, conn: u32, tx: mpsc::Sender<Message>) {
+    let mut buf = vec![0u8; TCP_READ_BUFFER];
+    loop {
+        let message = match reader.read(&mut buf).await {
+            Ok(0) => Message::Closed { conn, error: None },
+            Ok(n) => Message::Data {
+                conn,
+                bytes: buf[..n].to_vec(),
+            },
+            Err(e) => Message::Closed {
+                conn,
+                error: Some(e.to_string()),
+            },
+        };
+        let end = matches!(message, Message::Closed { .. });
+        if tx.send(message).await.is_err() || end {
+            return;
+        }
+    }
+}
+
+/// How the host opens the TCP connection a session asks for with [`Action::TcpConnect`]: plain,
+/// or TLS verified against `config` (the public-CA bundle when none is given).
+#[derive(Default)]
+pub(crate) struct TlsHost {
+    #[cfg(feature = "tls")]
+    pub(crate) config: Option<rustls::ClientConfig>,
+}
+
+impl TlsHost {
+    async fn connect(
+        &self,
+        host: &str,
+        port: u16,
+        tls: bool,
+        connect_timeout: Duration,
+    ) -> Result<(BoxedRead, BoxedWrite), String> {
+        let addr = if host.contains(':') {
+            format!("[{host}]:{port}")
+        } else {
+            format!("{host}:{port}")
+        };
+        let opened = async {
+            let tcp = TcpStream::connect(&addr)
+                .await
+                .map_err(|e| format!("connect {addr}: {e}"))?;
+            if tls {
+                self.handshake(host, &addr, tcp).await
+            } else {
+                let (reader, writer) = tcp.into_split();
+                Ok((
+                    Box::new(reader) as BoxedRead,
+                    Box::new(writer) as BoxedWrite,
+                ))
+            }
+        };
+        tokio::time::timeout(connect_timeout, opened)
+            .await
+            .map_err(|_| format!("connect {addr}: no response within {connect_timeout:?}"))?
+    }
+
+    #[cfg(feature = "tls")]
+    async fn handshake(
+        &self,
+        host: &str,
+        addr: &str,
+        tcp: TcpStream,
+    ) -> Result<(BoxedRead, BoxedWrite), String> {
+        let config = self
+            .config
+            .clone()
+            .unwrap_or_else(rtsp_runtime::io::default_tls_client_config);
+        let connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(config));
+        let name = rustls::pki_types::ServerName::try_from(host.to_string())
+            .map_err(|e| format!("invalid TLS server name {host:?}: {e}"))?;
+        let stream = connector
+            .connect(name, tcp)
+            .await
+            .map_err(|e| format!("TLS handshake {addr}: {e}"))?;
+        let (reader, writer) = tokio::io::split(stream);
+        Ok((Box::new(reader), Box::new(writer)))
+    }
+
+    #[cfg(not(feature = "tls"))]
+    async fn handshake(
+        &self,
+        _host: &str,
+        addr: &str,
+        _tcp: TcpStream,
+    ) -> Result<(BoxedRead, BoxedWrite), String> {
+        Err(format!(
+            "TLS requires multimux's `tls` feature; cannot connect to {addr}"
+        ))
+    }
 }
