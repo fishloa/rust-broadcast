@@ -5,6 +5,8 @@ All notable changes to `rtsp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `ServerSession::try_new` (a fallible `Session` id source) and `Error::RandomSource`: when the OS random source is unavailable the `SETUP` that needs an id returns that error and creates no session, instead of panicking. `AsyncRtspServer::accept` and `RtspServerConfig::default` use it; their `# Panics` section is gone (#2591).
 ### Changed
 - BREAKING: `ServerSession::new` takes a session-id source that is `Send + Sync` (it was `Send`), so a `ServerSession` is `Sync` and can be shared behind an `Arc`; a test pins it (issue #2533).
 ### Removed

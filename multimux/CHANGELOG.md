@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- Building an output-auth verifier reports an unavailable OS random source (Digest) as `MultimuxError::Auth` instead of panicking (#2591).
 ### Removed
 - BREAKING: `config::{AudioTrackSelector, AudioProfile, AudioProfileOverride}` moved to `transmux::audio_profile` (same serde forms); the route logs declarations that did not apply as before (issue #2554).
 ### Fixed

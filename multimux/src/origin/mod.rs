@@ -1343,7 +1343,7 @@ fn resolve_verifier(
                 realm,
             })
         }
-        builtin => Ok(builtin.build_verifier(realm)),
+        builtin => builtin.build_verifier(realm),
     }
 }
 

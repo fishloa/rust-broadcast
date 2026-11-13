@@ -179,7 +179,7 @@ impl RtspServerConfig {
 impl Default for RtspServerConfig {
     /// A session whose ids come from the OS random source.
     fn default() -> Self {
-        RtspServerConfig::new(ServerSession::new(os_session_id))
+        RtspServerConfig::new(ServerSession::try_new(os_session_id))
     }
 }
 
@@ -815,13 +815,10 @@ pub struct AsyncRtspServer<S> {
 
 impl AsyncRtspServer<TcpStream> {
     /// Wraps an accepted plain-TCP connection with a fresh [`ServerSession`]
-    /// whose `Session` ids come from the OS random source.
-    ///
-    /// # Panics
-    ///
-    /// When the OS random source is unavailable.
+    /// whose `Session` ids come from the OS random source; when it is unavailable the `SETUP`
+    /// that needs an id fails with [`Error::RandomSource`].
     pub fn accept(stream: TcpStream) -> Self {
-        Self::with_stream(stream, ServerSession::new(os_session_id))
+        Self::with_stream(stream, ServerSession::try_new(os_session_id))
     }
 
     /// Wraps an accepted plain-TCP connection with a pre-configured session.
@@ -870,10 +867,10 @@ where
 }
 
 /// A `Session` id value from the OS random source (RFC 2326 §3.4).
-fn os_session_id() -> u64 {
+fn os_session_id() -> crate::Result<u64> {
     let mut bytes = [0u8; 8];
-    getrandom::fill(&mut bytes).expect("OS random source unavailable");
-    u64::from_ne_bytes(bytes)
+    getrandom::fill(&mut bytes).map_err(|_| Error::RandomSource)?;
+    Ok(u64::from_ne_bytes(bytes))
 }
 
 impl<S> AsyncRtspServer<S>
@@ -1076,7 +1073,7 @@ mod tests {
     fn os_session_id_varies() {
         let mut seen = std::collections::HashSet::new();
         for _ in 0..100 {
-            seen.insert(os_session_id());
+            seen.insert(os_session_id().expect("OS random source"));
         }
         assert!(
             seen.len() > 90,

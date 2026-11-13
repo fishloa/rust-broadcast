@@ -19,6 +19,11 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// The OS random source failed while a `Session` id was being allocated; the request is not
+    /// answered, since a predictable id would let another client take the session over.
+    #[error("the OS random source is unavailable")]
+    RandomSource,
+
     /// An RTSP message could not be parsed or framed; `source` carries the
     /// codec's or the framing check's own error.
     #[error("failed to parse RTSP {what}")]

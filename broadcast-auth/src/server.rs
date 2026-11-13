@@ -324,10 +324,16 @@ fn pair_key(nonce: &str, cnonce: &str) -> PairKey {
 }
 
 impl DigestNonces {
-    fn new() -> Self {
+    fn new() -> crate::Result<Self> {
+        Self::from_source(|bytes| getrandom::fill(bytes).map_err(|_| crate::Error::RandomSource))
+    }
+
+    /// A table whose nonce-signing secret `fill` writes; a failing source is the typed error,
+    /// never a fixed or partial secret.
+    fn from_source(fill: impl FnOnce(&mut [u8]) -> crate::Result<()>) -> crate::Result<Self> {
         let mut secret = [0u8; NONCE_SECRET_LEN];
-        getrandom::fill(&mut secret).expect("OS random source unavailable");
-        DigestNonces {
+        fill(&mut secret)?;
+        Ok(DigestNonces {
             secret,
             seen: Mutex::new(NcTable {
                 entries: LruCache::unbounded(),
@@ -336,7 +342,7 @@ impl DigestNonces {
                 next_seq: 0,
                 latest_issue_time: 0,
             }),
-        }
+        })
     }
 
     fn table(&self) -> std::sync::MutexGuard<'_, NcTable> {
@@ -465,7 +471,18 @@ impl Verifier {
     /// For `Credentials::Digest`, a random nonce-signing secret is generated
     /// now; every [`Self::challenge`] then issues a fresh, time-limited nonce
     /// (see the module docs' nonce handling).
+    ///
+    /// # Panics
+    ///
+    /// For `Credentials::Digest`, when the OS random source is unavailable; use
+    /// [`Self::try_new`] to receive that as [`crate::Error::RandomSource`].
     pub fn new(credentials: Credentials, realm: impl Into<String>) -> Self {
+        Self::try_new(credentials, realm).expect("OS random source unavailable")
+    }
+
+    /// [`Self::new`] that reports an unavailable OS random source (Digest only: the other schemes
+    /// draw no randomness) as [`crate::Error::RandomSource`] instead of panicking.
+    pub fn try_new(credentials: Credentials, realm: impl Into<String>) -> crate::Result<Self> {
         // Stored in the form it is rendered in, so the realm a client echoes
         // back (and hashes into HA1) is the realm the server compares.
         let realm = sanitize_realm(&realm.into());
@@ -483,16 +500,16 @@ impl Verifier {
                 username: core::mem::take(username),
                 password: core::mem::take(password),
                 realm,
-                nonces: DigestNonces::new(),
+                nonces: DigestNonces::new()?,
             },
             Credentials::Bearer { token } => VerifierScheme::Bearer {
                 token: core::mem::take(token),
             },
         };
-        Verifier {
+        Ok(Verifier {
             scheme,
             clock: default_clock(),
-        }
+        })
     }
 
     /// Replaces the clock Digest nonce ages are measured against (default
@@ -1066,7 +1083,7 @@ mod tests {
     /// touching an old pair must protect it.
     #[test]
     fn recently_used_pair_survives_eviction() {
-        let nonces = DigestNonces::new();
+        let nonces = DigestNonces::new().expect("OS random source");
         nonces.set_capacity(2);
         let stamp = |seq| NonceStamp { time: 100, seq };
         let (a, b, c) = (
@@ -1092,7 +1109,7 @@ mod tests {
 
     #[test]
     fn nonce_is_96_lowercase_hex_and_round_trips() {
-        let nonces = DigestNonces::new();
+        let nonces = DigestNonces::new().expect("OS random source");
         let nonce = nonces.issue(1_000);
         assert_eq!(nonce.len(), NONCE_LEN * 2);
         assert!(
@@ -1120,7 +1137,7 @@ mod tests {
     /// nonces issued before and after the change verify against each other.
     #[test]
     fn nonce_mac_matches_variable_length_keying() {
-        let nonces = DigestNonces::new();
+        let nonces = DigestNonces::new().expect("OS random source");
         let signed = b"issue-time||issue-seq";
         let reference = {
             let mut m = <Hmac<Sha256> as KeyInit>::new_from_slice(&nonces.secret).unwrap();
@@ -2279,5 +2296,16 @@ mod tests {
         let altered = "Basic RWxhZGRpbjpvcGVuIHNlc2FtZQ==";
         assert!(!verify_basic(altered, "Aladdin", "open sesame"));
         assert!(!verify_basic(ok, "Aladdin", "open sesamf"));
+    }
+
+    #[test]
+    fn an_unavailable_random_source_is_a_typed_error_not_a_secret_or_a_panic() {
+        let failed = DigestNonces::from_source(|_| Err(crate::Error::RandomSource));
+        assert!(matches!(failed, Err(crate::Error::RandomSource)));
+        let filled = DigestNonces::from_source(|bytes| {
+            bytes.fill(7);
+            Ok(())
+        });
+        assert!(filled.is_ok());
     }
 }
