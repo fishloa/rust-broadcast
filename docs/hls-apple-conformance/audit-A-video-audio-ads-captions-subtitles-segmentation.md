@@ -99,7 +99,7 @@ Class legend: MET-V verified, MET-U unverified, GAP, PARTIAL, N/A (ENCODER/CONTE
 | Item | Requirement | Class | Evidence (file:line) | Note |
 |---|---|---|---|---|
 | 3.1 | Ads inserted in playlists or as Interstitials (MAY) | PARTIAL | ssai-runtime/src/playlist.rs:29-30, 96-155 (interstitial DATERANGE renderer); multimux has no `ssai-runtime` dependency (`git grep ssai_runtime multimux`: CHANGELOG only); EN:1730-1747 (SCTE-35 to plain DATERANGE) | Library capability exists; the HLS origin does neither stitched insertion nor interstitial tags (only SCTE-35-derived `EXT-X-DATERANGE`, gated on a time anchor). |
-| 3.2 | Inserted media same codecs (SHOULD) | GAP-OPT | transmux/src/splice.rs; transmux/examples/ssai_ad_stitch.rs | Splice/stitch exists in transmux (offline example); no codec-equality check at the join. Not wired to the origin. |
+| 3.2 | Inserted media same codecs (SHOULD) | GAP-OPT | transmux/src/splice.rs; transmux/examples/ssai_ad_stitch/main.rs | Splice/stitch exists in transmux (offline example); no codec-equality check at the join. Not wired to the origin. |
 | 3.3 | Same aspect ratio (SHOULD) | GAP-OPT | same | No aspect check. |
 | 3.4 | Inserted media <= variant bandwidths (SHOULD) | GAP-OPT | same | No check. |
 
