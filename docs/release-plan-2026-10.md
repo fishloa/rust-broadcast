@@ -209,10 +209,10 @@ Computed from `cargo metadata` over normal + build edges **and versioned dev-dep
    needs live first: `v12.0.0`, `broadcast-common`, `dvb-ci`, `mpeg-ts`
 43. `media-doctor-v0.11.0`  
    needs live first: `v12.0.0`, `broadcast-common`, `broadcast-hls`, `container-probe`, `dvb-stream`, `mpeg-pes`, `mpeg-ts`, `scte35-splice`, `timed-metadata`, `transmux`
-44. `media-plane-v0.7.0`  
-   needs live first: `broadcast-common`, `container-probe`, `scte35-splice`, `timed-metadata`, `transmux`
-45. `playout-runtime-v0.3.0`  
+44. `playout-runtime-v0.3.0`  
    needs live first: `broadcast-common`, `mp4-emsg`, `scte35-splice`, `ssai-runtime`
+45. `media-plane-v0.7.0`  
+   needs live first: `v12.0.0`, `broadcast-common`, `caption-convert`, `container-probe`, `scte35-splice`, `timed-metadata`, `transmux`
 46. `compliance-probe-v0.4.0`  
    needs live first: `v12.0.0`, `broadcast-common`, `media-doctor`, `media-plane`, `mpeg-ts`, `scte35-splice`, `timed-metadata`
 47. `hls-runtime-v0.9.0`  
