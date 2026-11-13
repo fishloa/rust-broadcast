@@ -17,16 +17,7 @@
 //! generated, so regeneration cannot regenerate its own gate — evaluates every
 //! circuit over its *entire* input domain and compares against the table it was
 //! generated from. A generator bug cannot ship.
-#![allow(clippy::identity_op)]
-
 use super::Word;
-
-/// All-zero lane mask — used only where a table column is identically zero.
-#[allow(dead_code)]
-const ZERO: Word = 0;
-/// All-ones lane mask — used only where a table column is identically one.
-#[allow(dead_code)]
-const ONES: Word = !0;
 
 /// Bitsliced `SBOX[..]` — the block cipher's 8-bit substitution box.
 ///

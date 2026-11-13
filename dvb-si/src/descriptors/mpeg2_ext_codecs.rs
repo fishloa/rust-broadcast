@@ -530,7 +530,6 @@ impl MediaServiceKind {
 }
 
 #[cfg(test)]
-#[allow(clippy::unusual_byte_groupings)] // bit-field-wise literals mirror the syntax tables
 mod tests {
     use super::*;
     use alloc::vec;
@@ -539,7 +538,7 @@ mod tests {
     fn lcevc_video_spec_vector() {
         // tag=7, profile=3 level=5, sublevel=1 planes=1 pic=0 field=1 reserved=111,
         // HDR_WCG=2 reserved_zero=00 vpt=2
-        let b = [0x07, 0x35, 0b01_1_0_1_111, 0b10_00_0010];
+        let b = [0x07, 0x35, 0b0110_1111, 0b1000_0010];
         let d = LcevcVideo::parse_body(&b).unwrap();
         assert_eq!((d.profile_idc, d.level_idc, d.sublevel_idc), (3, 5, 1));
         assert!(d.processed_planes_type_flag && !d.picture_type_bit_flag && d.field_type_bit_flag);
@@ -589,15 +588,15 @@ mod tests {
         let d = MediaServiceKind::new(vec![e1, e2]);
         let b = d.write_body().unwrap();
         // entry 1: desc=0 ident=1 pairs=2 type=2 reserved=1
-        assert_eq!(b[0], 0b0_1_010_10_1);
+        assert_eq!(b[0], 0b0101_0101);
         // ID_length_code=2 (4 bytes), ID_type=0x0200
         assert_eq!(&b[1..3], &[0b010_00010, 0x00]);
         assert_eq!(&b[3..7], &[1, 2, 3, 4]);
         // pair 1: config=0, cnt=2, idc=1, reserved=1
-        assert_eq!(b[7], 0b00_010_01_1);
+        assert_eq!(b[7], 0b0001_0011);
         assert_eq!(&b[8..12], &[b'e', b'n', 1, 9]);
         // pair 2: config=1, cnt=0, idc=0 explicit, reserved=1 then lang_len=5
-        assert_eq!(&b[12..14], &[0b01_000_00_1, 5]);
+        assert_eq!(&b[12..14], &[0b0100_0001, 5]);
         assert_eq!(MediaServiceKind::parse_body(&b).unwrap(), d);
     }
 
@@ -611,7 +610,7 @@ mod tests {
             Err(crate::error::Error::InvalidDescriptor { .. })
         ));
         // lang_len_idc = 3 is reserved
-        let b = [0b0_0_001_01_1, 0b00_000_11_1];
+        let b = [0b0000_1011, 0b0000_0111];
         assert!(matches!(
             MediaServiceKind::parse_body(&b),
             Err(crate::Error::InvalidDescriptor { .. })

@@ -57,7 +57,7 @@ macro_rules! declare_payloads {
         #[non_exhaustive]
         pub enum AnyPayload<$lt> {
             $(
-                #[allow(missing_docs)]
+                #[doc = concat!(stringify!($variant), " T2-MI payload.")]
                 $variant($($path)::+ $(<$plt>)?),
             )+
             /// Runtime-registered custom payload (see [`PayloadRegistry`]).

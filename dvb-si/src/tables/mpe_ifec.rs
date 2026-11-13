@@ -147,15 +147,11 @@ pub struct MpeIfecSection<'a> {
 impl<'a> MpeIfecSection<'a> {
     /// Construct an MPE-IFEC section with the spec `reserved` fill.
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         private_indicator: bool,
         burst_number: u8,
         ifec_burst_size: u8,
-        version: u8,
-        current_next_indicator: bool,
-        section_number: u8,
-        last_section_number: u8,
+        section: crate::tables::SectionVersion,
         real_time_parameters: RealTimeParameters,
         ifec_data: &'a [u8],
     ) -> Self {
@@ -164,10 +160,10 @@ impl<'a> MpeIfecSection<'a> {
             private_indicator,
             burst_number,
             ifec_burst_size,
-            version,
-            current_next_indicator,
-            section_number,
-            last_section_number,
+            version: section.version_number,
+            current_next_indicator: section.current_next_indicator,
+            section_number: section.section_number,
+            last_section_number: section.last_section_number,
             real_time_parameters,
             ifec_data,
             reserved_b1: super::RESERVED_2,
@@ -286,28 +282,14 @@ mod tests {
     use super::*;
     use alloc::{vec, vec::Vec};
 
-    #[allow(clippy::too_many_arguments)]
     fn build_mpe_ifec(
         burst_number: u8,
         ifec_burst_size: u8,
-        version: u8,
-        current_next: bool,
-        section_number: u8,
-        last_section_number: u8,
+        section: crate::tables::SectionVersion,
         rtp: RealTimeParameters,
         ifec_data: &[u8],
     ) -> Vec<u8> {
-        let s = MpeIfecSection::new(
-            true,
-            burst_number,
-            ifec_burst_size,
-            version,
-            current_next,
-            section_number,
-            last_section_number,
-            rtp,
-            ifec_data,
-        );
+        let s = MpeIfecSection::new(true, burst_number, ifec_burst_size, section, rtp, ifec_data);
         let mut buf = vec![0u8; s.serialized_len()];
         s.serialize_into(&mut buf).unwrap();
         buf
@@ -325,7 +307,13 @@ mod tests {
     #[test]
     fn parse_happy_path() {
         let ifec = [0x11u8, 0x22, 0x33, 0x44];
-        let bytes = build_mpe_ifec(5, 16, 9, true, 1, 3, sample_rtp(), &ifec);
+        let bytes = build_mpe_ifec(
+            5,
+            16,
+            crate::tables::SectionVersion::new(9, true, 1, 3),
+            sample_rtp(),
+            &ifec,
+        );
         let s = MpeIfecSection::parse(&bytes).unwrap();
         assert!(s.private_indicator);
         assert_eq!(s.burst_number, 5);
@@ -340,7 +328,13 @@ mod tests {
 
     #[test]
     fn parse_empty_ifec_data() {
-        let bytes = build_mpe_ifec(0, 0, 0, false, 0, 0, sample_rtp(), &[]);
+        let bytes = build_mpe_ifec(
+            0,
+            0,
+            crate::tables::SectionVersion::new(0, false, 0, 0),
+            sample_rtp(),
+            &[],
+        );
         let s = MpeIfecSection::parse(&bytes).unwrap();
         assert_eq!(s.burst_number, 0);
         assert_eq!(s.version, 0);
@@ -362,7 +356,13 @@ mod tests {
 
     #[test]
     fn parse_rejects_wrong_tag() {
-        let mut bytes = build_mpe_ifec(0, 0, 0, true, 0, 0, sample_rtp(), &[]);
+        let mut bytes = build_mpe_ifec(
+            0,
+            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
+            sample_rtp(),
+            &[],
+        );
         bytes[0] = 0x70; // not 0x7A
         assert!(matches!(
             MpeIfecSection::parse(&bytes).unwrap_err(),
@@ -380,7 +380,13 @@ mod tests {
 
     #[test]
     fn parse_rejects_section_length_overflow() {
-        let mut bytes = build_mpe_ifec(0, 0, 0, true, 0, 0, sample_rtp(), &[]);
+        let mut bytes = build_mpe_ifec(
+            0,
+            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
+            sample_rtp(),
+            &[],
+        );
         let fake_sl: u16 = (bytes.len() as u16) + 100 - HEADER_LEN as u16;
         bytes[1] = (bytes[1] & 0xF0) | ((fake_sl >> 8) as u8 & 0x0F);
         bytes[2] = (fake_sl & 0xFF) as u8;
@@ -393,7 +399,14 @@ mod tests {
     #[test]
     fn serialize_round_trip() {
         let ifec = [0xDEu8, 0xAD, 0xBE, 0xEF, 0x00];
-        let original = MpeIfecSection::new(false, 200, 32, 31, false, 2, 4, sample_rtp(), &ifec);
+        let original = MpeIfecSection::new(
+            false,
+            200,
+            32,
+            crate::tables::SectionVersion::new(31, false, 2, 4),
+            sample_rtp(),
+            &ifec,
+        );
         let mut buf = vec![0u8; original.serialized_len()];
         original.serialize_into(&mut buf).unwrap();
         assert_eq!(MpeIfecSection::parse(&buf).unwrap(), original);
@@ -401,7 +414,14 @@ mod tests {
 
     #[test]
     fn serialize_rejects_output_buffer_too_small() {
-        let s = MpeIfecSection::new(false, 0, 0, 0, true, 0, 0, sample_rtp(), &[]);
+        let s = MpeIfecSection::new(
+            false,
+            0,
+            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
+            sample_rtp(),
+            &[],
+        );
         let mut buf = vec![0u8; 2];
         assert!(matches!(
             s.serialize_into(&mut buf).unwrap_err(),
@@ -413,7 +433,14 @@ mod tests {
     fn serialize_rejects_over_wide_real_time_parameters() {
         let mut rtp = sample_rtp();
         rtp.delta_t = 0x1000; // 13 bits
-        let mut s = MpeIfecSection::new(false, 0, 0, 0, true, 0, 0, rtp, &[]);
+        let mut s = MpeIfecSection::new(
+            false,
+            0,
+            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
+            rtp,
+            &[],
+        );
         let mut buf = vec![0u8; s.serialized_len()];
         assert!(matches!(
             s.serialize_into(&mut buf).unwrap_err(),
@@ -457,10 +484,7 @@ mod tests {
             false,
             0,
             0,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             RealTimeParameters {
                 delta_t: 0,
                 mpe_boundary: false,
@@ -483,10 +507,7 @@ mod tests {
             false,
             0,
             0,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             RealTimeParameters {
                 delta_t: 0,
                 mpe_boundary: false,
@@ -506,7 +527,13 @@ mod tests {
     fn serde_json_serializes_fields() {
         // Serialize-only: assert serialization yields valid, field-bearing JSON.
         let ifec = [0x01u8, 0x02];
-        let bytes = build_mpe_ifec(7, 8, 3, true, 0, 0, sample_rtp(), &ifec);
+        let bytes = build_mpe_ifec(
+            7,
+            8,
+            crate::tables::SectionVersion::new(3, true, 0, 0),
+            sample_rtp(),
+            &ifec,
+        );
         let s = MpeIfecSection::parse(&bytes).unwrap();
         let v: serde_json::Value = serde_json::to_value(&s).unwrap();
         assert_eq!(v["burst_number"], 7);

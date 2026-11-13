@@ -13,7 +13,6 @@
 //! `cfg(feature = "baseline")` / `cfg(feature = "head")`; see README.md for the
 //! list of adapted call sites.
 
-#![allow(clippy::too_many_lines)]
 
 #[cfg(not(any(feature = "head", feature = "baseline")))]
 compile_error!("build with exactly one of `--features head` or `--features baseline` (see README.md)");

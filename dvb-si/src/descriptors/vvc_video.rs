@@ -249,7 +249,6 @@ impl VvcVideoDescriptor {
 impl_h222_descriptor!(VvcVideoDescriptor, TAG, "VvcVideoDescriptor", "VVC_VIDEO");
 
 #[cfg(test)]
-#[allow(clippy::unusual_byte_groupings)] // bit-field-wise literals mirror the syntax tables
 mod tests {
     use super::*;
     use alloc::vec;
@@ -263,7 +262,7 @@ mod tests {
         let b = [
             TAG,
             12,
-            0b0000001_0,
+            0b0000_0010,
             1,
             0,
             0,
@@ -271,10 +270,10 @@ mod tests {
             2,
             0b1001_0000,
             0x33,
-            0b1_0_0_11111,
-            0b10_11_0010,
-            0b11111_001,
-            0b11111_011,
+            0b1001_1111,
+            0b1011_0010,
+            0b1111_1001,
+            0b1111_1011,
         ];
         let d = VvcVideoDescriptor::parse(&b).unwrap();
         assert_eq!(d.profile_idc, 1);
@@ -290,14 +289,7 @@ mod tests {
 
     #[test]
     fn without_subset_keeps_nonzero_reserved_zero_bits() {
-        let body = [
-            0b0000010_1,
-            0,
-            0b0000_1010,
-            0x40,
-            0b0_1_1_00000,
-            0b11_00_0000,
-        ];
+        let body = [0b0000_0101, 0, 0b0000_1010, 0x40, 0b0110_0000, 0b1100_0000];
         let mut full = vec![TAG, body.len() as u8];
         full.extend_from_slice(&body);
         let d = VvcVideoDescriptor::parse(&full).unwrap();

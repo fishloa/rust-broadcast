@@ -9,7 +9,6 @@
 //! type 6), emulation prevention §7.4.1; ATSC A/53 Part 4 §6.2.3 / ANSI/SCTE
 //! 128-1 (`itu_t_t35` country 0xB5, provider 0x0031, `GA94`,
 //! `user_data_type_code` 0x03).
-#![allow(dead_code)]
 
 use mpeg_pes::{PesAssembler, PesPacket};
 use mpeg_ts::TsPacket;

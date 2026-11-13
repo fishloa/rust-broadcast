@@ -772,7 +772,6 @@ impl JxsVideo {
 }
 
 #[cfg(test)]
-#[allow(clippy::unusual_byte_groupings)] // bit-field-wise literals mirror the syntax tables
 mod tests {
     use super::*;
     use alloc::vec;
@@ -925,7 +924,7 @@ mod tests {
         b.extend_from_slice(&[0, 0, 0, 8]); // max_buffer_size
         b.extend_from_slice(&[2, 1, 1, 1]); // buffer model, cicp
         b.push(0b1_1111111); // full range + reserved
-        b.push(0b0_0_000000); // still_mode, mdm_flag=0, zero_bits
+        b.push(0b0000_0000); // still_mode, mdm_flag=0, zero_bits
         b.extend_from_slice(&[0xAB, 0xCD]); // private data
         let d = JxsVideo::parse_body(&b).unwrap();
         assert_eq!(d.horizontal_size, 1920);
@@ -936,7 +935,7 @@ mod tests {
         // mdm_flag = 1 adds the 24-byte block
         let mut m = b[..b.len() - 2].to_vec();
         let n = m.len();
-        m[n - 1] = 0b0_1_000000;
+        m[n - 1] = 0b0100_0000;
         for i in 0..8u8 {
             m.push(0);
             m.push(i);

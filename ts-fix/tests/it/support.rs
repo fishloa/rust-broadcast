@@ -1,7 +1,5 @@
 //! Test support helpers for `ts-fix` tests.
 
-#![allow(dead_code)]
-
 use broadcast_common::traits::Serialize;
 use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::tables::pat::{PatEntry, PatSection};
@@ -169,10 +167,10 @@ fn build_two_program_core(cycles: usize, psi_each_cycle: bool) -> Vec<u8> {
     // ── PMT1 ─────────────────────────────────────────────────────────────────
     let pmt1 = PmtSection::new(
         /* program_number */ 1,
-        /* version_number */ 0,
-        /* current_next_indicator */ true,
-        /* section_number */ 0,
-        /* last_section_number */ 0,
+        dvb_si::tables::SectionVersion::new(
+            /* version_number */ 0, /* current_next_indicator */ true,
+            /* section_number */ 0, /* last_section_number */ 0,
+        ),
         /* pcr_pid */ P1_PCR_PID,
         /* program_info */ DescriptorLoop::new(&[]),
         /* streams */
@@ -196,10 +194,10 @@ fn build_two_program_core(cycles: usize, psi_each_cycle: bool) -> Vec<u8> {
     // ── PMT2 ─────────────────────────────────────────────────────────────────
     let pmt2 = PmtSection::new(
         /* program_number */ 2,
-        /* version_number */ 0,
-        /* current_next_indicator */ true,
-        /* section_number */ 0,
-        /* last_section_number */ 0,
+        dvb_si::tables::SectionVersion::new(
+            /* version_number */ 0, /* current_next_indicator */ true,
+            /* section_number */ 0, /* last_section_number */ 0,
+        ),
         /* pcr_pid */ P2_PCR_PID,
         /* program_info */ DescriptorLoop::new(&[]),
         /* streams */

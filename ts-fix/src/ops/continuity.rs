@@ -78,17 +78,6 @@ impl ContinuityOp {
         }
     }
 
-    /// Extract the adaptation_field_control bits from byte 3.
-    ///
-    /// Returns the 2-bit `adaptation_field_control` value (ISO/IEC 13818-1
-    /// §2.4.3.3, Table 2-5): 00=reserved, 01=payload-only, 10=adaptation-only,
-    /// 11=both.
-    #[inline]
-    #[allow(dead_code)]
-    fn afc(b3: u8) -> u8 {
-        (b3 >> 4) & 0x03
-    }
-
     /// Check whether a packet has `discontinuity_indicator == 1` in its
     /// adaptation field (§2.4.3.5).
     ///

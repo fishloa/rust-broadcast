@@ -686,7 +686,7 @@ pub(crate) const STREAM_OUT: [u8; 16] = [
 /// Each entry is (mask, sbox_index, [shift_chain]) — the mask is ANDed with
 /// register A, then the 5 shift-and-XOR operations produce the 5-bit sbox index.
 #[rustfmt::skip]
-#[allow(dead_code)]
+#[cfg(test)]
 pub(crate) const STREAM_SBOX_SEL: [(u64, usize, [u8; 5]); 7] = [
     (0x2018004200, 1, [37, 27, 25, 11, 5]),
     (0x4201480000, 4, [38, 32, 22, 16, 18]),

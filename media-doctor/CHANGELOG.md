@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `hls-program-date-time-invalid` (Warning): an `#EXT-X-PROGRAM-DATE-TIME` that is not an ISO 8601 date-time (a bare date, say) is reported at its line from the playlist parser's new `MediaPlaylist::diagnostics` instead of failing the playlist (#2591).
 ### Changed
 - `udp::bind_udp` now uses `dvb_stream::udp::bind_standard` (shared socket bind) instead of its own socket2 sequence (#2472).
 ### Added

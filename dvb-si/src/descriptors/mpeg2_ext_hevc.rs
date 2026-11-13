@@ -953,7 +953,6 @@ impl HevcSubregion {
 }
 
 #[cfg(test)]
-#[allow(clippy::unusual_byte_groupings)] // bit-field-wise literals mirror the syntax tables
 mod tests {
     use super::*;
     use alloc::vec;
@@ -1085,11 +1084,11 @@ mod tests {
         assert_eq!(b[25], 1); // operation_points_count
         assert_eq!(b[26], 2); // target_ols
         assert_eq!(b[27], 2); // ES_count
-        assert_eq!(&b[28..30], &[0b1_1_000101, 0b1_0_000110]);
+        assert_eq!(&b[28..30], &[0b1100_0101, 0b1000_0110]);
         assert_eq!(b[30], 0b11_000010); // reserved + numEsInOp
         assert_eq!(&b[31..33], &[0b11_000000, 0b10_000001]);
         // reserved(1)=1, avg=1, max=1, idc=10, tid=110
-        assert_eq!(b[33], 0b1_1_1_10_110);
+        assert_eq!(b[33], 0b1111_0110);
         assert_eq!(&b[34..36], &[0xF0, 50]);
         assert_eq!(&b[36..39], &[0, 0x1F, 0x40]);
         assert_eq!(&b[39..42], &[0, 0x27, 0x10]);
@@ -1119,8 +1118,8 @@ mod tests {
         let b = [
             0x00,
             0x03,
-            0b000101_01,
-            0b0_000001_0,
+            0b0001_0101,
+            0b0000_0010,
             0b11_000010,
             0b11_000100,
             0xC1,
@@ -1213,7 +1212,7 @@ mod tests {
         assert!(!p.general_interlaced_source_flag);
         assert!(p.general_non_packed_constraint_flag);
         assert!(!p.general_frame_only_constraint_flag);
-        assert_eq!(p.copied_44bits, 0x9_1234_5678_9A);
+        assert_eq!(p.copied_44bits, 0x0912_3456_789A);
         assert_eq!(p.general_level_idc, 93);
         assert_eq!(write_ptl(&p).unwrap(), PTL_VECTOR);
     }
