@@ -1334,3 +1334,69 @@ async fn a_fragment_outside_the_window_is_not_found() {
         );
     }
 }
+
+/// Concurrent requests for the manifest and a fragment on a multi-thread
+/// runtime all succeed and agree: the first builds the plan on the blocking
+/// pool, the others reuse or wait for it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_requests_all_succeed_and_agree() {
+    const CLIENTS: usize = 32;
+    let store = Arc::new(RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8));
+    let mut batches = Vec::new();
+    for i in 0..60u32 {
+        let sample = Sample::new(
+            vec![0xAAu8.wrapping_add((i % 251) as u8); 64],
+            Some(i64::from(i) * i64::from(FRAME_DUR)),
+            Some(i64::from(i) * i64::from(FRAME_DUR)),
+            Some(FRAME_DUR),
+            i % 30 == 0,
+        );
+        batches.push(vec![(1u32, sample)]);
+    }
+    feed_via_segmenter(&store, vec![video_track_spec()], batches);
+    let app = build_app(store, Arc::new(SmoothOutput));
+
+    let mut tasks = tokio::task::JoinSet::new();
+    for _ in 0..CLIENTS {
+        let app = app.clone();
+        tasks.spawn(async move {
+            let resp = app
+                .oneshot(get("/cam/Manifest"))
+                .await
+                .expect("router call");
+            assert_eq!(resp.status(), StatusCode::OK);
+            body_string(resp).await
+        });
+    }
+    let mut manifests = Vec::new();
+    while let Some(joined) = tasks.join_next().await {
+        manifests.push(joined.expect("task completes"));
+    }
+    assert_eq!(manifests.len(), CLIENTS);
+    assert!(manifests.windows(2).all(|pair| pair[0] == pair[1]));
+
+    let manifest = SmoothManifest::parse(&manifests[0]).expect("parse manifest");
+    let stream = &manifest.streams[0];
+    let quality = &stream.qualities[0];
+    let (start, _) = stream.enumerate_chunks().expect("chunks")[0];
+    let path = format!(
+        "/cam/{}",
+        stream.resolve_fragment_url(quality.bitrate, start)
+    );
+    let mut tasks = tokio::task::JoinSet::new();
+    for _ in 0..CLIENTS {
+        let app = app.clone();
+        let path = path.clone();
+        tasks.spawn(async move {
+            let resp = app.oneshot(get(&path)).await.expect("router call");
+            assert_eq!(resp.status(), StatusCode::OK);
+            body_bytes(resp).await
+        });
+    }
+    let mut fragments = Vec::new();
+    while let Some(joined) = tasks.join_next().await {
+        fragments.push(joined.expect("task completes"));
+    }
+    assert!(fragments.iter().all(|bytes| !bytes.is_empty()));
+    assert!(fragments.windows(2).all(|pair| pair[0] == pair[1]));
+}

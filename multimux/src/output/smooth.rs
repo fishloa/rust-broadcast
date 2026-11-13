@@ -20,6 +20,19 @@
 //! shared resource route's `/:file` catch-all only matches the first segment,
 //! so the fallback parses the original request URI.
 //!
+//! # Caching and the blocking pool
+//!
+//! The origin caches its plan and every packaged fragment (see
+//! `smooth_runtime::server::SmoothOrigin`), and it lives as long as the
+//! program does, so a request over an unchanged window is a lookup. A request
+//! that misses demuxes and re-muxes, which is CPU-bound: this module runs that
+//! work on the blocking pool (`tokio::task::spawn_blocking`, at most
+//! [`MAX_CONCURRENT_BUILDS`] at once per program) and answers from the cache
+//! afterwards, so a runtime worker never does it. The one exception is a
+//! request that waited for the first segment of a program to exist: the wait
+//! loop is the shared `http::resolve_blocking`, which resolves inline when the
+//! wait ends, so that first plan is built on the worker that woke it.
+//!
 //! Fragments are the same bytes the shared resource route serves for
 //! LL-HLS/DASH — the `Trunk` is the single copy.
 //!
@@ -35,7 +48,7 @@
 //! what they send now (`tests/it/smooth_output.rs`'s
 //! `smooth_responses_carry_no_cache` pins it).
 
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use axum::Router;
 use axum::extract::{OriginalUri, State};
@@ -47,6 +60,7 @@ use bytes::Bytes;
 use hls_runtime::server::{DEFAULT_TRACK_ID, HlsBody, HlsOrigin, HlsRequest};
 use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
 use smooth_runtime::server::{SmoothBody, SmoothOrigin, SmoothRequest};
+use tokio::sync::Semaphore;
 
 use crate::http::{self, BLOCKING_RELOAD_TIMEOUT};
 use crate::origin::resource::cors_preflight;
@@ -84,17 +98,21 @@ impl Output for SmoothOutput {
 /// `GET /Manifest` — the origin's live Smooth client Manifest.
 ///
 /// Rendering demuxes every window segment to derive each track's own `c`
-/// timeline, so it runs on the **blocking pool**, not a runtime worker.
+/// timeline, so a render that is not already cached runs on the **blocking
+/// pool**, not a runtime worker.
 async fn manifest(State(route): State<Arc<RouteHandle>>) -> Response {
     let serving = match http::resolve_route_program(&route) {
         Ok(serving) => serving,
         Err(resp) => return *resp,
     };
     let trunk = serving.trunk();
-    let origin = origin(&serving);
+    let smooth = smooth_serving(&serving);
+    if let Err(status) = prepare(&smooth, SmoothRequest::Manifest).await {
+        return status.into_response();
+    }
     let resp = http::resolve_blocking(
         &trunk,
-        &origin,
+        &*smooth.origin,
         SmoothRequest::Manifest,
         BLOCKING_RELOAD_TIMEOUT,
         || (),
@@ -118,8 +136,9 @@ async fn manifest(State(route): State<Arc<RouteHandle>>) -> Response {
 /// for why a fallback is needed (axum's `/:file` is single-segment only).
 ///
 /// The request grammar, the stream it names and the fragment's bytes are all
-/// the origin's; re-demuxing and re-muxing are CPU-bound and must not run on
-/// a runtime worker, which [`http::resolve_blocking`] guarantees.
+/// the origin's; re-demuxing and re-muxing are CPU-bound, so a fragment that
+/// is not already cached is built on the blocking pool by [`prepare`], and the
+/// answer is then a cache lookup.
 ///
 /// A fragment the origin's window does not hold (a start time older than its
 /// first chunk or later than its last, or a segment that slid away while the
@@ -131,13 +150,25 @@ async fn fragment_fallback(State(route): State<Arc<RouteHandle>>, uri: OriginalU
         Err(resp) => return *resp,
     };
     let trunk = serving.trunk();
-    let origin = origin(&serving);
-    let kinds = origin.stream_keys();
+    let smooth = smooth_serving(&serving);
+    if let Err(status) = prepare(&smooth, SmoothRequest::Manifest).await {
+        return status.into_response();
+    }
+    let kinds = smooth.origin.stream_keys();
     let Some(request) = SmoothRequest::parse(uri.path(), &kinds) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let resp =
-        http::resolve_blocking(&trunk, &origin, request, BLOCKING_RELOAD_TIMEOUT, || ()).await;
+    if let Err(status) = prepare(&smooth, request).await {
+        return status.into_response();
+    }
+    let resp = http::resolve_blocking(
+        &trunk,
+        &*smooth.origin,
+        request,
+        BLOCKING_RELOAD_TIMEOUT,
+        || (),
+    )
+    .await;
     http::into_response_with_message(
         resp,
         StatusCode::NOT_FOUND,
@@ -170,30 +201,83 @@ fn segment_bytes(ll_hls: &HlsOrigin, public_seq: u64) -> Option<Bytes> {
     }
 }
 
-/// The origin over this program's `Trunk`, carrying the program's init
-/// segment (the one thing no `Trunk` ring holds) and its DASH-rendered
-/// window (which published segments it presents) as the segment source.
-fn origin(serving: &Arc<ProgramServing>) -> SmoothOrigin {
-    let window = Arc::clone(serving);
-    let ll_hls = serving.ll_hls();
-    let tracks = Arc::clone(serving);
-    let origin = SmoothOrigin::new(
-        serving.trunk(),
-        Arc::new(move || {
-            window
-                .window_segments()
-                .into_iter()
-                .filter(|segment| !segment.gap)
-                .filter_map(|segment| {
-                    segment_bytes(&ll_hls, segment.public_seq)
-                        .map(|bytes| (segment.segment_seq, Arc::<[u8]>::from(bytes.as_ref())))
-                })
-                .collect::<Vec<_>>()
-        }),
-        Arc::new(move || tracks.track_specs()),
-    );
-    if let Some(init) = serving.init_bytes() {
-        origin.set_init(Arc::<[u8]>::from(init.as_ref()));
+/// How many plan or fragment builds one program runs on the blocking pool at
+/// once; a burst of cache misses queues here instead of filling the pool.
+const MAX_CONCURRENT_BUILDS: usize = 4;
+
+/// A program's Smooth origin and the bound on the builds it offloads.
+pub(crate) struct SmoothServing {
+    origin: Arc<SmoothOrigin>,
+    builds: Arc<Semaphore>,
+}
+
+impl SmoothServing {
+    /// The origin over `serving`'s `Trunk`, with its DASH-rendered window
+    /// (which published segments it presents) and track set as its sources.
+    /// They hold the program weakly: the program owns this origin, so a strong
+    /// reference would keep both alive forever.
+    fn new(serving: &Arc<ProgramServing>) -> Self {
+        let window: Weak<ProgramServing> = Arc::downgrade(serving);
+        let ll_hls = serving.ll_hls();
+        let tracks: Weak<ProgramServing> = Arc::downgrade(serving);
+        let origin = SmoothOrigin::new(
+            serving.trunk(),
+            Arc::new(move || {
+                let Some(window) = window.upgrade() else {
+                    return Vec::new();
+                };
+                window
+                    .window_segments()
+                    .into_iter()
+                    .filter(|segment| !segment.gap)
+                    .filter_map(|segment| {
+                        segment_bytes(&ll_hls, segment.public_seq)
+                            .map(|bytes| (segment.segment_seq, bytes))
+                    })
+                    .collect::<Vec<_>>()
+            }),
+            Arc::new(move || {
+                tracks
+                    .upgrade()
+                    .map(|tracks| tracks.track_specs())
+                    .unwrap_or_default()
+            }),
+        );
+        Self {
+            origin: Arc::new(origin),
+            builds: Arc::new(Semaphore::new(MAX_CONCURRENT_BUILDS)),
+        }
     }
-    origin
+}
+
+/// The program's origin, holding the program's current init segment (the one
+/// thing no `Trunk` ring holds); storing the init it already has is a no-op.
+fn smooth_serving(serving: &Arc<ProgramServing>) -> Arc<SmoothServing> {
+    let smooth = serving
+        .smooth
+        .get_or_init(|| Arc::new(SmoothServing::new(serving)));
+    if let Some(init) = serving.init_bytes() {
+        smooth.origin.set_init(init);
+    }
+    Arc::clone(smooth)
+}
+
+/// Make answering `request` a cache hit: when it is not one already, build
+/// what it needs on the blocking pool. `Err` is the status to answer with
+/// when the build could not run.
+async fn prepare(smooth: &SmoothServing, request: SmoothRequest) -> Result<(), StatusCode> {
+    if smooth.origin.is_warm(&request) {
+        return Ok(());
+    }
+    let permit = Arc::clone(&smooth.builds)
+        .acquire_owned()
+        .await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let origin = Arc::clone(&smooth.origin);
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        origin.prepare(request);
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
