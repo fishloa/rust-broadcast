@@ -50,7 +50,7 @@ retyped by hand each time:
    is live. `--tag-order <pairs...>` prints just that, one tag per line.
 
 It does NOT tag, push, or publish. Those stay manual and need explicit
-sign-off; `tools/push-release-tags.sh` pushes tags one at a time afterwards.
+sign-off; `tools/push-release-tags.sh` pushes tags one at a time; `tools/release_plan.py` plans the levels and pushes them in parallel (one single-tag push per crate).
 
 `--verify` checks each crate is live at the expected version via
 `tools/crates-io.py`, which is the only supported way to ask crates.io (it
