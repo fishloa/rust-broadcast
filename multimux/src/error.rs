@@ -144,7 +144,7 @@ pub enum MultimuxError {
     FileRoute(
         /// The underlying file-reader error (read / probe / demux).
         #[from]
-        crate::source::file_reader::FileReaderError,
+        media_plane::file_source::FileReaderError,
     ),
 
     /// An output cannot carry a codec the ingested program delivered, so the

@@ -30,10 +30,6 @@ const RECV_BUFFER_BYTES: usize = 1500;
 /// Datagrams one viewer may have queued before further ones are dropped.
 const SESSION_INBOUND_QUEUE: usize = 64;
 
-/// Sockets a route binds per advertised IP: viewers spread across them so one socket's send path
-/// is not the serial point of every viewer's SRTP stream.
-pub(crate) const SOCKETS_PER_IP: usize = 8;
-
 type SessionKey = u64;
 
 /// One inbound datagram and where it came from.
@@ -191,26 +187,40 @@ impl Drop for Attachment {
 }
 
 /// The media sockets of one advertised IP: bound one by one as viewers arrive up to
-/// [`SOCKETS_PER_IP`], then handed out round-robin.
+/// the configured count, then handed out round-robin.
 #[derive(Default)]
 struct IpSockets {
     shards: Vec<Arc<SharedSocket>>,
     next: usize,
 }
 
-/// A route's media sockets, up to [`SOCKETS_PER_IP`] per advertised IP, bound on first use.
-#[derive(Default)]
+/// A route's media sockets, up to `per_ip` per advertised IP, bound on first use.
 pub(crate) struct SharedSockets {
+    per_ip: usize,
     sockets: Mutex<HashMap<IpAddr, IpSockets>>,
 }
 
+impl Default for SharedSockets {
+    fn default() -> Self {
+        Self::with_sockets_per_ip(crate::config::DEFAULT_WHEP_MEDIA_SOCKETS_PER_IP)
+    }
+}
+
 impl SharedSockets {
-    /// A socket for `ip`: a newly bound one while the IP has fewer than [`SOCKETS_PER_IP`],
+    /// Sockets per advertised IP: clamped up to one.
+    pub(crate) fn with_sockets_per_ip(per_ip: usize) -> Self {
+        Self {
+            per_ip: per_ip.max(1),
+            sockets: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// A socket for `ip`: a newly bound one while the IP has fewer than the configured count,
     /// otherwise the next in rotation.
     pub(crate) fn socket_for(&self, ip: IpAddr) -> io::Result<Arc<SharedSocket>> {
         let mut sockets = self.sockets.lock();
         let entry = sockets.entry(ip).or_default();
-        if entry.shards.len() < SOCKETS_PER_IP {
+        if entry.shards.len() < self.per_ip {
             let socket = Arc::new(SharedSocket::bind(ip)?);
             entry.shards.push(Arc::clone(&socket));
             return Ok(socket);
@@ -258,21 +268,29 @@ mod tests {
         UdpSocket::bind((LOCALHOST, 0)).await.expect("bind client")
     }
 
-    /// The viewers of a route on one IP spread evenly over at most [`SOCKETS_PER_IP`] sockets.
+    /// The viewers of a route on one IP spread evenly over exactly the configured number of
+    /// sockets, whatever that number is.
     #[tokio::test]
-    async fn viewers_of_a_route_spread_over_a_bounded_set_of_sockets() {
+    async fn viewers_of_a_route_spread_over_the_configured_number_of_sockets() {
         const ROUNDS: usize = 3;
-        let sockets = SharedSockets::default();
-        let mut attached = Vec::new();
-        let mut per_address: HashMap<SocketAddr, usize> = HashMap::new();
-        for i in 0..SOCKETS_PER_IP * ROUNDS {
-            let socket = sockets.socket_for(LOCALHOST).expect("socket");
-            *per_address.entry(socket.local_addr()).or_default() += 1;
-            attached.push(socket.attach(&format!("ufrag{i:04}")).expect("attach"));
+        for per_ip in [1, 3, 8] {
+            let sockets = SharedSockets::with_sockets_per_ip(per_ip);
+            let mut attached = Vec::new();
+            let mut per_address: HashMap<SocketAddr, usize> = HashMap::new();
+            for i in 0..per_ip * ROUNDS {
+                let socket = sockets.socket_for(LOCALHOST).expect("socket");
+                *per_address.entry(socket.local_addr()).or_default() += 1;
+                attached.push(socket.attach(&format!("ufrag{i:04}")).expect("attach"));
+            }
+            assert_eq!(sockets.len(), per_ip, "bound sockets");
+            assert_eq!(per_address.len(), per_ip, "distinct addresses");
+            assert!(per_address.values().all(|viewers| *viewers == ROUNDS));
         }
-        assert_eq!(sockets.len(), SOCKETS_PER_IP);
-        assert_eq!(per_address.len(), SOCKETS_PER_IP);
-        assert!(per_address.values().all(|viewers| *viewers == ROUNDS));
+    }
+
+    #[test]
+    fn a_zero_count_is_clamped_to_one_socket() {
+        assert_eq!(SharedSockets::with_sockets_per_ip(0).per_ip, 1);
     }
 
     /// A check reaches the viewer it names, later datagrams from that address

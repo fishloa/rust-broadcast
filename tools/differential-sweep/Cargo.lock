@@ -1877,6 +1877,7 @@ version = "0.11.0"
 dependencies = [
  "broadcast-common",
  "bytes",
+ "container-probe",
  "event-listener",
  "parking_lot",
  "thiserror",

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- `file_source` (feature `std`): the sans-IO core of linear file playout moved from multimux. `probe_and_demux` identifies a whole file with `container-probe` and demuxes it (`select_demuxer`, `DemuxerKind`, `demux_identified`) into a `ParsedFile`; `ParsedFile::build_playout` merges its tracks into one paced publish order; `FileIngestSession` replays it as `SessionEvent`s, looping on one monotonic per-track timeline and handing out at most `MAX_SAMPLES_PER_DRAIN` due samples per drain (`FILE_TIMED_RING` sizes the ring); `FileReaderError` names every failure (issue #2554). `container-probe` is now an optional dependency behind `std`.
+### Added
 - `ts_session` (feature `std`): the shared MPEG-2 TS ingest session moved from multimux. `TsIngestSession` feeds `transmux::StreamingTsDemux` and translates its events into `SessionEvent`s, `ProgramTracker` (public) tracks which `ProgramId` owns each track and holds pre-resolution samples within `MAX_HELD_SAMPLES`/`MAX_HELD_BYTES`, `SILENT_PID_SETTLE`, `MAX_TS_READ`, and a backlog-drop observer (`with_backlog_drop_observer`) in place of the multimux metric. Feature `test-support` adds `ts_session::test_support` (muxed TS bytes and configs) for a host's tests (issue #2554).
 ### Removed
 - BREAKING: the four-positional `IngestDriver::new(session, trunk_config, handshake, max_programs)` and `ListenDriver::new(listener, ..)`; both take `(session_or_listener, IngestConfig)` (#2514).
