@@ -22,25 +22,10 @@ use crate::origin;
 use crate::route::RouteHandle;
 use crate::source::DriverProgress;
 use dash_runtime::ingest::session::SessionError;
-use dash_runtime::ingest::{DashifIngestSession, IngestObject};
+use dash_runtime::ingest::{DashifIngestConfig, DashifIngestSession, IngestObject};
 use dash_runtime::ingest::{ManifestGrouping, RequestMeta, classify};
 
 use media_plane::ingress::IngestDriver;
-
-/// Hard cap on a single ingested object's body (P2b-1; P2b-2 makes it
-/// configurable).
-pub const MAX_OBJECT_BYTES: usize = 64 * 1024 * 1024;
-
-/// Cap on one buffered (non-segment) object: manifests and init segments are
-/// kilobytes, and every buffered byte is held in memory until the pump has
-/// consumed it, so this is far below [`MAX_OBJECT_BYTES`], which still bounds a
-/// streamed media segment. The effective cap is the smaller of the two.
-pub const MAX_BUFFERED_OBJECT_BYTES: usize = 8 * 1024 * 1024;
-
-/// Bytes of non-segment objects one route holds buffered at once, summed over
-/// its concurrent requests; a request that would exceed it is answered `503`
-/// with `Retry-After` instead of buffering.
-pub const BUFFERED_BUDGET_BYTES: usize = 64 * 1024 * 1024;
 
 /// Bounded channel between HTTP handlers and the per-publishing-point pump.
 const CHANNEL_CAPACITY: usize = 64;
@@ -81,9 +66,7 @@ pub struct DashifIngestRoute {
     publishing_point: String,
     timeouts: broadcast_common::timeouts::Timeouts,
     auth: Option<Arc<broadcast_auth::Verifier>>,
-    max_object_bytes: usize,
-    max_buffered_object_bytes: usize,
-    buffered_budget_bytes: usize,
+    ingest: DashifIngestConfig,
     body_timeout: Option<tokio::time::Duration>,
 }
 
@@ -93,7 +76,7 @@ impl std::fmt::Debug for DashifIngestRoute {
             .field("name", &self.name)
             .field("listen", &self.listen)
             .field("publishing_point", &self.publishing_point)
-            .field("max_object_bytes", &self.max_object_bytes)
+            .field("ingest", &self.ingest)
             .field("body_timeout", &self.body_timeout)
             .finish()
     }
@@ -112,9 +95,7 @@ impl DashifIngestRoute {
             publishing_point: publishing_point.into(),
             timeouts: broadcast_common::timeouts::Timeouts::default(),
             auth: None,
-            max_object_bytes: MAX_OBJECT_BYTES,
-            max_buffered_object_bytes: MAX_BUFFERED_OBJECT_BYTES,
-            buffered_budget_bytes: BUFFERED_BUDGET_BYTES,
+            ingest: DashifIngestConfig::default(),
             body_timeout: Some(tokio::time::Duration::from_secs(30)),
         }
     }
@@ -135,9 +116,7 @@ impl DashifIngestRoute {
             publishing_point: publishing_point.into(),
             timeouts: broadcast_common::timeouts::Timeouts::default(),
             auth: None,
-            max_object_bytes: MAX_OBJECT_BYTES,
-            max_buffered_object_bytes: MAX_BUFFERED_OBJECT_BYTES,
-            buffered_budget_bytes: BUFFERED_BUDGET_BYTES,
+            ingest: DashifIngestConfig::default(),
             body_timeout: Some(tokio::time::Duration::from_secs(30)),
         }
     }
@@ -156,21 +135,21 @@ impl DashifIngestRoute {
 
     #[must_use]
     pub fn with_max_object_bytes(mut self, n: usize) -> Self {
-        self.max_object_bytes = n;
+        self.ingest = self.ingest.with_max_object_bytes(n);
         self
     }
 
     /// The cap on one buffered (non-segment) object.
     #[must_use]
     pub fn with_max_buffered_object_bytes(mut self, n: usize) -> Self {
-        self.max_buffered_object_bytes = n;
+        self.ingest = self.ingest.with_max_buffered_object_bytes(n);
         self
     }
 
     /// The bytes of buffered objects this route holds at once.
     #[must_use]
     pub fn with_buffered_budget_bytes(mut self, n: usize) -> Self {
-        self.buffered_budget_bytes = n;
+        self.ingest = self.ingest.with_buffered_budget_bytes(n);
         self
     }
 
@@ -201,9 +180,9 @@ struct TolerantSession {
 }
 
 impl TolerantSession {
-    fn new() -> Self {
+    fn new(config: DashifIngestConfig) -> Self {
         TolerantSession {
-            inner: DashifIngestSession::new(),
+            inner: DashifIngestSession::new(config),
             last_error: None,
         }
     }
@@ -346,9 +325,10 @@ pub async fn run_dashif_ingest(
     let route_handle_pump = Arc::clone(route_handle);
     let grouping_pump = Arc::clone(&grouping);
 
+    let ingest_config = route.ingest;
     let pump_handle = tokio::spawn(async move {
         let mut driver = IngestDriver::new(
-            TolerantSession::new(),
+            TolerantSession::new(ingest_config),
             media_plane::IngestConfig::new(handshake).with_trunk(trunk_config),
         );
         let mut progress = DriverProgress::new();
@@ -495,9 +475,9 @@ pub async fn run_dashif_ingest(
         publishing_point: route.publishing_point.clone(),
         grouping: Arc::clone(&grouping),
         auth: route.auth.clone(),
-        max_object_bytes: route.max_object_bytes,
-        max_buffered_object_bytes: route.max_buffered_object_bytes,
-        buffered_budget: Arc::new(Semaphore::new(route.buffered_budget_bytes)),
+        max_object_bytes: route.ingest.max_object_bytes,
+        max_buffered_object_bytes: route.ingest.max_buffered_object_bytes,
+        buffered_budget: Arc::new(Semaphore::new(route.ingest.buffered_budget_bytes)),
         body_timeout: route.body_timeout,
     };
 
