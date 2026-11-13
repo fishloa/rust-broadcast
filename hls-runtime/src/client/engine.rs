@@ -21,6 +21,7 @@ use super::action::{Action, BlockingReload, KeyId, ResourceId};
 use super::error::{Error, Result};
 use super::output::{MasterSelection, Output, RenditionInfo, VariantInfo, VariantPolicy};
 use super::url;
+use broadcast_common::units::MILLIS_PER_SEC;
 
 /// Movie timescale of the init segment synthesized for classic TS-segment
 /// HLS: the 90 kHz MPEG-2 system clock the PES PTS/DTS are expressed in
@@ -40,8 +41,6 @@ const MAX_PENDING_KEYED_BYTES: usize = 64 * 1024 * 1024;
 /// Longest the non-blocking reload cadence may wait, however large the
 /// untrusted `EXT-X-TARGETDURATION` says the target duration is.
 const MAX_RELOAD_WAIT_MS: u64 = 60_000;
-
-const MILLIS_PER_SECOND: u64 = 1000;
 
 /// `EXT-X-VERSION` of the one-segment playlist a single `EXT-X-MAP` line is
 /// parsed in: the lowest version that allows `EXT-X-MAP` without
@@ -71,8 +70,7 @@ fn index_u64(i: usize) -> u64 {
 /// §4.3.3.1: no more often than once per Target Duration), clamped because
 /// the Target Duration is untrusted.
 fn reload_wait_ms(target_duration: u32) -> u64 {
-    (u64::from(target_duration.max(1)).saturating_mul(MILLIS_PER_SECOND) / 2)
-        .min(MAX_RELOAD_WAIT_MS)
+    (u64::from(target_duration.max(1)).saturating_mul(MILLIS_PER_SEC) / 2).min(MAX_RELOAD_WAIT_MS)
 }
 
 /// Every `EXT-X-MAP` line of `text` with the identity-`KEYFORMAT` key in effect
@@ -284,17 +282,6 @@ fn program_date_time(seg: &MediaSegment) -> Option<broadcast_hls::ProgramDateTim
 /// [`program_date_time`] as milliseconds since the Unix epoch.
 fn program_date_time_ms(seg: &MediaSegment) -> Option<i64> {
     program_date_time(seg).map(|pdt| pdt.timestamp().as_millisecond())
-}
-
-/// Parse an RFC 3339 / ISO 8601 date-time (`2024-05-01T12:00:00.250Z`,
-/// `...+02:00`, `...-0500`) into Unix milliseconds. `None` for anything that
-/// does not parse — never a guess. Delegates to [`jiff::Timestamp`] (an offset
-/// is required; a leap second is clamped to `:59`).
-#[cfg(test)]
-fn parse_rfc3339_ms(text: &str) -> Option<i64> {
-    text.parse::<jiff::Timestamp>()
-        .ok()
-        .map(|t| t.as_millisecond())
 }
 
 /// A driveable, sans-IO Low-Latency HLS (RFC 8216bis) playback client.
@@ -3146,25 +3133,48 @@ mod tests {
         assert_eq!(c.poll_timeout(t0 + Duration::from_secs(9)), None);
     }
 
+    /// What the client reads from `EXT-X-PROGRAM-DATE-TIME`: the production parser, in Unix
+    /// milliseconds.
+    fn program_date_ms(text: &str) -> Option<i64> {
+        broadcast_hls::ProgramDateTime::parse(text)
+            .ok()
+            .map(|pdt| pdt.timestamp().as_millisecond())
+    }
+
+    /// The spellings the playlist parser accepts beyond strict RFC 3339: a zone-less value is UTC
+    /// (RFC 8216bis) and surrounding whitespace is ignored.
     #[test]
-    fn rfc3339_accepts_the_spellings_the_old_parser_accepted() {
+    fn program_date_time_accepts_a_zone_less_value_as_utc_and_ignores_whitespace() {
         assert_eq!(
-            parse_rfc3339_ms("2026-10-02 10:00:00Z"),
+            program_date_ms("2026-10-02T10:00:00"),
+            Some(1_790_935_200_000)
+        );
+        assert_eq!(
+            program_date_ms(" 2026-10-02T10:00:00Z "),
+            Some(1_790_935_200_000)
+        );
+        assert_eq!(program_date_ms("not a date"), None);
+    }
+
+    #[test]
+    fn program_date_time_accepts_the_common_spellings() {
+        assert_eq!(
+            program_date_ms("2026-10-02 10:00:00Z"),
             Some(1_790_935_200_000),
             "space separator"
         );
         assert_eq!(
-            parse_rfc3339_ms("2026-10-02t10:00:00z"),
+            program_date_ms("2026-10-02t10:00:00z"),
             Some(1_790_935_200_000),
             "lower-case t and z"
         );
         assert_eq!(
-            parse_rfc3339_ms("2026-10-02T10:00:00.123456789Z"),
+            program_date_ms("2026-10-02T10:00:00.123456789Z"),
             Some(1_790_935_200_123),
             "extra digits truncated"
         );
         assert_eq!(
-            parse_rfc3339_ms("1969-12-31T23:59:59Z"),
+            program_date_ms("1969-12-31T23:59:59Z"),
             Some(-1_000),
             "before the epoch"
         );
@@ -3181,10 +3191,10 @@ mod tests {
             "2026-10-02T10:00:00+00:00",
             "2026-10-02T10:00:00-00:00",
         ] {
-            assert_eq!(parse_rfc3339_ms(text), want, "{text}");
+            assert_eq!(program_date_ms(text), want, "{text}");
         }
         // An hour-only offset: whatever `jiff` decides, it must never be a guess.
-        let hour_only = parse_rfc3339_ms("2026-10-02T12:00:00+02");
+        let hour_only = program_date_ms("2026-10-02T12:00:00+02");
         assert!(hour_only == want || hour_only.is_none(), "{hour_only:?}");
     }
 
@@ -3192,7 +3202,7 @@ mod tests {
     #[test]
     fn a_leap_second_is_clamped_to_the_last_second_of_the_minute() {
         assert_eq!(
-            parse_rfc3339_ms("2016-12-31T23:59:60Z"),
+            program_date_ms("2016-12-31T23:59:60Z"),
             Some(1_483_228_799_000)
         );
     }
@@ -3201,44 +3211,44 @@ mod tests {
     fn rfc3339_parses_to_literal_epoch_milliseconds() {
         // 2026-10-02T10:00:00Z = 1_790_935_200 s (independently: `date -u -d`).
         assert_eq!(
-            parse_rfc3339_ms("2026-10-02T10:00:00Z"),
+            program_date_ms("2026-10-02T10:00:00Z"),
             Some(1_790_935_200_000)
         );
         assert_eq!(
-            parse_rfc3339_ms("2026-10-02T10:00:00.250Z"),
+            program_date_ms("2026-10-02T10:00:00.250Z"),
             Some(1_790_935_200_250)
         );
         assert_eq!(
-            parse_rfc3339_ms("2026-10-02T10:00:00.5Z"),
+            program_date_ms("2026-10-02T10:00:00.5Z"),
             Some(1_790_935_200_500)
         );
-        assert_eq!(parse_rfc3339_ms("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(program_date_ms("1970-01-01T00:00:00Z"), Some(0));
         assert_eq!(
-            parse_rfc3339_ms("2000-02-29T23:59:59Z"),
+            program_date_ms("2000-02-29T23:59:59Z"),
             Some(951_868_799_000)
         );
         // The same instant with an offset, both spellings.
         assert_eq!(
-            parse_rfc3339_ms("2026-10-02T12:00:00+02:00"),
+            program_date_ms("2026-10-02T12:00:00+02:00"),
             Some(1_790_935_200_000)
         );
         assert_eq!(
-            parse_rfc3339_ms("2026-10-02T05:00:00-0500"),
+            program_date_ms("2026-10-02T05:00:00-0500"),
             Some(1_790_935_200_000)
         );
-        // Anything not exactly RFC 3339 is `None`, never a guess.
+        // A zone-less date-time is UTC (RFC 8216bis); a bare date is not a date-time
+        // (RFC 8216 §4.3.2.6) and everything else that is not RFC 3339 is `None`, never a guess.
+        assert_eq!(program_date_ms("2026-10-02"), None, "a bare date");
         for bad in [
             "",
-            "2026-10-02",
             "2026-13-02T10:00:00Z",
             "2026-10-02T25:00:00Z",
-            "2026-10-02T10:00:00",
             "2026-10-02T10:00:00Zjunk",
             "2026-10-02T10:00:00.Z",
             "2026-10-02T10:00:00+2:00",
             "xxxx-10-02T10:00:00Z",
         ] {
-            assert_eq!(parse_rfc3339_ms(bad), None, "{bad:?}");
+            assert_eq!(program_date_ms(bad), None, "{bad:?}");
         }
     }
 }

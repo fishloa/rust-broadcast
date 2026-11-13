@@ -10,6 +10,7 @@ use alloc::vec::Vec;
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use broadcast_common::units::MICROS_PER_SEC;
 use cookie::Cookie;
 use cookie_store::{CookieDomain, CookiePath};
 use url::{Origin, Url};
@@ -20,7 +21,6 @@ const MAX_PATH_BYTES: usize = 1024;
 const MAX_HEADER_BYTES: usize = 16 * 1024;
 const SECURE_PREFIX: &str = "__secure-";
 const HOST_PREFIX: &str = "__host-";
-const MICROS_PER_SEC: u64 = 1_000_000;
 const SET_COOKIE: &str = "set-cookie";
 const ROOT_PATH: &str = "/";
 const HTTPS: &str = "https";

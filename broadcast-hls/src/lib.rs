@@ -552,14 +552,17 @@ pub struct ProgramDateTime(jiff::Timestamp);
 impl ProgramDateTime {
     /// Parse an ISO 8601 / RFC 3339 date-time (`2010-02-19T14:54:23.031+08:00`,
     /// `2024-01-01T00:00:00.000Z`, or a zone-less value, which the spec says
-    /// the client SHOULD treat as UTC). Sub-millisecond precision is truncated to
+    /// the client SHOULD treat as UTC; RFC 8216 §4.3.2.6 asks for a date-time, so a bare date such as
+    /// `2026-10-02` is rejected). Sub-millisecond precision is truncated to
     /// milliseconds; offsets are converted to UTC. Returns an error if the value
     /// is not a recognisable date/time.
     pub fn parse(s: &str) -> crate::Result<Self> {
         let trimmed = s.trim();
         let ts = if let Ok(ts) = trimmed.parse::<jiff::Timestamp>() {
             ts
-        } else if let Ok(dt) = trimmed.parse::<jiff::civil::DateTime>() {
+        } else if trimmed.contains(':')
+            && let Ok(dt) = trimmed.parse::<jiff::civil::DateTime>()
+        {
             dt.to_zoned(jiff::tz::TimeZone::UTC)
                 .map_err(|_| crate::Error::HlsParse {
                     line_no: 0,
@@ -4876,6 +4879,20 @@ pub fn mark_init_discontinuities(entries: &mut [(&[u8], &mut MediaSegment)]) {
 
 #[cfg(test)]
 mod tests {
+    /// RFC 8216 §4.3.2.6: `EXT-X-PROGRAM-DATE-TIME` is an ISO 8601 date-time. A zone-less
+    /// date-time is accepted (taken as UTC), a bare date is not a date-time.
+    #[test]
+    fn program_date_time_requires_a_time_but_not_a_zone() {
+        let zone_less = ProgramDateTime::parse("2026-10-02T10:00:00").expect("zone-less date-time");
+        let utc = ProgramDateTime::parse("2026-10-02T10:00:00Z").expect("UTC date-time");
+        assert_eq!(zone_less, utc);
+        assert!(ProgramDateTime::parse("2026-10-02").is_err(), "a bare date");
+        assert!(
+            ProgramDateTime::parse(" 2026-10-02 ").is_err(),
+            "a padded bare date"
+        );
+    }
+
     use super::*;
     use alloc::vec;
 

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 ### Added
+- `units`: the decimal time-unit ratios (`MILLIS_PER_SEC`, `MICROS_PER_MILLI`, `MICROS_PER_SEC`, `NANOS_PER_MICRO`, `NANOS_PER_MILLI`, `NANOS_PER_SEC`, all `u64`) declared once; about 40 per-file copies in broadcast-client, broadcast-auth, broadcast-dash, dash-runtime, hls-runtime, smooth-runtime, dvb-conformance, transmux and multimux are gone (#2591).
+### Added
 - `content_range::ContentRange::parse`: the one RFC 9110 §14.4 `Content-Range` parser (`bytes first-last/length-or-*`; `*` valid, last-pos at or past a known length invalid, first > last invalid, one space after the unit and none around `-`/`/`), `no_std` (#2586).
 - `timeouts::Timeouts`: the `{connect, handshake, read_idle, write}` bounds of an adapter's awaited I/O, one type for the RTSP, RTMP and SRT adapters instead of three copies (#2514).
 - `impl From<BitError> for BufferTooShort`: the one conversion from a bit-level failure to the workspace's byte-counted buffer error, so a bit reader's short input is reported in the same unit everywhere. `need`/`have` are whole bytes (a partial byte rounds up in `need`, down in `have`), read the same way whether an adapter reports the bits needed or the absolute position. It also fixes `BitReader::skip_bits` leaving the cursor past the end on a failed skip, so `bits_remaining` stays a real count (issue #2461).

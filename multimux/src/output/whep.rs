@@ -2001,13 +2001,16 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
     }
 
     fn basic_verifier(username: &str, password: &str) -> Arc<Verifier> {
-        Arc::new(Verifier::new(
-            broadcast_auth::Credentials::Basic {
-                username: username.to_string(),
-                password: password.to_string(),
-            },
-            "whep-test",
-        ))
+        Arc::new(
+            Verifier::new(
+                broadcast_auth::Credentials::Basic {
+                    username: username.to_string(),
+                    password: password.to_string(),
+                },
+                "whep-test",
+            )
+            .expect("OS random source"),
+        )
     }
 
     /// `WhepRoute::with_listener` runs the route over the caller's own

@@ -20,10 +20,10 @@ use super::config::{SYNTHETIC_MOVIE_TIMESCALE, SmoothConfig};
 use super::output::{Dropped, ManifestFault, Output, QualityInfo};
 use super::stream::{Chunk, Cursor, HeldFragment, Stream, demux_fragment, live_join};
 use crate::error::SmoothError;
+use broadcast_common::units::MICROS_PER_SEC;
 
 /// The shortest retry delay: a zero step must never become a burst of retries at one instant.
 const MIN_BACKOFF_MS: u64 = 1;
-const MICROS_PER_SEC: u64 = 1_000_000;
 const REFRESH_DIVISOR: u64 = 2;
 const FIRST_TRACK_ID: u32 = 1;
 const FOURCC_AVC: [&str; 2] = ["H264", "AVC1"];

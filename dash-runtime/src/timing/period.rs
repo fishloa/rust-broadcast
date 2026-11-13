@@ -15,15 +15,14 @@ use std::time::Duration;
 
 use broadcast_common::impl_spec_display;
 
+use broadcast_common::units::{MICROS_PER_SEC, NANOS_PER_MICRO};
 use broadcast_dash::{Mpd, PresentationType};
-
-const MICROS_PER_SECOND: i128 = 1_000_000;
-const NANOS_PER_MICRO: u32 = 1_000;
 
 /// Duration to microseconds.
 #[must_use]
 pub fn duration_us(d: Duration) -> i128 {
-    i128::from(d.as_secs()) * MICROS_PER_SECOND + i128::from(d.subsec_nanos() / NANOS_PER_MICRO)
+    i128::from(d.as_secs()) * (MICROS_PER_SEC as i128)
+        + i128::from(d.subsec_nanos() / (NANOS_PER_MICRO as u32))
 }
 
 /// 5.3.2.1 Period kind.

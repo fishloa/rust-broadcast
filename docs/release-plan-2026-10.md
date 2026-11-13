@@ -125,7 +125,7 @@ Computed from `cargo metadata` over normal + build edges **and versioned dev-dep
 1. `broadcast-common-v10.0.0`  
    needs live first: (nothing in this wave)
 2. `broadcast-auth-v0.5.0`  
-   needs live first: (nothing in this wave)
+   needs live first: `broadcast-common`
 3. `broadcast-hls-v0.4.0`  
    needs live first: `broadcast-common`
 4. `broadcast-loudness-v0.5.0`  
@@ -150,34 +150,34 @@ Computed from `cargo metadata` over normal + build edges **and versioned dev-dep
    needs live first: `broadcast-common`
 14. `rtp-packet-v0.5.0`  
    needs live first: `broadcast-common`
-15. `rtsp-runtime-v0.8.0`  
-   needs live first: `broadcast-auth`, `broadcast-common`
-16. `scte104-v0.6.0`  
+15. `scte104-v0.6.0`  
    needs live first: `broadcast-common`
-17. `srt-runtime-v0.6.0`  
+16. `srt-runtime-v0.6.0`  
    needs live first: `broadcast-common`
-18. `st12-1-v0.4.0`  
+17. `st12-1-v0.4.0`  
    needs live first: `broadcast-common`
-19. `st2022-v0.2.0`  
+18. `st2022-v0.2.0`  
    needs live first: `broadcast-common`
-20. `st337-v0.4.0`  
+19. `st337-v0.4.0`  
    needs live first: `broadcast-common`
-21. `st377-1-v0.5.0`  
+20. `st377-1-v0.5.0`  
    needs live first: `broadcast-common`
-22. `ttml-subtitle-v0.4.0`  
+21. `ttml-subtitle-v0.4.0`  
    needs live first: `broadcast-common`
-23. `ule-v0.5.0`  
+22. `ule-v0.5.0`  
    needs live first: `broadcast-common`
-24. `atsc3-route-v0.3.0`  
+23. `atsc3-route-v0.3.0`  
    needs live first: `broadcast-common`, `rmt-flute`
-25. `dvb-subtitle-v0.6.0`  
+24. `dvb-subtitle-v0.6.0`  
    needs live first: `broadcast-common`, `mpeg-pes`
-26. `mpeg-ps-v0.6.0`  
+25. `mpeg-ps-v0.6.0`  
    needs live first: `broadcast-common`, `mpeg-pes`
-27. `mpeg-ts-v0.6.0`  
+26. `mpeg-ts-v0.6.0`  
    needs live first: `broadcast-common`, `mp4-emsg`
-28. `rist-runtime-v0.4.0`  
+27. `rist-runtime-v0.4.0`  
    needs live first: `broadcast-common`, `rtp-packet`
+28. `rtsp-runtime-v0.8.0`  
+   needs live first: `broadcast-auth`, `broadcast-common`
 29. `st291-v0.5.0`  
    needs live first: `broadcast-common`, `rtp-packet`
 30. `webrtc-runtime-v0.4.0`  

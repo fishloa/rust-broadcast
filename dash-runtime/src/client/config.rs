@@ -8,20 +8,18 @@
 //! so `MAX` reads as "never" or "unbounded" rather than overflowing.
 
 use broadcast_common::impl_spec_display;
+use broadcast_common::units::{MICROS_PER_MILLI, MICROS_PER_SEC};
 use thiserror::Error;
 
-const MICROS_PER_MILLI: u64 = 1_000;
-const MICROS_PER_SECOND: u64 = 1_000 * MICROS_PER_MILLI;
-
 /// Default time one `UTCTiming` request may take.
-pub const DEFAULT_UTC_TIMEOUT_US: u64 = 2 * MICROS_PER_SECOND;
+pub const DEFAULT_UTC_TIMEOUT_US: u64 = 2 * MICROS_PER_SEC;
 /// Default total wait for a `UTCTiming` sample before the clock ladder falls
 /// through to the next source.
-pub const DEFAULT_UTC_WAIT_US: u64 = 5 * MICROS_PER_SECOND;
+pub const DEFAULT_UTC_WAIT_US: u64 = 5 * MICROS_PER_SEC;
 /// Default longest round trip a `UTCTiming` sample may have and still be used.
-pub const DEFAULT_UTC_MAX_RTT_US: u64 = 2 * MICROS_PER_SECOND;
+pub const DEFAULT_UTC_MAX_RTT_US: u64 = 2 * MICROS_PER_SEC;
 /// Default age after which a same-source clock anchor is replaced.
-pub const DEFAULT_UTC_RESYNC_US: u64 = 600 * MICROS_PER_SECOND;
+pub const DEFAULT_UTC_RESYNC_US: u64 = 600 * MICROS_PER_SEC;
 /// Default error bar reported for a host-supplied clock.
 pub const DEFAULT_HOST_CLOCK_UNCERTAINTY_US: u64 = 500 * MICROS_PER_MILLI;
 /// Default margin added to a segment's availability start before requesting it.
@@ -30,9 +28,9 @@ pub const DEFAULT_AVAILABILITY_MARGIN_US: u64 = 0;
 pub const DEFAULT_EARLY_RETRY_US: u64 = 250 * MICROS_PER_MILLI;
 /// Default window after a segment's availability start in which a 404, 410 or
 /// 425 still means "too early" rather than "missing".
-pub const DEFAULT_EARLY_GRACE_US: u64 = MICROS_PER_SECOND;
+pub const DEFAULT_EARLY_GRACE_US: u64 = MICROS_PER_SEC;
 /// Default floor under the MPD refresh interval.
-pub const DEFAULT_MIN_MPD_REFRESH_US: u64 = MICROS_PER_SECOND;
+pub const DEFAULT_MIN_MPD_REFRESH_US: u64 = MICROS_PER_SEC;
 
 /// Which clock source the ladder tries first for a dynamic MPD.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

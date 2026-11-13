@@ -24,8 +24,8 @@ use srt_runtime::tsbpd::{TickOutcome, TsbpdScheduler};
 use crate::source::datagram::is_aligned_ts;
 use crate::srt::{SrtConfig, SrtKeyLength};
 use crate::udp::DatagramStats;
+use broadcast_common::units::MICROS_PER_MILLI;
 
-const MICROS_PER_MILLI: u64 = 1_000;
 const HANDSHAKE_RETRANSMIT_PERIOD_US: u64 = 250_000;
 const MAX_SOCKET_ID: u32 = 0x3FFF_FFFF;
 const SEQ_NUMBER_MASK: u32 = 0x7FFF_FFFF;

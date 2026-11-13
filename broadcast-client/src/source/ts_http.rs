@@ -15,11 +15,9 @@ use mpeg_ts::pid::Pid;
 use crate::source::fetch::retry::{RefusedCapture, retry_after_us};
 use crate::source::ts_http_hold::{DeclaredStreams, HoldLimits, SETTLE_US, StreamKind};
 use crate::{Event, Status};
+use broadcast_common::units::{MICROS_PER_MILLI, MICROS_PER_SEC};
 
 pub(crate) type Item = Option<Event>;
-
-const MICROS_PER_MILLI: u64 = 1_000;
-const MICROS_PER_SEC: i128 = 1_000_000;
 
 struct HoldState {
     started_us: u64,
@@ -286,7 +284,7 @@ impl TsHttpSource {
             return;
         };
         let first = *h.first_pts.entry(track).or_insert(pts);
-        let span = i128::from(pts.saturating_sub(first)) * MICROS_PER_SEC / timescale;
+        let span = i128::from(pts.saturating_sub(first)) * (MICROS_PER_SEC as i128) / timescale;
         h.span_us = h
             .span_us
             .max(u64::try_from(span.max(0)).unwrap_or(u64::MAX));

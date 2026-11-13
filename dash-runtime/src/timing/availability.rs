@@ -9,17 +9,15 @@
 //! * Initialization Segment: available from `AST + PeriodStart` (5.3.9.5.2).
 
 use broadcast_common::timescale::{Rounding, to_micros};
+use broadcast_common::units::MICROS_PER_SEC;
 
-const MICROS_PER_SECOND_U32: u32 = 1_000_000;
-const MICROS_PER_SECOND: i128 = MICROS_PER_SECOND_U32 as i128;
-const MICROS_PER_SECOND_F64: f64 = 1_000_000.0;
 const ATO_CLAMP_US: i128 = 1 << 80;
 
 /// Convert `@availabilityTimeOffset` seconds (possibly `INF` or negative) to
 /// microseconds, clamped so later sums stay in range. A NaN is zero.
 #[must_use]
 pub fn ato_seconds_to_us(seconds: f64) -> i128 {
-    let us = seconds * MICROS_PER_SECOND_F64;
+    let us = seconds * (MICROS_PER_SEC as f64);
     (us as i128).clamp(-ATO_CLAMP_US, ATO_CLAMP_US)
 }
 
@@ -136,7 +134,7 @@ pub fn complete_count_constant(
         return 0;
     }
     let numerator = x1.saturating_mul(i128::from(timescale)).saturating_sub(1);
-    let denominator = i128::from(duration_ticks).saturating_mul(MICROS_PER_SECOND);
+    let denominator = i128::from(duration_ticks).saturating_mul(MICROS_PER_SEC as i128);
     let n = numerator / denominator;
     u64::try_from(n.max(0)).unwrap_or(u64::MAX)
 }

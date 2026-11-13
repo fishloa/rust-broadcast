@@ -183,13 +183,16 @@ async fn handler(State(origin): State<Shared>, uri: Uri, headers: HeaderMap) -> 
 async fn serve() -> Origin {
     let log = Arc::new(Log::default());
     let (addr, tcp) = bind_tcp();
-    let verifier = Arc::new(Verifier::new(
-        Credentials::Digest {
-            username: DIGEST_USER.to_string(),
-            password: DIGEST_PASSWORD.to_string(),
-        },
-        DIGEST_REALM,
-    ));
+    let verifier = Arc::new(
+        Verifier::new(
+            Credentials::Digest {
+                username: DIGEST_USER.to_string(),
+                password: DIGEST_PASSWORD.to_string(),
+            },
+            DIGEST_REALM,
+        )
+        .expect("OS random source"),
+    );
     let app = Router::new().fallback(handler).with_state(Shared {
         log: Arc::clone(&log),
         verifier,

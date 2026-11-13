@@ -788,24 +788,30 @@ impl OutputAuthSpec {
     /// call) — the `.expect` below documents that invariant rather than
     /// re-deriving a `Result` this method's signature (matching every other
     /// builtin scheme) doesn't carry.
-    pub(crate) fn build_verifier(&self, realm: &str) -> broadcast_auth::Verifier {
-        match self {
+    pub(crate) fn build_verifier(&self, realm: &str) -> Result<broadcast_auth::Verifier> {
+        let auth_error = |e: broadcast_auth::Error| MultimuxError::Auth {
+            reason: format!("output auth: {e}"),
+        };
+        Ok(match self {
             OutputAuthSpec::Basic { username, password } => broadcast_auth::Verifier::new(
                 Credentials::Basic {
                     username: username.clone(),
                     password: password.clone(),
                 },
                 realm,
-            ),
+            )
+            .map_err(auth_error)?,
             OutputAuthSpec::Digest { username, password } => broadcast_auth::Verifier::new(
                 Credentials::Digest {
                     username: username.clone(),
                     password: password.clone(),
                 },
                 realm,
-            ),
+            )
+            .map_err(auth_error)?,
             OutputAuthSpec::Bearer { token } => {
                 broadcast_auth::Verifier::new(Credentials::bearer(token.clone()), realm)
+                    .map_err(auth_error)?
             }
             OutputAuthSpec::Forwarded {
                 user_header,
@@ -844,7 +850,7 @@ impl OutputAuthSpec {
                  crate::origin::serve_with_registry resolves it via `registry.auth(type_tag)` \
                  before this method is ever called on a Custom variant"
             ),
-        }
+        })
     }
 
     /// Rejects an empty `username`/`token`/`user_header` (an empty `password`
@@ -5283,6 +5289,7 @@ mod tests {
         assert!(
             basic
                 .build_verifier("realm")
+                .expect("verifier")
                 .challenge()
                 .starts_with("Basic ")
         );
@@ -5294,6 +5301,7 @@ mod tests {
         assert!(
             digest
                 .build_verifier("realm")
+                .expect("verifier")
                 .challenge()
                 .starts_with("Digest ")
         );
@@ -5301,14 +5309,26 @@ mod tests {
         let bearer = OutputAuthSpec::Bearer {
             token: "tok".into(),
         };
-        assert_eq!(bearer.build_verifier("realm").challenge(), "Bearer");
+        assert_eq!(
+            bearer
+                .build_verifier("realm")
+                .expect("verifier")
+                .challenge(),
+            "Bearer"
+        );
 
         let forwarded = OutputAuthSpec::Forwarded {
             user_header: "X-Forwarded-User".into(),
             forwarded_for_header: Some("X-Forwarded-For".into()),
             trusted_proxies: None,
         };
-        assert_eq!(forwarded.build_verifier("realm").challenge(), "Forwarded");
+        assert_eq!(
+            forwarded
+                .build_verifier("realm")
+                .expect("verifier")
+                .challenge(),
+            "Forwarded"
+        );
     }
 
     /// Biting test: `OutputAuthSpec`'s `Debug` must never render the
@@ -5472,7 +5492,10 @@ mod tests {
             }],
         };
         spec.validate().unwrap();
-        assert_eq!(spec.build_verifier("realm").challenge(), "SignedUrl");
+        assert_eq!(
+            spec.build_verifier("realm").expect("verifier").challenge(),
+            "SignedUrl"
+        );
     }
 
     /// Biting test: `OutputAuthSpec::SignedUrl`'s `Debug` must show `kid`s

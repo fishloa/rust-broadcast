@@ -6,6 +6,7 @@
 //! the broader random-access-point rule of [`crate::access_unit_is_rap`]
 //! (recovery-point SEI, SPS + I-slice, CRA/BLA), which DASH and CMAF accept.
 
+use broadcast_common::units::NANOS_PER_SEC;
 /// Which video pictures a segmenter may open a segment on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(
@@ -34,8 +35,6 @@ impl SegmentCutPolicy {
 }
 
 broadcast_common::impl_spec_display!(SegmentCutPolicy);
-
-const NANOS_PER_SEC: u128 = 1_000_000_000;
 
 /// Media-time bound on how long [`SegmentCutPolicy::IdrOnly`] waits for the
 /// first IDR before the caller falls back to any random-access point.
@@ -70,7 +69,8 @@ impl IdrWait {
         if self.tripped || timescale == 0 {
             return false;
         }
-        let waited_ns = u128::from(self.waited_ticks) * NANOS_PER_SEC / u128::from(timescale);
+        let waited_ns =
+            u128::from(self.waited_ticks) * (NANOS_PER_SEC as u128) / u128::from(timescale);
         self.tripped = waited_ns >= self.bound.as_nanos();
         self.tripped
     }

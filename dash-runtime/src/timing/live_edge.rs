@@ -15,10 +15,10 @@ use std::time::Duration;
 use crate::address::plan::SegmentPlan;
 use crate::timing::availability::complete_count_constant;
 use crate::timing::period::duration_us;
+use broadcast_common::units::MICROS_PER_SEC;
 
-const MICROS_PER_SECOND: i128 = 1_000_000;
 /// IOP 4.3.3.2.2: the presentation delay is not under four seconds.
-pub const MIN_PRESENTATION_DELAY_US: i128 = 4 * MICROS_PER_SECOND;
+pub const MIN_PRESENTATION_DELAY_US: i128 = 4 * (MICROS_PER_SEC as i128);
 /// IOP 4.3.3.2.2: the delay is a small multiple of the segment duration.
 pub const DELAY_SEGMENT_MULTIPLE: i128 = 3;
 /// Segment durations kept free inside the time-shift buffer.

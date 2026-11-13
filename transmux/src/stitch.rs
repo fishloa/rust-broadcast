@@ -112,6 +112,7 @@ mod tests {
     use super::*;
     use crate::media::Fmp4Demux;
     use broadcast_common::Unpackage;
+    use broadcast_common::units::MICROS_PER_SEC;
 
     fn spec(id: u32, timescale: u32) -> TrackSpec {
         let init = std::fs::read(test_fixtures::path("dash/init-stream1.m4s")).expect("init");
@@ -140,9 +141,8 @@ mod tests {
     }
 
     fn old_us_to_ticks(us: i128, timescale: u32) -> i64 {
-        const MICROS_PER_SECOND: i128 = 1_000_000;
-        let ticks =
-            (us * i128::from(timescale) + MICROS_PER_SECOND / 2).div_euclid(MICROS_PER_SECOND);
+        let ticks = (us * i128::from(timescale) + (MICROS_PER_SEC as i128) / 2)
+            .div_euclid(MICROS_PER_SEC as i128);
         i64::try_from(ticks.clamp(i128::from(i64::MIN), i128::from(i64::MAX))).unwrap_or(0)
     }
 

@@ -1343,7 +1343,7 @@ fn resolve_verifier(
                 realm,
             })
         }
-        builtin => Ok(builtin.build_verifier(realm)),
+        builtin => builtin.build_verifier(realm),
     }
 }
 
@@ -3724,13 +3724,16 @@ mod tests {
     /// Basic realm=...` challenge.
     #[tokio::test]
     async fn output_auth_basic_missing_creds_401_with_challenge() {
-        let app = app_with_output_auth(Verifier::new(
-            Credentials::Basic {
-                username: "admin".into(),
-                password: "hunter2".into(),
-            },
-            OUTPUT_AUTH_REALM,
-        ));
+        let app = app_with_output_auth(
+            Verifier::new(
+                Credentials::Basic {
+                    username: "admin".into(),
+                    password: "hunter2".into(),
+                },
+                OUTPUT_AUTH_REALM,
+            )
+            .expect("OS random source"),
+        );
         let resp = app.oneshot(get("/cam1/master.m3u8")).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
         let challenge = resp
@@ -3745,13 +3748,16 @@ mod tests {
     /// Correct Basic credentials must `200`.
     #[tokio::test]
     async fn output_auth_basic_correct_creds_200() {
-        let app = app_with_output_auth(Verifier::new(
-            Credentials::Basic {
-                username: "admin".into(),
-                password: "hunter2".into(),
-            },
-            OUTPUT_AUTH_REALM,
-        ));
+        let app = app_with_output_auth(
+            Verifier::new(
+                Credentials::Basic {
+                    username: "admin".into(),
+                    password: "hunter2".into(),
+                },
+                OUTPUT_AUTH_REALM,
+            )
+            .expect("OS random source"),
+        );
         let resp = app
             .oneshot(get_with_auth(
                 "/cam1/master.m3u8",
@@ -3765,13 +3771,16 @@ mod tests {
     /// Wrong Basic credentials must `401`.
     #[tokio::test]
     async fn output_auth_basic_wrong_creds_401() {
-        let app = app_with_output_auth(Verifier::new(
-            Credentials::Basic {
-                username: "admin".into(),
-                password: "hunter2".into(),
-            },
-            OUTPUT_AUTH_REALM,
-        ));
+        let app = app_with_output_auth(
+            Verifier::new(
+                Credentials::Basic {
+                    username: "admin".into(),
+                    password: "hunter2".into(),
+                },
+                OUTPUT_AUTH_REALM,
+            )
+            .expect("OS random source"),
+        );
         let resp = app
             .oneshot(get_with_auth(
                 "/cam1/master.m3u8",
@@ -3787,13 +3796,16 @@ mod tests {
     /// Digest realm=..., nonce=..., qop="auth", algorithm=MD5` challenge.
     #[tokio::test]
     async fn output_auth_digest_missing_creds_401_with_challenge() {
-        let app = app_with_output_auth(Verifier::new(
-            Credentials::Digest {
-                username: "admin".into(),
-                password: "hunter2".into(),
-            },
-            OUTPUT_AUTH_REALM,
-        ));
+        let app = app_with_output_auth(
+            Verifier::new(
+                Credentials::Digest {
+                    username: "admin".into(),
+                    password: "hunter2".into(),
+                },
+                OUTPUT_AUTH_REALM,
+            )
+            .expect("OS random source"),
+        );
         let resp = app.oneshot(get("/cam1/master.m3u8")).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
         let challenge = resp
@@ -3818,7 +3830,8 @@ mod tests {
                 password: "hunter2".into(),
             },
             OUTPUT_AUTH_REALM,
-        );
+        )
+        .expect("OS random source");
         let challenge = verifier.challenge();
         let app = router(Arc::new(
             AppState::new(make_state_streams()).with_output_auth(Arc::new(verifier)),
@@ -3845,7 +3858,8 @@ mod tests {
                 password: "hunter2".into(),
             },
             OUTPUT_AUTH_REALM,
-        );
+        )
+        .expect("OS random source");
         let challenge = verifier.challenge();
         let app = router(Arc::new(
             AppState::new(make_state_streams()).with_output_auth(Arc::new(verifier)),
@@ -3893,6 +3907,7 @@ mod tests {
             },
             OUTPUT_AUTH_REALM,
         )
+        .expect("OS random source")
         .with_clock(move || UNIX_EPOCH + Duration::from_secs(clock_now.load(Ordering::SeqCst)));
 
         let challenge = verifier.challenge();
@@ -3932,10 +3947,10 @@ mod tests {
     /// `Authorization` header must `401`.
     #[tokio::test]
     async fn output_auth_bearer_missing_creds_401() {
-        let app = app_with_output_auth(Verifier::new(
-            Credentials::bearer("secrettoken"),
-            OUTPUT_AUTH_REALM,
-        ));
+        let app = app_with_output_auth(
+            Verifier::new(Credentials::bearer("secrettoken"), OUTPUT_AUTH_REALM)
+                .expect("OS random source"),
+        );
         let resp = app.oneshot(get("/cam1/master.m3u8")).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
     }
@@ -3943,10 +3958,10 @@ mod tests {
     /// Correct Bearer token must `200`.
     #[tokio::test]
     async fn output_auth_bearer_correct_token_200() {
-        let app = app_with_output_auth(Verifier::new(
-            Credentials::bearer("secrettoken"),
-            OUTPUT_AUTH_REALM,
-        ));
+        let app = app_with_output_auth(
+            Verifier::new(Credentials::bearer("secrettoken"), OUTPUT_AUTH_REALM)
+                .expect("OS random source"),
+        );
         let resp = app
             .oneshot(get_with_auth("/cam1/master.m3u8", "Bearer secrettoken"))
             .await
@@ -3957,10 +3972,10 @@ mod tests {
     /// Wrong Bearer token must `401`.
     #[tokio::test]
     async fn output_auth_bearer_wrong_token_401() {
-        let app = app_with_output_auth(Verifier::new(
-            Credentials::bearer("secrettoken"),
-            OUTPUT_AUTH_REALM,
-        ));
+        let app = app_with_output_auth(
+            Verifier::new(Credentials::bearer("secrettoken"), OUTPUT_AUTH_REALM)
+                .expect("OS random source"),
+        );
         let resp = app
             .oneshot(get_with_auth("/cam1/master.m3u8", "Bearer WRONG"))
             .await
@@ -3976,10 +3991,10 @@ mod tests {
     /// credentials).
     #[tokio::test]
     async fn output_auth_configured_healthz_still_open() {
-        let app = app_with_output_auth(Verifier::new(
-            Credentials::bearer("secrettoken"),
-            OUTPUT_AUTH_REALM,
-        ));
+        let app = app_with_output_auth(
+            Verifier::new(Credentials::bearer("secrettoken"), OUTPUT_AUTH_REALM)
+                .expect("OS random source"),
+        );
         let resp = app.oneshot(get("/healthz")).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
     }
@@ -3988,10 +4003,10 @@ mod tests {
     /// configured.
     #[tokio::test]
     async fn output_auth_configured_metrics_still_open() {
-        let app = app_with_output_auth(Verifier::new(
-            Credentials::bearer("secrettoken"),
-            OUTPUT_AUTH_REALM,
-        ));
+        let app = app_with_output_auth(
+            Verifier::new(Credentials::bearer("secrettoken"), OUTPUT_AUTH_REALM)
+                .expect("OS random source"),
+        );
         let resp = app.oneshot(get("/metrics")).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
     }
@@ -4051,7 +4066,7 @@ mod tests {
         spec: &crate::config::OutputAuthSpec,
         peer: &str,
     ) -> axum::http::StatusCode {
-        let app = app_with_output_auth(spec.build_verifier(OUTPUT_AUTH_REALM));
+        let app = app_with_output_auth(spec.build_verifier(OUTPUT_AUTH_REALM).expect("verifier"));
         let mut req = get_with_header("/cam1/master.m3u8", "X-Forwarded-User", "alice");
         req.extensions_mut().insert(axum::extract::ConnectInfo(
             peer.parse::<std::net::SocketAddr>().unwrap(),
@@ -4091,7 +4106,11 @@ mod tests {
     /// against the allow-list and is refused.
     #[tokio::test]
     async fn output_auth_forwarded_from_config_refuses_a_request_without_a_peer() {
-        let app = app_with_output_auth(forwarded_spec(None).build_verifier(OUTPUT_AUTH_REALM));
+        let app = app_with_output_auth(
+            forwarded_spec(None)
+                .build_verifier(OUTPUT_AUTH_REALM)
+                .expect("verifier"),
+        );
         let resp = app
             .oneshot(get_with_header(
                 "/cam1/master.m3u8",
@@ -4142,10 +4161,10 @@ mod tests {
     /// silently winning.
     #[tokio::test]
     async fn output_auth_duplicate_authorization_headers_are_400() {
-        let app = app_with_output_auth(Verifier::new(
-            Credentials::bearer("secrettoken"),
-            OUTPUT_AUTH_REALM,
-        ));
+        let app = app_with_output_auth(
+            Verifier::new(Credentials::bearer("secrettoken"), OUTPUT_AUTH_REALM)
+                .expect("OS random source"),
+        );
         let req = axum::http::Request::builder()
             .uri("/cam1/master.m3u8")
             .header("Authorization", "Bearer secrettoken")
@@ -4200,10 +4219,10 @@ mod tests {
     /// opaque failed-CORS network error.
     #[tokio::test]
     async fn output_auth_401_response_still_carries_cors_header() {
-        let app = app_with_output_auth(Verifier::new(
-            Credentials::bearer("secrettoken"),
-            OUTPUT_AUTH_REALM,
-        ));
+        let app = app_with_output_auth(
+            Verifier::new(Credentials::bearer("secrettoken"), OUTPUT_AUTH_REALM)
+                .expect("OS random source"),
+        );
         let resp = app.oneshot(get("/cam1/master.m3u8")).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
         assert_eq!(
@@ -4221,10 +4240,10 @@ mod tests {
     /// preflight for every browser player using output auth.
     #[tokio::test]
     async fn cors_preflight_allows_authorization_explicitly() {
-        let app = app_with_output_auth(Verifier::new(
-            Credentials::bearer("secrettoken"),
-            OUTPUT_AUTH_REALM,
-        ));
+        let app = app_with_output_auth(
+            Verifier::new(Credentials::bearer("secrettoken"), OUTPUT_AUTH_REALM)
+                .expect("OS random source"),
+        );
         let req = Request::builder()
             .method("OPTIONS")
             .uri("/cam1/master.m3u8")

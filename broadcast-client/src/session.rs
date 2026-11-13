@@ -33,6 +33,7 @@ use transmux::JumpDetector;
 use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 
 use crate::tshttp::Action as TsAction;
+use broadcast_common::units::MICROS_PER_MILLI;
 
 const SCHEME_HTTP: &str = "http";
 const SCHEME_HTTPS: &str = "https";
@@ -43,7 +44,6 @@ const SCHEME_RTP: &str = "rtp";
 const SCHEME_SRT: &str = "srt";
 const RTSPS_DEFAULT_PORT: u16 = 322;
 const HTTPS_DEFAULT_PORT: u16 = 443;
-const MICROS_PER_MILLI: u64 = 1_000;
 const TS_WAKE_TICK_US: u64 = 1_000_000;
 const FIRST_CONN_ID: u32 = 1;
 

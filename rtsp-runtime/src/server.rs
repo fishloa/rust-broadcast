@@ -68,7 +68,7 @@ pub enum ServerEvent {
 }
 
 /// The source of `Session` id values a [`ServerSession`] draws from.
-type SessionIdSource = Box<dyn FnMut() -> u64 + Send + Sync>;
+type SessionIdSource = Box<dyn FnMut() -> Result<u64> + Send + Sync>;
 
 /// A driveable RTSP server session (RFC 2326 §A.2).
 pub struct ServerSession {
@@ -111,7 +111,14 @@ impl ServerSession {
     /// the id is the only thing tying later requests to this session. The
     /// `tokio` adapter's `io::AsyncRtspServer::accept` supplies the OS RNG. The
     /// source must be `Send + Sync`, so a session can be shared behind an `Arc`.
-    pub fn new(session_ids: impl FnMut() -> u64 + Send + Sync + 'static) -> Self {
+    pub fn new(mut session_ids: impl FnMut() -> u64 + Send + Sync + 'static) -> Self {
+        Self::try_new(move || Ok(session_ids()))
+    }
+
+    /// [`Self::new`] for an id source that can fail (the OS random source): the failure is
+    /// returned by the request that needed the id (`SETUP`) as that error, and no session is
+    /// created.
+    pub fn try_new(session_ids: impl FnMut() -> Result<u64> + Send + Sync + 'static) -> Self {
         ServerSession {
             state: SessionState::Init,
             session_id: None,
@@ -153,7 +160,7 @@ impl ServerSession {
         self.session_ids = Box::new(move || {
             let id = next;
             next = next.wrapping_add(1);
-            id
+            Ok(id)
         });
         self
     }
@@ -246,10 +253,10 @@ impl ServerSession {
                 chosen.server_port = self.server_ports;
             }
             let transport = Transport::single(chosen);
-            let session_id = self
-                .session_id
-                .clone()
-                .unwrap_or_else(|| self.allocate_session());
+            let session_id = match self.session_id.clone() {
+                Some(id) => id,
+                None => self.allocate_session()?,
+            };
             self.session_id = Some(session_id.clone());
             self.negotiated_transport = Some(transport.clone());
 
@@ -314,9 +321,9 @@ impl ServerSession {
         Ok((serialize(&Message::from(resp))?, events))
     }
 
-    fn allocate_session(&mut self) -> String {
-        let id = (self.session_ids)();
-        format!("{id:016x}")
+    fn allocate_session(&mut self) -> Result<String> {
+        let id = (self.session_ids)()?;
+        Ok(format!("{id:016x}"))
     }
 
     /// RFC 2326 §12.37: a `Session` header must name this session's id; a
@@ -453,6 +460,17 @@ mod tests {
         let (a, b) = (a.session_id().unwrap(), b.session_id().unwrap());
         assert_ne!(a, b, "two sessions must not share an id");
         assert!(a.len() >= 16, "id {a} is shorter than 64 bits of hex");
+    }
+
+    #[test]
+    fn an_unavailable_random_source_fails_the_setup_with_a_typed_error_and_creates_no_session() {
+        let mut s = ServerSession::try_new(|| Err(Error::RandomSource));
+        let result = s.handle_request(&req(
+            "SETUP rtsp://h/s/track1 RTSP/1.0\nCSeq: 1\nTransport: RTP/AVP/TCP;interleaved=0-1\n\n",
+        ));
+        assert!(matches!(result, Err(Error::RandomSource)), "{result:?}");
+        assert!(s.session_id().is_none());
+        assert_eq!(s.state(), SessionState::Init);
     }
 
     #[test]

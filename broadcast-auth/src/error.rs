@@ -7,6 +7,11 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[non_exhaustive]
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum Error {
+    /// The OS random source failed while generating a Digest nonce-signing secret; no verifier is
+    /// built, since a predictable secret would let nonces be forged.
+    #[error("the OS random source is unavailable")]
+    RandomSource,
+
     /// The `WWW-Authenticate` challenge value could not be parsed (RFC 7235 /
     /// RFC 2326 §14 for a Basic or Digest challenge).
     #[error("failed to parse challenge: {0}")]

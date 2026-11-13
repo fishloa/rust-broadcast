@@ -12,13 +12,15 @@ fuzz_target!(|data: &[u8]| {
     let Ok(header) = core::str::from_utf8(data) else {
         return;
     };
-    let verifier = Verifier::new(
+    let Ok(verifier) = Verifier::new(
         Credentials::Digest {
             username: "admin".into(),
             password: "pw".into(),
         },
         "r",
-    );
+    ) else {
+        return;
+    };
     let headers = [("authorization", header)];
     let _ = verifier.verify(&RequestContext::new("GET", "/x").with_headers(&headers));
 });
