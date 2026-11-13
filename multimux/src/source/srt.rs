@@ -1,12 +1,12 @@
 //! SRT (Secure Reliable Transport) ingest source (issue #739; ported onto
 //! the media-plane ingress traits at plan step 5a): an [`srt_runtime::io`]
 //! socket (listener or caller mode) carrying an MPEG-2 Transport Stream,
-//! feeding the shared [`crate::source::ts_program::TsIngestSession`].
+//! feeding the shared [`media_plane::ts_session::TsIngestSession`].
 //!
 //! Like [`crate::source::ts_udp`] and [`crate::source::ts_http`], this module
 //! owns **only the transport** — all PAT/PMT/PES demuxing and
 //! `DemuxEvent`→`SessionEvent` translation (including the B5 mid-stream
-//! `NewProgram` handling) lives in [`crate::source::ts_program`]. Before this
+//! `NewProgram` handling) lives in [`media_plane::ts_session`]. Before this
 //! port this file carried its own near-identical copy of that drain loop.
 //!
 //! SRT has two connection modes ([`draft-sharabayko-srt-01`] §3), and after
@@ -79,8 +79,8 @@ use tokio::sync::{Mutex, OnceCell};
 
 use crate::error::{MultimuxError, Result};
 use crate::source::client_host::{EventIngest, SessionLabels, SessionStep};
-use crate::source::ts_program::TsIngestSession;
 use crate::source::{IngestTimeouts, Source};
+use media_plane::ts_session::TsIngestSession;
 
 /// An SRT-over-MPEG-TS route, in either listener (bind + accept) or caller
 /// (dial out) mode — see the module doc. Replaces the old (pre-5a)
@@ -197,7 +197,8 @@ impl Dialer for SrtDialer {
     type Error = Infallible;
 
     fn dial(&mut self) -> core::result::Result<TsIngestSession, Infallible> {
-        Ok(TsIngestSession::new())
+        Ok(TsIngestSession::new()
+            .with_backlog_drop_observer(crate::source::count_ts_backlog_dropped))
     }
 }
 
@@ -449,10 +450,10 @@ pub async fn run_srt_listener_once(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::source::ts_program::test_support::{build_ts_bytes, handshake, trunk_config};
     use crate::testutil::drain;
     use media_plane::ingress::ProgramId;
     use media_plane::trunk::SampleCursor;
+    use media_plane::ts_session::test_support::{build_ts_bytes, handshake, trunk_config};
     use parking_lot::Mutex as StdMutex;
 
     const LOW_LATENCY_MS: u16 = 20;

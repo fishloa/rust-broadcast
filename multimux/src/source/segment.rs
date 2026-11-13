@@ -1,4 +1,4 @@
-//! Productionises the segmenter gap `ts_program`'s own test proved closed
+//! Productionises the segmenter gap `media_plane::ts_session`'s own test proved closed
 //! (issue #805 task 2b): task 2 wired all eight `media_plane`-ported inputs
 //! (rtsp/rtp/ts_udp/ts_http/srt/hls_pull/dash_pull/smooth_pull) so they
 //! *ingest* — each publishes its driver-minted [`Trunk`] into
@@ -69,7 +69,7 @@
 //! gets its own [`crate::route::RouteHandle`] registry entry (issue #805 task
 //! 6: per-program serving state), so every program's `Trunk` carries its own
 //! real segments/parts, individually resolvable exactly like the
-//! `ts_program` test proves and `crate::route`'s own
+//! `media_plane::ts_session` test proves and `crate::route`'s own
 //! `two_programs_serve_distinct_media` test proves end to end. *Selecting*
 //! one from an incoming HTTP request (as opposed to segmenting/serving it at
 //! all) is the addressing question `crate::route`'s own module doc records
@@ -1193,7 +1193,7 @@ impl ProgramSegmenter {
             // `Sparse`/`Degraded` items: a section-carried (sparse) track has
             // no place in either segmenter's media segment (fMP4 or classic
             // TS) and `Degraded` is cursor bookkeeping, not media — nothing
-            // to feed the segmenter with either way, mirroring `ts_program`'s
+            // to feed the segmenter with either way, mirroring `media_plane::ts_session`'s
             // own reference test, which only ever matches
             // `SampleCursorItem::Timed`.
         }
@@ -2032,14 +2032,14 @@ mod tests {
     }
 
     use crate::source::report_driver_progress;
-    use crate::source::ts_program::TsIngestSession;
-    use crate::source::ts_program::test_support::{
-        build_ts_bytes, handshake, track_spec, trunk_config,
-    };
     use broadcast_common::{Demand, Stage};
     use hls_runtime::server::{Container, DEFAULT_TRACK_ID, HlsBody, HlsRequest};
     use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
     use media_plane::ingress::{IngestDriver, IngestSession, SessionEvent};
+    use media_plane::ts_session::TsIngestSession;
+    use media_plane::ts_session::test_support::{
+        build_ts_bytes, handshake, track_spec, trunk_config,
+    };
     use std::collections::{HashSet, VecDeque};
     use std::convert::Infallible;
     use transmux::DemuxEvent;
@@ -2559,7 +2559,7 @@ mod tests {
     const FRAME_DUR: u32 = transmux::VIDEO_CLOCK_RATE / 30;
 
     /// A length-prefixed AVC NAL sample — the same per-sample byte layout
-    /// `ts_program::test_support::build_ts_bytes` uses (`(nal.len() as
+    /// `media_plane::ts_session::test_support::build_ts_bytes` uses (`(nal.len() as
     /// u32).to_be_bytes()` prefix, then `[0x65, nal_byte, seq_byte]`), rather
     /// than an arbitrary opaque byte blob. `LlHlsSegmenter` never
     /// re-interprets a sample's bytes (fMP4 stores whatever it's given
@@ -2594,7 +2594,7 @@ mod tests {
     /// (on every later call) one sample for *each* program's own track —
     /// enough to drive `drive_program_segmenters` through the MPTS case
     /// without needing a real multi-program TS mux (`transmux` has no
-    /// `program_number` in its IR yet — see `ts_program`'s own module doc).
+    /// `program_number` in its IR yet — see `media_plane::ts_session`'s own module doc).
     struct TwoProgramSession {
         pending: VecDeque<SessionEvent>,
         feed_count: u32,
@@ -3382,10 +3382,10 @@ mod tests {
     /// samples, and `TrackUpdated` does not panic. (A `TrackUpdated` for a
     /// live track announces the track set again since #1083 — the demux emits
     /// it only for a config that really changed — covered by
-    /// `track_updated_announces_the_new_config` in `ts_program`.)
+    /// `track_updated_announces_the_new_config` in `media_plane::ts_session`.)
     #[test]
     fn removal_and_update_degrade_without_panicking() {
-        use crate::source::ts_program::ProgramTracker;
+        use media_plane::ts_session::ProgramTracker;
 
         let mut tracker = ProgramTracker::new();
         tracker.handle(DemuxEvent::TrackAdded(track_spec(TrackId::new(1))));

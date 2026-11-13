@@ -25,7 +25,7 @@
 //! capture (320x240 Main-profile H.264 @ 25 fps + AAC, ~3.0 s / 75 real
 //! video frames with keyframes roughly every second -- see
 //! `fixtures/ts/PROVENANCE.md`) verbatim over the wire, exactly as a real
-//! camera/HTTP origin would -- not `ts_program::test_support::build_ts_bytes`
+//! camera/HTTP origin would -- not `media_plane::ts_session::test_support::build_ts_bytes`
 //! (a muxed-but-hand-faked NAL payload used by this crate's own unit tests).
 //!
 //! # Driver-backed kinds
@@ -226,7 +226,7 @@ async fn ts_udp_dispatch_serves_real_media_end_to_end() {
     // `multimux/src/origin/mod.rs`'s own
     // `ts_udp_input_ingests_and_becomes_resolvable_through_the_registry` test
     // uses, just with real fixture bytes instead of
-    // `ts_program::test_support::build_ts_bytes`.
+    // `media_plane::ts_session::test_support::build_ts_bytes`.
     let stop = Arc::new(AtomicBool::new(false));
     let sender_stop = Arc::clone(&stop);
     let sender = tokio::net::UdpSocket::bind("127.0.0.1:0")
@@ -453,7 +453,7 @@ mod custom_dispatch_driver_backed {
     /// Demux the real `h264-aac.ts` fixture's AVC video track into a
     /// `TrackSpec` + its real, decoded `Sample`s -- mirrors
     /// `tests/lldash_dashjs.rs`'s own `real_video_track_and_samples`: real
-    /// bytes in, not `ts_program::test_support::build_ts_bytes`'s
+    /// bytes in, not `media_plane::ts_session::test_support::build_ts_bytes`'s
     /// hand-faked NAL payload.
     fn real_video_track_and_samples() -> (TrackSpec, Vec<Sample>) {
         let ts =

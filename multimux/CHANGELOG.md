@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Removed
+- BREAKING: the public `source::ts_program` module and `source::MAX_TS_READ`; use `media_plane::ts_session` (issue #2554). The TS backlog-drop counter is reported through its observer, unchanged.
 ### Changed
 - The Smooth pull goldens run in the crate's own tests on a session clock 20 times faster than real time, so the deliberately missing fragment's retry backoff costs about 2.7 s of wall time instead of about 54 s; the goldens are unchanged.
 - Every pull input's session queue is also bounded in bytes (`Config::max_queued_bytes`): 32 MiB for the live inputs (TS-over-HTTP, UDP, RTP, SRT caller, RTSP), 128 MiB (two maximum-size segments) for HLS, DASH and Smooth pull, instead of only the 100 000-event count.

@@ -330,7 +330,7 @@ mod tests {
     /// Builds a real, non-LL (whole-segment) CMAF Media Playlist plus its
     /// init/segment byte blobs by driving a real `LlHlsSegmenter` — the same
     /// "real fixture, not hand-faked bytes" discipline
-    /// `ts_program::test_support::build_ts_bytes` uses — and renders the
+    /// `media_plane::ts_session::test_support::build_ts_bytes` uses — and renders the
     /// playlist via `broadcast_hls::MediaPlaylist::to_m3u8` (the same real
     /// renderer the workspace's own LL-HLS origin uses), rather than
     /// depending on `multimux`'s own (unrelated, currently-broken — see this
