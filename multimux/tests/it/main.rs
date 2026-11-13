@@ -65,6 +65,8 @@ mod shutdown_cancel;
 mod smooth_oracle;
 mod smooth_output;
 mod soak_load;
+#[cfg(all(feature = "whep", feature = "test-hooks"))]
+mod soak_whep_peers;
 mod spawn_disposition;
 mod spawn_ownership;
 mod split_audio;
