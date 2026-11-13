@@ -183,6 +183,33 @@ pub(crate) async fn read_body_bounded(
     Ok(buf)
 }
 
+/// The process-wide HTTP client the pull sources outside the session host
+/// share: one connection pool and one TLS root store for every route and every
+/// reconnect, instead of a fresh client per attempt. It follows cross-origin
+/// redirects (credentials are scoped to their own origin per request, see
+/// `http_auth`).
+#[cfg(test)]
+static SHARED_CLIENT_BUILDS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+pub(crate) fn shared_http_client() -> crate::Result<reqwest::Client> {
+    static CLIENT: std::sync::OnceLock<std::result::Result<reqwest::Client, String>> =
+        std::sync::OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            #[cfg(test)]
+            SHARED_CLIENT_BUILDS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            reqwest::Client::builder()
+                .redirect(redirect_policy(true))
+                .build()
+                .map_err(|e| e.to_string())
+        })
+        .clone()
+        .map_err(|reason| crate::MultimuxError::Connect {
+            reason: format!("reqwest client: {reason}"),
+        })
+}
+
 /// The redirect policy every pull source's HTTP client uses (audit W16): at
 /// most 3 hops, and a refusal of an `https`→`http` scheme downgrade — a
 /// redirect must never silently move an authenticated fetch onto cleartext.
@@ -327,6 +354,19 @@ mod redirect_tests {
                 RedirectDecision::TooMany
             );
         }
+    }
+
+    /// Every caller gets the one process-wide client: it is built once, not per
+    /// call (so per attempt).
+    #[test]
+    fn the_shared_client_is_built_once() {
+        for _ in 0..8 {
+            crate::source::shared_http_client().expect("client builds");
+        }
+        assert_eq!(
+            crate::source::SHARED_CLIENT_BUILDS.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
     }
 
     #[tokio::test]
@@ -747,16 +787,18 @@ impl DriverProgress {
 /// worker — it is dispatched to the blocking pool here. A caller with no DVR
 /// routes pays nothing extra: the drain is a no-op when no program has a
 /// recorder.
-pub async fn advance_route<S: media_plane::ingress::IngestSession>(
+pub fn advance_route<'r, S: media_plane::ingress::IngestSession>(
     driver: &media_plane::ingress::IngestDriver<S>,
-    route_handle: &crate::route::RouteHandle,
+    route_handle: &'r crate::route::RouteHandle,
     state: &mut DriverProgress,
-) {
+) -> impl std::future::Future<Output = ()> + Send + use<'r, S> {
     report_driver_progress(driver, route_handle, &mut state.published);
     segment::drive_program_segmenters(driver, route_handle, &mut state.segmenters);
     // Drain DVR cursors for every published program — recording happens
-    // after segmenters have published new segments to the Trunk.
-    route_handle.drain_dvr().await;
+    // after segmenters have published new segments to the Trunk. Returned
+    // rather than awaited here, so the future holds nothing of `driver`
+    // and a session need not be `Sync` for it to be `Send`.
+    route_handle.drain_dvr()
 }
 
 /// Passes a pull drive loop's terminal result through, first marking the route
@@ -1154,6 +1196,52 @@ mod advance_route_tests {
                 .is_some_and(|b| !b.is_empty()),
             "advance_route must also turn samples into a real, servable init segment"
         );
+    }
+
+    /// A session that is `Send` but not `Sync`, as media-plane's
+    /// `IngestSession` allows.
+    struct NotSyncSession(std::cell::Cell<u8>);
+
+    impl broadcast_common::Stage for NotSyncSession {
+        type In<'a> = &'a [u8];
+        type Out = media_plane::ingress::SessionEvent;
+        type Error = crate::MultimuxError;
+
+        fn feed(&mut self, _input: &[u8], _now: Timestamp) -> crate::Result<()> {
+            self.0.set(self.0.get().wrapping_add(1));
+            Ok(())
+        }
+        fn poll(&mut self) -> Option<media_plane::ingress::SessionEvent> {
+            None
+        }
+        fn finish(&mut self) -> crate::Result<()> {
+            Ok(())
+        }
+        fn demand(&self) -> broadcast_common::Demand {
+            broadcast_common::Demand::new(1)
+        }
+    }
+
+    impl media_plane::ingress::IngestSession for NotSyncSession {
+        type Request = std::convert::Infallible;
+    }
+
+    /// Advancing a route must not require the session to be `Sync`: the
+    /// returned future holds nothing of the driver, so it is `Send` for a
+    /// `Send`-only session, as media-plane's `IngestSession` contract allows.
+    #[test]
+    fn advancing_a_route_needs_only_a_send_session() {
+        fn assert_send<T: Send>(_: &T) {}
+        let route = RouteHandle::new(1.0, 250, 8);
+        let driver = IngestDriver::new(
+            NotSyncSession(std::cell::Cell::new(0)),
+            trunk_config(),
+            handshake(),
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        );
+        let mut progress = DriverProgress::new();
+        let advance = advance_route(&driver, &route, &mut progress);
+        assert_send(&advance);
     }
 }
 

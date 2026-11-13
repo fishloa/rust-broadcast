@@ -1,4 +1,5 @@
 #[cfg(feature = "media")]
+mod send_sync;
 mod dtls_fingerprint;
 mod golden_http;
 mod sdp_builder;
