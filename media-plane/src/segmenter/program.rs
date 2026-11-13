@@ -2582,6 +2582,159 @@ mod segmenter_tests {
         assert_eq!(segmenter.published_tracks[0].timescale, 45_000);
     }
 
+    /// Item 5 (unit): a discontinuity recorded while a segment is in progress
+    /// must NOT change that segment's start — it is promoted to the NEXT
+    /// segment boundary. Driven directly on the anchor state, since an fMP4
+    /// segmenter cannot be made to keep cutting after a jump large enough to
+    /// be detected as a discontinuity.
+    ///
+    /// Biting test: assign `self.anchor = Some(fresh)` unconditionally (the
+    /// pre-fix behaviour) and the in-progress segment's start changes.
+    #[test]
+    fn a_pending_anchor_does_not_change_the_in_progress_segment() {
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(16))
+                .with_segment_capacity(nz(8))
+                .with_event_capacity(nz(16))
+                .with_part_capacity(nz(16)),
+        );
+        trunk
+            .writer()
+            .expect("writer")
+            .set_tracks(vec![track_spec(TrackId::new(1))]);
+        let mut segmenter = segmenter_for(&trunk, fmp4_config());
+
+        // Establish the initial anchor for segment 1.
+        segmenter.anchor = Some(MediaAnchor {
+            source_90k: 0,
+            timeline_ns: 0,
+        });
+        // A discontinuity observed mid-segment-1: it must NOT retro-stamp
+        // segment 1.
+        segmenter.pending_anchor = Some(MediaAnchor {
+            source_90k: 900_090,
+            timeline_ns: 0,
+        });
+        assert_eq!(
+            segmenter.anchor.map(|a| a.source_90k),
+            Some(0),
+            "the in-progress segment's anchor must be unchanged by a pending one"
+        );
+
+        // Close segment 1 (duration 1 s == 90000 ticks) -> the pending anchor
+        // is promoted, offset by that segment's duration.
+        segmenter.queue_segment(ReadySegment {
+            bytes: vec![0u8; 8],
+            segment_seq: SegmentSeq::new(1),
+            duration: 1.0,
+            discontinuous: false,
+        });
+        let promoted = segmenter.anchor.expect("anchor promoted");
+        assert_eq!(
+            promoted.source_90k, 900_090,
+            "the NEXT segment must be anchored to the post-jump clock"
+        );
+        assert_eq!(
+            promoted.timeline_ns, 1_000_000_000,
+            "the promoted anchor's timeline position is the end of the closed segment (1 s in ns)"
+        );
+        assert!(
+            segmenter.pending_anchor.is_none(),
+            "the pending anchor is consumed, not re-applied"
+        );
+    }
+
+    /// Issue #1428: an AAC config change (sample rate or channel count) is a
+    /// discontinuity trigger on a classic-TS route; an unchanged AAC
+    /// re-announce is not.
+    #[test]
+    fn apply_track_change_ts_aac_config_change_arms_discontinuity() {
+        let video = track_spec(TrackId::new(1));
+        let audio = aac_track_spec(TrackId::new(2));
+
+        let unchanged = ts_playlist_after_respec(
+            vec![video.clone(), audio.clone()],
+            vec![video.clone(), audio.clone()],
+        );
+        assert!(
+            !unchanged.contains("#EXT-X-DISCONTINUITY"),
+            "unchanged AAC re-announce must not arm a discontinuity: {unchanged}"
+        );
+
+        let mut rate = audio.clone();
+        if let CodecConfig::Aac { sample_rate, .. } = &mut rate.config {
+            *sample_rate = if *sample_rate == 48_000 {
+                44_100
+            } else {
+                48_000
+            };
+        }
+        let pl = ts_playlist_after_respec(
+            vec![video.clone(), audio.clone()],
+            vec![video.clone(), rate],
+        );
+        assert!(
+            pl.contains("#EXT-X-DISCONTINUITY"),
+            "AAC sample_rate change must arm a discontinuity: {pl}"
+        );
+
+        let mut chans = audio.clone();
+        if let CodecConfig::Aac { channel_count, .. } = &mut chans.config {
+            *channel_count = if *channel_count == 2 { 1 } else { 2 };
+        }
+        let pl = ts_playlist_after_respec(vec![video.clone(), audio], vec![video, chans]);
+        assert!(
+            pl.contains("#EXT-X-DISCONTINUITY"),
+            "AAC channel_count change must arm a discontinuity: {pl}"
+        );
+    }
+
+    /// Push a first run, apply `respec` as a track change, push a second run,
+    /// and return the rebuilt TS segmenter's rendered playlist.
+    fn ts_playlist_after_respec(initial: Vec<TrackSpec>, respec: Vec<TrackSpec>) -> String {
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
+        let writer = trunk.writer().expect("first take succeeds");
+        writer.set_tracks(initial);
+        let mut segmenter = segmenter_for(&trunk, ts_config());
+        for i in 0..45u32 {
+            segmenter
+                .seg
+                .push(TrackId::new(1), sample_at(i, i.is_multiple_of(45)))
+                .expect("push");
+        }
+        segmenter.publish_ready();
+        writer.set_tracks(respec);
+        segmenter.published_tracks = trunk.tracks();
+        let mut events = Vec::new();
+        segmenter.apply_track_change(
+            ProgramId(0),
+            &trunk,
+            &mut events,
+            &NO_SIBLINGS,
+            trunk.track_generation(),
+        );
+        for i in 45..90u32 {
+            segmenter
+                .seg
+                .push(TrackId::new(1), sample_at(i, i.is_multiple_of(45)))
+                .expect("push");
+        }
+        segmenter.publish_ready();
+        let AnySegmenter::Ts(ts) = &segmenter.seg else {
+            panic!("ts")
+        };
+        ts.playlist().expect("playlist")
+    }
+
     /// A changed spec must arm a discontinuity on the rebuilt TS segmenter;
     /// an unchanged re-announce must not.
     #[test]

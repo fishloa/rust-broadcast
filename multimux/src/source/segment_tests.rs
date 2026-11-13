@@ -1783,3 +1783,59 @@ fn a_route_signals_its_own_config_to_the_segmenter() {
     );
     assert!(matches!(config.container, Container::MpegTs));
 }
+
+/// **Issue #781 test 4.** Regression guard: removal stops routing samples,
+/// and `TrackUpdated` does not panic. (A `TrackUpdated` for a live track
+/// announces the track set again since #1083 — the demux emits it only for a
+/// config that really changed — covered by
+/// `track_updated_announces_the_new_config` in `media_plane::ts_session`.)
+///
+/// The segmenter's own entry point consumes these `SessionEvent`s through
+/// `IngestDriver`; this drives the same `ProgramTracker` (the demux half of
+/// `TsIngestSession`) that stands behind it, so the degradation the
+/// segmenter sees is exercised directly.
+#[test]
+fn removal_and_update_degrade_without_panicking() {
+    use media_plane::ts_session::ProgramTracker;
+
+    let mut tracker = ProgramTracker::new();
+    tracker.handle(transmux::DemuxEvent::TrackAdded(track_spec(TrackId::new(
+        1,
+    ))));
+    tracker.handle(transmux::DemuxEvent::TrackAdded(track_spec(TrackId::new(
+        2,
+    ))));
+    tracker.handle(transmux::DemuxEvent::tracks_resolved(0));
+    let _established = tracker.poll();
+    let _new_program = tracker.poll();
+
+    tracker.handle(transmux::DemuxEvent::track_removed(
+        TrackId::new(2),
+        transmux::EventProvenance::default(),
+    ));
+    tracker.handle(transmux::DemuxEvent::tracks_resolved(1));
+
+    match tracker.poll() {
+        Some(SessionEvent::TracksChanged { tracks, .. }) => {
+            assert_eq!(tracks.len(), 1);
+            assert_eq!(tracks[0].track_id, TrackId::new(1));
+        }
+        other => panic!("expected TracksChanged with track 1 only, got {other:?}"),
+    }
+
+    tracker.handle(transmux::DemuxEvent::sample(
+        TrackId::new(2),
+        sample_at(0, true),
+    ));
+    assert!(tracker.poll().is_none(), "sample for removed track dropped");
+
+    // An update for the removed track 2 is for a track nothing routes on:
+    // ignored.
+    tracker.handle(transmux::DemuxEvent::TrackUpdated(track_spec(
+        TrackId::new(2),
+    )));
+    assert!(
+        tracker.poll().is_none(),
+        "TrackUpdated for a removed track emits no event"
+    );
+}
