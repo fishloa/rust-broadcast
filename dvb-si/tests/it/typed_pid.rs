@@ -35,10 +35,7 @@ fn max_pid_round_trips_through_every_typed_api() {
     // PMT PCR_PID + elementary_PID.
     let pmt = PmtSection::new(
         1,
-        0,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
         max,
         DescriptorLoop::new(&[]),
         vec![PmtStream::new(

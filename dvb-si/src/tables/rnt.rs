@@ -271,23 +271,19 @@ pub struct RntSection<'a> {
 impl<'a> RntSection<'a> {
     /// Construct an RNT section with the spec `reserved` fill.
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         context_id: u16,
-        version_number: u8,
-        current_next_indicator: bool,
-        section_number: u8,
-        last_section_number: u8,
+        section: crate::tables::SectionVersion,
         context_id_type: ContextIdType,
         common_descriptors: RntDescriptorLoop<'a>,
         resolution_providers: Vec<ResolutionProvider<'a>>,
     ) -> Self {
         Self {
             context_id,
-            version_number,
-            current_next_indicator,
-            section_number,
-            last_section_number,
+            version_number: section.version_number,
+            current_next_indicator: section.current_next_indicator,
+            section_number: section.section_number,
+            last_section_number: section.last_section_number,
             context_id_type,
             common_descriptors,
             resolution_providers,
@@ -626,10 +622,7 @@ mod tests {
         );
         let rnt = RntSection::new(
             0x0042,
-            3,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(3, true, 0, 0),
             ContextIdType::BouquetId,
             RntDescriptorLoop::new(&common_desc),
             vec![rp],
@@ -660,10 +653,7 @@ mod tests {
     fn parse_no_descriptors_no_providers() {
         let rnt = RntSection::new(
             0x0000,
-            0,
-            false,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, false, 0, 0),
             ContextIdType::BouquetId,
             RntDescriptorLoop::new(&[]),
             Vec::new(),
@@ -695,10 +685,7 @@ mod tests {
         );
         let rnt = RntSection::new(
             0xABCD,
-            15,
-            true,
-            1,
-            2,
+            crate::tables::SectionVersion::new(15, true, 1, 2),
             ContextIdType::NetworkId,
             RntDescriptorLoop::new(&[0x40, 0x03, b'R', b'N', b'T']),
             vec![rp],
@@ -723,10 +710,7 @@ mod tests {
     fn parse_rejects_wrong_table_id() {
         let rnt = RntSection::new(
             0x0001,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             ContextIdType::BouquetId,
             RntDescriptorLoop::new(&[]),
             Vec::new(),
@@ -752,10 +736,7 @@ mod tests {
     fn serialize_rejects_too_small_buffer() {
         let rnt = RntSection::new(
             0x0001,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             ContextIdType::BouquetId,
             RntDescriptorLoop::new(&[]),
             Vec::new(),
@@ -791,10 +772,7 @@ mod tests {
         let desc = vec![0xAAu8; 4084];
         let rnt = RntSection::new(
             1,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             ContextIdType::BouquetId,
             RntDescriptorLoop::new(&desc),
             vec![],
@@ -811,10 +789,7 @@ mod tests {
         let desc = vec![0xAAu8; 4083];
         let rnt = RntSection::new(
             1,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             ContextIdType::BouquetId,
             RntDescriptorLoop::new(&desc),
             vec![],

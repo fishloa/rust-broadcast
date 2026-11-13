@@ -284,10 +284,7 @@ pub(crate) mod tests {
         let pcr_pid = streams.first().map(|&(pid, _)| pid).unwrap_or(0x1FFF);
         let pmt = PmtSection::new(
             1,
-            version_number,
-            current_next_indicator,
-            0,
-            0,
+            dvb_si::tables::SectionVersion::new(version_number, current_next_indicator, 0, 0),
             Pid::new(pcr_pid),
             DescriptorLoop::new(&[]),
             pmt_streams,
@@ -332,10 +329,7 @@ pub(crate) mod tests {
         for &(program_number, elementary_pid, stream_type, version_number) in programs {
             let pmt = PmtSection::new(
                 program_number,
-                version_number,
-                true,
-                0,
-                0,
+                dvb_si::tables::SectionVersion::new(version_number, true, 0, 0),
                 Pid::new(elementary_pid),
                 DescriptorLoop::new(&[]),
                 alloc::vec![PmtStream::new(
@@ -389,10 +383,7 @@ pub(crate) mod tests {
     pub(crate) fn build_pmt_ts_on_pid(pid: Pid, version_number: u8) -> Vec<u8> {
         let pmt = PmtSection::new(
             1,
-            version_number,
-            true,
-            0,
-            0,
+            dvb_si::tables::SectionVersion::new(version_number, true, 0, 0),
             ELEMENTARY_PID,
             DescriptorLoop::new(&[]),
             alloc::vec![PmtStream::new(

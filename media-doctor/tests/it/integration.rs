@@ -523,10 +523,7 @@ fn pat_pmt_ts(
 
     let pmt = PmtSection::new(
         1,
-        version,
-        current_next,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(version, current_next, 0, 0),
         streams
             .first()
             .map(|&(pid, _)| Pid::new(pid))

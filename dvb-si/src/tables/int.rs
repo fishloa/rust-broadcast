@@ -129,15 +129,12 @@ pub struct IntSection<'a> {
 
 impl<'a> IntSection<'a> {
     /// Construct an INT section with the spec `reserved` fill.
-    #[must_use]
     #[allow(clippy::too_many_arguments)]
+    #[must_use]
     pub fn new(
         action_type: IntActionType,
         platform_id_hash: u8,
-        version_number: u8,
-        current_next_indicator: bool,
-        section_number: u8,
-        last_section_number: u8,
+        section: crate::tables::SectionVersion,
         platform_id: u32,
         processing_order: u8,
         platform_descriptors: IntDescriptorLoop<'a>,
@@ -146,10 +143,10 @@ impl<'a> IntSection<'a> {
         Self {
             action_type,
             platform_id_hash,
-            version_number,
-            current_next_indicator,
-            section_number,
-            last_section_number,
+            version_number: section.version_number,
+            current_next_indicator: section.current_next_indicator,
+            section_number: section.section_number,
+            last_section_number: section.last_section_number,
             platform_id,
             processing_order,
             platform_descriptors,
@@ -388,10 +385,7 @@ mod tests {
             IntSection::new(
                 IntActionType::IpMacStreamLocation,
                 0,
-                1,
-                true,
-                0,
-                0,
+                crate::tables::SectionVersion::new(1, true, 0, 0),
                 platform_id,
                 0,
                 IntDescriptorLoop::new(&[]),
@@ -416,10 +410,7 @@ mod tests {
         let int = IntSection::new(
             IntActionType::IpMacStreamLocation,
             0x12 ^ 0x34,
-            3,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(3, true, 0, 0),
             0x00_12_34,
             0x00,
             IntDescriptorLoop::new(plat_desc),
@@ -441,10 +432,7 @@ mod tests {
         let int = IntSection::new(
             IntActionType::IpMacStreamLocation,
             0x56,
-            5,
-            false,
-            1,
-            1,
+            crate::tables::SectionVersion::new(5, false, 1, 1),
             0x00_56_78,
             0x01,
             IntDescriptorLoop::new(&[]),
@@ -472,10 +460,7 @@ mod tests {
         let int = IntSection::new(
             IntActionType::IpMacStreamLocation,
             0xAB,
-            15,
-            true,
-            2,
-            3,
+            crate::tables::SectionVersion::new(15, true, 2, 3),
             0x00_AB_CD,
             0x00,
             IntDescriptorLoop::new(plat_desc),
@@ -498,10 +483,7 @@ mod tests {
         let int = IntSection::new(
             IntActionType::IpMacStreamLocation,
             0x00,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             0,
             0,
             IntDescriptorLoop::new(&[]),
@@ -532,10 +514,7 @@ mod tests {
         let int = IntSection::new(
             IntActionType::IpMacStreamLocation,
             0x00,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             0,
             0,
             IntDescriptorLoop::new(&[]),
@@ -573,10 +552,7 @@ mod tests {
         let int = IntSection::new(
             IntActionType::IpMacStreamLocation,
             0,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             0,
             0,
             IntDescriptorLoop::new(&desc),
@@ -595,10 +571,7 @@ mod tests {
         let int = IntSection::new(
             IntActionType::IpMacStreamLocation,
             0,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             0,
             0,
             IntDescriptorLoop::new(&desc),
@@ -615,10 +588,7 @@ mod tests {
         let int = IntSection::new(
             IntActionType::IpMacStreamLocation,
             0xFF,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             0x00FF_FFFF,
             0x00,
             IntDescriptorLoop::new(&[]),

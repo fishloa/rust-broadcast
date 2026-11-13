@@ -19,10 +19,7 @@ fn nit_section(
     let nit = NitSection::new(
         NitKind::Actual,
         0x0001,
-        3,
-        true,
-        section_number,
-        last_section_number,
+        dvb_si::tables::SectionVersion::new(3, true, section_number, last_section_number),
         DescriptorLoop::new(network_descriptors),
         transport_streams,
     );
@@ -38,10 +35,7 @@ fn eit_pf_section(service_id: u16) -> Vec<u8> {
         EitKind::PresentFollowingActual,
         TABLE_ID_PF_ACTUAL,
         service_id,
-        1,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(1, true, 0, 0),
         0x2000,
         0x0001,
         0,
@@ -66,10 +60,7 @@ fn eit_schedule_section_with_version(
         EitKind::ScheduleActual,
         table_id,
         0x0100,
-        version_number,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(version_number, true, 0, 0),
         0x2000,
         0x0001,
         0,
@@ -84,7 +75,6 @@ fn eit_schedule_section_with_version(
 /// Build one EIT schedule section with explicit section-numbering fields, for
 /// exercising the `segment_last_section_number` sparse-segment completion
 /// logic directly (issue #971).
-#[allow(clippy::too_many_arguments)]
 fn eit_schedule_section_sparse(
     table_id: u8,
     last_table_id: u8,
@@ -96,10 +86,7 @@ fn eit_schedule_section_sparse(
         EitKind::ScheduleActual,
         table_id,
         0x0100,
-        4,
-        true,
-        section_number,
-        last_section_number,
+        dvb_si::tables::SectionVersion::new(4, true, section_number, last_section_number),
         0x2000,
         0x0001,
         segment_last_section_number,
