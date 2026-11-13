@@ -1,6 +1,7 @@
 //! Datagram-socket vocabulary shared by the UDP, RTP and SRT sources: how the host binds a
 //! socket, the multicast join it performs, the reorder settings and the counters a session keeps.
 
+use alloc::string::String;
 use core::net::IpAddr;
 
 /// UDP and RTP source settings ([`crate::Config::udp`]).
@@ -23,6 +24,12 @@ pub struct UdpConfig {
     /// Requested `SO_RCVBUF` in bytes; `None` keeps the host default. A live multicast feed of a
     /// few Mbit/s overruns the usual 200 KB default during a decoder hiccup.
     pub recv_buffer_bytes: Option<u32>,
+    /// RTP only: an out-of-band SDP (RFC 4566) describing the streams, which switches an `rtp://`
+    /// session from MPEG-2 transport stream (payload type 33) to the H.264 (RFC 6184) and AAC
+    /// (RFC 3640) streams the SDP declares, played by RTP payload type. The tracks are announced
+    /// before the first packet. Not valid for a `udp://` URL; the reorder settings do not apply to an
+    /// SDP session.
+    pub sdp: Option<String>,
     /// RTP only: most packets the reorder buffer holds while it waits for a missing one.
     pub reorder_packets: usize,
     /// RTP only: longest a held packet waits for the missing one before the gap is counted lost.
@@ -45,6 +52,7 @@ impl Default for UdpConfig {
             interface_index: None,
             source: None,
             recv_buffer_bytes: None,
+            sdp: None,
             reorder_packets: DEFAULT_REORDER_PACKETS,
             reorder_wait_us: DEFAULT_REORDER_WAIT_US,
         }

@@ -119,51 +119,21 @@ impl Source for TsUdpRoute {
 
 impl TsUdpRoute {
     fn take_prebound(&self) -> Option<UdpSocket> {
-        match self.prebound.lock() {
-            Ok(mut slot) => slot.take(),
-            Err(poisoned) => poisoned.into_inner().take(),
-        }
+        crate::source::udp::take_prebound(&self.prebound)
     }
 
     fn session_url(&self) -> Result<String, MultimuxError> {
-        let bind: std::net::SocketAddr = self.addr.parse().map_err(|e| MultimuxError::Connect {
-            reason: format!("bad UDP bind address {:?}: {e}", self.addr),
-        })?;
-        let host = match self.multicast_group.as_deref() {
-            Some(group) if group.contains(':') => format!("[{group}]"),
-            Some(group) => group.to_owned(),
-            None if bind.is_ipv6() => format!("[{}]", bind.ip()),
-            None => bind.ip().to_string(),
-        };
-        Ok(format!("udp://{host}:{}", bind.port()))
+        crate::source::udp::session_url("udp", &self.addr, self.multicast_group.as_deref())
     }
 
     fn session_config(&self) -> Result<Config, MultimuxError> {
         let mut config = Config::relay();
         config.kind = SourceKind::Udp;
-        let invalid =
-            |field: &'static str, reason: String| MultimuxError::ConfigInvalid { field, reason };
-        config.udp.recv_buffer_bytes = self
-            .socket
-            .recv_buffer_bytes
-            .map(u32::try_from)
-            .transpose()
-            .map_err(|e| invalid("routes.input.recv_buffer_bytes", e.to_string()))?;
-        if self.multicast_group.is_some()
-            && let Some(interface) = self.socket.multicast_interface.as_deref()
-        {
-            match interface.parse::<std::net::IpAddr>() {
-                Ok(address) => config.udp.interface = Some(address),
-                Err(_) => {
-                    config.udp.interface_index = Some(interface.parse().map_err(|e| {
-                        invalid(
-                            "routes.input.multicast_interface",
-                            format!("{interface:?} is neither an address nor an index: {e}"),
-                        )
-                    })?);
-                }
-            }
-        }
+        crate::source::udp::apply_socket_options(
+            &mut config,
+            self.multicast_group.as_deref(),
+            &self.socket,
+        )?;
         Ok(config)
     }
 }
