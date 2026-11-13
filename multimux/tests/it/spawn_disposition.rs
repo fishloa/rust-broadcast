@@ -29,7 +29,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "route.rs",
-        1244,
+        1247,
         "spawn_blocking DVR persist; awaited inline",
     ),
     (
@@ -166,17 +166,17 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "origin/admin.rs",
-        1116,
+        1264,
         "external shutdown-signal watcher; aborted by hand at admin teardown",
     ),
     (
         "origin/admin.rs",
-        1128,
+        1276,
         "shutdown-watch task translating the signal channel into the token; aborted by hand at teardown",
     ),
     (
         "origin/admin.rs",
-        1134,
+        1282,
         "admin listener server task; joined/aborted at admin teardown",
     ),
     (
