@@ -118,8 +118,8 @@ const MAX_DESCRIBE_NOT_FOUND_BEFORE_PERMANENT: u32 = 5;
 /// Classifies an `attempt` failure as "certain to fail again" vs. "worth
 /// supervised retry" (issue #957). Every other failure (network, transport,
 /// server-side 5xx, protocol errors) is genuinely transient — the camera
-/// rebooted, the network blipped, the far end restarted — so only two kinds
-/// are ever permanent:
+/// rebooted, the network blipped, the far end restarted — so only three kinds
+/// are ever permanent (the third, [`is_invalid_config`], is declared on the first attempt):
 ///
 /// - [`MultimuxError::Auth`] — a `401`/`403` that persisted after
 ///   credentials were supplied (`crate::source::rtsp::response_error`'s
@@ -149,6 +149,12 @@ pub(crate) fn is_permanent_describe_not_found(err: &MultimuxError) -> bool {
         MultimuxError::Protocol { phase, reason }
             if *phase == "DESCRIBE" && reason == "non-success status Not Found"
     )
+}
+
+/// A route configuration the source refused (a field the session or the route cannot run with):
+/// retrying cannot succeed, so the route is declared permanently failed on the first attempt.
+pub(crate) fn is_invalid_config(err: &MultimuxError) -> bool {
+    matches!(err, MultimuxError::ConfigInvalid { .. })
 }
 
 /// The supervisor's reconnect pacing: broadcast-client's one
@@ -392,7 +398,8 @@ pub async fn supervise_driver<F, Fut>(
             } else {
                 consecutive_describe_not_found = 0;
             }
-            if consecutive_describe_not_found > MAX_DESCRIBE_NOT_FOUND_BEFORE_PERMANENT
+            if is_invalid_config(e)
+                || consecutive_describe_not_found > MAX_DESCRIBE_NOT_FOUND_BEFORE_PERMANENT
                 || consecutive_auth_failures > MAX_AUTH_ATTEMPTS_BEFORE_PERMANENT
             {
                 tracing::error!(
@@ -662,6 +669,34 @@ mod tests {
             MAX_AUTH_ATTEMPTS_BEFORE_PERMANENT + 1,
             "must attempt exactly bound+1 times before declaring permanence"
         );
+    }
+
+    /// A route configuration the source refuses is permanent on the first attempt: retrying a bad
+    /// config cannot succeed.
+    #[tokio::test]
+    async fn an_invalid_route_config_is_permanent_on_the_first_attempt() {
+        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let attempt = always_fails(
+            || MultimuxError::ConfigInvalid {
+                field: "udp.sdp",
+                reason: "rtp/udp: invalid config: udp.sdp".into(),
+            },
+            call_count.clone(),
+        );
+        let handle = tokio::spawn(supervise_driver(
+            attempt,
+            route.clone(),
+            tiny_backoff(),
+            "test-route".to_string(),
+            tokio_util::sync::CancellationToken::new(),
+        ));
+        tokio::time::timeout(Duration::from_secs(10), handle)
+            .await
+            .expect("an invalid config must end the supervisor, not be retried")
+            .expect("supervise_driver task did not panic");
+        assert_eq!(route.health(), HealthState::Failed);
+        assert_eq!(call_count.load(Ordering::SeqCst), 1);
     }
 
     /// The DESCRIBE-404 counterpart: permanent on the very first attempt (no

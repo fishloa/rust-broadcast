@@ -11,6 +11,7 @@
 - A `407` from an HTTP pull is returned unchanged instead of being retried; there is no proxy-credential configuration, and the origin's credentials are never sent as a proxy's.
 - The challenge-answer flag a pull passes on reports whether the request really carried an `Authorization` header, so a Digest state that has not negotiated its first nonce is not treated as a rejected credential.
 ### Changed
+- A route configuration the `broadcast_client::Session` refuses (`InvalidConfig`, for example an unparsable RTP SDP) is `MultimuxError::ConfigInvalid` naming the session's field, and the route supervisor declares it permanent on the first attempt instead of retrying a configuration that cannot succeed.
 - Raw RTP-over-UDP pull (SDP-described H.264/AAC) runs the relay `broadcast_client::Session` (`UdpConfig::sdp`) through the shared session host: the session routes packets by payload type and depayloads them; the host binds the socket with the route's socket options. `RtpUdpRoute` gains `with_socket` and `with_multicast_group`, mirroring `TsUdpRoute`.
 - An RTSP DESCRIBE/SETUP/PLAY refusal (for example 503, 406 or 454) is reported as the `Protocol` error naming the method and the server's status, promptly, instead of a media-timeout error.
 - A blocking-reload request beyond the trunk's waiter cap parks on `Trunk::waiter_slot_freed` instead of sleep-polling every 20 ms and re-rendering the playlist (#2523); the cap is no longer the 64-entry part ring.
