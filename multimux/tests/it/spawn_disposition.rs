@@ -141,19 +141,19 @@ const DISPOSITION: &[(&str, &str, u32, &str)] = &[
     ),
     (
         "output/whep.rs",
-        "serve_whep_run_probed_for_test",
+        "serve_whep_run_probed_with_sockets_for_test",
         1,
-        "serve_whep_run_probed_for_test -> run_whep_on_probed; cancelled by the returned WhepRunHarness token (test-hooks only)",
+        "serve_whep_run_probed_with_sockets_for_test -> run_whep_on_probed_with_limits; cancelled by the returned WhepRunHarness token (test-hooks only)",
     ),
     (
         "output/whep.rs",
-        "run_whep_on_probed",
+        "run_whep_on_probed_with_limits",
         1,
         "WHEP signalling server; JOINED before run_whep returns (port-release ordering)",
     ),
     (
         "output/whep.rs",
-        "run_whep_on_probed",
+        "run_whep_on_probed_with_limits",
         2,
         "WHEP viewer session on the run's session TaskTracker (close()+wait() on cancel)",
     ),
