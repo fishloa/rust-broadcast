@@ -1943,7 +1943,7 @@ fn spawn_ingest(
     cancel: tokio_util::sync::CancellationToken,
 ) -> crate::Result<tokio::task::JoinHandle<()>> {
     let name = route.name.clone();
-    let timeouts = crate::source::IngestTimeouts::from(config);
+    let timeouts = crate::source::ingest_timeouts(config);
     let ctx = IngestSpawn {
         name: name.clone(),
         store,
@@ -2265,7 +2265,7 @@ struct IngestSpawn {
     store: Arc<RouteHandle>,
     cancel: tokio_util::sync::CancellationToken,
     window_segments: usize,
-    timeouts: crate::source::IngestTimeouts,
+    timeouts: broadcast_common::timeouts::Timeouts,
 }
 
 /// Spawn one built-in input's [`supervisor::supervise_driver`] loop — the
@@ -2320,7 +2320,7 @@ where
 fn pull_route<K: PullDrive>(
     name: String,
     url: &str,
-    timeouts: crate::source::IngestTimeouts,
+    timeouts: broadcast_common::timeouts::Timeouts,
     auth: &Option<crate::config::AuthSpec>,
 ) -> PullRoute<K> {
     PullRoute::new(name, url)

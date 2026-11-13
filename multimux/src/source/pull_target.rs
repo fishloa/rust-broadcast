@@ -11,13 +11,13 @@ use media_plane::trunk::TrunkConfig;
 use tokio_util::sync::CancellationToken;
 
 use crate::route::RouteHandle;
-use crate::source::IngestTimeouts;
+use broadcast_common::timeouts::Timeouts;
 
 #[derive(Clone)]
 pub(crate) struct PullTarget {
     pub(crate) name: String,
     pub(crate) url: String,
-    pub(crate) timeouts: IngestTimeouts,
+    pub(crate) timeouts: Timeouts,
     pub(crate) auth: Option<Credentials>,
 }
 
@@ -26,12 +26,12 @@ impl PullTarget {
         Self {
             name: name.into(),
             url: url.into(),
-            timeouts: IngestTimeouts::default(),
+            timeouts: Timeouts::default(),
             auth: None,
         }
     }
 
-    pub(crate) fn with_timeouts(mut self, timeouts: IngestTimeouts) -> Self {
+    pub(crate) fn with_timeouts(mut self, timeouts: Timeouts) -> Self {
         self.timeouts = timeouts;
         self
     }
@@ -113,9 +113,9 @@ impl<K: PullKind> PullRoute<K> {
         }
     }
 
-    /// Overrides the default [`IngestTimeouts`].
+    /// Overrides the default [`Timeouts`].
     #[must_use]
-    pub fn with_timeouts(mut self, timeouts: IngestTimeouts) -> Self {
+    pub fn with_timeouts(mut self, timeouts: Timeouts) -> Self {
         self.target = self.target.with_timeouts(timeouts);
         self
     }

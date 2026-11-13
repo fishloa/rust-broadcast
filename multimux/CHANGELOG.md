@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Removed
+- BREAKING: `source::IngestTimeouts` (a `{connect, read}` copy of the adapters' timeout struct): every source's `with_timeouts` takes `broadcast_common::timeouts::Timeouts` (`read` is `read_idle`), and `source::ingest_timeouts(&Config)` replaces `IngestTimeouts::from(&Config)`. `push::RtmpTransportConfig`'s `connect_timeout`/`write_timeout` options are one `timeouts: Timeouts` (#2514).
 ### Changed
 - The Smooth pull goldens run in the crate's own tests on a session clock 20 times faster than real time, so the deliberately missing fragment's retry backoff costs about 2.7 s of wall time instead of about 54 s; the goldens are unchanged.
 - Every pull input's session queue is also bounded in bytes (`Config::max_queued_bytes`): 32 MiB for the live inputs (TS-over-HTTP, UDP, RTP, SRT caller, RTSP), 128 MiB (two maximum-size segments) for HLS, DASH and Smooth pull, instead of only the 100 000-event count.

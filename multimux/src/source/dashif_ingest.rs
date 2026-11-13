@@ -79,7 +79,7 @@ pub struct DashifIngestRoute {
     listen: String,
     prebound: Mutex<Option<TcpListener>>,
     publishing_point: String,
-    timeouts: crate::source::IngestTimeouts,
+    timeouts: broadcast_common::timeouts::Timeouts,
     auth: Option<Arc<broadcast_auth::Verifier>>,
     max_object_bytes: usize,
     max_buffered_object_bytes: usize,
@@ -110,7 +110,7 @@ impl DashifIngestRoute {
             listen: listen.into(),
             prebound: Mutex::new(None),
             publishing_point: publishing_point.into(),
-            timeouts: crate::source::IngestTimeouts::default(),
+            timeouts: broadcast_common::timeouts::Timeouts::default(),
             auth: None,
             max_object_bytes: MAX_OBJECT_BYTES,
             max_buffered_object_bytes: MAX_BUFFERED_OBJECT_BYTES,
@@ -133,7 +133,7 @@ impl DashifIngestRoute {
             listen,
             prebound: Mutex::new(Some(listener)),
             publishing_point: publishing_point.into(),
-            timeouts: crate::source::IngestTimeouts::default(),
+            timeouts: broadcast_common::timeouts::Timeouts::default(),
             auth: None,
             max_object_bytes: MAX_OBJECT_BYTES,
             max_buffered_object_bytes: MAX_BUFFERED_OBJECT_BYTES,
@@ -143,7 +143,7 @@ impl DashifIngestRoute {
     }
 
     #[must_use]
-    pub fn with_timeouts(mut self, timeouts: crate::source::IngestTimeouts) -> Self {
+    pub fn with_timeouts(mut self, timeouts: broadcast_common::timeouts::Timeouts) -> Self {
         self.timeouts = timeouts;
         self
     }

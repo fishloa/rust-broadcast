@@ -108,7 +108,7 @@ use crate::error::{MultimuxError, Result};
 use crate::route::RouteHandle;
 #[cfg(feature = "test-hooks")]
 use crate::source::handshake_policy;
-use crate::source::{DriverProgress, IngestTimeouts, Source};
+use crate::source::{DriverProgress, Source, Timeouts};
 use crate::webrtc_session::{
     ResourceGuard, ResourceTable, SessionControl, ensure_connect_info, ice_attr, single_video_media,
 };
@@ -239,7 +239,7 @@ pub struct WhipRoute {
     /// A caller-supplied, already-bound listener (tests that must know the
     /// port before the route starts). `None` binds `listen` on first use.
     prebound: StdMutex<Option<TcpListener>>,
-    timeouts: IngestTimeouts,
+    timeouts: Timeouts,
     max_sessions: usize,
     infra: OnceCell<Arc<WhipInfra>>,
 }
@@ -264,7 +264,7 @@ impl WhipRoute {
             name: name.into(),
             listen: listen.into(),
             prebound: StdMutex::new(None),
-            timeouts: IngestTimeouts::default(),
+            timeouts: Timeouts::default(),
             max_sessions: DEFAULT_WHIP_MAX_SESSIONS,
             infra: OnceCell::new(),
         }
@@ -286,15 +286,15 @@ impl WhipRoute {
             name: name.into(),
             listen,
             prebound: StdMutex::new(Some(listener)),
-            timeouts: IngestTimeouts::default(),
+            timeouts: Timeouts::default(),
             max_sessions,
             infra: OnceCell::new(),
         }
     }
 
-    /// Overrides the default [`IngestTimeouts`].
+    /// Overrides the default [`Timeouts`].
     #[must_use]
-    pub fn with_timeouts(mut self, timeouts: IngestTimeouts) -> Self {
+    pub fn with_timeouts(mut self, timeouts: Timeouts) -> Self {
         self.timeouts = timeouts;
         self
     }
@@ -490,7 +490,7 @@ pub async fn serve_for_test() -> (
     WhipRouteShared,
     tokio_util::sync::CancellationToken,
 ) {
-    serve_for_test_with_read_timeout(IngestTimeouts::default().read).await
+    serve_for_test_with_read_timeout(Timeouts::default().read_idle).await
 }
 
 /// [`serve_for_test`] with an explicit session read timeout.
@@ -506,7 +506,7 @@ pub async fn serve_for_test_with_read_timeout(
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr");
     let mut route = WhipRoute::with_listener("cam", listener, DEFAULT_WHIP_MAX_SESSIONS);
-    route.timeouts.read = read;
+    route.timeouts.read_idle = read;
     let infra = route.ensure_infra().await.expect("ensure_infra");
     let token = infra.cancel.clone();
     let shared = WhipRouteShared {
@@ -530,7 +530,7 @@ pub async fn serve_for_test_with_read_load() -> (
     WhipRouteShared,
     tokio_util::sync::CancellationToken,
 ) {
-    serve_for_test_with_read_load_and_timeout(IngestTimeouts::default().read).await
+    serve_for_test_with_read_load_and_timeout(Timeouts::default().read_idle).await
 }
 
 /// [`serve_for_test_with_read_load`] with an explicit session read timeout
@@ -582,7 +582,7 @@ pub async fn serve_for_test_with_read_load_and_max_sessions(
     tokio_util::sync::CancellationToken,
 ) {
     serve_read_load_inner(
-        IngestTimeouts::default().read,
+        Timeouts::default().read_idle,
         Duration::from_secs(10_000),
         max_sessions,
     )
@@ -603,7 +603,7 @@ async fn serve_read_load_inner(
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr");
     let mut route = WhipRoute::with_listener("cam", listener, max_sessions);
-    route.timeouts.read = read;
+    route.timeouts.read_idle = read;
     let route = Arc::new(route);
     let infra = route.ensure_infra().await.expect("ensure_infra");
     let token = infra.cancel.clone();
@@ -1496,7 +1496,7 @@ enum ReadOutcome {
     /// N3): the ICE/DTLS timer drive failed, so the session is ended rather
     /// than silently stuck.
     TimerError(String),
-    /// No datagram within [`IngestTimeouts::read`] — treated as ending this
+    /// No datagram within [`Timeouts::read_idle`] — treated as ending this
     /// session, same as `crate::source::rtmp`'s own "timeouts still bound
     /// reads" policy.
     TimedOut,
@@ -1880,7 +1880,7 @@ pub(crate) async fn run_whip_with_clock(
         Err(e) => return e,
     };
     let start = clock();
-    let read_timeout = route.timeouts.read;
+    let read_timeout = route.timeouts.read_idle;
     let active_sessions = Arc::clone(&infra.active_sessions);
 
     // The shared admitted-session driver (media-plane): admission, the

@@ -28,7 +28,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::error::MultimuxError;
 use crate::route::RouteHandle;
-use crate::source::{DriverProgress, IngestTimeouts, advance_route, release_route};
+use crate::source::{DriverProgress, Timeouts, advance_route, release_route};
 
 /// What one source [`IngestStep::step`] observed.
 pub(crate) enum StepOutcome {
@@ -76,7 +76,7 @@ pub(crate) fn ts(start: Instant, now: Instant) -> Timestamp {
 }
 
 /// Default bound on one outbound write (defect 4: the pre-migration
-/// `run_rtsp`'s `wr.write_all` had none). Not a field on [`IngestTimeouts`] —
+/// `run_rtsp`'s `wr.write_all` had none). Not a field on [`Timeouts`] —
 /// that struct is built by literal in public code and tests, so adding a
 /// field would break them; the scaffold takes it as an argument.
 pub(crate) const DEFAULT_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -120,7 +120,7 @@ pub(crate) async fn run_ingest_scaffold<S, W, T>(
     route_handle: &Arc<RouteHandle>,
     progress: &mut DriverProgress,
     cancel: CancellationToken,
-    timeouts: IngestTimeouts,
+    timeouts: Timeouts,
     write_timeout: Duration,
     writer: &mut W,
     source: &mut T,
@@ -180,20 +180,20 @@ where
         if !driver.health().is_running() {
             break;
         }
-        if last_rx.elapsed() >= timeouts.read {
+        if last_rx.elapsed() >= timeouts.read_idle {
             // Release the publisher slot on every exit path, not only cancel
             // (M1) — otherwise a stalled route keeps `active_publisher` bound
             // to its `Trunk` and a reconnect is rejected as a second
             // publisher.
             release_route(&driver, route_handle);
             driver.finish();
-            return source.stalled(timeouts.read);
+            return source.stalled(timeouts.read_idle);
         }
         let keepalive_wait = driver.next_deadline().map(|d| {
             let now = ts(start, Instant::now());
             Duration::from_nanos(d.as_nanos().saturating_sub(now.as_nanos()))
         });
-        let remaining = timeouts.read.saturating_sub(last_rx.elapsed());
+        let remaining = timeouts.read_idle.saturating_sub(last_rx.elapsed());
         let window = keepalive_wait.map_or(remaining, |w| w.min(remaining));
         let outcome = tokio::select! {
             biased;
@@ -482,11 +482,10 @@ mod tests {
         }
     }
 
-    fn timeouts(read: Duration) -> IngestTimeouts {
-        IngestTimeouts {
-            connect: Duration::from_secs(5),
-            read,
-        }
+    fn timeouts(read: Duration) -> broadcast_common::timeouts::Timeouts {
+        broadcast_common::timeouts::Timeouts::default()
+            .with_connect(Duration::from_secs(5))
+            .with_read_idle(read)
     }
 
     const MAP: fn(Infallible) -> MultimuxError = |n| match n {};

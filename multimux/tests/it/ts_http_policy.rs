@@ -14,7 +14,6 @@ use axum::routing::get;
 use broadcast_common::Timestamp;
 use media_plane::ingress::HandshakePolicy;
 use media_plane::trunk::{SampleCursorItem, TrunkConfig};
-use multimux::source::IngestTimeouts;
 use multimux::source::ts_http::{TsHttpRoute, run_ts_http};
 use multimux::{MultimuxError, RouteHandle};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -38,11 +37,10 @@ fn fixture() -> Vec<u8> {
     test_fixtures::read(FIXTURE)
 }
 
-fn timeouts(read: Duration) -> IngestTimeouts {
-    IngestTimeouts {
-        connect: CONNECT,
-        read,
-    }
+fn timeouts(read: Duration) -> broadcast_common::timeouts::Timeouts {
+    broadcast_common::timeouts::Timeouts::default()
+        .with_connect(CONNECT)
+        .with_read_idle(read)
 }
 
 async fn run(route: &TsHttpRoute) -> (Result<(), MultimuxError>, Arc<RouteHandle>) {

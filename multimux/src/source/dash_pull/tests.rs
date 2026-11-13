@@ -28,7 +28,6 @@ use transmux::{CodecConfig, Sample, TrackId, TrackSpec};
 use super::{DashPullRoute, run_with_clock};
 use crate::clock::{HostClock, SystemHostClock};
 use crate::error::{MultimuxError, Result};
-use crate::source::IngestTimeouts;
 use tokio_util::sync::CancellationToken;
 
 const CEILING: Duration = Duration::from_secs(120);
@@ -849,14 +848,15 @@ async fn a_missing_mpd_fails_the_attempt() {
 }
 
 /// A server that resolves the MPD and the inits but stalls on a segment must
-/// fail within the retry budget of `IngestTimeouts::read`, not hang forever.
+/// fail within the retry budget of `Timeouts::read_idle`, not hang forever.
 #[tokio::test]
 async fn a_server_that_stalls_on_a_segment_fails_the_attempt() {
     let origin = serve_files(fixture(""), None, Some("chunk-stream0-00001.m4s"), false).await;
-    let route = route(origin.url("manifest.mpd")).with_timeouts(IngestTimeouts {
-        connect: Duration::from_secs(5),
-        read: Duration::from_millis(150),
-    });
+    let route = route(origin.url("manifest.mpd")).with_timeouts(
+        broadcast_common::timeouts::Timeouts::default()
+            .with_connect(Duration::from_secs(5))
+            .with_read_idle(Duration::from_millis(150)),
+    );
     let (_, result) = Pull::start(route, SkewedClock::new(0)).finish().await;
     assert!(
         result.is_err(),

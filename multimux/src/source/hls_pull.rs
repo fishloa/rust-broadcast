@@ -79,7 +79,7 @@ fn retry_schedule_ms() -> Vec<u64> {
 }
 
 fn session_config(route: &HlsPullRoute) -> Config {
-    let read_us = u64::try_from(route.target.timeouts.read.as_micros())
+    let read_us = u64::try_from(route.target.timeouts.read_idle.as_micros())
         .unwrap_or(u64::MAX)
         .max(MICROS_PER_MILLI);
     let mut config = Config::relay();
@@ -102,7 +102,7 @@ fn session_config(route: &HlsPullRoute) -> Config {
 ///
 /// Returns `Ok(())` when the origin's `#EXT-X-ENDLIST` is fully accounted for (the route is then
 /// marked ended: a finite playlist has nothing more to pull) and `Err` on a failure the session
-/// does not retry. Each fetch is bounded by [`IngestTimeouts::read`](crate::source::IngestTimeouts::read),
+/// does not retry. Each fetch is bounded by [`Timeouts::read_idle`](broadcast_common::timeouts::Timeouts::read),
 /// and the handshake (until the first track set resolves) by `handshake`.
 ///
 /// `route_handle` is the driver-backed registry side of issue #805 task 2 — see
@@ -162,10 +162,10 @@ mod tests {
             crate::source::SEGMENTED_EVENT_QUEUE_BYTES
         );
     }
-    use crate::source::IngestTimeouts;
     use crate::testutil::MockAuthScheme;
     use broadcast_auth::Credentials;
     use broadcast_common::Timestamp;
+    use broadcast_common::timeouts::Timeouts;
     use broadcast_hls::{MediaPlaylist, MediaSegment};
     use media_plane::ingress::{HandshakePolicy, ProgramId};
     use media_plane::trunk::{SampleCursorItem, TrunkConfig};
@@ -1140,10 +1140,11 @@ mod tests {
         }))
         .await;
         let wrong_creds = url.replacen("http://", &format!("http://{AUTH_USER}:wrongpass@"), 1);
-        let route = HlsPullRoute::new("pulled-wrong", wrong_creds).with_timeouts(IngestTimeouts {
-            connect: IngestTimeouts::default().connect,
-            read: Duration::from_secs(2),
-        });
+        let route = HlsPullRoute::new("pulled-wrong", wrong_creds).with_timeouts(
+            broadcast_common::timeouts::Timeouts::default()
+                .with_connect(Timeouts::default().connect)
+                .with_read_idle(Duration::from_secs(2)),
+        );
         // HANG GUARD (issue #826): backstop around `drain_via_run_hls_pull`
         // for wrong credentials. The server returns 401 immediately so
         // `run_hls_pull` fails within ~ms; this only exists to fail "never
@@ -1159,7 +1160,7 @@ mod tests {
     }
 
     /// A stalled origin (accepts the playlist request, then never responds)
-    /// must fail within `IngestTimeouts::read`, not hang forever.
+    /// must fail within `Timeouts::read_idle`, not hang forever.
     #[tokio::test]
     async fn read_times_out_against_a_server_that_stalls_on_the_playlist() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -1175,10 +1176,11 @@ mod tests {
         });
 
         let route = HlsPullRoute::new("stalled", format!("http://{addr}/media.m3u8"))
-            .with_timeouts(IngestTimeouts {
-                connect: IngestTimeouts::default().connect,
-                read: Duration::from_secs(2),
-            });
+            .with_timeouts(
+                broadcast_common::timeouts::Timeouts::default()
+                    .with_connect(Timeouts::default().connect)
+                    .with_read_idle(Duration::from_secs(2)),
+            );
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
         // DISCRIMINATOR (issue #826): must prove the operation returns
         // through the CONFIGURED read timeout, not via any longer system/

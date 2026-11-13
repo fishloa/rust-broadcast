@@ -86,10 +86,11 @@ async fn serve_fixture(fixture: &str) -> (String, tokio::task::JoinHandle<()>) {
 /// sample the route published, in the order it published them.
 async fn sample_trace(fixture: &str) -> String {
     let (url, server) = serve_fixture(fixture).await;
-    let route = SmoothPullRoute::new("golden", url).with_timeouts(crate::source::IngestTimeouts {
-        connect: READ_TIMEOUT,
-        read: READ_TIMEOUT,
-    });
+    let route = SmoothPullRoute::new("golden", url).with_timeouts(
+        broadcast_common::timeouts::Timeouts::default()
+            .with_connect(READ_TIMEOUT)
+            .with_read_idle(READ_TIMEOUT),
+    );
     let route_handle = Arc::new(RouteHandle::new(4.0, 500, 4));
     let config = TrunkConfig::default()
         .with_timed_capacity(nz(TIMED_RING))

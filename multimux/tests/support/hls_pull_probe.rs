@@ -115,10 +115,9 @@ pub async fn pull_samples(
     mut on_sample: impl FnMut(&Sample),
 ) -> Pulled {
     let route = HlsPullRoute::new("pulled", playlist_url.to_owned()).with_timeouts(
-        multimux::source::IngestTimeouts {
-            connect: READ,
-            read: READ,
-        },
+        broadcast_common::timeouts::Timeouts::default()
+            .with_connect(READ)
+            .with_read_idle(READ),
     );
     let route_handle = Arc::new(RouteHandle::new(4.0, 500, 4));
     let config = TrunkConfig::default()
