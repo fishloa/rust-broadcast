@@ -135,14 +135,14 @@ pub fn multimux_ts_ingest(fx: &Fixture, _: &Cfg) -> Option<Value> {
         return None;
     }
     let packets = ts_packets(&fx.data)?;
-    let mut s = multimux::source::ts_program::TsIngestSession::new();
+    let mut s = media_plane::ts_session::TsIngestSession::new();
     let mut agg: BTreeMap<String, TrackAgg> = BTreeMap::new();
     let mut programs: Vec<Value> = Vec::new();
     // Announce order with the `ProgramId` of each programme (run 3: after #1332
     // the ids are deterministic; diff.py ignores `head_only_*` keys).
     let mut program_order: Vec<Value> = Vec::new();
     let mut counters: BTreeMap<String, u64> = BTreeMap::new();
-    let mut drain = |s: &mut multimux::source::ts_program::TsIngestSession| {
+    let mut drain = |s: &mut media_plane::ts_session::TsIngestSession| {
         while let Some(ev) = s.poll() {
             match ev {
                 // `ProgramTracker` assigns `ProgramId`s by iterating a
