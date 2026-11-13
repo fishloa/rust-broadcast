@@ -2196,7 +2196,11 @@ fn spawn_ingest(
                 )
                 .with_timeouts(timeouts)
                 .with_auth(ingest_auth.clone())
-                .with_max_object_bytes(max_object_bytes.unwrap_or(64 * 1024 * 1024) as usize)
+                .with_max_object_bytes(
+                    max_object_bytes.map_or(dash_runtime::ingest::DEFAULT_MAX_OBJECT_BYTES, |n| {
+                        n as usize
+                    }),
+                )
                 .with_body_timeout(body_timeout_secs.map(tokio::time::Duration::from_secs_f64)),
                 None => crate::source::dashif_ingest::DashifIngestRoute::new(
                     name,
@@ -2205,7 +2209,11 @@ fn spawn_ingest(
                 )
                 .with_timeouts(timeouts)
                 .with_auth(ingest_auth.clone())
-                .with_max_object_bytes(max_object_bytes.unwrap_or(64 * 1024 * 1024) as usize)
+                .with_max_object_bytes(
+                    max_object_bytes.map_or(dash_runtime::ingest::DEFAULT_MAX_OBJECT_BYTES, |n| {
+                        n as usize
+                    }),
+                )
                 .with_body_timeout(body_timeout_secs.map(tokio::time::Duration::from_secs_f64)),
             };
             spawn_supervised(

@@ -73,7 +73,7 @@ fn drain(s: &mut DashifIngestSession) -> Vec<SessionEvent> {
 /// A live session (manifest + both headers) with the AUDIO segment already
 /// ingested whole, so only the video representation is exercised.
 fn live(f: &Fixture) -> DashifIngestSession {
-    let mut s = DashifIngestSession::new();
+    let mut s = DashifIngestSession::new(dash_runtime::ingest::DashifIngestConfig::default());
     feed(
         &mut s,
         ObjectKind::Manifest(ManifestFormat::Dash),
@@ -264,7 +264,7 @@ fn a_duplicate_segment_emits_nothing_even_when_streamed() {
 #[test]
 fn begin_runs_the_same_checks_as_the_whole_object_path() {
     let f = presentation();
-    let mut s = DashifIngestSession::new();
+    let mut s = DashifIngestSession::new(dash_runtime::ingest::DashifIngestConfig::default());
     let e = s.begin_segment("1", Some(1), None).unwrap_err();
     assert!(
         matches!(e, SessionError::Ingest(IngestError::NoManifest)),

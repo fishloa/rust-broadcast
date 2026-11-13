@@ -83,8 +83,68 @@ pub struct SegmentHandle {
     buf: Vec<u8>,
 }
 
+/// Default for [`DashifIngestConfig::max_object_bytes`]: 64 MiB.
+pub const DEFAULT_MAX_OBJECT_BYTES: usize = 64 * 1024 * 1024;
+
+/// Default for [`DashifIngestConfig::max_buffered_object_bytes`]: 8 MiB.
+pub const DEFAULT_MAX_BUFFERED_OBJECT_BYTES: usize = 8 * 1024 * 1024;
+
+/// Default for [`DashifIngestConfig::buffered_budget_bytes`]: 64 MiB.
+pub const DEFAULT_BUFFERED_BUDGET_BYTES: usize = 64 * 1024 * 1024;
+
+/// The limits a DASH-IF ingest host enforces on what a publisher sends. The
+/// session carries them so the host reads one policy from one place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct DashifIngestConfig {
+    /// Hard cap on one ingested object's body.
+    pub max_object_bytes: usize,
+    /// Cap on one buffered (non-segment) object: manifests and init segments
+    /// are kilobytes and every buffered byte is held in memory until consumed,
+    /// so this is far below `max_object_bytes`, which bounds a streamed media
+    /// segment. The effective cap is the smaller of the two.
+    pub max_buffered_object_bytes: usize,
+    /// Bytes of non-segment objects held buffered at once, summed over
+    /// concurrent requests; a request that would exceed it is refused.
+    pub buffered_budget_bytes: usize,
+}
+
+impl Default for DashifIngestConfig {
+    fn default() -> Self {
+        DashifIngestConfig {
+            max_object_bytes: DEFAULT_MAX_OBJECT_BYTES,
+            max_buffered_object_bytes: DEFAULT_MAX_BUFFERED_OBJECT_BYTES,
+            buffered_budget_bytes: DEFAULT_BUFFERED_BUDGET_BYTES,
+        }
+    }
+}
+
+impl DashifIngestConfig {
+    /// Replace [`DashifIngestConfig::max_object_bytes`].
+    #[must_use]
+    pub fn with_max_object_bytes(mut self, max_object_bytes: usize) -> Self {
+        self.max_object_bytes = max_object_bytes;
+        self
+    }
+
+    /// Replace [`DashifIngestConfig::max_buffered_object_bytes`].
+    #[must_use]
+    pub fn with_max_buffered_object_bytes(mut self, max_buffered_object_bytes: usize) -> Self {
+        self.max_buffered_object_bytes = max_buffered_object_bytes;
+        self
+    }
+
+    /// Replace [`DashifIngestConfig::buffered_budget_bytes`].
+    #[must_use]
+    pub fn with_buffered_budget_bytes(mut self, buffered_budget_bytes: usize) -> Self {
+        self.buffered_budget_bytes = buffered_budget_bytes;
+        self
+    }
+}
+
 /// Sans-IO ingest session for one DASH-IF Interface-1 publishing point.
 pub struct DashifIngestSession {
+    config: DashifIngestConfig,
     grouping: Option<ManifestGrouping>,
     rep_order: Vec<String>,
     reps: HashMap<String, RepData>,
@@ -101,9 +161,16 @@ impl DashifIngestSession {
         self.grouping.clone()
     }
 
-    /// Construct an empty session. No manifest has been received yet.
-    pub fn new() -> Self {
+    /// The limits this session was configured with.
+    pub fn config(&self) -> DashifIngestConfig {
+        self.config
+    }
+
+    /// Construct an empty session with `config`. No manifest has been
+    /// received yet.
+    pub fn new(config: DashifIngestConfig) -> Self {
         Self {
+            config,
             grouping: None,
             rep_order: Vec::new(),
             reps: HashMap::new(),
@@ -453,12 +520,6 @@ impl DashifIngestSession {
                 }
             }
         }
-    }
-}
-
-impl Default for DashifIngestSession {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
