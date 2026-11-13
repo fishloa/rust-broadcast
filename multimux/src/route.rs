@@ -1339,6 +1339,8 @@ impl ProgramServing {
 /// serving state lives in `Self::programs` (the `programs` field, below),
 /// created only by [`Self::publish_program`].
 pub struct RouteHandle {
+    /// This route's catch-up scan permits; built by the first catch-up request.
+    catchup_scans: std::sync::OnceLock<Arc<tokio::sync::Semaphore>>,
     health: Mutex<HealthState>,
     target_duration_secs: f64,
     part_target_ms: u32,
@@ -1464,6 +1466,7 @@ impl RouteHandle {
     pub fn new(target_duration_secs: f64, part_target_ms: u32, window_segments: usize) -> Self {
         let window_segments = NonZeroUsize::new(window_segments).unwrap_or(NonZeroUsize::MIN);
         RouteHandle {
+            catchup_scans: std::sync::OnceLock::new(),
             health: Mutex::new(HealthState::Connecting),
             target_duration_secs,
             part_target_ms,
@@ -1723,6 +1726,10 @@ impl RouteHandle {
     /// the on-disk archive root — `crate::dvr::DvrRecorder` itself reads
     /// `self.dvr_config` directly, not through this accessor, since it is
     /// built once at [`Self::publish_program`] time.
+    pub(crate) fn catchup_scans(&self) -> &std::sync::OnceLock<Arc<tokio::sync::Semaphore>> {
+        &self.catchup_scans
+    }
+
     pub(crate) fn dvr_config(&self) -> Option<&crate::dvr::DvrConfig> {
         self.dvr_config.as_ref().filter(|c| c.enabled)
     }

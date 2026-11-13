@@ -85,9 +85,10 @@
 //! mitigated only by `IngestTimeouts` eventually giving up on that one
 //! connection). [`run_rtmp`]'s `ListenDriver` admits and drives up to
 //! `max_sessions` sessions **concurrently** — each session's read is its own
-//! independent `tokio` task, raced via `FuturesUnordered`, so one stalled
-//! publisher's read future simply never resolves while every other session's
-//! read future keeps making progress. See this module's
+//! independent `tokio` task that owns its connection and hands outcomes to the
+//! route's publisher over a bounded channel, so one stalled publisher's task
+//! simply waits on its socket while every other session's task keeps reading,
+//! even while the publisher is busy segmenting. See this module's
 //! `second_publisher_is_served_while_first_is_stalled_at_handshake` test.
 //!
 //! # Preserved behaviours (unchanged by this port)
@@ -126,19 +127,16 @@
 
 use std::collections::{BTreeSet, VecDeque};
 use std::convert::Infallible;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 use transmux::TrackId;
 
 use broadcast_common::{Demand, Stage, Timestamp};
-use futures_util::StreamExt;
-use futures_util::stream::FuturesUnordered;
 use rtmp_runtime::io::{AcceptedRtmpConnection, AsyncRtmpServer, RtmpConnection};
 use rtmp_runtime::server::{ServerConfig, ServerEvent};
-use tokio::sync::{Mutex as TokioMutex, OnceCell, mpsc};
+use tokio::sync::{OnceCell, mpsc};
+use tokio::task::JoinSet;
 use transmux::pipeline::{Sample, TrackSpec};
 use transmux::{DemuxEvent, StreamingFlvDemux};
 
@@ -151,10 +149,6 @@ use media_plane::trunk::{RetentionClass, TrunkConfig};
 use crate::error::{MultimuxError, Result};
 use crate::route::RouteHandle;
 use crate::source::{DriverProgress, IngestTimeouts, Source};
-
-/// One [`read_one`] call, boxed so [`run_rtmp`] can hold many of them (one
-/// per admitted session) in a single [`FuturesUnordered`].
-type BoxedRead = Pin<Box<dyn Future<Output = (SessionId, ReadOutcome)> + Send>>;
 
 /// Default cap on concurrently admitted RTMP publishers per route
 /// ([`Listener::max_sessions`]) — generous for a single origin's worth of
@@ -171,6 +165,10 @@ pub const DEFAULT_RTMP_MAX_SESSIONS: usize = 16;
 /// arriving faster than they're drained cannot grow this channel without
 /// bound.
 const ACCEPT_QUEUE_CAPACITY: usize = 32;
+
+/// Read outcomes one session may have queued for the route's publisher before
+/// its read task waits.
+const OUTCOMES_PER_SESSION: usize = 4;
 
 /// The bind-once, reuse-forever infrastructure [`RtmpRoute::ensure_infra`]
 /// builds exactly once and every [`run_rtmp`] attempt shares — see the
@@ -402,12 +400,14 @@ impl Listener for RtmpListener {
     }
 }
 
-/// An admitted RTMP publisher: a shared handle to its accepted
-/// [`RtmpConnection`] (read by [`run_rtmp`]'s own per-session task — see the
-/// module doc's "Why `RtmpIngestSession` isn't fed raw bytes") plus the FLV
+/// An admitted RTMP publisher: its accepted [`RtmpConnection`] until
+/// [`run_rtmp`] moves it into the session's own read task (see the module
+/// doc's "Why `RtmpIngestSession` isn't fed raw bytes") plus the FLV
 /// demux state that translates [`ServerEvent`]s into [`SessionEvent`]s.
 pub struct RtmpIngestSession {
-    conn: Arc<TokioMutex<RtmpConnection>>,
+    /// In a `Mutex` only so the session is `Sync` (`RtmpConnection` is not);
+    /// it is never locked, only reached through `&mut self`.
+    conn: StdMutex<Option<RtmpConnection>>,
     app: Option<String>,
     demux: StreamingFlvDemux,
     /// The [`DemuxEvent`] -> [`SessionEvent`] translation state.
@@ -429,18 +429,21 @@ struct FlvEvents {
 }
 
 impl RtmpIngestSession {
-    /// A cheap `Arc` clone of the accepted connection — [`run_rtmp`]'s own
-    /// per-session read task uses this to call
+    /// The accepted connection, handed over once to [`run_rtmp`]'s
+    /// per-session read task, which owns it outright (no lock) and calls
     /// [`RtmpConnection::next_events`] concurrently with every other
     /// session's, entirely outside this sans-IO [`Stage`] impl. See the
-    /// module doc.
-    pub fn conn_handle(&self) -> Arc<TokioMutex<RtmpConnection>> {
-        Arc::clone(&self.conn)
+    /// module doc. `None` after the first call.
+    fn take_connection(&mut self) -> Option<RtmpConnection> {
+        self.conn
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
     }
 
     fn new(conn: RtmpConnection, app: Option<String>) -> Self {
         RtmpIngestSession {
-            conn: Arc::new(TokioMutex::new(conn)),
+            conn: StdMutex::new(Some(conn)),
             app,
             demux: StreamingFlvDemux::new(),
             events: FlvEvents::default(),
@@ -465,7 +468,15 @@ impl RtmpIngestSession {
     /// session one protocol read at a time.
     #[cfg(feature = "test-seams")]
     pub async fn next_events_for_test(&mut self) -> std::io::Result<Option<Vec<ServerEvent>>> {
-        self.conn.lock().await.next_events().await
+        match self
+            .conn
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_mut()
+        {
+            Some(conn) => conn.next_events().await,
+            None => Ok(None),
+        }
     }
 }
 
@@ -617,7 +628,7 @@ impl IngestSession for RtmpIngestSession {
     type Request = Infallible;
 }
 
-/// What one [`read_one`] call observed.
+/// What one read of a session's connection observed.
 enum ReadOutcome {
     /// A batch of parsed (and already replied-to) events, ready to `feed`.
     Events(Vec<ServerEvent>),
@@ -631,25 +642,29 @@ enum ReadOutcome {
     TimedOut,
 }
 
-/// Awaits the next batch of events for session `id`, bounded by
-/// `read_timeout` — the async half of driving an [`RtmpIngestSession`] (see
-/// the module doc). Boxed so [`run_rtmp`] can hold many of these,
-/// one per admitted session, in one [`FuturesUnordered`].
-fn read_one(
+/// Session `id`'s own read task: owns `conn` and hands every outcome to the
+/// route's publisher over `tx`, a bounded channel, so a slow publisher applies
+/// back-pressure here instead of growing a queue. Each read is bounded by
+/// `read_timeout`. Ends after a terminal outcome (EOF, error, idle timeout) or
+/// when the receiver is gone.
+async fn read_session(
     id: SessionId,
-    conn: Arc<TokioMutex<RtmpConnection>>,
+    mut conn: RtmpConnection,
     read_timeout: Duration,
-) -> BoxedRead {
-    Box::pin(async move {
-        let mut guard = conn.lock().await;
-        let outcome = match tokio::time::timeout(read_timeout, guard.next_events()).await {
+    tx: mpsc::Sender<(SessionId, ReadOutcome)>,
+) {
+    loop {
+        let outcome = match tokio::time::timeout(read_timeout, conn.next_events()).await {
             Ok(Ok(Some(events))) => ReadOutcome::Events(events),
             Ok(Ok(None)) => ReadOutcome::Eof,
             Ok(Err(e)) => ReadOutcome::TransportError(e.to_string()),
             Err(_) => ReadOutcome::TimedOut,
         };
-        (id, outcome)
-    })
+        let terminal = !matches!(outcome, ReadOutcome::Events(_));
+        if tx.send((id, outcome)).await.is_err() || terminal {
+            return;
+        }
+    }
 }
 
 /// Publish and segment session `id`'s programs once its read made progress,
@@ -803,7 +818,9 @@ pub(crate) async fn run_rtmp_with_clock(
     };
     let start = clock();
     let read_timeout = route.timeouts.read;
-    let mut reads: FuturesUnordered<BoxedRead> = FuturesUnordered::new();
+    let (outcomes_tx, mut outcomes) =
+        mpsc::channel(route.max_sessions.max(1) * OUTCOMES_PER_SESSION);
+    let mut readers: JoinSet<()> = JoinSet::new();
 
     // The shared admitted-session driver (media-plane): admission, the
     // per-session clock origin, publish-then-reap and the live-session gauge
@@ -833,7 +850,7 @@ pub(crate) async fn run_rtmp_with_clock(
             () = infra.admit_notify.notified() => {
                 admitted.prune_clocks();
             }
-            Some((id, outcome)) = reads.next(), if !reads.is_empty() => {
+            Some((id, outcome)) = outcomes.recv() => {
                 let now = admitted.now(id, clock());
                 match outcome {
                     ReadOutcome::Events(events) => admitted.feed(id, &events[..], now),
@@ -848,16 +865,10 @@ pub(crate) async fn run_rtmp_with_clock(
                     }
                 }
                 advance(&mut admitted, id, route_handle).await;
-                let reaped = admitted.reap(id);
+                admitted.reap(id);
                 infra
                     .session_count
                     .store(admitted.session_count(), Ordering::SeqCst);
-                if !reaped
-                    && let Some(d) = admitted.driver(id)
-                {
-                    let conn = d.session().conn_handle();
-                    reads.push(read_one(id, conn, read_timeout));
-                }
             }
         }
 
@@ -870,11 +881,13 @@ pub(crate) async fn run_rtmp_with_clock(
         };
         for id in admitted_now {
             admitted.register(id, clock());
-            let conn = admitted.driver(id).map(|d| d.session().conn_handle());
+            let conn = admitted
+                .driver_mut(id)
+                .and_then(|d| d.session_mut().take_connection());
             let Some(conn) = conn else { continue };
             infra.admitted_total.fetch_add(1, Ordering::SeqCst);
             infra.admit_count_notify.notify_waiters();
-            reads.push(read_one(id, conn, read_timeout));
+            readers.spawn(read_session(id, conn, read_timeout, outcomes_tx.clone()));
         }
     }
 }
@@ -1591,5 +1604,49 @@ mod tests {
         run_task.abort();
         idle_client.abort();
         good_client.abort();
+    }
+
+    /// RTMP handshake C0 version byte.
+    const RTMP_VERSION: u8 = 3;
+    /// RTMP handshake C1 length.
+    const HANDSHAKE_C1_LEN: usize = 1536;
+    /// Handshake reply S0 + S1 + S2 length.
+    const HANDSHAKE_REPLY_LEN: usize = 1 + 2 * HANDSHAKE_C1_LEN;
+
+    /// Two sessions' read tasks answer their peers' handshakes while the
+    /// route's publisher is not receiving at all: each session's reads are its
+    /// own task, not futures the publisher loop polls between its own work.
+    #[tokio::test]
+    async fn session_reads_progress_while_the_publisher_is_not_receiving() {
+        use rtmp_runtime::io::RtmpTimeouts;
+        let (tx, _unread) = mpsc::channel(OUTCOMES_PER_SESSION);
+        let mut readers = JoinSet::new();
+        let mut clients = Vec::new();
+        for id in 0..2 {
+            let (client, server) = tokio::io::duplex(4 * HANDSHAKE_REPLY_LEN);
+            let conn = RtmpConnection::from_stream_erased(
+                server,
+                ServerSession::new(ServerConfig::default()),
+                RtmpTimeouts::default(),
+            );
+            readers.spawn(read_session(
+                SessionId(id),
+                conn,
+                Duration::from_secs(30),
+                tx.clone(),
+            ));
+            clients.push(client);
+        }
+        for mut client in clients {
+            let mut c0c1 = vec![RTMP_VERSION];
+            c0c1.extend_from_slice(&[0u8; HANDSHAKE_C1_LEN]);
+            client.write_all(&c0c1).await.expect("write C0+C1");
+            let mut reply = vec![0u8; HANDSHAKE_REPLY_LEN];
+            tokio::time::timeout(Duration::from_secs(10), client.read_exact(&mut reply))
+                .await
+                .expect("the handshake reply arrives with nobody receiving outcomes")
+                .expect("read S0+S1+S2");
+            assert_eq!(reply[0], RTMP_VERSION);
+        }
     }
 }

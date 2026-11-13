@@ -164,7 +164,7 @@ pub(crate) fn read_period_segments(dir: &Path, period_num: u32) -> Arc<Vec<Archi
         inode: stamp.2,
     };
 
-    let cache = index_cache();
+    let cache = index_cache(dir);
     // Poison-recovering (the cache is only ever a memo: a lost or stale entry
     // is recomputed from the sidecar).
     let mut guard = cache.lock();
@@ -312,16 +312,22 @@ pub(crate) fn parse_index(data: &[u8]) -> Result<Vec<IndexEntry>, serde_json::Er
     }
 }
 
-fn index_cache() -> &'static Mutex<IndexCache> {
-    static CACHE: OnceLock<Mutex<IndexCache>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(IndexCache::default()))
+/// The index cache of the archive directory `dir`, which belongs to exactly
+/// one route. Each route has its own cache and its own lock, so one route's
+/// scans never contend with another's; the registry lock is held only to find
+/// or create the entry.
+fn index_cache(dir: &Path) -> Arc<Mutex<IndexCache>> {
+    static CACHES: OnceLock<Mutex<std::collections::HashMap<PathBuf, Arc<Mutex<IndexCache>>>>> =
+        OnceLock::new();
+    let mut caches = CACHES.get_or_init(Default::default).lock();
+    Arc::clone(caches.entry(dir.to_path_buf()).or_default())
 }
 
 /// Drop cached indices whose sidecar no longer exists under `dir` — called
 /// opportunistically so a deleted/rolled archive does not keep stale
 /// entries resident. Correctness never depends on this.
 fn prune_index_cache(dir: &Path) {
-    index_cache()
+    index_cache(dir)
         .lock()
         .entries
         .retain(|path, _| path.parent() != Some(dir) || path.exists());
@@ -1354,5 +1360,29 @@ mod tests {
             parse_index(b"not json }"),
             Err(e) if e.is_syntax()
         ));
+    }
+
+    /// Two archive directories (two routes) have separate caches, and one
+    /// route's cache lock being held never delays another route's index read.
+    #[test]
+    fn each_archive_directory_has_its_own_index_cache() {
+        let first = temp_dir();
+        let second = temp_dir();
+        assert!(Arc::ptr_eq(&index_cache(&first), &index_cache(&first)));
+        assert!(!Arc::ptr_eq(&index_cache(&first), &index_cache(&second)));
+
+        let first_cache = index_cache(&first);
+        let _held = first_cache.lock();
+        let (done, finished) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            let segments = read_period_segments(&second, 0);
+            done.send(segments.len()).expect("receiver alive");
+            cleanup(&second);
+        });
+        finished
+            .recv_timeout(Duration::from_secs(5))
+            .expect("another route's read is not blocked by this route's cache lock");
+        reader.join().expect("reader thread");
+        cleanup(&first);
     }
 }
