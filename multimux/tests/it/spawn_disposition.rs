@@ -29,7 +29,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "route.rs",
-        1167,
+        1171,
         "spawn_blocking DVR persist; awaited inline",
     ),
     ("dvr.rs", 603, "spawn_blocking DVR write; awaited inline"),
@@ -91,38 +91,43 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "output/whep.rs",
-        817,
+        811,
         "WHEP saturated-accept test harness server; cancelled by the returned token",
     ),
     (
         "output/whep.rs",
-        871,
+        865,
         "serve_whep_run_for_test -> run_whep_with_tracker; cancelled by the returned token",
     ),
     (
         "output/whep.rs",
-        909,
+        903,
         "serve_whep_run_probed_for_test -> run_whep_on_probed; cancelled by the returned WhepRunHarness token (test-hooks only)",
     ),
     (
         "output/whep.rs",
-        1531,
+        1524,
         "WHEP signalling server; JOINED before run_whep returns (port-release ordering)",
     ),
     (
         "output/whep.rs",
-        1553,
+        1546,
         "WHEP viewer session on the run's session TaskTracker (close()+wait() on cancel)",
     ),
     (
         "origin/mod.rs",
-        639,
+        652,
         "per-connection task on the listener's TaskTracker (serve_hyper_util reaps finished tasks)",
     ),
     (
         "origin/mod.rs",
-        748,
+        761,
         "per-connection task on the listener's TaskTracker (serve_hyper_util reaps finished tasks)",
+    ),
+    (
+        "output/smooth.rs",
+        277,
+        "spawn_blocking for a Smooth plan or fragment build, bounded by the program's MAX_CONCURRENT_BUILDS semaphore (permit moved into the closure); awaited inline (owned by the request)",
     ),
     (
         "output/catchup.rs",
@@ -131,17 +136,17 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "origin/mod.rs",
-        1648,
+        1661,
         "Ctrl-C/SIGTERM shutdown watcher; aborted/awaited at process shutdown",
     ),
     (
         "origin/mod.rs",
-        1824,
+        1837,
         "spawn_following -> follow_trunk; the returned JoinHandle is owned by the caller and dropped on route teardown (async drop cancels)",
     ),
     (
         "origin/mod.rs",
-        2345,
+        2358,
         "supervise_driver; spawned under the route cancellation token",
     ),
     (

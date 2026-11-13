@@ -25,6 +25,7 @@ transmux          = { path = "../transmux", version = "0.31.0", default-features
 # `Trunk` is `std`-only (see its module doc), the same gate `hls-runtime`'s
 # `server` module inherits.
 media-plane       = { path = "../media-plane", version = "0.11.0", optional = true, default-features = false }
+bytes             = { version = "1", optional = true }
 url               = "2"
 thiserror         = "2"
 
@@ -38,7 +39,7 @@ quick-xml        = { workspace = true }
 
 [features]
 default = ["std"]
-std = ["broadcast-common/std", "broadcast-smooth/std", "transmux/std", "thiserror/std", "media-plane/std"]
+std = ["broadcast-common/std", "broadcast-smooth/std", "transmux/std", "thiserror/std", "media-plane/std", "dep:bytes"]
 
 [lints]
 workspace = true

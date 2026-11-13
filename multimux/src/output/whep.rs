@@ -134,12 +134,6 @@ use axum::response::IntoResponse as _;
 /// inbound viewer connections.
 pub const DEFAULT_WHEP_MAX_SESSIONS: usize = 64;
 
-/// How often `run_whep_session`'s read loop times out waiting for an
-/// inbound datagram before checking the `Trunk` cursor for new samples to
-/// send — see `crate::source::whip`'s `ACCEPT_POLL_INTERVAL` for the
-/// identical "bounded poll, not a busy loop" reasoning.
-const SESSION_POLL_INTERVAL: Duration = Duration::from_millis(10);
-
 /// Bound on the accept-pump's admission channel — see
 /// `crate::source::whip::ACCEPT_QUEUE_CAPACITY`'s identical reasoning.
 const ACCEPT_QUEUE_CAPACITY: usize = 32;
@@ -1259,12 +1253,11 @@ async fn run_whep_session_with_silence_timeout(
     // deliberately do not count, matching or not.
     let mut last_inbound = Instant::now();
     // N5: the transport's timer fire is floored from ITS own previous fire
-    // (so a stuck, always-overdue deadline cannot re-arm every iteration), and
-    // the silence reap uses an ABSOLUTE deadline that is only advanced when it
-    // actually fires — otherwise a 1 kHz timer would reset `sleep(10ms)` before
-    // it ever elapsed and the vanished-viewer reap would never run.
+    // (so a stuck, always-overdue deadline cannot re-arm every iteration).
     let mut last_timer_fire = Instant::now();
-    let mut next_silence_check = Instant::now() + SESSION_POLL_INTERVAL;
+    // Registered before every drain of `cursor`, so a sample published after
+    // the drain wakes the next `select!`.
+    let mut sample_wake = trunk.data_listener();
 
     loop {
         if cancel.is_cancelled() {
@@ -1350,12 +1343,11 @@ async fn run_whep_session_with_silence_timeout(
             }
             // A `PATCH`/`DELETE` landed: loop back, the top applies it.
             () = control.notified() => {}
-            // The poll tick (silence reap + sample drain): NOT a transport
-            // timer driver, only the bound at which a vanished viewer is
-            // checked for. Uses an absolute deadline advanced only on fire, so
-            // a fast timer arm cannot perpetually push it back (N5).
-            () = tokio::time::sleep_until(tokio::time::Instant::from_std(next_silence_check)) => {
-                next_silence_check = Instant::now() + SESSION_POLL_INTERVAL;
+            // A sample (or track-set change) was published: drain it below.
+            () = &mut sample_wake, if handshake_done => {}
+            // Vanished-viewer reap, at the exact instant the silence bound
+            // lapses; no periodic tick.
+            () = tokio::time::sleep_until(tokio::time::Instant::from_std(last_inbound + silence_timeout)) => {
                 if last_inbound.elapsed() >= silence_timeout {
                     tracing::info!("whep: session ending after inbound silence timeout");
                     break;
@@ -1363,6 +1355,7 @@ async fn run_whep_session_with_silence_timeout(
             }
         }
 
+        sample_wake = trunk.data_listener();
         if handshake_done && let Some(peer) = peer_addr {
             while let Some(item) = cursor.poll() {
                 match item {
@@ -2139,12 +2132,11 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
     }
 
     /// Finding N5 (fairness): a transport whose `poll_timeout` is perpetually
-    /// overdue must NOT starve the silence reap. The old timer arm re-created
-    /// the 10 ms silence `sleep` every loop iteration, so a 1 kHz stuck timer
-    /// reset it before it ever elapses and the vanished viewer was never
-    /// reaped. The fix gives the silence tick an ABSOLUTE deadline advanced
-    /// only on fire; reverting it to `sleep(SESSION_POLL_INTERVAL)` leaves
-    /// this session running past the bounded wait (fails).
+    /// overdue must NOT starve the silence reap. The reap sleeps to the
+    /// absolute instant `last_inbound + silence_timeout`, which a loop
+    /// iteration driven by the stuck timer cannot push back; a `sleep` of a
+    /// fixed duration re-created per iteration would be reset before it ever
+    /// elapsed and leave this session running past the bounded wait (fails).
     #[tokio::test]
     async fn a_stuck_transport_deadline_does_not_prevent_the_silence_reap() {
         let mut admitted = test_admitted_whep().await;

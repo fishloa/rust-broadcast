@@ -1,9 +1,11 @@
 //! [`SmoothOrigin`]: the live Manifest and fragment resolution over a `Trunk`.
 
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use broadcast_common::{Timestamp, Unpackage};
 use broadcast_smooth::{C, QualityLevel, SmoothManifest, StreamIndex, StreamType};
+use bytes::Bytes;
 use media_plane::Trunk;
 use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress};
 use media_plane::ids::SegmentSeq;
@@ -142,7 +144,7 @@ pub enum SmoothBody {
     /// The client Manifest document.
     Manifest(String),
     /// One fragment's `styp`+`moof`(+`tfxd`)+`mdat` bytes.
-    Fragment(Vec<u8>),
+    Fragment(Bytes),
 }
 
 /// Why a [`SmoothOrigin`] cannot describe the trunk's media.
@@ -333,14 +335,16 @@ fn advertised_bitrate(codec: &SmoothCodec) -> u64 {
 /// presence check with no store of its own is the plain adapter.
 pub trait SegmentProvider: Send + Sync {
     /// The program's published (sequence number, bytes) pairs, oldest first.
-    fn segments(&self) -> Vec<(SegmentSeq, Arc<[u8]>)>;
+    /// The bytes are shared handles: a provider hands out the segment it
+    /// already holds, never a copy.
+    fn segments(&self) -> Vec<(SegmentSeq, Bytes)>;
 }
 
 impl<F> SegmentProvider for F
 where
-    F: Fn() -> Vec<(SegmentSeq, Arc<[u8]>)> + Send + Sync,
+    F: Fn() -> Vec<(SegmentSeq, Bytes)> + Send + Sync,
 {
-    fn segments(&self) -> Vec<(SegmentSeq, Arc<[u8]>)> {
+    fn segments(&self) -> Vec<(SegmentSeq, Bytes)> {
         self()
     }
 }
@@ -371,11 +375,86 @@ pub struct SmoothOrigin {
     /// The init segment the trunk's segments were muxed with — the one thing
     /// no `Trunk` ring holds, and what a fragment request is re-demuxed
     /// against.
-    init: Mutex<Option<Arc<[u8]>>>,
+    init: Mutex<InitSlot>,
     /// The program's published segments.
     provider: Arc<dyn SegmentProvider>,
     /// The program's current track set, as the host records it.
     tracks: Arc<dyn TrackProvider>,
+    /// The plan built for the window it was last asked about; a request whose
+    /// [`PlanKey`] is unchanged reuses it.
+    plan_cache: Mutex<Option<CachedPlan>>,
+    /// Held for the whole of a plan build, so concurrent requests that all
+    /// miss build it once and the rest find it cached.
+    build_gate: Mutex<()>,
+    /// Packaged fragments of the cached plan's window, each built once.
+    fragments: Mutex<HashMap<FragmentKey, FragmentSlot>>,
+    #[cfg(test)]
+    plan_builds: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    fragment_builds: std::sync::atomic::AtomicUsize,
+}
+
+/// The stored init segment and how many distinct ones have been stored.
+#[derive(Default)]
+struct InitSlot {
+    bytes: Option<Bytes>,
+    generation: u64,
+}
+
+/// What a [`Plan`] depends on: the init segment generation, the track set and
+/// the window's segment sequence numbers. Equal keys yield equal plans.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PlanKey {
+    init_generation: u64,
+    tracks: Vec<TrackSpec>,
+    window: Vec<SegmentSeq>,
+}
+
+struct CachedPlan {
+    key: PlanKey,
+    plan: Result<Arc<Plan>, SmoothOriginError>,
+}
+
+/// One packaged fragment: the stream, its `c@t` and the segment it came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct FragmentKey {
+    kind: &'static str,
+    ordinal: u32,
+    start: u64,
+    sequence: u32,
+}
+
+impl FragmentKey {
+    fn new(stream: StreamKey, chunk: &ChunkTiming) -> Self {
+        Self {
+            kind: stream.kind.name(),
+            ordinal: stream.ordinal,
+            start: chunk.start,
+            sequence: chunk.sequence.value(),
+        }
+    }
+
+    fn is_in(&self, plan: &Plan) -> bool {
+        plan.streams.iter().any(|stream| {
+            stream.key.kind.name() == self.kind
+                && stream.key.ordinal == self.ordinal
+                && stream.chunks.iter().any(|chunk| {
+                    chunk.start == self.start && chunk.sequence.value() == self.sequence
+                })
+        })
+    }
+}
+
+/// A fragment packaged at most once; concurrent requests for it wait on the
+/// first.
+type FragmentSlot = Arc<OnceLock<Result<Bytes, SmoothOriginError>>>;
+
+/// Everything one request reads: the plan for the window it saw, that window's
+/// segments and the init segment they were planned against.
+struct Snapshot {
+    plan: Arc<Plan>,
+    init: Bytes,
+    segments: Vec<(SegmentSeq, Bytes)>,
 }
 
 impl SmoothOrigin {
@@ -389,9 +468,16 @@ impl SmoothOrigin {
     ) -> Self {
         Self {
             trunk,
-            init: Mutex::new(None),
+            init: Mutex::new(InitSlot::default()),
             provider,
             tracks,
+            plan_cache: Mutex::new(None),
+            build_gate: Mutex::new(()),
+            fragments: Mutex::new(HashMap::new()),
+            #[cfg(test)]
+            plan_builds: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            fragment_builds: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -404,33 +490,47 @@ impl SmoothOrigin {
     /// vocabulary [`SmoothRequest::parse`] needs to read a request path.
     /// Empty while the trunk has nothing to describe.
     pub fn stream_keys(&self) -> Vec<StreamKey> {
-        match self.plan() {
-            Ok(plan) => plan.streams.iter().map(|stream| stream.key).collect(),
+        match self.snapshot() {
+            Ok(snapshot) => snapshot
+                .plan
+                .streams
+                .iter()
+                .map(|stream| stream.key)
+                .collect(),
             Err(_) => Vec::new(),
         }
     }
 
     /// Store the fMP4 init segment the trunk's segments are muxed with — the
     /// one thing no `Trunk` ring holds, and what a fragment request is
-    /// re-demuxed against.
-    pub fn set_init(&self, bytes: impl Into<Arc<[u8]>>) {
-        *locked(&self.init) = Some(bytes.into());
+    /// re-demuxed against. Storing the segment already held changes nothing,
+    /// so a host may call this on every request without invalidating the
+    /// cached plan.
+    pub fn set_init(&self, bytes: impl Into<Bytes>) {
+        let bytes = bytes.into();
+        let mut slot = locked(&self.init);
+        if slot.bytes.as_ref() == Some(&bytes) {
+            return;
+        }
+        slot.bytes = Some(bytes);
+        slot.generation = slot.generation.saturating_add(1);
     }
 
     /// The init segment currently stored, if any.
-    pub fn init(&self) -> Option<Arc<[u8]>> {
-        locked(&self.init).clone()
+    pub fn init(&self) -> Option<Bytes> {
+        locked(&self.init).bytes.clone()
     }
 
     /// The fragments currently advertised, in manifest order, or `None` while
     /// the trunk has nothing to advertise yet.
     pub fn fragments(&self) -> Result<Vec<FragmentLocation>, SmoothOriginError> {
-        let plan = match self.plan() {
-            Ok(plan) => plan,
+        let snapshot = match self.snapshot() {
+            Ok(snapshot) => snapshot,
             Err(Unavailable::Waiting { .. }) => return Ok(Vec::new()),
             Err(Unavailable::Unusable(error)) => return Err(error),
         };
-        Ok(plan
+        Ok(snapshot
+            .plan
             .streams
             .iter()
             .flat_map(|stream| {
@@ -446,9 +546,9 @@ impl SmoothOrigin {
     /// Render the live client Manifest, or why it cannot be rendered yet
     /// (`EgressResponse::Await`) or at all (`EgressResponse::BadRequest`).
     pub fn manifest(&self, now: Timestamp, await_policy: AwaitPolicy) -> EgressResponse<String> {
-        match self.plan() {
-            Ok(plan) => EgressResponse::Ready {
-                body: plan.manifest,
+        match self.snapshot() {
+            Ok(snapshot) => EgressResponse::Ready {
+                body: snapshot.plan.manifest.clone(),
                 cache: CachePolicy::NoCache,
             },
             Err(Unavailable::Waiting {
@@ -479,25 +579,122 @@ impl From<SmoothOriginError> for Unavailable {
 }
 
 impl SmoothOrigin {
-    /// Describe the trunk's current media:
-    /// resolve the trunk's media into a [`Plan`].
-    fn plan(&self) -> Result<Plan, Unavailable> {
-        let init = self.init().ok_or(Unavailable::Waiting {
+    /// The plan for the window the host presents now: the cached one when
+    /// nothing it depends on has changed, otherwise a rebuilt one (built once
+    /// however many requests miss together).
+    fn snapshot(&self) -> Result<Snapshot, Unavailable> {
+        let waiting = || Unavailable::Waiting {
             retry_no_earlier_than: Timestamp::from_nanos(0),
-        })?;
+        };
+        let (init, init_generation) = self.init_slot().ok_or_else(waiting)?;
         let specs = self.tracks.tracks();
         if specs.is_empty() {
-            return Err(Unavailable::Waiting {
-                retry_no_earlier_than: Timestamp::from_nanos(0),
-            });
+            return Err(waiting());
         }
         let segments = self.provider.segments();
         if segments.is_empty() {
-            return Err(Unavailable::Waiting {
-                retry_no_earlier_than: Timestamp::from_nanos(0),
-            });
+            return Err(waiting());
         }
-        Ok(build_plan(&specs, &init, &segments)?)
+        let key = plan_key(init_generation, &specs, &segments);
+        let plan = match self.cached_plan(&key) {
+            Some(cached) => cached,
+            None => self.build(key, &specs, &init, &segments),
+        }?;
+        Ok(Snapshot {
+            plan,
+            init,
+            segments,
+        })
+    }
+
+    fn init_slot(&self) -> Option<(Bytes, u64)> {
+        let slot = locked(&self.init);
+        slot.bytes.clone().map(|bytes| (bytes, slot.generation))
+    }
+
+    fn cached_plan(&self, key: &PlanKey) -> Option<Result<Arc<Plan>, SmoothOriginError>> {
+        locked(&self.plan_cache)
+            .as_ref()
+            .filter(|cached| cached.key == *key)
+            .map(|cached| cached.plan.clone())
+    }
+
+    fn build(
+        &self,
+        key: PlanKey,
+        specs: &[TrackSpec],
+        init: &[u8],
+        segments: &[(SegmentSeq, Bytes)],
+    ) -> Result<Arc<Plan>, SmoothOriginError> {
+        let _gate = locked(&self.build_gate);
+        if let Some(cached) = self.cached_plan(&key) {
+            return cached;
+        }
+        #[cfg(test)]
+        self.plan_builds
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let built = build_plan(specs, init, segments).map(Arc::new);
+        self.retain_fragments_in(built.as_deref().ok());
+        *locked(&self.plan_cache) = Some(CachedPlan {
+            key,
+            plan: built.clone(),
+        });
+        built
+    }
+
+    /// Drop every packaged fragment the new plan's window no longer holds, so
+    /// the fragment cache never outgrows the window.
+    fn retain_fragments_in(&self, plan: Option<&Plan>) {
+        locked(&self.fragments).retain(|key, _| plan.is_some_and(|plan| key.is_in(plan)));
+    }
+
+    /// `true` when answering `request` now is a cache hit: no demux or
+    /// packaging is left to do, so it is cheap enough for any thread. A host
+    /// that must keep CPU-heavy work off an async worker calls
+    /// [`Self::prepare`] on a blocking thread when this is `false`.
+    pub fn is_warm(&self, request: &SmoothRequest) -> bool {
+        let Some((_, init_generation)) = self.init_slot() else {
+            return true;
+        };
+        let specs = self.tracks.tracks();
+        let segments = self.provider.segments();
+        if specs.is_empty() || segments.is_empty() {
+            return true;
+        }
+        let Some(cached) = self.cached_plan(&plan_key(init_generation, &specs, &segments)) else {
+            return false;
+        };
+        let (Ok(plan), SmoothRequest::Fragment { stream, start, .. }) = (cached, request) else {
+            return true;
+        };
+        let Some((_, chunk)) = plan.chunk(*stream, *start) else {
+            return true;
+        };
+        locked(&self.fragments)
+            .get(&FragmentKey::new(*stream, &chunk))
+            .is_some_and(|slot| slot.get().is_some())
+    }
+
+    /// Do the demuxing and packaging `request` needs, so the next
+    /// [`ServedEgress::resolve`] of it is a cache hit.
+    pub fn prepare(&self, request: SmoothRequest) {
+        drop(self.answer(
+            request,
+            Timestamp::from_nanos(0),
+            AwaitPolicy::new(Timestamp::from_nanos(0)),
+        ));
+    }
+}
+
+fn plan_key(
+    init_generation: u64,
+    specs: &[TrackSpec],
+    segments: &[(SegmentSeq, Bytes)],
+) -> PlanKey {
+    PlanKey {
+        init_generation,
+        tracks: specs.to_vec(),
+        window: segments.iter().map(|(sequence, _)| *sequence).collect(),
     }
 }
 
@@ -505,7 +702,7 @@ impl SmoothOrigin {
 fn build_plan(
     specs: &[TrackSpec],
     init: &[u8],
-    segments: &[(SegmentSeq, Arc<[u8]>)],
+    segments: &[(SegmentSeq, Bytes)],
 ) -> Result<Plan, SmoothOriginError> {
     let mut ordinals: Vec<(SmoothStreamType, u32)> = Vec::new();
     let mut streams: Vec<StreamPlan> = Vec::new();
@@ -565,7 +762,7 @@ const FIRST_TRACK_ID: u32 = 1;
 /// window slides.
 fn chunk_timeline(
     init: &[u8],
-    segments: &[(SegmentSeq, Arc<[u8]>)],
+    segments: &[(SegmentSeq, Bytes)],
     spec: &TrackSpec,
     key: StreamKey,
 ) -> Result<Vec<ChunkTiming>, SmoothOriginError> {
@@ -654,8 +851,19 @@ impl ServedEgress for SmoothOrigin {
         now: Timestamp,
         await_policy: AwaitPolicy,
     ) -> EgressResponse<SmoothBody> {
-        let plan = match self.plan() {
-            Ok(plan) => plan,
+        self.answer(request, now, await_policy)
+    }
+}
+
+impl SmoothOrigin {
+    fn answer(
+        &self,
+        request: SmoothRequest,
+        now: Timestamp,
+        await_policy: AwaitPolicy,
+    ) -> EgressResponse<SmoothBody> {
+        let snapshot = match self.snapshot() {
+            Ok(snapshot) => snapshot,
             Err(Unavailable::Waiting {
                 retry_no_earlier_than,
             }) => return EgressResponse::pending(await_policy, now, retry_no_earlier_than),
@@ -667,16 +875,16 @@ impl ServedEgress for SmoothOrigin {
         };
         match request {
             SmoothRequest::Manifest => EgressResponse::Ready {
-                body: SmoothBody::Manifest(plan.manifest),
+                body: SmoothBody::Manifest(snapshot.plan.manifest.clone()),
                 cache: CachePolicy::NoCache,
             },
             SmoothRequest::Fragment {
                 stream,
                 bitrate,
                 start,
-            } => match plan.chunk(stream, start) {
+            } => match snapshot.plan.chunk(stream, start) {
                 Some((stream, chunk)) if bitrate == advertised_bitrate(&stream.codec) => {
-                    match self.fragment(&stream, chunk) {
+                    match self.fragment(&stream, chunk, &snapshot) {
                         Ok(Some(bytes)) => EgressResponse::Ready {
                             body: SmoothBody::Fragment(bytes),
                             cache: CachePolicy::Immutable,
@@ -705,39 +913,53 @@ impl SmoothOrigin {
         &self,
         stream: &StreamPlan,
         chunk: ChunkTiming,
-    ) -> Result<Option<Vec<u8>>, SmoothOriginError> {
-        let init = self.init().ok_or(SmoothOriginError::Codec {
-            track: stream.interleaved_ordinal,
-            reason: "no init segment is published".to_string(),
-        })?;
-        let Some(bytes) = self
-            .provider
-            .segments()
-            .into_iter()
+        snapshot: &Snapshot,
+    ) -> Result<Option<Bytes>, SmoothOriginError> {
+        let Some((_, bytes)) = snapshot
+            .segments
+            .iter()
             .find(|(sequence, _)| *sequence == chunk.sequence)
-            .map(|(_, bytes)| bytes)
         else {
             return Ok(None);
         };
-        let media = demux(&init, &bytes).map_err(|reason| SmoothOriginError::Codec {
-            track: stream.interleaved_ordinal,
-            reason,
-        })?;
-        let track = find_track(&media, stream.key).ok_or(SmoothOriginError::Codec {
-            track: stream.interleaved_ordinal,
-            reason: "the segment does not carry the requested stream".to_string(),
-        })?;
-        let sequence_number = chunk.sequence.value();
-        let fragment = SmoothPackager {
-            target_duration_secs: SINGLE_SEGMENT_FRAGMENT_TARGET_SECS,
-        }
-        .package_track_fragment(track, sequence_number, chunk.start)
-        .map_err(|error| SmoothOriginError::Codec {
-            track: stream.interleaved_ordinal,
-            reason: error.to_string(),
-        })?;
-        Ok(Some(fragment.data))
+        let key = FragmentKey::new(stream.key, &chunk);
+        let slot = Arc::clone(locked(&self.fragments).entry(key).or_default());
+        slot.get_or_init(|| {
+            #[cfg(test)]
+            self.fragment_builds
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            package_fragment(stream, &chunk, &snapshot.init, bytes)
+        })
+        .clone()
+        .map(Some)
     }
+}
+
+/// Demux `bytes` and re-mux the `chunk` of `stream` as one fragment whose
+/// `tfxd` is the manifest's `c@t`.
+fn package_fragment(
+    stream: &StreamPlan,
+    chunk: &ChunkTiming,
+    init: &[u8],
+    bytes: &[u8],
+) -> Result<Bytes, SmoothOriginError> {
+    let media = demux(init, bytes).map_err(|reason| SmoothOriginError::Codec {
+        track: stream.interleaved_ordinal,
+        reason,
+    })?;
+    let track = find_track(&media, stream.key).ok_or(SmoothOriginError::Codec {
+        track: stream.interleaved_ordinal,
+        reason: "the segment does not carry the requested stream".to_string(),
+    })?;
+    let fragment = SmoothPackager {
+        target_duration_secs: SINGLE_SEGMENT_FRAGMENT_TARGET_SECS,
+    }
+    .package_track_fragment(track, chunk.sequence.value(), chunk.start)
+    .map_err(|error| SmoothOriginError::Codec {
+        track: stream.interleaved_ordinal,
+        reason: error.to_string(),
+    })?;
+    Ok(Bytes::from(fragment.data))
 }
 
 impl SmoothRequest {
@@ -820,6 +1042,8 @@ mod tests {
     const FRAME_DUR: u32 = VIDEO_TIMESCALE / 30;
     /// Frames per segment: two seconds of video.
     const FRAMES_PER_SEGMENT: u32 = 60;
+    /// Repeat requests the cache tests make over one window.
+    const REQUESTS: usize = 8;
     /// Segments published per test route.
     const SEGMENTS: u32 = 2;
     /// The AAC media timescale, in ticks per second.
@@ -947,7 +1171,7 @@ mod tests {
     struct Route {
         trunk: Arc<Trunk>,
         init: Vec<u8>,
-        published: Vec<(SegmentSeq, Arc<[u8]>)>,
+        published: Vec<(SegmentSeq, Bytes)>,
         specs: Vec<TrackSpec>,
     }
 
@@ -958,7 +1182,7 @@ mod tests {
         }
 
         /// The provider handing back this route's published segments.
-        fn published(&self) -> impl Fn() -> Vec<(SegmentSeq, Arc<[u8]>)> + Send + Sync + 'static {
+        fn published(&self) -> impl Fn() -> Vec<(SegmentSeq, Bytes)> + Send + Sync + 'static {
             let published = self.published.clone();
             move || published.clone()
         }
@@ -976,7 +1200,7 @@ mod tests {
         let writer = trunk.segment_writer().expect("fresh trunk");
         let init = segmenter.init_segment().expect("init segment");
         let mut published = 0u32;
-        let mut window: Vec<(SegmentSeq, Arc<[u8]>)> = Vec::new();
+        let mut window: Vec<(SegmentSeq, Bytes)> = Vec::new();
         for index in 0..SEGMENTS * FRAMES_PER_SEGMENT {
             let dts = i64::from(index) * i64::from(FRAME_DUR);
             for spec in &specs {
@@ -1023,7 +1247,7 @@ mod tests {
         writer: &media_plane::trunk::SegmentWriter,
         segment: transmux::ll_hls::SegmentInfo,
         published: &mut u32,
-        window: &mut Vec<(SegmentSeq, Arc<[u8]>)>,
+        window: &mut Vec<(SegmentSeq, Bytes)>,
     ) {
         let bytes = segment.bytes.clone();
         writer
@@ -1037,7 +1261,7 @@ mod tests {
                 },
             ))
             .expect("publish segment");
-        window.push((SegmentSeq::new(*published + 1), Arc::from(bytes.as_slice())));
+        window.push((SegmentSeq::new(*published + 1), Bytes::from(bytes)));
         *published += 1;
     }
 
@@ -1855,5 +2079,146 @@ mod tests {
             first.url_template(),
             "QualityLevels({bitrate})/Fragments(video={start time})"
         );
+    }
+
+    /// The origin is shared across threads by its host, so the cache it holds
+    /// must not take that away.
+    #[test]
+    fn the_origin_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<SmoothOrigin>();
+    }
+
+    type Window = Vec<(SegmentSeq, Bytes)>;
+
+    /// An origin whose window the test moves by publishing segments, and the
+    /// handle it moves it with.
+    fn sliding(route: &Route, initial: usize) -> (SmoothOrigin, Arc<Mutex<Window>>) {
+        let window = Arc::new(Mutex::new(route.published[..initial].to_vec()));
+        let shared = Arc::clone(&window);
+        let specs = route.specs();
+        let origin = SmoothOrigin::new(
+            Arc::clone(&route.trunk),
+            Arc::new(move || locked(&shared).clone()),
+            Arc::new(move || specs.clone()),
+        );
+        origin.set_init(route.init.clone());
+        (origin, window)
+    }
+
+    fn render(origin: &SmoothOrigin) -> EgressResponse<String> {
+        origin.manifest(
+            Timestamp::from_nanos(0),
+            AwaitPolicy::new(Timestamp::from_nanos(u64::MAX)),
+        )
+    }
+
+    fn builds(origin: &SmoothOrigin) -> usize {
+        origin.plan_builds.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// N requests over one window build the plan once; publishing a segment
+    /// changes the window and the next request builds it again, once.
+    #[test]
+    fn the_plan_is_built_once_per_window() {
+        let route = publish(vec![video_spec()]);
+        let (origin, window) = sliding(&route, 1);
+        let keys = origin.stream_keys();
+        assert_eq!(keys.len(), 1);
+        let first = render(&origin);
+        for _ in 0..REQUESTS {
+            assert_eq!(render(&origin), first);
+            origin.fragments().expect("fragments");
+            origin.stream_keys();
+        }
+        assert_eq!(builds(&origin), 1);
+
+        locked(&window).push(route.published[1].clone());
+        let second = render(&origin);
+        assert_ne!(second, first);
+        for _ in 0..REQUESTS {
+            assert_eq!(render(&origin), second);
+        }
+        assert_eq!(builds(&origin), 2);
+    }
+
+    /// A new init segment invalidates the plan; storing the one already held
+    /// does not.
+    #[test]
+    fn only_a_changed_init_segment_rebuilds_the_plan() {
+        let route = publish(vec![video_spec()]);
+        let (origin, _window) = sliding(&route, 1);
+        render(&origin);
+        origin.set_init(route.init.clone());
+        render(&origin);
+        assert_eq!(builds(&origin), 1);
+        let mut changed = route.init.clone();
+        changed.push(0);
+        origin.set_init(changed);
+        render(&origin);
+        assert_eq!(builds(&origin), 2);
+    }
+
+    /// A fragment requested repeatedly is packaged once; one that left the
+    /// window is dropped from the cache when the plan is rebuilt.
+    #[test]
+    fn a_fragment_is_packaged_once_and_evicted_with_its_segment() {
+        let route = publish(vec![video_spec()]);
+        let (origin, window) = sliding(&route, 2);
+        let stream = origin.stream_keys()[0];
+        let chunks = origin.fragments().expect("fragments");
+        let bitrate =
+            advertised_bitrate(&origin.snapshot().ok().expect("a snapshot").plan.streams[0].codec);
+        let fetch = |start: u64| {
+            origin.resolve(
+                SmoothRequest::Fragment {
+                    stream,
+                    bitrate,
+                    start,
+                },
+                Timestamp::from_nanos(0),
+                AwaitPolicy::new(Timestamp::from_nanos(u64::MAX)),
+            )
+        };
+        let first = fetch(chunks[0].start);
+        for _ in 0..REQUESTS {
+            assert_eq!(fetch(chunks[0].start), first);
+        }
+        assert_eq!(
+            origin
+                .fragment_builds
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        assert!(matches!(first, EgressResponse::Ready { .. }));
+        fetch(chunks[1].start);
+        assert_eq!(locked(&origin.fragments).len(), 2);
+
+        let kept = locked(&window).split_off(1);
+        *locked(&window) = kept;
+        render(&origin);
+        assert!(locked(&origin.fragments).len() <= 1);
+    }
+
+    /// A track-set change with no new segment yields a new Manifest.
+    #[test]
+    fn a_track_change_without_a_new_segment_rebuilds_the_plan() {
+        let route = publish(vec![video_spec(), audio_spec(2)]);
+        let current = Arc::new(Mutex::new(vec![route.specs()[0].clone()]));
+        let shared = Arc::clone(&current);
+        let origin = SmoothOrigin::new(
+            Arc::clone(&route.trunk),
+            Arc::new(route.published()),
+            Arc::new(move || locked(&shared).clone()),
+        );
+        origin.set_init(route.init.clone());
+        let video_only = render(&origin);
+        assert_eq!(render(&origin), video_only);
+        assert_eq!(builds(&origin), 1);
+
+        *locked(&current) = route.specs();
+        let both = render(&origin);
+        assert_ne!(both, video_only);
+        assert_eq!(builds(&origin), 2);
     }
 }
