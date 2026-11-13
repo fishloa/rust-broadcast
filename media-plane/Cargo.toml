@@ -59,6 +59,11 @@ name = "ingest_trunk_playback"
 required-features = ["std"]
 
 [[bench]]
+name              = "trunk_parked_readers"
+harness           = false
+required-features = ["std"]
+
+[[bench]]
 name              = "trunk_contention"
 harness           = false
 required-features = ["std"]
