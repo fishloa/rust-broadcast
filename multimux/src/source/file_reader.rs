@@ -1402,13 +1402,12 @@ fn file_trunk_config(window_segments: usize) -> media_plane::trunk::TrunkConfig 
     let nz =
         |n: usize| std::num::NonZeroUsize::new(n.max(1)).unwrap_or(std::num::NonZeroUsize::MIN);
     let live = crate::source::driver_trunk_config(window_segments);
-    media_plane::trunk::TrunkConfig::new(
-        nz(FILE_TIMED_RING),
-        live.sparse_capacity,
-        live.segment_capacity,
-        live.event_capacity,
-        live.part_capacity,
-    )
+    media_plane::trunk::TrunkConfig::default()
+        .with_timed_capacity(nz(FILE_TIMED_RING))
+        .with_sparse_capacity(live.sparse_capacity)
+        .with_segment_capacity(live.segment_capacity)
+        .with_event_capacity(live.event_capacity)
+        .with_part_capacity(live.part_capacity)
 }
 
 /// Run a `InputSpec::File` route to completion on the current task: demux the
@@ -1436,9 +1435,14 @@ pub(crate) async fn run_file_source(
     // `FileReaderConfig` wants a `Trunk` to publish into; `read_probe_demux`
     // never publishes, so the smallest possible one is all this needs.
     let one = std::num::NonZeroUsize::MIN;
-    let scratch = media_plane::trunk::Trunk::new(media_plane::trunk::TrunkConfig::new(
-        one, one, one, one, one,
-    ));
+    let scratch = media_plane::trunk::Trunk::new(
+        media_plane::trunk::TrunkConfig::default()
+            .with_timed_capacity(one)
+            .with_sparse_capacity(one)
+            .with_segment_capacity(one)
+            .with_event_capacity(one)
+            .with_part_capacity(one),
+    );
     let reader = FileReader::new(
         FileReaderConfig::new(std::path::PathBuf::from(path), loop_file, scratch)
             .with_pace(false)
@@ -1459,9 +1463,11 @@ pub(crate) async fn run_file_source(
         };
     let mut driver = IngestDriver::new(
         session,
-        trunk_config,
-        handshake,
-        std::num::NonZeroUsize::new(1).unwrap_or(std::num::NonZeroUsize::MIN),
+        media_plane::IngestConfig::new(handshake)
+            .with_trunk(trunk_config)
+            .with_max_programs(
+                std::num::NonZeroUsize::new(1).unwrap_or(std::num::NonZeroUsize::MIN),
+            ),
     );
     let start = std::time::Instant::now();
     let mut progress = crate::source::DriverProgress::new();
@@ -1868,11 +1874,11 @@ mod playout_tests {
             FileIngestSession::new(parsed, crate::route::SPTS_PROGRAM_ID, true, true).unwrap();
         let mut driver = media_plane::ingress::IngestDriver::new(
             session,
-            file_trunk_config(8),
-            media_plane::ingress::HandshakePolicy::establish_by(
+            media_plane::IngestConfig::new(media_plane::ingress::HandshakePolicy::establish_by(
                 broadcast_common::Timestamp::from_nanos(u64::MAX),
-            ),
-            std::num::NonZeroUsize::MIN,
+            ))
+            .with_trunk(file_trunk_config(8))
+            .with_max_programs(std::num::NonZeroUsize::MIN),
         );
         driver.feed((), broadcast_common::Timestamp::ZERO);
         let trunk = driver

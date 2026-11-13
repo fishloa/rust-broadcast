@@ -36,13 +36,14 @@ fn trunk() -> Arc<Trunk> {
     fn nz(n: usize) -> std::num::NonZeroUsize {
         std::num::NonZeroUsize::new(n).unwrap()
     }
-    Trunk::new(TrunkConfig::new(
-        nz(4096),
-        nz(1024),
-        nz(128),
-        nz(1024),
-        nz(1024),
-    ))
+    Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(4096))
+            .with_sparse_capacity(nz(1024))
+            .with_segment_capacity(nz(128))
+            .with_event_capacity(nz(1024))
+            .with_part_capacity(nz(1024)),
+    )
 }
 
 /// A reader config with `max_retries = 0` (no sleeping on a failure) and

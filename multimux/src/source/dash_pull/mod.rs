@@ -182,9 +182,7 @@ pub(crate) async fn run_with_clock(
     let mut step = step.with_clock(clock).with_clock_resync(resync_us);
     let driver = IngestDriver::new(
         EventIngest::new().stitching(),
-        trunk_config,
-        handshake,
-        media_plane::DEFAULT_MAX_PROGRAMS,
+        media_plane::IngestConfig::new(handshake).with_trunk(trunk_config),
     );
     let mut progress = crate::source::DriverProgress::new();
     let mut sink = tokio::io::sink();

@@ -17,13 +17,14 @@ fn nz(n: usize) -> NonZeroUsize {
 }
 
 fn trunk_with(segment_cap: usize, part_cap: usize) -> (Arc<Trunk>, SegmentWriter) {
-    let trunk = Trunk::new(TrunkConfig::new(
-        nz(64),
-        nz(8),
-        nz(segment_cap),
-        nz(8),
-        nz(part_cap),
-    ));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(64))
+            .with_sparse_capacity(nz(8))
+            .with_segment_capacity(nz(segment_cap))
+            .with_event_capacity(nz(8))
+            .with_part_capacity(nz(part_cap)),
+    );
     let writer = trunk.segment_writer().expect("first segment writer");
     (trunk, writer)
 }
@@ -124,7 +125,14 @@ fn bandwidth_never_decreases_across_calls() {
 
 #[test]
 fn declared_zero_or_over_u32_rejected_at_build() {
-    let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(64))
+            .with_sparse_capacity(nz(8))
+            .with_segment_capacity(nz(8))
+            .with_event_capacity(nz(8))
+            .with_part_capacity(nz(64)),
+    );
     match HlsOrigin::builder(Arc::clone(&trunk))
         .target_duration_secs(4.0)
         .window_segments(nz(4))

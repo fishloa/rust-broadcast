@@ -40,7 +40,14 @@ fn percentile(sorted: &[u64], p: f64) -> u64 {
 }
 
 fn run(readers: usize) -> (Vec<u64>, Vec<u64>) {
-    let trunk = Trunk::new(TrunkConfig::new(nz(4096), nz(64), nz(8), nz(64), nz(64)));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(4096))
+            .with_sparse_capacity(nz(64))
+            .with_segment_capacity(nz(8))
+            .with_event_capacity(nz(64))
+            .with_part_capacity(nz(64)),
+    );
     let writer = trunk.writer().expect("first writer");
     let base = Instant::now();
     let stop = Arc::new(AtomicBool::new(false));

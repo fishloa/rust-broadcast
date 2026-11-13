@@ -457,20 +457,28 @@ struct Snapshot {
     segments: Vec<(SegmentSeq, Bytes)>,
 }
 
+/// What a [`SmoothOrigin`] is built from. Every field is required and none has
+/// a default, so this is a plain struct: the compiler rejects a missing one,
+/// and a field is named where it is set rather than found by position.
+pub struct SmoothOriginConfig {
+    /// The trunk whose segments the origin describes.
+    pub trunk: Arc<Trunk>,
+    /// Which published segments the origin presents.
+    pub segments: Arc<dyn SegmentProvider>,
+    /// The program's current track set.
+    pub tracks: Arc<dyn TrackProvider>,
+}
+
 impl SmoothOrigin {
-    /// An origin over `trunk`; it describes whatever segments the trunk
-    /// currently holds, once an init segment is stored and at least one
+    /// An origin over `config.trunk`; it describes whatever segments the
+    /// trunk currently holds, once an init segment is stored and at least one
     /// track is announced.
-    pub fn new(
-        trunk: Arc<Trunk>,
-        provider: Arc<dyn SegmentProvider>,
-        tracks: Arc<dyn TrackProvider>,
-    ) -> Self {
+    pub fn new(config: SmoothOriginConfig) -> Self {
         Self {
-            trunk,
+            trunk: config.trunk,
             init: Mutex::new(InitSlot::default()),
-            provider,
-            tracks,
+            provider: config.segments,
+            tracks: config.tracks,
             plan_cache: Mutex::new(None),
             build_gate: Mutex::new(()),
             fragments: Mutex::new(HashMap::new()),
@@ -1141,24 +1149,26 @@ mod tests {
     }
 
     fn trunk() -> Arc<Trunk> {
-        Trunk::new(TrunkConfig::new(
-            NonZeroUsize::new(8).expect("non-zero"),
-            NonZeroUsize::new(8).expect("non-zero"),
-            NonZeroUsize::new(8).expect("non-zero"),
-            NonZeroUsize::new(8).expect("non-zero"),
-            NonZeroUsize::new(8).expect("non-zero"),
-        ))
+        Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(NonZeroUsize::new(8).expect("non-zero"))
+                .with_sparse_capacity(NonZeroUsize::new(8).expect("non-zero"))
+                .with_segment_capacity(NonZeroUsize::new(8).expect("non-zero"))
+                .with_event_capacity(NonZeroUsize::new(8).expect("non-zero"))
+                .with_part_capacity(NonZeroUsize::new(8).expect("non-zero")),
+        )
     }
 
     /// A trunk whose segment log holds every test segment.
     fn big_trunk() -> Arc<Trunk> {
-        Trunk::new(TrunkConfig::new(
-            NonZeroUsize::new(64).expect("non-zero"),
-            NonZeroUsize::new(64).expect("non-zero"),
-            NonZeroUsize::new(64).expect("non-zero"),
-            NonZeroUsize::new(64).expect("non-zero"),
-            NonZeroUsize::new(64).expect("non-zero"),
-        ))
+        Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(NonZeroUsize::new(64).expect("non-zero"))
+                .with_sparse_capacity(NonZeroUsize::new(64).expect("non-zero"))
+                .with_segment_capacity(NonZeroUsize::new(64).expect("non-zero"))
+                .with_event_capacity(NonZeroUsize::new(64).expect("non-zero"))
+                .with_part_capacity(NonZeroUsize::new(64).expect("non-zero")),
+        )
     }
 
     /// Everything a published route holds: the trunk and its init segment.
@@ -1276,14 +1286,14 @@ mod tests {
 
     /// An origin over `route` with its init segment stored.
     fn origin(route: &Route) -> SmoothOrigin {
-        let origin = SmoothOrigin::new(
-            Arc::clone(&route.trunk),
-            Arc::new(route.published()),
-            Arc::new({
+        let origin = SmoothOrigin::new(SmoothOriginConfig {
+            trunk: Arc::clone(&route.trunk),
+            segments: Arc::new(route.published()),
+            tracks: Arc::new({
                 let specs = route.specs();
                 move || specs.clone()
             }),
-        );
+        });
         origin.set_init(route.init.clone());
         origin
     }
@@ -1307,7 +1317,11 @@ mod tests {
     /// `NotFound` — never a fabricated manifest.
     #[test]
     fn an_empty_origin_waits_then_gives_up() {
-        let origin = SmoothOrigin::new(trunk(), Arc::new(Vec::new), Arc::new(Vec::new));
+        let origin = SmoothOrigin::new(SmoothOriginConfig {
+            trunk: trunk(),
+            segments: Arc::new(Vec::new),
+            tracks: Arc::new(Vec::new),
+        });
         let policy = AwaitPolicy::new(Timestamp::from_nanos(10));
         assert!(matches!(
             origin.manifest(Timestamp::from_nanos(0), policy),
@@ -2091,11 +2105,11 @@ mod tests {
         let window = Arc::new(Mutex::new(route.published[..initial].to_vec()));
         let shared = Arc::clone(&window);
         let specs = route.specs();
-        let origin = SmoothOrigin::new(
-            Arc::clone(&route.trunk),
-            Arc::new(move || locked(&shared).clone()),
-            Arc::new(move || specs.clone()),
-        );
+        let origin = SmoothOrigin::new(SmoothOriginConfig {
+            trunk: Arc::clone(&route.trunk),
+            segments: Arc::new(move || locked(&shared).clone()),
+            tracks: Arc::new(move || specs.clone()),
+        });
         origin.set_init(route.init.clone());
         (origin, window)
     }
@@ -2200,11 +2214,11 @@ mod tests {
         let route = publish(vec![video_spec(), audio_spec(2)]);
         let current = Arc::new(Mutex::new(vec![route.specs()[0].clone()]));
         let shared = Arc::clone(&current);
-        let origin = SmoothOrigin::new(
-            Arc::clone(&route.trunk),
-            Arc::new(route.published()),
-            Arc::new(move || locked(&shared).clone()),
-        );
+        let origin = SmoothOrigin::new(SmoothOriginConfig {
+            trunk: Arc::clone(&route.trunk),
+            segments: Arc::new(route.published()),
+            tracks: Arc::new(move || locked(&shared).clone()),
+        });
         origin.set_init(route.init.clone());
         let video_only = render(&origin);
         assert_eq!(render(&origin), video_only);

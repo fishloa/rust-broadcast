@@ -26,7 +26,14 @@ fn nz(n: usize) -> NonZeroUsize {
 }
 
 fn trunk_with() -> (Arc<Trunk>, SegmentWriter) {
-    let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(64), nz(8), nz(64)));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(64))
+            .with_sparse_capacity(nz(8))
+            .with_segment_capacity(nz(64))
+            .with_event_capacity(nz(8))
+            .with_part_capacity(nz(64)),
+    );
     let writer = trunk.segment_writer().expect("writer");
     (trunk, writer)
 }
@@ -587,7 +594,14 @@ fn iframe_msn_with_part_is_served() {
 
 #[test]
 fn iframe_ts_origin_not_found() {
-    let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(64), nz(8), nz(64)));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(64))
+            .with_sparse_capacity(nz(8))
+            .with_segment_capacity(nz(64))
+            .with_event_capacity(nz(8))
+            .with_part_capacity(nz(64)),
+    );
     let writer = trunk.segment_writer().expect("writer");
     let origin = HlsOrigin::builder(trunk)
         .target_duration_secs(4.0)

@@ -381,9 +381,9 @@ pub struct ProgramId(pub u32);
 /// Suggested [`IngestDriver`]/[`ListenDriver`] `max_programs` bound — see
 /// [the module docs](self#max_programs-the-fifth-unbounded-allocation-vector-and-why-it-needs-its-own-bound-rather-than-reusing-max_sessions-or-a-trunk-capacity)
 /// for the justification. Not applied automatically (there is no default
-/// constructor for `max_programs`, matching [`TrunkConfig::new`]'s and
-/// [`HandshakePolicy::establish_by`]'s own all-explicit-arguments shape) —
-/// a caller passes it like any other driver parameter.
+/// constructor for `max_programs` on its own; [`IngestConfig::new`] applies
+/// this value) — a caller overrides it with
+/// [`IngestConfig::with_max_programs`].
 ///
 /// Typed [`NonZeroUsize`], not `usize`: every consumer of this constant feeds
 /// it to a `max_programs: NonZeroUsize` parameter, so handing back a plain
@@ -744,6 +744,52 @@ impl HandshakePolicy {
     }
 }
 
+/// Everything an [`IngestDriver`] or [`ListenDriver`] is built from: the
+/// handshake bound every session must meet, the [`TrunkConfig`] every program's
+/// `Trunk` is built from, and the per-session `max_programs` bound.
+///
+/// A new type rather than more fields on [`TrunkConfig`]: the handshake
+/// deadline and the program bound belong to a connection, not to a ring, and a
+/// caller varies all three independently (the trunk per source, the deadline
+/// per connection attempt, `max_programs` per test or listener).
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub struct IngestConfig {
+    /// Capacities of every program's [`Trunk`].
+    pub trunk: TrunkConfig,
+    /// The bound the session's handshake must meet.
+    pub handshake: HandshakePolicy,
+    /// Distinct programs one session may announce; see
+    /// [`DEFAULT_MAX_PROGRAMS`].
+    pub max_programs: NonZeroUsize,
+}
+
+impl IngestConfig {
+    /// Config with the given `handshake`, [`TrunkConfig::default`] and
+    /// [`DEFAULT_MAX_PROGRAMS`].
+    pub fn new(handshake: HandshakePolicy) -> Self {
+        IngestConfig {
+            trunk: TrunkConfig::default(),
+            handshake,
+            max_programs: DEFAULT_MAX_PROGRAMS,
+        }
+    }
+
+    /// Replace [`IngestConfig::trunk`].
+    #[must_use]
+    pub fn with_trunk(mut self, trunk: TrunkConfig) -> Self {
+        self.trunk = trunk;
+        self
+    }
+
+    /// Replace [`IngestConfig::max_programs`].
+    #[must_use]
+    pub fn with_max_programs(mut self, max_programs: NonZeroUsize) -> Self {
+        self.max_programs = max_programs;
+        self
+    }
+}
+
 /// Drives one connected [`IngestSession`], dispatching every
 /// [`SessionEvent`] it yields into a fresh per-[`ProgramId`] [`Trunk`], and
 /// tracking [`HealthState`] — the "pump that owns the feed/poll/deadline
@@ -775,22 +821,17 @@ impl<S: IngestSession> IngestDriver<S> {
     /// Wrap a freshly-constructed (**not yet established**) `session`, ready
     /// to be pumped: it starts in [`HealthState::Establishing`] and reaches
     /// [`HealthState::Live`] when it emits [`SessionEvent::Established`],
-    /// bounded by `handshake`. Every program it later announces gets a fresh
-    /// [`Trunk`] built from `trunk_config`, up to `max_programs` distinct
+    /// bounded by `config.handshake`. Every program it later announces gets a fresh
+    /// [`Trunk`] built from `config.trunk`, up to `config.max_programs` distinct
     /// [`ProgramId`]s — see
     /// [the module docs](self#max_programs-the-fifth-unbounded-allocation-vector-and-why-it-needs-its-own-bound-rather-than-reusing-max_sessions-or-a-trunk-capacity)
     /// for what happens past that bound.
-    pub fn new(
-        session: S,
-        trunk_config: TrunkConfig,
-        handshake: HandshakePolicy,
-        max_programs: NonZeroUsize,
-    ) -> Self {
+    pub fn new(session: S, config: IngestConfig) -> Self {
         IngestDriver {
             session,
-            trunk_config,
-            handshake,
-            max_programs,
+            trunk_config: config.trunk,
+            handshake: config.handshake,
+            max_programs: config.max_programs,
             programs: BTreeMap::new(),
             writers: HashMap::new(),
             refused_programs: 0,
@@ -1109,9 +1150,9 @@ pub fn run_dial<D: Dialer>(
     let session = dialer.dial()?;
     Ok(IngestDriver::new(
         session,
-        trunk_config,
-        handshake,
-        max_programs,
+        IngestConfig::new(handshake)
+            .with_trunk(trunk_config)
+            .with_max_programs(max_programs),
     ))
 }
 
@@ -1222,9 +1263,9 @@ impl<D: Dialer> DialSupervisor<D> {
                 self.attempts = 0;
                 DialAttempt::Connected(IngestDriver::new(
                     session,
-                    trunk_config,
-                    handshake,
-                    max_programs,
+                    IngestConfig::new(handshake)
+                        .with_trunk(trunk_config)
+                        .with_max_programs(max_programs),
                 ))
             }
             Err(e) => {
@@ -1273,23 +1314,18 @@ pub struct ListenDriver<L: Listener> {
 
 impl<L: Listener> ListenDriver<L> {
     /// Build a driver over `listener`. Every admitted session starts in
-    /// [`HealthState::Establishing`] bounded by `handshake` — which is what
+    /// [`HealthState::Establishing`] bounded by `config.handshake` — which is what
     /// stops a flood of half-open inbound connections from squatting the
     /// `max_sessions` bound indefinitely — and every program any of them
-    /// announces gets a `Trunk` built from `trunk_config`, up to
-    /// `max_programs` distinct programs per session — see
+    /// announces gets a `Trunk` built from `config.trunk`, up to
+    /// `config.max_programs` distinct programs per session — see
     /// [the module docs](self#max_programs-the-fifth-unbounded-allocation-vector-and-why-it-needs-its-own-bound-rather-than-reusing-max_sessions-or-a-trunk-capacity).
-    pub fn new(
-        listener: L,
-        trunk_config: TrunkConfig,
-        handshake: HandshakePolicy,
-        max_programs: NonZeroUsize,
-    ) -> Self {
+    pub fn new(listener: L, config: IngestConfig) -> Self {
         ListenDriver {
             listener,
-            trunk_config,
-            handshake,
-            max_programs,
+            trunk_config: config.trunk,
+            handshake: config.handshake,
+            max_programs: config.max_programs,
             sessions: HashMap::new(),
             next_id: 0,
         }
@@ -1349,9 +1385,9 @@ impl<L: Listener> ListenDriver<L> {
                         id,
                         IngestDriver::new(
                             session,
-                            self.trunk_config,
-                            self.handshake,
-                            self.max_programs,
+                            IngestConfig::new(self.handshake)
+                                .with_trunk(self.trunk_config)
+                                .with_max_programs(self.max_programs),
                         ),
                     );
                     AcceptOutcome::Admitted(id)
@@ -1780,7 +1816,12 @@ pub fn run_listen<L: Listener>(
     handshake: HandshakePolicy,
     max_programs: NonZeroUsize,
 ) -> ListenDriver<L> {
-    ListenDriver::new(listener, trunk_config, handshake, max_programs)
+    ListenDriver::new(
+        listener,
+        IngestConfig::new(handshake)
+            .with_trunk(trunk_config)
+            .with_max_programs(max_programs),
+    )
 }
 
 #[cfg(test)]
@@ -1799,7 +1840,12 @@ mod tests {
     /// Minimal config every test's `Trunk`s share — capacities are irrelevant
     /// to these tests beyond "large enough that nothing evicts mid-test".
     fn trunk_config() -> TrunkConfig {
-        TrunkConfig::new(nz(64), nz(16), nz(8), nz(8), nz(8))
+        TrunkConfig::default()
+            .with_timed_capacity(nz(64))
+            .with_sparse_capacity(nz(16))
+            .with_segment_capacity(nz(8))
+            .with_event_capacity(nz(8))
+            .with_part_capacity(nz(8))
     }
 
     /// A handshake deadline far enough out that it never fires — for the
@@ -2110,7 +2156,12 @@ mod tests {
                 tracks: vec![opaque_track(TrackId::new(1))],
             },
         ])]);
-        let mut driver = IngestDriver::new(session, trunk_config(), handshake(), max_programs());
+        let mut driver = IngestDriver::new(
+            session,
+            IngestConfig::new(handshake())
+                .with_trunk(trunk_config())
+                .with_max_programs(max_programs()),
+        );
 
         // Must not panic.
         driver.feed(b"stray", Timestamp::ZERO);
@@ -2152,7 +2203,12 @@ mod tests {
             }]),
             FeedOutcome::Events(vec![]),
         ]);
-        let mut driver = IngestDriver::new(session, trunk_config(), handshake(), max_programs());
+        let mut driver = IngestDriver::new(
+            session,
+            IngestConfig::new(handshake())
+                .with_trunk(trunk_config())
+                .with_max_programs(max_programs()),
+        );
 
         driver.feed(b"1", Timestamp::from_nanos(0));
         let trunk = driver.trunk(ProgramId(1)).cloned().unwrap();
@@ -2273,7 +2329,12 @@ mod tests {
     #[test]
     fn clean_finish_yields_ended_not_failed() {
         let session = ScriptedSession::new(vec![]);
-        let mut driver = IngestDriver::new(session, trunk_config(), handshake(), max_programs());
+        let mut driver = IngestDriver::new(
+            session,
+            IngestConfig::new(handshake())
+                .with_trunk(trunk_config())
+                .with_max_programs(max_programs()),
+        );
         assert!(
             matches!(driver.health(), HealthState::Establishing),
             "a freshly dialled session has not established yet"
@@ -2294,7 +2355,12 @@ mod tests {
     #[test]
     fn erroring_feed_yields_failed_not_ended() {
         let session = ScriptedSession::new(vec![FeedOutcome::Err(FakeError("bad continuity"))]);
-        let mut driver = IngestDriver::new(session, trunk_config(), handshake(), max_programs());
+        let mut driver = IngestDriver::new(
+            session,
+            IngestConfig::new(handshake())
+                .with_trunk(trunk_config())
+                .with_max_programs(max_programs()),
+        );
 
         driver.feed(b"garbage", Timestamp::ZERO);
 
@@ -2307,7 +2373,12 @@ mod tests {
     #[test]
     fn erroring_finish_yields_failed_not_ended() {
         let session = ScriptedSession::new(vec![]).failing_finish(FakeError("truncated tail"));
-        let mut driver = IngestDriver::new(session, trunk_config(), handshake(), max_programs());
+        let mut driver = IngestDriver::new(
+            session,
+            IngestConfig::new(handshake())
+                .with_trunk(trunk_config())
+                .with_max_programs(max_programs()),
+        );
 
         driver.finish();
 
@@ -2334,7 +2405,12 @@ mod tests {
             }],
             FakeError("bad continuity"),
         )]);
-        let mut driver = IngestDriver::new(session, trunk_config(), handshake(), max_programs());
+        let mut driver = IngestDriver::new(
+            session,
+            IngestConfig::new(handshake())
+                .with_trunk(trunk_config())
+                .with_max_programs(max_programs()),
+        );
 
         driver.feed(b"garbage", Timestamp::ZERO);
 
@@ -2363,7 +2439,12 @@ mod tests {
             }],
             FakeError("truncated tail"),
         );
-        let mut driver = IngestDriver::new(session, trunk_config(), handshake(), max_programs());
+        let mut driver = IngestDriver::new(
+            session,
+            IngestConfig::new(handshake())
+                .with_trunk(trunk_config())
+                .with_max_programs(max_programs()),
+        );
 
         driver.finish();
 
@@ -2381,7 +2462,12 @@ mod tests {
     #[test]
     fn terminated_driver_ignores_further_feed_and_finish() {
         let session = ScriptedSession::new(vec![FeedOutcome::Err(FakeError("boom"))]);
-        let mut driver = IngestDriver::new(session, trunk_config(), handshake(), max_programs());
+        let mut driver = IngestDriver::new(
+            session,
+            IngestConfig::new(handshake())
+                .with_trunk(trunk_config())
+                .with_max_programs(max_programs()),
+        );
         driver.feed(b"x", Timestamp::ZERO);
         assert!(matches!(driver.health(), HealthState::Failed(_)));
 
@@ -2489,7 +2575,12 @@ mod tests {
                 tracks: vec![opaque_track(TrackId::new(3))],
             },
         ])]);
-        let mut driver = IngestDriver::new(session, trunk_config(), handshake(), nz(cap));
+        let mut driver = IngestDriver::new(
+            session,
+            IngestConfig::new(handshake())
+                .with_trunk(trunk_config())
+                .with_max_programs(nz(cap)),
+        );
 
         driver.feed(b"pat", Timestamp::ZERO);
 
@@ -2530,7 +2621,12 @@ mod tests {
                 tracks: vec![opaque_track(TrackId::new(1))],
             },
         ])]);
-        let mut driver = IngestDriver::new(session, trunk_config(), handshake(), nz(cap));
+        let mut driver = IngestDriver::new(
+            session,
+            IngestConfig::new(handshake())
+                .with_trunk(trunk_config())
+                .with_max_programs(nz(cap)),
+        );
 
         driver.feed(b"pat", Timestamp::ZERO);
 
@@ -2568,7 +2664,12 @@ mod tests {
                 },
             ]),
         ]);
-        let mut driver = IngestDriver::new(session, trunk_config(), handshake(), nz(cap));
+        let mut driver = IngestDriver::new(
+            session,
+            IngestConfig::new(handshake())
+                .with_trunk(trunk_config())
+                .with_max_programs(nz(cap)),
+        );
 
         driver.feed(b"1", Timestamp::from_nanos(0));
         let trunk1 = driver.trunk(ProgramId(1)).cloned().unwrap();
@@ -2615,7 +2716,12 @@ mod tests {
             });
         }
         let session = ScriptedSession::new(vec![FeedOutcome::Events(events)]);
-        let mut driver = IngestDriver::new(session, trunk_config(), handshake(), nz(cap));
+        let mut driver = IngestDriver::new(
+            session,
+            IngestConfig::new(handshake())
+                .with_trunk(trunk_config())
+                .with_max_programs(nz(cap)),
+        );
 
         driver.feed(b"flood", Timestamp::ZERO);
 
@@ -3325,9 +3431,9 @@ mod tests {
         let session = ScriptedSession::new(vec![]);
         let mut driver = IngestDriver::new(
             session,
-            trunk_config(),
-            HandshakePolicy::establish_by(DEADLINE),
-            max_programs(),
+            IngestConfig::new(HandshakePolicy::establish_by(DEADLINE))
+                .with_trunk(trunk_config())
+                .with_max_programs(max_programs()),
         );
         driver.feed(b"reply", DEADLINE);
         assert!(

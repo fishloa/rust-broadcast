@@ -73,7 +73,14 @@ impl PushTransport for NeverConnect {
 /// `TrunkConfig` has no `Default` (five `NonZeroUsize` capacities).
 fn test_trunk() -> Arc<Trunk> {
     let cap = NonZeroUsize::new(8).unwrap();
-    Trunk::new(TrunkConfig::new(cap, cap, cap, cap, cap))
+    Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(cap)
+            .with_sparse_capacity(cap)
+            .with_segment_capacity(cap)
+            .with_event_capacity(cap)
+            .with_part_capacity(cap),
+    )
 }
 
 /// Advance virtual time in 250 ms steps (the push loop's own listen-wait cap)

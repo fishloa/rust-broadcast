@@ -276,7 +276,12 @@ pub fn recording_driver<S: IngestSession + 'static>(
         accepted: Arc::clone(&recorder.accepted),
     };
     (
-        ListenDriver::new(listener, trunk_config, handshake, max_programs),
+        ListenDriver::new(
+            listener,
+            media_plane::IngestConfig::new(handshake)
+                .with_trunk(trunk_config)
+                .with_max_programs(max_programs),
+        ),
         recorder,
     )
 }

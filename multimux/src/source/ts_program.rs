@@ -470,7 +470,12 @@ pub(crate) mod test_support {
     }
 
     pub(crate) fn trunk_config() -> TrunkConfig {
-        TrunkConfig::new(nz(64), nz(16), nz(8), nz(8), nz(8))
+        TrunkConfig::default()
+            .with_timed_capacity(nz(64))
+            .with_sparse_capacity(nz(16))
+            .with_segment_capacity(nz(8))
+            .with_event_capacity(nz(8))
+            .with_part_capacity(nz(8))
     }
 
     /// A handshake deadline far enough out that it never fires — these
@@ -788,9 +793,7 @@ mod tests {
 
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
         );
 
         // Feed a real muxed TS stream; the driver mints program 0's Trunk
@@ -984,9 +987,7 @@ mod tests {
         // And through the driver: the programme's Trunk exists.
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
         );
         driver.feed(&ts, Timestamp::ZERO);
         assert!(

@@ -40,13 +40,14 @@ fn nz(n: usize) -> NonZeroUsize {
 }
 
 fn trunk_with(segment_cap: usize, part_cap: usize) -> (Arc<Trunk>, SegmentWriter) {
-    let trunk = Trunk::new(TrunkConfig::new(
-        nz(64),
-        nz(8),
-        nz(segment_cap),
-        nz(8),
-        nz(part_cap),
-    ));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(64))
+            .with_sparse_capacity(nz(8))
+            .with_segment_capacity(nz(segment_cap))
+            .with_event_capacity(nz(8))
+            .with_part_capacity(nz(part_cap)),
+    );
     let writer = trunk.segment_writer().expect("first segment writer");
     (trunk, writer)
 }
@@ -1231,7 +1232,14 @@ fn bare_msn_reload(o: &HlsOrigin, msn: u64) -> EgressResponse<HlsBody> {
 
 #[test]
 fn a_bare_msn_reload_is_answered_only_with_a_playlist_that_lists_that_segment() {
-    let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(64))
+            .with_sparse_capacity(nz(8))
+            .with_segment_capacity(nz(8))
+            .with_event_capacity(nz(8))
+            .with_part_capacity(nz(64)),
+    );
     let w = trunk.segment_writer().expect("segment writer");
     publish_seg(&w, 1, 4, false);
     let o = origin(&trunk, 4, false);

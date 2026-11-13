@@ -227,15 +227,18 @@ async fn run_demo(route_handle: Arc<RouteHandle>) -> multimux::Result<()> {
     // Ring capacities are this factory's own choice, not something multimux
     // hands you (unlike a built-in source's own tuned constants) — sized
     // generously for this trivial demo.
-    let trunk_config = TrunkConfig::new(nz(64), nz(16), nz(8), nz(64), nz(64));
+    let trunk_config = TrunkConfig::default()
+        .with_timed_capacity(nz(64))
+        .with_sparse_capacity(nz(16))
+        .with_segment_capacity(nz(8))
+        .with_event_capacity(nz(64))
+        .with_part_capacity(nz(64));
     // A generous handshake bound; a real scheme would derive this from its
     // own configured connect timeout.
     let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
     let mut driver: IngestDriver<DemoSession> = IngestDriver::new(
         session,
-        trunk_config,
-        handshake,
-        media_plane::DEFAULT_MAX_PROGRAMS,
+        media_plane::IngestConfig::new(handshake).with_trunk(trunk_config),
     );
 
     let mut progress = DriverProgress::new();
