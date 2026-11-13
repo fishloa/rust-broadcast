@@ -116,6 +116,7 @@ pub(crate) struct PendingFetch<K, R = Vec<u8>> {
 /// cookies) hands over a closure instead of a built future: the scheduler
 /// calls it in [`PullScheduler::pump`], so the fetch captures the state as it
 /// is then, not as it was when the fetch was queued.
+#[cfg(test)]
 pub(crate) struct LazyFetch<K, R = Vec<u8>> {
     /// How long to wait before this fetch may run.
     pub delay: Duration,
@@ -142,6 +143,7 @@ struct QueuedFetch<K, R> {
 /// A queued fetch's future: already built, or built when it is dispatched.
 enum QueuedFuture<K, R> {
     Ready(FetchFuture<K, R>),
+    #[cfg(test)]
     AtDispatch(Box<dyn FnOnce() -> FetchFuture<K, R> + Send>),
 }
 
@@ -149,6 +151,7 @@ impl<K, R> QueuedFuture<K, R> {
     fn build(self) -> FetchFuture<K, R> {
         match self {
             QueuedFuture::Ready(fut) => fut,
+            #[cfg(test)]
             QueuedFuture::AtDispatch(build) => build(),
         }
     }
@@ -162,6 +165,7 @@ impl<K, R> QueuedFetch<K, R> {
         }
     }
 
+    #[cfg(test)]
     fn after_lazy(fetch: LazyFetch<K, R>) -> Self {
         Self {
             due: tokio::time::Instant::now() + fetch.delay,
@@ -194,16 +198,11 @@ impl<K: Send + 'static, R: Send + 'static> PullScheduler<K, R> {
         self.backlog.push_back(QueuedFetch::after(fetch));
     }
 
-    /// Queue a fetch whose future is built only when it is dispatched; see
-    /// [`LazyFetch`].
-    pub fn push_lazy(&mut self, fetch: LazyFetch<K, R>) {
-        self.backlog.push_back(QueuedFetch::after_lazy(fetch));
-    }
-
-    /// [`Self::push_lazy`], paced: the fetch is dispatched no earlier than
+    /// Queue a lazily built fetch, paced: the fetch is dispatched no earlier than
     /// `not_before` (a pacing floor — see the module doc's `WaitMs` section).
     /// The floor is resolved against the current instant here, so later
     /// pump/backlog churn cannot shorten or lengthen it.
+    #[cfg(test)]
     pub fn push_lazy_at(
         &mut self,
         fetch: LazyFetch<K, R>,
@@ -218,6 +217,7 @@ impl<K: Send + 'static, R: Send + 'static> PullScheduler<K, R> {
 
     /// Queue a due retry — a retry takes a free slot before the backlog, so
     /// an eviction race is repaired before new work is started.
+    #[cfg(test)]
     pub fn push_retry(&mut self, fetch: PendingFetch<K, R>) {
         self.retries.push_back(QueuedFetch::after(fetch));
     }

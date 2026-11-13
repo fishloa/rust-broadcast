@@ -1,264 +1,44 @@
-//! HLS-pull ingest source (issue #663 P3c / #717 / #760; re-ported onto the
-//! media-plane ingress traits at plan step 5a round 3): a driven
-//! [`hls_runtime::client::HlsClient`] — the sans-IO Low-Latency HLS
-//! (RFC 8216bis) playback engine — feeding real fetch bytes in and turning
-//! its `Output`s into [`SessionEvent`]s.
+//! HLS-pull ingest source (issue #663 P3c / #717 / #760): a remote (LL-)HLS origin pulled by a
+//! relay-mode [`broadcast_client::Session`] through the shared session host
+//! (`crate::source::client_host`).
 //!
-//! # Why this drives the sans-IO `HlsClient`
+//! The session owns the protocol: playlist reload pacing and Low-Latency blocking reload
+//! (RFC 8216bis), part prefetch from the preload hint, AES-128 keys, fMP4 and classic-TS segment
+//! demux, discontinuities, per-resource retry with backoff, `Retry-After`, redirects, cookies and
+//! Basic/Digest/Bearer auth. The host performs its HTTP requests (at most
+//! [`MAX_INFLIGHT_FETCHES`](crate::source::MAX_INFLIGHT_FETCHES) media requests at once, a
+//! session setting) and writes what the session emits into the route's `Trunk`.
 //!
-//! [`HlsClient`] is the engine — `poll() -> Option<Action>` out,
-//! `on_playlist`/`on_resource` in — which is exactly the
-//! [`IngestSession::Request`]/`Stage::In` shape this module needs. Its I/O
-//! stays here, driven by [`media_plane::ingress::IngestDriver`], so the actual
-//! LL-HLS logic (reload scheduling, part/segment dedup, fMP4/classic-TS demux)
-//! is owned entirely by `hls-runtime`, never duplicated here, and the fetch
-//! policy (auth, cookies, retries, pacing) is this crate's own.
-//!
-//! # Establishment is genuinely ordinary driving here
-//!
-//! [`HlsPullDialer::dial`] performs no I/O at all — `HlsClient::new` only
-//! queues the first `Action::FetchPlaylist`. [`SessionEvent::Established`] +
-//! `NewProgram` are queued the moment the recovered `TrackSpec`s are known
-//! (the first `Output::Init`, exactly like the pre-5a `wait_for_init`, just
-//! reached by feeding responses through the ordinary pump instead of an
-//! `async fn` polling loop before the session is ever returned). Until then
-//! [`media_plane::ingress::IngestDriver::health`] reports `Establishing`, bounded by the same
-//! [`HandshakePolicy`] every other ported source uses — no bespoke
-//! `IngestTimeouts::connect` wrapper is needed any more.
-//!
-//! # Correlating a fetch response: `HlsFetchId`
-//!
-//! `HlsClient::on_playlist` and `on_resource` are two different methods,
-//! but a `Stage::In` is one type. [`HlsFetchId`] is this session's own
-//! (opaque to `media-plane`) request/response identity — `Playlist` for the
-//! one method, `Resource(id)` wrapping [`ResourceId`] for the other — chosen
-//! entirely by this module; the plane never sees it.
-//!
-//! # Bounded in-flight fetches
-//!
-//! `HlsClient::poll` can hand back many `Action::FetchResource`s in one
-//! drain (e.g. every already-available part of a freshly-opened segment)
-//! with nothing in the client itself capping how many the caller launches at
-//! once. [`run_hls_pull`] never has more than
-//! [`crate::source::MAX_INFLIGHT_FETCHES`] fetches running concurrently —
-//! the rest queue in `backlog` until a slot frees — see that constant's docs
-//! for why (this project's sixth unbounded-allocation vector, this time in a
-//! pull source's own fan-out rather than a session's per-item state).
-//!
-//! # Known limitation (carried over from the pre-port module)
-//!
-//! A mid-stream `Output::Init` (the client re-emits it only on a codec-
-//! parameter change across an `#EXT-X-DISCONTINUITY`) yields no
-//! `SessionEvent` at all — matching [`SessionEvent::NewProgram`]'s "exactly
-//! one initial program" case for this source; a pulled origin that changes
-//! codec parameters mid-stream is not yet supported.
+//! A finite playlist (`#EXT-X-ENDLIST`) ends the pull cleanly and the route is served as ended;
+//! an authentication or permission refusal (`401`/`403`) fails the attempt at once rather than
+//! being retried.
 
-use std::collections::{HashMap, VecDeque};
+use broadcast_client::{Config, SourceKind};
+use media_plane::ingress::{HandshakePolicy, IngestDriver};
+use media_plane::trunk::TrunkConfig;
 use std::convert::Infallible;
-use std::time::Duration;
-#[cfg(test)]
-use transmux::TrackId;
-
-use broadcast_common::{Demand, Stage, Timestamp, Unpackage};
-use hls_runtime::client::{Action, HlsClient, KeyId, Output as HlsOutput, ResourceId};
-use media_plane::ingress::{
-    Dialer, HandshakePolicy, IngestSession, ProgramId, SessionEvent, run_dial,
-};
-use media_plane::trunk::{RetentionClass, TrunkConfig};
-use reqwest::Client as HttpClient;
-use transmux::media::Fmp4Demux;
-use transmux::pipeline::TrackSpec;
-use url::Url;
 
 use crate::error::{MultimuxError, Result};
-use crate::source::driver::terminal_result;
-use crate::source::http_auth::{
-    authenticated_get, credentials_from_url, resolve_credentials, scope_credentials, strip_userinfo,
-};
+use crate::source::client_host::{EventIngest, SessionLabels, SessionStep};
 use crate::source::pull_target::{PullKind, PullRoute};
-use broadcast_auth::{AuthState, CookieWatch};
 
-/// How long a `run_*_pull` drive loop parks when its session has, momentarily,
-/// neither an outbound request queued nor a fetch in flight — and has not
-/// ended. A bare `continue` there would spin the loop with no `.await` in it,
-/// which on a current-thread runtime starves every other task on the executor
-/// (including the in-flight fetches this loop is waiting for). Short enough
-/// that it costs no observable latency, long enough that it is not a spin.
-const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(5);
+/// How many times one media resource is requested before the session gives up on it.
+const MAX_RESOURCE_ATTEMPTS: u32 = 8;
 
-/// How many times one resource fetch (init/part/segment) is retried before
-/// the session is failed (audit run 7, W14). A single `404` from an eviction
-/// race, or a dropped connection, must not tear down and reconnect the whole
-/// route — which, with every viewer riding one session, disrupts them all.
-/// Bounded so a permanently missing resource still fails the session rather
-/// than retrying forever.
-const MAX_RESOURCE_RETRY_ATTEMPTS: u32 = 8;
+/// Delay before the first retry of a failed resource, milliseconds; each retry doubles it up to
+/// [`RESOURCE_RETRY_CAP_MS`]. An eviction race reappears on the next playlist reload seconds
+/// later, so a fixed short delay would burn the whole budget before it heals.
+const RESOURCE_RETRY_BASE_MS: u64 = 500;
 
-/// Cap on a `#EXT-X-KEY` key-file body. A key file is exactly
-/// [`AES128_KEY_LEN`] octets (RFC 8216 §5.1); the slack only lets a short
-/// error page through to be rejected by length instead of by the cap.
+/// Cap on the exponential resource retry delay, milliseconds.
+const RESOURCE_RETRY_CAP_MS: u64 = 30_000;
+
+/// Cap on a `#EXT-X-KEY` key-file body. A key file is exactly 16 octets (RFC 8216 §5.1); the
+/// slack only lets a short error page through to be rejected by length instead of by the cap.
 const MAX_KEY_BODY_BYTES: usize = 4096;
 
-/// Length of an AES-128 key file (RFC 8216 §5.1).
-const AES128_KEY_LEN: usize = 16;
-
-/// Base delay for the **exponential** resource-fetch retry backoff (audit
-/// W14d): the delay for attempt N is `base * 2^(N-1)`, capped at
-/// [`RESOURCE_RETRY_MAX_DELAY`]. A fixed 200 ms was far too short for an
-/// eviction race (the segment reappears on the next playlist reload, seconds
-/// later); starting at 500 ms and doubling reaches ~64 s by the 8th attempt,
-/// well past a normal reload cycle, without stalling the live edge on the
-/// first retry.
-const RESOURCE_RETRY_BASE_DELAY: Duration = Duration::from_millis(500);
-
-/// Growth factor of the resource-fetch retry delay (doubling).
-const RESOURCE_RETRY_FACTOR: f64 = 2.0;
-
-/// Cap on the exponential resource-fetch retry delay.
-const RESOURCE_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
-
-/// Exponential backoff for resource-fetch attempt `attempt` (1-based),
-/// capped at [`RESOURCE_RETRY_MAX_DELAY`].
-fn retry_backoff(attempt: u32) -> Duration {
-    // The workspace's one capped-exponential implementation (audit r07-O1 /
-    // #1141; SP1.5 moved it onto `backon`); `attempt` here is 1-based,
-    // `delay_for_attempt` 0-based.
-    broadcast_common::backoff::RetrySchedule::new(
-        RESOURCE_RETRY_BASE_DELAY,
-        RESOURCE_RETRY_MAX_DELAY,
-        RESOURCE_RETRY_FACTOR,
-        crate::source::seed_entropy(),
-    )
-    .delay_for_attempt(attempt.saturating_sub(1))
-}
-
-/// The `PendingFetch` for one resource fetch, after `delay`. The single
-/// place a resource is described, so the first try and every retry share the
-/// exact same timeout/error handling. The delay is applied by
-/// [`PullScheduler::pump`], not here.
-fn resource_fetch(
-    http: HttpClient,
-    session: &Session,
-    now_us: u64,
-    fetch_id: HlsFetchId,
-    url: String,
-    read_timeout: Duration,
-    delay: Duration,
-) -> crate::source::pull::PendingFetch<HlsFetchId, Fetched> {
-    let cap = match fetch_id {
-        HlsFetchId::Key(_) => MAX_KEY_BODY_BYTES,
-        _ => crate::source::MAX_HTTP_BODY_BYTES,
-    };
-    let mut auth = session.auth.clone();
-    let watch = session.watch.clone();
-    crate::source::pull::PendingFetch {
-        delay,
-        fut: Box::pin(async move {
-            let (result, retry_after) = tokio::time::timeout(
-                read_timeout,
-                fetch_bytes_capped_with_retry_after(&http, &url, &mut auth, cap, now_us),
-            )
-            .await
-            .unwrap_or_else(|_| {
-                (
-                    Err(MultimuxError::Connect {
-                        reason: format!(
-                            "hls-pull: resource {fetch_id:?} read exceeded {read_timeout:?}"
-                        ),
-                    }),
-                    None,
-                )
-            });
-            let result = result.and_then(|bytes| match fetch_id {
-                HlsFetchId::Key(id) if bytes.len() != AES128_KEY_LEN => {
-                    Err(hls_runtime::client::Error::BadKeyLength {
-                        id,
-                        len: bytes.len(),
-                    }
-                    .into())
-                }
-                _ => Ok(bytes),
-            });
-            (
-                fetch_id,
-                match result {
-                    Ok(bytes) => crate::source::pull::FetchResult::Ready(Fetched { bytes, watch }),
-                    Err(e) => crate::source::pull::FetchResult::Failed {
-                        error: e,
-                        learned: Fetched {
-                            bytes: Vec::new(),
-                            watch,
-                        },
-                        retry_after,
-                    },
-                },
-            )
-        }),
-    }
-}
-
-/// The `PendingFetch` for the playlist fetch (never delayed — a manifest
-/// issue is not transient; see the W14 note below).
-fn playlist_fetch(
-    http: HttpClient,
-    session: &Session,
-    now_us: u64,
-    url: String,
-    read_timeout: Duration,
-) -> crate::source::pull::PendingFetch<HlsFetchId, Fetched> {
-    playlist_fetch_after(http, session, now_us, url, read_timeout, Duration::ZERO)
-}
-
-/// [`playlist_fetch`] dispatched after `delay`, the server's `Retry-After`.
-fn playlist_fetch_after(
-    http: HttpClient,
-    session: &Session,
-    now_us: u64,
-    url: String,
-    read_timeout: Duration,
-    delay: Duration,
-) -> crate::source::pull::PendingFetch<HlsFetchId, Fetched> {
-    let mut auth = session.auth.clone();
-    let watch = session.watch.clone();
-    crate::source::pull::PendingFetch {
-        delay,
-        fut: Box::pin(async move {
-            let (result, retry_after) = tokio::time::timeout(
-                read_timeout,
-                fetch_bytes_capped_with_retry_after(
-                    &http,
-                    &url,
-                    &mut auth,
-                    crate::source::MAX_HTTP_BODY_BYTES,
-                    now_us,
-                ),
-            )
-            .await
-            .unwrap_or_else(|_| {
-                (
-                    Err(MultimuxError::Connect {
-                        reason: format!("hls-pull: playlist read exceeded {read_timeout:?}"),
-                    }),
-                    None,
-                )
-            });
-            (
-                HlsFetchId::Playlist,
-                match result {
-                    Ok(bytes) => crate::source::pull::FetchResult::Ready(Fetched { bytes, watch }),
-                    Err(e) => crate::source::pull::FetchResult::Failed {
-                        error: e,
-                        learned: Fetched {
-                            bytes: Vec::new(),
-                            watch,
-                        },
-                        retry_after,
-                    },
-                },
-            )
-        }),
-    }
-}
+const MICROS_PER_MILLI: u64 = 1_000;
+const WHAT: &str = "hls-pull";
 
 /// A remote (LL-)HLS Media Playlist to pull: its URL, which may carry
 /// `user:pass@` userinfo (see [`Debug`]'s redaction and
@@ -282,704 +62,112 @@ impl crate::source::pull_target::PullDrive for HlsPullKind {
         trunk_config: media_plane::trunk::TrunkConfig,
         handshake: media_plane::ingress::HandshakePolicy,
         route_handle: std::sync::Arc<crate::route::RouteHandle>,
-        _cancel: tokio_util::sync::CancellationToken,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> crate::Result<()> {
-        run_hls_pull(&route, trunk_config, handshake, &route_handle).await
+        run_hls_pull(&route, trunk_config, handshake, &route_handle, cancel).await
     }
 }
 
-/// This session's own request/response identity — see the module doc's
-/// "Correlating a fetch response".
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum HlsFetchId {
-    /// A Media Playlist fetch — routes to `HlsClient::on_playlist`.
-    Playlist,
-    /// An init/part/segment fetch — routes to `HlsClient::on_resource`.
-    Resource(ResourceId),
-    /// An `#EXT-X-KEY` key-file fetch — routes to `HlsClient::on_key`.
-    Key(KeyId),
+fn retry_schedule_ms() -> Vec<u64> {
+    let mut schedule = Vec::new();
+    let mut delay = RESOURCE_RETRY_BASE_MS;
+    for _ in 0..MAX_RESOURCE_ATTEMPTS {
+        schedule.push(delay.min(RESOURCE_RETRY_CAP_MS));
+        delay = delay.saturating_mul(2);
+    }
+    schedule
 }
 
-/// The sans-IO HLS-pull [`IngestSession`]: a driven [`HlsClient`], no
-/// socket. [`run_hls_pull`] owns the real GETs and feeds responses in.
-pub struct HlsIngestSession {
-    client: HlsClient,
-    pending: VecDeque<SessionEvent>,
-    /// Set once the first `Output::Init` is recovered — guards against ever
-    /// queuing a second `Established`/`NewProgram` pair (see the module doc's
-    /// "Known limitation").
-    program_announced: bool,
-    /// The first `Output::Init` received, kept so a caller driving this
-    /// session directly (rather than through the trunk) gets the client's own
-    /// Media Initialization Section; see [`Self::take_init`].
-    init: Option<Vec<u8>>,
-    /// `Output::EndOfStream` reached: the origin's `#EXT-X-ENDLIST` was seen
-    /// and every fetch it named is accounted for. Read by [`run_hls_pull`]
-    /// via [`media_plane::ingress::IngestDriver::session`] to decide when to call
-    /// [`media_plane::ingress::IngestDriver::finish`] — see that method's docs for why this can't
-    /// be a [`SessionEvent`] instead.
-    ended: bool,
+fn session_config(route: &HlsPullRoute) -> Config {
+    let read_us = u64::try_from(route.target.timeouts.read.as_micros())
+        .unwrap_or(u64::MAX)
+        .max(MICROS_PER_MILLI);
+    let mut config = Config::relay();
+    config.kind = SourceKind::Hls;
+    config.request_timeout_us = read_us;
+    config.segment_timeout_us = read_us;
+    config.hls_key_timeout_us = read_us;
+    config.max_manifest_bytes = crate::source::MAX_HTTP_BODY_BYTES;
+    config.max_segment_bytes = crate::source::MAX_HTTP_BODY_BYTES;
+    config.max_key_bytes = MAX_KEY_BODY_BYTES;
+    config.max_inflight_segments = crate::source::MAX_INFLIGHT_FETCHES;
+    config.max_segment_failures = MAX_RESOURCE_ATTEMPTS;
+    config.backoff_ms = retry_schedule_ms();
+    config.backoff_cap_ms = RESOURCE_RETRY_CAP_MS;
+    config
 }
 
-impl HlsIngestSession {
-    /// Construct a fresh session for `playlist_url` — performs no I/O
-    /// (`HlsClient::new` only queues the first `Action::FetchPlaylist`).
-    pub fn new(playlist_url: impl Into<String>) -> Self {
-        HlsIngestSession {
-            client: HlsClient::new(playlist_url),
-            pending: VecDeque::new(),
-            program_announced: false,
-            init: None,
-            ended: false,
-        }
-    }
-
-    /// See [`Self::ended`]'s field doc.
-    pub fn ended(&self) -> bool {
-        self.ended
-    }
-
-    /// Reports that fetching key `id` failed, so the client forgets it is in
-    /// flight and will request it again.
-    pub fn key_fetch_failed(&mut self, id: KeyId) {
-        self.client.on_key_error(id);
-    }
-
-    /// The Media Initialization Section the client received, once. `None`
-    /// until the first `Output::Init` arrives.
-    pub fn take_init(&mut self) -> Option<Vec<u8>> {
-        self.init.take()
-    }
-
-    /// Gives up on the part or segment `id` the origin no longer serves — the
-    /// live edge moved past it — and carries on with the next one, which the
-    /// client reports as a discontinuity. No-op for the init segment.
-    pub fn resource_gone(&mut self, id: ResourceId) {
-        self.client.skip_resource(id);
-    }
-
-    fn drain_outputs(&mut self) -> Result<()> {
-        while let Some(out) = self.client.next_output() {
-            match out {
-                HlsOutput::Init(bytes) => {
-                    if self.init.is_none() {
-                        self.init = Some(bytes.clone());
-                    }
-                    if self.program_announced {
-                        continue; // mid-stream re-Init: see "Known limitation".
-                    }
-                    let media = Fmp4Demux::new().unpackage(bytes.as_slice())?;
-                    let specs: Vec<TrackSpec> = media.tracks.into_iter().map(|t| t.spec).collect();
-                    self.program_announced = true;
-                    self.pending.push_back(SessionEvent::Established);
-                    self.pending.push_back(SessionEvent::NewProgram {
-                        program: ProgramId(0),
-                        tracks: specs,
-                    });
-                }
-                HlsOutput::Samples { track_id, samples } => {
-                    for sample in samples {
-                        self.pending.push_back(SessionEvent::Sample {
-                            program: ProgramId(0),
-                            track_id,
-                            retention: RetentionClass::Timed,
-                            sample,
-                        });
-                    }
-                }
-                HlsOutput::Discontinuity => {
-                    // No `SessionEvent` routes on this yet — matches
-                    // `ts_program::ProgramTracker`'s "metadata-only, nothing
-                    // routes on it yet" precedent.
-                }
-                HlsOutput::EndOfStream => self.ended = true,
-                _ => {}
-            }
-        }
-        Ok(())
-    }
-}
-
-impl Stage for HlsIngestSession {
-    type In<'a> = (HlsFetchId, &'a [u8]);
-    type Out = SessionEvent;
-    type Error = MultimuxError;
-
-    fn feed(&mut self, (id, bytes): (HlsFetchId, &[u8]), _now: Timestamp) -> Result<()> {
-        match id {
-            HlsFetchId::Playlist => self.client.on_playlist(bytes)?,
-            HlsFetchId::Resource(rid) => self.client.on_resource(rid, bytes)?,
-            HlsFetchId::Key(kid) => self.client.on_key(kid, bytes)?,
-        }
-        self.drain_outputs()
-    }
-
-    fn poll(&mut self) -> Option<SessionEvent> {
-        self.pending.pop_front()
-    }
-
-    fn finish(&mut self) -> Result<()> {
-        Ok(())
-    }
-
-    fn demand(&self) -> Demand {
-        Demand::new(crate::source::MAX_TS_READ)
-    }
-}
-
-impl IngestSession for HlsIngestSession {
-    type Request = Action;
-
-    fn poll_transmit(&mut self) -> Option<Action> {
-        self.client.poll()
-    }
-}
-
-/// Constructs an [`HlsIngestSession`] — performs **no I/O** (see the module
-/// doc's "Establishment is genuinely ordinary driving here").
-pub struct HlsPullDialer {
-    playlist_url: String,
-}
-
-impl Dialer for HlsPullDialer {
-    type Session = HlsIngestSession;
-    type Error = Infallible;
-
-    fn dial(&mut self) -> core::result::Result<HlsIngestSession, Infallible> {
-        Ok(HlsIngestSession::new(self.playlist_url.clone()))
-    }
-}
-
-/// Performs `GET url` (answering a Digest challenge if `creds` names one),
-/// returning an error on any non-2xx status.
-#[cfg(test)]
-async fn fetch_bytes(client: &HttpClient, url: &str, auth: &mut AuthState) -> Result<Vec<u8>> {
-    fetch_bytes_capped_with_retry_after(
-        client,
-        url,
-        auth,
-        crate::source::MAX_HTTP_BODY_BYTES,
-        crate::clock::SystemHostClock::now_us(),
-    )
-    .await
-    .0
-}
-
-/// `GET url` capped at `cap` bytes, also returning any `Retry-After` delay carried by a
-/// `429`/`503` response, for the caller's retry scheduling.
-async fn fetch_bytes_capped_with_retry_after(
-    client: &HttpClient,
-    url: &str,
-    auth: &mut AuthState,
-    cap: usize,
-    now_us: u64,
-) -> (
-    core::result::Result<Vec<u8>, MultimuxError>,
-    Option<Duration>,
-) {
-    let response = match authenticated_get(client, url, auth, now_us).await {
-        Ok(r) => r,
-        Err(e) => return (Err(e), None),
-    };
-    let status = response.status();
-    if !status.is_success() {
-        let retry_after = crate::source::server_retry_after(status, response.headers());
-        // 401/403 are permanent (a bad credential or a forbidden resource);
-        // every other status is transient and may be retried.
-        let err = if status == reqwest::StatusCode::UNAUTHORIZED
-            || status == reqwest::StatusCode::FORBIDDEN
-        {
-            MultimuxError::Auth {
-                reason: format!("hls-pull: {status}"),
-            }
-        } else {
-            MultimuxError::Connect {
-                reason: format!("hls-pull: HTTP {status}"),
-            }
-        };
-        return (Err(err), retry_after);
-    }
-    (
-        crate::source::read_body_capped(response, cap, "hls-pull").await,
-        None,
-    )
-}
-
-/// The pull session's auth state and a watch on its cookie jar: what every
-/// fetch of the session is built from.
-#[derive(Debug, Clone)]
-struct Session {
-    auth: AuthState,
-    watch: CookieWatch,
-}
-
-/// One fetch's outcome as the drive loop sees it: the body (empty on a failed
-/// fetch) and the watch the fetch carried.
-#[derive(Debug)]
-pub struct Fetched {
-    bytes: Vec<u8>,
-    watch: CookieWatch,
-}
-
-/// Opens `route`'s connect-time HTTP client and userinfo-stripped URL —
-/// mirrors `ts_http::open_stream`'s split between "parse/strip the URL" and
-/// "drive the fetches" so a bad URL fails fast, before [`run_hls_pull`]'s
-/// drive loop ever starts.
-/// The playlist reload-pacing state: the *real dispatch instant* of the last
-/// playlist fetch and the flat `WaitMs` floor for the next one (I-A).
+/// Drives `route` until its playlist ends or the session fails outright.
 ///
-/// The engine (`hls-runtime`) emits `FetchPlaylist` then `WaitMs(hint)`
-/// (RFC 8216 §4.3.3.1). A paced fetch is not dispatched until its floor, so
-/// the floor for the *next* fetch must be anchored to the instant this one
-/// really started — `max(now, floor)` — not to the earlier `now` at which it
-/// was merely pushed. Anchoring to the push instant let a second GET slip
-/// through back-to-back (d2 = 1.02 s after d1 = 1.00 s in the trace the
-/// re-reviewer gives), i.e. ~2x the intended reload rate.
-#[derive(Default, Clone, Copy)]
-struct PlaylistPacing {
-    /// The last playlist fetch's real dispatch instant.
-    last_dispatch: Option<tokio::time::Instant>,
-    /// The floor the next playlist fetch must not precede.
-    floor: Option<tokio::time::Instant>,
-}
-
-impl PlaylistPacing {
-    /// Arm the floor for the next playlist fetch from a fresh `WaitMs` hint.
-    fn arm(&mut self, hint: Duration) {
-        self.floor = self.last_dispatch.map(|t| t + hint);
-    }
-
-    /// The floor to hand [`crate::source::pull::PullScheduler::push_at`] for a
-    /// playlist fetch being pushed now, recording the instant it will really
-    /// be dispatched (`max(now, floor)`) so the next floor is anchored there.
-    fn on_push(&mut self, now: tokio::time::Instant) -> Option<tokio::time::Instant> {
-        let floor = self.floor.take();
-        self.last_dispatch = Some(floor.map_or(now, |f| f.max(now)));
-        floor
-    }
-}
-
-fn build_client(route: &HlsPullRoute) -> Result<(HttpClient, Url, AuthState)> {
-    let parsed = Url::parse(&route.target.url).map_err(|e| MultimuxError::Connect {
-        reason: format!(
-            "bad HLS-pull URL {}: {e}",
-            crate::redact::redact_url(&route.target.url)
-        ),
-    })?;
-    let credentials =
-        resolve_credentials(route.target.auth.clone(), credentials_from_url(&parsed)?);
-    let clean_url = strip_userinfo(&parsed)?;
-    let credentials = scope_credentials(credentials, &clean_url);
-    let http = HttpClient::builder()
-        .redirect(crate::source::redirect_policy(true))
-        .build()
-        .map_err(|e| MultimuxError::Connect {
-            reason: format!("reqwest client: {e}"),
-        })?;
-    Ok((http, clean_url, credentials))
-}
-
-/// Drives `route` to completion: dial (no I/O), then pump
-/// [`media_plane::ingress::IngestDriver::poll_transmit`] → fetch → [`media_plane::ingress::IngestDriver::feed`] until the
-/// origin's playlist reports end-of-stream or a fetch fails outright — the
-/// new drive loop, replacing the pre-5a `HlsPullSource::connect`/
-/// `HlsPullSession::next_samples` pair.
+/// Returns `Ok(())` when the origin's `#EXT-X-ENDLIST` is fully accounted for (the route is then
+/// marked ended: a finite playlist has nothing more to pull) and `Err` on a failure the session
+/// does not retry. Each fetch is bounded by [`IngestTimeouts::read`](crate::source::IngestTimeouts::read),
+/// and the handshake (until the first track set resolves) by `handshake`.
 ///
-/// Bounded fan-out: never more than
-/// [`crate::source::MAX_INFLIGHT_FETCHES`] concurrent
-/// requests (see the module doc); each individual fetch is itself bounded by
-/// [`IngestTimeouts::read`](crate::source::IngestTimeouts::read), and the handshake (until the first init segment
-/// resolves) by `handshake`.
-///
-/// `route_handle` is the driver-backed registry side of issue #805 task 2 —
-/// see `crate::source::rtsp::run_rtsp`'s own doc for what
-/// `crate::source::report_driver_progress` does with it each iteration.
+/// `route_handle` is the driver-backed registry side of issue #805 task 2 — see
+/// `crate::source::rtsp::run_rtsp`'s own doc for what `crate::source::report_driver_progress`
+/// does with it each iteration.
 pub async fn run_hls_pull(
     route: &HlsPullRoute,
     trunk_config: TrunkConfig,
     handshake: HandshakePolicy,
     route_handle: &std::sync::Arc<crate::route::RouteHandle>,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<()> {
-    drive(route, trunk_config, handshake, route_handle).await
-}
-
-/// The one drive loop: dial (no I/O), then pump `poll_transmit` → fetch →
-/// `feed` until the origin's playlist reports end-of-stream or a fetch fails
-/// outright.
-async fn drive(
-    route: &HlsPullRoute,
-    trunk_config: TrunkConfig,
-    handshake: HandshakePolicy,
-    route_handle: &std::sync::Arc<crate::route::RouteHandle>,
-) -> Result<()> {
-    let (http, clean_url, auth) = build_client(route)?;
-    let session = Session {
-        watch: auth.cookie_watch(),
-        auth,
-    };
-    let mut dialer = HlsPullDialer {
-        playlist_url: clean_url.to_string(),
-    };
-    let mut driver = run_dial(
-        &mut dialer,
+    let timeouts = route.target.timeouts;
+    let mut step = SessionStep::open(
+        &route.target.url,
+        session_config(route),
+        route.target.auth.clone(),
+        SessionLabels::new(WHAT, timeouts).session_retries(),
+        std::sync::Arc::clone(route_handle),
+        false,
+    )?;
+    let driver = IngestDriver::new(
+        EventIngest::new(),
         trunk_config,
         handshake,
         media_plane::DEFAULT_MAX_PROGRAMS,
-    )
-    .unwrap_or_else(|never: Infallible| match never {});
-
-    let read_timeout = route.target.timeouts.read;
-    // Everything this session needs an instant for comes from this one clock:
-    // `Timestamp`s are nanoseconds from it, and cookies are stamped in
-    // microseconds since the same open.
-    let clock = crate::clock::SystemHostClock::new();
-    // The fetch/retry/wait engine (SP6.2) owns the backlog, the in-flight
-    // bound, the retries and the waits; this loop owns only the `Action`
-    // translation and the `feed`.
-    let mut scheduler: crate::source::pull::PullScheduler<HlsFetchId, Fetched> =
-        crate::source::pull::PullScheduler::new(crate::source::MAX_INFLIGHT_FETCHES);
-    // Tracks resource fetches so a transient failure (a 404 from an eviction
-    // race, a dropped connection) can be retried instead of ending the whole
-    // session (audit run 7, W14): `HlsFetchId` + resolved URL + attempts so
-    // far. A playlist fetch is not tracked — a broken manifest is a
-    // route-level failure, not a transient one.
-    let mut resource_retries: HashMap<HlsFetchId, (String, u32)> = HashMap::new();
-    // The session's own reload-pacing floor (`Action::WaitMs`): the *next*
-    // playlist fetch is dispatched no earlier than this. `None` until the
-    // engine has paced once. Set to `last playlist dispatch + hint` when a
-    // `WaitMs` is seen, so non-LL live HLS reloads at the engine's cadence
-    // (RFC 8216 §4.3.3.1), not back-to-back at RTT rate — while a ready
-    // resource fetch is still serviced the moment it completes (defect 5).
-    let mut pacing = PlaylistPacing::default();
-    let mut playlist_url: Option<String> = None;
-    let mut playlist_waits = 0u32;
-    // The most recent `WaitMs` hint, bounding how long `next` waits for a
-    // result this iteration (not the pacing floor itself — see `pacing`).
-    let mut reload_hint: Option<Duration> = None;
-    let start = std::time::Instant::now();
-    let mut progress = crate::source::DriverProgress::new();
-
-    loop {
-        while let Some(action) = driver.poll_transmit() {
-            match action {
-                Action::WaitMs(ms) => {
-                    // The engine's own reload-pacing request (drained via
-                    // `poll_transmit`, exactly like a fetch). It is a floor on
-                    // the *next* playlist dispatch, never a delay on an
-                    // already-running fetch's result.
-                    reload_hint = Some(Duration::from_millis(ms));
-                    pacing.arm(Duration::from_millis(ms));
-                }
-                Action::FetchPlaylist { .. } => {
-                    let url = action
-                        .playlist_request_url()
-                        .expect("FetchPlaylist always has a request URL");
-                    // Dispatched at the pacing floor when one is pending, so a
-                    // fast playlist response is not re-fetched immediately.
-                    let floor = pacing.on_push(tokio::time::Instant::now());
-                    playlist_url = Some(url.clone());
-                    // Built when the scheduler dispatches it, so it carries
-                    // whatever the session's auth state holds by then — a
-                    // reload is queued behind another fetch as often as not.
-                    let (fetch, session_now) = (http.clone(), session.clone());
-                    let now_us = clock.unix_us();
-                    scheduler.push_lazy_at(
-                        crate::source::pull::LazyFetch {
-                            delay: Duration::ZERO,
-                            at_dispatch: Box::new(move || {
-                                playlist_fetch(
-                                    fetch.clone(),
-                                    &session_now,
-                                    now_us,
-                                    url,
-                                    read_timeout,
-                                )
-                                .fut
-                            }),
-                        },
-                        floor,
-                    );
-                }
-                Action::FetchResource { id, url, .. } => {
-                    // Remember the URL so a transient failure can be retried
-                    // (audit run 7, W14). Attempt 1 on the first spawn.
-                    let fetch_id = HlsFetchId::Resource(id);
-                    resource_retries
-                        .entry(fetch_id)
-                        .or_insert_with(|| (url.clone(), 1));
-                    let (fetch, session_now) = (http.clone(), session.clone());
-                    let now_us = clock.unix_us();
-                    scheduler.push_lazy(crate::source::pull::LazyFetch {
-                        delay: Duration::ZERO,
-                        at_dispatch: Box::new(move || {
-                            resource_fetch(
-                                fetch.clone(),
-                                &session_now,
-                                now_us,
-                                fetch_id,
-                                url,
-                                read_timeout,
-                                Duration::ZERO,
-                            )
-                            .fut
-                        }),
-                    });
-                }
-                Action::FetchKey { id, url } => {
-                    let fetch_id = HlsFetchId::Key(id);
-                    if resource_retries.contains_key(&fetch_id) {
-                        continue;
-                    }
-                    resource_retries.insert(fetch_id, (url.clone(), 1));
-                    let (fetch, session_now) = (http.clone(), session.clone());
-                    let now_us = clock.unix_us();
-                    scheduler.push_lazy(crate::source::pull::LazyFetch {
-                        delay: Duration::ZERO,
-                        at_dispatch: Box::new(move || {
-                            resource_fetch(
-                                fetch.clone(),
-                                &session_now,
-                                now_us,
-                                fetch_id,
-                                url,
-                                read_timeout,
-                                Duration::ZERO,
-                            )
-                            .fut
-                        }),
-                    });
-                }
-                // `Action` is `#[non_exhaustive]`: a future variant is simply
-                // dropped from the backlog rather than failing the whole
-                // route, matching this driver's general "unrecognised ==
-                // no-op, not fatal" posture.
-                _ => {}
-            }
-        }
-
-        scheduler.pump();
-
-        if scheduler.is_idle() {
-            if driver.session().ended() {
-                driver.finish();
-                crate::source::advance_route(&driver, route_handle, &mut progress).await;
-                return crate::source::finish_vod(
-                    route_handle,
-                    terminal_result(driver, "hls-pull"),
-                );
-            }
-            // Nothing running, queued or awaiting a retry: the client has
-            // genuinely nothing to do right now. Park briefly rather than
-            // spinning — see `IDLE_POLL_INTERVAL`.
-            reload_hint = None;
-            scheduler.next(None, IDLE_POLL_INTERVAL).await;
-            continue;
-        }
-
-        let joined = scheduler.next(reload_hint, IDLE_POLL_INTERVAL).await;
-        let now = Timestamp::from_instant(start, std::time::Instant::now());
-        match joined {
-            Some(crate::source::pull::FetchOutcome::Ready(fetch_id, fetched)) => {
-                resource_retries.remove(&fetch_id);
-                if fetch_id == HlsFetchId::Playlist {
-                    playlist_waits = 0;
-                }
-                driver.feed((fetch_id, fetched.bytes.as_slice()), now);
-                crate::source::advance_route(&driver, route_handle, &mut progress).await;
-            }
-            Some(crate::source::pull::FetchOutcome::Failed(fetch_id, e, learned, retry_after)) => {
-                // A resource or key refused for want of a credential the
-                // attempt itself could not carry is retried on the session's
-                // own state, which has it: a key server that answers before a
-                // preemptive Basic header is armed, or a live playlist that
-                // hands out its first parts before its challenge is answered.
-                // `retry_for_auth` marks exactly that refusal.
-                let retry_for_auth = matches!(e, MultimuxError::Auth { .. })
-                    && !learned.watch.cookies(clock.unix_us()).is_empty();
-                match fetch_id {
-                    HlsFetchId::Resource(_) | HlsFetchId::Key(_) => {
-                        // A permanent auth/permission failure is not retried —
-                        // retrying 8 times over ~2 min would only delay the
-                        // reconnect for a credential that will never work —
-                        // unless the refusal is one the session can now answer
-                        // (see `retry_for_auth`), which gets the retry the
-                        // bound allows.
-                        if matches!(e, MultimuxError::Auth { .. }) && !retry_for_auth {
-                            tracing::error!(
-                                resource = ?fetch_id,
-                                error = %e,
-                                "hls-pull: resource fetch failed permanently (auth); failing the session"
-                            );
-                            resource_retries.remove(&fetch_id);
-                            return Err(e);
-                        }
-                        let attempts = resource_retries
-                            .get(&fetch_id)
-                            .map(|(_, a)| *a)
-                            .unwrap_or(MAX_RESOURCE_RETRY_ATTEMPTS);
-                        if attempts < MAX_RESOURCE_RETRY_ATTEMPTS {
-                            let url = resource_retries
-                                .get(&fetch_id)
-                                .map(|(u, _)| u.clone())
-                                .expect("resource_retries entry exists for a spawned resource");
-                            let next_attempt = attempts.saturating_add(1);
-                            tracing::warn!(
-                                resource = ?fetch_id,
-                                attempt = next_attempt,
-                                error = %e,
-                                "hls-pull: resource fetch failed; queuing a retry"
-                            );
-                            if let Some(entry) = resource_retries.get_mut(&fetch_id) {
-                                entry.1 = next_attempt;
-                            }
-                            if let HlsFetchId::Key(key_id) = fetch_id {
-                                driver.session_mut().key_fetch_failed(key_id);
-                            }
-                            // Queued, not spawned: the spawn loop applies
-                            // the in-flight bound and the backoff delay.
-                            let delay =
-                                retry_backoff(next_attempt).max(retry_after.unwrap_or_default());
-                            scheduler.push_retry(resource_fetch(
-                                http.clone(),
-                                &session,
-                                clock.unix_us(),
-                                fetch_id,
-                                url,
-                                read_timeout,
-                                delay,
-                            ));
-                        } else {
-                            tracing::error!(
-                                resource = ?fetch_id,
-                                attempts,
-                                error = %e,
-                                "hls-pull: resource fetch failed after the retry bound; \
-                                 giving up on this session"
-                            );
-                            return Err(e);
-                        }
-                    }
-                    HlsFetchId::Playlist => match (retry_after, playlist_url.clone()) {
-                        (Some(wait), Some(url)) if playlist_waits < MAX_RESOURCE_RETRY_ATTEMPTS => {
-                            playlist_waits = playlist_waits.saturating_add(1);
-                            tracing::warn!(
-                                error = %e,
-                                wait = ?wait,
-                                "hls-pull: playlist fetch asked to wait; retrying"
-                            );
-                            scheduler.push_retry(playlist_fetch_after(
-                                http.clone(),
-                                &session,
-                                clock.unix_us(),
-                                url,
-                                read_timeout,
-                                wait,
-                            ));
-                        }
-                        _ => return Err(e),
-                    },
-                }
-            }
-            Some(crate::source::pull::FetchOutcome::TaskPanic(detail)) => {
-                return Err(MultimuxError::Connect {
-                    reason: format!("hls-pull: fetch task failed: {detail}"),
-                });
-            }
-            // Nothing was in flight (the scheduler parked on the idle poll);
-            // check the session's own end condition below.
-            None => {}
-        }
-
-        if !driver.health().is_running() {
-            // The feed above drove the session terminal (a rejected
-            // playlist/manifest/resource) — see `terminal_result`. Health is
-            // already terminal here, so this call's internal terminal-health
-            // check flushes every program's trailing partial segment.
-            crate::source::advance_route(&driver, route_handle, &mut progress).await;
-            return crate::source::finish_vod(route_handle, terminal_result(driver, "hls-pull"));
-        }
-
-        if driver.session().ended() {
-            driver.finish();
-            crate::source::advance_route(&driver, route_handle, &mut progress).await;
-            return crate::source::finish_vod(route_handle, terminal_result(driver, "hls-pull"));
-        }
-    }
-}
-
-/// Lexical tripwire, honestly labelled: it asserts only that `run_hls_pull`'s
-/// production half contains no `tokio::time::` + `sleep(` — i.e. that no wait
-/// was re-inlined at this call site. It does NOT guard the reload-pacing
-/// *behaviour* (a `scheduler.next(Some(hint))` that dropped the floor would
-/// still pass it); that is what the paused-time pacing tests in
-/// `source::pull::tests` (`a_paced_fetch_is_dispatched_at_its_floor_..`,
-/// `a_resource_fetch_completes_while_a_pacing_floor_..`) are for. On `main`
-/// the production half had THREE such sleeps (`:144`, `:518`, `:576`), so this
-/// FAILED pre-migration.
-#[test]
-fn hls_pull_has_no_inline_sleep_outside_the_scheduler() {
-    let src = include_str!("hls_pull.rs");
-    let production = src
-        .split("#[cfg(test)]")
-        .next()
-        .expect("split yields one part");
-    let hits: Vec<usize> = production
-        .match_indices(concat!("tokio::time::", "sleep("))
-        .map(|(at, _)| production[..at].matches('\n').count() + 1)
-        .collect();
-    assert!(
-        hits.is_empty(),
-        "inline sleep(s) in hls_pull.rs at lines {hits:?}: waits belong in PullScheduler"
     );
+    let mut progress = crate::source::DriverProgress::new();
+    let mut sink = tokio::io::sink();
+    let err = crate::source::driver::run_ingest_scaffold(
+        driver,
+        route_handle,
+        &mut progress,
+        cancel,
+        timeouts,
+        crate::source::driver::DEFAULT_WRITE_TIMEOUT,
+        &mut sink,
+        &mut step,
+        |never: Infallible| match never {},
+    )
+    .await;
+    let result = match err {
+        MultimuxError::Connect { reason } if reason.starts_with("session ended") => Ok(()),
+        other => Err(other),
+    };
+    crate::source::finish_vod(route_handle, result)
 }
 
 #[cfg(test)]
 mod tests {
-    /// Before/after pin (#1141): the shared `Backoff` reproduces the
-    /// shift-based schedule `retry_backoff` carried before consolidation.
-    /// SP1.5: `retry_backoff` is the pre-consolidation shift series
-    /// (0.5 s doubling to a 30 s cap) with `backon`'s jitter on top, so the
-    /// band is pinned exactly and the cap saturates.
-    #[test]
-    fn retry_backoff_matches_the_pre_consolidation_shift_schedule() {
-        for attempt in 0..40u32 {
-            let shift = attempt.saturating_sub(1).min(16);
-            let raw = RESOURCE_RETRY_BASE_DELAY
-                .checked_mul(1u32 << shift)
-                .unwrap_or(RESOURCE_RETRY_MAX_DELAY)
-                .min(RESOURCE_RETRY_MAX_DELAY);
-            let got = retry_backoff(attempt);
-            // The shared schedule's jitter: `raw * [5/6, 1.0]`.
-            assert!(
-                got >= raw.mul_f64(5.0 / 6.0) && got <= raw + Duration::from_nanos(1),
-                "attempt {attempt}: {got:?} outside [{:?}, {raw:?}]",
-                raw.mul_f64(5.0 / 6.0)
-            );
-        }
-        // C2: once raw saturates at the cap the delay stays jittered in
-        // [cap/2, cap), never a single constant.
-        for _ in 0..40 {
-            let d = retry_backoff(20);
-            assert!(
-                d >= RESOURCE_RETRY_MAX_DELAY.mul_f64(5.0 / 6.0) && d <= RESOURCE_RETRY_MAX_DELAY,
-                "capped retry {d:?} must stay jittered in [cap*5/6, cap]"
-            );
-        }
-    }
 
     use super::*;
     use crate::source::IngestTimeouts;
     use crate::testutil::MockAuthScheme;
-    use crate::testutil::drain;
     use broadcast_auth::Credentials;
+    use broadcast_common::Timestamp;
     use broadcast_hls::{MediaPlaylist, MediaSegment};
-    use media_plane::ingress::HealthState;
-    use media_plane::trunk::{SampleCursor, TrunkConfig};
+    use media_plane::ingress::{HandshakePolicy, ProgramId};
+    use media_plane::trunk::{SampleCursorItem, TrunkConfig};
     use std::collections::HashMap;
     use std::num::NonZeroUsize;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+    use transmux::TrackId;
+    use transmux::TrackSpec;
     use transmux::ll_hls::LlHlsSegmenter;
     use transmux::pipeline::Sample;
     use transmux::{
@@ -988,58 +176,6 @@ mod tests {
 
     fn nz(n: usize) -> NonZeroUsize {
         NonZeroUsize::new(n).expect("test capacity must be non-zero")
-    }
-
-    /// W16: `fetch_bytes` caps a response body even when the origin lies
-    /// about `Content-Length` — the real loopback server declares
-    /// `Content-Length: 10` but streams an endless body, and the fetch must
-    /// fail on the size cap, not buffer forever.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn fetch_bytes_caps_a_body_that_lies_about_its_length() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-        // A raw TCP server that declares a `Content-Length` *larger than the
-        // cap* (a lying/oversized header claim) and then streams that many
-        // bytes — `read_body_capped` must refuse from the header alone, before
-        // buffering the body.
-        let over = crate::source::MAX_HTTP_BODY_BYTES + 1024;
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move {
-            if let Ok((mut sock, _)) = listener.accept().await {
-                let mut buf = [0u8; 1024];
-                let _ = sock.read(&mut buf).await;
-                let header = format!(
-                    "HTTP/1.1 200 OK
-Content-Length: {over}
-
-"
-                );
-                let _ = sock.write_all(header.as_bytes()).await;
-                // Keep the connection open without sending the declared body:
-                // the cap must reject from the header alone, so no body is
-                // needed (and we avoid a real multi-MB write).
-                tokio::time::sleep(Duration::from_secs(5)).await;
-            }
-        });
-
-        let client = reqwest::Client::new();
-        let result = tokio::time::timeout(
-            Duration::from_secs(30),
-            fetch_bytes(
-                &client,
-                &format!("http://{addr}/x"),
-                &mut scope_credentials(None, &Url::parse("http://127.0.0.1/").expect("url")),
-            ),
-        )
-        .await
-        .expect("fetch must return, not hang");
-        server.abort();
-        let err = result.expect_err("an over-cap body must be refused");
-        assert!(
-            matches!(&err, MultimuxError::Connect { reason } if reason.contains("exceeds")),
-            "the error must name the cap: {err:?}"
-        );
     }
 
     /// W14d: a resource whose fetch fails with a permanent **auth** error
@@ -1109,7 +245,13 @@ Content-Length: {over}
         let started = std::time::Instant::now();
         let result = tokio::time::timeout(
             Duration::from_secs(60),
-            run_hls_pull(&route, trunk_config(), handshake(), &route_handle),
+            run_hls_pull(
+                &route,
+                trunk_config(),
+                handshake(),
+                &route_handle,
+                tokio_util::sync::CancellationToken::new(),
+            ),
         )
         .await
         .expect("must return");
@@ -1128,149 +270,6 @@ Content-Length: {over}
             started.elapsed() < Duration::from_secs(20),
             "fail-fast must return well under the full retry budget"
         );
-    }
-
-    const KEYED_PLAYLIST: &str = "#EXTM3U\n#EXT-X-VERSION:5\n#EXT-X-TARGETDURATION:2\n\
-#EXT-X-MEDIA-SEQUENCE:0\n\
-#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\",IV=0x00000000000000000000000000000001\n\
-#EXTINF:2.0,\nindex0.ts\n#EXT-X-ENDLIST\n";
-
-    fn key_requests(session: &mut HlsIngestSession) -> Vec<KeyId> {
-        let mut ids = Vec::new();
-        while let Some(action) = session.poll_transmit() {
-            if let Action::FetchKey { id, .. } = action {
-                ids.push(id);
-            }
-        }
-        ids
-    }
-
-    /// `key_fetch_failed` is what hands a failed key fetch back to the
-    /// client: until it is called the client still considers the key in
-    /// flight and never asks for it again; afterwards the next playlist
-    /// reload re-requests it.
-    #[test]
-    fn key_fetch_failed_lets_the_client_request_the_key_again() {
-        let mut session = HlsIngestSession::new("http://origin.test/index.m3u8");
-        while session.poll_transmit().is_some() {}
-        session
-            .feed(
-                (HlsFetchId::Playlist, KEYED_PLAYLIST.as_bytes()),
-                Timestamp::from_nanos(0),
-            )
-            .expect("keyed playlist is accepted");
-        let first = key_requests(&mut session);
-        assert_eq!(first.len(), 1, "one key requested");
-
-        session
-            .feed(
-                (HlsFetchId::Playlist, KEYED_PLAYLIST.as_bytes()),
-                Timestamp::from_nanos(1),
-            )
-            .expect("reload is accepted");
-        assert!(
-            key_requests(&mut session).is_empty(),
-            "an in-flight key is not requested twice"
-        );
-
-        session.key_fetch_failed(first[0]);
-        session
-            .feed(
-                (HlsFetchId::Playlist, KEYED_PLAYLIST.as_bytes()),
-                Timestamp::from_nanos(2),
-            )
-            .expect("reload is accepted");
-        assert_eq!(
-            key_requests(&mut session),
-            first,
-            "re-requested after failure"
-        );
-    }
-
-    fn first_key_id() -> KeyId {
-        let mut session = HlsIngestSession::new("http://origin.test/index.m3u8");
-        while session.poll_transmit().is_some() {}
-        session
-            .feed(
-                (HlsFetchId::Playlist, KEYED_PLAYLIST.as_bytes()),
-                Timestamp::from_nanos(0),
-            )
-            .expect("keyed playlist is accepted");
-        key_requests(&mut session)[0]
-    }
-
-    async fn serve_key_body(body: Vec<u8>) -> (String, tokio::task::JoinHandle<()>) {
-        use axum::Router;
-        use axum::routing::get;
-        let app = Router::new().route("/key.bin", get(move || async move { body }));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let task = tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        (format!("http://{addr}/key.bin"), task)
-    }
-
-    async fn run_key_fetch(url: String) -> crate::source::pull::FetchResult<Fetched> {
-        let auth = scope_credentials(None, &Url::parse(&url).expect("url"));
-        let session = Session {
-            watch: auth.cookie_watch(),
-            auth,
-        };
-        let pending = resource_fetch(
-            HttpClient::new(),
-            &session,
-            crate::clock::SystemHostClock::now_us(),
-            HlsFetchId::Key(first_key_id()),
-            url,
-            Duration::from_secs(10),
-            Duration::ZERO,
-        );
-        pending.fut.await.1
-    }
-
-    #[tokio::test]
-    async fn a_key_body_that_is_not_16_bytes_fails_as_bad_key_length() {
-        let (url, server) = serve_key_body(vec![0x44; AES128_KEY_LEN - 1]).await;
-        let result = run_key_fetch(url).await;
-        server.abort();
-        match result {
-            crate::source::pull::FetchResult::Failed {
-                error: MultimuxError::LlHls(hls_runtime::client::Error::BadKeyLength { len, .. }),
-                ..
-            } => assert_eq!(len, AES128_KEY_LEN - 1),
-            _ => panic!("expected a typed BadKeyLength failure"),
-        }
-    }
-
-    #[tokio::test]
-    async fn a_key_body_over_the_cap_fails_on_the_cap_not_on_its_length() {
-        let (url, server) = serve_key_body(vec![0x55; MAX_KEY_BODY_BYTES + 1]).await;
-        let result = run_key_fetch(url).await;
-        server.abort();
-        match result {
-            crate::source::pull::FetchResult::Failed {
-                error: MultimuxError::Connect { reason },
-                ..
-            } => {
-                assert!(reason.contains("exceeds"), "{reason}");
-            }
-            _ => panic!("expected the body cap to reject the key"),
-        }
-    }
-
-    #[tokio::test]
-    async fn a_16_byte_key_body_is_delivered() {
-        let (url, server) = serve_key_body(vec![0x66; AES128_KEY_LEN]).await;
-        let result = run_key_fetch(url).await;
-        server.abort();
-        match result {
-            crate::source::pull::FetchResult::Ready(fetched) => {
-                let bytes = fetched.bytes;
-                assert_eq!(bytes, vec![0x66; AES128_KEY_LEN]);
-            }
-            _ => panic!("expected the key bytes"),
-        }
     }
 
     fn trunk_config() -> TrunkConfig {
@@ -1468,212 +467,59 @@ Content-Length: {over}
         (format!("http://{addr}/media.m3u8"), server)
     }
 
-    /// Drives the raw [`HlsIngestSession`] over real HTTP (dial →
-    /// `poll_transmit` → fetch → `feed`), returning the `TrackSpec`s it
-    /// announced and a per-`track_id` count of the `SessionEvent::Sample`s it
-    /// produced.
-    ///
-    /// **Why the session and not an `IngestDriver`+`SampleCursor` for the
-    /// exact count**: `Trunk::subscribe()` starts from *now* and sees no
-    /// backlog, and `HlsClient` legitimately flushes a whole batch of
-    /// buffered part/segment resources the instant the init segment arrives —
-    /// i.e. `NewProgram` (which is what mints the `Trunk`) and that batch's
-    /// `Sample`s are drained by the *same* `IngestDriver::feed` call, so no
-    /// cursor can exist in time to observe them. Counting `SessionEvent`s
-    /// observes the identical property (real CMAF over real HTTP → real
-    /// decoded samples, correctly attributed) without racing the subscription.
-    /// `Trunk` arrival is asserted separately, by
-    /// [`assert_samples_reach_the_trunk`].
-    async fn drive_session_and_count(
+    const COUNT_TIMED_RING: usize = 4096;
+
+    /// Pulls `route` to the end of its finite playlist and reads back what the route published:
+    /// the result, the track set, and the number of samples per track the `Trunk` holds.
+    async fn pull_to_end(
         route: &HlsPullRoute,
-    ) -> Result<(Vec<TrackSpec>, HashMap<TrackId, usize>)> {
-        let (http, clean_url, mut credentials) = build_client(route)?;
-        let mut session = HlsIngestSession::new(clean_url.to_string());
-        let mut backlog: VecDeque<Action> = VecDeque::new();
-        let mut specs: Vec<TrackSpec> = Vec::new();
-        let mut per_track: HashMap<TrackId, usize> = HashMap::new();
-        // HANG GUARD (issue #826): ceiling on the whole session-drive loop.
-        // The session fetches playlist + init + segments over real loopback
-        // HTTP against a local axum server; each fetch completes in ~ms.
-        // Raised to 60s for load tolerance — only job is to fail "never
-        // finishes" rather than hang, not a timing claim.
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
-
-        loop {
-            while let Some(a) = session.poll_transmit() {
-                backlog.push_back(a);
-            }
-            while let Some(event) = session.poll() {
-                match event {
-                    SessionEvent::NewProgram { tracks, .. } => specs = tracks,
-                    SessionEvent::Sample { track_id, .. } => {
-                        *per_track.entry(track_id).or_insert(0) += 1;
-                    }
-                    _ => {}
-                }
-            }
-            let Some(action) = backlog.pop_front() else {
-                if session.ended() || tokio::time::Instant::now() >= deadline {
-                    break;
-                }
-                tokio::time::sleep(IDLE_POLL_INTERVAL).await;
-                continue;
-            };
-            let now = Timestamp::from_nanos(0);
-            match action {
-                Action::WaitMs(ms) => tokio::time::sleep(Duration::from_millis(ms)).await,
-                Action::FetchPlaylist { .. } => {
-                    let url = action.playlist_request_url().expect("playlist URL");
-                    let bytes = fetch_bytes(&http, &url, &mut credentials).await?;
-                    session.feed((HlsFetchId::Playlist, bytes.as_slice()), now)?;
-                }
-                Action::FetchResource { id, url, .. } => {
-                    let bytes = fetch_bytes(&http, &url, &mut credentials).await?;
-                    session.feed((HlsFetchId::Resource(id), bytes.as_slice()), now)?;
-                }
-                _ => {}
-            }
-        }
-        Ok((specs, per_track))
-    }
-
-    /// The `Trunk`-side counterpart to [`drive_session_and_count`]: drives the
-    /// same route through a real [`media_plane::ingress::IngestDriver`] and
-    /// asserts real samples actually land on a real [`SampleCursor`] — the
-    /// half a session-level count cannot prove. Deliberately a `> 0`
-    /// assertion, not an exact one: the cursor can only see what is published
-    /// *after* it subscribes, and the first batch is published in the same
-    /// `feed` that mints the `Trunk` (see [`drive_session_and_count`]'s doc).
-    async fn assert_samples_reach_the_trunk(route: &HlsPullRoute) {
-        let (http, clean_url, mut credentials) = build_client(route).expect("build client");
-        let mut dialer = HlsPullDialer {
-            playlist_url: clean_url.to_string(),
-        };
-        let mut driver = run_dial(
-            &mut dialer,
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+    ) -> (Result<()>, Vec<TrackSpec>, HashMap<TrackId, usize>) {
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let config = TrunkConfig::new(nz(COUNT_TIMED_RING), nz(16), nz(16), nz(16), nz(16));
+        // HANG GUARD (issue #826): only fails "never finishes" rather than hanging CI.
+        let result = tokio::time::timeout(
+            Duration::from_secs(60),
+            run_hls_pull(
+                route,
+                config,
+                handshake(),
+                &route_handle,
+                tokio_util::sync::CancellationToken::new(),
+            ),
         )
-        .expect("dial is infallible");
-        assert!(
-            matches!(driver.health(), HealthState::Establishing),
-            "dial() must not establish the session: {:?}",
-            driver.health()
-        );
-
-        let mut backlog: VecDeque<Action> = VecDeque::new();
-        let mut cursor: Option<SampleCursor> = None;
-        let start = std::time::Instant::now();
-        let mut total = 0usize;
-        // HANG GUARD (issue #826): ceiling on the whole Trunk-drive loop.
-        // Same reasoning as `drive_session_and_count`'s deadline — real
-        // loopback HTTP, each fetch ~ms, raised for load tolerance, not a
-        // timing claim.
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
-        loop {
-            while let Some(a) = driver.poll_transmit() {
-                backlog.push_back(a);
-            }
-            // Deliver the init resource FIRST, ahead of any part/segment.
-            //
-            // `HlsClient::on_playlist` queues its `FetchResource` actions
-            // segments-first, map-last, and buffers every part/segment that
-            // arrives before the init — replaying the whole batch the instant
-            // the init lands. Delivered in queue order against a fully-known
-            // static playlist, that means *every* sample is emitted by the one
-            // `feed` that also emits `NewProgram`, so the `Trunk` this test
-            // wants to observe is created and filled in the same call and no
-            // cursor can exist in time to see any of it. Reordering is not a
-            // test cheat: `on_resource`'s own docs state fetches may complete
-            // in any order (a real concurrent IO loop routinely finishes the
-            // small init before a large segment), and it is the only ordering
-            // under which a subscriber can observe this fixture at all.
-            let idx = if cursor.is_none() {
-                backlog
-                    .iter()
-                    .position(|a| {
-                        matches!(
-                            a,
-                            Action::FetchResource {
-                                id: ResourceId::Init,
-                                ..
-                            }
-                        )
-                    })
-                    .unwrap_or(0)
-            } else {
-                0
-            };
-            let Some(action) = backlog.remove(idx) else {
-                if driver.session().ended() || tokio::time::Instant::now() >= deadline {
-                    break;
+        .await
+        .expect("run_hls_pull must not hang against a finite playlist");
+        let trunk = route_handle.await_first_trunk().await;
+        let specs = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let specs = route_handle.track_specs(ProgramId(0));
+                if !specs.is_empty() {
+                    return specs;
                 }
-                tokio::time::sleep(IDLE_POLL_INTERVAL).await;
-                continue;
-            };
-            let now = Timestamp::from_instant(start, std::time::Instant::now());
-            match action {
-                Action::WaitMs(ms) => tokio::time::sleep(Duration::from_millis(ms)).await,
-                Action::FetchPlaylist { .. } => {
-                    let url = action.playlist_request_url().expect("playlist URL");
-                    let bytes = fetch_bytes(&http, &url, &mut credentials)
-                        .await
-                        .expect("fetch");
-                    driver.feed((HlsFetchId::Playlist, bytes.as_slice()), now);
-                }
-                Action::FetchResource { id, url, .. } => {
-                    let bytes = fetch_bytes(&http, &url, &mut credentials)
-                        .await
-                        .expect("fetch");
-                    driver.feed((HlsFetchId::Resource(id), bytes.as_slice()), now);
-                }
-                _ => {}
+                tokio::task::yield_now().await;
             }
-            if cursor.is_none() {
-                cursor = driver.trunk(ProgramId(0)).map(|t| t.subscribe());
-            }
-            if let Some(c) = cursor.as_mut() {
-                total += drain(c);
+        })
+        .await
+        .expect("the pulled programme records its track set");
+        let mut cursor = trunk.subscribe_from_backlog();
+        let mut per_track: HashMap<TrackId, usize> = HashMap::new();
+        while let Some(item) = cursor.poll() {
+            if let SampleCursorItem::Timed { track_id, .. } = item {
+                *per_track.entry(track_id).or_insert(0) += 1;
             }
         }
-
-        assert!(
-            matches!(driver.health(), HealthState::Live),
-            "the session must have established: {:?}",
-            driver.health()
-        );
-        assert!(
-            total > 0,
-            "real samples must reach the Trunk through IngestDriver, got {total}"
-        );
+        (result, specs, per_track)
     }
 
-    /// Biting loopback test: a real axum server serves a real
-    /// `LlHlsSegmenter`-built CMAF fixture over real HTTP; asserts the
-    /// session recovers the right `TrackSpec` and produces **exactly** the
-    /// fixture's own sample count, and (separately) that those samples really
-    /// do land in a `Trunk` through a real `IngestDriver`.
-    ///
-    /// MUTATION-CHECKED: replacing the `session.feed(...)` call in
-    /// `drive_session_and_count` with a no-op makes `per_track` empty and
-    /// fails the exact-count assertion; replacing `driver.feed(...)` in
-    /// `assert_samples_reach_the_trunk` with a no-op fails its `total > 0`.
+    /// Biting loopback test: a real axum server serves a real `LlHlsSegmenter`-built CMAF
+    /// fixture over real HTTP; the route recovers the right `TrackSpec` and its `Trunk` holds
+    /// **exactly** the fixture's own sample count.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn loopback_hls_pull_lands_real_samples_in_trunk() {
         let (url, server) = start_cmaf_fixture_server(None).await;
         let route = HlsPullRoute::new("pulled-cam", url);
-
-        let (specs, per_track) =
-            // HANG GUARD (issue #826): backstop around the session drive
-            // against a real axum server. The session's own internal pacing
-            // keeps it alive for the content's duration; raised to 60s for
-            // load tolerance since it only exists to fail "never finishes".
-            tokio::time::timeout(Duration::from_secs(60), drive_session_and_count(&route))
-                .await
-                .expect("drive timed out")
-                .expect("drive");
-
+        let (result, specs, per_track) = pull_to_end(&route).await;
+        assert!(result.is_ok(), "{result:?}");
         assert_eq!(specs.len(), 1, "one video track recovered: {specs:?}");
         assert_eq!(specs[0].track_id, TRACK_ID);
         assert_eq!(specs[0].timescale, VIDEO_TIMESCALE);
@@ -1687,8 +533,6 @@ Content-Length: {over}
             FRAME_COUNT as usize,
             "must pull every real sample from the CMAF fixture, no gaps/duplicates"
         );
-
-        assert_samples_reach_the_trunk(&route).await;
         server.abort();
     }
 
@@ -1706,7 +550,13 @@ Content-Length: {over}
         // returns" rather than hang CI, not a timing claim.
         let result = tokio::time::timeout(
             Duration::from_secs(60),
-            run_hls_pull(&route, trunk_config(), handshake(), &route_handle),
+            run_hls_pull(
+                &route,
+                trunk_config(),
+                handshake(),
+                &route_handle,
+                tokio_util::sync::CancellationToken::new(),
+            ),
         )
         .await
         .expect("run_hls_pull must not hang against a static playlist");
@@ -1735,7 +585,16 @@ Content-Length: {over}
         let supervisor = tokio::spawn(crate::origin::supervisor::supervise_driver(
             move |handle| {
                 let route = attempt_route.clone();
-                async move { run_hls_pull(&route, trunk_config(), handshake(), &handle).await }
+                async move {
+                    run_hls_pull(
+                        &route,
+                        trunk_config(),
+                        handshake(),
+                        &handle,
+                        tokio_util::sync::CancellationToken::new(),
+                    )
+                    .await
+                }
             },
             route_handle.clone(),
             crate::origin::supervisor::Backoff::new(
@@ -1851,7 +710,13 @@ Content-Length: {over}
         let handle = std::sync::Arc::clone(&route_handle);
         let result = tokio::time::timeout(
             Duration::from_secs(60),
-            run_hls_pull(&route, trunk_config(), handshake(), &route_handle),
+            run_hls_pull(
+                &route,
+                trunk_config(),
+                handshake(),
+                &route_handle,
+                tokio_util::sync::CancellationToken::new(),
+            ),
         )
         .await
         .expect("run_hls_pull must not hang");
@@ -1864,10 +729,15 @@ Content-Length: {over}
             "seg0 must have been requested at least 3 times (2 failures + success)"
         );
         let _ = handle;
-        // Real samples reach the trunk on a fresh drive over the same route
-        // (subscribing after the first run would miss the backlog — see the
-        // module doc).
-        assert_samples_reach_the_trunk(&route).await;
+        let trunk = route_handle.await_first_trunk().await;
+        let mut cursor = trunk.subscribe_from_backlog();
+        let mut samples = 0usize;
+        while let Some(item) = cursor.poll() {
+            if matches!(item, SampleCursorItem::Timed { .. }) {
+                samples += 1;
+            }
+        }
+        assert!(samples > 0, "the retried segment's samples reach the Trunk");
         server.abort();
     }
 
@@ -1953,7 +823,13 @@ Content-Length: {over}
         let handle = std::sync::Arc::clone(&route_handle);
         let result = tokio::time::timeout(
             Duration::from_secs(60),
-            run_hls_pull(&route, trunk_config(), handshake(), &route_handle),
+            run_hls_pull(
+                &route,
+                trunk_config(),
+                handshake(),
+                &route_handle,
+                tokio_util::sync::CancellationToken::new(),
+            ),
         )
         .await
         .expect("run_hls_pull must not hang");
@@ -1968,7 +844,6 @@ Content-Length: {over}
             "retry must wait at least the Retry-After delay"
         );
         let _ = handle;
-        assert_samples_reach_the_trunk(&route).await;
         server.abort();
     }
 
@@ -2041,7 +916,13 @@ Content-Length: {over}
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
         let result = tokio::time::timeout(
             Duration::from_secs(60),
-            run_hls_pull(&route, trunk_config(), handshake(), &route_handle),
+            run_hls_pull(
+                &route,
+                trunk_config(),
+                handshake(),
+                &route_handle,
+                tokio_util::sync::CancellationToken::new(),
+            ),
         )
         .await
         .expect("run_hls_pull must not hang");
@@ -2125,14 +1006,8 @@ Content-Length: {over}
 
         let route = HlsPullRoute::new("pulled-ts-hls", format!("http://{addr}/media.m3u8"));
 
-        let (specs, per_track) =
-            // HANG GUARD (issue #826): backstop around the session drive
-            // against the TS-HLS fixture. Same reasoning as the CMAF
-            // loopback test — real loopback HTTP, raised for load tolerance.
-            tokio::time::timeout(Duration::from_secs(60), drive_session_and_count(&route))
-                .await
-                .expect("drive timed out")
-                .expect("drive");
+        let (result, specs, per_track) = pull_to_end(&route).await;
+        assert!(result.is_ok(), "{result:?}");
 
         assert!(
             specs
@@ -2152,7 +1027,6 @@ Content-Length: {over}
             "must pull every real sample from the real TS-HLS origin, no gaps/duplicates"
         );
 
-        assert_samples_reach_the_trunk(&route).await;
         server.abort();
     }
 
@@ -2165,7 +1039,14 @@ Content-Length: {over}
 
     async fn drain_via_run_hls_pull(route: HlsPullRoute) -> Result<()> {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
-        run_hls_pull(&route, trunk_config(), handshake(), &route_handle).await
+        run_hls_pull(
+            &route,
+            trunk_config(),
+            handshake(),
+            &route_handle,
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2290,7 +1171,13 @@ Content-Length: {over}
         // outer timeout fire first, producing `Elapsed`.
         let result = tokio::time::timeout(
             Duration::from_secs(10),
-            run_hls_pull(&route, trunk_config(), handshake(), &route_handle),
+            run_hls_pull(
+                &route,
+                trunk_config(),
+                handshake(),
+                &route_handle,
+                tokio_util::sync::CancellationToken::new(),
+            ),
         )
         .await
         .expect("run_hls_pull must not exceed the assertion window");
@@ -2309,42 +1196,4 @@ Content-Length: {over}
     // would still pass every other test in this module. Observing the cap
     // end-to-end would need the fixture server to count concurrent
     // connections. Recorded rather than left implicit.
-
-    /// I-A: the pacing floor is anchored to the REAL dispatch instant, so N
-    /// reload cycles with a 1 s hint and a 20 ms playlist RTT dispatch at
-    /// exactly 0, 1, 2, 3, 4 s. The pre-fix arithmetic (anchoring to the push
-    /// instant) gives 0, 1.00, 1.02, 2.02, 2.04 — ~2x rate — and this FAILS.
-    ///
-    /// Revert-check: replace `floor.map_or(now, |f| f.max(now))` with `now`
-    /// in `PlaylistPacing::on_push` and the assertion fails.
-    #[test]
-    fn the_pacing_floor_is_anchored_to_the_real_dispatch_instant() {
-        let hint = Duration::from_millis(1000);
-        let rtt = Duration::from_millis(20);
-        let t0 = tokio::time::Instant::now();
-
-        // Model the engine's emit order per cycle: it feeds the playlist
-        // result, then queues `FetchPlaylist` THEN `WaitMs(hint)`. The next
-        // fetch is therefore pushed at (previous dispatch + rtt) with the
-        // floor already armed.
-        let mut pacing = PlaylistPacing::default();
-        let mut dispatches = Vec::new();
-        let mut push_at = t0; // first playlist is pushed immediately
-        for _ in 0..5 {
-            let floor = pacing.on_push(push_at);
-            let dispatched_at = floor.map_or(push_at, |f| f.max(push_at));
-            dispatches.push(dispatched_at - t0);
-            // The result arrives `rtt` later; the engine then arms the WaitMs
-            // hint and pushes the next FetchPlaylist.
-            pacing.arm(hint);
-            push_at = dispatched_at + rtt;
-        }
-
-        let secs: Vec<u128> = dispatches.iter().map(|d| d.as_millis()).collect();
-        assert_eq!(
-            secs,
-            vec![0, 1000, 2000, 3000, 4000],
-            "reload GETs must dispatch at 0,1,2,3,4 s (not ~2x rate)"
-        );
-    }
 }

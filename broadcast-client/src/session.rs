@@ -534,6 +534,7 @@ impl Session {
         }
         if let Some(h) = self.adaptive.as_mut() {
             self.now_us = now_us;
+            self.payload_bytes = self.payload_bytes.saturating_add(bytes.len() as u64);
             h.on_data(conn, bytes, now_us, &mut self.auth);
             self.flush_adaptive();
             return;
@@ -661,7 +662,8 @@ impl Session {
     }
 
     /// Payload bytes the session has accepted from its source: HTTP body bytes of a
-    /// TS-over-HTTP session, every byte an RTSP connection delivers (replies and interleaved
+    /// TS-over-HTTP session, every response body byte of an HLS, DASH or Smooth session, every
+    /// byte an RTSP connection delivers (replies and interleaved
     /// media), and the payloads a UDP, RTP or SRT session delivers after
     /// alignment checks, reordering and decryption. Control traffic (SRT keepalives, ACKs) and
     /// dropped datagrams do not count, so a host that measures stalls by this counter is not
@@ -774,6 +776,9 @@ impl Session {
         }
         headers::validate_credentials(&creds)?;
         let was_waiting = self.auth.set_credentials(creds);
+        if self.config.preemptive_basic {
+            self.auth.preauthorize_basic();
+        }
         if let Some(r) = self.rtsp.as_mut() {
             r.on_credentials(self.now_us, &self.auth);
             self.flush_rtsp();

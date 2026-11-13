@@ -18,6 +18,42 @@ fn bearer_preemptive() {
 }
 
 #[test]
+fn explicit_basic_is_sent_on_the_first_request_only_when_preemptive_basic_is_on() {
+    for (preemptive, expected) in [(false, false), (true, true)] {
+        let mut config = Config::default();
+        config.preemptive_basic = preemptive;
+        let mut session = Session::open("http://example/live.m3u8", config, 0).unwrap();
+        session
+            .set_credentials(Credentials::Basic {
+                username: "user".to_string(),
+                password: "pass".to_string(),
+            })
+            .unwrap();
+        let Some(Action::HttpRequest { headers, .. }) = session.poll(0) else {
+            panic!("a first request");
+        };
+        let sent = headers
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("authorization") && v.starts_with("Basic "));
+        assert_eq!(sent, expected, "preemptive_basic = {preemptive}");
+    }
+}
+
+#[test]
+fn error_kinds_report_their_refusal_status_and_permanence() {
+    use broadcast_client::ErrorKind;
+    assert_eq!(
+        ErrorKind::KeyFetchFailed { status: Some(403) }.refusal_status(),
+        Some(403)
+    );
+    assert_eq!(ErrorKind::DecryptFailed.refusal_status(), None);
+    assert!(ErrorKind::DecryptFailed.is_permanent());
+    assert!(ErrorKind::InitDecodeFailed.is_permanent());
+    assert!(!ErrorKind::BadKey.is_permanent());
+    assert!(!ErrorKind::SegmentFetchFailed { status: Some(404) }.is_permanent());
+}
+
+#[test]
 fn basic_401_replay_then_200() {
     let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
     session

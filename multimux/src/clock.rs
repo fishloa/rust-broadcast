@@ -38,6 +38,7 @@ impl SystemHostClock {
     }
 }
 
+#[cfg(test)]
 impl SystemHostClock {
     /// Microseconds since 1970-01-01T00:00:00Z on the host's own wall clock.
     pub(crate) fn unix_us(&self) -> u64 {
