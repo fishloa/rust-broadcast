@@ -2,8 +2,7 @@
 //! until the next map, so each segment is demuxed with the init of its own
 //! map-run, however the fetches interleave. Round-6 audit F3.
 
-#[path = "support/fmp4_split.rs"]
-mod fmp4_split;
+use test_harness::fmp4_split;
 
 use std::collections::BTreeMap;
 
