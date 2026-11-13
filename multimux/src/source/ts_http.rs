@@ -8,9 +8,6 @@
 //! `EventIngest`. A session that asks to reconnect ends the attempt;
 //! the route supervisor owns the backoff.
 
-use std::time::Duration;
-
-use broadcast_client::tshttp::Config as PolicyConfig;
 use broadcast_client::{Config, SourceKind};
 use media_plane::ingress::{HandshakePolicy, IngestDriver};
 use media_plane::trunk::TrunkConfig;
@@ -18,7 +15,6 @@ use media_plane::trunk::TrunkConfig;
 use crate::error::Result;
 use crate::source::client_host::{EventIngest, SessionLabels, SessionStep};
 use crate::source::pull_target::{PullKind, PullRoute};
-use broadcast_common::timeouts::Timeouts;
 
 /// An MPEG-2 TS-over-HTTP route: an `http(s)://` URL, which may carry
 /// `user:pass@` userinfo (see [`Debug`]'s redaction and
@@ -49,29 +45,7 @@ impl crate::source::pull_target::PullDrive for TsHttpKind {
     }
 }
 
-const MIN_START_TIMEOUT_MS: u64 = 1;
-const STALL_NOTICE_DIVISOR: u64 = 2;
-const MIN_STALL_RECONNECT_MS: u64 = 2;
 const WHAT: &str = "ts/http";
-
-fn duration_ms(d: Duration) -> u64 {
-    u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
-}
-
-/// The policy-core configuration for a route: the post-establishment stall
-/// threshold is the route's read timeout, the core's start timeout is the
-/// route's connect budget (the driver is `Live` from the first byte, so the
-/// handshake deadline alone never bounds a connection that sends bytes but no
-/// media), and backoff is unused because the supervisor owns reconnect.
-pub(crate) fn policy_config(timeouts: Timeouts) -> PolicyConfig {
-    let reconnect = duration_ms(timeouts.read_idle).max(MIN_STALL_RECONNECT_MS);
-    PolicyConfig {
-        start_timeout_ms: duration_ms(timeouts.connect).max(MIN_START_TIMEOUT_MS),
-        stall_notice_ms: reconnect / STALL_NOTICE_DIVISOR,
-        stall_reconnect_ms: reconnect,
-        ..PolicyConfig::default()
-    }
-}
 
 /// Opens `route`'s GET in a relay-mode session and drives it until the body ends or a read
 /// fails.
@@ -93,7 +67,7 @@ pub async fn run_ts_http(
     let mut config = Config::relay();
     config.kind = SourceKind::TsHttp;
     config.max_queued_bytes = crate::source::LIVE_EVENT_QUEUE_BYTES;
-    config.ts_http = policy_config(timeouts);
+    let config = config.with_timeouts(timeouts);
     let mut step = SessionStep::open(
         &route.target.url,
         config,
@@ -139,6 +113,7 @@ mod tests {
     use broadcast_auth::Credentials;
     use media_plane::trunk::SampleCursorItem;
     use media_plane::ts_session::test_support::{build_ts_bytes, handshake, trunk_config};
+    use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use transmux::TrackId;
 

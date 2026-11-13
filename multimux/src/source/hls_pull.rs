@@ -79,15 +79,10 @@ fn retry_schedule_ms() -> Vec<u64> {
 }
 
 fn session_config(route: &HlsPullRoute) -> Config {
-    let read_us = u64::try_from(route.target.timeouts.read_idle.as_micros())
-        .unwrap_or(u64::MAX)
-        .max(MICROS_PER_MILLI);
     let mut config = Config::relay();
     config.kind = SourceKind::Hls;
+    let mut config = config.with_timeouts(route.target.timeouts);
     config.max_queued_bytes = crate::source::SEGMENTED_EVENT_QUEUE_BYTES;
-    config.request_timeout_us = read_us;
-    config.segment_timeout_us = read_us;
-    config.hls_key_timeout_us = read_us;
     config.max_manifest_bytes = crate::source::MAX_HTTP_BODY_BYTES;
     config.max_segment_bytes = crate::source::MAX_HTTP_BODY_BYTES;
     config.max_key_bytes = MAX_KEY_BODY_BYTES;

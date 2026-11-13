@@ -1,4 +1,5 @@
 use alloc::vec;
+use broadcast_common::timeouts::Timeouts;
 
 /// Session configuration (defaults per DESIGN.md).
 ///
@@ -25,6 +26,30 @@ pub struct Config {
     /// lasted less than this interval, so a long-lived stream still
     /// reconnects with no delay.
     pub min_reconnect_interval_ms: u64,
+}
+
+/// Smallest start timeout [`Config::with_timeouts`] produces, in milliseconds.
+const MIN_START_TIMEOUT_MS: u64 = 1;
+/// Smallest stall-reconnect threshold [`Config::with_timeouts`] produces, in
+/// milliseconds; the notice threshold is half of it, so the two stay ordered.
+const MIN_STALL_RECONNECT_MS: u64 = 2;
+const STALL_NOTICE_DIVISOR: u64 = 2;
+
+impl Config {
+    /// Take the start timeout from `timeouts.connect` (the whole first-byte
+    /// budget, bounding a connection that sends bytes but no media) and the
+    /// stall-reconnect threshold from `timeouts.read_idle`, with the notice
+    /// threshold at half of it. Floors: 1 ms start, 2 ms reconnect. The backoff
+    /// fields are left as they are.
+    #[must_use]
+    pub fn with_timeouts(mut self, timeouts: Timeouts) -> Self {
+        let millis = |d: core::time::Duration| u64::try_from(d.as_millis()).unwrap_or(u64::MAX);
+        let reconnect = millis(timeouts.read_idle).max(MIN_STALL_RECONNECT_MS);
+        self.start_timeout_ms = millis(timeouts.connect).max(MIN_START_TIMEOUT_MS);
+        self.stall_notice_ms = reconnect / STALL_NOTICE_DIVISOR;
+        self.stall_reconnect_ms = reconnect;
+        self
+    }
 }
 
 impl Default for Config {

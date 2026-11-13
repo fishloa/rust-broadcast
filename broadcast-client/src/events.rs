@@ -6,6 +6,7 @@ use alloc::vec::Vec;
 use url::Url;
 
 use broadcast_auth::Scheme as AuthScheme;
+use broadcast_common::timeouts::Timeouts;
 
 use transmux::{DisplayInfo, JoinDecision, Sample, TrackId, TrackSpec};
 
@@ -1185,6 +1186,53 @@ impl Config {
             timeline_jump: None,
             ..Self::default()
         }
+    }
+
+    /// Set the time bounds of the session's I/O from one [`Timeouts`], by
+    /// [`Config::kind`] (set `kind` first; the meaning of each field differs per
+    /// protocol, and this is the one place that says how):
+    ///
+    /// - [`SourceKind::Hls`]: `read_idle` bounds each playlist, segment and key
+    ///   request ([`Config::request_timeout_us`], [`Config::segment_timeout_us`],
+    ///   [`Config::hls_key_timeout_us`]); `connect` and `handshake` are the
+    ///   host's.
+    /// - [`SourceKind::Dash`] and [`SourceKind::Smooth`]: `read_idle` bounds each
+    ///   manifest and segment request ([`Config::request_timeout_us`],
+    ///   [`Config::segment_timeout_us`]).
+    /// - [`SourceKind::Srt`]: `connect` bounds the handshake
+    ///   (`srt.handshake_timeout_ms`); the peer-idle bound keeps its own value (set
+    ///   it with [`crate::srt::SrtConfig::with_timeouts`]).
+    /// - every other kind (TS over HTTP, RTSP, UDP, RTP, RTMP, and `Auto`): the
+    ///   stall policy ([`Config::ts_http`], see [`crate::tshttp::Config::with_timeouts`]):
+    ///   `connect` is the start timeout, `read_idle` the stall-reconnect
+    ///   threshold.
+    ///
+    /// Every bound is at least one millisecond; a bound the protocol does not
+    /// have is ignored.
+    #[must_use]
+    pub fn with_timeouts(mut self, timeouts: Timeouts) -> Self {
+        let floor = core::time::Duration::from_millis(1);
+        let micros =
+            |d: core::time::Duration| u64::try_from(d.max(floor).as_micros()).unwrap_or(u64::MAX);
+        match self.kind {
+            SourceKind::Hls => {
+                let read = micros(timeouts.read_idle);
+                self.request_timeout_us = read;
+                self.segment_timeout_us = read;
+                self.hls_key_timeout_us = read;
+            }
+            SourceKind::Dash | SourceKind::Smooth => {
+                let read = micros(timeouts.read_idle);
+                self.request_timeout_us = read;
+                self.segment_timeout_us = read;
+            }
+            SourceKind::Srt => {
+                self.srt.handshake_timeout_ms =
+                    u64::try_from(timeouts.connect.max(floor).as_millis()).unwrap_or(u64::MAX);
+            }
+            _ => self.ts_http = self.ts_http.with_timeouts(timeouts),
+        }
+        self
     }
 
     /// The exact controller configuration a session opened with this `Config` builds its
