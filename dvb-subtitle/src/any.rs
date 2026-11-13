@@ -26,7 +26,7 @@ macro_rules! declare_segments {
         #[non_exhaustive]
         pub enum AnySegment<$lt> {
             $(
-                #[allow(missing_docs)]
+                #[doc = concat!(stringify!($variant), " segment.")]
                 $variant($($path)::+ $(<$plt>)?),
             )+
             /// Segment with an unrecognized or unsupported segment_type; `data` is the
