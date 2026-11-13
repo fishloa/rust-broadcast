@@ -201,7 +201,7 @@ pub(crate) struct SessionStep {
     writers: BTreeMap<u32, BoxedWrite>,
     udp: UdpHost,
     tls: TlsHost,
-    wake_at: Option<u64>,
+    wakes: std::collections::BTreeSet<u64>,
     route_handle: std::sync::Arc<crate::route::RouteHandle>,
     feed_si: bool,
     media_seen: bool,
@@ -259,7 +259,7 @@ impl SessionStep {
             writers: BTreeMap::new(),
             udp: UdpHost::default(),
             tls: TlsHost::default(),
-            wake_at: None,
+            wakes: std::collections::BTreeSet::new(),
             route_handle,
             feed_si,
             media_seen: false,
@@ -398,7 +398,7 @@ impl SessionStep {
                     }
                 }
                 Action::WakeAt(at) => {
-                    self.wake_at = Some(self.wake_at.map_or(at, |w| w.min(at)));
+                    self.wakes.insert(at);
                 }
                 other => {
                     return Err(MultimuxError::Connect {
@@ -633,13 +633,18 @@ impl IngestStep<EventIngest> for SessionStep {
         let mut received = false;
         let mut verdict = self.drain_events(driver);
         if matches!(verdict, Verdict::Continue) {
-            let until_wake = self.wake_at.map_or(window, |at| {
-                Duration::from_micros(at.saturating_sub(self.now_us()))
-            });
-            match tokio::time::timeout(window.min(until_wake), self.rx.recv()).await {
-                Ok(Some(message)) => received = self.apply(message),
-                Ok(None) => {}
-                Err(_) => self.wake_at = None,
+            let now = self.now_us();
+            while self.wakes.first().is_some_and(|at| *at <= now) {
+                self.wakes.pop_first();
+            }
+            let until_wake = self
+                .wakes
+                .first()
+                .map_or(window, |at| Duration::from_micros(at.saturating_sub(now)));
+            if let Ok(Some(message)) =
+                tokio::time::timeout(window.min(until_wake), self.rx.recv()).await
+            {
+                received = self.apply(message);
             }
             if let Err(e) = self.perform_actions().await {
                 return StepOutcome::Failed(e);

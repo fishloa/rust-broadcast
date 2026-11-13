@@ -121,19 +121,6 @@ pub(crate) const DVR_SI_ERRORS_TOTAL: &str = "multimux_dvr_si_errors_total";
 /// counter is how an operator sees it (issue #1083, D3 / I1).
 pub(crate) const DVR_FAILED_TOTAL: &str = "multimux_dvr_failed_total";
 
-/// Counter: total live-edge segments/fragments a pull source abandoned after
-/// exhausting its bounded tolerated-`404` retries (audit W14a/W14b), so the
-/// downstream end has been notified the source is no longer at the live edge.
-/// Labels: `source`. A non-zero rate is the signal an operator uses to see a
-/// stalled-or-restarted encoder without the route going dark silently.
-pub(crate) const PULL_FRAGMENT_ABANDONED_TOTAL: &str = "multimux_pull_fragment_abandoned_total";
-
-/// Counter: total manifest refreshes in which a live stream had no matching
-/// `StreamIndex` (audit W14e) — a renamed or retemplated stream. Distinct
-/// from `PULL_FRAGMENT_ABANDONED_TOTAL` (a fragment that never arrived) so an
-/// operator can tell the two apart. Labels: none.
-pub(crate) const PULL_STREAM_REFRESH_MISS_TOTAL: &str = "multimux_pull_stream_refresh_miss_total";
-
 /// Counter: total TS samples dropped (oldest first) because the demux
 /// replayed more pre-`TracksResolved` backlog than the ingest session's
 /// bounded hold (`MAX_HELD_SAMPLES` / `MAX_HELD_BYTES`) allows - a head

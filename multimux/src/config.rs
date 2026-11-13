@@ -64,15 +64,15 @@ fn default_file_loop() -> bool {
 ///   field is exposed.
 ///
 /// [`InputSpec::TsHttp`]/[`InputSpec::HlsPull`]/[`InputSpec::DashPull`] all
-/// may carry `user:pass@` URL userinfo (Basic/Digest — see
-/// [`crate::source::http_auth`]), redacted the same way [`InputSpec::Rtsp`]'s
+/// may carry `user:pass@` URL userinfo (Basic/Digest, answered
+/// by the session), redacted the same way [`InputSpec::Rtsp`]'s
 /// URL is.
 ///
 /// [`InputSpec::Rtsp`]/[`InputSpec::TsHttp`]/[`InputSpec::HlsPull`]/
 /// [`InputSpec::DashPull`] each also take an optional config-supplied `auth`
 /// ([`AuthSpec`]) — the only way to supply a Bearer token (RFC 6750 has no
 /// URL-userinfo form) and, when present, taking precedence over any URL
-/// userinfo (see `crate::source::http_auth::resolve_credentials`).
+/// userinfo.
 /// [`InputSpec::Rtp`]/[`InputSpec::TsUdp`] are raw UDP transports with no
 /// HTTP/RTSP request line to attach credentials to, so they carry no `auth`
 /// field.
@@ -335,8 +335,7 @@ pub enum InputSpec {
 /// asks for (RFC 7617/RFC 7616) — or a bearer token (RFC 6750). A bearer
 /// token has no URL-userinfo form, so config is its only source; a
 /// username/password pair may instead come from the route's own URL
-/// userinfo, but an explicit `auth` here always wins over that (see
-/// `crate::source::http_auth::resolve_credentials`).
+/// userinfo, but an explicit `auth` here always wins over that.
 ///
 /// Socket options for a UDP ingest bind (SP1.6), flattened into
 /// [`InputSpec::Rtp`]/[`InputSpec::TsUdp`] so they are set as sibling keys on

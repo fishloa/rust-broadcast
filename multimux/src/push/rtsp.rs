@@ -13,7 +13,7 @@
 //!   (previously hard-coded to `rtsp://localhost/push`);
 //! - userinfo credentials in the URL are honoured (`config.credentials`
 //!   still wins when both are given, matching
-//!   `crate::source::http_auth::resolve_credentials`' precedence);
+//!   the pull routes' precedence);
 //! - every response status is checked; a non-2xx now fails `connect`/`setup`
 //!   instead of being silently ignored;
 //! - the SDP carries a session-level `c=` line (RFC 4566 requires one
@@ -172,8 +172,8 @@ impl PushTransport for RtspTransport {
         let port = parsed.port().unwrap_or(554);
         let addr = format!("{host}:{port}");
 
-        // Config credentials win over the URL's own userinfo (mirrors
-        // `crate::source::http_auth::resolve_credentials`'s precedence).
+        // Config credentials win over the URL's own userinfo (the same
+        // precedence the pull routes use).
         let url_credentials = broadcast_auth::credentials_from_url(&parsed)
             .map_err(|e| RtspPushError::Connect(e.to_string()))?;
         let _ = parsed.set_username("");
