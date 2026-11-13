@@ -70,16 +70,16 @@ fn avc_spec() -> TrackSpec {
 
 fn primary_builder() -> HlsOriginBuilder {
     HlsOrigin::builder(new_trunk())
-        .container(Container::MpegTs)
-        .target_duration_secs(TARGET_SECS)
-        .window_segments(nz(4))
-        .instance(7)
-        .declared_bandwidth_bps(5_000_000)
+        .with_container(Container::MpegTs)
+        .with_target_duration_secs(TARGET_SECS)
+        .with_window_segments(nz(4))
+        .with_instance(7)
+        .with_declared_bandwidth_bps(5_000_000)
 }
 
 fn primary_with(decls: Vec<SubtitleRenditionDecl>) -> HlsOrigin {
     let origin = primary_builder()
-        .subtitle_renditions(decls)
+        .with_subtitle_renditions(decls)
         .build()
         .expect("primary builds");
     origin.set_track_specs(&[avc_spec()]).expect("track specs");
@@ -103,10 +103,10 @@ fn media_lines(master: &str) -> Vec<&str> {
 
 fn webvtt_origin(trunk: &Arc<Trunk>, target_secs: f64) -> HlsOrigin {
     HlsOrigin::builder(Arc::clone(trunk))
-        .container(Container::WebVtt)
-        .target_duration_secs(target_secs)
-        .window_segments(nz(4))
-        .instance(9)
+        .with_container(Container::WebVtt)
+        .with_target_duration_secs(target_secs)
+        .with_window_segments(nz(4))
+        .with_instance(9)
         .build()
         .expect("webvtt origin builds")
 }
@@ -264,10 +264,10 @@ fn master_without_subtitles_is_unchanged() {
 fn subtitle_playlist_has_no_map_and_matches_primary_target_duration() {
     let primary_trunk = new_trunk();
     let primary = HlsOrigin::builder(Arc::clone(&primary_trunk))
-        .container(Container::MpegTs)
-        .target_duration_secs(TARGET_SECS)
-        .window_segments(nz(4))
-        .instance(7)
+        .with_container(Container::MpegTs)
+        .with_target_duration_secs(TARGET_SECS)
+        .with_window_segments(nz(4))
+        .with_instance(7)
         .build()
         .expect("primary");
     let primary_writer = primary_trunk.segment_writer().expect("writer");
@@ -324,11 +324,11 @@ fn publish_vtt_part(w: &SegmentWriter, seq: u32, idx: u32) {
 fn low_latency_webvtt_origin_renders_parts_and_blocks_on_media_sequence() {
     let trunk = new_trunk();
     let origin = HlsOrigin::builder(Arc::clone(&trunk))
-        .container(Container::WebVtt)
-        .target_duration_secs(TARGET_SECS)
-        .window_segments(nz(4))
-        .low_latency(500)
-        .instance(9)
+        .with_container(Container::WebVtt)
+        .with_target_duration_secs(TARGET_SECS)
+        .with_window_segments(nz(4))
+        .with_low_latency(500)
+        .with_instance(9)
         .build()
         .expect("builds");
     let writer = trunk.segment_writer().expect("writer");
@@ -362,12 +362,12 @@ fn low_latency_webvtt_origin_renders_parts_and_blocks_on_media_sequence() {
 fn webvtt_part_resource_is_served_and_awaited() {
     let trunk = new_trunk();
     let origin = HlsOrigin::builder(Arc::clone(&trunk))
-        .container(Container::WebVtt)
-        .target_duration_secs(TARGET_SECS)
-        .window_segments(nz(4))
-        .low_latency(500)
-        .instance(9)
-        .hold_cold_playlist(false)
+        .with_container(Container::WebVtt)
+        .with_target_duration_secs(TARGET_SECS)
+        .with_window_segments(nz(4))
+        .with_low_latency(500)
+        .with_instance(9)
+        .with_hold_cold_playlist(false)
         .build()
         .expect("builds");
     let writer = trunk.segment_writer().expect("writer");
@@ -399,11 +399,11 @@ fn webvtt_part_resource_is_served_and_awaited() {
 
 fn ll_origin(container: Container, trunk: &Arc<Trunk>) -> HlsOrigin {
     let origin = HlsOrigin::builder(Arc::clone(trunk))
-        .container(container)
-        .target_duration_secs(TARGET_SECS)
-        .window_segments(nz(8))
-        .low_latency(500)
-        .instance(9)
+        .with_container(container)
+        .with_target_duration_secs(TARGET_SECS)
+        .with_window_segments(nz(8))
+        .with_low_latency(500)
+        .with_instance(9)
         .build()
         .expect("builds");
     if container != Container::WebVtt {
@@ -482,8 +482,8 @@ fn sibling_origins_must_be_webvtt_with_the_primary_target_duration() {
     let good = Arc::new(webvtt_origin(&sub_trunk, TARGET_SECS));
     assert!(
         primary_builder()
-            .subtitle_renditions(vec![english()])
-            .subtitle_sibling_origins(vec![good])
+            .with_subtitle_renditions(vec![english()])
+            .with_subtitle_sibling_origins(vec![good])
             .build()
             .is_ok()
     );
@@ -492,25 +492,25 @@ fn sibling_origins_must_be_webvtt_with_the_primary_target_duration() {
     assert_eq!(
         build_err(
             primary_builder()
-                .subtitle_renditions(vec![english()])
-                .subtitle_sibling_origins(vec![slow])
+                .with_subtitle_renditions(vec![english()])
+                .with_subtitle_sibling_origins(vec![slow])
         ),
         HlsOriginBuildError::SubtitleSiblingTargetDurationMismatch
     );
 
     let ts = Arc::new(
         HlsOrigin::builder(new_trunk())
-            .container(Container::MpegTs)
-            .target_duration_secs(TARGET_SECS)
-            .window_segments(nz(4))
+            .with_container(Container::MpegTs)
+            .with_target_duration_secs(TARGET_SECS)
+            .with_window_segments(nz(4))
             .build()
             .expect("ts"),
     );
     assert_eq!(
         build_err(
             primary_builder()
-                .subtitle_renditions(vec![english()])
-                .subtitle_sibling_origins(vec![ts])
+                .with_subtitle_renditions(vec![english()])
+                .with_subtitle_sibling_origins(vec![ts])
         ),
         HlsOriginBuildError::SubtitleSiblingNotWebVtt
     );
@@ -520,8 +520,8 @@ fn sibling_origins_must_be_webvtt_with_the_primary_target_duration() {
     assert_eq!(
         build_err(
             primary_builder()
-                .subtitle_renditions(vec![english()])
-                .subtitle_sibling_origins(vec![a, b])
+                .with_subtitle_renditions(vec![english()])
+                .with_subtitle_sibling_origins(vec![a, b])
         ),
         HlsOriginBuildError::SubtitleSiblingCountMismatch
     );
@@ -535,7 +535,7 @@ fn build_err(builder: HlsOriginBuilder) -> HlsOriginBuildError {
 }
 
 fn err_for(decls: Vec<SubtitleRenditionDecl>) -> HlsOriginBuildError {
-    build_err(primary_builder().subtitle_renditions(decls))
+    build_err(primary_builder().with_subtitle_renditions(decls))
 }
 
 #[test]

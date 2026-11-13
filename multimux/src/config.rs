@@ -2254,7 +2254,7 @@ pub struct Config {
     pub program_date_time: ProgramDateTimeSource,
     /// Whether a media-playlist request without `_HLS_msn`/`_HLS_part` made
     /// before the playlist holds a closed segment is held until the first
-    /// segment closes (see `hls_runtime::server::HlsOriginBuilder::hold_cold_playlist`),
+    /// segment closes (see `hls_runtime::server::HlsOriginBuilder::with_hold_cold_playlist`),
     /// bounded by the blocking-reload timeout and answered `503` after it.
     /// Defaults to `true`: clients that ignore Partial Segments (ffmpeg, VLC)
     /// cannot open a playlist with no `EXTINF` and do not retry. Set `false`

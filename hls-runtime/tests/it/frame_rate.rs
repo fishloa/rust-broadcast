@@ -29,10 +29,10 @@ fn origin() -> HlsOrigin {
             .with_part_capacity(nz(64)),
     );
     HlsOrigin::builder(trunk)
-        .target_duration_secs(4.0)
-        .window_segments(nz(4))
-        .instance(7)
-        .declared_bandwidth_bps(5_000_000)
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(4))
+        .with_instance(7)
+        .with_declared_bandwidth_bps(5_000_000)
         .build()
         .expect("build")
 }
@@ -114,11 +114,11 @@ fn set_init_reset_clears_frame_rate() {
             .with_part_capacity(nz(64)),
     );
     let origin = HlsOrigin::builder(trunk)
-        .target_duration_secs(4.0)
-        .window_segments(nz(4))
-        .container(Container::Fmp4)
-        .instance(7)
-        .declared_bandwidth_bps(5_000_000)
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(4))
+        .with_container(Container::Fmp4)
+        .with_instance(7)
+        .with_declared_bandwidth_bps(5_000_000)
         .build()
         .expect("build");
     let specs = specs_from_fixture("ts/h264-aac.ts").unwrap_or_default();
@@ -179,11 +179,11 @@ fn ts_origin_fed_with(
     );
     let writer = trunk.segment_writer().expect("segment writer");
     let origin = HlsOrigin::builder(Arc::clone(&trunk))
-        .container(Container::MpegTs)
-        .target_duration_secs(f64::from(SEGMENT_TARGET_SECS) + 1.0)
-        .window_segments(nz(64))
-        .instance(7)
-        .declared_bandwidth_bps(5_000_000)
+        .with_container(Container::MpegTs)
+        .with_target_duration_secs(f64::from(SEGMENT_TARGET_SECS) + 1.0)
+        .with_window_segments(nz(64))
+        .with_instance(7)
+        .with_declared_bandwidth_bps(5_000_000)
         .build()
         .expect("build");
     origin.set_track_specs(&specs).expect("specs");
@@ -392,11 +392,11 @@ impl Feed {
         );
         let writer = trunk.segment_writer().expect("segment writer");
         let origin = HlsOrigin::builder(trunk)
-            .container(Container::MpegTs)
-            .target_duration_secs(2.0)
-            .window_segments(nz(3))
-            .instance(7)
-            .declared_bandwidth_bps(5_000_000)
+            .with_container(Container::MpegTs)
+            .with_target_duration_secs(2.0)
+            .with_window_segments(nz(3))
+            .with_instance(7)
+            .with_declared_bandwidth_bps(5_000_000)
             .build()
             .expect("build");
         origin.set_track_specs(specs).expect("specs");

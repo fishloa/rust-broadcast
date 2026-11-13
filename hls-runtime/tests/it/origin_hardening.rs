@@ -54,12 +54,12 @@ fn trunk_with(segment_cap: usize, part_cap: usize) -> (Arc<Trunk>, SegmentWriter
 
 fn origin(trunk: &Arc<Trunk>, window: usize, low_latency: bool) -> HlsOrigin {
     let mut b = HlsOrigin::builder(Arc::clone(trunk))
-        .target_duration_secs(4.0)
-        .window_segments(nz(window));
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(window));
     if low_latency {
-        b = b.low_latency(500);
+        b = b.with_low_latency(500);
     }
-    b.instance(7).build().expect("origin builds")
+    b.with_instance(7).build().expect("origin builds")
 }
 
 fn publish_seg(w: &SegmentWriter, seq: u32, secs: u64, discontinuous: bool) {
@@ -460,11 +460,11 @@ fn lag_after_a_populated_window_does_not_leave_a_numbering_hole() {
 fn media_sequence_offset_continues_the_numbering_everywhere() {
     let (trunk, w) = trunk_with(8, 64);
     let o = HlsOrigin::builder(Arc::clone(&trunk))
-        .target_duration_secs(4.0)
-        .window_segments(nz(4))
-        .low_latency(500)
-        .media_sequence_offset(1000)
-        .instance(7)
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(4))
+        .with_low_latency(500)
+        .with_media_sequence_offset(1000)
+        .with_instance(7)
         .build()
         .unwrap();
     publish_seg(&w, 1, 4, false);
@@ -539,29 +539,29 @@ fn builder_rejects_hostile_configuration() {
     let (trunk, _w) = trunk_with(8, 64);
     let base = || {
         HlsOrigin::builder(Arc::clone(&trunk))
-            .target_duration_secs(4.0)
-            .window_segments(nz(4))
+            .with_target_duration_secs(4.0)
+            .with_window_segments(nz(4))
     };
     assert_eq!(
-        base().low_latency(0).build().err(),
+        base().with_low_latency(0).build().err(),
         Some(HlsOriginBuildError::ZeroPartTarget)
     );
     assert_eq!(
-        base().media_sequence_offset(u64::MAX).build().err(),
+        base().with_media_sequence_offset(u64::MAX).build().err(),
         Some(HlsOriginBuildError::MediaSequenceOffsetTooLarge)
     );
     assert_eq!(
         base()
-            .media_sequence_offset(u64::MAX - u64::from(u32::MAX) + 1)
-            .instance(7)
+            .with_media_sequence_offset(u64::MAX - u64::from(u32::MAX) + 1)
+            .with_instance(7)
             .build()
             .err(),
         Some(HlsOriginBuildError::MediaSequenceOffsetTooLarge)
     );
     assert!(
         base()
-            .media_sequence_offset(u64::MAX - u64::from(u32::MAX))
-            .instance(7)
+            .with_media_sequence_offset(u64::MAX - u64::from(u32::MAX))
+            .with_instance(7)
             .build()
             .is_ok()
     );
@@ -666,10 +666,10 @@ media.m3u8
 fn a_new_unparseable_init_drops_the_previous_codecs() {
     let (trunk, _w) = trunk_with(8, 64);
     let o = HlsOrigin::builder(Arc::clone(&trunk))
-        .target_duration_secs(4.0)
-        .window_segments(nz(4))
-        .declared_bandwidth_bps(5_000_000)
-        .instance(7)
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(4))
+        .with_declared_bandwidth_bps(5_000_000)
+        .with_instance(7)
         .build()
         .expect("origin builds");
     o.set_init(fixture("init.mp4"));
@@ -685,10 +685,10 @@ fn a_new_unparseable_init_drops_the_previous_codecs() {
 fn next_media_sequence_continues_into_a_replacement_origin() {
     let (trunk, w) = trunk_with(8, 64);
     let first = HlsOrigin::builder(Arc::clone(&trunk))
-        .target_duration_secs(4.0)
-        .window_segments(nz(4))
-        .media_sequence_offset(1000)
-        .instance(7)
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(4))
+        .with_media_sequence_offset(1000)
+        .with_instance(7)
         .build()
         .unwrap();
     assert_eq!(first.next_media_sequence(), 1001);
@@ -699,10 +699,10 @@ fn next_media_sequence_continues_into_a_replacement_origin() {
     // A reconnect: a fresh Trunk restarts at 1, the offset carries on.
     let (trunk2, w2) = trunk_with(8, 64);
     let second = HlsOrigin::builder(Arc::clone(&trunk2))
-        .target_duration_secs(4.0)
-        .window_segments(nz(4))
-        .media_sequence_offset(first.next_media_sequence().saturating_sub(1))
-        .instance(7)
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(4))
+        .with_media_sequence_offset(first.next_media_sequence().saturating_sub(1))
+        .with_instance(7)
         .build()
         .unwrap();
     publish_seg(&w2, 1, 4, false);
@@ -1016,10 +1016,10 @@ fn a_replacement_origin_with_the_offset_reuses_no_segment_name() {
     let (trunk2, w2) = trunk_with(8, 64);
     let collide = origin(&trunk2, 6, false);
     let o2 = HlsOrigin::builder(Arc::clone(&trunk2))
-        .target_duration_secs(4.0)
-        .window_segments(nz(6))
-        .media_sequence_offset(o1.next_media_sequence().saturating_sub(1))
-        .instance(7)
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(6))
+        .with_media_sequence_offset(o1.next_media_sequence().saturating_sub(1))
+        .with_instance(7)
         .build()
         .unwrap();
     publish_seg_bytes(&w2, 1, 4, false, vec![0xEE; 8]);
@@ -1045,9 +1045,9 @@ fn a_hostile_target_duration_is_a_build_error() {
     let (trunk, _w) = trunk_with(8, 64);
     for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, -4.0] {
         let result = HlsOrigin::builder(Arc::clone(&trunk))
-            .target_duration_secs(bad)
-            .window_segments(nz(4))
-            .instance(7)
+            .with_target_duration_secs(bad)
+            .with_window_segments(nz(4))
+            .with_instance(7)
             .build();
         assert!(
             matches!(result, Err(HlsOriginBuildError::InvalidTargetDuration)),
@@ -1083,10 +1083,10 @@ fn named_uris(body: &str) -> Vec<String> {
 fn fresh_origin(offset: u64) -> (Arc<Trunk>, SegmentWriter, HlsOrigin) {
     let (trunk, w) = trunk_with(8, 64);
     let o = HlsOrigin::builder(Arc::clone(&trunk))
-        .target_duration_secs(4.0)
-        .window_segments(nz(6))
-        .low_latency(500)
-        .media_sequence_offset(offset)
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(6))
+        .with_low_latency(500)
+        .with_media_sequence_offset(offset)
         .build()
         .expect("origin builds");
     (trunk, w, o)
@@ -1203,10 +1203,10 @@ fn token_less_names_resolve_but_are_never_immutable() {
 fn a_segmenter_numbering_from_above_one_renders_the_open_segments_parts() {
     let (trunk, w) = trunk_with(8, 64);
     let o = HlsOrigin::builder(Arc::clone(&trunk))
-        .target_duration_secs(4.0)
-        .window_segments(nz(6))
-        .low_latency(500)
-        .hold_cold_playlist(false)
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(6))
+        .with_low_latency(500)
+        .with_hold_cold_playlist(false)
         .build()
         .expect("origin builds");
     publish_part(&w, 5, 0);

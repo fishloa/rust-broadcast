@@ -25,10 +25,10 @@ fn origin() -> HlsOrigin {
             .with_part_capacity(nz(64)),
     );
     HlsOrigin::builder(trunk)
-        .target_duration_secs(4.0)
-        .window_segments(nz(4))
-        .instance(7)
-        .declared_bandwidth_bps(5_000_000)
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(4))
+        .with_instance(7)
+        .with_declared_bandwidth_bps(5_000_000)
         .build()
         .expect("build")
 }
@@ -169,11 +169,11 @@ fn set_init_reset_clears_video_range() {
             .with_part_capacity(nz(64)),
     );
     let origin = HlsOrigin::builder(trunk)
-        .target_duration_secs(4.0)
-        .window_segments(nz(4))
-        .container(Container::Fmp4)
-        .instance(7)
-        .declared_bandwidth_bps(5_000_000)
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(4))
+        .with_container(Container::Fmp4)
+        .with_instance(7)
+        .with_declared_bandwidth_bps(5_000_000)
         .build()
         .expect("build");
     let spec = spec_with(1, Some(16), true, true);
@@ -203,10 +203,10 @@ fn real_sdr_capture_omits_video_range() {
             .with_part_capacity(nz(64)),
     );
     let origin = HlsOrigin::builder(trunk)
-        .target_duration_secs(4.0)
-        .window_segments(nz(4))
-        .instance(7)
-        .declared_bandwidth_bps(5_000_000)
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(4))
+        .with_instance(7)
+        .with_declared_bandwidth_bps(5_000_000)
         .build()
         .expect("build");
     origin.set_track_specs(&specs).unwrap();
@@ -232,10 +232,10 @@ fn real_sdr_krone_omits_video_range() {
             .with_part_capacity(nz(64)),
     );
     let origin = HlsOrigin::builder(trunk)
-        .target_duration_secs(4.0)
-        .window_segments(nz(4))
-        .instance(7)
-        .declared_bandwidth_bps(5_000_000)
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(4))
+        .with_instance(7)
+        .with_declared_bandwidth_bps(5_000_000)
         .build()
         .expect("build");
     origin.set_track_specs(&specs).unwrap();
