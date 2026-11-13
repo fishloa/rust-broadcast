@@ -1,4 +1,3 @@
-mod send_sync;
 mod aes128;
 mod audio_renditions;
 mod audit_1485;
@@ -27,6 +26,7 @@ mod playlist_base;
 mod rendition_validators;
 mod resolution;
 mod segment_failure;
+mod send_sync;
 mod subtitle_renditions;
 mod target_duration_freeze;
 mod tracks_display;
