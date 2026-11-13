@@ -155,10 +155,10 @@ impl TlsServer {
 }
 
 impl TlsServer {
-    pub fn log_when<R: Fn(&ServerLog) -> bool>(
+    pub fn log_when(
         &self,
         within: std::time::Duration,
-        ready: R,
+        ready: impl Fn(&ServerLog) -> bool,
     ) -> MutexGuard<'_, ServerLog> {
         let (log, _) = self
             .logged
@@ -311,44 +311,3 @@ pub fn https_get(
         body: raw[split + 4..].to_vec(),
     })
 }
-
-// SENTINEL-START
-#[used]
-static _USE_ALL_ITEMS: usize = {
-    let _ = 0usize;
-    let _ = provider;
-    let _ = server_config;
-    let _ = client_config;
-    let _ = identity_material;
-    let _ = https_get;
-    let _ = std::mem::size_of::<Ca>();
-    let _ = std::mem::size_of::<Leaf>();
-    let _ = std::mem::size_of::<ServerLog>();
-    let _ = std::mem::size_of::<TlsServer>();
-    let _ = std::mem::size_of::<Response>();
-    let _ = std::mem::offset_of!(Ca, cert_der);
-    let _ = std::mem::offset_of!(Ca, issuer);
-    let _ = std::mem::offset_of!(Leaf, chain_pem);
-    let _ = std::mem::offset_of!(Leaf, key_pem);
-    let _ = std::mem::offset_of!(Leaf, chain_der);
-    let _ = std::mem::offset_of!(Leaf, key_der);
-    let _ = std::mem::offset_of!(ServerLog, client_certs);
-    let _ = std::mem::offset_of!(ServerLog, handshake_failures);
-    let _ = std::mem::offset_of!(ServerLog, requests);
-    let _ = std::mem::offset_of!(TlsServer, addr);
-    let _ = std::mem::offset_of!(TlsServer, log);
-    let _ = std::mem::offset_of!(TlsServer, logged);
-    let _ = std::mem::offset_of!(TlsServer, stop);
-    let _ = std::mem::offset_of!(TlsServer, thread);
-    let _ = std::mem::offset_of!(Response, status);
-    let _ = std::mem::offset_of!(Response, headers);
-    let _ = std::mem::offset_of!(Response, body);
-    let _ = Ca::new;
-    let _ = Ca::issue;
-    let _ = Leaf::pem_identity;
-    let _ = Leaf::der_identity;
-    let _ = TlsServer::start;
-    let _ = TlsServer::log_when::<fn(&ServerLog) -> bool>;
-    0
-};
-// SENTINEL-END

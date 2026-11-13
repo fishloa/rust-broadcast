@@ -143,30 +143,3 @@ impl Truth {
         }
     }
 }
-
-// SENTINEL-START
-#[used]
-static _USE_ALL_ITEMS: usize = {
-    let _ = 0usize;
-    let _ = video_key;
-    let _ = median;
-    let _ = candidates;
-    let _ = NAL_LENGTH_BYTES;
-    let _ = NAL_TYPE_MASK;
-    let _ = NAL_SLICE;
-    let _ = NAL_IDR;
-    let _ = std::mem::size_of::<GroundTruth>();
-    let _ = std::mem::size_of::<Keyed>();
-    let _ = std::mem::size_of::<Truth>();
-    let _ = std::mem::offset_of!(GroundTruth, audio_matched);
-    let _ = std::mem::offset_of!(GroundTruth, video_matched);
-    let _ = std::mem::offset_of!(GroundTruth, audio_median);
-    let _ = std::mem::offset_of!(GroundTruth, video_median);
-    let _ = std::mem::offset_of!(Truth, video);
-    let _ = std::mem::offset_of!(Truth, audio);
-    let _ = GroundTruth::offset;
-    let _ = Truth::from_media;
-    let _ = Truth::source_start_gap;
-    0
-};
-// SENTINEL-END

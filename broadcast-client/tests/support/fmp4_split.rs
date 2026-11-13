@@ -136,31 +136,3 @@ pub fn drop_track(init: &[u8], track_id: u32) -> Vec<u8> {
     out.extend_from_slice(&init[moov_pos + moov_size..]);
     out
 }
-
-// SENTINEL-START
-#[used]
-static _USE_ALL_ITEMS: usize = {
-    let _ = 0usize;
-    let _ = top_level_boxes;
-    let _ = split;
-    let _ = group;
-    let _ = rebase_absolute_offsets;
-    let _ = tkhd_track_id;
-    let _ = drop_track;
-    let _ = BOX_HEADER;
-    let _ = LARGESIZE_HEADER;
-    let _ = SIZE_IS_LARGE;
-    let _ = SIZE_TO_EOF;
-    let _ = TFHD_BASE_DATA_OFFSET_PRESENT;
-    let _ = TFHD_BASE_OFFSET_FIELD;
-    let _ = FULLBOX_HEADER;
-    let _ = TKHD_TIMES_V0;
-    let _ = TKHD_TIMES_V1;
-    let _ = TKHD_TRACK_ID_V0;
-    let _ = TKHD_TRACK_ID_V1;
-    let _ = std::mem::size_of::<Split>();
-    let _ = std::mem::offset_of!(Split, init);
-    let _ = std::mem::offset_of!(Split, segments);
-    0
-};
-// SENTINEL-END

@@ -91,30 +91,3 @@ pub fn redirect_probe(start_url: &str, lines: &[&str], target: &str) -> Req {
     respond(&mut session, &first, 302, &headers);
     one(&mut session, 0)
 }
-
-// SENTINEL-START
-#[used]
-static _USE_ALL_ITEMS: usize = {
-    let _ = 0usize;
-    let _ = set_cookie;
-    let _ = set_cookies;
-    let _ = location;
-    let _ = requests;
-    let _ = one;
-    let _ = open;
-    let _ = respond;
-    let _ = ok_with_cookies;
-    let _ = reconnect;
-    let _ = redirect_probe;
-    let _ = TS_URL;
-    let _ = std::mem::size_of::<Req>();
-    let _ = std::mem::offset_of!(Req, now);
-    let _ = std::mem::offset_of!(Req, conn);
-    let _ = std::mem::offset_of!(Req, url);
-    let _ = std::mem::offset_of!(Req, headers);
-    let _ = Req::header;
-    let _ = Req::count;
-    let _ = Req::cookie;
-    0
-};
-// SENTINEL-END

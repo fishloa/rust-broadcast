@@ -95,7 +95,7 @@ impl WireHost {
         }
     }
 
-    pub fn run_until<D: FnMut(&Self) -> bool>(&mut self, deadline: Duration, mut done: D) -> bool {
+    pub fn run_until(&mut self, deadline: Duration, mut done: impl FnMut(&Self) -> bool) -> bool {
         let end = Instant::now() + deadline;
         while Instant::now() < end {
             self.pump();
@@ -112,32 +112,7 @@ impl WireHost {
         }
     }
 
-    pub fn count<P: Fn(&Event) -> bool>(&self, pred: P) -> usize {
+    pub fn count(&self, pred: impl Fn(&Event) -> bool) -> usize {
         self.events.iter().filter(|t| pred(&t.event)).count()
     }
 }
-
-// SENTINEL-START
-#[used]
-static _USE_ALL_ITEMS: usize = {
-    let _ = 0usize;
-    let _ = READ_TIMEOUT;
-    let _ = MAX_DATAGRAM;
-    let _ = std::mem::size_of::<WireHost>();
-    let _ = std::mem::offset_of!(WireHost, session);
-    let _ = std::mem::offset_of!(WireHost, socket);
-    let _ = std::mem::offset_of!(WireHost, conn);
-    let _ = std::mem::offset_of!(WireHost, start);
-    let _ = std::mem::offset_of!(WireHost, events);
-    let _ = std::mem::offset_of!(WireHost, binds);
-    let _ = std::mem::offset_of!(WireHost, closes);
-    let _ = std::mem::offset_of!(WireHost, sends);
-    let _ = WireHost::open;
-    let _ = WireHost::now_us;
-    let _ = WireHost::pump;
-    let _ = WireHost::replay;
-    let _ = WireHost::run_until::<fn(&WireHost) -> bool>;
-    let _ = WireHost::count::<fn(&Event) -> bool>;
-    0
-};
-// SENTINEL-END

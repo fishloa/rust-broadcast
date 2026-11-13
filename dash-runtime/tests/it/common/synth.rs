@@ -4,6 +4,8 @@
 //! crate), answered with the four REAL fMP4 segments of
 //! `fixtures/dash/live-number` recycled in turn. See `world.rs` for why.
 
+#![allow(dead_code)]
+
 use std::collections::BTreeMap;
 
 use super::world::{
@@ -612,108 +614,3 @@ pub fn parse_segment_url(url: &str) -> Option<(String, u64)> {
     let n = file.strip_suffix(".m4s")?.parse().ok()?;
     Some((rep.to_owned(), n))
 }
-
-// SENTINEL-START
-#[used]
-static _USE_ALL_ITEMS: usize = {
-    let _ = 0usize;
-    let _ = is_video;
-    let _ = fnv;
-    let _ = parse_segment_url;
-    let _ = MPD_URL;
-    let _ = UTC_HOST;
-    let _ = VIDEO_TIMESCALE;
-    let _ = AUDIO_TIMESCALE;
-    let _ = POOL;
-    let _ = MAX_PERIODS;
-    let _ = std::mem::size_of::<Addressing>();
-    let _ = std::mem::size_of::<UtcMode>();
-    let _ = std::mem::size_of::<UtcServer>();
-    let _ = std::mem::size_of::<Geo>();
-    let _ = std::mem::size_of::<Pool>();
-    let _ = std::mem::size_of::<Synth>();
-    let _ = std::mem::offset_of!(UtcServer, skew_us);
-    let _ = std::mem::offset_of!(UtcServer, mode);
-    let _ = std::mem::offset_of!(UtcServer, head_status);
-    let _ = std::mem::offset_of!(UtcServer, date_skew_us);
-    let _ = std::mem::offset_of!(UtcServer, by_path);
-    let _ = std::mem::offset_of!(Geo, ast_us);
-    let _ = std::mem::offset_of!(Geo, seg_us);
-    let _ = std::mem::offset_of!(Geo, start_number);
-    let _ = std::mem::offset_of!(Geo, t0_ticks);
-    let _ = std::mem::offset_of!(Geo, addressing);
-    let _ = std::mem::offset_of!(Geo, tsb_us);
-    let _ = std::mem::offset_of!(Geo, n_periods);
-    let _ = std::mem::offset_of!(Geo, period_first_idx);
-    let _ = std::mem::offset_of!(Pool, video);
-    let _ = std::mem::offset_of!(Pool, audio);
-    let _ = std::mem::offset_of!(Pool, video_init);
-    let _ = std::mem::offset_of!(Pool, audio_init);
-    let _ = std::mem::offset_of!(Synth, ast_us);
-    let _ = std::mem::offset_of!(Synth, seg_us);
-    let _ = std::mem::offset_of!(Synth, tsb_us);
-    let _ = std::mem::offset_of!(Synth, mup_us);
-    let _ = std::mem::offset_of!(Synth, spd_us);
-    let _ = std::mem::offset_of!(Synth, addressing);
-    let _ = std::mem::offset_of!(Synth, window);
-    let _ = std::mem::offset_of!(Synth, utc_elements);
-    let _ = std::mem::offset_of!(Synth, early_status);
-    let _ = std::mem::offset_of!(Synth, start_number);
-    let _ = std::mem::offset_of!(Synth, t0_ticks);
-    let _ = std::mem::offset_of!(Synth, utc);
-    let _ = std::mem::offset_of!(Synth, send_date);
-    let _ = std::mem::offset_of!(Synth, send_etag);
-    let _ = std::mem::offset_of!(Synth, location);
-    let _ = std::mem::offset_of!(Synth, redirect_to);
-    let _ = std::mem::offset_of!(Synth, static_from_utc_us);
-    let _ = std::mem::offset_of!(Synth, with_audio);
-    let _ = std::mem::offset_of!(Synth, mpd_override);
-    let _ = std::mem::offset_of!(Synth, utc_direct);
-    let _ = std::mem::offset_of!(Synth, pool);
-    let _ = std::mem::offset_of!(Synth, mpd_requests);
-    let _ = std::mem::offset_of!(Synth, if_none_match_hits);
-    let _ = std::mem::offset_of!(Synth, segment_bytes_overrides);
-    let _ = std::mem::offset_of!(Synth, min_update_attr);
-    let _ = std::mem::offset_of!(Synth, second_video);
-    let _ = std::mem::offset_of!(Synth, period_starts_us);
-    let _ = std::mem::offset_of!(Synth, announce_ahead_us);
-    let _ = std::mem::offset_of!(Synth, per_segment_s);
-    let _ = std::mem::offset_of!(Synth, negative_r);
-    let _ = std::mem::offset_of!(Synth, extra_mpd_children);
-    let _ = std::mem::offset_of!(Synth, mpd_id);
-    let _ = std::mem::offset_of!(Synth, mpd_urls);
-    let _ = Addressing::Number;
-    let _ = Addressing::TimelineNumber;
-    let _ = Addressing::TimelineTime;
-    let _ = UtcMode::Ok;
-    let _ = UtcMode::Garbage;
-    let _ = UtcMode::Empty;
-    let _ = UtcMode::Huge;
-    let _ = UtcMode::Hang;
-    let _ = UtcMode::Fail;
-    let _ = Geo::ticks;
-    let _ = Geo::avail_from_us;
-    let _ = Geo::avail_until_us;
-    let _ = Geo::complete_count;
-    let _ = Geo::period_of;
-    let _ = Geo::index_of;
-    let _ = Pool::load;
-    let _ = Synth::new;
-    let _ = Synth::with_utc;
-    let _ = Synth::url;
-    let _ = Synth::geo;
-    let _ = Synth::complete_count;
-    let _ = Synth::avail_from_us;
-    let _ = Synth::avail_until_us;
-    let _ = Synth::ticks;
-    let _ = Synth::media_attr;
-    let _ = Synth::template;
-    let _ = Synth::period_xml;
-    let _ = Synth::mpd_at;
-    let _ = Synth::serve_utc;
-    let _ = Synth::rep_of;
-    let _ = Synth::index_of;
-    let _ = Synth::serve_media;
-    0
-};
-// SENTINEL-END

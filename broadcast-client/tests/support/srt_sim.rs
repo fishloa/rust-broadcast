@@ -200,7 +200,7 @@ impl SrtSim {
         }
     }
 
-    pub fn count<P: Fn(&Event) -> bool>(&self, pred: P) -> usize {
+    pub fn count(&self, pred: impl Fn(&Event) -> bool) -> usize {
         self.events.iter().filter(|t| pred(&t.event)).count()
     }
 
@@ -208,53 +208,3 @@ impl SrtSim {
         self.advance_by(100 * TICK_US);
     }
 }
-
-// SENTINEL-START
-#[used]
-static _USE_ALL_ITEMS: usize = {
-    let _ = 0usize;
-    let _ = config_with_seed;
-    let _ = TICK_US;
-    let _ = ONE_WAY_US;
-    let _ = SEED;
-    let _ = SEQ_MASK;
-    let _ = std::mem::size_of::<Fate>();
-    let _ = std::mem::size_of::<Dir>();
-    let _ = std::mem::size_of::<SrtSim>();
-    let _ = std::mem::offset_of!(SrtSim, session);
-    let _ = std::mem::offset_of!(SrtSim, peers);
-    let _ = std::mem::offset_of!(SrtSim, now);
-    let _ = std::mem::offset_of!(SrtSim, conn);
-    let _ = std::mem::offset_of!(SrtSim, events);
-    let _ = std::mem::offset_of!(SrtSim, binds);
-    let _ = std::mem::offset_of!(SrtSim, closes);
-    let _ = std::mem::offset_of!(SrtSim, from_session);
-    let _ = std::mem::offset_of!(SrtSim, peer_listening);
-    let _ = std::mem::offset_of!(SrtSim, last_wake);
-    let _ = std::mem::offset_of!(SrtSim, fate);
-    let _ = std::mem::offset_of!(SrtSim, inflight);
-    let _ = std::mem::offset_of!(SrtSim, connected_to);
-    let _ = Fate::Deliver;
-    let _ = Fate::Drop;
-    let _ = Fate::Duplicate;
-    let _ = Fate::DelayUs;
-    let _ = Dir::ToPeer;
-    let _ = Dir::ToSession;
-    let _ = SrtSim::open;
-    let _ = SrtSim::open_with_peers;
-    let _ = SrtSim::peer;
-    let _ = SrtSim::binds_count;
-    let _ = SrtSim::settle;
-    let _ = SrtSim::deliver_due;
-    let _ = SrtSim::data_seq;
-    let _ = SrtSim::queue_for_session;
-    let _ = SrtSim::send_data;
-    let _ = SrtSim::raw_to_session;
-    let _ = SrtSim::advance_to;
-    let _ = SrtSim::advance_by;
-    let _ = SrtSim::replay;
-    let _ = SrtSim::connect;
-    let _ = SrtSim::count::<fn(&Event) -> bool>;
-    0
-};
-// SENTINEL-END

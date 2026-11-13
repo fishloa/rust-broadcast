@@ -38,17 +38,3 @@ impl VideoRun {
         end
     }
 }
-
-// SENTINEL-START
-#[used]
-static _USE_ALL_ITEMS: usize = {
-    let _ = 0usize;
-    let _ = std::mem::size_of::<VideoRun>();
-    let _ = std::mem::offset_of!(VideoRun, end);
-    let _ = std::mem::offset_of!(VideoRun, decoded);
-    let _ = std::mem::offset_of!(VideoRun, ahead);
-    let _ = VideoRun::new;
-    let _ = VideoRun::push;
-    0
-};
-// SENTINEL-END

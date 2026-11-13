@@ -4,6 +4,8 @@
 //! (`fixtures/dash/livesim2/*_a.mpd`/`_b.mpd`, media recycled from the ffmpeg
 //! capture because livesim2 serves a generator, not files).
 
+#![allow(dead_code)]
+
 use std::collections::BTreeMap;
 
 use super::synth::Pool;
@@ -133,28 +135,3 @@ impl Origin for Livesim2Pair {
         Outcome::Resp(HttpResp::ok(pool[(t as usize / 7) % 4].clone()))
     }
 }
-
-// SENTINEL-START
-#[used]
-static _USE_ALL_ITEMS: usize = {
-    let _ = 0usize;
-    let _ = std::mem::size_of::<CaptureOrigin>();
-    let _ = std::mem::size_of::<Livesim2Pair>();
-    let _ = std::mem::offset_of!(CaptureOrigin, mount);
-    let _ = std::mem::offset_of!(CaptureOrigin, dir);
-    let _ = std::mem::offset_of!(CaptureOrigin, avail_utc_us);
-    let _ = std::mem::offset_of!(CaptureOrigin, early_status);
-    let _ = std::mem::offset_of!(CaptureOrigin, mpd_requests);
-    let _ = std::mem::offset_of!(Livesim2Pair, a);
-    let _ = std::mem::offset_of!(Livesim2Pair, b);
-    let _ = std::mem::offset_of!(Livesim2Pair, switch_utc_us);
-    let _ = std::mem::offset_of!(Livesim2Pair, avail_utc_us);
-    let _ = std::mem::offset_of!(Livesim2Pair, pool);
-    let _ = std::mem::offset_of!(Livesim2Pair, segment_requests);
-    let _ = CaptureOrigin::new;
-    let _ = CaptureOrigin::url;
-    let _ = CaptureOrigin::available;
-    let _ = Livesim2Pair::url;
-    0
-};
-// SENTINEL-END

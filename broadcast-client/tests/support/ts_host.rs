@@ -123,32 +123,3 @@ impl Host {
         self.log.len()
     }
 }
-
-// SENTINEL-START
-#[used]
-static _USE_ALL_ITEMS: usize = {
-    let _ = 0usize;
-    let _ = TS_PACKET;
-    let _ = DEFAULT_STEP_US;
-    let _ = TICKS_PER_US;
-    let _ = std::mem::size_of::<Host>();
-    let _ = std::mem::offset_of!(Host, session);
-    let _ = std::mem::offset_of!(Host, conn);
-    let _ = std::mem::offset_of!(Host, now);
-    let _ = std::mem::offset_of!(Host, log);
-    let _ = std::mem::offset_of!(Host, playing);
-    let _ = std::mem::offset_of!(Host, held);
-    let _ = Host::open;
-    let _ = Host::settle;
-    let _ = Host::position;
-    let _ = Host::feed_playing;
-    let _ = Host::buffer_events;
-    let _ = Host::feed;
-    let _ = Host::reconnect;
-    let _ = Host::tick;
-    let _ = Host::announced;
-    let _ = Host::samples_on;
-    let _ = Host::mark;
-    0
-};
-// SENTINEL-END

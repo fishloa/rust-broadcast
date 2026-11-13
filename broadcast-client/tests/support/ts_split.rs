@@ -31,18 +31,3 @@ pub fn split_at_pat(bytes: &[u8], parts: usize) -> Vec<Vec<u8>> {
 pub fn drop_leading_packets(segment: &[u8], n: usize) -> Vec<u8> {
     segment[n * TS_PACKET..].to_vec()
 }
-
-// SENTINEL-START
-#[used]
-static _USE_ALL_ITEMS: usize = {
-    let _ = 0usize;
-    let _ = is_pat_start;
-    let _ = split_at_pat;
-    let _ = drop_leading_packets;
-    let _ = TS_PACKET;
-    let _ = PID_MASK;
-    let _ = PUSI_BIT;
-    let _ = PAT_PID;
-    0
-};
-// SENTINEL-END

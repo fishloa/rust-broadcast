@@ -8,6 +8,7 @@ use transmux::{FlvDemux, Media};
 #[path = "../../../transmux/tests/it/rtmp_play_peer.rs"]
 pub mod play_peer;
 
+#[allow(unused_imports)]
 pub use play_peer::{PeerConfig, PlayPeer, Seen};
 
 pub const MS: u64 = 1_000;
@@ -191,6 +192,20 @@ impl RtmpHost {
         Some(t)
     }
 
+    pub fn run_until(&mut self, stop: impl Fn(&[Event]) -> bool, max_steps: usize) {
+        for _ in 0..max_steps {
+            self.collect();
+            if stop(&self.events) {
+                return;
+            }
+            match self.next_wake() {
+                Some(t) => self.now = t,
+                None => return,
+            }
+        }
+        self.collect();
+    }
+
     pub fn send_to_session(&mut self, bytes: &[u8]) {
         let conn = self.conn.expect("a live connection");
         self.session.on_data(conn, bytes, self.now);
@@ -268,61 +283,3 @@ pub fn assert_samples_equal_direct_with(samples: &[(u32, transmux::Sample)], hel
         }
     }
 }
-
-// SENTINEL-START
-#[used]
-static _USE_ALL_ITEMS: usize = {
-    let _ = 0usize;
-    let _ = std::mem::size_of::<PeerConfig>();
-    let _ = std::mem::size_of::<PlayPeer>();
-    let _ = std::mem::size_of::<Seen>();
-    let _ = rtmp_config;
-    let _ = peer_config;
-    let _ = fixture_tags;
-    let _ = direct;
-    let _ = media_tags;
-    let _ = connect_and_play;
-    let _ = assert_samples_equal_direct;
-    let _ = assert_complete_samples_equal_direct;
-    let _ = assert_samples_equal_direct_with;
-    let _ = MS;
-    let _ = SEC;
-    let _ = URL;
-    let _ = STREAM;
-    let _ = FIXTURE;
-    let _ = FLV_HEADER_LEN;
-    let _ = PREV_TAG_LEN;
-    let _ = TAG_HEADER_LEN;
-    let _ = std::mem::size_of::<Connect>();
-    let _ = std::mem::size_of::<RtmpHost>();
-    let _ = std::mem::offset_of!(Connect, conn);
-    let _ = std::mem::offset_of!(Connect, host);
-    let _ = std::mem::offset_of!(Connect, port);
-    let _ = std::mem::offset_of!(Connect, tls);
-    let _ = std::mem::offset_of!(Connect, at_us);
-    let _ = std::mem::offset_of!(RtmpHost, session);
-    let _ = std::mem::offset_of!(RtmpHost, now);
-    let _ = std::mem::offset_of!(RtmpHost, events);
-    let _ = std::mem::offset_of!(RtmpHost, connects);
-    let _ = std::mem::offset_of!(RtmpHost, closes);
-    let _ = std::mem::offset_of!(RtmpHost, wakes);
-    let _ = std::mem::offset_of!(RtmpHost, peer);
-    let _ = std::mem::offset_of!(RtmpHost, conn);
-    let _ = std::mem::offset_of!(RtmpHost, peer_config);
-    let _ = std::mem::offset_of!(RtmpHost, sends);
-    let _ = std::mem::offset_of!(RtmpHost, fail_next_connect);
-    let _ = std::mem::offset_of!(RtmpHost, accept_connects);
-    let _ = std::mem::offset_of!(RtmpHost, silent);
-    let _ = RtmpHost::new;
-    let _ = RtmpHost::collect;
-    let _ = RtmpHost::apply;
-    let _ = RtmpHost::advance_to;
-    let _ = RtmpHost::advance_by;
-    let _ = RtmpHost::next_wake;
-    let _ = RtmpHost::send_to_session;
-    let _ = RtmpHost::play_all;
-    let _ = RtmpHost::peer_closes;
-    let _ = RtmpHost::samples;
-    0
-};
-// SENTINEL-END
