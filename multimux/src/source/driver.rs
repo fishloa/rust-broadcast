@@ -114,14 +114,11 @@ where
 /// shortened to wake for a keepalive) never resets it, so a peer that holds
 /// the socket open and answers keepalives but sends nothing fails the session
 /// `read` after the last byte, exactly as before.
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_ingest_scaffold<S, W, T>(
     mut driver: IngestDriver<S>,
     route_handle: &Arc<RouteHandle>,
-    progress: &mut DriverProgress,
     cancel: CancellationToken,
     timeouts: Timeouts,
-    write_timeout: Duration,
     writer: &mut W,
     source: &mut T,
     map_failed: fn(S::Error) -> MultimuxError,
@@ -133,6 +130,8 @@ where
     W: AsyncWrite + Unpin + Send,
     T: IngestStep<S>,
 {
+    let write_timeout = timeouts.write;
+    let mut progress = DriverProgress::new();
     let start = Instant::now();
     let mut last_rx = start;
     loop {
@@ -212,7 +211,7 @@ where
         match outcome {
             StepOutcome::Received => {
                 last_rx = Instant::now();
-                advance_route(&driver, route_handle, progress).await;
+                advance_route(&driver, route_handle, &mut progress).await;
             }
             StepOutcome::Idle => {}
             StepOutcome::Eof => {
@@ -229,7 +228,7 @@ where
             }
         }
     }
-    advance_route(&driver, route_handle, progress).await;
+    advance_route(&driver, route_handle, &mut progress).await;
     // Release the publisher slot on EVERY exit path (I-E): the tail
     // `advance_route` above may republish, so the release must come after it —
     // otherwise a peer-ended or terminal-health session keeps
@@ -254,6 +253,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::route::RouteConfig;
     use broadcast_common::{Demand, Stage};
     use bytes::Bytes;
     use media_plane::ingress::{HandshakePolicy, SessionEvent};
@@ -393,7 +393,12 @@ mod tests {
     }
 
     fn route() -> Arc<RouteHandle> {
-        Arc::new(RouteHandle::new(1.0, 250, 8))
+        Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(250)
+                .with_window_segments(8),
+        ))
     }
 
     /// Scripted source: each call sleeps `delay` then returns the outcome
@@ -502,14 +507,11 @@ mod tests {
     ) -> MultimuxError {
         let (mut w, _peer) = tokio::io::duplex(pipe);
         let route = route();
-        let mut progress = DriverProgress::new();
         run_ingest_scaffold(
             driver(session),
             &route,
-            &mut progress,
             cancel,
-            timeouts(read),
-            write_timeout,
+            timeouts(read).with_write(write_timeout),
             &mut w,
             &mut source,
             MAP,
@@ -527,14 +529,11 @@ mod tests {
     ) -> (MultimuxError, Arc<RouteHandle>) {
         let (mut w, _peer) = tokio::io::duplex(pipe);
         let route = route();
-        let mut progress = DriverProgress::new();
         let err = run_ingest_scaffold(
             driver(session),
             &route,
-            &mut progress,
             CancellationToken::new(),
             timeouts(read),
-            Duration::from_secs(1),
             &mut w,
             &mut source,
             MAP,
@@ -549,18 +548,16 @@ mod tests {
         session: QuietSession,
         mut source: T,
         read: Duration,
+        write_timeout: Duration,
         pipe: usize,
     ) -> (MultimuxError, Arc<RouteHandle>) {
         let (mut w, _peer) = tokio::io::duplex(pipe);
         let route = route();
-        let mut progress = DriverProgress::new();
         let err = run_ingest_scaffold(
             driver(session),
             &route,
-            &mut progress,
             CancellationToken::new(),
-            timeouts(read),
-            Duration::from_secs(1),
+            timeouts(read).with_write(write_timeout),
             &mut w,
             &mut source,
             MAP,
@@ -814,6 +811,7 @@ mod tests {
                 QuietSession::write_after_announce(),
                 AnnounceOnceThenPending,
                 Duration::from_secs(30),
+                Duration::from_secs(1),
                 16,
             ),
         )
@@ -828,7 +826,6 @@ mod tests {
         use tokio::io::AsyncReadExt;
         let (mut w, mut peer) = tokio::io::duplex(64);
         let route = route();
-        let mut progress = DriverProgress::new();
         let cancel = CancellationToken::new();
         let mut session = QuietSession::silent();
         session.farewell = Some(Bytes::from_static(b"TEARDOWN"));
@@ -841,10 +838,8 @@ mod tests {
         let err = run_ingest_scaffold(
             driver(session),
             &route,
-            &mut progress,
             cancel,
             timeouts(Duration::from_secs(30)),
-            Duration::from_secs(1),
             &mut w,
             &mut source,
             MAP,

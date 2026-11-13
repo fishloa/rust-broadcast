@@ -151,6 +151,10 @@ const DEFAULT_PART_CAPACITY: usize = 64;
 /// Default for [`RouteHandle::with_max_concurrent_warms`].
 pub const DEFAULT_MAX_CONCURRENT_WARMS: usize = 8;
 
+/// [`RouteConfig`]'s default advertised-window depth (segments), and so the
+/// default segment capacity of every trunk a route builds.
+pub const DEFAULT_WINDOW_SEGMENTS: usize = 8;
+
 /// [`RouteHandle::name`]'s value until [`RouteHandle::with_name`] sets a real
 /// one — matches `crate::origin::mod`'s own `"unknown"` fallback token for an
 /// unrecognized route in its HTTP-path metrics labelling, so a route driven
@@ -347,18 +351,18 @@ pub struct DashWindowSegment {
 /// What a replacement program continues from its predecessor on the same
 /// route: the public segment numbering ([`HlsOrigin`]'s media sequence
 /// offset, the DVR archive's index, DASH `startNumber`, Smooth fragment
-/// names) and the program timeline ([`DashState`]'s window and the DVR's
+/// names) and the program timeline (`DashState`'s window and the DVR's
 /// `start_pts_ns`), which a fresh `Trunk` would otherwise restart from
 /// segment 1 and position 0. One value per published program, computed once
 /// in [`RouteHandle::publish_program`] so no output keeps its own copy.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct ProgramEpoch {
+pub struct ProgramEpoch {
     pub(crate) seq_offset: u64,
     /// Where this program's media timeline starts: the time the DASH
     /// manifest derives for its first number, `(first public number -
     /// startNumber)` nominal segments, so the segment bytes, the manifests
     /// and the DVR agree. `0` for the first program.
-    pub(crate) media_start_ns: u64,
+    pub media_start_ns: u64,
     /// The previous origin's Discontinuity Sequence Number, so
     /// `EXT-X-DISCONTINUITY-SEQUENCE` never decreases across a reconnect.
     pub(crate) discontinuity_sequence: u64,
@@ -727,24 +731,24 @@ impl ProgramServing {
     /// construction, plus an optional DVR recorder if `dvr_config` is
     /// provided. The one and only place either is created — see
     /// [`RouteHandle::publish_program`].
-    #[allow(clippy::too_many_arguments)] // one private constructor; a params struct adds nothing
     fn new(
         trunk: Arc<Trunk>,
-        target_duration_secs: f64,
-        part_target_ms: u32,
-        window_segments: NonZeroUsize,
-        container: Container,
-        dvr_config: Option<crate::dvr::DvrConfig>,
-        route_name: &str,
+        route: &RouteHandle,
         epoch: ProgramEpoch,
-        program_date_time: crate::config::ProgramDateTimeSource,
-        declared_bandwidth_bps: Option<u64>,
-        audio_renditions: Vec<hls_runtime::server::AudioRenditionDecl>,
-        closed_caption_overrides: Vec<hls_runtime::server::ClosedCaptionDecl>,
-        split_audio: bool,
-        hold_cold_playlist: bool,
-        warms: Arc<tokio::sync::Semaphore>,
     ) -> Result<Arc<Self>, hls_runtime::server::HlsOriginBuildError> {
+        let target_duration_secs = route.target_duration_secs;
+        let part_target_ms = route.part_target_ms;
+        let window_segments = route.window_segments_cap;
+        let container = route.container;
+        let dvr_config = route.dvr_config.clone();
+        let route_name = route.name.as_str();
+        let program_date_time = route.program_date_time;
+        let declared_bandwidth_bps = route.declared_bandwidth_bps;
+        let audio_renditions = &route.audio_renditions;
+        let closed_caption_overrides = &route.closed_caption_overrides;
+        let split_audio = !route.audio_rendition_sources.is_empty();
+        let hold_cold_playlist = route.hold_cold_playlist;
+        let warms = Arc::clone(&route.warms);
         let media_sequence_offset = epoch.seq_offset;
         let mut builder = HlsOrigin::builder(Arc::clone(&trunk))
             .with_target_duration_secs(target_duration_secs)
@@ -768,7 +772,7 @@ impl ProgramServing {
             builder = builder.with_audio_renditions(audio_renditions.clone());
         }
         if !closed_caption_overrides.is_empty() {
-            builder = builder.with_closed_caption_overrides(closed_caption_overrides);
+            builder = builder.with_closed_caption_overrides(closed_caption_overrides.clone());
         }
         builder = builder.with_playlist_uri("media.m3u8");
         // Sibling trunks + origins for the split audio renditions (issue #1428
@@ -776,19 +780,12 @@ impl ProgramServing {
         // own `HlsOrigin`; the primary trunk carries the remaining (video)
         // tracks.
         let sibling_decls: &[hls_runtime::server::AudioRenditionDecl] =
-            if split_audio { &audio_renditions } else { &[] };
+            if split_audio { audio_renditions } else { &[] };
         let mut audio_servings = Vec::with_capacity(sibling_decls.len());
         let mut sibling_origins: Vec<Arc<hls_runtime::server::HlsOrigin>> =
             Vec::with_capacity(sibling_decls.len());
         for (idx, decl) in sibling_decls.iter().enumerate() {
-            let sibling_trunk = Arc::new(Trunk::new(
-                TrunkConfig::default()
-                    .with_timed_capacity(nz(DEFAULT_TIMED_CAPACITY))
-                    .with_sparse_capacity(nz(DEFAULT_SPARSE_CAPACITY))
-                    .with_segment_capacity(window_segments)
-                    .with_event_capacity(nz(DEFAULT_EVENT_CAPACITY))
-                    .with_part_capacity(nz(DEFAULT_PART_CAPACITY)),
-            ));
+            let sibling_trunk = Arc::new(Trunk::new(route.trunk_config));
             let track_id = transmux::TrackId::new(u32::try_from(idx + 2).unwrap_or(u32::MAX));
             let mut ab = HlsOrigin::builder(Arc::clone(&sibling_trunk))
                 .with_target_duration_secs(target_duration_secs)
@@ -1380,6 +1377,167 @@ impl ProgramServing {
 /// [`crate::source::advance_route`] facade over both) and every
 /// [`crate::output::Output`]/the shared resource route that reads from it.
 ///
+/// The route-wide settings [`RouteHandle::new`] records: the segmenter's
+/// target duration, part target and advertised-window depth, plus every
+/// serving/output option a configured route can set. A plain struct with a
+/// [`Default`] and `with_*` builders, so the one constructor takes a value
+/// rather than a dozen positional arguments, and a test builds only the
+/// fields it cares about.
+#[derive(Debug, Clone)]
+pub struct RouteConfig {
+    pub target_duration_secs: f64,
+    pub part_target_ms: u32,
+    /// Advertised-window depth: the segment log's capacity, the playlist
+    /// window's article, and the segment capacity of every program/trunk
+    /// this route builds — one number, one source of truth. Clamped up to
+    /// `1`.
+    pub window_segments: usize,
+    pub container: Container,
+    pub ts_cut_policy: transmux::SegmentCutPolicy,
+    pub ts_idr_fallback: crate::config::TsHlsIdrFallback,
+    pub program_date_time: crate::config::ProgramDateTimeSource,
+    pub hold_cold_playlist: bool,
+    pub declared_bandwidth_bps: Option<u64>,
+    pub audio_renditions: Vec<hls_runtime::server::AudioRenditionDecl>,
+    pub audio_rendition_sources: Vec<transmux::audio_profile::AudioTrackSelector>,
+    pub closed_caption_overrides: Vec<hls_runtime::server::ClosedCaptionDecl>,
+    pub audio_profiles: Vec<transmux::audio_profile::AudioProfileOverride>,
+    pub subtitles: bool,
+    /// Concurrency bound for cold-egress warm-ups; see
+    /// [`RouteHandle::with_max_concurrent_warms`].
+    pub warms: Arc<tokio::sync::Semaphore>,
+}
+
+impl Default for RouteConfig {
+    fn default() -> Self {
+        RouteConfig {
+            target_duration_secs: 1.0,
+            part_target_ms: 250,
+            window_segments: DEFAULT_WINDOW_SEGMENTS,
+            container: Container::default(),
+            ts_cut_policy: transmux::SegmentCutPolicy::default(),
+            ts_idr_fallback: crate::config::TsHlsIdrFallback::default(),
+            program_date_time: crate::config::ProgramDateTimeSource::Off,
+            hold_cold_playlist: hls_runtime::server::HOLD_COLD_PLAYLIST_DEFAULT,
+            declared_bandwidth_bps: None,
+            audio_renditions: Vec::new(),
+            audio_rendition_sources: Vec::new(),
+            closed_caption_overrides: Vec::new(),
+            audio_profiles: Vec::new(),
+            subtitles: true,
+            warms: Arc::new(tokio::sync::Semaphore::new(DEFAULT_MAX_CONCURRENT_WARMS)),
+        }
+    }
+}
+
+impl RouteConfig {
+    #[must_use]
+    pub fn with_target_duration_secs(mut self, v: f64) -> Self {
+        self.target_duration_secs = v;
+        self
+    }
+
+    #[must_use]
+    pub fn with_part_target_ms(mut self, v: u32) -> Self {
+        self.part_target_ms = v;
+        self
+    }
+
+    /// Sets the advertised-window depth (and so every trunk's segment
+    /// capacity; a zero is clamped up to `1`).
+    #[must_use]
+    pub fn with_window_segments(mut self, segments: usize) -> Self {
+        self.window_segments = segments;
+        self
+    }
+
+    #[must_use]
+    pub fn with_container(mut self, v: Container) -> Self {
+        self.container = v;
+        self
+    }
+
+    #[must_use]
+    pub fn with_ts_cut_policy(mut self, v: transmux::SegmentCutPolicy) -> Self {
+        self.ts_cut_policy = v;
+        self
+    }
+
+    #[must_use]
+    pub fn with_ts_idr_fallback(mut self, v: crate::config::TsHlsIdrFallback) -> Self {
+        self.ts_idr_fallback = v;
+        self
+    }
+
+    #[must_use]
+    pub fn with_program_date_time(mut self, v: crate::config::ProgramDateTimeSource) -> Self {
+        self.program_date_time = v;
+        self
+    }
+
+    #[must_use]
+    pub fn with_hold_cold_playlist(mut self, v: bool) -> Self {
+        self.hold_cold_playlist = v;
+        self
+    }
+
+    #[must_use]
+    pub fn with_declared_bandwidth_bps(mut self, v: Option<u64>) -> Self {
+        self.declared_bandwidth_bps = v;
+        self
+    }
+
+    #[must_use]
+    pub fn with_audio_renditions(
+        mut self,
+        v: Vec<hls_runtime::server::AudioRenditionDecl>,
+    ) -> Self {
+        self.audio_renditions = v;
+        self
+    }
+
+    #[must_use]
+    pub fn with_audio_rendition_sources(
+        mut self,
+        v: Vec<transmux::audio_profile::AudioTrackSelector>,
+    ) -> Self {
+        self.audio_rendition_sources = v;
+        self
+    }
+
+    #[must_use]
+    pub fn with_closed_caption_overrides(
+        mut self,
+        v: Vec<hls_runtime::server::ClosedCaptionDecl>,
+    ) -> Self {
+        self.closed_caption_overrides = v;
+        self
+    }
+
+    #[must_use]
+    pub fn with_audio_profiles(
+        mut self,
+        v: Vec<transmux::audio_profile::AudioProfileOverride>,
+    ) -> Self {
+        self.audio_profiles = v;
+        self
+    }
+
+    #[must_use]
+    pub fn with_subtitles(mut self, v: bool) -> Self {
+        self.subtitles = v;
+        self
+    }
+
+    /// Sets the cold-egress warm-up concurrency bound; a zero is clamped up
+    /// to `1`.
+    #[must_use]
+    pub fn with_max_concurrent_warms(mut self, permits: usize) -> Self {
+        self.warms = Arc::new(tokio::sync::Semaphore::new(permits.max(1)));
+        self
+    }
+}
+
 /// Owns **no** `Trunk`/`HlsOrigin`/`DashState` of its own — see this
 /// module's own "No pre-first-program placeholder" doc. Every program's
 /// serving state lives in `Self::programs` (the `programs` field, below),
@@ -1486,6 +1644,10 @@ pub struct RouteHandle {
     /// Source track per audio rendition for the opt-in split-mux (issue
     /// #1428 slice 2b); empty means no split.
     audio_rendition_sources: Vec<transmux::audio_profile::AudioTrackSelector>,
+    /// Sibling (audio/subtitle rendition) trunk capacities (issue #2554): taken
+    /// from this route's [`SegmenterConfig::trunk_config`] so a host can size
+    /// every sibling trunk consistently. Defaults to the standard capacities.
+    trunk_config: TrunkConfig,
     /// `NAME`/`LANGUAGE` overrides for detected closed captions (issue #1428).
     closed_caption_overrides: Vec<hls_runtime::server::ClosedCaptionDecl>,
     /// Operator-declared HE-AAC profile per audio track (issue #1428).
@@ -1516,19 +1678,37 @@ impl RouteHandle {
     /// route's target duration/part target/window depth recorded so every
     /// later [`Self::publish_program`] builds each program's `Trunk`/
     /// `HlsOrigin`/`DashState` consistently.
-    pub fn new(target_duration_secs: f64, part_target_ms: u32, window_segments: usize) -> Self {
-        let window_segments = NonZeroUsize::new(window_segments).unwrap_or(NonZeroUsize::MIN);
+    pub fn new(config: RouteConfig) -> Self {
+        let window_segments =
+            NonZeroUsize::new(config.window_segments).unwrap_or(NonZeroUsize::MIN);
+        let RouteConfig {
+            target_duration_secs,
+            part_target_ms,
+            container,
+            ts_cut_policy,
+            ts_idr_fallback,
+            program_date_time,
+            hold_cold_playlist,
+            declared_bandwidth_bps,
+            audio_renditions,
+            audio_rendition_sources,
+            closed_caption_overrides,
+            audio_profiles,
+            subtitles,
+            warms,
+            ..
+        } = config;
         RouteHandle {
             catchup_scans: std::sync::OnceLock::new(),
-            warms: Arc::new(tokio::sync::Semaphore::new(DEFAULT_MAX_CONCURRENT_WARMS)),
+            warms,
             retired: tokio_util::sync::CancellationToken::new(),
             health: Mutex::new(HealthState::Connecting),
             target_duration_secs,
             part_target_ms,
             window_segments_cap: window_segments,
-            container: Container::default(),
-            ts_cut_policy: transmux::SegmentCutPolicy::default(),
-            ts_idr_fallback: crate::config::TsHlsIdrFallback::default(),
+            container,
+            ts_cut_policy,
+            ts_idr_fallback,
             ts_idr_status: Mutex::new(None),
             output_error: Mutex::new(None),
             created_at: SystemTime::now(),
@@ -1536,14 +1716,20 @@ impl RouteHandle {
             name: DEFAULT_ROUTE_NAME.to_string(),
             dvr_config: None,
             archive_floor: 0,
-            program_date_time: crate::config::ProgramDateTimeSource::Off,
-            hold_cold_playlist: hls_runtime::server::HOLD_COLD_PLAYLIST_DEFAULT,
-            declared_bandwidth_bps: None,
-            audio_renditions: Vec::new(),
-            audio_rendition_sources: Vec::new(),
-            closed_caption_overrides: Vec::new(),
-            audio_profiles: Vec::new(),
-            subtitles: true,
+            program_date_time,
+            hold_cold_playlist,
+            declared_bandwidth_bps,
+            audio_renditions,
+            audio_rendition_sources,
+            trunk_config: TrunkConfig::default()
+                .with_timed_capacity(nz(DEFAULT_TIMED_CAPACITY))
+                .with_sparse_capacity(nz(DEFAULT_SPARSE_CAPACITY))
+                .with_segment_capacity(window_segments)
+                .with_event_capacity(nz(DEFAULT_EVENT_CAPACITY))
+                .with_part_capacity(nz(DEFAULT_PART_CAPACITY)),
+            closed_caption_overrides,
+            audio_profiles,
+            subtitles,
             program_notify: tokio::sync::Notify::new(),
             active_publisher: RwLock::new(HashMap::new()),
             predecessor: Mutex::new(HashMap::new()),
@@ -1680,15 +1866,12 @@ impl RouteHandle {
         *self.ts_idr_status.lock()
     }
 
-    /// Record that this route's output cannot serve what the program
-    /// delivered. Returns `true` only for the first failure, so a caller
-    /// retrying every poll logs once.
-    pub(crate) fn fail_output(&self, error: &crate::MultimuxError) -> bool {
+    pub(crate) fn fail_output_message(&self, message: String) -> bool {
         let mut slot = self.output_error.lock();
         if slot.is_some() {
             return false;
         }
-        *slot = Some(error.to_string());
+        *slot = Some(message);
         true
     }
 
@@ -1801,8 +1984,21 @@ impl RouteHandle {
         self
     }
 
-    pub(crate) fn subtitles_enabled(&self) -> bool {
+    pub fn subtitles_enabled(&self) -> bool {
         self.subtitles
+    }
+
+    /// Sets the [`TrunkConfig`] used for sibling (audio/subtitle rendition)
+    /// trunks built by [`Self::publish_program`] (issue #2554): capacities
+    /// propagate to every sibling trunk.
+    #[must_use]
+    pub fn with_trunk_config(mut self, value: TrunkConfig) -> Self {
+        self.trunk_config = value;
+        self
+    }
+
+    pub fn trunk_config(&self) -> &TrunkConfig {
+        &self.trunk_config
     }
 
     /// Declares the HE-AAC profile of audio tracks (issue #1428) — a consuming
@@ -1841,6 +2037,12 @@ impl RouteHandle {
 
     pub(crate) fn audio_rendition_sources(&self) -> &[transmux::audio_profile::AudioTrackSelector] {
         &self.audio_rendition_sources
+    }
+
+    pub(crate) fn audio_profiles_for_segmenter(
+        &self,
+    ) -> Vec<transmux::audio_profile::AudioProfileOverride> {
+        self.audio_profiles.clone()
     }
 
     /// This route's configured container (see [`Self::with_container`]) —
@@ -1963,23 +2165,7 @@ impl RouteHandle {
             presentation_origin: previous_epoch
                 .map_or_else(SystemTime::now, |e| e.presentation_origin),
         };
-        let serving = match ProgramServing::new(
-            Arc::clone(&trunk),
-            self.target_duration_secs,
-            self.part_target_ms,
-            self.window_segments_cap,
-            self.container,
-            self.dvr_config.clone(),
-            &self.name,
-            epoch,
-            self.program_date_time,
-            self.declared_bandwidth_bps,
-            self.audio_renditions.clone(),
-            self.closed_caption_overrides.clone(),
-            !self.audio_rendition_sources.is_empty(),
-            self.hold_cold_playlist,
-            Arc::clone(&self.warms),
-        ) {
+        let serving = match ProgramServing::new(Arc::clone(&trunk), self, epoch) {
             Ok(serving) => serving,
             Err(e) => {
                 // An unservable configuration (e.g. a NaN target duration
@@ -2464,7 +2650,7 @@ impl RouteHandle {
         self.serving(program).map(|s| s.presentation_origin())
     }
 
-    pub(crate) fn epoch(&self, program: ProgramId) -> Option<ProgramEpoch> {
+    pub fn epoch(&self, program: ProgramId) -> Option<ProgramEpoch> {
         self.serving(program).map(|s| s.epoch())
     }
 
@@ -2547,6 +2733,12 @@ impl IntoDeclaredBandwidth for Option<u64> {
     }
 }
 
+impl AsRef<RouteHandle> for RouteHandle {
+    fn as_ref(&self) -> &RouteHandle {
+        self
+    }
+}
+
 #[cfg(test)]
 mod program_registry_tests {
     //! Coverage for `RouteHandle::publish_program`/`resolve_program` (issue
@@ -2586,7 +2778,12 @@ mod program_registry_tests {
     /// reverted.
     #[test]
     fn publish_then_resolve_returns_same_trunk() {
-        let route = RouteHandle::new(4.0, 500, 4);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         let trunk = test_trunk();
         route.publish_program(ProgramId(1), Arc::clone(&trunk));
 
@@ -2612,7 +2809,12 @@ mod program_registry_tests {
     /// reverted.
     #[test]
     fn resolve_before_any_program_is_not_yet_announced() {
-        let route = RouteHandle::new(4.0, 500, 4);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         let result = route.resolve_program(ProgramId(1));
         assert!(
             matches!(result, ProgramResolution::NotYetAnnounced),
@@ -2631,7 +2833,12 @@ mod program_registry_tests {
     /// re-run to confirm the failure, then reverted.
     #[test]
     fn resolve_unknown_program_among_others_is_not_found() {
-        let route = RouteHandle::new(4.0, 500, 4);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         route.publish_program(ProgramId(1), test_trunk());
 
         let result = route.resolve_program(ProgramId(2));
@@ -2653,7 +2860,12 @@ mod program_registry_tests {
     /// Recompiled and re-run to confirm the failure, then reverted.
     #[test]
     fn two_programs_resolve_independently_to_different_trunks() {
-        let route = RouteHandle::new(4.0, 500, 4);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         let trunk_a = test_trunk();
         let trunk_b = test_trunk();
         route.publish_program(ProgramId(1), Arc::clone(&trunk_a));
@@ -2681,7 +2893,12 @@ mod program_registry_tests {
     /// silently rebound to `trunk_b`.
     #[test]
     fn publish_program_rejects_a_second_concurrent_publisher() {
-        let route = RouteHandle::new(4.0, 500, 4);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         let trunk_a = test_trunk();
         let trunk_b = test_trunk();
         route.publish_program(ProgramId(1), Arc::clone(&trunk_a));
@@ -2704,7 +2921,12 @@ mod program_registry_tests {
     /// in `ProgramServing::new` — and must give the publish slot back.
     #[test]
     fn publish_program_with_nan_target_duration_does_not_panic() {
-        let route = RouteHandle::new(f64::NAN, 500, 4);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(f64::NAN)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         let trunk = test_trunk();
         route.publish_program(ProgramId(1), Arc::clone(&trunk));
         assert!(
@@ -2728,7 +2950,12 @@ mod program_registry_tests {
     /// wedging the route after the first publisher legitimately disconnects.
     #[test]
     fn release_program_then_publish_lets_a_new_publisher_take_over() {
-        let route = RouteHandle::new(4.0, 500, 4);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         let trunk_a = test_trunk();
         let trunk_b = test_trunk();
         route.publish_program(ProgramId(1), Arc::clone(&trunk_a));
@@ -2763,7 +2990,12 @@ mod program_registry_tests {
             segment_seq: seq,
             part_count: 0,
         };
-        let route = RouteHandle::new(4.0, 500, 4);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         let first_trunk = route.publish_new_program(ProgramId(1));
         route.add_segment(ProgramId(1), info(1)).expect("add");
         route.add_segment(ProgramId(1), info(2)).expect("add");
@@ -2806,7 +3038,13 @@ mod program_registry_tests {
     /// media timeline start) carries on, and the replaced route's own numbering is untouched.
     #[test]
     fn a_replacing_route_continues_the_replaced_routes_numbering() {
-        let old = RouteHandle::new(4.0, 500, 4).with_archive_floor(41);
+        let old = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        )
+        .with_archive_floor(41);
         let trunk = test_trunk();
         old.publish_program(ProgramId(1), Arc::clone(&trunk));
         let old_next = old
@@ -2815,7 +3053,12 @@ mod program_registry_tests {
             .next_media_sequence();
         assert_eq!(old_next, 42);
 
-        let successor = RouteHandle::new(4.0, 500, 4);
+        let successor = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         successor.continue_from(&old);
         successor.publish_program(ProgramId(1), test_trunk());
         let origin = successor.ll_hls(ProgramId(1)).expect("origin");
@@ -2832,7 +3075,12 @@ mod program_registry_tests {
             "the timeline carries on, so the segmenter marks a discontinuity"
         );
 
-        let unrelated = RouteHandle::new(4.0, 500, 4);
+        let unrelated = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         unrelated.publish_program(ProgramId(1), test_trunk());
         assert_eq!(
             unrelated
@@ -2850,7 +3098,13 @@ mod program_registry_tests {
     /// is higher.
     #[test]
     fn archive_floor_lifts_the_first_media_sequence_number() {
-        let route = RouteHandle::new(4.0, 500, 4).with_archive_floor(41);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        )
+        .with_archive_floor(41);
         let first = test_trunk();
         route.publish_program(ProgramId(1), Arc::clone(&first));
         let origin = route.ll_hls(ProgramId(1)).expect("origin");
@@ -2908,7 +3162,12 @@ mod program_registry_tests {
             segment_seq: seq,
             part_count: 1,
         };
-        let route = RouteHandle::new(4.0, 500, 8);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(8),
+        );
         route.publish_new_program(ProgramId(1));
         route.set_init(ProgramId(1), vec![0xA1; 4]);
         route.add_segment(ProgramId(1), info(1, 0x11)).expect("add");
@@ -2952,7 +3211,12 @@ mod program_registry_tests {
             part_count: 1,
         };
         // "Process" 1: segments 1..=2 served, part 0 of the open segment 3.
-        let p1 = RouteHandle::new(4.0, 500, 4);
+        let p1 = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         let t1 = p1.publish_new_program(ProgramId(1));
         p1.set_init(ProgramId(1), vec![0xA1; 4]);
         p1.add_segment(ProgramId(1), info(1, 0x11)).expect("add");
@@ -2971,7 +3235,12 @@ mod program_registry_tests {
         assert!(names1.iter().any(|n| n.starts_with("part-")), "{names1:?}");
 
         // "Process" 2: same numbers from scratch, different init.
-        let p2 = RouteHandle::new(4.0, 500, 4);
+        let p2 = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         p2.publish_new_program(ProgramId(1));
         p2.set_init(ProgramId(1), vec![0xB2; 4]);
         p2.add_segment(ProgramId(1), info(1, 0x21)).expect("add");
@@ -3023,7 +3292,12 @@ mod program_registry_tests {
     /// *surviving* publisher's binding out from under it.
     #[test]
     fn release_program_is_a_noop_for_a_rejected_publisher() {
-        let route = RouteHandle::new(4.0, 500, 4);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         let trunk_a = test_trunk();
         let trunk_b = test_trunk();
         route.publish_program(ProgramId(1), Arc::clone(&trunk_a));
@@ -3079,7 +3353,12 @@ mod program_registry_tests {
     /// assertion fires, then reverted.
     #[test]
     fn two_programs_serve_distinct_media() {
-        let route = RouteHandle::new(1.0, 500, 8);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(500)
+                .with_window_segments(8),
+        );
         let program_a = ProgramId(1);
         let program_b = ProgramId(2);
 
@@ -3158,7 +3437,12 @@ mod program_registry_tests {
     /// proven through the real HTTP handlers.
     #[test]
     fn unannounced_program_is_not_yet_announced_not_not_found() {
-        let route = RouteHandle::new(4.0, 500, 4);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         assert!(matches!(
             route.resolve_program(ProgramId(7)),
             ProgramResolution::NotYetAnnounced
@@ -3169,7 +3453,12 @@ mod program_registry_tests {
     /// whatever `with_name` set.
     #[test]
     fn name_defaults_then_reflects_with_name() {
-        let route = RouteHandle::new(4.0, 500, 4);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         assert_eq!(route.name(), DEFAULT_ROUTE_NAME);
         let route = route.with_name("cam1");
         assert_eq!(route.name(), "cam1");
@@ -3180,7 +3469,12 @@ mod program_registry_tests {
     /// dropping the segment.
     #[test]
     fn add_segment_for_unpublished_program_returns_error() {
-        let route = RouteHandle::new(4.0, 500, 4);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         let err = route
             .add_segment(ProgramId(9), seg(1, 2.0))
             .expect_err("add_segment for a never-published program must return an error");
@@ -3220,9 +3514,14 @@ mod program_registry_tests {
             overrun: crate::dvr::ArchiveOverrunSerde::Gap,
             dvb_service_id: None,
         };
-        let route = RouteHandle::new(1.0, 250, 8)
-            .with_name("panicking-dvr")
-            .with_dvr(dvr_cfg);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(250)
+                .with_window_segments(8),
+        )
+        .with_name("panicking-dvr")
+        .with_dvr(dvr_cfg);
         route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
 
@@ -3293,9 +3592,14 @@ mod program_registry_tests {
             overrun: crate::dvr::ArchiveOverrunSerde::Gap,
             dvb_service_id: None,
         };
-        let route = RouteHandle::new(1.0, 250, 8)
-            .with_name("init-roll")
-            .with_dvr(dvr_cfg);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(250)
+                .with_window_segments(8),
+        )
+        .with_name("init-roll")
+        .with_dvr(dvr_cfg);
         route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
         route.add_segment(SPTS_PROGRAM_ID, seg(1, 1.0)).unwrap();
@@ -3329,7 +3633,12 @@ mod program_registry_tests {
     /// lowest-numbered one, not whichever the map happens to yield.
     #[tokio::test]
     async fn await_trunk_change_waits_for_a_different_trunk() {
-        let route = Arc::new(RouteHandle::new(1.0, 250, 4));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(250)
+                .with_window_segments(4),
+        ));
         let high = test_trunk();
         route.publish_program(ProgramId(5), Arc::clone(&high));
         let low = test_trunk();

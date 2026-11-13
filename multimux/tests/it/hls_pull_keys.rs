@@ -5,6 +5,7 @@
 //! servers, and the samples that reach the route's `Trunk` are compared with
 //! the samples the same route produces from the plaintext segments.
 
+use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -289,7 +290,12 @@ fn resetting_key_server() -> (String, Arc<Counter>) {
 
 async fn assert_key_is_retried_not_stalled_not_ingested(playlist_url: &str, key_hits: &Counter) {
     let route = HlsPullRoute::new("keys", playlist_url);
-    let route_handle = Arc::new(RouteHandle::new(4.0, 500, 4));
+    let route_handle = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(4.0)
+            .with_part_target_ms(500)
+            .with_window_segments(4),
+    ));
     let config = TrunkConfig::default()
         .with_timed_capacity(nz(TIMED_RING))
         .with_sparse_capacity(nz(RING))
@@ -354,7 +360,12 @@ async fn ingest(
     auth: Option<Credentials>,
 ) -> (Result<(), MultimuxError>, Fingerprint) {
     let route = HlsPullRoute::new("keys", playlist_url).with_auth(auth);
-    let route_handle = Arc::new(RouteHandle::new(4.0, 500, 4));
+    let route_handle = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(4.0)
+            .with_part_target_ms(500)
+            .with_window_segments(4),
+    ));
     let config = TrunkConfig::default()
         .with_timed_capacity(nz(TIMED_RING))
         .with_sparse_capacity(nz(RING))

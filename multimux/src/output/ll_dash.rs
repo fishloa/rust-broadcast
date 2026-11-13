@@ -70,6 +70,7 @@ pub fn render_ll_dash_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<
 mod tests {
     use super::*;
     use crate::output::dash::DASH_MANIFEST_CONTENT_TYPE;
+    use crate::route::RouteConfig;
     use crate::testutil::video_spec;
 
     #[tokio::test]
@@ -182,7 +183,12 @@ mod tests {
 
     #[test]
     fn publish_time_present_stable_when_unchanged_and_later_per_new_segment() {
-        let route = RouteHandle::new(4.0, 500, 2);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(2),
+        );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
@@ -212,7 +218,12 @@ mod tests {
 
     #[test]
     fn render_ll_dash_mpd_none_without_track_specs() {
-        let route = RouteHandle::new(4.0, 500, 4);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         assert!(
             render_ll_dash_mpd(&route).is_none(),
             "no track specs recorded yet -> nothing to describe"
@@ -221,7 +232,12 @@ mod tests {
 
     #[test]
     fn render_ll_dash_mpd_valid_before_any_segment_closes() {
-        let route = RouteHandle::new(4.0, 500, 4);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
@@ -234,7 +250,12 @@ mod tests {
 
     #[test]
     fn render_ll_dash_mpd_carries_required_ll_dash_elements() {
-        let route = RouteHandle::new(4.0, 500, 4);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
@@ -267,7 +288,12 @@ mod tests {
 
     #[test]
     fn render_ll_dash_mpd_addresses_whole_segments_not_parts() {
-        let route = RouteHandle::new(4.0, 500, 4);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
@@ -289,7 +315,12 @@ mod tests {
 
     #[test]
     fn render_ll_dash_mpd_start_number_is_fixed_at_first_segment() {
-        let route = RouteHandle::new(4.0, 500, 2);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(2),
+        );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
@@ -318,7 +349,12 @@ mod tests {
     fn render_ll_dash_mpd_carries_time_shift_buffer_depth() {
         // Unlike the old parts-only design, whole closed segments stay in
         // the window -- a real DVR window can be advertised.
-        let route = RouteHandle::new(2.0, 500, 4);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(2.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
@@ -335,7 +371,12 @@ mod tests {
     /// frozen, proving the jiff migration (SP5) changes no wire byte.
     #[test]
     fn render_ll_dash_mpd_matches_frozen_now_golden() {
-        let route = RouteHandle::new(4.0, 500, 2);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(2),
+        );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
@@ -370,7 +411,12 @@ mod tests {
 
     #[test]
     fn render_ll_dash_mpd_forces_representation_id_to_default_track() {
-        let route = RouteHandle::new(4.0, 500, 4);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
@@ -391,7 +437,12 @@ mod tests {
     /// representable track" 503 from issue #805's "not yet announced" 503).
     #[tokio::test]
     async fn manifest_handler_503_before_track_specs_known() {
-        let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         let resp = manifest(State(route)).await;
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
@@ -399,7 +450,12 @@ mod tests {
 
     #[tokio::test]
     async fn manifest_handler_200_with_dash_content_type() {
-        let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
@@ -419,7 +475,12 @@ mod tests {
     /// `output::hls`'s identical test for the mutation this guards.
     #[tokio::test]
     async fn manifest_not_yet_announced_is_503_not_404() {
-        let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         let resp = manifest(State(route)).await;
         assert_eq!(
             resp.status(),
@@ -436,7 +497,12 @@ mod tests {
     #[test]
     fn an_ll_dash_window_over_a_gap_and_a_codec_change_renders_the_standard_periods_plus_ll() {
         let program = crate::route::SPTS_PROGRAM_ID;
-        let route = RouteHandle::new(4.0, 500, 8);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(8),
+        );
         route.publish_new_program(program);
         route.set_init(program, vec![0xAA; 8]);
         route.set_track_specs(program, vec![video_spec(TrackId::new(1))]);

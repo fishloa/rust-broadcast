@@ -522,6 +522,7 @@ fn parse_seg_filename(file: &str, ext: &str) -> Option<u32> {
 mod tests {
     use super::*;
     use crate::dvr::{ArchiveOverrunSerde, DvrConfig};
+    use crate::route::RouteConfig;
     use crate::route::SPTS_PROGRAM_ID;
     use crate::testutil::body_string;
 
@@ -617,9 +618,14 @@ mod tests {
         rt.block_on(async {
             let tmp = temp_dir();
             let route = Arc::new(
-                RouteHandle::new(1.0, 250, 64)
-                    .with_name("w3")
-                    .with_dvr(dvr_config(&tmp)),
+                RouteHandle::new(
+                    RouteConfig::default()
+                        .with_target_duration_secs(1.0)
+                        .with_part_target_ms(250)
+                        .with_window_segments(64),
+                )
+                .with_name("w3")
+                .with_dvr(dvr_config(&tmp)),
             );
             route.publish_new_program(SPTS_PROGRAM_ID);
             const SEG_LEN: usize = 4096;
@@ -729,8 +735,18 @@ mod tests {
     /// One route's exhausted scan pool does not delay another route's scan.
     #[tokio::test]
     async fn one_routes_exhausted_scan_pool_does_not_delay_another_route() {
-        let busy = Arc::new(RouteHandle::new(1.0, 250, 8));
-        let idle = Arc::new(RouteHandle::new(1.0, 250, 8));
+        let busy = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(250)
+                .with_window_segments(8),
+        ));
+        let idle = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(250)
+                .with_window_segments(8),
+        ));
         let _held = scan_permit_wait_all(&busy).await;
         assert_eq!(scan_permit(&busy).available_permits(), 0);
         let blocked = tokio::time::timeout(
@@ -759,9 +775,14 @@ mod tests {
     async fn all_three_catchup_scan_paths_share_the_scan_semaphore() {
         let tmp = temp_dir();
         let route = Arc::new(
-            RouteHandle::new(1.0, 250, 8)
-                .with_name("semp")
-                .with_dvr(dvr_config(&tmp)),
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(1.0)
+                    .with_part_target_ms(250)
+                    .with_window_segments(8),
+            )
+            .with_name("semp")
+            .with_dvr(dvr_config(&tmp)),
         );
         route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
@@ -829,9 +850,14 @@ mod tests {
     async fn catchup_playlist_straddles_archive_and_live_tail_continuously() {
         let tmp = temp_dir();
         let route = Arc::new(
-            RouteHandle::new(4.0, 500, 8)
-                .with_name("straddle")
-                .with_dvr(dvr_config(&tmp)),
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(4.0)
+                    .with_part_target_ms(500)
+                    .with_window_segments(8),
+            )
+            .with_name("straddle")
+            .with_dvr(dvr_config(&tmp)),
         );
         route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
@@ -895,7 +921,15 @@ mod tests {
 
     #[tokio::test]
     async fn catchup_playlist_without_dvr_is_404() {
-        let route = Arc::new(RouteHandle::new(4.0, 500, 8).with_name("no-dvr"));
+        let route = Arc::new(
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(4.0)
+                    .with_part_target_ms(500)
+                    .with_window_segments(8),
+            )
+            .with_name("no-dvr"),
+        );
         route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
         let resp = catchup_playlist(State(route), Query(CatchupPlaylistQuery::default())).await;
@@ -906,9 +940,14 @@ mod tests {
     async fn window_secs_bounds_the_playlist() {
         let tmp = temp_dir();
         let route = Arc::new(
-            RouteHandle::new(4.0, 500, 8)
-                .with_name("windowed")
-                .with_dvr(dvr_config(&tmp)),
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(4.0)
+                    .with_part_target_ms(500)
+                    .with_window_segments(8),
+            )
+            .with_name("windowed")
+            .with_dvr(dvr_config(&tmp)),
         );
         route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
@@ -959,9 +998,14 @@ mod tests {
             ..DvrConfig::default()
         };
         let route = Arc::new(
-            RouteHandle::new(4.0, 500, 8)
-                .with_name("event")
-                .with_dvr(dvr),
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(4.0)
+                    .with_part_target_ms(500)
+                    .with_window_segments(8),
+            )
+            .with_name("event")
+            .with_dvr(dvr),
         );
         route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
@@ -986,9 +1030,14 @@ mod tests {
         // `dvr_config` enables count-based retention (retention_periods:
         // 10), so leading periods (and therefore segments) can be evicted.
         let route = Arc::new(
-            RouteHandle::new(4.0, 500, 8)
-                .with_name("retained")
-                .with_dvr(dvr_config(&tmp)),
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(4.0)
+                    .with_part_target_ms(500)
+                    .with_window_segments(8),
+            )
+            .with_name("retained")
+            .with_dvr(dvr_config(&tmp)),
         );
         route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
@@ -1011,9 +1060,14 @@ mod tests {
     async fn vod_playlist_finished_period_has_endlist() {
         let tmp = temp_dir();
         let route = Arc::new(
-            RouteHandle::new(4.0, 500, 8)
-                .with_name("vod")
-                .with_dvr(dvr_config(&tmp)),
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(4.0)
+                    .with_part_target_ms(500)
+                    .with_window_segments(8),
+            )
+            .with_name("vod")
+            .with_dvr(dvr_config(&tmp)),
         );
         route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
@@ -1048,9 +1102,14 @@ mod tests {
     async fn vod_playlist_unknown_period_is_404() {
         let tmp = temp_dir();
         let route = Arc::new(
-            RouteHandle::new(4.0, 500, 8)
-                .with_name("vod-missing")
-                .with_dvr(dvr_config(&tmp)),
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(4.0)
+                    .with_part_target_ms(500)
+                    .with_window_segments(8),
+            )
+            .with_name("vod-missing")
+            .with_dvr(dvr_config(&tmp)),
         );
         route.publish_new_program(SPTS_PROGRAM_ID);
         let resp = vod_playlist(State(route), Path("p99.m3u8".to_string())).await;
@@ -1060,7 +1119,15 @@ mod tests {
 
     #[tokio::test]
     async fn catchup_resource_unmatched_filename_404() {
-        let route = Arc::new(RouteHandle::new(4.0, 500, 8).with_name("bad-name"));
+        let route = Arc::new(
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(4.0)
+                    .with_part_target_ms(500)
+                    .with_window_segments(8),
+            )
+            .with_name("bad-name"),
+        );
         let resp = catchup_resource(State(route), Path("not-a-segment.txt".to_string())).await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
@@ -1076,9 +1143,14 @@ mod tests {
     async fn reconnect_keeps_archive_and_live_tail_in_one_numbering() {
         let tmp = temp_dir();
         let route = Arc::new(
-            RouteHandle::new(1.0, 250, 8)
-                .with_name("c5")
-                .with_dvr(dvr_config(&tmp)),
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(1.0)
+                    .with_part_target_ms(250)
+                    .with_window_segments(8),
+            )
+            .with_name("c5")
+            .with_dvr(dvr_config(&tmp)),
         );
         let first = route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
@@ -1184,9 +1256,14 @@ mod tests {
     async fn the_unarchived_live_tail_is_offset_mapped_after_a_reconnect() {
         let tmp = temp_dir();
         let route = Arc::new(
-            RouteHandle::new(1.0, 250, 8)
-                .with_name("c5-live")
-                .with_dvr(dvr_config(&tmp)),
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(1.0)
+                    .with_part_target_ms(250)
+                    .with_window_segments(8),
+            )
+            .with_name("c5-live")
+            .with_dvr(dvr_config(&tmp)),
         );
         let first = route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
@@ -1328,9 +1405,14 @@ mod tests {
 
         let tmp = temp_dir();
         let route = Arc::new(
-            RouteHandle::new(1.0, 250, 8)
-                .with_name("valid")
-                .with_dvr(dvr_config(&tmp)),
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(1.0)
+                    .with_part_target_ms(250)
+                    .with_window_segments(8),
+            )
+            .with_name("valid")
+            .with_dvr(dvr_config(&tmp)),
         );
         let info = |seq: u32, name: &str| transmux::ll_hls::SegmentInfo {
             bytes: read(name),
@@ -1412,9 +1494,14 @@ mod tests {
     async fn a_segment_closed_under_the_old_init_is_archived_with_the_old_init() {
         let root = temp_dir();
         let route = Arc::new(
-            RouteHandle::new(2.0, 500, 8)
-                .with_name("r")
-                .with_dvr(dvr_config(&root)),
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(2.0)
+                    .with_part_target_ms(500)
+                    .with_window_segments(8),
+            )
+            .with_name("r")
+            .with_dvr(dvr_config(&root)),
         );
         route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, b"INIT_A".to_vec());
@@ -1444,9 +1531,14 @@ mod tests {
     async fn segments_closed_before_a_source_reconnect_are_archived() {
         let root = temp_dir();
         let route = Arc::new(
-            RouteHandle::new(2.0, 500, 8)
-                .with_name("r")
-                .with_dvr(dvr_config(&root)),
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(2.0)
+                    .with_part_target_ms(500)
+                    .with_window_segments(8),
+            )
+            .with_name("r")
+            .with_dvr(dvr_config(&root)),
         );
         let first = route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, b"INIT_A".to_vec());
@@ -1482,9 +1574,14 @@ mod tests {
     async fn the_archive_timeline_does_not_go_backwards_across_a_source_reconnect() {
         let root = temp_dir();
         let route = Arc::new(
-            RouteHandle::new(2.0, 500, 8)
-                .with_name("r")
-                .with_dvr(dvr_config(&root)),
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(2.0)
+                    .with_part_target_ms(500)
+                    .with_window_segments(8),
+            )
+            .with_name("r")
+            .with_dvr(dvr_config(&root)),
         );
         let first = route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, b"INIT_A".to_vec());

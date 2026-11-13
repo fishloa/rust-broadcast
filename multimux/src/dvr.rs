@@ -1708,6 +1708,7 @@ impl SegmentEgress for DvrRecorder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::route::RouteConfig;
     use media_plane::trunk::{SegmentEntry, Trunk, TrunkConfig};
     use std::num::NonZeroUsize;
     use std::time::Duration;
@@ -2900,9 +2901,14 @@ mod tests {
             dvb_service_id: None,
         };
 
-        let route = crate::route::RouteHandle::new(1.0, 250, 64)
-            .with_name("ingest-test")
-            .with_dvr(dvr_cfg);
+        let route = crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(250)
+                .with_window_segments(64),
+        )
+        .with_name("ingest-test")
+        .with_dvr(dvr_cfg);
 
         fn nz2(n: usize) -> NonZeroUsize {
             NonZeroUsize::new(n).expect("n > 0")
@@ -3047,9 +3053,14 @@ mod tests {
             dvb_service_id: None,
         };
 
-        let route = crate::route::RouteHandle::new(2.0, 250, 64)
-            .with_name("france-tnt")
-            .with_dvr(dvr_cfg);
+        let route = crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(2.0)
+                .with_part_target_ms(250)
+                .with_window_segments(64),
+        )
+        .with_name("france-tnt")
+        .with_dvr(dvr_cfg);
 
         fn nz2(n: usize) -> NonZeroUsize {
             NonZeroUsize::new(n).expect("n > 0")

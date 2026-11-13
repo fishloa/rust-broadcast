@@ -4,6 +4,7 @@
 //! 6.2.5.2 bounds the hold: a Server that cannot provide the Playlist after
 //! blocking more than three Target Durations SHOULD answer 503.
 
+use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::process::Command;
 use std::sync::Arc;
@@ -37,7 +38,12 @@ const PUBLISH_DELAY: Duration = Duration::from_secs(1);
 const MIN_BLOCKING_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn cold_route() -> (Arc<RouteHandle>, transmux::ll_hls::LlHlsSegmenter) {
-    let store = Arc::new(RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8));
+    let store = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(TARGET_DURATION_SECS)
+            .with_part_target_ms(PART_TARGET_MS)
+            .with_window_segments(8),
+    ));
     let seg = feed_open_segment(
         &store,
         vec![video_track_spec()],
@@ -169,7 +175,12 @@ async fn msn_requests_on_a_cold_stream_keep_their_semantics() {
 }
 
 fn unannounced_route() -> Arc<RouteHandle> {
-    Arc::new(RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8))
+    Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(TARGET_DURATION_SECS)
+            .with_part_target_ms(PART_TARGET_MS)
+            .with_window_segments(8),
+    ))
 }
 
 #[tokio::test(start_paused = true)]
@@ -249,7 +260,13 @@ async fn a_request_for_a_program_that_never_appears_is_503_with_retry_after() {
 #[tokio::test(start_paused = true)]
 async fn with_the_hold_off_a_request_before_the_program_is_an_immediate_503() {
     let store = Arc::new(
-        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8).with_hold_cold_playlist(false),
+        RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_part_target_ms(PART_TARGET_MS)
+                .with_window_segments(8),
+        )
+        .with_hold_cold_playlist(false),
     );
     let app = app(&store);
 

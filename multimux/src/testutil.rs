@@ -19,6 +19,7 @@
 //! multimux's real output-auth middleware runs, including that fix, rather
 //! than a second, independently-behaving oracle.
 
+use crate::route::RouteConfig;
 use std::sync::Arc;
 
 use axum::Router;
@@ -241,7 +242,12 @@ pub(crate) async fn assert_dash_continues_across_a_reconnect(
 ) {
     use axum::http::StatusCode;
     const SEGMENT_TICKS: i64 = 90_000;
-    let route = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 500, 8));
+    let route = std::sync::Arc::new(crate::route::RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(500)
+            .with_window_segments(8),
+    ));
     let app = app_with(&route, output);
 
     let first = ingest_run(&route, 8).await;

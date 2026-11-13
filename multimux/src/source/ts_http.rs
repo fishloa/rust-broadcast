@@ -80,15 +80,12 @@ pub async fn run_ts_http(
         EventIngest::new(),
         media_plane::IngestConfig::new(handshake).with_trunk(trunk_config),
     );
-    let mut progress = crate::source::DriverProgress::new();
     let mut sink = tokio::io::sink();
     let err = crate::source::driver::run_ingest_scaffold(
         driver,
         route_handle,
-        &mut progress,
         cancel,
         timeouts,
-        crate::source::driver::DEFAULT_WRITE_TIMEOUT,
         &mut sink,
         &mut step,
         |never: std::convert::Infallible| match never {},
@@ -106,6 +103,7 @@ pub async fn run_ts_http(
 mod tests {
     use super::*;
     use crate::error::MultimuxError;
+    use crate::route::RouteConfig;
     use axum::Router;
     use axum::body::Body;
     use axum::response::{IntoResponse, Response as AxumResponse};
@@ -163,7 +161,12 @@ mod tests {
         handshake: HandshakePolicy,
         ceiling: Duration,
     ) -> (Result<()>, std::sync::Arc<crate::route::RouteHandle>) {
-        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         let result = tokio::time::timeout(
             ceiling,
             run_ts_http(

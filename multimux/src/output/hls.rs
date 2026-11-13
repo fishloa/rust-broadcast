@@ -435,6 +435,7 @@ pub(crate) async fn iframe_playlist(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::route::RouteConfig;
     use crate::route::RouteHandle;
     use crate::testutil::body_string;
     use std::time::Duration;
@@ -519,7 +520,12 @@ mod tests {
             );
             return;
         }
-        let route = std::sync::Arc::new(RouteHandle::new(1.0, 500, 8));
+        let route = std::sync::Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(500)
+                .with_window_segments(8),
+        ));
         let app = crate::testutil::app_with(&route, std::sync::Arc::new(HlsOutput::default()));
         let first = crate::testutil::ingest_run(&route, 8).await;
         let before = validator_findings(&app, "before").await;
@@ -541,7 +547,12 @@ mod tests {
     /// served.
     #[tokio::test]
     async fn the_media_playlist_stays_valid_across_a_source_reconnect() {
-        let route = std::sync::Arc::new(RouteHandle::new(1.0, 500, 8));
+        let route = std::sync::Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(500)
+                .with_window_segments(8),
+        ));
         let app = crate::testutil::app_with(&route, std::sync::Arc::new(HlsOutput::default()));
         let first = crate::testutil::ingest_run(&route, 8).await;
         let before_text = playlist_text(&app).await;
@@ -633,7 +644,12 @@ mod tests {
     /// serves anything -- and so there is a `ProgramServing` bundle for
     /// `set_init`/`add_segment`/`add_part` to write into at all.
     fn make_route() -> Arc<RouteHandle> {
-        let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 8]);
         route
@@ -902,7 +918,12 @@ mod tests {
         // A bare route: never `publish_new_program`/`publish_program`d, so
         // its registry is empty -- exactly the window between a driver-backed
         // route connecting and its first `SessionEvent::NewProgram`.
-        let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         let resp = media_playlist(State(state(route)), Query(BlockingReloadQuery::default())).await;
         assert_eq!(
             resp.status(),
@@ -932,7 +953,7 @@ mod tests {
 #[cfg(test)]
 mod ts_tests {
     use super::*;
-    use crate::route::RouteHandle;
+    use crate::route::{RouteConfig, RouteHandle};
     use crate::testutil::body_string;
     use transmux::Container;
     use transmux::ll_hls::SegmentInfo;
@@ -957,7 +978,15 @@ mod ts_tests {
     /// `media_playlist`'s `resolve_route_program` lookup sees `Found` — see
     /// `crate::output::hls`'s identical test fixture for the same shape.
     fn make_route() -> Arc<RouteHandle> {
-        let route = Arc::new(RouteHandle::new(4.0, 500, 4).with_container(Container::MpegTs));
+        let route = Arc::new(
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(4.0)
+                    .with_part_target_ms(500)
+                    .with_window_segments(4),
+            )
+            .with_container(Container::MpegTs),
+        );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route
             .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 0x21))
@@ -1187,7 +1216,15 @@ mod ts_tests {
     /// route with no program announced yet must be `503`, not `404`.
     #[tokio::test]
     async fn media_playlist_not_yet_announced_is_503_not_404() {
-        let route = Arc::new(RouteHandle::new(4.0, 500, 4).with_container(Container::MpegTs));
+        let route = Arc::new(
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(4.0)
+                    .with_part_target_ms(500)
+                    .with_window_segments(4),
+            )
+            .with_container(Container::MpegTs),
+        );
         let resp = media_playlist(State(state(route)), Query(BlockingReloadQuery::default())).await;
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     }

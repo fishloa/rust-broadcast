@@ -966,6 +966,9 @@ pub const TABLE: &[Crate] = &[
             "EventCursorItem",
             // Structured `thiserror` error enum — no spec label.
             "TryPublishSegmentError",
+            // Data-carrying event ADT returned by the segmenter (issue #2554);
+            // callers match the typed variant rather than a static label.
+            "SegmenterEvent",
         ],
         expected: None,
         min_enums: None,

@@ -323,19 +323,16 @@ pub async fn drive_socket(
         route_handle: std::sync::Arc::clone(route_handle),
         handoff: Some(on_driver),
     };
-    let mut progress = crate::source::DriverProgress::new();
     // SRT has no `poll_transmit`; the scaffold still bounds the (unused)
     // write half (defect 4 discipline).
     let mut sink = tokio::io::sink();
     let err = crate::source::driver::run_ingest_scaffold(
         driver,
         route_handle,
-        &mut progress,
         tokio_util::sync::CancellationToken::new(),
         broadcast_common::timeouts::Timeouts::default()
             .with_connect(read_timeout)
             .with_read_idle(read_timeout),
-        crate::source::driver::DEFAULT_WRITE_TIMEOUT,
         &mut sink,
         &mut step,
         |never: Infallible| match never {},
@@ -391,15 +388,12 @@ pub async fn run_srt_caller(
         EventIngest::new(),
         media_plane::IngestConfig::new(handshake).with_trunk(trunk_config),
     );
-    let mut progress = crate::source::DriverProgress::new();
     let mut sink = tokio::io::sink();
     let err = crate::source::driver::run_ingest_scaffold(
         driver,
         route_handle,
-        &mut progress,
         cancel,
         route.timeouts,
-        crate::source::driver::DEFAULT_WRITE_TIMEOUT,
         &mut sink,
         &mut step,
         |never: Infallible| match never {},
@@ -444,6 +438,7 @@ pub async fn run_srt_listener_once(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::route::RouteConfig;
     use crate::testutil::drain;
     use media_plane::ingress::ProgramId;
     use media_plane::trunk::SampleCursor;
@@ -511,7 +506,12 @@ mod tests {
             .await
             .expect("accept must not hang")
             .expect("accept");
-        let route_handle = Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let route_handle = Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         // Drive to completion: the client stops sending, so the 300 ms read
         // timeout ends the loop with an `Err` — expected here, and the
         // samples have already landed by then.
@@ -573,7 +573,12 @@ mod tests {
                 .with_connect(Duration::from_secs(5))
                 .with_read_idle(Duration::from_millis(300)),
         );
-        let route_handle = Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let route_handle = Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         let _ = tokio::time::timeout(
             Duration::from_secs(60),
             run_srt_caller(
@@ -623,7 +628,12 @@ mod tests {
                     .with_connect(Duration::from_secs(5))
                     .with_read_idle(Duration::from_millis(300)),
             );
-        let route_handle = Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let route_handle = Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         let _ = tokio::time::timeout(
             Duration::from_secs(60),
             run_srt_caller(
@@ -675,7 +685,12 @@ mod tests {
                 .with_connect(Duration::from_secs(5))
                 .with_read_idle(READ_TIMEOUT),
         );
-        let route_handle = Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let route_handle = Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         // DISCRIMINATOR (issue #826): must prove the operation returns
         // through the CONFIGURED read timeout (above), not via the SRT
         // library's own internal retry/default budget. Gap widened:
@@ -720,7 +735,12 @@ mod tests {
                 .with_connect(CONNECT_TIMEOUT)
                 .with_read_idle(Duration::from_secs(30)),
         );
-        let route_handle = Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let route_handle = Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         let started = std::time::Instant::now();
         let outcome = tokio::time::timeout(
             Duration::from_secs(60),
@@ -756,7 +776,12 @@ mod tests {
         let addr = reserved.local_addr().expect("local addr");
         drop(reserved);
         let route = SrtRoute::new_listener("cam-srt", addr.to_string());
-        let route_handle = Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let route_handle = Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         let cancel = tokio_util::sync::CancellationToken::new();
         let canceller = cancel.clone();
         tokio::spawn(async move {

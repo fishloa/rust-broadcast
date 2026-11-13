@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use crate::clock::ScaledHostClock;
 use crate::source::smooth_pull::{SmoothPullRoute, run_with_clock};
-use crate::{MultimuxError, RouteHandle};
+use crate::{MultimuxError, RouteConfig, RouteHandle};
 use axum::Router;
 use axum::extract::{Path as AxumPath, State};
 use axum::http::StatusCode;
@@ -91,7 +91,12 @@ async fn sample_trace(fixture: &str) -> String {
             .with_connect(READ_TIMEOUT)
             .with_read_idle(READ_TIMEOUT),
     );
-    let route_handle = Arc::new(RouteHandle::new(4.0, 500, 4));
+    let route_handle = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(4.0)
+            .with_part_target_ms(500)
+            .with_window_segments(4),
+    ));
     let config = TrunkConfig::default()
         .with_timed_capacity(nz(TIMED_RING))
         .with_sparse_capacity(nz(RING))

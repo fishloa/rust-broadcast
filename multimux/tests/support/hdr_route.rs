@@ -16,11 +16,11 @@ use tower::ServiceExt;
 use transmux::pipeline::{Sample, TrackSpec};
 use transmux::ts_demux::TsDemux;
 
+use media_plane::segmenter::ProgramSegmenter;
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
 use multimux::output::hls::HlsOutput;
-use multimux::route::RouteHandle;
-use multimux::source::segment::ProgramSegmenter;
+use multimux::route::{RouteConfig, RouteHandle};
 
 use crate::support::shared;
 
@@ -97,14 +97,20 @@ pub fn route_app_with_profiles(
     let writer = trunk.writer().expect("trunk writer");
     writer.set_tracks(sources.iter().map(|s| s.spec.clone()).collect());
     let route = Arc::new(
-        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, WINDOW_SEGMENTS)
-            .with_declared_bandwidth_bps(Some(DECLARED_BPS))
-            .with_audio_profiles(profiles),
+        RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_part_target_ms(PART_TARGET_MS)
+                .with_window_segments(WINDOW_SEGMENTS),
+        )
+        .with_declared_bandwidth_bps(Some(DECLARED_BPS))
+        .with_audio_profiles(profiles),
     );
     route.publish_program(ProgramId(0), Arc::clone(&trunk));
     route.set_track_specs(ProgramId(0), trunk.tracks().to_vec());
     let mut segmenter =
-        ProgramSegmenter::try_new(&trunk, &route, TARGET_DURATION_SECS, PART_TARGET_MS)
+        ProgramSegmenter::try_new_with_siblings(&trunk, route.segmenter_config(), route.as_ref())
+            .0
             .expect("segmenter");
     if let Some(init) = segmenter.init_segment() {
         route.set_init(ProgramId(0), init);
@@ -127,10 +133,10 @@ pub fn route_app_with_profiles(
             sources[ti].samples[si].clone(),
         );
         if n % PUMP_EVERY == 0 {
-            segmenter.pump(ProgramId(0), &trunk, &route);
+            multimux::source::segment::pump_segmenter(&mut segmenter, ProgramId(0), &trunk, &route);
         }
     }
-    segmenter.pump(ProgramId(0), &trunk, &route);
+    multimux::source::segment::pump_segmenter(&mut segmenter, ProgramId(0), &trunk, &route);
     segmenter.flush();
     let mut streams = HashMap::new();
     streams.insert(

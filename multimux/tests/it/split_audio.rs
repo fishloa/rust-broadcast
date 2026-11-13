@@ -4,6 +4,7 @@
 //! a `Trunk` fed with demuxed fixture samples — and reads the result back over
 //! the axum router the way a player would.
 
+use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -23,12 +24,12 @@ use transmux::validate::{Severity, validate_init_segment, validate_media_segment
 use crate::support::shared;
 
 use crate::support::shared_it::nz;
+use media_plane::segmenter::ProgramSegmenter;
 use multimux::config::Config;
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
 use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
-use multimux::source::segment::ProgramSegmenter;
 use transmux::audio_profile::AudioTrackSelector;
 
 const TARGET_DURATION_SECS: f64 = 1.0;
@@ -150,10 +151,10 @@ fn feed(
             sources[ti].samples[si].clone(),
         );
         if n % PUMP_EVERY == 0 {
-            segmenter.pump(ProgramId(0), trunk, route);
+            multimux::source::segment::pump_segmenter(segmenter, ProgramId(0), trunk, route);
         }
     }
-    segmenter.pump(ProgramId(0), trunk, route);
+    multimux::source::segment::pump_segmenter(segmenter, ProgramId(0), trunk, route);
 }
 
 fn publish_interleaved(
@@ -271,16 +272,22 @@ fn build_rig(
     let writer = trunk.writer().expect("trunk writer");
     writer.set_tracks(sources.iter().map(|s| s.spec.clone()).collect());
     let route = Arc::new(
-        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, WINDOW_SEGMENTS)
-            .with_hold_cold_playlist(false)
-            .with_declared_bandwidth_bps(declared)
-            .with_audio_renditions(renditions)
-            .with_audio_rendition_sources(selectors),
+        RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_part_target_ms(PART_TARGET_MS)
+                .with_window_segments(WINDOW_SEGMENTS),
+        )
+        .with_hold_cold_playlist(false)
+        .with_declared_bandwidth_bps(declared)
+        .with_audio_renditions(renditions)
+        .with_audio_rendition_sources(selectors),
     );
     route.publish_program(ProgramId(0), Arc::clone(&trunk));
     route.set_track_specs(ProgramId(0), trunk.tracks().to_vec());
     let mut segmenter =
-        ProgramSegmenter::try_new(&trunk, &route, TARGET_DURATION_SECS, PART_TARGET_MS)
+        ProgramSegmenter::try_new_with_siblings(&trunk, route.segmenter_config(), route.as_ref())
+            .0
             .expect("segmenter");
     if let Some(init) = segmenter.init_segment() {
         route.set_init(ProgramId(0), init);
@@ -863,17 +870,23 @@ async fn split_audio_track_appearing_mid_stream_starts_at_next_cut() {
     let writer = trunk.writer().expect("writer");
     writer.set_tracks(vec![early_video.spec.clone(), a0.spec.clone()]);
     let route = Arc::new(
-        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, WINDOW_SEGMENTS)
-            .with_declared_bandwidth_bps(8_000_000)
-            .with_audio_renditions(decls(&["fre", "qad"]))
-            .with_audio_rendition_sources(vec![
-                AudioTrackSelector::Index(0),
-                AudioTrackSelector::TrackId(a1.spec.track_id.value()),
-            ]),
+        RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_part_target_ms(PART_TARGET_MS)
+                .with_window_segments(WINDOW_SEGMENTS),
+        )
+        .with_declared_bandwidth_bps(8_000_000)
+        .with_audio_renditions(decls(&["fre", "qad"]))
+        .with_audio_rendition_sources(vec![
+            AudioTrackSelector::Index(0),
+            AudioTrackSelector::TrackId(a1.spec.track_id.value()),
+        ]),
     );
     route.publish_program(ProgramId(0), Arc::clone(&trunk));
     let mut segmenter =
-        ProgramSegmenter::try_new(&trunk, &route, TARGET_DURATION_SECS, PART_TARGET_MS)
+        ProgramSegmenter::try_new_with_siblings(&trunk, route.segmenter_config(), route.as_ref())
+            .0
             .expect("segmenter");
     if let Some(init) = segmenter.init_segment() {
         route.set_init(ProgramId(0), init);
@@ -887,7 +900,7 @@ async fn split_audio_track_appearing_mid_stream_starts_at_next_cut() {
     };
     publish(early_video, 0..half(early_video));
     publish(a0, 0..half(a0));
-    segmenter.pump(ProgramId(0), &trunk, &route);
+    multimux::source::segment::pump_segmenter(&mut segmenter, ProgramId(0), &trunk, &route);
 
     writer.set_tracks(vec![
         early_video.spec.clone(),
@@ -897,7 +910,7 @@ async fn split_audio_track_appearing_mid_stream_starts_at_next_cut() {
     publish(early_video, half(early_video)..early_video.samples.len());
     publish(a0, half(a0)..a0.samples.len());
     publish(a1, half(a1)..a1.samples.len());
-    segmenter.pump(ProgramId(0), &trunk, &route);
+    multimux::source::segment::pump_segmenter(&mut segmenter, ProgramId(0), &trunk, &route);
     segmenter.flush();
 
     let rig = Rig {
@@ -2111,9 +2124,15 @@ async fn run_on(route: &Arc<RouteHandle>, trunk: &Arc<Trunk>, sources: &[Source]
     route.publish_program(ProgramId(0), Arc::clone(trunk));
     route.set_track_specs(ProgramId(0), trunk.tracks().to_vec());
     let mut segmenter =
-        ProgramSegmenter::try_new(trunk, route, TARGET_DURATION_SECS, PART_TARGET_MS)
+        ProgramSegmenter::try_new_with_siblings(trunk, route.segmenter_config(), route.as_ref())
+            .0
             .expect("segmenter");
-    segmenter.continue_after_reconnect(route, ProgramId(0));
+    segmenter.continue_after_reconnect(
+        route
+            .epoch(ProgramId(0))
+            .map(|e| e.media_start_ns)
+            .unwrap_or(0),
+    );
     if let Some(init) = segmenter.init_segment() {
         route.set_init(ProgramId(0), init);
     }
@@ -2129,13 +2148,16 @@ async fn split_audio_after_a_source_reconnect_starts_at_the_number_derived_time(
     let sources = h264_aac();
     let aac = &sources[1];
     let route = Arc::new(
-        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, WINDOW_SEGMENTS)
-            .with_hold_cold_playlist(false)
-            .with_declared_bandwidth_bps(Some(DECLARED_BPS))
-            .with_audio_renditions(decls(&["eng"]))
-            .with_audio_rendition_sources(vec![AudioTrackSelector::TrackId(
-                aac.spec.track_id.value(),
-            )]),
+        RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_part_target_ms(PART_TARGET_MS)
+                .with_window_segments(WINDOW_SEGMENTS),
+        )
+        .with_hold_cold_playlist(false)
+        .with_declared_bandwidth_bps(Some(DECLARED_BPS))
+        .with_audio_renditions(decls(&["eng"]))
+        .with_audio_rendition_sources(vec![AudioTrackSelector::TrackId(aac.spec.track_id.value())]),
     );
     let first = new_trunk();
     run_on(&route, &first, sources).await;
@@ -2187,4 +2209,55 @@ async fn split_audio_after_a_source_reconnect_starts_at_the_number_derived_time(
             <= tolerance,
         "the second segment drifted"
     );
+}
+
+#[test]
+fn sibling_trunk_carries_trunk_config_capacities() {
+    use media_plane::trunk::TrunkConfig;
+    use std::num::NonZeroUsize;
+    let trunk_config = TrunkConfig::default()
+        .with_timed_capacity(NonZeroUsize::new(7).unwrap())
+        .with_sparse_capacity(NonZeroUsize::new(11).unwrap())
+        .with_segment_capacity(NonZeroUsize::new(13).unwrap())
+        .with_event_capacity(NonZeroUsize::new(17).unwrap())
+        .with_part_capacity(NonZeroUsize::new(19).unwrap());
+    let trunk = new_trunk();
+    let writer = trunk.writer().expect("trunk writer");
+    writer.set_tracks(Vec::new());
+    let route = Arc::new(
+        RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_part_target_ms(PART_TARGET_MS)
+                .with_window_segments(WINDOW_SEGMENTS),
+        )
+        .with_audio_renditions(vec![hls_runtime::server::AudioRenditionDecl {
+            uri: "audio.m3u8".into(),
+            characteristics: Vec::new(),
+            group_id: "audio".into(),
+            name: "audio".into(),
+            language: "und".into(),
+            channels: None,
+            default: true,
+            autoselect: true,
+        }])
+        .with_audio_rendition_sources(vec![transmux::audio_profile::AudioTrackSelector::Index(0)])
+        .with_trunk_config(trunk_config),
+    );
+    route.publish_program(ProgramId(0), Arc::clone(&trunk));
+    route.set_track_specs(ProgramId(0), Vec::new());
+    let serving = route.audio_servings(ProgramId(0));
+    assert!(!serving.is_empty(), "expected a sibling serving");
+    let sibling = &serving[0].trunk;
+    assert_eq!(sibling.config().timed_capacity, trunk_config.timed_capacity);
+    assert_eq!(
+        sibling.config().sparse_capacity,
+        trunk_config.sparse_capacity
+    );
+    assert_eq!(
+        sibling.config().segment_capacity,
+        trunk_config.segment_capacity
+    );
+    assert_eq!(sibling.config().event_capacity, trunk_config.event_capacity);
+    assert_eq!(sibling.config().part_capacity, trunk_config.part_capacity);
 }

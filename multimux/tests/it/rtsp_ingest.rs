@@ -41,7 +41,7 @@ use broadcast_common::Timestamp;
 use media_plane::ingress::{HandshakePolicy, ProgramId};
 use media_plane::trunk::{SampleCursorItem, TrunkConfig};
 use multimux::source::rtsp::{RtspRoute, run_rtsp};
-use multimux::{MultimuxError, RouteHandle};
+use multimux::{MultimuxError, RouteConfig, RouteHandle};
 use rtsp_runtime::{Credentials, InterleavedFrame, TransportSpec};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -172,7 +172,12 @@ fn start_pull(url: String, auth: Option<Credentials>) -> Pull {
                 .with_connect(TEST_TIMEOUT)
                 .with_read_idle(TEST_TIMEOUT),
         );
-    let route_handle = Arc::new(RouteHandle::new(4.0, 500, 4));
+    let route_handle = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(4.0)
+            .with_part_target_ms(500)
+            .with_window_segments(4),
+    ));
     let config = TrunkConfig::default()
         .with_timed_capacity(nz(TIMED_RING))
         .with_sparse_capacity(nz(RING))

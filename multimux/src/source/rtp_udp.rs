@@ -185,15 +185,12 @@ pub async fn run_rtp_udp(
         EventIngest::new(),
         media_plane::IngestConfig::new(handshake).with_trunk(trunk_config),
     );
-    let mut progress = crate::source::DriverProgress::new();
     let mut sink = tokio::io::sink();
     crate::source::driver::run_ingest_scaffold(
         driver,
         route_handle,
-        &mut progress,
         cancel,
         route.timeouts,
-        crate::source::driver::DEFAULT_WRITE_TIMEOUT,
         &mut sink,
         &mut step,
         |never: Infallible| match never {},
@@ -204,6 +201,7 @@ pub async fn run_rtp_udp(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::route::RouteConfig;
     use media_plane::trunk::SampleCursorItem;
     use media_plane::ts_session::test_support::{handshake, trunk_config};
     use std::time::Duration;
@@ -244,7 +242,12 @@ mod tests {
     }
 
     fn route_handle() -> std::sync::Arc<crate::route::RouteHandle> {
-        std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4))
+        std::sync::Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ))
     }
 
     /// Runs `route` until `want` samples are in its Trunk (or the senders finish), then cancels.

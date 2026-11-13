@@ -45,6 +45,7 @@
 //! therefore the faithful measurement; reading the route's closed segments
 //! would report samples that have been waiting for a segment boundary.
 
+use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -172,8 +173,13 @@ async fn start_ll_origin() -> (
     tokio::task::JoinHandle<()>,
 ) {
     let store = Arc::new(
-        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, WINDOW_SEGMENTS)
-            .with_hold_cold_playlist(false),
+        RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_part_target_ms(PART_TARGET_MS)
+                .with_window_segments(WINDOW_SEGMENTS),
+        )
+        .with_hold_cold_playlist(false),
     );
     // `multimux` egress resolves what it serves through the route's program
     // registry (issue #805/#806). This test drives the handle's own

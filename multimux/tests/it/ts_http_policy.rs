@@ -15,7 +15,7 @@ use broadcast_common::Timestamp;
 use media_plane::ingress::HandshakePolicy;
 use media_plane::trunk::{SampleCursorItem, TrunkConfig};
 use multimux::source::ts_http::{TsHttpRoute, run_ts_http};
-use multimux::{MultimuxError, RouteHandle};
+use multimux::{MultimuxError, RouteConfig, RouteHandle};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
@@ -44,7 +44,12 @@ fn timeouts(read: Duration) -> broadcast_common::timeouts::Timeouts {
 }
 
 async fn run(route: &TsHttpRoute) -> (Result<(), MultimuxError>, Arc<RouteHandle>) {
-    let route_handle = Arc::new(RouteHandle::new(4.0, 500, 4));
+    let route_handle = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(4.0)
+            .with_part_target_ms(500)
+            .with_window_segments(4),
+    ));
     let config = TrunkConfig::default()
         .with_timed_capacity(nz(TIMED_RING))
         .with_sparse_capacity(nz(RING))
@@ -165,7 +170,12 @@ async fn mid_body_stall_fails_with_the_stall_reason() {
     let body = fixture();
     let url = raw_server(body.len() + MISSING_PROMISE_BYTES, body, false).await;
     let route = TsHttpRoute::new("stalled", url).with_timeouts(timeouts(STALL_READ));
-    let route_handle = Arc::new(RouteHandle::new(4.0, 500, 4));
+    let route_handle = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(4.0)
+            .with_part_target_ms(500)
+            .with_window_segments(4),
+    ));
     let config = TrunkConfig::default()
         .with_timed_capacity(nz(TIMED_RING))
         .with_sparse_capacity(nz(RING))

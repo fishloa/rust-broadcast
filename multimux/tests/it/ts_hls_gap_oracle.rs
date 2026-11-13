@@ -13,6 +13,7 @@
 //! §4.4.4.7 shared by both. It skips **loudly** when the binary is absent
 //! (Linux/CI), so run it on macOS for the genuine check.
 
+use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -24,12 +25,12 @@ use test_fixtures::process::msv;
 use tower::ServiceExt;
 
 use media_plane::ProgramId;
+use media_plane::segmenter::ProgramSegmenter;
 use media_plane::trunk::{RetentionClass, Trunk, TrunkConfig, TrunkWriter};
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
 use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
-use multimux::source::segment::ProgramSegmenter;
 use transmux::pipeline::Sample;
 use transmux::ts_demux::TsDemux;
 
@@ -113,13 +114,22 @@ impl Rig {
         let writer = trunk.writer().expect("trunk writer");
         writer.set_tracks(tracks.iter().map(|(spec, _)| spec.clone()).collect());
         let route = Arc::new(
-            RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, WINDOW_SEGMENTS)
-                .with_container(transmux::Container::MpegTs),
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(TARGET_DURATION_SECS)
+                    .with_part_target_ms(PART_TARGET_MS)
+                    .with_window_segments(WINDOW_SEGMENTS),
+            )
+            .with_container(transmux::Container::MpegTs),
         );
         route.publish_program(ProgramId(0), Arc::clone(&trunk));
-        let segmenter =
-            ProgramSegmenter::try_new(&trunk, &route, TARGET_DURATION_SECS, PART_TARGET_MS)
-                .expect("TS-HLS segmenter builds");
+        let segmenter = ProgramSegmenter::try_new_with_siblings(
+            &trunk,
+            route.segmenter_config(),
+            route.as_ref(),
+        )
+        .0
+        .expect("TS-HLS segmenter builds");
         route.set_track_specs(
             ProgramId(0),
             tracks.iter().map(|(spec, _)| spec.clone()).collect(),
@@ -147,7 +157,12 @@ impl Rig {
     }
 
     fn pump(&mut self) {
-        self.segmenter.pump(ProgramId(0), &self.trunk, &self.route);
+        multimux::source::segment::pump_segmenter(
+            &mut self.segmenter,
+            ProgramId(0),
+            &self.trunk,
+            &self.route,
+        );
     }
 
     /// Publishes every sample of the fixture once more, merging the tracks in

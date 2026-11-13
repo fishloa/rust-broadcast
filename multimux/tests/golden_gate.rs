@@ -37,6 +37,7 @@
 //! must genuinely assert against `ffprobe`'s own output — never just "exited
 //! 0".
 
+use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -286,9 +287,10 @@ async fn start_ll_origin(
     tokio::task::JoinHandle<()>,
 ) {
     let store = Arc::new(RouteHandle::new(
-        TARGET_DURATION_SECS,
-        PART_TARGET_MS,
-        WINDOW_SEGMENTS,
+        RouteConfig::default()
+            .with_target_duration_secs(TARGET_DURATION_SECS)
+            .with_part_target_ms(PART_TARGET_MS)
+            .with_window_segments(WINDOW_SEGMENTS),
     ));
     // `multimux` egress resolves what it serves through the route's program
     // registry (issue #805/#806). This test drives the handle's own

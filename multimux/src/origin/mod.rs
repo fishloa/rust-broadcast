@@ -45,6 +45,7 @@ pub mod limit;
 pub(crate) mod resource;
 pub mod supervisor;
 
+use crate::route::RouteConfig;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -359,7 +360,12 @@ pub fn router(state: Arc<AppState>) -> Router {
 /// body and prove the shared pool sheds a cross-route request.
 #[doc(hidden)]
 pub fn limit_budget_test_app(ordinary: usize, queue: Duration) -> Router {
-    let store = Arc::new(RouteHandle::new(4.0, 500, 4));
+    let store = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(4.0)
+            .with_part_target_ms(500)
+            .with_window_segments(4),
+    ));
     store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
     store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
     let mut streams = HashMap::new();
@@ -525,8 +531,9 @@ pub async fn serve_hyper_util_with_task_gauge(
         listener,
         app,
         token,
-        header_read,
-        drain,
+        broadcast_common::timeouts::Timeouts::default()
+            .with_read_idle(header_read)
+            .with_write(drain),
         max_connections,
         Some(live_tasks),
         |l: Arc<tokio::net::TcpListener>| Box::pin(async move { l.accept().await }),
@@ -557,8 +564,9 @@ where
         listener,
         app,
         token,
-        header_read,
-        drain,
+        broadcast_common::timeouts::Timeouts::default()
+            .with_read_idle(header_read)
+            .with_write(drain),
         max_connections,
         None,
         accept_source,
@@ -570,13 +578,11 @@ where
 /// incremented when a connection task is spawned and decremented when it
 /// finishes, so a test can assert the finished-task set is reaped (bounded)
 /// rather than accumulating one entry per connection.
-#[allow(clippy::too_many_arguments)]
 async fn serve_impl_with_task_gauge<A, Fut>(
     listener: tokio::net::TcpListener,
     app: axum::Router,
     token: tokio_util::sync::CancellationToken,
-    header_read: Duration,
-    drain: Duration,
+    timeouts: broadcast_common::timeouts::Timeouts,
     max_connections: usize,
     live_tasks: Option<Arc<std::sync::atomic::AtomicUsize>>,
     accept_source: A,
@@ -587,6 +593,8 @@ where
         + Send
         + 'static,
 {
+    let header_read = timeouts.read_idle;
+    let drain = timeouts.write;
     use std::net::SocketAddr;
     use std::sync::Arc;
 
@@ -1577,31 +1585,32 @@ async fn serve_with_registry_impl(
         // (a previous process's), or the archive and any HTTP cache would
         // see numbers reused for different media (audit r07-C5, #1083).
         let archive_floor = admin::archive_floor_of(route).await;
+        let route_config = RouteConfig::default()
+            .with_target_duration_secs(target_duration_secs)
+            .with_part_target_ms(part_target_ms)
+            .with_window_segments(config.window_segments)
+            .with_container(route_container(route))
+            .with_ts_cut_policy(route.ts_hls_cut.into())
+            .with_ts_idr_fallback(route.ts_hls_idr_fallback)
+            .with_program_date_time(config.program_date_time)
+            .with_hold_cold_playlist(config.hold_cold_playlist)
+            .with_max_concurrent_warms(config.max_concurrent_warms_per_route)
+            .with_declared_bandwidth_bps(route.declared_bandwidth_bps)
+            .with_audio_renditions(route.audio_renditions.clone())
+            .with_closed_caption_overrides(route.closed_caption_overrides.clone())
+            .with_audio_rendition_sources(route.audio_rendition_sources.clone())
+            .with_audio_profiles(route.audio_profiles.clone())
+            .with_subtitles(route.subtitles);
+        // Issue #900: without this, `route.dvr` was validated
+        // (`Route::validate_dvr`) but never actually reached the
+        // `RouteHandle` that `ProgramServing::new` builds a `DvrRecorder`
+        // from — DVR recording configured via `Config`/JSON silently never
+        // ran outside this crate's own `with_dvr`-calling unit tests.
         let store = Arc::new(
-            RouteHandle::new(target_duration_secs, part_target_ms, config.window_segments)
+            RouteHandle::new(route_config)
                 .with_archive_floor(archive_floor)
                 .with_name(route.name.clone())
-                .with_container(route_container(route))
-                .with_ts_cut_policy(route.ts_hls_cut.into())
-                .with_ts_idr_fallback(route.ts_hls_idr_fallback)
-                // Issue #900: without this, `route.dvr` was validated
-                // (`Route::validate_dvr`) but never actually reached the
-                // `RouteHandle` that `ProgramServing::new` builds a
-                // `DvrRecorder` from — DVR recording configured via
-                // `Config`/JSON silently never ran outside this crate's own
-                // `with_dvr`-calling unit tests. `with_dvr` is a no-op when
-                // `route.dvr.enabled` is `false` (the default), so wiring it
-                // unconditionally is safe for every existing config.
-                .with_dvr(route.dvr.clone())
-                .with_program_date_time(config.program_date_time)
-                .with_hold_cold_playlist(config.hold_cold_playlist)
-                .with_max_concurrent_warms(config.max_concurrent_warms_per_route)
-                .with_declared_bandwidth_bps(route.declared_bandwidth_bps)
-                .with_audio_renditions(route.audio_renditions.clone())
-                .with_closed_caption_overrides(route.closed_caption_overrides.clone())
-                .with_audio_rendition_sources(route.audio_rendition_sources.clone())
-                .with_audio_profiles(route.audio_profiles.clone())
-                .with_subtitles(route.subtitles),
+                .with_dvr(route.dvr.clone()),
         );
         let outputs: Vec<Arc<dyn Output>> = route
             .outputs
@@ -2424,7 +2433,15 @@ mod tests {
     use tower::ServiceExt;
 
     fn make_state() -> Arc<AppState> {
-        let store = Arc::new(RouteHandle::new(4.0, 500, 4).with_declared_bandwidth_bps(5_000_000));
+        let store = Arc::new(
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(4.0)
+                    .with_part_target_ms(500)
+                    .with_window_segments(4),
+            )
+            .with_declared_bandwidth_bps(5_000_000),
+        );
         // Issue #805 tasks 3/6: the migrated egress call sites (`dynamic_file`
         // et al.) now resolve through the registry, not a `RouteHandle`-owned
         // `Trunk` directly -- publish this bare-constructed test route's own
@@ -2489,7 +2506,15 @@ mod tests {
     }
 
     fn state_with_stream(name: &str) -> Arc<AppState> {
-        let store = Arc::new(RouteHandle::new(4.0, 500, 4).with_declared_bandwidth_bps(5_000_000));
+        let store = Arc::new(
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(4.0)
+                    .with_part_target_ms(500)
+                    .with_window_segments(4),
+            )
+            .with_declared_bandwidth_bps(5_000_000),
+        );
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         let mut streams = HashMap::new();
@@ -2625,7 +2650,15 @@ mod tests {
     /// `HealthState` rather than being hardcoded to one status.
     #[tokio::test]
     async fn readyz_200_when_a_route_is_live() {
-        let store = Arc::new(RouteHandle::new(4.0, 500, 4).with_declared_bandwidth_bps(5_000_000));
+        let store = Arc::new(
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(4.0)
+                    .with_part_target_ms(500)
+                    .with_window_segments(4),
+            )
+            .with_declared_bandwidth_bps(5_000_000),
+        );
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         store.set_health(HealthState::Live);
@@ -2650,7 +2683,15 @@ mod tests {
     /// Revert-check: comparing `health() == Live` in `readyz` fails this.
     #[tokio::test]
     async fn readyz_200_when_a_route_has_ended_but_is_still_served() {
-        let store = Arc::new(RouteHandle::new(4.0, 500, 4).with_declared_bandwidth_bps(5_000_000));
+        let store = Arc::new(
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(4.0)
+                    .with_part_target_ms(500)
+                    .with_window_segments(4),
+            )
+            .with_declared_bandwidth_bps(5_000_000),
+        );
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         store.set_health(HealthState::Ended);
         let mut streams = HashMap::new();
@@ -2692,7 +2733,15 @@ mod tests {
     /// this assertion.
     #[tokio::test]
     async fn http_requests_total_counter_increases_on_requests() {
-        let store = Arc::new(RouteHandle::new(4.0, 500, 4).with_declared_bandwidth_bps(5_000_000));
+        let store = Arc::new(
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(4.0)
+                    .with_part_target_ms(500)
+                    .with_window_segments(4),
+            )
+            .with_declared_bandwidth_bps(5_000_000),
+        );
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         let mut streams = HashMap::new();
@@ -2798,7 +2847,12 @@ mod tests {
     /// per-output re-mux.
     #[tokio::test]
     async fn both_outputs_serve_from_shared_segments_and_mpd_resolves() {
-        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let store = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         store.set_track_specs(
@@ -2914,7 +2968,12 @@ mod tests {
     /// genuinely per-output, not a hardcoded LL-HLS+DASH pair.
     #[tokio::test]
     async fn dash_only_route_has_no_llhls_routes() {
-        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let store = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         store.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
@@ -2959,7 +3018,12 @@ mod tests {
     /// once the segment closes.
     #[tokio::test]
     async fn ll_dash_output_signals_and_resolves_alongside_dash_and_llhls() {
-        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let store = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         store.set_track_specs(
@@ -3122,7 +3186,12 @@ mod tests {
     /// (which only ever checked `.m3u8`) actually covers DASH too.
     #[tokio::test]
     async fn manifest_and_resource_responses_carry_expected_cache_control_and_cors() {
-        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let store = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         store.set_track_specs(
@@ -3194,7 +3263,12 @@ mod tests {
     /// `GOLDEN_BLESS=<dir>` writes instead of comparing.
     #[tokio::test]
     async fn origin_response_headers_match_golden() {
-        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let store = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         store.set_track_specs(
@@ -3379,7 +3453,12 @@ mod tests {
     /// still bind when configured tighter.
     #[tokio::test]
     async fn global_timeout_layer_cuts_off_a_slow_blocking_request() {
-        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let store = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         store
@@ -3450,7 +3529,12 @@ mod tests {
         const FLOOD: usize = 8;
         let handle = crate::prometheus::install();
         let mut streams = HashMap::new();
-        let store = Arc::new(RouteHandle::new(4.0, 500, 8));
+        let store = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(8),
+        ));
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         store
@@ -3553,7 +3637,12 @@ mod tests {
     async fn a_reload_flood_sheds_the_excess_with_503() {
         const BOUND: usize = 4;
         let mut streams = HashMap::new();
-        let store = Arc::new(RouteHandle::new(1.0, 500, 4));
+        let store = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         store
@@ -3663,7 +3752,15 @@ mod tests {
     /// [`HttpLimits`] via [`AppState::with_limits`], which [`make_state`]
     /// itself doesn't expose).
     fn make_state_streams() -> HashMap<String, StreamRoute> {
-        let store = Arc::new(RouteHandle::new(4.0, 500, 4).with_declared_bandwidth_bps(5_000_000));
+        let store = Arc::new(
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(4.0)
+                    .with_part_target_ms(500)
+                    .with_window_segments(4),
+            )
+            .with_declared_bandwidth_bps(5_000_000),
+        );
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         let mut streams = HashMap::new();
@@ -4438,7 +4535,12 @@ mod tests {
             }),
         );
 
-        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let store = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         let cancel = tokio_util::sync::CancellationToken::new();
         let factory = registry.input("silence").expect("factory registered above");
         let handle = factory(crate::registry::InputCtx {
@@ -4515,7 +4617,12 @@ mod tests {
             bind: "127.0.0.1:0".into(),
             ..crate::config::Config::default()
         };
-        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let store = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         let cancel = tokio_util::sync::CancellationToken::new();
         let handle = spawn_ingest(
             &cfg.routes[0],
@@ -4769,9 +4876,10 @@ mod tests {
                 subtitles: true,
             };
             let store = Arc::new(RouteHandle::new(
-                config.target_duration_secs,
-                config.part_target_ms,
-                config.window_segments,
+                RouteConfig::default()
+                    .with_target_duration_secs(config.target_duration_secs)
+                    .with_part_target_ms(config.part_target_ms)
+                    .with_window_segments(config.window_segments),
             ));
 
             let handle = spawn_ingest(&route, store.clone(), &config, &registry, cancel.clone())
@@ -4950,7 +5058,12 @@ mod tests {
     /// `await_first_trunk`-once wiring the second start never happens.
     #[tokio::test]
     async fn egress_follows_a_replaced_trunk() {
-        let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         let cancel = tokio_util::sync::CancellationToken::new();
         let (started_tx, mut started_rx) = tokio::sync::mpsc::unbounded_channel();
         let (stopped_tx, mut stopped_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -5013,7 +5126,12 @@ mod tests {
     /// any `Trunk` exists returns without starting anything.
     #[tokio::test]
     async fn follower_ends_when_the_egress_ends_or_the_route_is_cancelled() {
-        let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let counted = Arc::clone(&runs);
@@ -5032,7 +5150,12 @@ mod tests {
         .expect("an egress that returns ends the follower");
         assert_eq!(runs.load(std::sync::atomic::Ordering::SeqCst), 1);
 
-        let empty = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let empty = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         let cancel = tokio_util::sync::CancellationToken::new();
         cancel.cancel();
         tokio::time::timeout(

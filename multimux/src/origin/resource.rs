@@ -626,6 +626,7 @@ struct PartCursor {
 
 #[cfg(test)]
 mod tests {
+    use crate::route::RouteConfig;
     /// `parse_segment_filename` accepts the legacy and the instance-named
     /// segment forms (issue #1422: before, only the legacy form parsed, so
     /// SCTE-35 `emsg` injection never ran for the origin's real names) and
@@ -687,7 +688,12 @@ mod tests {
     /// `dynamic_file`/`fetch_part`'s `resolve_route_program` lookup sees
     /// `Found`, and so there is a `ProgramServing` bundle to write into.
     fn make_route() -> Arc<RouteHandle> {
-        let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 8]);
         route
@@ -746,7 +752,15 @@ mod tests {
     /// player (and Apple's `mediastreamvalidator`) rejects the mismatch.
     #[tokio::test]
     async fn ts_route_segment_is_served_as_video_mp2t() {
-        let route = Arc::new(RouteHandle::new(4.0, 500, 4).with_container(Container::MpegTs));
+        let route = Arc::new(
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(4.0)
+                    .with_part_target_ms(500)
+                    .with_window_segments(4),
+            )
+            .with_container(Container::MpegTs),
+        );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route
             .add_segment(crate::route::SPTS_PROGRAM_ID, ts_seg(1))
@@ -809,7 +823,12 @@ mod tests {
     /// part path on a route with no video track at all.
     #[tokio::test]
     async fn audio_only_fmp4_part_is_video_iso_segment() {
-        let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 8]);
         route.add_part(crate::route::SPTS_PROGRAM_ID, part(1, 0));
@@ -946,7 +965,12 @@ mod tests {
         // streaming, not "wait for everything, then answer once": if the
         // handler eagerly required the whole segment up front, this request
         // would have nothing to serve yet and would 404/block differently.
-        let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 8]);
         route.add_part(crate::route::SPTS_PROGRAM_ID, part(2, 0));
@@ -1072,7 +1096,12 @@ mod tests {
     /// guards (`http::resolve_route_program`'s `NotYetAnnounced` arm).
     #[tokio::test]
     async fn dynamic_file_not_yet_announced_is_503_not_404() {
-        let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         let resp = dynamic_file(
             State(route),
             HeaderMap::new(),
@@ -1305,7 +1334,12 @@ mod tests {
     }
 
     fn range_route() -> Arc<RouteHandle> {
-        let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 8]);
         route
@@ -1626,7 +1660,12 @@ mod tests {
 
     #[tokio::test]
     async fn range_dynamic_file_applies_to_spliced_bytes() {
-        let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         let trunk = route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 8]);
         let styp: [u8; 12] = [0, 0, 0, 12, b's', b't', b'y', b'p', b'm', b's', b'd', b'h'];
@@ -1740,7 +1779,12 @@ mod tests {
     #[tokio::test]
     async fn a_window_spanning_two_init_generations_renders_a_period_per_init() {
         let program = crate::route::SPTS_PROGRAM_ID;
-        let route = Arc::new(RouteHandle::new(4.0, 500, 8));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(8),
+        ));
         route.publish_new_program(program);
         route.set_track_specs(
             program,

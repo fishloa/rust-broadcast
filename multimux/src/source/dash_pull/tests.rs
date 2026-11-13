@@ -7,6 +7,7 @@
 //! through the shared session host) over a real loopback socket; only the clock is injected
 //! (`SkewedClock`), and a collector reads the route's `Trunk` the way the segmenter does.
 
+use crate::route::RouteConfig;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -190,7 +191,12 @@ struct Pull {
 impl Pull {
     fn start(route: DashPullRoute, clock: Arc<dyn HostClock>) -> Self {
         let delivered = Arc::new(Mutex::new(Delivered::default()));
-        let route_handle = Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let route_handle = Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let cancel = CancellationToken::new();
         let task = tokio::spawn({

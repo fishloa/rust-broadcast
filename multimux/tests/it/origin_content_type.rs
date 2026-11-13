@@ -3,6 +3,7 @@
 //! fragmented-MP4 segments/parts are `video/iso.segment`, MPEG-2 TS
 //! segments are `video/mp2t`. Range (206) responses carry the same type.
 
+use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -17,7 +18,12 @@ use multimux::route::RouteHandle;
 use transmux::ll_hls::PartInfo;
 
 fn fmp4_route() -> Arc<RouteHandle> {
-    let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+    let route = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(4.0)
+            .with_part_target_ms(500)
+            .with_window_segments(4),
+    ));
     route.publish_new_program(media_plane::ProgramId(0));
     route.set_init(media_plane::ProgramId(0), vec![0xAA; 8]);
     // closed segment 1
@@ -47,7 +53,15 @@ fn fmp4_route() -> Arc<RouteHandle> {
 
 fn ts_route() -> Arc<RouteHandle> {
     use transmux::Container;
-    let route = Arc::new(RouteHandle::new(4.0, 500, 4).with_container(Container::MpegTs));
+    let route = Arc::new(
+        RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        )
+        .with_container(Container::MpegTs),
+    );
     route.publish_new_program(media_plane::ProgramId(0));
     route
         .add_segment(

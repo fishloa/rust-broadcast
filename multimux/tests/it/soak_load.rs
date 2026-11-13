@@ -15,6 +15,7 @@
 //! 400000 of 400000 sample deliveries, consumer p50 0 ms / p99 7 ms. The
 //! floors and ceilings below are 2x to 50x off those, for a shared CI runner.
 
+use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -85,8 +86,13 @@ async fn soak_blocking_reload_viewers_and_sample_consumers() {
     }
 
     let route = Arc::new(
-        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8)
-            .with_declared_bandwidth_bps(5_000_000),
+        RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_part_target_ms(PART_TARGET_MS)
+                .with_window_segments(8),
+        )
+        .with_declared_bandwidth_bps(5_000_000),
     );
     let spec = TrackSpec::new(
         TrackId::new(1),

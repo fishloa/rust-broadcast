@@ -74,6 +74,7 @@
 //! split RTMP draws between `RtmpConnection::next_events` (I/O) and
 //! `RtmpIngestSession::feed` (sans-IO translation).
 
+use crate::route::RouteConfig;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -609,7 +610,12 @@ async fn serve_read_load_inner(
     let token = infra.cancel.clone();
 
     let policy = handshake_policy(handshake_timeout);
-    let route_handle = Arc::new(RouteHandle::new(1.0, 500, 8));
+    let route_handle = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(500)
+            .with_window_segments(8),
+    ));
     let route_clone = Arc::clone(&route);
     let abort_token = token.clone();
     let run_task = tokio::spawn(async move {

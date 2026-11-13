@@ -21,6 +21,7 @@ use crate::support::origin::{body_bytes, body_string, get};
 use crate::support::segmenter_feed::{
     FRAME_DUR, PART_TARGET_MS, TARGET_DURATION_SECS, feed_via_segmenter, video_track_spec,
 };
+use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -57,7 +58,12 @@ fn first_segment_uri(playlist: &str) -> Option<&str> {
 
 #[tokio::test]
 async fn end_to_end_pipeline_serves_valid_llhls() {
-    let store = Arc::new(RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8));
+    let store = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(TARGET_DURATION_SECS)
+            .with_part_target_ms(PART_TARGET_MS)
+            .with_window_segments(8),
+    ));
     let specs = vec![video_track_spec()];
 
     // 120 frames @ 30 fps = 4 s of video, with sync samples every 30 frames
@@ -167,7 +173,12 @@ fn part(seq: u32, idx: u32) -> PartInfo {
 /// (5 s) rather than resolving as soon as the part lands.
 #[tokio::test]
 async fn blocking_reload_resolves_when_part_arrives() {
-    let store = Arc::new(RouteHandle::new(4.0, 500, 8));
+    let store = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(4.0)
+            .with_part_target_ms(500)
+            .with_window_segments(8),
+    ));
     let program = media_plane::ProgramId(0);
     store.publish_new_program(program);
     store.set_init(program, vec![0xAA; 8]);
