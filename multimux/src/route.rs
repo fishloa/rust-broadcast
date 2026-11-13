@@ -1997,13 +1997,6 @@ impl RouteHandle {
         self
     }
 
-    /// Alias for [`Self::with_trunk_config`].
-    #[must_use]
-    pub fn with_sibling_trunk_config(mut self, value: TrunkConfig) -> Self {
-        self.trunk_config = value;
-        self
-    }
-
     pub fn trunk_config(&self) -> &TrunkConfig {
         &self.trunk_config
     }
