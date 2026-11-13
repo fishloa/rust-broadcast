@@ -105,7 +105,7 @@ assert!(report.findings().iter().any(|f| f.rule_id == "hls-extinf-exceeds-target
 | `ParamSetsCheck` | missing SPS/PPS/VPS before the first IDR/IRAP |
 | `InterlaceCheck` | interlaced coding (`frame_mbs_only_flag == 0`) reported as a content fact |
 | `check_container_codec` | `avcC`/`hvcC` vs in-band SPS; sample-entry dims vs SPS dims (ISOBMFF/CMAF) |
-| `check_hls_playlist` (alias `check_playlist`) | HLS validator: `hls-missing-extm3u`, `hls-missing-targetduration`, `hls-extinf-exceeds-target`, `hls-malformed-daterange` (§4.4.5.1), `hls-preload-hint-with-endlist` (§4.4.5.3), `hls-skip-without-can-skip-until` (§4.4.3.8), `hls-part-duration-range` (§4.4.4.9), `hls-parse-error` (§4) |
+| `check_hls_playlist` (alias `check_playlist`) | HLS validator: `hls-missing-extm3u`, `hls-missing-targetduration`, `hls-extinf-exceeds-target`, `hls-malformed-daterange` (§4.4.5.1), `hls-program-date-time-invalid` (RFC 8216 §4.3.2.6), `hls-preload-hint-with-endlist` (§4.4.5.3), `hls-skip-without-can-skip-until` (§4.4.3.8), `hls-part-duration-range` (§4.4.4.9), `hls-parse-error` (§4) |
 | `check_dash_mpd` | DASH validator: `dash-static-mpd-missing-duration` (§5.3.1.2), `dash-dynamic-mpd-no-availability-start`, `dash-representation-id-duplicate` (§5.3.5.2 Table 7), `dash-segment-timeline-monotonic` (§5.3.9.6.2), `dash-period-no-adaptation-sets` (§5.3.2), `dash-parse-error` |
 
 Public types: `Diagnostic` (trait), `Finding`, `Report`, `Severity`, `Location`
