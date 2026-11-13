@@ -2,15 +2,32 @@
 //! committed `fixtures/smooth/{av,av-low}` fixtures through an in-memory fetch.
 //! `SMOOTH_PULL_GOLDEN_BLESS=<dir>` writes the traces instead of comparing.
 
-use broadcast_common::{Stage, Timestamp};
-use media_plane::ingress::{IngestSession, SessionEvent};
-use multimux::source::smooth_pull::{SmoothIngestSession, SmoothInput};
-use smooth_runtime::{Action, FetchFailure};
-use url::Url;
+use std::sync::Arc;
+use std::time::Duration;
 
+use axum::Router;
+use axum::extract::{Path as AxumPath, State};
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
+use axum::routing::get;
+use broadcast_client::ErrorKind;
+use broadcast_common::Timestamp;
+use media_plane::ProgramId;
+use media_plane::ingress::HandshakePolicy;
+use media_plane::trunk::{SampleCursorItem, TrunkConfig};
+use multimux::source::smooth_pull::{SmoothPullRoute, run_smooth_pull};
+use multimux::{MultimuxError, RouteHandle};
+use tokio_util::sync::CancellationToken;
+
+use crate::support::shared_it::nz;
+
+const TIMED_RING: usize = 4096;
+const RING: usize = 16;
+/// A fixture with a missing fragment ends only after the session's own retry backoff
+/// (2 s, 4 s, 8 s, then 10 s per attempt) has run out.
+const PULL_CEILING: Duration = Duration::from_secs(150);
+const READ_TIMEOUT: Duration = Duration::from_secs(120);
 const GOLDEN_BLESS_ENV: &str = "SMOOTH_PULL_GOLDEN_BLESS";
-const NOT_FOUND: u16 = 404;
-const ORIGIN: &str = "http://origin.test/";
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
@@ -20,87 +37,102 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     })
 }
 
-fn fixture_bytes(fixture: &str, url: &str) -> Option<Vec<u8>> {
-    let rel = url.strip_prefix(ORIGIN).expect("origin url");
-    let path = test_fixtures::path(&format!("smooth/{fixture}/{}", percent_decode(rel)));
-    std::fs::read(path).ok()
+fn fnv1a_trace_line(track: u32, sample: &transmux::Sample) -> String {
+    format!(
+        "sample track={} dts={:?} pts={:?} dur={:?} sync={} len={} fnv={:016x}\n",
+        track,
+        sample.dts,
+        sample.pts,
+        sample.duration,
+        sample.flags.is_sync,
+        sample.data.len(),
+        fnv1a(&sample.data),
+    )
 }
 
-fn percent_decode(s: &str) -> String {
-    Url::parse(&format!("{ORIGIN}{s}"))
-        .expect("url")
-        .path()
-        .trim_start_matches('/')
-        .replace("%28", "(")
-        .replace("%29", ")")
+async fn fixture_handler(
+    AxumPath(path): AxumPath<String>,
+    State(fixture): State<Arc<String>>,
+) -> axum::response::Response {
+    let rel = path.replace("%28", "(").replace("%29", ")");
+    match std::fs::read(test_fixtures::path(&format!("smooth/{fixture}/{rel}"))) {
+        Ok(bytes) => bytes.into_response(),
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
-fn sample_trace(fixture: &str) -> String {
-    let mut session = SmoothIngestSession::new(Url::parse(&format!("{ORIGIN}Manifest")).unwrap());
-    let mut now = Timestamp::from_nanos(0);
+async fn serve_fixture(fixture: &str) -> (String, tokio::task::JoinHandle<()>) {
+    let app = Router::new()
+        .route("/{*path}", get(fixture_handler))
+        .with_state(Arc::new(fixture.to_owned()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind loopback");
+    let addr = listener.local_addr().expect("local addr");
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("axum server");
+    });
+    (format!("http://{addr}/Manifest"), server)
+}
+
+/// Pulls the fixture to its end through `run_smooth_pull` and renders the track set and every
+/// sample the route published, in the order it published them.
+async fn sample_trace(fixture: &str) -> String {
+    let (url, server) = serve_fixture(fixture).await;
+    let route =
+        SmoothPullRoute::new("golden", url).with_timeouts(multimux::source::IngestTimeouts {
+            connect: READ_TIMEOUT,
+            read: READ_TIMEOUT,
+        });
+    let route_handle = Arc::new(RouteHandle::new(4.0, 500, 4));
+    let config = TrunkConfig::new(nz(TIMED_RING), nz(RING), nz(RING), nz(RING), nz(RING));
+    let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
+    let result = tokio::time::timeout(
+        PULL_CEILING,
+        run_smooth_pull(
+            &route,
+            config,
+            handshake,
+            &route_handle,
+            CancellationToken::new(),
+        ),
+    )
+    .await
+    .expect("a static manifest must end");
+    server.abort();
     let mut out = String::new();
-    loop {
-        while let Some(event) = session.poll() {
-            match event {
-                SessionEvent::NewProgram { tracks, .. } => {
-                    let ids: Vec<u32> = tracks.iter().map(|t| t.track_id.value()).collect();
-                    out.push_str(&format!("tracks {ids:?}\n"));
-                }
-                SessionEvent::Sample {
-                    track_id, sample, ..
-                } => out.push_str(&format!(
-                    "sample track={} dts={:?} pts={:?} dur={:?} sync={} len={} fnv={:016x}\n",
-                    track_id.value(),
-                    sample.dts,
-                    sample.pts,
-                    sample.duration,
-                    sample.flags.is_sync,
-                    sample.data.len(),
-                    fnv1a(&sample.data),
-                )),
-                _ => {}
-            }
+    let trunk = route_handle.await_first_trunk().await;
+    let specs = loop {
+        let specs = route_handle.track_specs(ProgramId(0));
+        if !specs.is_empty() {
+            break specs;
         }
-        let Some(action) = session.poll_transmit() else {
-            match session.next_deadline() {
-                Some(deadline) => {
-                    now = deadline;
-                    session.on_deadline(now);
-                    continue;
-                }
-                None => break,
-            }
-        };
-        let (id, is_manifest, url) = match action {
-            Action::FetchManifest { id, url } => (id, true, url.to_string()),
-            Action::FetchFragment { id, url, .. } => (id, false, url.to_string()),
-            _ => panic!("unexpected action"),
-        };
-        let body = fixture_bytes(fixture, &url);
-        let input = match body {
-            None => SmoothInput::Failed(
-                id,
-                FetchFailure {
-                    status: Some(NOT_FOUND),
-                    ..FetchFailure::default()
-                },
-            ),
-            Some(ref bytes) if is_manifest => SmoothInput::Manifest(id, bytes),
-            Some(ref bytes) => SmoothInput::Fragment(id, bytes),
-        };
-        if let Err(e) = session.feed(input, now) {
-            out.push_str(&format!("fatal {e}\n"));
-            return out;
+        tokio::task::yield_now().await;
+    };
+    let ids: Vec<u32> = specs.iter().map(|t| t.track_id.value()).collect();
+    out.push_str(&format!("tracks {ids:?}\n"));
+    let mut cursor = trunk.subscribe_from_backlog();
+    while let Some(item) = cursor.poll() {
+        if let SampleCursorItem::Timed { track_id, sample } = item {
+            out.push_str(&fnv1a_trace_line(track_id.value(), &sample));
         }
     }
-    assert!(session.ended());
-    out.push_str("ended\n");
+    match result {
+        Ok(()) => out.push_str("ended\n"),
+        Err(MultimuxError::Session {
+            kind: ErrorKind::SegmentFetchFailed { status },
+            ..
+        }) => out.push_str(&format!(
+            "fatal connect failed: smooth-pull: fragment fetch failed (status {status:?})\n"
+        )),
+        Err(e) => out.push_str(&format!("fatal {e}\n")),
+    }
     out
 }
 
-fn check_golden(fixture: &str) {
+async fn check_golden(fixture: &str) {
     let name = format!("pull-multimux-{fixture}.txt");
-    let actual = sample_trace(fixture);
+    let actual = sample_trace(fixture).await;
     if let Ok(dir) = std::env::var(GOLDEN_BLESS_ENV) {
         std::fs::write(std::path::Path::new(&dir).join(&name), &actual).expect("write golden");
         return;
@@ -110,12 +142,12 @@ fn check_golden(fixture: &str) {
     assert_eq!(actual, expected, "{name} differs from the recorded trace");
 }
 
-#[test]
-fn smooth_pull_golden_av() {
-    check_golden("av");
+#[tokio::test]
+async fn smooth_pull_golden_av() {
+    check_golden("av").await;
 }
 
-#[test]
-fn smooth_pull_golden_av_low() {
-    check_golden("av-low");
+#[tokio::test]
+async fn smooth_pull_golden_av_low() {
+    check_golden("av-low").await;
 }

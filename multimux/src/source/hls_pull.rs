@@ -1186,14 +1186,4 @@ mod tests {
             "a stalled playlist fetch must fail, not hang forever"
         );
     }
-
-    // Bounds concurrent fetches: the cap itself is unit-tested at its own
-    // definition (`crate::source::inflight_tests`), which is where the
-    // decision now lives -- these loops only call
-    // the `PullScheduler`'s in-flight cap. What is *not* black-box observable
-    // here is that a loop actually consults it: the committed fixtures never
-    // reveal more than a handful of resources at once, so removing the gate
-    // would still pass every other test in this module. Observing the cap
-    // end-to-end would need the fixture server to count concurrent
-    // connections. Recorded rather than left implicit.
 }
