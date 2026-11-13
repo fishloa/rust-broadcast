@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- BREAKING: the long-form table constructors `AitSection::new`, `CitSection::new`, `EitSection::new`, `IntSection::new`, `MpeIfecSection::new`, `NitSection::new`, `PmtSection::new`, `RctSection::new`, `RntSection::new`, `SatSection::new`, `SdtSection::new` and `UntSection::new` take one `tables::SectionVersion` (`version_number`, `current_next_indicator`, `section_number`, `last_section_number`; build it with `SectionVersion::new`) in place of those four positional arguments (#2612).
 ### Added
 - `skills/dvb-si-basics/SKILL.md`: a Symposium agent skill shipped in the published package, so an AI coding agent working in a project that depends on `dvb-si` gets usage guidance covering the `SiDemux` loop, descriptor loops, the symmetric parse/serialize contract, carousel reassembly, features and the common pitfalls.
 ### Fixed

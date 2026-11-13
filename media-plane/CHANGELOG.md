@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- `segmenter::program` (feature `std`): `ProgramSegmenter`, `SegmenterConfig`, `SegmenterEvent`, `SiblingTrunks`, `TsHlsIdrFallback` and `TsHlsIdrStatus`, the per-program segmenter that cuts a `Trunk`'s samples into parts and segments, moved from multimux (#2554).
+### Added
 - `segmenter::subtitle` (feature `std`): the teletext-subtitle rendition follower moved from multimux. `teletext_pages` lists a program's subtitle pages (bounded by the caller's `max_pages`), `SubtitleFollower` turns the page's teletext PES data fields into WebVTT parts and segments cut where the leader cut and publishes them into its sibling `Trunk`, with `TeletextPage` and `LeaderPart`. `caption-convert` and `dvb-si` are now optional dependencies behind `std` (issue #2554).
 ### Added
 - `segmenter::audio` (feature `std`): the separate-audio-rendition follower moved from multimux. `AudioFollower` cuts one audio track where the video leader cut and publishes into its sibling `Trunk`; the host serves its init segment (`take_init`) and the part target its first sample fixes (`take_part_target_ms`) instead of the follower driving an HLS origin. `resolve_sources` maps rendition selectors to source tracks, `leader_tracks` keeps the primary playlist's tracks, with `LEADER_DURATION_HISTORY` and `LeaderDurations` (issue #2554).
