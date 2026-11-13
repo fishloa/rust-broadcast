@@ -1459,3 +1459,327 @@ fn program_segmenter_notes_each_segments_start_media_time() {
 fn nz(n: usize) -> std::num::NonZeroUsize {
     std::num::NonZeroUsize::new(n).expect("test capacity must be non-zero")
 }
+
+/// A scripted two-program (MPTS) session: `Established`, then both
+/// `NewProgram` announcements, then one sample per program per feed.
+struct MptsSession {
+    pending: VecDeque<SessionEvent>,
+    feed_count: u32,
+}
+
+impl MptsSession {
+    fn new() -> Self {
+        MptsSession {
+            pending: VecDeque::from([SessionEvent::Established]),
+            feed_count: 0,
+        }
+    }
+}
+
+impl Stage for MptsSession {
+    type In<'a> = &'a [u8];
+    type Out = SessionEvent;
+    type Error = Infallible;
+
+    fn demand(&self) -> Demand {
+        Demand::new(crate::source::INGEST_DEMAND_BYTES)
+    }
+
+    fn feed(&mut self, _input: &[u8], _now: Timestamp) -> Result<(), Infallible> {
+        self.feed_count += 1;
+        if self.feed_count == 2 {
+            self.pending.push_back(SessionEvent::NewProgram {
+                program: ProgramId(0),
+                tracks: vec![track_spec(TrackId::new(1))],
+            });
+            self.pending.push_back(SessionEvent::NewProgram {
+                program: ProgramId(1),
+                tracks: vec![track_spec(TrackId::new(2))],
+            });
+        } else if self.feed_count >= 3 {
+            let i = self.feed_count - 3;
+            let is_sync = i == 0 || i == 45;
+            self.pending.push_back(SessionEvent::Sample {
+                program: ProgramId(0),
+                track_id: TrackId::new(1),
+                retention: media_plane::trunk::RetentionClass::Timed,
+                sample: sample_at(i, is_sync),
+            });
+            self.pending.push_back(SessionEvent::Sample {
+                program: ProgramId(1),
+                track_id: TrackId::new(2),
+                retention: media_plane::trunk::RetentionClass::Timed,
+                sample: sample_at(i, is_sync),
+            });
+        }
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Option<SessionEvent> {
+        self.pending.pop_front()
+    }
+
+    fn finish(&mut self) -> Result<(), Infallible> {
+        Ok(())
+    }
+}
+
+impl IngestSession for MptsSession {
+    type Request = bytes::Bytes;
+}
+
+#[test]
+fn mpts_programs_segment_independently() {
+    let route = RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(500)
+            .with_window_segments(8),
+    );
+    let mut driver = IngestDriver::new(
+        MptsSession::new(),
+        media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
+    );
+    let mut published = HashSet::new();
+    let mut segmenters = HashMap::new();
+
+    driver.feed(&[], Timestamp::from_nanos(0));
+    report_driver_progress(&driver, &route, &mut published);
+    drive_program_segmenters(&driver, &route, &mut segmenters);
+    driver.feed(&[], Timestamp::from_nanos(1));
+    report_driver_progress(&driver, &route, &mut published);
+    drive_program_segmenters(&driver, &route, &mut segmenters);
+    let _: &HashSet<ProgramId> = &published;
+
+    for _ in 0..90 {
+        driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+    }
+
+    let trunk_0 = driver.trunk(ProgramId(0)).cloned().expect("program 0");
+    let trunk_1 = driver.trunk(ProgramId(1)).cloned().expect("program 1");
+    assert!(
+        !std::sync::Arc::ptr_eq(&trunk_0, &trunk_1),
+        "the two programs must have genuinely distinct Trunks"
+    );
+    assert!(trunk_0.last_closed_segment().is_some());
+    assert!(trunk_1.last_closed_segment().is_some());
+}
+
+#[test]
+fn ts_hls_mpts_serves_one_pmt_per_program() {
+    let route = RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(500)
+            .with_window_segments(8)
+            .with_container(Container::MpegTs),
+    );
+    let mut driver = IngestDriver::new(
+        MptsSession::new(),
+        media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
+    );
+    let mut published = HashSet::new();
+    let mut segmenters = HashMap::new();
+
+    driver.feed(&[], Timestamp::from_nanos(0));
+    report_driver_progress(&driver, &route, &mut published);
+    drive_program_segmenters(&driver, &route, &mut segmenters);
+    driver.feed(&[], Timestamp::from_nanos(1));
+    report_driver_progress(&driver, &route, &mut published);
+    drive_program_segmenters(&driver, &route, &mut segmenters);
+    for _ in 0..90 {
+        driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+    }
+
+    for program in [ProgramId(0), ProgramId(1)] {
+        let playlist = render_playlist_for(&route, program);
+        assert!(
+            playlist.contains(".ts") && !playlist.contains("#EXT-X-MAP"),
+            "{program:?}'s classic-TS playlist must reference .ts segments with no init \
+             segment: {playlist}"
+        );
+        let uri = first_ts_segment_uri(&playlist).unwrap_or_else(|| {
+            panic!("{program:?}'s playlist has no closed .ts segment: {playlist}")
+        });
+        assert_eq!(
+            count_pmt_sections(&resolve_resource(&route, program, uri)),
+            1,
+            "{program:?}: RFC 8216bis §3.1.1 requires exactly one MPEG-2 Program per segment"
+        );
+    }
+}
+
+/// A video track whose PTS steps by `jump` after `first` frames re-anchors
+/// that segment's reported start on the source 90 kHz clock.
+fn jump_source_starts(jump: i64) -> Vec<Option<u64>> {
+    let trunk = media_plane::trunk::Trunk::new(
+        media_plane::trunk::TrunkConfig::default()
+            .with_timed_capacity(nz(256))
+            .with_sparse_capacity(nz(64))
+            .with_segment_capacity(nz(16))
+            .with_event_capacity(nz(8))
+            .with_part_capacity(nz(8)),
+    );
+    let writer = trunk.writer().expect("writer");
+    writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+    let route = RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8),
+    );
+    let (segmenter, _) =
+        ProgramSegmenter::try_new_with_siblings(&trunk, route.segmenter_config(), &route);
+    let mut segmenter = segmenter.expect("segmenter");
+    for i in 0..120u32 {
+        let base = if i < 60 { i } else { i + 2 };
+        let mut sample = sample_at(base, base.is_multiple_of(30));
+        let pts = i64::from(base) * i64::from(FRAME_DUR) + if i >= 60 { jump } else { 0 };
+        sample.pts = Some(pts);
+        sample.dts = Some(pts);
+        writer.publish(
+            TrackId::new(1),
+            media_plane::trunk::RetentionClass::Timed,
+            sample,
+        );
+        crate::source::segment::pump_segmenter(&mut segmenter, ProgramId(0), &trunk, &route);
+    }
+    segmenter.flush();
+    (1..=3)
+        .map(|seq| {
+            trunk
+                .segment_start_time(media_plane::ids::SegmentSeq::new(seq))
+                .map(|t| t.0)
+        })
+        .collect()
+}
+
+#[test]
+fn a_backward_pts_step_reanchors_the_source_clock() {
+    let back = -2 * i64::from(transmux::VIDEO_CLOCK_RATE);
+    let starts = jump_source_starts(back);
+    assert_eq!(starts[..2], [Some(0), Some(90_000)]);
+    assert_ne!(
+        starts[2],
+        Some(180_000),
+        "a 2 s backward PTS step must move the segment start, not continue the old line: {starts:?}"
+    );
+}
+
+#[test]
+fn a_forward_pts_step_reanchors_the_source_clock() {
+    let forward = 8 * i64::from(transmux::VIDEO_CLOCK_RATE);
+    let starts = jump_source_starts(forward);
+    assert_eq!(starts[..2], [Some(0), Some(90_000)]);
+    assert!(
+        starts[2].is_some_and(|s| s > 180_000),
+        "an 8 s forward PTS step must move the segment start forward: {starts:?}"
+    );
+}
+
+/// **Review item 3's capacity propagation, through the shared host builder.**
+/// The sibling trunk `build_core_followers` (the production host half)
+/// writes a rendition's segments into must carry the route's configured
+/// `TrunkConfig` capacities.
+#[test]
+fn sibling_trunk_built_by_the_host_carries_the_routes_trunk_config() {
+    use media_plane::trunk::{Trunk, TrunkConfig};
+
+    let trunk_config = TrunkConfig::default()
+        .with_timed_capacity(nz(7))
+        .with_sparse_capacity(nz(11))
+        .with_segment_capacity(nz(13))
+        .with_event_capacity(nz(17))
+        .with_part_capacity(nz(19));
+    let trunk = media_plane::trunk::Trunk::new(trunk_config);
+    trunk.writer().expect("writer").set_tracks(vec![
+        track_spec(TrackId::new(1)),
+        track_spec(TrackId::new(2)),
+    ]);
+    let route = RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8)
+            .with_audio_renditions(vec![hls_runtime::server::AudioRenditionDecl {
+                uri: "audio.m3u8".into(),
+                characteristics: Vec::new(),
+                group_id: "audio".into(),
+                name: "audio".into(),
+                language: "und".into(),
+                channels: None,
+                default: true,
+                autoselect: true,
+            }])
+            .with_audio_rendition_sources(vec![
+                transmux::audio_profile::AudioTrackSelector::Index(1),
+            ]),
+    )
+    .with_trunk_config(trunk_config);
+    assert_eq!(
+        route.trunk_config().segment_capacity,
+        trunk_config.segment_capacity,
+        "the route's own trunk config is what every sibling is built from"
+    );
+    route.publish_program(ProgramId(0), std::sync::Arc::clone(&trunk));
+    route.set_track_specs(ProgramId(0), trunk.tracks().to_vec());
+
+    let mapped = vec![(0usize, trunk.tracks()[1].clone())];
+    let followers =
+        crate::source::split_audio::build_core_followers(&route, &trunk, &mapped, 1.0, 250);
+    assert_eq!(followers.len(), 1, "one audio rendition, one follower");
+    let servings = route.audio_servings(ProgramId(0));
+    assert_eq!(servings.len(), 1, "one sibling trunk");
+    let sibling: &Trunk = &servings[0].trunk;
+    assert_eq!(sibling.config().timed_capacity, trunk_config.timed_capacity);
+    assert_eq!(
+        sibling.config().sparse_capacity,
+        trunk_config.sparse_capacity
+    );
+    assert_eq!(
+        sibling.config().segment_capacity,
+        trunk_config.segment_capacity
+    );
+    assert_eq!(sibling.config().event_capacity, trunk_config.event_capacity);
+    assert_eq!(sibling.config().part_capacity, trunk_config.part_capacity);
+}
+
+/// `verifier rejects an unauthenticated pull` — the segmenter's host is not
+/// involved in auth, but `RouteHandle` must not need auth state to segment.
+#[test]
+fn route_segments_without_any_output_auth() {
+    let route = RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8),
+    );
+    let trunk = media_plane::trunk::Trunk::new(trunk_config());
+    let (segmenter, events) =
+        ProgramSegmenter::try_new_with_siblings(&trunk, route.segmenter_config(), &route);
+    assert!(events.is_empty(), "an empty trunk builds no segmenter");
+    assert!(segmenter.is_none(), "an empty trunk builds no segmenter");
+}
+
+#[test]
+fn a_route_signals_its_own_config_to_the_segmenter() {
+    let route = RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(2.5)
+            .with_part_target_ms(333)
+            .with_window_segments(12)
+            .with_container(Container::MpegTs),
+    );
+    let config = route.segmenter_config();
+    assert_eq!(config.target_duration_secs, 2.5);
+    assert_eq!(config.part_target_ms, 333);
+    assert_eq!(config.window_segments_cap.get(), 12);
+    assert_eq!(
+        config.trunk_config.segment_capacity.get(),
+        12,
+        "one number: the window depth is the trunk's segment capacity"
+    );
+    assert!(matches!(config.container, Container::MpegTs));
+}
