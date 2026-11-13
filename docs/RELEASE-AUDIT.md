@@ -102,3 +102,28 @@ Every fix greps the whole workspace for siblings of its class and adds a regress
 Per [`RELEASE-DOCS.md`](RELEASE-DOCS.md): version bumps (lockstep together; bump every inter-crate ref) → CHANGELOG `[Unreleased]` cut to a dated heading → `docs/release-notes/vX.Y.Z.md` → README coverage → crate-root `//!` (incl. CLI `--help` text for new tool features) → Cargo.toml + `[package.metadata.docs.rs]` sweep → branch → PR (`Closes #n`) → **all CI checks SUCCESS (not just mergeStateStatus)** → merge → version-tag push (release CI gates + publishes) → post-publish verify docs.rs built green + every crate live on crates.io.
 
 **Never `cargo publish` / push a release tag from a workstation, and never tag without the owner's explicit per-release sign-off.** Releases are tag-driven, CI-only.
+
+## 4.5 Planning and pushing a wave: `tools/release_plan.py` (#2630)
+
+```bash
+python3 tools/release_plan.py plan                 # read-only: what goes, the levels, an ETA
+python3 tools/release_plan.py run --dry-run        # the whole loop, every worker is push-release-tags.sh --dry-run
+python3 tools/release_plan.py run [--cap 6] [--allow-tag-commit <sha>]...
+```
+
+`plan` compares every publishable crate's manifest version with crates.io (via
+`tools/crates-io.py`: User-Agent, 404 only means absent, 429 retried with backoff) and
+with its last release tag. **to-publish** = not live yet; **needs-attention** = source
+changed since the last tag but the version is unbumped / `[Unreleased]` is empty, or the
+manifest is behind crates.io; **live** = skipped. The lockstep five are one `v<ver>` node.
+Levels are topological layers over normal, build and versioned dev-dependency edges
+(dependencies already live count as satisfied).
+
+`run` refuses while anything needs attention or a local tag is missing, then pushes level by
+level: each crate of a level runs its own `tools/push-release-tags.sh <one-tag>` (so every
+`git push` carries exactly one tag, #933), up to `--cap` at once, and the level completes
+only when every crate is on the index AND its release workflow succeeded. The push/wait
+logic and every preflight stay in `push-release-tags.sh` (one implementation); the planner
+only decides tags, order and concurrency. Exit 0 done, 1 failed (later levels never start; a
+crates.io 429 is named in the output and NOT auto-retried), 2 manual step (the lockstep tag,
+an approval gate, a dependency not live). Per-tag logs: `.delegate/scratch/release-logs/`.
