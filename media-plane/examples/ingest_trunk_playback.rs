@@ -21,8 +21,8 @@ use std::num::NonZeroUsize;
 
 use broadcast_common::{Demand, Stage, Timestamp};
 use media_plane::{
-    DEFAULT_MAX_PROGRAMS, HandshakePolicy, IngestDriver, IngestSession, ProgramId, RetentionClass,
-    SampleCursorItem, SessionEvent, TrunkConfig,
+    HandshakePolicy, IngestDriver, IngestSession, ProgramId, RetentionClass, SampleCursorItem,
+    SessionEvent, TrunkConfig,
 };
 use transmux::{DemuxEvent, StreamingTsDemux};
 

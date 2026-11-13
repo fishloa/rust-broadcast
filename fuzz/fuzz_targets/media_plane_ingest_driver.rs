@@ -8,7 +8,7 @@ use broadcast_common::{Demand, Stage, Timestamp};
 use bytes::Bytes;
 use libfuzzer_sys::fuzz_target;
 use media_plane::{
-    DEFAULT_MAX_PROGRAMS, HandshakePolicy, IngestDriver, IngestSession, ProgramId, RetentionClass,
+    HandshakePolicy, IngestDriver, IngestSession, ProgramId, RetentionClass,
     SessionEvent, TrunkConfig,
 };
 use transmux::pipeline::DataCarriage;

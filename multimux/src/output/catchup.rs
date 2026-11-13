@@ -600,7 +600,6 @@ mod tests {
     fn dvr_persist_through_advance_route_writes_bytes_exact() {
         use crate::source::DriverProgress;
         use crate::source::ts_program::{TsIngestSession, test_support::build_ts_bytes};
-        use media_plane::DEFAULT_MAX_PROGRAMS;
         use media_plane::ingress::{HandshakePolicy, IngestDriver};
         use std::num::NonZeroUsize;
 

@@ -2886,7 +2886,6 @@ mod tests {
     async fn ingest_pipeline_records_and_demux_from_disk() {
         use crate::source::ts_program::{TsIngestSession, test_support::build_ts_bytes};
         use crate::source::{DriverProgress, advance_route};
-        use media_plane::DEFAULT_MAX_PROGRAMS;
         use media_plane::ingress::{HandshakePolicy, IngestDriver};
 
         let tmp = temp_dir();
@@ -3033,7 +3032,6 @@ mod tests {
 
         use crate::source::ts_program::TsIngestSession;
         use crate::source::{DriverProgress, advance_route};
-        use media_plane::DEFAULT_MAX_PROGRAMS;
         use media_plane::ingress::{HandshakePolicy, IngestDriver};
 
         let tmp = temp_dir();
