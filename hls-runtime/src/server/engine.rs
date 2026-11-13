@@ -1604,7 +1604,7 @@ impl HlsOriginBuilder {
 
     /// Which container this origin serves segments/parts as. Defaults to
     /// [`Container::Fmp4`] if never called, matching every pre-#873 caller's
-    /// behaviour. Orthogonal to [`Self::low_latency`] — all four
+    /// behaviour. Orthogonal to [`Self::with_low_latency`] — all four
     /// `{Fmp4, MpegTs} x {classic, low-latency}` combinations are valid.
     pub fn with_container(mut self, container: Container) -> Self {
         self.container = container;
@@ -1615,7 +1615,7 @@ impl HlsOriginBuilder {
     /// `PART-TARGET` (milliseconds). **Omit this call entirely for classic
     /// HLS** — no `#EXT-X-PART`/`#EXT-X-PART-INF`/`#EXT-X-SERVER-CONTROL`/
     /// `#EXT-X-PRELOAD-HINT` tags are then rendered, regardless of
-    /// [`Self::container`]. This is what the old constructor's mandatory
+    /// [`Self::with_container`]. This is what the old constructor's mandatory
     /// `part_target_ms` positional could not express.
     pub fn with_low_latency(mut self, part_target_ms: u32) -> Self {
         self.part_target_ms = Some(part_target_ms);
@@ -1774,13 +1774,13 @@ impl HlsOriginBuilder {
     /// immediately (so the window starts empty but never misses a segment
     /// published from this point on).
     ///
-    /// Errors, never silently defaults, if [`Self::target_duration_secs`] or
-    /// [`Self::window_segments`] was never called, for a zero
-    /// [`Self::low_latency`] part target, or for an offset that cannot hold
+    /// Errors, never silently defaults, if [`Self::with_target_duration_secs`] or
+    /// [`Self::with_window_segments`] was never called, for a zero
+    /// [`Self::with_low_latency`] part target, or for an offset that cannot hold
     /// the `u32` sequence range.
     ///
     /// The advertised window is never shorter than three segments, whatever
-    /// [`Self::window_segments`] says (RFC 8216bis §6.2.2: a live Playlist
+    /// [`Self::with_window_segments`] says (RFC 8216bis §6.2.2: a live Playlist
     /// MUST NOT be shortened below three Target Durations). Part retention is
     /// not checked here: the part ring's capacity belongs to the [`Trunk`]
     /// and is not observable from it; the playlist only advertises the parts
