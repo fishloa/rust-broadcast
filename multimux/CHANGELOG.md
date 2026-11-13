@@ -3,6 +3,7 @@
 ## [Unreleased]
 ### Changed
 - The session host yields to the runtime every 256 session events it hands to the driver, and the segmenter drives at most 512 queued samples per program per pass (`source::advance_route` yields between passes), so a large queued burst no longer holds a worker thread, or starves a current-thread runtime, for its whole length.
+- The admin registry serialises add, remove and reload per route name (and case-insensitively) instead of computing the DVR archive floor under the registry-wide lock: a slow archive scan for one route no longer delays an admin change to another, a remove drains its route before releasing the name so a later add of that name reads the floor only afterwards, and a drain no longer holds the registry-wide lock (issue #2533).
 - Smooth pull uses one process-wide HTTP client (one connection pool and TLS root store) instead of building a client per connection attempt (issue #2533).
 - A segment served with SCTE-35 `emsg` boxes spliced in is spliced once per program (the last 16 are kept) instead of copied and rebuilt on every request (issue #2533).
 - A listener-mode SRT route waiting for its Caller ends the wait when its cancel token fires, instead of relying on the supervisor dropping the future (issue #2533).
