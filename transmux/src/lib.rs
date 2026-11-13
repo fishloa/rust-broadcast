@@ -210,6 +210,7 @@ pub mod ps_demux;
 pub mod rbsp;
 pub mod rebase;
 pub mod repackage;
+pub mod stitch;
 #[cfg(test)]
 pub(crate) mod test_bits;
 pub mod timeline;
