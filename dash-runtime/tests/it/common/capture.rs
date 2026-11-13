@@ -4,8 +4,6 @@
 //! (`fixtures/dash/livesim2/*_a.mpd`/`_b.mpd`, media recycled from the ffmpeg
 //! capture because livesim2 serves a generator, not files).
 
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 
 use super::synth::Pool;
