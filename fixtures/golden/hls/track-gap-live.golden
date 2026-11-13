@@ -124,7 +124,7 @@ seg-1-INSTANCE-8.m4s
       <InbandEventStream schemeIdUri="urn:scte:scte35:2013:bin"/>
       <Role schemeIdUri="urn:mpeg:dash:role:2011" value="main"/>
       <Representation id="1" mimeType="video/mp4" codecs="avc1.420029" bandwidth="1" width="640" height="480" sar="1:1">
-        <SegmentTemplate timescale="90000" duration="90000" startNumber="6" initialization="init-$RepresentationID$-INSTANCE-1.mp4" media="seg-$RepresentationID$-$Number$.m4s"/>
+        <SegmentTemplate timescale="90000" presentationTimeOffset="363000" duration="90000" startNumber="6" initialization="init-$RepresentationID$-INSTANCE-1.mp4" media="seg-$RepresentationID$-$Number$.m4s"/>
       </Representation>
     </AdaptationSet>
   </Period>

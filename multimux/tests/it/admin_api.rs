@@ -73,6 +73,37 @@ fn instant_track_spec() -> TrackSpec {
     )
 }
 
+/// The init segment a ticker source publishes: [`instant_track_spec`] for `variant == 0`, and for
+/// any other variant the same track at another `level_idc` (in the SPS and the `avcC` record
+/// alike), so both the RFC 6381 codec string and the fMP4 init bytes differ (issue #2611's "the
+/// codec changed").
+const TAG_TICKER: &str = "ticker";
+const TAG_TICKER_HI: &str = "ticker-hi";
+const SPS_LEVEL_IDC: usize = 3;
+const VARIANT_LEVEL_IDC: u8 = 0x1F;
+
+fn ticker_track_spec(variant: u8) -> TrackSpec {
+    if variant == 0 {
+        return instant_track_spec();
+    }
+    let mut config = transmux::avc_config_from_sprop(SPROP).expect("valid sprop");
+    if let Some(sps) = config.config.sps.first_mut()
+        && let Some(level) = sps.0.get_mut(SPS_LEVEL_IDC)
+    {
+        *level = VARIANT_LEVEL_IDC;
+    }
+    config.config.level_indication = VARIANT_LEVEL_IDC;
+    TrackSpec::new(
+        TrackId::new(1),
+        VIDEO_TIMESCALE,
+        CodecConfig::Avc {
+            config,
+            width: 64,
+            height: 64,
+        },
+    )
+}
+
 /// Mirrors `examples/custom_scheme.rs`'s `DemoSession`: announces one
 /// program and queues every synthetic sample in its first `feed` call.
 struct InstantSession {
@@ -203,6 +234,7 @@ async fn run_hold(route_handle: Arc<RouteHandle>) -> multimux::Result<()> {
 struct TickerSession {
     pending: VecDeque<SessionEvent>,
     frame: u32,
+    variant: u8,
 }
 
 const TICKER_GOP: u32 = 6;
@@ -220,7 +252,7 @@ impl Stage for TickerSession {
         if self.frame == 0 {
             self.pending.push_back(SessionEvent::NewProgram {
                 program: ProgramId(0),
-                tracks: vec![instant_track_spec()],
+                tracks: vec![ticker_track_spec(self.variant)],
             });
         }
         let pts = i64::from(self.frame) * i64::from(FRAME_DUR);
@@ -256,9 +288,16 @@ impl IngestSession for TickerSession {
 /// Feeds a [`TickerSession`] through the real driver, segmenter and publisher
 /// (`advance_route`) at 30 frames per second until the supervisor stops it.
 async fn run_ticker(route_handle: Arc<RouteHandle>) -> multimux::Result<()> {
+    run_ticker_variant(route_handle, 0).await
+}
+
+/// [`run_ticker`] with the `variant`-th [`ticker_track_spec`]: a second ticker source that
+/// publishes a DIFFERENT init segment, for the reload tests (issue #2611).
+async fn run_ticker_variant(route_handle: Arc<RouteHandle>, variant: u8) -> multimux::Result<()> {
     let session = TickerSession {
         pending: VecDeque::from([SessionEvent::Established]),
         frame: 0,
+        variant,
     };
     let trunk_config = TrunkConfig::default()
         .with_timed_capacity(nz(256))
@@ -299,10 +338,22 @@ fn instant_registry() -> SchemeRegistry {
         }) as InputFactory,
     );
     registry.register_input(
-        "ticker",
+        TAG_TICKER,
         Arc::new(|ctx: InputCtx| {
             Ok(tokio::spawn(multimux::supervise_driver(
                 run_ticker,
+                ctx.store,
+                Backoff::production_default(),
+                ctx.name,
+                ctx.cancel,
+            )))
+        }) as InputFactory,
+    );
+    registry.register_input(
+        TAG_TICKER_HI,
+        Arc::new(|ctx: InputCtx| {
+            Ok(tokio::spawn(multimux::supervise_driver(
+                |route_handle| run_ticker_variant(route_handle, 1),
                 ctx.store,
                 Backoff::production_default(),
                 ctx.name,
@@ -1087,7 +1138,7 @@ async fn a_reload_of_a_changed_route_never_answers_a_viewer_with_an_error() {
     let with_version = |version: u32| {
         let mut route = instant_route("live");
         route.input = InputSpec::Custom {
-            type_tag: "ticker".to_string(),
+            type_tag: TAG_TICKER.to_string(),
             params: serde_json::json!({ "version": version }),
         };
         admin_config(media_addr, admin_addr, vec![route])
@@ -1243,7 +1294,7 @@ async fn removing_a_route_answers_a_parked_blocking_reload_with_404() {
     ));
     let mut route = instant_route("live");
     route.input = InputSpec::Custom {
-        type_tag: "ticker".to_string(),
+        type_tag: TAG_TICKER.to_string(),
         params: serde_json::Value::Null,
     };
     let config = admin_config(media_addr, admin_addr, vec![route]);
@@ -1326,7 +1377,7 @@ async fn a_changed_routes_replacement_continues_numbering_with_a_discontinuity()
         let mut route = instant_route("live");
         route.outputs = vec![OutputKind::LlHls, OutputKind::Dash];
         route.input = InputSpec::Custom {
-            type_tag: "ticker".to_string(),
+            type_tag: TAG_TICKER.to_string(),
             params: serde_json::json!({ "version": version }),
         };
         admin_config(media_addr, admin_addr, vec![route])
@@ -1481,6 +1532,503 @@ async fn a_changed_routes_replacement_continues_numbering_with_a_discontinuity()
 
     server.abort();
     let _ = std::fs::remove_file(&config_path);
+}
+
+/// Every bound on a reload test: a wrong expectation fails with a message instead of hanging.
+const RELOAD_DEADLINE: Duration = Duration::from_secs(60);
+
+/// What a client sees on route `"reload"` just before and just after `/admin/reload` replaces it.
+struct ReloadObservation {
+    /// The server, still running: dropping the observation stops it.
+    server: tokio::task::JoinHandle<multimux::Result<()>>,
+    config_path: std::path::PathBuf,
+    client: reqwest::Client,
+    media_addr: SocketAddr,
+    /// `(number, bytes)` of every segment the replaced route's playlist listed just before the
+    /// reload.
+    old_segments: Vec<(u64, Vec<u8>)>,
+    old_mpd: broadcast_dash::Mpd,
+    old_mpd_text: String,
+    old_init: Vec<u8>,
+    old_last_number: u64,
+    new_mpd: broadcast_dash::Mpd,
+    new_mpd_text: String,
+    new_init: Vec<u8>,
+    new_playlist: broadcast_hls::MediaPlaylist,
+    new_first_segment: Vec<u8>,
+}
+
+impl Drop for ReloadObservation {
+    fn drop(&mut self) {
+        self.server.abort();
+        let _ = std::fs::remove_file(&self.config_path);
+    }
+}
+
+impl ReloadObservation {
+    fn url(&self, name: &str) -> String {
+        format!("http://{}/reload/{name}", self.media_addr)
+    }
+
+    async fn status_and_body(&self, name: &str) -> (reqwest::StatusCode, Vec<u8>) {
+        let response = self.client.get(self.url(name)).send().await.expect("GET");
+        let status = response.status();
+        (status, response.bytes().await.expect("body").to_vec())
+    }
+
+    async fn mpd(&self) -> (broadcast_dash::Mpd, String) {
+        let text = String::from_utf8(get_bytes(&self.client, &self.url("manifest.mpd")).await)
+            .expect("utf-8");
+        let mpd = broadcast_dash::Mpd::parse(text.as_bytes()).expect("MPD parses");
+        (mpd, text)
+    }
+}
+
+/// The `candidates` that are Media Segments of `period` of `mpd` still inside the time-shift
+/// buffer at `MPD@publishTime`: within the Period (`@duration`, when it has one), and with an
+/// availability end time, MPD start + segment end within the Period + `@timeShiftBufferDepth`
+/// (ISO/IEC 23009-1 §5.3.9.5.3), not before it.
+fn available_numbers(
+    mpd: &broadcast_dash::Mpd,
+    period: &broadcast_dash::Period,
+    candidates: impl IntoIterator<Item = u64>,
+) -> Vec<u64> {
+    const NANOS: u128 = 1_000_000_000;
+    let template = template(period);
+    let timescale = u128::from(template.multi.base.timescale.expect("timescale"));
+    let ticks = u128::from(template.multi.duration.expect("@duration"));
+    let first = template.multi.start_number.expect("startNumber");
+    let start_ns = period.start.expect("Period@start").as_nanos();
+    let count = period.duration.map_or(u64::MAX, |duration| {
+        u64::try_from(duration.as_nanos() * timescale / (ticks * NANOS)).expect("count")
+    });
+    let publish_ns = u128::try_from(
+        mpd.publish_time_us.expect("publishTime") - mpd.availability_start_time_us.expect("AST"),
+    )
+    .expect("publishTime after AST")
+        * 1_000;
+    let tsbd_ns = mpd
+        .time_shift_buffer_depth
+        .expect("timeShiftBufferDepth")
+        .as_nanos();
+    candidates
+        .into_iter()
+        .filter(|number| *number >= first && number - first < count)
+        .filter(|number| {
+            let end_ns = start_ns + u128::from(number - first + 1) * ticks * NANOS / timescale;
+            end_ns + tsbd_ns >= publish_ns
+        })
+        .collect()
+}
+
+/// The one `SegmentTemplate` of a single-rendition `period`.
+fn template(period: &broadcast_dash::Period) -> &broadcast_dash::SegmentTemplate {
+    period.adaptation_sets[0].representations[0]
+        .segment
+        .template
+        .as_ref()
+        .expect("a SegmentTemplate")
+}
+
+async fn get_bytes(client: &reqwest::Client, url: &str) -> Vec<u8> {
+    let response = client.get(url).send().await.expect("GET");
+    assert_eq!(response.status(), reqwest::StatusCode::OK, "{url}");
+    response.bytes().await.expect("body").to_vec()
+}
+
+/// The init segment the last Period of `mpd` names, as served under `/reload/`.
+async fn last_period_init(
+    client: &reqwest::Client,
+    media_addr: SocketAddr,
+    mpd: &broadcast_dash::Mpd,
+) -> Vec<u8> {
+    let period = mpd.periods.last().expect("a Period");
+    let name = template(period)
+        .initialization
+        .as_deref()
+        .expect("SegmentTemplate@initialization")
+        .replace("$RepresentationID$", "1");
+    get_bytes(client, &format!("http://{media_addr}/reload/{name}")).await
+}
+
+/// Serve route `"reload"` from the input tagged `first_tag`, let it publish segments, rewrite the
+/// config file to `second_tag` (with other input params, so the route always counts as changed)
+/// and `/admin/reload`, then observe the replacement once it has closed its first
+/// segment. The whole run is bounded by [`RELOAD_DEADLINE`].
+async fn observe_reload(who: &'static str, first_tag: &str, second_tag: &str) -> ReloadObservation {
+    let (media_addr, media_listener) = bind_tcp();
+    let (admin_addr, admin_listener) = bind_tcp();
+    let config = |tag: &str, version: u32| {
+        let mut route = instant_route("reload");
+        route.outputs = vec![OutputKind::LlHls, OutputKind::Dash];
+        route.input = InputSpec::Custom {
+            type_tag: tag.to_string(),
+            params: serde_json::json!({ "version": version }),
+        };
+        initial_as_json(&admin_config(media_addr, admin_addr, vec![route]))
+    };
+    let config_path = std::env::temp_dir().join(format!(
+        "multimux-admin-api-test-{who}-{}-{}.json",
+        std::process::id(),
+        admin_addr.port()
+    ));
+    std::fs::write(
+        &config_path,
+        serde_json::to_string_pretty(&config(first_tag, 1)).expect("serialize"),
+    )
+    .expect("write config");
+    let server = tokio::spawn(serve_config_file_with_registry_on_admin(
+        media_listener,
+        admin_listener,
+        config_path.clone(),
+        instant_registry(),
+    ));
+    let observation = tokio::time::timeout(RELOAD_DEADLINE, async {
+        wait_for_port(admin_addr).await;
+        let client = reqwest::Client::new();
+        let playlist_url = media_playlist_url(media_addr, "reload");
+        let mpd_url = format!("http://{media_addr}/reload/manifest.mpd");
+        let old_playlist = loop {
+            let body = wait_until_live(&client, media_addr, "reload").await;
+            let playlist = broadcast_hls::MediaPlaylist::parse(&body).expect("playlist parses");
+            if playlist.segments.len() >= 2 {
+                break playlist;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        };
+        let old_mpd_text = String::from_utf8(get_bytes(&client, &mpd_url).await).expect("utf-8");
+        let old_mpd = broadcast_dash::Mpd::parse(old_mpd_text.as_bytes()).expect("old MPD parses");
+        let old_init = last_period_init(&client, media_addr, &old_mpd).await;
+        let mut old_segments = Vec::new();
+        for (number, segment) in (old_playlist.media_sequence..).zip(&old_playlist.segments) {
+            let bytes = get_bytes(
+                &client,
+                &format!("http://{media_addr}/reload/{}", segment.uri),
+            )
+            .await;
+            old_segments.push((number, bytes));
+        }
+        let before = admin_get(&client, admin_addr, "/admin/routes/reload")
+            .await
+            .json::<serde_json::Value>()
+            .await
+            .expect("status before");
+
+        std::fs::write(
+            &config_path,
+            serde_json::to_string_pretty(&config(second_tag, 2)).expect("serialize"),
+        )
+        .expect("rewrite config");
+        let reload = admin_json(
+            &client,
+            admin_addr,
+            reqwest::Method::POST,
+            "/admin/reload",
+            Some(ADMIN_TOKEN),
+            None,
+        )
+        .await;
+        assert_eq!(reload.status(), reqwest::StatusCode::OK);
+
+        let new_playlist = loop {
+            let after = admin_get(&client, admin_addr, "/admin/routes/reload")
+                .await
+                .json::<serde_json::Value>()
+                .await
+                .expect("status after");
+            if created_at_nanos(&before) != created_at_nanos(&after)
+                && let Ok(response) = client.get(&playlist_url).send().await
+                && response.status() == reqwest::StatusCode::OK
+                && let Ok(body) = response.text().await
+                && let Ok(playlist) = broadcast_hls::MediaPlaylist::parse(&body)
+                && !playlist.segments.is_empty()
+            {
+                break playlist;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        let new_mpd_text = String::from_utf8(get_bytes(&client, &mpd_url).await).expect("utf-8");
+        let new_mpd = broadcast_dash::Mpd::parse(new_mpd_text.as_bytes()).expect("new MPD parses");
+        let new_init = last_period_init(&client, media_addr, &new_mpd).await;
+        let first_uri = &new_playlist.segments[0].uri;
+        let new_first_segment =
+            get_bytes(&client, &format!("http://{media_addr}/reload/{first_uri}")).await;
+        (
+            client,
+            old_segments,
+            old_mpd,
+            old_mpd_text,
+            old_init,
+            old_playlist.media_sequence + old_playlist.segments.len() as u64 - 1,
+            new_mpd,
+            new_mpd_text,
+            new_init,
+            new_playlist,
+            new_first_segment,
+        )
+    })
+    .await;
+    let Ok((
+        client,
+        old_segments,
+        old_mpd,
+        old_mpd_text,
+        old_init,
+        old_last_number,
+        new_mpd,
+        new_mpd_text,
+        new_init,
+        new_playlist,
+        new_first_segment,
+    )) = observation
+    else {
+        server.abort();
+        let _ = std::fs::remove_file(&config_path);
+        panic!("{who}: the reload was not observed within {RELOAD_DEADLINE:?}");
+    };
+    ReloadObservation {
+        server,
+        config_path,
+        client,
+        media_addr,
+        old_segments,
+        old_mpd,
+        old_mpd_text,
+        old_init,
+        old_last_number,
+        new_mpd,
+        new_mpd_text,
+        new_init,
+        new_playlist,
+        new_first_segment,
+    }
+}
+
+fn validate_mpd(mpd: &str, name: &str) {
+    if let Some(schema) = test_fixtures::process::xsd::dash_mpd_schema("admin_api") {
+        test_fixtures::process::xsd::validate(&schema, name, mpd)
+            .unwrap_or_else(|e| panic!("{name} fails the ISO ed6 MPD schema: {e}\n{mpd}"));
+    }
+}
+
+/// Issue #2611: reloading a changed route onto a source whose init segment DIFFERS (another SPS
+/// level, so another codec string) opens a new DASH Period at the replacement's first segment
+/// (ISO/IEC 23009-1 §5.3.2: a Period has one fixed set of encoded versions).
+///
+/// - the new Period has a new, stable `@id` (§5.3.2.2, §5.4.1);
+/// - its `@start` is the first new segment's MPD start on the replaced Period's numbering
+///   (§5.3.2.1), its `startNumber` that segment's number, which continues past the replaced
+///   route's, and `@presentationTimeOffset` that segment's media start, equal to the decode time
+///   the segment itself carries (§5.3.9.5);
+/// - the replaced Period stays listed, closed with `@duration` at the end of its last segment
+///   and before the new `@start`, with its own `startNumber`, while its segments are inside the
+///   time-shift buffer; each of those segments and its init segment keep answering with the
+///   replaced route's bytes (§5.3.9.5.3);
+/// - once its segments have aged out of the window the Period is gone and its URLs are `404`;
+/// - `availabilityStartTime` is unchanged and `publishTime` later (§5.4.1, §5.3.1.2);
+/// - no continuity, connectivity or `AssetIdentifier` signalling (§5.3.2.4, IOP 5.5.1);
+/// - every MPD validates against the ISO ed6 schema.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_reload_whose_init_changed_starts_a_new_dash_period() {
+    let seen = observe_reload("dash-period", TAG_TICKER, TAG_TICKER_HI).await;
+    let (old_mpd, new_mpd, text) = (&seen.old_mpd, &seen.new_mpd, &seen.new_mpd_text);
+    assert_eq!(old_mpd.periods.len(), 1, "{}", seen.old_mpd_text);
+    let old_period = &old_mpd.periods[0];
+    assert_eq!(
+        new_mpd.periods.len(),
+        2,
+        "the replaced Period stays listed: {text}"
+    );
+    let (replaced, period) = (&new_mpd.periods[0], &new_mpd.periods[1]);
+    assert_eq!(replaced.id, old_period.id, "{text}");
+    assert_eq!(replaced.start, old_period.start, "{text}");
+    assert_eq!(
+        template(replaced).multi.start_number,
+        template(old_period).multi.start_number,
+        "{text}"
+    );
+    assert_eq!(
+        template(replaced).initialization,
+        template(old_period).initialization,
+        "{text}"
+    );
+    assert_ne!(
+        period.id, old_period.id,
+        "a new Period needs a new id: {text}"
+    );
+    assert_eq!(period.id.as_deref(), Some("1"), "{text}");
+
+    let old_template = template(old_period);
+    let new_template = template(period);
+    let start_number = new_template.multi.start_number.expect("startNumber");
+    assert_eq!(
+        start_number, seen.new_playlist.media_sequence,
+        "startNumber is the first new segment's number: {text}"
+    );
+    assert!(
+        start_number > seen.old_last_number,
+        "the numbering continues past the replaced route's {}: {text}",
+        seen.old_last_number
+    );
+    let timescale = old_template.multi.base.timescale.expect("timescale");
+    let ticks = (start_number - old_template.multi.start_number.expect("startNumber"))
+        * old_template.multi.duration.expect("@duration");
+    let start = period.start.expect("Period@start");
+    assert_eq!(
+        u128::from(ticks) * 1_000_000_000,
+        start.as_nanos() * u128::from(timescale),
+        "Period@start is the first new segment's MPD start on the replaced numbering: {text}"
+    );
+    let replaced_end = replaced.start.expect("start") + replaced.duration.expect("closed");
+    assert!(replaced_end <= start, "{text}");
+    assert_eq!(new_template.multi.base.timescale, Some(timescale), "{text}");
+    assert_eq!(
+        new_template.multi.base.presentation_time_offset,
+        Some(ticks),
+        "@presentationTimeOffset is the first new segment's media start: {text}"
+    );
+    let mut init_and_segment = seen.new_init.clone();
+    init_and_segment.extend_from_slice(&seen.new_first_segment);
+    let media =
+        broadcast_common::Unpackage::unpackage(&mut transmux::Fmp4Demux::new(), &init_and_segment)
+            .expect("the first new segment demuxes with the new init");
+    let decode_time = media.tracks[0].samples[0].dts.expect("dts");
+    assert_eq!(
+        u64::try_from(decode_time).expect("non-negative"),
+        ticks,
+        "the segment's own decode time is the Period's @presentationTimeOffset"
+    );
+    assert_ne!(
+        old_period.adaptation_sets[0].representations[0]
+            .common
+            .codecs,
+        period.adaptation_sets[0].representations[0].common.codecs,
+        "each Period carries its own source's codecs: {text}"
+    );
+    assert_ne!(seen.old_init, seen.new_init);
+    assert_eq!(
+        new_mpd.availability_start_time_us,
+        old_mpd.availability_start_time_us
+    );
+    assert!(new_mpd.publish_time_us > old_mpd.publish_time_us, "{text}");
+    for listed in &new_mpd.periods {
+        assert!(listed.asset_identifier.is_none(), "{text}");
+        assert!(listed.supplemental_properties.is_empty(), "{text}");
+        assert!(
+            listed.adaptation_sets[0].supplemental_properties.is_empty(),
+            "{text}"
+        );
+    }
+    validate_mpd(text, "reload-period-split");
+
+    let checks = tokio::time::timeout(RELOAD_DEADLINE, async {
+        let last_listed = start_number - 1;
+        let available = available_numbers(new_mpd, replaced, 0..=last_listed);
+        assert!(!available.is_empty(), "{text}");
+        let mut compared = 0;
+        for number in &available {
+            let (status, body) = seen.status_and_body(&format!("seg-1-{number}.m4s")).await;
+            assert_eq!(status, reqwest::StatusCode::OK, "segment {number}: {text}");
+            if let Some((_, old)) = seen.old_segments.iter().find(|(n, _)| n == number) {
+                assert_eq!(&body, old, "segment {number} is the replaced route's");
+                compared += 1;
+            }
+        }
+        assert!(
+            compared > 0,
+            "no listed segment was seen before the reload: {text}"
+        );
+        let old_init_name = template(replaced)
+            .initialization
+            .as_deref()
+            .expect("initialization")
+            .replace("$RepresentationID$", "1");
+        let (status, body) = seen.status_and_body(&old_init_name).await;
+        assert_eq!(status, reqwest::StatusCode::OK);
+        assert_eq!(
+            body, seen.old_init,
+            "the replaced Period's init is the old init"
+        );
+
+        let (aged, aged_text) = loop {
+            let (mpd, text) = seen.mpd().await;
+            validate_mpd(&text, "reload-period-overlap");
+            if mpd.periods.len() == 1 {
+                break (mpd, text);
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        };
+        assert_eq!(aged.periods[0].id, period.id, "{aged_text}");
+        assert_eq!(aged.periods[0].start, period.start, "{aged_text}");
+        assert_eq!(
+            template(&aged.periods[0]).multi.start_number,
+            Some(start_number),
+            "{aged_text}"
+        );
+        for number in &available {
+            let (status, _) = seen.status_and_body(&format!("seg-1-{number}.m4s")).await;
+            assert_eq!(status, reqwest::StatusCode::NOT_FOUND, "segment {number}");
+        }
+        let (status, _) = seen.status_and_body(&old_init_name).await;
+        assert_eq!(status, reqwest::StatusCode::NOT_FOUND, "the replaced init");
+    })
+    .await;
+    assert!(
+        checks.is_ok(),
+        "the aging-out checks exceeded {RELOAD_DEADLINE:?}"
+    );
+}
+
+/// Issue #2611's other half: reloading onto a source whose init segment is BYTE-IDENTICAL keeps
+/// the presentation in the replaced Period, unchanged (§5.4.1), with no new init generation.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_reload_whose_init_is_unchanged_keeps_one_dash_period() {
+    let seen = observe_reload("dash-one-period", TAG_TICKER, TAG_TICKER).await;
+    let (old_mpd, new_mpd, text) = (&seen.old_mpd, &seen.new_mpd, &seen.new_mpd_text);
+    assert_eq!(new_mpd.periods.len(), 1, "{text}");
+    let (old_period, period) = (&old_mpd.periods[0], &new_mpd.periods[0]);
+    assert_eq!(period.id, old_period.id, "{text}");
+    assert_eq!(period.start, old_period.start, "{text}");
+    assert_eq!(period.duration, None, "{text}");
+    assert_eq!(
+        template(period).multi.start_number,
+        template(old_period).multi.start_number,
+        "{text}"
+    );
+    assert_eq!(
+        template(period).multi.base.presentation_time_offset,
+        None,
+        "{text}"
+    );
+    assert!(
+        template(period)
+            .initialization
+            .as_deref()
+            .is_some_and(|name| name.ends_with("-1.mp4")),
+        "still init generation 1: {text}"
+    );
+    assert_eq!(seen.new_init, seen.old_init, "the same init bytes");
+    assert_eq!(
+        new_mpd.availability_start_time_us,
+        old_mpd.availability_start_time_us
+    );
+    validate_mpd(text, "reload-one-period");
+    let checks = tokio::time::timeout(RELOAD_DEADLINE, async {
+        let old_numbers = seen.old_segments.iter().map(|(number, _)| *number);
+        let available = available_numbers(new_mpd, period, old_numbers);
+        assert!(!available.is_empty(), "{text}");
+        for number in &available {
+            let (status, body) = seen.status_and_body(&format!("seg-1-{number}.m4s")).await;
+            assert_eq!(status, reqwest::StatusCode::OK, "segment {number}: {text}");
+            let old = seen.old_segments.iter().find(|(n, _)| n == number);
+            assert_eq!(Some(&body), old.map(|(_, bytes)| bytes), "segment {number}");
+        }
+    })
+    .await;
+    assert!(
+        checks.is_ok(),
+        "the overlap checks exceeded {RELOAD_DEADLINE:?}"
+    );
 }
 
 /// `Config` is `Deserialize`-only (no `Serialize` — several nested types

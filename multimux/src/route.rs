@@ -346,7 +346,98 @@ pub struct DashWindowSegment {
     /// The init-segment generation this segment was cut against, for versioned
     /// init URLs (issue #2441).
     pub init_generation: media_plane::ids::Generation,
+    /// The DASH Period this segment is listed in; `None` only for a gap placeholder cut before
+    /// the program's first Period opened.
+    pub(crate) period: Option<PeriodAnchor>,
+    /// [`HlsOrigin::instance`] of the program that cut this segment: this program's own, or a
+    /// predecessor's whose segments are still in the DASH window (see
+    /// [`ProgramServing::dash_window_segments`]).
+    pub(crate) instance: u64,
 }
+
+/// The identity of one DASH Period, fixed when the Period opens and never changed by an MPD
+/// update: ISO/IEC 23009-1 §5.4.1 keeps `Period@id` across updates, and the Period's
+/// `@start`, `SegmentTemplate@startNumber` and `@presentationTimeOffset` are derived from its
+/// first segment, so neither may move as the window slides past that segment
+/// (`private/specs-verified/dash/23009-1/05-3-2-period.md` §5.3.2.1/§5.3.2.2,
+/// `private/specs-verified/dash/23009-1/05-4_to_5-7.md` §5.4.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PeriodAnchor {
+    /// How many Periods the presentation opened before this one: `Period@id`.
+    pub(crate) ordinal: u64,
+    /// The public number of the Period's first segment: `SegmentTemplate@startNumber`.
+    pub(crate) first_public_seq: u64,
+    /// The media time of that segment's earliest sample, nanoseconds:
+    /// `@presentationTimeOffset` once scaled to the Representation's timescale.
+    pub(crate) media_start_ns: u64,
+}
+
+/// Where a program's DASH Periods stand: the Period now open and what the last segment was cut
+/// under. A media segment opens a new Period after a gap placeholder or when its init generation
+/// differs from the previous segment's (a Period has one fixed set of encoded versions,
+/// ISO/IEC 23009-1 §5.3.2.4); otherwise it joins the open one.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct PeriodCursor {
+    anchor: Option<PeriodAnchor>,
+    /// `(gap, init generation)` of the last segment drained.
+    last: Option<(bool, media_plane::ids::Generation)>,
+}
+
+impl PeriodCursor {
+    /// The Period a media segment `segment` (`(public number, media start ns)`), cut under
+    /// `generation`, would be listed in. `program_start` is the program's first segment: the
+    /// presentation's first Period opens there even when the segments before `segment` were
+    /// never drained (the `Trunk` evicted them before an MPD was rendered).
+    fn anchor_for(
+        &self,
+        generation: media_plane::ids::Generation,
+        segment: (u64, u64),
+        program_start: (u64, u64),
+    ) -> PeriodAnchor {
+        let joins = matches!(self.last, Some((false, last)) if last == generation);
+        let (first_public_seq, media_start_ns) = if self.last.is_none() {
+            program_start
+        } else {
+            segment
+        };
+        match self.anchor {
+            Some(open) if joins => open,
+            previous => PeriodAnchor {
+                ordinal: previous.map_or(0, |p| p.ordinal.saturating_add(1)),
+                first_public_seq,
+                media_start_ns,
+            },
+        }
+    }
+
+    fn advance(
+        &mut self,
+        gap: bool,
+        generation: media_plane::ids::Generation,
+        segment: (u64, u64),
+        program_start: (u64, u64),
+    ) -> Option<PeriodAnchor> {
+        if !gap {
+            self.anchor = Some(self.anchor_for(generation, segment, program_start));
+        }
+        self.last = Some((gap, generation));
+        self.anchor
+    }
+
+    /// This cursor as the successor program sees it: its origin numbers init generations from
+    /// [`SEEDED_INIT_GENERATION`] again, with the predecessor's last init seeded as that
+    /// generation (see [`ProgramServing::new`]).
+    fn continued(self) -> Self {
+        PeriodCursor {
+            anchor: self.anchor,
+            last: self.last.map(|(gap, _)| (gap, SEEDED_INIT_GENERATION)),
+        }
+    }
+}
+
+/// The init generation a fresh origin gives its first init segment: the predecessor's seeded
+/// init on a continued program.
+const SEEDED_INIT_GENERATION: media_plane::ids::Generation = media_plane::ids::Generation::new(1);
 
 /// What a replacement program continues from its predecessor on the same
 /// route: the public segment numbering ([`HlsOrigin`]'s media sequence
@@ -375,14 +466,23 @@ pub struct ProgramEpoch {
 }
 
 /// What a program's successor needs of it to continue its numbering and timeline: the next media
-/// sequence number, the discontinuity sequence of its newest segment, and its epoch. Taken from
+/// sequence number, the discontinuity sequence of its newest segment, its epoch, its init segment
+/// and where its DASH Periods stand. Taken from
 /// the live [`ProgramServing`] on a reconnect, or from the route this one replaces
 /// ([`RouteHandle::continue_from`]).
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct ProgramContinuation {
     next_media_sequence: u64,
     discontinuity_sequence_after: u64,
     epoch: ProgramEpoch,
+    /// The predecessor's current init segment.
+    init: Option<Bytes>,
+    /// The predecessor's DASH Period position after its last segment.
+    period: PeriodCursor,
+    /// The predecessor's DASH window, its own segments and any it still lists of earlier ones.
+    window: Vec<DashWindowSegment>,
+    /// The programs that cut the segments of `window`, which keep serving them.
+    servings: Vec<Arc<ProgramServing>>,
 }
 
 /// The small `Trunk`-drained state DASH/LL-DASH rendering needs beyond any
@@ -407,15 +507,32 @@ pub(crate) struct DashState {
     /// construction time, which precedes ingest (#1187).
     presentation_origin: SystemTime,
     epoch: ProgramEpoch,
+    period: Mutex<PeriodCursor>,
+    /// [`HlsOrigin::instance`] of this program's origin.
+    instance: u64,
 }
 
 impl DashState {
-    fn new(trunk: &Arc<Trunk>, window_segments: NonZeroUsize, epoch: ProgramEpoch) -> Self {
+    /// `inherited` is the predecessor's DASH window: its newest segments stay listed (and age
+    /// out as this program's segments arrive) so a Period whose segments are still inside the
+    /// time-shift buffer is not withdrawn (ISO/IEC 23009-1 §5.3.9.5.3, §5.4.1).
+    fn new(
+        trunk: &Arc<Trunk>,
+        window_segments: NonZeroUsize,
+        epoch: ProgramEpoch,
+        period: PeriodCursor,
+        instance: u64,
+        inherited: &[DashWindowSegment],
+    ) -> Self {
+        let capacity = window_segments.get();
+        let kept = &inherited[inherited.len().saturating_sub(capacity)..];
         DashState {
             epoch,
+            period: Mutex::new(period),
+            instance,
             cursor: Mutex::new(trunk.subscribe_segments()),
-            window: Mutex::new(VecDeque::new()),
-            capacity: window_segments.get(),
+            window: Mutex::new(kept.iter().copied().collect()),
+            capacity,
             track_specs: Mutex::new(Vec::new()),
             track_epoch: AtomicU64::new(0),
             presentation_origin: epoch.presentation_origin,
@@ -474,35 +591,81 @@ impl DashState {
     /// Absorb every segment this route's `SegmentCursor` has produced since
     /// the last call — the same non-blocking, called-at-the-top-of-render
     /// shape as [`HlsOrigin`]'s own `drain` (see that type's module doc).
-    fn drain(&self) {
+    ///
+    /// `generation_of` names the init generation each segment was cut under; every segment
+    /// passes through here once, in order, so this is where its DASH Period is fixed.
+    fn drain(
+        &self,
+        generation_of: impl Fn(media_plane::ids::SegmentSeq) -> media_plane::ids::Generation,
+    ) {
         let mut cursor = self.cursor.lock();
         let mut window = self.window.lock();
+        let mut period = self.period.lock();
         while let Some(item) = cursor.poll() {
             if let SegmentCursorItem::Segment(entry) = item {
                 if window.len() == self.capacity {
                     window.pop_front();
                 }
+                let public_seq = self
+                    .epoch
+                    .seq_offset
+                    .saturating_add(u64::from(entry.sequence_number.value()));
+                let gap = entry.bytes.is_empty();
+                let init_generation = generation_of(entry.sequence_number);
+                let timeline_position_ns = entry.timeline_position.as_nanos();
                 window.push_back(DashWindowSegment {
                     segment_seq: entry.sequence_number,
                     duration_secs: entry.duration.as_secs_f64(),
-                    timeline_position_ns: entry.timeline_position.as_nanos(),
-                    public_seq: self
-                        .epoch
-                        .seq_offset
-                        .saturating_add(u64::from(entry.sequence_number.value())),
-                    gap: entry.bytes.is_empty(),
-                    init_generation: media_plane::ids::Generation::new(1),
+                    timeline_position_ns,
+                    public_seq,
+                    gap,
+                    init_generation,
+                    period: period.advance(
+                        gap,
+                        init_generation,
+                        (public_seq, timeline_position_ns),
+                        self.program_start(),
+                    ),
+                    instance: self.instance,
                 });
             }
         }
-        if let Some(oldest) = window.front() {
+        if let Some(oldest) = window.iter().find(|s| s.instance == self.instance) {
             self.retire_track_specs_before(oldest.segment_seq);
         }
     }
 
-    fn window_segments(&self) -> Vec<DashWindowSegment> {
-        self.drain();
+    fn window_segments(
+        &self,
+        generation_of: impl Fn(media_plane::ids::SegmentSeq) -> media_plane::ids::Generation,
+    ) -> Vec<DashWindowSegment> {
+        self.drain(generation_of);
         self.window.lock().iter().copied().collect()
+    }
+
+    /// The Period cursor after every segment published so far.
+    fn period_cursor(
+        &self,
+        generation_of: impl Fn(media_plane::ids::SegmentSeq) -> media_plane::ids::Generation,
+    ) -> PeriodCursor {
+        self.drain(generation_of);
+        *self.period.lock()
+    }
+
+    /// The Period this program's first segment will open or join, for an MPD rendered before
+    /// any segment closed: a continued program's next number and media start are its epoch's.
+    fn first_period(&self, generation: media_plane::ids::Generation) -> PeriodAnchor {
+        self.period
+            .lock()
+            .anchor_for(generation, self.program_start(), self.program_start())
+    }
+
+    /// `(public number, media start ns)` of this program's first segment.
+    fn program_start(&self) -> (u64, u64) {
+        (
+            self.epoch.seq_offset.saturating_add(1),
+            self.epoch.media_start_ns,
+        )
     }
 }
 
@@ -576,6 +739,10 @@ pub(crate) struct ProgramServing {
     /// of this program's recorder has flushed the segments it had closed but
     /// not yet archived (see [`Self::flush_predecessor`]).
     predecessor: Mutex<Option<Arc<ProgramServing>>>,
+    /// The replaced programs whose segments this program's DASH window still lists: they keep
+    /// serving those segments and their init segments until the segments age out of the window
+    /// (see [`Self::dash_window_segments`]).
+    retained: Mutex<Vec<Arc<ProgramServing>>>,
     /// Lazily-acquired write handle for [`RouteHandle::add_segment`]/
     /// [`RouteHandle::add_part`] (this crate's own direct-`Trunk`-write test
     /// helpers, standing in for a real `crate::source::segment::ProgramSegmenter`).
@@ -731,10 +898,17 @@ impl ProgramServing {
     /// construction, plus an optional DVR recorder if `dvr_config` is
     /// provided. The one and only place either is created — see
     /// [`RouteHandle::publish_program`].
+    ///
+    /// `previous` is the program this one continues (a reconnect, or the route a reload
+    /// replaced). Its last init segment seeds the origin's first init generation before any
+    /// segment is cut, and its DASH Period carries on: a byte-identical init stays in that
+    /// generation and Period, a different one opens the next of each at this program's first
+    /// segment (see [`PeriodCursor`]).
     fn new(
         trunk: Arc<Trunk>,
         route: &RouteHandle,
         epoch: ProgramEpoch,
+        previous: Option<&ProgramContinuation>,
     ) -> Result<Arc<Self>, hls_runtime::server::HlsOriginBuildError> {
         let target_duration_secs = route.target_duration_secs;
         let part_target_ms = route.part_target_ms;
@@ -818,6 +992,9 @@ impl ProgramServing {
         // part target and an offset with no room for u32 — all reachable
         // from caller-supplied numbers, so surfaced, never `expect`ed.
         let ll_hls = Arc::new(builder.build()?);
+        if let Some(init) = previous.and_then(|p| p.init.clone()) {
+            ll_hls.set_init(init);
+        }
 
         let audio_entries: Vec<(Arc<HlsOrigin>, String)> = audio_servings
             .iter()
@@ -825,7 +1002,15 @@ impl ProgramServing {
             .collect();
         wire_rendition_siblings(&ll_hls, &audio_entries);
 
-        let dash = Arc::new(DashState::new(&trunk, window_segments, epoch));
+        let period = previous.map_or_else(PeriodCursor::default, |p| p.period.continued());
+        let dash = Arc::new(DashState::new(
+            &trunk,
+            window_segments,
+            epoch,
+            period,
+            ll_hls.instance(),
+            previous.map_or(&[][..], |p| p.window.as_slice()),
+        ));
 
         let ext = match container {
             Container::Fmp4 => ".m4s",
@@ -872,6 +1057,7 @@ impl ProgramServing {
             dvr: Mutex::new(dvr),
             init_log: Mutex::new(Vec::new()),
             predecessor: Mutex::new(None),
+            retained: Mutex::new(previous.map(|p| p.servings.clone()).unwrap_or_default()),
             segment_writer: Mutex::new(None),
             next_timeline_ns: AtomicU64::new(epoch.media_start_ns),
             audio_rendition_servings: audio_servings,
@@ -1105,7 +1291,7 @@ impl ProgramServing {
         self.dash.track_specs()
     }
 
-    fn track_specs_at(&self, segment: media_plane::ids::SegmentSeq) -> Vec<TrackSpec> {
+    pub(crate) fn track_specs_at(&self, segment: media_plane::ids::SegmentSeq) -> Vec<TrackSpec> {
         self.dash.track_specs_at(segment)
     }
 
@@ -1117,8 +1303,47 @@ impl ProgramServing {
         self.tracks_active.load(Ordering::SeqCst)
     }
 
+    /// This program's own segments in the DASH window.
     pub(crate) fn window_segments(&self) -> Vec<DashWindowSegment> {
-        self.dash.window_segments()
+        let instance = self.ll_hls.instance();
+        self.dash_window_segments()
+            .into_iter()
+            .filter(|segment| segment.instance == instance)
+            .collect()
+    }
+
+    /// The DASH window: this program's segments, after those of replaced programs it still
+    /// lists. A replaced program stops being retained once none of its segments is listed.
+    pub(crate) fn dash_window_segments(&self) -> Vec<DashWindowSegment> {
+        let window = self
+            .dash
+            .window_segments(|seq| self.ll_hls.init_generation_for(seq));
+        self.retained.lock().retain(|serving| {
+            let instance = serving.ll_hls.instance();
+            window.iter().any(|segment| segment.instance == instance)
+        });
+        window
+    }
+
+    /// The retained replaced program that cut segments under `instance`.
+    pub(crate) fn retained_serving(&self, instance: u64) -> Option<Arc<ProgramServing>> {
+        self.retained
+            .lock()
+            .iter()
+            .find(|serving| serving.ll_hls.instance() == instance)
+            .cloned()
+    }
+
+    /// Every retained replaced program, newest first.
+    pub(crate) fn retained_servings(&self) -> Vec<Arc<ProgramServing>> {
+        self.retained.lock().iter().rev().cloned().collect()
+    }
+
+    /// The DASH Period an MPD rendered before this program's first segment lists: the one the
+    /// first segment will open or join under the current init.
+    pub(crate) fn first_period(&self) -> PeriodAnchor {
+        self.dash
+            .first_period(self.ll_hls.current_init_generation())
     }
 
     fn presentation_origin(&self) -> SystemTime {
@@ -1129,8 +1354,13 @@ impl ProgramServing {
         self.dash.epoch
     }
 
-    fn continuation(&self) -> ProgramContinuation {
+    fn continuation(self: &Arc<Self>) -> ProgramContinuation {
+        let window = self.dash_window_segments();
+        let mut servings = std::mem::take(&mut *self.retained.lock());
+        servings.push(Arc::clone(self));
         ProgramContinuation {
+            window,
+            servings,
             // `next_media_sequence()`, not `- 1`: the number the old origin's *open* segment was
             // shown with is skipped too — its parts were already served and must not be
             // reissued for different media.
@@ -1142,6 +1372,10 @@ impl ProgramServing {
                 .min(u64::MAX - u64::from(u32::MAX)),
             discontinuity_sequence_after: self.ll_hls.discontinuity_sequence_after(),
             epoch: self.epoch(),
+            init: self.init_bytes(),
+            period: self
+                .dash
+                .period_cursor(|seq| self.ll_hls.init_generation_for(seq)),
         }
     }
 
@@ -1779,8 +2013,10 @@ impl RouteHandle {
     /// Makes this (new) route continue `old`: the first publication of each program `old` served
     /// carries on from it with the next media sequence number, the discontinuity sequence of
     /// `old`'s newest segment, its DASH start number and presentation origin, and the segmenter
-    /// marks the first segment discontinuous (`EXT-X-DISCONTINUITY`, a new DASH Period), exactly as
-    /// a reconnect on the same route does. Call before the first program is published.
+    /// marks the first segment discontinuous (`EXT-X-DISCONTINUITY`), exactly as a reconnect on
+    /// the same route does. DASH stays in `old`'s Period when the first init is byte-identical to
+    /// `old`'s, and opens a new Period at the first segment otherwise (issue #2611). Call before
+    /// the first program is published.
     pub(crate) fn continue_from(&self, old: &RouteHandle) {
         let continuations: HashMap<ProgramId, ProgramContinuation> = old
             .programs
@@ -2147,25 +2383,29 @@ impl RouteHandle {
         let previous = programs
             .get(&program)
             .map(|previous| previous.continuation())
-            .or_else(|| self.predecessor.lock().get(&program).copied());
+            .or_else(|| self.predecessor.lock().get(&program).cloned());
         let seq_offset = previous
+            .as_ref()
             .map_or(0, |previous| previous.next_media_sequence)
             // ...and never at or below what the DVR archive already holds
             // (a previous process's numbers).
             .max(u64::from(self.archive_floor));
-        let previous_epoch = previous.map(|previous| previous.epoch);
+        let previous_epoch = previous.as_ref().map(|previous| previous.epoch);
         let epoch = ProgramEpoch {
             seq_offset,
             media_start_ns: previous_epoch.map_or(0, |e| {
                 let slots = seq_offset.saturating_add(1).saturating_sub(e.first_number);
                 (slots as f64 * self.target_duration_secs * 1e9) as u64
             }),
-            discontinuity_sequence: previous.map_or(0, |p| p.discontinuity_sequence_after),
+            discontinuity_sequence: previous
+                .as_ref()
+                .map_or(0, |p| p.discontinuity_sequence_after),
             first_number: previous_epoch.map_or(seq_offset.saturating_add(1), |e| e.first_number),
             presentation_origin: previous_epoch
                 .map_or_else(SystemTime::now, |e| e.presentation_origin),
         };
-        let serving = match ProgramServing::new(Arc::clone(&trunk), self, epoch) {
+        let serving = match ProgramServing::new(Arc::clone(&trunk), self, epoch, previous.as_ref())
+        {
             Ok(serving) => serving,
             Err(e) => {
                 // An unservable configuration (e.g. a NaN target duration
@@ -2616,16 +2856,17 @@ impl RouteHandle {
     /// the `Trunk`-drained replacement for `MediaStore::window_segments`.
     /// Empty if `program` is not registered.
     pub fn window_segments(&self, program: ProgramId) -> Vec<DashWindowSegment> {
-        if let Some(serving) = self.serving(program) {
-            let ll = serving.ll_hls();
-            let mut w = serving.window_segments();
-            for seg in &mut w {
-                seg.init_generation = ll.init_generation_for(seg.segment_seq);
-            }
-            w
-        } else {
-            Vec::new()
-        }
+        self.serving(program)
+            .map(|serving| serving.window_segments())
+            .unwrap_or_default()
+    }
+
+    /// `program`'s DASH window: [`Self::window_segments`] after the segments of replaced
+    /// programs it still lists (see `ProgramServing::dash_window_segments`).
+    pub(crate) fn dash_window_segments(&self, program: ProgramId) -> Vec<DashWindowSegment> {
+        self.serving(program)
+            .map(|serving| serving.dash_window_segments())
+            .unwrap_or_default()
     }
 
     /// Configured target full-segment duration, seconds — route-wide (every
@@ -3149,6 +3390,77 @@ mod program_registry_tests {
             }
         }
         names
+    }
+
+    /// Issue #2611: a replacement's init generation follows the bytes it is seeded with. An init
+    /// identical to the one the replaced route last published stays in that generation (so DASH
+    /// keeps one Period); a different one starts the next generation at the replacement's first
+    /// segment, which DASH renders as a new Period.
+    #[test]
+    fn a_replacement_starts_a_new_init_generation_only_when_its_init_differs() {
+        let info = |seq: u32, byte: u8| transmux::ll_hls::SegmentInfo {
+            bytes: vec![byte; 8],
+            duration: 4.0,
+            segment_seq: seq,
+            part_count: 1,
+        };
+        let route = || {
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(4.0)
+                    .with_part_target_ms(500)
+                    .with_window_segments(8),
+            )
+        };
+        let replace = |old_init: Vec<u8>, new_init: Vec<u8>| {
+            let old = route();
+            old.publish_new_program(ProgramId(1));
+            old.set_init(ProgramId(1), old_init);
+            old.add_segment(ProgramId(1), info(1, 0x11)).expect("add");
+            let successor = route();
+            successor.continue_from(&old);
+            successor.publish_new_program(ProgramId(1));
+            successor.set_init(ProgramId(1), new_init);
+            successor
+                .add_segment(ProgramId(1), info(1, 0x21))
+                .expect("add");
+            let generation = successor
+                .window_segments(ProgramId(1))
+                .first()
+                .map(|segment| segment.init_generation.value());
+            (old, successor, generation)
+        };
+
+        let (_, _same, generation) = replace(vec![0xA1; 4], vec![0xA1; 4]);
+        assert_eq!(
+            generation,
+            Some(1),
+            "identical bytes stay in the generation the viewer already has"
+        );
+        let init_url = |route: &RouteHandle| {
+            advertised_names(route, ProgramId(1))
+                .into_iter()
+                .find(|name| name.starts_with("init"))
+                .unwrap_or_else(|| panic!("no init in the playlist"))
+        };
+
+        let (old, changed, generation) = replace(vec![0xA1; 4], vec![0xB2; 4]);
+        assert_eq!(
+            generation,
+            Some(2),
+            "a different init opens the next generation at the replacement's first segment"
+        );
+        assert_ne!(
+            init_url(&old),
+            init_url(&changed),
+            "a new generation is a new init URL"
+        );
+        let urls = advertised_names(&changed, ProgramId(1));
+        assert_eq!(
+            urls.iter().filter(|name| name.starts_with("init")).count(),
+            1,
+            "one init URL: the first segment after the hand-off: {urls:?}"
+        );
     }
 
     /// **A10-2.** A new init generation begins at the segment the caller names,

@@ -217,7 +217,8 @@ async fn dynamic_file(
         // its segment is still in progress -- try that before giving up.
         resp if resp.status() == StatusCode::NOT_FOUND => {
             if let Some((track, seq)) = parse_segment_filename(&file)
-                && let Some(resp) = stream_in_progress_segment(serving, track, seq).await
+                && let Some(resp) =
+                    stream_in_progress_segment(Arc::clone(&serving), track, seq).await
             {
                 let mut resp = resp;
                 if let Some(value) = priority_value.clone() {
@@ -225,7 +226,10 @@ async fn dynamic_file(
                 }
                 return resp;
             }
-            let mut resp = StatusCode::NOT_FOUND.into_response();
+            let mut resp = match retained_resource(&serving, &headers, &file, container).await {
+                Some(resp) => resp,
+                None => StatusCode::NOT_FOUND.into_response(),
+            };
             if let Some(value) = priority_value.clone() {
                 resp.headers_mut().insert("priority", value);
             }
@@ -237,6 +241,40 @@ async fn dynamic_file(
         resp.headers_mut().insert("priority", value);
     }
     resp
+}
+
+/// `file` from a replaced program whose segments the DASH window still lists (see
+/// `ProgramServing::dash_window_segments`): its segments and init segment stay available while
+/// they are inside the advertised time-shift buffer (ISO/IEC 23009-1 §5.3.9.5.3,
+/// `private/specs-verified/dash/23009-1/05-3-9-5-segment-information-derivation.md`). Only what
+/// such a program already holds is served; it is never waited on.
+async fn retained_resource(
+    serving: &ProgramServing,
+    headers: &HeaderMap,
+    file: &str,
+    container: transmux::Container,
+) -> Option<Response> {
+    for retained in serving.retained_servings() {
+        let trunk = retained.trunk();
+        let resp = http::resolve_blocking(
+            &trunk,
+            retained.warms(),
+            &retained.ll_hls(),
+            HlsRequest::Resource {
+                name: file.to_owned(),
+            },
+            std::time::Duration::ZERO,
+            BlockingRequestGuard::new,
+        )
+        .await;
+        if matches!(resp, media_plane::egress::EgressResponse::Ready { .. }) {
+            return Some(http::into_response(resp, StatusCode::NOT_FOUND, |body| {
+                let body = inject_segment_events(&trunk, &retained.spliced, file, body);
+                resource_body_response(headers, body, container, file)
+            }));
+        }
+    }
+    None
 }
 
 fn resource_body_response(
