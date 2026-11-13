@@ -1646,6 +1646,7 @@ impl ProgramServing {
 /// rather than a dozen positional arguments, and a test builds only the
 /// fields it cares about.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct RouteConfig {
     pub target_duration_secs: f64,
     pub part_target_ms: u32,

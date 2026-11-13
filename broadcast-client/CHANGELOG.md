@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.5.0] - 2026-11-14
 ### Removed
+- BREAKING: `Session` is no longer `UnwindSafe` or `RefUnwindSafe`, and `tshttp::{TsHttpClient, TsHttpPolicy, TsHttpSource}` are no longer `RefUnwindSafe` (they now hold state that is not unwind-safe, such as the shared `RetrySchedule`'s jitter `Cell`); code that moves them across `std::panic::catch_unwind` must wrap them in `AssertUnwindSafe`.
 - BREAKING: `broadcast_client::auth`'s own `AuthState`, `AuthDecision`, `AuthEvent` and `carries_credentials` definitions — they live in `broadcast-auth` now, and this module re-exports them, so the paths keep working but the types are `broadcast_auth`'s.
 
 ### Changed

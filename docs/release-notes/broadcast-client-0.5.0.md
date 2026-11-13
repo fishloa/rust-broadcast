@@ -8,6 +8,8 @@ Version: 0.4.0 -> 0.5.0.
 
 ## Breaking changes and migration
 
+- `Session` is no longer `UnwindSafe` or `RefUnwindSafe`, and `tshttp::{TsHttpClient, TsHttpPolicy, TsHttpSource}` are no longer `RefUnwindSafe` (they now hold state that is not unwind-safe, such as the shared `RetrySchedule`'s jitter `Cell`); code that moves them across `std::panic::catch_unwind` must wrap them in `AssertUnwindSafe`.
+
 - The test-only feature is renamed `__test-seams` -> `test-seams`.
 
 ```toml

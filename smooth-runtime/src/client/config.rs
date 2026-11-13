@@ -55,8 +55,10 @@ impl fmt::Debug for QualitySelector {
     }
 }
 
-/// Engine tunables.
+/// Engine tunables: start from [`SmoothConfig::default`] and set what differs
+/// with the `with_*` setters.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SmoothConfig {
     /// Live join point, in fragments behind the newest.
     pub live_join_fragments: usize,
@@ -98,5 +100,77 @@ impl Default for SmoothConfig {
             refresh_max_us: DEFAULT_REFRESH_MAX_US,
             video_quality: QualitySelector::first(),
         }
+    }
+}
+
+impl SmoothConfig {
+    /// Set [`Self::live_join_fragments`].
+    #[must_use]
+    pub fn with_live_join_fragments(mut self, live_join_fragments: usize) -> Self {
+        self.live_join_fragments = live_join_fragments;
+        self
+    }
+
+    /// Set [`Self::max_fragment_failures`].
+    #[must_use]
+    pub fn with_max_fragment_failures(mut self, max_fragment_failures: u32) -> Self {
+        self.max_fragment_failures = max_fragment_failures;
+        self
+    }
+
+    /// Set [`Self::max_manifest_failures`].
+    #[must_use]
+    pub fn with_max_manifest_failures(mut self, max_manifest_failures: u32) -> Self {
+        self.max_manifest_failures = max_manifest_failures;
+        self
+    }
+
+    /// Set [`Self::max_refresh_misses`].
+    #[must_use]
+    pub fn with_max_refresh_misses(mut self, max_refresh_misses: u32) -> Self {
+        self.max_refresh_misses = max_refresh_misses;
+        self
+    }
+
+    /// Set [`Self::backoff_ms`].
+    #[must_use]
+    pub fn with_backoff_ms(mut self, backoff_ms: Vec<u64>) -> Self {
+        self.backoff_ms = backoff_ms;
+        self
+    }
+
+    /// Set [`Self::backoff_cap_ms`].
+    #[must_use]
+    pub fn with_backoff_cap_ms(mut self, backoff_cap_ms: u64) -> Self {
+        self.backoff_cap_ms = backoff_cap_ms;
+        self
+    }
+
+    /// Set [`Self::jitter_seed`].
+    #[must_use]
+    pub fn with_jitter_seed(mut self, jitter_seed: u64) -> Self {
+        self.jitter_seed = jitter_seed;
+        self
+    }
+
+    /// Set [`Self::refresh_min_us`].
+    #[must_use]
+    pub fn with_refresh_min_us(mut self, refresh_min_us: u64) -> Self {
+        self.refresh_min_us = refresh_min_us;
+        self
+    }
+
+    /// Set [`Self::refresh_max_us`].
+    #[must_use]
+    pub fn with_refresh_max_us(mut self, refresh_max_us: u64) -> Self {
+        self.refresh_max_us = refresh_max_us;
+        self
+    }
+
+    /// Set [`Self::video_quality`].
+    #[must_use]
+    pub fn with_video_quality(mut self, video_quality: QualitySelector) -> Self {
+        self.video_quality = video_quality;
+        self
     }
 }

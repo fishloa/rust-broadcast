@@ -104,8 +104,11 @@ use crate::segmenter::subtitle::{LeaderPart, SubtitleFollower};
 use broadcast_common::units::NANOS_PER_SEC;
 use broadcast_hls::InstreamId;
 
-/// Configuration for one [`ProgramSegmenter`], replaceable on route reload.
+/// Configuration for one [`ProgramSegmenter`], replaceable on route reload:
+/// start from [`SegmenterConfig::default`] and set what differs with the
+/// `with_*` setters.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct SegmenterConfig {
     pub container: transmux::Container,
     pub ts_cut_policy: transmux::SegmentCutPolicy,

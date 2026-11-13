@@ -8,6 +8,8 @@ Version: 0.17.0 -> 0.18.0.
 
 ## Breaking changes and migration
 
+- `push::ReconnectEngine` is no longer `RefUnwindSafe` (its timer is broadcast-client's `ReconnectTimer` over `broadcast_common::backoff::RetrySchedule`, whose jitter cursor is a `Cell`); wrap it in `AssertUnwindSafe` to use it across `std::panic::catch_unwind`.
+
 - `OutputAuthSpec::Forwarded` gained `trusted_proxies`; code constructing or exhaustively matching it must add the field. Behaviour: `X-Forwarded-User` is honoured only from a peer in `trusted_proxies` (default loopback); any other peer is `401`. A deployment whose proxy is not on loopback must list it.
 
 ```rust
@@ -125,7 +127,7 @@ OutputAuthSpec::Forwarded { user_header, trusted_proxies, .. }
 - BREAKING: `source::IngestTimeouts` (a `{connect, read}` copy of the adapters' timeout struct): every source's `with_timeouts` takes `broadcast_common::timeouts::Timeouts` (`read` is `read_idle`), and `source::ingest_timeouts(&Config)` replaces `IngestTimeouts::from(&Config)`. `push::RtmpTransportConfig`'s `connect_timeout`/`write_timeout` options are one `timeouts: Timeouts` (#2514).
 - BREAKING: `source::file_reader::{FileReaderError, DemuxerKind, select_demuxer}` moved to `media_plane::file_source`; `FileReader` (the file IO, pacing and supervision) stays (issue #2554).
 - BREAKING: the public `source::ts_program` module and `source::MAX_TS_READ`; use `media_plane::ts_session` (issue #2554). The TS backlog-drop counter is reported through its observer, unchanged.
-- BREAKING: `RouteHandle::new(target_duration_secs, part_target_ms, window_segments)` takes one `RouteConfig` (re-exported at the crate root; `Default` plus a `with_*` setter per field: target duration, part target, window, container, TS cut policy and IDR fallback, program-date-time source, cold-playlist hold, declared bandwidth, audio/caption renditions, audio profiles, subtitles, warm-up permits). `RouteHandle::with_trunk_config`/`trunk_config` set and read the `TrunkConfig` every program trunk is built from (issue #2554).
+- BREAKING: `RouteHandle::new(target_duration_secs, part_target_ms, window_segments)` takes one `RouteConfig` (re-exported at the crate root, `#[non_exhaustive]`, so it is built from `Default` plus a `with_*` setter per field: target duration, part target, window, container, TS cut policy and IDR fallback, program-date-time source, cold-playlist hold, declared bandwidth, audio/caption renditions, audio profiles, subtitles, warm-up permits). `RouteHandle::with_trunk_config`/`trunk_config` set and read the `TrunkConfig` every program trunk is built from (issue #2554).
 - BREAKING: `source::segment::ProgramSegmenter` (`try_new`, `pump`, `flush`, `init_segment`, `continue_after_reconnect`) moved to `media_plane::segmenter::program`; `source::segment` keeps the route-facing glue (issue #2554).
 - BREAKING: the `reconnect` module and its `ReconnectSchedule` (`from_parts`, `from_parts_seeded`, `from_policy`, `delay_for_attempt`); the reconnect delay comes from `broadcast_common::backoff::RetrySchedule`, the one capped retry schedule shared with broadcast-client (#2471).
 - BREAKING: `source::sdp::parse_sdp_tracks`; SDP media sections are read through `transmux::sdp_track`.
