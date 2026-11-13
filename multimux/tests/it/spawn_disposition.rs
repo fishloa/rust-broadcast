@@ -180,6 +180,11 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
         "admin listener server task; joined/aborted at admin teardown",
     ),
     (
+        "source/smooth_pull_golden.rs",
+        79,
+        "test server task; aborted at test end",
+    ),
+    (
         "source/dash_pull/tests.rs",
         192,
         "test pull task; cancelled and aborted by the harness",

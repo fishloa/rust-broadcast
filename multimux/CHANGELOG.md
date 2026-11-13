@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Changed
+- The Smooth pull goldens run in the crate's own tests on a session clock 20 times faster than real time, so the deliberately missing fragment's retry backoff costs about 2.7 s of wall time instead of about 54 s; the goldens are unchanged.
 - Every pull input's session queue is also bounded in bytes (`Config::max_queued_bytes`): 32 MiB for the live inputs (TS-over-HTTP, UDP, RTP, SRT caller, RTSP), 128 MiB (two maximum-size segments) for HLS, DASH and Smooth pull, instead of only the 100 000-event count.
 - The session host yields to the runtime every 256 session events it hands to the driver, and the segmenter drives at most 512 queued samples per program per pass (`source::advance_route` yields between passes), so a large queued burst no longer holds a worker thread, or starves a current-thread runtime, for its whole length.
 - The admin registry serialises add, remove and reload per route name (and case-insensitively) instead of computing the DVR archive floor under the registry-wide lock: a slow archive scan for one route no longer delays an admin change to another, a remove drains its route before releasing the name so a later add of that name reads the floor only afterwards, and a drain no longer holds the registry-wide lock (issue #2533).

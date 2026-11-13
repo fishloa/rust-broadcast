@@ -41,6 +41,8 @@ pub mod segment;
 pub(crate) const INGEST_DEMAND_BYTES: usize = 4096;
 mod client_host;
 pub mod smooth_pull;
+#[cfg(test)]
+mod smooth_pull_golden;
 pub(crate) mod split_audio;
 pub(crate) mod split_subtitle;
 pub mod srt;

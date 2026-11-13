@@ -80,6 +80,27 @@ pub async fn run_smooth_pull(
     route_handle: &std::sync::Arc<crate::route::RouteHandle>,
     cancel: tokio_util::sync::CancellationToken,
 ) -> Result<()> {
+    run_with_clock(
+        route,
+        trunk_config,
+        handshake,
+        route_handle,
+        cancel,
+        std::sync::Arc::new(crate::clock::SystemHostClock::new()),
+    )
+    .await
+}
+
+/// [`run_smooth_pull`] with the session's instants taken from `clock`: the seam a test uses to run
+/// the pull on a paused tokio clock.
+pub(crate) async fn run_with_clock(
+    route: &SmoothPullRoute,
+    trunk_config: TrunkConfig,
+    handshake: HandshakePolicy,
+    route_handle: &std::sync::Arc<crate::route::RouteHandle>,
+    cancel: tokio_util::sync::CancellationToken,
+    clock: std::sync::Arc<dyn crate::clock::HostClock>,
+) -> Result<()> {
     let timeouts = route.target.timeouts;
     let mut step = SessionStep::open(
         &route.target.url,
@@ -88,7 +109,8 @@ pub async fn run_smooth_pull(
         SessionLabels::new(WHAT, timeouts).session_retries(),
         std::sync::Arc::clone(route_handle),
         false,
-    )?;
+    )?
+    .with_clock(clock);
     let driver = IngestDriver::new(
         EventIngest::new(),
         trunk_config,
