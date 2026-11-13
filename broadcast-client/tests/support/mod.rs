@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 pub mod dash_checks;
 pub mod dash_common;
 pub mod dash_matrix;
@@ -117,6 +118,7 @@ pub fn feed_chunks(
     out
 }
 
+#[allow(unused_macros)]
 macro_rules! skip_none {
     ($e:expr) => {
         match $e {
@@ -126,38 +128,23 @@ macro_rules! skip_none {
     };
 }
 
+#[allow(unused_macros)]
 macro_rules! tf1_bytes {
     () => {
         skip_none!($crate::support::read_tf1_bytes())
     };
 }
 
+#[allow(unused_macros)]
 macro_rules! tf1_headers {
     () => {
         skip_none!($crate::support::read_tf1_headers())
     };
 }
 
+#[allow(unused_macros)]
 macro_rules! missing_headers {
     () => {
         skip_none!($crate::support::read_missing_headers())
     };
 }
-
-fn _touch_macros() {
-    let _ = skip_none!(Some(0usize));
-    let _ = tf1_bytes!();
-    let _ = tf1_headers!();
-    let _ = missing_headers!();
-}
-
-#[used]
-static _USE_ALL_ITEMS: usize = {
-    let _ = 0usize;
-    let _ = read_tf1_headers;
-    let _ = read_tf1_bytes;
-    let _ = read_missing_headers;
-    let _ = feed_chunks;
-    let _ = _touch_macros;
-    0
-};
