@@ -7,8 +7,10 @@
 - A `407` from an HTTP pull is returned unchanged instead of being retried; there is no proxy-credential configuration, and the origin's credentials are never sent as a proxy's.
 - The challenge-answer flag a pull passes on reports whether the request really carried an `Authorization` header, so a Digest state that has not negotiated its first nonce is not treated as a rejected credential.
 ### Changed
+- TS-over-HTTP pull runs one `broadcast_client::Session` in relay mode (`Config::relay()`) through a shared async session host (`source::client_host`): the session owns redirects, cookies, Basic/Digest/Bearer auth, the finite-body decision and the stall policy, and the host performs its HTTP requests with `reqwest`; the programme split of a multi-programme stream keys on each track's `program_number` as before.
 - DASH-IF ingest sans-IO engine moved to `dash-runtime::ingest`; multimux keeps the axum glue.
 ### Removed
+- BREAKING: `source::ts_http::{open_stream, recv_and_feed, StreamStatus, TsHttpDialer, TsHttpStream}`; `run_ts_http` is the entry point (the session replaces the hand-driven GET and stall policy).
 - BREAKING: the public `multimux::dashif_ingest` module; use `dash_runtime::ingest` (issue #2480).
 - Blocking-reload timeout policy now lives in `hls-runtime::server` (multimux calls it).
 - The DASH/LL-DASH manifests render their `xs:duration` attributes with `broadcast_dash::duration::xs_duration`, the one writer in the workspace, instead of `transmux::dash::xs_duration` (removed); the rendered bytes are unchanged (#2465).

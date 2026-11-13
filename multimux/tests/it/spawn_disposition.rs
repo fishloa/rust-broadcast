@@ -34,6 +34,11 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     ("dvr.rs", 603, "spawn_blocking DVR write; awaited inline"),
     (
+        "source/client_host.rs",
+        213,
+        "one HTTP request task per Action::HttpRequest of the session; owned by SessionStep, which aborts it on Action::Close and aborts every outstanding one on drop",
+    ),
+    (
         "source/pull.rs",
         246,
         "PullScheduler's `inflight` JoinSet (drained on drop); the shared engine for the three pull sources",

@@ -148,148 +148,149 @@ impl ProgramTracker {
 
     pub(crate) fn handle(&mut self, event: DemuxEvent) {
         match event {
-            DemuxEvent::TrackAdded(spec) => {
-                let pn = spec.program_number;
-                if self.resolved_once {
-                    // Issue #781 + #906: a track declared after initial
-                    // resolution joins its program_number's program.
-                    let program = self.find_or_create_program(pn);
-                    self.track_specs_for_program(program)
-                        .insert(spec.track_id, spec.clone());
-                    self.track_program.insert(spec.track_id, program);
-                    self.changed.insert(program);
-                } else {
-                    self.resolving.entry(pn).or_default().push(spec);
-                }
-            }
-            DemuxEvent::TracksResolved { .. } => {
-                if !self.resolved_once {
-                    if !self.resolving.is_empty() {
-                        self.resolved_once = true;
-                        let groups: Vec<_> =
-                            std::mem::take(&mut self.resolving).into_iter().collect();
-                        for (pn, tracks) in groups {
-                            if tracks.is_empty() {
-                                continue;
-                            }
-                            let program = ProgramId(self.next_program_id);
-                            self.next_program_id += 1;
-                            let mut track_specs = BTreeMap::new();
-                            for spec in &tracks {
-                                self.track_program.insert(spec.track_id, program);
-                                track_specs.insert(spec.track_id, spec.clone());
-                            }
-                            self.programs.insert(
-                                pn,
-                                PerProgram {
-                                    program_id: program,
-                                    track_specs,
-                                },
-                            );
-                            self.pending
-                                .push_back(SessionEvent::NewProgram { program, tracks });
-                        }
-                        self.held_bytes = 0;
-                        for (track_id, sample) in std::mem::take(&mut self.held) {
-                            if let Some(&program) = self.track_program.get(&track_id) {
-                                self.pending.push_back(SessionEvent::Sample {
-                                    program,
-                                    track_id,
-                                    retention: RetentionClass::Timed,
-                                    sample,
-                                });
-                            }
-                        }
-                    }
-                } else {
-                    // Mid-stream TracksResolved: only emit TracksChanged for
-                    // programs whose track set actually changed.
-                    let dirty = std::mem::take(&mut self.changed);
-                    for prog in self.programs.values() {
-                        if !dirty.contains(&prog.program_id) {
-                            continue;
-                        }
-                        let tracks: Vec<TrackSpec> = prog.track_specs.values().cloned().collect();
-                        if !tracks.is_empty() {
-                            self.pending.push_back(SessionEvent::TracksChanged {
-                                program: prog.program_id,
-                                tracks,
-                            });
-                        }
-                    }
-                }
-            }
-            // A sample for a track never announced (or since removed) is
-            // dropped by the guard — mirrors the pre-5a `known_track_ids`
-            // check — and falls through to the `_ => {}` catch-all below.
+            DemuxEvent::TrackAdded(spec) => self.track_added(spec),
+            DemuxEvent::TracksResolved { .. } => self.tracks_resolved(),
             DemuxEvent::Sample {
                 track_id, sample, ..
-            } if let Some(&program) = self.track_program.get(&track_id) => {
-                self.pending.push_back(SessionEvent::Sample {
-                    program,
-                    track_id,
-                    retention: RetentionClass::Timed,
-                    sample,
-                });
-            }
-            // Before the first `TracksResolved` the programme is not yet
-            // announced: hold the sample of an announced track (the demux's
-            // probe-backlog replay) until it is. See "Pre-resolution backlog".
-            DemuxEvent::Sample {
-                track_id, sample, ..
-            } if !self.resolved_once
-                && self
-                    .resolving
-                    .values()
-                    .any(|specs| specs.iter().any(|s| s.track_id == track_id)) =>
-            {
-                self.hold(track_id, sample);
-            }
-            DemuxEvent::TrackRemoved { track_id, .. } => {
-                // A mid-stream PMT version bump dropped a previously-live
-                // PID (issue #774): stop routing samples for it.
-                if let Some(program) = self.track_program.remove(&track_id) {
-                    if let Some(prog) = self.program_for_program_id_mut(program) {
-                        prog.track_specs.remove(&track_id);
-                    }
-                    self.changed.insert(program);
-                }
-            }
-            // A track's codec config changed mid-stream (the demux emits this
-            // only for a config that really differs: a new in-band
-            // SPS/PPS/AAC config, or a changed PMT descriptor). Adopt the new
-            // spec and announce the program's track set, so the route
-            // rebuilds its init segment instead of describing a stream that
-            // is no longer being sent. Before the first `TracksResolved` the
-            // buffered spec is just replaced; an update for a track that was
-            // never announced is ignored (nothing routes on it).
-            DemuxEvent::TrackUpdated(spec) => {
-                let track_id = spec.track_id;
-                if self.resolved_once {
-                    if let Some(&program) = self.track_program.get(&track_id)
-                        && let Some(prog) = self.program_for_program_id_mut(program)
-                    {
-                        prog.track_specs.insert(track_id, spec);
-                        let mut tracks: Vec<TrackSpec> =
-                            prog.track_specs.values().cloned().collect();
-                        tracks.sort_by_key(|t| t.track_id);
-                        self.pending
-                            .push_back(SessionEvent::TracksChanged { program, tracks });
-                    }
-                } else if let Some(buffered) = self
-                    .resolving
-                    .values_mut()
-                    .flat_map(|specs| specs.iter_mut())
-                    .find(|s| s.track_id == track_id)
-                {
-                    *buffered = spec;
-                }
-            }
-            DemuxEvent::TrackAbandoned { .. } => {
-                // Pre-resolution event; nothing routes on it (mirrors the
-                // pre-5a tracing-only handling).
-            }
+            } => self.sample(track_id, sample),
+            DemuxEvent::TrackRemoved { track_id, .. } => self.track_removed(track_id),
+            DemuxEvent::TrackUpdated(spec) => self.track_updated(spec),
+            DemuxEvent::TrackAbandoned { .. } => {}
             _ => {}
+        }
+    }
+
+    pub(crate) fn track_added(&mut self, spec: TrackSpec) {
+        let pn = spec.program_number;
+        if self.resolved_once {
+            // Issue #781 + #906: a track declared after initial
+            // resolution joins its program_number's program.
+            let program = self.find_or_create_program(pn);
+            self.track_specs_for_program(program)
+                .insert(spec.track_id, spec.clone());
+            self.track_program.insert(spec.track_id, program);
+            self.changed.insert(program);
+        } else {
+            self.resolving.entry(pn).or_default().push(spec);
+        }
+    }
+
+    pub(crate) fn tracks_resolved(&mut self) {
+        if !self.resolved_once {
+            if !self.resolving.is_empty() {
+                self.resolved_once = true;
+                let groups: Vec<_> = std::mem::take(&mut self.resolving).into_iter().collect();
+                for (pn, tracks) in groups {
+                    if tracks.is_empty() {
+                        continue;
+                    }
+                    let program = ProgramId(self.next_program_id);
+                    self.next_program_id += 1;
+                    let mut track_specs = BTreeMap::new();
+                    for spec in &tracks {
+                        self.track_program.insert(spec.track_id, program);
+                        track_specs.insert(spec.track_id, spec.clone());
+                    }
+                    self.programs.insert(
+                        pn,
+                        PerProgram {
+                            program_id: program,
+                            track_specs,
+                        },
+                    );
+                    self.pending
+                        .push_back(SessionEvent::NewProgram { program, tracks });
+                }
+                self.held_bytes = 0;
+                for (track_id, sample) in std::mem::take(&mut self.held) {
+                    if let Some(&program) = self.track_program.get(&track_id) {
+                        self.pending.push_back(SessionEvent::Sample {
+                            program,
+                            track_id,
+                            retention: RetentionClass::Timed,
+                            sample,
+                        });
+                    }
+                }
+            }
+        } else {
+            // Mid-stream TracksResolved: only emit TracksChanged for
+            // programs whose track set actually changed.
+            let dirty = std::mem::take(&mut self.changed);
+            for prog in self.programs.values() {
+                if !dirty.contains(&prog.program_id) {
+                    continue;
+                }
+                let tracks: Vec<TrackSpec> = prog.track_specs.values().cloned().collect();
+                if !tracks.is_empty() {
+                    self.pending.push_back(SessionEvent::TracksChanged {
+                        program: prog.program_id,
+                        tracks,
+                    });
+                }
+            }
+        }
+    }
+
+    /// A sample for a track never announced (or since removed) is dropped,
+    /// mirroring the pre-5a `known_track_ids` check. Before the first
+    /// `TracksResolved` the programme is not yet announced: the sample of an
+    /// announced track is held (the demux's probe-backlog replay) until it is.
+    /// See "Pre-resolution backlog".
+    pub(crate) fn sample(&mut self, track_id: TrackId, sample: Sample) {
+        if let Some(&program) = self.track_program.get(&track_id) {
+            self.pending.push_back(SessionEvent::Sample {
+                program,
+                track_id,
+                retention: RetentionClass::Timed,
+                sample,
+            });
+        } else if !self.resolved_once
+            && self
+                .resolving
+                .values()
+                .any(|specs| specs.iter().any(|s| s.track_id == track_id))
+        {
+            self.hold(track_id, sample);
+        }
+    }
+
+    /// A mid-stream PMT version bump dropped a previously-live PID
+    /// (issue #774): stop routing samples for it.
+    pub(crate) fn track_removed(&mut self, track_id: TrackId) {
+        if let Some(program) = self.track_program.remove(&track_id) {
+            if let Some(prog) = self.program_for_program_id_mut(program) {
+                prog.track_specs.remove(&track_id);
+            }
+            self.changed.insert(program);
+        }
+    }
+
+    /// A track's codec config changed mid-stream (a new in-band SPS/PPS/AAC
+    /// config, or a changed PMT descriptor). Adopt the new spec and announce
+    /// the program's track set, so the route rebuilds its init segment instead
+    /// of describing a stream that is no longer being sent. Before the first
+    /// `TracksResolved` the buffered spec is just replaced; an update for a
+    /// track that was never announced is ignored (nothing routes on it).
+    pub(crate) fn track_updated(&mut self, spec: TrackSpec) {
+        let track_id = spec.track_id;
+        if self.resolved_once {
+            if let Some(&program) = self.track_program.get(&track_id)
+                && let Some(prog) = self.program_for_program_id_mut(program)
+            {
+                prog.track_specs.insert(track_id, spec);
+                let mut tracks: Vec<TrackSpec> = prog.track_specs.values().cloned().collect();
+                tracks.sort_by_key(|t| t.track_id);
+                self.pending
+                    .push_back(SessionEvent::TracksChanged { program, tracks });
+            }
+        } else if let Some(buffered) = self
+            .resolving
+            .values_mut()
+            .flat_map(|specs| specs.iter_mut())
+            .find(|s| s.track_id == track_id)
+        {
+            *buffered = spec;
         }
     }
 

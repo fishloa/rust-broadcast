@@ -43,6 +43,7 @@ pub mod segment;
 /// Default demand (in bytes) a source asks the pipeline to feed per
 /// iteration.
 pub(crate) const INGEST_DEMAND_BYTES: usize = 4096;
+mod client_host;
 pub mod smooth_pull;
 pub(crate) mod split_audio;
 pub(crate) mod split_subtitle;
