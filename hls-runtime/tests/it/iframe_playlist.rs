@@ -41,10 +41,10 @@ fn trunk_with() -> (Arc<Trunk>, SegmentWriter) {
 fn origin_fmp4() -> (Arc<Trunk>, HlsOrigin, SegmentWriter) {
     let (trunk, writer) = trunk_with();
     let origin = HlsOrigin::builder(Arc::clone(&trunk))
-        .target_duration_secs(4.0)
-        .window_segments(nz(4))
-        .low_latency(500)
-        .instance(7)
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(4))
+        .with_low_latency(500)
+        .with_instance(7)
         .build()
         .expect("origin");
     let init = test_fixtures::read("hls/cmaf-fmp4/init.mp4");
@@ -604,10 +604,10 @@ fn iframe_ts_origin_not_found() {
     );
     let writer = trunk.segment_writer().expect("writer");
     let origin = HlsOrigin::builder(trunk)
-        .target_duration_secs(4.0)
-        .window_segments(nz(4))
-        .container(Container::MpegTs)
-        .instance(7)
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(4))
+        .with_container(Container::MpegTs)
+        .with_instance(7)
         .build()
         .expect("origin");
     let bytes = fixture_bytes("index0.m4s");
@@ -629,10 +629,10 @@ fn iframe_ts_origin_not_found() {
 fn iframe_audio_only_not_found() {
     let (trunk, writer) = trunk_with();
     let origin = HlsOrigin::builder(trunk)
-        .target_duration_secs(4.0)
-        .window_segments(nz(4))
-        .low_latency(500)
-        .instance(7)
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(4))
+        .with_low_latency(500)
+        .with_instance(7)
         .build()
         .expect("origin");
     // no track specs -> no video track
@@ -750,9 +750,9 @@ fn a_bare_msn_iframe_reload_waits_for_a_segment_the_window_holds() {
     };
     publish(1);
     let origin = HlsOrigin::builder(Arc::clone(&trunk))
-        .target_duration_secs(4.0)
-        .window_segments(nz(4))
-        .instance(7)
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(4))
+        .with_instance(7)
         .build()
         .expect("origin");
     origin.set_init(Bytes::from(fixture_bytes("init.mp4")));

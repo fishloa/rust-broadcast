@@ -33,10 +33,10 @@ fn trunk_with() -> (Arc<Trunk>, SegmentWriter) {
 
 fn origin(trunk: &Arc<Trunk>) -> HlsOrigin {
     HlsOrigin::builder(Arc::clone(trunk))
-        .target_duration_secs(4.0)
-        .window_segments(nz(4))
-        .low_latency(500)
-        .instance(7)
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(4))
+        .with_low_latency(500)
+        .with_instance(7)
         .build()
         .expect("origin")
 }
@@ -212,10 +212,10 @@ fn discontinuity_sequence_zero_on_iframe_playlist() {
         (t, w)
     };
     let origin = HlsOrigin::builder(Arc::clone(&trunk))
-        .target_duration_secs(4.0)
-        .window_segments(nz(4))
-        .low_latency(500)
-        .instance(7)
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(4))
+        .with_low_latency(500)
+        .with_instance(7)
         .build()
         .expect("origin");
     let init = test_fixtures::read("hls/cmaf-fmp4/init.mp4");

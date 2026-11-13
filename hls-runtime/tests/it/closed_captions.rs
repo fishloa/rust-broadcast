@@ -22,12 +22,12 @@ fn origin(overrides: Vec<ClosedCaptionDecl>, none: bool) -> HlsOrigin {
             .with_part_capacity(nz(64)),
     );
     HlsOrigin::builder(trunk)
-        .target_duration_secs(4.0)
-        .window_segments(nz(4))
-        .instance(7)
-        .declared_bandwidth_bps(5_000_000)
-        .closed_caption_overrides(overrides)
-        .closed_captions_none(none)
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(4))
+        .with_instance(7)
+        .with_declared_bandwidth_bps(5_000_000)
+        .with_closed_caption_overrides(overrides)
+        .with_closed_captions_none(none)
         .build()
         .expect("origin builds")
 }

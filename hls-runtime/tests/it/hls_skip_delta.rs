@@ -32,10 +32,10 @@ fn make_origin() -> (Arc<Trunk>, HlsOrigin, SegmentWriter) {
     );
     let writer = trunk.segment_writer().expect("writer");
     let origin = HlsOrigin::builder(Arc::clone(&trunk))
-        .target_duration_secs(4.0)
-        .window_segments(nz(16))
-        .low_latency(500)
-        .instance(7)
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(16))
+        .with_low_latency(500)
+        .with_instance(7)
         .build()
         .expect("origin");
     origin.set_init(vec![0xAAu8; 8]);
@@ -150,9 +150,9 @@ fn no_can_skip_until_means_no_skip() {
     );
     let writer = trunk.segment_writer().expect("writer");
     let origin = HlsOrigin::builder(Arc::clone(&trunk))
-        .target_duration_secs(4.0)
-        .window_segments(nz(8))
-        .instance(7)
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(8))
+        .with_instance(7)
         .build()
         .expect("origin");
     origin.set_init(vec![0xAAu8; 8]);

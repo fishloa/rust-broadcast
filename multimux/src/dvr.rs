@@ -710,7 +710,7 @@ impl DvrRecorder {
     /// bare `Trunk` number (default `0`). A `Trunk` numbers its segments from
     /// `1` again after a source reconnect, and the route's `HlsOrigin` hides
     /// that by adding an offset to every Media Sequence Number it shows
-    /// (`HlsOriginBuilder::media_sequence_offset`); passing the *same* offset
+    /// (`HlsOriginBuilder::with_media_sequence_offset`); passing the *same* offset
     /// here keeps the archive's sequence numbers equal to the live playlist's,
     /// unique across reconnects, so catch-up's merge of archive and live tail
     /// and its by-number lookup never confuse two runs (audit r07-C5, issue

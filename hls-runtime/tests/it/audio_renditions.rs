@@ -24,10 +24,10 @@ fn builder() -> HlsOriginBuilder {
             .with_part_capacity(nz(64)),
     );
     HlsOrigin::builder(trunk)
-        .target_duration_secs(4.0)
-        .window_segments(nz(4))
-        .instance(7)
-        .declared_bandwidth_bps(5_000_000)
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(4))
+        .with_instance(7)
+        .with_declared_bandwidth_bps(5_000_000)
 }
 
 fn decl(group: &str, name: &str, lang: &str, default: bool, uri: &str) -> AudioRenditionDecl {
@@ -54,8 +54,8 @@ fn two_groups() -> Vec<AudioRenditionDecl> {
 
 fn master_with(decls: Vec<AudioRenditionDecl>, cc_none: bool) -> String {
     builder()
-        .audio_renditions(decls)
-        .closed_captions_none(cc_none)
+        .with_audio_renditions(decls)
+        .with_closed_captions_none(cc_none)
         .build()
         .expect("origin builds")
         .master_playlist("media.m3u8")
@@ -108,7 +108,12 @@ fn no_declarations_and_flag_off_keeps_plain_master() {
 
 #[test]
 fn same_name_in_two_groups_is_accepted() {
-    assert!(builder().audio_renditions(two_groups()).build().is_ok());
+    assert!(
+        builder()
+            .with_audio_renditions(two_groups())
+            .build()
+            .is_ok()
+    );
 }
 
 #[test]
@@ -200,13 +205,13 @@ fn invalid_declarations_are_rejected() {
     ];
     let wrong: Vec<_> = cases
         .into_iter()
-        .filter_map(
-            |(label, decls, matches)| match builder().audio_renditions(decls).build() {
+        .filter_map(|(label, decls, matches)| {
+            match builder().with_audio_renditions(decls).build() {
                 Ok(_) => Some(format!("{label}: built successfully")),
                 Err(e) if !matches(&e) => Some(format!("{label}: wrong error {e:?}")),
                 Err(_) => None,
-            },
-        )
+            }
+        })
         .collect();
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
@@ -214,7 +219,7 @@ fn invalid_declarations_are_rejected() {
 #[test]
 fn uri_equal_to_media_playlist_name_rejected_at_render() {
     let origin = builder()
-        .audio_renditions(vec![decl("aac", "English", "en", true, "media.m3u8")])
+        .with_audio_renditions(vec![decl("aac", "English", "en", true, "media.m3u8")])
         .build()
         .expect("builds");
     assert!(matches!(

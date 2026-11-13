@@ -735,29 +735,30 @@ impl ProgramServing {
     ) -> Result<Arc<Self>, hls_runtime::server::HlsOriginBuildError> {
         let media_sequence_offset = epoch.seq_offset;
         let mut builder = HlsOrigin::builder(Arc::clone(&trunk))
-            .target_duration_secs(target_duration_secs)
-            .window_segments(window_segments)
-            .container(container)
-            .media_sequence_offset(media_sequence_offset)
-            .discontinuity_sequence(epoch.discontinuity_sequence)
-            .hold_cold_playlist(hold_cold_playlist);
+            .with_target_duration_secs(target_duration_secs)
+            .with_window_segments(window_segments)
+            .with_container(container)
+            .with_media_sequence_offset(media_sequence_offset)
+            .with_discontinuity_sequence(epoch.discontinuity_sequence)
+            .with_hold_cold_playlist(hold_cold_playlist);
         if program_date_time == crate::config::ProgramDateTimeSource::Arrival {
-            builder = builder
-                .program_date_time_arrival(Arc::new(|| jiff::Timestamp::now().as_millisecond()));
+            builder = builder.with_program_date_time_arrival(Arc::new(|| {
+                jiff::Timestamp::now().as_millisecond()
+            }));
         }
         if container == Container::Fmp4 {
-            builder = builder.low_latency(part_target_ms);
+            builder = builder.with_low_latency(part_target_ms);
         }
         if let Some(declared) = declared_bandwidth_bps {
-            builder = builder.declared_bandwidth_bps(declared);
+            builder = builder.with_declared_bandwidth_bps(declared);
         }
         if !audio_renditions.is_empty() {
-            builder = builder.audio_renditions(audio_renditions.clone());
+            builder = builder.with_audio_renditions(audio_renditions.clone());
         }
         if !closed_caption_overrides.is_empty() {
-            builder = builder.closed_caption_overrides(closed_caption_overrides);
+            builder = builder.with_closed_caption_overrides(closed_caption_overrides);
         }
-        builder = builder.playlist_uri("media.m3u8");
+        builder = builder.with_playlist_uri("media.m3u8");
         // Sibling trunks + origins for the split audio renditions (issue #1428
         // slice 2b). Each carries one audio track's fMP4 and is served by its
         // own `HlsOrigin`; the primary trunk carries the remaining (video)
@@ -778,19 +779,19 @@ impl ProgramServing {
             ));
             let track_id = transmux::TrackId::new(u32::try_from(idx + 2).unwrap_or(u32::MAX));
             let mut ab = HlsOrigin::builder(Arc::clone(&sibling_trunk))
-                .target_duration_secs(target_duration_secs)
-                .window_segments(window_segments)
-                .container(Container::Fmp4)
-                .media_sequence_offset(media_sequence_offset)
-                .discontinuity_sequence(epoch.discontinuity_sequence)
-                .hold_cold_playlist(hold_cold_playlist);
+                .with_target_duration_secs(target_duration_secs)
+                .with_window_segments(window_segments)
+                .with_container(Container::Fmp4)
+                .with_media_sequence_offset(media_sequence_offset)
+                .with_discontinuity_sequence(epoch.discontinuity_sequence)
+                .with_hold_cold_playlist(hold_cold_playlist);
             if program_date_time == crate::config::ProgramDateTimeSource::Arrival {
-                ab = ab.program_date_time_arrival(Arc::new(|| {
+                ab = ab.with_program_date_time_arrival(Arc::new(|| {
                     jiff::Timestamp::now().as_millisecond()
                 }));
             }
-            ab = ab.low_latency(part_target_ms);
-            ab = ab.playlist_uri(decl.uri.clone());
+            ab = ab.with_low_latency(part_target_ms);
+            ab = ab.with_playlist_uri(decl.uri.clone());
             let origin = Arc::new(ab.build()?);
             sibling_origins.push(Arc::clone(&origin));
             audio_servings.push(AudioServing {
@@ -802,7 +803,7 @@ impl ProgramServing {
         }
 
         if !sibling_origins.is_empty() {
-            builder = builder.audio_sibling_origins(sibling_origins);
+            builder = builder.with_audio_sibling_origins(sibling_origins);
         }
         // `build` rejects a non-finite/non-positive target duration, a zero
         // part target and an offset with no room for u32 — all reachable
@@ -999,16 +1000,16 @@ impl ProgramServing {
                     .with_part_capacity(nz(DEFAULT_PART_CAPACITY)),
             );
             let mut builder = HlsOrigin::builder(Arc::clone(&trunk))
-                .target_duration_secs(params.target_duration_secs)
-                .window_segments(params.window_segments)
-                .container(Container::WebVtt)
-                .media_sequence_offset(params.media_sequence_offset)
-                .discontinuity_sequence(params.discontinuity_sequence)
-                .hold_cold_playlist(params.hold_cold_playlist)
-                .low_latency(params.part_target_ms)
-                .playlist_uri(decl.uri.clone());
+                .with_target_duration_secs(params.target_duration_secs)
+                .with_window_segments(params.window_segments)
+                .with_container(Container::WebVtt)
+                .with_media_sequence_offset(params.media_sequence_offset)
+                .with_discontinuity_sequence(params.discontinuity_sequence)
+                .with_hold_cold_playlist(params.hold_cold_playlist)
+                .with_low_latency(params.part_target_ms)
+                .with_playlist_uri(decl.uri.clone());
             if params.program_date_time == crate::config::ProgramDateTimeSource::Arrival {
-                builder = builder.program_date_time_arrival(Arc::new(|| {
+                builder = builder.with_program_date_time_arrival(Arc::new(|| {
                     jiff::Timestamp::now().as_millisecond()
                 }));
             }
@@ -1446,7 +1447,7 @@ pub struct RouteHandle {
     /// See [`Self::with_hold_cold_playlist`].
     hold_cold_playlist: bool,
     /// Operator-declared peak bitrate (bits/second) for this route's HLS
-    /// master playlist (see [`HlsOriginBuilder::declared_bandwidth_bps`]).
+    /// master playlist (see [`HlsOriginBuilder::with_declared_bandwidth_bps`]).
     /// `None` means none.
     declared_bandwidth_bps: Option<u64>,
     /// Audio renditions advertised in this route's HLS master playlist
