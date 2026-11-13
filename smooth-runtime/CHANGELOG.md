@@ -3,6 +3,8 @@
 All notable changes to smooth-runtime will be documented in this file.
 
 ## [Unreleased]
+### Fixed
+- `SmoothOrigin`'s cached plan is also keyed by the track set, so a track-set change with an unchanged window rebuilds the Manifest instead of serving the stale one until the next segment (issue #2522).
 ### Changed
 - BREAKING: `SmoothOrigin` caches its plan (every track's chunk timeline plus the rendered Manifest) keyed by the init-segment generation and the window's segment sequence numbers: requests over an unchanged window reuse it, and concurrent requests that miss together build it once. Packaged fragments are cached per (stream, start, segment) and dropped when their segment leaves the window. `SegmentProvider::segments` and `SmoothOrigin::set_init`/`init` now carry `bytes::Bytes` instead of `Arc<[u8]>`, and `SmoothBody::Fragment` holds `Bytes`, so no request copies segment bytes (issue #2522).
 ### Added
