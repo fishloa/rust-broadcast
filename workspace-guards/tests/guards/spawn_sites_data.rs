@@ -7,6 +7,10 @@ use crate::spawn_sites::Crate;
 
 pub const TABLE: &[Crate] = &[
     Crate {
+        name: "broadcast-client",
+        sites: &[],
+    },
+    Crate {
         name: "dash-runtime",
         sites: &[],
     },
