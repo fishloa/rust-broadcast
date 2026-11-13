@@ -31,7 +31,7 @@ macro_rules! declare_splice_descriptors {
         #[non_exhaustive]
         pub enum AnySpliceDescriptor<$lt> {
             $(
-                #[allow(missing_docs)]
+                /// A typed splice descriptor carried by this variant.
                 $variant($($path)::+ $(<$plt>)?),
             )+
             /// A `splice_descriptor_tag` with no typed implementation; `body`

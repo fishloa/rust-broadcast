@@ -100,16 +100,6 @@ impl Replay {
             .find(|t| matches!(t.event, Event::Sample { .. }))
             .map(|t| t.at_us)
     }
-
-    pub fn buffer_events(&self) -> Vec<(u64, BufferEvent)> {
-        self.events
-            .iter()
-            .filter_map(|t| match &t.event {
-                Event::Buffer(b) => Some((t.at_us, b.clone())),
-                _ => None,
-            })
-            .collect()
-    }
 }
 
 pub fn open_live(config: Config) -> (Session, u32) {

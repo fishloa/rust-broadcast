@@ -88,7 +88,6 @@ pub struct Seen {
     pub conn: u32,
     pub url: String,
     pub headers: Vec<(String, String)>,
-    pub byte_range: Option<(u64, u64)>,
     pub at_us: u64,
 }
 
@@ -161,14 +160,13 @@ impl Host {
                     conn,
                     url,
                     headers,
-                    byte_range,
+                    byte_range: _,
                     ..
                 } => {
                     let seen = Seen {
                         conn,
                         url,
                         headers,
-                        byte_range,
                         at_us: self.now,
                     };
                     self.seen.push(seen.clone());

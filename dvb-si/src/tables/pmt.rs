@@ -656,23 +656,19 @@ impl<'a> PmtSection<'a> {
     /// `#[non_exhaustive]` so struct literal syntax is not available outside
     /// the crate; use this function instead.
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         program_number: u16,
-        version_number: u8,
-        current_next_indicator: bool,
-        section_number: u8,
-        last_section_number: u8,
+        section: crate::tables::SectionVersion,
         pcr_pid: Pid,
         program_info: DescriptorLoop<'a>,
         streams: Vec<PmtStream<'a>>,
     ) -> Self {
         Self {
             program_number,
-            version_number,
-            current_next_indicator,
-            section_number,
-            last_section_number,
+            version_number: section.version_number,
+            current_next_indicator: section.current_next_indicator,
+            section_number: section.section_number,
+            last_section_number: section.last_section_number,
             pcr_pid,
             program_info,
             streams,
@@ -953,10 +949,7 @@ mod tests {
     fn serialize_round_trip_empty_program() {
         let pmt = PmtSection::new(
             1,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             Pid::new(0x100),
             DescriptorLoop::new(&[]),
             vec![],
@@ -974,10 +967,7 @@ mod tests {
         let es2: [u8; 2] = [0x0A, 0x00];
         let pmt = PmtSection::new(
             0xABCD,
-            7,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(7, true, 0, 0),
             Pid::new(0x1F0),
             DescriptorLoop::new(&prog_info),
             vec![
@@ -1038,10 +1028,7 @@ mod tests {
         let pi = vec![0xAAu8; 4083];
         let pmt = PmtSection::new(
             1,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             Pid::new(0x100),
             DescriptorLoop::new(&pi),
             vec![],
@@ -1058,10 +1045,7 @@ mod tests {
         let pi = vec![0xAAu8; 4082];
         let pmt = PmtSection::new(
             1,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             Pid::new(0x100),
             DescriptorLoop::new(&pi),
             vec![],
@@ -1078,10 +1062,7 @@ mod tests {
         let es = vec![0xAAu8; 4078];
         let pmt = PmtSection::new(
             1,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             Pid::new(0x100),
             DescriptorLoop::new(&[]),
             vec![PmtStream::new(
@@ -1383,10 +1364,7 @@ mod tests {
     fn section_number_round_trip_nonzero() {
         let pmt = PmtSection::new(
             42,
-            1,
-            true,
-            3,
-            7,
+            crate::tables::SectionVersion::new(1, true, 3, 7),
             Pid::new(0x0200),
             DescriptorLoop::new(&[]),
             vec![],

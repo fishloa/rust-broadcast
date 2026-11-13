@@ -290,6 +290,41 @@ impl SectionBits {
     }
 }
 
+/// The version / section-number half of an ISO/IEC 13818-1 §2.4.4 long-form
+/// section header: `version_number(5)` + `current_next_indicator(1)` +
+/// `section_number(8)` + `last_section_number(8)`. One spec-defined unit shared
+/// by every long-form table constructor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SectionVersion {
+    /// 5-bit `version_number`.
+    pub version_number: u8,
+    /// `current_next_indicator` bit.
+    pub current_next_indicator: bool,
+    /// `section_number` within the sub-table sequence.
+    pub section_number: u8,
+    /// `last_section_number` within the sub-table sequence.
+    pub last_section_number: u8,
+}
+
+impl SectionVersion {
+    /// Construct the four long-form header fields as one unit.
+    #[must_use]
+    pub const fn new(
+        version_number: u8,
+        current_next_indicator: bool,
+        section_number: u8,
+        last_section_number: u8,
+    ) -> Self {
+        Self {
+            version_number,
+            current_next_indicator,
+            section_number,
+            last_section_number,
+        }
+    }
+}
+
 /// Assemble section byte 1 (everything above `section_length[11:8]`) from its
 /// parts, for tables that keep `private_indicator` / `reserved_b1` as their
 /// own fields.

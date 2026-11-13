@@ -574,7 +574,8 @@ fn a_three_b_frame_two_second_gop_source_lands_on_the_sender_report_timeline() {
             assert_ground_truth_offset(
                 &o,
                 &truth,
-                skew - truth.source_start_gap(),
+                skew - (truth.audio.first().map_or(0.0, |s| s.1)
+                    - truth.video.first().map_or(0.0, |s| s.1)),
                 &format!("3b skew {skew} {when:?}"),
             );
         }
@@ -631,7 +632,8 @@ fn emitted_samples_keep_their_source_audio_video_offset() {
             assert_ground_truth_offset(
                 &o,
                 &truth,
-                skew - truth.source_start_gap(),
+                skew - (truth.audio.first().map_or(0.0, |s| s.1)
+                    - truth.video.first().map_or(0.0, |s| s.1)),
                 &format!("fixture skew {skew} {when:?}"),
             );
         }
@@ -653,7 +655,9 @@ fn assert_scenario(
         assert_ground_truth_offset(
             &o,
             truth,
-            expected_skew - truth.source_start_gap(),
+            expected_skew
+                - (truth.audio.first().map_or(0.0, |s| s.1)
+                    - truth.video.first().map_or(0.0, |s| s.1)),
             &format!("{what} {when:?}"),
         );
     }

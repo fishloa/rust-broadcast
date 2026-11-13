@@ -2310,10 +2310,7 @@ pub(crate) mod tests {
         assert_eq!(prog_info.len(), LOOP);
         PmtSection::new(
             1,
-            1,
-            true,
-            0,
-            0,
+            dvb_si::tables::SectionVersion::new(1, true, 0, 0),
             Pid::new(0x0200),
             dvb_si::descriptors::DescriptorLoop::new(Box::leak(prog_info.into_boxed_slice())),
             Vec::new(),

@@ -229,10 +229,7 @@ fn built_sections() -> Vec<(&'static str, Vec<u8>, bool)> {
         ser(&AitSection::new(
             ApplicationType::HbbTv,
             false,
-            4,
-            true,
-            0,
-            0,
+            dvb_si::tables::SectionVersion::new(4, true, 0, 0),
             dl(DESC),
             vec![
                 AitApplication::new(
@@ -272,10 +269,7 @@ fn built_sections() -> Vec<(&'static str, Vec<u8>, bool)> {
         ser(&IntSection::new(
             IntActionType::IpMacStreamLocation,
             0x12,
-            1,
-            true,
-            0,
-            0,
+            dvb_si::tables::SectionVersion::new(1, true, 0, 0),
             0x0001_5A00,
             0,
             dvb_si::descriptors::int::IntDescriptorLoop::new(DESC),
@@ -288,10 +282,7 @@ fn built_sections() -> Vec<(&'static str, Vec<u8>, bool)> {
         ser(&UntSection::new(
             UntActionType::SystemSoftwareUpdate,
             0x5B,
-            2,
-            true,
-            0,
-            0,
+            dvb_si::tables::SectionVersion::new(2, true, 0, 0),
             0x0001_5A00,
             0,
             dvb_si::descriptors::unt::UntDescriptorLoop::new(DESC),
@@ -309,10 +300,7 @@ fn built_sections() -> Vec<(&'static str, Vec<u8>, bool)> {
         "RNT",
         ser(&RntSection::new(
             0x0102,
-            1,
-            true,
-            0,
-            0,
+            dvb_si::tables::SectionVersion::new(1, true, 0, 0),
             ContextIdType::from_u8(1),
             dvb_si::descriptors::rnt::RntDescriptorLoop::new(DESC),
             vec![ResolutionProvider::new(
@@ -363,10 +351,7 @@ fn built_sections() -> Vec<(&'static str, Vec<u8>, bool)> {
         ser(&RctSection::new(
             true,
             0x0001,
-            2,
-            true,
-            0,
-            0,
+            dvb_si::tables::SectionVersion::new(2, true, 0, 0),
             2026,
             vec![
                 LinkInfo::new(
@@ -408,10 +393,7 @@ fn built_sections() -> Vec<(&'static str, Vec<u8>, bool)> {
         ser(&CitSection::new(
             true,
             0x0001,
-            1,
-            true,
-            0,
-            0,
+            dvb_si::tables::SectionVersion::new(1, true, 0, 0),
             3,
             4,
             DvbText::new(b"crid://x\0"),
@@ -475,10 +457,7 @@ fn built_sections() -> Vec<(&'static str, Vec<u8>, bool)> {
             true,
             1,
             2,
-            3,
-            true,
-            0,
-            0,
+            dvb_si::tables::SectionVersion::new(3, true, 0, 0),
             IfecRtp {
                 delta_t: 5,
                 mpe_boundary: true,
@@ -552,10 +531,7 @@ fn built_sections() -> Vec<(&'static str, Vec<u8>, bool)> {
             9,
             true,
             1,
-            1,
-            true,
-            0,
-            0,
+            dvb_si::tables::SectionVersion::new(1, true, 0, 0),
             SatBody::Raw(vec![1, 2, 3]),
         )),
         true,
@@ -660,10 +636,7 @@ fn defaults_carry_spec_fill_psi_private_indicator_zero() {
     assert_eq!(pat[10] & 0xE0, 0xE0, "PAT: reserved(3) before PID");
     let pmt = ser(&PmtSection::new(
         1,
-        0,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
         Pid::new(0x0101),
         dl(&[]),
         vec![PmtStream::new(StreamType::H264, Pid::new(0x0101), dl(&[]))],
@@ -702,10 +675,7 @@ fn defaults_carry_spec_fill_dvb_reserved_future_use_one() {
     let sdt = ser(&SdtSection::new(
         SdtKind::Actual,
         1,
-        0,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
         0x20,
         vec![SdtService::new(
             1,
@@ -723,10 +693,7 @@ fn defaults_carry_spec_fill_dvb_reserved_future_use_one() {
     let nit = ser(&NitSection::new(
         NitKind::Actual,
         1,
-        0,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
         dl(&[]),
         vec![],
     ));
@@ -738,10 +705,7 @@ fn defaults_carry_spec_fill_dvb_reserved_future_use_one() {
         EitKind::PresentFollowingActual,
         0x4E,
         1,
-        0,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
         1,
         1,
         0,

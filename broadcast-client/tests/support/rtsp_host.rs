@@ -9,7 +9,6 @@ use transmux::pipeline::CodecConfig;
 use transmux::rtp::RtpMediaKind;
 use transmux::{RtpPacketiser, Sample, SenderReport, TsDemux};
 
-pub const MS: u64 = 1_000;
 pub const SEC: u64 = 1_000_000;
 pub const BASE_URL: &str = "rtsp://cam.test/live/";
 pub const DESCRIBE: &str = "DESCRIBE";
@@ -20,8 +19,6 @@ pub const PLAY: &str = "PLAY";
 /// `GET_PARAMETER`; a server that lists anything else, or sends no `Public`,
 /// gets `OPTIONS` keepalives.
 pub const OPTIONS: &str = "OPTIONS";
-pub const PUBLIC_ALL: &str =
-    "Public: OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN, GET_PARAMETER";
 pub const TEARDOWN: &str = "TEARDOWN";
 const FIXTURE: &str = "ts/h264-aac.ts";
 const MTU: usize = 1400;
@@ -400,13 +397,6 @@ impl Server {
             None => SESSION_ID.to_string(),
         }
     }
-}
-
-/// The digest nonce a request presented, if it carried one.
-fn presented_nonce(rec: &ReqRec) -> Option<String> {
-    let auth = rec.header("authorization")?;
-    let (_, rest) = auth.split_once("nonce=\"")?;
-    rest.split_once('"').map(|(n, _)| n.to_string())
 }
 
 pub fn session_id() -> &'static str {

@@ -1950,15 +1950,11 @@ pub struct SatSection {
 impl SatSection {
     /// Construct a SAT section with the spec `reserved` fill.
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         satellite_table_id: u8,
         private_indicator: bool,
         table_count: u16,
-        version_number: u8,
-        current_next_indicator: bool,
-        section_number: u8,
-        last_section_number: u8,
+        section: crate::tables::SectionVersion,
         body: SatBody,
     ) -> Self {
         Self {
@@ -1966,10 +1962,10 @@ impl SatSection {
             section_syntax_indicator: true,
             private_indicator,
             table_count,
-            version_number,
-            current_next_indicator,
-            section_number,
-            last_section_number,
+            version_number: section.version_number,
+            current_next_indicator: section.current_next_indicator,
+            section_number: section.section_number,
+            last_section_number: section.last_section_number,
             body,
             reserved_b1: super::RESERVED_2,
             reserved_b5: super::RESERVED_2,
@@ -2109,14 +2105,26 @@ mod tests {
     use super::*;
 
     fn build_sat(stid: u8, table_count: u16, body: &SatBody) -> Vec<u8> {
-        let sat = SatSection::new(stid, true, table_count, 5, true, 0, 0, body.clone());
+        let sat = SatSection::new(
+            stid,
+            true,
+            table_count,
+            crate::tables::SectionVersion::new(5, true, 0, 0),
+            body.clone(),
+        );
         let mut buf = vec![0u8; sat.serialized_len()];
         sat.serialize_into(&mut buf).unwrap();
         buf
     }
 
     fn build_sat_private_indicator_false(stid: u8, body: &SatBody) -> Vec<u8> {
-        let sat = SatSection::new(stid, false, 0, 5, true, 0, 0, body.clone());
+        let sat = SatSection::new(
+            stid,
+            false,
+            0,
+            crate::tables::SectionVersion::new(5, true, 0, 0),
+            body.clone(),
+        );
         let mut buf = vec![0u8; sat.serialized_len()];
         sat.serialize_into(&mut buf).unwrap();
         buf
@@ -2384,10 +2392,7 @@ mod tests {
             10,
             true,
             0x2FF,
-            5,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(5, true, 0, 0),
             SatBody::Raw(body_data.clone()),
         );
         let mut buf = vec![0u8; sat.serialized_len()];
@@ -2838,10 +2843,7 @@ mod tests {
             1,
             true,
             0,
-            5,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(5, true, 0, 0),
             SatBody::CellFragment(CellFragmentBody {
                 fragments: vec![CellFragment {
                     cell_fragment_id: 1,
@@ -2885,10 +2887,7 @@ mod tests {
             3,
             true,
             0,
-            5,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(5, true, 0, 0),
             SatBody::BeamhoppingTimePlan(BeamhoppingTimePlanBody {
                 plans: vec![BeamhoppingPlan {
                     beamhopping_time_plan_id: 1,
@@ -2940,10 +2939,7 @@ mod tests {
             4,
             true,
             0,
-            5,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(5, true, 0, 0),
             SatBody::PositionV3(PositionV3Body {
                 oem_version_major: 1,
                 oem_version_minor: 0,

@@ -1,5 +1,4 @@
 #![cfg(feature = "std")]
-#![allow(clippy::vec_init_then_push)]
 //! I-frame playlist rendering (P2a).
 
 use std::num::NonZeroUsize;
@@ -264,17 +263,18 @@ fn iframe_audio_first_leading_skipped() {
         .find(|t| matches!(t.config(), CodecConfig::Avc { .. }))
         .expect("video");
     let samples_n = 5usize.min(video.samples.len()).min(audio.samples.len());
-    let mut frags = Vec::new();
-    frags.push(FragmentTrackData::new(
-        audio.track_id(),
-        audio.start_decode_time,
-        &audio.samples[..samples_n],
-    ));
-    frags.push(FragmentTrackData::new(
-        video.track_id(),
-        video.start_decode_time,
-        &video.samples[..samples_n],
-    ));
+    let frags = vec![
+        FragmentTrackData::new(
+            audio.track_id(),
+            audio.start_decode_time,
+            &audio.samples[..samples_n],
+        ),
+        FragmentTrackData::new(
+            video.track_id(),
+            video.start_decode_time,
+            &video.samples[..samples_n],
+        ),
+    ];
     let seg_bytes = build_media_segment(1, &frags).expect("segment");
 
     let (trunk, origin, writer) = origin_fmp4();
@@ -342,17 +342,18 @@ fn iframe_audio_first_after_entry_not_found() {
         .find(|t| matches!(t.config(), CodecConfig::Avc { .. }))
         .expect("video");
     let samples_n = 5usize.min(video.samples.len()).min(audio.samples.len());
-    let mut frags = Vec::new();
-    frags.push(FragmentTrackData::new(
-        audio.track_id(),
-        audio.start_decode_time,
-        &audio.samples[..samples_n],
-    ));
-    frags.push(FragmentTrackData::new(
-        video.track_id(),
-        video.start_decode_time,
-        &video.samples[..samples_n],
-    ));
+    let frags = vec![
+        FragmentTrackData::new(
+            audio.track_id(),
+            audio.start_decode_time,
+            &audio.samples[..samples_n],
+        ),
+        FragmentTrackData::new(
+            video.track_id(),
+            video.start_decode_time,
+            &video.samples[..samples_n],
+        ),
+    ];
     let seg_bytes = build_media_segment(2, &frags).expect("segment");
 
     let (_trunk, origin, writer) = origin_fmp4();
@@ -411,18 +412,18 @@ fn iframe_nonsync_first_video_leading_skipped() {
         .unwrap_or(1);
     let samples_n = 5usize;
     let end = (start + samples_n).min(video.samples.len());
-    let mut frags = Vec::new();
-    // video first
-    frags.push(FragmentTrackData::new(
-        video.track_id(),
-        video.start_decode_time,
-        &video.samples[start..end],
-    ));
-    frags.push(FragmentTrackData::new(
-        audio.track_id(),
-        audio.start_decode_time,
-        &audio.samples[..samples_n.min(audio.samples.len())],
-    ));
+    let frags = vec![
+        FragmentTrackData::new(
+            video.track_id(),
+            video.start_decode_time,
+            &video.samples[start..end],
+        ),
+        FragmentTrackData::new(
+            audio.track_id(),
+            audio.start_decode_time,
+            &audio.samples[..samples_n.min(audio.samples.len())],
+        ),
+    ];
     let seg_bytes = build_media_segment(3, &frags).expect("segment");
 
     let (_trunk, origin, writer) = origin_fmp4();
@@ -486,17 +487,18 @@ fn iframe_nonsync_first_video_after_entry_not_found() {
         .unwrap_or(1);
     let samples_n = 5usize;
     let end = (start + samples_n).min(video.samples.len());
-    let mut frags = Vec::new();
-    frags.push(FragmentTrackData::new(
-        video.track_id(),
-        video.start_decode_time,
-        &video.samples[start..end],
-    ));
-    frags.push(FragmentTrackData::new(
-        audio.track_id(),
-        audio.start_decode_time,
-        &audio.samples[..samples_n.min(audio.samples.len())],
-    ));
+    let frags = vec![
+        FragmentTrackData::new(
+            video.track_id(),
+            video.start_decode_time,
+            &video.samples[start..end],
+        ),
+        FragmentTrackData::new(
+            audio.track_id(),
+            audio.start_decode_time,
+            &audio.samples[..samples_n.min(audio.samples.len())],
+        ),
+    ];
     let seg_bytes = build_media_segment(4, &frags).expect("segment");
 
     let (_trunk, origin, writer) = origin_fmp4();

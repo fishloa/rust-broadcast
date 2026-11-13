@@ -121,10 +121,7 @@ fn assert_valid_json_with_keys(j: &str, keys: &[&str]) {
 fn pmt_serializes_to_valid_json() {
     let pmt = PmtSection::new(
         1,
-        0,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
         Pid::new(0x64),
         DescriptorLoop::new(&[]),
         vec![PmtStream::new(
@@ -142,10 +139,7 @@ fn sdt_serializes_to_valid_json() {
     let sdt = SdtSection::new(
         SdtKind::Actual,
         0x1234,
-        0,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
         0x0020,
         vec![SdtService::new(
             1,
@@ -173,10 +167,7 @@ fn sdt_service_descriptor_loop_serializes_decoded_name() {
     let sdt = SdtSection::new(
         SdtKind::Actual,
         0x1234,
-        0,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
         0x0020,
         vec![SdtService::new(
             1,
@@ -204,10 +195,7 @@ fn eit_serializes_to_valid_json() {
         EitKind::PresentFollowingActual,
         0x4E,
         0x0001,
-        0,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
         0x1234,
         0x0020,
         0,
@@ -230,10 +218,7 @@ fn nit_serializes_to_valid_json() {
     let nit = NitSection::new(
         NitKind::Actual,
         0x0020,
-        0,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
         DescriptorLoop::new(&[]),
         vec![TransportStreamEntry::new(
             0x1234,
@@ -257,10 +242,7 @@ fn ait_serializes_to_valid_json() {
     let ait = AitSection::new(
         ApplicationType::HbbTv,
         false,
-        0,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
         DescriptorLoop::new(&[]),
         vec![AitApplication::new(
             ApplicationIdentifier {
@@ -378,7 +360,13 @@ fn sit_serializes_to_valid_json() {
 
 #[test]
 fn sat_serializes_to_valid_json() {
-    let sat = SatSection::new(0, true, 0, 0, true, 0, 0, SatBody::Raw(vec![]));
+    let sat = SatSection::new(
+        0,
+        true,
+        0,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
+        SatBody::Raw(vec![]),
+    );
     let j = serde_json::to_string(&sat).expect("serialize SAT");
     assert_valid_json_with_keys(&j, &["satellite_table_id", "body"]);
 }
@@ -388,10 +376,7 @@ fn unt_serializes_to_valid_json() {
     let unt = UntSection::new(
         UntActionType::SystemSoftwareUpdate,
         0x00,
-        0,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
         0x00_00_01,
         0,
         dvb_si::descriptors::unt::UntDescriptorLoop::new(&[]),
@@ -406,10 +391,7 @@ fn int_serializes_to_valid_json() {
     let int = IntSection::new(
         IntActionType::IpMacStreamLocation,
         0x00,
-        0,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
         0x00_00_01,
         0,
         dvb_si::descriptors::int::IntDescriptorLoop::new(&[]),
@@ -424,10 +406,7 @@ fn rct_serializes_to_valid_json() {
     let rct = RctSection::new(
         false,
         0x0001,
-        0,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
         0x07D3,
         vec![],
         DescriptorLoop::new(&[]),
@@ -441,10 +420,7 @@ fn cit_serializes_to_valid_json() {
     let cit = CitSection::new(
         false,
         0x0001,
-        0,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
         0x1234,
         0x0020,
         DvbText::new(&[]),
@@ -458,10 +434,7 @@ fn cit_serializes_to_valid_json() {
 fn rnt_serializes_to_valid_json() {
     let rnt = RntSection::new(
         0x0001,
-        0,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
         ContextIdType::BouquetId,
         dvb_si::descriptors::rnt::RntDescriptorLoop::new(&[]),
         vec![],
@@ -527,10 +500,7 @@ fn mpe_ifec_serializes_to_valid_json() {
         true,
         7,
         8,
-        3,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(3, true, 0, 0),
         MpeIfecRtp {
             delta_t: 0x0ABC,
             mpe_boundary: true,

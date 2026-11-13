@@ -94,15 +94,12 @@ pub struct CitSection<'a> {
 
 impl<'a> CitSection<'a> {
     /// Construct a CIT section with the spec `reserved` fill.
-    #[must_use]
     #[allow(clippy::too_many_arguments)]
+    #[must_use]
     pub fn new(
         private_indicator: bool,
         service_id: u16,
-        version_number: u8,
-        current_next_indicator: bool,
-        section_number: u8,
-        last_section_number: u8,
+        section: crate::tables::SectionVersion,
         transport_stream_id: u16,
         original_network_id: u16,
         prepend_strings: DvbText<'a>,
@@ -112,10 +109,10 @@ impl<'a> CitSection<'a> {
             section_syntax_indicator: true,
             private_indicator,
             service_id,
-            version_number,
-            current_next_indicator,
-            section_number,
-            last_section_number,
+            version_number: section.version_number,
+            current_next_indicator: section.current_next_indicator,
+            section_number: section.section_number,
+            last_section_number: section.last_section_number,
             transport_stream_id,
             original_network_id,
             prepend_strings,
@@ -336,10 +333,7 @@ mod tests {
         let cit = CitSection::new(
             false,
             0x1234,
-            3,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(3, true, 0, 0),
             0x0064,
             0x0002,
             prepend,
@@ -371,7 +365,13 @@ mod tests {
             },
         ];
         let cit = CitSection::new(
-            false, 0xABCD, 7, true, 1, 3, 0x01F4, 0x0028, prepend, entries,
+            false,
+            0xABCD,
+            crate::tables::SectionVersion::new(7, true, 1, 3),
+            0x01F4,
+            0x0028,
+            prepend,
+            entries,
         );
         let mut buf = vec![0u8; cit.serialized_len()];
         cit.serialize_into(&mut buf).unwrap();
@@ -398,7 +398,13 @@ mod tests {
             unique_string: DvbText::new(b"episode42"),
         }];
         let original = CitSection::new(
-            true, 0x4321, 15, false, 2, 4, 0x03E8, 0x0050, prepend, entries,
+            true,
+            0x4321,
+            crate::tables::SectionVersion::new(15, false, 2, 4),
+            0x03E8,
+            0x0050,
+            prepend,
+            entries,
         );
         let mut buf = vec![0u8; original.serialized_len()];
         original.serialize_into(&mut buf).unwrap();
@@ -419,10 +425,7 @@ mod tests {
         let cit = CitSection::new(
             false,
             0x0001,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             0x0001,
             0x0001,
             DvbText::new(&[]),
@@ -451,10 +454,7 @@ mod tests {
         let cit = CitSection::new(
             false,
             0x0001,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             0x0001,
             0x0001,
             prepend,
@@ -478,10 +478,7 @@ mod tests {
         let cit = CitSection::new(
             false,
             0x0001,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             0x0001,
             0x0001,
             DvbText::new(&[]),
@@ -525,10 +522,7 @@ mod tests {
         let cit = CitSection::new(
             false,
             1,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             1,
             1,
             DvbText::new(&[]),
@@ -549,10 +543,7 @@ mod tests {
         let cit = CitSection::new(
             false,
             1,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             1,
             1,
             DvbText::new(&[]),
@@ -575,10 +566,7 @@ mod tests {
         let cit = CitSection::new(
             false,
             1,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             1,
             1,
             DvbText::new(&[]),
@@ -613,10 +601,7 @@ mod tests {
             CitSection::new(
                 false,
                 0x0001,
-                0,
-                true,
-                0,
-                0,
+                crate::tables::SectionVersion::new(0, true, 0, 0),
                 0x0001,
                 0x0001,
                 DvbText::new(block),

@@ -2,8 +2,6 @@
 //! (the `World` of the core suites), an origin that answers by true time, per-request faults, and
 //! the callbacks a real host makes (`on_response`, `on_data`, `on_closed`). No clock is read.
 
-#![allow(dead_code)]
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use broadcast_client::{Action, Config, Event, Session, Status};
@@ -27,7 +25,6 @@ pub struct Logged {
     pub headers: Headers,
     pub byte_range: Option<(u64, u64)>,
     pub send_elapsed_us: u64,
-    pub send_mono_us: u64,
     pub send_utc_us: i64,
     pub status: Option<u16>,
 }
@@ -225,7 +222,6 @@ impl<O: world::Origin> Backend for WorldBackend<O> {
         let http = HttpReq {
             method,
             url: req.url.clone(),
-            range: req.byte_range,
             if_none_match: req.header("if-none-match").map(str::to_owned),
         };
         match self.0.serve(at_utc_us, &http) {
@@ -388,7 +384,6 @@ impl DashSim {
             headers,
             byte_range: range,
             send_elapsed_us: sent_elapsed,
-            send_mono_us: self.world.mono(),
             send_utc_us: self.world.true_utc_at(sent_elapsed),
             status: None,
         };

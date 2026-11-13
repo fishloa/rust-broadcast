@@ -57,22 +57,25 @@ pub enum AuthDecision {
     Wait(Vec<AuthEvent>),
 }
 
+/// Payload of [`AuthEvent::AuthRequired`], boxed to keep the enum small.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthRequiredData {
+    /// Scheme.
+    pub scheme: crate::Scheme,
+    /// Realm.
+    pub realm: Option<String>,
+    /// Origin.
+    pub origin: Url,
+    /// Resource metadata.
+    pub resource_metadata: Option<Url>,
+}
+
 /// Event emitted by [`AuthState::handle_unauthorized`] when it cannot replay on its own.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-#[allow(clippy::large_enum_variant)]
 pub enum AuthEvent {
     /// Credentials are required from the host.
-    AuthRequired {
-        /// Scheme.
-        scheme: crate::Scheme,
-        /// Realm.
-        realm: Option<String>,
-        /// Origin.
-        origin: Url,
-        /// Resource metadata.
-        resource_metadata: Option<Url>,
-    },
+    AuthRequired(Box<AuthRequiredData>),
     /// Credentials were rejected.
     AuthRejected {
         /// HTTP status.
@@ -331,12 +334,12 @@ impl AuthState {
             self.waiting = true;
             self.authenticator = None;
             return AuthDecision::Wait(vec![
-                AuthEvent::AuthRequired {
+                AuthEvent::AuthRequired(Box::new(AuthRequiredData {
                     scheme,
                     realm,
                     origin: self.origin.clone(),
                     resource_metadata,
-                },
+                })),
                 AuthEvent::StatusWaitingForCredentials,
             ]);
         }

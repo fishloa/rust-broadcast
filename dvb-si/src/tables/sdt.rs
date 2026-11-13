@@ -133,24 +133,20 @@ impl<'a> SdtSection<'a> {
     /// Construct an SDT section with the spec `reserved` fill.
     #[must_use]
     // The eight arguments mirror the table's wire fields (EN 300 468 §5.2.3); a builder would only rename them.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         kind: SdtKind,
         transport_stream_id: u16,
-        version_number: u8,
-        current_next_indicator: bool,
-        section_number: u8,
-        last_section_number: u8,
+        section: crate::tables::SectionVersion,
         original_network_id: u16,
         services: Vec<SdtService<'a>>,
     ) -> Self {
         Self {
             kind,
             transport_stream_id,
-            version_number,
-            current_next_indicator,
-            section_number,
-            last_section_number,
+            version_number: section.version_number,
+            current_next_indicator: section.current_next_indicator,
+            section_number: section.section_number,
+            last_section_number: section.last_section_number,
             original_network_id,
             services,
             bits: super::SectionBits::dvb(),
@@ -472,10 +468,7 @@ mod tests {
         let sdt = SdtSection::new(
             SdtKind::Actual,
             0x1234,
-            5,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(5, true, 0, 0),
             0x0020,
             vec![
                 SdtService::new(
@@ -534,10 +527,7 @@ mod tests {
         let sdt = SdtSection::new(
             SdtKind::Actual,
             1,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             0x20,
             vec![SdtService::new(
                 1,
@@ -561,10 +551,7 @@ mod tests {
         let sdt = SdtSection::new(
             SdtKind::Actual,
             1,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             0x20,
             vec![SdtService::new(
                 1,

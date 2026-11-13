@@ -272,24 +272,20 @@ pub struct AitSection<'a> {
 impl<'a> AitSection<'a> {
     /// Construct an AIT section with the spec `reserved` fill.
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         application_type: ApplicationType,
         test_application_flag: bool,
-        version_number: u8,
-        current_next_indicator: bool,
-        section_number: u8,
-        last_section_number: u8,
+        section: crate::tables::SectionVersion,
         common_descriptors: DescriptorLoop<'a>,
         applications: Vec<AitApplication<'a>>,
     ) -> Self {
         Self {
             application_type,
             test_application_flag,
-            version_number,
-            current_next_indicator,
-            section_number,
-            last_section_number,
+            version_number: section.version_number,
+            current_next_indicator: section.current_next_indicator,
+            section_number: section.section_number,
+            last_section_number: section.last_section_number,
             common_descriptors,
             applications,
             bits: super::SectionBits::dvb(),
@@ -679,10 +675,7 @@ mod tests {
         let ait = AitSection::new(
             ApplicationType::HbbTv,
             false,
-            3,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(3, true, 0, 0),
             DescriptorLoop::new(&[]),
             vec![],
         );
@@ -698,10 +691,7 @@ mod tests {
         let ait = AitSection::new(
             ApplicationType::HbbTv,
             true,
-            7,
-            true,
-            1,
-            2,
+            crate::tables::SectionVersion::new(7, true, 1, 2),
             DescriptorLoop::new(&[0x01, 0x00]),
             vec![
                 AitApplication::new(
@@ -753,10 +743,7 @@ mod tests {
         let ait = AitSection::new(
             ApplicationType::from_u16(0x0010),
             false,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             DescriptorLoop::new(&desc),
             vec![],
         );
@@ -773,10 +760,7 @@ mod tests {
         let ait = AitSection::new(
             ApplicationType::from_u16(0x0010),
             false,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             DescriptorLoop::new(&desc),
             vec![],
         );
@@ -836,10 +820,7 @@ mod tests {
         let sec = AitSection::new(
             ApplicationType::Reserved(0x8000),
             false,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             DescriptorLoop::new(&[]),
             vec![],
         );

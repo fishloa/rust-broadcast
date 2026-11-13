@@ -565,10 +565,7 @@ fn build_two_program_ts_with_nit(cycles: usize, network_pid: u16) -> Vec<u8> {
 
     let pmt1 = PmtSection::new(
         1,
-        0,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
         P1_PCR_PID,
         DescriptorLoop::new(&[]),
         vec![
@@ -590,10 +587,7 @@ fn build_two_program_ts_with_nit(cycles: usize, network_pid: u16) -> Vec<u8> {
 
     let pmt2 = PmtSection::new(
         2,
-        0,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
         P2_PCR_PID,
         DescriptorLoop::new(&[]),
         vec![
@@ -707,10 +701,7 @@ fn regen_pat_version_number_bumps_once_when_mapping_changes() {
     const P3_PCR_PID: Pid = Pid::new(0x0301);
     let pmt3 = PmtSection::new(
         3,
-        0,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
         P3_PCR_PID,
         DescriptorLoop::new(&[]),
         vec![PmtStream::new(
@@ -743,10 +734,7 @@ fn regen_pat_version_number_bumps_once_when_mapping_changes() {
     // build_two_program_ts does, so PMT PIDs/content match phase 1 exactly.
     let pmt1 = PmtSection::new(
         1,
-        0,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
         P1_PCR_PID,
         DescriptorLoop::new(&[]),
         vec![
@@ -766,10 +754,7 @@ fn regen_pat_version_number_bumps_once_when_mapping_changes() {
     let mut pmt1_pktz = SectionPacketiser::new(PMT1_PID);
     let pmt2 = PmtSection::new(
         2,
-        0,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
         P2_PCR_PID,
         DescriptorLoop::new(&[]),
         vec![
@@ -899,10 +884,7 @@ fn regen_pat_preserves_network_pid_entry() {
 fn build_patless_p1_ts() -> Vec<u8> {
     let pmt1 = PmtSection::new(
         1,
-        0,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
         P1_PCR_PID,
         DescriptorLoop::new(&[]),
         vec![PmtStream::new(
@@ -1180,10 +1162,7 @@ fn raw_section_packet(pid: Pid, section: &[u8]) -> [u8; 188] {
 fn pmt1_packets() -> Vec<[u8; 188]> {
     let pmt1 = PmtSection::new(
         1,
-        0,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
         P1_PCR_PID,
         DescriptorLoop::new(&[]),
         vec![PmtStream::new(
@@ -1313,10 +1292,7 @@ fn regen_pat_version_number_wraps_modulo_32_and_holds_when_unchanged() {
         let pmt_pid = Pid::new(FIRST_PMT_PID + k);
         let pmt = PmtSection::new(
             1,
-            0,
-            true,
-            0,
-            0,
+            dvb_si::tables::SectionVersion::new(0, true, 0, 0),
             P1_PCR_PID,
             DescriptorLoop::new(&[]),
             vec![PmtStream::new(

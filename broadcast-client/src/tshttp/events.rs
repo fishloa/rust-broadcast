@@ -53,11 +53,10 @@ broadcast_common::impl_spec_display!(StarveKind);
 /// feature an `Event` serializes only; [`Event::Demux`] serializes as the
 /// bare variant tag, without its payload.
 #[derive(Debug, Clone)]
-#[allow(clippy::large_enum_variant)]
 #[non_exhaustive]
 pub enum Event {
     /// Demuxer event (T5, T14).
-    Demux(DemuxEvent),
+    Demux(Box<DemuxEvent>),
     /// Stall notice (T11).
     StallNotice {
         /// Stalled seconds.

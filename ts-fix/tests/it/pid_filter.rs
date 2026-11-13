@@ -321,10 +321,7 @@ fn build_scrambled_ts(cycles: usize) -> Vec<u8> {
     let ecm_ca = ca_descriptor_bytes(ECM_PID);
     let pmt1 = PmtSection::new(
         1,
-        0,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
         P1_PCR_PID,
         DescriptorLoop::new(&ecm_ca),
         vec![
@@ -412,10 +409,7 @@ fn service_extract_re_observes_pat_version_change() {
         // v1, program_number 1: this is the *moved* PMT for program 1.
         let pmt2 = PmtSection::new(
             1,
-            1,
-            true,
-            0,
-            0,
+            dvb_si::tables::SectionVersion::new(1, true, 0, 0),
             P2_PCR_PID,
             DescriptorLoop::new(&[]),
             vec![
@@ -474,10 +468,7 @@ fn service_extract_ignores_a_next_pat_and_a_next_pmt() {
     }
     let next_pmt = PmtSection::new(
         1,
-        3,
-        false,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(3, false, 0, 0),
         P2_PCR_PID,
         DescriptorLoop::new(&[]),
         vec![PmtStream::new(
