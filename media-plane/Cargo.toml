@@ -40,6 +40,8 @@ criterion     = { workspace = true, features = ["html_reports"] }
 
 [features]
 default = ["std"]
+# The `ts_session::test_support` helpers (muxed TS bytes, configs) for a host's tests.
+test-support = ["std"]
 std     = ["broadcast-common/std", "thiserror/std", "dep:transmux", "dep:timed-metadata", "dep:event-listener", "dep:parking_lot"]
 
 [package.metadata.docs.rs]

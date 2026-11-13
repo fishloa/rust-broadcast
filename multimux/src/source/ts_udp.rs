@@ -214,8 +214,8 @@ const WHAT: &str = "ts/udp";
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::source::ts_program::test_support::{build_ts_bytes, handshake, trunk_config};
     use media_plane::trunk::SampleCursorItem;
+    use media_plane::ts_session::test_support::{build_ts_bytes, handshake, trunk_config};
     use std::time::Duration;
     use tokio_util::sync::CancellationToken;
     use transmux::TrackId;

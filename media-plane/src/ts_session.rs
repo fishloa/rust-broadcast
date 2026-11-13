@@ -11,7 +11,7 @@
 //! the differing `TrackAdded` log wording); this module is the single copy,
 //! and the three transports keep only their socket/stream handling.
 //!
-//! This is exactly the consolidation `media_plane::ingress`'s module docs
+//! This is exactly the consolidation `crate::ingress`'s module docs
 //! anticipate ("this module's job is to ... own the feed/poll/deadline/
 //! dispatch loop so no protocol has to reimplement it"): the plane owns the
 //! driver loop, and this owns the one TS-specific translation the plane
@@ -42,7 +42,7 @@
 //! negotiate once its transport is up (UDP: a local bind; HTTP: the response
 //! headers are already in; SRT: the SRT handshake completed in the socket
 //! layer). They are the "purely local operation with nothing to negotiate"
-//! case `media_plane::ingress`'s own `ScriptedSession` test precedent
+//! case `crate::ingress`'s own `ScriptedSession` test precedent
 //! documents, so [`SessionEvent::Established`] is queued up front rather
 //! than gated on the PMT — establishment is a per-*connection* fact, and the
 //! PMT resolving is a per-*program* one that `NewProgram` already carries
@@ -52,21 +52,24 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::convert::Infallible;
 use transmux::{ProgramNumber, TrackId};
 
+use crate::ingress::{IngestSession, ProgramId, SessionEvent};
+use crate::trunk::RetentionClass;
 use broadcast_common::{Demand, Stage, Timestamp};
-use media_plane::ingress::{IngestSession, ProgramId, SessionEvent};
-use media_plane::trunk::RetentionClass;
 
 use transmux::pipeline::{Sample, TrackSpec};
 use transmux::{DemuxEvent, StreamingTsDemux};
 
+/// Largest read a transport should hand [`TsIngestSession::feed`] at a time; the session's [`Demand`].
+pub const MAX_TS_READ: usize = 65_536;
+
 /// Most samples [`ProgramTracker`] holds for tracks the demux has announced
 /// but whose programme is not yet announced (before the first
 /// `TracksResolved`). See [`ProgramTracker`]'s "Pre-resolution backlog".
-pub(crate) const MAX_HELD_SAMPLES: usize = 65_536;
+pub const MAX_HELD_SAMPLES: usize = 65_536;
 
 /// Most sample payload bytes [`ProgramTracker`] holds in that pre-resolution
 /// backlog (64 MiB). Whichever of the two caps is hit first applies.
-pub(crate) const MAX_HELD_BYTES: usize = 64 * 1024 * 1024;
+pub const MAX_HELD_BYTES: usize = 64 * 1024 * 1024;
 
 /// Translates [`transmux::DemuxEvent`]s into [`SessionEvent`]s and tracks
 /// which [`ProgramId`] owns each `track_id` — a plain, byte-free state
@@ -101,9 +104,9 @@ pub(crate) const MAX_HELD_BYTES: usize = 64 * 1024 * 1024;
 /// The hold is bounded by [`MAX_HELD_SAMPLES`] / [`MAX_HELD_BYTES`]. On
 /// overflow (a head that never resolves, with other tracks flowing) the
 /// **oldest** held sample is dropped and counted in the
-/// `multimux_ts_backlog_dropped_total` counter, so the newest media (the
+/// backlog-drop observer ([`ProgramTracker::with_backlog_drop_observer`]), so the newest media (the
 /// live edge) survives.
-pub(crate) struct ProgramTracker {
+pub struct ProgramTracker {
     /// Samples for announced-but-not-yet-programmed tracks, oldest first.
     held: VecDeque<(TrackId, Sample)>,
     held_bytes: usize,
@@ -121,6 +124,8 @@ pub(crate) struct ProgramTracker {
     /// Programs whose track set changed since last `TracksResolved`.
     changed: HashSet<ProgramId>,
     next_program_id: u32,
+    /// Told how many held samples an overflow just dropped.
+    backlog_drop_observer: Option<fn(u64)>,
 }
 
 struct PerProgram {
@@ -132,7 +137,7 @@ struct PerProgram {
 impl ProgramTracker {
     /// Starts with [`SessionEvent::Established`] already queued — see the
     /// module doc.
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         ProgramTracker {
             held: VecDeque::new(),
             held_bytes: 0,
@@ -143,10 +148,19 @@ impl ProgramTracker {
             track_program: HashMap::new(),
             changed: HashSet::new(),
             next_program_id: 0,
+            backlog_drop_observer: None,
         }
     }
 
-    pub(crate) fn handle(&mut self, event: DemuxEvent) {
+    /// Call `observer` with the number of held samples dropped each time the
+    /// pre-resolution backlog overflows (a counter in the host, say).
+    #[must_use]
+    pub fn with_backlog_drop_observer(mut self, observer: fn(u64)) -> Self {
+        self.backlog_drop_observer = Some(observer);
+        self
+    }
+
+    pub fn handle(&mut self, event: DemuxEvent) {
         match event {
             DemuxEvent::TrackAdded(spec) => self.track_added(spec),
             DemuxEvent::TracksResolved { .. } => self.tracks_resolved(),
@@ -160,7 +174,7 @@ impl ProgramTracker {
         }
     }
 
-    pub(crate) fn track_added(&mut self, spec: TrackSpec) {
+    pub fn track_added(&mut self, spec: TrackSpec) {
         let pn = spec.program_number;
         if self.resolved_once {
             // Issue #781 + #906: a track declared after initial
@@ -175,7 +189,7 @@ impl ProgramTracker {
         }
     }
 
-    pub(crate) fn tracks_resolved(&mut self) {
+    pub fn tracks_resolved(&mut self) {
         if !self.resolved_once {
             if !self.resolving.is_empty() {
                 self.resolved_once = true;
@@ -237,7 +251,7 @@ impl ProgramTracker {
     /// `TracksResolved` the programme is not yet announced: the sample of an
     /// announced track is held (the demux's probe-backlog replay) until it is.
     /// See "Pre-resolution backlog".
-    pub(crate) fn sample(&mut self, track_id: TrackId, sample: Sample) {
+    pub fn sample(&mut self, track_id: TrackId, sample: Sample) {
         if let Some(&program) = self.track_program.get(&track_id) {
             self.pending.push_back(SessionEvent::Sample {
                 program,
@@ -257,7 +271,7 @@ impl ProgramTracker {
 
     /// A mid-stream PMT version bump dropped a previously-live PID
     /// (issue #774): stop routing samples for it.
-    pub(crate) fn track_removed(&mut self, track_id: TrackId) {
+    pub fn track_removed(&mut self, track_id: TrackId) {
         if let Some(program) = self.track_program.remove(&track_id) {
             if let Some(prog) = self.program_for_program_id_mut(program) {
                 prog.track_specs.remove(&track_id);
@@ -272,7 +286,7 @@ impl ProgramTracker {
     /// of describing a stream that is no longer being sent. Before the first
     /// `TracksResolved` the buffered spec is just replaced; an update for a
     /// track that was never announced is ignored (nothing routes on it).
-    pub(crate) fn track_updated(&mut self, spec: TrackSpec) {
+    pub fn track_updated(&mut self, spec: TrackSpec) {
         let track_id = spec.track_id;
         if self.resolved_once {
             if let Some(&program) = self.track_program.get(&track_id)
@@ -294,7 +308,7 @@ impl ProgramTracker {
         }
     }
 
-    pub(crate) fn poll(&mut self) -> Option<SessionEvent> {
+    pub fn poll(&mut self) -> Option<SessionEvent> {
         self.pending.pop_front()
     }
 
@@ -311,8 +325,10 @@ impl ProgramTracker {
             self.held_bytes -= old.data.len();
             dropped += 1;
         }
-        if dropped > 0 {
-            metrics::counter!(crate::prometheus::TS_BACKLOG_DROPPED_TOTAL).increment(dropped);
+        if dropped > 0
+            && let Some(observer) = self.backlog_drop_observer
+        {
+            observer(dropped);
         }
     }
 
@@ -373,6 +389,15 @@ pub struct TsIngestSession {
 pub const SILENT_PID_SETTLE: std::time::Duration = std::time::Duration::from_secs(1);
 
 impl TsIngestSession {
+    /// Call `observer` with the number of samples dropped when the
+    /// pre-resolution backlog overflows; see
+    /// [`ProgramTracker::with_backlog_drop_observer`].
+    #[must_use]
+    pub fn with_backlog_drop_observer(mut self, observer: fn(u64)) -> Self {
+        self.tracker = self.tracker.with_backlog_drop_observer(observer);
+        self
+    }
+
     /// Construct a fresh session — performs no I/O.
     pub fn new() -> Self {
         TsIngestSession {
@@ -436,7 +461,7 @@ impl Stage for TsIngestSession {
     }
 
     fn demand(&self) -> Demand {
-        Demand::new(crate::source::MAX_TS_READ)
+        Demand::new(MAX_TS_READ)
     }
 }
 
@@ -453,10 +478,11 @@ impl IngestSession for TsIngestSession {
 /// loopback test needs. Lives here (rather than being copy-pasted into
 /// `ts_udp`/`ts_http`/`srt`'s own `mod tests`) for the same
 /// one-copy reason the session itself does.
-#[cfg(test)]
-pub(crate) mod test_support {
-    use media_plane::ingress::HandshakePolicy;
-    use media_plane::trunk::TrunkConfig;
+/// Real `TsMux`-muxed TS bytes and the configs a TS transport's test needs.
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support {
+    use crate::ingress::HandshakePolicy;
+    use crate::trunk::TrunkConfig;
     use transmux::TrackId;
 
     use broadcast_common::Timestamp;
@@ -469,7 +495,8 @@ pub(crate) mod test_support {
         NonZeroUsize::new(n).expect("test capacity must be non-zero")
     }
 
-    pub(crate) fn trunk_config() -> TrunkConfig {
+    /// A small `TrunkConfig`.
+    pub fn trunk_config() -> TrunkConfig {
         TrunkConfig::default()
             .with_timed_capacity(nz(64))
             .with_sparse_capacity(nz(16))
@@ -480,11 +507,13 @@ pub(crate) mod test_support {
 
     /// A handshake deadline far enough out that it never fires — these
     /// transports' `Established` is queued at construction.
-    pub(crate) fn handshake() -> HandshakePolicy {
+    /// A handshake deadline that never fires.
+    pub fn handshake() -> HandshakePolicy {
         HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX))
     }
 
-    pub(crate) fn track_spec(track_id: TrackId) -> TrackSpec {
+    /// An AVC track spec.
+    pub fn track_spec(track_id: TrackId) -> TrackSpec {
         let avc = transmux::avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==")
             .expect("valid sprop");
         TrackSpec::new(
@@ -502,13 +531,14 @@ pub(crate) mod test_support {
     /// the workspace's own `transmux::TsMux` packager — the "real fixture,
     /// not inline bytes" discipline this project requires, since a
     /// hand-built TS risks missing real PSI/PES framing quirks.
-    pub(crate) fn build_ts_bytes(track_id: TrackId, nal_byte: u8, count: u32) -> Vec<u8> {
+    /// A muxed TS of `count` frames of one track.
+    pub fn build_ts_bytes(track_id: TrackId, nal_byte: u8, count: u32) -> Vec<u8> {
         build_ts_bytes_with_gop(track_id, nal_byte, count, u32::MAX)
     }
 
     /// [`build_ts_bytes`] with a sync sample every `gop` frames, so the
     /// segmenter closes a segment per `gop` frames.
-    pub(crate) fn build_ts_bytes_with_gop(
+    pub fn build_ts_bytes_with_gop(
         track_id: TrackId,
         nal_byte: u8,
         count: u32,
@@ -784,16 +814,16 @@ mod tests {
     #[test]
     fn a_segmenter_can_hold_a_segment_writer_while_ingest_holds_the_sample_writer() {
         use super::test_support::{build_ts_bytes, handshake, track_spec, trunk_config};
+        use crate::ingress::{IngestDriver, ProgramId};
+        use crate::trunk::{PartEntry, SampleCursorItem, SegmentEntry};
         use broadcast_common::Timestamp;
-        use media_plane::ingress::{IngestDriver, ProgramId};
-        use media_plane::trunk::{PartEntry, SampleCursorItem, SegmentEntry};
         use std::time::Duration as StdDuration;
         use transmux::ll_hls::LlHlsSegmenter;
         use transmux::segmenter::SegmentMeta;
 
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
-            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
+            crate::IngestConfig::new(handshake()).with_trunk(trunk_config()),
         );
 
         // Feed a real muxed TS stream; the driver mints program 0's Trunk
@@ -856,8 +886,8 @@ mod tests {
         for part in seg.take_ready_parts() {
             segment_writer.publish_part(PartEntry::new(
                 part.bytes,
-                media_plane::ids::SegmentSeq::new(part.segment_seq),
-                media_plane::ids::PartIndex::new(part.part_index),
+                crate::ids::SegmentSeq::new(part.segment_seq),
+                crate::ids::PartIndex::new(part.part_index),
                 StdDuration::from_secs_f64(part.duration),
                 part.independent,
             ));
@@ -868,7 +898,7 @@ mod tests {
             segment_writer
                 .publish_segment(SegmentEntry::new(
                     segment.bytes,
-                    media_plane::ids::SegmentSeq::new(segment.segment_seq),
+                    crate::ids::SegmentSeq::new(segment.segment_seq),
                     StdDuration::from_secs_f64(segment.duration),
                     Timestamp::ZERO,
                     SegmentMeta {
@@ -955,7 +985,7 @@ mod tests {
     /// `track_program` guard.
     #[test]
     fn stalled_head_does_not_hide_the_programme_from_the_session() {
-        use media_plane::ingress::IngestDriver;
+        use crate::ingress::IngestDriver;
         use test_support::{handshake, trunk_config};
 
         let ts = stalled_head_ts_bytes();
@@ -987,7 +1017,7 @@ mod tests {
         // And through the driver: the programme's Trunk exists.
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
-            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
+            crate::IngestConfig::new(handshake()).with_trunk(trunk_config()),
         );
         driver.feed(&ts, Timestamp::ZERO);
         assert!(

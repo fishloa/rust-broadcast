@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use broadcast_common::{Stage, Timestamp, crc32_mpeg2};
 use media_plane::ingress::SessionEvent;
-use multimux::source::ts_program::TsIngestSession;
+use media_plane::ts_session::TsIngestSession;
 
 const TS_PACKET: usize = 188;
 const SYNC_BYTE: u8 = 0x47;
@@ -148,7 +148,7 @@ fn assert_released_by_time(rate: u64, position: Position) {
         panic!("no program within 10 s of arrival at {rate} B/s: the silent PID held it")
     });
     assert!(
-        at <= multimux::source::ts_program::SILENT_PID_SETTLE + FIRST_OUTPUT_SLACK,
+        at <= media_plane::ts_session::SILENT_PID_SETTLE + FIRST_OUTPUT_SLACK,
         "first output at {at:?} at {rate} B/s"
     );
 }

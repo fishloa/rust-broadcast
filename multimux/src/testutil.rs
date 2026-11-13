@@ -153,9 +153,9 @@ pub(crate) const INGEST_GOP_FRAMES: u32 = 30;
 pub(crate) async fn ingest_run(
     route: &crate::route::RouteHandle,
     segments: u32,
-) -> media_plane::ingress::IngestDriver<crate::source::ts_program::TsIngestSession> {
-    use crate::source::ts_program::TsIngestSession;
+) -> media_plane::ingress::IngestDriver<media_plane::ts_session::TsIngestSession> {
     use media_plane::ingress::{HandshakePolicy, IngestDriver};
+    use media_plane::ts_session::TsIngestSession;
 
     let mut driver = IngestDriver::new(
         TsIngestSession::new(),
@@ -165,7 +165,7 @@ pub(crate) async fn ingest_run(
         .with_trunk(crate::source::pull_trunk_config(8)),
     );
     driver.feed(
-        &crate::source::ts_program::test_support::build_ts_bytes_with_gop(
+        &media_plane::ts_session::test_support::build_ts_bytes_with_gop(
             transmux::TrackId::new(1),
             0xAB,
             segments * INGEST_GOP_FRAMES,

@@ -132,13 +132,13 @@ pub async fn run_ts_http(
 mod tests {
     use super::*;
     use crate::error::MultimuxError;
-    use crate::source::ts_program::test_support::{build_ts_bytes, handshake, trunk_config};
     use axum::Router;
     use axum::body::Body;
     use axum::response::{IntoResponse, Response as AxumResponse};
     use axum::routing::get;
     use broadcast_auth::Credentials;
     use media_plane::trunk::SampleCursorItem;
+    use media_plane::ts_session::test_support::{build_ts_bytes, handshake, trunk_config};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use transmux::TrackId;
 
