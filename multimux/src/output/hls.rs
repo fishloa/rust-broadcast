@@ -1017,7 +1017,7 @@ mod ts_tests {
     /// PAT/PMT), so there is no init segment to reference.
     ///
     /// MUTATION VERIFIED: forcing `crate::route::ProgramServing::new` to
-    /// always call `.container(Container::Fmp4)` regardless of the route's
+    /// always call `.with_container(Container::Fmp4)` regardless of the route's
     /// configured container (simulating the pre-#887 fMP4-only wiring) makes
     /// this test's `assert!(!body.contains("#EXT-X-MAP"))` fail: the rendered
     /// body contains `#EXT-X-MAP:URI="init-1.mp4"` (actual) where none was

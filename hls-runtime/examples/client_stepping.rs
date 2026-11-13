@@ -47,9 +47,9 @@ fn canned_playlist() -> String {
         .segment_writer()
         .expect("first (and only) segment writer");
     let origin = HlsOrigin::builder(std::sync::Arc::clone(&trunk))
-        .target_duration_secs(1.0)
-        .window_segments(nz(4))
-        .low_latency(500)
+        .with_target_duration_secs(1.0)
+        .with_window_segments(nz(4))
+        .with_low_latency(500)
         .build()
         .expect("both required fields set");
     origin.set_init(vec![0xAA; 32]);

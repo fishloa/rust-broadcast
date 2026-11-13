@@ -41,9 +41,9 @@ fn trunk_with(segment_cap: usize) -> (Arc<Trunk>, SegmentWriter) {
 
 fn origin(trunk: &Arc<Trunk>, window: usize) -> HlsOrigin {
     HlsOrigin::builder(Arc::clone(trunk))
-        .target_duration_secs(4.0)
-        .window_segments(nz(window))
-        .instance(7)
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(window))
+        .with_instance(7)
         .build()
         .expect("origin builds")
 }
@@ -138,10 +138,10 @@ fn average_bandwidth_survives_window_eviction() {
 fn average_bandwidth_is_omitted_when_nothing_is_measurable() {
     let (trunk, w) = trunk_with(8);
     let o = HlsOrigin::builder(Arc::clone(&trunk))
-        .target_duration_secs(4.0)
-        .window_segments(nz(4))
-        .instance(7)
-        .declared_bandwidth_bps(5_000_000)
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(4))
+        .with_instance(7)
+        .with_declared_bandwidth_bps(5_000_000)
         .build()
         .expect("origin builds");
 

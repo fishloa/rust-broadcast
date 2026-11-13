@@ -63,9 +63,9 @@ fn main() {
         .segment_writer()
         .expect("first (and only) segment writer");
     let origin = HlsOrigin::builder(std::sync::Arc::clone(&trunk))
-        .target_duration_secs(TARGET_DURATION_SECS)
-        .window_segments(nz(WINDOW_SEGMENTS))
-        .low_latency(PART_TARGET_MS)
+        .with_target_duration_secs(TARGET_DURATION_SECS)
+        .with_window_segments(nz(WINDOW_SEGMENTS))
+        .with_low_latency(PART_TARGET_MS)
         .build()
         .expect("both required fields set");
     origin.set_init(vec![0xAA; 32]);

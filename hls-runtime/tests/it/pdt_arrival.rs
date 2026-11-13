@@ -33,21 +33,21 @@ fn trunk_with() -> (Arc<Trunk>, SegmentWriter) {
 
 fn origin_arrival(trunk: &Arc<Trunk>, clock: Arc<dyn Fn() -> i64 + Send + Sync>) -> HlsOrigin {
     HlsOrigin::builder(Arc::clone(trunk))
-        .target_duration_secs(4.0)
-        .window_segments(nz(4))
-        .low_latency(500)
-        .instance(7)
-        .program_date_time_arrival(clock)
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(4))
+        .with_low_latency(500)
+        .with_instance(7)
+        .with_program_date_time_arrival(clock)
         .build()
         .expect("origin")
 }
 
 fn origin_plain(trunk: &Arc<Trunk>) -> HlsOrigin {
     HlsOrigin::builder(Arc::clone(trunk))
-        .target_duration_secs(4.0)
-        .window_segments(nz(4))
-        .low_latency(500)
-        .instance(7)
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(4))
+        .with_low_latency(500)
+        .with_instance(7)
         .build()
         .expect("origin")
 }
@@ -277,11 +277,11 @@ fn iframe_pdt_equals_media_pdt() {
     let writer = trunk.segment_writer().expect("writer");
     let clock = Arc::new(|| NOW_MS) as Arc<dyn Fn() -> i64 + Send + Sync>;
     let origin = HlsOrigin::builder(Arc::clone(&trunk))
-        .target_duration_secs(4.0)
-        .window_segments(nz(4))
-        .low_latency(500)
-        .instance(7)
-        .program_date_time_arrival(clock)
+        .with_target_duration_secs(4.0)
+        .with_window_segments(nz(4))
+        .with_low_latency(500)
+        .with_instance(7)
+        .with_program_date_time_arrival(clock)
         .build()
         .expect("origin");
     let init = test_fixtures::read("hls/cmaf-fmp4/init.mp4");

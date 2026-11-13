@@ -16,7 +16,7 @@
 //! A Media Playlist request without `_HLS_msn`/`_HLS_part` made before the
 //! window holds a closed segment is answered [`EgressResponse::Await`], like a
 //! blocking reload, until the first segment closes (see
-//! [`HlsOriginBuilder::hold_cold_playlist`]): clients that ignore Partial
+//! [`HlsOriginBuilder::with_hold_cold_playlist`]): clients that ignore Partial
 //! Segments cannot open a playlist with no `EXTINF`. The hold shares the
 //! blocking-reload bound; once the caller's [`AwaitPolicy`] expires the answer
 //! is [`EgressResponse::NotFound`], which the adapter turns into `503 Service
@@ -151,7 +151,7 @@ fn locked<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 pub const DEFAULT_TRACK_ID: TrackId = TrackId::new(1);
 
 /// Which container [`HlsOrigin`] serves segments/parts as — orthogonal to
-/// whether LL-HLS is enabled ([`HlsOriginBuilder::low_latency`]); issue #873.
+/// whether LL-HLS is enabled ([`HlsOriginBuilder::with_low_latency`]); issue #873.
 ///
 /// RFC 8216bis §3.1.1 / §3.1.2 give the two containers different
 /// `#EXT-X-MAP` obligations:
@@ -261,7 +261,7 @@ const MILLIS_PER_SEC: u64 = 1_000;
 /// the current last closed segment is either a malfunctioning client or abuse.
 const ABUSE_MSN_FUTURE_BOUND: u64 = 2;
 
-/// Default of [`HlsOriginBuilder::hold_cold_playlist`].
+/// Default of [`HlsOriginBuilder::with_hold_cold_playlist`].
 pub const HOLD_COLD_PLAYLIST_DEFAULT: bool = true;
 
 /// RFC 8216bis / Apple LL-HLS §4.4.3.7: `#EXT-X-SERVER-CONTROL`'s
@@ -1095,106 +1095,112 @@ fn parse_immediate(file: &str, container: Container) -> Option<ImmediateResource
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum HlsOriginBuildError {
-    /// [`HlsOriginBuilder::target_duration_secs`] was never called.
-    #[error("HlsOrigin::builder(...).target_duration_secs(...) is required but was never called")]
+    /// [`HlsOriginBuilder::with_target_duration_secs`] was never called.
+    #[error(
+        "HlsOrigin::builder(...).with_target_duration_secs(...) is required but was never called"
+    )]
     MissingTargetDurationSecs,
-    /// [`HlsOriginBuilder::window_segments`] was never called.
-    #[error("HlsOrigin::builder(...).window_segments(...) is required but was never called")]
+    /// [`HlsOriginBuilder::with_window_segments`] was never called.
+    #[error("HlsOrigin::builder(...).with_window_segments(...) is required but was never called")]
     MissingWindowSegments,
-    /// [`HlsOriginBuilder::target_duration_secs`] was NaN, infinite, zero or
+    /// [`HlsOriginBuilder::with_target_duration_secs`] was NaN, infinite, zero or
     /// negative: `EXT-X-TARGETDURATION` must be a positive integer (RFC
     /// 8216bis §4.4.3.1).
-    #[error("HlsOrigin::builder(...).target_duration_secs(...) must be finite and positive")]
+    #[error("HlsOrigin::builder(...).with_target_duration_secs(...) must be finite and positive")]
     InvalidTargetDuration,
-    /// [`HlsOriginBuilder::low_latency`] was given a part target of `0` ms:
+    /// [`HlsOriginBuilder::with_low_latency`] was given a part target of `0` ms:
     /// `#EXT-X-PART-INF`'s `PART-TARGET` must be a positive duration (RFC
     /// 8216bis §4.4.3.7), and the Advance Part Limit divides by it.
-    #[error("HlsOrigin::builder(...).low_latency(0): the part target must be positive")]
+    #[error("HlsOrigin::builder(...).with_low_latency(0): the part target must be positive")]
     ZeroPartTarget,
-    /// [`HlsOriginBuilder::media_sequence_offset`] is so large that
+    /// [`HlsOriginBuilder::with_media_sequence_offset`] is so large that
     /// `offset + u32::MAX` (the largest origin sequence number) would not fit
     /// a `u64` Media Sequence Number.
     #[error(
-        "HlsOrigin::builder(...).media_sequence_offset(...) leaves no room for u32 sequence numbers"
+        "HlsOrigin::builder(...).with_media_sequence_offset(...) leaves no room for u32 sequence numbers"
     )]
     MediaSequenceOffsetTooLarge,
-    /// [`HlsOriginBuilder::declared_bandwidth_bps`] was given `0` or a value
+    /// [`HlsOriginBuilder::with_declared_bandwidth_bps`] was given `0` or a value
     /// greater than `u32::MAX`.
-    #[error("HlsOrigin::builder(...).declared_bandwidth_bps(...) must be > 0 and <= u32::MAX")]
+    #[error("HlsOrigin::builder(...).with_declared_bandwidth_bps(...) must be > 0 and <= u32::MAX")]
     InvalidDeclaredBandwidth,
     /// An audio rendition's `group_id` is empty.
-    #[error("HlsOrigin::builder(...).audio_renditions(...): group_id must be non-empty")]
+    #[error("HlsOrigin::builder(...).with_audio_renditions(...): group_id must be non-empty")]
     EmptyAudioRenditionGroupId,
     /// An audio rendition's `name` is empty.
-    #[error("HlsOrigin::builder(...).audio_renditions(...): name must be non-empty")]
+    #[error("HlsOrigin::builder(...).with_audio_renditions(...): name must be non-empty")]
     EmptyAudioRenditionName,
     /// Two audio renditions in one group share a `NAME`.
-    #[error("HlsOrigin::builder(...).audio_renditions(...): duplicate NAME in a group")]
+    #[error("HlsOrigin::builder(...).with_audio_renditions(...): duplicate NAME in a group")]
     DuplicateAudioRenditionName,
     /// An audio rendition group does not have exactly one `DEFAULT=YES` member.
     #[error(
-        "HlsOrigin::builder(...).audio_renditions(...): a group must have exactly one DEFAULT=YES member"
+        "HlsOrigin::builder(...).with_audio_renditions(...): a group must have exactly one DEFAULT=YES member"
     )]
     AudioRenditionDefaultCount,
     /// A `DEFAULT=YES` audio rendition is not `AUTOSELECT=YES` (RFC 8216bis §4.4.6.1).
-    #[error("HlsOrigin::builder(...).audio_renditions(...): DEFAULT=YES requires AUTOSELECT=YES")]
+    #[error(
+        "HlsOrigin::builder(...).with_audio_renditions(...): DEFAULT=YES requires AUTOSELECT=YES"
+    )]
     AudioRenditionDefaultNotAutoselect,
     /// An audio rendition's `language` is empty.
-    #[error("HlsOrigin::builder(...).audio_renditions(...): language must be non-empty")]
+    #[error("HlsOrigin::builder(...).with_audio_renditions(...): language must be non-empty")]
     EmptyAudioRenditionLanguage,
     /// An audio rendition's `uri` is empty.
-    #[error("HlsOrigin::builder(...).audio_renditions(...): uri must be non-empty")]
+    #[error("HlsOrigin::builder(...).with_audio_renditions(...): uri must be non-empty")]
     EmptyAudioRenditionUri,
     /// Audio rendition groups do not all have the same members (RFC 8216bis §4.4.6.1).
     #[error(
-        "HlsOrigin::builder(...).audio_renditions(...): every group must have the same members, differing only in URI and CHANNELS"
+        "HlsOrigin::builder(...).with_audio_renditions(...): every group must have the same members, differing only in URI and CHANNELS"
     )]
     AudioRenditionGroupsDiffer,
     /// A subtitle rendition's `name` is empty.
-    #[error("HlsOrigin::builder(...).subtitle_renditions(...): name must be non-empty")]
+    #[error("HlsOrigin::builder(...).with_subtitle_renditions(...): name must be non-empty")]
     EmptySubtitleRenditionName,
     /// A subtitle rendition's `language` is empty (Apple HLS Authoring Spec 4.7).
-    #[error("HlsOrigin::builder(...).subtitle_renditions(...): language must be non-empty")]
+    #[error("HlsOrigin::builder(...).with_subtitle_renditions(...): language must be non-empty")]
     EmptySubtitleRenditionLanguage,
     /// A subtitle rendition's `uri` is empty.
-    #[error("HlsOrigin::builder(...).subtitle_renditions(...): uri must be non-empty")]
+    #[error("HlsOrigin::builder(...).with_subtitle_renditions(...): uri must be non-empty")]
     EmptySubtitleRenditionUri,
     /// Two subtitle renditions share a `NAME`.
-    #[error("HlsOrigin::builder(...).subtitle_renditions(...): duplicate NAME")]
+    #[error("HlsOrigin::builder(...).with_subtitle_renditions(...): duplicate NAME")]
     DuplicateSubtitleRenditionName,
     /// Two subtitle renditions share a `URI`.
-    #[error("HlsOrigin::builder(...).subtitle_renditions(...): duplicate URI")]
+    #[error("HlsOrigin::builder(...).with_subtitle_renditions(...): duplicate URI")]
     DuplicateSubtitleRenditionUri,
     /// A `DEFAULT=YES` subtitle rendition is not `AUTOSELECT=YES` (RFC 8216 §4.3.4.1.1).
     #[error(
-        "HlsOrigin::builder(...).subtitle_renditions(...): DEFAULT=YES requires AUTOSELECT=YES"
+        "HlsOrigin::builder(...).with_subtitle_renditions(...): DEFAULT=YES requires AUTOSELECT=YES"
     )]
     SubtitleRenditionDefaultNotAutoselect,
     /// More than one subtitle rendition is `DEFAULT=YES` (RFC 8216 §4.3.4.1.1).
-    #[error("HlsOrigin::builder(...).subtitle_renditions(...): at most one DEFAULT=YES member")]
+    #[error(
+        "HlsOrigin::builder(...).with_subtitle_renditions(...): at most one DEFAULT=YES member"
+    )]
     MultipleDefaultSubtitleRenditions,
     /// `subtitle_sibling_origins` is non-empty but not one per declared rendition.
     #[error(
-        "HlsOrigin::builder(...).subtitle_sibling_origins(...): one origin per declared subtitle rendition"
+        "HlsOrigin::builder(...).with_subtitle_sibling_origins(...): one origin per declared subtitle rendition"
     )]
     SubtitleSiblingCountMismatch,
     /// A subtitle sibling origin is not a [`Container::WebVtt`] origin.
     #[error(
-        "HlsOrigin::builder(...).subtitle_sibling_origins(...): sibling must be a WebVtt origin"
+        "HlsOrigin::builder(...).with_subtitle_sibling_origins(...): sibling must be a WebVtt origin"
     )]
     SubtitleSiblingNotWebVtt,
     /// A subtitle sibling's `EXT-X-TARGETDURATION` differs from this origin's
     /// (Apple HLS Authoring Spec 5.6).
     #[error(
-        "HlsOrigin::builder(...).subtitle_sibling_origins(...): sibling target duration must equal this origin's"
+        "HlsOrigin::builder(...).with_subtitle_sibling_origins(...): sibling target duration must equal this origin's"
     )]
     SubtitleSiblingTargetDurationMismatch,
     /// A closed-caption override's `instream_id` is not `CC1`..`CC4` or
     /// `SERVICE1`..`SERVICE63`.
-    #[error("HlsOrigin::builder(...).closed_caption_overrides(...): invalid INSTREAM-ID")]
+    #[error("HlsOrigin::builder(...).with_closed_caption_overrides(...): invalid INSTREAM-ID")]
     InvalidClosedCaptionInstreamId,
     /// Two closed-caption overrides name the same `INSTREAM-ID`.
-    #[error("HlsOrigin::builder(...).closed_caption_overrides(...): duplicate INSTREAM-ID")]
+    #[error("HlsOrigin::builder(...).with_closed_caption_overrides(...): duplicate INSTREAM-ID")]
     DuplicateClosedCaptionInstreamId,
 }
 
@@ -1308,7 +1314,7 @@ pub fn validate_audio_renditions_relaxed(
 
 /// A typed declaration of one audio rendition for a multivariant playlist
 /// (RFC 8216bis §4.4.6.1, Apple HLS authoring spec items 9.5-9.8). Consumed
-/// by [`HlsOriginBuilder::audio_renditions`].
+/// by [`HlsOriginBuilder::with_audio_renditions`].
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AudioRenditionDecl {
@@ -1356,7 +1362,7 @@ const WEBVTT_CODEC: &str = "wvtt";
 
 /// A typed declaration of one WebVTT subtitle rendition for a multivariant
 /// playlist (RFC 8216 §4.3.4.1, Apple HLS Authoring Spec items 4.5-4.7, 5.11).
-/// Consumed by [`HlsOriginBuilder::subtitle_renditions`]. All renditions share
+/// Consumed by [`HlsOriginBuilder::with_subtitle_renditions`]. All renditions share
 /// the group [`SUBTITLES_GROUP_ID`].
 ///
 /// `hearing_impaired` emits the item 4.5 `CHARACTERISTICS` and forces
@@ -1447,7 +1453,7 @@ pub const CLOSED_CAPTIONS_GROUP_ID: &str = "cc";
 /// Operator override of how one detected caption stream is advertised
 /// (RFC 8216bis §4.4.6.1, Apple HLS authoring spec item 4.4). It never makes
 /// a stream appear: a stream is advertised only once the video is seen to
-/// carry it. Consumed by [`HlsOriginBuilder::closed_caption_overrides`].
+/// carry it. Consumed by [`HlsOriginBuilder::with_closed_caption_overrides`].
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ClosedCaptionDecl {
@@ -1506,10 +1512,10 @@ pub struct RenditionSibling {
 /// # let nz = |n: usize| NonZeroUsize::new(n).unwrap();
 /// # let trunk = Arc::new(Trunk::new(TrunkConfig::default().with_timed_capacity(nz(16)).with_sparse_capacity(nz(4)).with_segment_capacity(nz(8)).with_event_capacity(nz(4)).with_part_capacity(nz(16))));
 /// let classic_ts = HlsOrigin::builder(Arc::clone(&trunk))
-///     .target_duration_secs(6.0)
-///     .window_segments(nz(4))
-///     .container(Container::MpegTs)
-///     // `.low_latency(..)` omitted entirely -> classic HLS.
+///     .with_target_duration_secs(6.0)
+///     .with_window_segments(nz(4))
+///     .with_container(Container::MpegTs)
+///     // `.with_low_latency(..)` omitted entirely -> classic HLS.
 ///     .build()
 ///     .expect("both required fields were set");
 /// # let _ = classic_ts;
@@ -1571,7 +1577,7 @@ impl HlsOriginBuilder {
     /// segment exists. Default [`HOLD_COLD_PLAYLIST_DEFAULT`] (`true`); turn it
     /// off for a deployment that serves only Low-Latency clients, whose cold
     /// start then no longer waits one segment.
-    pub fn hold_cold_playlist(mut self, hold_cold_playlist: bool) -> Self {
+    pub fn with_hold_cold_playlist(mut self, hold_cold_playlist: bool) -> Self {
         self.hold_cold_playlist = hold_cold_playlist;
         self
     }
@@ -1580,7 +1586,7 @@ impl HlsOriginBuilder {
     /// required; [`HlsOriginBuilder::build`] errors if this is never called.
     /// The actually-rendered value is raised to the largest real segment
     /// duration seen, if that ever exceeds this (see `render_playlist`).
-    pub fn target_duration_secs(mut self, target_duration_secs: f64) -> Self {
+    pub fn with_target_duration_secs(mut self, target_duration_secs: f64) -> Self {
         self.target_duration_secs = Some(target_duration_secs);
         self
     }
@@ -1591,16 +1597,16 @@ impl HlsOriginBuilder {
     /// own retention bound): a caller may legitimately want a shorter
     /// advertised window than the `Trunk` retains for other consumers (e.g. a
     /// DVR `SegmentEgress` reading the same `Trunk`).
-    pub fn window_segments(mut self, window_segments: NonZeroUsize) -> Self {
+    pub fn with_window_segments(mut self, window_segments: NonZeroUsize) -> Self {
         self.window_segments = Some(window_segments);
         self
     }
 
     /// Which container this origin serves segments/parts as. Defaults to
     /// [`Container::Fmp4`] if never called, matching every pre-#873 caller's
-    /// behaviour. Orthogonal to [`Self::low_latency`] — all four
+    /// behaviour. Orthogonal to [`Self::with_low_latency`] — all four
     /// `{Fmp4, MpegTs} x {classic, low-latency}` combinations are valid.
-    pub fn container(mut self, container: Container) -> Self {
+    pub fn with_container(mut self, container: Container) -> Self {
         self.container = container;
         self
     }
@@ -1609,9 +1615,9 @@ impl HlsOriginBuilder {
     /// `PART-TARGET` (milliseconds). **Omit this call entirely for classic
     /// HLS** — no `#EXT-X-PART`/`#EXT-X-PART-INF`/`#EXT-X-SERVER-CONTROL`/
     /// `#EXT-X-PRELOAD-HINT` tags are then rendered, regardless of
-    /// [`Self::container`]. This is what the old constructor's mandatory
+    /// [`Self::with_container`]. This is what the old constructor's mandatory
     /// `part_target_ms` positional could not express.
-    pub fn low_latency(mut self, part_target_ms: u32) -> Self {
+    pub fn with_low_latency(mut self, part_target_ms: u32) -> Self {
         self.part_target_ms = Some(part_target_ms);
         self
     }
@@ -1626,7 +1632,7 @@ impl HlsOriginBuilder {
     /// decrease). Pass `previous.next_media_sequence()` — not `- 1`: the number
     /// the previous origin's *open* segment was shown with is skipped too, as
     /// its parts were already served (see [`HlsOrigin::next_media_sequence`]).
-    pub fn media_sequence_offset(mut self, offset: u64) -> Self {
+    pub fn with_media_sequence_offset(mut self, offset: u64) -> Self {
         self.media_sequence_offset = offset;
         self
     }
@@ -1635,7 +1641,7 @@ impl HlsOriginBuilder {
     /// `0`. An origin replacing another (a reconnect) passes
     /// `previous.discontinuity_sequence_after()` so the value clients see
     /// never decreases (RFC 8216bis section 6.2.2).
-    pub fn discontinuity_sequence(mut self, base: u64) -> Self {
+    pub fn with_discontinuity_sequence(mut self, base: u64) -> Self {
         self.discontinuity_sequence = base;
         self
     }
@@ -1644,7 +1650,7 @@ impl HlsOriginBuilder {
     /// wall-clock-seeded one per build). For deterministic tests and for an
     /// embedder that wants names stable across a rebuild it knows is the
     /// *same* media.
-    pub fn instance(mut self, token: u64) -> Self {
+    pub fn with_instance(mut self, token: u64) -> Self {
         self.instance = Some(token);
         self
     }
@@ -1663,7 +1669,10 @@ impl HlsOriginBuilder {
     /// timeline rather than to a (possibly jumping) source media clock, so a
     /// source-clock discontinuity never makes the date↔segment mapping
     /// ambiguous (server-requirements.md item 26).
-    pub fn program_date_time_arrival(mut self, clock: Arc<dyn Fn() -> i64 + Send + Sync>) -> Self {
+    pub fn with_program_date_time_arrival(
+        mut self,
+        clock: Arc<dyn Fn() -> i64 + Send + Sync>,
+    ) -> Self {
         self.arrival_clock = Some(clock);
         self
     }
@@ -1673,7 +1682,7 @@ impl HlsOriginBuilder {
     /// playlist before any segment with a measurable duration has been
     /// published (and as a lower bound afterwards). Validated at
     /// [`Self::build`] (`> 0` and `<= u32::MAX`).
-    pub fn declared_bandwidth_bps(mut self, declared_bandwidth_bps: u64) -> Self {
+    pub fn with_declared_bandwidth_bps(mut self, declared_bandwidth_bps: u64) -> Self {
         self.declared_bandwidth_bps = Some(declared_bandwidth_bps);
         self
     }
@@ -1683,7 +1692,7 @@ impl HlsOriginBuilder {
     /// line, emitted before the variants; the video variant's `AUDIO` attribute
     /// is set to the entry's `group_id`. Empty by default (no audio
     /// rendition lines, byte-identical to the pre-existing output).
-    pub fn audio_renditions(mut self, audio_renditions: Vec<AudioRenditionDecl>) -> Self {
+    pub fn with_audio_renditions(mut self, audio_renditions: Vec<AudioRenditionDecl>) -> Self {
         self.audio_renditions = audio_renditions;
         self
     }
@@ -1695,10 +1704,10 @@ impl HlsOriginBuilder {
     /// `BANDWIDTH` = video peak + the group's largest audio peak and
     /// `AVERAGE-BANDWIDTH` likewise over averages (Apple authoring items
     /// 9.13/9.14); `CODECS` is the video codec plus the group's distinct audio
-    /// codecs. [`HlsOriginBuilder::declared_bandwidth_bps`] floors the video
+    /// codecs. [`HlsOriginBuilder::with_declared_bandwidth_bps`] floors the video
     /// part only, never the audio part. Empty (the default) keeps the slice 1
     /// behaviour: declared-only `CODECS`/`BANDWIDTH`.
-    pub fn audio_sibling_origins(mut self, origins: Vec<Arc<HlsOrigin>>) -> Self {
+    pub fn with_audio_sibling_origins(mut self, origins: Vec<Arc<HlsOrigin>>) -> Self {
         self.audio_sibling_origins = origins;
         self
     }
@@ -1709,7 +1718,10 @@ impl HlsOriginBuilder {
     /// variant's `SUBTITLES` attribute set and `wvtt` added to its `CODECS`
     /// (Apple HLS Authoring Spec item 5.10) when `CODECS` is known. Empty by
     /// default: the master is byte-identical to the pre-existing output.
-    pub fn subtitle_renditions(mut self, subtitle_renditions: Vec<SubtitleRenditionDecl>) -> Self {
+    pub fn with_subtitle_renditions(
+        mut self,
+        subtitle_renditions: Vec<SubtitleRenditionDecl>,
+    ) -> Self {
         self.subtitle_renditions = subtitle_renditions;
         self
     }
@@ -1720,7 +1732,7 @@ impl HlsOriginBuilder {
     /// `EXT-X-TARGETDURATION` equals this origin's (Apple HLS Authoring Spec
     /// item 5.6 — live subtitle playlists must match the other media).
     /// Subtitle bandwidth is not folded into `BANDWIDTH`.
-    pub fn subtitle_sibling_origins(mut self, origins: Vec<Arc<HlsOrigin>>) -> Self {
+    pub fn with_subtitle_sibling_origins(mut self, origins: Vec<Arc<HlsOrigin>>) -> Self {
         self.subtitle_sibling_origins = origins;
         self
     }
@@ -1730,7 +1742,7 @@ impl HlsOriginBuilder {
     /// relative `URI` of [`RenditionSibling`] entries when rendering
     /// `#EXT-X-RENDITION-REPORT` (RFC 8216bis §4.4.5.4). Defaults to
     /// `"media.m3u8"` when unset.
-    pub fn playlist_uri(mut self, playlist_uri: impl Into<String>) -> Self {
+    pub fn with_playlist_uri(mut self, playlist_uri: impl Into<String>) -> Self {
         self.playlist_uri = Some(playlist_uri.into());
         self
     }
@@ -1738,7 +1750,7 @@ impl HlsOriginBuilder {
     /// Sibling renditions whose live edge is reported by this origin's media
     /// playlist (RFC 8216bis §4.4.5.4). Each entry is a weak handle plus the
     /// sibling's playlist URI. Empty by default.
-    pub fn rendition_siblings(mut self, siblings: Vec<RenditionSibling>) -> Self {
+    pub fn with_rendition_siblings(mut self, siblings: Vec<RenditionSibling>) -> Self {
         self.rendition_siblings = siblings;
         self
     }
@@ -1746,14 +1758,14 @@ impl HlsOriginBuilder {
     /// When `true`, emit `CLOSED-CAPTIONS=NONE` on the video variant
     /// (RFC 8216bis §4.4.6.2). Default `false` leaves the attribute omitted,
     /// matching the pre-existing output.
-    pub fn closed_captions_none(mut self, closed_captions_none: bool) -> Self {
+    pub fn with_closed_captions_none(mut self, closed_captions_none: bool) -> Self {
         self.closed_captions_none = closed_captions_none;
         self
     }
 
     /// Override `NAME`/`LANGUAGE` of detected caption streams (see
     /// [`ClosedCaptionDecl`]). Empty by default.
-    pub fn closed_caption_overrides(mut self, overrides: Vec<ClosedCaptionDecl>) -> Self {
+    pub fn with_closed_caption_overrides(mut self, overrides: Vec<ClosedCaptionDecl>) -> Self {
         self.closed_caption_overrides = overrides;
         self
     }
@@ -1762,13 +1774,13 @@ impl HlsOriginBuilder {
     /// immediately (so the window starts empty but never misses a segment
     /// published from this point on).
     ///
-    /// Errors, never silently defaults, if [`Self::target_duration_secs`] or
-    /// [`Self::window_segments`] was never called, for a zero
-    /// [`Self::low_latency`] part target, or for an offset that cannot hold
+    /// Errors, never silently defaults, if [`Self::with_target_duration_secs`] or
+    /// [`Self::with_window_segments`] was never called, for a zero
+    /// [`Self::with_low_latency`] part target, or for an offset that cannot hold
     /// the `u32` sequence range.
     ///
     /// The advertised window is never shorter than three segments, whatever
-    /// [`Self::window_segments`] says (RFC 8216bis §6.2.2: a live Playlist
+    /// [`Self::with_window_segments`] says (RFC 8216bis §6.2.2: a live Playlist
     /// MUST NOT be shortened below three Target Durations). Part retention is
     /// not checked here: the part ring's capacity belongs to the [`Trunk`]
     /// and is not observable from it; the playlist only advertises the parts
@@ -1971,13 +1983,13 @@ pub struct HlsOrigin {
     /// no override); see [`Self::set_part_target_ms`].
     part_target_override_ms: AtomicU32,
     /// Added to every shown Media Sequence Number (see
-    /// [`HlsOriginBuilder::media_sequence_offset`]); validated at build so
+    /// [`HlsOriginBuilder::with_media_sequence_offset`]); validated at build so
     /// `offset + u32::MAX` fits a `u64`.
     media_sequence_offset: u64,
     /// See [`Self::instance`].
     instance: u64,
     /// Optional arrival wall-clock source (see
-    /// [`HlsOriginBuilder::program_date_time_arrival`]). `None` => no arrival
+    /// [`HlsOriginBuilder::with_program_date_time_arrival`]). `None` => no arrival
     /// source.
     arrival_clock: Option<Arc<dyn Fn() -> i64 + Send + Sync>>,
     /// Recorded origin: `(segment timeline start_ns, wall epoch ms)`. Set
@@ -1987,7 +1999,7 @@ pub struct HlsOrigin {
     /// taken before window).
     arrival_origin: Mutex<Option<(u64, i64)>>,
     /// Operator-declared peak bitrate (see
-    /// [`HlsOriginBuilder::declared_bandwidth_bps`]) — `None` means none.
+    /// [`HlsOriginBuilder::with_declared_bandwidth_bps`]) — `None` means none.
     declared_bandwidth_bps: Option<u64>,
     /// Declared audio renditions (issue #1428 slice 1).
     audio_renditions: Vec<AudioRenditionDecl>,
@@ -2004,7 +2016,7 @@ pub struct HlsOrigin {
     /// Emit `CLOSED-CAPTIONS=NONE` (issue #1428 slice 1).
     closed_captions_none: bool,
     closed_caption_overrides: Vec<ClosedCaptionDecl>,
-    /// See [`HlsOriginBuilder::hold_cold_playlist`].
+    /// See [`HlsOriginBuilder::with_hold_cold_playlist`].
     hold_cold_playlist: bool,
     /// Caption streams the video has been seen to carry, in advertising
     /// order. Taken alone (never while `window` or `codecs` is held).
@@ -2236,7 +2248,7 @@ impl HlsOrigin {
     /// An empty list means the video was scanned and carries none: the master
     /// then states `CLOSED-CAPTIONS=NONE` on every variant (RFC 8216bis
     /// section 4.4.6.2). Until this is called the master claims nothing either
-    /// way, unless [`HlsOriginBuilder::closed_captions_none`] is set.
+    /// way, unless [`HlsOriginBuilder::with_closed_captions_none`] is set.
     pub fn set_detected_closed_captions(&self, detected: Vec<broadcast_hls::InstreamId>) {
         *locked(&self.detected_closed_captions) = Some(detected);
         self.bump_epoch();
@@ -2260,7 +2272,7 @@ impl HlsOrigin {
     ///
     /// # Errors
     /// The same [`HlsOriginBuildError`] variants as
-    /// [`HlsOriginBuilder::subtitle_renditions`] at `build()`; the previous
+    /// [`HlsOriginBuilder::with_subtitle_renditions`] at `build()`; the previous
     /// declarations are kept on error.
     pub fn set_subtitle_renditions(
         &self,
@@ -2688,7 +2700,7 @@ impl HlsOrigin {
 
     /// This origin's instance token: a number that differs for every origin
     /// built, in this process and across restarts (see
-    /// [`HlsOriginBuilder::instance`]), and is part of **every resource name
+    /// [`HlsOriginBuilder::with_instance`]), and is part of **every resource name
     /// served `immutable`** — `init-{track}-{instance}-{generation}.mp4`,
     /// `seg-{track}-{instance}-{msn}.{ext}`,
     /// `part-{track}-{instance}-{msn}.{idx}.{ext}`. A name therefore maps to
@@ -2775,7 +2787,7 @@ impl HlsOrigin {
     }
 
     /// The offset added to every Media Sequence Number this origin shows (see
-    /// [`HlsOriginBuilder::media_sequence_offset`]): the number in a segment's
+    /// [`HlsOriginBuilder::with_media_sequence_offset`]): the number in a segment's
     /// URI/playlist is this plus its origin sequence number
     /// ([`ClosedSegment::sequence_number`]).
     pub fn media_sequence_offset(&self) -> u64 {
@@ -2788,7 +2800,7 @@ impl HlsOrigin {
     /// A fresh [`Trunk`] numbers its segments from `1` again, so an origin
     /// replacing this one over a new `Trunk` (a reconnect) must pass
     /// `next_media_sequence()` to
-    /// [`HlsOriginBuilder::media_sequence_offset`]: the new origin's first
+    /// [`HlsOriginBuilder::with_media_sequence_offset`]: the new origin's first
     /// segment (sequence number one) is then shown one above this value — the
     /// number this origin's *open* segment was shown with is skipped, since
     /// its parts were already served — and the Media Sequence Number clients
@@ -2803,7 +2815,7 @@ impl HlsOrigin {
     }
 
     /// The Discontinuity Sequence Number of the newest segment in the window:
-    /// the value to pass to [`HlsOriginBuilder::discontinuity_sequence`] for
+    /// the value to pass to [`HlsOriginBuilder::with_discontinuity_sequence`] for
     /// an origin that replaces this one.
     pub fn discontinuity_sequence_after(&self) -> u64 {
         self.drain();
@@ -4276,10 +4288,10 @@ mod tests {
         );
         let writer = trunk.segment_writer().expect("first segment writer");
         let origin = HlsOrigin::builder(Arc::clone(&trunk))
-            .target_duration_secs(4.0)
-            .window_segments(nz(4))
-            .low_latency(500)
-            .instance(7)
+            .with_target_duration_secs(4.0)
+            .with_window_segments(nz(4))
+            .with_low_latency(500)
+            .with_instance(7)
             .build()
             .expect("both required fields set");
         origin.set_init(vec![0xAAu8; 8]);
@@ -4317,10 +4329,10 @@ mod tests {
                 .with_part_capacity(nz(64)),
         );
         let offset = HlsOrigin::builder(trunk)
-            .target_duration_secs(4.0)
-            .window_segments(nz(4))
-            .instance(7)
-            .media_sequence_offset(100)
+            .with_target_duration_secs(4.0)
+            .with_window_segments(nz(4))
+            .with_instance(7)
+            .with_media_sequence_offset(100)
             .build()
             .expect("both required fields set");
         assert_eq!(
@@ -4387,11 +4399,11 @@ mod tests {
         );
         let writer = trunk.segment_writer().expect("first segment writer");
         let origin = HlsOrigin::builder(Arc::clone(&trunk))
-            .target_duration_secs(4.0)
-            .window_segments(nz(4))
-            .low_latency(500)
-            .instance(7)
-            .hold_cold_playlist(hold)
+            .with_target_duration_secs(4.0)
+            .with_window_segments(nz(4))
+            .with_low_latency(500)
+            .with_instance(7)
+            .with_hold_cold_playlist(hold)
             .build()
             .expect("both required fields set");
         origin.set_init(vec![0xAAu8; 8]);
@@ -4440,8 +4452,8 @@ mod tests {
                 .with_part_capacity(nz(64)),
         );
         let origin = HlsOrigin::builder(trunk)
-            .target_duration_secs(4.0)
-            .window_segments(nz(4))
+            .with_target_duration_secs(4.0)
+            .with_window_segments(nz(4))
             .build()
             .expect("both required fields set");
         assert!(origin.hold_cold_playlist);
@@ -4513,11 +4525,11 @@ mod tests {
         );
         let writer = trunk.segment_writer().expect("first segment writer");
         let origin = HlsOrigin::builder(Arc::clone(&trunk))
-            .target_duration_secs(4.0)
-            .window_segments(nz(4))
-            .low_latency(500)
-            .instance(7)
-            .hold_cold_playlist(true)
+            .with_target_duration_secs(4.0)
+            .with_window_segments(nz(4))
+            .with_low_latency(500)
+            .with_instance(7)
+            .with_hold_cold_playlist(true)
             .build()
             .expect("both required fields set");
         let init = test_fixtures::read("hls/cmaf-fmp4/init.mp4");
@@ -5350,14 +5362,14 @@ mod tests {
         );
         let writer = trunk.segment_writer().expect("first segment writer");
         let mut builder = HlsOrigin::builder(Arc::clone(&trunk))
-            .target_duration_secs(4.0)
-            .window_segments(nz(4))
-            .container(container);
+            .with_target_duration_secs(4.0)
+            .with_window_segments(nz(4))
+            .with_container(container);
         if let Some(ms) = low_latency_ms {
-            builder = builder.low_latency(ms);
+            builder = builder.with_low_latency(ms);
         }
         let origin = builder
-            .instance(7)
+            .with_instance(7)
             .build()
             .expect("both required fields set");
         (trunk, origin, writer)
@@ -5451,7 +5463,7 @@ mod tests {
         })
     }
 
-    /// MUTATION VERIFIED (issue #873): making `HlsOriginBuilder::container`
+    /// MUTATION VERIFIED (issue #873): making `HlsOriginBuilder::with_container`
     /// a no-op (so every origin renders as `Fmp4` regardless of the
     /// `Container` passed to it) makes this test's
     /// `assert!(!body.contains("#EXT-X-MAP"))` fail -- the mutated build
@@ -5501,7 +5513,7 @@ mod tests {
         }
     }
 
-    /// MUTATION VERIFIED (issue #873): making `HlsOriginBuilder::container`
+    /// MUTATION VERIFIED (issue #873): making `HlsOriginBuilder::with_container`
     /// a no-op makes this test's `assert!(!body.contains("#EXT-X-MAP"))`
     /// fail identically to the classic-`MpegTs` test above, and the part
     /// URIs render as `part-1-7-2.0.m4s` instead of `part-1-7-2.0.ts`, so
@@ -5601,7 +5613,7 @@ mod tests {
     /// check, which made those assertions vacuous) because an integral
     /// `#EXTINF` is a real, if unusual, shape.
     ///
-    /// MUTATION VERIFIED (issue #873): making `HlsOriginBuilder::container`
+    /// MUTATION VERIFIED (issue #873): making `HlsOriginBuilder::with_container`
     /// a no-op makes this fail with `left: Some(6), right: None` -- the
     /// mutated build emits `#EXT-X-MAP`, which trips §8 row 6. Recompiled
     /// and re-run to confirm, then reverted.
@@ -5760,7 +5772,7 @@ mod tests {
         }
     }
 
-    /// MUTATION VERIFIED (issue #873): making `HlsOriginBuilder::container`
+    /// MUTATION VERIFIED (issue #873): making `HlsOriginBuilder::with_container`
     /// a no-op makes every origin behave as `Fmp4`, so `init-1.mp4` under a
     /// nominally-`MpegTs` origin resolves `Ready` instead of `NotFound` --
     /// this test's final assertion fails. Recompiled and re-run to confirm,
@@ -5793,16 +5805,16 @@ mod tests {
                 .with_part_capacity(nz(64)),
         );
         match HlsOrigin::builder(Arc::clone(&trunk))
-            .window_segments(nz(4))
-            .instance(7)
+            .with_window_segments(nz(4))
+            .with_instance(7)
             .build()
         {
             Err(e) => assert_eq!(e, HlsOriginBuildError::MissingTargetDurationSecs),
             Ok(_) => panic!("expected an error: target_duration_secs was never set"),
         }
         match HlsOrigin::builder(Arc::clone(&trunk))
-            .target_duration_secs(4.0)
-            .instance(7)
+            .with_target_duration_secs(4.0)
+            .with_instance(7)
             .build()
         {
             Err(e) => assert_eq!(e, HlsOriginBuildError::MissingWindowSegments),
