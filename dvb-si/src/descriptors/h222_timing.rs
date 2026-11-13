@@ -329,7 +329,6 @@ impl EvcTimingAndHrd {
 }
 
 #[cfg(test)]
-#[allow(clippy::unusual_byte_groupings)] // bit-field-wise literals mirror the syntax tables
 mod tests {
     use super::*;
 
@@ -345,22 +344,7 @@ mod tests {
         assert_eq!(p.num_units_in_tick, 1001);
         assert_eq!(d.write_body().unwrap(), b);
         // 90kHz=0 -> N and K on the wire, schedule idx present (= 3)
-        let b2 = [
-            0b1_0_00011_1,
-            0x7F,
-            0,
-            0,
-            0,
-            1,
-            0,
-            0,
-            1,
-            0x2C,
-            0,
-            0,
-            0,
-            0x64,
-        ];
+        let b2 = [0b1000_0111, 0x7F, 0, 0, 0, 1, 0, 0, 1, 0x2C, 0, 0, 0, 0x64];
         let d2 = HevcTimingAndHrd::parse_body(&b2).unwrap();
         assert_eq!(d2.target_schedule_idx, Some(3));
         let nk = d2.picture_timing.as_ref().unwrap().nk.unwrap();
@@ -385,13 +369,13 @@ mod tests {
 
     #[test]
     fn vvc_and_evc_round_trip_with_reserved_and_trailing() {
-        let b = [0b0_111111_0, 0xAA, 0xBB];
+        let b = [0b0111_1110, 0xAA, 0xBB];
         let v = VvcTimingAndHrd::parse_body(&b).unwrap();
         assert!(v.picture_timing.is_none());
         assert_eq!(v.trailing, [0xAA, 0xBB]);
         assert_eq!(v.write_body().unwrap(), b);
         // non-default reserved bits survive
-        let b = [0b1_000000_1, 0x80, 0, 0, 0, 7];
+        let b = [0b1000_0001, 0x80, 0, 0, 0, 7];
         let e = EvcTimingAndHrd::parse_body(&b).unwrap();
         assert_eq!(e.reserved, 0);
         assert_eq!(e.picture_timing.as_ref().unwrap().reserved, 0);

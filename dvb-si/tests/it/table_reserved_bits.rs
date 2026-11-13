@@ -162,7 +162,6 @@ fn dl(raw: &'static [u8]) -> DescriptorLoop<'static> {
 /// Descriptor-shaped bytes (tag, len, body) so loops look plausible.
 const DESC: &[u8] = &[0x48, 0x02, 0xAA, 0xBB];
 
-#[allow(clippy::vec_init_then_push)] // one entry per table type reads better pushed than as one giant vec! literal
 fn built_sections() -> Vec<(&'static str, Vec<u8>, bool)> {
     use dvb_si::compatibility::CompatibilityDescriptor;
     use dvb_si::tables::ait::*;
@@ -188,7 +187,7 @@ fn built_sections() -> Vec<(&'static str, Vec<u8>, bool)> {
     use dvb_si::tables::{RunningStatus, TargetOperationalLoop};
     use dvb_si::text::{DvbText, LangCode};
 
-    let mut v: Vec<(&'static str, Vec<u8>, bool)> = Vec::new();
+    let mut v: Vec<(&'static str, Vec<u8>, bool)> = Vec::with_capacity(64);
     v.push((
         "TSDT",
         ser(&TsdtSection::new(1, 2, true, 0, 0, dl(DESC))),

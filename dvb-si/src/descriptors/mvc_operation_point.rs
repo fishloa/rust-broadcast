@@ -224,7 +224,6 @@ impl_h222_descriptor!(
 );
 
 #[cfg(test)]
-#[allow(clippy::unusual_byte_groupings)] // bit-field-wise literals mirror the syntax tables
 mod tests {
     use super::*;
     use alloc::vec;
@@ -238,11 +237,11 @@ mod tests {
             TAG,
             10,
             118,
-            0b1_0_1_0_0_1_01,
+            0b1010_0101,
             1,
             0x28,
             1,
-            0b11111_011,
+            0b1111_1011,
             2,
             2,
             0b11_000011,

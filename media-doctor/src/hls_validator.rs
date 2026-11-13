@@ -32,6 +32,7 @@
 //! | `hls-preload-hint-with-endlist` | Error | PRELOAD-HINT in a playlist with ENDLIST | §4.4.5.3 |
 //! | `hls-skip-without-can-skip-until` | Error | EXT-X-SKIP without CAN-SKIP-UNTIL in SERVER-CONTROL | §4.4.5.2, §4.4.3.8 |
 //! | `hls-malformed-daterange` | Error | DATERANGE line fails `DateRange::parse_tag_line` | §4.4.5.1 |
+//! | `hls-program-date-time-invalid` | Warning | EXT-X-PROGRAM-DATE-TIME is not an ISO 8601 date-time (a bare date is not one): the parser drops the tag and the segment has no program date time | RFC 8216 §4.3.2.6 |
 
 use crate::report::{Finding, Location, Report, Severity};
 use alloc::vec::Vec;
@@ -161,6 +162,26 @@ fn report_parse_error(err: &broadcast_hls::Error, kind: &str, report: &mut Repor
 // ---------------------------------------------------------------------------
 
 fn validate_media_playlist(pl: &broadcast_hls::MediaPlaylist, report: &mut Report) {
+    // The parser tolerated these (dropped the tag, kept the playlist): report each with its line.
+    for diagnostic in &pl.diagnostics {
+        let (rule, message) = match diagnostic.kind {
+            broadcast_hls::ParseDiagnosticKind::InvalidProgramDateTime => (
+                "hls-program-date-time-invalid",
+                alloc::format!(
+                    "{:?} is not an ISO 8601 date-time (RFC 8216 §4.3.2.6); the tag was dropped and its segment has no program date time",
+                    diagnostic.line
+                ),
+            ),
+            _ => continue,
+        };
+        report.push(Finding::new(
+            Severity::Warning,
+            Location::new(diagnostic.line_no, 0),
+            rule,
+            message,
+        ));
+    }
+
     // hls-preload-hint-with-endlist — §4.4.5.3
     if pl.endlist
         && let Some(ref ll) = pl.low_latency

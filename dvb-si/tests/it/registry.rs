@@ -149,8 +149,7 @@ fn custom_registration_overrides_builtin() {
     #[derive(Debug)]
     #[cfg_attr(feature = "serde", derive(serde::Serialize))]
     struct MyShortEventOverride {
-        #[allow(dead_code)]
-        raw_len: u8,
+        _raw_len: u8,
     }
 
     impl<'a> broadcast_common::Parse<'a> for MyShortEventOverride {
@@ -165,7 +164,7 @@ fn custom_registration_overrides_builtin() {
                     },
                 ));
             }
-            Ok(Self { raw_len: bytes[1] })
+            Ok(Self { _raw_len: bytes[1] })
         }
     }
 

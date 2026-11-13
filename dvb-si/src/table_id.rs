@@ -16,50 +16,83 @@ use num_enum::TryFromPrimitive;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, TryFromPrimitive)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[repr(u8)]
-#[allow(missing_docs)]
 #[non_exhaustive]
 #[rustfmt::skip] // deliberate column-aligned discriminants
 pub enum TableId {
     // ── MPEG-2 tables ──────────────────────────────────────────────────────
+    /// `Pat` (table_id 0x00).
     Pat                        = 0x00,
+    /// `Cat` (table_id 0x01).
     Cat                        = 0x01,
+    /// `Pmt` (table_id 0x02).
     Pmt                        = 0x02,
+    /// `TransportStreamDescription` (table_id 0x03).
     TransportStreamDescription = 0x03,
+    /// `Iso14496SceneDescription` (table_id 0x04).
     Iso14496SceneDescription   = 0x04,
+    /// `Iso14496ObjectDescriptor` (table_id 0x05).
     Iso14496ObjectDescriptor   = 0x05,
+    /// `Metadata` (table_id 0x06).
     Metadata                   = 0x06,
+    /// `Iso14496` (table_id 0x08).
     Iso14496                   = 0x08,
+    /// `GreenAccessUnit` (table_id 0x09).
     GreenAccessUnit            = 0x09,
 
     // ── DVB SI tables ──────────────────────────────────────────────────────
+    /// `NetworkInformationActual` (table_id 0x40).
     NetworkInformationActual   = 0x40,
+    /// `NetworkInformationOther` (table_id 0x41).
     NetworkInformationOther    = 0x41,
+    /// `ServiceDescriptionActual` (table_id 0x42).
     ServiceDescriptionActual   = 0x42,
+    /// `ServiceDescriptionOther` (table_id 0x46).
     ServiceDescriptionOther    = 0x46,
+    /// `BouquetAssociation` (table_id 0x4A).
     BouquetAssociation         = 0x4A,
+    /// `UpdateNotification` (table_id 0x4B).
     UpdateNotification         = 0x4B,
+    /// `IpMacNotification` (table_id 0x4C).
     IpMacNotification          = 0x4C,
+    /// `SatelliteAccess` (table_id 0x4D).
     SatelliteAccess            = 0x4D,
+    /// `EventInformationPfActual` (table_id 0x4E).
     EventInformationPfActual   = 0x4E,
+    /// `EventInformationPfOther` (table_id 0x4F).
     EventInformationPfOther    = 0x4F,
 
     // EIT schedule actual covers 0x50..=0x5F (16 segments).
     // EIT schedule other covers 0x60..=0x6F.
 
+    /// `TimeAndDate` (table_id 0x70).
     TimeAndDate                = 0x70,
+    /// `RunningStatus` (table_id 0x71).
     RunningStatus              = 0x71,
+    /// `Stuffing` (table_id 0x72).
     Stuffing                   = 0x72,
+    /// `TimeOffset` (table_id 0x73).
     TimeOffset                 = 0x73,
+    /// `ApplicationInformation` (table_id 0x74).
     ApplicationInformation     = 0x74,
+    /// `Container` (table_id 0x75).
     Container                  = 0x75,
+    /// `RelatedContent` (table_id 0x76).
     RelatedContent             = 0x76,
+    /// `ContentIdentifier` (table_id 0x77).
     ContentIdentifier          = 0x77,
+    /// `MpeFec` (table_id 0x78).
     MpeFec                     = 0x78,
+    /// `ResolutionNotification` (table_id 0x79).
     ResolutionNotification     = 0x79,
+    /// `MpeIfec` (table_id 0x7A).
     MpeIfec                    = 0x7A,
+    /// `ProtectionMessage` (table_id 0x7B).
     ProtectionMessage          = 0x7B,
+    /// `DownloadableFontInfo` (table_id 0x7C).
     DownloadableFontInfo       = 0x7C,
+    /// `DiscontinuityInformation` (table_id 0x7E).
     DiscontinuityInformation   = 0x7E,
+    /// `SelectionInformation` (table_id 0x7F).
     SelectionInformation       = 0x7F,
 }
 
