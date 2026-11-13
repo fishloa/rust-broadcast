@@ -253,6 +253,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::route::RouteConfig;
     use broadcast_common::{Demand, Stage};
     use bytes::Bytes;
     use media_plane::ingress::{HandshakePolicy, SessionEvent};
@@ -392,7 +393,12 @@ mod tests {
     }
 
     fn route() -> Arc<RouteHandle> {
-        Arc::new(RouteHandle::new(1.0, 250, 8))
+        Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(250)
+                .with_window_segments(8),
+        ))
     }
 
     /// Scripted source: each call sleeps `delay` then returns the outcome

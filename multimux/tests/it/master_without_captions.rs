@@ -1,6 +1,7 @@
 //! A route whose video carries no captions serves the same master playlist
 //! it did before caption detection existed (issue #1428).
 
+use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -52,8 +53,13 @@ async fn master_without_captions_is_unchanged() {
         .collect();
     writer.set_tracks(specs.clone());
     let route = Arc::new(
-        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, WINDOW_SEGMENTS)
-            .with_declared_bandwidth_bps(DECLARED_BPS),
+        RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_part_target_ms(PART_TARGET_MS)
+                .with_window_segments(WINDOW_SEGMENTS),
+        )
+        .with_declared_bandwidth_bps(DECLARED_BPS),
     );
     route.publish_program(ProgramId(0), Arc::clone(&trunk));
     route.set_track_specs(ProgramId(0), trunk.tracks().to_vec());

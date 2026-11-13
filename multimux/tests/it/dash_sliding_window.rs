@@ -16,6 +16,7 @@
 //! every one must be served; the MPD must also pass `media-doctor`'s DASH
 //! validator and keep `startNumber`/`@duration` constant as it refreshes.
 
+use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 use transmux::TrackId;
@@ -104,7 +105,12 @@ async fn slide(output: Arc<dyn Output>, manifest_path: &str) {
     track.spec.track_id = TrackId::new(1);
     let specs = vec![track.spec.clone()];
 
-    let store = Arc::new(RouteHandle::new(TARGET_SECS, PART_MS, WINDOW));
+    let store = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(TARGET_SECS)
+            .with_part_target_ms(PART_MS)
+            .with_window_segments(WINDOW),
+    ));
     let program = media_plane::ProgramId(0);
     store.publish_new_program(program);
     let mut seg = LlHlsSegmenter::with_part_target(

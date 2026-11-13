@@ -11,6 +11,7 @@
 //! starts shortly after the video. The shift is the only synthetic part, and
 //! every timing check below is computed from the shifted track.
 
+use multimux::route::RouteConfig;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
@@ -125,10 +126,15 @@ struct Driver {
 
 fn fresh_route(subtitles: bool) -> Arc<RouteHandle> {
     Arc::new(
-        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, WINDOW_SEGMENTS)
-            .with_hold_cold_playlist(false)
-            .with_declared_bandwidth_bps(DECLARED_BPS)
-            .with_subtitles(subtitles),
+        RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_part_target_ms(PART_TARGET_MS)
+                .with_window_segments(WINDOW_SEGMENTS),
+        )
+        .with_hold_cold_playlist(false)
+        .with_declared_bandwidth_bps(DECLARED_BPS)
+        .with_subtitles(subtitles),
     )
 }
 

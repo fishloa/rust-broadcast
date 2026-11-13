@@ -13,6 +13,7 @@
 //! §4.4.4.7 shared by both. It skips **loudly** when the binary is absent
 //! (Linux/CI), so run it on macOS for the genuine check.
 
+use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -113,8 +114,13 @@ impl Rig {
         let writer = trunk.writer().expect("trunk writer");
         writer.set_tracks(tracks.iter().map(|(spec, _)| spec.clone()).collect());
         let route = Arc::new(
-            RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, WINDOW_SEGMENTS)
-                .with_container(transmux::Container::MpegTs),
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(TARGET_DURATION_SECS)
+                    .with_part_target_ms(PART_TARGET_MS)
+                    .with_window_segments(WINDOW_SEGMENTS),
+            )
+            .with_container(transmux::Container::MpegTs),
         );
         route.publish_program(ProgramId(0), Arc::clone(&trunk));
         let segmenter = ProgramSegmenter::try_new_with_siblings(

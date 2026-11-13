@@ -2,6 +2,7 @@
 //! samples it publishes into its `Trunk` as they appear, and what it asked the origin for
 //! (blocking reloads, preload-hint prefetches), counted from the requests the origin receives.
 
+use multimux::route::RouteConfig;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -119,7 +120,12 @@ pub async fn pull_samples(
             .with_connect(READ)
             .with_read_idle(READ),
     );
-    let route_handle = Arc::new(RouteHandle::new(4.0, 500, 4));
+    let route_handle = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(4.0)
+            .with_part_target_ms(500)
+            .with_window_segments(4),
+    ));
     let config = TrunkConfig::default()
         .with_timed_capacity(nz(TIMED_RING))
         .with_sparse_capacity(nz(RING))

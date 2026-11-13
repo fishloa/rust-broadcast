@@ -451,6 +451,7 @@ pub async fn supervise_driver<F, Fut>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::route::RouteConfig;
 
     /// Audit r07-O1 (#1083): the stateless `delay_for_attempt` is the same
     /// series repeated `next()` calls produce, and stays total on hostile
@@ -629,7 +630,12 @@ mod tests {
     /// the permanence block.
     #[tokio::test]
     async fn a_wrong_password_stops_retrying_after_the_bound_and_marks_the_route_failed() {
-        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(500)
+                .with_window_segments(8),
+        ));
         let call_count = Arc::new(AtomicUsize::new(0));
         let attempt = always_fails(
             || MultimuxError::Auth {
@@ -674,7 +680,12 @@ mod tests {
     /// config cannot succeed.
     #[tokio::test]
     async fn an_invalid_route_config_is_permanent_on_the_first_attempt() {
-        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(500)
+                .with_window_segments(8),
+        ));
         let call_count = Arc::new(AtomicUsize::new(0));
         let attempt = always_fails(
             || MultimuxError::ConfigInvalid {
@@ -703,7 +714,12 @@ mod tests {
     /// on a reboot the way a not-yet-ready auth subsystem does).
     #[tokio::test]
     async fn a_describe_404_is_permanent_only_after_the_bound() {
-        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(500)
+                .with_window_segments(8),
+        ));
         let call_count = Arc::new(AtomicUsize::new(0));
         let attempt = always_fails(
             || MultimuxError::Protocol {
@@ -744,7 +760,12 @@ mod tests {
     /// #1083, C3).
     #[tokio::test]
     async fn a_describe_404_that_recovers_within_the_bound_reaches_live() {
-        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(500)
+                .with_window_segments(8),
+        ));
         let call_count = Arc::new(AtomicUsize::new(0));
         let seen = Arc::clone(&call_count);
         let attempt = move |route_handle: Arc<RouteHandle>| {
@@ -795,7 +816,12 @@ mod tests {
     /// doesn't misfire on the exact scenario it exists to tolerate.
     #[tokio::test]
     async fn an_auth_failure_that_recovers_within_the_bound_still_reaches_live() {
-        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(500)
+                .with_window_segments(8),
+        ));
         let call_count = Arc::new(AtomicUsize::new(0));
         // Strictly fewer failures than the bound, so recovery must land
         // before permanence would ever be declared.
@@ -846,7 +872,12 @@ mod tests {
     /// bound — the bound only ever applies to `MultimuxError::Auth`.
     #[tokio::test]
     async fn a_non_auth_failure_keeps_retrying_past_the_auth_bound() {
-        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(500)
+                .with_window_segments(8),
+        ));
         let call_count = Arc::new(AtomicUsize::new(0));
         let attempt = always_fails(
             || MultimuxError::Connect {
@@ -940,7 +971,12 @@ mod tests {
     /// and re-run to confirm that exact assertion failure, then reverted.
     #[tokio::test]
     async fn reconnects_after_a_failing_attempt_reaches_live_and_retries_again_after_ending() {
-        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(500)
+                .with_window_segments(8),
+        ));
         let call_count = Arc::new(AtomicUsize::new(0));
         let attempt = flaky_attempt(1, call_count.clone());
         let cancel = tokio_util::sync::CancellationToken::new();
@@ -1022,7 +1058,12 @@ mod tests {
     /// 12x below the shortest backoff it must distinguish from.
     #[tokio::test]
     async fn shutdown_stops_supervise_driver_promptly_mid_backoff() {
-        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(500)
+                .with_window_segments(8),
+        ));
         let call_count = Arc::new(AtomicUsize::new(0));
         // Always fails, so the loop is guaranteed to be sitting in the
         // backoff sleep (not mid-attempt) shortly after start.
@@ -1059,7 +1100,12 @@ mod tests {
     /// unconditionally, so this would time out (the attempt never returns).
     #[tokio::test(start_paused = true)]
     async fn shutdown_abandons_an_in_flight_attempt() {
-        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(500)
+                .with_window_segments(8),
+        ));
         let cancel = tokio_util::sync::CancellationToken::new();
 
         // An attempt that never returns.
@@ -1110,7 +1156,12 @@ mod tests {
     }
 
     async fn run_scripted(lives: Vec<Duration>, observe: Duration) -> Vec<(Duration, Duration)> {
-        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(500)
+                .with_window_segments(8),
+        ));
         let starts = Arc::new(parking_lot::Mutex::new(Vec::new()));
         let cancel = tokio_util::sync::CancellationToken::new();
         let handle = tokio::spawn(supervise_driver(
@@ -1195,7 +1246,12 @@ mod tests {
     /// `supervise_driver` makes the attempt count climb past 1.
     #[tokio::test(start_paused = true)]
     async fn a_finite_source_that_ended_is_not_reconnected() {
-        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(500)
+                .with_window_segments(8),
+        ));
         let call_count = Arc::new(AtomicUsize::new(0));
         let counter = call_count.clone();
         let attempt = move |route_handle: Arc<RouteHandle>| -> BoxedAttempt {
@@ -1237,7 +1293,12 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_reconnect_after_a_publisher_ended_is_not_rejected_as_concurrent() {
         use media_plane::ingress::ProgramId;
-        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(500)
+                .with_window_segments(8),
+        ));
         let trunks = Arc::new(parking_lot::Mutex::new(Vec::new()));
         let recorded = trunks.clone();
         let attempt = move |route_handle: Arc<RouteHandle>| -> BoxedAttempt {

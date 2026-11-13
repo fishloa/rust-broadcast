@@ -1,5 +1,6 @@
 //! Router-level coverage for `_HLS_skip` delivery directives (#blskip).
 
+use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -17,7 +18,12 @@ use transmux::ll_hls::SegmentInfo;
 use transmux::{CodecConfig, TrackSpec};
 
 fn make_app() -> (axum::Router, Arc<RouteHandle>) {
-    let store = Arc::new(RouteHandle::new(4.0, 500, 16));
+    let store = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(4.0)
+            .with_part_target_ms(500)
+            .with_window_segments(16),
+    ));
     store.publish_new_program(ProgramId(0));
     store.set_init(ProgramId(0), vec![0xAA; 4]);
     store.set_track_specs(

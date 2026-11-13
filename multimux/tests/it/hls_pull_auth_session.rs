@@ -15,6 +15,7 @@
 //! credentials the playlist negotiated is refused the same way. Either way the
 //! route publishes no media.
 
+use multimux::route::RouteConfig;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -221,9 +222,10 @@ async fn played_samples(
 ) -> Option<String> {
     let route = HlsPullRoute::new(name, format!("{origin}{path}")).with_auth(auth);
     let route_handle = Arc::new(RouteHandle::new(
-        ROUTE_TARGET_DURATION_SECS,
-        ROUTE_PART_TARGET_MS,
-        ROUTE_WINDOW_SEGMENTS,
+        RouteConfig::default()
+            .with_target_duration_secs(ROUTE_TARGET_DURATION_SECS)
+            .with_part_target_ms(ROUTE_PART_TARGET_MS)
+            .with_window_segments(ROUTE_WINDOW_SEGMENTS),
     ));
     let config = TrunkConfig::default()
         .with_timed_capacity(nz(TIMED_RING))

@@ -16,6 +16,7 @@ use crate::support::segmenter_feed::{
     FRAME_DUR, PART_TARGET_MS, TARGET_DURATION_SECS, VIDEO_TIMESCALE,
     feed_via_segmenter as feed_segments, video_track_spec_sized,
 };
+use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 use transmux::TrackId;
@@ -59,7 +60,12 @@ struct SlideRoute {
 impl SlideRoute {
     /// Build a route whose target is `W13_TARGET_SECS` (4 s) per segment.
     fn new() -> Self {
-        let store = Arc::new(RouteHandle::new(W13_TARGET_SECS, PART_TARGET_MS, 2));
+        let store = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(W13_TARGET_SECS)
+                .with_part_target_ms(PART_TARGET_MS)
+                .with_window_segments(2),
+        ));
         let specs = vec![video_track_spec()];
         let program = media_plane::ProgramId(0);
         store.publish_new_program(program);
@@ -119,7 +125,12 @@ fn build_app(store: Arc<RouteHandle>, output: Arc<dyn Output>) -> axum::Router {
 /// Test 1: The manifest is served and is well-formed.
 #[tokio::test]
 async fn manifest_is_served_and_well_formed() {
-    let store = Arc::new(RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8));
+    let store = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(TARGET_DURATION_SECS)
+            .with_part_target_ms(PART_TARGET_MS)
+            .with_window_segments(8),
+    ));
     let specs = vec![video_track_spec()];
 
     // 60 frames = ~2s of video, enough for 2 segments.
@@ -183,7 +194,12 @@ async fn manifest_is_served_and_well_formed() {
 /// URLs it actually advertises, request each one, assert real bytes come back.
 #[tokio::test]
 async fn advertised_equals_servable() {
-    let store = Arc::new(RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8));
+    let store = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(TARGET_DURATION_SECS)
+            .with_part_target_ms(PART_TARGET_MS)
+            .with_window_segments(8),
+    ));
     let specs = vec![video_track_spec()];
 
     let mut batches = Vec::new();
@@ -254,7 +270,12 @@ async fn advertised_equals_servable() {
 /// fragments are rejected.
 #[tokio::test]
 async fn auth_is_enforced() {
-    let store = Arc::new(RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8));
+    let store = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(TARGET_DURATION_SECS)
+            .with_part_target_ms(PART_TARGET_MS)
+            .with_window_segments(8),
+    ));
     let specs = vec![video_track_spec()];
 
     let mut batches = Vec::new();
@@ -345,7 +366,12 @@ async fn auth_is_enforced() {
 /// proving they share the Trunk.
 #[tokio::test]
 async fn llhls_and_smooth_serve_from_same_trunk() {
-    let store = Arc::new(RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8));
+    let store = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(TARGET_DURATION_SECS)
+            .with_part_target_ms(PART_TARGET_MS)
+            .with_window_segments(8),
+    ));
     let specs = vec![video_track_spec()];
 
     let mut batches = Vec::new();
@@ -442,7 +468,12 @@ fn have_oracle(bin: &str) -> bool {
 /// A route with `W13_TARGET_SECS` segments: `W13_FRAMES` video frames through
 /// a real `LlHlsSegmenter`.
 fn w13_route() -> Arc<RouteHandle> {
-    let store = Arc::new(RouteHandle::new(W13_TARGET_SECS, PART_TARGET_MS, 16));
+    let store = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(W13_TARGET_SECS)
+            .with_part_target_ms(PART_TARGET_MS)
+            .with_window_segments(16),
+    ));
     let specs = vec![video_track_spec()];
     let mut batches = Vec::new();
     for i in 0..W13_FRAMES {
@@ -560,7 +591,12 @@ async fn w13_real_multitrack_per_chunk_timeline_is_exact() {
         .collect();
     assert_eq!(specs.len(), 2, "one video + one audio track");
 
-    let store = Arc::new(RouteHandle::new(W13_TARGET_SECS, PART_TARGET_MS, 16));
+    let store = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(W13_TARGET_SECS)
+            .with_part_target_ms(PART_TARGET_MS)
+            .with_window_segments(16),
+    ));
     let program = media_plane::ProgramId(0);
     store.publish_new_program(program);
     let mut seg = LlHlsSegmenter::with_part_target(
@@ -1021,7 +1057,12 @@ fn subtitle_spec(track_id: u32) -> TrackSpec {
 /// Publish a stable, multi-segment route for `specs`, with tracks recorded so
 /// the origin knows what the window describes.
 fn publish_route(specs: Vec<TrackSpec>) -> Arc<RouteHandle> {
-    let store = Arc::new(RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8));
+    let store = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(TARGET_DURATION_SECS)
+            .with_part_target_ms(PART_TARGET_MS)
+            .with_window_segments(8),
+    ));
     let mut batches = Vec::new();
     for i in 0..60u32 {
         let is_sync = i % 30 == 0;
@@ -1206,7 +1247,12 @@ async fn a_subtitle_track_is_advertised() {
 #[tokio::test]
 async fn smooth_responses_carry_no_cache() {
     const NO_CACHE: &str = "no-cache";
-    let store = Arc::new(RouteHandle::new(W13_TARGET_SECS, PART_TARGET_MS, 2));
+    let store = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(W13_TARGET_SECS)
+            .with_part_target_ms(PART_TARGET_MS)
+            .with_window_segments(2),
+    ));
     let specs = vec![video_track_spec()];
     let program = media_plane::ProgramId(0);
     store.publish_new_program(program);
@@ -1344,7 +1390,12 @@ async fn a_fragment_outside_the_window_is_not_found() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_requests_all_succeed_and_agree() {
     const CLIENTS: usize = 32;
-    let store = Arc::new(RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8));
+    let store = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(TARGET_DURATION_SECS)
+            .with_part_target_ms(PART_TARGET_MS)
+            .with_window_segments(8),
+    ));
     let mut batches = Vec::new();
     for i in 0..60u32 {
         let sample = Sample::new(

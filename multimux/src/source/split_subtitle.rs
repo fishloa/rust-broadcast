@@ -147,6 +147,7 @@ pub(super) fn build_followers(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::route::RouteConfig;
     use dvb_si::descriptors::teletext::TeletextEntry;
     use dvb_si::descriptors::{AnyDescriptor, parse_loop};
     use transmux::TrackId;
@@ -221,7 +222,13 @@ mod tests {
                 .with_event_capacity(nz(8))
                 .with_part_capacity(nz(64)),
         );
-        let route = RouteHandle::new(2.0, 500, 4).with_subtitles(true);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(2.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        )
+        .with_subtitles(true);
         route.publish_program(media_plane::ProgramId(0), std::sync::Arc::clone(&trunk));
         (route, trunk)
     }

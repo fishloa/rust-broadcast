@@ -1,5 +1,6 @@
 //! Master playlist 503/Retry-After gate (issue #1426 part A).
 
+use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -13,17 +14,35 @@ use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
 
 fn llhls_route_declared(declared: u64) -> Arc<RouteHandle> {
-    let route = Arc::new(RouteHandle::new(4.0, 500, 4).with_declared_bandwidth_bps(declared));
+    let route = Arc::new(
+        RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        )
+        .with_declared_bandwidth_bps(declared),
+    );
     route.publish_new_program(media_plane::ProgramId(0));
     route
 }
 
 fn llhls_route_undeclared_unpublished() -> Arc<RouteHandle> {
-    Arc::new(RouteHandle::new(4.0, 500, 4))
+    Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(4.0)
+            .with_part_target_ms(500)
+            .with_window_segments(4),
+    ))
 }
 
 fn llhls_route_with_segment() -> Arc<RouteHandle> {
-    let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+    let route = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(4.0)
+            .with_part_target_ms(500)
+            .with_window_segments(4),
+    ));
     route.publish_new_program(media_plane::ProgramId(0));
     route
         .add_segment(
@@ -41,7 +60,15 @@ fn llhls_route_with_segment() -> Arc<RouteHandle> {
 
 fn ts_route_undeclared_unpublished() -> Arc<RouteHandle> {
     use transmux::Container;
-    Arc::new(RouteHandle::new(4.0, 500, 4).with_container(Container::MpegTs))
+    Arc::new(
+        RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        )
+        .with_container(Container::MpegTs),
+    )
 }
 
 fn app_for(route: Arc<RouteHandle>, output: Arc<dyn Output>) -> axum::Router {
@@ -134,7 +161,12 @@ async fn master_200_after_first_segment_uses_measured() {
 
 fn published_without_segment(output: &Arc<dyn Output>) -> Arc<RouteHandle> {
     use transmux::Container;
-    let mut route = RouteHandle::new(4.0, 500, 4);
+    let mut route = RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(4.0)
+            .with_part_target_ms(500)
+            .with_window_segments(4),
+    );
     if output.kind() == multimux::output::OutputKind::TsHls {
         route = route.with_container(Container::MpegTs);
     }
@@ -171,7 +203,12 @@ async fn master_503_when_published_but_no_segment_and_no_declared_bandwidth() {
 
 #[tokio::test]
 async fn master_ratchets_bandwidth_over_http() {
-    let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+    let route = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(4.0)
+            .with_part_target_ms(500)
+            .with_window_segments(4),
+    ));
     route.publish_new_program(media_plane::ProgramId(0));
     let app = app_for(route.clone(), Arc::new(HlsOutput::default()));
 

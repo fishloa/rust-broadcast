@@ -1,6 +1,7 @@
 //! Several pull sessions running at once on the multi-thread runtime: each is its own task,
 //! none blocks another, and every one publishes media.
 
+use multimux::route::RouteConfig;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -77,7 +78,12 @@ async fn eight_ts_http_pulls_all_progress_on_the_multi_thread_runtime() {
                 .with_connect(CONNECT)
                 .with_read_idle(READ),
         );
-        let route_handle = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let route_handle = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         let config = TrunkConfig::default()
             .with_timed_capacity(nz(TIMED_RING))
             .with_sparse_capacity(nz(RING))
@@ -111,7 +117,12 @@ async fn cancelling_a_pull_stops_its_session_promptly() {
         std::future::pending::<()>().await;
     });
     let route = TsHttpRoute::new("hung", format!("http://{addr}/stream.ts"));
-    let route_handle = Arc::new(RouteHandle::new(4.0, 500, 4));
+    let route_handle = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(4.0)
+            .with_part_target_ms(500)
+            .with_window_segments(4),
+    ));
     let config = TrunkConfig::default()
         .with_timed_capacity(nz(TIMED_RING))
         .with_sparse_capacity(nz(RING))

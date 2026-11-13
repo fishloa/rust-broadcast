@@ -142,6 +142,7 @@ pub async fn run_hls_pull(
 
 #[cfg(test)]
 mod tests {
+    use crate::route::RouteConfig;
 
     use super::*;
 
@@ -240,7 +241,12 @@ mod tests {
         });
 
         let route = HlsPullRoute::new("pulled-403", format!("http://{addr}/media.m3u8"));
-        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         let started = std::time::Instant::now();
         let result = tokio::time::timeout(
             Duration::from_secs(60),
@@ -478,7 +484,12 @@ mod tests {
     async fn pull_to_end(
         route: &HlsPullRoute,
     ) -> (Result<()>, Vec<TrackSpec>, HashMap<TrackId, usize>) {
-        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         let config = TrunkConfig::default()
             .with_timed_capacity(nz(COUNT_TIMED_RING))
             .with_sparse_capacity(nz(16))
@@ -552,7 +563,12 @@ mod tests {
     async fn run_hls_pull_completes_cleanly_on_a_static_playlist() {
         let (url, server) = start_cmaf_fixture_server(None).await;
         let route = HlsPullRoute::new("pulled-cam", url);
-        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         // HANG GUARD (issue #826): backstop around the full `run_hls_pull`
         // against a static CMAF fixture. `run_hls_pull` returns on its own
         // once the playlist is exhausted; this only exists to fail "never
@@ -588,7 +604,12 @@ mod tests {
         let (url, server) = start_counting_cmaf_fixture_server(None, hits.clone()).await;
         let segment_count = build_cmaf_fixture().2.len();
         let route = Arc::new(HlsPullRoute::new("vod", url));
-        let route_handle = Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let route_handle = Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         let cancel = tokio_util::sync::CancellationToken::new();
         let attempt_route = route.clone();
         let supervisor = tokio::spawn(crate::origin::supervisor::supervise_driver(
@@ -715,7 +736,12 @@ mod tests {
         });
 
         let route = HlsPullRoute::new("pulled-retry", format!("http://{addr}/media.m3u8"));
-        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         let handle = std::sync::Arc::clone(&route_handle);
         let result = tokio::time::timeout(
             Duration::from_secs(60),
@@ -828,7 +854,12 @@ mod tests {
         });
 
         let route = HlsPullRoute::new("pulled-retry-after", format!("http://{addr}/media.m3u8"));
-        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         let handle = std::sync::Arc::clone(&route_handle);
         let result = tokio::time::timeout(
             Duration::from_secs(60),
@@ -922,7 +953,12 @@ mod tests {
         });
 
         let route = HlsPullRoute::new("pulled-playlist-wait", format!("http://{addr}/media.m3u8"));
-        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         let result = tokio::time::timeout(
             Duration::from_secs(60),
             run_hls_pull(
@@ -1047,7 +1083,12 @@ mod tests {
     const BEARER_TOKEN: &str = "hls-pull-bearer-token";
 
     async fn drain_via_run_hls_pull(route: HlsPullRoute) -> Result<()> {
-        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         run_hls_pull(
             &route,
             trunk_config(),
@@ -1172,7 +1213,12 @@ mod tests {
                     .with_connect(Timeouts::default().connect)
                     .with_read_idle(Duration::from_secs(2)),
             );
-        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         // DISCRIMINATOR (issue #826): must prove the operation returns
         // through the CONFIGURED read timeout, not via any longer system/
         // library default. Gap widened: configured read timeout raised

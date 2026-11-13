@@ -4,6 +4,7 @@
 //! a `Trunk` fed with demuxed fixture samples — and reads the result back over
 //! the axum router the way a player would.
 
+use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -271,11 +272,16 @@ fn build_rig(
     let writer = trunk.writer().expect("trunk writer");
     writer.set_tracks(sources.iter().map(|s| s.spec.clone()).collect());
     let route = Arc::new(
-        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, WINDOW_SEGMENTS)
-            .with_hold_cold_playlist(false)
-            .with_declared_bandwidth_bps(declared)
-            .with_audio_renditions(renditions)
-            .with_audio_rendition_sources(selectors),
+        RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_part_target_ms(PART_TARGET_MS)
+                .with_window_segments(WINDOW_SEGMENTS),
+        )
+        .with_hold_cold_playlist(false)
+        .with_declared_bandwidth_bps(declared)
+        .with_audio_renditions(renditions)
+        .with_audio_rendition_sources(selectors),
     );
     route.publish_program(ProgramId(0), Arc::clone(&trunk));
     route.set_track_specs(ProgramId(0), trunk.tracks().to_vec());
@@ -864,13 +870,18 @@ async fn split_audio_track_appearing_mid_stream_starts_at_next_cut() {
     let writer = trunk.writer().expect("writer");
     writer.set_tracks(vec![early_video.spec.clone(), a0.spec.clone()]);
     let route = Arc::new(
-        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, WINDOW_SEGMENTS)
-            .with_declared_bandwidth_bps(8_000_000)
-            .with_audio_renditions(decls(&["fre", "qad"]))
-            .with_audio_rendition_sources(vec![
-                AudioTrackSelector::Index(0),
-                AudioTrackSelector::TrackId(a1.spec.track_id.value()),
-            ]),
+        RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_part_target_ms(PART_TARGET_MS)
+                .with_window_segments(WINDOW_SEGMENTS),
+        )
+        .with_declared_bandwidth_bps(8_000_000)
+        .with_audio_renditions(decls(&["fre", "qad"]))
+        .with_audio_rendition_sources(vec![
+            AudioTrackSelector::Index(0),
+            AudioTrackSelector::TrackId(a1.spec.track_id.value()),
+        ]),
     );
     route.publish_program(ProgramId(0), Arc::clone(&trunk));
     let mut segmenter =
@@ -2137,13 +2148,16 @@ async fn split_audio_after_a_source_reconnect_starts_at_the_number_derived_time(
     let sources = h264_aac();
     let aac = &sources[1];
     let route = Arc::new(
-        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, WINDOW_SEGMENTS)
-            .with_hold_cold_playlist(false)
-            .with_declared_bandwidth_bps(Some(DECLARED_BPS))
-            .with_audio_renditions(decls(&["eng"]))
-            .with_audio_rendition_sources(vec![AudioTrackSelector::TrackId(
-                aac.spec.track_id.value(),
-            )]),
+        RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_part_target_ms(PART_TARGET_MS)
+                .with_window_segments(WINDOW_SEGMENTS),
+        )
+        .with_hold_cold_playlist(false)
+        .with_declared_bandwidth_bps(Some(DECLARED_BPS))
+        .with_audio_renditions(decls(&["eng"]))
+        .with_audio_rendition_sources(vec![AudioTrackSelector::TrackId(aac.spec.track_id.value())]),
     );
     let first = new_trunk();
     run_on(&route, &first, sources).await;
@@ -2211,21 +2225,24 @@ fn sibling_trunk_carries_trunk_config_capacities() {
     let writer = trunk.writer().expect("trunk writer");
     writer.set_tracks(Vec::new());
     let route = Arc::new(
-        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, WINDOW_SEGMENTS)
-            .with_audio_renditions(vec![hls_runtime::server::AudioRenditionDecl {
-                uri: "audio.m3u8".into(),
-                characteristics: Vec::new(),
-                group_id: "audio".into(),
-                name: "audio".into(),
-                language: "und".into(),
-                channels: None,
-                default: true,
-                autoselect: true,
-            }])
-            .with_audio_rendition_sources(vec![transmux::audio_profile::AudioTrackSelector::Index(
-                0,
-            )])
-            .with_trunk_config(trunk_config),
+        RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_part_target_ms(PART_TARGET_MS)
+                .with_window_segments(WINDOW_SEGMENTS),
+        )
+        .with_audio_renditions(vec![hls_runtime::server::AudioRenditionDecl {
+            uri: "audio.m3u8".into(),
+            characteristics: Vec::new(),
+            group_id: "audio".into(),
+            name: "audio".into(),
+            language: "und".into(),
+            channels: None,
+            default: true,
+            autoselect: true,
+        }])
+        .with_audio_rendition_sources(vec![transmux::audio_profile::AudioTrackSelector::Index(0)])
+        .with_trunk_config(trunk_config),
     );
     route.publish_program(ProgramId(0), Arc::clone(&trunk));
     route.set_track_specs(ProgramId(0), Vec::new());

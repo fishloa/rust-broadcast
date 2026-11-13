@@ -950,6 +950,7 @@ impl TlsHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::route::RouteConfig;
 
     #[test]
     fn a_config_the_session_refuses_is_the_route_config_error_with_its_field() {
@@ -957,7 +958,12 @@ mod tests {
         config.kind = broadcast_client::SourceKind::Udp;
         config.udp.reorder_packets = 0;
         let labels = SessionLabels::new("ts/udp", broadcast_common::timeouts::Timeouts::default());
-        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(250)
+                .with_window_segments(8),
+        ));
         let error = SessionStep::open(
             "udp://127.0.0.1:5000",
             config,
@@ -985,7 +991,12 @@ mod tests {
 
         let ring = |n: usize| std::num::NonZeroUsize::new(n).expect("non-zero ring");
         let labels = SessionLabels::new("ts/http", broadcast_common::timeouts::Timeouts::default());
-        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(250)
+                .with_window_segments(8),
+        ));
         let mut step = SessionStep::open(
             "http://127.0.0.1:1/stream.ts",
             Config::relay(),

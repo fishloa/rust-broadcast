@@ -1,3 +1,4 @@
+use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -11,9 +12,14 @@ use tokio::net::TcpListener;
 
 fn make_state() -> Arc<AppState> {
     let store = Arc::new(
-        RouteHandle::new(4.0, 500, 4)
-            .with_hold_cold_playlist(false)
-            .with_declared_bandwidth_bps(5_000_000),
+        RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        )
+        .with_hold_cold_playlist(false)
+        .with_declared_bandwidth_bps(5_000_000),
     );
     let program = media_plane::ProgramId(0);
     store.publish_new_program(program);

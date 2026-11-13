@@ -38,6 +38,7 @@
 //! advanced, a finite live-latency sample was observed, no fatal `ERROR`
 //! event) -- never just "the child process exited 0".
 
+use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
@@ -158,9 +159,10 @@ async fn start_ll_dash_origin(
     spec: TrackSpec,
 ) -> (Arc<RouteHandle>, String, tokio::task::JoinHandle<()>) {
     let store = Arc::new(RouteHandle::new(
-        TARGET_DURATION_SECS,
-        PART_TARGET_MS,
-        WINDOW_SEGMENTS,
+        RouteConfig::default()
+            .with_target_duration_secs(TARGET_DURATION_SECS)
+            .with_part_target_ms(PART_TARGET_MS)
+            .with_window_segments(WINDOW_SEGMENTS),
     ));
     // Issue #805 task 6: a `ProgramServing` bundle must exist before
     // `set_track_specs`/`set_init`/`add_part`/`add_segment` (here or in the

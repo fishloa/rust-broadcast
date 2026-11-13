@@ -1,6 +1,7 @@
 //! Route-level `audio_renditions` config and its effect on `/master.m3u8`
 //! (issue #1428 slice 1).
 
+use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -60,7 +61,13 @@ async fn get_master(route: Arc<RouteHandle>) -> (StatusCode, String) {
 }
 
 fn route(audio: Option<Vec<AudioRenditionDecl>>) -> Arc<RouteHandle> {
-    let mut r = RouteHandle::new(4.0, 500, 4).with_declared_bandwidth_bps(7_000_000u64);
+    let mut r = RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(4.0)
+            .with_part_target_ms(500)
+            .with_window_segments(4),
+    )
+    .with_declared_bandwidth_bps(7_000_000u64);
     if let Some(a) = audio {
         r = r.with_audio_renditions(a);
     }

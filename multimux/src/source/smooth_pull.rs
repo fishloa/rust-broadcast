@@ -131,6 +131,7 @@ pub(crate) async fn run_with_clock(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::route::RouteConfig;
 
     #[test]
     fn the_session_queue_is_budgeted_in_bytes() {
@@ -351,7 +352,12 @@ mod tests {
     async fn pull_to_end(
         route: &SmoothPullRoute,
     ) -> (Result<()>, Vec<TrackSpec>, HashMap<TrackId, usize>) {
-        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         let config = TrunkConfig::default()
             .with_timed_capacity(nz(COUNT_TIMED_RING))
             .with_sparse_capacity(nz(16))
@@ -525,7 +531,12 @@ mod tests {
     async fn run_smooth_pull_completes_cleanly_on_a_static_manifest() {
         let (url, server, _media) = start_fixture_server(None).await;
         let route = SmoothPullRoute::new("smooth-cam", url);
-        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         // HANG GUARD (issue #826): backstop around `run_smooth_pull`.
         // The static manifest is exhausted by the session's fragment-fetch
         // loop; `run_smooth_pull` returns on its own once complete.
@@ -561,7 +572,12 @@ mod tests {
         let (url, server, _media, hits) =
             start_throttling_fixture_server(None, Some(("video", first))).await;
         let route = SmoothPullRoute::new("smooth-retry-after", url);
-        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         let result = tokio::time::timeout(
             Duration::from_secs(60),
             run_smooth_pull(
@@ -617,7 +633,12 @@ mod tests {
                 .with_connect(Duration::from_secs(5))
                 .with_read_idle(Duration::from_secs(1)),
         );
-        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         // DISCRIMINATOR (issue #826): must prove the operation returns
         // through the CONFIGURED read timeout, not via any longer system
         // default. Gap widened: configured read timeout raised from 150ms
@@ -664,7 +685,12 @@ mod tests {
         </SmoothStreamingMedia>"#;
         let (url, server) = start_manifest_only_server(MANIFEST).await;
         let route = SmoothPullRoute::new("smooth-drm", url);
-        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         // HANG GUARD (issue #826): backstop around `run_smooth_pull` for
         // the DRM manifest test. The manifest parse check returns
         // immediately so `run_smooth_pull` fails within ~ms.

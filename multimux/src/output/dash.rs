@@ -682,6 +682,7 @@ pub(crate) fn xs_duration_secs_checked(field: &'static str, secs: f64) -> String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::route::RouteConfig;
     use crate::testutil::video_spec;
     use transmux::CodecConfig;
 
@@ -691,7 +692,12 @@ mod tests {
     /// a publish makes the next request render again.
     #[tokio::test(flavor = "multi_thread")]
     async fn concurrent_manifest_requests_render_once_until_a_publish() {
-        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(500)
+                .with_window_segments(8),
+        ));
         let app = crate::testutil::app_with(&route, Arc::new(DashOutput));
         let _first = crate::testutil::ingest_run(&route, 4).await;
         let serving = route
@@ -798,7 +804,12 @@ mod tests {
 
     #[test]
     fn publish_time_present_stable_when_unchanged_and_later_per_new_segment() {
-        let route = RouteHandle::new(4.0, 500, 2);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(2),
+        );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
@@ -860,7 +871,12 @@ mod tests {
     #[test]
     fn a_gap_ends_the_period_and_the_next_segments_open_a_new_one() {
         let program = crate::route::SPTS_PROGRAM_ID;
-        let route = RouteHandle::new(4.0, 500, 8);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(8),
+        );
         route.publish_new_program(program);
         route.set_track_specs(program, vec![video_spec(TrackId::new(1))]);
         for info in [seg(1, 4.0), seg(2, 4.0), gap_seg(3, 4.0), seg(4, 4.0)] {
@@ -880,7 +896,12 @@ mod tests {
     #[test]
     fn a_window_of_only_gap_placeholders_renders_no_mpd() {
         let program = crate::route::SPTS_PROGRAM_ID;
-        let route = RouteHandle::new(4.0, 500, 8);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(8),
+        );
         route.publish_new_program(program);
         route.set_track_specs(program, vec![video_spec(TrackId::new(1))]);
         route
@@ -913,7 +934,12 @@ mod tests {
     /// to change no wire byte. `GOLDEN_BLESS=<dir>` writes instead of compares.
     #[test]
     fn render_mpd_matches_frozen_now_golden() {
-        let route = RouteHandle::new(4.0, 500, 2);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(2),
+        );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
@@ -955,7 +981,12 @@ mod tests {
     /// `GOLDEN_BLESS=<dir>` writes instead of compares.
     #[test]
     fn render_mpd_window_over_60s_matches_frozen_now_golden() {
-        let route = RouteHandle::new(4.0, 500, 15);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(15),
+        );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
@@ -1007,7 +1038,12 @@ mod tests {
     /// comparing.
     #[test]
     fn the_fractional_target_differs_from_main_by_exactly_the_rounded_token() {
-        let route = RouteHandle::new(0.1, 30, 3);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(0.1)
+                .with_part_target_ms(30)
+                .with_window_segments(3),
+        );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
@@ -1070,7 +1106,12 @@ mod tests {
         // Render a live 60 s window and compare it to main's captured golden
         // (also check the two committed golden FILES agree) — so a code
         // regression to `PT60S` fails here, not just a golden edit.
-        let route = RouteHandle::new(4.0, 500, 15);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(15),
+        );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
@@ -1124,7 +1165,12 @@ mod tests {
     /// again the two differ by exactly that token.
     #[test]
     fn the_over_an_hour_window_differs_from_main_by_exactly_the_balanced_token() {
-        let route = RouteHandle::new(4.0, 500, 900);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(900),
+        );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
@@ -1285,7 +1331,12 @@ mod tests {
 
     #[test]
     fn render_mpd_none_without_track_specs() {
-        let route = RouteHandle::new(4.0, 500, 4);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         assert!(
             render_mpd(&route).is_none(),
             "no track specs recorded yet -> nothing to describe"
@@ -1297,7 +1348,12 @@ mod tests {
         // Track specs known, but the window is still empty (no segment has
         // closed yet) -- must still render a syntactically valid MPD (a
         // degenerate SegmentTemplate@duration=0), not None/panic.
-        let route = RouteHandle::new(4.0, 500, 4);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
@@ -1314,7 +1370,12 @@ mod tests {
         // @id -- it must be forced to DEFAULT_TRACK_ID (1) so
         // $RepresentationID$ substitution matches the shared resource
         // route's init-1.mp4/seg-1-<N>.m4s filenames.
-        let route = RouteHandle::new(4.0, 500, 4);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
@@ -1337,7 +1398,12 @@ mod tests {
 
     #[test]
     fn render_mpd_number_addressing_and_start_number_is_fixed_at_first_segment() {
-        let route = RouteHandle::new(4.0, 500, 2);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(2),
+        );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
@@ -1386,7 +1452,12 @@ mod tests {
     /// Reverting `render_mpd` to `route.created_at()` makes this fail.
     #[test]
     fn availability_start_time_is_presentation_origin_not_route_creation() {
-        let route = RouteHandle::new(2.0, 500, 4);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(2.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         let created = route.created_at();
         std::thread::sleep(Duration::from_millis(1_100));
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -1417,7 +1488,12 @@ mod tests {
 
     #[test]
     fn render_mpd_carries_live_attributes() {
-        let route = RouteHandle::new(2.0, 500, 4);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(2.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
@@ -1451,7 +1527,12 @@ mod tests {
     /// Recompiled and re-run to confirm the failure, then reverted.
     #[test]
     fn render_mpd_skips_leading_opaque_track_instead_of_503ing() {
-        let route = RouteHandle::new(4.0, 500, 4);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
@@ -1470,7 +1551,12 @@ mod tests {
 
     #[test]
     fn render_mpd_none_when_every_track_is_opaque() {
-        let route = RouteHandle::new(4.0, 500, 4);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
@@ -1494,7 +1580,12 @@ mod tests {
     /// reaching it.
     #[tokio::test]
     async fn manifest_handler_503_before_track_specs_known() {
-        let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         let resp = manifest(State(route)).await;
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
@@ -1502,7 +1593,12 @@ mod tests {
 
     #[tokio::test]
     async fn manifest_handler_200_with_dash_content_type() {
-        let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
@@ -1525,7 +1621,12 @@ mod tests {
     /// (`http::resolve_route_program`'s `NotYetAnnounced` arm).
     #[tokio::test]
     async fn manifest_not_yet_announced_is_503_not_404() {
-        let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        ));
         let resp = manifest(State(route)).await;
         assert_eq!(
             resp.status(),
@@ -1539,7 +1640,12 @@ mod tests {
         // issue #969: the MPD must advertise SCTE-35 as an inband event
         // stream so DASH clients know segments may carry `emsg` boxes with
         // this scheme (ANSI/SCTE 214-3 §8.3.3).
-        let route = RouteHandle::new(4.0, 500, 4);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,

@@ -125,6 +125,7 @@
 //!   preserved, only the "reads don't hang forever" property), freeing its
 //!   `max_sessions` slot for the next publisher.
 
+use crate::route::RouteConfig;
 use std::collections::{BTreeSet, VecDeque};
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -744,7 +745,12 @@ pub async fn serve_for_test_with_read_load() -> (
         admitted_total: Arc::clone(&infra.admitted_total),
         admit_count_notify: Arc::clone(&infra.admit_count_notify),
     });
-    let route_handle = Arc::new(RouteHandle::new(1.0, 500, 8));
+    let route_handle = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(500)
+            .with_window_segments(8),
+    ));
     // `run_rtmp`'s task owns the route (and its `OnceCell<Arc<RtmpInfra>>`),
     // keeping the accept pump alive. The cancel token aborts the run task so
     // the test binary exits rather than hanging on a forever-looping loop.
@@ -1024,7 +1030,12 @@ mod tests {
         let route = RtmpRoute::new("cam-rtmp", addr.to_string());
         let fixture = load_fixture();
 
-        let route_handle = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let route_handle = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(500)
+                .with_window_segments(8),
+        ));
         let route_handle_for_task = Arc::clone(&route_handle);
         let run_task = tokio::spawn(async move {
             let _ = run_rtmp(&route, trunk_config(), handshake(), &route_handle_for_task).await;
@@ -1226,7 +1237,12 @@ mod tests {
         let fixture = load_fixture();
         let clock = ManualClock::new();
 
-        let route_handle = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let route_handle = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(500)
+                .with_window_segments(8),
+        ));
         let route_handle_for_task = Arc::clone(&route_handle);
         let clock_for_task = Arc::clone(&clock);
         let run_task = tokio::spawn(async move {
@@ -1335,7 +1351,12 @@ mod tests {
         );
         let stall_prefix = fixture[..stall_prefix_len].to_vec();
 
-        let route_handle = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let route_handle = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(500)
+                .with_window_segments(8),
+        ));
         let route_handle_for_task = Arc::clone(&route_handle);
         let run_task = tokio::spawn(async move {
             let _ = run_rtmp(&route, trunk_config(), handshake(), &route_handle_for_task).await;
@@ -1463,7 +1484,12 @@ mod tests {
 
         let addr = reserve_addr().await;
         let route = RtmpRoute::new("cam-rtmp-split", addr.to_string());
-        let route_handle = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let route_handle = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(500)
+                .with_window_segments(8),
+        ));
         let route_handle_for_task = Arc::clone(&route_handle);
         let run_task = tokio::spawn(async move {
             let _ = run_rtmp(&route, trunk_config(), handshake(), &route_handle_for_task).await;
@@ -1550,7 +1576,12 @@ mod tests {
                     .with_connect(Timeouts::default().connect)
                     .with_read_idle(Duration::from_millis(200)),
             );
-        let route_handle = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let route_handle = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(500)
+                .with_window_segments(8),
+        ));
         let route_handle_for_task = Arc::clone(&route_handle);
         let run_task = tokio::spawn(async move {
             let _ = run_rtmp(&route, trunk_config(), handshake(), &route_handle_for_task).await;

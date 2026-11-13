@@ -12,6 +12,7 @@ use crate::support::origin::{body_bytes, body_string, get};
 use crate::support::segmenter_feed::{
     PART_TARGET_MS, TARGET_DURATION_SECS, feed_via_segmenter, video_batches_n, video_track_spec,
 };
+use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -53,8 +54,13 @@ fn pdt_lines(playlist: &str) -> Vec<i64> {
 async fn arrival_pdt_on_media_and_iframe() {
     let clock_before_ms = jiff::Timestamp::now().as_millisecond();
     let store = Arc::new(
-        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8)
-            .with_program_date_time(ProgramDateTimeSource::Arrival),
+        RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_part_target_ms(PART_TARGET_MS)
+                .with_window_segments(8),
+        )
+        .with_program_date_time(ProgramDateTimeSource::Arrival),
     );
     feed_via_segmenter(&store, vec![video_track_spec()], video_batches_n(120));
 
@@ -123,8 +129,13 @@ async fn arrival_pdt_on_media_and_iframe() {
 #[tokio::test]
 async fn off_emits_no_pdt() {
     let store = Arc::new(
-        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8)
-            .with_program_date_time(ProgramDateTimeSource::Off),
+        RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_part_target_ms(PART_TARGET_MS)
+                .with_window_segments(8),
+        )
+        .with_program_date_time(ProgramDateTimeSource::Off),
     );
     feed_via_segmenter(&store, vec![video_track_spec()], video_batches_n(60));
 
@@ -154,9 +165,14 @@ async fn off_emits_no_pdt() {
 #[tokio::test]
 async fn ts_hls_route_carries_pdt() {
     let store = Arc::new(
-        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8)
-            .with_container(Container::MpegTs)
-            .with_program_date_time(ProgramDateTimeSource::Arrival),
+        RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_part_target_ms(PART_TARGET_MS)
+                .with_window_segments(8),
+        )
+        .with_container(Container::MpegTs)
+        .with_program_date_time(ProgramDateTimeSource::Arrival),
     );
     feed_via_segmenter(&store, vec![video_track_spec()], video_batches_n(60));
 
@@ -198,8 +214,13 @@ async fn pdt_validator_clean() {
     }
 
     let store = Arc::new(
-        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8)
-            .with_program_date_time(ProgramDateTimeSource::Arrival),
+        RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_part_target_ms(PART_TARGET_MS)
+                .with_window_segments(8),
+        )
+        .with_program_date_time(ProgramDateTimeSource::Arrival),
     );
     let program = media_plane::ProgramId(0);
     store.publish_new_program(program);

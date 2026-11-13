@@ -35,7 +35,7 @@ pub mod rtsp;
 pub mod sdp;
 pub mod segment;
 #[cfg(test)]
-mod segment_legacy;
+mod segment_tests;
 
 /// Default demand (in bytes) a source asks the pipeline to feed per
 /// iteration.
@@ -401,6 +401,7 @@ mod driver_progress_tests {
     //! `ScriptedSession`-style construction indirectly via a minimal fake
     //! `IngestSession`, so this is a fast, deterministic unit test rather
     //! than a real-socket loopback one.
+    use crate::route::RouteConfig;
 
     use super::*;
     use broadcast_common::{Demand, Stage, Timestamp};
@@ -508,7 +509,12 @@ mod driver_progress_tests {
     #[test]
     fn first_live_flips_route_health_to_live() {
         let mut driver = driver();
-        let route = crate::route::RouteHandle::new(4.0, 500, 4);
+        let route = crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         let mut published = HashSet::new();
 
         // Establish: driver becomes Live once it drains SessionEvent::Established.
@@ -536,7 +542,12 @@ mod driver_progress_tests {
     #[test]
     fn new_program_is_published_into_the_registry() {
         let mut driver = driver();
-        let route = crate::route::RouteHandle::new(4.0, 500, 4);
+        let route = crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         let mut published = HashSet::new();
 
         driver.feed(&[], Timestamp::from_nanos(1)); // Established
@@ -571,7 +582,12 @@ mod driver_progress_tests {
     #[test]
     fn repeated_calls_with_no_new_programs_are_idempotent() {
         let mut driver = driver();
-        let route = crate::route::RouteHandle::new(4.0, 500, 4);
+        let route = crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         let mut published = HashSet::new();
 
         driver.feed(&[], Timestamp::from_nanos(1));
@@ -658,7 +674,12 @@ mod driver_progress_tests {
             .with_trunk(trunk_config())
             .with_max_programs(nz(4)),
         );
-        let route = crate::route::RouteHandle::new(4.0, 500, 4);
+        let route = crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(4),
+        );
         let mut published = HashSet::new();
         let mut segmenters = std::collections::HashMap::new();
 
@@ -703,6 +724,7 @@ mod advance_route_tests {
     //! `driver_backed_route_serves_real_media_through_ll_hls` test, to prove
     //! the facade performs *both* steps (registry publish AND
     //! sample-to-segment turning), not just one.
+    use crate::route::RouteConfig;
 
     use super::*;
     use crate::route::{ProgramResolution, RouteHandle, SPTS_PROGRAM_ID};
@@ -723,7 +745,12 @@ mod advance_route_tests {
     /// reverted.
     #[tokio::test]
     async fn advance_route_both_publishes_and_segments() {
-        let route = RouteHandle::new(1.0, 250, 8);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(250)
+                .with_window_segments(8),
+        );
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
             media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),

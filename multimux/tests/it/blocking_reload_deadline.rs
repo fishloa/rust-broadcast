@@ -1,6 +1,7 @@
 //! A Playlist blocking reload waits three Target Durations before it answers
 //! 503 (RFC 8216bis section 6.2.5.2, issue #1651), not a fixed 5 s.
 
+use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,8 +36,13 @@ struct Feeder {
 impl Feeder {
     fn new() -> Self {
         let store = Arc::new(
-            RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8)
-                .with_declared_bandwidth_bps(5_000_000),
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(TARGET_DURATION_SECS)
+                    .with_part_target_ms(PART_TARGET_MS)
+                    .with_window_segments(8),
+            )
+            .with_declared_bandwidth_bps(5_000_000),
         );
         let config = avc_config_from_sprop(SPROP).expect("valid sprop");
         let spec = TrackSpec::new(

@@ -123,6 +123,7 @@ pub(crate) async fn run_rtsp_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::route::RouteConfig;
     use std::time::Duration;
     use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -154,7 +155,12 @@ mod tests {
     #[tokio::test]
     async fn a_bad_url_error_redacts_credentials() {
         let route = RtspRoute::new("bad", "rtsp://user:secretpass@bad host/s");
-        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(250)
+                .with_window_segments(8),
+        ));
         let error = run_rtsp(
             &route,
             trunk_config(),
@@ -253,7 +259,12 @@ mod tests {
                 .with_connect(std::time::Duration::from_millis(500))
                 .with_read_idle(std::time::Duration::from_millis(500)),
         );
-        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(250)
+                .with_window_segments(8),
+        ));
 
         // HANG GUARD (issue #826): the test's semantic assertion is that
         // the rtsps:// client sends a real TLS ClientHello on the wire
@@ -406,7 +417,12 @@ mod tests {
                 .with_connect(std::time::Duration::from_secs(5))
                 .with_read_idle(std::time::Duration::from_secs(5)),
         );
-        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(250)
+                .with_window_segments(8),
+        ));
         let err = tokio::time::timeout(
             std::time::Duration::from_secs(30),
             run_rtsp(
@@ -450,7 +466,12 @@ mod tests {
                 .with_connect(Duration::from_secs(5))
                 .with_read_idle(READ),
         );
-        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(250)
+                .with_window_segments(8),
+        ));
         let started = std::time::Instant::now();
         let err = tokio::time::timeout(
             Duration::from_secs(10),
@@ -503,7 +524,12 @@ mod tests {
                 .with_connect(std::time::Duration::from_secs(5))
                 .with_read_idle(std::time::Duration::from_secs(5)),
         );
-        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(250)
+                .with_window_segments(8),
+        ));
         let err = tokio::time::timeout(
             std::time::Duration::from_secs(30),
             run_rtsp(
@@ -588,7 +614,12 @@ mod tests {
                 .with_connect(std::time::Duration::from_secs(5))
                 .with_read_idle(std::time::Duration::from_secs(5)),
         );
-        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(250)
+                .with_window_segments(8),
+        ));
         // The route only ends when the server closes; run it concurrently and
         // observe what the server saw.
         let run = tokio::spawn(async move {
@@ -657,7 +688,12 @@ mod tests {
                 .with_connect(Duration::from_secs(5))
                 .with_read_idle(Duration::from_secs(30)),
         );
-        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(250)
+                .with_window_segments(8),
+        ));
         let cancel = tokio_util::sync::CancellationToken::new();
         let run = tokio::spawn({
             let cancel = cancel.clone();
@@ -822,7 +858,12 @@ mod tests {
                         .with_connect(HANG_GUARD)
                         .with_read_idle(HANG_GUARD),
                 );
-            let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
+            let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(1.0)
+                    .with_part_target_ms(250)
+                    .with_window_segments(8),
+            ));
             let cancel = tokio_util::sync::CancellationToken::new();
             let run = tokio::spawn({
                 let route_handle = std::sync::Arc::clone(&route_handle);
@@ -908,7 +949,12 @@ mod tests {
                     .with_connect(std::time::Duration::from_secs(5))
                     .with_read_idle(std::time::Duration::from_secs(5)),
             );
-            let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
+            let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(1.0)
+                    .with_part_target_ms(250)
+                    .with_window_segments(8),
+            ));
             let run = tokio::spawn(async move {
                 run_rtsp(
                     &route,
@@ -979,7 +1025,12 @@ mod tests {
                 .with_connect(Duration::from_secs(5))
                 .with_read_idle(Duration::from_millis(300)),
         );
-        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(250)
+                .with_window_segments(8),
+        ));
         let err = tokio::time::timeout(
             Duration::from_secs(10),
             run_rtsp(

@@ -74,7 +74,7 @@ use media_plane::trunk::{RetentionClass, TrunkConfig};
 use multimux::config::{Config, InputSpec};
 use multimux::registry::InputCtx;
 use multimux::source::{DriverProgress, advance_route};
-use multimux::{Backoff, RouteHandle, SchemeRegistry, supervise_driver};
+use multimux::{Backoff, RouteConfig, RouteHandle, SchemeRegistry, supervise_driver};
 use transmux::avc_config_from_sprop;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 
@@ -318,7 +318,12 @@ async fn main() {
     // would for this route, and wait for real, servable media to land — this
     // is the proof the wiring above is not just type-checked but genuinely
     // moves samples end to end.
-    let store = Arc::new(RouteHandle::new(1.0, 500, 8));
+    let store = Arc::new(RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(500)
+            .with_window_segments(8),
+    ));
     let cancel = tokio_util::sync::CancellationToken::new();
     let factory = registry.input("demo").expect("registered above");
     let handle = factory(InputCtx {

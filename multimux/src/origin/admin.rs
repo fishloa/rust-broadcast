@@ -72,6 +72,7 @@
 //! ingest supervisor is told to stop. This is a graceful drain, not an
 //! abrupt disconnect: no in-flight response is ever cut off mid-body.
 
+use crate::route::RouteConfig;
 use std::collections::HashMap;
 use std::future::Future;
 use std::net::SocketAddr;
@@ -448,9 +449,10 @@ impl RouteRegistry {
             .collect::<crate::Result<Vec<_>>>()?;
         let store = Arc::new(
             RouteHandle::new(
-                self.ctx.base_config.target_duration_secs,
-                self.ctx.base_config.part_target_ms,
-                self.ctx.base_config.window_segments,
+                RouteConfig::default()
+                    .with_target_duration_secs(self.ctx.base_config.target_duration_secs)
+                    .with_part_target_ms(self.ctx.base_config.part_target_ms)
+                    .with_window_segments(self.ctx.base_config.window_segments),
             )
             .with_archive_floor(archive_floor)
             .with_name(route.name.clone())

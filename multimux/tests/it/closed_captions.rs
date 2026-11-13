@@ -2,6 +2,7 @@
 //! carries CEA-608/708 (issue #1428), driven through the production
 //! `ProgramSegmenter::pump` path and read back over the axum router.
 
+use multimux::route::RouteConfig;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
@@ -163,9 +164,14 @@ fn build_with(
             .collect(),
     );
     let route = Arc::new(
-        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, WINDOW_SEGMENTS)
-            .with_declared_bandwidth_bps(DECLARED_BPS)
-            .with_closed_caption_overrides(overrides),
+        RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_part_target_ms(PART_TARGET_MS)
+                .with_window_segments(WINDOW_SEGMENTS),
+        )
+        .with_declared_bandwidth_bps(DECLARED_BPS)
+        .with_closed_caption_overrides(overrides),
     );
     route.publish_program(ProgramId(0), Arc::clone(&trunk));
     route.set_track_specs(ProgramId(0), trunk.tracks().to_vec());

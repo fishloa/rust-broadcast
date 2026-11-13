@@ -1883,6 +1883,7 @@ pub(crate) fn drive_program_segmenters<S: IngestSession>(
 
 #[cfg(test)]
 mod tests {
+    use crate::route::RouteConfig;
     use super::*;
     use crate::route::RouteHandle;
     use media_plane::ids::PartIndex;
@@ -1953,7 +1954,10 @@ mod tests {
     /// then reverted.
     #[test]
     fn driver_backed_route_serves_real_media_through_ll_hls() {
-        let route = RouteHandle::new(1.0, 250, 8);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8));
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
             media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
@@ -2021,7 +2025,10 @@ mod tests {
 
     #[test]
     fn a_large_queued_burst_is_segmented_in_bounded_batches() {
-        let route = RouteHandle::new(1.0, 250, 8);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8));
         let driver = burst_driver(3 * PUMP_BATCH_ITEMS as u32);
         let mut published = HashSet::new();
         let mut segmenters = HashMap::new();
@@ -2039,7 +2046,10 @@ mod tests {
 
     #[test]
     fn a_small_burst_is_segmented_in_one_call() {
-        let route = RouteHandle::new(1.0, 250, 8);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8));
         let driver = burst_driver(30);
         let mut published = HashSet::new();
         let mut segmenters = HashMap::new();
@@ -2049,7 +2059,10 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn a_large_queued_burst_does_not_starve_another_task() {
-        let route = RouteHandle::new(1.0, 250, 8);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8));
         let driver = burst_driver(3 * PUMP_BATCH_ITEMS as u32);
         let mut state = crate::source::DriverProgress::new();
         let ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -2085,7 +2098,10 @@ mod tests {
     #[test]
     fn drive_program_segmenters_bumps_parts_and_segments_produced_counters() {
         crate::prometheus::install();
-        let route = RouteHandle::new(1.0, 250, 8).with_name("segment-metrics-probe-route");
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8)).with_name("segment-metrics-probe-route");
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
             media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
@@ -2193,7 +2209,10 @@ mod tests {
             );
         }
 
-        let route = RouteHandle::new(1.0, 250, 8);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8));
         let mut segmenter =
             ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter builds");
         // `pump` drains the backlog cursor and publishes whatever segments
@@ -2247,7 +2266,10 @@ mod tests {
             .writer()
             .expect("writer")
             .set_tracks(vec![track_spec(TrackId::new(1))]);
-        let route = RouteHandle::new(1.0, 250, 8);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8));
         let mut segmenter =
             ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter builds");
 
@@ -2331,7 +2353,10 @@ mod tests {
     /// again.
     #[test]
     fn samples_published_in_the_same_feed_as_new_program_are_still_segmented() {
-        let route = RouteHandle::new(1.0, 250, 8);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8));
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
             media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
@@ -2383,7 +2408,10 @@ mod tests {
     /// and re-run to confirm the failure, then reverted.
     #[test]
     fn segmenter_feeds_the_same_trunk_the_driver_writes_samples_into() {
-        let route = RouteHandle::new(1.0, 250, 8);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8));
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
             media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
@@ -2558,7 +2586,10 @@ mod tests {
     /// assertion's failure, then reverted.
     #[test]
     fn two_programs_on_one_route_segment_independently() {
-        let route = RouteHandle::new(1.0, 500, 8);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(500)
+            .with_window_segments(8));
         let mut driver = IngestDriver::new(
             TwoProgramSession::new(),
             media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
@@ -2725,7 +2756,10 @@ mod tests {
     /// that construction.
     #[test]
     fn ts_hls_mpts_route_serves_each_program_as_its_own_single_pmt_playlist() {
-        let route = RouteHandle::new(1.0, 500, 8).with_container(Container::MpegTs);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(500)
+            .with_window_segments(8)).with_container(Container::MpegTs);
         let mut driver = IngestDriver::new(
             TwoProgramSession::new(),
             media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
@@ -2989,7 +3023,10 @@ mod tests {
     /// boxes and asserts a `tfhd` names `track_ID=9`.
     #[test]
     fn new_tracks_media_appears_in_output_after_mid_stream_addition() {
-        let route = RouteHandle::new(1.0, 250, 8);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8));
         let mut driver = IngestDriver::new(
             TrackChangeSession::new(),
             media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
@@ -3092,7 +3129,10 @@ mod tests {
 
     #[test]
     fn existing_tracks_are_uninterrupted_across_mid_stream_addition() {
-        let route = RouteHandle::new(1.0, 250, 8);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8));
         let mut driver = IngestDriver::new(
             TrackChangeSession::new(),
             media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
@@ -3180,7 +3220,10 @@ mod tests {
 
     #[test]
     fn track_change_lands_on_segment_boundary() {
-        let route = RouteHandle::new(1.0, 250, 8);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8));
         let mut driver = IngestDriver::new(
             TrackChangeSession::new(),
             media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
@@ -3288,7 +3331,10 @@ mod tests {
 
     #[test]
     fn dash_output_logs_and_continues_on_mid_stream_addition() {
-        let route = RouteHandle::new(1.0, 250, 8);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8));
         let mut driver = IngestDriver::new(
             TrackChangeSession::new(),
             media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
@@ -3438,7 +3484,10 @@ mod tests {
 
         fn new_with_container(container: Container) -> Self {
             GapRig {
-                route: RouteHandle::new(1.0, 250, 16).with_container(container),
+                route: RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(16)).with_container(container),
                 driver: IngestDriver::new(
                     GapSession::new(),
                     media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
@@ -3701,7 +3750,10 @@ mod tests {
             .set_tracks(vec![track_spec(TrackId::new(1))]);
         pre_seed_five_segments(&trunk);
 
-        let route = RouteHandle::new(1.0, 250, 8).with_container(Container::MpegTs);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8)).with_container(Container::MpegTs);
         let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250)
             .expect("non-empty, anchor-capable track set");
 
@@ -3764,7 +3816,10 @@ mod tests {
         // `add_track`'s duplicate check on the (only) entry, forcing the
         // rebuild path.
         let mut segmenter = bare_segmenter(&trunk);
-        let route = RouteHandle::new(1.0, 250, 8).with_container(Container::MpegTs);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8)).with_container(Container::MpegTs);
 
         apply_change(&mut segmenter, &trunk, &route);
 
@@ -3828,7 +3883,10 @@ mod tests {
         );
         let writer = trunk.writer().expect("first take succeeds");
         writer.set_tracks(vec![track_spec(TrackId::new(1))]);
-        let route = RouteHandle::new(1.0, 250, 8);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8));
         let mut segmenter =
             ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("fMP4 segmenter builds");
         let mut cursor = trunk.subscribe_segments();
@@ -3896,7 +3954,10 @@ mod tests {
         );
         let writer = trunk.writer().expect("first take succeeds");
         writer.set_tracks(vec![track_spec(TrackId::new(1))]);
-        let route = RouteHandle::new(1.0, 250, 8);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8));
         route.publish_program(ProgramId(0), Arc::clone(&trunk));
         let mut segmenter =
             ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("fMP4 segmenter builds");
@@ -3947,7 +4008,10 @@ mod tests {
         );
         let writer = trunk.writer().expect("first take succeeds");
         writer.set_tracks(vec![track_spec(TrackId::new(1))]);
-        let route = RouteHandle::new(1.0, 250, 8).with_container(Container::MpegTs);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8)).with_container(Container::MpegTs);
         route.publish_program(ProgramId(0), Arc::clone(&trunk));
         let mut segmenter =
             ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("TS segmenter builds");
@@ -3989,7 +4053,10 @@ mod tests {
         );
         let writer = trunk.writer().expect("first take succeeds");
         writer.set_tracks(vec![track_spec(TrackId::new(1))]);
-        let route = RouteHandle::new(1.0, 250, 8).with_container(Container::MpegTs);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8)).with_container(Container::MpegTs);
         let mut segmenter =
             ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("TS segmenter builds");
 
@@ -4036,7 +4103,10 @@ mod tests {
         );
         let writer2 = trunk2.writer().expect("first take succeeds");
         writer2.set_tracks(vec![track_spec(TrackId::new(1))]);
-        let route2 = RouteHandle::new(1.0, 250, 8).with_container(Container::MpegTs);
+        let route2 = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8)).with_container(Container::MpegTs);
         let mut segmenter2 =
             ProgramSegmenter::try_new(&trunk2, &route2, 1.0, 250).expect("TS segmenter builds");
         for i in 0..45u32 {
@@ -4093,7 +4163,10 @@ mod tests {
         );
         let writer = trunk.writer().expect("first take succeeds");
         writer.set_tracks(initial);
-        let route = RouteHandle::new(1.0, 250, 8).with_container(Container::MpegTs);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8)).with_container(Container::MpegTs);
         let mut segmenter =
             ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("TS segmenter builds");
         for i in 0..45u32 {
@@ -4643,7 +4716,10 @@ mod tests {
         );
         let writer = trunk.writer().expect("writer");
         writer.set_tracks(vec![track_spec(TrackId::new(1))]);
-        let route = RouteHandle::new(1.0, 250, 8);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8));
         let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
         for i in 0..4u32 {
             writer.publish(TrackId::new(1), RetentionClass::Timed, sample_at(i, i == 3));
@@ -4672,7 +4748,10 @@ mod tests {
         );
         let writer = trunk.writer().expect("writer");
         writer.set_tracks(vec![track_spec(TrackId::new(1))]);
-        let route = RouteHandle::new(1.0, 250, 8);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8));
         let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
         // Source clock starts 10 s in; samples 0..3 are mid-GOP, 3 is the
         // first sync, then a sync every 45 frames (1 s) so segment 1 closes
@@ -4724,7 +4803,10 @@ mod tests {
         );
         let writer = trunk.writer().expect("writer");
         writer.set_tracks(vec![track_spec(TrackId::new(1))]);
-        let route = RouteHandle::new(1.0, 250, 8);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8));
         let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
         let total = u32::try_from(START_GATE_MAX_VIDEO_DROPPED).unwrap() + 3;
         for i in 0..total {
@@ -4754,7 +4836,10 @@ mod tests {
         );
         let writer = trunk.writer().expect("writer");
         writer.set_tracks(vec![track_spec(TrackId::new(1))]);
-        let route = RouteHandle::new(1.0, 250, 8);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8));
         let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
         for i in 0..4u32 {
             writer.publish(TrackId::new(1), RetentionClass::Timed, sample_at(i, true));
@@ -4785,7 +4870,10 @@ mod tests {
                 sample_rate: 48000,
             },
         )]);
-        let route = RouteHandle::new(1.0, 250, 8).with_container(Container::MpegTs);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8)).with_container(Container::MpegTs);
         let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
         for i in 0..4u32 {
             writer.publish(TrackId::new(2), RetentionClass::Timed, sample_at(i, false));
@@ -4810,7 +4898,10 @@ mod tests {
             track_spec(TrackId::new(1)),
             data_track_spec(TrackId::new(2)),
         ]);
-        let route = RouteHandle::new(1.0, 250, 8);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8));
         let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
         for i in 0..3u32 {
             writer.publish(TrackId::new(1), RetentionClass::Timed, sample_at(i, false));
@@ -4863,7 +4954,10 @@ mod tests {
         );
         let writer = trunk.writer().expect("writer");
         writer.set_tracks(vec![track_spec(TrackId::new(1))]);
-        let route = RouteHandle::new(1.0, 250, 8);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8));
         let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
         let mut segments = trunk.subscribe_segments();
 
@@ -4920,7 +5014,10 @@ mod tests {
         let video = track_spec(TrackId::new(1));
         let audio = aac_track_spec(TrackId::new(2));
         writer.set_tracks(vec![video.clone(), audio.clone()]);
-        let route = RouteHandle::new(1.0, 250, 8);
+        let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8));
         let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
         writer.publish(
             TrackId::new(1),
@@ -4983,7 +5080,10 @@ mod tests {
             );
             let writer = trunk.writer().expect("writer");
             writer.set_tracks(vec![track_spec(TrackId::new(1))]);
-            let route = RouteHandle::new(1.0, 250, 8);
+            let route = RouteHandle::new(RouteConfig::default()
+            .with_target_duration_secs(1.0)
+            .with_part_target_ms(250)
+            .with_window_segments(8));
             let segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
             Self {
                 trunk,

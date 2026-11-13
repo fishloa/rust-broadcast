@@ -11,6 +11,7 @@
 //!
 //! Skips cleanly when `mp4dump` is not on `PATH`.
 
+use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -104,7 +105,12 @@ fn build_real_trunk(pts_origin: i64, frames: u32) -> (Arc<RouteHandle>, Arc<Trun
     let writer = trunk.writer().expect("trunk writer");
     writer.set_tracks(vec![track_spec()]);
 
-    let route = RouteHandle::new(TARGET_DURATION_SECS, 200, 8);
+    let route = RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration_secs(TARGET_DURATION_SECS)
+            .with_part_target_ms(200)
+            .with_window_segments(8),
+    );
     // Publish the program into a route's serving state FIRST, so its
     // `HlsOrigin` subscribes from the backlog and observes every segment the
     // segmenter below produces — otherwise its live-edge cursor starts after

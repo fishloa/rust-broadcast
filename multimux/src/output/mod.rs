@@ -357,6 +357,7 @@ pub trait Output: Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::route::RouteConfig;
 
     /// Audit T14 (#1142): `Debug` of a push output must not print its
     /// credentials or stream key, nor a custom output's opaque params.
@@ -424,7 +425,12 @@ mod tests {
     /// turns that into a test failure instead.
     #[test]
     fn every_output_kind_merges_without_panicking() {
-        let route = Arc::new(RouteHandle::new(1.0, 250, 8));
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(1.0)
+                .with_part_target_ms(250)
+                .with_window_segments(8),
+        ));
 
         // The maximal set a route may actually configure. `ts_hls` is excluded
         // deliberately: it is mutually exclusive with the fMP4 outputs (it
