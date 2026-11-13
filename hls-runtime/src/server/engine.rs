@@ -1439,7 +1439,7 @@ pub struct RenditionSibling {
 /// # use std::num::NonZeroUsize;
 /// # use std::sync::Arc;
 /// # use hls_runtime::server::{HlsOrigin};
-/// # /// # use transmux::Container;
+/// # use transmux::Container;
 /// # use media_plane::trunk::{Trunk, TrunkConfig};
 /// # let nz = |n: usize| NonZeroUsize::new(n).unwrap();
 /// # let trunk = Arc::new(Trunk::new(TrunkConfig::default().with_timed_capacity(nz(16)).with_sparse_capacity(nz(4)).with_segment_capacity(nz(8)).with_event_capacity(nz(4)).with_part_capacity(nz(16))));
