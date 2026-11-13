@@ -59,6 +59,7 @@ async fn master_without_captions_is_unchanged() {
     route.set_track_specs(ProgramId(0), trunk.tracks().to_vec());
     let mut segmenter =
         ProgramSegmenter::try_new_with_siblings(&trunk, route.segmenter_config(), route.as_ref())
+            .0
             .expect("segmenter");
     if let Some(init) = segmenter.init_segment() {
         route.set_init(ProgramId(0), init);

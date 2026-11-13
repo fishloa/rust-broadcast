@@ -122,6 +122,7 @@ impl Rig {
             route.segmenter_config(),
             route.as_ref(),
         )
+        .0
         .expect("TS-HLS segmenter builds");
         route.set_track_specs(
             ProgramId(0),

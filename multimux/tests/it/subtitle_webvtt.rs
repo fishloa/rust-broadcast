@@ -151,6 +151,7 @@ fn start_rig_on(media: transmux::Media, route: Arc<RouteHandle>, reconnect: bool
     route.set_track_specs(ProgramId(0), trunk.tracks().to_vec());
     let mut segmenter =
         ProgramSegmenter::try_new_with_siblings(&trunk, route.segmenter_config(), route.as_ref())
+            .0
             .expect("segmenter");
     if reconnect {
         segmenter.continue_after_reconnect(

@@ -193,15 +193,12 @@ pub async fn run_ts_udp(
         EventIngest::new(),
         media_plane::IngestConfig::new(handshake).with_trunk(trunk_config),
     );
-    let mut progress = crate::source::DriverProgress::new();
     let mut sink = tokio::io::sink();
     crate::source::driver::run_ingest_scaffold(
         driver,
         route_handle,
-        &mut progress,
         cancel,
         route.timeouts,
-        crate::source::driver::DEFAULT_WRITE_TIMEOUT,
         &mut sink,
         &mut step,
         |never: Infallible| match never {},

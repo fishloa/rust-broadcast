@@ -525,8 +525,9 @@ pub async fn serve_hyper_util_with_task_gauge(
         listener,
         app,
         token,
-        header_read,
-        drain,
+        broadcast_common::timeouts::Timeouts::default()
+            .with_read_idle(header_read)
+            .with_write(drain),
         max_connections,
         Some(live_tasks),
         |l: Arc<tokio::net::TcpListener>| Box::pin(async move { l.accept().await }),
@@ -557,8 +558,9 @@ where
         listener,
         app,
         token,
-        header_read,
-        drain,
+        broadcast_common::timeouts::Timeouts::default()
+            .with_read_idle(header_read)
+            .with_write(drain),
         max_connections,
         None,
         accept_source,
@@ -574,8 +576,7 @@ async fn serve_impl_with_task_gauge<A, Fut>(
     listener: tokio::net::TcpListener,
     app: axum::Router,
     token: tokio_util::sync::CancellationToken,
-    header_read: Duration,
-    drain: Duration,
+    timeouts: broadcast_common::timeouts::Timeouts,
     max_connections: usize,
     live_tasks: Option<Arc<std::sync::atomic::AtomicUsize>>,
     accept_source: A,
@@ -586,6 +587,8 @@ where
         + Send
         + 'static,
 {
+    let header_read = timeouts.read_idle;
+    let drain = timeouts.write;
     use std::net::SocketAddr;
     use std::sync::Arc;
 

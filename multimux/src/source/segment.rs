@@ -11,9 +11,6 @@ use media_plane::trunk::Trunk;
 use crate::route::{RouteHandle, TsHlsIdrStatus};
 
 impl SiblingTrunks for RouteHandle {
-    fn report_output_failed(&self, message: String) {
-        let _ = self.fail_output_message(message);
-    }
     fn build_audio_followers(
         &self,
         trunk: &Trunk,
@@ -124,9 +121,6 @@ pub fn apply_segmenter_events(
 }
 
 impl SiblingTrunks for &RouteHandle {
-    fn report_output_failed(&self, message: String) {
-        (**self).report_output_failed(message)
-    }
     fn build_audio_followers(
         &self,
         trunk: &Trunk,
@@ -176,9 +170,10 @@ pub fn drive_program_segmenters<S: IngestSession>(
         let Some(trunk) = driver.trunk(program) else {
             continue;
         };
-        let Some(mut segmenter) =
-            ProgramSegmenter::try_new_with_siblings(trunk, config.clone(), route_handle)
-        else {
+        let (segmenter, ctor_events) =
+            ProgramSegmenter::try_new_with_siblings(trunk, config.clone(), route_handle);
+        apply_segmenter_events(route_handle, program, ctor_events);
+        let Some(mut segmenter) = segmenter else {
             continue;
         };
         segmenter.continue_after_reconnect(
@@ -206,7 +201,7 @@ pub fn drive_program_segmenters<S: IngestSession>(
             continue;
         };
         let mut events: Vec<SegmenterEvent> = Vec::new();
-        let (parts, segments) = segmenter.pump(program, trunk, &mut events, route_handle);
+        let (parts, segments) = segmenter.pump_batch(program, trunk, &mut events, route_handle);
         parts_total += parts;
         segments_total += segments;
         let servings = route_handle.audio_servings_for_trunk(trunk);

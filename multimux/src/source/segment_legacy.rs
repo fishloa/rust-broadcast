@@ -1,0 +1,5104 @@
+//! Productionises the segmenter gap `media_plane::ts_session`'s own test proved closed
+//! (issue #805 task 2b): task 2 wired all eight `media_plane`-ported inputs
+//! (rtsp/rtp/ts_udp/ts_http/srt/hls_pull/dash_pull/smooth_pull) so they
+//! *ingest* — each publishes its driver-minted [`Trunk`] into
+//! [`crate::route::RouteHandle`]'s program registry
+//! (`crate::source::report_driver_progress`), and egress resolves through
+//! that registry. But nothing turned the raw samples the driver publishes
+//! into segments/parts: the eight inputs wrote samples via the driver's
+//! `TrunkWriter` and nothing ever read them back out, so a driver-backed
+//! route's LL-HLS/DASH playlists came back empty — ingest was observable,
+//! playback was not.
+//!
+//! `ProgramSegmenter` is the missing stage: one per announced
+//! [`ProgramId`], subscribing a [`SampleCursor`] to that program's
+//! driver-minted `Trunk`, feeding a [`transmux::ll_hls::LlHlsSegmenter`], and
+//! publishing the resulting parts/segments back into **the same `Trunk`**
+//! via [`Trunk::segment_writer`] — never a second `Trunk`, and never copying
+//! samples between trunks (decided in
+//! `docs/superpowers/specs/2026-07-26-media-plane-architecture.md` §8: the
+//! ring-group split, `Trunk::segment_writer`, is exactly what makes holding
+//! both the driver's sample writer and this segmenter's segment writer live
+//! simultaneously on one `Trunk` legal). `drive_program_segmenters` is the
+//! per-iteration driver every `run_*` entry point calls, mirroring
+//! `report_driver_progress`'s own shape: build a segmenter the first time a
+//! program's tracks have landed, then pump every already-built segmenter's
+//! cursor.
+//!
+//! **Issue #887**: `ProgramSegmenter` feeds one of *two* segmenter kinds —
+//! [`transmux::ll_hls::LlHlsSegmenter`] (fMP4/CMAF, LL-HLS parts) or
+//! [`transmux::ts_hls::StreamingTsHlsSegmenter`] (classic whole-`.ts`
+//! segments, no parts) — selected per-program by that program's route's
+//! configured `crate::route::RouteHandle::container()` (see `AnySegmenter`,
+//! below). A route's container is fixed at route-construction time
+//! (`crate::config::OutputKind::TsHls` is mutually exclusive with
+//! `llhls`/`dash`/`ll_dash` on the same route, enforced by
+//! `crate::config::Route::validate_standalone`), so every program on one
+//! route always takes the same branch.
+//!
+//! Both are `pub(crate)` (issue #805 task 6 narrowed them back from `pub`):
+//! the supported extension surface for a [`crate::registry::SchemeRegistry`]
+//! `Custom` input factory is now the single [`crate::source::advance_route`]
+//! facade over `report_driver_progress` + this module's own
+//! `drive_program_segmenters`, not either call directly — a factory that
+//! called them separately (in the wrong order, or one without the other)
+//! could silently ingest with nothing ever becoming servable, the exact
+//! footgun `advance_route` exists to remove. See `examples/custom_scheme.rs`.
+//!
+//! # Init bytes and `RouteHandle::set_init`
+//!
+//! The fMP4 init segment has no home in a `Trunk` (no ring holds it — see
+//! `hls_runtime::server::engine`'s own module doc, "the one thing that
+//! genuinely cannot come from the `Trunk` alone"); it lives inside the
+//! route's [`hls_runtime::server::HlsOrigin`] instead.
+//! `RouteHandle::publish_program` (crate-private) builds that program's
+//! `ProgramServing` bundle (`HlsOrigin`+`DashState`) the first time its
+//! `Trunk` is published — see that method's own doc — so calling
+//! [`crate::route::RouteHandle::set_init`] here, *after* this program's
+//! `Trunk` has already been published into the registry, lands the init
+//! bytes in the same bundle every driver-backed `run_*` reads from.
+//! Init is pushed for **every** program, not just `SPTS_PROGRAM_ID` — DVR
+//! recording needs it for all programs (issue #906).
+//!
+//! # Why segmenting is per-program, not per-route
+//!
+//! An MPTS route carries several programs on one `IngestDriver`; each has
+//! its own driver-minted `Trunk` (see `media_plane::ingress`'s own docs) and
+//! must be segmented independently — `drive_program_segmenters` iterates
+//! every program `driver.programs()` reports, not just one. Every program
+//! gets its own [`crate::route::RouteHandle`] registry entry (issue #805 task
+//! 6: per-program serving state), so every program's `Trunk` carries its own
+//! real segments/parts, individually resolvable exactly like the
+//! `media_plane::ts_session` test proves and `crate::route`'s own
+//! `two_programs_serve_distinct_media` test proves end to end. *Selecting*
+//! one from an incoming HTTP request (as opposed to segmenting/serving it at
+//! all) is the addressing question `crate::route`'s own module doc records
+//! options for.
+
+use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use broadcast_common::clock33::PTS_HZ;
+use broadcast_common::timescale::{Rounding, rescale_u64};
+use transmux::TrackId;
+
+use broadcast_common::Timestamp;
+use broadcast_common::bcp47_language;
+use dvb_si::descriptors::atsc_caption_service::AtscCaptionService;
+use media_plane::ids::SegmentSeq;
+use media_plane::ingress::{IngestDriver, IngestSession, ProgramId};
+use media_plane::publish_queue::{PendingPublish, drain_publish_queue, part_entry};
+use media_plane::trunk::{SampleCursor, SampleCursorItem, SegmentEntry, SegmentWriter, Trunk};
+use transmux::Container;
+use transmux::SegmentMeta;
+use transmux::ll_hls::{LlHlsSegmenter, PartCutReady, PartInfo};
+use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
+use transmux::ts_hls::StreamingTsHlsSegmenter;
+use transmux::{CaptionDetector, DetectedCaption, declared_caption_services};
+
+use super::split_audio;
+use media_plane::segmenter::audio::AudioFollower;
+use super::split_subtitle;
+use crate::route::{RouteHandle, TsHlsIdrStatus};
+use broadcast_common::units::NANOS_PER_SEC;
+use media_plane::segmenter::audio::{LEADER_DURATION_HISTORY, LeaderDurations, leader_tracks};
+use media_plane::segmenter::subtitle::{LeaderPart, SubtitleFollower};
+
+/// One closed segment, normalised across the two segmenter kinds
+/// [`AnySegmenter`] wraps — [`transmux::ll_hls::SegmentInfo`] (fMP4) and
+/// [`transmux::ts_hls::TsSegment`] (classic TS) carry the same information
+/// under different field names/numbering conventions (see
+/// [`AnySegmenter::take_ready_segments`]), so [`ProgramSegmenter::publish_ready`]
+/// works against this one shape regardless of which segmenter produced it.
+struct ReadySegment {
+    bytes: Vec<u8>,
+    /// 1-based, matching [`media_plane::trunk::SegmentEntry::sequence_number`]'s
+    /// own convention (which in turn mirrors
+    /// [`transmux::ll_hls::SegmentInfo::segment_seq`]) — a
+    /// [`transmux::ts_hls::TsSegment::sequence`] is 0-based, so
+    /// [`AnySegmenter::take_ready_segments`] adds one when normalising it.
+    segment_seq: SegmentSeq,
+    duration: f64,
+    discontinuous: bool,
+}
+
+impl From<transmux::ll_hls::SegmentInfo> for ReadySegment {
+    fn from(info: transmux::ll_hls::SegmentInfo) -> Self {
+        ReadySegment {
+            bytes: info.bytes,
+            segment_seq: SegmentSeq::new(info.segment_seq),
+            duration: info.duration,
+            // The fMP4 segmenter never itself flags a discontinuity (see
+            // `ProgramSegmenter::publish_ready`'s pre-#887 hardcoded `false` —
+            // preserved here, not a behaviour change).
+            discontinuous: false,
+        }
+    }
+}
+
+impl From<transmux::ts_hls::TsSegment> for ReadySegment {
+    fn from(seg: transmux::ts_hls::TsSegment) -> Self {
+        ReadySegment {
+            bytes: seg.bytes,
+            segment_seq: SegmentSeq::new(
+                u32::try_from(seg.sequence)
+                    .unwrap_or(u32::MAX)
+                    .saturating_add(1),
+            ),
+            duration: seg.duration,
+            discontinuous: seg.discontinuous,
+        }
+    }
+}
+
+/// The two segmenter kinds a [`ProgramSegmenter`] can drive, selected by the
+/// route's configured [`Container`] (`crate::route::RouteHandle::container`,
+/// issue #887): [`Container::Fmp4`] feeds an [`LlHlsSegmenter`] (parts +
+/// segments), [`Container::MpegTs`] feeds a [`StreamingTsHlsSegmenter`]
+/// (whole self-initialising `.ts` segments only — no parts, no init segment;
+/// see that type's own module doc). Kept as one enum (rather than
+/// `ProgramSegmenter` being generic) so `drive_program_segmenters` and its
+/// `HashMap<ProgramId, ProgramSegmenter>` stay a single concrete type
+/// regardless of which container any given route is configured for.
+enum AnySegmenter {
+    Fmp4(LlHlsSegmenter),
+    Ts(StreamingTsHlsSegmenter),
+}
+
+impl AnySegmenter {
+    fn set_start_time_ns(&mut self, start_ns: u64) {
+        match self {
+            AnySegmenter::Fmp4(seg) => seg.set_start_time_ns(start_ns),
+            AnySegmenter::Ts(seg) => seg.set_start_time_ns(start_ns),
+        }
+    }
+
+    fn push(&mut self, track_id: TrackId, sample: Sample) -> transmux::Result<()> {
+        match self {
+            AnySegmenter::Fmp4(seg) => seg.push(track_id, sample),
+            AnySegmenter::Ts(seg) => seg.push(track_id, sample),
+        }
+    }
+
+    /// Finalize any trailing buffered partial segment — `LlHlsSegmenter::flush`
+    /// for fMP4, `StreamingTsHlsSegmenter::finish` for classic TS (same job,
+    /// different name: see that method's own doc for why it is not named
+    /// `flush` there).
+    fn part_target_ms(&self) -> Option<u32> {
+        match self {
+            AnySegmenter::Fmp4(seg) => Some(seg.part_target_ms()),
+            AnySegmenter::Ts(_) => None,
+        }
+    }
+
+    fn finish(&mut self) -> transmux::Result<()> {
+        match self {
+            AnySegmenter::Fmp4(seg) => seg.flush(),
+            AnySegmenter::Ts(seg) => seg.finish(),
+        }
+    }
+
+    /// The init segment bytes, fMP4 only — `Container::MpegTs`'s classic TS
+    /// segments are self-initialising (in-band PAT/PMT at the head of every
+    /// segment; see [`StreamingTsHlsSegmenter`]'s own doc), so this is always
+    /// `None` for [`AnySegmenter::Ts`] — mirroring
+    /// `hls_runtime::server::HlsOrigin::set_init`'s documented no-op under
+    /// [`Container::MpegTs`].
+    fn init_segment(&self) -> Option<Vec<u8>> {
+        match self {
+            AnySegmenter::Fmp4(seg) => match seg.init_segment() {
+                Ok(bytes) => Some(bytes),
+                Err(e) => {
+                    tracing::warn!(error = %e, "driver-backed segmenter init segment build failed");
+                    None
+                }
+            },
+            AnySegmenter::Ts(_) => None,
+        }
+    }
+
+    /// LL-HLS partial segments — always empty for [`AnySegmenter::Ts`], which
+    /// has no partial-segment concept at all (see [`AnySegmenter`]'s own doc).
+    fn record_part_cuts(&mut self) {
+        if let AnySegmenter::Fmp4(seg) = self {
+            seg.record_part_cuts();
+        }
+    }
+
+    fn take_ready_part_cuts(&mut self) -> Vec<PartCutReady> {
+        match self {
+            AnySegmenter::Fmp4(seg) => seg.take_ready_part_cuts(),
+            AnySegmenter::Ts(_) => Vec::new(),
+        }
+    }
+
+    fn take_ready_parts(&mut self) -> Vec<PartInfo> {
+        match self {
+            AnySegmenter::Fmp4(seg) => seg.take_ready_parts(),
+            AnySegmenter::Ts(_) => Vec::new(),
+        }
+    }
+
+    /// Closed segments, normalised to [`ReadySegment`] — see that type's own
+    /// doc for the fMP4/TS field-mapping differences this bridges.
+    fn take_ready_segments(&mut self) -> Vec<ReadySegment> {
+        match self {
+            AnySegmenter::Fmp4(seg) => seg
+                .take_ready_segments()
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            AnySegmenter::Ts(seg) => seg.take_ready().into_iter().map(Into::into).collect(),
+        }
+    }
+
+    /// Admit a new track into a running segmenter — issue #781: a mid-stream
+    /// PMT change adds an elementary stream.
+    ///
+    /// For [`Container::MpegTs`], [`StreamingTsHlsSegmenter::add_track`]
+    /// admits the new track in place; the next muxed `.ts` segment will carry
+    /// it in its PMT.
+    ///
+    /// For [`Container::Fmp4`], [`LlHlsSegmenter`] has no `add_track` (its
+    /// track set is frozen at construction) — returns `false` to signal the
+    /// caller must rebuild the segmenter at a segment boundary (when no
+    /// samples are buffered mid-segment).
+    ///
+    /// Returns `true` if the track was admitted in place, `false` if a
+    /// rebuild is required.
+    fn add_track(&mut self, spec: &TrackSpec) -> bool {
+        match self {
+            AnySegmenter::Fmp4(_) => false,
+            AnySegmenter::Ts(seg) => match seg.add_track(spec.clone()) {
+                Ok(()) => {
+                    tracing::info!(
+                        track_id = %spec.track_id,
+                        "admitted new track into running TS-HLS segmenter"
+                    );
+                    true
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        track_id = %spec.track_id,
+                        "failed to admit new track into TS-HLS segmenter"
+                    );
+                    false
+                }
+            },
+        }
+    }
+
+    /// Apply a changed track spec in place (issue #1425). fMP4 cannot, and
+    /// reports `Unknown` so the caller keeps its rebuild path.
+    fn update_track(
+        &mut self,
+        spec: &TrackSpec,
+    ) -> Result<transmux::UpdateTrackOutcome, transmux::Error> {
+        match self {
+            AnySegmenter::Fmp4(_) => Ok(transmux::UpdateTrackOutcome::Unknown),
+            AnySegmenter::Ts(seg) => match seg.update_track(spec.clone()) {
+                Ok(outcome) => {
+                    if matches!(outcome, transmux::UpdateTrackOutcome::Changed) {
+                        tracing::info!(
+                            track_id = %spec.track_id,
+                            "applied changed track config to running TS-HLS segmenter"
+                        );
+                    }
+                    Ok(outcome)
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        track_id = %spec.track_id,
+                        "failed to apply changed track config to TS-HLS segmenter"
+                    );
+                    Err(e)
+                }
+            },
+        }
+    }
+}
+
+/// One program's segmenting state: a [`SampleCursor`] on its driver-minted
+/// [`Trunk`], an [`LlHlsSegmenter`] fed from it, and the *same* `Trunk`'s own
+/// [`SegmentWriter`] the resulting parts/segments are published back
+/// through.
+///
+/// `pub(crate)` (not `pub`, issue #805 task 6): the one caller outside this
+/// module, [`crate::source::advance_route`], is the facade a
+/// [`crate::registry::SchemeRegistry`] `Custom` factory calls instead of
+/// touching this type or [`drive_program_segmenters`] directly — see that
+/// facade's own doc.
+/// What [`ProgramSegmenter::apply_track_change`] did with a track-set change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TrackChange {
+    /// Admitted in place: the init segment is unchanged.
+    Admitted,
+    /// The segmenter was rebuilt; the new init serves from this segment.
+    Rebuilt { first_segment: SegmentSeq },
+    /// The set carries no media the container can mux (empty, or data only).
+    NoMuxableMedia,
+    /// The change could not be applied; the previous segmenter stays.
+    Refused,
+}
+
+/// The program has no muxable media: its current segment was closed, a gap
+/// placeholder published, and every sample is dropped until a track set the
+/// container can mux arrives.
+#[derive(Debug, Clone, Copy)]
+struct GapState {
+    resume_segment: SegmentSeq,
+}
+
+/// [`SegmentWriter`] the resulting parts/segments are published back
+/// through.
+///
+/// The per-program fMP4/TS segmenter a driver-backed route runs.
+///
+/// Public (issue #1083) so an embedder or a test can drive the exact
+/// production segmenting path — [`Self::try_new`] → push samples into the
+/// program's `Trunk` → [`Self::pump`] → [`Self::flush`] — rather than
+/// reimplementing it. Most callers should use the
+/// [`crate::source::advance_route`] facade instead.
+pub struct ProgramSegmenter {
+    cursor: SampleCursor,
+    /// The last [`Self::pump`] stopped at its per-call item budget with samples still queued.
+    backlogged: bool,
+    /// Per track whose declared timescale differs from the `Trunk`'s (an
+    /// `audio_profiles` HE-AAC override moves it to the output rate): the
+    /// `(trunk, declared)` timescales its samples are re-expressed between
+    /// on their way into the segmenter.
+    timescale_moves: HashMap<TrackId, (u32, u32)>,
+    segment_writer: SegmentWriter,
+    seg: AnySegmenter,
+    /// The next segment published opens a replacement run, so it carries
+    /// `EXT-X-DISCONTINUITY` (RFC 8216bis 6.2.1: a change of timing or
+    /// encoding is signalled with it).
+    mark_next_discontinuous: bool,
+    gap: Option<GapState>,
+    /// Cumulative nanoseconds of segment duration published so far by this
+    /// segmenter — mirrors `crate::route::RouteHandle`'s own
+    /// `next_timeline_ns`, kept per-program here since each program's
+    /// timeline is independent.
+    next_timeline_ns: u64,
+    /// Last-seen [`Trunk::track_generation`] — compared each pump to detect
+    /// a mid-stream track-set change (issue #781). When the trunk's
+    /// generation advances past this, [`Self::apply_track_change`] admits
+    /// new tracks into (or rebuilds) the segmenter.
+    track_generation: u64,
+    /// The track set the samples being drained were published under: the
+    /// trunk's set at construction, replaced at each in-band
+    /// [`SampleCursorItem::TracksChanged`]. Never read from the trunk, which
+    /// may already be ahead of the cursor.
+    published_tracks: Arc<[TrackSpec]>,
+    /// Set when an fMP4 rebuild re-armed [`Self::start_gate_open`] mid-stream:
+    /// the gate then holds back only video, so audio that is not part of the
+    /// change keeps flowing.
+    gate_video_only: bool,
+    /// Parts/segments this segmenter could not hand to `segment_writer` on a
+    /// previous call (a segment's `ArchiveOverrun::StallIngest` pin had not
+    /// caught up yet), oldest first — see
+    /// [`Self::publish_without_blocking`]/[`Self::drain_pending`] for why
+    /// this exists: `pump`/`flush` run synchronously on a shared tokio
+    /// worker thread (via `drive_program_segmenters`, called directly from
+    /// every ingest source's async task loop), so this segmenter must never
+    /// call the blocking `SegmentWriter::publish_segment` — a stalled DVR
+    /// pin would then park that worker thread for up to
+    /// `media_plane::trunk::SegmentWriter`'s bounded wait (issue #1082's T7
+    /// finding). Bounded by [`PENDING_PUBLISH_QUEUE_CAP`].
+    pending: VecDeque<PendingPublish>,
+    /// When the entry currently at the front of `pending` first became
+    /// stuck — `None` whenever `pending` is empty. Compared against
+    /// [`PENDING_PUBLISH_MAX_WAIT`] in [`Self::drain_pending`].
+    pending_since: Option<Instant>,
+    /// The mapping from the trunk's internal segment timeline to the
+    /// source's own media (90 kHz) clock — see [`MediaAnchor`]. Reported to
+    /// the trunk via [`SegmentWriter::note_segment_start`] so
+    /// `Trunk::events_in_segment` can attribute inband SCTE-35 events to the
+    /// right segment (issue #1083, W9). `None` until the first timed sample.
+    anchor: Option<MediaAnchor>,
+    /// An anchor to apply at the NEXT segment boundary, not now: a
+    /// discontinuity detected mid-segment must not retro-stamp the segment
+    /// already being filled with the post-jump clock (item 5). Set while
+    /// samples of the in-progress segment are still arriving; consumed by
+    /// [`Self::queue_segment`] once that segment closes, so the following
+    /// segment is anchored to the first post-jump sample.
+    pending_anchor: Option<MediaAnchor>,
+    /// Per-track timeline-jump detector (broadcast-client semantics), moved
+    /// to transmux.
+    timeline: transmux::JumpDetector,
+    /// Wall-clock origin for delivery times passed to the detector.
+    ingest_origin: Instant,
+    /// Start-gate (Apple authoring 7.4 MUST: segments start on a sync/IDR
+    /// picture, issue #1425): for a program whose track set contains a video
+    /// track, drop every timed sample until the first sync sample of a video
+    /// track has been seen. `true` once opened.
+    pub(crate) start_gate_open: bool,
+    /// Number of timed samples dropped by the start-gate so far.
+    pub(crate) start_gate_dropped: u64,
+    /// Of those, how many were on a video track.
+    pub(crate) start_gate_video_dropped: u64,
+    /// Whether the one-shot `tracing::info!` on gate open has fired.
+    pub(crate) start_gate_opened_logged: bool,
+    /// How long the start gate has dropped IDR-less video while an `idr_only`
+    /// classic-TS route waits for its first IDR.
+    idr_wait: transmux::IdrWait,
+    /// The wait ran out and the route cuts on non-IDR sync samples
+    /// (`ts_hls_idr_fallback` permitting).
+    idr_fallback_active: bool,
+    /// Every sample since the first non-IDR sync sample, kept while the gate
+    /// waits for an IDR: when the wait runs out the stream is replayed from
+    /// that sync sample, so a stream whose only random-access points came
+    /// before the bound still yields its first segment.
+    idr_hold: VecDeque<(TrackId, Sample)>,
+    idr_hold_bytes: usize,
+    /// Separate audio renditions (issue #1428 slice 2b): one follower per
+    /// mapped audio track, empty unless the route opts into split audio.
+    followers: Vec<AudioFollower>,
+    /// WebVTT subtitle renditions built from teletext subtitle pages (issue
+    /// #1428): one follower per declared page.
+    subtitle_followers: Vec<SubtitleFollower>,
+    /// Duration of each recent leader segment, for sizing gap placeholders.
+    leader_durations: LeaderDurations,
+    /// Per-track caption detectors (`None` for a track whose codec has no
+    /// caption carriage), built lazily and dropped on a track-set change.
+    caption_detectors: HashMap<TrackId, Option<CaptionDetector>>,
+    /// Every caption stream this segmenter has seen, across track changes.
+    captions_seen: BTreeSet<DetectedCaption>,
+    captions_declared: Vec<AtscCaptionService>,
+    /// `captions_seen` has grown, or the scan window has ended, since the
+    /// state was last handed to the route.
+    captions_unreported: bool,
+    /// First DTS seen per track the caption scan covers.
+    caption_scan_started: HashMap<TrackId, i64>,
+    /// A full [`CAPTION_SCAN_WINDOW_SECS`] of video has been examined; an
+    /// empty `captions_seen` then means the route declares no captions.
+    captions_scan_complete: bool,
+    /// The leader's `PART-TARGET` last handed to the route's origin.
+    part_target_published: Option<u32>,
+}
+
+/// Most sample payload bytes the IDR-fallback hold keeps (32 MiB). Past it the
+/// hold is discarded and restarts at the next sync sample, so a stream with
+/// no usable random-access point cannot grow it without bound.
+/// Media time of video examined for captions before a route that has found
+/// none declares `CLOSED-CAPTIONS=NONE`; a later detection replaces it.
+const CAPTION_SCAN_WINDOW_SECS: i64 = 10;
+const IDR_HOLD_MAX_BYTES: usize = 32 * 1024 * 1024;
+
+/// Maps this segmenter's internal per-segment timeline
+/// ([`SegmentEntry::timeline_position`], which starts at 0 for a fresh
+/// segmenter and advances by segment durations) onto the **source's** own
+/// 90 kHz media clock — the same clock SCTE-35 events are anchored on.
+///
+/// `source_90k` is the rescaled PTS of a real sample, and `timeline_ns` the
+/// internal timeline position at the moment that sample was seen. Every
+/// segment's start is then `source_90k + (segment.timeline_position -
+/// timeline_ns)`, which is exact for any segment (no per-segment rounding
+/// accumulation — the delta is computed once from real values). A PTS
+/// discontinuity (or a track change) re-anchors: the anchor is re-taken from
+/// the first sample after it, so a jump in the source clock does not smear
+/// every later boundary (issue #1083, E).
+#[derive(Debug, Clone, Copy)]
+struct MediaAnchor {
+    source_90k: u64,
+    timeline_ns: u64,
+}
+
+/// Start-gate safety valve (issue #1425): the gate drops leading video samples
+/// until the first sync sample; if a video track flags no sync sample at all
+/// within this many video samples (about 30 s at 60 fps) the gate opens
+/// anyway (with a warning) instead of dropping the program forever.
+const START_GATE_MAX_VIDEO_DROPPED: u64 = 1800;
+
+/// Cursor items one [`ProgramSegmenter::pump`] call processes before it returns, leaving the rest
+/// queued for the next call, so the caller can yield to the runtime between batches.
+const PUMP_BATCH_ITEMS: usize = 512;
+
+/// Rolling-window depth [`StreamingTsHlsSegmenter::new`] is given —
+/// irrelevant to a driver-backed route in practice (its own `.playlist()`
+/// method, the only consumer of this window, is never called here: the
+/// served playlist is rendered from the `Trunk`'s own segment log via
+/// `crate::route::ProgramServing`'s `HlsOrigin`, exactly like the fMP4 path).
+/// Any positive value works; matches this route's own advertised-window
+/// depth (`crate::route::RouteHandle::window_segments_cap`) so memory use is
+/// at least bounded consistently with everything else per-route.
+fn ts_segmenter_window(route_handle: &RouteHandle) -> usize {
+    route_handle.window_segments_cap().get()
+}
+
+/// Refuse a track a classic MPEG-TS HLS segment may not carry: Apple HLS
+/// Authoring Spec 1.5 allows only AVC video in TS, so HEVC and AV1 fail the
+/// output rather than producing an invalid stream.
+pub(crate) fn ts_hls_track_check(config: &CodecConfig) -> crate::Result<()> {
+    let (codec, reason) = match config {
+        CodecConfig::Hevc { .. } => ("HEVC", "HEVC is not allowed in MPEG-TS HLS segments"),
+        CodecConfig::Av1 { .. } => ("AV1", "AV1 is not allowed in MPEG-TS HLS segments"),
+        _ => return Ok(()),
+    };
+    Err(crate::MultimuxError::UnsupportedCodec {
+        output: "ts_hls",
+        codec,
+        reason,
+    })
+}
+
+/// Fail `route_handle`'s output on the first track [`ts_hls_track_check`]
+/// refuses, logging once. `true` when every track is acceptable.
+fn ts_hls_tracks_acceptable<'a>(
+    route_handle: &RouteHandle,
+    configs: impl IntoIterator<Item = &'a CodecConfig>,
+) -> bool {
+    for config in configs {
+        if let Err(e) = ts_hls_track_check(config) {
+            if route_handle.fail_output_message(e.to_string()) {
+                tracing::error!(error = %e, route = route_handle.name(), "ts_hls output failed");
+            }
+            return false;
+        }
+    }
+    true
+}
+
+/// Whether `sample` of a video track may open the start gate: a sync sample,
+/// or under a classic-TS route cutting on IDR only
+/// ([`transmux::SegmentCutPolicy::IdrOnly`]) a sample carrying an IDR slice,
+/// so the media-time anchor is pinned on the picture the first segment starts
+/// with rather than on dropped leading pictures.
+fn gate_opens_on(
+    route_handle: &RouteHandle,
+    config: Option<&CodecConfig>,
+    sample: &Sample,
+    idr_fallback_active: bool,
+) -> bool {
+    let idr_only = matches!(route_handle.container(), Container::MpegTs)
+        && route_handle.ts_cut_policy() == transmux::SegmentCutPolicy::IdrOnly
+        && !idr_fallback_active;
+    let codec = match config {
+        Some(CodecConfig::Avc { .. }) => Some(transmux::NalCodec::Avc),
+        Some(CodecConfig::Hevc { .. }) => Some(transmux::NalCodec::Hevc),
+        Some(CodecConfig::Vvc { .. }) => Some(transmux::NalCodec::Vvc),
+        _ => None,
+    };
+    match (idr_only, codec) {
+        (true, Some(codec)) => transmux::access_unit_is_idr(codec, &sample.data),
+        _ => sample.flags.is_sync,
+    }
+}
+
+impl ProgramSegmenter {
+    /// Start this run's media timeline where `route_handle` says `program`'s
+    /// serving begins it (a no-op for the first run on a route): call once,
+    /// right after [`Self::try_new`] and the program's publication, before
+    /// the first [`Self::pump`].
+    pub fn continue_after_reconnect(&mut self, route_handle: &RouteHandle, program: ProgramId) {
+        if let Some(epoch) = route_handle.epoch(program) {
+            self.continue_media_timeline(epoch.media_start_ns);
+        }
+    }
+
+    /// Start this run's media timeline at `start_ns` instead of zero: the
+    /// leader's and every follower's decode clock and the segment timeline.
+    pub(crate) fn continue_media_timeline(&mut self, start_ns: u64) {
+        if start_ns == 0 {
+            return;
+        }
+        self.seg.set_start_time_ns(start_ns);
+        self.next_timeline_ns = start_ns;
+        self.mark_next_discontinuous = true;
+        for follower in &mut self.followers {
+            follower.set_start_time_ns(start_ns);
+        }
+        for follower in &mut self.subtitle_followers {
+            follower.set_start_time_ns(start_ns);
+        }
+    }
+
+    /// Attempt to start segmenting `trunk`. `None` if its track set hasn't
+    /// landed yet (a `NewProgram` announcement with samples pending is
+    /// unusual but not impossible — retried on the next call), if its
+    /// segment writer has already been taken (must never happen for a
+    /// freshly-observed per-program `Trunk`, but defensive rather than
+    /// panicking on a driver/caller bug), or if the underlying segmenter
+    /// constructor ([`LlHlsSegmenter::with_part_target`] for
+    /// [`Container::Fmp4`], [`StreamingTsHlsSegmenter::new`] for
+    /// [`Container::MpegTs`]) itself rejects the track set (logged, not
+    /// propagated — a segmentation failure on one program must not tear down
+    /// the whole ingest session; see `drive_program_segmenters`'s own doc).
+    pub fn try_new(
+        trunk: &Arc<Trunk>,
+        route_handle: &RouteHandle,
+        target_duration_secs: f64,
+        part_target_ms: u32,
+    ) -> Option<Self> {
+        let (cursor, track_generation, published_tracks) =
+            trunk.subscribe_from_backlog_with_tracks();
+        let tracks = route_handle.with_declared_audio_profiles(published_tracks.to_vec());
+        if tracks.is_empty() {
+            return None;
+        }
+        let timescale_moves = timescale_moves(&published_tracks, &tracks);
+        let segment_writer = trunk.segment_writer()?;
+        // Seeded from `next_sequence_number` rather than the plain
+        // `with_part_target` constructor's implicit `1`: this `Trunk` may
+        // already have accepted segments from an earlier `SegmentWriter`
+        // that was dropped and re-issued (`media_plane` issue #1082) —
+        // `publish_segment` now rejects a `sequence_number` that is not
+        // strictly greater than the last one accepted, so this segmenter
+        // must resume from there, not renumber from 1 again. For a fresh
+        // `Trunk` this is exactly `1`, matching `with_part_target`'s own
+        // default.
+        let next_seq = segment_writer.next_sequence_number();
+        let mapped = if matches!(route_handle.container(), Container::Fmp4) {
+            split_audio::resolve_sources(route_handle, &tracks)
+        } else {
+            Vec::new()
+        };
+        let mut seg = match route_handle.container() {
+            Container::Fmp4 => {
+                let muxable = leader_tracks(&tracks, &mapped);
+                if muxable.is_empty() {
+                    return None;
+                }
+                match LlHlsSegmenter::with_part_target_at(
+                    muxable,
+                    transmux::VIDEO_CLOCK_RATE,
+                    target_duration_secs,
+                    part_target_ms,
+                    next_seq.value(),
+                    next_seq.value(),
+                ) {
+                    Ok(seg) => AnySegmenter::Fmp4(seg),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "driver-backed fMP4 segmenter build failed");
+                        return None;
+                    }
+                }
+            }
+            Container::MpegTs => {
+                // Whole seconds, clamped >= 1 (mirrors
+                // `StreamingTsHlsSegmenter::new`'s own clamp) — the target
+                // duration is configured as `f64` seconds route-wide
+                // (`crate::config::Config::target_duration_secs`), but the
+                // classic-TS segmenter's cut rule is integer-second, per
+                // `transmux::ts_hls`'s own module doc ("no_std-friendly").
+                let target_secs = target_duration_secs.round().max(1.0) as u32;
+                // Seeded from `next_seq` (see this function's own doc above,
+                // on the Fmp4 arm) — a `StreamingTsHlsSegmenter::new` built
+                // from the plain, unseeded constructor always numbers its
+                // first cut segment `0`; on a `Trunk` that already holds
+                // segments (or after an `apply_track_change` rebuild) that
+                // is not strictly greater than the last one accepted, so
+                // every segment this segmenter ever cuts would be rejected
+                // as `NonMonotonicSequenceNumber` and dropped forever
+                // (`drain_pending`'s `Err(TryPublishSegmentError::NonMonotonic(_))`
+                // arm), silently taking the whole route's TS-HLS output dark.
+                if !ts_hls_tracks_acceptable(route_handle, tracks.iter().map(|t| &t.config)) {
+                    return None;
+                }
+                match StreamingTsHlsSegmenter::with_start_sequence(
+                    tracks.to_vec(),
+                    target_secs,
+                    ts_segmenter_window(route_handle),
+                    u64::from(next_seq.value().saturating_sub(1)),
+                ) {
+                    Ok(seg) => AnySegmenter::Ts(seg.with_cut_policy(route_handle.ts_cut_policy())),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "driver-backed TS-HLS segmenter build failed");
+                        return None;
+                    }
+                }
+            }
+            // `Container` is `#[non_exhaustive]`: a future container variant
+            // this segmenter has no branch for is refused (logged, not
+            // propagated — see this function's own doc), not silently
+            // defaulted into one of the two existing branches.
+            other => {
+                tracing::warn!(
+                    ?other,
+                    "driver-backed segmenter: no segmenter implementation for this container"
+                );
+                return None;
+            }
+        };
+        let followers = split_audio::build_core_followers(
+            route_handle,
+            trunk,
+            &mapped,
+            target_duration_secs,
+            part_target_ms,
+        );
+        let subtitle_followers = if matches!(route_handle.container(), Container::Fmp4) {
+            split_subtitle::build_followers(route_handle, trunk, &tracks)
+        } else {
+            Vec::new()
+        };
+        if !followers.is_empty() || !subtitle_followers.is_empty() {
+            seg.record_part_cuts();
+        }
+        let mut ps = ProgramSegmenter {
+            backlogged: false,
+            timescale_moves,
+            // `subscribe_from_backlog`, not `subscribe` (issue #808): the
+            // driver's own `feed` call that announced this program's
+            // `NewProgram` routinely carries its first samples too (a
+            // single MPEG-TS feed batch commonly holds the PMT *and* the
+            // first PES packets) — those samples are already sitting in
+            // the ring by the time this constructor runs, and a
+            // live-tail `subscribe()` cursor would never see them (the
+            // opening IDR risks landing in that skipped batch). Replaying
+            // whatever backlog the ring still retains is exactly this
+            // consumer's shape: it exists to segment everything a program
+            // ever publishes, not just what arrives after it happens to be
+            // built.
+            cursor,
+            segment_writer,
+            seg,
+            mark_next_discontinuous: false,
+            gap: None,
+            next_timeline_ns: 0,
+            track_generation,
+            published_tracks,
+            gate_video_only: false,
+            pending: VecDeque::new(),
+            pending_since: None,
+            anchor: None,
+            pending_anchor: None,
+            start_gate_open: false,
+            start_gate_dropped: 0,
+            start_gate_video_dropped: 0,
+            start_gate_opened_logged: false,
+            idr_wait: transmux::IdrWait::new(
+                route_handle.ts_idr_fallback().bound(target_duration_secs),
+            ),
+            idr_fallback_active: false,
+            idr_hold: VecDeque::new(),
+            idr_hold_bytes: 0,
+            followers,
+            subtitle_followers,
+            leader_durations: LeaderDurations::new(),
+            caption_detectors: HashMap::new(),
+            captions_seen: BTreeSet::new(),
+            captions_declared: Vec::new(),
+            captions_unreported: false,
+            caption_scan_started: HashMap::new(),
+            captions_scan_complete: false,
+            part_target_published: None,
+            timeline: transmux::JumpDetector::new(Some(transmux::TimelineJumpConfig::default())),
+            ingest_origin: Instant::now(),
+        };
+        ps.timeline.on_tracks(&ps.published_tracks);
+        Some(ps)
+    }
+
+    /// Queue `item` (behind anything already queued from an earlier call,
+    /// so order is preserved) and immediately try to drain the queue — see
+    /// [`Self::drain_pending`]. Never blocks.
+    fn publish_without_blocking(&mut self, item: PendingPublish) {
+        self.pending.push_back(item);
+        self.drain_pending();
+    }
+
+    /// Drain [`Self::pending`] from the front for as long as items keep
+    /// going through, in order — a live part always succeeds
+    /// ([`SegmentWriter::publish_part`] never blocks or rejects), so only a
+    /// segment can actually get stuck (its `ArchiveOverrun::StallIngest` pin
+    /// not yet caught up); when one does, this stops rather than letting a
+    /// later queued item (another segment, or a part that belongs after it)
+    /// jump ahead of it.
+    ///
+    /// Called on every call to [`Self::pump`]/[`Self::flush`] — not only
+    /// when this segmenter has something new to publish — so a backlog left
+    /// over from an earlier call keeps getting retried even on a tick that
+    /// produces nothing new, and the tail is drained (with this same
+    /// deadline/expiry rule) at end of stream rather than lost.
+    ///
+    /// While the front is stuck, tracks how long via [`Self::pending_since`]
+    /// and, once [`PENDING_PUBLISH_MAX_WAIT`] elapses **or**
+    /// [`PENDING_PUBLISH_QUEUE_CAP`] is reached (memory must stay bounded
+    /// even before the deadline, for a pin that never advances at all),
+    /// force-expires the blocking pin via
+    /// [`SegmentWriter::expire_stalled_pins`] and retries immediately —
+    /// applying, non-blockingly, the exact bound
+    /// `SegmentWriter::publish_segment`'s own internal blocking wait uses.
+    fn drain_pending(&mut self) {
+        drain_publish_queue(
+            &mut self.segment_writer,
+            &mut self.pending,
+            &mut self.pending_since,
+        );
+    }
+
+    /// The init segment bytes — built once, at construction, stable for the
+    /// life of the segmenter (mirrors [`LlHlsSegmenter::init_segment`]'s own
+    /// doc). Always `None` under [`Container::MpegTs`].
+    /// Callers publish it with [`RouteHandle::set_init`] once the program is
+    /// registered.
+    pub fn init_segment(&self) -> Option<Vec<u8>> {
+        self.seg.init_segment()
+    }
+
+    /// Drain every sample this program's cursor has observed since the last
+    /// call, push it through the segmenter, and publish whatever parts/
+    /// segments that produced. Returns `(parts_published, segments_published)`
+    /// this call — issue #809: `drive_program_segmenters` sums these across
+    /// every segmenter to drive `crate::prometheus::PARTS_PRODUCED_TOTAL`/
+    /// `SEGMENTS_PRODUCED_TOTAL`.
+    ///
+    /// A track-set change (issue #781) arrives in-band as
+    /// [`SampleCursorItem::TracksChanged`], ordered against the samples: every
+    /// sample before it is segmented under the previous track set, every one
+    /// after under the new. The segmenter admits new tracks in place or, for
+    /// fMP4 (which has no in-place `add_track`), flushes the old segmenter and
+    /// rebuilds it at that boundary; the rebuild gates only video until the new
+    /// level's first sync sample, so audio keeps flowing.
+    pub fn pump(
+        &mut self,
+        program: ProgramId,
+        trunk: &Trunk,
+        route_handle: &RouteHandle,
+    ) -> (usize, usize) {
+        let mut totals = (0, 0);
+        loop {
+            let (parts, segments) = self.pump_batch(program, trunk, route_handle);
+            totals.0 += parts;
+            totals.1 += segments;
+            if !self.backlogged {
+                return totals;
+            }
+        }
+    }
+
+    /// [`Self::pump`] for at most [`PUMP_BATCH_ITEMS`] queued items, leaving the rest queued and
+    /// setting `backlogged` so the caller can yield to the runtime before the next batch.
+    fn pump_batch(
+        &mut self,
+        program: ProgramId,
+        trunk: &Trunk,
+        route_handle: &RouteHandle,
+    ) -> (usize, usize) {
+        let mut drained = 0usize;
+        self.backlogged = false;
+        loop {
+            if drained == PUMP_BATCH_ITEMS {
+                self.backlogged = true;
+                break;
+            }
+            let Some(item) = self.cursor.poll() else {
+                break;
+            };
+            drained += 1;
+            if let SampleCursorItem::TracksChanged { generation, tracks }
+            | SampleCursorItem::TracksLagged {
+                generation, tracks, ..
+            } = item
+            {
+                if generation > self.track_generation {
+                    let previous_tracks = std::mem::replace(&mut self.published_tracks, tracks);
+                    let previous_moves = self.timescale_moves.clone();
+                    match self.apply_track_change(program, trunk, route_handle, generation) {
+                        TrackChange::Admitted => {
+                            route_handle.set_track_specs(program, self.published_tracks.to_vec());
+                            route_handle.set_tracks_active(program, true);
+                        }
+                        TrackChange::Rebuilt { first_segment } => {
+                            route_handle.begin_track_specs(
+                                program,
+                                self.published_tracks.to_vec(),
+                                first_segment,
+                            );
+                            route_handle.set_tracks_active(program, true);
+                        }
+                        TrackChange::NoMuxableMedia => {
+                            self.published_tracks = previous_tracks;
+                            self.timescale_moves = previous_moves;
+                            self.enter_gap(program, trunk, route_handle);
+                        }
+                        TrackChange::Refused => {
+                            self.published_tracks = previous_tracks;
+                            self.timescale_moves = previous_moves;
+                        }
+                    }
+                    self.track_generation = generation;
+                    self.timeline.on_tracks(&self.published_tracks);
+                    self.caption_detectors.clear();
+                }
+            } else if let SampleCursorItem::Timed { track_id, sample } = item {
+                if self.gap.is_some() {
+                    continue;
+                }
+                if self
+                    .subtitle_followers
+                    .iter()
+                    .any(|f| f.source_track_id == track_id)
+                {
+                    for follower in self
+                        .subtitle_followers
+                        .iter_mut()
+                        .filter(|f| f.source_track_id == track_id)
+                    {
+                        follower.push(&sample);
+                    }
+                    continue;
+                }
+                self.observe_captions(track_id, &sample.data, sample.dts);
+                // Start-gate (Apple authoring 7.4 MUST: segments start on a
+                // sync/IDR picture, issue #1425): for a program whose track set
+                // contains a video track, drop every timed sample until the
+                // first sync sample of a video track has been seen. Runs
+                // BEFORE the media-anchor block so dropped samples never pin
+                // timeline 0.
+                let tracks = Arc::clone(&self.published_tracks);
+                let has_video_track = tracks.iter().any(|t| t.config.is_video());
+                let passes_video_only_gate = self.gate_video_only
+                    && !tracks
+                        .iter()
+                        .find(|t| t.track_id == track_id)
+                        .is_some_and(|t| t.config.is_video());
+                if has_video_track && !self.start_gate_open && !passes_video_only_gate {
+                    let is_video_sample = tracks
+                        .iter()
+                        .find(|t| t.track_id == track_id)
+                        .map(|t| t.config.is_video())
+                        .unwrap_or(false);
+                    let opens_gate = is_video_sample
+                        && gate_opens_on(
+                            route_handle,
+                            tracks
+                                .iter()
+                                .find(|t| t.track_id == track_id)
+                                .map(|t| &t.config),
+                            &sample,
+                            self.idr_fallback_active,
+                        );
+                    // Safety valve: a video track that NEVER flags a sync
+                    // sample (a broken or non-keyframe-signalling source)
+                    // must not be dropped forever — after
+                    // `START_GATE_MAX_VIDEO_DROPPED` video samples (about 30 s
+                    // at 60 fps) open the gate anyway, loudly, and let the
+                    // segmenter's own cut rules apply as they did before the
+                    // gate existed.
+                    let valve = is_video_sample
+                        && self.start_gate_video_dropped >= START_GATE_MAX_VIDEO_DROPPED;
+                    if valve {
+                        tracing::warn!(
+                            program = program.0,
+                            dropped = self.start_gate_dropped,
+                            "start gate: no video sync sample after {} video samples; \
+                             opening the gate on a non-sync sample",
+                            START_GATE_MAX_VIDEO_DROPPED
+                        );
+                    } else if !opens_gate {
+                        self.start_gate_dropped += 1;
+                        if is_video_sample {
+                            self.start_gate_video_dropped += 1;
+                            let timescale = tracks
+                                .iter()
+                                .find(|t| t.track_id == track_id)
+                                .map_or(0, |t| t.timescale);
+                            let waiting = self.idr_wait_applies(route_handle);
+                            let tripped =
+                                waiting && self.idr_wait.observe_dropped(&sample, timescale);
+                            if waiting && route_handle.ts_idr_fallback().falls_back() {
+                                self.hold_for_fallback(is_video_sample, track_id, sample);
+                            }
+                            if tripped {
+                                self.idr_wait_ran_out(program, route_handle);
+                                if !self.idr_hold.is_empty() {
+                                    self.start_gate_open = true;
+                                    tracing::info!(
+                                        program = program.0,
+                                        dropped = self.start_gate_dropped,
+                                        replayed = self.idr_hold.len(),
+                                        "start gate opened on the first non-IDR sync sample after the IDR wait ran out"
+                                    );
+                                    self.start_gate_opened_logged = true;
+                                    self.idr_hold_bytes = 0;
+                                    for (held_track, held) in std::mem::take(&mut self.idr_hold) {
+                                        self.ingest_sample(held_track, held);
+                                    }
+                                }
+                            }
+                        } else if self.idr_wait_applies(route_handle)
+                            && route_handle.ts_idr_fallback().falls_back()
+                        {
+                            self.hold_for_fallback(false, track_id, sample);
+                        }
+                        continue;
+                    }
+                    self.start_gate_open = true;
+                    self.gate_video_only = false;
+                    self.idr_hold.clear();
+                    self.idr_hold_bytes = 0;
+                    if !self.start_gate_opened_logged {
+                        tracing::info!(
+                            program = program.0,
+                            dropped = self.start_gate_dropped,
+                            video_dropped = self.start_gate_video_dropped,
+                            "start gate opened on first video sync sample"
+                        );
+                        self.start_gate_opened_logged = true;
+                    }
+                }
+                self.ingest_sample(track_id, sample);
+            } else if let SampleCursorItem::Lagged { skipped } = item {
+                tracing::warn!(
+                    program = program.0,
+                    skipped,
+                    "segmenter fell behind the trunk's timed ring; those samples are lost"
+                );
+            }
+            // `Sparse`/`Degraded` items: a section-carried (sparse) track has
+            // no place in either segmenter's media segment (fMP4 or classic
+            // TS) and `Degraded` is cursor bookkeeping, not media — nothing
+            // to feed the segmenter with either way, mirroring `media_plane::ts_session`'s
+            // own reference test, which only ever matches
+            // `SampleCursorItem::Timed`.
+        }
+        if self.captions_unreported {
+            let detected = self.captions_seen.iter().map(DetectedCaption::instream_id);
+            let languages = self
+                .captions_seen
+                .iter()
+                .filter_map(|caption| {
+                    let iso = caption.declared_language(&self.captions_declared)?;
+                    Some((caption.instream_id(), bcp47_language(&iso)?))
+                })
+                .collect();
+            self.captions_unreported = !(route_handle
+                .note_closed_caption_languages(program, languages)
+                && route_handle.note_closed_captions(program, detected.collect()));
+        }
+        self.publish_part_target(program, route_handle);
+        self.publish_ready()
+    }
+
+    fn publish_part_target(&mut self, program: ProgramId, route_handle: &RouteHandle) {
+        let Some(ms) = self.seg.part_target_ms() else {
+            return;
+        };
+        if self.part_target_published != Some(ms) && route_handle.set_part_target_ms(program, ms) {
+            self.part_target_published = Some(ms);
+        }
+    }
+
+    fn observe_captions(&mut self, track_id: TrackId, data: &[u8], dts: Option<i64>) {
+        let declared = &mut self.captions_declared;
+        let tracks = &self.published_tracks;
+        let detector = self.caption_detectors.entry(track_id).or_insert_with(|| {
+            let spec = tracks.iter().find(|t| t.track_id == track_id)?;
+            let detector = CaptionDetector::for_config(&spec.config)?;
+            *declared = declared_caption_services(&spec.es_info_descriptors);
+            Some(detector)
+        });
+        let Some(detector) = detector else {
+            return;
+        };
+        if detector.observe(data) {
+            self.captions_seen.extend(detector.detected());
+            self.captions_unreported = true;
+        }
+        if self.captions_scan_complete {
+            return;
+        }
+        let timescale = tracks
+            .iter()
+            .find(|t| t.track_id == track_id)
+            .map(|t| t.timescale);
+        let (Some(dts), Some(timescale)) = (dts, timescale) else {
+            return;
+        };
+        let started = *self.caption_scan_started.entry(track_id).or_insert(dts);
+        let window_ticks = i64::from(timescale) * CAPTION_SCAN_WINDOW_SECS;
+        if dts.saturating_sub(started) >= window_ticks {
+            self.captions_scan_complete = true;
+            self.captions_unreported = true;
+        }
+    }
+
+    /// Anchor the media timeline on `sample` and push it through the
+    /// segmenter.
+    fn ingest_sample(&mut self, track_id: TrackId, sample: Sample) {
+        if let Some(follower) = self
+            .followers
+            .iter_mut()
+            .find(|f| f.source_track_id == track_id)
+        {
+            let sample = in_declared_timescale(&self.timescale_moves, track_id, sample);
+            follower.push(sample, &self.leader_durations);
+            return;
+        }
+        // Keep the internal-timeline -> source-90kHz mapping anchored
+        // (issue #1083, E): anchor on the first timed sample, and
+        // re-anchor on a genuine source-clock discontinuity so a jump
+        // in the source PTS is not smeared across every later segment
+        // boundary. This is what makes `note_segment_start` (below)
+        // report the source clock the SCTE-35 events are on, not the
+        // segmenter's own restart-from-zero timeline.
+        if let Some(pts) = sample.pts
+            && let Some(timescale) = self
+                .published_tracks
+                .iter()
+                .find(|t| t.track_id == track_id)
+                .map(|t| t.timescale)
+            && timescale > 0
+        {
+            let now_us =
+                u64::try_from(self.ingest_origin.elapsed().as_micros()).unwrap_or(u64::MAX);
+            let re_anchor = match self.anchor {
+                None => true,
+                Some(_) => self.timeline.is_jump(track_id, &sample, None, now_us),
+            };
+            self.timeline.record(track_id, &sample, None, now_us);
+            if re_anchor {
+                let fresh = MediaAnchor {
+                    source_90k: rescale_to_90k(pts, timescale),
+                    timeline_ns: self.next_timeline_ns,
+                };
+                if self.anchor.is_none() {
+                    // No anchor at all yet: this IS the first
+                    // segment's clock, so it applies immediately.
+                    self.anchor = Some(fresh);
+                } else {
+                    // A discontinuity mid-stream. The segment being
+                    // filled right now must keep the OLD anchor (its
+                    // start really was before the jump); the new one
+                    // takes effect at the next segment boundary
+                    // (item 5).
+                    self.pending_anchor = Some(fresh);
+                }
+            }
+        }
+        let sample = in_declared_timescale(&self.timescale_moves, track_id, sample);
+        if let Err(e) = self.seg.push(track_id, sample) {
+            tracing::warn!(error = %e, "driver-backed segmenter push failed");
+        }
+    }
+
+    /// Keep `sample` for the IDR-fallback replay: collection starts at the
+    /// first non-IDR sync sample of a video track and takes every sample after
+    /// it, so the replay opens on the oldest random-access point the wait saw.
+    fn hold_for_fallback(&mut self, is_video: bool, track_id: TrackId, sample: Sample) {
+        if self.idr_hold.is_empty() && !(is_video && sample.flags.is_sync) {
+            return;
+        }
+        self.idr_hold_bytes = self.idr_hold_bytes.saturating_add(sample.data.len());
+        self.idr_hold.push_back((track_id, sample));
+        if self.idr_hold_bytes > IDR_HOLD_MAX_BYTES {
+            self.idr_hold.clear();
+            self.idr_hold_bytes = 0;
+        }
+    }
+
+    /// Whether this route is a classic-TS output cutting on IDR only, so a
+    /// stream without IDR pictures is a stall rather than normal operation.
+    fn idr_wait_applies(&self, route_handle: &RouteHandle) -> bool {
+        matches!(route_handle.container(), Container::MpegTs)
+            && route_handle.ts_cut_policy() == transmux::SegmentCutPolicy::IdrOnly
+            && !self.idr_fallback_active
+    }
+
+    /// The IDR wait passed its bound: fall back to non-IDR sync samples when
+    /// the route allows it, and tell the operator either way (once per route:
+    /// log, `multimux_ts_hls_non_idr_total`, admin `ts_hls_idr`).
+    fn idr_wait_ran_out(&mut self, program: ProgramId, route_handle: &RouteHandle) {
+        let falls_back = route_handle.ts_idr_fallback().falls_back();
+        let status = if falls_back {
+            TsHlsIdrStatus::FellBack
+        } else {
+            TsHlsIdrStatus::Awaiting
+        };
+        if falls_back {
+            self.idr_fallback_active = true;
+            if let AnySegmenter::Ts(seg) = &mut self.seg {
+                seg.fall_back_to_any_rap();
+            }
+        }
+        metrics::counter!(
+            crate::prometheus::TS_HLS_NON_IDR_TOTAL,
+            "route" => route_handle.name().to_string(),
+            "mode" => status.name()
+        )
+        .increment(1);
+        if route_handle.note_ts_idr_missing(status) {
+            tracing::warn!(
+                program = program.0,
+                route = route_handle.name(),
+                waited = ?self.idr_wait.bound(),
+                mode = status.name(),
+                "ts_hls: no IDR picture in the stream within the wait bound; {}",
+                if falls_back {
+                    "cutting segments on non-IDR random-access points instead (not Apple 7.4 IDR-aligned)"
+                } else {
+                    "ts_hls_idr_fallback is \"never\": serving no segments until an IDR arrives"
+                }
+            );
+        }
+    }
+
+    /// Apply a mid-stream track-set change detected via
+    /// [`Trunk::track_generation`] advancing past `self.track_generation`
+    /// (issue #781).
+    ///
+    /// For [`Container::MpegTs`], [`StreamingTsHlsSegmenter::add_track`]
+    /// admits new tracks into the running segmenter in place — the next
+    /// muxed segment carries them. Removals are handled by the trunk alone
+    /// (samples stop arriving for the removed track).
+    ///
+    /// For [`Container::Fmp4`], [`LlHlsSegmenter`] has no `add_track` so
+    /// the segmenter is rebuilt from the trunk's current track set. Rebuilding
+    /// must NOT reset segment numbering or the media sequence — those live
+    /// in the `Trunk`'s `SegmentLog`, which is never touched here (only the
+    /// `LlHlsSegmenter`'s internal `next_seq`/`current_segment` state gets
+    /// fresh, but since the `Trunk` already has the published segments, the
+    /// served playlist sees no discontinuity). The rebuild runs only when
+    /// no samples are buffered (i.e. at a segment boundary); if the previous
+    /// segmenter still holds buffered samples, they are flushed first via
+    /// [`Self::pump`]'s normal drain→cut cycle, and the generation change
+    /// is detected on the NEXT call (post-boundary).
+    fn apply_track_change(
+        &mut self,
+        program: ProgramId,
+        trunk: &Trunk,
+        route_handle: &RouteHandle,
+        generation: u64,
+    ) -> TrackChange {
+        let new_tracks = route_handle.with_declared_audio_profiles(self.published_tracks.to_vec());
+        self.timescale_moves = timescale_moves(&self.published_tracks, &new_tracks);
+        tracing::info!(
+            generation,
+            track_count = new_tracks.len(),
+            "mid-stream track-set change detected — admitting into segmenter"
+        );
+
+        // TS adds each new track individually; fMP4 rebuilds below with the complete set.
+        let is_ts = matches!(route_handle.container(), Container::MpegTs);
+        let new_specs: Vec<TrackSpec> = if is_ts {
+            new_tracks
+                .iter()
+                .filter(|t| ts_hls_tracks_acceptable(route_handle, [&t.config]))
+                .cloned()
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        if is_ts && new_specs.is_empty() {
+            tracing::warn!("mid-stream track-set change left no TS-muxable track — entering a gap");
+            return TrackChange::NoMuxableMedia;
+        }
+
+        let mut any_admitted = false;
+        for spec in new_specs.iter().filter(|_| self.gap.is_none()) {
+            match self.seg.update_track(spec) {
+                Ok(transmux::UpdateTrackOutcome::Unchanged) => {}
+                Ok(transmux::UpdateTrackOutcome::Unknown) => {
+                    any_admitted |= self.seg.add_track(spec);
+                }
+                Ok(_) => any_admitted = true,
+                Err(_) => {
+                    any_admitted |= self.seg.add_track(spec);
+                }
+            }
+        }
+
+        if matches!(route_handle.container(), Container::Fmp4) || !any_admitted {
+            let mut first_segment = None;
+            // Rebuild the segmenter from the trunk's current complete
+            // track set. The previous segmenter's buffered samples have
+            // already been flushed by `pump` (which calls this before
+            // draining the cursor, and the previous drain already cut any
+            // due segment). The new segmenter starts fresh with the
+            // updated track set.
+            match route_handle.container() {
+                Container::Fmp4 => {
+                    // Only the tracks an fMP4 segmenter can carry, exactly as
+                    // `try_new` filters them: a Data/Subtitle PID joining a
+                    // DVB source mid-stream (a routine PMT version bump) must
+                    // not make the rebuild fail (audit r07-C7, #1083).
+                    let mapped = split_audio::resolve_sources(route_handle, &new_tracks);
+                    let muxable = leader_tracks(&new_tracks, &mapped);
+                    if muxable.is_empty() {
+                        tracing::warn!(
+                            "mid-stream track-set change left no fMP4-muxable track — \
+                             entering a gap"
+                        );
+                        return TrackChange::NoMuxableMedia;
+                    }
+                    // Flush the old segmenter in place, drain its output and
+                    // read its next sequence numbers — the replacement
+                    // resumes from there so segment numbering is strictly
+                    // monotonic (issue #781 BLOCKER). The old segmenter stays
+                    // installed until the replacement is built, so a failed
+                    // rebuild leaves a working fMP4 segmenter, never a
+                    // placeholder of another container.
+                    let AnySegmenter::Fmp4(old_seg) = &mut self.seg else {
+                        return TrackChange::Refused;
+                    };
+                    if let Err(e) = old_seg.flush() {
+                        tracing::warn!(error = %e, "old segmenter flush on rebuild failed");
+                    }
+                    // Stream order, not "all parts then all segments" — see
+                    // `Self::publish_in_stream_order`'s own doc for why the
+                    // latter can publish a later segment's opening part
+                    // ahead of an earlier segment's own close.
+                    let parts = old_seg.take_ready_parts();
+                    let segments: Vec<ReadySegment> = old_seg
+                        .take_ready_segments()
+                        .into_iter()
+                        .map(Into::into)
+                        .collect();
+                    let (next_seq, mut current_seg) = old_seg.next_sequence_numbers();
+                    if let Some(gap) = self.gap {
+                        current_seg = current_seg.max(gap.resume_segment.value());
+                    }
+                    let part_cuts = old_seg.take_ready_part_cuts();
+                    self.note_leader_segments(&segments);
+                    let leader_parts = self.leader_parts(&part_cuts, &parts);
+                    let last_flushed = segments.iter().map(|s| s.segment_seq.value()).max();
+                    self.publish_in_stream_order(parts, segments);
+                    self.feed_followers(part_cuts, &leader_parts);
+                    self.finish_followers();
+                    let last_queued = self
+                        .last_queued_segment(trunk)
+                        .into_iter()
+                        .chain(last_flushed)
+                        .max();
+                    let new_init_first_segment =
+                        SegmentSeq::new(last_queued.unwrap_or(0)).saturating_next();
+                    first_segment = Some(new_init_first_segment);
+
+                    match LlHlsSegmenter::with_part_target_at(
+                        muxable,
+                        transmux::VIDEO_CLOCK_RATE,
+                        route_handle.target_duration_secs(),
+                        route_handle.part_target_ms(),
+                        next_seq,
+                        current_seg,
+                    ) {
+                        Ok(seg) => {
+                            if let Ok(init) = seg.init_segment() {
+                                route_handle.set_init_from(program, init, new_init_first_segment);
+                            }
+                            self.seg = AnySegmenter::Fmp4(seg);
+                            self.part_target_published = None;
+                            self.followers.clear();
+                            self.followers = split_audio::build_core_followers(
+                                route_handle,
+                                trunk,
+                                &mapped,
+                                route_handle.target_duration_secs(),
+                                route_handle.part_target_ms(),
+                            );
+                            self.subtitle_followers.clear();
+                            self.subtitle_followers =
+                                split_subtitle::build_followers(route_handle, trunk, &new_tracks);
+                            if !self.followers.is_empty() || !self.subtitle_followers.is_empty() {
+                                self.seg.record_part_cuts();
+                            }
+                            // Re-arm the start-gate for the rebuilt track set
+                            // (issue #1425): a fresh segmenter must not emit a
+                            // segment until the first video sync sample again.
+                            self.start_gate_open = false;
+                            self.gate_video_only = true;
+                            self.start_gate_dropped = 0;
+                            self.start_gate_video_dropped = 0;
+                            self.start_gate_opened_logged = false;
+                            tracing::info!(
+                                "fMP4 segmenter rebuilt with updated track set for \
+                                 mid-stream addition (resuming seq={next_seq} seg={current_seg})"
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                "fMP4 segmenter rebuild failed — keeping the current \
+                                 segmenter, track change dropped"
+                            );
+                            return TrackChange::Refused;
+                        }
+                    }
+                }
+                Container::MpegTs => {
+                    // TS segmenter: the rebuild path. Should only be reached
+                    // if add_track failed on every new track (unusual).
+                    //
+                    // Seeded from `self.segment_writer.next_sequence_number()`
+                    // — same reasoning as `try_new`'s own Ts arm: the plain
+                    // `StreamingTsHlsSegmenter::new` always numbers its first
+                    // cut segment `0`, which this `Trunk` (already holding
+                    // segments from the *old* segmenter this rebuild is
+                    // replacing) rejects as non-monotonic forever after.
+                    let mut next_seq = self.segment_writer.next_sequence_number();
+                    if let Some(gap) = self.gap {
+                        next_seq = next_seq.max(gap.resume_segment);
+                    }
+                    match StreamingTsHlsSegmenter::with_start_sequence(
+                        new_tracks.to_vec(),
+                        route_handle.target_duration_secs().round().max(1.0) as u32,
+                        ts_segmenter_window(route_handle),
+                        u64::from(next_seq.value().saturating_sub(1)),
+                    ) {
+                        Ok(seg) => {
+                            let mut seg = seg.with_cut_policy(route_handle.ts_cut_policy());
+                            if self.idr_fallback_active {
+                                seg.fall_back_to_any_rap();
+                            }
+                            let replaced = std::mem::replace(&mut self.seg, AnySegmenter::Ts(seg));
+                            if let AnySegmenter::Ts(mut old) = replaced {
+                                if let Err(e) = old.finish() {
+                                    tracing::warn!(error = %e, "old TS segmenter finish on rebuild failed");
+                                }
+                                let segments: Vec<ReadySegment> =
+                                    old.take_ready().into_iter().map(Into::into).collect();
+                                self.publish_in_stream_order(Vec::new(), segments);
+                            }
+                            // Re-arm the start-gate for the rebuilt track set
+                            // (issue #1425).
+                            self.start_gate_open = false;
+                            self.start_gate_dropped = 0;
+                            self.start_gate_video_dropped = 0;
+                            self.start_gate_opened_logged = false;
+                            self.idr_wait = transmux::IdrWait::new(self.idr_wait.bound());
+                            self.idr_hold.clear();
+                            self.idr_hold_bytes = 0;
+                            tracing::info!(
+                                "TS segmenter rebuilt with updated track set for \
+                                 mid-stream addition"
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                "TS segmenter rebuild failed — track addition dropped"
+                            );
+                            return TrackChange::Refused;
+                        }
+                    }
+                }
+                // `#[non_exhaustive]`: a future container has no rebuild
+                // path — log and carry on.
+                _ => {
+                    tracing::warn!(
+                        "mid-stream track-set change on an unsupported container — \
+                         new tracks will not be served"
+                    );
+                    return TrackChange::Refused;
+                }
+            }
+            if self.gap.take().is_some() {
+                self.mark_next_discontinuous = true;
+            }
+            return first_segment.map_or(TrackChange::Admitted, |first_segment| {
+                TrackChange::Rebuilt { first_segment }
+            });
+        }
+        TrackChange::Admitted
+    }
+
+    fn last_queued_segment(&self, trunk: &Trunk) -> Option<u32> {
+        self.pending
+            .iter()
+            .filter_map(|p| match p {
+                PendingPublish::Segment(entry) => Some(entry.sequence_number.value()),
+                _ => None,
+            })
+            .chain(trunk.last_closed_segment().map(SegmentSeq::value))
+            .max()
+    }
+
+    fn enter_gap(&mut self, program: ProgramId, trunk: &Trunk, route_handle: &RouteHandle) {
+        route_handle.set_tracks_active(program, false);
+        if self.gap.is_some() {
+            return;
+        }
+        self.flush();
+        let seq = SegmentSeq::new(self.last_queued_segment(trunk).unwrap_or(0)).saturating_next();
+        let duration = Duration::from_secs_f64(route_handle.target_duration_secs());
+        let start_ns = self.next_timeline_ns;
+        self.next_timeline_ns = self
+            .next_timeline_ns
+            .saturating_add(u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX));
+        if !self.followers.is_empty() || !self.subtitle_followers.is_empty() {
+            self.leader_durations
+                .insert(seq.value(), duration.as_secs_f64());
+        }
+        self.publish_without_blocking(PendingPublish::Segment(SegmentEntry::new(
+            Vec::new(),
+            seq,
+            duration,
+            Timestamp::from_nanos(start_ns),
+            SegmentMeta {
+                discontinuous: false,
+            },
+        )));
+        self.gap = Some(GapState {
+            resume_segment: seq.saturating_next(),
+        });
+    }
+
+    /// Finalize any trailing buffered partial segment — called once the
+    /// driver reaches a terminal [`media_plane::ingress::HealthState`], so a
+    /// disconnecting driver-backed route doesn't silently drop its last
+    /// partial segment the way the pre-flush `run_pipeline` regression once
+    /// did (see that module's `eos_flush_emits_buffered_tail_segment` test).
+    /// Returns `(parts_published, segments_published)` this call — see
+    /// [`Self::pump`].
+    pub fn flush(&mut self) -> (usize, usize) {
+        if let Err(e) = self.seg.finish() {
+            tracing::warn!(error = %e, "driver-backed segmenter flush failed");
+        }
+        let counts = self.publish_ready();
+        self.finish_followers();
+        counts
+    }
+
+    fn finish_followers(&mut self) {
+        for follower in &mut self.followers {
+            follower.finish(&self.leader_durations);
+        }
+        for follower in &mut self.subtitle_followers {
+            follower.finish(&self.leader_durations);
+        }
+    }
+
+    /// Retries [`Self::pending`] first (issue #1082 T7: this must happen on
+    /// every call — `pump`'s and `flush`'s own docs — not only when there is
+    /// something new to publish, so a backlog left over from an earlier
+    /// call keeps draining even on an otherwise-idle tick, and the tail is
+    /// drained rather than lost at end of stream), then queues whatever
+    /// this segmenter has newly finished producing, in stream order — see
+    /// [`Self::publish_in_stream_order`].
+    fn publish_ready(&mut self) -> (usize, usize) {
+        self.drain_pending();
+        let parts = self.seg.take_ready_parts();
+        let segments = self.seg.take_ready_segments();
+        let part_cuts = self.seg.take_ready_part_cuts();
+        self.note_leader_segments(&segments);
+        let leader_parts = self.leader_parts(&part_cuts, &parts);
+        let counts = self.publish_in_stream_order(parts, segments);
+        self.feed_followers(part_cuts, &leader_parts);
+        counts
+    }
+
+    fn note_leader_segments(&mut self, segments: &[ReadySegment]) {
+        if self.followers.is_empty() && self.subtitle_followers.is_empty() {
+            return;
+        }
+        for segment in segments {
+            self.leader_durations
+                .insert(segment.segment_seq.value(), segment.duration);
+        }
+        while self.leader_durations.len() > LEADER_DURATION_HISTORY {
+            self.leader_durations.pop_first();
+        }
+    }
+
+    /// The cuts paired with the duration the leader's own part has, for the
+    /// subtitle followers: their parts carry the video playlist's durations.
+    fn leader_parts(&self, cuts: &[PartCutReady], parts: &[PartInfo]) -> Vec<LeaderPart> {
+        if self.subtitle_followers.is_empty() {
+            return Vec::new();
+        }
+        cuts.iter()
+            .filter_map(|cut| {
+                let part = parts
+                    .iter()
+                    .find(|p| p.segment_seq == cut.msn && p.part_index == cut.part_index)?;
+                Some(LeaderPart {
+                    cut: *cut,
+                    duration_secs: part.duration,
+                })
+            })
+            .collect()
+    }
+
+    fn feed_followers(&mut self, cuts: Vec<PartCutReady>, leader_parts: &[LeaderPart]) {
+        for follower in &mut self.subtitle_followers {
+            follower.on_part_cuts(leader_parts, &self.leader_durations);
+        }
+        if cuts.is_empty() {
+            return;
+        }
+        for follower in &mut self.followers {
+            follower.on_part_cuts(cuts.clone(), &self.leader_durations);
+        }
+    }
+
+    /// Queue one part, converting it to the `Trunk`'s [`PartEntry`] shape.
+    fn queue_part(&mut self, part: PartInfo) {
+        self.publish_without_blocking(PendingPublish::Part(part_entry(part)));
+    }
+
+    /// Queue one closed segment, converting it to the `Trunk`'s
+    /// [`SegmentEntry`] shape and advancing [`Self::next_timeline_ns`] by
+    /// its duration.
+    fn queue_segment(&mut self, segment: ReadySegment) {
+        let duration = Duration::from_secs_f64(segment.duration);
+        let start_ns = self.next_timeline_ns;
+        // Tell the trunk where this segment starts on the media (90 kHz)
+        // clock, so `Trunk::events_in_segment` can attribute inband SCTE-35
+        // events to it (issue #1083, W9 — no production caller of
+        // `note_segment_start` existed before this). The start is derived
+        // from the real anchor plus this segment's exact internal-timeline
+        // offset — no per-segment rounding accumulation (issue #1083, E).
+        if let Some(anchor) = self.anchor {
+            let delta_ns = self.next_timeline_ns.saturating_sub(anchor.timeline_ns);
+            let delta_90k = rescale_u64(delta_ns, NANOS_PER_SEC, PTS_HZ, Rounding::Floor);
+            let start_90k = anchor.source_90k.saturating_add(delta_90k);
+            self.segment_writer
+                .note_segment_start(segment.segment_seq, timed_metadata::MediaTime(start_90k));
+        }
+        // A discontinuity recorded while this segment was filling becomes
+        // effective for the NEXT one (item 5): its `timeline_ns` is this
+        // segment's end, so the next segment's start maps exactly onto the
+        // post-jump source clock.
+        if let Some(mut pending) = self.pending_anchor.take() {
+            pending.timeline_ns = self
+                .next_timeline_ns
+                .saturating_add(u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX));
+            self.anchor = Some(pending);
+        }
+        self.next_timeline_ns = self
+            .next_timeline_ns
+            .saturating_add(u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX));
+        let discontinuous =
+            segment.discontinuous || std::mem::take(&mut self.mark_next_discontinuous);
+        self.publish_without_blocking(PendingPublish::Segment(SegmentEntry::new(
+            segment.bytes,
+            segment.segment_seq,
+            duration,
+            Timestamp::from_nanos(start_ns),
+            SegmentMeta { discontinuous },
+        )));
+    }
+
+    /// Queue `parts` and `segments` interleaved by `segment_seq`, in the
+    /// order they actually occurred on the wire — parts of segment N, then
+    /// segment N's own close, then parts of segment N+1, and so on — rather
+    /// than every ready part followed by every ready segment.
+    ///
+    /// The latter (this method's predecessor) queues `take_ready_parts()`'s
+    /// *entire* batch before touching a single entry of
+    /// `take_ready_segments()`. When a call's batch spans a segment
+    /// boundary — the segmenter has both cut segment N *and* already
+    /// produced segment N+1's opening part before this method next runs —
+    /// that ordering publishes part (N+1, 0) into the `Trunk`'s live-part
+    /// log (through [`Self::publish_without_blocking`], which never waits
+    /// for anything ahead of it in [`Self::pending`]) before segment N's own
+    /// [`SegmentEntry`] has even been queued, let alone published. A part
+    /// ring reader that assumes "no part of segment N+1 precedes segment
+    /// N's close" (the shape [`media_plane::trunk::Trunk::parts_in_segment`]
+    /// used to rely on) then loses segment N's still-open parts entirely —
+    /// and, in LL-HLS terms, the just-closing segment's own
+    /// `#EXT-X-PART` tags silently vanish from the playlist.
+    ///
+    /// `parts` and `segments` are each already in production order
+    /// (ascending `segment_seq`, and ascending `part_index` within a
+    /// `segment_seq`) — a merge by `segment_seq` (a part with `segment_seq`
+    /// `<=` the next unqueued segment's `segment_seq` goes first, so a
+    /// segment's own trailing parts are queued immediately before its
+    /// close) recovers the true interleaving without needing any additional
+    /// timestamp.
+    fn publish_in_stream_order(
+        &mut self,
+        parts: Vec<PartInfo>,
+        segments: Vec<ReadySegment>,
+    ) -> (usize, usize) {
+        let mut parts = parts.into_iter().peekable();
+        let mut segments = segments.into_iter().peekable();
+        let mut parts_published = 0usize;
+        let mut segments_published = 0usize;
+        loop {
+            let take_part = match (parts.peek(), segments.peek()) {
+                (Some(part), Some(segment)) => part.segment_seq <= segment.segment_seq.value(),
+                (Some(_), None) => true,
+                (None, Some(_)) => false,
+                (None, None) => break,
+            };
+            if take_part {
+                self.queue_part(parts.next().expect("peeked Some above"));
+                parts_published += 1;
+            } else {
+                self.queue_segment(segments.next().expect("peeked Some above"));
+                segments_published += 1;
+            }
+        }
+        (parts_published, segments_published)
+    }
+}
+
+fn in_declared_timescale(
+    moves: &HashMap<TrackId, (u32, u32)>,
+    track_id: TrackId,
+    sample: Sample,
+) -> Sample {
+    match moves.get(&track_id) {
+        Some(&(from, to)) => sample.rescale_timescale(from, to),
+        None => sample,
+    }
+}
+
+fn timescale_moves(
+    published: &[TrackSpec],
+    declared: &[TrackSpec],
+) -> HashMap<TrackId, (u32, u32)> {
+    declared
+        .iter()
+        .filter_map(|d| {
+            let from = published
+                .iter()
+                .find(|t| t.track_id == d.track_id)?
+                .timescale;
+            (from != d.timescale && from > 0).then_some((d.track_id, (from, d.timescale)))
+        })
+        .collect()
+}
+
+/// Rescale a timestamp in `timescale` ticks to the trunk event ring's fixed
+/// 90 kHz clock (issue #1083, W9). Rounds down, saturating — a value that
+/// overflows `u64` is clamped, never wrapped.
+fn rescale_to_90k(pts: i64, timescale: u32) -> u64 {
+    // A negative PTS (a pre-roll/PTS-base offset a demuxer may produce) is
+    // clamped to 0: the event ring has no representation for a time before
+    // zero, and a segment starting there simply begins the timeline.
+    rescale_u64(
+        u64::try_from(pts).unwrap_or(0),
+        timescale,
+        PTS_HZ,
+        Rounding::Floor,
+    )
+}
+
+/// Per-iteration driver every `run_*` entry point calls right after
+/// [`crate::source::report_driver_progress`] (together, [`crate::source::advance_route`]
+/// is the one facade call that does both, in order — see that function's own
+/// doc) — builds a [`ProgramSegmenter`] for each newly-observed program (once
+/// its tracks have landed) and pumps every already-built one. `segmenters` is
+/// caller-owned, opaque state, exactly like `report_driver_progress`'s own
+/// `published: &mut HashSet<ProgramId>`: a caller declares one fresh
+/// `HashMap::new()` per connection attempt and passes it back in on every
+/// call for that attempt's whole lifetime, never constructing or reading a
+/// [`ProgramSegmenter`] itself.
+///
+/// A segmenter's own errors (build failure, a push/flush rejecting a
+/// malformed sample) are logged and otherwise swallowed — never propagated
+/// to the caller — because a segmentation problem on one program must not
+/// tear down a working ingest connection; the connection itself (and every
+/// other program on it) keeps running. A program whose segmenter failed to
+/// build is retried on the next call (it is never inserted into
+/// `segmenters`, so this function's internal `ProgramSegmenter::try_new`
+/// runs again).
+///
+/// `pub(crate)` (issue #805 task 6 narrowed this back from `pub`): the
+/// supported extension surface for a [`crate::registry::SchemeRegistry`]
+/// `Custom` factory is now the single [`crate::source::advance_route`]
+/// facade, not this function directly — see that function's own doc for why.
+///
+/// **Issue #809**: bumps `crate::prometheus::PARTS_PRODUCED_TOTAL`/
+/// `SEGMENTS_PRODUCED_TOTAL`, labelled by `route_handle.name()`, for the total
+/// parts/segments every segmenter on this route actually published this call
+/// (pump, plus flush if the driver just went terminal) — the only place in
+/// the driver-backed architecture samples actually turn into parts/segments,
+/// so the only place that can honestly say a part/segment was "produced".
+/// Only increments when the total is nonzero (an idle call with nothing new
+/// to publish must not spuriously bump a counter meant to reflect real
+/// throughput).
+///
+/// Each segmenter processes at most [`PUMP_BATCH_ITEMS`] queued items per call; the returned
+/// `bool` is `true` while any segmenter still has samples queued, and the caller calls again
+/// (yielding to the runtime in between, as [`crate::source::advance_route`] does). The terminal
+/// flush waits for the last of those calls.
+pub(crate) fn drive_program_segmenters<S: IngestSession>(
+    driver: &IngestDriver<S>,
+    route_handle: &RouteHandle,
+    segmenters: &mut HashMap<ProgramId, ProgramSegmenter>,
+) -> bool {
+    for program in driver.programs() {
+        if segmenters.contains_key(&program) {
+            continue;
+        }
+        let Some(trunk) = driver.trunk(program) else {
+            continue;
+        };
+        let Some(mut segmenter) = ProgramSegmenter::try_new(
+            trunk,
+            route_handle,
+            route_handle.target_duration_secs(),
+            route_handle.part_target_ms(),
+        ) else {
+            continue;
+        };
+        segmenter.continue_after_reconnect(route_handle, program);
+        route_handle.set_track_specs(program, segmenter.published_tracks.to_vec());
+        // Push the fMP4 init segment for every program — DVR recording
+        // needs it regardless of whether HTTP egress addresses this
+        // program yet (issue #805 task 6's MPTS-addressing doc).
+        if let Some(init) = segmenter.init_segment() {
+            route_handle.set_init(program, init);
+        }
+        segmenters.insert(program, segmenter);
+    }
+
+    let mut parts_total = 0usize;
+    let mut segments_total = 0usize;
+    // Pump each segmenter, passing its program's trunk for mid-stream
+    // track-change detection (issue #781).
+    for (&program, segmenter) in segmenters.iter_mut() {
+        let Some(trunk) = driver.trunk(program) else {
+            continue;
+        };
+        let (parts, segments) = segmenter.pump_batch(program, trunk, route_handle);
+        parts_total += parts;
+        segments_total += segments;
+    }
+
+    let more = segmenters.values().any(|s| s.backlogged);
+    if !more && !driver.health().is_running() {
+        for segmenter in segmenters.values_mut() {
+            let (parts, segments) = segmenter.flush();
+            parts_total += parts;
+            segments_total += segments;
+        }
+    }
+
+    if parts_total > 0 {
+        metrics::counter!(
+            crate::prometheus::PARTS_PRODUCED_TOTAL,
+            "route" => route_handle.name().to_string(),
+        )
+        .increment(parts_total as u64);
+    }
+    if segments_total > 0 {
+        metrics::counter!(
+            crate::prometheus::SEGMENTS_PRODUCED_TOTAL,
+            "route" => route_handle.name().to_string(),
+        )
+        .increment(segments_total as u64);
+    }
+    more
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::route::RouteHandle;
+    use media_plane::ids::PartIndex;
+    use media_plane::publish_queue::{PENDING_PUBLISH_MAX_WAIT, PENDING_PUBLISH_QUEUE_CAP};
+    use media_plane::trunk::PartEntry;
+
+    #[test]
+    fn a_zero_timescale_rescales_without_dividing_by_zero() {
+        assert_eq!(rescale_to_90k(7, 0), 7 * 90_000);
+    }
+
+    use crate::source::report_driver_progress;
+    use broadcast_common::{Demand, Stage};
+    use hls_runtime::server::{DEFAULT_TRACK_ID, HlsBody, HlsRequest};
+    use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
+    use media_plane::ingress::{IngestDriver, IngestSession, SessionEvent};
+    use media_plane::ts_session::TsIngestSession;
+    use media_plane::ts_session::test_support::{
+        build_ts_bytes, handshake, track_spec, trunk_config,
+    };
+    use std::collections::{HashSet, VecDeque};
+    use std::convert::Infallible;
+    use transmux::Container;
+    use transmux::DemuxEvent;
+    use transmux::pipeline::Sample;
+
+    /// Render `route`'s current LL-HLS media playlist synchronously — the
+    /// exact production call every LL-HLS request resolves through
+    /// (`crate::output::hls::media_playlist` / `crate::http::resolve_blocking`,
+    /// minus the axum/tokio wrapping), so a passing assertion here is
+    /// genuinely "resolvable the way egress resolves them", not a
+    /// Trunk-level shortcut.
+    fn render_playlist(route: &RouteHandle) -> String {
+        let ll_hls = route
+            .ll_hls(crate::route::SPTS_PROGRAM_ID)
+            .expect("SPTS_PROGRAM_ID must be published before rendering");
+        match ll_hls.resolve(
+            HlsRequest::Playlist {
+                track_id: DEFAULT_TRACK_ID,
+                query: Default::default(),
+            },
+            Timestamp::from_nanos(0),
+            AwaitPolicy::new(Timestamp::from_nanos(0)),
+        ) {
+            EgressResponse::Ready {
+                body: HlsBody::Playlist(m),
+                ..
+            } => m,
+            other => panic!("expected Ready(Playlist), got {other:?}"),
+        }
+    }
+
+    /// **The production segmenter gap, closed** (issue #805 task 2b). Drives
+    /// the exact production chain a driver-backed route uses: a real
+    /// `TsMux`-muxed TS stream → `TsIngestSession` → `IngestDriver` →
+    /// `report_driver_progress` (publishes the registry) →
+    /// `drive_program_segmenters` (this module) → the route's own
+    /// `RouteHandle::init_bytes`/`HlsOrigin`.
+    ///
+    /// MUTATION VERIFIED: removing the `route_handle.set_init(program, init)`
+    /// push in `drive_program_segmenters` (never push init bytes to
+    /// `RouteHandle` at all) makes this test's first assertion fail:
+    /// `assert!(route.init_bytes(crate::route::SPTS_PROGRAM_ID).is_some_and(|b| !b.is_empty()), ...)`
+    /// fails — actual value `None` (the registry's `ProgramServing` for
+    /// program 0 exists and its `Trunk` carries real segments/parts, but its
+    /// `HlsOrigin` never received the init segment bytes at all), not the
+    /// expected `Some(bytes)`. Recompiled and re-run to confirm the failure,
+    /// then reverted.
+    #[test]
+    fn driver_backed_route_serves_real_media_through_ll_hls() {
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut driver = IngestDriver::new(
+            TsIngestSession::new(),
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
+        );
+        let mut published = HashSet::new();
+        let mut segmenters = HashMap::new();
+
+        // First feed: resolves the PMT, mints program 0's driver-side Trunk.
+        let ts_bytes = build_ts_bytes(TrackId::new(1), 0xAB, 90);
+        driver.feed(&ts_bytes, Timestamp::ZERO);
+        report_driver_progress(&driver, &route, &mut published);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+
+        // Second feed: more real media, proving the segmenter's cursor
+        // (subscribed just above via `subscribe_from_backlog` — issue #808)
+        // keeps observing new samples live *in addition to* replaying the
+        // first feed's own backlog, not merely as a substitute for it.
+        let more = build_ts_bytes(TrackId::new(1), 0xCD, 90);
+        driver.feed(&more, Timestamp::from_nanos(1));
+        report_driver_progress(&driver, &route, &mut published);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+
+        assert!(
+            route
+                .init_bytes(crate::route::SPTS_PROGRAM_ID)
+                .is_some_and(|b| !b.is_empty()),
+            "a driver-backed route must end up with real, non-empty init bytes"
+        );
+
+        let playlist = render_playlist(&route);
+        // `"#EXT-X-PART-INF:"` (the part-target *header*, RFC 8216bis
+        // §4.4.3.7) is present in every low-latency playlist regardless of
+        // whether any part/segment has actually landed, so it would make
+        // this assertion pass even against a completely empty playlist —
+        // deliberately checked for `"#EXT-X-PART:"` (an actual per-part tag,
+        // §4.4.4.9, note the trailing colon distinguishing it from
+        // `"#EXT-X-PART-INF:"`) and `"#EXTINF:"` (an actual closed segment's
+        // duration tag, §4.3.2.1) instead.
+        assert!(
+            playlist.contains("#EXTINF:") || playlist.contains("#EXT-X-PART:"),
+            "the route's own HlsOrigin must serve real closed segments/parts, \
+             resolved exactly the way egress resolves them: {playlist}"
+        );
+    }
+
+    fn burst_driver(frames: u32) -> IngestDriver<TsIngestSession> {
+        let ring = |n: usize| std::num::NonZeroUsize::new(n).expect("non-zero ring");
+        let mut driver = IngestDriver::new(
+            TsIngestSession::new(),
+            media_plane::IngestConfig::new(handshake()).with_trunk(
+                media_plane::trunk::TrunkConfig::default()
+                    .with_timed_capacity(ring(8192))
+                    .with_sparse_capacity(ring(64))
+                    .with_segment_capacity(ring(8))
+                    .with_event_capacity(ring(8))
+                    .with_part_capacity(ring(8)),
+            ),
+        );
+        driver.feed(
+            &build_ts_bytes(TrackId::new(1), 0xAB, frames),
+            Timestamp::ZERO,
+        );
+        driver
+    }
+
+    #[test]
+    fn a_large_queued_burst_is_segmented_in_bounded_batches() {
+        let route = RouteHandle::new(1.0, 250, 8);
+        let driver = burst_driver(3 * PUMP_BATCH_ITEMS as u32);
+        let mut published = HashSet::new();
+        let mut segmenters = HashMap::new();
+        report_driver_progress(&driver, &route, &mut published);
+        let mut calls = 1;
+        while drive_program_segmenters(&driver, &route, &mut segmenters) {
+            calls += 1;
+            assert!(calls < 64, "the backlog never drains");
+        }
+        assert!(
+            calls >= 3,
+            "3 batches of queued samples must take at least 3 calls, took {calls}"
+        );
+    }
+
+    #[test]
+    fn a_small_burst_is_segmented_in_one_call() {
+        let route = RouteHandle::new(1.0, 250, 8);
+        let driver = burst_driver(30);
+        let mut published = HashSet::new();
+        let mut segmenters = HashMap::new();
+        report_driver_progress(&driver, &route, &mut published);
+        assert!(!drive_program_segmenters(&driver, &route, &mut segmenters));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_large_queued_burst_does_not_starve_another_task() {
+        let route = RouteHandle::new(1.0, 250, 8);
+        let driver = burst_driver(3 * PUMP_BATCH_ITEMS as u32);
+        let mut state = crate::source::DriverProgress::new();
+        let ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = Arc::clone(&ran);
+        tokio::spawn(async move { flag.store(true, std::sync::atomic::Ordering::SeqCst) });
+        crate::source::advance_route(&driver, &route, &mut state).await;
+        assert!(
+            ran.load(std::sync::atomic::Ordering::SeqCst),
+            "advance_route must yield between batches of a large burst"
+        );
+    }
+
+    /// **Issue #809.** `multimux_parts_produced_total`/
+    /// `multimux_segments_produced_total` must actually move for a
+    /// driver-backed route — these two counters had no emitter at all since
+    /// the media-plane port (silently reading zero, then deleted outright)
+    /// until `drive_program_segmenters` started bumping them directly. Uses a
+    /// distinctively-named route (`with_name`) so the assertion reads this
+    /// test's own series, not whatever another test in this shared-process
+    /// binary already recorded under a different (or default) route label.
+    ///
+    /// MUTATION VERIFIED: commenting out both `if parts_total > 0 { ... }`/
+    /// `if segments_total > 0 { ... }` metric-emitting blocks in
+    /// `drive_program_segmenters` (simulating the exact #809 regression: the
+    /// segmenting logic runs correctly, nothing ever reports it) makes this
+    /// test's `assert!(parts_after > parts_before, ...)` fail: actual
+    /// `parts_after == parts_before` (both `0.0`, since nothing ever
+    /// increments the counter) instead of `parts_after > parts_before` —
+    /// real parts/segments are demonstrably produced (this test's sibling,
+    /// `driver_backed_route_serves_real_media_through_ll_hls`, proves that via
+    /// the served playlist), but the metric stays silently at zero. Recompiled
+    /// and re-run to confirm the failure, then reverted.
+    #[test]
+    fn drive_program_segmenters_bumps_parts_and_segments_produced_counters() {
+        crate::prometheus::install();
+        let route = RouteHandle::new(1.0, 250, 8).with_name("segment-metrics-probe-route");
+        let mut driver = IngestDriver::new(
+            TsIngestSession::new(),
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
+        );
+        let mut published = HashSet::new();
+        let mut segmenters = HashMap::new();
+
+        fn metric_total(metric: &str, route_label: &str) -> f64 {
+            let rendered = crate::prometheus::install().render();
+            rendered
+                .lines()
+                .find(|l| l.starts_with(metric) && l.contains(route_label))
+                .and_then(|l| l.rsplit(' ').next())
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(0.0)
+        }
+
+        let parts_before = metric_total(
+            "multimux_parts_produced_total",
+            "segment-metrics-probe-route",
+        );
+        let segments_before = metric_total(
+            "multimux_segments_produced_total",
+            "segment-metrics-probe-route",
+        );
+
+        let ts_bytes = build_ts_bytes(TrackId::new(1), 0xAB, 90);
+        driver.feed(&ts_bytes, Timestamp::ZERO);
+        report_driver_progress(&driver, &route, &mut published);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+        let more = build_ts_bytes(TrackId::new(1), 0xCD, 90);
+        driver.feed(&more, Timestamp::from_nanos(1));
+        report_driver_progress(&driver, &route, &mut published);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+
+        let parts_after = metric_total(
+            "multimux_parts_produced_total",
+            "segment-metrics-probe-route",
+        );
+        let segments_after = metric_total(
+            "multimux_segments_produced_total",
+            "segment-metrics-probe-route",
+        );
+
+        assert!(
+            parts_after > parts_before,
+            "multimux_parts_produced_total must increase: before={parts_before} after={parts_after}"
+        );
+        assert!(
+            segments_after > segments_before,
+            "multimux_segments_produced_total must increase: before={segments_before} \
+             after={segments_after}"
+        );
+    }
+
+    /// Issue #1083 W9: the production segmenter must call
+    /// [`SegmentWriter::note_segment_start`], so the trunk's per-segment
+    /// event attribution (`Trunk::events_in_segment`) is non-empty for a
+    /// segment a real SCTE-35 event falls inside. Before this fix nothing in
+    /// production ever called `note_segment_start`, so the DASH `emsg`
+    /// injection path (`crate::origin::resource::inject_segment_events`) saw
+    /// an empty event list for every real segment.
+    ///
+    /// Drives the real `ProgramSegmenter::pump` (the production entry point
+    /// `drive_program_segmenters` calls, where the segment start is
+    /// recorded), not a direct `seg.push` — the latter would bypass exactly
+    /// the code this fixes.
+    ///
+    /// Biting test: delete the `self.segment_writer.note_segment_start(...)`
+    /// call from `queue_segment` and this test's `events_in_segment` walk
+    /// finds nothing, failing the assertion.
+    #[test]
+    fn program_segmenter_notes_each_segments_start_media_time() {
+        use media_plane::trunk::{EventAnchor, RetentionClass, TrunkConfig};
+        use timed_metadata::MediaTime;
+
+        // A bare trunk with the real video track (90000 ticks/s == the event
+        // ring's own 90 kHz clock).
+        // A sample ring large enough to retain every frame (the segmenter
+        // subscribes from the backlog; a small ring would evict the head).
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(512))
+                .with_sparse_capacity(nz(16))
+                .with_segment_capacity(nz(8))
+                .with_event_capacity(nz(16))
+                .with_part_capacity(nz(16)),
+        );
+        let writer = trunk.writer().expect("first trunk writer");
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+
+        // A real SCTE-35 splice_insert (event_id 2002) at pts 0.
+        let splice_bytes = test_fixtures::read("scte35/splice-insert-2002.bin");
+        let mut timeline = timed_metadata::Timeline::new();
+        let ev = timeline.push_scte35(&splice_bytes).unwrap();
+        writer.publish_event(ev, EventAnchor::Media(MediaTime(0)));
+
+        // Write enough frames into the trunk to cut a few real segments (a
+        // sync frame every 45 frames == 0.5 s, target 1.0 s).
+        for i in 0..200u32 {
+            writer.publish(
+                TrackId::new(1),
+                RetentionClass::Timed,
+                sample_at(i, i.is_multiple_of(45)),
+            );
+        }
+
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut segmenter =
+            ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter builds");
+        // `pump` drains the backlog cursor and publishes whatever segments
+        // that produced — the production path.
+        segmenter.pump(ProgramId(0), &trunk, &route);
+        segmenter.flush();
+
+        let last = trunk
+            .last_closed_segment()
+            .expect("the segmenter must have closed at least one segment");
+        let attributed = (1..=last.value()).any(|seq| {
+            trunk
+                .events_in_segment(SegmentSeq::new(seq))
+                .iter()
+                .any(|e| {
+                    matches!(
+                        e.event.source,
+                        timed_metadata::event::SourcePayload::Scte35 { .. }
+                    )
+                })
+        });
+        assert!(
+            attributed,
+            "a published SCTE-35 event must be attributable to a segment;  \
+            `note_segment_start` was never called by the production segmenter before W9  \
+            (closed segments: 1..={last})"
+        );
+    }
+
+    /// Item 5 (unit): a discontinuity recorded while a segment is in progress
+    /// must NOT change that segment's start — it is promoted to the NEXT
+    /// segment boundary. Driven directly on the anchor state, since an fMP4
+    /// segmenter cannot be made to keep cutting after a jump large enough to
+    /// be detected as a discontinuity.
+    ///
+    /// Biting test: assign `self.anchor = Some(fresh)` unconditionally (the
+    /// pre-fix behaviour) and the in-progress segment's start changes.
+    #[test]
+    fn a_pending_anchor_does_not_change_the_in_progress_segment() {
+        use media_plane::trunk::TrunkConfig;
+
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(16))
+                .with_segment_capacity(nz(8))
+                .with_event_capacity(nz(16))
+                .with_part_capacity(nz(16)),
+        );
+        trunk
+            .writer()
+            .expect("writer")
+            .set_tracks(vec![track_spec(TrackId::new(1))]);
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut segmenter =
+            ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter builds");
+
+        // Establish the initial anchor for segment 1.
+        segmenter.anchor = Some(MediaAnchor {
+            source_90k: 0,
+            timeline_ns: 0,
+        });
+        // A discontinuity observed mid-segment-1: it must NOT retro-stamp
+        // segment 1.
+        segmenter.pending_anchor = Some(MediaAnchor {
+            source_90k: 900_090,
+            timeline_ns: 0,
+        });
+        assert_eq!(
+            segmenter.anchor.map(|a| a.source_90k),
+            Some(0),
+            "the in-progress segment's anchor must be unchanged by a pending one"
+        );
+
+        // Close segment 1 (duration 1 s == 90000 ticks) -> the pending anchor
+        // is promoted, offset by that segment's duration.
+        segmenter.queue_segment(ReadySegment {
+            bytes: vec![0u8; 8],
+            segment_seq: SegmentSeq::new(1),
+            duration: 1.0,
+            discontinuous: false,
+        });
+        let promoted = segmenter.anchor.expect("anchor promoted");
+        assert_eq!(
+            promoted.source_90k, 900_090,
+            "the NEXT segment must be anchored to the post-jump clock"
+        );
+        assert_eq!(
+            promoted.timeline_ns, 1_000_000_000,
+            "the promoted anchor's timeline position is the end of the closed segment (1 s in ns)"
+        );
+        assert!(
+            segmenter.pending_anchor.is_none(),
+            "the pending anchor is consumed, not re-applied"
+        );
+    }
+
+    /// **Issue #808, the regression test.** A source that announces
+    /// `NewProgram` *and* publishes its samples in a **single** `feed`
+    /// call — ordinary behaviour for MPEG-TS, where one PMT-carrying feed
+    /// batch routinely also carries the first PES samples — must still get
+    /// those samples segmented and served. Deliberately only one `feed`
+    /// call, unlike `driver_backed_route_serves_real_media_through_ll_hls`
+    /// above: that test's second feed would mask exactly the bug this test
+    /// exists to catch.
+    ///
+    /// Asserts on `"#EXT-X-PART:"`/`"#EXTINF:"` specifically (not merely
+    /// `EgressResponse::Ready`, and not `"#EXT-X-PART-INF:"`/`"#EXT-X-MAP:"`,
+    /// which `hls_runtime` renders unconditionally even for a route with
+    /// zero parts/segments) — see `render_playlist`'s and this module's
+    /// sibling test's own doc for why an unconditional header would let this
+    /// test pass against the bug.
+    ///
+    /// **Confirmed this test fails against live-tail `subscribe()`**: with
+    /// `ProgramSegmenter::try_new`'s `cursor: trunk.subscribe_from_backlog()`
+    /// temporarily reverted to `cursor: trunk.subscribe()`, this test's
+    /// `assert!(playlist.contains("#EXTINF:") || playlist.contains("#EXT-X-PART:"), ...)`
+    /// fails — actual rendered playlist body (verbatim from the panic):
+    /// ```text
+    /// #EXTM3U
+    /// #EXT-X-VERSION:9
+    /// #EXT-X-TARGETDURATION:1
+    /// #EXT-X-MEDIA-SEQUENCE:1
+    /// #EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=0.75
+    /// #EXT-X-PART-INF:PART-TARGET=0.25
+    /// #EXT-X-MAP:URI="init-1.mp4"
+    /// ```
+    /// — the single feed's `NewProgram` *and* all 90 samples land in the
+    /// ring before `drive_program_segmenters` ever builds the
+    /// `ProgramSegmenter`, so a `subscribe()` cursor (starting from "now",
+    /// i.e. *after* that entire batch) never observes a single sample: no
+    /// part, no segment, ever. Recompiled with the revert in place, re-ran
+    /// to confirm this exact failure, then restored
+    /// `subscribe_from_backlog()` and re-ran to confirm this test passes
+    /// again.
+    #[test]
+    fn samples_published_in_the_same_feed_as_new_program_are_still_segmented() {
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut driver = IngestDriver::new(
+            TsIngestSession::new(),
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
+        );
+        let mut published = HashSet::new();
+        let mut segmenters = HashMap::new();
+
+        // ONE feed: build_ts_bytes muxes the PMT (-> NewProgram) and 90 real
+        // PES samples (-> Sample events) into the same TS byte stream, so
+        // the driver's own `feed` drains both the NewProgram announcement
+        // and every one of those samples in this single call — exactly the
+        // "ordinary MPEG-TS" shape issue #808 describes, not a contrived
+        // edge case.
+        let ts_bytes = build_ts_bytes(TrackId::new(1), 0xAB, 90);
+        driver.feed(&ts_bytes, Timestamp::ZERO);
+        report_driver_progress(&driver, &route, &mut published);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+
+        assert!(
+            route
+                .init_bytes(crate::route::SPTS_PROGRAM_ID)
+                .is_some_and(|b| !b.is_empty()),
+            "a driver-backed route must end up with real, non-empty init bytes"
+        );
+
+        let playlist = render_playlist(&route);
+        assert!(
+            playlist.contains("#EXTINF:") || playlist.contains("#EXT-X-PART:"),
+            "samples published in the SAME feed call as NewProgram must still reach the \
+             served playlist as real closed segments/parts: {playlist}"
+        );
+    }
+
+    /// The segmenter must feed the **same** `Trunk` the driver publishes
+    /// samples into — never a copy, never a second `Trunk` (issue #805 §8's
+    /// explicit decision; see this module's own doc).
+    ///
+    /// MUTATION VERIFIED: changing `ProgramSegmenter::try_new` to take its
+    /// `segment_writer` from a freshly-constructed `Trunk` (i.e.
+    /// `Trunk::new(media_plane::trunk::TrunkConfig::default().with_timed_capacity(nz(1)).with_sparse_capacity(nz(1)).with_segment_capacity(nz(8)).with_event_capacity(nz(1)).with_part_capacity(nz(8))).segment_writer()`)
+    /// instead of `trunk.segment_writer()`, while still subscribing the
+    /// *real* `trunk`'s `SampleCursor` (so samples keep flowing into the
+    /// segmenter), makes this test's
+    /// `assert!(driver.trunk(ProgramId(0)).unwrap().last_closed_segment().is_some(), ...)`
+    /// fail: `last_closed_segment()` returns `None` (actual) instead of
+    /// `Some(_)` (expected), because every produced segment/part landed in
+    /// the discarded throwaway `Trunk` instead of the one `driver.trunk(..)`
+    /// (and therefore `RouteHandle`'s registry) actually holds. Recompiled
+    /// and re-run to confirm the failure, then reverted.
+    #[test]
+    fn segmenter_feeds_the_same_trunk_the_driver_writes_samples_into() {
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut driver = IngestDriver::new(
+            TsIngestSession::new(),
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
+        );
+        let mut published = HashSet::new();
+        let mut segmenters = HashMap::new();
+
+        let ts_bytes = build_ts_bytes(TrackId::new(1), 0xAB, 90);
+        driver.feed(&ts_bytes, Timestamp::ZERO);
+        report_driver_progress(&driver, &route, &mut published);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+
+        let more = build_ts_bytes(TrackId::new(1), 0xCD, 90);
+        driver.feed(&more, Timestamp::from_nanos(1));
+        report_driver_progress(&driver, &route, &mut published);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+
+        let program_trunk = driver
+            .trunk(ProgramId(0))
+            .cloned()
+            .expect("program 0 resolved from the muxed TS");
+        assert!(
+            program_trunk.last_closed_segment().is_some(),
+            "the driver's own registered Trunk must show the closed segment \
+             the segmenter produced — proving no second Trunk was used"
+        );
+        // Also pins that the registry (what egress resolves) is the exact
+        // same Trunk, not merely one with equal contents.
+        match route.resolve_program(crate::route::SPTS_PROGRAM_ID) {
+            crate::route::ProgramResolution::Found(resolved) => {
+                assert!(Arc::ptr_eq(&resolved.trunk(), &program_trunk));
+            }
+            _ => panic!("expected the route's registry to resolve program 0"),
+        }
+    }
+
+    const FRAME_DUR: u32 = transmux::VIDEO_CLOCK_RATE / 30;
+
+    /// A length-prefixed AVC NAL sample — the same per-sample byte layout
+    /// `media_plane::ts_session::test_support::build_ts_bytes` uses (`(nal.len() as
+    /// u32).to_be_bytes()` prefix, then `[0x65, nal_byte, seq_byte]`), rather
+    /// than an arbitrary opaque byte blob. `LlHlsSegmenter` never
+    /// re-interprets a sample's bytes (fMP4 stores whatever it's given
+    /// verbatim), so the older opaque-blob shape worked for that path; issue
+    /// #887's `StreamingTsHlsSegmenter`/`ts_mux` path DOES parse AVC samples
+    /// as length-prefixed NALs (to re-wrap them Annex-B for the muxed TS), so
+    /// `TwoProgramSession`'s samples must be real ones for
+    /// `ts_hls_mpts_route_segments_each_program_into_single_pmt_segments`
+    /// (below) to mux successfully — this shape also still satisfies every
+    /// existing fMP4-path test in this module, which never inspects sample
+    /// content.
+    fn apply_change(segmenter: &mut ProgramSegmenter, trunk: &Trunk, route: &RouteHandle) {
+        segmenter.published_tracks = trunk.tracks();
+        segmenter.apply_track_change(ProgramId(0), trunk, route, trunk.track_generation());
+    }
+
+    fn sample_at(i: u32, is_sync: bool) -> Sample {
+        let nal = [0x65u8, 0xAAu8.wrapping_add(i as u8), (i % 256) as u8];
+        let mut data = (nal.len() as u32).to_be_bytes().to_vec();
+        data.extend_from_slice(&nal);
+        Sample::new(
+            data,
+            Some(i64::from(i) * i64::from(FRAME_DUR)),
+            Some(i64::from(i) * i64::from(FRAME_DUR)),
+            Some(FRAME_DUR),
+            is_sync,
+        )
+    }
+
+    /// A hand-scripted two-program `IngestSession`: queues `Established`,
+    /// then (on its 2nd `feed` call) both `NewProgram` announcements, then
+    /// (on every later call) one sample for *each* program's own track —
+    /// enough to drive `drive_program_segmenters` through the MPTS case
+    /// without needing a real multi-program TS mux (`transmux` has no
+    /// `program_number` in its IR yet — see `media_plane::ts_session`'s own module doc).
+    struct TwoProgramSession {
+        pending: VecDeque<SessionEvent>,
+        feed_count: u32,
+    }
+
+    impl TwoProgramSession {
+        fn new() -> Self {
+            let mut pending = VecDeque::new();
+            pending.push_back(SessionEvent::Established);
+            TwoProgramSession {
+                pending,
+                feed_count: 0,
+            }
+        }
+    }
+
+    impl Stage for TwoProgramSession {
+        type In<'a> = &'a [u8];
+        type Out = SessionEvent;
+        type Error = Infallible;
+
+        fn demand(&self) -> Demand {
+            Demand::new(crate::source::INGEST_DEMAND_BYTES)
+        }
+
+        fn feed(&mut self, _input: &[u8], _now: Timestamp) -> Result<(), Infallible> {
+            self.feed_count += 1;
+            if self.feed_count == 2 {
+                self.pending.push_back(SessionEvent::NewProgram {
+                    program: ProgramId(0),
+                    tracks: vec![track_spec(TrackId::new(1))],
+                });
+                self.pending.push_back(SessionEvent::NewProgram {
+                    program: ProgramId(1),
+                    tracks: vec![track_spec(TrackId::new(2))],
+                });
+            } else if self.feed_count >= 3 {
+                let i = self.feed_count - 3;
+                let is_sync = i == 0 || i == 45;
+                self.pending.push_back(SessionEvent::Sample {
+                    program: ProgramId(0),
+                    track_id: TrackId::new(1),
+                    retention: media_plane::trunk::RetentionClass::Timed,
+                    sample: sample_at(i, is_sync),
+                });
+                self.pending.push_back(SessionEvent::Sample {
+                    program: ProgramId(1),
+                    track_id: TrackId::new(2),
+                    retention: media_plane::trunk::RetentionClass::Timed,
+                    sample: sample_at(i, is_sync),
+                });
+            }
+            Ok(())
+        }
+
+        fn poll(&mut self) -> Option<SessionEvent> {
+            self.pending.pop_front()
+        }
+
+        fn finish(&mut self) -> Result<(), Infallible> {
+            Ok(())
+        }
+    }
+
+    impl IngestSession for TwoProgramSession {
+        type Request = bytes::Bytes;
+    }
+
+    // --- Issue #781 test helpers ---
+
+    /// Maximum feeds for any bounded wait loop — 500 iterations is more
+    /// than enough to close one segment at a 1.0 s target duration with
+    /// 30 fps samples (each feed advances the timeline by at most one
+    /// sample per track; 500 × 33 ms ≈ 16.7 s of media, 16× the target).
+    const MAX_BOUNDED_FEEDS: usize = 2000;
+
+    /// An MPTS route (one `IngestDriver`, two announced programs) must
+    /// segment each program independently — issue #805 task 2b's explicit
+    /// "do not write anything that assumes one program per route".
+    ///
+    /// MUTATION VERIFIED: changing `drive_program_segmenters`'s per-program
+    /// loop to key `segmenters`/publish init bytes by the constant
+    /// `SPTS_PROGRAM_ID` instead of the loop's own `program` variable (i.e.
+    /// `segmenters.contains_key(&SPTS_PROGRAM_ID)` /
+    /// `segmenters.insert(SPTS_PROGRAM_ID, segmenter)`, simulating code that
+    /// assumes a single program per route) makes this test's
+    /// `assert!(driver.trunk(ProgramId(1)).unwrap().last_closed_segment().is_some(), ...)`
+    /// fail: `last_closed_segment()` returns `None` (actual) instead of
+    /// `Some(_)` (expected) — program 1 never gets its own `ProgramSegmenter`
+    /// (every program collapses onto the single `SPTS_PROGRAM_ID` slot, and
+    /// only whichever program is announced last actually accumulates
+    /// samples), so its `Trunk` never sees a closed segment. Program 0's
+    /// identical assertion still passes even with the mutation (misleading
+    /// on its own — this is why the test checks *both* programs, and why an
+    /// assertion that would still pass under a plausible mutation is not
+    /// sufficient by itself). Recompiled and re-run to confirm program 1's
+    /// assertion's failure, then reverted.
+    #[test]
+    fn two_programs_on_one_route_segment_independently() {
+        let route = RouteHandle::new(1.0, 500, 8);
+        let mut driver = IngestDriver::new(
+            TwoProgramSession::new(),
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
+        );
+        let mut published = HashSet::new();
+        let mut segmenters = HashMap::new();
+
+        // Feed 1: Established. Feed 2: both NewProgram announcements (mints
+        // both driver-side Trunks and, via `drive_program_segmenters`,
+        // subscribes both `ProgramSegmenter`s *before* any sample exists).
+        driver.feed(&[], Timestamp::from_nanos(0));
+        report_driver_progress(&driver, &route, &mut published);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+        driver.feed(&[], Timestamp::from_nanos(1));
+        report_driver_progress(&driver, &route, &mut published);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+
+        // 90 samples @ 3000 ticks/30fps = 3s of media per program,
+        // comfortably over the 1.0s target duration — mirrors
+        // `crate::pipeline`'s own `drives_source_through_segmenter_into_store`
+        // fixture numbers, already proven to close at least one segment.
+        for _ in 0..90 {
+            let now = Timestamp::from_nanos(driver_feed_nanos());
+            driver.feed(&[], now);
+            drive_program_segmenters(&driver, &route, &mut segmenters);
+        }
+
+        let trunk_0 = driver
+            .trunk(ProgramId(0))
+            .cloned()
+            .expect("program 0 announced");
+        let trunk_1 = driver
+            .trunk(ProgramId(1))
+            .cloned()
+            .expect("program 1 announced");
+        assert!(
+            !Arc::ptr_eq(&trunk_0, &trunk_1),
+            "the two programs must have genuinely distinct Trunks"
+        );
+        assert!(
+            trunk_0.last_closed_segment().is_some(),
+            "program 0 must have segmented its own media independently"
+        );
+        assert!(
+            trunk_1.last_closed_segment().is_some(),
+            "program 1 must have segmented its own media independently"
+        );
+    }
+
+    /// Render `route`'s current classic-HLS media playlist for `program`
+    /// synchronously — the multi-program analogue of `render_playlist` (which
+    /// hardcodes `SPTS_PROGRAM_ID`), needed by the MPTS test below since it
+    /// must render two DIFFERENT programs' playlists off the SAME route.
+    fn render_playlist_for(route: &RouteHandle, program: ProgramId) -> String {
+        let ll_hls = route
+            .ll_hls(program)
+            .unwrap_or_else(|| panic!("{program:?} must be published before rendering"));
+        match ll_hls.resolve(
+            HlsRequest::Playlist {
+                track_id: DEFAULT_TRACK_ID,
+                query: Default::default(),
+            },
+            Timestamp::from_nanos(0),
+            AwaitPolicy::new(Timestamp::from_nanos(0)),
+        ) {
+            EgressResponse::Ready {
+                body: HlsBody::Playlist(m),
+                ..
+            } => m,
+            other => panic!("expected Ready(Playlist) for {program:?}, got {other:?}"),
+        }
+    }
+
+    /// Resolve one dynamic resource (a served `.ts` segment, by URI) against
+    /// `program`'s `HlsOrigin` — the same `ServedEgress::resolve` call
+    /// `crate::origin::resource::dynamic_file` drives in production, minus
+    /// the axum/tokio wrapping (mirrors `render_playlist`/`render_playlist_for`
+    /// resolving playlists the same way).
+    fn resolve_resource(route: &RouteHandle, program: ProgramId, name: &str) -> bytes::Bytes {
+        let ll_hls = route
+            .ll_hls(program)
+            .unwrap_or_else(|| panic!("{program:?} must be published before resolving"));
+        match ll_hls.resolve(
+            HlsRequest::Resource {
+                name: name.to_string(),
+            },
+            Timestamp::from_nanos(0),
+            AwaitPolicy::new(Timestamp::from_nanos(0)),
+        ) {
+            EgressResponse::Ready {
+                body: HlsBody::Resource(bytes),
+                ..
+            } => bytes,
+            other => panic!("expected Ready(Resource) for {name:?} ({program:?}), got {other:?}"),
+        }
+    }
+
+    /// The first `.ts` segment URI line in a rendered classic-HLS media
+    /// playlist (a bare `seg-{track}-{seq}.ts` line, distinct from every
+    /// `#`-prefixed tag line) — `None` if the playlist advertises no closed
+    /// segment yet.
+    fn first_ts_segment_uri(playlist: &str) -> Option<&str> {
+        playlist
+            .lines()
+            .find(|l| !l.starts_with('#') && l.ends_with(".ts"))
+    }
+
+    /// How many times [`count_pmt_sections`] reads its buffer: a second pass
+    /// lets a PMT that precedes its PAT be seen.
+    const PMT_SECTION_SCAN_PASSES: usize = 2;
+
+    /// Count PMT sections (ISO/IEC 13818-1 Table 2-31) in one whole-packet
+    /// MPEG-2 TS byte buffer through `dvb_si::demux::SiDemux` — the same
+    /// section reassembly `dvb-si`'s `ts` feature is built on, so the count is
+    /// a genuine parse of the wire bytes, not an assumption about which PID
+    /// `transmux::ts_mux` happens to place the PMT on (issue #887's MPTS test
+    /// needs this to actually *prove* RFC 8216bis §3.1.1's "a Transport
+    /// Stream Segment MUST contain a single MPEG-2 Program" constraint, not
+    /// merely trust `ts_mux`'s own single-PMT-by-construction doc).
+    ///
+    /// The demux only watches the PMT PIDs each served PAT names
+    /// (`follow_pat`), so a PMT is counted once its PAT names it — fully
+    /// reading a one-pass buffer a second time (`PMT_SECTION_SCAN_PASSES`)
+    /// lets a PMT that precedes its PAT, a legal but unusual order, be seen
+    /// too; the same-version PAT is gated on the repeat, so no PMT is counted
+    /// twice.
+    fn count_pmt_sections(ts_bytes: &[u8]) -> usize {
+        let mut demux = SiDemux::builder().build();
+        let mut pmt_count = 0usize;
+        for _ in 0..PMT_SECTION_SCAN_PASSES {
+            for packet in ts_bytes.chunks_exact(mpeg_ts::ts::TS_PACKET_SIZE) {
+                pmt_count += demux
+                    .feed(packet)
+                    .filter(|event| event.table_id() == dvb_si::TableId::Pmt as u8)
+                    .count();
+            }
+        }
+        pmt_count
+    }
+
+    /// **Issue #887 — RFC 8216bis §3.1.1's "single MPEG-2 Program"
+    /// constraint, proven by parsing served bytes.** Feeds the same
+    /// hand-scripted two-program (MPTS) session
+    /// `two_programs_on_one_route_segment_independently` uses into a
+    /// `ts_hls` route (`Container::MpegTs`) instead of the default fMP4
+    /// container, then asserts:
+    ///
+    /// 1. each program renders its OWN classic-HLS playlist — resolved off
+    ///    its own `Trunk`/`HlsOrigin`, never a shared one — referencing `.ts`
+    ///    segment URIs with no `#EXT-X-MAP` (classic TS is
+    ///    self-initialising), and
+    /// 2. each program's first served `.ts` segment contains EXACTLY ONE
+    ///    PMT section — never zero (a malformed mux) and never more than
+    ///    one (which would make the segment a genuine multi-program
+    ///    stream, exactly what RFC 8216bis §3.1.1 says playback is
+    ///    undefined for).
+    ///
+    /// The architecture already satisfies this by construction
+    /// (`transmux::ts_mux` mints one PAT + one PMT per mux call — see that
+    /// module's own doc — and `drive_program_segmenters` gives each program
+    /// its own independent `StreamingTsHlsSegmenter`/mux, never a shared
+    /// one), so this test is the missing proof, not a fix: it parses the
+    /// actual served TS bytes via `count_pmt_sections` rather than trusting
+    /// that construction.
+    #[test]
+    fn ts_hls_mpts_route_serves_each_program_as_its_own_single_pmt_playlist() {
+        let route = RouteHandle::new(1.0, 500, 8).with_container(Container::MpegTs);
+        let mut driver = IngestDriver::new(
+            TwoProgramSession::new(),
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
+        );
+        let mut published = HashSet::new();
+        let mut segmenters = HashMap::new();
+
+        // Feed 1: Established. Feed 2: both NewProgram announcements.
+        driver.feed(&[], Timestamp::from_nanos(0));
+        report_driver_progress(&driver, &route, &mut published);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+        driver.feed(&[], Timestamp::from_nanos(1));
+        report_driver_progress(&driver, &route, &mut published);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+
+        // Same 90-sample budget as `two_programs_on_one_route_segment_independently`
+        // -- comfortably over the 1.0s target duration for both programs.
+        for _ in 0..90 {
+            let now = Timestamp::from_nanos(driver_feed_nanos());
+            driver.feed(&[], now);
+            drive_program_segmenters(&driver, &route, &mut segmenters);
+        }
+
+        // "Own playlist" means independently resolvable off its own
+        // Trunk/HlsOrigin, not merely textually different — with both
+        // programs fed identical sample cadences (`TwoProgramSession` pushes
+        // the same `sample_at(i, is_sync)` bytes to each), their rendered
+        // playlist text can legitimately coincide (same URI-naming scheme,
+        // same durations) even though the underlying `.ts` segment bytes and
+        // Trunks are genuinely distinct — proven the same way
+        // `two_programs_on_one_route_segment_independently` proves it.
+        let trunk_0 = driver
+            .trunk(ProgramId(0))
+            .cloned()
+            .expect("program 0 announced");
+        let trunk_1 = driver
+            .trunk(ProgramId(1))
+            .cloned()
+            .expect("program 1 announced");
+        assert!(
+            !Arc::ptr_eq(&trunk_0, &trunk_1),
+            "each program must be served off its own Trunk, not a shared one"
+        );
+
+        let playlist_0 = render_playlist_for(&route, ProgramId(0));
+        let playlist_1 = render_playlist_for(&route, ProgramId(1));
+
+        assert!(
+            playlist_0.contains(".ts") && !playlist_0.contains("#EXT-X-MAP"),
+            "program 0's classic-TS playlist must reference .ts segments with no init \
+             segment: {playlist_0}"
+        );
+        assert!(
+            playlist_1.contains(".ts") && !playlist_1.contains("#EXT-X-MAP"),
+            "program 1's classic-TS playlist must reference .ts segments with no init \
+             segment: {playlist_1}"
+        );
+
+        for (program, playlist) in [(ProgramId(0), &playlist_0), (ProgramId(1), &playlist_1)] {
+            let uri = first_ts_segment_uri(playlist).unwrap_or_else(|| {
+                panic!("{program:?}'s playlist has no closed .ts segment yet: {playlist}")
+            });
+            let bytes = resolve_resource(&route, program, uri);
+            let pmt_count = count_pmt_sections(&bytes);
+            assert_eq!(
+                pmt_count, 1,
+                "{program:?}'s served segment {uri:?} must carry exactly one PMT \
+                 (RFC 8216bis §3.1.1: a Transport Stream Segment MUST contain a single \
+                 MPEG-2 Program), got {pmt_count}"
+            );
+        }
+    }
+
+    /// Monotonic nanosecond source for feed-loop timestamps — the exact
+    /// `now` value is immaterial (sessions never read it), only that each
+    /// call passes a value (an `IngestDriver` contract).
+    fn driver_feed_nanos() -> u64 {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(2);
+        N.fetch_add(1, Ordering::Relaxed)
+    }
+
+    // --- ISOBMFF box parser (issue #781: assert track 9 in output) ---
+
+    use dvb_si::demux::SiDemux;
+    use transmux::TrackFragmentHeaderBox;
+    use transmux::box_types;
+
+    /// Box types the segment assertions walk and recognise (four-character
+    /// codes, ISO/IEC 14496-12:2026 §4.2; `styp` names a CMAF segment type
+    /// per ISO/IEC 23000-19 §7.1).
+    const MOOF: [u8; 4] = *b"moof";
+    const TRAF: [u8; 4] = *b"traf";
+    const TFHD: [u8; 4] = *b"tfhd";
+    const STYP: [u8; 4] = transmux::segments::STYP;
+    const STYP_BYTES: &[u8] = &STYP;
+    const MOOF_BYTES: &[u8] = &MOOF;
+
+    /// Collect every `track_ID` from `tfhd` boxes in a CMAF segment: walk
+    /// `moof` → `traf`, then let `transmux`'s typed parser read each `tfhd`
+    /// body (ISO/IEC 14496-12:2026 §8.8.7).
+    fn tfhd_track_ids(segment_bytes: &[u8]) -> Vec<u32> {
+        let mut ids = Vec::new();
+        for moof in top_level_boxes(segment_bytes, MOOF) {
+            for traf in top_level_boxes(moof.body, TRAF) {
+                for tfhd in top_level_boxes(traf.body, TFHD) {
+                    if let Ok(header) = TrackFragmentHeaderBox::parse_body(tfhd.body) {
+                        ids.push(header.track_id.value());
+                    }
+                }
+            }
+        }
+        ids
+    }
+
+    /// The top-level boxes of `data` whose type is `box_type`; a malformed or
+    /// truncated box ends the walk.
+    fn top_level_boxes<'a>(
+        data: &'a [u8],
+        box_type: [u8; 4],
+    ) -> impl Iterator<Item = box_types::BoxRef<'a>> {
+        box_types::box_iter(data)
+            .map_while(Result::ok)
+            .filter_map(move |(b, _consumed)| {
+                (b.header.box_type == box_types::BoxType(box_type)).then_some(b)
+            })
+    }
+
+    /// Collect segment sequence numbers from an LL-HLS playlist
+    /// (scans for `seg-1-<N>.m4s` lines).
+    /// Record the trunk's latest closed segment sequence number, in
+    /// publication order, skipping repeats of the value already at the tail.
+    ///
+    /// Sampling this after every feed builds the series a client would see.
+    /// A segmenter rebuilt without carrying its counters forward restarts at
+    /// 1, which shows up here as a value that fails to exceed its predecessor
+    /// — the check `existing_tracks_are_uninterrupted_across_mid_stream_addition`
+    /// makes (issue #781).
+    fn note_segment_seq(trunk: &Trunk, observed: &mut Vec<u32>) {
+        if let Some(seq) = trunk.last_closed_segment().map(SegmentSeq::value)
+            && observed.last() != Some(&seq)
+        {
+            observed.push(seq);
+        }
+    }
+
+    fn segment_sequences_from_playlist(playlist: &str) -> Vec<u32> {
+        let mut seqs = Vec::new();
+        for line in playlist.lines() {
+            // `seg-{track}-{instance}-{msn}.m4s` (the instance token is part of
+            // every name the playlist advertises).
+            if let Some(start) = line.find("seg-1-") {
+                let rest = &line[start + 6..];
+                if let Some(end) = rest.find(".m4s")
+                    && let Some((_instance, msn)) = rest[..end].split_once('-')
+                    && let Ok(n) = msn.parse::<u32>()
+                {
+                    seqs.push(n);
+                }
+            }
+        }
+        seqs
+    }
+
+    // ================================================================
+    // Issue #781 tests
+    // ================================================================
+
+    /// A session that announces track 1 at feed 2, emits `TracksChanged`
+    /// adding track 9 when `add_track_9()` is called, and publishes
+    /// samples for all active tracks on every subsequent feed. Uses
+    /// interior mutability (`Cell<bool>`) so `add_track_9()` is `&self`
+    /// and can be called through `driver.session()`.
+    struct TrackChangeSession {
+        pending: std::cell::RefCell<VecDeque<SessionEvent>>,
+        feed_count: u32,
+        added_track_9: std::cell::Cell<bool>,
+    }
+
+    impl TrackChangeSession {
+        fn new() -> Self {
+            let mut pending = VecDeque::new();
+            pending.push_back(SessionEvent::Established);
+            TrackChangeSession {
+                pending: std::cell::RefCell::new(pending),
+                feed_count: 0,
+                added_track_9: std::cell::Cell::new(false),
+            }
+        }
+
+        /// Queue a `TracksChanged` event — callable via `&self` through
+        /// `driver.session()`.
+        fn add_track_9(&self) {
+            self.pending
+                .borrow_mut()
+                .push_back(SessionEvent::TracksChanged {
+                    program: ProgramId(0),
+                    tracks: vec![track_spec(TrackId::new(1)), track_spec(TrackId::new(9))],
+                });
+            self.added_track_9.set(true);
+        }
+    }
+
+    impl Stage for TrackChangeSession {
+        type In<'a> = &'a [u8];
+        type Out = SessionEvent;
+        type Error = Infallible;
+
+        fn demand(&self) -> Demand {
+            Demand::new(crate::source::INGEST_DEMAND_BYTES)
+        }
+
+        fn feed(&mut self, _input: &[u8], _now: Timestamp) -> Result<(), Infallible> {
+            self.feed_count += 1;
+            if self.feed_count == 2 {
+                self.pending
+                    .borrow_mut()
+                    .push_back(SessionEvent::NewProgram {
+                        program: ProgramId(0),
+                        tracks: vec![track_spec(TrackId::new(1))],
+                    });
+            } else if self.feed_count >= 3 {
+                let i = self.feed_count - 3;
+                let is_sync = i.is_multiple_of(45);
+                self.pending.borrow_mut().push_back(SessionEvent::Sample {
+                    program: ProgramId(0),
+                    track_id: TrackId::new(1),
+                    retention: media_plane::trunk::RetentionClass::Timed,
+                    sample: sample_at(i, is_sync),
+                });
+                if self.added_track_9.get() {
+                    self.pending.borrow_mut().push_back(SessionEvent::Sample {
+                        program: ProgramId(0),
+                        track_id: TrackId::new(9),
+                        retention: media_plane::trunk::RetentionClass::Timed,
+                        sample: sample_at(i, is_sync),
+                    });
+                }
+            }
+            Ok(())
+        }
+
+        fn poll(&mut self) -> Option<SessionEvent> {
+            self.pending.borrow_mut().pop_front()
+        }
+
+        fn finish(&mut self) -> Result<(), Infallible> {
+            Ok(())
+        }
+    }
+
+    impl IngestSession for TrackChangeSession {
+        type Request = bytes::Bytes;
+    }
+
+    // --- Test 1: new track's media in output ---
+
+    /// **Issue #781 test 1.** Drives a session with track 1 until a segment
+    /// closes, injects `TracksChanged` adding track 9, feeds both tracks
+    /// until another segment closes, then parses the segment's ISOBMFF
+    /// boxes and asserts a `tfhd` names `track_ID=9`.
+    #[test]
+    fn new_tracks_media_appears_in_output_after_mid_stream_addition() {
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut driver = IngestDriver::new(
+            TrackChangeSession::new(),
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
+        );
+        let mut published = HashSet::new();
+        let mut segmenters = HashMap::new();
+
+        driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+        report_driver_progress(&driver, &route, &mut published);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+        driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+        report_driver_progress(&driver, &route, &mut published);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+
+        let trunk = driver.trunk(ProgramId(0)).cloned().expect("program 0");
+        for i in 0..MAX_BOUNDED_FEEDS {
+            if trunk.last_closed_segment().is_some() {
+                break;
+            }
+            driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+            report_driver_progress(&driver, &route, &mut published);
+            drive_program_segmenters(&driver, &route, &mut segmenters);
+            if i + 1 >= MAX_BOUNDED_FEEDS {
+                panic!(
+                    "no segment closed before track change after {MAX_BOUNDED_FEEDS} feeds (test 1)"
+                );
+            }
+        }
+        let pre_change_seg_len = trunk.segment_len();
+        let pre_playlist = render_playlist(&route);
+        let pre_seqs = segment_sequences_from_playlist(&pre_playlist);
+        let last_pre_seq = pre_seqs.last().copied().unwrap_or(0);
+
+        driver.session().add_track_9();
+        // Feed once to apply the track change.
+        driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+        report_driver_progress(&driver, &route, &mut published);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+
+        // Sanity: the track change must have been applied to the trunk.
+        let gen_after = trunk.track_generation();
+        assert!(
+            gen_after >= 2,
+            "track generation must have advanced (got {gen_after})"
+        );
+
+        // The flush created exactly one trailing segment.
+        let flush_seg_len = trunk.segment_len();
+        assert!(
+            flush_seg_len > pre_change_seg_len,
+            "flush must create at least one trailing segment (was {}, now {})",
+            pre_change_seg_len,
+            flush_seg_len,
+        );
+
+        // Feed samples after the change until we get a genuinely new segment
+        // (beyond the flush trailing segment).
+        for i in 0..MAX_BOUNDED_FEEDS {
+            if trunk.segment_len() > pre_change_seg_len + 1 {
+                break;
+            }
+            driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+            report_driver_progress(&driver, &route, &mut published);
+            drive_program_segmenters(&driver, &route, &mut segmenters);
+            if i + 1 >= MAX_BOUNDED_FEEDS {
+                panic!(
+                    "no new segment beyond flush after {} feeds (segment_len={})",
+                    MAX_BOUNDED_FEEDS,
+                    trunk.segment_len(),
+                );
+            }
+        }
+
+        let post_playlist = render_playlist(&route);
+        let post_seqs = segment_sequences_from_playlist(&post_playlist);
+        assert!(
+            post_seqs.iter().any(|&s| s > last_pre_seq),
+            "post-change playlist must have sequence > last pre-change ({last_pre_seq})"
+        );
+
+        let mut found_track_9 = false;
+        for seq in &post_seqs {
+            if *seq <= last_pre_seq {
+                continue;
+            }
+            let uri = format!("seg-1-{seq}.m4s");
+            let bytes = resolve_resource(&route, ProgramId(0), &uri);
+            if tfhd_track_ids(&bytes).contains(&9) {
+                found_track_9 = true;
+                break;
+            }
+        }
+        assert!(
+            found_track_9,
+            "a post-change segment must contain tfhd naming track_ID 9"
+        );
+    }
+
+    // --- Test 2: existing tracks uninterrupted ---
+
+    #[test]
+    fn existing_tracks_are_uninterrupted_across_mid_stream_addition() {
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut driver = IngestDriver::new(
+            TrackChangeSession::new(),
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
+        );
+        let mut published = HashSet::new();
+        let mut segmenters = HashMap::new();
+
+        driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+        report_driver_progress(&driver, &route, &mut published);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+        driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+        report_driver_progress(&driver, &route, &mut published);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+
+        let trunk = driver.trunk(ProgramId(0)).cloned().expect("program 0");
+
+        // Every segment sequence number the route publishes, in publication
+        // order, sampled across the whole session.
+        let mut observed: Vec<u32> = Vec::new();
+
+        for i in 0..MAX_BOUNDED_FEEDS {
+            if trunk.last_closed_segment().is_some() {
+                break;
+            }
+            driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+            report_driver_progress(&driver, &route, &mut published);
+            drive_program_segmenters(&driver, &route, &mut segmenters);
+            note_segment_seq(&trunk, &mut observed);
+            if i + 1 >= MAX_BOUNDED_FEEDS {
+                panic!(
+                    "no segment closed before track change after {MAX_BOUNDED_FEEDS} feeds (test 2)"
+                );
+            }
+        }
+        note_segment_seq(&trunk, &mut observed);
+        let seqs_before_change = observed.len();
+
+        driver.session().add_track_9();
+        driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+        report_driver_progress(&driver, &route, &mut published);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+        note_segment_seq(&trunk, &mut observed);
+
+        let pre_len = trunk.segment_len();
+        for i in 0..MAX_BOUNDED_FEEDS {
+            if trunk.segment_len() > pre_len + 1 {
+                break;
+            }
+            driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+            report_driver_progress(&driver, &route, &mut published);
+            drive_program_segmenters(&driver, &route, &mut segmenters);
+            note_segment_seq(&trunk, &mut observed);
+            if i + 1 >= MAX_BOUNDED_FEEDS {
+                panic!(
+                    "no new segment after track change after {MAX_BOUNDED_FEEDS} feeds (test 2, len={})",
+                    trunk.segment_len()
+                );
+            }
+        }
+        note_segment_seq(&trunk, &mut observed);
+
+        // Segments must have kept flowing across the change, not merely
+        // existed before it.
+        assert!(
+            observed.len() > seqs_before_change,
+            "no segment was published after the track change: {observed:?}"
+        );
+
+        // THE INVARIANT. `#EXT-X-MEDIA-SEQUENCE` is derived from these, and a
+        // client mid-playlist breaks if it ever goes backwards or repeats. A
+        // segmenter rebuilt for the new track set without carrying its
+        // counters forward restarts at 1 and violates this.
+        for pair in observed.windows(2) {
+            assert!(
+                pair[1] > pair[0],
+                "segment sequence must be strictly increasing across a \
+                 mid-stream track change — went {} -> {} in {observed:?}",
+                pair[0],
+                pair[1]
+            );
+        }
+    }
+
+    // --- Test 3: change lands on segment boundary ---
+
+    #[test]
+    fn track_change_lands_on_segment_boundary() {
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut driver = IngestDriver::new(
+            TrackChangeSession::new(),
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
+        );
+        let mut published = HashSet::new();
+        let mut segmenters = HashMap::new();
+
+        driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+        report_driver_progress(&driver, &route, &mut published);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+        driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+        report_driver_progress(&driver, &route, &mut published);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+
+        let trunk = driver.trunk(ProgramId(0)).cloned().expect("program 0");
+        for i in 0..MAX_BOUNDED_FEEDS {
+            if trunk.last_closed_segment().is_some() {
+                break;
+            }
+            driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+            report_driver_progress(&driver, &route, &mut published);
+            drive_program_segmenters(&driver, &route, &mut segmenters);
+            if i + 1 >= MAX_BOUNDED_FEEDS {
+                panic!(
+                    "no segment closed before track change after {MAX_BOUNDED_FEEDS} feeds (test 3)"
+                );
+            }
+        }
+
+        let last_closed_seq = trunk.last_closed_segment().expect("segment closed");
+
+        driver.session().add_track_9();
+        driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+        report_driver_progress(&driver, &route, &mut published);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+
+        let pre_len = trunk.segment_len();
+        for i in 0..MAX_BOUNDED_FEEDS {
+            if trunk.segment_len() > pre_len + 1 {
+                break;
+            }
+            driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+            report_driver_progress(&driver, &route, &mut published);
+            drive_program_segmenters(&driver, &route, &mut segmenters);
+            if i + 1 >= MAX_BOUNDED_FEEDS {
+                panic!(
+                    "no new segment after track change after {MAX_BOUNDED_FEEDS} feeds (test 3, len={})",
+                    trunk.segment_len()
+                );
+            }
+        }
+
+        let next = trunk.last_closed_segment().expect("another segment closed");
+        assert!(
+            next > last_closed_seq,
+            "next segment seq {next} must be > previous {last_closed_seq}"
+        );
+    }
+
+    // --- Test 4: removal and update still degrade ---
+
+    /// **Issue #781 test 4.** Regression guard: removal stops routing
+    /// samples, and `TrackUpdated` does not panic. (A `TrackUpdated` for a
+    /// live track announces the track set again since #1083 — the demux emits
+    /// it only for a config that really changed — covered by
+    /// `track_updated_announces_the_new_config` in `media_plane::ts_session`.)
+    #[test]
+    fn removal_and_update_degrade_without_panicking() {
+        use media_plane::ts_session::ProgramTracker;
+
+        let mut tracker = ProgramTracker::new();
+        tracker.handle(DemuxEvent::TrackAdded(track_spec(TrackId::new(1))));
+        tracker.handle(DemuxEvent::TrackAdded(track_spec(TrackId::new(2))));
+        tracker.handle(DemuxEvent::tracks_resolved(0));
+        let _established = tracker.poll();
+        let _new_program = tracker.poll();
+
+        tracker.handle(DemuxEvent::track_removed(
+            TrackId::new(2),
+            transmux::EventProvenance::default(),
+        ));
+        tracker.handle(DemuxEvent::tracks_resolved(1));
+
+        match tracker.poll() {
+            Some(SessionEvent::TracksChanged { tracks, .. }) => {
+                assert_eq!(tracks.len(), 1);
+                assert_eq!(tracks[0].track_id, TrackId::new(1));
+            }
+            other => panic!("expected TracksChanged with track 1 only, got {other:?}"),
+        }
+
+        tracker.handle(DemuxEvent::sample(TrackId::new(2), sample_at(0, true)));
+        assert!(tracker.poll().is_none(), "sample for removed track dropped");
+
+        // An update for the removed track 2 is for a track nothing routes
+        // on: ignored.
+        tracker.handle(DemuxEvent::TrackUpdated(track_spec(TrackId::new(2))));
+        assert!(
+            tracker.poll().is_none(),
+            "TrackUpdated for a removed track emits no event"
+        );
+    }
+
+    // --- Test 5: DASH-output route logs and continues ---
+
+    #[test]
+    fn dash_output_logs_and_continues_on_mid_stream_addition() {
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut driver = IngestDriver::new(
+            TrackChangeSession::new(),
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
+        );
+        let mut published = HashSet::new();
+        let mut segmenters = HashMap::new();
+
+        driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+        report_driver_progress(&driver, &route, &mut published);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+        driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+        report_driver_progress(&driver, &route, &mut published);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+
+        let specs_before = route.track_specs(ProgramId(0));
+        assert_eq!(specs_before.len(), 1);
+
+        driver.session().add_track_9();
+        driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+        report_driver_progress(&driver, &route, &mut published);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+
+        let specs_after = route.track_specs(ProgramId(0));
+        assert_eq!(
+            specs_after.len(),
+            2,
+            "DASH path must see the new track spec"
+        );
+
+        let selected = crate::output::dash::select_representable_track(&specs_after);
+        assert!(selected.is_some(), "must still pick a representable track");
+    }
+
+    const GAP_AUDIO_TRACK: u32 = 2;
+    const GAP_AUDIO_FRAME_TICKS: i64 = 1_600;
+    const GAP_RESUME_SKIP_FRAMES: u32 = 90;
+    const GAP_SEGMENTS_PER_STAGE: usize = 3;
+    const GAP_EMPTY_FEEDS: usize = 8;
+    const GAP_GOLDEN: &str = "golden/hls/track-gap-live.golden";
+    const GAP_PRESENTATION_ORIGIN_SECS: u64 = 1_700_000_000;
+
+    fn gap_video_audio_specs() -> Vec<TrackSpec> {
+        vec![
+            track_spec(TrackId::new(1)),
+            aac_track_spec(TrackId::new(GAP_AUDIO_TRACK)),
+        ]
+    }
+
+    struct GapSession {
+        pending: std::cell::RefCell<VecDeque<SessionEvent>>,
+        frame: std::cell::Cell<u32>,
+        flowing: std::cell::Cell<bool>,
+    }
+
+    impl GapSession {
+        fn new() -> Self {
+            let mut pending = VecDeque::new();
+            pending.push_back(SessionEvent::Established);
+            pending.push_back(SessionEvent::NewProgram {
+                program: ProgramId(0),
+                tracks: gap_video_audio_specs(),
+            });
+            GapSession {
+                pending: std::cell::RefCell::new(pending),
+                frame: std::cell::Cell::new(0),
+                flowing: std::cell::Cell::new(true),
+            }
+        }
+
+        fn change_tracks(&self, tracks: Vec<TrackSpec>) {
+            let flowing = !tracks.is_empty();
+            self.pending
+                .borrow_mut()
+                .push_back(SessionEvent::TracksChanged {
+                    program: ProgramId(0),
+                    tracks,
+                });
+            if flowing {
+                self.frame.set(self.frame.get() + GAP_RESUME_SKIP_FRAMES);
+            }
+            self.flowing.set(flowing);
+        }
+    }
+
+    impl Stage for GapSession {
+        type In<'a> = &'a [u8];
+        type Out = SessionEvent;
+        type Error = Infallible;
+
+        fn demand(&self) -> Demand {
+            Demand::new(crate::source::INGEST_DEMAND_BYTES)
+        }
+
+        fn feed(&mut self, _input: &[u8], _now: Timestamp) -> Result<(), Infallible> {
+            if !self.flowing.get() {
+                return Ok(());
+            }
+            let i = self.frame.get();
+            self.frame.set(i + 1);
+            let mut pending = self.pending.borrow_mut();
+            pending.push_back(SessionEvent::Sample {
+                program: ProgramId(0),
+                track_id: TrackId::new(1),
+                retention: media_plane::trunk::RetentionClass::Timed,
+                sample: sample_at(i, i.is_multiple_of(30)),
+            });
+            let audio_dts = i64::from(i) * GAP_AUDIO_FRAME_TICKS;
+            pending.push_back(SessionEvent::Sample {
+                program: ProgramId(0),
+                track_id: TrackId::new(GAP_AUDIO_TRACK),
+                retention: media_plane::trunk::RetentionClass::Timed,
+                sample: Sample::new(
+                    vec![0, 0, 0, 1, 0x21],
+                    Some(audio_dts),
+                    Some(audio_dts),
+                    Some(u32::try_from(GAP_AUDIO_FRAME_TICKS).expect("fits")),
+                    true,
+                ),
+            });
+            Ok(())
+        }
+
+        fn poll(&mut self) -> Option<SessionEvent> {
+            self.pending.borrow_mut().pop_front()
+        }
+
+        fn finish(&mut self) -> Result<(), Infallible> {
+            Ok(())
+        }
+    }
+
+    impl IngestSession for GapSession {
+        type Request = bytes::Bytes;
+    }
+
+    struct GapRig {
+        route: RouteHandle,
+        driver: IngestDriver<GapSession>,
+        published: HashSet<ProgramId>,
+        segmenters: HashMap<ProgramId, ProgramSegmenter>,
+    }
+
+    impl GapRig {
+        fn new() -> Self {
+            Self::new_with_container(Container::Fmp4)
+        }
+
+        fn new_with_container(container: Container) -> Self {
+            GapRig {
+                route: RouteHandle::new(1.0, 250, 16).with_container(container),
+                driver: IngestDriver::new(
+                    GapSession::new(),
+                    media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
+                ),
+                published: HashSet::new(),
+                segmenters: HashMap::new(),
+            }
+        }
+
+        fn feed(&mut self) {
+            self.driver
+                .feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+            report_driver_progress(&self.driver, &self.route, &mut self.published);
+            drive_program_segmenters(&self.driver, &self.route, &mut self.segmenters);
+        }
+
+        fn closed_segments(&self) -> usize {
+            self.driver
+                .trunk(ProgramId(0))
+                .map_or(0, |trunk| trunk.segment_len())
+        }
+
+        fn feed_until_segments(&mut self, wanted: usize) {
+            for _ in 0..MAX_BOUNDED_FEEDS {
+                if self.closed_segments() >= wanted {
+                    return;
+                }
+                self.feed();
+            }
+            panic!("{wanted} segments did not close within {MAX_BOUNDED_FEEDS} feeds");
+        }
+
+        fn snapshot(&self, stage: &str, out: &mut String) {
+            let origin = std::time::UNIX_EPOCH + Duration::from_secs(GAP_PRESENTATION_ORIGIN_SECS);
+            out.push_str(&format!("==== {stage}: HLS media playlist ====\n"));
+            let instance = self
+                .route
+                .ll_hls(crate::route::SPTS_PROGRAM_ID)
+                .expect("program published")
+                .instance()
+                .to_string();
+            out.push_str(&render_playlist(&self.route).replace(&instance, "INSTANCE"));
+            out.push_str(&format!("==== {stage}: DASH MPD ====\n"));
+            let dash = crate::output::dash::render_mpd_at(&self.route, origin)
+                .unwrap_or_else(|| "(no MPD: 503)".to_owned());
+            out.push_str(&dash.replace(&instance, "INSTANCE"));
+            out.push('\n');
+        }
+    }
+
+    fn assert_gap_golden(actual: &str) {
+        if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
+            let path = std::path::Path::new(&dir).join(GAP_GOLDEN);
+            std::fs::create_dir_all(path.parent().expect("golden parent")).expect("create dir");
+            std::fs::write(path, actual).expect("write golden");
+            return;
+        }
+        let expected = std::fs::read_to_string(test_fixtures::path(GAP_GOLDEN)).expect("golden");
+        assert_eq!(
+            actual, expected,
+            "{GAP_GOLDEN} differs from the golden output"
+        );
+    }
+
+    #[test]
+    fn live_route_through_an_empty_track_set_and_back_matches_golden() {
+        let mut rig = GapRig::new();
+        let mut out = String::new();
+
+        rig.feed();
+        rig.feed();
+        rig.feed_until_segments(GAP_SEGMENTS_PER_STAGE);
+        rig.snapshot("1 video+audio", &mut out);
+
+        rig.driver.session().change_tracks(Vec::new());
+        for _ in 0..GAP_EMPTY_FEEDS {
+            rig.feed();
+        }
+        rig.snapshot("2 empty track set", &mut out);
+        assert!(!rig.route.has_active_tracks(ProgramId(0)));
+        let gap_playlist = render_playlist(&rig.route);
+        assert!(gap_playlist.contains("#EXT-X-GAP"), "{gap_playlist}");
+        let gap_mpd = crate::output::dash::render_mpd_at(
+            &rig.route,
+            std::time::UNIX_EPOCH + Duration::from_secs(GAP_PRESENTATION_ORIGIN_SECS),
+        )
+        .expect("the segments before the gap still render");
+        assert_eq!(gap_mpd.matches("<Period ").count(), 1, "{gap_mpd}");
+        assert!(
+            gap_mpd.contains(" duration=\"PT"),
+            "the Period ends at the gap: {gap_mpd}"
+        );
+
+        rig.driver.session().change_tracks(gap_video_audio_specs());
+        let resumed = rig.closed_segments() + GAP_SEGMENTS_PER_STAGE;
+        rig.feed_until_segments(resumed);
+        rig.snapshot("3 video+audio again", &mut out);
+        assert!(rig.route.has_active_tracks(ProgramId(0)));
+        let resumed_playlist = render_playlist(&rig.route);
+        assert!(
+            resumed_playlist.contains("#EXT-X-DISCONTINUITY\n"),
+            "{resumed_playlist}"
+        );
+
+        assert_gap_golden(&out);
+    }
+
+    #[test]
+    fn ts_hls_route_through_an_empty_track_set_and_back_shows_gap() {
+        let mut rig = GapRig::new_with_container(Container::MpegTs);
+        rig.feed();
+        rig.feed();
+        rig.feed_until_segments(GAP_SEGMENTS_PER_STAGE);
+
+        rig.driver.session().change_tracks(Vec::new());
+        for _ in 0..GAP_EMPTY_FEEDS {
+            rig.feed();
+        }
+        let gap_playlist = render_playlist(&rig.route);
+        assert!(gap_playlist.contains("#EXT-X-GAP"), "{gap_playlist}");
+
+        // numbering continues: collect media sequence numbers
+        let before: Vec<&str> = gap_playlist
+            .lines()
+            .filter(|l| l.starts_with("#EXTINF"))
+            .collect();
+        let _ = before;
+
+        rig.driver.session().change_tracks(gap_video_audio_specs());
+        let resumed = rig.closed_segments() + GAP_SEGMENTS_PER_STAGE;
+        rig.feed_until_segments(resumed);
+        let resumed_playlist = render_playlist(&rig.route);
+        assert!(
+            resumed_playlist.contains("#EXT-X-DISCONTINUITY\n"),
+            "{resumed_playlist}"
+        );
+        assert!(gap_playlist.contains("#EXT-X-GAP"), "{gap_playlist}");
+    }
+
+    // --- T7 (issue #1082): a stalled DVR pin must never block the shared --
+    // --- tokio worker thread `pump`/`flush` run on -------------------------
+
+    fn nz(n: usize) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(n).expect("test capacity must be non-zero")
+    }
+
+    fn fake_ready_entry(seq: u32) -> SegmentEntry {
+        SegmentEntry::new(
+            bytes::Bytes::from(vec![seq as u8; 4]),
+            SegmentSeq::new(seq),
+            Duration::from_secs(1),
+            Timestamp::from_nanos(u64::from(seq)),
+            SegmentMeta {
+                discontinuous: false,
+            },
+        )
+    }
+
+    /// A helper for these low-level tests: build a `ProgramSegmenter`
+    /// directly (bypassing `try_new`'s real TS/fMP4 pipeline) over a
+    /// caller-supplied `Trunk`, so a test can control the `Trunk`'s segment
+    /// capacity and pins precisely.
+    fn bare_segmenter(trunk: &Arc<Trunk>) -> ProgramSegmenter {
+        let segment_writer = trunk.segment_writer().expect("first take succeeds");
+        let seg = AnySegmenter::Ts(
+            StreamingTsHlsSegmenter::new(vec![track_spec(TrackId::new(1))], 1, 8)
+                .expect("valid placeholder TS segmenter"),
+        );
+        let mut ps = ProgramSegmenter {
+            backlogged: false,
+            timescale_moves: HashMap::new(),
+            cursor: trunk.subscribe_from_backlog(),
+            segment_writer,
+            seg,
+            mark_next_discontinuous: false,
+            gap: None,
+            next_timeline_ns: 0,
+            track_generation: trunk.track_generation(),
+            published_tracks: trunk.tracks(),
+            gate_video_only: false,
+            pending: VecDeque::new(),
+            pending_since: None,
+            anchor: None,
+            pending_anchor: None,
+            start_gate_open: false,
+            start_gate_dropped: 0,
+            start_gate_video_dropped: 0,
+            start_gate_opened_logged: false,
+            idr_wait: transmux::IdrWait::new(std::time::Duration::from_secs(6)),
+            idr_fallback_active: false,
+            idr_hold: VecDeque::new(),
+            idr_hold_bytes: 0,
+            followers: Vec::new(),
+            subtitle_followers: Vec::new(),
+            leader_durations: LeaderDurations::new(),
+            caption_detectors: HashMap::new(),
+            captions_seen: BTreeSet::new(),
+            captions_declared: Vec::new(),
+            captions_unreported: false,
+            caption_scan_started: HashMap::new(),
+            captions_scan_complete: false,
+            part_target_published: None,
+            timeline: transmux::JumpDetector::new(Some(transmux::TimelineJumpConfig::default())),
+            ingest_origin: Instant::now(),
+        };
+        ps.timeline.on_tracks(&ps.published_tracks);
+        ps
+    }
+
+    /// Pre-populate `trunk`'s segment log with segments `1..=5`, as if
+    /// published by an earlier `SegmentWriter` — simulates the two
+    /// triggering conditions review item 1 names: "a `Trunk` that already
+    /// has segments" (`try_new`'s own case) and "the segmenter this
+    /// [rebuild] is replacing already published some" (`apply_track_change`'s
+    /// case). Returns nothing; the writer used is dropped at the end of this
+    /// call so exactly one `SegmentWriter`/`TrunkWriter` is ever live at a
+    /// time, matching every ring group's single-writer contract.
+    fn pre_seed_five_segments(trunk: &Arc<Trunk>) {
+        let seeding_writer = trunk.segment_writer().expect("first take succeeds");
+        for seq in 1..=5u32 {
+            seeding_writer
+                .publish_segment(fake_ready_entry(seq))
+                .expect("pre-seed accepted");
+        }
+    }
+
+    /// **Review item 1, `try_new`'s `Container::MpegTs` arm.** Building a
+    /// TS-container segmenter against a `Trunk` that already holds segments
+    /// (e.g. a `SegmentWriter` dropped and re-issued — `media_plane` issue
+    /// #1082) must resume numbering from `SegmentWriter::next_sequence_number()`,
+    /// not renumber from 1 — a segmenter seeded from 1 has every segment it
+    /// cuts rejected as non-monotonic and dropped
+    /// (`drain_pending`'s `Err(TryPublishSegmentError::NonMonotonic(_))` arm,
+    /// logged not retried) for as long as its own counter stays at or below
+    /// the `Trunk`'s already-published high-water mark.
+    ///
+    /// MUTATION VERIFIED: reverting `try_new`'s `Container::MpegTs` arm to
+    /// call the plain, unseeded `StreamingTsHlsSegmenter::new` (this test's
+    /// pre-fix shape) makes this test's `assert_eq!(trunk.last_closed_segment(),
+    /// Some(6), ...)` fail: actual `Some(5)`, unchanged from the pre-seeded
+    /// value — the unseeded segmenter's first cut numbers `segment_seq` 1,
+    /// which `try_publish_segment` rejects against the `Trunk`'s already-
+    /// published seq 5, and `drain_pending` drops it. Recompiled and re-run
+    /// to confirm the failure, then reverted.
+    #[test]
+    fn try_new_ts_arm_seeds_from_an_already_populated_trunk() {
+        use media_plane::trunk::TrunkConfig;
+
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
+        trunk
+            .writer()
+            .expect("first take succeeds")
+            .set_tracks(vec![track_spec(TrackId::new(1))]);
+        pre_seed_five_segments(&trunk);
+
+        let route = RouteHandle::new(1.0, 250, 8).with_container(Container::MpegTs);
+        let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250)
+            .expect("non-empty, anchor-capable track set");
+
+        // Push samples through a sync boundary past the 1s target so the
+        // segmenter cuts at least one real segment.
+        for i in 0..90u32 {
+            segmenter
+                .seg
+                .push(TrackId::new(1), sample_at(i, i.is_multiple_of(45)))
+                .expect("push");
+        }
+        segmenter.publish_ready();
+
+        assert_eq!(
+            trunk.last_closed_segment(),
+            Some(SegmentSeq::new(6)),
+            "the first segment a freshly-built TS segmenter cuts against an \
+             already-populated Trunk must resume from next_sequence_number(), \
+             not renumber from 1"
+        );
+    }
+
+    /// **Review item 1, `apply_track_change`'s `Container::MpegTs` rebuild
+    /// arm.** When every track in a mid-stream track-set snapshot fails
+    /// `StreamingTsHlsSegmenter::add_track` (forcing the rebuild path rather
+    /// than in-place admission — see that arm's own comment: "should only be
+    /// reached if add_track failed on every new track"), the replacement
+    /// segmenter must resume numbering from `SegmentWriter::next_sequence_number()`,
+    /// mirroring `try_new`'s own arm — not renumber from 1 against a `Trunk`
+    /// that already holds segments from the segmenter it is replacing.
+    ///
+    /// MUTATION VERIFIED: reverting this arm to call the plain, unseeded
+    /// `StreamingTsHlsSegmenter::new` (this test's pre-fix shape) makes this
+    /// test's final assertion fail: actual `trunk.last_closed_segment()`
+    /// stays `Some(5)` after the rebuild and a full cut cycle — the
+    /// rebuilt segmenter's first cut numbers `segment_seq` 1, rejected as
+    /// non-monotonic against the `Trunk`'s already-published seq 5 and
+    /// dropped by `drain_pending`. Recompiled and re-run to confirm the
+    /// failure, then reverted.
+    #[test]
+    fn apply_track_change_ts_rebuild_seeds_from_next_sequence_number() {
+        use media_plane::trunk::TrunkConfig;
+
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
+        trunk
+            .writer()
+            .expect("first take succeeds")
+            .set_tracks(vec![track_spec(TrackId::new(1))]);
+        pre_seed_five_segments(&trunk);
+
+        // `bare_segmenter` already builds its placeholder Ts segmenter over
+        // track 1 — so re-announcing that same track_id below fails
+        // `add_track`'s duplicate check on the (only) entry, forcing the
+        // rebuild path.
+        let mut segmenter = bare_segmenter(&trunk);
+        let route = RouteHandle::new(1.0, 250, 8).with_container(Container::MpegTs);
+
+        apply_change(&mut segmenter, &trunk, &route);
+
+        for i in 0..90u32 {
+            segmenter
+                .seg
+                .push(TrackId::new(1), sample_at(i, i.is_multiple_of(45)))
+                .expect("push");
+        }
+        segmenter.publish_ready();
+
+        assert_eq!(
+            trunk.last_closed_segment(),
+            Some(SegmentSeq::new(6)),
+            "the rebuilt TS segmenter's first cut segment must resume from \
+             next_sequence_number(), not renumber from 1"
+        );
+    }
+
+    /// A Data track (a DVB SCTE-35/teletext PID) that cannot ride in fMP4.
+    fn data_track_spec(track_id: TrackId) -> TrackSpec {
+        TrackSpec::new(
+            track_id,
+            90_000,
+            transmux::pipeline::CodecConfig::Data {
+                stream_type: 0x86,
+                descriptors: Vec::new(),
+                carriage: transmux::pipeline::DataCarriage::Sections,
+            },
+        )
+    }
+
+    /// Push ~3 s of 25 fps video (a keyframe every 25 frames) and publish what
+    /// closes; return the number of segments the trunk now holds.
+    fn push_gop_run(segmenter: &mut ProgramSegmenter, first_frame: u32) {
+        for i in first_frame..first_frame + 75 {
+            segmenter
+                .seg
+                .push(TrackId::new(1), sample_at(i, i.is_multiple_of(25)))
+                .expect("push");
+        }
+        segmenter.publish_ready();
+    }
+
+    /// Audit r07-C7 (#1083): a Data/Subtitle track joining mid-stream must
+    /// neither panic the rebuild nor leave an MPEG-TS placeholder installed
+    /// on an fMP4 route (which would publish TS bytes as `seg-*.m4s`). The
+    /// fMP4 segmenter is rebuilt over the muxable tracks only and numbering
+    /// continues.
+    #[test]
+    fn fmp4_rebuild_with_a_data_track_keeps_fmp4_and_numbering() {
+        use media_plane::trunk::TrunkConfig;
+
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(64)),
+        );
+        let writer = trunk.writer().expect("first take succeeds");
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut segmenter =
+            ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("fMP4 segmenter builds");
+        let mut cursor = trunk.subscribe_segments();
+        push_gop_run(&mut segmenter, 0);
+        let before = trunk.last_closed_segment().expect("a segment closed");
+
+        // A routine PMT version bump adds a Data PID.
+        writer.set_tracks(vec![
+            track_spec(TrackId::new(1)),
+            data_track_spec(TrackId::new(2)),
+        ]);
+        apply_change(&mut segmenter, &trunk, &route);
+        let AnySegmenter::Fmp4(rebuilt) = &segmenter.seg else {
+            panic!("an fMP4 route must keep producing fMP4 after a track change");
+        };
+        // The rebuilt segmenter carries only the muxable tracks, so its init
+        // segment is buildable (a Data track makes it `UnmuxableDataTrack`).
+        rebuilt
+            .init_segment()
+            .expect("rebuilt segmenter must be able to build its init segment");
+
+        push_gop_run(&mut segmenter, 75);
+        let after = trunk.last_closed_segment().expect("segments closed");
+        assert!(
+            after > before,
+            "numbering must continue: {before} -> {after}"
+        );
+        let mut checked = 0;
+        while let Some(item) = cursor.poll() {
+            if let media_plane::trunk::SegmentCursorItem::Segment(entry) = item {
+                assert_ne!(
+                    entry.bytes[0],
+                    mpeg_ts::ts::TS_SYNC_BYTE,
+                    "segment {} is MPEG-TS bytes on an fMP4 route",
+                    entry.sequence_number
+                );
+                assert!(
+                    matches!(&entry.bytes[4..8], STYP_BYTES | MOOF_BYTES),
+                    "segment {} does not start with an fMP4 box: {:02x?}",
+                    entry.sequence_number,
+                    &entry.bytes[..8]
+                );
+                checked += 1;
+            }
+        }
+        assert!(
+            checked >= 2,
+            "expected segments from both runs, saw {checked}"
+        );
+    }
+
+    /// A track set with nothing fMP4-muxable (the video PID went away, only a
+    /// Data PID remains) must not panic; the current segmenter is kept.
+    #[test]
+    fn fmp4_rebuild_with_no_muxable_track_keeps_the_current_segmenter() {
+        use media_plane::trunk::TrunkConfig;
+
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(64)),
+        );
+        let writer = trunk.writer().expect("first take succeeds");
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let route = RouteHandle::new(1.0, 250, 8);
+        route.publish_program(ProgramId(0), Arc::clone(&trunk));
+        let mut segmenter =
+            ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("fMP4 segmenter builds");
+        route.set_track_specs(ProgramId(0), segmenter.published_tracks.to_vec());
+
+        writer.set_tracks(vec![data_track_spec(TrackId::new(2))]);
+        segmenter.pump(ProgramId(0), &trunk, &route);
+        assert!(matches!(segmenter.seg, AnySegmenter::Fmp4(_)));
+        assert_eq!(
+            route
+                .track_specs(ProgramId(0))
+                .iter()
+                .map(|t| t.track_id)
+                .collect::<Vec<_>>(),
+            vec![TrackId::new(1)],
+            "a data-only change must not change the advertised specs"
+        );
+        assert!(!route.has_active_tracks(ProgramId(0)));
+        assert_eq!(
+            segmenter
+                .published_tracks
+                .iter()
+                .map(|t| t.track_id)
+                .collect::<Vec<_>>(),
+            vec![TrackId::new(1)],
+            "a refused change must leave the published set the installed segmenter carries"
+        );
+
+        // And an empty set (every track removed).
+        writer.set_tracks(Vec::new());
+        apply_change(&mut segmenter, &trunk, &route);
+        assert!(matches!(segmenter.seg, AnySegmenter::Fmp4(_)));
+    }
+
+    /// A10-7: the route's track specs (what DASH renders `codecs` from) follow
+    /// the in-band `TracksChanged` marker the segment pump reads, not the
+    /// trunk's `track_generation`, which runs ahead of the pump.
+    #[test]
+    fn route_track_specs_follow_the_in_band_marker_not_the_trunk_generation() {
+        use media_plane::trunk::{RetentionClass, TrunkConfig};
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(512))
+                .with_sparse_capacity(nz(16))
+                .with_segment_capacity(nz(8))
+                .with_event_capacity(nz(16))
+                .with_part_capacity(nz(16)),
+        );
+        let writer = trunk.writer().expect("first take succeeds");
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let route = RouteHandle::new(1.0, 250, 8).with_container(Container::MpegTs);
+        route.publish_program(ProgramId(0), Arc::clone(&trunk));
+        let mut segmenter =
+            ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("TS segmenter builds");
+        route.set_track_specs(ProgramId(0), segmenter.published_tracks.to_vec());
+        for i in 0..10u32 {
+            writer.publish(
+                TrackId::new(1),
+                RetentionClass::Timed,
+                sample_at(i, i.is_multiple_of(45)),
+            );
+        }
+        let mut changed = track_spec(TrackId::new(1));
+        changed.timescale = 45_000;
+        writer.set_tracks(vec![changed.clone()]);
+        assert_eq!(trunk.track_generation(), 2);
+        assert_eq!(
+            route.track_specs(ProgramId(0))[0].timescale,
+            track_spec(TrackId::new(1)).timescale,
+            "the trunk's generation advancing must not move the route's specs by itself"
+        );
+        segmenter.pump(ProgramId(0), &trunk, &route);
+        assert_eq!(route.track_specs(ProgramId(0))[0].timescale, 45_000);
+    }
+
+    /// **Issue #1425.** A changed track spec (here a timescale change standing
+    /// in for an audio/video config change) reaches the running TS-HLS
+    /// segmenter through `apply_track_change` and the next playlist carries
+    /// `#EXT-X-DISCONTINUITY`; an unchanged re-announce does not.
+    #[test]
+    fn apply_track_change_ts_changed_spec_arms_discontinuity() {
+        use media_plane::trunk::TrunkConfig;
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
+        let writer = trunk.writer().expect("first take succeeds");
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let route = RouteHandle::new(1.0, 250, 8).with_container(Container::MpegTs);
+        let mut segmenter =
+            ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("TS segmenter builds");
+
+        // Push a first run so a segment closes.
+        for i in 0..45u32 {
+            segmenter
+                .seg
+                .push(TrackId::new(1), sample_at(i, i.is_multiple_of(45)))
+                .expect("push");
+        }
+        segmenter.publish_ready();
+
+        // Changed spec: bump the timescale (a discontinuity trigger).
+        let mut changed = track_spec(TrackId::new(1));
+        changed.timescale = 45_000;
+        writer.set_tracks(vec![changed.clone()]);
+        apply_change(&mut segmenter, &trunk, &route);
+
+        for i in 45..90u32 {
+            segmenter
+                .seg
+                .push(TrackId::new(1), sample_at(i, i.is_multiple_of(45)))
+                .expect("push");
+        }
+        segmenter.publish_ready();
+
+        let AnySegmenter::Ts(ts) = &segmenter.seg else {
+            panic!("ts")
+        };
+        let pl = ts.playlist().expect("playlist");
+        assert!(
+            pl.contains("#EXT-X-DISCONTINUITY"),
+            "changed spec must arm a discontinuity: {pl}"
+        );
+
+        // Unchanged re-announce: no discontinuity armed.
+        let trunk2 = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
+        let writer2 = trunk2.writer().expect("first take succeeds");
+        writer2.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let route2 = RouteHandle::new(1.0, 250, 8).with_container(Container::MpegTs);
+        let mut segmenter2 =
+            ProgramSegmenter::try_new(&trunk2, &route2, 1.0, 250).expect("TS segmenter builds");
+        for i in 0..45u32 {
+            segmenter2
+                .seg
+                .push(TrackId::new(1), sample_at(i, i.is_multiple_of(45)))
+                .expect("push");
+        }
+        segmenter2.publish_ready();
+        writer2.set_tracks(vec![track_spec(TrackId::new(1))]);
+        apply_change(&mut segmenter2, &trunk2, &route2);
+        for i in 45..90u32 {
+            segmenter2
+                .seg
+                .push(TrackId::new(1), sample_at(i, i.is_multiple_of(45)))
+                .expect("push");
+        }
+        segmenter2.publish_ready();
+        let AnySegmenter::Ts(ts2) = &segmenter2.seg else {
+            panic!("ts")
+        };
+        let pl2 = ts2.playlist().expect("playlist");
+        assert!(
+            !pl2.contains("#EXT-X-DISCONTINUITY"),
+            "unchanged re-announce must not arm a discontinuity: {pl2}"
+        );
+    }
+
+    fn aac_track_spec(track_id: TrackId) -> TrackSpec {
+        use broadcast_common::Unpackage;
+        let ts = std::fs::read(test_fixtures::path("ts/h264-aac.ts"))
+            .expect("h264-aac.ts fixture must exist");
+        let media = transmux::TsDemux::new().unpackage(&ts).expect("demux TS");
+        let mut spec = media
+            .tracks
+            .iter()
+            .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
+            .expect("fixture has an AAC track")
+            .spec
+            .clone();
+        spec.track_id = track_id;
+        spec
+    }
+
+    fn ts_playlist_after_respec(initial: Vec<TrackSpec>, respec: Vec<TrackSpec>) -> String {
+        use media_plane::trunk::TrunkConfig;
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
+        let writer = trunk.writer().expect("first take succeeds");
+        writer.set_tracks(initial);
+        let route = RouteHandle::new(1.0, 250, 8).with_container(Container::MpegTs);
+        let mut segmenter =
+            ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("TS segmenter builds");
+        for i in 0..45u32 {
+            segmenter
+                .seg
+                .push(TrackId::new(1), sample_at(i, i.is_multiple_of(45)))
+                .expect("push");
+        }
+        segmenter.publish_ready();
+        writer.set_tracks(respec);
+        apply_change(&mut segmenter, &trunk, &route);
+        for i in 45..90u32 {
+            segmenter
+                .seg
+                .push(TrackId::new(1), sample_at(i, i.is_multiple_of(45)))
+                .expect("push");
+        }
+        segmenter.publish_ready();
+        let AnySegmenter::Ts(ts) = &segmenter.seg else {
+            panic!("ts")
+        };
+        ts.playlist().expect("playlist")
+    }
+
+    /// **Issue #1425.** An AAC sample-rate or channel-count change reaches the
+    /// running TS-HLS segmenter through `apply_track_change` and arms
+    /// `#EXT-X-DISCONTINUITY`; an unchanged re-announce does not.
+    #[test]
+    fn apply_track_change_ts_aac_config_change_arms_discontinuity() {
+        let video = track_spec(TrackId::new(1));
+        let audio = aac_track_spec(TrackId::new(2));
+
+        let unchanged = ts_playlist_after_respec(
+            vec![video.clone(), audio.clone()],
+            vec![video.clone(), audio.clone()],
+        );
+        assert!(
+            !unchanged.contains("#EXT-X-DISCONTINUITY"),
+            "unchanged AAC re-announce must not arm a discontinuity: {unchanged}"
+        );
+
+        let mut rate = audio.clone();
+        if let CodecConfig::Aac { sample_rate, .. } = &mut rate.config {
+            *sample_rate = if *sample_rate == 48_000 {
+                44_100
+            } else {
+                48_000
+            };
+        }
+        let pl = ts_playlist_after_respec(
+            vec![video.clone(), audio.clone()],
+            vec![video.clone(), rate],
+        );
+        assert!(
+            pl.contains("#EXT-X-DISCONTINUITY"),
+            "AAC sample_rate change must arm a discontinuity: {pl}"
+        );
+
+        let mut chans = audio.clone();
+        if let CodecConfig::Aac { channel_count, .. } = &mut chans.config {
+            *channel_count = if *channel_count == 2 { 1 } else { 2 };
+        }
+        let pl = ts_playlist_after_respec(vec![video.clone(), audio], vec![video, chans]);
+        assert!(
+            pl.contains("#EXT-X-DISCONTINUITY"),
+            "AAC channel_count change must arm a discontinuity: {pl}"
+        );
+    }
+
+    fn pending_sequence_numbers(segmenter: &ProgramSegmenter) -> Vec<u32> {
+        segmenter
+            .pending
+            .iter()
+            .map(|item| match item {
+                PendingPublish::Segment(e) => e.sequence_number.value(),
+                PendingPublish::Part(p) => p.segment_number.value(),
+                other => unreachable!("unexpected queue item {:?}", std::mem::discriminant(other)),
+            })
+            .collect()
+    }
+
+    /// `ProgramSegmenter::publish_without_blocking` must never call the
+    /// blocking `SegmentWriter::publish_segment` — `pump`/`flush` run
+    /// synchronously on whatever thread the owning async ingest task is
+    /// scheduled on (a shared tokio worker in production), so a stalled
+    /// `ArchiveOverrun::StallIngest` DVR pin blocking that call would park
+    /// the worker thread for up to `media_plane`'s bounded wait, starving
+    /// every other task scheduled on it (issue #1082's T7 finding).
+    ///
+    /// MUTATION VERIFIED: reverting `drain_pending`'s `Segment` arm to call
+    /// `self.segment_writer.publish_segment(entry).unwrap()` directly (the
+    /// pre-fix shape every call site used) makes this test fail: it no
+    /// longer completes within the bounded `recv_timeout` below (the pinned
+    /// cursor is never drained by this test, on purpose), because the
+    /// blocking call parks the background thread for
+    /// `media_plane::trunk`'s test-scaled `STALL_INGEST_MAX_WAIT`, which
+    /// this test's bound is deliberately shorter than. Compiled, run,
+    /// confirmed timing out, then reverted.
+    #[test]
+    fn publish_without_blocking_never_blocks_the_calling_thread() {
+        use media_plane::trunk::{ArchiveOverrun, TrunkConfig};
+
+        // Segment-log capacity 1, and a `StallIngest` pin this test never
+        // drains: every publish past the first would need to block under
+        // the pre-fix, direct `publish_segment` call. Only 5 entries — well
+        // under `PENDING_PUBLISH_QUEUE_CAP` — so the queue-depth expiry
+        // (tested separately below) does not also fire here.
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(8))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(1))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
+        let _pinned_cursor = trunk.pin_segments(ArchiveOverrun::StallIngest);
+        let mut segmenter = bare_segmenter(&trunk);
+
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            for seq in 1..=5u32 {
+                segmenter.publish_without_blocking(PendingPublish::Segment(fake_ready_entry(seq)));
+            }
+            done_tx.send(segmenter).expect("send back for inspection");
+        });
+
+        let segmenter = done_rx.recv_timeout(Duration::from_millis(500)).expect(
+            "publish_without_blocking must never block — the pinned \
+                 cursor above is never drained in this test",
+        );
+        handle.join().unwrap();
+
+        // Nothing was silently dropped: whatever could not go through yet
+        // is queued, in order, for the next call to retry.
+        assert_eq!(
+            pending_sequence_numbers(&segmenter),
+            (2..=5).collect::<Vec<_>>(),
+            "the queue must hold exactly the entries that could not be \
+             published yet, in order — seq 1 alone fit before capacity was reached"
+        );
+    }
+
+    /// Issue #1082's T6 finding (BLOCKER): a DVR disk error whose
+    /// `StallIngest` pin never advances at all must not freeze live output
+    /// forever, and the pending queue must stay bounded even before the
+    /// wall-clock deadline — `PENDING_PUBLISH_QUEUE_CAP` forces the expiry
+    /// as soon as the queue gets that deep, regardless of elapsed time.
+    ///
+    /// MUTATION VERIFIED: removing the `|| queue_too_deep` disjunct in
+    /// `drain_pending` (bound only by elapsed time, matching
+    /// `PENDING_PUBLISH_MAX_WAIT`'s real 30s value in production) makes
+    /// this test fail: `segmenter.pending.len()` keeps growing past
+    /// `PENDING_PUBLISH_QUEUE_CAP` instead of being capped, because 30s
+    /// never elapses inside a fast test. Recompiled and re-run to confirm
+    /// the failure, then reverted.
+    #[test]
+    fn pending_queue_is_capped_even_before_the_deadline_elapses() {
+        use media_plane::trunk::{ArchiveOverrun, SegmentCursorItem, TrunkConfig};
+
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(8))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(1))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
+        let mut stall = trunk.pin_segments(ArchiveOverrun::StallIngest);
+        let mut segmenter = bare_segmenter(&trunk);
+
+        // Publish well past the cap; the never-drained `stall` pin blocks
+        // every eviction past the first.
+        for seq in 1..=(PENDING_PUBLISH_QUEUE_CAP as u32 + 20) {
+            segmenter.publish_without_blocking(PendingPublish::Segment(fake_ready_entry(seq)));
+        }
+
+        assert!(
+            segmenter.pending.len() <= PENDING_PUBLISH_QUEUE_CAP,
+            "queue length {} exceeded the cap {}",
+            segmenter.pending.len(),
+            PENDING_PUBLISH_QUEUE_CAP
+        );
+        // The stalled pin must actually have been terminated (live output
+        // unfroze), not merely have its backlog silently truncated.
+        assert!(
+            matches!(stall.poll(), Some(SegmentCursorItem::Terminated)),
+            "the stalled StallIngest pin must be terminated once the queue cap is hit"
+        );
+    }
+
+    /// **Review item 2.** `PENDING_PUBLISH_QUEUE_CAP` must count queued
+    /// SEGMENTS only, never queued parts riding behind them. An LL-HLS
+    /// route publishes a new part roughly every `part_target_ms` (200ms is
+    /// a typical target) — if every queued item counted toward the cap, one
+    /// segment stuck behind a slow `StallIngest` pin would force-expire
+    /// that pin in well under two real seconds of part traffic alone,
+    /// nowhere near `PENDING_PUBLISH_MAX_WAIT`'s 30s bound and long before
+    /// a merely-briefly-slow disk write actually recovers — silently
+    /// terminating a DVR pin (or any other `StallIngest` consumer) for a
+    /// stall it should have tolerated.
+    ///
+    /// MUTATION VERIFIED: reverting `drain_pending`'s `queue_too_deep`
+    /// computation to `self.pending.len() >= PENDING_PUBLISH_QUEUE_CAP`
+    /// (this test's pre-fix shape) makes this test's
+    /// `assert!(stall.poll().is_none(), ...)` fail: the pin is terminated
+    /// (`Some(SegmentCursorItem::Terminated)`) once the queued parts alone
+    /// cross `PENDING_PUBLISH_QUEUE_CAP`, despite only the single segment
+    /// ever being stuck. Recompiled and re-run to confirm the failure, then
+    /// reverted.
+    #[test]
+    fn queue_cap_counts_stuck_segments_not_queued_parts() {
+        use media_plane::trunk::{ArchiveOverrun, SegmentCursorItem, TrunkConfig};
+
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(8))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(1))
+                .with_event_capacity(nz(64))
+                .with_part_capacity(nz(64)),
+        );
+        let mut stall = trunk.pin_segments(ArchiveOverrun::StallIngest);
+        let mut segmenter = bare_segmenter(&trunk);
+
+        // Seg 1 fills the (capacity-1) segment log with no eviction needed,
+        // so it publishes immediately. Seg 2 needs to evict seg 1, which
+        // the never-drained `stall` pin (still sitting on seg 1) blocks —
+        // this is the one that actually gets stuck.
+        segmenter.publish_without_blocking(PendingPublish::Segment(fake_ready_entry(1)));
+        segmenter.publish_without_blocking(PendingPublish::Segment(fake_ready_entry(2)));
+
+        // ...then far more parts than the (item-count) cap used to allow —
+        // simulating an LL-HLS route's part cadence while that one segment
+        // stays stuck. Every one of these queues up behind the stuck
+        // segment (parts never jump ahead — see `publish_in_stream_order`'s
+        // own doc) rather than draining.
+        for i in 0..(PENDING_PUBLISH_QUEUE_CAP as u32 * 4) {
+            segmenter.publish_without_blocking(PendingPublish::Part(PartEntry::new(
+                bytes::Bytes::from_static(b"x"),
+                SegmentSeq::new(2),
+                PartIndex::new(i),
+                Duration::from_millis(200),
+                i == 0,
+            )));
+        }
+
+        // `stall`'s cursor legitimately has real backlog to read (seg 1) —
+        // the assertion is that it was never force-expired (`Terminated`),
+        // not that `poll()` returns nothing at all.
+        assert!(
+            !matches!(stall.poll(), Some(SegmentCursorItem::Terminated)),
+            "a single stuck segment behind a flood of queued parts must not \
+             force-expire the pin — only PENDING_PUBLISH_QUEUE_CAP SEGMENTS \
+             (or the 30s deadline) may do that"
+        );
+    }
+
+    /// Companion to [`queue_cap_counts_stuck_segments_not_queued_parts`]:
+    /// confirms the 30s deadline itself still applies once enough segments
+    /// (not parts) are genuinely stuck. Manipulates `pending_since`
+    /// directly (this module's own private field) rather than sleeping 30
+    /// real seconds — `PENDING_PUBLISH_MAX_WAIT` has no `#[cfg(test)]`
+    /// scaled-down variant (unlike `media_plane::trunk`'s own
+    /// `STALL_INGEST_MAX_WAIT`).
+    #[test]
+    fn stuck_segment_under_the_deadline_is_not_expired() {
+        use media_plane::trunk::{ArchiveOverrun, SegmentCursorItem, TrunkConfig};
+
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(8))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(1))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
+        let mut stall = trunk.pin_segments(ArchiveOverrun::StallIngest);
+        let mut segmenter = bare_segmenter(&trunk);
+
+        // Seg 1 fills the (capacity-1) log with no eviction needed; seg 2
+        // needs to evict it, which the never-drained `stall` pin blocks.
+        segmenter.publish_without_blocking(PendingPublish::Segment(fake_ready_entry(1)));
+        segmenter.publish_without_blocking(PendingPublish::Segment(fake_ready_entry(2)));
+        assert_eq!(
+            segmenter.pending.len(),
+            1,
+            "seg 2 must be stuck, not dropped"
+        );
+
+        // A 3s-old stall — comfortably under PENDING_PUBLISH_MAX_WAIT (30s).
+        segmenter.pending_since = Some(Instant::now() - Duration::from_secs(3));
+        segmenter.drain_pending();
+
+        // `stall`'s cursor legitimately has real backlog to read (seg 1) —
+        // the assertion is that it was never force-expired (`Terminated`),
+        // not that `poll()` returns nothing at all.
+        assert!(
+            !matches!(stall.poll(), Some(SegmentCursorItem::Terminated)),
+            "a 3s stall must not force-expire the pin — PENDING_PUBLISH_MAX_WAIT is 30s"
+        );
+        assert_eq!(
+            segmenter.pending.len(),
+            1,
+            "the segment must still be queued, waiting for the pin to advance"
+        );
+    }
+
+    /// The other half of the deadline: once a stuck segment has genuinely
+    /// waited past `PENDING_PUBLISH_MAX_WAIT`, the pin IS force-expired.
+    #[test]
+    fn stuck_segment_past_the_deadline_is_expired() {
+        use media_plane::trunk::{ArchiveOverrun, SegmentCursorItem, TrunkConfig};
+
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(8))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(1))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
+        let mut stall = trunk.pin_segments(ArchiveOverrun::StallIngest);
+        let mut segmenter = bare_segmenter(&trunk);
+
+        segmenter.publish_without_blocking(PendingPublish::Segment(fake_ready_entry(1)));
+        segmenter.publish_without_blocking(PendingPublish::Segment(fake_ready_entry(2)));
+
+        segmenter.pending_since =
+            Some(Instant::now() - PENDING_PUBLISH_MAX_WAIT - Duration::from_secs(1));
+        segmenter.drain_pending();
+
+        assert!(
+            matches!(stall.poll(), Some(SegmentCursorItem::Terminated)),
+            "a stall past PENDING_PUBLISH_MAX_WAIT must force-expire the pin"
+        );
+        assert_eq!(
+            segmenter.pending.len(),
+            0,
+            "the segment must have been retried and accepted once the pin was expired"
+        );
+    }
+
+    /// **Review item 4.** `pending_since` must reset whenever the front of
+    /// [`ProgramSegmenter::pending`] actually publishes, not only once the
+    /// whole queue drains empty — otherwise a stale timestamp from an
+    /// earlier, already-resolved stall episode leaks onto a *different*
+    /// item's brand-new one. Reproduced here: segment 2 stalls (pin hasn't
+    /// consumed segment 1 yet), sits stuck long enough that its own
+    /// `pending_since` looks past `PENDING_PUBLISH_MAX_WAIT`, then the pin
+    /// genuinely advances (consumes segment 1) and segment 2 is retried
+    /// successfully — with segment 3 already queued behind it. Segment 3's
+    /// own stall (needing to evict segment 2, which the pin has not yet
+    /// consumed either) has been underway for all of zero seconds and must
+    /// not be force-expired on the strength of segment 2's old, resolved
+    /// timestamp.
+    ///
+    /// MUTATION VERIFIED: removing the `self.pending_since = None;` line
+    /// from the `Ok(())` arm (this test's pre-fix shape — the queue-empty
+    /// reset in the `else` branch above it is untouched) makes this test's
+    /// `assert!(!matches!(stall.poll(), Some(SegmentCursorItem::Terminated)),
+    /// ...)` fail: the pin IS `Terminated` — segment 3's `WouldStall` arm's
+    /// `get_or_insert` finds `pending_since` still set to the already-
+    /// expired timestamp left over from segment 2's resolved stall, so
+    /// `waited_too_long` is true on segment 3's very first check, even
+    /// though segment 3 has been stuck for no time at all. Recompiled and
+    /// re-run to confirm the failure, then reverted.
+    #[test]
+    fn pending_since_resets_when_the_front_item_publishes_not_only_when_the_queue_empties() {
+        use media_plane::trunk::{ArchiveOverrun, SegmentCursorItem, TrunkConfig};
+
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(8))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(1))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
+        let mut stall = trunk.pin_segments(ArchiveOverrun::StallIngest);
+        let mut segmenter = bare_segmenter(&trunk);
+
+        // Seg 1 fills the (capacity-1) log immediately. Seg 2 needs to
+        // evict it, which the pin (not yet having consumed seg 1) blocks.
+        segmenter.publish_without_blocking(PendingPublish::Segment(fake_ready_entry(1)));
+        segmenter.publish_without_blocking(PendingPublish::Segment(fake_ready_entry(2)));
+        // Seg 3 queues up behind the still-stuck seg 2 — never even
+        // attempted yet, since `drain_pending` stops at the stuck front.
+        segmenter.publish_without_blocking(PendingPublish::Segment(fake_ready_entry(3)));
+        assert_eq!(
+            pending_sequence_numbers(&segmenter),
+            vec![2, 3],
+            "seg 2 stuck, seg 3 queued behind it"
+        );
+
+        // Make seg 2's stall LOOK already past the deadline — simulating
+        // that it has been stuck for a long time before finally resolving.
+        segmenter.pending_since =
+            Some(Instant::now() - PENDING_PUBLISH_MAX_WAIT - Duration::from_secs(1));
+
+        // The pin genuinely advances now: it consumes seg 1, so evicting it
+        // for seg 2 is no longer blocked.
+        assert!(
+            matches!(stall.poll(), Some(SegmentCursorItem::Segment(_))),
+            "the pin must read real backlog (seg 1) here, not Terminated"
+        );
+        segmenter.drain_pending();
+
+        // The decisive check: seg 3's own stall (the pin still has not
+        // consumed seg 2, so evicting it for seg 3 is freshly blocked) has
+        // been underway for 0 real seconds and must not be force-expired on
+        // the strength of seg 2's old, already-resolved stall timestamp.
+        // Pre-fix, it IS force-expired here — which (as an observable side
+        // effect) also lets seg 3 itself slip through immediately once the
+        // pin gives up, leaving `pending` empty instead of `[3]`.
+        assert!(
+            !matches!(stall.poll(), Some(SegmentCursorItem::Terminated)),
+            "seg 3's stall just started (0s old) — it must not be force-expired on \
+             the strength of seg 2's old, already-resolved stall timestamp"
+        );
+        assert_eq!(
+            pending_sequence_numbers(&segmenter),
+            vec![3],
+            "seg 2 must have been accepted once the pin advanced past it, and seg 3 \
+             must still be waiting (genuinely stuck, not force-expired through)"
+        );
+    }
+
+    /// **Review item 3.** [`ProgramSegmenter::publish_in_stream_order`] must
+    /// queue a segment's own parts, then that segment's close, then the
+    /// NEXT segment's parts — never every ready part before any ready
+    /// segment (`publish_ready`'s pre-fix shape) — so a later segment's
+    /// opening part can never land in the `Trunk`'s live-part log ahead of
+    /// an earlier, still-stuck segment.
+    ///
+    /// Reproduced directly: segment 1 is stuck behind a never-drained
+    /// `StallIngest` pin (evicting segment 0 to make room for it is
+    /// blocked); segment 2's opening part `(2, 0)` is handed to
+    /// `publish_in_stream_order` in the SAME call, alongside segment 1's own
+    /// two parts and its close.
+    ///
+    /// MUTATION VERIFIED: reverting `publish_ready` to its pre-fix shape
+    /// (`for part in take_ready_parts() { queue it }` fully, THEN
+    /// `for segment in take_ready_segments() { queue it }`) and calling that
+    /// through this test's same inputs makes the final assertion fail:
+    /// `trunk.part_bytes(SegmentSeq::new(2), PartIndex::new(0))` returns `Some(_)` — part `(2, 0)` was queued
+    /// (and, since nothing was queued ahead of it yet at that point in the
+    /// old ordering, drained straight through to the `Trunk`) before
+    /// segment 1 was ever even attempted. Recompiled with the reverted
+    /// ordering, re-ran to confirm the failure, then restored
+    /// `publish_in_stream_order`.
+    #[test]
+    fn stream_order_keeps_a_later_segments_part_from_landing_ahead_of_a_stuck_segment() {
+        use media_plane::trunk::{ArchiveOverrun, TrunkConfig};
+
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(8))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(1))
+                .with_event_capacity(nz(64))
+                .with_part_capacity(nz(64)),
+        );
+        let _stall = trunk.pin_segments(ArchiveOverrun::StallIngest);
+        let mut segmenter = bare_segmenter(&trunk);
+
+        // Segment 0 fills the (capacity-1) log; the pin (created before it,
+        // and never drained) has not consumed it, so evicting it for
+        // segment 1 is blocked.
+        segmenter.publish_without_blocking(PendingPublish::Segment(fake_ready_entry(0)));
+
+        let parts = vec![
+            PartInfo {
+                bytes: vec![0u8; 4],
+                duration: 0.2,
+                independent: true,
+                segment_seq: 1,
+                part_index: 0,
+            },
+            PartInfo {
+                bytes: vec![0u8; 4],
+                duration: 0.2,
+                independent: false,
+                segment_seq: 1,
+                part_index: 1,
+            },
+            // Segment 2's opening part — already produced (the segmenter
+            // has started buffering the next segment) even though segment
+            // 1 has not been queued yet in this same call.
+            PartInfo {
+                bytes: vec![0u8; 4],
+                duration: 0.2,
+                independent: true,
+                segment_seq: 2,
+                part_index: 0,
+            },
+        ];
+        let segments = vec![ReadySegment {
+            bytes: vec![1u8; 4],
+            segment_seq: SegmentSeq::new(1),
+            duration: 1.0,
+            discontinuous: false,
+        }];
+
+        segmenter.publish_in_stream_order(parts, segments);
+
+        // Segment 1's own two parts must have gone through — they were
+        // never behind anything stuck.
+        assert!(
+            trunk
+                .part_bytes(SegmentSeq::new(1), PartIndex::new(0))
+                .is_some()
+                && trunk
+                    .part_bytes(SegmentSeq::new(1), PartIndex::new(1))
+                    .is_some(),
+            "segment 1's own parts must reach the Trunk — nothing was ever stuck ahead of them"
+        );
+        // Segment 1 itself must be stuck (queued, not yet in the Trunk) —
+        // the last CLOSED segment is still segment 0, the one that filled
+        // capacity.
+        assert_eq!(
+            trunk.last_closed_segment(),
+            Some(SegmentSeq::new(0)),
+            "segment 1 must still be stuck behind the un-consumed StallIngest pin"
+        );
+        // THE INVARIANT: segment 2's opening part must NOT have bypassed
+        // the still-stuck segment 1 — it must be queued behind it, in
+        // stream order, not delivered early.
+        assert!(
+            trunk
+                .part_bytes(SegmentSeq::new(2), PartIndex::new(0))
+                .is_none(),
+            "segment 2's opening part must not land in the Trunk ahead of the \
+             still-stuck segment 1's own close"
+        );
+    }
+
+    #[test]
+    fn start_gate_drops_leading_non_sync_video() {
+        use media_plane::trunk::{RetentionClass, TrunkConfig};
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
+        let writer = trunk.writer().expect("writer");
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
+        for i in 0..4u32 {
+            writer.publish(TrackId::new(1), RetentionClass::Timed, sample_at(i, i == 3));
+        }
+        segmenter.pump(ProgramId(0), &trunk, &route);
+        assert_eq!(segmenter.start_gate_dropped, 3);
+        assert_eq!(segmenter.start_gate_video_dropped, 3);
+        assert!(segmenter.start_gate_open);
+    }
+
+    /// The gate runs BEFORE the media-anchor block (issue #1425): the first
+    /// segment's reported start is the first KEPT (sync) sample's PTS on the
+    /// source 90 kHz clock, not a dropped leading sample's. Biting: with the
+    /// gate placed after the anchor block timeline 0 pins to sample 0 and the
+    /// start comes out `3 * FRAME_DUR` early.
+    #[test]
+    fn start_gate_anchor_pins_to_the_first_kept_sync_sample() {
+        use media_plane::trunk::{RetentionClass, TrunkConfig};
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
+        let writer = trunk.writer().expect("writer");
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
+        // Source clock starts 10 s in; samples 0..3 are mid-GOP, 3 is the
+        // first sync, then a sync every 45 frames (1 s) so segment 1 closes
+        // when sample 48 arrives.
+        let offset = 10 * i64::from(transmux::VIDEO_CLOCK_RATE);
+        let at = |i: u32, is_sync: bool| {
+            let mut s = sample_at(i, is_sync);
+            s.pts = Some(offset + i64::from(i) * i64::from(FRAME_DUR));
+            s.dts = s.pts;
+            s
+        };
+        for i in 0..100u32 {
+            let is_sync = i == 3 || (i > 3 && (i - 3).is_multiple_of(45));
+            writer.publish(TrackId::new(1), RetentionClass::Timed, at(i, is_sync));
+            // Pump as we go: the sample ring is bounded (64), so an unpumped
+            // burst of 100 would evict the leading samples before the gate
+            // ever saw them.
+            if i % 16 == 15 {
+                segmenter.pump(ProgramId(0), &trunk, &route);
+            }
+        }
+        segmenter.pump(ProgramId(0), &trunk, &route);
+        assert_eq!(segmenter.start_gate_dropped, 3);
+        assert!(
+            trunk.last_closed_segment().is_some(),
+            "segment 1 must have closed"
+        );
+        let first_kept_pts_90k = u64::try_from(offset + 3 * i64::from(FRAME_DUR)).unwrap();
+        assert_eq!(
+            trunk.segment_start_time(SegmentSeq::new(1)),
+            Some(timed_metadata::MediaTime(first_kept_pts_90k)),
+            "first segment starts at the first kept sync sample's PTS"
+        );
+    }
+
+    /// Safety valve (issue #1425): a video track that never flags a sync
+    /// sample is not dropped forever — after `START_GATE_MAX_VIDEO_DROPPED`
+    /// video samples the gate opens (with a warning).
+    #[test]
+    fn start_gate_safety_valve_opens_without_any_sync_sample() {
+        use media_plane::trunk::{RetentionClass, TrunkConfig};
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
+        let writer = trunk.writer().expect("writer");
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
+        let total = u32::try_from(START_GATE_MAX_VIDEO_DROPPED).unwrap() + 3;
+        for i in 0..total {
+            writer.publish(TrackId::new(1), RetentionClass::Timed, sample_at(i, false));
+            if i % 16 == 15 {
+                segmenter.pump(ProgramId(0), &trunk, &route);
+            }
+        }
+        segmenter.pump(ProgramId(0), &trunk, &route);
+        assert!(segmenter.start_gate_open, "valve must open the gate");
+        assert_eq!(
+            segmenter.start_gate_video_dropped, START_GATE_MAX_VIDEO_DROPPED,
+            "exactly the valve's worth of video samples were dropped first"
+        );
+    }
+
+    #[test]
+    fn start_gate_no_drop_when_starts_on_sync() {
+        use media_plane::trunk::{RetentionClass, TrunkConfig};
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
+        let writer = trunk.writer().expect("writer");
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
+        for i in 0..4u32 {
+            writer.publish(TrackId::new(1), RetentionClass::Timed, sample_at(i, true));
+        }
+        segmenter.pump(ProgramId(0), &trunk, &route);
+        assert_eq!(segmenter.start_gate_dropped, 0);
+        assert!(segmenter.start_gate_open);
+    }
+
+    #[test]
+    fn start_gate_audio_only_drops_nothing() {
+        use media_plane::trunk::{RetentionClass, TrunkConfig};
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
+        let writer = trunk.writer().expect("writer");
+        writer.set_tracks(vec![TrackSpec::new(
+            TrackId::new(2),
+            48000,
+            transmux::pipeline::CodecConfig::Vorbis {
+                codec_private: Vec::new(),
+                channels: 2,
+                sample_rate: 48000,
+            },
+        )]);
+        let route = RouteHandle::new(1.0, 250, 8).with_container(Container::MpegTs);
+        let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
+        for i in 0..4u32 {
+            writer.publish(TrackId::new(2), RetentionClass::Timed, sample_at(i, false));
+        }
+        segmenter.pump(ProgramId(0), &trunk, &route);
+        assert_eq!(segmenter.start_gate_dropped, 0);
+    }
+
+    #[test]
+    fn start_gate_video_plus_audio_drops_audio_before_first_video_sync() {
+        use media_plane::trunk::{RetentionClass, TrunkConfig};
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
+        let writer = trunk.writer().expect("writer");
+        writer.set_tracks(vec![
+            track_spec(TrackId::new(1)),
+            data_track_spec(TrackId::new(2)),
+        ]);
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
+        for i in 0..3u32 {
+            writer.publish(TrackId::new(1), RetentionClass::Timed, sample_at(i, false));
+            let s = sample_at(i, false);
+            writer.publish(TrackId::new(2), RetentionClass::Timed, s);
+        }
+        writer.publish(TrackId::new(1), RetentionClass::Timed, sample_at(3, true));
+        // audio after the sync is kept
+        writer.publish(TrackId::new(2), RetentionClass::Timed, sample_at(4, false));
+        segmenter.pump(ProgramId(0), &trunk, &route);
+        assert_eq!(segmenter.start_gate_dropped, 6);
+        assert_eq!(segmenter.start_gate_video_dropped, 3);
+        assert!(segmenter.start_gate_open);
+    }
+
+    const GEN1_MARK: u8 = 0xDD;
+    const GEN2_MARK: u8 = 0xEE;
+
+    fn marked_sample(i: u32, is_sync: bool, mark: u8) -> Sample {
+        let nal = [0x65u8, mark, (i % 256) as u8];
+        let mut data = (nal.len() as u32).to_be_bytes().to_vec();
+        data.extend_from_slice(&nal);
+        Sample::new(
+            data,
+            Some(i64::from(i) * i64::from(FRAME_DUR)),
+            Some(i64::from(i) * i64::from(FRAME_DUR)),
+            Some(FRAME_DUR),
+            is_sync,
+        )
+    }
+
+    fn marks_in(bytes: &[u8]) -> (bool, bool) {
+        let has = |mark: u8| bytes.windows(2).any(|w| w == [0x65, mark]);
+        (has(GEN1_MARK), has(GEN2_MARK))
+    }
+
+    /// **A9-4.** Samples published before `set_tracks` are muxed under the
+    /// old track set even when the segmenter first runs after both the
+    /// samples and the change are already in the ring.
+    #[test]
+    fn samples_published_before_a_track_change_are_not_muxed_under_the_new_set() {
+        use media_plane::trunk::{RetentionClass, TrunkConfig};
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(256))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(64)),
+        );
+        let writer = trunk.writer().expect("writer");
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
+        let mut segments = trunk.subscribe_segments();
+
+        for i in 0..45u32 {
+            let sample = marked_sample(i, i == 0, GEN1_MARK);
+            writer.publish(TrackId::new(1), RetentionClass::Timed, sample);
+        }
+        writer.set_tracks(vec![
+            track_spec(TrackId::new(1)),
+            data_track_spec(TrackId::new(2)),
+        ]);
+        for i in 45..120u32 {
+            let sample = marked_sample(i, i % 30 == 0, GEN2_MARK);
+            writer.publish(TrackId::new(1), RetentionClass::Timed, sample);
+        }
+        segmenter.pump(ProgramId(0), &trunk, &route);
+
+        let mut checked = 0;
+        let mut saw = (false, false);
+        while let Some(item) = segments.poll() {
+            if let media_plane::trunk::SegmentCursorItem::Segment(entry) = item {
+                let marks = marks_in(&entry.bytes);
+                assert!(
+                    !(marks.0 && marks.1),
+                    "segment {} mixes samples of both track sets",
+                    entry.sequence_number
+                );
+                saw = (saw.0 || marks.0, saw.1 || marks.1);
+                checked += 1;
+            }
+        }
+        assert!(
+            checked >= 2,
+            "expected segments from both sets, saw {checked}"
+        );
+        assert_eq!(saw, (true, true), "both generations must reach a segment");
+    }
+
+    /// **A9-3.** A video-only config change on an fMP4 route must not gate
+    /// the audio track: audio published after the change and before the new
+    /// video level's first sync sample is kept.
+    #[test]
+    fn audio_keeps_flowing_across_a_video_only_track_change() {
+        use media_plane::trunk::{RetentionClass, TrunkConfig};
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(256))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(64)),
+        );
+        let writer = trunk.writer().expect("writer");
+        let video = track_spec(TrackId::new(1));
+        let audio = aac_track_spec(TrackId::new(2));
+        writer.set_tracks(vec![video.clone(), audio.clone()]);
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
+        writer.publish(
+            TrackId::new(1),
+            RetentionClass::Timed,
+            marked_sample(0, true, GEN1_MARK),
+        );
+        segmenter.pump(ProgramId(0), &trunk, &route);
+        assert!(segmenter.start_gate_open);
+
+        let mut changed = video.clone();
+        if let CodecConfig::Avc { width, .. } = &mut changed.config {
+            *width = 1280;
+        }
+        writer.set_tracks(vec![changed, audio]);
+        for i in 0..3u32 {
+            writer.publish(TrackId::new(2), RetentionClass::Timed, sample_at(i, true));
+        }
+        writer.publish(
+            TrackId::new(1),
+            RetentionClass::Timed,
+            marked_sample(1, true, GEN2_MARK),
+        );
+        segmenter.pump(ProgramId(0), &trunk, &route);
+        assert_eq!(
+            segmenter.start_gate_dropped, 0,
+            "audio must not be dropped by the video start gate after a video-only change"
+        );
+        assert!(segmenter.start_gate_open);
+    }
+
+    /// Issue #2469: `ProgramSegmenter` decides a re-anchor from the
+    /// timeline-jump detector now living in `transmux` — the media timeline
+    /// plus the delivery time between two samples. These tests feed it real
+    /// `Trunk` samples and assert on its production output: each closed
+    /// segment's start on the source 90 kHz clock, the value
+    /// [`SegmentWriter::note_segment_start`] records for
+    /// [`Trunk::segment_start_time`] (what a segmented SCTE-35 `emsg`
+    /// resolves through).
+    ///
+    /// A `segment_start_time` call made between two pushes may be hoisted
+    /// past the second one, so every snapshot below is taken after all the
+    /// pushes have happened.
+    struct JumpRig {
+        trunk: Arc<Trunk>,
+        writer: media_plane::trunk::TrunkWriter,
+        route: RouteHandle,
+        segmenter: ProgramSegmenter,
+    }
+
+    impl JumpRig {
+        fn new() -> Self {
+            use media_plane::trunk::TrunkConfig;
+            let trunk = Trunk::new(
+                TrunkConfig::default()
+                    .with_timed_capacity(nz(256))
+                    .with_sparse_capacity(nz(64))
+                    .with_segment_capacity(nz(16))
+                    .with_event_capacity(nz(8))
+                    .with_part_capacity(nz(8)),
+            );
+            let writer = trunk.writer().expect("writer");
+            writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+            let route = RouteHandle::new(1.0, 250, 8);
+            let segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter");
+            Self {
+                trunk,
+                writer,
+                route,
+                segmenter,
+            }
+        }
+
+        /// Push `count` frames from frame index `first`, with a sync sample
+        /// every [`GOP`] frames, through the production `pump` path.
+        fn push_frames(&mut self, first: u32, count: u32, pts_at: impl Fn(u32) -> i64) {
+            use media_plane::trunk::RetentionClass;
+            for i in first..first + count {
+                let pts = pts_at(i);
+                let mut sample = sample_at(i, i.is_multiple_of(GOP));
+                sample.pts = Some(pts);
+                sample.dts = Some(pts);
+                self.writer
+                    .publish(TrackId::new(1), RetentionClass::Timed, sample);
+                self.segmenter.pump(ProgramId(0), &self.trunk, &self.route);
+            }
+        }
+
+        /// The reported start of segments `1..=last` on the source clock.
+        fn source_starts(&mut self, last: u32) -> Vec<Option<u64>> {
+            self.segmenter.flush();
+            (1..=last)
+                .map(|seq| {
+                    self.trunk
+                        .segment_start_time(SegmentSeq::new(seq))
+                        .map(|t| t.0)
+                })
+                .collect()
+        }
+    }
+
+    /// One segment per second: 30 fps frames with a sync sample every 30.
+    const GOP: u32 = 30;
+
+    fn gapless_pts(i: u32) -> i64 {
+        i64::from(i) * i64::from(FRAME_DUR)
+    }
+
+    fn on_90k(pts: i64) -> u64 {
+        u64::try_from(pts).expect("test clocks stay positive")
+    }
+
+    /// (a) A video track whose PTS steps back 2 s mid-stream re-anchors: the
+    /// first segment after the step starts at the stepped-back source clock,
+    /// not at the pre-step clock continued forward. A 3 s step would put the
+    /// post-step clock below zero, where the sample clock is clamped.
+    #[test]
+    fn a_backward_pts_step_reanchors_the_segments_source_clock() {
+        let mut rig = JumpRig::new();
+        rig.push_frames(0, 60, gapless_pts);
+        let back = 2 * i64::from(transmux::VIDEO_CLOCK_RATE);
+        rig.push_frames(60, 60, |i| gapless_pts(i) - back);
+
+        assert_eq!(
+            rig.source_starts(3),
+            vec![Some(0), Some(90_000), Some(on_90k(gapless_pts(60) - back))],
+            "the segment after a 2 s backward PTS step must restart from the stepped-back \
+             source clock (frame 60 PTS minus 2 s), not continue the pre-step line at 180000"
+        );
+    }
+
+    /// (b) A forward PTS step of 8 s with well under a second of delivery
+    /// time between the two samples re-anchors: the segment after the step
+    /// starts at the jumped-to source clock. Both samples go in through the
+    /// same in-process pump loop, so the detector measures a delivery gap far
+    /// below its 5 s slack.
+    #[test]
+    fn a_forward_pts_step_reanchors_the_segments_source_clock() {
+        let mut rig = JumpRig::new();
+        rig.push_frames(0, 60, gapless_pts);
+        let forward = 8 * i64::from(transmux::VIDEO_CLOCK_RATE);
+        rig.push_frames(60, 60, |i| gapless_pts(i) + forward);
+
+        assert_eq!(
+            rig.source_starts(3),
+            vec![
+                Some(0),
+                Some(90_000),
+                Some(on_90k(gapless_pts(60) + forward))
+            ],
+            "the segment after an 8 s forward PTS step must restart from the jumped-to source \
+             clock (frame 60 PTS plus 8 s)"
+        );
+    }
+
+    /// (c) Continuous 30 fps video with ordinary B-frame reordering — PTS out
+    /// of order by a frame or two while the DTS stays monotonic — is one
+    /// timeline: no re-anchor, so every segment's reported start follows the
+    /// pre-step picture's own PTS and the starts stay exactly one segment
+    /// duration apart.
+    #[test]
+    fn b_frame_reordering_does_not_reanchor() {
+        let mut rig = JumpRig::new();
+        let reordered = |i: u32| -> i64 {
+            let display_offset = match i % 3 {
+                0 => 1,
+                1 => -2,
+                _ => -1,
+            };
+            gapless_pts(i) + i64::from(display_offset * 1_000)
+        };
+        rig.push_frames(0, 60, reordered);
+        rig.push_frames(60, 60, reordered);
+
+        assert_eq!(
+            rig.source_starts(3),
+            vec![Some(1_000), Some(91_000), Some(181_000)],
+            "B-frame reordering must not re-anchor: the starts follow the first picture of each \
+             segment (frame 0, 30, 60 at +1 ms per the reorder) and stay 90000 apart"
+        );
+    }
+}

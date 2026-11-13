@@ -110,15 +110,12 @@ pub(crate) async fn run_with_clock(
         EventIngest::new(),
         media_plane::IngestConfig::new(handshake).with_trunk(trunk_config),
     );
-    let mut progress = crate::source::DriverProgress::new();
     let mut sink = tokio::io::sink();
     let err = crate::source::driver::run_ingest_scaffold(
         driver,
         route_handle,
-        &mut progress,
         cancel,
         timeouts,
-        crate::source::driver::DEFAULT_WRITE_TIMEOUT,
         &mut sink,
         &mut step,
         |never: Infallible| match never {},

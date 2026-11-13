@@ -114,6 +114,7 @@ fn build_real_trunk(pts_origin: i64, frames: u32) -> (Arc<RouteHandle>, Arc<Trun
 
     let mut segmenter =
         ProgramSegmenter::try_new_with_siblings(&trunk, route.segmenter_config(), route.as_ref())
+            .0
             .expect("segmenter");
 
     for i in 0..frames {

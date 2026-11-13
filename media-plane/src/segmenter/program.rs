@@ -293,7 +293,10 @@ impl TsHlsIdrStatus {
 broadcast_common::impl_spec_display!(TsHlsIdrStatus);
 
 pub trait SiblingTrunks {
-    fn report_output_failed(&self, _message: String) {}
+    /// Build audio follower renditions for `trunk`. The only registration
+    /// call besides [`Self::build_subtitle_followers`]: the host builds the
+    /// sibling trunks (see [`crate::trunk::Trunk`]) before the segmenter
+    /// runs, because the master playlist depends on that ordering.
     fn build_audio_followers(
         &self,
         trunk: &crate::trunk::Trunk,
@@ -851,7 +854,7 @@ impl ProgramSegmenter {
     /// [`Container::MpegTs`]) itself rejects the track set (logged, not
     /// propagated — a segmentation failure on one program must not tear down
     /// the whole ingest session; see `drive_program_segmenters`'s own doc).
-    pub fn try_new(trunk: &Arc<Trunk>, config: SegmenterConfig) -> Option<Self> {
+    pub fn try_new(trunk: &Arc<Trunk>, config: SegmenterConfig) -> (Option<Self>, Vec<SegmenterEvent>) {
         Self::try_new_with_siblings(trunk, config, &())
     }
 
@@ -859,17 +862,20 @@ impl ProgramSegmenter {
         trunk: &Arc<Trunk>,
         config: SegmenterConfig,
         siblings: &dyn SiblingTrunks,
-    ) -> Option<Self> {
+    ) -> (Option<Self>, Vec<SegmenterEvent>) {
         let target_duration_secs = config.target_duration_secs;
         let part_target_ms = config.part_target_ms;
         let (cursor, track_generation, published_tracks) =
             trunk.subscribe_from_backlog_with_tracks();
         let tracks = config.apply_declared_audio_profiles(published_tracks.to_vec());
         if tracks.is_empty() {
-            return None;
+            return (None, Vec::new());
         }
         let timescale_moves = timescale_moves(&published_tracks, &tracks);
-        let segment_writer = trunk.segment_writer()?;
+        let segment_writer = match trunk.segment_writer() {
+            Some(w) => w,
+            None => return (None, Vec::new()),
+        };
         // Seeded from `next_sequence_number` rather than the plain
         // `with_part_target` constructor's implicit `1`: this `Trunk` may
         // already have accepted segments from an earlier `SegmentWriter`
@@ -889,7 +895,7 @@ impl ProgramSegmenter {
             Container::Fmp4 => {
                 let muxable = leader_tracks(&tracks, &mapped);
                 if muxable.is_empty() {
-                    return None;
+                    return (None, Vec::new());
                 }
                 match LlHlsSegmenter::with_part_target_at(
                     muxable,
@@ -902,7 +908,7 @@ impl ProgramSegmenter {
                     Ok(seg) => AnySegmenter::Fmp4(seg),
                     Err(e) => {
                         tracing::warn!(error = %e, "driver-backed fMP4 segmenter build failed");
-                        return None;
+                        return (None, Vec::new());
                     }
                 }
             }
@@ -927,12 +933,7 @@ impl ProgramSegmenter {
                 let mut events = Vec::new();
                 if !ts_hls_tracks_acceptable(&config, &mut events, tracks.iter().map(|t| &t.config))
                 {
-                    for e in events {
-                        if let SegmenterEvent::OutputFailed(msg) = e {
-                            siblings.report_output_failed(msg);
-                        }
-                    }
-                    return None;
+                    return (None, events);
                 }
                 match StreamingTsHlsSegmenter::with_start_sequence(
                     tracks.to_vec(),
@@ -943,7 +944,7 @@ impl ProgramSegmenter {
                     Ok(seg) => AnySegmenter::Ts(seg.with_cut_policy(config.ts_cut_policy)),
                     Err(e) => {
                         tracing::warn!(error = %e, "driver-backed TS-HLS segmenter build failed");
-                        return None;
+                        return (None, Vec::new());
                     }
                 }
             }
@@ -956,7 +957,7 @@ impl ProgramSegmenter {
                     ?other,
                     "driver-backed segmenter: no segmenter implementation for this container"
                 );
-                return None;
+                return (None, Vec::new());
             }
         };
         let followers =
@@ -1023,7 +1024,7 @@ impl ProgramSegmenter {
             ingest_origin: Instant::now(),
         };
         ps.timeline.on_tracks(&ps.published_tracks);
-        Some(ps)
+        (Some(ps), Vec::new())
     }
 
     /// Queue `item` (behind anything already queued from an earlier call,
@@ -1107,7 +1108,7 @@ impl ProgramSegmenter {
 
     /// [`Self::pump`] for at most [`PUMP_BATCH_ITEMS`] queued items, leaving the rest queued and
     /// setting `backlogged` so the caller can yield to the runtime before the next batch.
-    fn pump_batch(
+    pub fn pump_batch(
         &mut self,
         program: ProgramId,
         trunk: &Trunk,

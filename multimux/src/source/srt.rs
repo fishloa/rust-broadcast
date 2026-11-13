@@ -323,19 +323,16 @@ pub async fn drive_socket(
         route_handle: std::sync::Arc::clone(route_handle),
         handoff: Some(on_driver),
     };
-    let mut progress = crate::source::DriverProgress::new();
     // SRT has no `poll_transmit`; the scaffold still bounds the (unused)
     // write half (defect 4 discipline).
     let mut sink = tokio::io::sink();
     let err = crate::source::driver::run_ingest_scaffold(
         driver,
         route_handle,
-        &mut progress,
         tokio_util::sync::CancellationToken::new(),
         broadcast_common::timeouts::Timeouts::default()
             .with_connect(read_timeout)
             .with_read_idle(read_timeout),
-        crate::source::driver::DEFAULT_WRITE_TIMEOUT,
         &mut sink,
         &mut step,
         |never: Infallible| match never {},
@@ -391,15 +388,12 @@ pub async fn run_srt_caller(
         EventIngest::new(),
         media_plane::IngestConfig::new(handshake).with_trunk(trunk_config),
     );
-    let mut progress = crate::source::DriverProgress::new();
     let mut sink = tokio::io::sink();
     let err = crate::source::driver::run_ingest_scaffold(
         driver,
         route_handle,
-        &mut progress,
         cancel,
         route.timeouts,
-        crate::source::driver::DEFAULT_WRITE_TIMEOUT,
         &mut sink,
         &mut step,
         |never: Infallible| match never {},

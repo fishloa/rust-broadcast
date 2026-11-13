@@ -34,6 +34,8 @@ pub mod rtp_udp;
 pub mod rtsp;
 pub mod sdp;
 pub mod segment;
+#[cfg(test)]
+mod segment_legacy;
 
 /// Default demand (in bytes) a source asks the pipeline to feed per
 /// iteration.
