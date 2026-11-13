@@ -4,6 +4,10 @@ All notable changes to smooth-runtime will be documented in this file.
 
 ## [Unreleased]
 ### Changed
+- BREAKING: `SmoothOrigin` caches its plan (every track's chunk timeline plus the rendered Manifest) keyed by the init-segment generation and the window's segment sequence numbers: requests over an unchanged window reuse it, and concurrent requests that miss together build it once. Packaged fragments are cached per (stream, start, segment) and dropped when their segment leaves the window. `SegmentProvider::segments` and `SmoothOrigin::set_init`/`init` now carry `bytes::Bytes` instead of `Arc<[u8]>`, and `SmoothBody::Fragment` holds `Bytes`, so no request copies segment bytes (issue #2522).
+### Added
+- `SmoothOrigin::is_warm` and `SmoothOrigin::prepare`: a host reports whether a request is a cache hit and runs the demux/packaging a miss needs on a thread of its choosing (issue #2522).
+### Changed
 - URL-reference resolution now uses the shared guarded resolver in `broadcast-common::url_ref` (control characters rejected before joining) (issue #2458).
 ### Added
 - `server::SmoothOrigin` (feature `std`, issue #2453): the live Smooth Streaming origin engine, the server-side counterpart of `SmoothClient`. Given a `media_plane::Trunk`, the program's `SegmentProvider`/`TrackProvider` and its init segment, it renders the MS-SSTR client Manifest through `broadcast_smooth::SmoothManifest::live(..)`/`to_xml` and resolves `SmoothRequest::Fragment` to re-muxed fragment bytes, answering `EgressResponse::Ready`/`Await`/`BadRequest`/`NotFound` without I/O or a clock read. Codec parameters come from `transmux::resolve_codec`, the resolver the packager uses, so the manifest advertises what the fragments carry.

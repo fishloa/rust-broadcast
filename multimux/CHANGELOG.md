@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- The Smooth output keeps one `SmoothOrigin` per program, so its cached plan and packaged fragments survive between requests, and hands it the segments as shared `Bytes` instead of copying every window segment per request. A request that misses the cache builds on the blocking pool (`spawn_blocking`, at most four at once per program); the module doc that claimed `http::resolve_blocking` did so was wrong (issue #2522).
 ### Fixed
 - A Smooth fragment request the origin's window does not hold answers `404`, as an evicted HLS segment does, instead of `500`: the Smooth fallback passed its server-error status as the not-found status too, so every `EgressResponse::NotFound` from the origin (a start time before the window or past its end) became an internal error (issue #2506).
 - An HTTP pull (HLS, DASH, Smooth, TS-over-HTTP) keeps the auth state for the whole session: a cookie an origin sets on the playlist is sent with the segments, and a Digest challenge is negotiated once instead of on every request, because the state is updated in place rather than cloned per request. Cookies are stamped with the pull's own clock instead of `0`.

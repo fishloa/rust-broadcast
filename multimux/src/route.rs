@@ -511,6 +511,9 @@ pub(crate) struct ProgramServing {
     trunk: Arc<Trunk>,
     ll_hls: Arc<HlsOrigin>,
     dash: Arc<DashState>,
+    /// The Smooth origin over this program, with the plan and fragments it has
+    /// cached; built by the first Smooth request.
+    pub(crate) smooth: std::sync::OnceLock<Arc<crate::output::smooth::SmoothServing>>,
     /// Whether the program has muxable media now. Cleared when the source
     /// drops every muxable track; the specs and segments already published
     /// are unaffected.
@@ -777,6 +780,7 @@ impl ProgramServing {
             trunk,
             ll_hls,
             dash,
+            smooth: std::sync::OnceLock::new(),
             tracks_active: std::sync::atomic::AtomicBool::new(true),
             route_name: route_name.to_string(),
             #[cfg(test)]
