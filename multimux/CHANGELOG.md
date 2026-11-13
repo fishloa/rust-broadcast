@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 ### Changed
+- A blocking-reload request that wakes on a cold egress (`ServedEgress::is_warm` false: the first Smooth plan, the I-frame and bitrate scans of a new HLS segment) runs `prepare` on the blocking pool, at most eight at a time, instead of on the waking worker (#2538).
+- HLS media and I-frame playlists and DASH/LL-DASH MPDs are rendered once per state stamp and shared by concurrent requests (#2526).
 - The Smooth output keeps one `SmoothOrigin` per program, so its cached plan and packaged fragments survive between requests, and hands it the segments as shared `Bytes` instead of copying every window segment per request. A request that misses the cache builds on the blocking pool (`spawn_blocking`, at most four at once per program); the module doc that claimed `http::resolve_blocking` did so was wrong (issue #2522).
 ### Added
 - `max_blocking_reloads_per_route` (config; `HttpLimits::max_blocking_reloads_per_route`, default 1024): LL-HLS blocking-reload requests are budgeted per route instead of one listener-wide pool of `max_concurrent_requests / 4`, so a reload flood on one route cannot shed another's.

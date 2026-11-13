@@ -108,21 +108,18 @@ impl Output for DashOutput {
 /// codec string, not merely "no segment has closed yet", which still
 /// renders a valid, if near-empty, MPD).
 async fn manifest(State(route): State<Arc<RouteHandle>>) -> Response {
-    serve_mpd(route, render_mpd).await
+    serve_mpd(route, DashFlavour::Standard).await
 }
 
 /// The shared DASH/LL-DASH manifest handler: resolves `route`'s program and
 /// serves whatever `render` produces (`503` when it renders nothing).
-pub(crate) async fn serve_mpd(
-    route: Arc<RouteHandle>,
-    render: fn(&RouteHandle) -> Option<String>,
-) -> Response {
+pub(crate) async fn serve_mpd(route: Arc<RouteHandle>, flavour: DashFlavour) -> Response {
     let serving = match http::resolve_route_program(&route) {
         Ok(serving) => serving,
         Err(resp) => return *resp,
     };
     let trunk = serving.trunk();
-    let origin = Arc::new(MpdOrigin { route, render });
+    let origin = Arc::new(MpdOrigin { route, flavour });
     let resp = http::resolve_blocking(&trunk, &origin, (), BLOCKING_RELOAD_TIMEOUT, || ()).await;
     http::into_response(resp, StatusCode::SERVICE_UNAVAILABLE, |body| {
         ([(header::CONTENT_TYPE, DASH_MANIFEST_CONTENT_TYPE)], body).into_response()
@@ -141,7 +138,7 @@ pub(crate) async fn serve_mpd(
 /// `crate::http`'s own module doc.
 struct MpdOrigin {
     route: Arc<RouteHandle>,
-    render: fn(&RouteHandle) -> Option<String>,
+    flavour: DashFlavour,
 }
 
 impl ServedEgress for MpdOrigin {
@@ -154,7 +151,7 @@ impl ServedEgress for MpdOrigin {
         _now: broadcast_common::Timestamp,
         _await_policy: AwaitPolicy,
     ) -> EgressResponse<String> {
-        match (self.render)(&self.route) {
+        match render_mpd_cached(&self.route, self.flavour) {
             Some(body) => EgressResponse::Ready {
                 body,
                 cache: CachePolicy::NoCache,
@@ -178,7 +175,7 @@ pub(crate) const FIRST_SEGMENT_NUMBER: u64 = 1;
 /// the MPD model the same way: the Period split at a gap placeholder and at
 /// each new init generation, the per-init-generation `initialization` URL and
 /// the SCTE-35 inband event declaration are common to both.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum DashFlavour {
     /// Standard DASH (`manifest.mpd`): no low-latency signalling, refreshed
     /// once per whole segment (`minimumUpdatePeriod` at the segment target).
@@ -235,17 +232,26 @@ fn track_is_representable(spec: &TrackSpec) -> bool {
     DashPackager::default().package(&media).is_ok()
 }
 
+/// The live MPD of `flavour`, served from the program's cache when nothing it
+/// depends on has changed since it was rendered.
+fn render_mpd_cached(route: &RouteHandle, flavour: DashFlavour) -> Option<String> {
+    let serving = route.serving(crate::route::SPTS_PROGRAM_ID)?;
+    serving.cached_mpd(flavour, || match flavour {
+        DashFlavour::Standard => render_mpd(route),
+        DashFlavour::LowLatency => render_ll_dash_mpd(route),
+    })
+}
+
 /// Render the live MPD for `route`'s current window. `None` if no track in
 /// [`RouteHandle::track_specs`] is [`select_representable_track`]-selectable
 /// (nothing recorded yet, or every recorded track is opaque — issue #776).
-fn render_mpd(route: &RouteHandle) -> Option<String> {
+pub(crate) fn render_mpd(route: &RouteHandle) -> Option<String> {
     let origin = route.presentation_origin(crate::route::SPTS_PROGRAM_ID)?;
     render_mpd_at_with_flavour(route, origin, DashFlavour::Standard)
 }
 
 /// Render `route`'s current window as the low-latency flavour of the MPD, with
-/// `availabilityStartTime` taken from the program's own presentation origin
-/// (`manifest-ll.mpd`, `pub(crate)` wrapper over [`render_ll_dash_mpd_at`]).
+/// `availabilityStartTime` taken from the program's own presentation origin.
 pub(crate) fn render_ll_dash_mpd(route: &RouteHandle) -> Option<String> {
     let origin = route.presentation_origin(crate::route::SPTS_PROGRAM_ID)?;
     render_mpd_at_with_flavour(route, origin, DashFlavour::LowLatency)
@@ -672,6 +678,51 @@ mod tests {
     use super::*;
     use crate::testutil::video_spec;
     use transmux::CodecConfig;
+
+    const CONCURRENT_MANIFESTS: usize = 64;
+
+    /// #2526: concurrent manifest requests at one stamp share one render, and
+    /// a publish makes the next request render again.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn concurrent_manifest_requests_render_once_until_a_publish() {
+        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let app = crate::testutil::app_with(&route, Arc::new(DashOutput));
+        let _first = crate::testutil::ingest_run(&route, 4).await;
+        let serving = route
+            .serving(crate::route::SPTS_PROGRAM_ID)
+            .expect("program published");
+        let renders = || {
+            serving
+                .mpd_renders
+                .load(std::sync::atomic::Ordering::Relaxed)
+        };
+
+        let requests: Vec<_> = (0..CONCURRENT_MANIFESTS)
+            .map(|_| {
+                let app = app.clone();
+                tokio::spawn(
+                    async move { crate::testutil::get_bytes(&app, "/cam/manifest.mpd").await },
+                )
+            })
+            .collect();
+        let mut bodies = Vec::new();
+        for request in requests {
+            let (status, body) = request.await.expect("request task");
+            assert_eq!(status, StatusCode::OK);
+            bodies.push(body);
+        }
+        assert!(bodies.iter().all(|body| *body == bodies[0]));
+        assert_eq!(renders(), 1, "one render serves every concurrent request");
+
+        let (_, again) = crate::testutil::get_bytes(&app, "/cam/manifest.mpd").await;
+        assert_eq!(again, bodies[0]);
+        assert_eq!(renders(), 1, "nothing changed, so the cache is served");
+
+        let _second = crate::testutil::ingest_run(&route, 6).await;
+        let (status, _) = crate::testutil::get_bytes(&app, "/cam/manifest.mpd").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(renders(), 2, "new segments must invalidate the cache");
+    }
 
     #[tokio::test]
     async fn dash_continues_across_a_source_reconnect() {

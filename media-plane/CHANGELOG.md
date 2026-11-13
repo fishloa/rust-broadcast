@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- `Trunk::generation`: a counter bumped by every part, segment, event, track-set, segment-start and time-anchor publish (never a sample), for caching a render keyed by the state it was made from.
+- `ServedEgress::is_warm` and `ServedEgress::prepare` (default always warm / no-op): an egress with heavy first-use work says so, so an async host runs `prepare` on a blocking thread instead of on the worker that woke the request.
 - `TrunkConfig::waiter_capacity` (default `DEFAULT_WAITER_CAPACITY`, set with `TrunkConfig::with_waiter_capacity`): the bound on concurrent `Trunk::listen` registrations is its own setting instead of `part_capacity`, so a programme is no longer limited to 64 parked blocking-reload requests (#2523).
 - `SampleCursor::next` and `Trunk::data_listener`: a sample, event, track-set change or writer hand-off notifies the trunk once, and a consumer awaits it instead of polling; an idle cursor takes no trunk lock (#2524).
 - `Trunk::tracks_with_generation` and `Trunk::subscribe_from_backlog_with_tracks`: the track generation and set (and, for the latter, a backlog cursor) read under one lock acquisition.

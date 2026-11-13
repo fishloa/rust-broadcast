@@ -29,8 +29,13 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "route.rs",
-        1171,
+        1232,
         "spawn_blocking DVR persist; awaited inline",
+    ),
+    (
+        "http.rs",
+        233,
+        "spawn_blocking egress warm-up (ServedEgress::prepare) under a WARMS permit; awaited inline (owned by the request)",
     ),
     ("dvr.rs", 603, "spawn_blocking DVR write; awaited inline"),
     (

@@ -3086,6 +3086,14 @@ impl HlsOrigin {
         self.drained_through.store(head, Ordering::Release);
     }
 
+    /// A counter that changes whenever a setter changes what this origin
+    /// renders (init, track specs, part target, siblings, caption and
+    /// subtitle declarations). A cache of anything derived from this origin
+    /// and its [`Trunk`] keys on it together with [`Trunk::generation`].
+    pub fn render_epoch(&self) -> u64 {
+        self.epoch.load(Ordering::Acquire)
+    }
+
     fn bump_epoch(&self) {
         self.epoch.fetch_add(1, Ordering::Release);
     }
