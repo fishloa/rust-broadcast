@@ -167,9 +167,7 @@ async fn soak_blocking_reload_viewers_and_sample_consumers() {
                 }
                 if resp.status() != StatusCode::OK {
                     failures += 1;
-                    uri = "/cam/media.m3u8".to_string();
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    continue;
+                    break;
                 }
                 let body = crate::support::origin::body_string(resp).await;
                 let (msn, part) = next_reload(&body);
@@ -207,7 +205,7 @@ async fn soak_blocking_reload_viewers_and_sample_consumers() {
                         Some(pts),
                         Some(pts),
                         Some(FRAME_DUR),
-                        frame % FRAMES_PER_SEGMENT == 0,
+                        frame.is_multiple_of(FRAMES_PER_SEGMENT),
                     ),
                 )
                 .expect("push");
