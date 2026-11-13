@@ -178,6 +178,46 @@ fn a_utc_server_on_the_session_origin_gets_the_credentials_too() {
 }
 
 #[test]
+fn a_utc_server_on_the_session_origin_gets_no_credentials_when_the_session_is_told_not_to() {
+    let synth = Synth::new(AST_US, Addressing::Number)
+        .with_utc("http-xsdate", "http://dash.test/live/utc/xsdate");
+    let backend = Rewrite {
+        inner: WorldBackend(synth),
+        from: "http://dash.test/live/utc/",
+        to: "http://dash.test/live/utc/",
+    };
+    let mut config = secured();
+    config.utc_timing_credentials = false;
+    let mut sim = DashSim::new(
+        MPD_URL,
+        config,
+        World::new(AST_US + 41 * MICROS + 120_000),
+        Box::new(backend),
+    );
+    sim.session
+        .set_credentials(Credentials::bearer("tok"))
+        .unwrap();
+    sim.run_for(15 * SEC);
+    let utc: Vec<&Logged> = sim
+        .log
+        .iter()
+        .filter(|l| l.url.contains("/live/utc/"))
+        .collect();
+    assert!(!utc.is_empty());
+    assert!(
+        utc.iter()
+            .all(|l| l.header("authorization").is_none() && l.header("cookie").is_none()),
+        "{utc:?}"
+    );
+    let media: Vec<&Logged> = sim
+        .log
+        .iter()
+        .filter(|l| !l.url.contains("/live/utc/"))
+        .collect();
+    assert!(media.iter().any(|l| l.header("authorization").is_some()));
+}
+
+#[test]
 fn a_401_waits_for_credentials_and_replays_the_parked_request() {
     struct Gate(StaticBackend);
     impl Backend for Gate {

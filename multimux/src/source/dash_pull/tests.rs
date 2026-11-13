@@ -1,13 +1,12 @@
 //! `dash_pull` against real fMP4 and real servers: the static fixtures of
 //! `fixtures/dash/`, a simulated live origin that serves them under a dynamic
 //! MPD with availability enforced against the true clock, and the drive loop's
-//! wire rules (byte ranges, conditional refreshes, credentials, backoff).
+//! wire rules (byte ranges, conditional refreshes, credentials).
 //!
-//! Every pull here runs the production loop (`drive::run`) over a real loopback
-//! socket; only the clock is injected (`SkewedClock`) and the route registry
-//! is replaced by a sink that reads the `Trunk` the way the segmenter does.
+//! Every pull here runs the production pull (`run_with_clock`, a relay `broadcast_client::Session`
+//! through the shared session host) over a real loopback socket; only the clock is injected
+//! (`SkewedClock`), and a collector reads the route's `Trunk` the way the segmenter does.
 
-use std::future::Future;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -21,17 +20,16 @@ use axum::response::{IntoResponse, Response as AxumResponse};
 use axum::routing::get;
 use broadcast_common::{Timestamp, Unpackage};
 use headers::HeaderMapExt;
-use media_plane::ingress::{HandshakePolicy, IngestDriver};
-use media_plane::trunk::{SampleCursor, SampleCursorItem, TrunkConfig};
+use media_plane::ingress::HandshakePolicy;
+use media_plane::trunk::{SampleCursorItem, TrunkConfig};
 use transmux::media::Fmp4Demux;
 use transmux::{CodecConfig, Sample, TrackId, TrackSpec};
 
-use super::drive::{self, RouteSink};
-use super::session::PROGRAM;
-use super::{DashIngestSession, DashPullRoute};
+use super::{DashPullRoute, run_with_clock};
 use crate::clock::{HostClock, SystemHostClock};
 use crate::error::{MultimuxError, Result};
 use crate::source::IngestTimeouts;
+use tokio_util::sync::CancellationToken;
 
 const CEILING: Duration = Duration::from_secs(120);
 /// A static presentation over loopback ends in well under a second; the
@@ -141,21 +139,24 @@ impl Delivered {
     }
 }
 
-struct CollectSink {
-    delivered: Arc<Mutex<Delivered>>,
-    cursor: Option<SampleCursor>,
-}
+const COLLECT_POLL: Duration = Duration::from_millis(5);
+/// How long the collector gets to read what a finished pull published last; a pull that failed
+/// before publishing anything leaves it waiting for a `Trunk` that never comes.
+const COLLECT_GRACE: Duration = Duration::from_secs(1);
 
-impl RouteSink for CollectSink {
-    fn advance<'a>(
-        &'a mut self,
-        driver: &'a IngestDriver<DashIngestSession>,
-    ) -> impl Future<Output = ()> + Send + 'a {
-        if let Some(trunk) = driver.trunk(PROGRAM) {
-            let cursor = self
-                .cursor
-                .get_or_insert_with(|| trunk.subscribe_from_backlog());
-            let mut delivered = self.delivered.lock().expect("lock");
+/// Reads the route's `Trunk` the way the segmenter does, into `delivered`, until told to stop (and
+/// once more after, so what the pull published last is not missed).
+async fn collect(
+    route_handle: Arc<crate::route::RouteHandle>,
+    delivered: Arc<Mutex<Delivered>>,
+    stop: Arc<std::sync::atomic::AtomicBool>,
+) {
+    let trunk = route_handle.await_first_trunk().await;
+    let mut cursor = trunk.subscribe_from_backlog();
+    loop {
+        let finishing = stop.load(Ordering::SeqCst);
+        {
+            let mut delivered = delivered.lock().expect("lock");
             delivered.specs = trunk.tracks().to_vec();
             while let Some(item) = cursor.poll() {
                 match item {
@@ -167,30 +168,54 @@ impl RouteSink for CollectSink {
                 }
             }
         }
-        std::future::ready(())
-    }
-
-    fn finish(&mut self, result: Result<()>) -> Result<()> {
-        result
+        if finishing {
+            return;
+        }
+        tokio::time::sleep(COLLECT_POLL).await;
     }
 }
 
 struct Pull {
     delivered: Arc<Mutex<Delivered>>,
     task: tokio::task::JoinHandle<Result<()>>,
+    collector: tokio::task::JoinHandle<()>,
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    cancel: CancellationToken,
 }
 
 impl Pull {
     fn start(route: DashPullRoute, clock: Arc<dyn HostClock>) -> Self {
         let delivered = Arc::new(Mutex::new(Delivered::default()));
-        let sink = CollectSink {
-            delivered: Arc::clone(&delivered),
-            cursor: None,
-        };
-        let task = tokio::spawn(async move {
-            drive::run(&route, trunk_config(), handshake(), clock, sink).await
+        let route_handle = Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let cancel = CancellationToken::new();
+        let task = tokio::spawn({
+            let route_handle = Arc::clone(&route_handle);
+            let cancel = cancel.clone();
+            async move {
+                run_with_clock(
+                    &route,
+                    trunk_config(),
+                    handshake(),
+                    &route_handle,
+                    cancel,
+                    clock,
+                )
+                .await
+            }
         });
-        Self { delivered, task }
+        let collector = tokio::spawn(collect(
+            route_handle,
+            Arc::clone(&delivered),
+            Arc::clone(&stop),
+        ));
+        Self {
+            delivered,
+            task,
+            collector,
+            stop,
+            cancel,
+        }
     }
 
     fn now(&self) -> std::sync::MutexGuard<'_, Delivered> {
@@ -219,12 +244,21 @@ impl Pull {
             .await
             .expect("a static presentation must end")
             .expect("pull task");
+        self.stop.store(true, Ordering::SeqCst);
+        if tokio::time::timeout(COLLECT_GRACE, &mut self.collector)
+            .await
+            .is_err()
+        {
+            self.collector.abort();
+        }
         let delivered = std::mem::take(&mut *self.now());
         (delivered, result)
     }
 
     fn stop(self) -> Delivered {
+        self.cancel.cancel();
         self.task.abort();
+        self.collector.abort();
         let mut guard = self.delivered.lock().expect("lock");
         std::mem::take(&mut *guard)
     }
@@ -882,7 +916,8 @@ async fn a_wrong_password_ends_the_attempt_with_an_auth_error() {
     );
     assert!(
         started.elapsed() < Duration::from_secs(2),
-        "no backoff first"
+        "no backoff first: {:?}",
+        started.elapsed()
     );
 }
 
@@ -943,8 +978,14 @@ async fn a_base_url_on_another_origin_is_refused_by_default() {
         .finish()
         .await;
     assert!(
-        matches!(result, Err(crate::error::MultimuxError::Connect { .. })),
-        "no Representation is left to play"
+        matches!(
+            result,
+            Err(crate::error::MultimuxError::Session {
+                kind: broadcast_client::ErrorKind::MpdInvalid { .. },
+                ..
+            })
+        ),
+        "no Representation is left to play: {result:?}"
     );
     assert!(delivered.samples.is_empty());
     assert!(
@@ -976,9 +1017,10 @@ async fn a_base_url_on_another_origin_plays_when_the_route_allows_it() {
 fn a_route_refuses_cross_origin_urls_until_told_otherwise() {
     let route = DashPullRoute::new("r", "http://example.test/a.mpd");
     assert!(!route.allow_cross_origin());
-    assert!(route.with_cross_origin_urls(true).allow_cross_origin());
-    assert!(!super::session::dash_config(false).cross_origin_urls);
-    assert!(super::session::dash_config(true).cross_origin_urls);
+    assert!(!super::session_config(&route).dash.cross_origin_urls);
+    let allowed = route.with_cross_origin_urls(true);
+    assert!(allowed.allow_cross_origin());
+    assert!(super::session_config(&allowed).dash.cross_origin_urls);
 }
 
 // ---------------------------------------------------------------------------
@@ -1612,461 +1654,6 @@ async fn utc_timing_requests_carry_no_credentials_but_every_other_request_does()
             "{prefix}: {seen:?}"
         );
     }
-}
-
-// ---------------------------------------------------------------------------
-// One exchange on the wire
-// ---------------------------------------------------------------------------
-
-mod exchange {
-    use super::*;
-    use crate::source::dash_pull::{DashInput, FetchTarget};
-    use axum::body::Body;
-    use axum::response::Redirect;
-    use broadcast_common::Stage;
-    use bytes::Bytes;
-    use dash_runtime::client::{Action, Failure, ResourceId, UtcId};
-    use drive::{DashFetch, Net, Outcome, Request};
-    use media_plane::ingress::IngestSession;
-    use reqwest::Method;
-
-    use crate::source::pull::FetchResult;
-
-    const SMALL_CAP: usize = 100;
-    const BIG_CAP: usize = 1 << 20;
-
-    fn net(read_timeout: Duration, cap: usize) -> Net {
-        let origin = url::Url::parse("http://127.0.0.1:1/").expect("origin");
-        Net {
-            http: reqwest::Client::builder()
-                .redirect(crate::source::redirect_policy(true))
-                .build()
-                .expect("client"),
-            credentials: broadcast_auth::AuthState::new(origin, Vec::new()),
-            clock: SkewedClock::new(0),
-            read_timeout,
-            utc_timeout: read_timeout,
-            mpd_cap: cap,
-            segment_cap: cap,
-        }
-    }
-
-    fn request(url: String, target: FetchTarget, cap: usize) -> Request {
-        Request {
-            target,
-            method: Method::GET,
-            url,
-            byte_range: None,
-            conditional: Vec::new(),
-            with_credentials: true,
-            what: "test",
-            timeout: Duration::from_secs(5),
-            cap,
-        }
-    }
-
-    async fn serve(app: Router) -> (String, tokio::task::JoinHandle<()>) {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind");
-        let addr = listener.local_addr().expect("addr");
-        let task = tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
-        (format!("http://{addr}"), task)
-    }
-
-    async fn run(net: &mut Net, req: Request) -> (DashFetch, FetchResult) {
-        drive::exchange(net, &req, 0).await
-    }
-
-    fn status_route(status: u16) -> Router {
-        Router::new().route(
-            "/x",
-            get(move || async move {
-                (
-                    AxumStatus::from_u16(status).expect("status"),
-                    "body".to_owned(),
-                )
-            }),
-        )
-    }
-
-    /// A resource id and a `UTCTiming` id as the core hands them out: neither
-    /// can be built outside `dash-runtime`.
-    fn ids() -> (ResourceId, UtcId) {
-        let mut session =
-            DashIngestSession::new(url::Url::parse("http://origin.test/live.mpd").expect("url"));
-        let mpd = r#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="dynamic" availabilityStartTime="2026-01-01T00:00:00Z" minimumUpdatePeriod="PT1S" timeShiftBufferDepth="PT30S" suggestedPresentationDelay="PT2S" maxSegmentDuration="PT2S" profiles="urn:mpeg:dash:profile:isoff-live:2011">
-<UTCTiming schemeIdUri="urn:mpeg:dash:utc:http-xsdate:2014" value="http://origin.test/time"/>
-<Period id="0" start="PT0S"><AdaptationSet mimeType="video/mp4"><Representation id="0" codecs="avc1.4d400d" bandwidth="1000" width="320" height="240"><SegmentTemplate timescale="1000" duration="2000" startNumber="1" initialization="init.m4s" media="seg-$Number$.m4s"/></Representation></AdaptationSet></Period>
-</MPD>"#.to_string();
-        let _ = session.poll_transmit();
-        session
-            .feed(
-                DashInput::Mpd {
-                    body: mpd.as_bytes(),
-                    meta: dash_runtime::client::ResponseMeta::at(0),
-                },
-                Timestamp::from_nanos(0),
-            )
-            .expect("accepted");
-        let (mut resource, mut utc) = (None, None);
-        for _ in 0..16 {
-            match session.poll_transmit() {
-                Some(Action::FetchInit { id, .. }) => resource = Some(id),
-                Some(Action::FetchUtcTiming { id, .. }) => utc = Some(id),
-                Some(_) => {}
-                None => break,
-            }
-        }
-        (
-            resource.expect("an init request"),
-            utc.expect("a UTCTiming request"),
-        )
-    }
-
-    #[tokio::test]
-    async fn a_304_is_unchanged_for_the_mpd_and_a_failure_for_anything_else() {
-        let (base, server) = serve(status_route(304)).await;
-        let mut net = net(Duration::from_secs(5), BIG_CAP);
-        let (mpd, _) = run(
-            &mut net,
-            request(format!("{base}/x"), FetchTarget::Mpd, BIG_CAP),
-        )
-        .await;
-        assert_eq!(mpd.outcome, Outcome::Unchanged);
-        let (resource, _) = ids();
-        let (seg, _) = run(
-            &mut net,
-            request(
-                format!("{base}/x"),
-                FetchTarget::Resource(resource),
-                BIG_CAP,
-            ),
-        )
-        .await;
-        assert_eq!(seg.outcome, Outcome::Failed(Failure::Status(304)));
-        server.abort();
-    }
-
-    #[tokio::test]
-    async fn a_401_is_unauthorized_and_other_statuses_are_counted_failures() {
-        let mut net = net(Duration::from_secs(5), BIG_CAP);
-        for (status, want) in [
-            (401, Outcome::Unauthorized),
-            (404, Outcome::Failed(Failure::Status(404))),
-            (410, Outcome::Failed(Failure::Status(410))),
-            (425, Outcome::Failed(Failure::Status(425))),
-            (503, Outcome::Failed(Failure::Status(503))),
-        ] {
-            let (base, server) = serve(status_route(status)).await;
-            let (fetch, result) = run(
-                &mut net,
-                request(format!("{base}/x"), FetchTarget::Mpd, BIG_CAP),
-            )
-            .await;
-            assert_eq!(fetch.outcome, want, "status {status}");
-            assert!(
-                matches!(result, FetchResult::Failed { .. }),
-                "status {status} carries an error"
-            );
-            server.abort();
-        }
-    }
-
-    #[tokio::test]
-    async fn a_401_is_an_authentication_error() {
-        let (base, server) = serve(status_route(401)).await;
-        let mut net = net(Duration::from_secs(5), BIG_CAP);
-        let (_, result) = run(
-            &mut net,
-            request(format!("{base}/x"), FetchTarget::Mpd, BIG_CAP),
-        )
-        .await;
-        assert!(
-            matches!(
-                result,
-                FetchResult::Failed {
-                    error: MultimuxError::Auth { .. },
-                    ..
-                }
-            ),
-            "a refused credential is Auth, not a retryable Connect"
-        );
-        server.abort();
-    }
-
-    #[tokio::test]
-    async fn the_headers_the_core_reads_are_captured_and_a_redirect_is_reported() {
-        let app = Router::new()
-            .route("/a", get(|| async { Redirect::temporary("/b") }))
-            .route(
-                "/b",
-                get(|| async {
-                    let mut response = "mpd".into_response();
-                    let headers = response.headers_mut();
-                    headers.insert(header::ETAG, "\"e1\"".parse().unwrap());
-                    headers.insert(
-                        header::LAST_MODIFIED,
-                        "Mon, 26 Oct 2026 08:39:04 GMT".parse().unwrap(),
-                    );
-                    response
-                }),
-            )
-            .route("/plain", get(|| async { "mpd" }));
-        let (base, server) = serve(app).await;
-        let mut net = net(Duration::from_secs(5), BIG_CAP);
-        let (fetch, result) = run(
-            &mut net,
-            request(format!("{base}/a"), FetchTarget::Mpd, BIG_CAP),
-        )
-        .await;
-        assert_eq!(fetch.outcome, Outcome::Body);
-        assert!(matches!(result, FetchResult::Ready(ref b) if b == b"mpd"));
-        assert_eq!(
-            fetch.final_url.as_deref(),
-            Some(format!("{base}/b").as_str())
-        );
-        assert_eq!(fetch.etag.as_deref(), Some("\"e1\""));
-        assert_eq!(
-            fetch.last_modified.as_deref(),
-            Some("Mon, 26 Oct 2026 08:39:04 GMT")
-        );
-        assert!(
-            fetch.date.is_some(),
-            "hyper stamps a Date on every response"
-        );
-        assert!(fetch.received_us >= fetch.sent_us);
-        assert!(fetch.received_us > 0, "read from the injected clock");
-
-        let (plain, _) = run(
-            &mut net,
-            request(format!("{base}/plain"), FetchTarget::Mpd, BIG_CAP),
-        )
-        .await;
-        assert_eq!(plain.final_url, None, "no redirect, nothing to report");
-        server.abort();
-    }
-
-    #[tokio::test]
-    async fn a_body_past_the_cap_is_too_large_and_a_broken_transfer_is_transport() {
-        let app = Router::new()
-            .route("/big", get(|| async { vec![7u8; SMALL_CAP * 10] }))
-            .route(
-                "/cut",
-                get(|| async {
-                    let chunks: Vec<std::result::Result<Bytes, std::io::Error>> = vec![
-                        Ok(Bytes::from_static(&[1u8; 10])),
-                        Err(std::io::Error::other("cut")),
-                    ];
-                    Body::from_stream(futures_util::stream::iter(chunks))
-                }),
-            );
-        let (base, server) = serve(app).await;
-        let mut net = net(Duration::from_secs(5), SMALL_CAP);
-        let (big, _) = run(
-            &mut net,
-            request(format!("{base}/big"), FetchTarget::Mpd, SMALL_CAP),
-        )
-        .await;
-        assert_eq!(big.outcome, Outcome::Failed(Failure::TooLarge));
-        let (cut, _) = run(
-            &mut net,
-            request(format!("{base}/cut"), FetchTarget::Mpd, SMALL_CAP),
-        )
-        .await;
-        assert_eq!(cut.outcome, Outcome::Failed(Failure::Transport));
-        server.abort();
-    }
-
-    #[tokio::test]
-    async fn a_refused_connection_is_transport_and_a_silent_server_is_a_timeout() {
-        let mut net = net(Duration::from_millis(150), BIG_CAP);
-        let closed = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind");
-        let dead = closed.local_addr().expect("addr");
-        drop(closed);
-        let (refused, _) = run(
-            &mut net,
-            request(format!("http://{dead}/x"), FetchTarget::Mpd, BIG_CAP),
-        )
-        .await;
-        assert_eq!(refused.outcome, Outcome::Failed(Failure::Transport));
-
-        let silent = Router::new().route(
-            "/x",
-            get(|| async {
-                std::future::pending::<()>().await;
-                ""
-            }),
-        );
-        let (base, server) = serve(silent).await;
-        let mut req = request(format!("{base}/x"), FetchTarget::Mpd, BIG_CAP);
-        req.timeout = Duration::from_millis(150);
-        let (fetch, result) = drive::spawn_fetch(&net, req).fut.await;
-        assert_eq!(fetch.outcome, Outcome::Failed(Failure::Timeout));
-        assert!(matches!(result, FetchResult::Failed { .. }));
-        server.abort();
-    }
-
-    #[tokio::test]
-    async fn conditional_headers_and_the_head_method_reach_the_server() {
-        type SeenInner = Arc<Mutex<Vec<(String, Option<String>, bool)>>>;
-        #[derive(Clone, Default)]
-        struct Seen(SeenInner);
-        async fn echo(
-            State(seen): State<Seen>,
-            method: Method,
-            headers: HeaderMap,
-        ) -> AxumResponse {
-            seen.0.lock().unwrap().push((
-                method.to_string(),
-                headers
-                    .get(header::IF_NONE_MATCH)
-                    .and_then(|v| v.to_str().ok())
-                    .map(str::to_owned),
-                headers.contains_key(header::AUTHORIZATION),
-            ));
-            "ok".into_response()
-        }
-        let seen = Seen::default();
-        let app = Router::new()
-            .route("/x", get(echo))
-            .with_state(seen.clone());
-        let (base, server) = serve(app).await;
-        let mut net = net(Duration::from_secs(5), BIG_CAP);
-        let mut conditional = request(format!("{base}/x"), FetchTarget::Mpd, BIG_CAP);
-        conditional.conditional = vec![(header::IF_NONE_MATCH, "\"e1\"".to_owned())];
-        run(&mut net, conditional).await;
-        let (_, utc) = ids();
-        let mut head = request(format!("{base}/x"), FetchTarget::Utc(utc), BIG_CAP);
-        head.method = Method::HEAD;
-        head.with_credentials = false;
-        let (fetch, result) = run(&mut net, head).await;
-        assert_eq!(fetch.outcome, Outcome::Body);
-        assert!(matches!(result, FetchResult::Ready(ref b) if b.is_empty()));
-        let seen = seen.0.lock().unwrap().clone();
-        assert_eq!(
-            seen,
-            [
-                ("GET".to_owned(), Some("\"e1\"".to_owned()), false),
-                ("HEAD".to_owned(), None, false),
-            ]
-        );
-        server.abort();
-    }
-
-    #[tokio::test]
-    async fn a_ranged_request_asks_for_exactly_the_bytes_it_needs() {
-        #[derive(Clone, Default)]
-        struct Seen(Arc<Mutex<Vec<String>>>);
-        async fn echo(State(seen): State<Seen>, headers: HeaderMap) -> AxumResponse {
-            seen.0.lock().unwrap().push(
-                headers
-                    .get(header::RANGE)
-                    .and_then(|v| v.to_str().ok())
-                    .unwrap_or("")
-                    .to_owned(),
-            );
-            vec![9u8; 64].into_response()
-        }
-        let seen = Seen::default();
-        let app = Router::new()
-            .route("/x", get(echo))
-            .with_state(seen.clone());
-        let (base, server) = serve(app).await;
-        let mut net = net(Duration::from_secs(5), BIG_CAP);
-        let (resource, _) = ids();
-        let mut req = request(
-            format!("{base}/x"),
-            FetchTarget::Resource(resource),
-            BIG_CAP,
-        );
-        req.byte_range = Some((10, 20));
-        let (_, result) = run(&mut net, req).await;
-        assert!(matches!(result, FetchResult::Ready(ref b) if b.len() == 20));
-        assert_eq!(seen.0.lock().unwrap().as_slice(), ["bytes=10-29"]);
-        server.abort();
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Wire helpers
-// ---------------------------------------------------------------------------
-
-#[test]
-fn the_retry_delay_doubles_from_half_a_second_to_a_cap() {
-    let in_band = |attempt: u32, raw_ms: u64| {
-        let d = drive::backoff(attempt);
-        let raw = Duration::from_millis(raw_ms);
-        assert!(
-            d >= raw.mul_f64(5.0 / 6.0) && d <= raw,
-            "attempt {attempt}: {d:?} outside [{:?}, {raw:?}]",
-            raw.mul_f64(5.0 / 6.0)
-        );
-    };
-    assert_eq!(
-        drive::backoff(1),
-        Duration::from_millis(500),
-        "the first step"
-    );
-    in_band(2, 1_000);
-    in_band(3, 2_000);
-    in_band(4, 4_000);
-    in_band(5, 4_000);
-    assert_eq!(
-        drive::backoff(0),
-        Duration::from_millis(500),
-        "attempt 0 is the first step"
-    );
-    in_band(u32::MAX, 4_000);
-}
-
-#[test]
-fn only_the_requested_part_of_a_ranged_answer_is_accepted() {
-    let body: Vec<u8> = (0..100u8).collect();
-    let ok = drive::ranged_body;
-    let partial = axum::http::StatusCode::PARTIAL_CONTENT;
-    let full = axum::http::StatusCode::OK;
-    assert_eq!(
-        ok(partial, Some((10, 19)), body[10..20].to_vec(), (10, 10)),
-        Some(body[10..20].to_vec())
-    );
-    assert_eq!(
-        ok(partial, None, body[10..20].to_vec(), (10, 10)),
-        None,
-        "a 206 without Content-Range does not name the payload (RFC 9110 §15.3.7)"
-    );
-    assert_eq!(
-        ok(partial, Some((11, 20)), body[10..20].to_vec(), (10, 10)),
-        None,
-        "Content-Range names another part"
-    );
-    assert_eq!(
-        ok(partial, Some((10, 19)), body[10..21].to_vec(), (10, 10)),
-        None,
-        "a 206 longer than the range is not the range"
-    );
-    assert_eq!(
-        ok(partial, Some((10, 19)), body[10..19].to_vec(), (10, 10)),
-        None,
-        "short body"
-    );
-    assert_eq!(
-        ok(full, None, body.clone(), (10, 10)),
-        Some(body[10..20].to_vec()),
-        "a 200 is sliced"
-    );
-    assert_eq!(
-        ok(full, None, body[..15].to_vec(), (10, 10)),
-        None,
-        "a 200 too short for the range"
-    );
-    assert_eq!(
-        ok(full, None, body.clone(), (u64::MAX, 10)),
-        None,
-        "an overflowing range is refused, not wrapped"
-    );
 }
 
 /// Cross-Period track ids must not be recycled for a different media kind: a

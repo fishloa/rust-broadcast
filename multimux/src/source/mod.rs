@@ -48,6 +48,7 @@ pub mod smooth_pull;
 pub(crate) mod split_audio;
 pub(crate) mod split_subtitle;
 pub mod srt;
+mod stitch;
 pub mod ts_http;
 pub mod ts_program;
 pub mod ts_udp;
