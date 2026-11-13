@@ -375,9 +375,10 @@ pub async fn run_srt_caller(
     if let Some(latency) = route.latency_ms {
         config.srt.latency_ms = latency;
     }
-    config.srt.handshake_timeout_ms = u64::try_from(route.timeouts.connect.as_millis())
-        .unwrap_or(u64::MAX)
-        .max(1);
+    config.srt = config
+        .srt
+        .clone()
+        .with_timeouts(config.srt.timeouts().with_handshake(route.timeouts.connect));
     config.srt.entropy_seed = Some(broadcast_client::SrtEntropySeed::new(
         crate::secure_random::entropy_seed(),
     ));
