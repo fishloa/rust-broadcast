@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- `Config::max_queued_bytes` (default 256 MiB, `DEFAULT_MAX_QUEUED_BYTES`; `0` is `InvalidConfig`): a byte budget on the queued `Event::Sample` payloads next to `max_queued_events`. A host that does not drain loses the oldest samples (counted by `dropped_events`, each burst leaving one `Event::Discontinuity`) once either bound is exceeded.
 - `Config::utc_timing_credentials` (on by default): whether a DASH session sends its credentials to a `UTCTiming` server on the session origin; a relay turns it off.
 - `Config::preemptive_basic` (off by default): send `Basic` credentials on the first request to the session origin instead of waiting for a `401` (RFC 7617).
 - `ErrorKind::refusal_status()` (the HTTP status behind a failed key, init or segment request) and `ErrorKind::is_permanent()` (content or codec errors a retry cannot fix).

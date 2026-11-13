@@ -18,8 +18,9 @@ fn the_default_config_opens() {
 #[test]
 fn every_numeric_field_that_would_silently_drop_output_is_rejected_by_name() {
     type Mutate = fn(&mut Config);
-    let cases: [(&str, Mutate); 11] = [
+    let cases: [(&str, Mutate); 12] = [
         ("max_queued_events", |c| c.max_queued_events = 0),
+        ("max_queued_bytes", |c| c.max_queued_bytes = 0),
         ("max_manifest_bytes", |c| c.max_manifest_bytes = 0),
         ("max_segment_bytes", |c| c.max_segment_bytes = 0),
         ("max_key_bytes", |c| c.max_key_bytes = 0),
@@ -55,6 +56,7 @@ fn the_smallest_valid_values_open() {
     let config = {
         let mut new_config = Config::default();
         new_config.max_queued_events = 1;
+        new_config.max_queued_bytes = 1;
         new_config.max_manifest_bytes = 1;
         new_config.max_segment_bytes = 1;
         new_config.max_key_bytes = 1;

@@ -100,6 +100,14 @@ pub const MAX_INFLIGHT_FETCHES: usize = 8;
 /// chunked response with no length (or a lying one) is bounded too.
 pub const MAX_HTTP_BODY_BYTES: usize = 64 * 1024 * 1024;
 
+/// Sample bytes a live (continuous) pull input's session may hold queued for the host: the host
+/// drains after every read, so this only bounds a stalled drain.
+pub(crate) const LIVE_EVENT_QUEUE_BYTES: usize = 32 * 1024 * 1024;
+
+/// Sample bytes a segmented pull input's session may hold queued for the host: one whole
+/// [`MAX_HTTP_BODY_BYTES`] segment being delivered while the next arrives.
+pub(crate) const SEGMENTED_EVENT_QUEUE_BYTES: usize = 2 * MAX_HTTP_BODY_BYTES;
+
 /// Default bound on how long a source's `connect()` waits for the ingest
 /// handshake to complete (TCP/TLS connect, plus any protocol handshake —
 /// RTSP DESCRIBE/SETUP/PLAY, or waiting for the first PMT/init segment) —

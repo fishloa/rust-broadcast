@@ -4,7 +4,8 @@
 //! oldest samples go and are counted. A dropped sample leaves one [`Event::Discontinuity`] in its place
 //! per burst of drops so the player re-syncs; every other event (tracks, errors, buffer events,
 //! terminal statuses, ...) is kept, so the queue is bounded by the cap plus the undroppable
-//! events a stalled host leaves unread.
+//! events a stalled host leaves unread. A byte budget on the queued sample payloads sheds the
+//! oldest samples the same way, so a few very large samples cannot outgrow the event count.
 
 use alloc::collections::VecDeque;
 
@@ -75,7 +76,16 @@ pub(crate) struct EventQueue {
     last_discontinuity: Option<u64>,
     gap_end: Option<u64>,
     cap: usize,
+    byte_budget: usize,
+    bytes: usize,
     dropped: u64,
+}
+
+fn payload_len(e: &Event) -> usize {
+    match e {
+        Event::Sample { sample, .. } => sample.data.len(),
+        _ => 0,
+    }
 }
 
 impl EventQueue {
@@ -89,8 +99,15 @@ impl EventQueue {
             last_discontinuity: None,
             gap_end: None,
             cap,
+            byte_budget: usize::MAX,
+            bytes: 0,
             dropped: 0,
         }
+    }
+
+    pub(crate) fn with_byte_budget(mut self, byte_budget: usize) -> Self {
+        self.byte_budget = byte_budget;
+        self
     }
 
     fn next_seq(&self) -> u64 {
@@ -105,9 +122,10 @@ impl EventQueue {
         if matches!(e, Event::Discontinuity) {
             self.last_discontinuity = Some(seq);
         }
+        self.bytes = self.bytes.saturating_add(payload_len(&e));
         self.slots.push_back(Some(e));
         self.live = self.live.saturating_add(1);
-        while self.live > self.cap {
+        while self.live > self.cap || self.bytes > self.byte_budget {
             let Some(victim) = self.lanes.next_victim() else {
                 break;
             };
@@ -129,6 +147,7 @@ impl EventQueue {
             match slot {
                 Some(e) => {
                     self.live = self.live.saturating_sub(1);
+                    self.bytes = self.bytes.saturating_sub(payload_len(&e));
                     if let Some(lane) = self.lanes.lane(kind_of(&e))
                         && lane.front() == Some(&seq)
                     {
@@ -146,6 +165,7 @@ impl EventQueue {
         self.lanes.clear();
         self.base = 0;
         self.live = 0;
+        self.bytes = 0;
         self.tombstones = 0;
         self.last_discontinuity = None;
         self.gap_end = None;
@@ -177,6 +197,7 @@ impl EventQueue {
         let Some(event) = self.slots.get_mut(index).and_then(Option::take) else {
             return;
         };
+        self.bytes = self.bytes.saturating_sub(payload_len(&event));
         let is_sample = kind_of(&event) == Kind::Sample;
         if is_sample {
             self.dropped = self.dropped.saturating_add(1);
@@ -389,5 +410,57 @@ mod tests {
             "slots {}",
             q.slots.len()
         );
+    }
+
+    const PAYLOAD: usize = 1000;
+
+    fn sized_sample_event(n: i64, len: usize) -> Event {
+        let mut sample = base_sample();
+        sample.pts = Some(n);
+        sample.data = vec![0u8; len].into();
+        Event::Sample {
+            track: TRACK,
+            sample,
+            join: None,
+        }
+    }
+
+    #[test]
+    fn the_byte_budget_drops_the_oldest_samples_and_counts_them() {
+        let mut q = EventQueue::new(usize::MAX).with_byte_budget(3 * PAYLOAD);
+        for n in 0..10 {
+            q.push_back(sized_sample_event(n, PAYLOAD));
+        }
+        let events = drain(&mut q);
+        let kept: Vec<i64> = events.iter().filter_map(pts_of).collect();
+        assert_eq!(kept, [7, 8, 9], "the newest samples that fit the budget");
+        assert_eq!(q.dropped(), 7);
+        assert_eq!(discontinuities(&events), 1, "one marker per burst of drops");
+    }
+
+    #[test]
+    fn drained_bytes_free_the_budget() {
+        let mut q = EventQueue::new(usize::MAX).with_byte_budget(2 * PAYLOAD);
+        for round in 0..5 {
+            q.push_back(sized_sample_event(round, PAYLOAD));
+            q.push_back(sized_sample_event(round, PAYLOAD));
+            assert_eq!(drain(&mut q).iter().filter_map(pts_of).count(), 2);
+        }
+        assert_eq!(q.dropped(), 0, "a host that keeps up never loses a sample");
+    }
+
+    #[test]
+    fn a_sample_larger_than_the_whole_budget_is_dropped_and_other_events_survive() {
+        let mut q = EventQueue::new(usize::MAX).with_byte_budget(PAYLOAD);
+        q.push_back(Event::Status(Status::Ended));
+        q.push_back(sized_sample_event(1, 2 * PAYLOAD));
+        let events = drain(&mut q);
+        assert_eq!(q.dropped(), 1);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Status(Status::Ended)))
+        );
+        assert!(events.iter().all(|e| pts_of(e).is_none()));
     }
 }

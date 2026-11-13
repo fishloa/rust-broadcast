@@ -120,6 +120,7 @@ impl RtpUdpRoute {
         let sdp = load_sdp(&self.sdp)?;
         let mut config = Config::relay();
         config.kind = SourceKind::Rtp;
+        config.max_queued_bytes = crate::source::LIVE_EVENT_QUEUE_BYTES;
         config.udp.sdp = Some(String::from_utf8(sdp).map_err(|e| MultimuxError::Sdp {
             reason: format!("parse: {e}"),
         })?);

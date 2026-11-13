@@ -92,6 +92,7 @@ pub async fn run_ts_http(
     let timeouts = route.target.timeouts;
     let mut config = Config::relay();
     config.kind = SourceKind::TsHttp;
+    config.max_queued_bytes = crate::source::LIVE_EVENT_QUEUE_BYTES;
     config.ts_http = policy_config(timeouts);
     let mut step = SessionStep::open(
         &route.target.url,

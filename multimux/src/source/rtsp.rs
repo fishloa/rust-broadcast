@@ -89,6 +89,7 @@ pub(crate) async fn run_rtsp_with(
     let timeouts = route.target.timeouts;
     let mut config = Config::relay();
     config.kind = SourceKind::Rtsp;
+    config.max_queued_bytes = crate::source::LIVE_EVENT_QUEUE_BYTES;
     config.ts_http = crate::source::ts_http::policy_config(timeouts);
     let step = SessionStep::open(
         &route.target.url,

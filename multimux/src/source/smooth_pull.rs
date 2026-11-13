@@ -59,6 +59,7 @@ fn session_config(route: &SmoothPullRoute) -> Config {
         .max(MICROS_PER_MILLI);
     let mut config = Config::relay();
     config.kind = SourceKind::Smooth;
+    config.max_queued_bytes = crate::source::SEGMENTED_EVENT_QUEUE_BYTES;
     config.request_timeout_us = read_us;
     config.segment_timeout_us = read_us;
     config.max_manifest_bytes = crate::source::MAX_HTTP_BODY_BYTES;
@@ -116,6 +117,15 @@ pub async fn run_smooth_pull(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_session_queue_is_budgeted_in_bytes() {
+        let config = session_config(&SmoothPullRoute::new("q", "http://127.0.0.1:1/Manifest"));
+        assert_eq!(
+            config.max_queued_bytes,
+            crate::source::SEGMENTED_EVENT_QUEUE_BYTES
+        );
+    }
     use crate::source::IngestTimeouts;
     use axum::Router;
     use axum::extract::{Path as AxumPath, State};
