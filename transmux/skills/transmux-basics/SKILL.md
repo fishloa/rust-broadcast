@@ -117,7 +117,7 @@ movie_timescale, target_secs)`, then `init_segment()`, `push(track_id,
 sample)` in decode order, `take_ready()`, `flush()` at end of stream, and
 `mark_discontinuity()` to flag the next cut (RFC 8216 §4.3.2.3). It cuts on the
 anchor track's sync samples (first video track, else first anchor-capable
-track). `LlHlsSegmenter` (parts), `TsHlsSegmenter` / `StreamingTsHlsSegmenter`
+track). `LlHlsSegmenter` (parts), `StreamingTsHlsSegmenter`
 (TS segments, rolling playlist) and `LlSegmenter` are the siblings.
 
 ## Repackaging (select / trim / resegment)
