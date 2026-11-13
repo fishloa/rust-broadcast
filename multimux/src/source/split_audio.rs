@@ -32,7 +32,6 @@ use transmux::TrackId;
 use transmux::ll_hls::{LlHlsSegmenter, PartCutReady, PartInfo, SegmentInfo};
 use transmux::pipeline::{Sample, TrackSpec};
 
-use crate::config::AudioTrackSelector;
 use crate::route::{AudioServing, RouteHandle};
 use hls_runtime::server::HlsOrigin;
 use media_plane::publish_queue::{PendingPublish, drain_publish_queue, part_entry};
@@ -74,13 +73,9 @@ pub(crate) fn resolve_sources(
         .collect();
     let mut mapped: Vec<(usize, TrackSpec)> = Vec::new();
     for (rendition, selector) in selectors.iter().enumerate() {
-        let found = match selector {
-            AudioTrackSelector::Index(i) => audio.get(*i as usize).copied(),
-            AudioTrackSelector::TrackId(id) => audio
-                .iter()
-                .copied()
-                .find(|t| t.track_id == TrackId::new(*id)),
-        };
+        let found = selector
+            .position(audio.iter().map(|t| t.track_id))
+            .map(|n| audio[n]);
         match found {
             Some(spec) if mapped.iter().any(|(_, m)| m.track_id == spec.track_id) => {
                 tracing::warn!(

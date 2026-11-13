@@ -91,7 +91,7 @@ pub fn route_app_from(sources: Vec<Source>) -> Router {
 
 pub fn route_app_with_profiles(
     sources: Vec<Source>,
-    profiles: Vec<multimux::config::AudioProfileOverride>,
+    profiles: Vec<transmux::audio_profile::AudioProfileOverride>,
 ) -> Router {
     let trunk = new_trunk();
     let writer = trunk.writer().expect("trunk writer");

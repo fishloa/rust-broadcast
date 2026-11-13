@@ -1543,7 +1543,7 @@ pub struct Route {
     /// (video) playlist stops carrying those tracks. Requires an `llhls`-only
     /// fMP4 route. Empty by default: output is unchanged.
     #[serde(default)]
-    pub audio_rendition_sources: Vec<AudioTrackSelector>,
+    pub audio_rendition_sources: Vec<transmux::audio_profile::AudioTrackSelector>,
     /// Per-`INSTREAM-ID` `NAME`/`LANGUAGE` overrides for the closed captions
     /// (CEA-608/708) the route's video is seen to carry (issue #1428). Empty
     /// by default: a detected stream is advertised with `NAME` = its
@@ -1556,7 +1556,7 @@ pub struct Route {
     /// here gets explicit SBR / SBR+PS signalling in its fMP4 init and HLS
     /// `CODECS`, whatever the PMT says. Empty by default: output is unchanged.
     #[serde(default)]
-    pub audio_profiles: Vec<AudioProfileOverride>,
+    pub audio_profiles: Vec<transmux::audio_profile::AudioProfileOverride>,
     /// Serve the teletext subtitle pages of the route's input as WebVTT
     /// `EXT-X-MEDIA TYPE=SUBTITLES` renditions (issue #1428): one per page the
     /// PMT's teletext descriptor lists as a subtitle page or a subtitle page
@@ -2103,78 +2103,6 @@ impl ProgramDateTimeSource {
 }
 
 broadcast_common::impl_spec_display!(ProgramDateTimeSource);
-
-/// Which source audio track feeds a separate audio rendition (issue #1428
-/// slice 2b). `Index` is the zero-based ordinal among the program's
-/// fMP4-muxable audio tracks in the order the source announced them;
-/// `TrackId` is the source track id itself.
-#[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AudioTrackSelector {
-    /// Ordinal among the program's audio tracks.
-    Index(u32),
-    /// Source track id.
-    TrackId(u32),
-}
-
-impl AudioTrackSelector {
-    /// The wire/label string for this selector's kind.
-    pub fn name(&self) -> &'static str {
-        match self {
-            AudioTrackSelector::Index(_) => "index",
-            AudioTrackSelector::TrackId(_) => "track_id",
-        }
-    }
-}
-
-broadcast_common::impl_spec_display!(AudioTrackSelector);
-
-/// HE-AAC flavour an operator declares for one audio track of an ADTS source
-/// (issue #1428). The ADTS header states only the AAC-LC core, so transmux
-/// cannot tell HE-AAC from plain AAC-LC without decoding; this states it
-/// instead, and the track's `AudioSpecificConfig` and `CODECS` then carry
-/// explicit SBR (`mp4a.40.5`) or SBR+PS (`mp4a.40.29`) signalling, as Apple's
-/// HLS authoring rules require.
-#[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum AudioProfile {
-    /// HE-AAC v1: AAC-LC core + SBR.
-    HeAac,
-    /// HE-AAC v2: AAC-LC core + SBR + Parametric Stereo.
-    HeAacV2,
-}
-
-impl AudioProfile {
-    /// The wire/label string (the config value).
-    pub fn name(&self) -> &'static str {
-        match self {
-            AudioProfile::HeAac => "he-aac",
-            AudioProfile::HeAacV2 => "he-aac-v2",
-        }
-    }
-
-    pub(crate) fn he_aac(self) -> transmux::HeAacProfile {
-        match self {
-            AudioProfile::HeAac => transmux::HeAacProfile::V1,
-            AudioProfile::HeAacV2 => transmux::HeAacProfile::V2,
-        }
-    }
-}
-
-broadcast_common::impl_spec_display!(AudioProfile);
-
-/// One per-track [`AudioProfile`] declaration of a [`Route`]: `track` picks
-/// the audio track exactly as an `audio_rendition_sources` entry does. An
-/// override beats whatever the PMT `AAC_descriptor` says.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
-pub struct AudioProfileOverride {
-    /// The audio track the profile applies to.
-    pub track: AudioTrackSelector,
-    /// The declared profile.
-    pub audio_profile: AudioProfile,
-}
 
 /// multimux runtime configuration.
 #[derive(Debug, Clone, Deserialize)]
