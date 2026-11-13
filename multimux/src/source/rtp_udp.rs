@@ -1,56 +1,22 @@
-//! Raw RTP-over-UDP ingest source (issue #663 P3a; ported onto the
-//! media-plane ingress traits at plan step 5a) — no RTSP control plane.
+//! Raw RTP-over-UDP ingest source (issue #663 P3a) — no RTSP control plane.
 //!
-//! The stream's codec/fmtp is described by an SDP supplied out-of-band
-//! (inline config text, or an `@path` file reference — see
-//! [`crate::source::sdp::load_sdp`]); this module owns only the UDP socket
-//! transport (bind + optional multicast join, via the crate-private
-//! `crate::source::udp::bind_udp` helper). The SDP parse itself is the *same*
-//! [`crate::source::sdp::parse_tracks_multimux`] helper reads the SDP through
-//! `transmux::sdp_track`, the interpretation the RTSP source's session uses for its
-//! DESCRIBE body, and RTP
-//! depayload is [`transmux::RtpStreamDepacketiser`] (RFC 6184 H.264 / RFC
-//! 3640 AAC), exactly as the RTSP source uses it.
-//!
-//! # Sans-IO reshape: zero executor bridge, same reasoning as `ts_udp`
-//!
-//! Exactly like [`crate::source::ts_udp`], UDP is connectionless: binding the
-//! socket is a purely local operation, so [`RtpUdpDialer::dial`] performs
-//! **no I/O** and immediately queues [`SessionEvent::Established`]. There is
-//! no PMT-equivalent wait either — the SDP is already known at construction
-//! time, so [`RtpUdpDialer::dial`] can announce `NewProgram` with the full
-//! track set the very first time it is polled, with no bytes fed at all.
-//! [`run_rtp_udp`] is the multimux-side adapter that owns the real
-//! `UdpSocket` and feeds it, mirroring `ts_udp::run_ts_udp`.
-//!
-//! # Track routing
-//!
-//! RTSP distinguishes tracks by interleaved TCP channel (out-of-band framing
-//! SETUP negotiates). A raw RTP/UDP source has no such framing — every
-//! packet just arrives on the bound socket — so tracks are instead
-//! distinguished by the RTP header's payload-type (PT) field (RFC 3550
-//! §5.1), matched back to the payload type each SDP media declared (`m=<kind>
-//! <port> RTP/AVP <pt>`, captured as [`crate::source::TrackInit::payload_type`]).
-//! A packet whose PT does not match any configured track is silently dropped.
+//! The stream's codec/fmtp is described by an SDP supplied out-of-band (inline config text, or an
+//! `@path` file reference — see [`crate::source::sdp::load_sdp`]). The SDP goes to a relay-mode
+//! [`broadcast_client::Session`] (`UdpConfig::sdp`) through the shared session host
+//! (`crate::source::client_host`): the session reads it with `transmux::sdp_track`, routes each
+//! packet to its track by RTP payload type (RFC 3550 §5.1) and depayloads it
+//! (RFC 6184 H.264 / RFC 3640 AAC); the host binds the socket (with an optional multicast join)
+//! and feeds it datagrams.
 
-use std::collections::HashMap;
-use std::time::Duration;
-use transmux::TrackId;
+use std::convert::Infallible;
 
-use broadcast_common::{Demand, Parse, Stage, Timestamp};
-use media_plane::ingress::{Dialer, IngestSession, ProgramId, SessionEvent};
-use media_plane::trunk::RetentionClass;
+use broadcast_client::{Config, SourceKind};
 use tokio::net::UdpSocket;
 
-use crate::error::{MultimuxError, Result};
-use crate::source::sdp::{load_sdp, parse_tracks_multimux};
-use crate::source::udp::bind_udp;
-use crate::source::{IngestTimeouts, Source, TrackInit};
-use transmux::{RtpStreamDepacketiser, RtpStreamTrack};
-
-/// Max UDP datagram this source reads in one `recv` — comfortably above the
-/// largest legal UDP payload (65 507 bytes over IPv4).
-const MAX_UDP_DATAGRAM: usize = 65_536;
+use crate::error::MultimuxError;
+use crate::source::client_host::{EventIngest, SessionLabels, SessionStep, UdpHost};
+use crate::source::sdp::load_sdp;
+use crate::source::{IngestTimeouts, Source};
 
 /// A raw RTP-over-UDP route: no control plane — a bind address and an
 /// out-of-band SDP describing the codec/fmtp. Replaces the old (pre-5a)
@@ -65,6 +31,9 @@ pub struct RtpUdpRoute {
     /// pre-SP1.6 bind.
     socket: crate::source::udp::UdpBindOptions,
     timeouts: IngestTimeouts,
+    /// A socket bound by the caller: used once by the first attempt, so a test can own the exact
+    /// port without a reserve-then-rebind race. `None` (the production shape) binds `addr`.
+    prebound: std::sync::Arc<std::sync::Mutex<Option<UdpSocket>>>,
 }
 
 impl std::fmt::Debug for RtpUdpRoute {
@@ -96,7 +65,33 @@ impl RtpUdpRoute {
             multicast_group,
             socket: crate::source::udp::UdpBindOptions::default(),
             timeouts: IngestTimeouts::default(),
+            prebound: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
+    }
+
+    /// Builds a route over an already-bound UDP socket (the mirror of
+    /// `TsUdpRoute::with_socket`). The socket is used verbatim, so a multicast group cannot be
+    /// joined on it: [`run_rtp_udp`] fails if one is set.
+    pub fn with_socket(name: impl Into<String>, sdp: impl Into<String>, socket: UdpSocket) -> Self {
+        let addr = socket
+            .local_addr()
+            .map_or_else(|_| "127.0.0.1:0".to_string(), |a| a.to_string());
+        RtpUdpRoute {
+            name: name.into(),
+            addr,
+            sdp: sdp.into(),
+            multicast_group: None,
+            socket: crate::source::udp::UdpBindOptions::default(),
+            timeouts: IngestTimeouts::default(),
+            prebound: std::sync::Arc::new(std::sync::Mutex::new(Some(socket))),
+        }
+    }
+
+    /// Joins `group` on the route's own bind.
+    #[must_use]
+    pub fn with_multicast_group(mut self, group: impl Into<String>) -> Self {
+        self.multicast_group = Some(group.into());
+        self
     }
 
     /// Set the UDP socket options applied at bind (SP1.6).
@@ -120,235 +115,30 @@ impl Source for RtpUdpRoute {
     }
 }
 
-/// A live raw RTP-over-UDP [`IngestSession`]: no socket, no I/O — just the
-/// depacketiser plus payload-type routing. [`run_rtp_udp`] is the
-/// multimux-side adapter that owns the real `UdpSocket` and feeds it.
-pub struct RtpUdpIngestSession {
-    depacketiser: RtpStreamDepacketiser,
-    pt_to_track: HashMap<u8, TrackId>,
-    pending: std::collections::VecDeque<SessionEvent>,
-    announced: bool,
-    /// Packets dropped for failing depayload (malformed RTP header, CSRC
-    /// overflow, …) — counted rather than failing the session (issue
-    /// r07-C8).
-    depay_dropped: u64,
-}
-
-impl RtpUdpIngestSession {
-    fn new(tracks: Vec<TrackInit>) -> Self {
-        let depacketiser = RtpStreamDepacketiser::new(
-            tracks
-                .iter()
-                .map(|t| RtpStreamTrack::new(t.track_id, t.kind, t.config.clone(), t.clock_rate))
-                .collect(),
-        );
-        let pt_to_track: HashMap<u8, TrackId> = tracks
-            .iter()
-            .map(|t| (t.payload_type, t.track_id))
-            .collect();
-        RtpUdpIngestSession {
-            depacketiser,
-            pt_to_track,
-            pending: std::collections::VecDeque::from(vec![SessionEvent::Established]),
-            announced: false,
-            depay_dropped: 0,
-        }
-    }
-
-    /// Total packets dropped so far for failing depayload.
-    pub fn depay_dropped(&self) -> u64 {
-        self.depay_dropped
-    }
-
-    /// The single program this session ever announces: the SDP-declared
-    /// track set, known entirely at construction time (unlike TS-UDP's PMT
-    /// wait), so `NewProgram` fires on the very first `poll()` with no bytes
-    /// fed at all.
-    fn announce_program_once(&mut self) {
-        if !self.announced {
-            self.announced = true;
-            let specs = self.depacketiser.track_specs();
-            self.pending.push_back(SessionEvent::NewProgram {
-                program: ProgramId(0),
-                tracks: specs,
-            });
-        }
+impl RtpUdpRoute {
+    fn session_config(&self) -> Result<Config, MultimuxError> {
+        let sdp = load_sdp(&self.sdp)?;
+        let mut config = Config::relay();
+        config.kind = SourceKind::Rtp;
+        config.udp.sdp = Some(String::from_utf8(sdp).map_err(|e| MultimuxError::Sdp {
+            reason: format!("parse: {e}"),
+        })?);
+        crate::source::udp::apply_socket_options(
+            &mut config,
+            self.multicast_group.as_deref(),
+            &self.socket,
+        )?;
+        Ok(config)
     }
 }
 
-impl Stage for RtpUdpIngestSession {
-    type In<'a> = &'a [u8];
-    type Out = SessionEvent;
-    /// A malformed/unroutable datagram is silently dropped (mirrors the
-    /// pre-5a session's "unrouted payload type -> ignored" handling) — a
-    /// depayload failure from a routed track is also just a dropped packet
-    /// (issue r07-C8), so `feed` never actually returns `Err` today; this
-    /// crate's own error type is kept rather than `Infallible` since a
-    /// future genuinely-fatal condition may still need one.
-    type Error = MultimuxError;
-
-    fn feed(&mut self, input: &[u8], _now: Timestamp) -> core::result::Result<(), MultimuxError> {
-        self.announce_program_once();
-        let Some(track_id) =
-            payload_type_of(input).and_then(|pt| self.pt_to_track.get(&pt).copied())
-        else {
-            return Ok(());
-        };
-        let samples = match self
-            .depacketiser
-            .push(TrackId::new(track_id.value()), input)
-        {
-            Ok(samples) => samples,
-            Err(e) => {
-                self.depay_dropped += 1;
-                tracing::debug!(%track_id, error = %e, "rtp/udp depayload failed; dropping packet");
-                return Ok(());
-            }
-        };
-        for sample in samples {
-            self.pending.push_back(SessionEvent::Sample {
-                program: ProgramId(0),
-                track_id,
-                retention: RetentionClass::Timed,
-                sample,
-            });
-        }
-        Ok(())
-    }
-
-    fn poll(&mut self) -> Option<SessionEvent> {
-        self.pending.pop_front()
-    }
-
-    /// End of input: flush every track's depacketiser. At end of stream a
-    /// partially-assembled access unit (the packets since the last marker /
-    /// timestamp change) and the one-AU-late `pending` sample (held only to
-    /// measure its duration against the *next* AU) are complete by
-    /// definition — without this flush the last frame of every track is
-    /// never emitted. Idempotent: a second flush emits nothing.
-    fn finish(&mut self) -> core::result::Result<(), MultimuxError> {
-        for spec in self.depacketiser.track_specs() {
-            let track_id = spec.track_id;
-            match self.depacketiser.flush(track_id) {
-                Ok(samples) => {
-                    for sample in samples {
-                        self.pending.push_back(SessionEvent::Sample {
-                            program: ProgramId(0),
-                            track_id,
-                            retention: RetentionClass::Timed,
-                            sample,
-                        });
-                    }
-                }
-                Err(e) => {
-                    self.depay_dropped += 1;
-                    tracing::debug!(%track_id, error = %e, "rtp/udp end-of-input flush failed");
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn demand(&self) -> Demand {
-        Demand::new(MAX_UDP_DATAGRAM)
-    }
-}
-
-impl IngestSession for RtpUdpIngestSession {
-    type Request = bytes::Bytes;
-}
-
-/// Extracts the RTP payload-type field (RFC 3550 §5.1, header byte 1 bits
-/// `[6:0]`) from a wire packet, or `None` if it's too short to even carry a
-/// fixed RTP header.
-fn payload_type_of(packet: &[u8]) -> Option<u8> {
-    rtp_packet::RtpPacket::parse(packet)
-        .ok()
-        .map(|rtp| rtp.payload_type)
-}
-
-/// Constructs an [`RtpUdpIngestSession`] from the route's out-of-band SDP —
-/// the only fallible local step (parsing the SDP), performed with **no
-/// I/O**.
-pub struct RtpUdpDialer {
-    sdp: String,
-}
-
-impl RtpUdpDialer {
-    fn new(sdp: String) -> Self {
-        RtpUdpDialer { sdp }
-    }
-}
-
-impl Dialer for RtpUdpDialer {
-    type Session = RtpUdpIngestSession;
-    type Error = MultimuxError;
-
-    fn dial(&mut self) -> core::result::Result<RtpUdpIngestSession, MultimuxError> {
-        let sdp_bytes = load_sdp(&self.sdp)?;
-        let tracks = parse_tracks_multimux(&sdp_bytes)?;
-        Ok(RtpUdpIngestSession::new(tracks))
-    }
-}
-
-/// Binds `route`'s UDP socket — see `ts_udp::bind` for why this is split out
-/// of `dial()`/`run_rtp_udp`.
-pub async fn bind(route: &RtpUdpRoute) -> Result<UdpSocket> {
-    bind_udp(
-        &route.addr,
-        route.multicast_group.as_deref(),
-        route.socket.clone(),
-    )
-    .await
-}
-
-/// Constructs (`dial()`, no I/O), binds the socket, and drives an
-/// [`RtpUdpIngestSession`] through [`media_plane::ingress::IngestDriver`]
-/// until a read stall — the new drive loop, replacing the pre-5a
-/// `RtpUdpSource::connect`/`RtpUdpSession::next_samples` pair.
+/// Opens `route`'s socket through a relay-mode [`broadcast_client::Session`] carrying the route's
+/// SDP and drives it until a read stall (bounded by [`IngestTimeouts::read`]). Returns the error
+/// that ended the loop; the caller (the route supervisor) reconnects on it.
 ///
-/// `route_handle` is the driver-backed registry side of issue #805 task 2 —
-/// see `rtsp::run_rtsp`'s own doc for what
-/// `crate::source::report_driver_progress` does with it each iteration.
-/// The raw RTP-over-UDP source's
-/// [`IngestStep`](crate::source::driver::IngestStep): one bounded datagram
-/// receive, feeding the driver.
-pub(crate) struct RtpUdpStep {
-    pub socket: UdpSocket,
-    pub buf: Vec<u8>,
-    pub start: tokio::time::Instant,
-}
-
-impl crate::source::driver::IngestStep<RtpUdpIngestSession> for RtpUdpStep {
-    async fn step(
-        &mut self,
-        driver: &mut media_plane::ingress::IngestDriver<RtpUdpIngestSession>,
-        window: Duration,
-    ) -> crate::source::driver::StepOutcome {
-        use crate::source::driver::StepOutcome;
-        match tokio::time::timeout(window, self.socket.recv(&mut self.buf)).await {
-            Ok(Ok(n)) => {
-                let now = Timestamp::from_instant(
-                    self.start.into_std(),
-                    tokio::time::Instant::now().into_std(),
-                );
-                driver.feed(&self.buf[..n], now);
-                StepOutcome::Received
-            }
-            Ok(Err(e)) => StepOutcome::Failed(MultimuxError::Connect {
-                reason: format!("udp recv: {e}"),
-            }),
-            Err(_) => StepOutcome::Idle,
-        }
-    }
-
-    fn stalled(&self, read: Duration) -> MultimuxError {
-        MultimuxError::Connect {
-            reason: format!("rtp/udp recv: no data within {read:?}"),
-        }
-    }
-}
-
+/// `route_handle` is the driver-backed registry side of issue #805 task 2 — see
+/// `rtsp::run_rtsp`'s own doc for what `crate::source::report_driver_progress` does with it each
+/// iteration.
 pub async fn run_rtp_udp(
     route: &RtpUdpRoute,
     trunk_config: media_plane::trunk::TrunkConfig,
@@ -356,28 +146,46 @@ pub async fn run_rtp_udp(
     route_handle: &std::sync::Arc<crate::route::RouteHandle>,
     cancel: tokio_util::sync::CancellationToken,
 ) -> MultimuxError {
-    let socket = match bind(route).await {
-        Ok(s) => s,
-        Err(e) => return e,
+    let prebound = crate::source::udp::take_prebound(&route.prebound);
+    if prebound.is_some()
+        && let Some(group) = route.multicast_group.as_deref()
+    {
+        return MultimuxError::ConfigInvalid {
+            field: "routes.input.multicast_group",
+            reason: format!(
+                "a pre-bound socket cannot join multicast_group {group:?}; drop the group, \
+                 or let the route bind its own addr"
+            ),
+        };
+    }
+    let (url, config) = match (
+        crate::source::udp::session_url("rtp", &route.addr, route.multicast_group.as_deref()),
+        route.session_config(),
+    ) {
+        (Ok(url), Ok(config)) => (url, config),
+        (Err(e), _) | (_, Err(e)) => return e,
     };
-    let mut dialer = RtpUdpDialer::new(route.sdp.clone());
-    let session = match dialer.dial() {
-        Ok(s) => s,
+    let step = SessionStep::open(
+        &url,
+        config,
+        None,
+        SessionLabels::new("rtp/udp", route.timeouts),
+        std::sync::Arc::clone(route_handle),
+        false,
+    );
+    let mut step = match step {
+        Ok(step) => step.with_udp(UdpHost {
+            prebound,
+            options: route.socket.clone(),
+        }),
         Err(e) => return e,
     };
     let driver = media_plane::ingress::IngestDriver::new(
-        session,
+        EventIngest::new(),
         trunk_config,
         handshake,
-        // Bound the Trunks one session may mint (media-plane #803). Routes here
-        // carry a single programme today; the default ceiling covers an MPTS.
         media_plane::DEFAULT_MAX_PROGRAMS,
     );
-    let mut step = RtpUdpStep {
-        socket,
-        buf: vec![0u8; MAX_UDP_DATAGRAM],
-        start: tokio::time::Instant::now(),
-    };
     let mut progress = crate::source::DriverProgress::new();
     let mut sink = tokio::io::sink();
     crate::source::driver::run_ingest_scaffold(
@@ -389,7 +197,7 @@ pub async fn run_rtp_udp(
         crate::source::driver::DEFAULT_WRITE_TIMEOUT,
         &mut sink,
         &mut step,
-        |e| e,
+        |never: Infallible| match never {},
     )
     .await
 }
@@ -397,24 +205,13 @@ pub async fn run_rtp_udp(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::source::driver::{IngestStep, StepOutcome};
-    use media_plane::ingress::{HandshakePolicy, HealthState, IngestDriver};
-    use media_plane::trunk::TrunkConfig;
-    use std::num::NonZeroUsize;
+    use crate::source::ts_program::test_support::{handshake, trunk_config};
+    use media_plane::trunk::SampleCursorItem;
+    use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
 
     const SPROP: &str = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
-
-    fn nz(n: usize) -> NonZeroUsize {
-        NonZeroUsize::new(n).unwrap()
-    }
-
-    fn trunk_config() -> TrunkConfig {
-        TrunkConfig::new(nz(64), nz(16), nz(8), nz(8), nz(8))
-    }
-
-    fn handshake() -> HandshakePolicy {
-        HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX))
-    }
+    const TRUNK_WAIT: Duration = Duration::from_secs(10);
 
     fn sdp_body() -> String {
         format!(
@@ -447,279 +244,163 @@ mod tests {
         pkt
     }
 
-    fn count_samples(session: &mut RtpUdpIngestSession) -> usize {
-        let mut n = 0;
-        while let Some(ev) = session.poll() {
-            if matches!(ev, SessionEvent::Sample { .. }) {
-                n += 1;
+    fn route_handle() -> std::sync::Arc<crate::route::RouteHandle> {
+        std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4))
+    }
+
+    /// Runs `route` until `want` samples are in its Trunk (or the senders finish), then cancels.
+    async fn run_until(
+        route: RtpUdpRoute,
+        addr: std::net::SocketAddr,
+        datagrams: Vec<Vec<u8>>,
+        want: usize,
+    ) -> (usize, MultimuxError) {
+        let handle = route_handle();
+        let cancel = CancellationToken::new();
+        let run = tokio::spawn({
+            let handle = std::sync::Arc::clone(&handle);
+            let cancel = cancel.clone();
+            async move { run_rtp_udp(&route, trunk_config(), handshake(), &handle, cancel).await }
+        });
+        let trunk = tokio::time::timeout(TRUNK_WAIT, handle.await_first_trunk())
+            .await
+            .expect("the SDP-declared programme is announced before any packet");
+        let sender = UdpSocket::bind("127.0.0.1:0").await.expect("bind sender");
+        let send = tokio::spawn(async move {
+            for _ in 0..200 {
+                for d in &datagrams {
+                    sender.send_to(d, addr).await.expect("send RTP packet");
+                }
+                tokio::task::yield_now().await;
+            }
+        });
+        let mut cursor = trunk.subscribe_from_backlog();
+        let mut seen = 0usize;
+        while seen < want && !send.is_finished() {
+            match cursor.poll() {
+                Some(SampleCursorItem::Timed { .. }) => seen += 1,
+                Some(_) => {}
+                None => tokio::task::yield_now().await,
             }
         }
-        n
+        cancel.cancel();
+        send.abort();
+        let ended = tokio::time::timeout(TRUNK_WAIT, run)
+            .await
+            .expect("a cancelled run must stop")
+            .expect("run task");
+        (seen, ended)
     }
 
-    /// End of input must flush the trailing AU: one marker-terminated AU
-    /// (held one-AU-late for its duration) plus one AU with no marker yet
-    /// (still in the reassembly buffer). Before the flush `finish` was a
-    /// no-op and neither was ever emitted.
-    #[test]
-    fn finish_flushes_pending_and_partial_trailing_access_units() {
-        let mut dialer = RtpUdpDialer::new(sdp_body());
-        let mut session = dialer.dial().unwrap();
-        session
-            .feed(
-                &h264_rtp_packet(1, 1000, true, &[0x65, 0xAA]),
-                Timestamp::ZERO,
-            )
-            .unwrap();
-        session
-            .feed(
-                &h264_rtp_packet(2, 4000, false, &[0x41, 0xBB]),
-                Timestamp::ZERO,
-            )
-            .unwrap();
-        assert_eq!(count_samples(&mut session), 0, "nothing emitted yet");
-        session.finish().unwrap();
-        assert_eq!(count_samples(&mut session), 2, "both trailing AUs flushed");
-        session.finish().unwrap();
-        assert_eq!(count_samples(&mut session), 0, "finish is idempotent");
-    }
-
-    #[test]
-    fn payload_type_of_extracts_pt_ignoring_marker_bit() {
-        let pkt = h264_rtp_packet(1, 1000, true, &[0x65]);
-        assert_eq!(payload_type_of(&pkt), Some(96));
-        let pkt = h264_rtp_packet(1, 1000, false, &[0x65]);
-        assert_eq!(payload_type_of(&pkt), Some(96));
-    }
-
-    #[test]
-    fn payload_type_of_rejects_short_packet() {
-        assert_eq!(payload_type_of(&[0x80, 0x60]), None);
-    }
-
-    /// Drives an `RtpUdpIngestSession` directly (no socket): dial() performs
-    /// no I/O, and `NewProgram` for the single SDP-declared program fires on
-    /// the very first `feed()` — before any RTP packet has even been routed
-    /// — since the whole track set is already known from the SDP.
-    ///
-    /// MUTATION-CHECKED: change `announce_program_once`'s guard from
-    /// `!self.announced` to always-true and this test's second assertion
-    /// (`trunk(ProgramId(0))` staying the *same* `Arc` across two feeds)
-    /// still passes only because `IngestDriver::drain`'s `NewProgram` arm
-    /// always calls `Trunk::new` — a duplicate `NewProgram` would silently
-    /// replace program 0's `Trunk` (and its writer) out from under any
-    /// subscriber; removing the guard entirely () therefore changes
-    /// behaviour on the second feed, which the next test below drives.
-    #[test]
-    fn established_and_new_program_fire_before_any_packet() {
-        let mut dialer = RtpUdpDialer::new(sdp_body());
-        let session = dialer.dial().expect("dial: local SDP parse only, no I/O");
-        let mut driver = IngestDriver::new(
-            session,
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
-        );
-        assert!(matches!(driver.health(), HealthState::Establishing));
-
-        // A feed with an unroutable payload type still drives Established +
-        // NewProgram (the "before any packet is routed" property) even
-        // though the packet itself yields no sample.
-        let mut foreign = h264_rtp_packet(1, 1000, true, &[0x65]);
-        foreign[1] = 200; // PT never declared in the SDP
-        driver.feed(&foreign, Timestamp::ZERO);
-        assert!(matches!(driver.health(), HealthState::Live));
-        assert!(
-            driver.trunk(ProgramId(0)).is_some(),
-            "the single SDP-declared program must be announced on the first feed"
-        );
-    }
-
-    /// A duplicate `NewProgram` from a second feed would (per
-    /// `IngestDriver::drain`) mint a *fresh* `Trunk`, replacing the first —
-    /// this test proves `announce_program_once`'s guard prevents that: the
-    /// same `Trunk` (by pointer) is still there after a second feed.
-    #[test]
-    fn second_feed_does_not_re_announce_the_program() {
-        let mut dialer = RtpUdpDialer::new(sdp_body());
-        let session = dialer.dial().unwrap();
-        let mut driver = IngestDriver::new(
-            session,
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
-        );
-
-        let idr = h264_rtp_packet(1, 1000, true, &[0x65, 0xAA]);
-        driver.feed(&idr, Timestamp::ZERO);
-        let first_ptr = std::sync::Arc::as_ptr(driver.trunk(ProgramId(0)).unwrap());
-
-        let next = h264_rtp_packet(2, 4000, true, &[0x41, 0xBB]);
-        driver.feed(&next, Timestamp::from_nanos(1));
-        let second_ptr = std::sync::Arc::as_ptr(driver.trunk(ProgramId(0)).unwrap());
-
-        assert_eq!(
-            first_ptr, second_ptr,
-            "a second feed must not re-announce (and thus replace) program 0's Trunk"
-        );
-    }
-
-    /// Flips the RTP version field (header byte 0, top two bits — RFC 3550
-    /// §5.1) from the required `2` to `1`, keeping the payload-type byte
-    /// (and everything else) intact so the packet still routes to the same
-    /// track — exactly the malformed-but-routable datagram issue r07-C8
-    /// describes.
-    fn with_invalid_rtp_version(mut pkt: Vec<u8>) -> Vec<u8> {
-        pkt[0] = (pkt[0] & 0x3F) | 0x40; // version=1, csrc_count/padding/extension bits kept 0
-        pkt
-    }
-
-    /// PRE-FIX FAILURE OBSERVED: `assert!(matches!(driver.health(),
-    /// HealthState::Live), ..)` panicked after the malformed packet with
-    /// `Failed(..)` with "invalid rtp_version: must be 2 (value:
-    /// 0x1)" — the old code mapped the depayload error straight to
-    /// `Err`, and `IngestDriver::feed` turns that into a permanent freeze
-    /// (`feed` becomes a no-op once `!health.is_running()`), so the two
-    /// packets fed afterward were silently dropped instead of depayloaded.
-    #[test]
-    fn malformed_packet_is_dropped_and_the_session_keeps_running() {
-        let mut dialer = RtpUdpDialer::new(sdp_body());
-        let session = dialer.dial().unwrap();
-        let mut driver = IngestDriver::new(
-            session,
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
-        );
-
-        let idr = h264_rtp_packet(1, 1000, true, &[0x65, 0xAA]);
-        driver.feed(&idr, Timestamp::ZERO);
-        assert!(matches!(driver.health(), HealthState::Live));
-        let mut cursor = driver.trunk(ProgramId(0)).unwrap().subscribe();
-
-        // The malformed packet's header never parses far enough to reach
-        // sequence-number admission at all (`push` rejects it before
-        // `SeqState::admit` runs), so it never occupies a real sequence
-        // slot; `non1` below continues the sequence right where `idr` left
-        // off (seq 2, not 3) so the dropped datagram leaves no reorder-buffer
-        // hole for the depacketiser's own (unrelated) gap logic to open.
-        let malformed = with_invalid_rtp_version(h264_rtp_packet(99, 4000, true, &[0x41, 0xBB]));
-        driver.feed(&malformed, Timestamp::from_nanos(1));
-        assert!(
-            matches!(driver.health(), HealthState::Live),
-            "a malformed datagram must not fail the session: {:?}",
-            driver.health()
-        );
-
-        let non1 = h264_rtp_packet(2, 4000, true, &[0x41, 0xBB]);
-        driver.feed(&non1, Timestamp::from_nanos(2));
-        let non2 = h264_rtp_packet(3, 7000, true, &[0x41, 0xCC]);
-        driver.feed(&non2, Timestamp::from_nanos(3));
-
-        let mut samples_seen = 0usize;
-        while cursor.poll().is_some() {
-            samples_seen += 1;
-        }
-        assert!(
-            samples_seen >= 2,
-            "packets fed after the malformed datagram must still be depayloaded and delivered"
-        );
-    }
-
-    fn driver() -> IngestDriver<RtpUdpIngestSession> {
-        let mut dialer = RtpUdpDialer::new(sdp_body());
-        IngestDriver::new(
-            dialer.dial().unwrap(),
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
-        )
-    }
-
-    fn step(socket: UdpSocket) -> RtpUdpStep {
-        RtpUdpStep {
-            socket,
-            buf: vec![0u8; MAX_UDP_DATAGRAM],
-            start: tokio::time::Instant::now(),
-        }
-    }
-
-    /// End-to-end loopback: real socket I/O, real depayloaded samples land
-    /// in the Trunk.
     #[tokio::test]
     async fn loopback_udp_rtp_samples_land_in_trunk() {
-        let route = RtpUdpRoute::new("cam-udp", "127.0.0.1:0", sdp_body(), None);
-        let socket = bind(&route).await.expect("bind");
-        let local_addr = socket.local_addr().expect("local addr");
-        let mut step = step(socket);
-        let mut driver = driver();
-
-        let sender = UdpSocket::bind("127.0.0.1:0").await.expect("bind sender");
+        let socket = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
+        let addr = socket.local_addr().expect("local addr");
+        let route = RtpUdpRoute::with_socket("cam-udp", sdp_body(), socket);
         let idr = [0x65u8, 0xAA, 0xBB];
         let non1 = [0x41u8, 0xAA, 0xBB];
         let non2 = [0x41u8, 0xCC, 0xDD];
         let aus: [(u32, &[u8]); 3] = [(1000, &idr), (4000, &non1), (7000, &non2)];
-        for (i, (ts, nal)) in aus.into_iter().enumerate() {
-            let pkt = h264_rtp_packet(1 + i as u16, ts, true, nal);
-            sender
-                .send_to(&pkt, local_addr)
-                .await
-                .expect("send RTP packet");
-        }
+        let datagrams = aus
+            .into_iter()
+            .enumerate()
+            .map(|(i, (ts, nal))| h264_rtp_packet(1 + i as u16, ts, true, nal))
+            .collect();
+        let (seen, ended) = run_until(route, addr, datagrams, 2).await;
+        assert!(seen >= 2, "expected depayloaded samples in the Trunk");
+        assert!(matches!(ended, MultimuxError::Connect { .. }), "{ended:?}");
+    }
 
-        let mut cursor = None;
-        let mut samples_seen = 0usize;
-        for _ in 0..10 {
-            // HANG GUARD (issue #826): per-iteration recv timeout within a
-            // 10-iteration loopback test. All 3 RTP packets arrive within
-            // ~ms of each other over loopback UDP, so this recv normally
-            // resolves immediately. Only job is to prevent spinning on an
-            // empty socket, not a timing claim.
-            assert!(
-                matches!(
-                    step.step(&mut driver, Duration::from_secs(60)).await,
-                    StepOutcome::Received
-                ),
-                "recv within hang guard"
-            );
-            if cursor.is_none() {
-                cursor = driver.trunk(ProgramId(0)).map(|t| t.subscribe());
-            }
-            if let Some(c) = cursor.as_mut() {
-                while c.poll().is_some() {
-                    samples_seen += 1;
-                }
-            }
-            if samples_seen >= 2 {
-                break;
-            }
-        }
+    #[tokio::test]
+    async fn a_malformed_datagram_does_not_stop_the_stream() {
+        let socket = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
+        let addr = socket.local_addr().expect("local addr");
+        let route = RtpUdpRoute::with_socket("cam-udp", sdp_body(), socket);
+        let mut malformed = h264_rtp_packet(99, 4000, true, &[0x41, 0xBB]);
+        malformed[0] = (malformed[0] & 0x3F) | 0x40;
+        let datagrams = vec![
+            h264_rtp_packet(1, 1000, true, &[0x65, 0xAA]),
+            malformed,
+            h264_rtp_packet(2, 4000, true, &[0x41, 0xBB]),
+            h264_rtp_packet(3, 7000, true, &[0x41, 0xCC]),
+        ];
+        let (seen, _) = run_until(route, addr, datagrams, 2).await;
         assert!(
-            samples_seen >= 2,
-            "expected depayloaded samples in the Trunk"
+            seen >= 2,
+            "packets after the malformed datagram must still be depayloaded and delivered"
         );
     }
 
-    /// A source that never sends any RTP packet must report itself idle, and
-    /// the read deadline must become a recoverable error — issue #663 P5.2,
-    /// preserved from the pre-5a test.
     #[tokio::test]
-    async fn step_reports_idle_and_stalls_when_source_is_silent() {
-        let route = RtpUdpRoute::new("cam-udp", "127.0.0.1:0", sdp_body(), None);
-        let mut step = step(bind(&route).await.expect("bind"));
-        let mut driver = driver();
+    async fn a_source_that_never_sends_fails_at_the_read_timeout() {
+        const READ_TIMEOUT: Duration = Duration::from_millis(300);
+        let socket = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
+        let route =
+            RtpUdpRoute::with_socket("cam-udp", sdp_body(), socket).with_timeouts(IngestTimeouts {
+                connect: Duration::from_secs(5),
+                read: READ_TIMEOUT,
+            });
+        let error = tokio::time::timeout(
+            Duration::from_secs(10),
+            run_rtp_udp(
+                &route,
+                trunk_config(),
+                handshake(),
+                &route_handle(),
+                CancellationToken::new(),
+            ),
+        )
+        .await
+        .expect("the stall must end the run through the configured read timeout");
+        match error {
+            MultimuxError::Connect { reason } => {
+                assert!(reason.contains("no data within"), "{reason}");
+            }
+            other => panic!("expected a stall error, got {other:?}"),
+        }
+    }
 
-        const READ_TIMEOUT: Duration = Duration::from_millis(50);
+    #[tokio::test]
+    async fn a_bad_sdp_fails_the_route_with_the_sdp_error() {
+        let socket = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
+        let route = RtpUdpRoute::with_socket("cam-udp", "not an sdp", socket);
+        let error = run_rtp_udp(
+            &route,
+            trunk_config(),
+            handshake(),
+            &route_handle(),
+            CancellationToken::new(),
+        )
+        .await;
         assert!(
             matches!(
-                step.step(&mut driver, READ_TIMEOUT).await,
-                StepOutcome::Idle
+                error,
+                MultimuxError::Connect { .. } | MultimuxError::Sdp { .. }
             ),
-            "a silent socket is idle, not a failure"
+            "{error:?}"
         );
-        assert!(matches!(
-            step.stalled(READ_TIMEOUT),
-            MultimuxError::Connect { .. }
-        ));
+    }
+
+    #[tokio::test]
+    async fn with_socket_rejects_a_configured_multicast_group() {
+        let socket = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
+        let route = RtpUdpRoute::with_socket("cam-udp", sdp_body(), socket)
+            .with_multicast_group("239.1.2.3");
+        let error = run_rtp_udp(
+            &route,
+            trunk_config(),
+            handshake(),
+            &route_handle(),
+            CancellationToken::new(),
+        )
+        .await;
+        assert!(
+            matches!(
+                error,
+                MultimuxError::ConfigInvalid { field, .. }
+                    if field == "routes.input.multicast_group"
+            ),
+            "got {error:?}"
+        );
     }
 }

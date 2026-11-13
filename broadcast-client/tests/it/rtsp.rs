@@ -654,6 +654,33 @@ fn forbidden_403_event() {
 }
 
 #[test]
+fn a_refused_request_reports_the_method_and_the_status_the_server_sent() {
+    for (method, status, set) in [
+        ("DESCRIBE", "Service Unavailable", 503u16),
+        ("SETUP", "Not Acceptable", 406),
+        ("PLAY", "Session Not Found", 454),
+    ] {
+        let mut s = server();
+        match method {
+            "DESCRIBE" => s.describe_status = Some(set),
+            "SETUP" => s.setup_status = Some(set),
+            _ => s.play_status = Some(set),
+        }
+        let mut host = connected(Config::default(), s);
+        let events = host.events();
+        let refused = events.iter().find_map(|e| match e {
+            Event::Error {
+                kind: broadcast_client::ErrorKind::RequestRefused { method, status },
+                fatal: false,
+            } => Some((*method, status.clone())),
+            _ => None,
+        });
+        assert_eq!(refused, Some((method, status.to_string())), "{method}");
+        assert_eq!(reconnecting_attempts(&events), [1], "{method}");
+    }
+}
+
+#[test]
 fn describe_404_status_not_found_and_backoff() {
     let mut s = server();
     s.describe_status = Some(404);

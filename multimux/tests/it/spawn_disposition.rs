@@ -29,7 +29,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "route.rs",
-        1167,
+        1171,
         "spawn_blocking DVR persist; awaited inline",
     ),
     ("dvr.rs", 603, "spawn_blocking DVR write; awaited inline"),
@@ -123,6 +123,11 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
         "origin/mod.rs",
         761,
         "per-connection task on the listener's TaskTracker (serve_hyper_util reaps finished tasks)",
+    ),
+    (
+        "output/smooth.rs",
+        277,
+        "spawn_blocking for a Smooth plan or fragment build, bounded by the program's MAX_CONCURRENT_BUILDS semaphore (permit moved into the closure); awaited inline (owned by the request)",
     ),
     (
         "output/catchup.rs",

@@ -437,6 +437,15 @@ pub enum ErrorKind {
     /// The SRT peer sent nothing, not even a keepalive, for `SrtConfig::peer_idle_timeout_ms`.
     /// Non-fatal: the link is dropped and rebuilt at once.
     SrtPeerIdle,
+    /// An RTSP server answered DESCRIBE, SETUP or PLAY with a status the session cannot proceed
+    /// on (other than the authentication, forbidden and DESCRIBE-not-found answers, which have
+    /// their own events). Non-fatal: the session reconnects with backoff.
+    RequestRefused {
+        /// The refused method: `DESCRIBE`, `SETUP` or `PLAY`.
+        method: &'static str,
+        /// The status as the server sent it, for example `Service Unavailable`.
+        status: String,
+    },
     /// A Smooth Streaming client manifest could not be read as XML, broke a size or structure
     /// bound or is not a manifest (`reason` is a stable token). Non-fatal and reported once per
     /// reason until a good manifest arrives; the session keeps the last good manifest and
@@ -469,7 +478,10 @@ impl ErrorKind {
     pub fn ends_connection(&self) -> bool {
         matches!(
             self,
-            Self::SrtRejected { .. } | Self::SrtHandshakeTimeout | Self::SrtPeerIdle
+            Self::SrtRejected { .. }
+                | Self::SrtHandshakeTimeout
+                | Self::SrtPeerIdle
+                | Self::RequestRefused { .. }
         )
     }
 
@@ -500,6 +512,7 @@ impl ErrorKind {
             Self::SrtRejected { .. } => "srt_rejected",
             Self::SrtHandshakeTimeout => "srt_handshake_timeout",
             Self::SrtPeerIdle => "srt_peer_idle",
+            Self::RequestRefused { .. } => "request_refused",
             Self::SmoothManifest { .. } => "smooth_manifest",
             Self::RtmpStatus { .. } => "rtmp_status",
             Self::BufferInputsDropped => "buffer_inputs_dropped",

@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::time::Duration;
 
-use broadcast_client::{Action, Config, Event, Session, Status, UdpMode};
+use broadcast_client::{Action, Config, ErrorKind, Event, Session, Status, UdpMode};
 use broadcast_common::{Demand, Stage, Timestamp};
 use futures_util::StreamExt;
 use media_plane::ingress::{IngestDriver, IngestSession, SessionEvent};
@@ -420,6 +420,15 @@ impl SessionStep {
                 Event::AuthRequired { .. } => {
                     verdict = verdict.max(Verdict::Failed(MultimuxError::Auth {
                         reason: format!("{}: authentication required", self.labels.what),
+                    }));
+                }
+                Event::Error {
+                    kind: ErrorKind::RequestRefused { method, status },
+                    fatal: false,
+                } => {
+                    verdict = verdict.max(Verdict::Failed(MultimuxError::Protocol {
+                        phase: method,
+                        reason: format!("non-success status {status}"),
                     }));
                 }
                 Event::Error { kind, fatal: false } if kind.ends_connection() => {

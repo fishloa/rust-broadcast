@@ -32,6 +32,65 @@ use tokio::net::UdpSocket;
 
 use crate::error::{MultimuxError, Result};
 
+/// The session URL (`scheme://group-or-bind:port`) of a UDP-family route: the multicast group when
+/// there is one, else the bind address.
+pub(crate) fn session_url(
+    scheme: &str,
+    addr: &str,
+    multicast_group: Option<&str>,
+) -> Result<String> {
+    let bind: SocketAddr = addr.parse().map_err(|e| MultimuxError::Connect {
+        reason: format!("bad UDP bind address {addr:?}: {e}"),
+    })?;
+    let host = match multicast_group {
+        Some(group) if group.contains(':') => format!("[{group}]"),
+        Some(group) => group.to_owned(),
+        None if bind.is_ipv6() => format!("[{}]", bind.ip()),
+        None => bind.ip().to_string(),
+    };
+    Ok(format!("{scheme}://{host}:{}", bind.port()))
+}
+
+/// Carries the route's socket options (`SO_RCVBUF`, and the multicast interface as an address or
+/// an IPv6 index) onto the session's UDP configuration.
+pub(crate) fn apply_socket_options(
+    config: &mut broadcast_client::Config,
+    multicast_group: Option<&str>,
+    options: &UdpBindOptions,
+) -> Result<()> {
+    let invalid =
+        |field: &'static str, reason: String| MultimuxError::ConfigInvalid { field, reason };
+    config.udp.recv_buffer_bytes = options
+        .recv_buffer_bytes
+        .map(u32::try_from)
+        .transpose()
+        .map_err(|e| invalid("routes.input.recv_buffer_bytes", e.to_string()))?;
+    if multicast_group.is_some()
+        && let Some(interface) = options.multicast_interface.as_deref()
+    {
+        match interface.parse::<IpAddr>() {
+            Ok(address) => config.udp.interface = Some(address),
+            Err(_) => {
+                config.udp.interface_index = Some(interface.parse().map_err(|e| {
+                    invalid(
+                        "routes.input.multicast_interface",
+                        format!("{interface:?} is neither an address nor an index: {e}"),
+                    )
+                })?);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Takes the caller-supplied pre-bound socket out of its slot, tolerating a poisoned lock.
+pub(crate) fn take_prebound(slot: &std::sync::Mutex<Option<UdpSocket>>) -> Option<UdpSocket> {
+    match slot.lock() {
+        Ok(mut slot) => slot.take(),
+        Err(poisoned) => poisoned.into_inner().take(),
+    }
+}
+
 /// The receive-buffer size requested when a caller does not set one (4 MiB):
 /// comfortably above the observed OS defaults (Linux ~208 KiB, macOS ~786 KiB)
 /// so a burst between scheduler wakeups is not dropped. Best-effort — the OS

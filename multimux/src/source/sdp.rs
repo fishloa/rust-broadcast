@@ -173,7 +173,7 @@ pub(crate) fn plan_tracks(
 /// Loads an SDP body from `spec`: either the literal inline text, or —
 /// prefixed with `@` — a file path read fresh on every call, so an on-disk
 /// SDP can be updated between reconnects without a process restart. Used by
-/// [`crate::source::rtp_udp::RtpUdpDialer`]'s `dial()`, the raw-RTP-over-UDP
+/// [`crate::source::rtp_udp::run_rtp_udp`], the raw-RTP-over-UDP
 /// ingest source that has no RTSP DESCRIBE to fetch its SDP from.
 pub fn load_sdp(spec: &str) -> Result<Vec<u8>> {
     match spec.strip_prefix('@') {
