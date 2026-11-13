@@ -183,6 +183,33 @@ pub(crate) async fn read_body_bounded(
     Ok(buf)
 }
 
+/// The process-wide HTTP client the pull sources outside the session host
+/// share: one connection pool and one TLS root store for every route and every
+/// reconnect, instead of a fresh client per attempt. It follows cross-origin
+/// redirects (credentials are scoped to their own origin per request, see
+/// `http_auth`).
+#[cfg(test)]
+static SHARED_CLIENT_BUILDS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+pub(crate) fn shared_http_client() -> crate::Result<reqwest::Client> {
+    static CLIENT: std::sync::OnceLock<std::result::Result<reqwest::Client, String>> =
+        std::sync::OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            #[cfg(test)]
+            SHARED_CLIENT_BUILDS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            reqwest::Client::builder()
+                .redirect(redirect_policy(true))
+                .build()
+                .map_err(|e| e.to_string())
+        })
+        .clone()
+        .map_err(|reason| crate::MultimuxError::Connect {
+            reason: format!("reqwest client: {reason}"),
+        })
+}
+
 /// The redirect policy every pull source's HTTP client uses (audit W16): at
 /// most 3 hops, and a refusal of an `https`→`http` scheme downgrade — a
 /// redirect must never silently move an authenticated fetch onto cleartext.
@@ -327,6 +354,19 @@ mod redirect_tests {
                 RedirectDecision::TooMany
             );
         }
+    }
+
+    /// Every caller gets the one process-wide client: it is built once, not per
+    /// call (so per attempt).
+    #[test]
+    fn the_shared_client_is_built_once() {
+        for _ in 0..8 {
+            crate::source::shared_http_client().expect("client builds");
+        }
+        assert_eq!(
+            crate::source::SHARED_CLIENT_BUILDS.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
     }
 
     #[tokio::test]

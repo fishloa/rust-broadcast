@@ -318,13 +318,7 @@ fn build_client(route: &SmoothPullRoute) -> Result<(HttpClient, Url, AuthState)>
         resolve_credentials(route.target.auth.clone(), credentials_from_url(&parsed)?);
     let clean_url = strip_userinfo(&parsed)?;
     let credentials = scope_credentials(credentials, &clean_url);
-    let http = HttpClient::builder()
-        .redirect(crate::source::redirect_policy(true))
-        .build()
-        .map_err(|e| MultimuxError::Connect {
-            reason: format!("reqwest client: {e}"),
-        })?;
-    Ok((http, clean_url, credentials))
+    Ok((crate::source::shared_http_client()?, clean_url, credentials))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
