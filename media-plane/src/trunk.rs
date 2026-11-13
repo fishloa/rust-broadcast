@@ -3457,6 +3457,35 @@ mod tests {
         }
     }
 
+    /// A woken slot-freed waiter that answers without taking the slot hands
+    /// the wake to the next parked one, so one freed slot drains every parked
+    /// waiter instead of stranding all but the first.
+    #[test]
+    fn woken_slot_freed_waiter_hands_the_wake_to_the_next() {
+        let trunk = Trunk::new(
+            TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(4)).with_waiter_capacity(nz(1)),
+        );
+        let held = trunk.listen().expect("the sole slot");
+        let (wakes, waker) = counting_waker();
+        let mut cx = Context::from_waker(&waker);
+        let mut parked: Vec<SlotFreedFuture> = (0..MANY_WAITERS)
+            .map(|_| trunk.waiter_slot_freed().expect("slot is held"))
+            .collect();
+        for parked in &mut parked {
+            assert!(Pin::new(parked).poll(&mut cx).is_pending());
+        }
+
+        drop(held);
+        let mut answered = 0;
+        while answered < MANY_WAITERS {
+            assert_eq!(wakes.0.load(Ordering::SeqCst), answered + 1);
+            let mut next = parked.remove(0);
+            assert!(Pin::new(&mut next).poll(&mut cx).is_ready());
+            drop(next);
+            answered += 1;
+        }
+    }
+
     /// #2524: an idle `SampleCursor::next` parks without taking the trunk
     /// lock and is woken by a sample publish.
     #[test]

@@ -1,18 +1,23 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `max_blocking_reloads_per_route` (config; `HttpLimits::max_blocking_reloads_per_route`, default 1024): LL-HLS blocking-reload requests are budgeted per route instead of one listener-wide pool of `max_concurrent_requests / 4`, so a reload flood on one route cannot shed another's.
 ### Fixed
 - A Smooth fragment request the origin's window does not hold answers `404`, as an evicted HLS segment does, instead of `500`: the Smooth fallback passed its server-error status as the not-found status too, so every `EgressResponse::NotFound` from the origin (a start time before the window or past its end) became an internal error (issue #2506).
 - An HTTP pull (HLS, DASH, Smooth, TS-over-HTTP) keeps the auth state for the whole session: a cookie an origin sets on the playlist is sent with the segments, and a Digest challenge is negotiated once instead of on every request, because the state is updated in place rather than cloned per request. Cookies are stamped with the pull's own clock instead of `0`.
 - A `407` from an HTTP pull is returned unchanged instead of being retried; there is no proxy-credential configuration, and the origin's credentials are never sent as a proxy's.
 - The challenge-answer flag a pull passes on reports whether the request really carried an `Authorization` header, so a Digest state that has not negotiated its first nonce is not treated as a rejected credential.
 ### Changed
+- A blocking-reload request beyond the trunk's waiter cap parks on `Trunk::waiter_slot_freed` instead of sleep-polling every 20 ms and re-rendering the playlist (#2523); the cap is no longer the 64-entry part ring.
+- A WHEP viewer awaits the trunk's sample wake and reaps a silent viewer at the exact silence deadline instead of ticking every 10 ms and polling its cursor under the trunk lock (#2524).
 - RTSP pull (`rtsp://` and `rtsps://`) runs the relay `broadcast_client::Session` through the shared session host: the session owns the RTSP engine, auth, keepalive, RTP/RTCP depayload, A/V alignment and the `TEARDOWN`; the host opens the TCP/TLS connection, writes what the session sends and sends the goodbye on cancel. The route's tracks are announced when PLAY is answered, as before; an answered `404` on DESCRIBE is still the permanent-failure `Protocol` error the supervisor counts.
 - SRT caller pull runs the relay `broadcast_client::Session` through the shared session host (the session owns the handshake, ARQ and TSBPD; the host performs its connected UDP socket); listener mode is unchanged.
 - TS-over-UDP pull (unicast and multicast) runs the same relay `broadcast_client::Session` through the shared session host: the session names the socket, the host binds it with the route's socket options (`SO_RCVBUF`, reuse, multicast interface as address or IPv6 index) and feeds each datagram to the session. A pre-bound socket is still consumed once and still cannot join a group.
 - TS-over-HTTP pull runs one `broadcast_client::Session` in relay mode (`Config::relay()`) through a shared async session host (`source::client_host`): the session owns redirects, cookies, Basic/Digest/Bearer auth, the finite-body decision and the stall policy, and the host performs its HTTP requests with `reqwest`; the programme split of a multi-programme stream keys on each track's `program_number` as before.
 - DASH-IF ingest sans-IO engine moved to `dash-runtime::ingest`; multimux keeps the axum glue.
 ### Removed
+- BREAKING: `origin::limit::DEFAULT_BLOCKING_RELOAD_DIVISOR`, replaced by `DEFAULT_MAX_BLOCKING_RELOADS_PER_ROUTE`.
 - BREAKING: `source::rtsp::{RtspDialer, RtspIngestSession, route_channel}`; `run_rtsp` is the entry point (the session replaces the hand-driven RTSP engine, depayload and alignment).
 - BREAKING: `source::srt::connect_caller`; `run_srt_caller` is the caller entry point.
 - BREAKING: `source::ts_udp::{bind, TsUdpDialer}`; `run_ts_udp` is the entry point.
