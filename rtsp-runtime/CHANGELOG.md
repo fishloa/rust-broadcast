@@ -5,6 +5,8 @@ All notable changes to `rtsp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- BREAKING: `ServerSession::new` takes a session-id source that is `Send + Sync` (it was `Send`), so a `ServerSession` is `Sync` and can be shared behind an `Arc`; a test pins it (issue #2533).
 ### Added
 - `MAX_TRACKS` (16): the track cap owned by rtsp-runtime, used by `PlayPlan` consumers.
 - `AsyncRtspClient::start_record(url, sdp, interleaved_channel)` runs the whole publish flow: `ANNOUNCE` (RFC 2326 §10.3), `SETUP` on the track's control URL in `mode=record` (§10.4, §12.39) and `RECORD` (§10.11), returning `Error::UnexpectedResponse { method, status }` for the first request a server rejects and `Error::UnexpectedEvent` when a request draws anything but a response, so a pushing caller supplies only its SDP and its payload.
