@@ -31,7 +31,7 @@ OutputAuthSpec::Forwarded { user_header, trusted_proxies, .. }
 
 - `OutputAuthSpec::Forwarded::trusted_proxies`: IPs and CIDR blocks allowed to set the forwarded-user header; omitted means loopback only (`127.0.0.0/8` and `::1`).
 - `Config::hold_cold_playlist` (default `true`) and `RouteHandle::with_hold_cold_playlist`.
-- `DvrRecorder::needs_poll_for_init`, `DashWindowSegment::public_seq`, `ProgramSegmenter::continue_after_reconnect`, and `DvrRecorder::poll_and_persist_inits` with `InitGeneration`.
+- `DvrRecorder::needs_poll_for_init`, `DashWindowSegment::public_seq`, `ProgramSegmenter::continue_after_reconnect` (now `media_plane::segmenter::program::ProgramSegmenter`), and `DvrRecorder::poll_and_persist_inits` with `InitGeneration`.
 
 ## Fixed
 
@@ -125,6 +125,8 @@ OutputAuthSpec::Forwarded { user_header, trusted_proxies, .. }
 - BREAKING: `source::IngestTimeouts` (a `{connect, read}` copy of the adapters' timeout struct): every source's `with_timeouts` takes `broadcast_common::timeouts::Timeouts` (`read` is `read_idle`), and `source::ingest_timeouts(&Config)` replaces `IngestTimeouts::from(&Config)`. `push::RtmpTransportConfig`'s `connect_timeout`/`write_timeout` options are one `timeouts: Timeouts` (#2514).
 - BREAKING: `source::file_reader::{FileReaderError, DemuxerKind, select_demuxer}` moved to `media_plane::file_source`; `FileReader` (the file IO, pacing and supervision) stays (issue #2554).
 - BREAKING: the public `source::ts_program` module and `source::MAX_TS_READ`; use `media_plane::ts_session` (issue #2554). The TS backlog-drop counter is reported through its observer, unchanged.
+- BREAKING: `RouteHandle::new(target_duration_secs, part_target_ms, window_segments)` takes one `RouteConfig` (re-exported at the crate root; `Default` plus a `with_*` setter per field: target duration, part target, window, container, TS cut policy and IDR fallback, program-date-time source, cold-playlist hold, declared bandwidth, audio/caption renditions, audio profiles, subtitles, warm-up permits). `RouteHandle::with_trunk_config`/`trunk_config` set and read the `TrunkConfig` every program trunk is built from (issue #2554).
+- BREAKING: `source::segment::ProgramSegmenter` (`try_new`, `pump`, `flush`, `init_segment`, `continue_after_reconnect`) moved to `media_plane::segmenter::program`; `source::segment` keeps the route-facing glue (issue #2554).
 - BREAKING: `source::smooth_pull::{SmoothIngestSession, SmoothInput, SmoothPullDialer}` and the `smooth_pull` drive loop; `run_smooth_pull` now takes the route's `CancellationToken` as a fifth argument.
 - BREAKING: the `source::http_auth` module (`authenticated_get`, `resolve_credentials`, `scope_credentials`, `strip_userinfo`, `credentials_from_url`) and the crate-private `PullScheduler`, response-body cap, pull redirect policy and `terminal_result`: every pull is a `broadcast_client::Session` now, which owns requests, auth, cookies, redirects, caps and retry. The unused metric names `multimux_pull_fragment_abandoned_total` and `multimux_pull_stream_refresh_miss_total` are no longer defined.
 - BREAKING: `source::dash_pull::{DashIngestSession, DashInput, FetchTarget, PROGRAM, dash_config, pull_limits, DashPullDialer}` and the `dash_pull` drive loop; `run_dash_pull` now takes the route's `CancellationToken` as a fifth argument.
