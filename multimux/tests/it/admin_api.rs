@@ -1980,16 +1980,24 @@ async fn a_reload_whose_init_changed_starts_a_new_dash_period() {
 }
 
 /// Issue #2611's other half: reloading onto a source whose init segment is BYTE-IDENTICAL keeps
-/// the presentation in the replaced Period, unchanged (§5.4.1), with no new init generation.
+/// the replaced Period's identity (§5.4.1), with no new init generation. Issue #2625: that Period
+/// is early terminated at its last finished segment and the replacement continues in a
+/// period-connected Period (see [`an_identical_init_reload_lists_only_served_dash_segments`]).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_reload_whose_init_is_unchanged_keeps_one_dash_period() {
+async fn a_reload_whose_init_is_unchanged_keeps_its_dash_period() {
     let seen = observe_reload("dash-one-period", TAG_TICKER, TAG_TICKER).await;
     let (old_mpd, new_mpd, text) = (&seen.old_mpd, &seen.new_mpd, &seen.new_mpd_text);
-    assert_eq!(new_mpd.periods.len(), 1, "{text}");
+    assert_eq!(new_mpd.periods.len(), 2, "{text}");
     let (old_period, period) = (&old_mpd.periods[0], &new_mpd.periods[0]);
     assert_eq!(period.id, old_period.id, "{text}");
     assert_eq!(period.start, old_period.start, "{text}");
-    assert_eq!(period.duration, None, "{text}");
+    assert_eq!(old_period.duration, None, "{}", seen.old_mpd_text);
+    assert!(period.duration.is_some(), "early terminated: {text}");
+    assert_eq!(
+        new_mpd.periods[1].adaptation_sets[0].supplemental_properties[0].scheme_id_uri,
+        broadcast_dash::descriptors::SCHEME_PERIOD_CONNECTIVITY,
+        "{text}"
+    );
     assert_eq!(
         template(period).multi.start_number,
         template(old_period).multi.start_number,
@@ -2151,7 +2159,11 @@ async fn an_identical_init_reload_lists_only_served_dash_segments() {
         template(old_period).multi.start_number,
         "{text}"
     );
-    assert_eq!(new_template.multi.start_number, Some(start_number), "{text}");
+    assert_eq!(
+        new_template.multi.start_number,
+        Some(start_number),
+        "{text}"
+    );
     let timescale = old_template.multi.base.timescale.expect("timescale");
     let ticks = old_template.multi.duration.expect("@duration");
     let first = old_template.multi.start_number.expect("startNumber");
@@ -2179,7 +2191,10 @@ async fn an_identical_init_reload_lists_only_served_dash_segments() {
         (start_number - first) * ticks,
         "@presentationTimeOffset is the first new segment's decode time"
     );
-    assert_eq!(seen.new_init, seen.old_init, "functionally equivalent inits");
+    assert_eq!(
+        seen.new_init, seen.old_init,
+        "functionally equivalent inits"
+    );
 
     let (old_set, new_set) = (&replaced.adaptation_sets[0], &period.adaptation_sets[0]);
     assert_eq!(old_set.id, new_set.id, "{text}");
@@ -2188,8 +2203,7 @@ async fn an_identical_init_reload_lists_only_served_dash_segments() {
         "{text}"
     );
     assert_eq!(
-        old_set.representations[0].common.mime_type,
-        new_set.representations[0].common.mime_type,
+        old_set.representations[0].common.mime_type, new_set.representations[0].common.mime_type,
         "{text}"
     );
     let connectivity = new_set

@@ -354,6 +354,20 @@ pub fn render_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<String> 
 /// no `AssetIdentifier`: the route has no asset identity to name, and DASH-IF IOP 5.5.1 forbids
 /// one for a Period without a known continuation
 /// (`private/specs-verified/dash/dashif-iop-4.3/ch05-ad-insertion.md`).
+///
+/// A continued program whose init is unchanged stays in the open Period unless its numbering
+/// skipped the replaced program's unfinished segment, which no origin serves (issue #2625). Then
+/// the open Period is early terminated at its last finished segment (§5.3.2.1) and the next
+/// Period opens at the first new segment, as DASH-IF IOP 4.3 4.11.4.2 prescribes for a `@duration`
+/// live service whose media resumes after an outage
+/// (`private/specs-verified/dash/dashif-iop-4.3/ch04-06-deployment-scenarios.md`): the same
+/// `AdaptationSet@id` and `Representation@id`, an equivalent `AssetIdentifier` ([`ASSET_ID_SCHEME`])
+/// on both Periods so their Adaptation Sets are associated, and a
+/// `urn:mpeg:dash:period-connectivity:2015` descriptor naming the earlier Period's `@id` while
+/// that Period is listed (§5.3.2.4: the identical init allows connectivity; the skipped segment
+/// rules out continuity). A `SegmentTimeline` cannot express the hole instead: `$Number$` there
+/// numbers segments consecutively, and `S@n` would change the addressing every client of this
+/// `@duration` MPD relies on (§5.3.9.6).
 #[doc(hidden)]
 pub(crate) fn render_mpd_at_with_flavour(
     route: &RouteHandle,
@@ -368,6 +382,8 @@ pub(crate) fn render_mpd_at_with_flavour(
         ordinal: 0,
         first_public_seq: first_number,
         media_start_ns: 0,
+        connected_to: None,
+        asset: None,
     };
     let serving = route.serving(program);
     let own_instance = serving.as_ref().map(|s| s.ll_hls().instance());
@@ -439,6 +455,7 @@ pub(crate) fn render_mpd_at_with_flavour(
     }
     let nominal_secs = route.target_duration_secs();
     let mut mpd: Option<broadcast_dash::Mpd> = None;
+    let mut rendered: Vec<u64> = Vec::new();
     for plan in &plans {
         let anchor = plan.anchor;
         let Some(xml) = render_period_document(
@@ -467,6 +484,30 @@ pub(crate) fn render_mpd_at_with_flavour(
             None => None,
         };
         set_presentation_time_offset(&mut period, anchor.media_start_ns)?;
+        let asset = anchor.asset.or_else(|| {
+            plans
+                .iter()
+                .any(|later| later.anchor.asset == Some(anchor.ordinal))
+                .then_some(anchor.ordinal)
+        });
+        if let Some(asset) = asset {
+            let mut identifier = broadcast_dash::Descriptor::default();
+            identifier.scheme_id_uri = ASSET_ID_SCHEME.to_owned();
+            identifier.value = Some(format!("{}/{asset}", route.name()));
+            period.asset_identifier = Some(identifier);
+        }
+        if let Some(previous) = anchor.connected_to
+            && rendered.contains(&previous)
+        {
+            for adaptation_set in &mut period.adaptation_sets {
+                let mut connectivity = broadcast_dash::Descriptor::default();
+                connectivity.scheme_id_uri =
+                    broadcast_dash::descriptors::SCHEME_PERIOD_CONNECTIVITY.to_owned();
+                connectivity.value = Some(previous.to_string());
+                adaptation_set.supplemental_properties.push(connectivity);
+            }
+        }
+        rendered.push(anchor.ordinal);
         match mpd.as_mut() {
             Some(base) => base.periods.push(period),
             None => {
@@ -477,6 +518,12 @@ pub(crate) fn render_mpd_at_with_flavour(
     }
     mpd?.to_xml().ok()
 }
+
+/// `AssetIdentifier@schemeIdUri` naming a route's run of period-connected Periods
+/// (ISO/IEC 23009-1 §5.8.4.10; a private scheme, DASH-IF IOP 4.3 5.5.1), with
+/// `@value` `<route name>/<first Period @id of the run>`.
+pub(crate) const ASSET_ID_SCHEME: &str =
+    "https://github.com/fishloa/rust-broadcast/multimux/dash-asset-id";
 
 /// What one `Period` element is rendered from.
 struct PeriodPlan {
