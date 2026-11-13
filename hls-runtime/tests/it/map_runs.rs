@@ -3,7 +3,6 @@
 //! map-run, however the fetches interleave. Round-6 audit F3.
 
 #[path = "../../../broadcast-client/tests/support/fmp4_split.rs"]
-#[allow(dead_code)]
 mod fmp4_split;
 
 use std::collections::BTreeMap;
