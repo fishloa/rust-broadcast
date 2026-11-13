@@ -93,6 +93,7 @@
 //! 5-tuple once connectivity checks pick it, so one learned address is
 //! sufficient (no candidate-pair migration handling in this cut).
 
+use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -109,7 +110,9 @@ use tokio_util::sync::CancellationToken;
 
 use transmux::ir::Track;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
-use transmux::{DEFAULT_AUDIO_PT, DEFAULT_MTU, RtpPacketiser, VIDEO_CLOCK_RATE};
+use transmux::{
+    DEFAULT_AUDIO_PT, DEFAULT_MTU, DEFAULT_VIDEO_PT, RtpPacket, RtpPacketiser, VIDEO_CLOCK_RATE,
+};
 
 use webrtc_runtime::media::{
     Datagram, MAX_REMOTE_CANDIDATES, MediaEvent, MediaTransport, MediaTransportConfig, SetupRole,
@@ -140,7 +143,7 @@ const ACCEPT_QUEUE_CAPACITY: usize = 32;
 
 /// Max UDP datagram this output reads in one `recv` — matches
 /// `crate::source::whip::MAX_UDP_DATAGRAM`.
-const MAX_UDP_DATAGRAM: usize = 65_536;
+const MAX_UDP_DATAGRAM: usize = 1500;
 
 /// Ends a WHEP session (freeing its `active_sessions` slot) once no inbound
 /// datagram — STUN, DTLS, or SRTP/RTCP, valid or not — has arrived for this
@@ -228,6 +231,8 @@ struct AdmittedWhep {
     pt: u8,
     /// Fixed SSRC for this session's one outbound video stream.
     ssrc: u32,
+    /// The route's shared packetisations.
+    packets: Arc<PacketCache>,
     /// How the session resource's `PATCH`/`DELETE` handlers reach this
     /// session's task.
     control: Arc<SessionControl>,
@@ -441,6 +446,8 @@ struct WhepServeState {
     max_sessions: usize,
     /// Live session resources, keyed by the id in the `Location` URL.
     resources: Arc<ResourceTable<WhepSession>>,
+    /// Packetisations shared by every viewer of this route.
+    packets: Arc<PacketCache>,
 }
 
 impl WhepServeState {
@@ -459,6 +466,7 @@ impl WhepServeState {
             active_sessions: Arc::new(AtomicUsize::new(0)),
             max_sessions,
             resources: ResourceTable::new(),
+            packets: Arc::default(),
         }
     }
 }
@@ -717,6 +725,7 @@ async fn whep_post_inner(
         spec,
         pt: parsed.payload_type,
         ssrc: crate::secure_random::ssrc(),
+        packets: Arc::clone(&state.packets),
         control,
         resource,
     };
@@ -832,6 +841,7 @@ pub async fn serve_whep_for_test_with_trunk(
         active_sessions: Arc::new(AtomicUsize::new(0)),
         max_sessions: 64,
         resources: ResourceTable::new(),
+        packets: Arc::default(),
     });
     (whep_router(state, verifier), CancellationToken::new())
 }
@@ -1043,11 +1053,25 @@ fn patch_seq_and_timestamp(contiguous: &[u8], seq: u16, timestamp: u32) -> Optio
 /// the buffer that is then patched and sent — not first concatenated into a
 /// temporary `Bytes` (`RtpPacket::as_contiguous`) and copied again. This is
 /// the per-packet, per-viewer hot path (audit r07-O2, issue #1083).
+#[cfg(test)]
 fn patch_seq_and_timestamp_parts(
     header: &[u8],
     payload: &[u8],
     seq: u16,
     timestamp: u32,
+) -> Option<Vec<u8>> {
+    patch_packet(header, payload, seq, timestamp, None)
+}
+
+/// [`patch_seq_and_timestamp_parts`], also setting the SSRC and payload type
+/// when `identity` is given — how one packetisation of a sample, made with
+/// placeholder values, becomes each viewer's own packet.
+fn patch_packet(
+    header: &[u8],
+    payload: &[u8],
+    seq: u16,
+    timestamp: u32,
+    identity: Option<(u32, u8)>,
 ) -> Option<Vec<u8>> {
     let len = header.len().checked_add(payload.len())?;
     if len < rtp_packet::FIXED_HEADER_LEN {
@@ -1059,6 +1083,10 @@ fn patch_seq_and_timestamp_parts(
     let mut pkt = rtp_packet::RtpPacket::parse(&v).ok()?;
     pkt.sequence_number = seq;
     pkt.timestamp = timestamp;
+    if let Some((ssrc, payload_type)) = identity {
+        pkt.ssrc = ssrc;
+        pkt.payload_type = payload_type;
+    }
     let mut out = vec![0u8; pkt.serialized_len()];
     pkt.serialize_into(&mut out).ok()?;
     Some(out)
@@ -1076,6 +1104,81 @@ struct SessionMedia<'a> {
     /// The real, already-known `TrackSpec` (with real SPS/PPS) this
     /// session was negotiated against.
     spec: &'a TrackSpec,
+    /// The route's packetisations, shared by every viewer.
+    packets: &'a PacketCache,
+}
+
+/// How many recent samples' packetisations a route keeps. Viewers read the
+/// live edge together, so a few dozen covers them; one that lags further
+/// packetises for itself.
+const PACKET_CACHE_SAMPLES: usize = 64;
+
+struct CachedSample {
+    track_id: TrackId,
+    dts: i64,
+    /// Held so the buffer's address identifies this sample while it is cached.
+    data: bytes::Bytes,
+    packets: Arc<Vec<RtpPacket>>,
+}
+
+/// Packetises each sample once for all of a route's viewers. Packets are
+/// built with the default payload type and a zero SSRC; each viewer then sets
+/// its own sequence number, timestamp, SSRC and payload type
+/// ([`patch_packet`]) and encrypts, so the per-viewer work is a header patch
+/// and SRTP, not RFC 6184 packetisation.
+#[derive(Default)]
+struct PacketCache {
+    entries: parking_lot::Mutex<VecDeque<CachedSample>>,
+    #[cfg(test)]
+    packetisations: AtomicUsize,
+}
+
+impl PacketCache {
+    /// The packets of `sample`, built by the first viewer to ask and shared
+    /// with the rest. The lock is held while building so concurrent viewers of
+    /// one sample wait for it instead of each building their own.
+    fn packets(
+        &self,
+        spec: &TrackSpec,
+        sample: &Sample,
+        dts: i64,
+    ) -> transmux::Result<Arc<Vec<RtpPacket>>> {
+        let mut entries = self.entries.lock();
+        if let Some(hit) = entries.iter().rev().find(|cached| {
+            cached.track_id == spec.track_id
+                && cached.dts == dts
+                && cached.data.as_ptr() == sample.data.as_ptr()
+                && cached.data.len() == sample.data.len()
+        }) {
+            return Ok(Arc::clone(&hit.packets));
+        }
+        #[cfg(test)]
+        self.packetisations
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let packetiser = RtpPacketiser {
+            mtu: DEFAULT_MTU,
+            video_pt: DEFAULT_VIDEO_PT,
+            audio_pt: DEFAULT_AUDIO_PT,
+            ssrc: 0,
+            // Lead each sync (IDR) sample with a fresh STAP-A of the real
+            // SPS/PPS (RFC 6184 §5.7.1) so a viewer that joins mid-stream, or
+            // that lost the very first one, can still resynchronize at the
+            // next keyframe — see the module doc.
+            stap_a_parameter_sets: sample.flags.is_sync,
+        };
+        let track = Track::new(spec.clone(), vec![sample.clone()]);
+        let packets = Arc::new(packetiser.packetise_video(&track, DEFAULT_VIDEO_PT)?);
+        if entries.len() == PACKET_CACHE_SAMPLES {
+            entries.pop_front();
+        }
+        entries.push_back(CachedSample {
+            track_id: spec.track_id,
+            dts,
+            data: sample.data.clone(),
+            packets: Arc::clone(&packets),
+        });
+        Ok(packets)
+    }
 }
 
 /// Packetises one `Sample` into RTP (via [`RtpPacketiser::packetise_video`],
@@ -1096,19 +1199,7 @@ async fn send_sample(
     };
     let timestamp = rescale_to_90k(dts.max(0) as u64, session.spec.timescale);
 
-    let packetiser = RtpPacketiser {
-        mtu: DEFAULT_MTU,
-        video_pt: session.pt,
-        audio_pt: DEFAULT_AUDIO_PT,
-        ssrc: session.ssrc,
-        // Lead each sync (IDR) sample with a fresh STAP-A of the real
-        // SPS/PPS (RFC 6184 §5.7.1) so a viewer that joins mid-stream, or
-        // that lost the very first one, can still resynchronize at the next
-        // keyframe — see the module doc.
-        stap_a_parameter_sets: sample.flags.is_sync,
-    };
-    let track = Track::new(session.spec.clone(), vec![sample.clone()]);
-    let packets = match packetiser.packetise_video(&track, session.pt) {
+    let packets = match session.packets.packets(session.spec, sample, dts) {
         Ok(p) => p,
         Err(e) => {
             tracing::warn!(error = %e, "whep: packetise_video failed; dropping sample");
@@ -1116,7 +1207,7 @@ async fn send_sample(
         }
     };
 
-    for pkt in &packets {
+    for pkt in packets.iter() {
         // This packet's sequence number, burnt from the session counter
         // *before* any of the drop paths below — RFC 3550 §5.1 sequence
         // numbers count packets emitted for the stream, so a number burnt
@@ -1125,9 +1216,13 @@ async fn send_sample(
         // by the next packet and hiding the gap.
         let seq = *next_seq;
         *next_seq = next_seq.wrapping_add(1);
-        let Some(patched) =
-            patch_seq_and_timestamp_parts(&pkt.header, &pkt.payload, seq, timestamp)
-        else {
+        let Some(patched) = patch_packet(
+            &pkt.header,
+            &pkt.payload,
+            seq,
+            timestamp,
+            Some((session.ssrc, session.pt)),
+        ) else {
             tracing::error!(
                 len = pkt.header.len() + pkt.payload.len(),
                 min = rtp_packet::FIXED_HEADER_LEN,
@@ -1222,6 +1317,7 @@ async fn run_whep_session_with_silence_timeout(
         spec,
         pt,
         ssrc,
+        packets,
         control,
         // Held for the whole session: unregisters the resource on drop.
         resource: _resource,
@@ -1230,6 +1326,7 @@ async fn run_whep_session_with_silence_timeout(
         pt,
         ssrc,
         spec: &spec,
+        packets: &packets,
     };
     let mut cursor = trunk.subscribe();
     let mut peer_addr: Option<SocketAddr> = None;
@@ -1519,6 +1616,7 @@ pub async fn run_whep_on_probed(
         active_sessions: Arc::clone(&active_sessions),
         max_sessions,
         resources,
+        packets: Arc::default(),
     });
     let serve_cancel = cancel.clone();
     let serve_task = tokio::spawn(async move {
@@ -1791,6 +1889,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             active_sessions: Arc::clone(&active),
             max_sessions,
             resources: ResourceTable::new(),
+            packets: Arc::default(),
         });
         (whep_router(state, verifier), active, rx)
     }
@@ -2001,6 +2100,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             spec: test_track_spec(),
             pt: 96,
             ssrc: crate::secure_random::ssrc(),
+            packets: Arc::default(),
             control: Arc::clone(&control),
             resource: ResourceTable::new().insert(
                 "test".to_string(),
@@ -2498,6 +2598,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
                 active_sessions: Arc::new(AtomicUsize::new(0)),
                 max_sessions: 64,
                 resources: ResourceTable::new(),
+                packets: Arc::default(),
             });
             let cancel = CancellationToken::new();
             let serve_cancel = cancel.clone();
@@ -2609,5 +2710,59 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
              change (e.g. the WP2.1 CorsLayer move) must be listed in the \
              multimux CHANGELOG"
         );
+    }
+
+    /// A length-prefixed NAL access unit of `len` payload bytes.
+    fn test_sample(dts: i64, len: usize) -> Sample {
+        let mut data = (len as u32).to_be_bytes().to_vec();
+        data.extend(std::iter::repeat_n(0x65, len));
+        Sample::new(data, Some(dts), Some(dts), Some(3000), false)
+    }
+
+    /// A sample is packetised once however many viewers send it, and each
+    /// viewer's packets still carry its own SSRC, payload type and sequence.
+    #[test]
+    fn a_sample_is_packetised_once_for_every_viewer() {
+        const VIEWERS: u32 = 8;
+        let cache = PacketCache::default();
+        let spec = test_track_spec();
+        let sample = test_sample(0, 200);
+        let mut wires = Vec::new();
+        for viewer in 0..VIEWERS {
+            let packets = cache.packets(&spec, &sample, 0).expect("packetises");
+            let (ssrc, pt) = (0x1000 + viewer, 100 + viewer as u8);
+            let first = &packets[0];
+            let wire = patch_packet(&first.header, &first.payload, 7, 9000, Some((ssrc, pt)))
+                .expect("patches");
+            let parsed = rtp_packet::RtpPacket::parse(&wire).expect("parses");
+            assert_eq!(
+                (parsed.ssrc, parsed.payload_type, parsed.sequence_number),
+                (ssrc, pt, 7)
+            );
+            wires.push(wire);
+        }
+        assert_eq!(
+            cache.packetisations.load(Ordering::SeqCst),
+            1,
+            "{VIEWERS} viewers must share one packetisation"
+        );
+        cache
+            .packets(&spec, &test_sample(3000, 200), 3000)
+            .expect("packetises");
+        assert_eq!(cache.packetisations.load(Ordering::SeqCst), 2);
+        assert!(wires.windows(2).all(|pair| pair[0] != pair[1]));
+    }
+
+    /// The cache never holds more than its bound of samples.
+    #[test]
+    fn the_packet_cache_is_bounded() {
+        let cache = PacketCache::default();
+        let spec = test_track_spec();
+        for i in 0..(PACKET_CACHE_SAMPLES as i64 + 10) {
+            cache
+                .packets(&spec, &test_sample(i, 50), i)
+                .expect("packetises");
+        }
+        assert_eq!(cache.entries.lock().len(), PACKET_CACHE_SAMPLES);
     }
 }
