@@ -27,7 +27,7 @@
 //! program does, so a request over an unchanged window is a lookup. A request
 //! that misses demuxes and re-muxes, which is CPU-bound: this module runs that
 //! work on the blocking pool (`tokio::task::spawn_blocking`, at most
-//! [`MAX_CONCURRENT_BUILDS`] at once per program) and answers from the cache
+//! four at once per program) and answers from the cache
 //! afterwards, so a runtime worker never does it. The one exception is a
 //! request that waited for the first segment of a program to exist: the wait
 //! loop is the shared `http::resolve_blocking`, which resolves inline when the

@@ -2082,12 +2082,11 @@ mod tests {
         assert_send_sync::<SmoothOrigin>();
     }
 
+    type Window = Vec<(SegmentSeq, Bytes)>;
+
     /// An origin whose window the test moves by publishing segments, and the
-    /// route's request for stream `0` at its first chunk.
-    fn sliding(
-        route: &Route,
-        initial: usize,
-    ) -> (SmoothOrigin, Arc<Mutex<Vec<(SegmentSeq, Bytes)>>>) {
+    /// handle it moves it with.
+    fn sliding(route: &Route, initial: usize) -> (SmoothOrigin, Arc<Mutex<Window>>) {
         let window = Arc::new(Mutex::new(route.published[..initial].to_vec()));
         let shared = Arc::clone(&window);
         let specs = route.specs();

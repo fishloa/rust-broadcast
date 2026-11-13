@@ -2965,6 +2965,7 @@ version = "0.1.0"
 dependencies = [
  "broadcast-common",
  "broadcast-smooth",
+ "bytes",
  "media-plane",
  "thiserror",
  "transmux",
