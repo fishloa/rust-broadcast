@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::time::Duration;
 
-use broadcast_client::{Action, Config, ErrorKind, Event, Session, Status, UdpMode};
+use broadcast_client::{Action, Config, Error, ErrorKind, Event, Session, Status, UdpMode};
 use broadcast_common::{Demand, Stage, Timestamp};
 use futures_util::StreamExt;
 use media_plane::ingress::{IngestDriver, IngestSession, SessionEvent};
@@ -178,8 +178,14 @@ impl SessionStep {
         feed_si: bool,
     ) -> Result<Self, MultimuxError> {
         let start = Instant::now();
-        let mut session = Session::open(url, config, 0).map_err(|e| MultimuxError::Connect {
-            reason: format!("{}: {e}", labels.what),
+        let mut session = Session::open(url, config, 0).map_err(|e| match e {
+            Error::InvalidConfig { field } => MultimuxError::ConfigInvalid {
+                field,
+                reason: format!("{}: {e}", labels.what),
+            },
+            other => MultimuxError::Connect {
+                reason: format!("{}: {other}", labels.what),
+            },
         })?;
         if let Some(credentials) = credentials {
             session
@@ -825,5 +831,36 @@ impl TlsHost {
         Err(format!(
             "TLS requires multimux's `tls` feature; cannot connect to {addr}"
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_config_the_session_refuses_is_the_route_config_error_with_its_field() {
+        let mut config = Config::relay();
+        config.kind = broadcast_client::SourceKind::Udp;
+        config.udp.reorder_packets = 0;
+        let labels = SessionLabels::new("ts/udp", crate::source::IngestTimeouts::default());
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
+        let error = SessionStep::open(
+            "udp://127.0.0.1:5000",
+            config,
+            None,
+            labels,
+            route_handle,
+            false,
+        )
+        .err()
+        .expect("the session refuses the config");
+        assert!(
+            matches!(
+                &error,
+                MultimuxError::ConfigInvalid { field, .. } if *field == "udp.reorder_packets"
+            ),
+            "{error:?}"
+        );
     }
 }
