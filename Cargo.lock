@@ -2621,6 +2621,7 @@ dependencies = [
  "quick-xml",
  "reqwest",
  "rtc-dtls",
+ "rtc-stun",
  "rtmp-runtime",
  "rtp-packet",
  "rtsp-runtime",

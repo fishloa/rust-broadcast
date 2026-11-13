@@ -2,12 +2,14 @@
 
 ## [Unreleased]
 ### Changed
+- WHEP viewers of a route share one UDP media socket per advertised IP (bound on the first viewer) instead of binding one each: every viewer's answer carries the shared address as its candidate, a receive loop asks `webrtc_runtime::media::SocketDemux` which viewer each datagram belongs to, and each viewer has a bounded queue that drops its newest datagrams when full without delaying the others. An ICE restart registers the new local ufrag with the shared socket (issue #2529).
 - WHEP packetises each sample once per route instead of once per viewer: the route keeps the last 64 samples' RTP packets, and each viewer only sets its own sequence number, timestamp, SSRC and payload type on a copy before SRTP (issue #2529).
 - A WHEP session's UDP receive buffer is 1500 bytes (one Ethernet MTU) instead of 64 KiB.
 - Each admitted WHIP session runs on its own task, which owns its `MediaTransport`, its ICE/DTLS timers and its idle deadline; the route's publisher receives only the outcomes it must act on over a bounded channel, so a slow publisher or a stalled session no longer holds up another session's reads. A session whose publisher ends it is aborted, which closes its media socket at once. This completes the one-task-per-session work for RTMP and WHIP (issue #2525).
 - RTMP: a session the route's publisher ends (a rejected feed, say) now has its read task aborted, so its connection closes immediately instead of staying open until the peer quits.
 ### Fixed
 - A WHIP session's idle bound is measured from the last datagram that carried media: the driver's activity flag was never set, so the deadline stayed at admission plus the read timeout whatever the publisher sent.
+- DASH pull runs the relay `broadcast_client::Session` through the shared session host: the session owns the MPD, Period and AdaptationSet selection, addressing, the UTC clock ladder, live-edge joining, availability gating, conditional MPD refresh, failure classification and retry; the host performs the HTTP requests, anchors the session's wall clock to the host clock (re-read every `utc_resync_us`) and stitches the sample timeline across Period boundaries. The route's cross-origin opt-in is `DashConfig::cross_origin_urls`. A presentation the session cannot play (no playable Representation, an unusable first MPD) fails the attempt as the typed `MultimuxError::Session`.
 - Each admitted RTMP session reads on its own task, which owns the connection (the `Arc<Mutex<RtmpConnection>>` is gone) and hands its outcomes to the route's publisher over a bounded channel, so a publisher busy segmenting no longer stops other sessions' reads (issue #2525). WHIP still polls its sessions' reads from one task.
 - Catch-up keeps its period-index cache and its scan permits (4 concurrent scans) per route instead of process-wide, so one route's slow archive no longer starves another's viewers (issue #2528).
 - DASH-IF ingest holds at most 64 MiB of buffered non-segment objects per route at once (`DashifIngestRoute::with_buffered_budget_bytes`); a request over the budget answers `503` with `Retry-After`. A buffered non-segment object is capped at 8 MiB (`with_max_buffered_object_bytes`), below the 64 MiB cap that still applies to a streamed segment (issue #2532).
@@ -35,6 +37,7 @@
 - TS-over-HTTP pull runs one `broadcast_client::Session` in relay mode (`Config::relay()`) through a shared async session host (`source::client_host`): the session owns redirects, cookies, Basic/Digest/Bearer auth, the finite-body decision and the stall policy, and the host performs its HTTP requests with `reqwest`; the programme split of a multi-programme stream keys on each track's `program_number` as before.
 - DASH-IF ingest sans-IO engine moved to `dash-runtime::ingest`; multimux keeps the axum glue.
 ### Removed
+- BREAKING: `source::dash_pull::{DashIngestSession, DashInput, FetchTarget, PROGRAM, dash_config, pull_limits, DashPullDialer}` and the `dash_pull` drive loop; `run_dash_pull` now takes the route's `CancellationToken` as a fifth argument.
 - BREAKING: `source::hls_pull::{HlsIngestSession, HlsFetchId, HlsPullDialer, Fetched}` and the `hls_pull` drive loop; `run_hls_pull` now takes the route's `CancellationToken` as a fifth argument. `MultimuxError::LlHls` is no longer produced by the pull.
 - BREAKING: `source::rtp_udp::{bind, RtpUdpDialer, RtpUdpIngestSession}`; `run_rtp_udp` is the entry point.
 - BREAKING: `origin::limit::DEFAULT_BLOCKING_RELOAD_DIVISOR`, replaced by `DEFAULT_MAX_BLOCKING_RELOADS_PER_ROUTE`.

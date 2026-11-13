@@ -94,9 +94,11 @@
 //! [RFC 5764]: https://www.rfc-editor.org/rfc/rfc5764
 //! [RFC 5761]: https://www.rfc-editor.org/rfc/rfc5761
 
+mod demux;
 mod gather;
 mod transport;
 
+pub use demux::SocketDemux;
 #[cfg(feature = "test-seams")]
 #[doc(hidden)]
 pub use transport::certificate_fingerprint;

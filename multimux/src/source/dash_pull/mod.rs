@@ -1,69 +1,54 @@
-//! MPEG-DASH pull ingest source (issue #758): fetch a remote MPD and its
-//! segments, demux the fMP4/CMAF bytes and publish the samples into a `Trunk`.
+//! MPEG-DASH pull ingest source (issue #758): a remote MPD and its segments pulled by a
+//! relay-mode [`broadcast_client::Session`] through the shared session host
+//! (`crate::source::client_host`).
 //!
-//! # A thin host over `dash-runtime`
+//! The session owns DASH: it parses the MPD, resolves addressing for every Period and selected
+//! AdaptationSet, runs the UTC clock ladder (`UTCTiming`, the host clock, the response `Date`),
+//! refreshes live MPDs (conditionally), joins near the live edge, gates each request on the
+//! segment's availability, retries and classifies failures and selects the tracks. The host
+//! performs its HTTP requests and anchors the session's wall clock to the host clock (re-read
+//! every `utc_resync_us`); the sample timeline is stitched across Period boundaries
+//! (`EventIngest::stitching`) because a `Trunk` feeds segmenters that expect time to move
+//! forward.
 //!
-//! Everything DASH is the sans-IO core's:
-//! [`dash_runtime::client::DashClient`] parses the MPD, resolves addressing
-//! for every Period and every selected AdaptationSet, runs the UTC clock
-//! ladder (`UTCTiming`, the host clock, the response `Date`), refreshes live
-//! MPDs, joins near the live edge, gates each request on the segment's
-//! availability, classifies failures and selects the tracks. This module owns
-//! only what is multimux's:
-//!
-//! - `session`: [`DashIngestSession`], the media-plane [`media_plane::ingress::IngestSession`]
-//!   over the core. It maps outputs onto `SessionEvent`s (one program, tracks
-//!   announced and re-announced, samples), decides what ends a connection
-//!   attempt (the route supervisor reconnects), and hands the drive loop the
-//!   retries the core asked for. No clock, no sleeping.
-//! - `stitch`: one continuous sample timeline across Period boundaries.
-//! - `drive`: the tokio loop (reqwest, timeouts, byte ranges, conditional MPD
-//!   refreshes, backoff, the host clock anchor).
-//!
-//! Time comes from one seam, `HostClock`, which the loop reads
-//! and hands to the core as arguments; nothing in this module reads a clock.
-//!
-//! # What a route serves
-//!
-//! Per Period the core plays one video AdaptationSet (the highest-bandwidth
-//! Representation its policy allows) and one audio AdaptationSet, on a single
-//! timeline. Every Period of the MPD plays, in order. SegmentTemplate
-//! (`$Number$`, `$Time$`), SegmentTimeline, SegmentList and SegmentBase with a
-//! `sidx` are addressed. The behaviour changes against the pre-core module are
-//! listed in `docs/dash-runtime/DESIGN.md` section 12.3 and the multimux
-//! changelog.
+//! Per Period the session plays one video AdaptationSet (the highest-bandwidth Representation
+//! its policy allows) and one audio AdaptationSet, on a single timeline.
 //!
 //! # Cross-origin URLs
 //!
 //! A server-side pull must not fetch whatever address a remote manifest names
-//! (`http://169.254.169.254/...` as a `BaseURL`). By default every URL derived
-//! from the MPD (`BaseURL`, segments, `UTCTiming`) must have the origin of the
-//! MPD itself, after redirects; a Representation that leaves it is dropped.
-//! A route opts out with [`DashPullRoute::with_cross_origin_urls`]
-//! (`allow_cross_origin` in the config file), for the usual case of an MPD
-//! served from an origin and segments from a CDN.
+//! (`http://169.254.169.254/...` as a `BaseURL`). By default every URL derived from the MPD
+//! (`BaseURL`, segments, `UTCTiming`) must have the origin of the MPD itself, after redirects; a
+//! Representation that leaves it is dropped. A route opts out with
+//! [`DashPullRoute::with_cross_origin_urls`] (`allow_cross_origin` in the config file), for the
+//! usual case of an MPD served from an origin and segments from a CDN.
 
+use std::convert::Infallible;
 use std::sync::Arc;
 
-use media_plane::ingress::{Dialer, HandshakePolicy};
+use broadcast_client::{Config, SourceKind};
+use media_plane::ingress::{HandshakePolicy, IngestDriver};
 use media_plane::trunk::TrunkConfig;
-use reqwest::Client as HttpClient;
-use url::Url;
 
+use crate::clock::HostClock;
 use crate::error::{MultimuxError, Result};
-use crate::source::http_auth::{
-    credentials_from_url, resolve_credentials, scope_credentials, strip_userinfo,
-};
+use crate::source::client_host::{EventIngest, SessionLabels, SessionStep};
 use crate::source::pull_target::{PullKind, PullRoute};
-use broadcast_auth::AuthState;
 
-mod drive;
-mod session;
-mod stitch;
 #[cfg(test)]
 mod tests;
 
-pub use session::{DashIngestSession, DashInput, FetchTarget, PROGRAM, dash_config, pull_limits};
+/// Consecutive failures of one segment before a static presentation fails the attempt and a live
+/// one skips the segment.
+const MAX_SEGMENT_FAILURES: u32 = 4;
+/// Consecutive failures of one init or index resource before the attempt ends.
+const MAX_INIT_FAILURES: u32 = 4;
+/// Segment requests kept outstanding by the session, a share of
+/// [`crate::source::MAX_INFLIGHT_FETCHES`] that leaves room for the MPD, the inits and the
+/// `UTCTiming` requests.
+const SEGMENT_WINDOW: usize = crate::source::MAX_INFLIGHT_FETCHES / 2;
+const MICROS_PER_MILLI: u64 = 1_000;
+const WHAT: &str = "dash-pull";
 
 /// A remote MPEG-DASH presentation to pull: its MPD URL, which may carry
 /// `user:pass@` userinfo (see [`Debug`]'s redaction and
@@ -91,9 +76,9 @@ impl crate::source::pull_target::PullDrive for DashPullKind {
         trunk_config: media_plane::trunk::TrunkConfig,
         handshake: media_plane::ingress::HandshakePolicy,
         route_handle: std::sync::Arc<crate::route::RouteHandle>,
-        _cancel: tokio_util::sync::CancellationToken,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> crate::Result<()> {
-        run_dash_pull(&route, trunk_config, handshake, &route_handle).await
+        run_dash_pull(&route, trunk_config, handshake, &route_handle, cancel).await
     }
 }
 
@@ -108,40 +93,6 @@ impl DashPullRoute {
 
     pub(crate) fn allow_cross_origin(&self) -> bool {
         self.extra
-    }
-}
-
-/// Constructs a [`DashIngestSession`] — performs **no I/O**.
-pub struct DashPullDialer {
-    mpd_url: Url,
-    dash: dash_runtime::client::DashConfig,
-    limits: dash_runtime::client::PullLimits,
-}
-
-impl DashPullDialer {
-    fn new(
-        mpd_url: Url,
-        dash: dash_runtime::client::DashConfig,
-        limits: dash_runtime::client::PullLimits,
-    ) -> Self {
-        Self {
-            mpd_url,
-            dash,
-            limits,
-        }
-    }
-}
-
-impl Dialer for DashPullDialer {
-    type Session = DashIngestSession;
-    type Error = MultimuxError;
-
-    fn dial(&mut self) -> Result<DashIngestSession> {
-        Ok(DashIngestSession::with_config(
-            self.mpd_url.clone(),
-            self.dash,
-            self.limits.clone(),
-        ))
     }
 }
 
@@ -165,68 +116,92 @@ pub fn parse_iso8601_utc_for_test(s: &str) -> Option<u64> {
     parse_iso8601_utc(s)
 }
 
-fn build_client(route: &DashPullRoute) -> Result<(HttpClient, Url, AuthState)> {
-    let parsed = Url::parse(&route.target.url).map_err(|e| MultimuxError::Connect {
-        reason: format!(
-            "bad DASH-pull URL {}: {e}",
-            crate::redact::redact_url(&route.target.url)
-        ),
-    })?;
-    let credentials =
-        resolve_credentials(route.target.auth.clone(), credentials_from_url(&parsed)?);
-    let clean_url = strip_userinfo(&parsed)?;
-    let credentials = scope_credentials(credentials, &clean_url);
-    let http = HttpClient::builder()
-        .redirect(crate::source::redirect_policy(route.allow_cross_origin()))
-        .build()
-        .map_err(|e| MultimuxError::Connect {
-            reason: format!("reqwest client: {e}"),
-        })?;
-    Ok((http, clean_url, credentials))
+fn session_config(route: &DashPullRoute) -> Config {
+    let read_us = u64::try_from(route.target.timeouts.read.as_micros())
+        .unwrap_or(u64::MAX)
+        .max(MICROS_PER_MILLI);
+    let mut config = Config::relay();
+    config.kind = SourceKind::Dash;
+    config.dash.cross_origin_urls = route.allow_cross_origin();
+    config.utc_timing_credentials = false;
+    config.request_timeout_us = read_us;
+    config.segment_timeout_us = read_us;
+    config.max_segment_bytes = crate::source::MAX_HTTP_BODY_BYTES;
+    config.max_inflight_segments = SEGMENT_WINDOW;
+    config.max_segment_failures = MAX_SEGMENT_FAILURES;
+    config.max_key_failures = MAX_INIT_FAILURES;
+    config
 }
 
-/// Publishes into a route's registry; the production [`drive::RouteSink`].
-struct RegistrySink<'a> {
-    route_handle: &'a Arc<crate::route::RouteHandle>,
-    progress: crate::source::DriverProgress,
-}
-
-impl drive::RouteSink for RegistrySink<'_> {
-    fn advance<'a>(
-        &'a mut self,
-        driver: &'a media_plane::ingress::IngestDriver<DashIngestSession>,
-    ) -> impl std::future::Future<Output = ()> + Send + 'a {
-        crate::source::advance_route(driver, self.route_handle, &mut self.progress)
-    }
-
-    fn finish(&mut self, result: Result<()>) -> Result<()> {
-        crate::source::finish_vod(self.route_handle, result)
-    }
-}
-
-/// Drives `route` to completion: dial (no I/O), then pump the core's fetches,
-/// feed the answers back and publish the samples until a static MPD has played
-/// to its end, or a fetch the failure policy cannot absorb fails. A dynamic MPD
-/// never ends on its own.
+/// Drives `route` until a static MPD has played to its end or the session fails outright; a
+/// dynamic MPD never ends on its own.
 ///
-/// `route_handle` is the driver-backed registry side of issue #805 task 2 —
-/// see `crate::source::rtsp::run_rtsp`'s own doc for what
-/// `crate::source::report_driver_progress` does with it each iteration.
+/// `route_handle` is the driver-backed registry side of issue #805 task 2 — see
+/// `crate::source::rtsp::run_rtsp`'s own doc for what `crate::source::report_driver_progress`
+/// does with it each iteration.
 pub async fn run_dash_pull(
     route: &DashPullRoute,
     trunk_config: TrunkConfig,
     handshake: HandshakePolicy,
     route_handle: &Arc<crate::route::RouteHandle>,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<()> {
-    drive::run(
+    run_with_clock(
         route,
         trunk_config,
         handshake,
+        route_handle,
+        cancel,
         Arc::new(crate::clock::SystemHostClock::new()),
-        RegistrySink {
-            route_handle,
-            progress: crate::source::DriverProgress::new(),
-        },
     )
     .await
+}
+
+/// [`run_dash_pull`] with the instants taken from `clock`: the one seam a test uses to give the
+/// pull a host clock with a known skew.
+pub(crate) async fn run_with_clock(
+    route: &DashPullRoute,
+    trunk_config: TrunkConfig,
+    handshake: HandshakePolicy,
+    route_handle: &Arc<crate::route::RouteHandle>,
+    cancel: tokio_util::sync::CancellationToken,
+    clock: Arc<dyn HostClock>,
+) -> Result<()> {
+    let timeouts = route.target.timeouts;
+    let config = session_config(route);
+    let resync_us = config.dash.utc_resync_us;
+    let step = SessionStep::open(
+        &route.target.url,
+        config,
+        route.target.auth.clone(),
+        SessionLabels::new(WHAT, timeouts).session_retries(),
+        Arc::clone(route_handle),
+        false,
+    )?;
+    let mut step = step.with_clock(clock).with_clock_resync(resync_us);
+    let driver = IngestDriver::new(
+        EventIngest::new().stitching(),
+        trunk_config,
+        handshake,
+        media_plane::DEFAULT_MAX_PROGRAMS,
+    );
+    let mut progress = crate::source::DriverProgress::new();
+    let mut sink = tokio::io::sink();
+    let err = crate::source::driver::run_ingest_scaffold(
+        driver,
+        route_handle,
+        &mut progress,
+        cancel,
+        timeouts,
+        crate::source::driver::DEFAULT_WRITE_TIMEOUT,
+        &mut sink,
+        &mut step,
+        |never: Infallible| match never {},
+    )
+    .await;
+    let result = match err {
+        MultimuxError::Connect { reason } if reason.starts_with("session ended") => Ok(()),
+        other => Err(other),
+    };
+    crate::source::finish_vod(route_handle, result)
 }

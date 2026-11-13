@@ -204,6 +204,7 @@ pub(crate) struct DashSource {
     backoff: Backoff,
     max_redirects: u32,
     max_key_failures: u32,
+    utc_credentials: bool,
     mpd_failures: Attempts,
     mpd_accepted: bool,
     retry_after_us: u64,
@@ -272,6 +273,7 @@ impl DashSource {
             backoff: Backoff::new(&config.backoff_ms, config.backoff_cap_ms, seed),
             max_redirects: config.max_redirects,
             max_key_failures: config.max_key_failures,
+            utc_credentials: config.utc_timing_credentials,
             mpd_failures: Attempts::default(),
             mpd_accepted: false,
             retry_after_us: 0,
@@ -981,6 +983,9 @@ impl DashSource {
     fn send(&mut self, mut req: Req, auth: &mut AuthState, now: u64) {
         self.flush_refused();
         let mut headers = auth.request_headers(&req.url, now);
+        if !self.utc_credentials && matches!(req.purpose, Purpose::Utc(_)) {
+            headers.retain(|(name, _)| !is_credential_header(name));
+        }
         req.authed = broadcast_auth::carries_credentials(&headers);
         headers.extend(req.extra.conditional.iter().cloned());
         let method = req.extra.method;
@@ -1358,6 +1363,15 @@ fn master_selection(selection: &ManifestSelection) -> MasterSelection {
         chosen: selection.chosen.unwrap_or(0),
         renditions,
     }
+}
+
+/// Headers that carry the session's credentials or state: never sent to a `UTCTiming` server,
+/// which the MPD names (RFC 9110 17.16.2 puts credentials in the hands of the origin the user
+/// configured, not of whatever address a remote manifest points at).
+fn is_credential_header(name: &str) -> bool {
+    ["authorization", "proxy-authorization", "cookie"]
+        .iter()
+        .any(|credential| name.eq_ignore_ascii_case(credential))
 }
 
 #[cfg(test)]

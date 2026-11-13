@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- `Config::utc_timing_credentials` (on by default): whether a DASH session sends its credentials to a `UTCTiming` server on the session origin; a relay turns it off.
 - `Config::preemptive_basic` (off by default): send `Basic` credentials on the first request to the session origin instead of waiting for a `401` (RFC 7617).
 - `ErrorKind::refusal_status()` (the HTTP status behind a failed key, init or segment request) and `ErrorKind::is_permanent()` (content or codec errors a retry cannot fix).
 - `UdpConfig::sdp`: an out-of-band SDP (RFC 4566) that switches an `rtp://` session from MPEG-2 TS (payload type 33) to the H.264 (RFC 6184) and AAC (RFC 3640) streams it declares, routed by RTP payload type and depayloaded with `transmux`'s depacketisers. The tracks are announced when the socket is bound, before any packet; a reconnect flushes the access units still held. `datagram_stats()` counts the datagrams and the ones that were not RTP, and `payload_bytes()` the packets routed to a declared stream.
