@@ -94,6 +94,7 @@ pub struct Session {
     stale_dropped: u64,
     hls_joins: crate::source::hls_join::HlsJoins,
     wall: Option<WallClock>,
+    payload_bytes: u64,
 }
 
 impl Session {
@@ -284,6 +285,7 @@ impl Session {
             stale_dropped: 0,
             hls_joins: crate::source::hls_join::HlsJoins::default(),
             wall: None,
+            payload_bytes: 0,
         })
     }
 
@@ -559,6 +561,7 @@ impl Session {
             return;
         }
         self.now_us = now_us;
+        self.payload_bytes = self.payload_bytes.saturating_add(bytes.len() as u64);
         self.source.on_data(bytes, now_us);
         self.drain_source();
         if !bytes.is_empty() {
@@ -656,6 +659,16 @@ impl Session {
         }
     }
 
+    /// Transport-stream payload bytes the session has accepted from its source: HTTP body bytes
+    /// of a TS-over-HTTP session, and the payloads a UDP, RTP or SRT session delivers after
+    /// alignment checks, reordering and decryption. Control traffic (SRT keepalives, ACKs) and
+    /// dropped datagrams do not count, so a host that measures stalls by this counter is not
+    /// kept alive by a peer that only keeps the link up.
+    #[must_use]
+    pub fn payload_bytes(&self) -> u64 {
+        self.payload_bytes
+    }
+
     /// Datagram counters of a UDP, RTP or SRT session; all zero for any other source.
     #[must_use]
     pub fn datagram_stats(&self) -> crate::udp::DatagramStats {
@@ -680,7 +693,7 @@ impl Session {
             let (kind, clean) = match notice {
                 Notice::Rejected(reason) => (Some(ErrorKind::SrtRejected { reason }), false),
                 Notice::HandshakeTimedOut => (Some(ErrorKind::SrtHandshakeTimeout), false),
-                Notice::PeerIdle => (None, false),
+                Notice::PeerIdle => (Some(ErrorKind::SrtPeerIdle), false),
                 Notice::PeerShutdown => (None, true),
             };
             if let Some(kind) = kind {
@@ -699,6 +712,7 @@ impl Session {
             self.emit(Event::Discontinuity);
         }
         for payload in &released.payloads {
+            self.payload_bytes = self.payload_bytes.saturating_add(payload.len() as u64);
             self.source.on_data(payload, now_us);
             self.drain_source();
             let pcr = self.source.take_last_pcr();

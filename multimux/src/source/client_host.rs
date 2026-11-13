@@ -235,15 +235,32 @@ impl SessionStep {
                         .udp
                         .bind(&host, port, multicast.as_ref(), recv_buffer_bytes)
                         .await?;
-                    let socket = std::sync::Arc::new(socket);
-                    let task = tokio::spawn(receive(
-                        std::sync::Arc::clone(&socket),
-                        conn,
-                        self.tx.clone(),
-                    ));
-                    self.requests.insert(conn, task.abort_handle());
-                    self.sockets.insert(conn, socket);
+                    self.register_socket(conn, socket);
                     self.session.on_connected(conn);
+                }
+                Action::UdpBind {
+                    conn,
+                    host,
+                    port,
+                    mode: UdpMode::Connect,
+                    ..
+                } => match connect_udp(&host, port).await {
+                    Ok(socket) => {
+                        self.register_socket(conn, socket);
+                        self.session.on_connected(conn);
+                    }
+                    Err(e) => {
+                        self.transport_error = Some(e.to_string());
+                        let now = self.now_us();
+                        self.session.on_closed(conn, Some(e.to_string()), now);
+                    }
+                },
+                Action::Send { conn, bytes } => {
+                    if let Some(socket) = self.sockets.get(&conn)
+                        && let Err(e) = socket.send(&bytes).await
+                    {
+                        self.transport_error = Some(e.to_string());
+                    }
                 }
                 Action::Close { conn } => {
                     self.sockets.remove(&conn);
@@ -267,6 +284,17 @@ impl SessionStep {
         Ok(())
     }
 
+    fn register_socket(&mut self, conn: u32, socket: UdpSocket) {
+        let socket = std::sync::Arc::new(socket);
+        let task = tokio::spawn(receive(
+            std::sync::Arc::clone(&socket),
+            conn,
+            self.tx.clone(),
+        ));
+        self.requests.insert(conn, task.abort_handle());
+        self.sockets.insert(conn, socket);
+    }
+
     fn apply(&mut self, message: Message) -> bool {
         let now = self.now_us();
         match message {
@@ -282,8 +310,9 @@ impl SessionStep {
                 if self.feed_si {
                     self.route_handle.feed_si_ts(&bytes);
                 }
+                let before = self.session.payload_bytes();
                 self.session.on_data(conn, &bytes, now);
-                true
+                self.session.payload_bytes() > before
             }
             Message::Closed { conn, error } => {
                 self.requests.remove(&conn);
@@ -324,6 +353,11 @@ impl SessionStep {
                 Event::AuthRequired { .. } => {
                     verdict = verdict.max(Verdict::Failed(MultimuxError::Auth {
                         reason: format!("{}: authentication required", self.labels.what),
+                    }));
+                }
+                Event::Error { kind, fatal: false } if kind.ends_connection() => {
+                    verdict = verdict.max(Verdict::Failed(MultimuxError::Connect {
+                        reason: format!("{}: {}", self.labels.what, kind.name()),
                     }));
                 }
                 Event::Error { kind, fatal: true } => {
@@ -580,4 +614,21 @@ async fn receive(socket: std::sync::Arc<UdpSocket>, conn: u32, tx: mpsc::Sender<
             return;
         }
     }
+}
+
+async fn connect_udp(host: &str, port: u16) -> std::io::Result<UdpSocket> {
+    let peer = tokio::net::lookup_host((host, port))
+        .await?
+        .next()
+        .ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::NotFound, format!("{host}: no address"))
+        })?;
+    let local: std::net::SocketAddr = if peer.is_ipv6() {
+        (std::net::Ipv6Addr::UNSPECIFIED, 0).into()
+    } else {
+        (std::net::Ipv4Addr::UNSPECIFIED, 0).into()
+    };
+    let socket = UdpSocket::bind(local).await?;
+    socket.connect(peer).await?;
+    Ok(socket)
 }

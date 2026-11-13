@@ -502,6 +502,21 @@ fn a_single_far_behind_duplicate_is_not_a_restart() {
 }
 
 #[test]
+fn payload_bytes_counts_delivered_ts_and_not_dropped_datagrams() {
+    let ts = small();
+    let good = ts_datagrams(&ts, 7);
+    let mut host = UdpHost::open(GROUP, Config::default());
+    host.datagram(&good[0][..TS_PACKET - 1]);
+    assert_eq!(host.session.payload_bytes(), 0);
+    host.datagram(&good[0]);
+    host.datagram(&good[1]);
+    assert_eq!(
+        host.session.payload_bytes(),
+        (good[0].len() + good[1].len()) as u64
+    );
+}
+
+#[test]
 fn datagrams_that_are_not_whole_ts_packets_are_dropped_whole_and_counted() {
     let ts = small();
     let good = ts_datagrams(&ts, 7);

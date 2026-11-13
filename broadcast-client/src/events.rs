@@ -434,6 +434,9 @@ pub enum ErrorKind {
     /// The SRT handshake did not finish inside `SrtConfig::handshake_timeout_ms`. Non-fatal: the
     /// connect-failure backoff follows.
     SrtHandshakeTimeout,
+    /// The SRT peer sent nothing, not even a keepalive, for `SrtConfig::peer_idle_timeout_ms`.
+    /// Non-fatal: the link is dropped and rebuilt at once.
+    SrtPeerIdle,
     /// A Smooth Streaming client manifest could not be read as XML, broke a size or structure
     /// bound or is not a manifest (`reason` is a stable token). Non-fatal and reported once per
     /// reason until a good manifest arrives; the session keeps the last good manifest and
@@ -459,6 +462,17 @@ pub enum ErrorKind {
 }
 
 impl ErrorKind {
+    /// `true` when the error ended the connection the session was reading from, so a host that
+    /// owns reconnection (rather than letting the session rebuild the link) should treat the
+    /// attempt as failed.
+    #[must_use]
+    pub fn ends_connection(&self) -> bool {
+        matches!(
+            self,
+            Self::SrtRejected { .. } | Self::SrtHandshakeTimeout | Self::SrtPeerIdle
+        )
+    }
+
     /// Stable snake_case label.
     #[must_use]
     pub fn name(&self) -> &'static str {
@@ -485,6 +499,7 @@ impl ErrorKind {
             Self::PendingTrackUnresolved { .. } => "pending_track_unresolved",
             Self::SrtRejected { .. } => "srt_rejected",
             Self::SrtHandshakeTimeout => "srt_handshake_timeout",
+            Self::SrtPeerIdle => "srt_peer_idle",
             Self::SmoothManifest { .. } => "smooth_manifest",
             Self::RtmpStatus { .. } => "rtmp_status",
             Self::BufferInputsDropped => "buffer_inputs_dropped",

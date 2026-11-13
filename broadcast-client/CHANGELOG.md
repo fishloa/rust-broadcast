@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- `Session::payload_bytes()`: transport-stream payload bytes accepted from the source, excluding control traffic and dropped datagrams, for hosts that measure stalls.
+- `ErrorKind::SrtPeerIdle` (non-fatal) when the SRT peer goes silent past `peer_idle_timeout_ms`, and `ErrorKind::ends_connection()` naming the errors that end the connection the session was reading.
 - `UdpConfig::interface_index` and `MulticastJoin::interface_index`: join an IPv6 multicast group on an interface named by index (valid only for an IPv6 group, not together with `interface`).
 - `Config::relay()`: a preset for a host that forwards samples instead of playing them (no start-pending wait, no timeline-jump screening; the initial-tracks hold stays); `Event::Tracks` specs keep their `program_number`, which a relay uses to split a multi-programme stream.
 ### Removed
