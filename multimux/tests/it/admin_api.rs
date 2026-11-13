@@ -976,6 +976,119 @@ async fn reload_leaves_unchanged_route_running_restarts_changed_route() {
     let _ = std::fs::remove_file(&config_path);
 }
 
+/// A reload that restarts a changed route never leaves its viewers without an answer: while it
+/// runs, a loop requesting the route's media playlist sees only `200`s: the old runtime's store
+/// keeps serving until the replacement is swapped in, and the replacement's store answers from the
+/// first request on. (Blocking-reload requests parked on the old store at the swap are a separate,
+/// open gap: they end in a `503` after the blocking-reload timeout, see #2593.)
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_reload_of_a_changed_route_never_answers_a_viewer_with_an_error() {
+    let (media_addr, media_listener) = bind_tcp();
+    let (admin_addr, admin_listener) = bind_tcp();
+    let config_path = std::env::temp_dir().join(format!(
+        "multimux-admin-api-test-gapless-{}-{}.json",
+        std::process::id(),
+        admin_addr.port()
+    ));
+    let with_version = |version: u32| {
+        let mut route = instant_route("live");
+        route.input = InputSpec::Custom {
+            type_tag: "instant".to_string(),
+            params: serde_json::json!({ "version": version }),
+        };
+        admin_config(media_addr, admin_addr, vec![route])
+    };
+    std::fs::write(
+        &config_path,
+        serde_json::to_string_pretty(&initial_as_json(&with_version(1))).expect("serialize"),
+    )
+    .expect("write config");
+    let server = tokio::spawn(serve_config_file_with_registry_on_admin(
+        media_listener,
+        admin_listener,
+        config_path.clone(),
+        instant_registry(),
+    ));
+    wait_for_port(admin_addr).await;
+    let client = reqwest::Client::new();
+    wait_until_live(&client, media_addr, "live").await;
+    let before = admin_get(&client, admin_addr, "/admin/routes/live")
+        .await
+        .json::<serde_json::Value>()
+        .await
+        .expect("status before");
+
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let answered = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let viewer = tokio::spawn({
+        let (client, stop, answered) = (client.clone(), Arc::clone(&stop), Arc::clone(&answered));
+        let url = media_playlist_url(media_addr, "live");
+        async move {
+            let mut statuses = Vec::new();
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                let status = client.get(&url).send().await.map(|r| r.status());
+                statuses.push(status.map_err(|e| e.to_string()));
+                answered.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                tokio::task::yield_now().await;
+            }
+            statuses
+        }
+    });
+
+    std::fs::write(
+        &config_path,
+        serde_json::to_string_pretty(&initial_as_json(&with_version(2))).expect("serialize"),
+    )
+    .expect("rewrite config");
+    let reload = admin_json(
+        &client,
+        admin_addr,
+        reqwest::Method::POST,
+        "/admin/reload",
+        Some(ADMIN_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(reload.status(), reqwest::StatusCode::OK);
+    let summary = reload.json::<serde_json::Value>().await.expect("summary");
+    assert_eq!(summary["changed"], serde_json::json!(["live"]), "{summary}");
+    wait_until_live(&client, media_addr, "live").await;
+    let seen = answered.load(std::sync::atomic::Ordering::Relaxed);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    while answered.load(std::sync::atomic::Ordering::Relaxed) < seen + 20 {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the viewer stopped being answered"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let statuses = viewer.await.expect("viewer task");
+
+    let after = admin_get(&client, admin_addr, "/admin/routes/live")
+        .await
+        .json::<serde_json::Value>()
+        .await
+        .expect("status after");
+    assert_ne!(
+        created_at_nanos(&before),
+        created_at_nanos(&after),
+        "the route was restarted"
+    );
+    let bad: Vec<_> = statuses
+        .iter()
+        .filter(|s| !matches!(s, Ok(status) if *status == reqwest::StatusCode::OK))
+        .collect();
+    assert!(
+        statuses.len() > 20 && bad.is_empty(),
+        "{} requests, non-200 answers during the reload: {bad:?}",
+        statuses.len()
+    );
+
+    server.abort();
+    let _ = std::fs::remove_file(&config_path);
+}
+
 /// `Config` is `Deserialize`-only (no `Serialize` — several nested types
 /// carry credentials that must never round-trip to JSON in production), so
 /// this test-only helper hand-builds the equivalent JSON `serde_json::Value`
