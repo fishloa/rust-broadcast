@@ -126,7 +126,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "output/whep_socket.rs",
-        74,
+        78,
         "the shared media socket's receive loop; owned by its SharedSocket, whose Drop aborts it when the route's state (and every attached viewer) is gone",
     ),
     (
