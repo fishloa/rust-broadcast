@@ -7,6 +7,7 @@ use hls_runtime::client::HlsClient;
 use hls_runtime::server::HlsOrigin;
 
 fn assert_send<T: Send>() {}
+#[cfg(feature = "std")]
 fn assert_send_sync<T: Send + Sync>() {}
 
 #[test]
