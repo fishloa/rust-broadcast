@@ -42,6 +42,7 @@ media-plane implements an architecture, not a wire standard, so there is no spec
 | Feature | Default | Description |
 |---|---|---|
 | `std` | yes | `Trunk`, `ingress`, `egress`, `retention` and their re-exports, plus the `transmux`, `timed-metadata`, `event-listener` and `parking_lot` dependencies. Without it only the byte layer exists. |
+| `test-support` | no | Implies `std` and compiles `ts_session::test_support`: real `TsMux`-muxed TS bytes, `TrunkConfig` and `HandshakePolicy` builders for a host crate's tests of a TS transport. Meant for `[dev-dependencies]`, not for production builds. |
 
 **`no_std` note:** only the byte layer (`byte_stage`, `byte_tap`, `byte_merge`, `ids`) is `no_std` + `alloc`. `Trunk` and everything above it need `std`. `cargo build --no-default-features` builds the byte layer alone.
 
