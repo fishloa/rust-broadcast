@@ -35,19 +35,14 @@ fn first_send(outputs: Vec<HandshakeOutput>) -> Option<Vec<u8>> {
 fn main() {
     let mut caller = CallerHandshake::new(
         CALLER_SOCKET_ID,
-        HandshakeConfig {
-            latency_ms: 180,
-            stream_id: Some("live/camera-1".to_string()),
-            ..HandshakeConfig::default()
-        },
+        HandshakeConfig::default()
+            .with_latency_ms(180)
+            .with_stream_id(Some("live/camera-1".to_string())),
     );
     let mut listener = ListenerHandshake::new(
         LISTENER_SOCKET_ID,
         SYN_COOKIE,
-        HandshakeConfig {
-            latency_ms: 250,
-            ..HandshakeConfig::default()
-        },
+        HandshakeConfig::default().with_latency_ms(250),
     );
 
     let mut to_listener = caller.start().expect("caller start");

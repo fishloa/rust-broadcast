@@ -36,11 +36,9 @@ use srt_runtime::packet::{ControlPacket, EncryptionField};
 const PKT_SEQ_NO: u32 = 0x0000_2A2A;
 
 fn config_with_crypto(crypto: CryptoConfig) -> HandshakeConfig {
-    HandshakeConfig {
-        encryption_field: EncryptionField::Aes128,
-        crypto: Some(crypto),
-        ..HandshakeConfig::default()
-    }
+    HandshakeConfig::default()
+        .with_encryption_field(EncryptionField::Aes128)
+        .with_crypto(Some(crypto))
 }
 
 /// Drives one full induction → conclusion exchange between a fresh

@@ -79,14 +79,8 @@ fn run_rendezvous(a: &mut RendezvousHandshake, b: &mut RendezvousHandshake) {
 
 #[test]
 fn two_rendezvous_peers_converge_on_connected_with_matching_params() {
-    let config_a = HandshakeConfig {
-        latency_ms: 180,
-        ..HandshakeConfig::default()
-    };
-    let config_b = HandshakeConfig {
-        latency_ms: 250,
-        ..HandshakeConfig::default()
-    };
+    let config_a = HandshakeConfig::default().with_latency_ms(180);
+    let config_b = HandshakeConfig::default().with_latency_ms(250);
 
     let mut a = RendezvousHandshake::new(PEER_A_SOCKET_ID, PEER_A_COOKIE, config_a);
     let mut b = RendezvousHandshake::new(PEER_B_SOCKET_ID, PEER_B_COOKIE, config_b);
@@ -235,10 +229,8 @@ fn rendezvous_with_peer(peer_config: HandshakeConfig) -> (bool, bool) {
 
 #[test]
 fn rendezvous_rejects_a_peer_isn_wider_than_31_bits() {
-    let (connected, rejected) = rendezvous_with_peer(HandshakeConfig {
-        initial_seq_number: 0xFFFF_FFFF,
-        ..HandshakeConfig::default()
-    });
+    let (connected, rejected) =
+        rendezvous_with_peer(HandshakeConfig::default().with_initial_seq_number(0xFFFF_FFFF));
     assert!(
         rejected && !connected,
         "peer ISN 0xFFFF_FFFF accepted: connected={connected} rejected={rejected}"
@@ -248,14 +240,8 @@ fn rendezvous_rejects_a_peer_isn_wider_than_31_bits() {
 #[test]
 fn rendezvous_rejects_a_peer_advertising_zero_mtu_or_flow_window() {
     for bad in [
-        HandshakeConfig {
-            mtu: 0,
-            ..HandshakeConfig::default()
-        },
-        HandshakeConfig {
-            max_flow_window_size: 0,
-            ..HandshakeConfig::default()
-        },
+        HandshakeConfig::default().with_mtu(0),
+        HandshakeConfig::default().with_max_flow_window_size(0),
     ] {
         let (connected, rejected) = rendezvous_with_peer(bad);
         assert!(rejected && !connected, "connected={connected}");

@@ -374,6 +374,7 @@ impl zeroize::ZeroizeOnDrop for SecretBytes {}
 /// values *this* engine advertises (`draft-sharabayko-srt-01` §3.2.1,
 /// §3.2.1.1, §3.2.1.3, §3.2.1.4).
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct HandshakeConfig {
     /// TSBPD delay in milliseconds this side requests, sent as both the
     /// Receiver and Sender TSBPD Delay of its Handshake Extension Message
@@ -423,6 +424,101 @@ pub struct HandshakeConfig {
     #[cfg(feature = "crypto")]
     #[cfg_attr(docsrs, doc(cfg(feature = "crypto")))]
     pub crypto: Option<CryptoConfig>,
+}
+
+impl HandshakeConfig {
+    /// Sets [`latency_ms`](Self::latency_ms).
+    #[must_use]
+    pub fn with_latency_ms(mut self, latency_ms: u16) -> Self {
+        self.latency_ms = latency_ms;
+        self
+    }
+
+    /// Sets [`mtu`](Self::mtu).
+    #[must_use]
+    pub fn with_mtu(mut self, mtu: u32) -> Self {
+        self.mtu = mtu;
+        self
+    }
+
+    /// Sets [`max_flow_window_size`](Self::max_flow_window_size).
+    #[must_use]
+    pub fn with_max_flow_window_size(mut self, max_flow_window_size: u32) -> Self {
+        self.max_flow_window_size = max_flow_window_size;
+        self
+    }
+
+    /// Sets [`initial_seq_number`](Self::initial_seq_number).
+    #[must_use]
+    pub fn with_initial_seq_number(mut self, initial_seq_number: u32) -> Self {
+        self.initial_seq_number = initial_seq_number;
+        self
+    }
+
+    /// Sets [`srt_version`](Self::srt_version).
+    #[must_use]
+    pub fn with_srt_version(mut self, srt_version: u32) -> Self {
+        self.srt_version = srt_version;
+        self
+    }
+
+    /// Sets [`flags`](Self::flags).
+    #[must_use]
+    pub fn with_flags(mut self, flags: HandshakeExtensionMessageFlags) -> Self {
+        self.flags = flags;
+        self
+    }
+
+    /// Sets [`encryption_field`](Self::encryption_field).
+    #[must_use]
+    pub fn with_encryption_field(mut self, encryption_field: EncryptionField) -> Self {
+        self.encryption_field = encryption_field;
+        self
+    }
+
+    /// Sets [`stream_id`](Self::stream_id).
+    #[must_use]
+    pub fn with_stream_id(mut self, stream_id: Option<String>) -> Self {
+        self.stream_id = stream_id;
+        self
+    }
+
+    /// Sets [`group`](Self::group).
+    #[must_use]
+    pub fn with_group(mut self, group: Option<GroupMembershipExtension>) -> Self {
+        self.group = group;
+        self
+    }
+
+    /// Sets [`local_ip`](Self::local_ip).
+    #[must_use]
+    pub fn with_local_ip(mut self, local_ip: [u32; 4]) -> Self {
+        self.local_ip = local_ip;
+        self
+    }
+
+    /// Sets [`retransmit_after_ticks`](Self::retransmit_after_ticks).
+    #[must_use]
+    pub fn with_retransmit_after_ticks(mut self, retransmit_after_ticks: u32) -> Self {
+        self.retransmit_after_ticks = retransmit_after_ticks;
+        self
+    }
+
+    /// Sets [`max_retries`](Self::max_retries).
+    #[must_use]
+    pub fn with_max_retries(mut self, max_retries: u32) -> Self {
+        self.max_retries = max_retries;
+        self
+    }
+
+    /// Sets [`crypto`](Self::crypto).
+    #[cfg(feature = "crypto")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "crypto")))]
+    #[must_use]
+    pub fn with_crypto(mut self, crypto: Option<CryptoConfig>) -> Self {
+        self.crypto = crypto;
+        self
+    }
 }
 
 /// Default [`HandshakeConfig::max_retries`]: twelve retransmissions at the

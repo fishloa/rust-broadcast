@@ -341,10 +341,7 @@ async fn libsrt_sender_recovers_losses_reported_in_our_naks() {
     skip_unless_tools!("srt-live-transmit" => "-version");
     tokio::time::timeout(TEST_TIMEOUT, async {
         let (mut receiver, relay, _libsrt, src_port) = our_listener_behind_a_relay(
-            HandshakeConfig {
-                latency_ms: 500,
-                ..crate::without_tlpktdrop()
-            },
+            crate::without_tlpktdrop().with_latency_ms(500),
             "tlpktdrop=0&latency=120",
             None,
             drop_pattern,

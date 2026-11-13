@@ -138,12 +138,10 @@ impl SrtCaller {
         let attempt = self.attempt;
         let own_socket_id = first_u32(&derive(&seed, LABEL_SOCKET_ID, attempt)) % MAX_SOCKET_ID + 1;
         let isn = first_u32(&derive(&seed, LABEL_ISN, attempt)) & SEQ_NUMBER_MASK;
-        let mut hs_config = HandshakeConfig {
-            latency_ms: self.config.latency_ms,
-            initial_seq_number: isn,
-            stream_id: self.config.stream_id.clone(),
-            ..HandshakeConfig::default()
-        };
+        let mut hs_config = HandshakeConfig::default()
+            .with_latency_ms(self.config.latency_ms)
+            .with_initial_seq_number(isn)
+            .with_stream_id(self.config.stream_id.clone());
         if let Some(enc) = &self.config.encryption {
             hs_config.encryption_field = match enc.key_length {
                 SrtKeyLength::Aes128 => EncryptionField::Aes128,
