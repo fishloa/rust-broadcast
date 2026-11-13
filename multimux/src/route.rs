@@ -731,10 +731,16 @@ impl ProgramServing {
     /// construction, plus an optional DVR recorder if `dvr_config` is
     /// provided. The one and only place either is created — see
     /// [`RouteHandle::publish_program`].
+    ///
+    /// `inherited_init` seeds the origin's current init generation with the init segment the
+    /// replaced program last published, if this program continues one. Seeding it before any
+    /// segment is cut is what makes a reload's DASH Period boundary depend on the bytes alone:
+    /// republishing identical bytes stays in that generation, a different init opens the next.
     fn new(
         trunk: Arc<Trunk>,
         route: &RouteHandle,
         epoch: ProgramEpoch,
+        inherited_init: Option<Bytes>,
     ) -> Result<Arc<Self>, hls_runtime::server::HlsOriginBuildError> {
         let target_duration_secs = route.target_duration_secs;
         let part_target_ms = route.part_target_ms;
@@ -818,6 +824,9 @@ impl ProgramServing {
         // part target and an offset with no room for u32 — all reachable
         // from caller-supplied numbers, so surfaced, never `expect`ed.
         let ll_hls = Arc::new(builder.build()?);
+        if let Some(init) = inherited_init {
+            ll_hls.set_init(init);
+        }
 
         let audio_entries: Vec<(Arc<HlsOrigin>, String)> = audio_servings
             .iter()
@@ -1671,6 +1680,13 @@ pub struct RouteHandle {
     /// The programs of the route this one replaces ([`Self::continue_from`]): each program's
     /// first publication on this route continues their numbering and timeline.
     predecessor: Mutex<HashMap<ProgramId, ProgramContinuation>>,
+    /// The init segment the route this one replaces last published, carried over by
+    /// [`Self::continue_from`] (issue #2611). Once, at the replacement's first
+    /// [`Self::publish_program`], it seeds that program's origin — see [`ProgramServing::new`].
+    /// A replacement whose own init is byte-identical then stays in the same init generation
+    /// (one DASH Period); a different one starts a new generation at its first segment, which is
+    /// the new Period [`crate::output::dash`] already renders per generation.
+    predecessor_init: Mutex<Option<Bytes>>,
 }
 
 impl RouteHandle {
@@ -1733,6 +1749,7 @@ impl RouteHandle {
             program_notify: tokio::sync::Notify::new(),
             active_publisher: RwLock::new(HashMap::new()),
             predecessor: Mutex::new(HashMap::new()),
+            predecessor_init: Mutex::new(None),
         }
     }
 
@@ -1789,6 +1806,11 @@ impl RouteHandle {
             .map(|(program, serving)| (*program, serving.continuation()))
             .collect();
         *self.predecessor.lock() = continuations;
+        *self.predecessor_init.lock() = old
+            .programs
+            .read()
+            .values()
+            .find_map(|serving| serving.init_bytes());
     }
 
     /// The sequence number a replacement of this route must number above: the highest media
@@ -2165,7 +2187,8 @@ impl RouteHandle {
             presentation_origin: previous_epoch
                 .map_or_else(SystemTime::now, |e| e.presentation_origin),
         };
-        let serving = match ProgramServing::new(Arc::clone(&trunk), self, epoch) {
+        let inherited_init = self.predecessor_init.lock().clone();
+        let serving = match ProgramServing::new(Arc::clone(&trunk), self, epoch, inherited_init) {
             Ok(serving) => serving,
             Err(e) => {
                 // An unservable configuration (e.g. a NaN target duration
@@ -3149,6 +3172,82 @@ mod program_registry_tests {
             }
         }
         names
+    }
+
+    /// Issue #2611: a replacement's init generation follows the bytes it is seeded with. An init
+    /// identical to the one the replaced route last published stays in that generation (so DASH
+    /// keeps one Period); a different one starts the next generation at the replacement's first
+    /// segment, which DASH renders as a new Period.
+    #[test]
+    fn a_replacement_starts_a_new_init_generation_only_when_its_init_differs() {
+        let info = |seq: u32, byte: u8| transmux::ll_hls::SegmentInfo {
+            bytes: vec![byte; 8],
+            duration: 4.0,
+            segment_seq: seq,
+            part_count: 1,
+        };
+        let route = || {
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration_secs(4.0)
+                    .with_part_target_ms(500)
+                    .with_window_segments(8),
+            )
+        };
+        let replace = |old_init: Vec<u8>, new_init: Vec<u8>| {
+            let old = route();
+            old.publish_new_program(ProgramId(1));
+            old.set_init(ProgramId(1), old_init);
+            old.add_segment(ProgramId(1), info(1, 0x11)).expect("add");
+            let successor = route();
+            successor.continue_from(&old);
+            successor.publish_new_program(ProgramId(1));
+            successor.set_init(ProgramId(1), new_init);
+            successor
+                .add_segment(ProgramId(1), info(1, 0x21))
+                .expect("add");
+            let generation = successor
+                .window_segments(ProgramId(1))
+                .first()
+                .map(|segment| segment.init_generation.value());
+            (old, successor, generation)
+        };
+
+        let (_, same, generation) = replace(vec![0xA1; 4], vec![0xA1; 4]);
+        assert_eq!(
+            generation,
+            Some(1),
+            "identical bytes stay in the generation the viewer already has"
+        );
+        let init_url = |route: &RouteHandle| {
+            advertised_names(route, ProgramId(1))
+                .into_iter()
+                .find(|name| name.starts_with("init"))
+                .unwrap_or_else(|| panic!("no init in the playlist"))
+        };
+        assert_eq!(
+            init_url(&same),
+            init_url(&same),
+            "the same generation keeps one init URL"
+        );
+
+        let (old, changed, generation) = replace(vec![0xA1; 4], vec![0xB2; 4]);
+        assert_eq!(
+            generation,
+            Some(2),
+            "a different init opens the next generation at the replacement's first segment"
+        );
+        assert_ne!(
+            init_url(&old),
+            init_url(&changed),
+            "a new generation is a new init URL"
+        );
+        let urls = advertised_names(&changed, ProgramId(1));
+        assert_eq!(
+            urls.iter().filter(|name| name.starts_with("init")).count(),
+            1,
+            "one init URL: the first segment after the hand-off: {urls:?}"
+        );
     }
 
     /// **A10-2.** A new init generation begins at the segment the caller names,

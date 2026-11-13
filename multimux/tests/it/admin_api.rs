@@ -73,6 +73,35 @@ fn instant_track_spec() -> TrackSpec {
     )
 }
 
+/// The init segment a ticker source publishes: [`instant_track_spec`] for `variant == 0`, and for
+/// any other variant the same track with its SPS `profile_idc` byte varied, so both the RFC 6381
+/// codec string and the fMP4 init bytes differ (issue #2611's "the codec changed").
+const TAG_TICKER: &str = "ticker";
+const TAG_TICKER_HI: &str = "ticker-hi";
+const SPS_PROFILE_IDC: usize = 1;
+const SPS_VARIANT_STEP: u8 = 16;
+
+fn ticker_track_spec(variant: u8) -> TrackSpec {
+    if variant == 0 {
+        return instant_track_spec();
+    }
+    let mut config = transmux::avc_config_from_sprop(SPROP).expect("valid sprop");
+    if let Some(sps) = config.config.sps.first_mut()
+        && let Some(profile) = sps.0.get_mut(SPS_PROFILE_IDC)
+    {
+        *profile = profile.wrapping_add(SPS_VARIANT_STEP.wrapping_mul(variant));
+    }
+    TrackSpec::new(
+        TrackId::new(1),
+        VIDEO_TIMESCALE,
+        CodecConfig::Avc {
+            config,
+            width: 64,
+            height: 64,
+        },
+    )
+}
+
 /// Mirrors `examples/custom_scheme.rs`'s `DemoSession`: announces one
 /// program and queues every synthetic sample in its first `feed` call.
 struct InstantSession {
@@ -203,6 +232,7 @@ async fn run_hold(route_handle: Arc<RouteHandle>) -> multimux::Result<()> {
 struct TickerSession {
     pending: VecDeque<SessionEvent>,
     frame: u32,
+    variant: u8,
 }
 
 const TICKER_GOP: u32 = 6;
@@ -220,7 +250,7 @@ impl Stage for TickerSession {
         if self.frame == 0 {
             self.pending.push_back(SessionEvent::NewProgram {
                 program: ProgramId(0),
-                tracks: vec![instant_track_spec()],
+                tracks: vec![ticker_track_spec(self.variant)],
             });
         }
         let pts = i64::from(self.frame) * i64::from(FRAME_DUR);
@@ -256,9 +286,16 @@ impl IngestSession for TickerSession {
 /// Feeds a [`TickerSession`] through the real driver, segmenter and publisher
 /// (`advance_route`) at 30 frames per second until the supervisor stops it.
 async fn run_ticker(route_handle: Arc<RouteHandle>) -> multimux::Result<()> {
+    run_ticker_variant(route_handle, 0).await
+}
+
+/// [`run_ticker`] with the `variant`-th [`ticker_track_spec`]: a second ticker source that
+/// publishes a DIFFERENT init segment, for the reload tests (issue #2611).
+async fn run_ticker_variant(route_handle: Arc<RouteHandle>, variant: u8) -> multimux::Result<()> {
     let session = TickerSession {
         pending: VecDeque::from([SessionEvent::Established]),
         frame: 0,
+        variant,
     };
     let trunk_config = TrunkConfig::default()
         .with_timed_capacity(nz(256))
@@ -299,10 +336,22 @@ fn instant_registry() -> SchemeRegistry {
         }) as InputFactory,
     );
     registry.register_input(
-        "ticker",
+        TAG_TICKER,
         Arc::new(|ctx: InputCtx| {
             Ok(tokio::spawn(multimux::supervise_driver(
                 run_ticker,
+                ctx.store,
+                Backoff::production_default(),
+                ctx.name,
+                ctx.cancel,
+            )))
+        }) as InputFactory,
+    );
+    registry.register_input(
+        TAG_TICKER_HI,
+        Arc::new(|ctx: InputCtx| {
+            Ok(tokio::spawn(multimux::supervise_driver(
+                |route_handle| run_ticker_variant(route_handle, 1),
                 ctx.store,
                 Backoff::production_default(),
                 ctx.name,
@@ -1087,7 +1136,7 @@ async fn a_reload_of_a_changed_route_never_answers_a_viewer_with_an_error() {
     let with_version = |version: u32| {
         let mut route = instant_route("live");
         route.input = InputSpec::Custom {
-            type_tag: "ticker".to_string(),
+            type_tag: TAG_TICKER.to_string(),
             params: serde_json::json!({ "version": version }),
         };
         admin_config(media_addr, admin_addr, vec![route])
@@ -1243,7 +1292,7 @@ async fn removing_a_route_answers_a_parked_blocking_reload_with_404() {
     ));
     let mut route = instant_route("live");
     route.input = InputSpec::Custom {
-        type_tag: "ticker".to_string(),
+        type_tag: TAG_TICKER.to_string(),
         params: serde_json::Value::Null,
     };
     let config = admin_config(media_addr, admin_addr, vec![route]);
@@ -1326,7 +1375,7 @@ async fn a_changed_routes_replacement_continues_numbering_with_a_discontinuity()
         let mut route = instant_route("live");
         route.outputs = vec![OutputKind::LlHls, OutputKind::Dash];
         route.input = InputSpec::Custom {
-            type_tag: "ticker".to_string(),
+            type_tag: TAG_TICKER.to_string(),
             params: serde_json::json!({ "version": version }),
         };
         admin_config(media_addr, admin_addr, vec![route])
@@ -1481,6 +1530,211 @@ async fn a_changed_routes_replacement_continues_numbering_with_a_discontinuity()
 
     server.abort();
     let _ = std::fs::remove_file(&config_path);
+}
+
+/// The `@attribute="value"` of `name`, exactly as written in an MPD.
+fn mpd_attribute(mpd: &str, name: &str) -> String {
+    let start = mpd
+        .find(&format!("{name}=\""))
+        .unwrap_or_else(|| panic!("no {name} in {mpd}"))
+        + name.len()
+        + 2;
+    mpd[start..]
+        .split('"')
+        .next()
+        .expect("a closed attribute value")
+        .to_string()
+}
+
+/// Every `start` attribute, in document order.
+fn period_starts(mpd: &str) -> Vec<f64> {
+    mpd.split("<Period ")
+        .skip(1)
+        .map(|rest| mpd_attribute(&format!("start=\"{rest}"), "start"))
+        .map(|value| {
+            value
+                .trim_end_matches('S')
+                .parse::<f64>()
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+/// Start the admin + media servers on the config file `first` produces, reload that file to
+/// `second`, and run `check` against the first MPD the replacement renders (that lists a
+/// segment). The replacement route is `"reload"`; both configs and the whole wait are bounded by
+/// [`RELOAD_DEADLINE`], so a wrong expectation fails with a message rather than hanging.
+async fn reload_and_check(
+    who: &'static str,
+    first: Config,
+    second: Config,
+    check: impl FnOnce(&str, &str),
+) {
+    const RELOAD_DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
+    let (media_addr, media_listener) = bind_tcp();
+    let (admin_addr, admin_listener) = bind_tcp();
+    let with_addrs = |config: &Config| {
+        let mut config = initial_as_json(config);
+        config["bind"] = serde_json::json!(media_addr.to_string());
+        config["admin"]["bind"] = serde_json::json!(admin_addr.to_string());
+        config
+    };
+    let config_path = std::env::temp_dir().join(format!(
+        "multimux-admin-api-test-{who}-{}-{}.json",
+        std::process::id(),
+        admin_addr.port()
+    ));
+    std::fs::write(
+        &config_path,
+        serde_json::to_string_pretty(&with_addrs(&first)).expect("serialize"),
+    )
+    .expect("write config");
+    let server = tokio::spawn(serve_config_file_with_registry_on_admin(
+        media_listener,
+        admin_listener,
+        config_path.clone(),
+        instant_registry(),
+    ));
+    let outcome = tokio::time::timeout(RELOAD_DEADLINE, async {
+        wait_for_port(admin_addr).await;
+        let client = reqwest::Client::new();
+        let _playlist = wait_until_live(&client, media_addr, "reload").await;
+        let old_mpd = loop {
+            let response = client
+                .get(format!("http://{media_addr}/reload/manifest.mpd"))
+                .send()
+                .await;
+            if let Ok(response) = response
+                && let Ok(body) = response.text().await
+                && body.contains("m4s\"/")
+            {
+                break body;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        };
+        std::fs::write(
+            &config_path,
+            serde_json::to_string_pretty(&with_addrs(&second)).expect("serialize"),
+        )
+        .expect("rewrite config");
+        let reload = admin_json(
+            &client,
+            admin_addr,
+            reqwest::Method::POST,
+            "/admin/reload",
+            Some(ADMIN_TOKEN),
+            None,
+        )
+        .await;
+        assert_eq!(reload.status(), reqwest::StatusCode::OK);
+        loop {
+            let response = client
+                .get(format!("http://{media_addr}/reload/manifest.mpd"))
+                .send()
+                .await;
+            if let Ok(response) = response
+                && let Ok(body) = response.text().await
+                && body.contains("m4s\"/")
+            {
+                check(&old_mpd, &body);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    server.abort();
+    let _ = std::fs::remove_file(&config_path);
+    assert!(outcome.is_ok(), "reload check exceeded {RELOAD_DEADLINE:?}");
+}
+
+fn reload_config(media_addr: SocketAddr, admin_addr: SocketAddr, tag: &str) -> Config {
+    let mut route = instant_route("reload");
+    route.outputs = vec![OutputKind::LlHls, OutputKind::Dash];
+    route.input = InputSpec::Custom {
+        type_tag: tag.to_string(),
+        params: serde_json::Value::Null,
+    };
+    admin_config(media_addr, admin_addr, vec![route])
+}
+
+fn maybe_validate(mpd: &str, name: &str) {
+    if let Some(schema) = test_fixtures::process::xsd::dash_mpd_schema("admin_api") {
+        test_fixtures::process::xsd::validate(&schema, name, mpd)
+            .expect("the MPD validates against the ISO ed6 schema");
+    }
+}
+
+/// Issue #2611: reloading a changed route onto a source whose init segment DIFFERS (another SPS,
+/// so another codec string) starts a new DASH Period at the first segment the replacement
+/// closes — a new `Period@id` with its own `Representation`, because a Period is a span of the
+/// presentation with a fixed set of encoded versions (ISO/IEC 23009-1 §5.3.2). The replaced
+/// presentation stays listed as the Period before it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_reload_whose_init_changed_starts_a_new_dash_period() {
+    let (media_addr, _) = bind_tcp();
+    let (admin_addr, _) = bind_tcp();
+    let first = reload_config(media_addr, admin_addr, TAG_TICKER);
+    let second = reload_config(media_addr, admin_addr, TAG_TICKER_HI);
+    reload_and_check("dash-period", first, second, |old_mpd, new_mpd| {
+        assert_eq!(old_mpd.matches("</Period>").count(), 1, "{old_mpd}");
+        let ids: Vec<String> = new_mpd
+            .split("<Period ")
+            .skip(1)
+            .map(|rest| mpd_attribute(&format!("id=\"{rest}"), "id"))
+            .collect();
+        assert_eq!(ids.len(), 2, "a new Period: {new_mpd}");
+        assert_ne!(ids[0], ids[1], "Period ids must be unique: {new_mpd}");
+        let representations: Vec<&str> = new_mpd.split("<Representation ").skip(1).collect();
+        assert_eq!(representations.len(), 2, "{new_mpd}");
+        assert_ne!(
+            mpd_attribute(representations[0], "codecs"),
+            mpd_attribute(representations[1], "codecs"),
+            "each Period carries its own source's codecs: {new_mpd}"
+        );
+        assert_eq!(
+            mpd_attribute(&new_mpd, "availabilityStartTime"),
+            mpd_attribute(old_mpd, "availabilityStartTime"),
+            "a dynamic MPD update keeps its availabilityStartTime: {new_mpd}"
+        );
+        let starts = period_starts(new_mpd);
+        assert_eq!(starts.len(), 2, "{new_mpd}");
+        assert!(
+            starts[0] < starts[1],
+            "the new Period starts after the one it replaces: {new_mpd}"
+        );
+        maybe_validate(new_mpd, "period-split");
+    })
+    .await;
+}
+
+/// Issue #2611's other half: reloading onto a source whose init segment is BYTE-IDENTICAL keeps
+/// the presentation in one Period — no Period and no init generation at the hand-off.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_reload_whose_init_is_unchanged_keeps_one_dash_period() {
+    let (media_addr, _) = bind_tcp();
+    let (admin_addr, _) = bind_tcp();
+    let first = reload_config(media_addr, admin_addr, TAG_TICKER);
+    let second = reload_config(media_addr, admin_addr, TAG_TICKER);
+    reload_and_check("dash-one-period", first, second, |old_mpd, new_mpd| {
+        assert_eq!(
+            new_mpd.matches("</Period>").count(),
+            1,
+            "an unchanged init keeps one Period: {new_mpd}"
+        );
+        assert_eq!(
+            mpd_attribute(&new_mpd, "availabilityStartTime"),
+            mpd_attribute(old_mpd, "availabilityStartTime"),
+            "{new_mpd}"
+        );
+        assert_eq!(
+            mpd_attribute(new_mpd, "initialization"),
+            mpd_attribute(old_mpd, "initialization"),
+            "one init generation: {new_mpd}"
+        );
+        maybe_validate(new_mpd, "one-period");
+    })
+    .await;
 }
 
 /// `Config` is `Deserialize`-only (no `Serialize` — several nested types
