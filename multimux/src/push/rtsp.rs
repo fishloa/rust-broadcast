@@ -62,7 +62,7 @@ pub struct RtspTransportConfig {
     pub credentials: Option<(String, String)>,
     /// Bounds on every awaited IO the push performs (SP6.1, defect 4): the
     /// OPTIONS/ANNOUNCE/SETUP/RECORD exchanges and each interleaved write.
-    pub timeouts: rtsp_runtime::RtspTimeouts,
+    pub timeouts: broadcast_common::timeouts::Timeouts,
     /// A fixed SSRC and RTP clock origin, so a test can record byte-exact
     /// wire output. `None` (production) draws both per connection.
     #[cfg(feature = "test-hooks")]
@@ -109,7 +109,7 @@ impl RtspTransportConfig {
     /// termination outside this transport, or a tighter bound in a test,
     /// overrides the defaults here.
     #[must_use]
-    pub fn with_timeouts(mut self, timeouts: rtsp_runtime::RtspTimeouts) -> Self {
+    pub fn with_timeouts(mut self, timeouts: broadcast_common::timeouts::Timeouts) -> Self {
         self.timeouts = timeouts;
         self
     }
@@ -759,7 +759,7 @@ mod tests {
         let mut client = rtsp_runtime::AsyncRtspClient::connect_with_timeouts(
             &addr,
             ClientSession::new(),
-            rtsp_runtime::RtspTimeouts::default(),
+            broadcast_common::timeouts::Timeouts::default(),
         )
         .await
         .expect("connect");

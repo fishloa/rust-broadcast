@@ -44,7 +44,7 @@ Typical users: IP-camera ingest (`multimux`'s RTSP input), RTSP push to a media 
 | Feature | Default | Description |
 |---|---|---|
 | `serde` | no | `Serialize` on the public wire and event types. |
-| `tokio` | no | `AsyncRtspClient` / `AsyncRtspServer` (`tokio_util` `Framed` adapters; 64 KiB header and 2 MiB message caps; `RtspTimeouts`; keepalive at half the session timeout). |
+| `tokio` | no | `AsyncRtspClient` / `AsyncRtspServer` (`tokio_util` `Framed` adapters; 64 KiB header and 2 MiB message caps; `broadcast_common::timeouts::Timeouts`; keepalive at half the session timeout). |
 | `tls` | no | Implies `tokio`; adds `rtsps://` via `tokio-rustls`. |
 
 The core is `std` and uses no async runtime. The crate has `#![forbid(unsafe_code)]`.
@@ -103,7 +103,7 @@ Runnable programs: `client_server_loopback` and `transport_and_framing` (`cargo 
 - `Transport`, `TransportSpec`, `LowerTransport`, `Delivery`, `TransportMode`: UDP unicast and multicast, TCP interleaved. `SessionHeader`: `Session` id and `timeout`. Both are parsed by this crate over one RFC 2326 §15.1 lexer, because `rtsp-types` 0.1 is exact-case and drops case-variant parameters (a documented, owner-approved exception to the no-hand-roll rule; probe table in `private/specs-verified/rtp/rtsp-runtime/transport-header.md`).
 - `InterleavedFrame` and a streaming demultiplexer (complete frames plus a partial tail).
 - `Credentials` and `Authenticator`, re-exported from `broadcast-auth`.
-- `io` (feature `tokio`): `AsyncRtspClient`, `AsyncRtspServer`, `RtspTimeouts`, `RTSP_DEFAULT_PORT` (554), `RTSPS_DEFAULT_PORT` (322).
+- `io` (feature `tokio`): `AsyncRtspClient`, `AsyncRtspServer`, `broadcast_common::timeouts::Timeouts`, `RTSP_DEFAULT_PORT` (554), `RTSPS_DEFAULT_PORT` (322).
 
 ## Design notes
 

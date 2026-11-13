@@ -4,12 +4,13 @@
 
 use std::time::Duration;
 
+use broadcast_common::timeouts::Timeouts;
 use rtsp_runtime::client::ClientEvent;
 use rtsp_runtime::sdp::control_url;
 use rtsp_runtime::server::ServerEvent;
 use rtsp_runtime::{
-    AsyncRtspClient, AsyncRtspServer, ClientSession, RtspTimeouts, SessionState, StatusCode,
-    Transport, TransportSpec,
+    AsyncRtspClient, AsyncRtspServer, ClientSession, SessionState, StatusCode, Transport,
+    TransportSpec,
 };
 use tokio::io::duplex;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -108,7 +109,7 @@ async fn a_stalled_interleaved_send_times_out_at_the_write_bound() {
     // An 8-byte duplex pipe whose peer is kept alive but never drained: the
     // write blocks, and the `write` bound must fail it (paused virtual time).
     let (client_io, _server_io) = duplex(8);
-    let timeouts = RtspTimeouts::default().with_write(Duration::from_secs(1));
+    let timeouts = Timeouts::default().with_write(Duration::from_secs(1));
     let mut client =
         AsyncRtspClient::with_stream_timeouts(client_io, ClientSession::new(), timeouts);
     // Wrapped in an outer virtual-time bound so a MISSING write bound fails
@@ -200,11 +201,8 @@ async fn announce_carries_the_sdp_body_and_content_type_to_the_server() {
 #[tokio::test(start_paused = true)]
 async fn a_send_only_pusher_still_emits_a_get_parameter_keepalive() {
     let (client_io, mut peer) = duplex(64 * 1024);
-    let mut client = AsyncRtspClient::with_stream_timeouts(
-        client_io,
-        ClientSession::new(),
-        RtspTimeouts::default(),
-    );
+    let mut client =
+        AsyncRtspClient::with_stream_timeouts(client_io, ClientSession::new(), Timeouts::default());
 
     // Advertise `GET_PARAMETER`, so the keepalive below is that method.
     let resp = tokio::join!(
@@ -286,11 +284,8 @@ async fn read_one_interleaved(peer: &mut tokio::io::DuplexStream) -> Vec<u8> {
 async fn a_454_keepalive_response_is_surfaced_not_discarded() {
     // 64 KiB each way — the manually-driven peer never fills them.
     let (client_io, mut peer) = duplex(64 * 1024);
-    let mut client = AsyncRtspClient::with_stream_timeouts(
-        client_io,
-        ClientSession::new(),
-        RtspTimeouts::default(),
-    );
+    let mut client =
+        AsyncRtspClient::with_stream_timeouts(client_io, ClientSession::new(), Timeouts::default());
 
     // Advertise `GET_PARAMETER`, so the keepalive below is that method.
     let resp = tokio::join!(
@@ -455,11 +450,8 @@ async fn send_interleaved_never_parks_on_the_inbound_probe() {
     const FRAMES: usize = 1000;
     const BOUND: Duration = Duration::from_millis(750);
     let (client_io, _server_io) = duplex(8 << 20);
-    let mut client = AsyncRtspClient::with_stream_timeouts(
-        client_io,
-        ClientSession::new(),
-        RtspTimeouts::default(),
-    );
+    let mut client =
+        AsyncRtspClient::with_stream_timeouts(client_io, ClientSession::new(), Timeouts::default());
     let start = std::time::Instant::now();
     for _ in 0..FRAMES {
         client.send_interleaved(0, &[0u8; 1316]).await.unwrap();

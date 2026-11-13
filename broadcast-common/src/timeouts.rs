@@ -93,9 +93,27 @@ mod tests {
     fn each_with_sets_only_its_own_field() {
         let base = Timeouts::default();
         let one = Duration::from_secs(1);
-        assert_eq!(base.with_connect(one), Timeouts { connect: one, ..base });
-        assert_eq!(base.with_handshake(one), Timeouts { handshake: one, ..base });
-        assert_eq!(base.with_read_idle(one), Timeouts { read_idle: one, ..base });
+        assert_eq!(
+            base.with_connect(one),
+            Timeouts {
+                connect: one,
+                ..base
+            }
+        );
+        assert_eq!(
+            base.with_handshake(one),
+            Timeouts {
+                handshake: one,
+                ..base
+            }
+        );
+        assert_eq!(
+            base.with_read_idle(one),
+            Timeouts {
+                read_idle: one,
+                ..base
+            }
+        );
         assert_eq!(base.with_write(one), Timeouts { write: one, ..base });
     }
 }
