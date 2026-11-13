@@ -18,3 +18,4 @@ jobs:
     secrets: inherit
     with:
       crate: broadcast-smooth
+      build-gate: no-default
