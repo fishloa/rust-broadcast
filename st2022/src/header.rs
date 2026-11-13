@@ -304,7 +304,7 @@ impl TimestampRef {
             0 => Self::NotLocked,
             2 => Self::LockedUtc,
             3 => Self::LockedPrivate,
-            other => Self::Reserved(u8::try_from(other).unwrap_or(0)),
+            other => Self::Reserved(other.to_le_bytes()[0]),
         }
     }
 
@@ -350,7 +350,7 @@ impl Scrambling {
     fn from_bits(bits: u16) -> Self {
         match bits {
             0 => Self::NotScrambled,
-            other => Self::Reserved(u8::try_from(other).unwrap_or(0)),
+            other => Self::Reserved(other.to_le_bytes()[0]),
         }
     }
 
@@ -401,7 +401,7 @@ impl FecUsage {
             0 => Self::None,
             1 => Self::ColumnOnly,
             2 => Self::ColumnAndRow,
-            other => Self::Reserved(u8::try_from(other).unwrap_or(0)),
+            other => Self::Reserved(other.to_le_bytes()[0]),
         }
     }
 
@@ -856,17 +856,13 @@ impl VideoSourceFormat {
 
     fn from_bits(word: u32) -> Self {
         Self {
-            map: MapStructure::from_bits(u8::try_from((word >> MAP_SHIFT) & MAP_MASK).unwrap_or(0)),
-            frame: FrameStructure::from_bits(
-                u8::try_from((word >> FRAME_SHIFT) & FRAME_MASK).unwrap_or(0),
-            ),
-            frate: FrameRate::from_bits(
-                u8::try_from((word >> FRATE_SHIFT) & FRATE_MASK).unwrap_or(0),
-            ),
+            map: MapStructure::from_bits(((word >> MAP_SHIFT) & MAP_MASK).to_le_bytes()[0]),
+            frame: FrameStructure::from_bits(((word >> FRAME_SHIFT) & FRAME_MASK).to_le_bytes()[0]),
+            frate: FrameRate::from_bits(((word >> FRATE_SHIFT) & FRATE_MASK).to_le_bytes()[0]),
             sample: SampleStructure::from_bits(
-                u8::try_from((word >> SAMPLE_SHIFT) & SAMPLE_MASK).unwrap_or(0),
+                ((word >> SAMPLE_SHIFT) & SAMPLE_MASK).to_le_bytes()[0],
             ),
-            fmt_reserve: u8::try_from(word & FMT_RESERVE_MASK).unwrap_or(0),
+            fmt_reserve: (word & FMT_RESERVE_MASK).to_le_bytes()[0],
         }
     }
 }
@@ -959,9 +955,8 @@ impl<'a> PayloadHeader<'a> {
     /// `Ext` — the wire nibble, derived from [`Self::extension`]'s length.
     #[must_use]
     pub fn ext(&self) -> u8 {
-        self.extension.map_or(0, |e| {
-            u8::try_from(e.len() / EXTENSION_UNIT_LEN).unwrap_or(0)
-        })
+        self.extension
+            .map_or(0, |e| (e.len() / EXTENSION_UNIT_LEN).to_le_bytes()[0])
     }
 
     /// The extension's typed TLV items, or an empty iterator when `Ext = 0`.
@@ -1105,8 +1100,8 @@ impl<'a> Parse<'a> for PayloadHeader<'a> {
         let scrambling = Scrambling::from_bits((word >> S_SHIFT) & S_MASK);
         let fec_usage = FecUsage::from_bits((word >> FEC_SHIFT) & FEC_MASK);
         let clock_frequency =
-            ClockFrequency::from_bits(u8::try_from((word >> CF_SHIFT) & CF_MASK).unwrap_or(0));
-        let reserve = u8::try_from(word & RESERVE_MASK).unwrap_or(0);
+            ClockFrequency::from_bits(((word >> CF_SHIFT) & CF_MASK).to_le_bytes()[0]);
+        let reserve = (word & RESERVE_MASK).to_le_bytes()[0];
 
         let mut pos = FIXED_HEADER_LEN;
 
