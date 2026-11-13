@@ -99,7 +99,11 @@ pub fn run(data: &[u8], load: &dyn Fn(&str) -> Vec<u8>) -> bool {
     let host_mode = head[5] % 4;
 
     let url = format!("{BASE_URL}{MPD_NAME}");
-    let mut client = DashClient::new(url, dash, limits);
+    let mut client = DashClient::new(
+        dash_runtime::client::DashClientConfig::new(url)
+            .with_dash(dash)
+            .with_limits(limits),
+    );
     let mut pending: VecDeque<(Action, u64)> = VecDeque::new();
     let mut terminal = false;
     let mut chunks = rest

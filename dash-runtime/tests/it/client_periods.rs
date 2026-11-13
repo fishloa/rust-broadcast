@@ -113,7 +113,11 @@ fn restart_period_two_inits_are_requested_while_period_one_is_in_flight() {
     use dash_runtime::client::{Action, DashClient};
     let mut cfg = PullLimits::default();
     cfg.max_inflight_segments = 8;
-    let mut c = DashClient::new(RESTART, DashConfig::default(), cfg);
+    let mut c = DashClient::new(
+        dash_runtime::client::DashClientConfig::new(RESTART)
+            .with_dash(DashConfig::default())
+            .with_limits(cfg),
+    );
     assert!(matches!(c.poll(0), Some(Action::FetchMpd { .. })));
     let mpd = test_fixtures::read("dash/multiperiod-restart/multiperiod.mpd");
     c.on_mpd(0, &mpd).unwrap();

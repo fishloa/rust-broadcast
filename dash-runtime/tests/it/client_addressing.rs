@@ -24,7 +24,11 @@ fn a_segment_address_error_after_the_initial_plan_drops_the_track() {
  </Period>
 </MPD>"#;
 
-    let mut client = DashClient::new(DOC, DashConfig::default(), PullLimits::default());
+    let mut client = DashClient::new(
+        dash_runtime::client::DashClientConfig::new(DOC)
+            .with_dash(DashConfig::default())
+            .with_limits(PullLimits::default()),
+    );
     let now_unix_us: u64 = 1_767_225_600 * 1_000_000;
     client.set_wall_clock(0, now_unix_us);
     let Some(Action::FetchMpd { url, .. }) = client.poll(0) else {
@@ -80,7 +84,11 @@ fn an_init_lookup_plan_error_drops_the_track() {
  </Period>
 </MPD>"#;
 
-    let mut client = DashClient::new(DOC, DashConfig::default(), PullLimits::default());
+    let mut client = DashClient::new(
+        dash_runtime::client::DashClientConfig::new(DOC)
+            .with_dash(DashConfig::default())
+            .with_limits(PullLimits::default()),
+    );
     let now_unix_us: u64 = 1_767_225_600 * 1_000_000;
     client.set_wall_clock(0, now_unix_us);
     let Some(Action::FetchMpd { url, .. }) = client.poll(0) else {

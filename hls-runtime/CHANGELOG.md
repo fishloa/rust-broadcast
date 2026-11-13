@@ -13,6 +13,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `HlsOrigin` implements `ServedEgress::is_warm`/`prepare`: the I-frame and bitrate byte scans of a newly published segment run in `prepare`, which a host calls on a blocking thread, so no async worker waits on the drain gate.
 - `BLOCKING_RELOAD_TARGET_DURATIONS`, `BLOCKING_RELOAD_TIMEOUT` and `playlist_reload_timeout` moved here from `multimux` (RFC 8216bis §6.2.5.2).
 ### Changed
+- BREAKING: `HlsClient::new(url)` takes a `client::HlsClientConfig` (`HlsClientConfig::new(url).with_variant_policy(..).with_playlist_base(..)`), and `HlsClient::set_variant_policy` is removed in favour of the config's `variant_policy` (`set_playlist_base` stays: a redirect changes the base mid-stream) (#2514).
 - BREAKING: every `HlsOriginBuilder` setter is named `with_*` (`with_target_duration_secs`, `with_window_segments`, `with_container`, `with_low_latency`, `with_hold_cold_playlist`, `with_media_sequence_offset`, `with_discontinuity_sequence`, `with_instance`, `with_program_date_time_arrival`, `with_declared_bandwidth_bps`, `with_audio_renditions`, `with_audio_sibling_origins`, `with_subtitle_renditions`, `with_subtitle_sibling_origins`, `with_playlist_uri`, `with_rendition_siblings`, `with_closed_captions_none`, `with_closed_caption_overrides`), matching `TrunkConfig`, `IngestConfig` and the other engine configs (#2514).
 - URL-reference resolution now uses the shared guarded resolver in `broadcast-common::url_ref` (control characters rejected before joining) (issue #2458).
 ### Added

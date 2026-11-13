@@ -10,7 +10,9 @@ const SESSION: &str = "https://whip.example.com/session/abc";
 const FRAG: &[u8] = b"a=ice-ufrag:t\r\na=ice-pwd:t\r\n";
 
 fn established_client() -> WhipClient {
-    let mut c = WhipClient::new(ENDPOINT.into(), None);
+    let mut c = WhipClient::new(webrtc_runtime::session::client::ClientConfig::new(
+        ENDPOINT.into(),
+    ));
     c.offer(b"v=0\r\n".to_vec()).unwrap();
     c.on_response(
         client::HttpResponse::new(StatusCode::CREATED)
@@ -55,7 +57,9 @@ fn offer_can_be_retried_after_a_503_or_a_redirect() {
         StatusCode::SERVICE_UNAVAILABLE,
         StatusCode::TEMPORARY_REDIRECT,
     ] {
-        let mut c = WhipClient::new(ENDPOINT.into(), None);
+        let mut c = WhipClient::new(webrtc_runtime::session::client::ClientConfig::new(
+            ENDPOINT.into(),
+        ));
         c.offer(b"v=0\r\n".to_vec()).unwrap();
         assert!(c.on_response(client::HttpResponse::new(status)).is_err());
         assert_eq!(*c.state(), client::State::Idle);

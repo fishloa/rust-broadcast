@@ -7,8 +7,10 @@ use webrtc_runtime::whip::client::{HttpResponse, WhipClient};
 
 fn main() {
     let mut client = WhipClient::new(
-        "https://origin.example/whip/live".into(),
-        Some("my-token".into()),
+        webrtc_runtime::session::client::ClientConfig::new(
+            "https://origin.example/whip/live".into(),
+        )
+        .with_bearer_token("my-token".into()),
     );
 
     // Step 1: generate the SDP offer POST request.

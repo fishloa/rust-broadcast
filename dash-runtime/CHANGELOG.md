@@ -4,6 +4,7 @@ All notable changes to dash-runtime will be documented in this file.
 
 ## [Unreleased]
 ### Changed
+- BREAKING: `DashClient::new(url, dash, limits)` takes a `client::DashClientConfig` (`DashClientConfig::new(url).with_dash(..).with_limits(..)`) (#2514).
 - HTTP `Date` parsing moved to `broadcast_common::http_date` (re-exported as `timing::http_date`).
 - `mpd::base_url` joins each `BaseURL` chain entry through `broadcast-common::url_ref::resolve`, the workspace's one guarded resolver, and `mpd::base_url::first_forbidden_char` is the shared control-character check plus its own whitespace rule; a space is now refused too, matching the shared resolver (issue #2458).
 - `timing::clock::Anchor::utc_at`/`mono_for_utc` map through `broadcast_common::time::MonoUtc` instead of repeating the anchor arithmetic; the saturation to `i64`/`u64` stays here, and the clock still never reads a time source.

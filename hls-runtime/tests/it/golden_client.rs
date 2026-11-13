@@ -21,7 +21,7 @@ fn client_actions_and_request_urls_match_golden() {
         "http://h.example:8080/live/stream.m3u8?_HLS_msn=3&k=v",
         "https://h.example/a/b/stream.m3u8#frag",
     ] {
-        let mut c = HlsClient::new(base);
+        let mut c = HlsClient::new(hls_runtime::client::HlsClientConfig::new(base));
         out.push_str(&format!("base {base}\n"));
         out.push_str(&format!("  first {:?}\n", c.poll()));
         c.on_playlist(LIVE.as_bytes()).unwrap();

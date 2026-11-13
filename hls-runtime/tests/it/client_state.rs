@@ -65,7 +65,7 @@ fn live_join_starts_three_target_durations_from_the_end() {
     // RFC 8216 §6.3.3. TD = 2 s, ten 2 s segments (msn 50..=59): from the end
     // 59 is 2 s behind, 58 is 4 s, 57 is 6 s = 3 TD, so 57 is the earliest
     // segment the client may start at.
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     let _ = fetched_ids(&mut client);
     client
         .on_playlist(playlist(50, 10, "2.0", false).as_bytes())
@@ -82,7 +82,7 @@ fn live_join_starts_three_target_durations_from_the_end() {
 
 #[test]
 fn vod_playlist_with_endlist_is_played_from_its_start() {
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     let _ = fetched_ids(&mut client);
     client
         .on_playlist(playlist(0, 10, "2.0", true).as_bytes())
@@ -94,7 +94,7 @@ fn vod_playlist_with_endlist_is_played_from_its_start() {
 fn a_window_shorter_than_three_target_durations_is_played_whole() {
     // 2 x 2 s = 4 s < 6 s: there is no segment starting >= 3 TD from the end,
     // so play from the first one.
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     let _ = fetched_ids(&mut client);
     client
         .on_playlist(playlist(7, 2, "2.0", false).as_bytes())
@@ -106,7 +106,7 @@ fn a_window_shorter_than_three_target_durations_is_played_whole() {
 fn hostile_endless_live_window_joins_near_the_end_quickly() {
     // 50 000 segments with a zero EXTINF: a zero duration counts as one Target
     // Duration, so the join is still the last three segments.
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     let _ = fetched_ids(&mut client);
     client
         .on_playlist(playlist(1_000, 50_000, "0.0", false).as_bytes())
@@ -120,7 +120,7 @@ fn hostile_endless_live_window_joins_near_the_end_quickly() {
 #[test]
 fn media_sequence_overflow_is_an_error_not_a_panic() {
     for first in [u64::MAX, u64::MAX - 1, u64::MAX - 2] {
-        let mut client = HlsClient::new(URL);
+        let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
         let err = client
             .on_playlist(playlist(first, 3, "2.0", false).as_bytes())
             .expect_err("media_sequence + segments overflows u64");
@@ -131,7 +131,7 @@ fn media_sequence_overflow_is_an_error_not_a_panic() {
         );
     }
     // The largest playlist that still fits: msn u64::MAX - 3 .. u64::MAX - 1.
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     let _ = fetched_ids(&mut client);
     client
         .on_playlist(playlist(u64::MAX - 3, 3, "2.0", true).as_bytes())
@@ -144,7 +144,7 @@ fn media_sequence_overflow_is_an_error_not_a_panic() {
 
 #[test]
 fn regressing_media_sequence_fetches_the_new_numbers() {
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     let _ = fetched_ids(&mut client);
     client
         .on_playlist(playlist(100, 2, "2.0", true).as_bytes())
@@ -162,7 +162,7 @@ fn regressing_media_sequence_fetches_the_new_numbers() {
 /// new media and must be fetched, behind a `Discontinuity`.
 #[test]
 fn an_overlapping_media_sequence_regression_refetches_and_signals_a_discontinuity() {
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     let _ = fetched_ids(&mut client);
     client
         .on_playlist(playlist(100, 3, "2.0", true).as_bytes())
@@ -198,7 +198,7 @@ fn an_overlapping_media_sequence_regression_refetches_and_signals_a_discontinuit
 /// and no discontinuity is signalled.
 #[test]
 fn a_lagging_copy_of_the_same_window_is_not_a_restart() {
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     let _ = fetched_ids(&mut client);
     client
         .on_playlist(playlist(100, 4, "2.0", true).as_bytes())
@@ -262,7 +262,7 @@ fn discontinuities(client: &mut HlsClient) -> usize {
 #[test]
 fn a_cdn_edge_a_whole_window_behind_is_not_a_restart() {
     let t0 = 10 * 3600 * 1000; // 10:00:00
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     let _ = fetched_ids(&mut client);
     client
         .on_playlist(pdt_playlist(100, 4, t0, 0, "seg", true).as_bytes())
@@ -290,7 +290,7 @@ fn a_cdn_edge_a_whole_window_behind_is_not_a_restart() {
 /// residual case).
 #[test]
 fn a_whole_window_behind_without_pdt_reads_as_a_restart() {
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     let _ = fetched_ids(&mut client);
     client
         .on_playlist(playlist(100, 4, "2.0", true).as_bytes())
@@ -316,7 +316,7 @@ fn a_whole_window_behind_without_pdt_reads_as_a_restart() {
 #[test]
 fn an_equal_msn_restart_with_a_reset_discontinuity_sequence_is_detected() {
     let t0 = 10 * 3600 * 1000;
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     let _ = fetched_ids(&mut client);
     client
         .on_playlist(pdt_playlist(10, 3, t0, 5, "seg", true).as_bytes())
@@ -336,7 +336,7 @@ fn an_equal_msn_restart_with_a_reset_discontinuity_sequence_is_detected() {
 #[test]
 fn a_pdt_jump_at_a_shared_number_is_a_restart() {
     let t0 = 10 * 3600 * 1000;
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     let _ = fetched_ids(&mut client);
     client
         .on_playlist(pdt_playlist(10, 3, t0, 0, "seg", true).as_bytes())
@@ -354,7 +354,7 @@ fn a_pdt_jump_at_a_shared_number_is_a_restart() {
 /// but names different segments there is a restart too.
 #[test]
 fn a_restart_to_a_higher_msn_with_different_segments_is_detected() {
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     let _ = fetched_ids(&mut client);
     client
         .on_playlist(playlist(10, 3, "2.0", true).as_bytes())
@@ -372,7 +372,7 @@ fn a_restart_to_a_higher_msn_with_different_segments_is_detected() {
 /// lower numbers: names reused under new numbering are a restart.
 #[test]
 fn a_reused_name_under_a_lower_number_is_a_restart() {
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     let _ = fetched_ids(&mut client);
     client
         .on_playlist(playlist(100, 3, "2.0", true).as_bytes())
@@ -391,7 +391,7 @@ fn a_reused_name_under_a_lower_number_is_a_restart() {
 /// a restart.
 #[test]
 fn an_unchanged_or_advancing_media_sequence_is_not_a_restart() {
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     let _ = fetched_ids(&mut client);
     client
         .on_playlist(playlist(10, 3, "2.0", false).as_bytes())
@@ -414,7 +414,7 @@ fn an_unchanged_or_advancing_media_sequence_is_not_a_restart() {
 /// polled are withdrawn rather than issued for the dead numbering.
 #[test]
 fn a_restart_withdraws_old_fetches_and_rejects_stale_responses() {
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     let _ = fetched_ids(&mut client);
     client
         .on_playlist(playlist(5000, 3, "2.0", true).as_bytes())
@@ -456,7 +456,7 @@ fn a_restart_refetches_the_init_segment() {
              #EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:2.0,\nseg{first}.m4s\n#EXT-X-ENDLIST\n"
         )
     };
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     let _ = fetched_ids(&mut client);
     client.on_playlist(fmp4(7).as_bytes()).unwrap();
     let mut ids = fetched_ids(&mut client);
@@ -472,7 +472,7 @@ fn a_restart_refetches_the_init_segment() {
 fn a_second_delivery_of_the_same_id_is_rejected_and_does_not_end_the_stream_early() {
     // Two outstanding fetches under ENDLIST. A duplicate delivery of seg 0
     // must not be counted as seg 1's completion.
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     let _ = fetched_ids(&mut client);
     client
         .on_playlist(playlist(0, 2, "2.0", true).as_bytes())
@@ -513,7 +513,7 @@ fn a_second_delivery_of_the_same_id_is_rejected_and_does_not_end_the_stream_earl
 
 #[test]
 fn state_for_segments_that_left_the_window_is_dropped_but_in_flight_fetches_survive() {
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     let _ = fetched_ids(&mut client);
     // Window 0..=1 (a short live window is joined whole). Deliver seg 0,
     // leave seg 1 in flight.
@@ -556,7 +556,7 @@ fn state_for_segments_that_left_the_window_is_dropped_but_in_flight_fetches_surv
 fn long_lived_pull_forgets_old_segments() {
     // 20 000 reloads sliding by one segment each; every segment is delivered.
     // A driver that retries an id from long ago must find it forgotten.
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     let _ = fetched_ids(&mut client);
     for first in 0..20_000u64 {
         client
@@ -633,7 +633,7 @@ fn skipped_segments_advance_the_byte_range_cursor() {
     // Live, TARGETDURATION 3: the join is the third segment (2.0 + 2.04 are
     // skipped). ffmpeg's own offset for that segment is 91932 =
     // 47752 + 44180, the two skipped lengths.
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     let _ = fetched_ranges(&mut client);
     client
         .on_playlist(live_byterange_playlist_with_omitted_offsets().as_bytes())
@@ -671,7 +671,7 @@ fn hold_back_larger_than_three_target_durations_moves_the_join_back() {
         .map(|n| format!("#EXTINF:2.0,\nseg{n}.ts"))
         .collect();
     lines.extend(segs.iter().map(String::as_str));
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     let _ = fetched_ids(&mut client);
     client.on_playlist(text_of(&lines).as_bytes()).unwrap();
     assert_eq!(fetched_ids(&mut client), segment_ids(55..60));
@@ -697,7 +697,7 @@ fn ten_segment_playlist(extra: &[&str], endlist: bool) -> String {
 #[test]
 fn ext_x_start_chooses_the_join_segment() {
     let join = |extra: &[&str], endlist: bool| {
-        let mut client = HlsClient::new(URL);
+        let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
         let _ = fetched_ids(&mut client);
         client
             .on_playlist(ten_segment_playlist(extra, endlist).as_bytes())
@@ -758,7 +758,7 @@ fn low_latency_playlist(can_block_reload: &str, open_parts: u32) -> String {
 #[test]
 fn low_latency_join_honours_part_hold_back_counting_open_parts() {
     let join = |can_block: &str, open_parts: u32| {
-        let mut client = HlsClient::new(URL);
+        let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
         let _ = fetched_ids(&mut client);
         client
             .on_playlist(low_latency_playlist(can_block, open_parts).as_bytes())
@@ -790,7 +790,7 @@ fn low_latency_join_honours_part_hold_back_counting_open_parts() {
 
 #[test]
 fn hostile_start_and_hold_back_values_do_not_panic() {
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     let _ = fetched_ids(&mut client);
     // Huge TIME-OFFSET and HOLD-BACK on a small window: everything is clamped
     // to the segment range.
@@ -820,7 +820,7 @@ fn regression_after_delivery_neither_refetches_nor_duplicates() {
     let regressed = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n\
                      #EXT-X-MEDIA-SEQUENCE:9\n#EXTINF:1.0,\nindex1.ts\n#EXTINF:2.0,\nindex0.ts\n\
                      #EXT-X-ENDLIST\n";
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     let _ = fetched_ids(&mut client);
     client.on_playlist(live.as_bytes()).unwrap();
     assert_eq!(fetched_ids(&mut client), segment_ids([10]));
@@ -852,7 +852,7 @@ fn regression_after_delivery_neither_refetches_nor_duplicates() {
 
 #[test]
 fn a_failed_segment_under_endlist_defers_end_of_stream_until_it_is_delivered() {
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     let _ = fetched_ids(&mut client);
     client
         .on_playlist(playlist(0, 2, "2.0", true).as_bytes())
@@ -914,7 +914,7 @@ const SEGMENT_CLOSED_WITHOUT_PARTS: &str = "#EXTM3U\n#EXT-X-VERSION:9\n#EXT-X-TA
 fn a_failed_part_is_retried_when_its_segment_closes_without_parts() {
     let init = test_fixtures::read("hls/cmaf-fmp4/init.mp4");
     let fragment = test_fixtures::read("hls/cmaf-fmp4/index0.m4s");
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     drain(&mut client);
     client.on_playlist(OPEN_WITH_TWO_PARTS.as_bytes()).unwrap();
     let first = fetches(&drain(&mut client));
@@ -959,7 +959,7 @@ fn live(first_msn: u64, uri_prefix: &str) -> String {
 /// judged a second restart and a second `Discontinuity` is emitted.
 #[test]
 fn a_variant_switch_emits_exactly_one_discontinuity() {
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     drain(&mut client);
     client.on_playlist(MASTER.as_bytes()).unwrap();
     drain(&mut client);
@@ -981,7 +981,7 @@ fn a_variant_switch_emits_exactly_one_discontinuity() {
 /// not a second restart.
 #[test]
 fn a_forward_jump_after_a_restart_is_not_a_second_restart() {
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     drain(&mut client);
     client.on_playlist(live(1000, "old").as_bytes()).unwrap();
     drain(&mut client);
@@ -1022,7 +1022,7 @@ const DISCONTINUOUS_SEGMENT_CLOSED: &str = "#EXTM3U\n#EXT-X-VERSION:9\n#EXT-X-TA
 fn a_discontinuity_revealed_at_segment_close_is_signalled_late() {
     let init = test_fixtures::read("hls/cmaf-fmp4/init.mp4");
     let fragment = test_fixtures::read("hls/cmaf-fmp4/index0.m4s");
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     drain(&mut client);
     client.on_playlist(OPEN_WITH_ONE_PART.as_bytes()).unwrap();
     drain(&mut client);
@@ -1059,7 +1059,7 @@ fn range_of(actions: &[Action], wanted: ResourceId) -> Option<Option<(u64, u64)>
 /// request already advanced, so the retry asks for another segment's bytes.
 #[test]
 fn a_re_requested_byterange_segment_asks_for_its_own_bytes() {
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     drain(&mut client);
     client.on_playlist(BYTERANGE_VOD.as_bytes()).unwrap();
     let first = drain(&mut client);
@@ -1083,7 +1083,7 @@ const SKIPPED_THEN_FRESH_RANGE: &str = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGET
 
 #[test]
 fn reloading_a_playlist_with_skipped_segments_does_not_drift_later_byte_ranges() {
-    let mut client = HlsClient::new(URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
     drain(&mut client);
     let _ = client.on_playlist(SKIPPED_THEN_FRESH_RANGE.as_bytes());
     drain(&mut client);
