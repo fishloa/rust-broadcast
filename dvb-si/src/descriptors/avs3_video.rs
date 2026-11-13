@@ -205,7 +205,6 @@ impl Avs3VideoDescriptor {
     /// (the spec states no value). `colour_primaries` is included (GY/T 420
     /// 8-byte form).
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
     pub const fn new(
         profile_id: u8,
         level_id: u8,

@@ -131,7 +131,6 @@ pub struct EitSection<'a> {
 
 impl<'a> EitSection<'a> {
     /// Construct an EIT section with the spec `reserved` fill.
-    #[allow(clippy::too_many_arguments)]
     #[must_use]
     pub fn new(
         kind: EitKind,

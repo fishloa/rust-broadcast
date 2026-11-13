@@ -182,7 +182,6 @@ pub struct UntSection<'a> {
 
 impl<'a> UntSection<'a> {
     /// Construct a UNT section with the spec `reserved` fill.
-    #[allow(clippy::too_many_arguments)]
     #[must_use]
     pub fn new(
         action_type: UntActionType,

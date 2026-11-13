@@ -75,7 +75,6 @@ impl<'a> SingleOperationMessage<'a> {
 
     /// Construct a new single_operation_message for a basic response.
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
     pub fn new_response(
         op_id: u16,
         result: u16,
