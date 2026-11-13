@@ -1878,7 +1878,9 @@ version = "0.11.0"
 dependencies = [
  "broadcast-common",
  "bytes",
+ "caption-convert",
  "container-probe",
+ "dvb-si",
  "event-listener",
  "parking_lot",
  "thiserror",

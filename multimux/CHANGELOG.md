@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 ### Changed
+- The teletext subtitle follower's segmenting lives in `media_plane::segmenter::subtitle`; `source::split_subtitle` keeps the HLS rendition declarations and the pairing of pages to the route's `SubtitleServing`s (issue #2554).
+### Changed
 - The HLS, DASH, Smooth, TS-over-HTTP, RTSP and SRT pulls map their `Timeouts` with `broadcast_client::Config::with_timeouts`; the five hand-written conversions (`read_us` x3, `ts_http::policy_config`, the SRT handshake mapping) are deleted (#2590).
 - Building an output-auth verifier reports an unavailable OS random source (Digest) as `MultimuxError::Auth` instead of panicking (#2591).
 - The audio follower's segmenting lives in `media_plane::segmenter::audio`; `source::split_audio` keeps the route-facing half: selectors and name from the route, and applying the follower's init segment and part target to the rendition's `HlsOrigin` (issue #2554).
