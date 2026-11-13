@@ -363,6 +363,57 @@ pub fn encode_seconds_since_2000_utc(
     Some((secs, dt.nanosecond()))
 }
 
+/// A pure (no clock read) mapping between a monotonic microsecond counter and
+/// UTC microseconds, anchored by one observed pair: at monotonic `mono_us` the
+/// UTC clock read `utc_us`. Maps in both directions with wrap-safe `i128`
+/// arithmetic. The caller supplies the anchor (this type never reads a clock).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MonoUtc {
+    /// Monotonic microseconds at the anchor.
+    pub mono_us: u64,
+    /// UTC microseconds at the anchor (POSIX, no leap seconds).
+    pub utc_us: i128,
+}
+
+impl MonoUtc {
+    /// Build an anchor from a sampled pair.
+    pub fn new(mono_us: u64, utc_us: impl Into<i128>) -> Self {
+        Self {
+            mono_us,
+            utc_us: utc_us.into(),
+        }
+    }
+
+    /// UTC microseconds at monotonic instant `now_us`.
+    #[must_use]
+    pub fn utc_at(&self, now_us: u64) -> i128 {
+        self.utc_us + i128::from(now_us) - i128::from(self.mono_us)
+    }
+
+    /// Monotonic instant at which UTC reaches `utc_us`.
+    #[must_use]
+    pub fn mono_for_utc(&self, utc_us: i128) -> i128 {
+        i128::from(self.mono_us) + (utc_us - self.utc_us)
+    }
+
+    /// Alias for [`Self::utc_at`].
+    #[must_use]
+    pub fn unix_at(&self, now_us: u64) -> i128 {
+        self.utc_at(now_us)
+    }
+
+    /// Alias for [`Self::mono_for_utc`].
+    #[must_use]
+    pub fn mono_for_unix(&self, unix_us: i128) -> i128 {
+        self.mono_for_utc(unix_us)
+    }
+}
+
+/// Alias kept for callers that name the mapping a `WallClock`.
+pub type WallClock = MonoUtc;
+/// Alias kept for callers that name the mapping an `Anchor`.
+pub type Anchor = MonoUtc;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -596,6 +647,22 @@ mod tests {
         let dt = decode_seconds_since_2000_utc(0, 0, 0).expect("decodes");
         assert_eq!((dt.year(), dt.month(), dt.day()), (2000, 1, 1));
         assert_eq!((dt.hour(), dt.minute(), dt.second()), (0, 0, 0));
+    }
+
+    #[test]
+    fn mono_utc_maps_both_directions() {
+        let m = MonoUtc::new(1_000u64, 5i128);
+        assert_eq!(m.utc_at(1_000), 5);
+        assert_eq!(m.utc_at(1_005), 10);
+        assert_eq!(m.mono_for_utc(5), 1_000);
+        assert_eq!(m.mono_for_utc(10), 1_005);
+    }
+
+    #[test]
+    fn mono_utc_before_anchor_is_negative() {
+        let m = MonoUtc::new(1_000u64, 5i128);
+        assert_eq!(m.utc_at(995), 0);
+        assert!(m.utc_at(995) < m.utc_us);
     }
 
     #[cfg(feature = "chrono")]
