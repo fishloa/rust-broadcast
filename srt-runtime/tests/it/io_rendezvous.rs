@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use srt_runtime::Error;
 use srt_runtime::handshake_sm::HandshakeConfig;
-use srt_runtime::io::{IoConfig, SrtSocket};
+use srt_runtime::io::{IoConfig, SRT_TIMEOUTS, SrtSocket};
 use tokio::net::UdpSocket;
 
 #[tokio::test]
@@ -66,7 +66,7 @@ async fn rendezvous_without_a_peer_times_out() {
         sock_a,
         b_addr,
         HandshakeConfig::default(),
-        IoConfig::default().with_handshake(Duration::from_millis(600)),
+        IoConfig::default().with_timeouts(SRT_TIMEOUTS.with_handshake(Duration::from_millis(600))),
     )
     .await
     .map(|_| ())
