@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - BREAKING: `broadcast_client::auth`'s own `AuthState`, `AuthDecision`, `AuthEvent` and `carries_credentials` definitions — they live in `broadcast-auth` now, and this module re-exports them, so the paths keep working but the types are `broadcast_auth`'s.
 ### Changed
+- URL userinfo is read with `broadcast_auth::credentials_from_url` and removed with `strip_userinfo`; the private duplicate (`take_userinfo`) is deleted. Behaviour is unchanged for `user:pass@`; the control-character check still applies (#2587).
 - `Session::payload_bytes()` also counts every response body byte of an HLS, DASH or Smooth session.
 - An RTSP session announces its `Event::Tracks` (from the DESCRIBE SDP) when PLAY is answered instead of with the first access unit, so a host sees the programme before any media arrives.
 - `SrtConfig::latency_ms` accepts any value: a latency below 120 ms is no longer an `InvalidConfig` (the negotiated latency is the larger of the two peers' values).
@@ -34,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - RTSP pull skips an SDP media section whose `m=` format is not a numeric RTP payload type (RFC 4566 §5.14) instead of playing it, matching multimux; the skip is reported in `skipped`.
 - Timeline-jump detection now uses the detector moved to `transmux` (re-exported). `Config::timeline_jump` is now `Option<transmux::TimelineJumpConfig>`; the `broadcast_client::TimelineJumpConfig` re-export remains, but the type path changed (breaking for users naming `broadcast_client::timeline::TimelineJumpConfig`).
 ### Fixed
+- A `206` `Content-Range` is parsed by one RFC 9110 §14.4 parser (`broadcast_common::content_range`) instead of three: `bytes 5-20/10` is refused for a ranged fetch (it was accepted), `bytes 0-9/*` is a finite ts/http body of 10 bytes (it was not), and stray whitespace inside the value is invalid (ts/http accepted it) (#2586).
 - A redirect `Location` (HTTP and RTSP) carrying a control character or space is no longer followed: it resolves through `broadcast_common::url_ref::resolve` instead of the raw `Url::join`, which deleted a TAB/CR/LF and followed a different URL than the header names (RFC 3986 §2) (#2585).
 - A Smooth quality switch to a level with a different SPS/PPS or resolution now succeeds (it was refused as `NoSuchVariant`): the engine's `Output::TracksChanged` surfaces as a new `Event::Tracks`, the event DASH variant switches already use.
 ### Fixed

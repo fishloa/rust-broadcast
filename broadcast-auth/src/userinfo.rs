@@ -11,11 +11,15 @@ use crate::{Credentials, Error, Result};
 
 /// Credentials carried in `url`'s userinfo, percent-decoded to UTF-8.
 ///
-/// `Ok(None)` when the URL has no username (the common case: connect without
-/// auth). A missing password decodes as the empty string. The error never
-/// echoes the offending component, which is a still-encoded credential.
+/// `Ok(None)` when the URL has no userinfo at all (the common case: connect
+/// without auth). An empty username with a password (`scheme://:pw@host/`) is
+/// credentials, not "no credentials": RFC 3986 §3.2.1 makes the userinfo
+/// `user ":" password` with an empty user legal, and RFC 7617 §2 (`user-id` may
+/// be empty) and RFC 7616 §3.4 (`username=""`) both carry it. A missing
+/// password decodes as the empty string. The error never echoes the offending
+/// component, which is a still-encoded credential.
 pub fn credentials_from_url(url: &Url) -> Result<Option<Credentials>> {
-    if url.username().is_empty() {
+    if url.username().is_empty() && url.password().is_none() {
         return Ok(None);
     }
     let username = decode(url.username())?;
@@ -55,6 +59,18 @@ mod tests {
         assert_eq!(
             credentials_from_url(&url).unwrap().unwrap(),
             Credentials::new("us@er", "p:w")
+        );
+    }
+
+    /// RFC 3986 §3.2.1 / RFC 7617 §2: an empty user with a password is
+    /// credentials (it was reported as "none" and the password silently
+    /// dropped).
+    #[test]
+    fn an_empty_username_with_a_password_is_credentials() {
+        let url = Url::parse("rtsp://:pw@host/s").unwrap();
+        assert_eq!(
+            credentials_from_url(&url).unwrap().unwrap(),
+            Credentials::new("", "pw")
         );
     }
 

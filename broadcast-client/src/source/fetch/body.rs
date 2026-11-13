@@ -7,9 +7,7 @@
 
 use alloc::vec::Vec;
 
-use headers::{ContentRange, HeaderMapExt};
-
-use super::resume::map_of;
+use broadcast_common::content_range::ContentRange;
 
 const STATUS_OK: u16 = 200;
 const STATUS_PARTIAL_CONTENT: u16 = 206;
@@ -141,11 +139,16 @@ impl BodyAcc {
     }
 }
 
+/// The first `Content-Range` header, parsed (RFC 9110 §14.4).
+pub(crate) fn content_range(headers: &[(String, String)]) -> Option<ContentRange> {
+    headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("content-range"))
+        .and_then(|(_, value)| ContentRange::parse(value))
+}
+
 pub(crate) fn content_range_bytes(headers: &[(String, String)]) -> Option<(u64, u64)> {
-    map_of(headers)
-        .typed_get::<ContentRange>()?
-        .bytes_range()
-        .filter(|(first, last)| first <= last)
+    content_range(headers).map(|range| (range.first, range.last))
 }
 
 pub(crate) fn content_range_len(headers: &[(String, String)]) -> Option<u64> {
@@ -229,6 +232,17 @@ mod tests {
             !BodyAcc::new(1).accept(206, &[], range),
             "no Content-Range at all"
         );
+    }
+
+    /// RFC 9110 §14.4: a last position at or past a known complete length is
+    /// invalid, even when it names exactly the requested range; an unknown
+    /// length (`*`) is valid.
+    #[test]
+    fn a_206_range_past_its_known_length_is_refused_and_an_unknown_length_is_valid() {
+        let range = Some((5, 16));
+        assert!(!BodyAcc::new(1).accept(206, &h(&[("Content-Range", "bytes 5-20/10")]), range));
+        assert!(BodyAcc::new(1).accept(206, &h(&[("Content-Range", "bytes 5-20/*")]), range));
+        assert!(BodyAcc::new(1).accept(206, &h(&[("Content-Range", "bytes 5-20/21")]), range));
     }
 
     #[test]
