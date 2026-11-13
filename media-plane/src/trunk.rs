@@ -562,33 +562,25 @@
 //! writer nothing beyond that one `notify` call's O(waiter-count) fan-out —
 //! it never becomes a wait.
 //!
-//! **Bounded, and reusing [`TrunkConfig::part_capacity`] rather than a sixth
-//! knob.** [`Trunk::listen`] refuses (`None`) once `part_capacity`
-//! concurrent [`ProgressListener`]s are outstanding. This is deliberately
-//! **not** sized "one registration per remote viewer": that would repeat
-//! exactly the O(N)-in-cursor-count mistake [`Trunk::subscribe`]'s own docs
-//! warn against for data cursors, now for wake registrations instead of
-//! poll positions. The intended shape mirrors `subscribe`'s "one cursor per
-//! distinct consumer, never one per peer" rule: a `ServedEgress` adapter
-//! serving a thousand LL-HLS viewers takes **one** (or a small, fixed
-//! number of) [`Trunk::listen`] registration(s) for the route and fans the
-//! single wake-up out to its own thousand blocked HTTP handlers itself,
-//! using its own broadcast mechanism — exactly the same layering
-//! [`crate::egress::PushEgress`] already requires for sample fan-out. Under
-//! that shape, `part_capacity`-many concurrent *distinct-consumer*
-//! registrations is generous headroom, not a production ceiling; if a
-//! caller instead wires one HTTP request directly to one `Trunk::listen`
-//! call each (mirroring how `MediaStore`'s single, uncapped `Event` is used
-//! today), the cap is exactly the backstop this step exists to add — a
-//! caller hitting `None` must treat it the same way it treats an already-
-//! expired [`crate::egress::AwaitPolicy`]: answer the request as
-//! unavailable now rather than waiting with no slot to wait in. Composing
+//! **Bounded by [`TrunkConfig::waiter_capacity`], independent of the part
+//! ring.** [`Trunk::listen`] refuses (`None`) once `waiter_capacity`
+//! concurrent [`ProgressListener`]s are outstanding. A registration is a few
+//! dozen bytes, so the default ([`DEFAULT_WAITER_CAPACITY`]) is a
+//! resource-exhaustion backstop far above any real viewer count, not a
+//! viewer limit; one HTTP request per `listen()` call is a supported shape.
+//! A caller that nonetheless gets `None` parks on
+//! [`Trunk::waiter_slot_freed`] (never a sleep-poll) and treats an expired
+//! [`crate::egress::AwaitPolicy`] as "answer unavailable now". Composing
 //! with [`crate::egress::AwaitPolicy`]'s deadline is the caller's
 //! conversion of `AwaitPolicy::deadline` (a [`Timestamp`]) to the
 //! `std::time::Instant` it already anchors that `Timestamp` to, passed to
 //! [`ProgressListener::wait_deadline`] (or wrapped in the caller's own
-//! executor timeout around the `Future` impl) — see
-//! [`ProgressListener::wait_deadline`]'s own doc.
+//! executor timeout around the `Future` impl).
+//!
+//! **Sample wake.** A sample/event publish, a track-set change and a writer
+//! hand-off notify a separate `data` event (one `notify` per publish,
+//! independent of cursor count). [`SampleCursor::next`] registers on it
+//! before polling, so an idle consumer parks without taking the trunk lock.
 
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
@@ -718,18 +710,19 @@ pub struct TrunkConfig {
     /// exactly [`TrunkConfig::segment_capacity`]'s "no second capacity
     /// knob" precedent for pinning.
     pub event_capacity: NonZeroUsize,
-    /// Bound, in entry count, on the live-part log (step 3b-iv) — **and**
-    /// on how many concurrent [`Trunk::listen`] registrations this trunk
-    /// will honor at once. See
-    /// [The live-part log](self#the-live-part-log-parts-before-their-segment-closes)
-    /// for why a part-of-the-open-segment shares this one knob for both
-    /// jobs, rather than getting a second, independently-tuned "how many
-    /// waiters" setting — the third instance of this file's "no second
-    /// capacity knob" precedent (after [`TrunkConfig::segment_capacity`]'s
-    /// pin reuse and [`TrunkConfig::event_capacity`]'s `segment_starts`
-    /// reuse).
+    /// Bound, in entry count, on the live-part log (step 3b-iv). See
+    /// [The live-part log](self#the-live-part-log-parts-before-their-segment-closes).
     pub part_capacity: NonZeroUsize,
+    /// How many concurrent [`Trunk::listen`] registrations this trunk honors
+    /// at once. Independent of `part_capacity`: a registration is a few dozen
+    /// bytes, so the bound is a resource-exhaustion backstop, not a viewer
+    /// limit. Defaults to [`DEFAULT_WAITER_CAPACITY`]; change it with
+    /// [`TrunkConfig::with_waiter_capacity`].
+    pub waiter_capacity: NonZeroUsize,
 }
+
+/// Default for [`TrunkConfig::waiter_capacity`].
+pub const DEFAULT_WAITER_CAPACITY: NonZeroUsize = NonZeroUsize::MIN.saturating_add(65_535);
 
 impl TrunkConfig {
     /// Build a config with all five ring capacities. Nothing is validated
@@ -751,7 +744,15 @@ impl TrunkConfig {
             segment_capacity,
             event_capacity,
             part_capacity,
+            waiter_capacity: DEFAULT_WAITER_CAPACITY,
         }
+    }
+
+    /// Replace [`TrunkConfig::waiter_capacity`].
+    #[must_use]
+    pub fn with_waiter_capacity(mut self, waiter_capacity: NonZeroUsize) -> Self {
+        self.waiter_capacity = waiter_capacity;
+        self
     }
 }
 
@@ -1561,7 +1562,7 @@ pub struct Trunk {
     /// `Drop`.
     slot_freed: Event,
     /// Count of currently-registered, not-yet-dropped [`ProgressListener`]s —
-    /// what bounds [`Trunk::listen`] against `part_waiter_cap`. A plain
+    /// what bounds [`Trunk::listen`] against `waiter_cap`. A plain
     /// `AtomicUsize`, not part of `state`'s `Mutex`, so registering/releasing
     /// a listener never contends the same lock `publish`/`poll` do.
     waiter_count: AtomicUsize,
@@ -1570,12 +1571,19 @@ pub struct Trunk {
     /// directly instead of waiting a fixed time and inferring it.
     #[cfg(test)]
     stalled_publishers: AtomicUsize,
-    /// Copy of [`TrunkConfig::part_capacity`], read without locking `state` —
-    /// the cap [`Trunk::listen`] enforces against `waiter_count`. See
-    /// [The reader-wake primitive](self#the-reader-wake-primitive-listen-not-one-registration-per-remote-peer)
-    /// for why this reuses `part_capacity` rather than adding a sixth,
-    /// independent knob.
-    part_waiter_cap: usize,
+    /// Test-only probe: how many times `state` has been locked.
+    #[cfg(test)]
+    lock_takes: AtomicUsize,
+    /// Copy of [`TrunkConfig::waiter_capacity`], read without locking `state` —
+    /// the cap [`Trunk::listen`] enforces against `waiter_count`.
+    waiter_cap: usize,
+    /// Wake for new sample-ring-group data: bumped by every
+    /// [`TrunkWriter::publish`]/[`TrunkWriter::publish_event`]/
+    /// [`TrunkWriter::set_tracks`] and by a [`TrunkWriter`] drop (a writer
+    /// hand-off a cursor reports). What [`SampleCursor::next`] and
+    /// [`Trunk::data_listener`] await. Separate from `progress` so the
+    /// per-sample notify never wakes a part/segment waiter.
+    data: Event,
 }
 
 impl Trunk {
@@ -1609,7 +1617,10 @@ impl Trunk {
             waiter_count: AtomicUsize::new(0),
             #[cfg(test)]
             stalled_publishers: AtomicUsize::new(0),
-            part_waiter_cap: config.part_capacity.get(),
+            #[cfg(test)]
+            lock_takes: AtomicUsize::new(0),
+            waiter_cap: config.waiter_capacity.get(),
+            data: Event::new(),
         })
     }
 
@@ -1620,6 +1631,8 @@ impl Trunk {
     /// code inside — see [`crate::retention`] for why the sink hand-off stays
     /// outside any lock this type takes.)
     fn lock_state(&self) -> MutexGuard<'_, TrunkState> {
+        #[cfg(test)]
+        self.lock_takes.fetch_add(1, Ordering::Relaxed);
         self.state.lock()
     }
 
@@ -2100,7 +2113,7 @@ impl Trunk {
 
     /// Diagnostic: currently-outstanding [`ProgressListener`] registrations
     /// (from [`Trunk::listen`], not yet dropped). Never exceeds
-    /// [`TrunkConfig::part_capacity`] — see
+    /// [`TrunkConfig::waiter_capacity`] — see
     /// [The reader-wake primitive](self#the-reader-wake-primitive-listen-not-one-registration-per-remote-peer).
     pub fn waiter_count(&self) -> usize {
         self.waiter_count.load(Ordering::Acquire)
@@ -2153,19 +2166,18 @@ impl Trunk {
     /// Register for the next part/segment-close notification — see
     /// [The reader-wake primitive](self#the-reader-wake-primitive-listen-not-one-registration-per-remote-peer).
     ///
-    /// Returns `None` once [`TrunkConfig::part_capacity`] concurrent
-    /// registrations are already outstanding — the caller must not wait in
-    /// that case (there is no slot to wait *in*); it should fall back to an
-    /// immediate re-poll or answer its request as unavailable now, exactly
-    /// as a caller must once [`crate::egress::AwaitPolicy`] itself has
-    /// expired. **Register before re-checking the condition you are waiting
+    /// Returns `None` once [`TrunkConfig::waiter_capacity`] concurrent
+    /// registrations are already outstanding — the caller must not busy-poll
+    /// in that case; it parks on [`Trunk::waiter_slot_freed`] until a slot
+    /// frees, or answers its request as unavailable now once
+    /// [`crate::egress::AwaitPolicy`] itself has expired. **Register before re-checking the condition you are waiting
     /// on** — `event_listener`'s standard idiom, and the same ordering
     /// `hls_runtime::server::MediaStore::listen`'s own docs require —
     /// otherwise a `notify` racing your check can be missed.
     pub fn listen(self: &Arc<Self>) -> Option<ProgressListener> {
         loop {
             let current = self.waiter_count.load(Ordering::Acquire);
-            if current >= self.part_waiter_cap {
+            if current >= self.waiter_cap {
                 return None;
             }
             if self
@@ -2196,10 +2208,19 @@ impl Trunk {
     /// the shared `progress` event, or forever on an idle source).
     pub fn waiter_slot_freed(&self) -> Option<EventListener> {
         let listener = self.slot_freed.listen();
-        if self.waiter_count.load(Ordering::Acquire) < self.part_waiter_cap {
+        if self.waiter_count.load(Ordering::Acquire) < self.waiter_cap {
             return None;
         }
         Some(listener)
+    }
+
+    /// A listener woken by the next sample, event, track-set change or
+    /// writer hand-off published on this trunk. Not counted against
+    /// [`TrunkConfig::waiter_capacity`]. **Register before re-checking the
+    /// condition you wait on**, as with [`Trunk::listen`]; a consumer of a
+    /// [`SampleCursor`] should prefer [`SampleCursor::next`].
+    pub fn data_listener(&self) -> EventListener {
+        self.data.listen()
     }
 }
 
@@ -2321,6 +2342,8 @@ impl TrunkWriter {
             }
             RetentionClass::Sparse => state.sparse.push(track_id, sample),
         }
+        drop(state);
+        self.trunk.data.notify(usize::MAX);
     }
 
     /// Publish one event. Never blocks and never rejects — a full event log
@@ -2334,6 +2357,8 @@ impl TrunkWriter {
     pub fn publish_event(&self, event: TimedEvent, anchor: EventAnchor) {
         let mut state = self.trunk.lock_state();
         state.events.push(event, anchor);
+        drop(state);
+        self.trunk.data.notify(usize::MAX);
     }
 
     /// Replace this program's track set wholesale — the write side of
@@ -2373,6 +2398,7 @@ impl TrunkWriter {
         state.track_changes.prune(timed_base);
         drop(state);
         self.trunk.progress.notify(usize::MAX);
+        self.trunk.data.notify(usize::MAX);
     }
 }
 
@@ -2384,6 +2410,7 @@ impl Drop for TrunkWriter {
     /// would ever publish into their rings again).
     fn drop(&mut self) {
         self.trunk.writer_taken.store(false, Ordering::Release);
+        self.trunk.data.notify(usize::MAX);
     }
 }
 
@@ -2921,6 +2948,20 @@ pub struct SampleCursor {
 }
 
 impl SampleCursor {
+    /// Await the next item: registers for the trunk's data wake, polls, and
+    /// parks until a publish if nothing is ready. An idle cursor takes no
+    /// trunk lock while parked. Cancel-safe: dropping the future loses
+    /// nothing, the next call polls the same position.
+    pub async fn next(&mut self) -> SampleCursorItem {
+        loop {
+            let listener = self.trunk.data_listener();
+            if let Some(item) = self.poll() {
+                return item;
+            }
+            listener.await;
+        }
+    }
+
     /// Pull the next item, if any is ready.
     ///
     /// Loss is always reported before further data, in the same
@@ -3324,6 +3365,74 @@ mod tests {
                 carriage: DataCarriage::Pes,
             },
         )
+    }
+
+    struct CountingWake(AtomicUsize);
+
+    impl std::task::Wake for CountingWake {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn counting_waker() -> (Arc<CountingWake>, std::task::Waker) {
+        let counter = Arc::new(CountingWake(AtomicUsize::new(0)));
+        let waker = std::task::Waker::from(Arc::clone(&counter));
+        (counter, waker)
+    }
+
+    const MANY_WAITERS: usize = 1000;
+
+    /// #2523: the waiter cap is independent of `part_capacity`, so far more
+    /// registrations than the part ring holds all succeed and all wake on the
+    /// next publish.
+    #[test]
+    fn many_listen_waiters_beyond_part_capacity_all_wake_on_publish() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let writer = trunk.segment_writer().unwrap();
+        let (wakes, waker) = counting_waker();
+        let mut cx = Context::from_waker(&waker);
+
+        let mut listeners: Vec<ProgressListener> = (0..MANY_WAITERS)
+            .map(|_| trunk.listen().expect("no waiter may be refused"))
+            .collect();
+        assert_eq!(trunk.waiter_count(), MANY_WAITERS);
+        for listener in &mut listeners {
+            assert!(Pin::new(listener).poll(&mut cx).is_pending());
+        }
+
+        writer.publish_part(part_entry(1, 1, 0));
+
+        assert_eq!(wakes.0.load(Ordering::SeqCst), MANY_WAITERS);
+        for listener in &mut listeners {
+            assert!(Pin::new(listener).poll(&mut cx).is_ready());
+        }
+    }
+
+    /// #2524: an idle `SampleCursor::next` parks without taking the trunk
+    /// lock and is woken by a sample publish.
+    #[test]
+    fn idle_cursor_next_takes_no_lock_and_wakes_on_sample() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let writer = trunk.writer().unwrap();
+        let mut cursor = trunk.subscribe();
+        let (wakes, waker) = counting_waker();
+        let mut cx = Context::from_waker(&waker);
+
+        let mut next = Box::pin(cursor.next());
+        assert!(next.as_mut().poll(&mut cx).is_pending());
+        let locks_when_parked = trunk.lock_takes.load(Ordering::SeqCst);
+
+        thread::sleep(Duration::from_millis(100));
+        assert_eq!(trunk.lock_takes.load(Ordering::SeqCst), locks_when_parked);
+        assert_eq!(wakes.0.load(Ordering::SeqCst), 0);
+
+        writer.publish(TrackId::new(1), RetentionClass::Timed, sample(7, 4));
+        assert_eq!(wakes.0.load(Ordering::SeqCst), 1);
+        match next.as_mut().poll(&mut cx) {
+            Poll::Ready(item) => assert!(timed_data(&item).is_some()),
+            Poll::Pending => panic!("woken cursor must yield the sample"),
+        }
     }
 
     /// `NonZeroUsize` from a literal capacity, for readability at the ~30
@@ -5445,11 +5554,10 @@ mod tests {
     }
 
     /// The waiter set itself is bounded — a flood of `listen()` calls cannot
-    /// grow memory without limit, and reuses `part_capacity` rather than a
-    /// sixth, independent knob.
+    /// grow memory without limit.
     ///
     /// MUTATION VERIFIED: replacing `Trunk::listen`'s cap check (the
-    /// `if current >= self.part_waiter_cap { return None; }` loop) with a
+    /// `if current >= self.waiter_cap { return None; }` loop) with a
     /// version that always registers (never returns `None`) makes the
     /// `assert!(trunk.listen().is_none(), ..)` below fail — the call
     /// succeeds instead of being refused at the cap. Recompiled and re-run
@@ -5457,7 +5565,9 @@ mod tests {
     #[test]
     fn waiter_set_is_bounded_a_flood_of_listen_calls_cannot_grow_without_limit() {
         let cap = nz(4).get();
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(cap)));
+        let trunk = Trunk::new(
+            TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(4)).with_waiter_capacity(nz(cap)),
+        );
 
         // Fill exactly to the cap, keeping every registration alive.
         let mut held: Vec<ProgressListener> = Vec::new();
@@ -5469,7 +5579,7 @@ mod tests {
         // One more must be refused, not silently over-admitted.
         assert!(
             trunk.listen().is_none(),
-            "must refuse a registration beyond part_capacity"
+            "must refuse a registration beyond waiter_capacity"
         );
 
         // A flood of register-then-immediately-drop calls (no one keeping
@@ -5479,7 +5589,7 @@ mod tests {
             let l = trunk.listen();
             assert!(
                 trunk.waiter_count() <= cap,
-                "waiter count exceeded part_capacity mid-flood"
+                "waiter count exceeded waiter_capacity mid-flood"
             );
             drop(l);
         }
@@ -5534,7 +5644,9 @@ mod tests {
     #[test]
     fn a_parked_slot_freed_waiter_wakes_when_a_slot_is_freed() {
         let cap = nz(4).get();
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(cap)));
+        let trunk = Trunk::new(
+            TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(4)).with_waiter_capacity(nz(cap)),
+        );
 
         // Fill to the cap so `waiter_slot_freed` returns a real listener.
         let mut held: Vec<ProgressListener> = Vec::new();
@@ -5577,7 +5689,9 @@ mod tests {
     fn waiter_slot_freed_registers_before_rechecking_the_count() {
         let cap = nz(4).get();
         for _ in 0..200 {
-            let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(cap)));
+            let trunk = Trunk::new(
+            TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(4)).with_waiter_capacity(nz(cap)),
+        );
             let mut held: Vec<ProgressListener> = Vec::new();
             for _ in 0..cap {
                 held.push(trunk.listen().expect("succeeds up to the cap"));

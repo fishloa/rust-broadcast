@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- `TrunkConfig::waiter_capacity` (default `DEFAULT_WAITER_CAPACITY`, set with `TrunkConfig::with_waiter_capacity`): the bound on concurrent `Trunk::listen` registrations is its own setting instead of `part_capacity`, so a programme is no longer limited to 64 parked blocking-reload requests (#2523).
+- `SampleCursor::next` and `Trunk::data_listener`: a sample, event, track-set change or writer hand-off notifies the trunk once, and a consumer awaits it instead of polling; an idle cursor takes no trunk lock (#2524).
 - `Trunk::tracks_with_generation` and `Trunk::subscribe_from_backlog_with_tracks`: the track generation and set (and, for the latter, a backlog cursor) read under one lock acquisition.
 - `ingress::AdmittedDriver`: the bookkeeping every concurrently-admitting push-ingest loop had hand-written — one `IngestDriver` per admitted session (`accept`/`accept_with`/`register`), each session's clock measured from its own admission rather than the route's start, `feed`/`finish` plus a release-then-reap step that frees the session's `max_sessions` slot, and an idle clock (`touch`/`idle_deadline`) measured only from input the session actually took in. The multiplexing WHIP and RTMP ingest loops now share it instead of each carrying a copy.
 - `ingress::ListenDriver::listener`: read access to the listener a driver owns.
