@@ -1,8 +1,8 @@
 # transmux 0.31.0
 
-_Released 2026-11-10._
+_Released 2026-11-14._
 
-Breaking-class release (0.30 -> 0.31). One public type rename, four ISO BMFF struct changes, and an `i32` typing fix on `CleanApertureBox`. Public constructors and builders are otherwise unchanged.
+Breaking-class release (0.30 -> 0.31): breaking API changes are listed below, and the crate's sibling dependencies move to new caret epochs.
 
 Version: 0.30.0 -> 0.31.0.
 
@@ -59,20 +59,16 @@ let e: Vec<DataEntry> = box_.entries;
 - Container box writers share one FullBox header writer and one visual sample entry writer.
 - Shared helpers replacing private copies; internal refactors with no public effect.
 
+## Also in this release
+
+### Added
+- `skills/transmux-basics/SKILL.md`: a Symposium agent skill shipped in the published package, so an AI coding agent working in a project that depends on `transmux` gets usage guidance covering the `Unpackage`/`Package` hub loop, the `Media`/`Track`/`Sample`/`TrackSpec`/`CodecConfig` IR, streaming demux and segmentation, repackaging, timeline transforms and splice, CENC decrypt, the fMP4/CMAF validator, the `cli` packager, features and the common pitfalls.
+- `audio_profile` (serde behind the `serde` feature): `AudioTrackSelector` (with `position`), `AudioProfile`, `AudioProfileOverride` and `apply_overrides`, the operator-declared HE-AAC description moved from multimux; it reports unmatched and refused declarations instead of logging them (issue #2554).
+- `transmux::Container` (`Fmp4`, `MpegTs`, `WebVtt`) with `name()` and `segment_extension()`: which container a segmenter cuts and an origin serves, defined once here; moved from `hls_runtime::server` (issue #2554).
+
 ## Dependencies
-
-Workspace sibling requirements move to the new epochs of this wave:
-
-- `broadcast-common` 10 -> 11 (already live)
-- `broadcast-hls` 0.6 -> 0.7
-- `cc-data` 0.7 -> 0.8
-- `container-probe` 0.2 -> 0.3
-- `dvb-si` 12 -> 13
-- `mp4-emsg` 0.5 -> 0.6
-- `mpeg-pes` 0.6 -> 0.7
-- `mpeg-ps` 0.6 -> 0.7
-- `mpeg-ts` 0.6 -> 0.7
-- `rtp-packet` 0.5 -> 0.6
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12, `broadcast-hls` 0.6 -> 0.7, `cc-data` 0.8 -> 0.9, `container-probe` 0.3 -> 0.4, `dvb-si` 13 -> 14, `mp4-emsg` 0.6 -> 0.7, `mpeg-pes` 0.7 -> 0.8, `mpeg-ps` 0.7 -> 0.8, `mpeg-ts` 0.7 -> 0.8, `rtp-packet` 0.6 -> 0.7.
+- New sibling dependencies: `broadcast-dash` 0.1, `broadcast-smooth` 0.1, `rtmp-runtime` 0.10.
 
 ---
 

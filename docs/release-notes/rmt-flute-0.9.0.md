@@ -1,8 +1,8 @@
 # rmt-flute 0.9.0
 
-_Released 2026-11-10._
+_Released 2026-11-14._
 
-Breaking-class release (0.8 -> 0.9): `LctHeader` and `NormCmd` gain their reserved fields so parse then serialize is byte-exact, and `ExtTime`'s builders become fallible. Also adds `Parse` impls for `LctHeader`, `HeaderExtension` and `ExtTime`.
+Breaking-class release (0.8 -> 0.9): breaking API changes are listed below, and the crate's sibling dependencies move to new caret epochs.
 
 Version: 0.8.0 -> 0.9.0.
 
@@ -27,6 +27,9 @@ let e = ExtTime::to_content(&ext)?; // may fail with Error::InvalidField
 - `LctHeader` keeps the two reserved `Res` bits (RFC 5651 §5.1) so parse then serialize is byte-exact; a value over 2 bits is rejected on serialize.
 - `NormCmd` keeps the sub-type word bytes that EOT, CC, REPAIR_ADV, ACK_REQ and APPLICATION leave reserved (RFC 5740 §4.2.3), so parse then serialize is byte-exact.
 - `ExtTime::to_content` and `to_extension` no longer emit SCT-Low without SCT-High, which `ExtTime::parse` rejects; they return `Error::InvalidField` instead.
+
+## Dependencies
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12.
 
 ---
 

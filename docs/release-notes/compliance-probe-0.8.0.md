@@ -1,8 +1,8 @@
 # compliance-probe 0.8.0
 
-_Released 2026-11-10._
+_Released 2026-11-14._
 
-Additive release (0.7 -> 0.8): SCTE-35 cancel/encrypted handling; sibling epochs move.
+Major-class release (0.7 -> 0.8) for epoch purity: additions and fixes listed below; its sibling dependencies move to new caret epochs, which the workspace treats as a major-class change (docs/RELEASE-AUDIT.md section 2).
 
 Version: 0.7.0 -> 0.8.0.
 
@@ -21,10 +21,13 @@ Version: 0.7.0 -> 0.8.0.
 
 - `Probe::drain_byte_tap` documents shared arrival time.
 
-## Dependencies
+## Also in this release
 
-- `dvb-si` 12 -> 13
-- `broadcast-common` 10 -> 11
+### Changed
+- SCTE-35 cue sanity is the shared `scte35-splice` engine (`splice_event`/`judge_splice_time`) and TR 101 290 accounting is `dvb-conformance`'s own, so `compliance_probe_*` metrics report the same figures `media-doctor` does for the same stream; `Probe::indicator_counts` exposes the counts. Metric names and labels are unchanged.
+
+## Dependencies
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12, `dvb-conformance` 13 -> 14, `media-doctor` 0.14 -> 0.15, `media-plane` 0.10 -> 0.11, `mpeg-ts` 0.7 -> 0.8, `scte35-splice` 5 -> 6, `timed-metadata` 0.9 -> 0.10.
 
 ---
 
