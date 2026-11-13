@@ -6,6 +6,7 @@ mod real_ts_captions;
 mod review_signalling_findings;
 mod scc_reference;
 mod srt_real_fixture;
+#[cfg(feature = "cc-data")]
 mod support;
 mod teletext_test012;
 mod teletext_to_webvtt_fixture;
