@@ -39,6 +39,38 @@ fn explicit_basic_is_sent_on_the_first_request_only_when_preemptive_basic_is_on(
     }
 }
 
+/// RFC 3986 §3.2.1 / RFC 7617 §2: `:pw@` is an empty user with a password,
+/// answered to a Basic challenge as `":pw"` (base64 `OnB3`), and never left in
+/// the request URL.
+#[test]
+fn an_empty_username_in_the_url_userinfo_is_credentials() {
+    let mut session = Session::open("http://:pw@example/live.ts", Config::default(), 0).unwrap();
+    let Some(Action::HttpRequest { conn, url, .. }) = session.poll(0) else {
+        panic!("a first request");
+    };
+    assert!(!url.contains("pw"), "{url}");
+    session.on_response(
+        conn,
+        401,
+        &[(
+            "WWW-Authenticate".to_string(),
+            "Basic realm=\"test\"".to_string(),
+        )],
+        0,
+    );
+    let replay = std::iter::from_fn(|| session.poll(0)).find_map(|a| match a {
+        Action::HttpRequest { headers, .. } => Some(headers),
+        _ => None,
+    });
+    let headers = replay.expect("the replayed request");
+    assert!(
+        headers
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("authorization") && v == "Basic OnB3"),
+        "{headers:?}"
+    );
+}
+
 #[test]
 fn error_kinds_report_their_refusal_status_and_permanence() {
     use broadcast_client::ErrorKind;
