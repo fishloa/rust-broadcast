@@ -34,12 +34,18 @@ fn relay_emits_the_same_samples_as_the_default_and_no_later() {
 }
 
 #[test]
-fn relay_announces_tracks_without_waiting_for_the_hold() {
+fn relay_announces_the_whole_initial_track_set_at_once() {
     let bytes = test_fixtures::read("ts/france2.ts");
     let default = run(&bytes, Config::default());
     let relay = run(&bytes, Config::relay());
-    assert!(!relay.tracks_times().is_empty());
-    assert!(relay.tracks_times()[0] <= default.tracks_times()[0]);
+    let first_set = |replay: &Replay| {
+        replay.events.iter().find_map(|t| match &t.event {
+            Event::Tracks(specs) => Some(specs.len()),
+            _ => None,
+        })
+    };
+    assert!(first_set(&relay) > Some(1));
+    assert_eq!(first_set(&relay), first_set(&default));
     assert_eq!(relay.samples(), default.samples());
 }
 

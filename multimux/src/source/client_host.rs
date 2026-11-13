@@ -16,10 +16,11 @@ use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::time::Duration;
 
-use broadcast_client::{Action, Config, Event, Session, Status};
+use broadcast_client::{Action, Config, Event, Session, Status, UdpMode};
 use broadcast_common::{Demand, Stage, Timestamp};
 use futures_util::StreamExt;
 use media_plane::ingress::{IngestDriver, IngestSession, SessionEvent};
+use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 use tokio::time::Instant;
@@ -134,6 +135,8 @@ pub(crate) struct SessionStep {
     tx: mpsc::Sender<Message>,
     rx: mpsc::Receiver<Message>,
     requests: BTreeMap<u32, AbortHandle>,
+    sockets: BTreeMap<u32, std::sync::Arc<UdpSocket>>,
+    udp: UdpHost,
     wake_at: Option<u64>,
     route_handle: std::sync::Arc<crate::route::RouteHandle>,
     feed_si: bool,
@@ -178,6 +181,8 @@ impl SessionStep {
             tx,
             rx,
             requests: BTreeMap::new(),
+            sockets: BTreeMap::new(),
+            udp: UdpHost::default(),
             wake_at: None,
             route_handle,
             feed_si,
@@ -193,7 +198,12 @@ impl SessionStep {
         u64::try_from(micros).unwrap_or(u64::MAX)
     }
 
-    fn perform_actions(&mut self) -> Result<(), MultimuxError> {
+    pub(crate) fn with_udp(mut self, udp: UdpHost) -> Self {
+        self.udp = udp;
+        self
+    }
+
+    async fn perform_actions(&mut self) -> Result<(), MultimuxError> {
         let now = self.now_us();
         while let Some(action) = self.session.poll(now) {
             match action {
@@ -213,7 +223,30 @@ impl SessionStep {
                     let task = tokio::spawn(fetch(request, conn, tx));
                     self.requests.insert(conn, task.abort_handle());
                 }
+                Action::UdpBind {
+                    conn,
+                    host,
+                    port,
+                    mode: UdpMode::Receive,
+                    multicast,
+                    recv_buffer_bytes,
+                } => {
+                    let socket = self
+                        .udp
+                        .bind(&host, port, multicast.as_ref(), recv_buffer_bytes)
+                        .await?;
+                    let socket = std::sync::Arc::new(socket);
+                    let task = tokio::spawn(receive(
+                        std::sync::Arc::clone(&socket),
+                        conn,
+                        self.tx.clone(),
+                    ));
+                    self.requests.insert(conn, task.abort_handle());
+                    self.sockets.insert(conn, socket);
+                    self.session.on_connected(conn);
+                }
                 Action::Close { conn } => {
+                    self.sockets.remove(&conn);
                     if let Some(task) = self.requests.remove(&conn) {
                         task.abort();
                     }
@@ -254,6 +287,7 @@ impl SessionStep {
             }
             Message::Closed { conn, error } => {
                 self.requests.remove(&conn);
+                self.sockets.remove(&conn);
                 if error.is_some() {
                     self.transport_error.clone_from(&error);
                 }
@@ -380,7 +414,7 @@ impl IngestStep<EventIngest> for SessionStep {
         driver: &mut IngestDriver<EventIngest>,
         window: Duration,
     ) -> StepOutcome {
-        if let Err(e) = self.perform_actions() {
+        if let Err(e) = self.perform_actions().await {
             return StepOutcome::Failed(e);
         }
         let mut received = false;
@@ -394,7 +428,7 @@ impl IngestStep<EventIngest> for SessionStep {
                 Ok(None) => {}
                 Err(_) => self.wake_at = None,
             }
-            if let Err(e) = self.perform_actions() {
+            if let Err(e) = self.perform_actions().await {
                 return StepOutcome::Failed(e);
             }
             verdict = self.drain_events(driver);
@@ -478,4 +512,72 @@ async fn fetch(request: reqwest::RequestBuilder, conn: u32, tx: mpsc::Sender<Mes
         }
     }
     let _ = tx.send(closed(None)).await;
+}
+
+/// How the host obtains the datagram socket a session asks for with [`Action::UdpBind`]: a
+/// socket the caller already bound is used once, every other bind follows the route's options.
+#[derive(Default)]
+pub(crate) struct UdpHost {
+    pub(crate) prebound: Option<UdpSocket>,
+    pub(crate) options: crate::source::udp::UdpBindOptions,
+}
+
+impl UdpHost {
+    async fn bind(
+        &mut self,
+        host: &str,
+        port: u16,
+        multicast: Option<&broadcast_client::udp::MulticastJoin>,
+        recv_buffer_bytes: Option<u32>,
+    ) -> Result<UdpSocket, MultimuxError> {
+        if let Some(socket) = self.prebound.take() {
+            return Ok(socket);
+        }
+        let mut options = self.options.clone();
+        if let Some(bytes) = recv_buffer_bytes {
+            options.recv_buffer_bytes = usize::try_from(bytes).ok();
+        }
+        let (addr, group) = match multicast {
+            Some(join) => {
+                if let Some(interface) = join.interface {
+                    options.multicast_interface = Some(interface.to_string());
+                } else if let Some(index) = join.interface_index {
+                    options.multicast_interface = Some(index.to_string());
+                }
+                let any = if host.contains(':') {
+                    "[::]"
+                } else {
+                    "0.0.0.0"
+                };
+                (format!("{any}:{port}"), Some(host))
+            }
+            None if host.contains(':') => (format!("[{host}]:{port}"), None),
+            None => (format!("{host}:{port}"), None),
+        };
+        crate::source::udp::bind_udp(&addr, group, options).await
+    }
+}
+
+async fn receive(socket: std::sync::Arc<UdpSocket>, conn: u32, tx: mpsc::Sender<Message>) {
+    let mut buf = vec![0u8; crate::source::MAX_TS_READ];
+    loop {
+        let message = match socket.recv(&mut buf).await {
+            Ok(n) => Message::Data {
+                conn,
+                bytes: buf[..n].to_vec(),
+            },
+            Err(e) => {
+                let _ = tx
+                    .send(Message::Closed {
+                        conn,
+                        error: Some(e.to_string()),
+                    })
+                    .await;
+                return;
+            }
+        };
+        if tx.send(message).await.is_err() {
+            return;
+        }
+    }
 }

@@ -1097,16 +1097,16 @@ pub struct Config {
 }
 
 impl Config {
-    /// A relay configuration: the host forwards samples as they are demuxed and never plays them,
-    /// so there is no initial-tracks hold, no start-pending wait and no timeline-jump screening that would drop samples. [`Event::Tracks`] follows
-    /// each stream's first access unit and every [`Event::Sample`] is emitted as soon as it is
-    /// demuxed; [`Event::Buffer`] events are advisory and a relay ignores them. Each
-    /// [`TrackSpec`] keeps its `program_number`, so a multi-programme stream splits per programme.
+    /// A relay configuration: the host forwards samples as they are demuxed and never plays
+    /// them, so there is no start-pending wait and no timeline-jump screening that would drop
+    /// samples. The initial-tracks hold stays: it is what coalesces a live multiplex's first
+    /// [`Event::Tracks`] into the whole track set (bounded by [`Config::tracks_hold_max_wall_us`]),
+    /// which a relay needs to build one init segment. [`Event::Buffer`] events are advisory and a
+    /// relay ignores them. Each [`TrackSpec`] keeps its `program_number`, so a multi-programme
+    /// stream splits per programme.
     #[must_use]
     pub fn relay() -> Self {
         Self {
-            tracks_hold_max_media_us: 0,
-            tracks_hold_max_wall_us: 0,
             start_pending_track_wait_us: 0,
             start_pending_track_hard_cap_us: 0,
             timeline_jump: None,

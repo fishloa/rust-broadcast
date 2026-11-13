@@ -93,6 +93,17 @@ fn a_multicast_url_asks_the_host_to_bind_and_join_the_group() {
 }
 
 #[test]
+fn an_ipv6_group_carries_the_interface_index_to_the_host() {
+    let config = config_with(|cfg| cfg.udp.interface_index = Some(7));
+    let mut s = Session::open("udp://[ff02::1]:5000", config, 0).unwrap();
+    let Action::UdpBind { multicast, .. } = bind_of(&mut s) else {
+        unreachable!()
+    };
+    let join = multicast.expect("a multicast join");
+    assert_eq!((join.interface, join.interface_index), (None, Some(7)));
+}
+
+#[test]
 fn a_unicast_or_at_prefixed_url_binds_without_a_join() {
     for url in [
         "udp://127.0.0.1:5000",
@@ -157,6 +168,16 @@ fn bad_udp_urls_and_configs_are_typed_errors() {
             GROUP,
             udp_cfg(|c| c.source = v4(239, 1, 1, 2)),
             "udp.source",
+        ),
+        (
+            "udp://127.0.0.1:5000",
+            udp_cfg(|c| c.interface_index = Some(2)),
+            "udp.interface_index",
+        ),
+        (
+            GROUP,
+            udp_cfg(|c| c.interface_index = Some(2)),
+            "udp.interface_index",
         ),
         (
             GROUP,
