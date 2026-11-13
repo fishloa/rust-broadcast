@@ -47,7 +47,6 @@ const MAX_INIT_FAILURES: u32 = 4;
 /// [`crate::source::MAX_INFLIGHT_FETCHES`] that leaves room for the MPD, the inits and the
 /// `UTCTiming` requests.
 const SEGMENT_WINDOW: usize = crate::source::MAX_INFLIGHT_FETCHES / 2;
-const MICROS_PER_MILLI: u64 = 1_000;
 const WHAT: &str = "dash-pull";
 
 /// A remote MPEG-DASH presentation to pull: its MPD URL, which may carry
@@ -117,16 +116,12 @@ pub fn parse_iso8601_utc_for_test(s: &str) -> Option<u64> {
 }
 
 fn session_config(route: &DashPullRoute) -> Config {
-    let read_us = u64::try_from(route.target.timeouts.read_idle.as_micros())
-        .unwrap_or(u64::MAX)
-        .max(MICROS_PER_MILLI);
     let mut config = Config::relay();
     config.kind = SourceKind::Dash;
+    let mut config = config.with_timeouts(route.target.timeouts);
     config.max_queued_bytes = crate::source::SEGMENTED_EVENT_QUEUE_BYTES;
     config.dash.cross_origin_urls = route.allow_cross_origin();
     config.utc_timing_credentials = false;
-    config.request_timeout_us = read_us;
-    config.segment_timeout_us = read_us;
     config.max_segment_bytes = crate::source::MAX_HTTP_BODY_BYTES;
     config.max_inflight_segments = SEGMENT_WINDOW;
     config.max_segment_failures = MAX_SEGMENT_FAILURES;

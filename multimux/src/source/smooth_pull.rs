@@ -22,7 +22,6 @@ use crate::error::{MultimuxError, Result};
 use crate::source::client_host::{EventIngest, SessionLabels, SessionStep};
 use crate::source::pull_target::{PullKind, PullRoute};
 
-const MICROS_PER_MILLI: u64 = 1_000;
 const WHAT: &str = "smooth-pull";
 
 /// A remote MS-SSTR client Manifest to pull: its URL, which may carry
@@ -54,14 +53,10 @@ impl crate::source::pull_target::PullDrive for SmoothPullKind {
 }
 
 fn session_config(route: &SmoothPullRoute) -> Config {
-    let read_us = u64::try_from(route.target.timeouts.read_idle.as_micros())
-        .unwrap_or(u64::MAX)
-        .max(MICROS_PER_MILLI);
     let mut config = Config::relay();
     config.kind = SourceKind::Smooth;
+    let mut config = config.with_timeouts(route.target.timeouts);
     config.max_queued_bytes = crate::source::SEGMENTED_EVENT_QUEUE_BYTES;
-    config.request_timeout_us = read_us;
-    config.segment_timeout_us = read_us;
     config.max_manifest_bytes = crate::source::MAX_HTTP_BODY_BYTES;
     config.max_segment_bytes = crate::source::MAX_HTTP_BODY_BYTES;
     config
