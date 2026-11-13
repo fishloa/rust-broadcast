@@ -12,6 +12,7 @@ fn digest_verifier(user: &str, pw: &str) -> Verifier {
         },
         REALM,
     )
+    .expect("OS random source")
 }
 
 fn verify(v: &Verifier, header: &str, method: &str, uri: &str) -> AuthResult {

@@ -23,6 +23,7 @@ use core::time::Duration;
 use tstd::TstdModel;
 
 use broadcast_common::Parse;
+use broadcast_common::units::MICROS_PER_SEC;
 use dvb_si::tables::eit::EitSection;
 use dvb_si::tables::pat::{PatSection, TABLE_ID as PAT_TABLE_ID};
 use dvb_si::tables::pmt::PmtSection;
@@ -137,8 +138,6 @@ const DEFAULT_SI_OTHER_INTERVAL_SECS: u64 = 10;
 /// PCR modulus on the 27 MHz clock (`2^33 × 300`, ISO/IEC 13818-1 §2.4.3.5)
 /// and the 27 MHz clock rate: both owned by `broadcast_common::clock33`.
 use broadcast_common::clock33::{PCR_HZ as CLOCK_27MHZ, pcr_forward_distance};
-
-const MICROS_PER_SEC: u64 = 1_000_000;
 
 /// Upper bound on tracked EIT P/F sub-tables, so a noisy or hostile EIT PID
 /// cannot grow the pairing map without limit; further sub-tables go unpaired.

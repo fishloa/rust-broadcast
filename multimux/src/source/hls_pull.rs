@@ -21,6 +21,7 @@ use std::convert::Infallible;
 use crate::error::{MultimuxError, Result};
 use crate::source::client_host::{EventIngest, SessionLabels, SessionStep};
 use crate::source::pull_target::{PullKind, PullRoute};
+use broadcast_common::units::MICROS_PER_MILLI;
 
 /// How many times one media resource is requested before the session gives up on it.
 const MAX_RESOURCE_ATTEMPTS: u32 = 8;

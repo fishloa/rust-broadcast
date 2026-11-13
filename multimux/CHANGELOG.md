@@ -3,6 +3,7 @@
 ## [Unreleased]
 ### Changed
 - The HLS, DASH, Smooth, TS-over-HTTP, RTSP and SRT pulls map their `Timeouts` with `broadcast_client::Config::with_timeouts`; the five hand-written conversions (`read_us` x3, `ts_http::policy_config`, the SRT handshake mapping) are deleted (#2590).
+- Building an output-auth verifier reports an unavailable OS random source (Digest) as `MultimuxError::Auth` instead of panicking (#2591).
 - The audio follower's segmenting lives in `media_plane::segmenter::audio`; `source::split_audio` keeps the route-facing half: selectors and name from the route, and applying the follower's init segment and part target to the rendition's `HlsOrigin` (issue #2554).
 ### Removed
 - BREAKING: `config::{AudioTrackSelector, AudioProfile, AudioProfileOverride}` moved to `transmux::audio_profile` (same serde forms); the route logs declarations that did not apply as before (issue #2554).

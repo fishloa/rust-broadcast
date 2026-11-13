@@ -102,6 +102,7 @@ fn basic_verifier() -> Verifier {
         },
         REALM,
     )
+    .expect("OS random source")
 }
 
 fn digest_verifier() -> Verifier {
@@ -112,6 +113,7 @@ fn digest_verifier() -> Verifier {
         },
         REALM,
     )
+    .expect("OS random source")
 }
 
 fn authed_server(verifier: Verifier) -> Server {

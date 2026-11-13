@@ -77,6 +77,7 @@ pub mod time;
 pub mod timeouts;
 pub mod timescale;
 pub mod traits;
+pub mod units;
 #[cfg(feature = "url")]
 pub mod url_ref;
 #[cfg(feature = "xml")]

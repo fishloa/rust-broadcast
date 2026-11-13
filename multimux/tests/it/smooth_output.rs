@@ -271,13 +271,16 @@ async fn auth_is_enforced() {
     feed_via_segmenter(&store, specs, batches);
 
     // Build an app with output auth (Basic, user:pass)
-    let verifier = Arc::new(broadcast_auth::Verifier::new(
-        Credentials::Basic {
-            username: "viewer".into(),
-            password: "secret".into(),
-        },
-        "smooth-test",
-    ));
+    let verifier = Arc::new(
+        broadcast_auth::Verifier::new(
+            Credentials::Basic {
+                username: "viewer".into(),
+                password: "secret".into(),
+            },
+            "smooth-test",
+        )
+        .expect("OS random source"),
+    );
 
     let mut streams = HashMap::new();
     streams.insert(

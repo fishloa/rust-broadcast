@@ -87,8 +87,8 @@ builds (see the table above against the in-tree versions below).
 
 | Crate | Domain | In-tree version | crates.io | `no_std` (CI) | Layer | Status |
 |---|---|---|---|---|---|---|
-| [`broadcast-auth`](#broadcast-auth) | Foundation | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/broadcast-auth.svg)](https://crates.io/crates/broadcast-auth) | no | 0 | on crates.io |
 | [`broadcast-common`](#broadcast-common) | Foundation | 11.1.0 | [![crates.io](https://img.shields.io/crates/v/broadcast-common.svg)](https://crates.io/crates/broadcast-common) | yes | 0 | on crates.io |
+| [`broadcast-auth`](#broadcast-auth) | Foundation | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/broadcast-auth.svg)](https://crates.io/crates/broadcast-auth) | no | 1 | on crates.io |
 | [`mpeg-pes`](#mpeg-pes) | MPEG-2 TS / PES / PS framing | 0.7.1 | [![crates.io](https://img.shields.io/crates/v/mpeg-pes.svg)](https://crates.io/crates/mpeg-pes) | yes | 1 | on crates.io |
 | [`mpeg-ts`](#mpeg-ts) | MPEG-2 TS / PES / PS framing | 0.7.1 | [![crates.io](https://img.shields.io/crates/v/mpeg-ts.svg)](https://crates.io/crates/mpeg-ts) | yes | 1 | on crates.io |
 | [`mpeg-ps`](#mpeg-ps) | MPEG-2 TS / PES / PS framing | 0.7.1 | [![crates.io](https://img.shields.io/crates/v/mpeg-ps.svg)](https://crates.io/crates/mpeg-ps) | yes | 2 | on crates.io |
@@ -119,10 +119,10 @@ builds (see the table above against the in-tree versions below).
 | [`buffering-runtime`](#buffering-runtime) | Live transport protocols | 0.2.2 | [![crates.io](https://img.shields.io/crates/v/buffering-runtime.svg)](https://crates.io/crates/buffering-runtime) | yes | 1 | on crates.io |
 | [`rtmp-runtime`](#rtmp-runtime) | Live transport protocols | 0.9.1 | [![crates.io](https://img.shields.io/crates/v/rtmp-runtime.svg)](https://crates.io/crates/rtmp-runtime) | yes | 1 | on crates.io |
 | [`rtp-packet`](#rtp-packet) | Live transport protocols | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/rtp-packet.svg)](https://crates.io/crates/rtp-packet) | yes | 1 | on crates.io |
-| [`rtsp-runtime`](#rtsp-runtime) | Live transport protocols | 0.11.0 | [![crates.io](https://img.shields.io/crates/v/rtsp-runtime.svg)](https://crates.io/crates/rtsp-runtime) | no | 1 | on crates.io |
 | [`srt-runtime`](#srt-runtime) | Live transport protocols | 0.8.1 | [![crates.io](https://img.shields.io/crates/v/srt-runtime.svg)](https://crates.io/crates/srt-runtime) | yes | 1 | on crates.io |
 | [`st2022`](#st2022) | Live transport protocols | 0.3.0 | [![crates.io](https://img.shields.io/crates/v/st2022.svg)](https://crates.io/crates/st2022) | yes | 1 | on crates.io |
 | [`rist-runtime`](#rist-runtime) | Live transport protocols | 0.5.1 | [![crates.io](https://img.shields.io/crates/v/rist-runtime.svg)](https://crates.io/crates/rist-runtime) | yes | 2 | on crates.io |
+| [`rtsp-runtime`](#rtsp-runtime) | Live transport protocols | 0.11.0 | [![crates.io](https://img.shields.io/crates/v/rtsp-runtime.svg)](https://crates.io/crates/rtsp-runtime) | no | 2 | on crates.io |
 | [`webrtc-runtime`](#webrtc-runtime) | Live transport protocols | 0.7.0 | [![crates.io](https://img.shields.io/crates/v/webrtc-runtime.svg)](https://crates.io/crates/webrtc-runtime) | no | 2 | on crates.io |
 | [`dash-runtime`](#dash-runtime) | Live transport protocols | 0.4.0 | — | no | 5 | not on crates.io |
 | [`hls-runtime`](#hls-runtime) | Live transport protocols | 0.13.0 | [![crates.io](https://img.shields.io/crates/v/hls-runtime.svg)](https://crates.io/crates/hls-runtime) | yes | 5 | on crates.io |
@@ -155,17 +155,6 @@ builds (see the table above against the in-tree versions below).
 
 Shared traits and helpers every other crate builds on.
 
-#### broadcast-auth
-
-One credentials model and one challenge-response helper for clients, plus one server-side `Verifier` (including a reverse-proxy `forwarded` scheme), used by `rtsp-runtime`, `hls-runtime` and `multimux`. Basic/Digest challenge parsing is delegated to the `http-auth` crate.
-
-- **Standards:** RFC 7235, RFC 7616 / RFC 2617 (Digest), RFC 6750 (Bearer), RFC 2326 §14
-- **Cargo description:** Shared multi-scheme HTTP/RTSP auth: Basic/Digest (RFC 7235, RFC 2326 §14) via http-auth, Bearer (RFC 6750); one Credentials model + challenge->response helper for rtsp-runtime and multimux's HTTP clients.
-- **Version (in-tree):** 0.6.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 0
-- **Depends on (workspace):** none
-- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux), [`rtsp-runtime`](#rtsp-runtime)
-- **Links:** [README](../broadcast-auth/README.md) · [CHANGELOG](../broadcast-auth/CHANGELOG.md) · [crates.io](https://crates.io/crates/broadcast-auth) · [docs.rs](https://docs.rs/broadcast-auth)
-
 #### broadcast-common
 
 The base of the workspace: the zero-copy `Parse<'a>` / `Serialize` trait pair every wire type implements, the MPEG-2 CRC-32, BCD/MJD time and hex codecs, range-checked length narrowing for serializers (`len`), the container `mux` traits, the `cenc::CencScheme` identity shared by `transmux` and `broadcast-hls`, and `clock33` wrapping 33-bit PTS/DTS arithmetic. It implements no protocol on its own. Versioned independently of the DVB lockstep.
@@ -174,8 +163,19 @@ The base of the workspace: the zero-copy `Parse<'a>` / `Serialize` trait pair ev
 - **Cargo description:** Foundation for the rust-broadcast crates: symmetric Parse/Serialize traits, CRC-32/MPEG-2, BCD + MJD time codecs, bit I/O, 33-bit/PCR clock arithmetic, checked field widths, container-mux and Stage traits. no_std + alloc.
 - **Version (in-tree):** 11.1.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 0
 - **Depends on (workspace):** none
-- **Used by (workspace):** 56 workspace crates
+- **Used by (workspace):** 57 workspace crates
 - **Links:** [README](../broadcast-common/README.md) · [CHANGELOG](../broadcast-common/CHANGELOG.md) · [crates.io](https://crates.io/crates/broadcast-common) · [docs.rs](https://docs.rs/broadcast-common)
+
+#### broadcast-auth
+
+One credentials model and one challenge-response helper for clients, plus one server-side `Verifier` (including a reverse-proxy `forwarded` scheme), used by `rtsp-runtime`, `hls-runtime` and `multimux`. Basic/Digest challenge parsing is delegated to the `http-auth` crate.
+
+- **Standards:** RFC 7235, RFC 7616 / RFC 2617 (Digest), RFC 6750 (Bearer), RFC 2326 §14
+- **Cargo description:** Shared multi-scheme HTTP/RTSP auth: Basic/Digest (RFC 7235, RFC 2326 §14) via http-auth, Bearer (RFC 6750); one Credentials model + challenge->response helper for rtsp-runtime and multimux's HTTP clients.
+- **Version (in-tree):** 0.6.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 1
+- **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
+- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux), [`rtsp-runtime`](#rtsp-runtime)
+- **Links:** [README](../broadcast-auth/README.md) · [CHANGELOG](../broadcast-auth/CHANGELOG.md) · [crates.io](https://crates.io/crates/broadcast-auth) · [docs.rs](https://docs.rs/broadcast-auth)
 
 ### MPEG-2 TS / PES / PS framing
 
@@ -535,17 +535,6 @@ Spec-complete parse and serialize of the RTP packet header and its extension and
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`dvb-stream`](#dvb-stream), [`multimux`](#multimux), [`rist-runtime`](#rist-runtime), [`st291`](#st291), [`transmux`](#transmux), [`webrtc-runtime`](#webrtc-runtime)
 - **Links:** [README](../rtp-packet/README.md) · [CHANGELOG](../rtp-packet/CHANGELOG.md) · [crates.io](https://crates.io/crates/rtp-packet) · [docs.rs](https://docs.rs/rtp-packet)
 
-#### rtsp-runtime
-
-Driveable client and server state machines with CSeq correlation, Transport negotiation and interleaved framing over the `rtsp-types` codec, with auth through `broadcast-auth`. The optional `tokio` (+ `tls`) feature adds a socket adapter. RTSP 2.0 (RFC 7826) is not implemented. Requires `std`.
-
-- **Standards:** RFC 2326 (RTSP 1.0) incl. Appendix A state machines, §10.12 interleaving, §12.39 Transport, §14 auth
-- **Cargo description:** Sans-IO RTSP 1.0 (RFC 2326) session engine — driveable client + server state machines, interleaved RTP/RTCP framing, Basic/Digest/Bearer auth (via broadcast-auth), over the rtsp-types codec; optional tokio (+ rustls) socket adapter.
-- **Version (in-tree):** 0.11.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 1
-- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common)
-- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux)
-- **Links:** [README](../rtsp-runtime/README.md) · [CHANGELOG](../rtsp-runtime/CHANGELOG.md) · [crates.io](https://crates.io/crates/rtsp-runtime) · [docs.rs](https://docs.rs/rtsp-runtime)
-
 #### srt-runtime
 
 Sans-IO SRT: packet codecs, the HSv5 handshake state machines, an ARQ reliability engine, a TSBPD delivery scheduler, LiveCC pacing and FileCC congestion control, optional payload encryption (`crypto`) and an optional tokio UDP adapter (`tokio`). The core is `no_std`.
@@ -578,6 +567,17 @@ Wire codecs for the RIST Simple Profile RTCP messages on top of `rtp-packet`'s `
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`rtp-packet`](#rtp-packet)
 - **Used by (workspace):** none
 - **Links:** [README](../rist-runtime/README.md) · [CHANGELOG](../rist-runtime/CHANGELOG.md) · [crates.io](https://crates.io/crates/rist-runtime) · [docs.rs](https://docs.rs/rist-runtime)
+
+#### rtsp-runtime
+
+Driveable client and server state machines with CSeq correlation, Transport negotiation and interleaved framing over the `rtsp-types` codec, with auth through `broadcast-auth`. The optional `tokio` (+ `tls`) feature adds a socket adapter. RTSP 2.0 (RFC 7826) is not implemented. Requires `std`.
+
+- **Standards:** RFC 2326 (RTSP 1.0) incl. Appendix A state machines, §10.12 interleaving, §12.39 Transport, §14 auth
+- **Cargo description:** Sans-IO RTSP 1.0 (RFC 2326) session engine — driveable client + server state machines, interleaved RTP/RTCP framing, Basic/Digest/Bearer auth (via broadcast-auth), over the rtsp-types codec; optional tokio (+ rustls) socket adapter.
+- **Version (in-tree):** 0.11.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 2
+- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common)
+- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux)
+- **Links:** [README](../rtsp-runtime/README.md) · [CHANGELOG](../rtsp-runtime/CHANGELOG.md) · [crates.io](https://crates.io/crates/rtsp-runtime) · [docs.rs](https://docs.rs/rtsp-runtime)
 
 #### webrtc-runtime
 
@@ -898,9 +898,9 @@ One test binary that walks every crate named in each guard's data table (`non_ex
 Layer 0 has no workspace dependencies; every other crate sits one layer above its deepest workspace dependency. Normal dependencies only (dev-dependencies are excluded, so the test helpers appear at layer 0 with no edges).
 
 ```text
-layer 0: broadcast-auth, broadcast-common, test-alloc, test-fixtures, workspace-guards
-layer 1: atsc3, broadcast-dash, broadcast-hls, broadcast-loudness, broadcast-smooth, buffering-runtime, cc-data, container-probe, dvb-bbframe, dvb-mabr, dvb-simulcrypt, dvb-subtitle, dvb-vbi, mp4-emsg, mpeg-pes, mpeg-ts, rdd29, rmt-flute, rtmp-runtime, rtp-packet, rtsp-runtime, scte104, srt-runtime, st12-1, st2022, st337, st377-1, ttml-subtitle, ule
-layer 2: atsc3-route, dvb-csa, dvb-si, dvb-t2mi, mpeg-ps, rist-runtime, scte35-splice, ssai-runtime, st291, webrtc-runtime
+layer 0: broadcast-common, test-alloc, test-fixtures, workspace-guards
+layer 1: atsc3, broadcast-auth, broadcast-dash, broadcast-hls, broadcast-loudness, broadcast-smooth, buffering-runtime, cc-data, container-probe, dvb-bbframe, dvb-mabr, dvb-simulcrypt, dvb-subtitle, dvb-vbi, mp4-emsg, mpeg-pes, mpeg-ts, rdd29, rmt-flute, rtmp-runtime, rtp-packet, scte104, srt-runtime, st12-1, st2022, st337, st377-1, ttml-subtitle, ule
+layer 2: atsc3-route, dvb-csa, dvb-si, dvb-t2mi, mpeg-ps, rist-runtime, rtsp-runtime, scte35-splice, ssai-runtime, st291, webrtc-runtime
 layer 3: dvb-ci, dvb-conformance, dvb-stream, dvb-tools, playout-runtime, timed-metadata, transmux
 layer 4: caption-convert, dvb-ci-runtime, media-plane, ts-fix
 layer 5: dash-runtime, hls-runtime, smooth-runtime
@@ -914,11 +914,11 @@ The same graph as a diagram (transitive edges removed, so an arrow means "depend
 ```mermaid
 flowchart BT
   subgraph L0["layer 0"]
-    broadcast_auth["broadcast-auth"]
     broadcast_common["broadcast-common"]
   end
   subgraph L1["layer 1"]
     atsc3["atsc3"]
+    broadcast_auth["broadcast-auth"]
     broadcast_dash["broadcast-dash"]
     broadcast_hls["broadcast-hls"]
     broadcast_loudness["broadcast-loudness"]
@@ -938,7 +938,6 @@ flowchart BT
     rmt_flute["rmt-flute"]
     rtmp_runtime["rtmp-runtime"]
     rtp_packet["rtp-packet"]
-    rtsp_runtime["rtsp-runtime"]
     scte104["scte104"]
     srt_runtime["srt-runtime"]
     st12_1["st12-1"]
@@ -955,6 +954,7 @@ flowchart BT
     dvb_t2mi["dvb-t2mi"]
     mpeg_ps["mpeg-ps"]
     rist_runtime["rist-runtime"]
+    rtsp_runtime["rtsp-runtime"]
     scte35_splice["scte35-splice"]
     ssai_runtime["ssai-runtime"]
     st291["st291"]
@@ -993,6 +993,7 @@ flowchart BT
   end
   atsc3 --> broadcast_common
   atsc3_route --> rmt_flute
+  broadcast_auth --> broadcast_common
   broadcast_client --> buffering_runtime
   broadcast_client --> dash_runtime
   broadcast_client --> hls_runtime
@@ -1049,7 +1050,6 @@ flowchart BT
   rtmp_runtime --> broadcast_common
   rtp_packet --> broadcast_common
   rtsp_runtime --> broadcast_auth
-  rtsp_runtime --> broadcast_common
   scte104 --> broadcast_common
   scte35_splice --> mpeg_ts
   smooth_runtime --> media_plane

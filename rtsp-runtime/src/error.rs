@@ -19,6 +19,11 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// The OS random source failed while a `Session` id was being allocated; the request is not
+    /// answered, since a predictable id would let another client take the session over.
+    #[error("the OS random source is unavailable")]
+    RandomSource,
+
     /// An RTSP message could not be parsed or framed; `source` carries the
     /// codec's or the framing check's own error.
     #[error("failed to parse RTSP {what}")]
@@ -165,6 +170,11 @@ pub enum Error {
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
+
+    /// The default `rtsps://` client TLS configuration could not be built: the crypto provider
+    /// refused the safe default protocol versions (feature `tls`).
+    #[error("TLS client configuration failed")]
+    TlsConfig(#[source] Box<dyn std::error::Error + Send + Sync>),
 
     /// The server answered `454 Session Not Found` (RFC 2326 §11.3.5) to a
     /// request on our session — the session is gone (timed out, or torn down

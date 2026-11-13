@@ -18,23 +18,24 @@ use broadcast_auth::{AuthResult, Credentials, RequestContext, TrustedProxy, Veri
 
 const REALM: &str = "cameras";
 
-fn main() {
-    digest();
-    basic();
-    bearer();
+fn main() -> Result<(), broadcast_auth::Error> {
+    digest()?;
+    basic()?;
+    bearer()?;
     forwarded();
+    Ok(())
 }
 
 /// Digest (RFC 7616): the fullest round trip — challenge, correct response
 /// accepted, wrong password rejected.
-fn digest() {
+fn digest() -> Result<(), broadcast_auth::Error> {
     let verifier = Verifier::new(
         Credentials::Digest {
             username: "admin".into(),
             password: "hunter2".into(),
         },
         REALM,
-    );
+    )?;
     let challenge = verifier.challenge();
     println!("[digest] challenge: {challenge}");
 
@@ -53,17 +54,18 @@ fn digest() {
     let outcome = verify(&verifier, &wrong, &ctx);
     println!("[digest] wrong password    -> {outcome:?}");
     assert_eq!(outcome, AuthResult::Unauthorized);
+    Ok(())
 }
 
 /// Basic (RFC 7617): same accept/reject shape, briefly.
-fn basic() {
+fn basic() -> Result<(), broadcast_auth::Error> {
     let verifier = Verifier::new(
         Credentials::Basic {
             username: "admin".into(),
             password: "hunter2".into(),
         },
         REALM,
-    );
+    )?;
     let challenge = verifier.challenge();
     println!("[basic] challenge: {challenge}");
 
@@ -76,12 +78,13 @@ fn basic() {
     let wrong = respond(&challenge, &ctx, Credentials::new("admin", "WRONG")).expect("responds");
     assert_eq!(verify(&verifier, &wrong, &ctx), AuthResult::Unauthorized);
     println!("[basic] wrong password     -> Unauthorized");
+    Ok(())
 }
 
 /// Bearer (RFC 6750): no challenge round-trip needed, but still an
 /// accept/reject pair — a wrong token must not verify.
-fn bearer() {
-    let verifier = Verifier::new(Credentials::bearer("right-token"), REALM);
+fn bearer() -> Result<(), broadcast_auth::Error> {
+    let verifier = Verifier::new(Credentials::bearer("right-token"), REALM)?;
     let challenge = verifier.challenge();
     println!("[bearer] challenge: {challenge}");
 
@@ -93,6 +96,7 @@ fn bearer() {
     let wrong = respond(&challenge, &ctx, Credentials::bearer("wrong-token")).expect("responds");
     assert_eq!(verify(&verifier, &wrong, &ctx), AuthResult::Unauthorized);
     println!("[bearer] wrong token       -> Unauthorized");
+    Ok(())
 }
 
 /// Reverse-proxy forwarded-auth (`Verifier::forwarded_from`): no credential at

@@ -178,7 +178,8 @@ fn credentials_are_dropped_when_the_redirect_changes_host() {
             password: PASSWORD.to_string(),
         },
         REALM,
-    );
+    )
+    .expect("OS random source");
     let mut server = redirecting(302, REDIRECT_TARGET);
     server.auth = Some(verifier);
     let mut host = Host::new(BASE_URL, Config::default(), server);
@@ -217,7 +218,8 @@ fn a_same_host_redirect_keeps_the_credentials() {
             password: PASSWORD.to_string(),
         },
         REALM,
-    );
+    )
+    .expect("OS random source");
     let mut server = redirecting(302, "rtsp://cam.test/live2/");
     server.auth = Some(verifier);
     let mut host = Host::new(BASE_URL, Config::default(), server);
@@ -244,7 +246,8 @@ fn redirect_keeps_credentials(start: &str, target: &str) {
             password: PASSWORD.to_string(),
         },
         REALM,
-    );
+    )
+    .expect("OS random source");
     let mut server = redirecting(302, target);
     server.auth = Some(verifier);
     let mut host = Host::new(start, Config::default(), server);

@@ -126,13 +126,16 @@ async fn a_body_over_64_kib_is_rejected_413() {
 }
 
 fn basic_verifier(username: &str, password: &str) -> std::sync::Arc<broadcast_auth::Verifier> {
-    std::sync::Arc::new(broadcast_auth::Verifier::new(
-        broadcast_auth::Credentials::Basic {
-            username: username.to_string(),
-            password: password.to_string(),
-        },
-        "whep-test",
-    ))
+    std::sync::Arc::new(
+        broadcast_auth::Verifier::new(
+            broadcast_auth::Credentials::Basic {
+                username: username.to_string(),
+                password: password.to_string(),
+            },
+            "whep-test",
+        )
+        .expect("OS random source"),
+    )
 }
 
 /// Issue #1149: PATCH and DELETE are real operations on the per-session

@@ -35,7 +35,8 @@ fn digest_field(header: &str, name: &str) -> String {
 
 #[test]
 fn digest_uri_is_the_origin_form_request_target_for_http() {
-    let verifier = Verifier::new(Credentials::new("user", "pass"), REALM);
+    let verifier =
+        Verifier::new(Credentials::new("user", "pass"), REALM).expect("OS random source");
     let mut session = Session::open(TS_URL, Config::default(), 0).unwrap();
     session
         .set_credentials(Credentials::new("user", "pass"))

@@ -92,6 +92,7 @@ use std::time::Duration;
 use transmux::{Container, TrackId};
 
 use broadcast_common::bcp47_language;
+use broadcast_common::units::{MILLIS_PER_SEC, NANOS_PER_SEC};
 use broadcast_common::{Timestamp, Unpackage};
 use broadcast_hls::{
     ByteRange, ClosedCaptionsRef, DecimalSeconds, FrameRate, LowLatencyConfig, MapTag,
@@ -156,9 +157,6 @@ pub const DEFAULT_TRACK_ID: TrackId = TrackId::new(1);
 /// mid-stream codec change.
 const INIT_HISTORY: usize = 8;
 
-/// Nanoseconds per second, for the integer bitrate arithmetic.
-const NANOS_PER_SEC: u128 = 1_000_000_000;
-
 /// RFC 8216bis §6.2.2: the server MUST NOT remove a Media Segment from a live
 /// Playlist if that would leave a Playlist shorter than three times the
 /// Target Duration. A segment is cut at (about) the target duration, so a
@@ -182,7 +180,6 @@ const FUTURE_PART_SEGMENT_BOUND: u32 = 2;
 /// Target Duration if the Part Target Duration is less than one second, or
 /// three otherwise". Expressed against the part target in milliseconds.
 const ADVANCE_PART_LIMIT_NUMERATOR: u64 = 3;
-const MILLIS_PER_SEC: u64 = 1_000;
 
 /// RFC 8216bis §6.2.5.2 (SHOULD): a `_HLS_msn` greater than "the Media
 /// Sequence Number of the last Media Segment in the current Playlist plus
@@ -911,7 +908,7 @@ fn average_bandwidth_bps(total_bytes: u64, total_duration_nanos: u128) -> Option
     }
     let bits_nanos = u128::from(total_bytes)
         .checked_mul(8)?
-        .checked_mul(NANOS_PER_SEC)?;
+        .checked_mul(NANOS_PER_SEC as u128)?;
     let mean = bits_nanos.checked_add(total_duration_nanos / 2)? / total_duration_nanos;
     u32::try_from(mean).ok()
 }
@@ -925,7 +922,7 @@ fn segment_bandwidth_bps(len: usize, duration: Duration) -> Option<u64> {
         return None;
     }
     let bits = u128::try_from(len).ok()?.checked_mul(8)?;
-    let bps = bits.checked_mul(NANOS_PER_SEC)?.div_ceil(nanos);
+    let bps = bits.checked_mul(NANOS_PER_SEC as u128)?.div_ceil(nanos);
     u64::try_from(bps).ok()
 }
 

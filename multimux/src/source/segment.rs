@@ -100,6 +100,7 @@ use transmux::{CaptionDetector, DetectedCaption, declared_caption_services};
 use super::split_audio::{self, AudioFollower};
 use super::split_subtitle::{self, LeaderPart, SubtitleFollower};
 use crate::route::{RouteHandle, TsHlsIdrStatus};
+use broadcast_common::units::NANOS_PER_SEC;
 use media_plane::segmenter::audio::{LEADER_DURATION_HISTORY, LeaderDurations, leader_tracks};
 
 /// One closed segment, normalised across the two segmenter kinds
@@ -513,10 +514,6 @@ const START_GATE_MAX_VIDEO_DROPPED: u64 = 1800;
 /// Cursor items one [`ProgramSegmenter::pump`] call processes before it returns, leaving the rest
 /// queued for the next call, so the caller can yield to the runtime between batches.
 const PUMP_BATCH_ITEMS: usize = 512;
-
-/// Nanoseconds per second — for converting the segmenter's internal
-/// nanosecond timeline into the 90 kHz media clock.
-const NANOS_PER_SEC: u64 = 1_000_000_000;
 
 /// Rolling-window depth [`StreamingTsHlsSegmenter::new`] is given —
 /// irrelevant to a driver-backed route in practice (its own `.playlist()`

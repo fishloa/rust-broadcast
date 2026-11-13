@@ -19,6 +19,7 @@ fn verifier(user: &str) -> Verifier {
         },
         REALM,
     )
+    .expect("OS random source")
 }
 
 /// A correctly-hashed header whose username parameter text is `user_param`

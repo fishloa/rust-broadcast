@@ -39,13 +39,12 @@ use rtsp_runtime::Credentials;
 use rtsp_runtime::client::{ClientEvent, ClientSession};
 use rtsp_runtime::sdp::session_description;
 
+use broadcast_common::units::MICROS_PER_SEC;
 use std::time::Instant;
 use tokio::net::TcpStream;
 use transmux::ir::TrackSpec;
 use transmux::rtp::{MP2T_CLOCK_RATE, MP2T_MAX_PAYLOAD, MP2T_PT, MP2T_TS_PACKETS_PER_PACKET};
 
-/// Microseconds in one second, for the 90 kHz RTP clock (RFC 2250 §2).
-const MICROS_PER_SECOND: u32 = 1_000_000;
 /// The sequence number the first RTP packet of a connection carries
 /// (RFC 3550 §5.1 leaves the start to the sender).
 const INITIAL_SEQ: u16 = 0;
@@ -372,7 +371,7 @@ impl RtspTransport {
     fn rtp_timestamp(&self) -> u32 {
         let micros = u64::try_from(self.wire.started.elapsed().as_micros()).unwrap_or(u64::MAX);
         u32::try_from(
-            u128::from(micros) * u128::from(MP2T_CLOCK_RATE) / u128::from(MICROS_PER_SECOND),
+            u128::from(micros) * u128::from(MP2T_CLOCK_RATE) / u128::from(MICROS_PER_SEC as u32),
         )
         .unwrap_or(u32::MAX)
     }

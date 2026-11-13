@@ -347,13 +347,16 @@ fn a_connection_that_played_briefly_waits_out_the_minimum_reconnect_interval() {
 #[test]
 fn userinfo_in_an_rtsp_url_authenticates_and_stays_out_of_request_uris() {
     let mut server = Server::new(&fixture().sdp);
-    server.auth = Some(Verifier::new(
-        AuthCredentials::Basic {
-            username: USER.to_string(),
-            password: PASSWORD.to_string(),
-        },
-        "cam",
-    ));
+    server.auth = Some(
+        Verifier::new(
+            AuthCredentials::Basic {
+                username: USER.to_string(),
+                password: PASSWORD.to_string(),
+            },
+            "cam",
+        )
+        .expect("OS random source"),
+    );
     let host = connected(
         "rtsp://admin:s3cret@cam.test/live/",
         Config::default(),

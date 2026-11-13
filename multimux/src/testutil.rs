@@ -59,13 +59,17 @@ impl MockAuthScheme {
         match self {
             MockAuthScheme::Basic { username, password } => {
                 Verifier::new(Credentials::Basic { username, password }, "mock")
+                    .expect("OS random source")
             }
             MockAuthScheme::Digest {
                 username,
                 password,
                 realm,
-            } => Verifier::new(Credentials::Digest { username, password }, realm),
-            MockAuthScheme::Bearer { token } => Verifier::new(Credentials::bearer(token), "mock"),
+            } => Verifier::new(Credentials::Digest { username, password }, realm)
+                .expect("OS random source"),
+            MockAuthScheme::Bearer { token } => {
+                Verifier::new(Credentials::bearer(token), "mock").expect("OS random source")
+            }
         }
     }
 }

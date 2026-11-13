@@ -23,11 +23,11 @@ use url::{Host, Url};
 
 use crate::error::Error;
 use crate::events::{Action, ErrorKind, Event, MAX_SERVER_REFUSED_REASON_BYTES, Status};
+use broadcast_common::units::MICROS_PER_MILLI;
 
 pub(crate) const SCHEME_RTMP: &str = "rtmp";
 pub(crate) const SCHEME_RTMPS: &str = "rtmps";
 const FIRST_CONN_ID: u32 = 1;
-const MICROS_PER_MILLI: u64 = 1_000;
 const STATUS_STREAM_NOT_FOUND: &str = "NetStream.Play.StreamNotFound";
 
 /// The parsed target: [`rtmp_runtime::target::RtmpTarget`] (which owns the RTMP URL grammar:

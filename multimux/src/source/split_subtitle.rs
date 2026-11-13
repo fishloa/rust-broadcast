@@ -55,12 +55,11 @@ use transmux::ll_hls::PartCutReady;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 
 use crate::route::{MAX_SUBTITLE_RENDITIONS, RouteHandle, SubtitleServing, subtitle_playlist_uri};
+use broadcast_common::units::NANOS_PER_SEC;
 use media_plane::publish_queue::{PendingPublish, drain_publish_queue};
 use media_plane::segmenter::audio::LeaderDurations;
 
 const PTS_HZ_TICKS: i128 = clock33::PTS_HZ as i128;
-const NANOS_PER_SEC_F64: f64 = 1_000_000_000.0;
-const NANOS_PER_SEC: u64 = 1_000_000_000;
 
 /// `MPEGTS` of every segment's `X-TIMESTAMP-MAP`: the 90 kHz output time the
 /// leader's fMP4 timeline has at the timeline origin, which is its `tfdt` 0.
@@ -603,7 +602,7 @@ impl SubtitleFollower {
                     let start_ns = self.next_timeline_ns;
                     self.next_timeline_ns = self
                         .next_timeline_ns
-                        .saturating_add((segment.duration_secs * NANOS_PER_SEC_F64) as u64);
+                        .saturating_add((segment.duration_secs * (NANOS_PER_SEC as f64)) as u64);
                     self.pending
                         .push_back(PendingPublish::Segment(SegmentEntry::new(
                             segment.body.into_bytes(),

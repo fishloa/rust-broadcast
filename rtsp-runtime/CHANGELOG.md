@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 ### Changed
+- BREAKING: `io::default_tls_client_config` returns `Result<ClientConfig>` (new `Error::TlsConfig`) instead of panicking when the crypto provider refuses the safe default protocol versions (#2591).
+### Added
+- `ServerSession::try_new` (a fallible `Session` id source) and `Error::RandomSource`: when the OS random source is unavailable the `SETUP` that needs an id returns that error and creates no session, instead of panicking. `AsyncRtspServer::accept` and `RtspServerConfig::default` use it; their `# Panics` section is gone (#2591).
+### Changed
 - BREAKING: `ServerSession::new` takes a session-id source that is `Send + Sync` (it was `Send`), so a `ServerSession` is `Sync` and can be shared behind an `Arc`; a test pins it (issue #2533).
 ### Removed
 - BREAKING: the `connect_with`, `connect_with_timeouts`, `connect_tls_with`, `connect_tls_with_timeouts`, `accept_tls_with_timeouts` and `with_stream_timeouts` ladder. `AsyncRtspClient::connect(addr, config)`, `connect_tls(addr, server_name, tls, config)`, `with_stream(stream, config)` and `AsyncRtspServer::accept_tls(stream, tls, config)` / `with_stream(stream, config)` take the config; `connect(addr)` and `connect_tls(addr, name, tls)` without one now pass `RtspClientConfig::default()` (#2514).

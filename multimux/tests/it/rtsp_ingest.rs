@@ -676,7 +676,8 @@ async fn run_config_digest_auth_success() {
             password: "camsecret".into(),
         },
         "IP Camera",
-    );
+    )
+    .expect("OS random source");
     let server = tokio::spawn(async move {
         let (sock, _) = listener.accept().await.expect("accept");
         serve_one_session_requiring_digest_auth(sock, &verifier).await;
@@ -723,7 +724,8 @@ async fn run_config_digest_auth_wrong_password() {
             password: "camsecret".into(),
         },
         "IP Camera",
-    );
+    )
+    .expect("OS random source");
     let server = tokio::spawn(async move {
         let (sock, _) = listener.accept().await.expect("accept");
         serve_one_session_requiring_digest_auth(sock, &verifier).await;

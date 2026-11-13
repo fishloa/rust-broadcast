@@ -74,15 +74,17 @@ fn challenges_match_golden() {
             password: "12345".into(),
         },
         "cameras",
-    );
+    )
+    .expect("OS random source");
     let digest = Verifier::new(
         Credentials::Digest {
             username: "admin".into(),
             password: "12345".into(),
         },
         "cameras",
-    );
-    let bearer = Verifier::new(Credentials::bearer("tok"), "cameras");
+    )
+    .expect("OS random source");
+    let bearer = Verifier::new(Credentials::bearer("tok"), "cameras").expect("OS random source");
     let mut out = String::new();
     out.push_str(&format!("basic\t{}\n", basic.challenge()));
     out.push_str(&format!("digest\t{}\n", mask_nonce(&digest.challenge())));

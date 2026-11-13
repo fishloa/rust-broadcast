@@ -4,8 +4,8 @@ use alloc::string::String;
 use crate::source::fetch::retry::ReconnectTimer;
 use crate::tshttp::config::Config;
 use crate::tshttp::events::{Action, Event, StarveKind};
+use broadcast_common::units::MICROS_PER_MILLI;
 
-const MICROS_PER_MILLI: u64 = 1_000;
 /// The retry jitter's seed [`TsHttpPolicy::new`] uses: a policy takes no clock, so the seed is a
 /// fixed one and two policies built from one configuration replay identically. It is chosen so
 /// that the draws that matter most land exactly on their step — the first four, and the capped

@@ -28,7 +28,8 @@ fn verifiers(realm: &str) -> [(&'static str, Verifier); 2] {
                     password: "p".into(),
                 },
                 realm,
-            ),
+            )
+            .expect("OS random source"),
         ),
         (
             "Digest",
@@ -38,7 +39,8 @@ fn verifiers(realm: &str) -> [(&'static str, Verifier); 2] {
                     password: "p".into(),
                 },
                 realm,
-            ),
+            )
+            .expect("OS random source"),
         ),
     ]
 }
@@ -100,7 +102,8 @@ fn a_realm_with_crlf_still_authenticates_a_digest_client() {
             password: "p".into(),
         },
         "a\r\nb\tc",
-    );
+    )
+    .expect("OS random source");
     let h = respond(
         &v.challenge(),
         &RequestContext::new("GET", "/x"),
