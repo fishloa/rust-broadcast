@@ -25,7 +25,7 @@
 //!
 //! The base is `fixtures/ts/h264-aac.ts` — a real H.264/AVC + AAC MPEG-2 TS
 //! capture (25 fps, 320x240, 3 real keyframes) already used by
-//! [`transmux_hub`](../README.md). No fixture in this workspace carries
+//! [`transmux_hub`](../../README.md). No fixture in this workspace carries
 //! a genuine embedded SCTE-35 cue *and* real audio/video content on a matching
 //! PID/timescale profile (the dedicated `fixtures/ts/scte35-*.ts` fixtures are
 //! bare section vectors with no AV payload). Per the issue's option (b), this
@@ -91,7 +91,7 @@ fn is_avc(config: &CodecConfig) -> bool {
 /// tests, ANSI/SCTE 35 §11 example carriage).
 const SCTE35_PID: u16 = 0x01F0;
 /// Demo `splice_event_id` (ANSI/SCTE 35 §9.9.3 — any unique 32-bit value).
-const SPLICE_EVENT_ID: u32 = 100_002;
+pub const SPLICE_EVENT_ID: u32 = 100_002;
 /// Arbitrary demo wall-clock anchor: 2024-01-15T12:00:00Z, matching the
 /// convention already used by `timed-metadata`'s own `scte35_to_hls`/
 /// `scte35_to_dash` examples.
@@ -578,35 +578,4 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
         discontinuity_points: result.discontinuity_points,
         out_dir,
     })
-}
-
-#[allow(dead_code)]
-fn main() -> Result<(), Box<dyn Error>> {
-    let demo = run()?;
-
-    println!(
-        "SSAI ad-stitch demo — output written to {}\n",
-        demo.out_dir.display()
-    );
-
-    println!("splice_event_id  : {SPLICE_EVENT_ID}");
-    println!("raw cue          : {} bytes", demo.raw_cue.len());
-    println!("discontinuities  : {}", demo.discontinuity_points.len());
-    for p in &demo.discontinuity_points {
-        println!(
-            "  track {} sample {} @ pts {}",
-            p.track_id, p.sample_index, p.presentation_time
-        );
-    }
-    println!();
-    println!("--- EXT-X-DATERANGE ---");
-    println!("{}", demo.daterange.to_tag_line()?);
-    println!();
-    println!("--- HLS media playlist (video) ---");
-    println!("{}", demo.m3u8);
-    println!("--- DASH MPD ---");
-    println!("{}", demo.mpd);
-    println!("emsg box: {} bytes", demo.emsg_bytes.len());
-
-    Ok(())
 }
