@@ -546,12 +546,28 @@ fn find_semicolon(b: &[u8], from: usize) -> Option<usize> {
 
 const SPAWN_NEEDLES: &[&str] = &[
     "tokio::spawn(",
-    "tokio::task::spawn_blocking(",
-    "std::thread::spawn(",
+    "task::spawn(",
+    "spawn_blocking(",
+    "spawn_local(",
     "thread::spawn(",
     // A JoinSet/TaskTracker `.spawn(` (an owned-group spawn).
     ".spawn(",
 ];
+
+/// `line` without a trailing `//` comment (a `//` inside a string literal stays).
+fn code_part(line: &str) -> &str {
+    let mut in_string = false;
+    let mut previous = '\0';
+    for (at, c) in line.char_indices() {
+        match c {
+            '"' if previous != '\\' => in_string = !in_string,
+            '/' if !in_string && previous == '/' => return &line[..at - 1],
+            _ => {}
+        }
+        previous = c;
+    }
+    line
+}
 
 /// The name a line declares with `fn`, if any.
 fn declared_fn(text: &str) -> Option<&str> {
@@ -580,12 +596,19 @@ fn spawn_sites(files: &[(String, String)]) -> Vec<(String, String, u32, usize)> 
     for (path, src) in files {
         let mut current = "<top>".to_string();
         let mut ordinal = 0u32;
+        let mut declarations: std::collections::HashMap<String, usize> = Default::default();
         for (line_no, text) in surviving_lines(src) {
             if text.trim_start().starts_with("//") {
                 continue;
             }
-            if let Some(name) = declared_fn(&text) {
-                current = name.to_string();
+            if let Some(name) = declared_fn(code_part(&text)) {
+                let seen = declarations.entry(name.to_string()).or_insert(0);
+                *seen += 1;
+                current = if *seen == 1 {
+                    name.to_string()
+                } else {
+                    format!("{name}@{seen}")
+                };
                 ordinal = 0;
             }
             if SPAWN_NEEDLES.iter().any(|needle| text.contains(needle)) {
@@ -671,4 +694,35 @@ fn the_guard_is_stable_under_line_moves_and_bites_on_new_and_gone_spawns() {
 
     let (_, stale) = problems(&spawn_sites(&file("fn run() {}\n")), table);
     assert_eq!(stale.len(), 1, "a listed spawn that is gone is stale");
+}
+
+#[test]
+fn same_named_fns_are_told_apart_and_task_spawns_are_sites() {
+    let file = |body: &str| vec![("src/a.rs".to_string(), body.to_string())];
+    let table: &[(&str, &str, u32, &str)] = &[("a.rs", "run", 1, "owner")];
+    let two = "impl A {\n fn run() {\n  tokio::spawn(async {});\n }\n}\nimpl B {\n fn run() {\n  tokio::spawn(async {});\n }\n}\n";
+    let (untracked, _) = problems(&spawn_sites(&file(two)), table);
+    assert_eq!(untracked.len(), 1, "B::run's spawn must be untracked");
+    assert!(untracked[0].contains("run@2"), "{untracked:?}");
+    let both: &[(&str, &str, u32, &str)] = &[("a.rs", "run", 1, "A"), ("a.rs", "run@2", 1, "B")];
+    let (untracked, stale) = problems(&spawn_sites(&file(two)), both);
+    assert!(untracked.is_empty() && stale.is_empty());
+    let decoy = "fn real() {\n let x = 1; // see fn decoy\n tokio::spawn(async {});\n}\n";
+    let (untracked, stale) = problems(&spawn_sites(&file(decoy)), &[("a.rs", "real", 1, "owner")]);
+    assert!(
+        untracked.is_empty() && stale.is_empty(),
+        "a comment naming a fn is not a declaration"
+    );
+    let task = "fn run() {\n tokio::task::spawn(async {});\n}\n";
+    assert_eq!(
+        spawn_sites(&file(task)).len(),
+        1,
+        "tokio::task::spawn must be a site"
+    );
+    let local = "fn run() {\n tokio::task::spawn_local(async {});\n}\n";
+    assert_eq!(
+        spawn_sites(&file(local)).len(),
+        1,
+        "spawn_local must be a site"
+    );
 }
