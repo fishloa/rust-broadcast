@@ -51,5 +51,8 @@ fn relay_tracks_keep_their_program_number_for_every_programme_of_a_multiplex() {
     let relay = run(&bytes, Config::relay());
     let programs = programs_of(&relay);
     assert!(!programs.contains(&None), "{programs:?}");
-    assert!(programs.len() > 1, "a multiplex has several programmes: {programs:?}");
+    assert!(
+        programs.len() > 1,
+        "a multiplex has several programmes: {programs:?}"
+    );
 }

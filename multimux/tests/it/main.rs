@@ -3,6 +3,7 @@ mod admin_api;
 mod audio_renditions;
 mod blocking_reload_deadline;
 mod catchup_e2e;
+mod client_host_concurrent;
 mod closed_captions;
 mod cold_playlist_hold;
 mod dash_pull_route;

@@ -1098,18 +1098,20 @@ pub struct Config {
 
 impl Config {
     /// A relay configuration: the host forwards samples as they are demuxed and never plays them,
-    /// so there is no initial-tracks hold and no start-pending wait. [`Event::Tracks`] follows
+    /// so there is no initial-tracks hold, no start-pending wait and no timeline-jump screening that would drop samples. [`Event::Tracks`] follows
     /// each stream's first access unit and every [`Event::Sample`] is emitted as soon as it is
     /// demuxed; [`Event::Buffer`] events are advisory and a relay ignores them. Each
     /// [`TrackSpec`] keeps its `program_number`, so a multi-programme stream splits per programme.
     #[must_use]
     pub fn relay() -> Self {
-        let mut config = Self::default();
-        config.tracks_hold_max_media_us = 0;
-        config.tracks_hold_max_wall_us = 0;
-        config.start_pending_track_wait_us = 0;
-        config.start_pending_track_hard_cap_us = 0;
-        config
+        Self {
+            tracks_hold_max_media_us: 0,
+            tracks_hold_max_wall_us: 0,
+            start_pending_track_wait_us: 0,
+            start_pending_track_hard_cap_us: 0,
+            timeline_jump: None,
+            ..Self::default()
+        }
     }
 
     /// The exact controller configuration a session opened with this `Config` builds its

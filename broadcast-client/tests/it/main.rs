@@ -76,6 +76,7 @@ mod rtsp_playout;
 mod rtsp_pull_golden;
 mod rtsp_zero_duration;
 mod segment_inactivity;
+mod send_sync;
 mod server_refused;
 mod smooth_pull;
 mod srt;

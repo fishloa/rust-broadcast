@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
-- `Config::relay()`: a preset for a host that forwards samples instead of playing them (no initial-tracks hold, no start-pending wait); `Event::Tracks` specs keep their `program_number`, which a relay uses to split a multi-programme stream.
+- `Config::relay()`: a preset for a host that forwards samples instead of playing them (no initial-tracks hold, no start-pending wait, no timeline-jump screening); `Event::Tracks` specs keep their `program_number`, which a relay uses to split a multi-programme stream.
 ### Removed
 - BREAKING: `broadcast_client::auth`'s own `AuthState`, `AuthDecision`, `AuthEvent` and `carries_credentials` definitions — they live in `broadcast-auth` now, and this module re-exports them, so the paths keep working but the types are `broadcast_auth`'s.
 ### Changed
