@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Changed
+- The ingest scaffold and `source::advance_route` no longer require a session to be `Sync`, matching media-plane's `IngestSession` (`Send` only): `advance_route` runs its synchronous part when called and returns only the DVR drain future, which holds nothing of the driver (issue #2533).
 - WHEP viewers of a route share one UDP media socket per advertised IP (bound on the first viewer) instead of binding one each: every viewer's answer carries the shared address as its candidate, a receive loop asks `webrtc_runtime::media::SocketDemux` which viewer each datagram belongs to, and each viewer has a bounded queue that drops its newest datagrams when full without delaying the others. An ICE restart registers the new local ufrag with the shared socket (issue #2529).
 - WHEP packetises each sample once per route instead of once per viewer: the route keeps the last 64 samples' RTP packets, and each viewer only sets its own sequence number, timestamp, SSRC and payload type on a copy before SRTP (issue #2529).
 - A WHEP session's UDP receive buffer is 1500 bytes (one Ethernet MTU) instead of 64 KiB.
