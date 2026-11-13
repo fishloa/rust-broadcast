@@ -401,11 +401,12 @@ struct InitSlot {
     generation: u64,
 }
 
-/// What a [`Plan`] depends on: the init segment generation and the window's
-/// segment sequence numbers. Equal keys yield equal plans.
+/// What a [`Plan`] depends on: the init segment generation, the track set and
+/// the window's segment sequence numbers. Equal keys yield equal plans.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PlanKey {
     init_generation: u64,
+    tracks: Vec<TrackSpec>,
     window: Vec<SegmentSeq>,
 }
 
@@ -594,7 +595,7 @@ impl SmoothOrigin {
         if segments.is_empty() {
             return Err(waiting());
         }
-        let key = plan_key(init_generation, &segments);
+        let key = plan_key(init_generation, &specs, &segments);
         let plan = match self.cached_plan(&key) {
             Some(cached) => cached,
             None => self.build(key, &specs, &init, &segments),
@@ -655,11 +656,12 @@ impl SmoothOrigin {
         let Some((_, init_generation)) = self.init_slot() else {
             return true;
         };
+        let specs = self.tracks.tracks();
         let segments = self.provider.segments();
-        if segments.is_empty() {
+        if specs.is_empty() || segments.is_empty() {
             return true;
         }
-        let Some(cached) = self.cached_plan(&plan_key(init_generation, &segments)) else {
+        let Some(cached) = self.cached_plan(&plan_key(init_generation, &specs, &segments)) else {
             return false;
         };
         let (Ok(plan), SmoothRequest::Fragment { stream, start, .. }) = (cached, request) else {
@@ -684,9 +686,14 @@ impl SmoothOrigin {
     }
 }
 
-fn plan_key(init_generation: u64, segments: &[(SegmentSeq, Bytes)]) -> PlanKey {
+fn plan_key(
+    init_generation: u64,
+    specs: &[TrackSpec],
+    segments: &[(SegmentSeq, Bytes)],
+) -> PlanKey {
     PlanKey {
         init_generation,
+        tracks: specs.to_vec(),
         window: segments.iter().map(|(sequence, _)| *sequence).collect(),
     }
 }
@@ -2191,5 +2198,27 @@ mod tests {
         *locked(&window) = kept;
         render(&origin);
         assert!(locked(&origin.fragments).len() <= 1);
+    }
+
+    /// A track-set change with no new segment yields a new Manifest.
+    #[test]
+    fn a_track_change_without_a_new_segment_rebuilds_the_plan() {
+        let route = publish(vec![video_spec(), audio_spec(2)]);
+        let current = Arc::new(Mutex::new(vec![route.specs()[0].clone()]));
+        let shared = Arc::clone(&current);
+        let origin = SmoothOrigin::new(
+            Arc::clone(&route.trunk),
+            Arc::new(route.published()),
+            Arc::new(move || locked(&shared).clone()),
+        );
+        origin.set_init(route.init.clone());
+        let video_only = render(&origin);
+        assert_eq!(render(&origin), video_only);
+        assert_eq!(builds(&origin), 1);
+
+        *locked(&current) = route.specs();
+        let both = render(&origin);
+        assert_ne!(both, video_only);
+        assert_eq!(builds(&origin), 2);
     }
 }
