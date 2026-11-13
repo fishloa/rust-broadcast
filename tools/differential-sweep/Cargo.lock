@@ -2555,6 +2555,7 @@ dependencies = [
  "broadcast-common",
  "bytes",
  "futures-util",
+ "percent-encoding",
  "subtle",
  "thiserror",
  "tokio",

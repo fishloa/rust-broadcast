@@ -67,13 +67,14 @@ fn variant_info(q: &QualityInfo) -> VariantInfo {
     }
 }
 
-fn engine_config(config: &Config) -> SmoothConfig {
+fn engine_config(config: &Config, jitter_seed: u64) -> SmoothConfig {
     let policy = config.variant_policy.clone();
     SmoothConfig {
         max_fragment_failures: config.max_segment_failures,
         max_manifest_failures: config.max_key_failures,
         backoff_ms: config.backoff_ms.clone(),
         backoff_cap_ms: config.backoff_cap_ms,
+        jitter_seed,
         video_quality: QualitySelector::new(move |qualities| {
             let variants: Vec<VariantInfo> = qualities.iter().map(variant_info).collect();
             choose_variant(&variants, &policy)
@@ -99,11 +100,11 @@ fn fatal_error_kind(error: &SmoothError) -> (ErrorKind, bool) {
 }
 
 impl SmoothSource {
-    pub(crate) fn new(url: &Url, config: &Config, conn_alloc: ConnAlloc) -> Self {
+    pub(crate) fn new(url: &Url, config: &Config, conn_alloc: ConnAlloc, jitter_seed: u64) -> Self {
         let mut source = Self {
             config: config.clone(),
             conn_alloc,
-            client: SmoothClient::new(url.clone(), engine_config(config)),
+            client: SmoothClient::new(url.clone(), engine_config(config, jitter_seed)),
             reqs: HashMap::new(),
             parked: Vec::new(),
             actions: VecDeque::new(),

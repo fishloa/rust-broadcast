@@ -3,6 +3,8 @@
 All notable changes to smooth-runtime will be documented in this file.
 
 ## [Unreleased]
+### Changed
+- Retry delays are `broadcast_common::backoff::RetrySchedule` (the type every broadcast-client source uses) instead of a private `backoff_ms[attempt - 1]` lookup: the first failure of a fragment or manifest still waits exactly its step, every later retry waits its step times a jitter term of `[5/6, 1.0)`, so a fleet of clients failing together no longer retries in lockstep. `SmoothConfig::jitter_seed` (new, default `0`) is the jitter's seed; a host gives each client its own entropy (#2589).
 ### Fixed
 - `SmoothOrigin`'s cached plan is also keyed by the track set, so a track-set change with an unchanged window rebuilds the Manifest instead of serving the stale one until the next segment (issue #2522).
 ### Changed

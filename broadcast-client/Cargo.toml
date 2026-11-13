@@ -32,7 +32,7 @@ rtsp-runtime       = { path = "../rtsp-runtime", version = "0.11.0", default-fea
 sdp-types          = { workspace = true }
 rtp-packet         = { path = "../rtp-packet", version = "0.6.0", default-features = false, features = ["std"] }
 srt-runtime        = { path = "../srt-runtime", version = "0.8.1", default-features = false, features = ["std", "crypto"] }
-rtmp-runtime       = { path = "../rtmp-runtime", version = "0.9.1", default-features = false }
+rtmp-runtime       = { path = "../rtmp-runtime", version = "0.9.1", default-features = false, features = ["target"] }
 sha2               = { version = "0.11", default-features = false }
 rustls-pki-types  = { version = "1", default-features = false, features = ["alloc"] }
 zeroize            = { version = "1", default-features = false, features = ["alloc"] }
