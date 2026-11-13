@@ -2167,9 +2167,8 @@ async fn an_identical_init_reload_lists_only_served_dash_segments() {
     let timescale = old_template.multi.base.timescale.expect("timescale");
     let ticks = old_template.multi.duration.expect("@duration");
     let first = old_template.multi.start_number.expect("startNumber");
-    let at = |number: u64| {
-        Duration::from_nanos((number - first) * ticks * 1_000_000_000 / u64::from(timescale))
-    };
+    let at =
+        |number: u64| Duration::from_nanos((number - first) * ticks * 1_000_000_000 / timescale);
     assert_eq!(
         replaced.start.expect("start") + replaced.duration.expect("early terminated"),
         at(skipped),

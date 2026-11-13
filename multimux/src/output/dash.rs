@@ -2022,7 +2022,11 @@ mod tests {
         validate_against_ed6_schema(&mpd, "slid-period");
     }
 
-    /// Issue #2611's other half: a byte-identical init continues the replaced Period, unchanged.
+    /// Issue #2611's other half: a byte-identical init keeps the replaced Period's identity and
+    /// init generation. Issue #2625: the replacement's numbering skips the number the replaced
+    /// origin's open segment was shown with, which nothing serves, so the replaced Period is
+    /// early terminated before it (§5.3.2.1) and the replacement continues in the next Period,
+    /// period-connected to it with an equivalent `AssetIdentifier` (§5.3.2.4, §5.8.4.10).
     #[test]
     fn a_replacement_with_an_identical_init_stays_in_the_same_period() {
         let program = crate::route::SPTS_PROGRAM_ID;
@@ -2031,7 +2035,34 @@ mod tests {
         let before = period_facts(&render_mpd_at(&old, now).expect("old MPD"));
         new.add_segment(program, seg(1, 4.0)).expect("add_segment");
         let mpd = render_mpd_at(&new, now).expect("new MPD");
-        assert_eq!(period_facts(&mpd), before, "{mpd}");
+        let after = period_facts(&mpd);
+        assert_eq!(after.len(), 2, "{mpd}");
+        assert_eq!(
+            PeriodFacts {
+                duration: None,
+                ..after[0].clone()
+            },
+            before[0],
+            "{mpd}"
+        );
+        let skipped = new.window_segments(program)[0].public_seq - 1;
+        assert_eq!(after[1].start_number, skipped + 1, "{mpd}");
+        let at = |number: u64| Duration::from_secs(4 * (number - before[0].start_number));
+        assert_eq!(after[0].duration, Some(at(skipped)), "{mpd}");
+        assert_eq!(after[1].start, at(skipped + 1), "{mpd}");
+        let parsed = broadcast_dash::Mpd::parse(mpd.as_bytes()).expect("parses");
+        let connectivity = &parsed.periods[1].adaptation_sets[0].supplemental_properties;
+        assert_eq!(connectivity.len(), 1, "{mpd}");
+        assert_eq!(
+            connectivity[0].scheme_id_uri,
+            broadcast_dash::descriptors::SCHEME_PERIOD_CONNECTIVITY
+        );
+        assert_eq!(connectivity[0].value.as_deref(), Some("0"), "{mpd}");
+        assert!(parsed.periods[0].asset_identifier.is_some(), "{mpd}");
+        assert_eq!(
+            parsed.periods[0].asset_identifier,
+            parsed.periods[1].asset_identifier
+        );
         assert_eq!(
             new.window_segments(program)[0].init_generation,
             media_plane::ids::Generation::new(1),
