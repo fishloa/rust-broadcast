@@ -647,43 +647,6 @@ impl SmoothOrigin {
     fn retain_fragments_in(&self, plan: Option<&Plan>) {
         locked(&self.fragments).retain(|key, _| plan.is_some_and(|plan| key.is_in(plan)));
     }
-
-    /// `true` when answering `request` now is a cache hit: no demux or
-    /// packaging is left to do, so it is cheap enough for any thread. A host
-    /// that must keep CPU-heavy work off an async worker calls
-    /// [`Self::prepare`] on a blocking thread when this is `false`.
-    pub fn is_warm(&self, request: &SmoothRequest) -> bool {
-        let Some((_, init_generation)) = self.init_slot() else {
-            return true;
-        };
-        let specs = self.tracks.tracks();
-        let segments = self.provider.segments();
-        if specs.is_empty() || segments.is_empty() {
-            return true;
-        }
-        let Some(cached) = self.cached_plan(&plan_key(init_generation, &specs, &segments)) else {
-            return false;
-        };
-        let (Ok(plan), SmoothRequest::Fragment { stream, start, .. }) = (cached, request) else {
-            return true;
-        };
-        let Some((_, chunk)) = plan.chunk(*stream, *start) else {
-            return true;
-        };
-        locked(&self.fragments)
-            .get(&FragmentKey::new(*stream, &chunk))
-            .is_some_and(|slot| slot.get().is_some())
-    }
-
-    /// Do the demuxing and packaging `request` needs, so the next
-    /// [`ServedEgress::resolve`] of it is a cache hit.
-    pub fn prepare(&self, request: SmoothRequest) {
-        drop(self.answer(
-            request,
-            Timestamp::from_nanos(0),
-            AwaitPolicy::new(Timestamp::from_nanos(0)),
-        ));
-    }
 }
 
 fn plan_key(
@@ -852,6 +815,37 @@ impl ServedEgress for SmoothOrigin {
         await_policy: AwaitPolicy,
     ) -> EgressResponse<SmoothBody> {
         self.answer(request, now, await_policy)
+    }
+
+    fn is_warm(&self, request: &SmoothRequest) -> bool {
+        let Some((_, init_generation)) = self.init_slot() else {
+            return true;
+        };
+        let specs = self.tracks.tracks();
+        let segments = self.provider.segments();
+        if specs.is_empty() || segments.is_empty() {
+            return true;
+        }
+        let Some(cached) = self.cached_plan(&plan_key(init_generation, &specs, &segments)) else {
+            return false;
+        };
+        let (Ok(plan), SmoothRequest::Fragment { stream, start, .. }) = (cached, request) else {
+            return true;
+        };
+        let Some((_, chunk)) = plan.chunk(*stream, *start) else {
+            return true;
+        };
+        locked(&self.fragments)
+            .get(&FragmentKey::new(*stream, &chunk))
+            .is_some_and(|slot| slot.get().is_some())
+    }
+
+    fn prepare(&self, request: SmoothRequest) {
+        drop(self.answer(
+            request,
+            Timestamp::from_nanos(0),
+            AwaitPolicy::new(Timestamp::from_nanos(0)),
+        ));
     }
 }
 

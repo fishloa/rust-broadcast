@@ -122,7 +122,7 @@ pub(crate) async fn serve_mpd(
         Err(resp) => return *resp,
     };
     let trunk = serving.trunk();
-    let origin = MpdOrigin { route, render };
+    let origin = Arc::new(MpdOrigin { route, render });
     let resp = http::resolve_blocking(&trunk, &origin, (), BLOCKING_RELOAD_TIMEOUT, || ()).await;
     http::into_response(resp, StatusCode::SERVICE_UNAVAILABLE, |body| {
         ([(header::CONTENT_TYPE, DASH_MANIFEST_CONTENT_TYPE)], body).into_response()
