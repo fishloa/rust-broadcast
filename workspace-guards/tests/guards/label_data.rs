@@ -898,6 +898,9 @@ pub const TABLE: &[Crate] = &[
             "MergePolicy",
             // Structured `thiserror` error enum — no spec label.
             "MergeError",
+            // --- publish_queue.rs ---
+            // Data-carrying ADT: each variant holds the entry it queues.
+            "PendingPublish",
             // --- file_source.rs ---
             // Structured `thiserror` error for file probe/demux/playout failures.
             "FileReaderError",

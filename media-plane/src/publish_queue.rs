@@ -13,17 +13,17 @@ use crate::ids::{PartIndex, SegmentSeq};
 use crate::trunk::{PartEntry, SegmentEntry, SegmentWriter, TryPublishSegmentError};
 
 /// Hard cap on the number of **segments** (not parts — see below) queued in
-/// [`ProgramSegmenter`]'s pending-publish queue — bounds memory even before
+/// a segmenter's pending-publish queue — bounds memory even before
 /// [`PENDING_PUBLISH_MAX_WAIT`] elapses, for a DVR pin that never advances at
 /// all (a permanently stalled disk, say). Once that many segments have
 /// accumulated behind the stuck one, whichever `ArchiveOverrun::StallIngest`
 /// pin is blocking it is force-expired immediately, the same as if the
-/// deadline had already elapsed — see [`ProgramSegmenter::drain_pending`].
+/// deadline had already elapsed — see a segmenter's `drain_pending`.
 ///
 /// Counts queued [`PendingPublish::Segment`] entries only, never
 /// [`PendingPublish::Part`] ones: a part always rides behind its own segment
 /// (queued immediately before it — see
-/// [`ProgramSegmenter::publish_in_stream_order`]) and a stuck segment cannot
+/// the segmenter's publish-in-stream-order step) and a stuck segment cannot
 /// itself unstick a later part, so a part sitting in the queue reflects
 /// nothing about how "deep" the real backlog is. Counting every queued item
 /// (parts included, as this constant used to) made an LL-HLS route hit this
@@ -36,7 +36,7 @@ use crate::trunk::{PartEntry, SegmentEntry, SegmentWriter, TryPublishSegmentErro
 /// bounding memory for a pin that never advances at all.
 pub const PENDING_PUBLISH_QUEUE_CAP: usize = 8;
 
-/// How long the oldest entry in [`ProgramSegmenter`]'s pending-publish queue
+/// How long the oldest entry in a segmenter's pending-publish queue
 /// may wait before this segmenter force-expires whichever
 /// `ArchiveOverrun::StallIngest` pin is blocking it
 /// ([`SegmentWriter::expire_stalled_pins`]) and retries — applying, from
@@ -47,10 +47,11 @@ pub const PENDING_PUBLISH_QUEUE_CAP: usize = 8;
 /// bound).
 pub const PENDING_PUBLISH_MAX_WAIT: Duration = Duration::from_secs(30);
 
-/// One item queued by [`ProgramSegmenter::publish_without_blocking`] —
+/// One item queued by the segmenter's non-blocking publish —
 /// either a live part or a finished segment, in the exact order they were
 /// meant to reach [`SegmentWriter`], so a later segment's parts can never
 /// appear before an earlier segment still stuck in the queue.
+#[non_exhaustive]
 pub enum PendingPublish {
     Part(PartEntry),
     Segment(SegmentEntry),
@@ -68,7 +69,7 @@ pub fn part_entry(part: PartInfo) -> PartEntry {
 }
 
 /// Drain `pending` into `segment_writer` from the front for as long as items keep
-/// going through, in order; see [`ProgramSegmenter::drain_pending`].
+/// going through, in order; see a segmenter's `drain_pending`.
 pub fn drain_publish_queue(
     segment_writer: &mut SegmentWriter,
     pending: &mut VecDeque<PendingPublish>,

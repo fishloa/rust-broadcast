@@ -1503,7 +1503,7 @@ impl ProgramSegmenter {
             .iter()
             .filter_map(|p| match p {
                 PendingPublish::Segment(entry) => Some(entry.sequence_number.value()),
-                PendingPublish::Part(_) => None,
+                _ => None,
             })
             .chain(trunk.last_closed_segment().map(SegmentSeq::value))
             .max()
@@ -1885,6 +1885,7 @@ pub(crate) fn drive_program_segmenters<S: IngestSession>(
 mod tests {
     use super::*;
     use crate::route::RouteHandle;
+    use media_plane::ids::PartIndex;
     use media_plane::publish_queue::{PENDING_PUBLISH_MAX_WAIT, PENDING_PUBLISH_QUEUE_CAP};
     use media_plane::trunk::PartEntry;
 
@@ -4168,6 +4169,7 @@ mod tests {
             .map(|item| match item {
                 PendingPublish::Segment(e) => e.sequence_number.value(),
                 PendingPublish::Part(p) => p.segment_number.value(),
+                other => unreachable!("unexpected queue item {:?}", std::mem::discriminant(other)),
             })
             .collect()
     }
