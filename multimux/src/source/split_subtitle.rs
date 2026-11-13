@@ -54,10 +54,10 @@ use transmux::TrackId;
 use transmux::ll_hls::PartCutReady;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 
-use super::split_audio::LeaderDurations;
 use crate::route::{MAX_SUBTITLE_RENDITIONS, RouteHandle, SubtitleServing, subtitle_playlist_uri};
 use broadcast_common::units::NANOS_PER_SEC;
 use media_plane::publish_queue::{PendingPublish, drain_publish_queue};
+use media_plane::segmenter::audio::LeaderDurations;
 
 const PTS_HZ_TICKS: i128 = clock33::PTS_HZ as i128;
 

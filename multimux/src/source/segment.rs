@@ -97,10 +97,11 @@ use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::ts_hls::StreamingTsHlsSegmenter;
 use transmux::{CaptionDetector, DetectedCaption, declared_caption_services};
 
-use super::split_audio::{self, AudioFollower, LEADER_DURATION_HISTORY, LeaderDurations};
+use super::split_audio::{self, AudioFollower};
 use super::split_subtitle::{self, LeaderPart, SubtitleFollower};
 use crate::route::{RouteHandle, TsHlsIdrStatus};
 use broadcast_common::units::NANOS_PER_SEC;
+use media_plane::segmenter::audio::{LEADER_DURATION_HISTORY, LeaderDurations, leader_tracks};
 
 /// One closed segment, normalised across the two segmenter kinds
 /// [`AnySegmenter`] wraps — [`transmux::ll_hls::SegmentInfo`] (fMP4) and
@@ -655,7 +656,7 @@ impl ProgramSegmenter {
         };
         let mut seg = match route_handle.container() {
             Container::Fmp4 => {
-                let muxable = split_audio::leader_tracks(&tracks, &mapped);
+                let muxable = leader_tracks(&tracks, &mapped);
                 if muxable.is_empty() {
                     return None;
                 }
@@ -1316,7 +1317,7 @@ impl ProgramSegmenter {
                     // DVB source mid-stream (a routine PMT version bump) must
                     // not make the rebuild fail (audit r07-C7, #1083).
                     let mapped = split_audio::resolve_sources(route_handle, &new_tracks);
-                    let muxable = split_audio::leader_tracks(&new_tracks, &mapped);
+                    let muxable = leader_tracks(&new_tracks, &mapped);
                     if muxable.is_empty() {
                         tracing::warn!(
                             "mid-stream track-set change left no fMP4-muxable track — \

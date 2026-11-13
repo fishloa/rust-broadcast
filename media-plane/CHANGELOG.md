@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `segmenter::audio` (feature `std`): the separate-audio-rendition follower moved from multimux. `AudioFollower` cuts one audio track where the video leader cut and publishes into its sibling `Trunk`; the host serves its init segment (`take_init`) and the part target its first sample fixes (`take_part_target_ms`) instead of the follower driving an HLS origin. `resolve_sources` maps rendition selectors to source tracks, `leader_tracks` keeps the primary playlist's tracks, with `LEADER_DURATION_HISTORY` and `LeaderDurations` (issue #2554).
 ### Changed
 - The `test-support` feature (the `ts_session::test_support` helpers for a host's tests) is documented in the README feature table (#2582).
 ### Added
