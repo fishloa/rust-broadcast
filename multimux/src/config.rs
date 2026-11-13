@@ -2226,7 +2226,7 @@ pub struct Config {
     /// [`broadcast_common::timeouts::Timeouts::connect`].
     pub ingest_connect_timeout_secs: f64,
     /// Ingest per-read timeout, in seconds, applied to every route's source
-    /// — see [`broadcast_common::timeouts::Timeouts::read`].
+    /// — see [`broadcast_common::timeouts::Timeouts::read_idle`].
     pub ingest_read_timeout_secs: f64,
     /// The media-playlist filename served at `/{stream}/{playlist_name}`
     /// (issue #663 "configurable `playlist_name`") — `master.m3u8`'s
