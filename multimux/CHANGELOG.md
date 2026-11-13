@@ -2,11 +2,18 @@
 
 ## [Unreleased]
 ### Changed
+- WHEP packetises each sample once per route instead of once per viewer: the route keeps the last 64 samples' RTP packets, and each viewer only sets its own sequence number, timestamp, SSRC and payload type on a copy before SRTP (issue #2529).
+- A WHEP session's UDP receive buffer is 1500 bytes (one Ethernet MTU) instead of 64 KiB.
+- Each admitted WHIP session runs on its own task, which owns its `MediaTransport`, its ICE/DTLS timers and its idle deadline; the route's publisher receives only the outcomes it must act on over a bounded channel, so a slow publisher or a stalled session no longer holds up another session's reads. A session whose publisher ends it is aborted, which closes its media socket at once. This completes the one-task-per-session work for RTMP and WHIP (issue #2525).
+- RTMP: a session the route's publisher ends (a rejected feed, say) now has its read task aborted, so its connection closes immediately instead of staying open until the peer quits.
+### Fixed
+- A WHIP session's idle bound is measured from the last datagram that carried media: the driver's activity flag was never set, so the deadline stayed at admission plus the read timeout whatever the publisher sent.
 - Each admitted RTMP session reads on its own task, which owns the connection (the `Arc<Mutex<RtmpConnection>>` is gone) and hands its outcomes to the route's publisher over a bounded channel, so a publisher busy segmenting no longer stops other sessions' reads (issue #2525). WHIP still polls its sessions' reads from one task.
 - Catch-up keeps its period-index cache and its scan permits (4 concurrent scans) per route instead of process-wide, so one route's slow archive no longer starves another's viewers (issue #2528).
 - DASH-IF ingest holds at most 64 MiB of buffered non-segment objects per route at once (`DashifIngestRoute::with_buffered_budget_bytes`); a request over the budget answers `503` with `Retry-After`. A buffered non-segment object is capped at 8 MiB (`with_max_buffered_object_bytes`), below the 64 MiB cap that still applies to a streamed segment (issue #2532).
 - A blocking-reload request that wakes on a cold egress (`ServedEgress::is_warm` false: the first Smooth plan, the I-frame and bitrate scans of a new HLS segment) runs `prepare` on the blocking pool, at most eight at a time, instead of on the waking worker (#2538).
 - HLS media and I-frame playlists and DASH/LL-DASH MPDs are rendered once per state stamp and shared by concurrent requests (#2526).
+- HLS pull runs the relay `broadcast_client::Session` through the shared session host: the session owns playlist reload and Low-Latency blocking reload, preload-hint prefetch, AES-128 keys, fMP4 and classic-TS demux, per-resource retry with backoff (eight attempts, 0.5 s doubling to 30 s), `Retry-After`, redirects, cookies and auth; the host performs the HTTP requests. A finite playlist still ends the pull cleanly and the route is served as ended; a `401`/`403` on a resource or key still fails the attempt at once. Fatal and permanent session errors (undecryptable or unsupported content) surface as the new typed `MultimuxError::Session`.
 - The Smooth output keeps one `SmoothOrigin` per program, so its cached plan and packaged fragments survive between requests, and hands it the segments as shared `Bytes` instead of copying every window segment per request. A request that misses the cache builds on the blocking pool (`spawn_blocking`, at most four at once per program); the module doc that claimed `http::resolve_blocking` did so was wrong (issue #2522).
 ### Added
 - `max_blocking_reloads_per_route` (config; `HttpLimits::max_blocking_reloads_per_route`, default 1024): LL-HLS blocking-reload requests are budgeted per route instead of one listener-wide pool of `max_concurrent_requests / 4`, so a reload flood on one route cannot shed another's.
@@ -27,6 +34,7 @@
 - TS-over-HTTP pull runs one `broadcast_client::Session` in relay mode (`Config::relay()`) through a shared async session host (`source::client_host`): the session owns redirects, cookies, Basic/Digest/Bearer auth, the finite-body decision and the stall policy, and the host performs its HTTP requests with `reqwest`; the programme split of a multi-programme stream keys on each track's `program_number` as before.
 - DASH-IF ingest sans-IO engine moved to `dash-runtime::ingest`; multimux keeps the axum glue.
 ### Removed
+- BREAKING: `source::hls_pull::{HlsIngestSession, HlsFetchId, HlsPullDialer, Fetched}` and the `hls_pull` drive loop; `run_hls_pull` now takes the route's `CancellationToken` as a fifth argument. `MultimuxError::LlHls` is no longer produced by the pull.
 - BREAKING: `source::rtp_udp::{bind, RtpUdpDialer, RtpUdpIngestSession}`; `run_rtp_udp` is the entry point.
 - BREAKING: `origin::limit::DEFAULT_BLOCKING_RELOAD_DIVISOR`, replaced by `DEFAULT_MAX_BLOCKING_RELOADS_PER_ROUTE`.
 - BREAKING: `source::rtsp::{RtspDialer, RtspIngestSession, route_channel}`; `run_rtsp` is the entry point (the session replaces the hand-driven RTSP engine, depayload and alignment).

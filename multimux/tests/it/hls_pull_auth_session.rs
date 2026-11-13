@@ -224,7 +224,13 @@ async fn played_samples(
     ));
     let config = TrunkConfig::new(nz(TIMED_RING), nz(RING), nz(RING), nz(RING), nz(RING));
     let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
-    let pulled = run_hls_pull(&route, config, handshake, &route_handle);
+    let pulled = run_hls_pull(
+        &route,
+        config,
+        handshake,
+        &route_handle,
+        tokio_util::sync::CancellationToken::new(),
+    );
     tokio::pin!(pulled);
     // The wait for the first program and for the media behind it is the pull's
     // own; `RUN_CEILING` is a hang guard on the whole call, not a pacing

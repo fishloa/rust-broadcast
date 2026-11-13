@@ -4,9 +4,10 @@
 //! `transmux/tests/golden_gate.rs` (#569) validates only the ORIGIN half of
 //! the loop: transmux's own muxer/segmenter output handed straight to an
 //! independent decoder (`ffprobe`). This file closes the other half: a real
-//! LL-HLS origin -> the production client (`source::hls_pull`'s
-//! `HlsIngestSession`, the same session `run_hls_pull` drives) pulling it over
-//! loopback HTTP -> the client's *own* reconstructed init + samples muxed
+//! LL-HLS origin -> the production client (`source::hls_pull::run_hls_pull`, a
+//! relay-mode `broadcast_client::Session`) pulling it over
+//! loopback HTTP -> the client's *own* reconstructed init (rebuilt from the track set it
+//! recovered) + samples muxed
 //! back into a real fMP4 -> `ffprobe`. If the client silently drops,
 //! duplicates, or reorders a sample, the reconstruction is provably not
 //! decodable/matching — not just structurally plausible.
@@ -48,16 +49,15 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use serde_json::Value;
 
-use broadcast_common::{Stage, Timestamp};
 use broadcast_hls::{DecimalSeconds, MapTag, MediaPlaylist, MediaSegment};
-use hls_runtime::client::Action;
 use hls_runtime::server::DEFAULT_TRACK_ID;
-use media_plane::ingress::{IngestSession, SessionEvent};
 use multimux::origin::{AppState, router};
 use multimux::output::Output as MmOutput;
 use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
-use multimux::source::hls_pull::{HlsFetchId, HlsIngestSession};
+#[path = "support/hls_pull_probe.rs"]
+pub mod hls_pull_probe;
+use hls_pull_probe::{Probe, observed, pull_samples};
 use transmux::ll_hls::LlHlsSegmenter;
 use transmux::{CodecConfig, FragmentTrackData, Sample, TrackSpec, TsDemux};
 
@@ -202,11 +202,11 @@ fn assert_video_matches_source(src_probe: &Value, out_probe: &Value, what: &str)
     );
 }
 
-// ── The production client, driven exactly as `run_hls_pull` drives it ─────
+// ── The production client: `run_hls_pull` ─────────────────────────────────
 
-/// One driven client run, in the client's own terms: the init it received,
-/// every sample it emitted (in order), and how many blocking playlist reloads
-/// its requests carried.
+/// One driven client run, in the client's own terms: the init rebuilt from the track set it
+/// recovered, every sample it published (in order), and how many blocking playlist reloads its
+/// requests carried.
 #[derive(Default)]
 struct ClientRun {
     init: Option<Vec<u8>>,
@@ -214,105 +214,25 @@ struct ClientRun {
     blocking_reloads: u64,
 }
 
-/// Drives `playlist_url` with the source's own [`HlsIngestSession`] —
-/// `poll_transmit` → GET → `feed`, the loop `run_hls_pull` runs over the same
-/// [`HlsPullRoute::new`] construction — until `enough` samples have been
-/// emitted or the playlist ends.
-async fn drive_session(playlist_url: &str, enough: usize) -> ClientRun {
-    let http = reqwest::Client::new();
-    let mut session = HlsIngestSession::new(playlist_url);
-    let mut run = ClientRun::default();
-    loop {
-        if run.samples.len() >= enough || session.ended() {
-            break;
-        }
-        let Some(action) = session.poll_transmit() else {
-            tokio::time::sleep(IDLE_POLL_INTERVAL).await;
-            continue;
-        };
-        match action {
-            Action::FetchPlaylist { blocking, .. } => {
-                if run.samples.len() >= enough {
-                    break;
-                }
-                if blocking.is_some() {
-                    run.blocking_reloads = run.blocking_reloads.saturating_add(1);
-                }
-                let url = action
-                    .playlist_request_url()
-                    .expect("FetchPlaylist always names a request URL");
-                let body = get_bytes(&http, &url, None).await;
-                session
-                    .feed((HlsFetchId::Playlist, body.as_slice()), Timestamp::ZERO)
-                    .expect("playlist accepted");
-            }
-            Action::FetchResource {
-                id,
-                url,
-                byte_range,
-            } => match try_get_bytes(&http, &url, byte_range).await {
-                Some(body) => session
-                    .feed((HlsFetchId::Resource(id), body.as_slice()), Timestamp::ZERO)
-                    .expect("resource accepted"),
-                None => session.resource_gone(id),
-            },
-            _ => {}
-        }
-        while let Some(event) = session.poll() {
-            match event {
-                SessionEvent::Sample { sample, .. } => run.samples.push(sample),
-                SessionEvent::NewProgram { .. } | SessionEvent::Established => {}
-                _ => {}
-            }
-        }
-        if let Some(init) = session.take_init() {
-            run.init = Some(init);
-        }
+/// Pulls `playlist_url` with `run_hls_pull` until `enough` samples have been published or the
+/// playlist ends.
+async fn drive_pull(playlist_url: &str, enough: usize, probe: &Probe) -> ClientRun {
+    let mut samples = Vec::new();
+    let pulled = pull_samples(playlist_url, enough, |sample| samples.push(sample.clone())).await;
+    let init = transmux::build_init_segment(&pulled.specs, MOVIE_TIMESCALE)
+        .expect("an init segment builds from the recovered track set");
+    ClientRun {
+        init: Some(init),
+        samples,
+        blocking_reloads: probe.activity().blocking_reloads,
     }
-    run
-}
-
-/// `GET url`, optionally for one byte sub-range.
-async fn get_bytes(http: &reqwest::Client, url: &str, byte_range: Option<(u64, u64)>) -> Vec<u8> {
-    try_get_bytes(http, url, byte_range)
-        .await
-        .unwrap_or_else(|| panic!("client GET {url} must succeed"))
-}
-
-/// [`get_bytes`], `None` for a `404` — the origin no longer has that part.
-async fn try_get_bytes(
-    http: &reqwest::Client,
-    url: &str,
-    byte_range: Option<(u64, u64)>,
-) -> Option<Vec<u8>> {
-    let mut request = http.get(url);
-    if let Some((offset, length)) = byte_range {
-        let end = offset.saturating_add(length.saturating_sub(1));
-        request = request.header("Range", format!("bytes={offset}-{end}"));
-    }
-    let response = request.send().await.expect("client GET");
-    if response.status() == reqwest::StatusCode::NOT_FOUND {
-        return None;
-    }
-    assert!(
-        response.status().is_success(),
-        "client GET {url} answered {}",
-        response.status()
-    );
-    Some(
-        response
-            .bytes()
-            .await
-            .expect("client reads the body")
-            .to_vec(),
-    )
 }
 
 // ── LL origin standup (mirrors glass_to_glass.rs's start_ll_origin) ────────
 
 const TARGET_DURATION_SECS: f64 = 1.0;
-/// How long the client poll parks when it has nothing to do yet.
-const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(5);
+/// The movie timescale the origin's segmenter and the rebuilt init share.
+const MOVIE_TIMESCALE: u32 = 90_000;
 const PART_TARGET_MS: u32 = 120;
 const WINDOW_SEGMENTS: usize = 8;
 
@@ -359,7 +279,12 @@ async fn run_live_producer(store: Arc<RouteHandle>, spec: TrackSpec, samples: Ve
 /// serving one stream named `live`.
 async fn start_ll_origin(
     spec: TrackSpec,
-) -> (Arc<RouteHandle>, String, tokio::task::JoinHandle<()>) {
+) -> (
+    Arc<RouteHandle>,
+    String,
+    Arc<Probe>,
+    tokio::task::JoinHandle<()>,
+) {
     let store = Arc::new(RouteHandle::new(
         TARGET_DURATION_SECS,
         PART_TARGET_MS,
@@ -380,7 +305,8 @@ async fn start_ll_origin(
             vec![Arc::new(HlsOutput::default()) as Arc<dyn MmOutput>],
         ),
     );
-    let app = router(Arc::new(AppState::new(streams)));
+    let probe = Arc::new(Probe::default());
+    let app = observed(router(Arc::new(AppState::new(streams))), Arc::clone(&probe));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind ephemeral loopback port");
@@ -389,7 +315,12 @@ async fn start_ll_origin(
         axum::serve(listener, app).await.expect("axum server");
     });
     let _ = spec; // consumed by the caller's producer task instead; kept for symmetry with glass_to_glass's signature shape.
-    (store, format!("http://{addr}/live/media.m3u8"), server)
+    (
+        store,
+        format!("http://{addr}/live/media.m3u8"),
+        probe,
+        server,
+    )
 }
 
 // ===========================================================================
@@ -411,7 +342,7 @@ async fn ll_hls_client_reference_reconstructs_decodable_stream() {
         "h264-aac.ts must demux to at least one video sample"
     );
 
-    let (store, playlist_url, server) = start_ll_origin(spec.clone()).await;
+    let (store, playlist_url, probe, server) = start_ll_origin(spec.clone()).await;
     let producer = tokio::spawn(run_live_producer(store, spec.clone(), fed_samples.clone()));
 
     // HANG GUARD (issue #807): 20s on a ~3s real-time-paced fixture playback
@@ -420,7 +351,7 @@ async fn ll_hls_client_reference_reconstructs_decodable_stream() {
     // deadlock rather than hanging CI forever.
     let run = tokio::time::timeout(
         Duration::from_secs(20),
-        drive_session(&playlist_url, fed_count),
+        drive_pull(&playlist_url, fed_count, &probe),
     )
     .await
     .expect("client run must complete within 20s (deadlock/hang guard)");
@@ -621,28 +552,32 @@ async fn non_ll_full_segment_path_also_decodes() {
 
     let init_for_route = init_bytes.clone();
     let seg1_bytes_for_route = seg1.bytes.clone();
-    let app = Router::new()
-        .route(
-            "/media.m3u8",
-            get(move || {
-                let text = playlist_text.clone();
-                async move { text.into_response() }
-            }),
-        )
-        .route(
-            "/init.mp4",
-            get(move || {
-                let bytes = init_for_route.clone();
-                async move { bytes.into_response() }
-            }),
-        )
-        .route(
-            "/seg1.m4s",
-            get(move || {
-                let bytes = seg1_bytes_for_route.clone();
-                async move { bytes.into_response() }
-            }),
-        );
+    let probe = Arc::new(Probe::default());
+    let app = observed(
+        Router::new()
+            .route(
+                "/media.m3u8",
+                get(move || {
+                    let text = playlist_text.clone();
+                    async move { text.into_response() }
+                }),
+            )
+            .route(
+                "/init.mp4",
+                get(move || {
+                    let bytes = init_for_route.clone();
+                    async move { bytes.into_response() }
+                }),
+            )
+            .route(
+                "/seg1.m4s",
+                get(move || {
+                    let bytes = seg1_bytes_for_route.clone();
+                    async move { bytes.into_response() }
+                }),
+            ),
+        Arc::clone(&probe),
+    );
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -657,7 +592,7 @@ async fn non_ll_full_segment_path_also_decodes() {
     // deadlock rather than hanging CI forever.
     let run = tokio::time::timeout(
         Duration::from_secs(10),
-        drive_session(&format!("http://{addr}/media.m3u8"), fed_count),
+        drive_pull(&format!("http://{addr}/media.m3u8"), fed_count, &probe),
     )
     .await
     .expect("non-LL client run must complete within 10s (deadlock/hang guard)");
@@ -674,7 +609,7 @@ async fn non_ll_full_segment_path_also_decodes() {
     };
     assert_eq!(
         got_init, init_bytes,
-        "init bytes must round-trip byte-identical on the fallback path"
+        "the init rebuilt from the recovered track set must equal the origin's init byte for byte"
     );
     assert_eq!(
         got_samples.len(),

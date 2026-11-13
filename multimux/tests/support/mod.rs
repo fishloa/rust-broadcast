@@ -1,4 +1,5 @@
 pub mod hdr_route;
+pub mod hls_pull_probe;
 pub mod listener;
 pub mod origin;
 pub mod raw_http;

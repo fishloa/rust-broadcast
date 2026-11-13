@@ -40,17 +40,17 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ("dvr.rs", 603, "spawn_blocking DVR write; awaited inline"),
     (
         "source/client_host.rs",
-        258,
+        270,
         "one HTTP request task per Action::HttpRequest of the session; owned by SessionStep, which aborts it on Action::Close and aborts every outstanding one on drop",
     ),
     (
         "source/client_host.rs",
-        305,
+        317,
         "one TCP read task per Action::TcpConnect of the session; owned by SessionStep, which aborts it on Action::Close and aborts every outstanding one on drop",
     ),
     (
         "source/client_host.rs",
-        355,
+        367,
         "one datagram receive task per Action::UdpBind of the session; owned by SessionStep, which aborts it on Action::Close and aborts every outstanding one on drop",
     ),
     (
@@ -76,23 +76,28 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "source/rtmp.rs",
-        890,
+        900,
         "one read task per admitted RTMP session, on the run loop's JoinSet (dropped with run_rtmp, which aborts every reader); each ends itself on a terminal read or when the outcome channel closes",
     ),
     (
         "source/whip.rs",
-        350,
+        349,
         "WHIP signalling server TaskTracker (WhipInfra)",
     ),
     (
         "source/whip.rs",
-        616,
+        615,
         "WHIP run task; owned by the route supervisor handle",
     ),
     (
         "source/whip.rs",
-        631,
+        630,
         "WHIP accept pump; owned by the route supervisor handle",
+    ),
+    (
+        "source/whip.rs",
+        2001,
+        "one read task per admitted WHIP session, on the run loop's JoinSet (dropped with run_whip, which aborts every reader) with its AbortHandle aborted when the publisher reaps the session; ends itself on a terminal read or when the outcome channel closes",
     ),
     (
         "source/dashif_ingest.rs",
