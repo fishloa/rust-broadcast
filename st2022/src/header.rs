@@ -304,8 +304,7 @@ impl TimestampRef {
             0 => Self::NotLocked,
             2 => Self::LockedUtc,
             3 => Self::LockedPrivate,
-            #[allow(clippy::cast_possible_truncation)]
-            other => Self::Reserved(other as u8),
+            other => Self::Reserved(u8::try_from(other).unwrap_or(0)),
         }
     }
 
@@ -351,8 +350,7 @@ impl Scrambling {
     fn from_bits(bits: u16) -> Self {
         match bits {
             0 => Self::NotScrambled,
-            #[allow(clippy::cast_possible_truncation)]
-            other => Self::Reserved(other as u8),
+            other => Self::Reserved(u8::try_from(other).unwrap_or(0)),
         }
     }
 
@@ -403,8 +401,7 @@ impl FecUsage {
             0 => Self::None,
             1 => Self::ColumnOnly,
             2 => Self::ColumnAndRow,
-            #[allow(clippy::cast_possible_truncation)]
-            other => Self::Reserved(other as u8),
+            other => Self::Reserved(u8::try_from(other).unwrap_or(0)),
         }
     }
 
@@ -857,14 +854,19 @@ impl VideoSourceFormat {
             | (u32::from(self.fmt_reserve) & FMT_RESERVE_MASK)
     }
 
-    #[allow(clippy::cast_possible_truncation)]
     fn from_bits(word: u32) -> Self {
         Self {
-            map: MapStructure::from_bits(((word >> MAP_SHIFT) & MAP_MASK) as u8),
-            frame: FrameStructure::from_bits(((word >> FRAME_SHIFT) & FRAME_MASK) as u8),
-            frate: FrameRate::from_bits(((word >> FRATE_SHIFT) & FRATE_MASK) as u8),
-            sample: SampleStructure::from_bits(((word >> SAMPLE_SHIFT) & SAMPLE_MASK) as u8),
-            fmt_reserve: (word & FMT_RESERVE_MASK) as u8,
+            map: MapStructure::from_bits(u8::try_from((word >> MAP_SHIFT) & MAP_MASK).unwrap_or(0)),
+            frame: FrameStructure::from_bits(
+                u8::try_from((word >> FRAME_SHIFT) & FRAME_MASK).unwrap_or(0),
+            ),
+            frate: FrameRate::from_bits(
+                u8::try_from((word >> FRATE_SHIFT) & FRATE_MASK).unwrap_or(0),
+            ),
+            sample: SampleStructure::from_bits(
+                u8::try_from((word >> SAMPLE_SHIFT) & SAMPLE_MASK).unwrap_or(0),
+            ),
+            fmt_reserve: u8::try_from(word & FMT_RESERVE_MASK).unwrap_or(0),
         }
     }
 }
@@ -957,9 +959,9 @@ impl<'a> PayloadHeader<'a> {
     /// `Ext` — the wire nibble, derived from [`Self::extension`]'s length.
     #[must_use]
     pub fn ext(&self) -> u8 {
-        #[allow(clippy::cast_possible_truncation)]
-        self.extension
-            .map_or(0, |e| (e.len() / EXTENSION_UNIT_LEN) as u8)
+        self.extension.map_or(0, |e| {
+            u8::try_from(e.len() / EXTENSION_UNIT_LEN).unwrap_or(0)
+        })
     }
 
     /// The extension's typed TLV items, or an empty iterator when `Ext = 0`.
@@ -1102,10 +1104,9 @@ impl<'a> Parse<'a> for PayloadHeader<'a> {
         let timestamp_ref = TimestampRef::from_bits((word >> R_SHIFT) & R_MASK);
         let scrambling = Scrambling::from_bits((word >> S_SHIFT) & S_MASK);
         let fec_usage = FecUsage::from_bits((word >> FEC_SHIFT) & FEC_MASK);
-        #[allow(clippy::cast_possible_truncation)]
-        let clock_frequency = ClockFrequency::from_bits(((word >> CF_SHIFT) & CF_MASK) as u8);
-        #[allow(clippy::cast_possible_truncation)]
-        let reserve = (word & RESERVE_MASK) as u8;
+        let clock_frequency =
+            ClockFrequency::from_bits(u8::try_from((word >> CF_SHIFT) & CF_MASK).unwrap_or(0));
+        let reserve = u8::try_from(word & RESERVE_MASK).unwrap_or(0);
 
         let mut pos = FIXED_HEADER_LEN;
 
