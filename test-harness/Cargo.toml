@@ -9,9 +9,9 @@ publish = false
 description = "Shared test harnesses for workspace integration tests (unpublished)."
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "11.0.1", default-features = false, features = ["std"] }
+broadcast-common = { path = "../broadcast-common", version = "12.0.0", default-features = false, features = ["std"] }
 dash-runtime = { path = "../dash-runtime", version = "0.4.0" }
-rtmp-runtime = { path = "../rtmp-runtime", version = "0.9.1", features = ["target"] }
+rtmp-runtime = { path = "../rtmp-runtime", version = "0.10.0", features = ["target"] }
 test-fixtures = { path = "../test-fixtures" }
 jiff = { version = "0.2", default-features = false, features = ["std"] }
 url = "2"

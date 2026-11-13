@@ -412,7 +412,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-auth"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "base64 0.23.1",
  "broadcast-common",
@@ -480,7 +480,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-common"
-version = "11.1.0"
+version = "12.0.0"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -519,7 +519,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-loudness"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "broadcast-common",
  "hound",
@@ -549,7 +549,7 @@ dependencies = [
 
 [[package]]
 name = "buffering-runtime"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -645,7 +645,7 @@ dependencies = [
 
 [[package]]
 name = "cc-data"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -861,7 +861,7 @@ checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 
 [[package]]
 name = "container-probe"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "broadcast-common",
  "mpeg-ps",
@@ -1231,7 +1231,7 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "dvb-bbframe"
-version = "13.1.0"
+version = "14.0.0"
 dependencies = [
  "broadcast-common",
  "criterion",
@@ -1245,7 +1245,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-ci"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "broadcast-common",
  "dvb-si",
@@ -1273,7 +1273,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-conformance"
-version = "13.1.0"
+version = "14.0.0"
 dependencies = [
  "broadcast-common",
  "dvb-si",
@@ -1284,7 +1284,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-csa"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "criterion",
  "mpeg-ts",
@@ -1297,7 +1297,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-mabr"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "broadcast-common",
  "quick-xml",
@@ -1307,7 +1307,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-si"
-version = "13.1.0"
+version = "14.0.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -1328,7 +1328,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-simulcrypt"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -1339,7 +1339,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-stream"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -1358,7 +1358,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-subtitle"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "broadcast-common",
  "mpeg-pes",
@@ -1369,7 +1369,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-t2mi"
-version = "13.1.0"
+version = "14.0.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -1388,7 +1388,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-tools"
-version = "13.1.0"
+version = "14.0.0"
 dependencies = [
  "broadcast-common",
  "clap",
@@ -1401,7 +1401,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-vbi"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -2546,7 +2546,7 @@ dependencies = [
 
 [[package]]
 name = "mp4-emsg"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -2556,7 +2556,7 @@ dependencies = [
 
 [[package]]
 name = "mpeg-pes"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -2566,7 +2566,7 @@ dependencies = [
 
 [[package]]
 name = "mpeg-ps"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "broadcast-common",
  "mpeg-pes",
@@ -2577,7 +2577,7 @@ dependencies = [
 
 [[package]]
 name = "mpeg-ts"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -3309,7 +3309,7 @@ dependencies = [
 
 [[package]]
 name = "rdd29"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -3432,7 +3432,7 @@ dependencies = [
 
 [[package]]
 name = "rist-runtime"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "broadcast-common",
  "rtp-packet",
@@ -3633,7 +3633,7 @@ dependencies = [
 
 [[package]]
 name = "rtmp-runtime"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -3652,7 +3652,7 @@ dependencies = [
 
 [[package]]
 name = "rtp-packet"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -3862,7 +3862,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "scte104"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -3872,7 +3872,7 @@ dependencies = [
 
 [[package]]
 name = "scte35-splice"
-version = "5.0.1"
+version = "6.0.0"
 dependencies = [
  "base64 0.23.1",
  "broadcast-common",
@@ -4128,7 +4128,7 @@ dependencies = [
 
 [[package]]
 name = "srt-runtime"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "aes 0.9.4",
  "aes-kw",
@@ -4167,7 +4167,7 @@ dependencies = [
 
 [[package]]
 name = "st12-1"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -4176,7 +4176,7 @@ dependencies = [
 
 [[package]]
 name = "st2022"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -4186,7 +4186,7 @@ dependencies = [
 
 [[package]]
 name = "st291"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "broadcast-common",
  "rtp-packet",
@@ -4197,7 +4197,7 @@ dependencies = [
 
 [[package]]
 name = "st337"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -4207,7 +4207,7 @@ dependencies = [
 
 [[package]]
 name = "st377-1"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -4695,7 +4695,7 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "ts-fix"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "broadcast-common",
  "clap",
@@ -4710,7 +4710,7 @@ dependencies = [
 
 [[package]]
 name = "ttml-subtitle"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "broadcast-common",
  "quick-xml",
@@ -4732,7 +4732,7 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
 name = "ule"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "broadcast-common",
  "serde",

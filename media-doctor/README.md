@@ -31,7 +31,7 @@ in the private repo: `private/specs` set (ISO/IEC 23009-1) the edition is marked
 
 | Standard | Edition | Scope | Status | Notes |
 |---|---|---|---|---|
-| ITU-T H.222.0 / ISO/IEC 13818-1 | H.222.0 v9 (08/2023) (vendored; verified) | §2.4.3.2 sync byte; §2.4.3.3 continuity_counter and legal duplicates (`broadcast_common::ts_dup`); §2.4.3.5 PCR; §2.4.3.7 PTS/DTS and the forbidden `PTS_DTS_flags == 01`; §2.4.4 PAT/PMT versioning; Table 2-34 stream_type | Full for the listed checks | `SyncByteCheck`, `CcAnomalyCheck`, `PcrCheck`, `PtsCheck`, `PatPmtVersionCheck`. |
+| ITU-T H.222.0 / ISO/IEC 13818-1 | H.222.0 v9 (08/2023) (vendored; verified) | §2.4.3.2 sync byte; §2.4.3.3 continuity_counter and legal duplicates (`mpeg_ts::ts_dup`); §2.4.3.5 PCR; §2.4.3.7 PTS/DTS and the forbidden `PTS_DTS_flags == 01`; §2.4.4 PAT/PMT versioning; Table 2-34 stream_type | Full for the listed checks | `SyncByteCheck`, `CcAnomalyCheck`, `PcrCheck`, `PtsCheck`, `PatPmtVersionCheck`. |
 | ETSI TR 101 290 | V1.4.1 (vendored; verified) | PCR repetition/discontinuity style checks; full indicator set in `watch` via `dvb-conformance` | Partial | 2.4 `PCR_accuracy_error` is not computable (see `dvb-conformance`). |
 | ANSI/SCTE 35 | 2023r1 (vendored; verified) | `splice_insert` out/in pairing, duplicate open "out"s (`Scte35Check`) | Partial: `splice_insert` | |
 | ITU-T H.264 / H.265 | vendored (editions per `private/specs-md/INDEX.md`) | §7.4 / §E.2.1 SPS decode via `transmux`: stream_type vs actual codec, VUI frame rate, parameter sets before IDR/IRAP, interlace (`frame_mbs_only_flag`) | Partial: the fields named | Codec bitstreams are never decoded beyond headers. |
@@ -255,7 +255,7 @@ validator that flags a conformant playlist is worse than none.
 
 - **Findings, not panics.** Every rule has a stable `rule_id`; malformed input is
   a finding (`hls-parse-error`, `dash-parse-error`), never a crash.
-- **One reading of the spec.** Legal duplicates are `broadcast_common::ts_dup`
+- **One reading of the spec.** Legal duplicates are `mpeg_ts::ts_dup`
   (shared with `dvb-conformance` and `ts-fix`, issue #956); PCR wrap arithmetic is
   `clock33` (`workspace-guards/tests/guards/clock33.rs`); HLS syntax is `broadcast-hls`.
 - **Independent oracle.** `tests/mediastreamvalidator_oracle.rs` (macOS, skips

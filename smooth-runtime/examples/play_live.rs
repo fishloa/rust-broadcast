@@ -33,10 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(FIXTURE_DIR);
     let manifest = std::fs::read_to_string(dir.join("Manifest"))?.replace(STATIC_ATTRS, LIVE_ATTRS);
-    let config = SmoothConfig {
-        live_join_fragments: look_ahead,
-        ..SmoothConfig::default()
-    };
+    let config = SmoothConfig::default().with_live_join_fragments(look_ahead);
     let mut client = SmoothClient::new(Url::parse(&format!("{ORIGIN}Manifest"))?, config);
     let mut requested = Vec::new();
     let mut now = 0u64;

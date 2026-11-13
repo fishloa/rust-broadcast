@@ -312,7 +312,7 @@ fn segment_info_ok(period: &Period, set: &AdaptationSet, rep: &Representation) -
 /// Whether `preferred` matches `lang` by BCP 47 prefix, ASCII case-insensitive.
 #[must_use]
 pub fn lang_matches(preferred: &str, lang: &str) -> bool {
-    broadcast_common::lang::lang_matches(preferred, lang)
+    broadcast_common::lang::language_matches(preferred, lang)
 }
 
 fn codec_allowed(codecs: Option<&str>, prefixes: &[String]) -> bool {

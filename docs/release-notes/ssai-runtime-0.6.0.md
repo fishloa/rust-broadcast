@@ -1,8 +1,8 @@
 # ssai-runtime 0.6.0
 
-_Released 2026-11-10._
+_Released 2026-11-14._
 
-Breaking-class release (0.5 -> 0.6): `InterstitialDateRange` parsing/rendering changes; session store bounded.
+Breaking-class release (0.5 -> 0.6): breaking API changes are listed below, and the crate's sibling dependencies move to new caret epochs.
 
 Version: 0.5.0 -> 0.6.0.
 
@@ -30,8 +30,7 @@ Version: 0.5.0 -> 0.6.0.
 - `X-SNAP`/`X-RESTRICT` tokens trimmed; empty dropped; unknown kept as `Other`.
 
 ## Dependencies
-
-- `broadcast-hls` 0.6 -> 0.7
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12, `broadcast-hls` 0.6 -> 0.7.
 
 ---
 

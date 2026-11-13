@@ -1,8 +1,8 @@
 # broadcast-hls 0.7.0
 
-_Released 2026-11-10._
+_Released 2026-11-14._
 
-Breaking-class release (0.6 -> 0.7): `MasterPlaylist::to_m3u8` no longer fails on dangling group references.
+Breaking-class release (0.6 -> 0.7): breaking API changes are listed below, and the crate's sibling dependencies move to new caret epochs.
 
 Version: 0.6.0 -> 0.7.0.
 
@@ -18,6 +18,15 @@ Version: 0.6.0 -> 0.7.0.
 ## Fixed
 
 - `MediaPlaylist::parse` no longer drops `#EXT-X-DISCONTINUITY` preceding open segment's parts.
+
+## Also in this release
+
+### Changed
+- BREAKING: a malformed `#EXT-X-PROGRAM-DATE-TIME` no longer fails `MediaPlaylist::parse`: the tag is dropped (its segment has no `program_date_time`) and recorded in the new `MediaPlaylist::diagnostics` (`ParseDiagnostic { kind: ParseDiagnosticKind::InvalidProgramDateTime, line_no, line }`, never serialised). `ProgramDateTime::parse` itself stays strict (#2591).
+- BREAKING: `ProgramDateTime::parse` rejects a bare date (`2026-10-02`): RFC 8216 §4.3.2.6 asks for an ISO 8601 date-time. A zone-less date-time is still accepted and taken as UTC (#2591).
+
+## Dependencies
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12.
 
 ---
 

@@ -46,10 +46,7 @@ fn live_join_starts_look_ahead_fragments_behind_the_edge() {
 
 #[test]
 fn live_join_honours_a_zero_look_ahead_by_starting_at_the_edge() {
-    let mut host = Host::new(SmoothConfig {
-        live_join_fragments: 0,
-        ..SmoothConfig::default()
-    });
+    let mut host = Host::new(SmoothConfig::default().with_live_join_fragments(0));
     host.serve_dir("av");
     host.route("Manifest", vec![Reply::Body(live_manifest(""))]);
     host.run_until(|o| sample_count(o) > 0 && o.iter().any(|o| matches!(o, Output::Tracks(_))));
@@ -60,10 +57,7 @@ fn live_join_honours_a_zero_look_ahead_by_starting_at_the_edge() {
 
 #[test]
 fn live_join_is_clamped_to_the_dvr_window() {
-    let mut host = Host::new(SmoothConfig {
-        live_join_fragments: 10,
-        ..SmoothConfig::default()
-    });
+    let mut host = Host::new(SmoothConfig::default().with_live_join_fragments(10));
     host.serve_dir("av");
     host.route(
         "Manifest",

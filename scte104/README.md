@@ -10,7 +10,7 @@ with every operation in the opID allocation tables.
 
 ```toml
 [dependencies]
-scte104 = "0.7"
+scte104 = "0.8"
 ```
 
 ## What it does / what it does not

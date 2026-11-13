@@ -69,18 +69,16 @@ fn variant_info(q: &QualityInfo) -> VariantInfo {
 
 fn engine_config(config: &Config, jitter_seed: u64) -> SmoothConfig {
     let policy = config.variant_policy.clone();
-    SmoothConfig {
-        max_fragment_failures: config.max_segment_failures,
-        max_manifest_failures: config.max_key_failures,
-        backoff_ms: config.backoff_ms.clone(),
-        backoff_cap_ms: config.backoff_cap_ms,
-        jitter_seed,
-        video_quality: QualitySelector::new(move |qualities| {
+    SmoothConfig::default()
+        .with_max_fragment_failures(config.max_segment_failures)
+        .with_max_manifest_failures(config.max_key_failures)
+        .with_backoff_ms(config.backoff_ms.clone())
+        .with_backoff_cap_ms(config.backoff_cap_ms)
+        .with_jitter_seed(jitter_seed)
+        .with_video_quality(QualitySelector::new(move |qualities| {
             let variants: Vec<VariantInfo> = qualities.iter().map(variant_info).collect();
             choose_variant(&variants, &policy)
-        }),
-        ..SmoothConfig::default()
-    }
+        }))
 }
 
 fn fatal_error_kind(error: &SmoothError) -> (ErrorKind, bool) {

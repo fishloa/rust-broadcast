@@ -17,12 +17,12 @@ features = ["serde"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common  = { path = "../broadcast-common", version = "11.0.1", default-features = false, features = ["std", "http-date", "lang", "url"] }
-broadcast-auth     = { path = "../broadcast-auth", version = "0.6.0" }
+broadcast-common  = { path = "../broadcast-common", version = "12.0.0", default-features = false, features = ["std", "http-date", "lang", "url"] }
+broadcast-auth     = { path = "../broadcast-auth", version = "0.7.0" }
 transmux           = { path = "../transmux", version = "0.31.0", default-features = false, features = ["std"] }
-dvb-si             = { path = "../dvb-si", version = "13.1.0", default-features = false, features = ["ts", "std"] }
-mpeg-ts            = { path = "../mpeg-ts", version = "0.7.1", default-features = false, features = ["std"] }
-buffering-runtime  = { path = "../buffering-runtime", version = "0.2.2", default-features = false, features = ["std"] }
+dvb-si             = { path = "../dvb-si", version = "14.0.0", default-features = false, features = ["ts", "std"] }
+mpeg-ts            = { path = "../mpeg-ts", version = "0.8.0", default-features = false, features = ["std"] }
+buffering-runtime  = { path = "../buffering-runtime", version = "0.3.0", default-features = false, features = ["std"] }
 hls-runtime        = { path = "../hls-runtime", version = "0.13.0" }
 
 dash-runtime       = { path = "../dash-runtime", version = "0.4.0" }
@@ -30,9 +30,9 @@ broadcast-hls      = { path = "../broadcast-hls", version = "0.7.0" }
 smooth-runtime     = { path = "../smooth-runtime", version = "0.1.0" }
 rtsp-runtime       = { path = "../rtsp-runtime", version = "0.11.0", default-features = false }
 sdp-types          = { workspace = true }
-rtp-packet         = { path = "../rtp-packet", version = "0.6.0", default-features = false, features = ["std"] }
-srt-runtime        = { path = "../srt-runtime", version = "0.8.1", default-features = false, features = ["std", "crypto"] }
-rtmp-runtime       = { path = "../rtmp-runtime", version = "0.9.1", default-features = false, features = ["target"] }
+rtp-packet         = { path = "../rtp-packet", version = "0.7.0", default-features = false, features = ["std"] }
+srt-runtime        = { path = "../srt-runtime", version = "0.9.0", default-features = false, features = ["std", "crypto"] }
+rtmp-runtime       = { path = "../rtmp-runtime", version = "0.10.0", default-features = false, features = ["target"] }
 sha2               = { version = "0.11", default-features = false }
 rustls-pki-types  = { version = "1", default-features = false, features = ["alloc"] }
 zeroize            = { version = "1", default-features = false, features = ["alloc"] }
@@ -49,12 +49,12 @@ serde              = { version = "1", default-features = false, optional = true,
 broadcast-dash     = { path = "../broadcast-dash", version = "0.1.0" }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
-srt-runtime = { path = "../srt-runtime", version = "0.8.1", features = ["tokio", "crypto"] }
+srt-runtime = { path = "../srt-runtime", version = "0.9.0", features = ["tokio", "crypto"] }
 test-fixtures = { path = "../test-fixtures" }
 test-harness = { path = "../test-harness" }
-buffering-runtime = { path = "../buffering-runtime", version = "0.2.2" }
+buffering-runtime = { path = "../buffering-runtime", version = "0.3.0" }
 transmux = { path = "../transmux", version = "0.31.0" }
-broadcast-auth = { path = "../broadcast-auth", version = "0.6.0" }
+broadcast-auth = { path = "../broadcast-auth", version = "0.7.0" }
 rtsp-runtime = { path = "../rtsp-runtime", version = "0.11.0", default-features = false }
 sdp-types = { workspace = true }
 rtsp-types = "0.1"

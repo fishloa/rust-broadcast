@@ -3,27 +3,28 @@
 All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
+
+## [0.7.0] - 2026-11-14
 ### Changed
 - BREAKING: `Client::new(endpoint_url, bearer_token)` (`WhipClient`, `WhepPlayer`) takes a `session::client::ClientConfig` (`ClientConfig::new(endpoint_url).with_bearer_token(token)`), the same `Config` + `with_*` shape as the other engines (#2514).
+- BREAKING: the non-default test-hook feature is renamed `test-support` -> `test-seams`; only a test suite enabling it by name is affected (c6 C6-09).
+
 ### Added
 - `media::SocketDemux<K>` (feature `media`): a sans-IO demultiplexer that lets many `MediaTransport`s share one UDP socket. A session is registered by its local `ice-ufrag`; `classify(datagram, from)` routes a STUN connectivity check by the receiver ufrag in its `USERNAME` (RFC 8445 §7.2.2) and maps the sender's address to that session, then routes DTLS, SRTP/SRTCP and STUN responses by that address. A check naming an unknown ufrag maps nothing, an address from an unmapped source is dropped, and each session maps at most `max_tuples_per_session` addresses (a further one is dropped, never evicting a working mapping).
 - `sdp`, the one place a WHIP/WHEP SDP document is built: `session_answer` renders the whole answer (origin, session name, timing and the single media section with its ICE/DTLS attributes) from typed inputs — the local `IpAddr`, `LocalMediaIdentity` (ICE ufrag/pwd and the `sha-256` certificate fingerprint), the `AnswerTransport` narrowed to one payload type, `CodecAttribute`s and the gathered candidates — and `restart_answer` renders the ICE-restart answer fragment. `offer_codec_attributes` picks the offer's `a=rtpmap`/`a=fmtp`/`a=rtcp-fb` entries naming the chosen payload type for an answer to echo, `offer_mid` the `a=mid` to echo back, and `fragment_prelude` the session header lines a fragment has to be parsed against. Rendering reports `Error::SdpWrite` instead of a lossy conversion, and `LocalMediaIdentity`'s `Debug` redacts the ICE password. `sdp-types` is now a plain dependency (the builder is in the default build), so the `media` feature no longer enables it.
 - `sdp-types` is now a required dependency (it was optional behind `media`): the `sdp` builder is part of the default build.
 
-
 ### Fixed
 - The bearer-token origin check resolves the target through `broadcast_common::url_ref::resolve`, so a target with a control character is a different origin instead of being repaired into the endpoint's own (RFC 3986 §2) (#2585).
 - `sdp::offer_codec_attributes` now echoes `a=rtcp-fb` attributes whose payload-type token is `*` (RFC 4585 wildcard), in addition to the chosen payload type.
-
-## [0.7.0] - 2026-11-10
-### Changed
-- BREAKING: the non-default test-hook feature is renamed `test-support` -> `test-seams`; only a test suite enabling it by name is affected (c6 C6-09).
-### Fixed
 - A trickle PATCH answered `412 Precondition Failed` (RFC 9725 §4.3.1, outdated entity-tag) adopts the `ETag` the response carries, so the retry sends the current `If-Match` instead of the stale one. A failed `DELETE` consuming its pending marker is not a defect: each request pushes its own marker, and a retried `DELETE` terminates (pinned).
 - The client and player track every in-flight request in send order, so a trickle PATCH's `204` can no longer be taken for the answer to a `DELETE` sent after it (the session closed and emitted `Terminated` before the server answered the `DELETE`).
 - A non-2xx answer to the offer `POST` (a `503`, a `307` the engine does not follow, a `409`) returns the client to `Idle`, so it can send the offer again; it used to stay in `OfferSent`, where `offer` is refused.
 - `Session::accept`, `ack_restart` and `ack_answer` no longer reopen a closed session: a `DELETE` that wins the race against an in-flight restart stays final, and the late response is a `404` with the state unchanged (`ack_restart` needs `Established`, `ack_answer` needs `CounterOffered`).
 - `WhepSession::ack_answer` validates the entity-tag like `accept` and `ack_restart` do (a bad tag is a `500` and leaves the state unchanged) and sends it as the `ETag` of the `204`, which is what the player's counter-offer path already read.
+
+### Dependencies
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12, `rtp-packet` 0.6 -> 0.7.
 
 ## [0.6.0] - 2026-11-08
 ### Changed

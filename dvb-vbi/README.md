@@ -80,7 +80,7 @@ Runnable examples: `cargo run -p dvb-vbi --example build_data_field` and
 - `TeletextDataField`, `VpsDataField`, `WssDataField`,
   `ClosedCaptioningDataField`, `MonochromeDataField`.
 - `Error` (`#[non_exhaustive]`): `BufferTooShort`, `OutputBufferTooSmall`,
-  `InvalidDataUnitLength`, `FieldTooWide`, `InvalidField`.
+  `InvalidDataUnitLength`, `FieldOverflow`, `InvalidField`, `DataUnitIdPayloadMismatch`.
 
 ## Design notes
 

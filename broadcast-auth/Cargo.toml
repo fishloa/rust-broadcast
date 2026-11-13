@@ -1,6 +1,6 @@
 [package]
 name         = "broadcast-auth"
-version      = "0.6.0"
+version      = "0.7.0"
 edition      = "2024"
 description  = "Shared multi-scheme HTTP/RTSP auth: Basic/Digest (RFC 7235, RFC 2326 §14) via http-auth, Bearer (RFC 6750); one Credentials model + challenge->response helper for rtsp-runtime and multimux's HTTP clients."
 license      = "MIT OR Apache-2.0"
@@ -18,7 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 # The shared time-unit ratios (`units`).
-broadcast-common = { path = "../broadcast-common", version = "11.1.0", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "12.0.0", default-features = false }
 http-auth = { version = "0.1", default-features = false, features = ["basic-scheme", "digest-scheme"] }
 thiserror = "2"
 # Server-side (`server::Verifier`) challenge/verify: decoding a client's

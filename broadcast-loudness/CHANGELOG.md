@@ -7,11 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.7.1] - 2026-11-10
+## [0.8.0] - 2026-11-14
 ### Fixed
 - The `Max M`/`Max S` sliding-window sum is re-based on its ring once per window, so the incremental `+= new - outgoing` rounding no longer accumulates over a long run.
 - A rejected push leaves the meter exactly as it was. `push_f32`, `push_f64` and `push_stereo_planar_f32` validate every channel and frame before filtering any, and `TruePeakMeter::push_f32_slice`/`push_f64_slice` validate the whole slice first; they used to keep the frames before the bad sample (or the earlier channels' filter state), which a retry of the corrected input then counted twice.
 - `LoudnessMeter::new` rejects a `ChannelLayout::Custom` whose weights are non-finite, negative or all zero with the new `Error::InvalidChannelWeights` (`Error` is `#[non_exhaustive]`, so the variant is additive); such weights made `max_sample_magnitude` infinite or NaN and disabled the loudness ceiling check.
+
+### Dependencies
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12.
 
 ## [0.7.0] - 2026-11-08
 ### Fixed

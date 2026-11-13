@@ -1,15 +1,17 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.8.0] - 2026-11-14
 ### Added
 - `PusiAccumulator::len`/`is_empty`/`is_started` accessors; `PesAssembler` mirrors them.
-
-## [0.7.1] - 2026-11-10
-### Added
 - `Error::BadMarker(&'static str)` for a wrong ESCR marker bit, `P-STD_buffer` `'01'` prefix or `program_packet_sequence_counter` marker bit (#1945).
 
 ### Fixed
 - `PesPacket::parse` validates the ESCR, `P-STD_buffer` and `program_packet_sequence_counter` marker/prefix bits instead of accepting them and silently rewriting them on serialize (#1945).
+
+### Dependencies
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12.
 
 ## [0.7.0] - 2026-11-07
 ### Fixed

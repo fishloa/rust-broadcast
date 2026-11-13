@@ -222,9 +222,9 @@ impl SmoothServing {
         let window: Weak<ProgramServing> = Arc::downgrade(serving);
         let ll_hls = serving.ll_hls();
         let tracks: Weak<ProgramServing> = Arc::downgrade(serving);
-        let origin = SmoothOrigin::new(SmoothOriginConfig {
-            trunk: serving.trunk(),
-            segments: Arc::new(move || {
+        let origin = SmoothOrigin::new(SmoothOriginConfig::new(
+            serving.trunk(),
+            Arc::new(move || {
                 let Some(window) = window.upgrade() else {
                     return Vec::new();
                 };
@@ -238,13 +238,13 @@ impl SmoothServing {
                     })
                     .collect::<Vec<_>>()
             }),
-            tracks: Arc::new(move || {
+            Arc::new(move || {
                 tracks
                     .upgrade()
                     .map(|tracks| tracks.track_specs())
                     .unwrap_or_default()
             }),
-        });
+        ));
         Self {
             origin: Arc::new(origin),
             builds: Arc::new(Semaphore::new(MAX_CONCURRENT_BUILDS)),

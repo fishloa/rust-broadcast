@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-14
+### Changed
+- Major-class release for epoch purity only: no API or behaviour change in this crate; its sibling dependencies move to new caret epochs.
+
+### Dependencies
+- Sibling dependencies move to new caret epochs: `mpeg-ts` 0.7 -> 0.8.
+
 ## [0.6.0] - 2026-11-08
 ### Removed
 - BREAKING: `Error::BufferTooShort`, never constructed: the packet APIs take a fixed 188-byte array, so no input can be short (#1726).

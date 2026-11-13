@@ -7,10 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.7.1] - 2026-11-10
+## [0.8.0] - 2026-11-14
 ### Fixed
 - `ProgramStreamMap` parse and serialize now count `CRC_32` in `program_stream_map_length` as ISO/IEC 13818-1 Table 2-41 requires; before, any real PSM failed to parse (`MapLengthOverflow`, or a `CrcMismatch` that lost the whole pack) and serialize wrote a length 4 short (#1942).
 - The `PackHeader` and `SystemHeader` output-buffer pre-checks used the parse-side `need_in`; a too-small output buffer now reports `Error::OutputBufferTooSmall` as intended instead of `Error::BufferTooShort` (#2269).
+
+### Dependencies
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12, `mpeg-pes` 0.7 -> 0.8.
 
 ## [0.7.0] - 2026-11-07
 ### Fixed

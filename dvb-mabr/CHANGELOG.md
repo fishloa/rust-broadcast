@@ -4,6 +4,13 @@ All notable changes to dvb-mabr will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-14
+### Changed
+- Major-class release for epoch purity only: no API or behaviour change in this crate; its sibling dependencies move to new caret epochs.
+
+### Dependencies
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12.
+
 ## [0.4.0] - 2026-11-07
 ### Added
 - `MulticastServerConfiguration::parse_str_with_limits` and `MulticastGatewayConfiguration::parse_str_with_limits` take a caller-chosen `broadcast_common::xml_chars::XmlLimits`; `default_limits()` is what `parse_str` applies; `Error::TooLarge { limit, max }` reports a tripped bound.

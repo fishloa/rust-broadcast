@@ -11,7 +11,7 @@ categories   = ["multimedia", "no-std"]
 readme       = "README.md"
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "11.0.1", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "12.0.0", default-features = false }
 bytes            = { version = "1", default-features = false }
 thiserror        = { version = "2", default-features = false }
 transmux         = { path = "../transmux", version = "0.31.0", default-features = false, optional = true }
@@ -30,8 +30,8 @@ event-listener   = { version = "5", default-features = false, features = ["std"]
 parking_lot      = { version = "0.13", optional = true }
 tracing          = { version = "0.1", optional = true }
 caption-convert  = { path = "../caption-convert", version = "0.6.0", optional = true, default-features = false, features = ["std", "teletext"] }
-dvb-si           = { path = "../dvb-si", version = "13.1.0", optional = true, default-features = false, features = ["std"] }
-container-probe  = { path = "../container-probe", version = "0.3.1", optional = true }
+dvb-si           = { path = "../dvb-si", version = "14.0.0", optional = true, default-features = false, features = ["std"] }
+container-probe  = { path = "../container-probe", version = "0.4.0", optional = true }
 broadcast-hls     = { path = "../broadcast-hls", version = "0.7.0", optional = true, default-features = false }
 
 [dev-dependencies]
@@ -40,7 +40,7 @@ test-fixtures = { path = "../test-fixtures" }
 # fixtures in-test, to drive `timed_metadata::Timeline`'s 33-bit PTS
 # wrap-unroll across a genuine wrap boundary — see the event-log wrap test in
 # `src/trunk.rs`. Test-only: the library itself depends only on `timed-metadata`.
-scte35-splice = { path = "../scte35-splice", version = "5.0.1", default-features = false }
+scte35-splice = { path = "../scte35-splice", version = "6.0.0", default-features = false }
 criterion     = { workspace = true, features = ["html_reports"] }
 
 [features]

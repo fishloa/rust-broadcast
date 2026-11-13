@@ -5,11 +5,15 @@ All notable changes to `rtmp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.10.0] - 2026-11-14
 ### Removed
 - BREAKING: `io::RtmpTimeouts`; the adapters take `broadcast_common::timeouts::Timeouts` (the same four fields and defaults), shared with the RTSP and SRT adapters (#2514).
+
 ### Changed
 - BREAKING: `RtmpTarget::stream_key` and `app` are percent-decoded (they were raw), and `AsyncRtmpClient::connect` refuses an `rtmps` target (plain TCP to a TLS port would leak the key; use `from_stream` over TLS) (#2588).
-- **BREAKING**: `RtmpConnection`'s default stream type is now the erased `BoxStream` (a TCP socket, a TLS stream over one, or any other byte stream), so a caller naming one `RtmpConnection` no longer names its transport. `AsyncRtmpServer::accept` returns the new `AcceptedRtmpConnection` (the publisher's address, which an erased stream cannot report, plus the connection) instead of a `RtmpConnection`; call `into_connection()` for the connection itself.
+- **BREAKING**: `RtmpConnection`'s default stream type is now the erased `BoxStream` (a TCP socket, a TLS stream over one, or any other byte stream), so a caller naming one `RtmpConnection` no longer names its transport. `AsyncRtmpServer::accept` returns the new `AcceptedRtmpConnection` (the publisher's address, which an erased stream cannot report, plus the connection) instead of a `RtmpConnection`; call `into_connection()` for the connection itself. `RtmpConnection::peer_addr` is removed; use `AcceptedRtmpConnection::peer_addr`.
+- rtmp-runtime no longer dev-depends on `transmux`; the tests that decoded its FLV output with `transmux::FlvDemux` moved into transmux's test suite (#2339).
 
 ### Added
 - `target::RtmpTarget` accepts `rtmps://` (`RtmpTarget::tls`, default port `RTMPS_DEFAULT_PORT` 443, `SCHEME_RTMP`/`SCHEME_RTMPS`), percent-decodes the app and stream-key path (RFC 3986 §2.1; the query stays as written), and refuses a key that is only a query (`RtmpUrlError::PathNotUtf8` for undecodable text). A new `target` feature (implied by `tokio`) exposes the URL grammar without sockets (#2588).
@@ -18,20 +22,17 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `amf0::amf0_values(&[Amf0Value]) -> Result<Vec<u8>>`: encode several bare AMF0 values as one message body (the shape an FLV `onMetaData` script tag has). `transmux`'s FLV muxer writes its script tag through it.
 - `rtmp_runtime::flv`: the Adobe FLV v10.1 Annex E header and tag codec (`FlvHeader`, `TagType`, `FlvTag<'a>`, the strict `tags()` walk, `Parse`/`Serialize` with byte-exact round trips on the committed FLV fixtures), `no_std` + `alloc`. It replaces the crate-private FLV writer the server and client used, and transmux frames FLV through it, so the workspace has one FLV tag codec (#2342). A final tag whose trailing `PreviousTagSize` is cut off is accepted (the field is redundant, §E.4.1); a cut tag body is an error. New fuzz target `rtmp_flv_tags`.
 - `rtmp_runtime::flv::tags_resync(input, header) -> ResyncWalk`: the tolerant walk beside the strict `tags()`, tested in `tests/it/flv_tags.rs` over the committed FLV captures (a damaged tag is skipped and its offset reported, a cut-off final tag is flagged, a header with no tags yields none). It keeps the tags after a damaged span (skipping a span whose tag chain does not hold to the next consistent one, reported in `damaged`), reports a final tag whose body overruns the input as `truncated_tail` instead of dropping the good prefix, and accepts a final tag missing only its redundant trailing `PreviousTagSize`. It is the workspace's one FLV tag walker: `transmux`'s `FlvDemux` adapts its result, and transmux's own resync logic is gone.
+- The sans-IO core (handshake, chunk stream, AMF0, messages, client and server sessions) builds `no_std` + `alloc`; only the `tokio` adapter needs `std`. This lets `transmux` depend on rtmp-runtime for its RTMP spokes (#2339).
+- `ChunkAssembler::feed` and `ChunkAssembler::next_message` are public: the incremental form a caller needs when one input buffer carries a Set Chunk Size followed by chunks framed at the new size (`push` uses one chunk size for the whole buffer).
 
 ### Fixed
 - `flv::FlvHeader` serialize now writes the `DataOffset - 9` extra header bytes the parser skipped, so a non-standard `DataOffset` round-trips byte-exactly; `FlvTag::parse` rejects a trailing `PreviousTagSize` that disagrees with `11 + DataSize`.
-
-## [0.9.1] - 2026-11-10
-### Added
-- The sans-IO core (handshake, chunk stream, AMF0, messages, client and server sessions) builds `no_std` + `alloc`; only the `tokio` adapter needs `std`. This lets `transmux` depend on rtmp-runtime for its RTMP spokes (#2339).
-- `ChunkAssembler::feed` and `ChunkAssembler::next_message` are public: the incremental form a caller needs when one input buffer carries a Set Chunk Size followed by chunks framed at the new size (`push` uses one chunk size for the whole buffer).
-### Changed
-- rtmp-runtime no longer dev-depends on `transmux`; the tests that decoded its FLV output with `transmux::FlvDemux` moved into transmux's test suite (#2339).
-### Fixed
 - A Data-AMF0 message that begins with the AMF0 string `@setDataFrame` is forwarded as an FLV script tag that begins with `onMetaData`; the publisher-to-server handler name used to be forwarded verbatim as the script tag name.
 - `ServerSession` refuses a second `connect` while publishing with `RtmpError::UnexpectedState` and keeps publishing; it used to demote the session to `Connected` and silently drop all following media (bug audit E).
 - `BasicHeader` and `MessageHeader` `serialize_into` returned `RtmpError::BufferTooShort` for a too-small output buffer; they now return `RtmpError::OutputBufferTooSmall` (#2269).
+
+### Dependencies
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12.
 
 ## [0.9.0] - 2026-11-07
 ### Changed

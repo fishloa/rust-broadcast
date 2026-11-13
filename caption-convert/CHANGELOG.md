@@ -4,10 +4,13 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
-## [0.6.0] - 2026-11-10
+## [0.6.0] - 2026-11-14
 ### Fixed
 - `cc_data()` with `process_cc_data_flag` clear is discarded instead of producing cues.
 - A WebVTT cue identifier that merely starts with `NOTE` (for example `NOTES1`) is no longer dropped as a NOTE block; only `NOTE` alone or followed by a space or tab is.
+
+### Dependencies
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12, `cc-data` 0.8 -> 0.9, `dvb-vbi` 0.6 -> 0.7, `timed-metadata` 0.9 -> 0.10.
 
 ## [0.5.0] - 2026-11-07
 ### Changed

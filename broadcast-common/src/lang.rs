@@ -57,12 +57,6 @@ pub fn language_matches(preferred: &str, language: &str) -> bool {
     l == p || l.strip_prefix(&p).is_some_and(|rest| rest.starts_with('-'))
 }
 
-/// Alias for [`language_matches`] (argument order: preferred, then language).
-#[must_use]
-pub fn lang_matches(preferred: &str, language: &str) -> bool {
-    language_matches(preferred, language)
-}
-
 #[cfg(test)]
 mod tests_lang_match {
     use super::*;

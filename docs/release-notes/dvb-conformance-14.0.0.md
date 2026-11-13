@@ -1,8 +1,17 @@
-# dvb-conformance 13.1.0
+# dvb-conformance 14.0.0
 
-_Released 2026-11-10._
+_Released 2026-11-14._
 
-Lockstep minor (13.0.0 -> 13.1.0). No breaking changes. The shared summary is in the lockstep note [v13.1.0](v13.1.0.md); this note lists what changed in `dvb-conformance`.
+Major-class release (13 -> 14) for epoch purity: additions and fixes listed below; its sibling dependencies move to new caret epochs, which the workspace treats as a major-class change (docs/RELEASE-AUDIT.md section 2).
+
+Version: 13.0.0 -> 14.0.0.
+
+## Changed
+- Legal-duplicate TS packet detection now imports `mpeg_ts::ts_dup` instead of `broadcast_common::ts_dup` (#2466).
+
+## Added
+- `ConformanceMonitor::indicator_counts` with the `IndicatorCount` record, so a live monitor publishes exactly the accounting the monitor itself keeps.
+- `ConformanceMonitor` now accumulates per-indicator event counts, exposed via `indicator_counts()`.
 
 ## Fixed
 - A CRC-failed PAT, PMT, NIT, SDT, EIT or other SI section no longer changes monitor state: it no longer rebuilds the referenced PID sets (false PMT_error_2 / lost tracking) or refreshes the 3.2 repetition timers, min-gap trackers, `_other` trackers and EIT P/F pairing, so a permanently corrupt NIT now raises 3.2 and a bit-flipped service_id no longer creates a phantom EIT_PF_error.
@@ -16,9 +25,8 @@ Lockstep minor (13.0.0 -> 13.1.0). No breaking changes. The shared summary is in
 - The EIT P/F pairing map is bounded (1024 sub-tables).
 
 ## Dependencies
-- `mpeg-ts` 0.7.0 -> 0.7.1.
-- `dvb-si` 13.0.0 -> 13.1.0.
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12, `dvb-si` 13 -> 14, `mpeg-ts` 0.7 -> 0.8.
 
 ---
 
-Published from tag `v13.1.0`.
+Published from tag `v14.0.0`.

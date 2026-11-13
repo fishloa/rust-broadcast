@@ -15,7 +15,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "11.1.0", default-features = false, features = ["url"] }
+broadcast-common = { path = "../broadcast-common", version = "12.0.0", default-features = false, features = ["url"] }
 transmux          = { path = "../transmux", version = "0.31.0", default-features = false, features = ["sample-aes"] }
 # HLS (M3U8) playlist syntax (issue #878): the client/origin engines parse
 # and render playlists via this crate directly rather than through `transmux`.
@@ -26,10 +26,10 @@ broadcast-hls     = { path = "../broadcast-hls", version = "0.7.0", default-feat
 timed-metadata    = { path = "../timed-metadata", version = "0.10.0", default-features = false }
 # `client::engine` decides whether a fetched segment body is media with the
 # shared `segment` checks (the DASH client uses the same ones).
-container-probe   = { path = "../container-probe", version = "0.3.1", default-features = false }
+container-probe   = { path = "../container-probe", version = "0.4.0", default-features = false }
 # The TS sync byte and packet size the classic TS-segment detection reads are
 # `mpeg_ts::ts`'s own constants, so HLS cannot drift from the demuxer's framing.
-mpeg-ts           = { path = "../mpeg-ts", version = "0.7.1", default-features = false }
+mpeg-ts           = { path = "../mpeg-ts", version = "0.8.0", default-features = false }
 thiserror         = { version = "2", default-features = false }
 serde             = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 # Only pulled in by the `std` feature: `server::engine::HlsOrigin` renders

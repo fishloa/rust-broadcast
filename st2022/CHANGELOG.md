@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-14
+### Changed
+- Major-class release for epoch purity only: no API or behaviour change in this crate; its sibling dependencies move to new caret epochs.
+
+### Dependencies
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12.
+
 ## [0.3.0] - 2026-11-07
 ### Fixed
 - Serializers report a too-small output buffer as the new `Error::OutputBufferTooSmall { need, have }` (with `From<broadcast_common::len::OutputBufferTooSmall>`) instead of the input-side `Error::BufferTooShort` (c6 C6-02).

@@ -114,6 +114,7 @@ cargo run -p dash-runtime --example play_live -- --mpd fixtures/dash/live-timeli
 - Lazy segment plans for `SegmentTemplate`, `SegmentTimeline`, `SegmentList` and `SegmentBase` with `sidx`, including availability windows.
 - The UTC clock (`UTCTiming`, host clock, response `Date`) and live-edge arithmetic.
 - `DashClient`, playing static and dynamic MPDs to ordered `Fmp4Demux` samples with typed failure classes.
+- `ingest`: the DASH-IF Live Media Ingest (Interface-1) sans-IO engine: request classification (`classify`), MPD manifest grouping, the §5.3 status mapping and the per-track header/segment state machine (`DashifIngestSession` with `DashifIngestConfig` limits).
 
 ## Static presentations: behaviour worth knowing
 
@@ -139,7 +140,6 @@ Independent oracles, not this crate's own output:
 
 - Real MPDs and media from ffmpeg 8.1 and GPAC 26.07 (`fixtures/dash/`), with MP4Box `-diso` and ffprobe output next to each: the expanded segment URLs equal the files on disk, `$Time$` equals the `sidx` earliest presentation time (and differs from `tfdt` where the real files do), and every `sidx` byte range starts at a `moof` and tiles the file.
 - Real DASH-IF livesim2 MPDs (dynamic, `$Time$` and `$Number$` timelines, two consecutive refreshes): numbering stays stable across the refresh.
-- `transmux::dash_parse` and its generator's goldens: both parsers agree on every shared field, segment number/time and resolved URL, and the lazy timeline equals `SegmentTimeline::resolve` on 20 000 random timelines.
 - The IOP v4.3 Table 10 worked example and the `xs:dateTime` accept/reject table of the notes.
 - A hostile corpus (entity expansion, depth, element count, huge `@r`, NUL bytes, invalid UTF-8) and a mutation table (`docs/mutation-table.md`).
 - The client: every static fixture (ffmpeg and GPAC timelines, `SegmentList`, on-demand `sidx` including GPAC's nonsense `presentationTimeOffset`, multi-Period restart and continuous) plays through a loopback host that serves the real files by URL and byte range, and the delivered samples (payload, pts, dts, duration, flags, count per track) equal what `Fmp4Demux` makes of the concatenated init and segments, for four completion orders and window sizes 1 to 8. A failure matrix injects eleven faults (404, 410, 425, 429, 500, 503, transport, timeout, truncated, header-only, garbage 200) transiently and permanently on a segment, an init, the `sidx` and ranged subsegments, MPD included. 48 client mutants are all killed (`docs/mutation-table-client.md`); the fuzz target `dash_client_static` drives the whole client with arbitrary MPDs and steered, damaged answers.

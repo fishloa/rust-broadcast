@@ -39,7 +39,7 @@ them).
 
 ```toml
 [dependencies]
-ts-fix = { version = "0.8", default-features = false } # library only
+ts-fix = { version = "0.9", default-features = false } # library only
 ```
 
 ## Library quick start
@@ -121,7 +121,7 @@ wrote 450 packets (84600 bytes) to keep.ts
 | `Stuffing` (`drop_nulls()`, `pad_to(packets_per_input)`) | Drop null packets or pad to a rate; `pad_to` rejects a rate below 1.0 or above `Stuffing::MAX_PACKETS_PER_INPUT` with `Error::InvalidPadRate` |
 | `discontinuity::{detect_pcr_discontinuities, PcrDiscontinuity}` | Standalone read-only audit of PCR breaks (flagged vs unflagged) |
 | `pes::{reconstruct_access_units, AccessUnit}` | PES access-unit framing with PTS/DTS (opaque bytes); an input that is not a multiple of 188 bytes is `Error::UnalignedInput` |
-| `Error` (`ShortPacket`, `NoSyncByte`, `UnalignedInput`, ...) | Structured errors |
+| `Error` (`ShortPacket`, `InvalidSync`, `UnalignedInput`, `InvalidPadRate`) | Structured errors |
 
 ## Design notes
 
@@ -129,7 +129,7 @@ wrote 450 packets (84600 bytes) to keep.ts
   trait; operations are builder methods only, and every configuration and error
   enum is `#[non_exhaustive]`, so a new operation is a purely additive change.
 - **Canonical order is enforced** by `build()`, not by the caller.
-- **Reused judgements.** Legal duplicate packets are `broadcast_common::ts_dup`
+- **Reused judgements.** Legal duplicate packets are `mpeg_ts::ts_dup`
   (same rule as `dvb-conformance` and `media-doctor`, issue #956); PCR wrap
   arithmetic is `clock33` (`workspace-guards/tests/guards/clock33.rs` bans a local 2^33).
 - **`--regen-psi` after a filter that drops every PMT** (e.g. `--keep-pids`

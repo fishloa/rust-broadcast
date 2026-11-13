@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-14
+### Changed
+- Major-class release for epoch purity only: no API or behaviour change in this crate; its sibling dependencies move to new caret epochs.
+
+### Dependencies
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12.
+
 ## [0.7.0] - 2026-11-07
 ### Fixed
 - `PesDataField::parse` returns `Error::BadEndOfPesMarker` when exactly one byte follows the last whole segment and it is not the fixed `0xFF` `end_of_PES_data_field_marker` (EN 300 743 §7.2, Table 3); a field with misframed or truncated segments keeps its remainder verbatim as before (c2 TH3).

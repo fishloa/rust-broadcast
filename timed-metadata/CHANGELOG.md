@@ -3,13 +3,17 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+
+## [0.10.0] - 2026-11-14
 ### Changed
 - `PTS_HZ` is a re-export of `broadcast_common::clock33::PTS_HZ` instead of a second definition; its path and value are unchanged (#2343).
 
-## [0.10.0] - 2026-11-10
 ### Fixed
 - Two Start Box..End Box segments on one Teletext row are separated by a space instead of being glued together.
 - `Timeline` now seeds its 33-bit PTS unroller from the anchor, so a cue just after a PTS wrap that follows an anchor just before it is placed 2 s after the anchor instead of ~26.5 h before it (wrong `START-DATE`).
+
+### Dependencies
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12, `broadcast-hls` 0.6 -> 0.7, `cc-data` 0.8 -> 0.9, `dvb-vbi` 0.6 -> 0.7, `mp4-emsg` 0.6 -> 0.7, `scte35-splice` 5 -> 6.
 
 ## [0.9.0] - 2026-11-07
 ### Removed

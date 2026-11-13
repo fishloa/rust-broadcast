@@ -353,8 +353,6 @@ pub fn recovery_point_sei(nal: &[u8]) -> bool {
 const SEI_RBSP_TRAILING_BYTE: u8 = 0x80;
 const SEI_SIZE_ESCAPE_BYTE: u8 = 0xFF;
 const HEVC_PREFIX_SEI_LAYER_ZERO_TID_PLUS1: u8 = 1;
-const EMULATION_PREVENTION_BYTE: u8 = 0x03;
-const EMULATION_ZERO_RUN: usize = 2;
 
 /// An HEVC prefix SEI NAL unit (2-byte header, the given `(payloadType,
 /// payload)` messages, `rbsp_trailing_bits`, emulation prevention applied) —
@@ -377,18 +375,11 @@ pub(crate) fn hevc_prefix_sei_nal(messages: &[(u32, &[u8])]) -> Vec<u8> {
         rbsp.extend_from_slice(payload);
     }
     rbsp.push(SEI_RBSP_TRAILING_BYTE);
-    let mut nal = Vec::with_capacity(rbsp.len() + 4);
+    let escaped = crate::rbsp::escape(&rbsp);
+    let mut nal = Vec::with_capacity(escaped.len() + 2);
     nal.push(crate::hdr::HEVC_PREFIX_SEI_NUT << HEVC_NAL_TYPE_SHIFT);
     nal.push(HEVC_PREFIX_SEI_LAYER_ZERO_TID_PLUS1);
-    let mut zeros = 0usize;
-    for b in rbsp {
-        if zeros >= EMULATION_ZERO_RUN && b <= EMULATION_PREVENTION_BYTE {
-            nal.push(EMULATION_PREVENTION_BYTE);
-            zeros = 0;
-        }
-        zeros = if b == 0 { zeros + 1 } else { 0 };
-        nal.push(b);
-    }
+    nal.extend_from_slice(&escaped);
     nal
 }
 

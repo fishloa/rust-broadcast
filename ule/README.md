@@ -70,7 +70,7 @@ cargo run -p ule --example receive_sndu
 
 - **Zero-copy, symmetric.** `Sndu` and `PayloadChain` borrow from the input (`Parse`/`Serialize` style) and every parser has a serializer; round-trip is tested, including against the real RFC 4326 Appendix B vector committed as a fixture.
 - **No raw passthrough.** Length and CRC are always recomputed on serialize; a wrong length or CRC on the wire is a parse error (`Error::CrcMismatch`, `Error::InvalidLength`).
-- **Error model.** One `thiserror` enum, `Error`, with context-carrying variants (`BufferTooShort`, `OutputBufferTooSmall`, `InvalidLength`, `CrcMismatch`, `FieldTooWide`, `InvalidExtensionHeader`); serializers check output space before writing.
+- **Error model.** One `thiserror` enum, `Error`, with context-carrying variants (`BufferTooShort`, `OutputBufferTooSmall`, `InvalidLength`, `CrcMismatch`, `FieldOverflow`, `InvalidExtensionHeader`); serializers check output space before writing.
 - Public enums are `#[non_exhaustive]` and carry `name()` / `Display` labels; `#![no_std]` + `alloc`.
 
 ## Related crates

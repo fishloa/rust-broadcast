@@ -1,8 +1,8 @@
 # multimux-cli 0.16.0
 
-_Released 2026-11-10._
+_Released 2026-11-14._
 
-Breaking-class release (0.15 -> 0.16) by dependency epoch: `multimux` moves to 0.18. No functional change in this crate.
+Major-class release (0.15 -> 0.16) for epoch purity: additions and fixes listed below; its sibling dependencies move to new caret epochs, which the workspace treats as a major-class change (docs/RELEASE-AUDIT.md section 2).
 
 Version: 0.15.0 -> 0.16.0.
 
@@ -11,8 +11,7 @@ Version: 0.15.0 -> 0.16.0.
 None in this crate's own API. The bump is required because `multimux` moves to a new caret epoch; consumers must resolve a single copy.
 
 ## Dependencies
-
-- `multimux` 0.17 -> 0.18
+- Sibling dependencies move to new caret epochs: `multimux` 0.17 -> 0.18.
 
 ---
 

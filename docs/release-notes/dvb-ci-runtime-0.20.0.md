@@ -1,8 +1,8 @@
 # dvb-ci-runtime 0.20.0
 
-_Released 2026-11-10._
+_Released 2026-11-14._
 
-Breaking-class release (0.19 -> 0.20): `resource::Mmi` becomes a struct with chain state; sibling epochs move.
+Breaking-class release (0.19 -> 0.20): breaking API changes are listed below, and the crate's sibling dependencies move to new caret epochs.
 
 Version: 0.19.0 -> 0.20.0.
 
@@ -29,9 +29,7 @@ let m = Mmi::default();
 - MMI reassembles chained menus/lists.
 
 ## Dependencies
-
-- `dvb-si` 12 -> 13
-- `broadcast-common` 10 -> 11
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12, `dvb-ci` 0.11 -> 0.12, `dvb-si` 13 -> 14, `mpeg-ts` 0.7 -> 0.8.
 
 ---
 

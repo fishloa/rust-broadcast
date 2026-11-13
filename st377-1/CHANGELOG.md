@@ -6,11 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-### Changed
-- The KLV triplet and BER length codec are `broadcast_common::klv`'s (#2341). The crate root re-exports `st377_1::{BerLength, KlvItem, walk_klv_items, collect_klv_items, ber_length_size_for, decode_ber_length, encode_ber_length_as}`; the `ber` and `klv` modules themselves stay private, so `st377_1::ber::…` and `st377_1::klv::…` do not resolve. `st377_1::BerLength` now names `broadcast_common::klv::BerLength` (this crate's original type is gone; both paths resolve to the same type). The canonical minimal-form pair `ber_length_size` / `encode_ber_length` is not re-exported here: every MXF length token goes through the width-preserving `ber_length_size_for` / `encode_ber_length_as`. The Fill-item key helpers (`FILL_ITEM_KEY_PREFIX`, `FILL_ITEM_KEY_SUFFIX`, `is_fill_item_key`) stay at the crate root.
-- Requires broadcast-common 11.1.0.
+
+## [0.7.0] - 2026-11-14
 ### Breaking
 - `Error`'s BER/KLV variants (`BerIndefiniteLength`, `BerLengthTooLong`, `FixedBerLengthTooSmall`) are removed; every BER/KLV failure is now `Error::Klv(broadcast_common::klv::KlvError)`, which carries the same cases. Match on `Error::Klv(..)` instead.
+
+### Changed
+- The KLV triplet and BER length codec are `broadcast_common::klv`'s (#2341). The crate root re-exports `st377_1::{BerLength, KlvItem, walk_klv_items, collect_klv_items, ber_length_size_for, decode_ber_length, encode_ber_length_as}`; the `ber` and `klv` modules themselves stay private, so `st377_1::ber::…` and `st377_1::klv::…` do not resolve. `st377_1::BerLength` now names `broadcast_common::klv::BerLength` (this crate's original type is gone; both paths resolve to the same type). The canonical minimal-form pair `ber_length_size` / `encode_ber_length` is not re-exported here: every MXF length token goes through the width-preserving `ber_length_size_for` / `encode_ber_length_as`. The Fill-item key helpers (`FILL_ITEM_KEY_PREFIX`, `FILL_ITEM_KEY_SUFFIX`, `is_fill_item_key`) stay at the crate root.
+
+### Dependencies
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12.
 
 ## [0.6.0] - 2026-11-07
 ### Fixed

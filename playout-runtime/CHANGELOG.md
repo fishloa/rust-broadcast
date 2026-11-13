@@ -4,9 +4,12 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
-## [0.6.0] - 2026-11-10
+## [0.6.0] - 2026-11-14
 ### Fixed
 - `build_splice_insert` rejects a `break_duration_ticks` of 2^33 or more with the new `Error::BreakDurationTooLong` (`Error` is `#[non_exhaustive]`); it used to build the cue and fail only when it was serialized.
+
+### Dependencies
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12, `scte35-splice` 5 -> 6, `ssai-runtime` 0.5 -> 0.6.
 
 ## [0.5.0] - 2026-11-07
 ### Changed

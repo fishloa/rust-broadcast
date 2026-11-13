@@ -1,12 +1,14 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.9.0] - 2026-11-14
 ### Changed
 - Legal-duplicate TS packet detection now imports `mpeg_ts::ts_dup` instead of `broadcast_common::ts_dup` (#2466).
-
-## [0.8.1] - 2026-11-10
-### Changed
 - Internal: the service-extract filter state is boxed (clippy `large_enum_variant` after `SectionReassembler` grew a continuity-counter field).
+
+### Added
+- `Error::InvalidPadRate` (the enum is `#[non_exhaustive]`) and `Stuffing::MAX_PACKETS_PER_INPUT`.
 
 ### Fixed
 - Stuffing now runs before `restamp_pcr` and `honor_pcr_discontinuity` (it was last), so a PCR describes the byte position of the packet in the output instead of its position before nulls were inserted or dropped; `restamp_pcr(from_bitrate)` combined with `pad_to` or `drop_nulls` produced PCRs off by the stuffing ratio.
@@ -15,8 +17,9 @@
 - `Stuffing::pad_to` with a non-finite, below-1.0 or above-`Stuffing::MAX_PACKETS_PER_INPUT` rate fails `build()` with `Error::InvalidPadRate` instead of looping forever (`--pad-to inf`).
 - `PidFilter::service` ignores PAT, PMT and CAT sections with `current_next_indicator = 0`.
 - The CLI writes the trailing aligned packets of the input, and a capture shorter than five packets, instead of an empty file.
-### Added
-- `Error::InvalidPadRate` (the enum is `#[non_exhaustive]`) and `Stuffing::MAX_PACKETS_PER_INPUT`.
+
+### Dependencies
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12, `dvb-conformance` 13 -> 14, `dvb-si` 13 -> 14, `mpeg-pes` 0.7 -> 0.8, `mpeg-ts` 0.7 -> 0.8.
 
 ## [0.8.0] - 2026-11-07
 ### Documentation

@@ -480,6 +480,7 @@ while let Some(action) = session.poll(0) {
 | Feature | Default | Effect |
 |---|---|---|
 | `serde` | no | `Serialize` on events and configuration, forwarded to `broadcast-common`, `transmux` and `buffering-runtime` and enabling it on the `tshttp` types. |
+| `test-seams` | no | Hidden hooks for this crate's own test suites (renamed from `__test-seams`). Not public API. |
 
 The crate is `std`-only and has no `std` feature.
 

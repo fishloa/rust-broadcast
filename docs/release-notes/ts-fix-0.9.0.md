@@ -1,10 +1,10 @@
-# ts-fix 0.8.1
+# ts-fix 0.9.0
 
-_Released 2026-11-10._
+_Released 2026-11-14._
 
-Patch release: stuffing, continuity, pad-rate and CLI fixes.
+Major-class release (0.8 -> 0.9) for epoch purity: additions and fixes listed below; its sibling dependencies move to new caret epochs, which the workspace treats as a major-class change (docs/RELEASE-AUDIT.md section 2).
 
-Version: 0.8.0 -> 0.8.1.
+Version: 0.8.0 -> 0.9.0.
 
 ## Added
 - `Error::InvalidPadRate` (the enum is `#[non_exhaustive]`) and `Stuffing::MAX_PACKETS_PER_INPUT`.
@@ -20,11 +20,14 @@ Version: 0.8.0 -> 0.8.1.
 ## Changed
 - Internal: the service-extract filter state is boxed (clippy `large_enum_variant` after `SectionReassembler` grew a continuity-counter field).
 
+## Also in this release
+
+### Changed
+- Legal-duplicate TS packet detection now imports `mpeg_ts::ts_dup` instead of `broadcast_common::ts_dup` (#2466).
+
 ## Dependencies
-- `mpeg-ts` 0.7.0 -> 0.7.1.
-- `mpeg-pes` 0.7.0 -> 0.7.1.
-- `scte35-splice` 5.0 -> 5.0.1.
+- Sibling dependencies move to new caret epochs: `broadcast-common` 11 -> 12, `dvb-conformance` 13 -> 14, `dvb-si` 13 -> 14, `mpeg-pes` 0.7 -> 0.8, `mpeg-ts` 0.7 -> 0.8.
 
 ---
 
-Published from tag `ts-fix-v0.8.1`.
+Published from tag `ts-fix-v0.9.0`.

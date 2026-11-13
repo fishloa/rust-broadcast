@@ -7,8 +7,8 @@ SRT (Secure Reliable Transport): packet codecs plus sans-IO handshake, ARQ, deli
 
 ```toml
 [dependencies]
-srt-runtime = "0.8"
-# srt-runtime = { version = "0.5", features = ["tokio", "crypto"] }
+srt-runtime = "0.9"
+# srt-runtime = { version = "0.9", features = ["tokio", "crypto"] }
 ```
 
 ## What it does / what it does not
