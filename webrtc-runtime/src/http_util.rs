@@ -165,7 +165,7 @@ pub(crate) fn same_origin(endpoint: &str, target: &str) -> bool {
     let Ok(base) = url::Url::parse(endpoint) else {
         return false;
     };
-    base.join(target)
+    broadcast_common::url_ref::resolve(&base, target)
         .is_ok_and(|resolved| resolved.origin() == base.origin())
 }
 
@@ -253,5 +253,18 @@ mod tests {
         assert_eq!(etag_of(&h), None);
         h.insert(http::header::ETAG, HeaderValue::from_static("\"v1\""));
         assert_eq!(etag_of(&h).as_deref(), Some("v1"));
+    }
+
+    /// RFC 3986 §2: a target with a control character names no URL, so it is
+    /// never the same origin (the WHATWG join would delete the TAB and call
+    /// `https://a.exam\tple/` the endpoint's own origin).
+    #[test]
+    fn a_target_with_a_control_character_is_a_different_origin() {
+        assert!(same_origin("https://a.example/whip", "/resource"));
+        assert!(!same_origin(
+            "https://a.example/whip",
+            "https://a.exam\tple/x"
+        ));
+        assert!(!same_origin("https://a.example/whip", "/re\nsource"));
     }
 }
