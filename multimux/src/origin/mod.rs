@@ -112,6 +112,10 @@ pub struct HttpLimits {
     pub request_timeout: Duration,
     /// Maximum requests serviced concurrently, across every route.
     pub max_concurrent_requests: usize,
+    /// Maximum LL-HLS blocking-reload requests parked at once on any one
+    /// route; each route has its own pool, so a reload flood on one route
+    /// cannot shed another's.
+    pub max_blocking_reloads_per_route: usize,
     /// Maximum accepted request body size, in bytes.
     pub max_request_body_bytes: usize,
     /// How long a request may wait for a concurrency permit before it is shed
@@ -128,6 +132,10 @@ pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// Default concurrent-request bound, across every configured route.
 pub const DEFAULT_MAX_CONCURRENT_REQUESTS: usize = 4096;
 
+/// Default per-route blocking-reload bound.
+pub const DEFAULT_MAX_BLOCKING_RELOADS_PER_ROUTE: usize =
+    limit::DEFAULT_MAX_BLOCKING_RELOADS_PER_ROUTE;
+
 /// Default request-body cap: 16 KiB — comfortably above anything a
 /// legitimate `GET` needs (query string only, no body) and far below what a
 /// slow-loris-style oversized POST would need to pressure memory.
@@ -142,6 +150,7 @@ impl Default for HttpLimits {
         HttpLimits {
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
             max_concurrent_requests: DEFAULT_MAX_CONCURRENT_REQUESTS,
+            max_blocking_reloads_per_route: DEFAULT_MAX_BLOCKING_RELOADS_PER_ROUTE,
             max_request_body_bytes: DEFAULT_MAX_REQUEST_BODY_BYTES,
             queue_timeout: DEFAULT_QUEUE_TIMEOUT,
         }
@@ -158,6 +167,7 @@ impl From<&crate::config::Config> for HttpLimits {
         HttpLimits {
             request_timeout: secs_or_default(cfg.request_timeout_secs, DEFAULT_REQUEST_TIMEOUT),
             max_concurrent_requests: cfg.max_concurrent_requests,
+            max_blocking_reloads_per_route: cfg.max_blocking_reloads_per_route,
             max_request_body_bytes: cfg.max_request_body_bytes,
             queue_timeout: secs_or_default(
                 cfg.concurrency_queue_timeout_secs,
@@ -333,11 +343,14 @@ pub fn router(state: Arc<AppState>) -> Router {
         // request timeout. The layer is built ONCE here, because the pools
         // live in the layer value: building it per route would give one pool
         // per route.
-        .layer(limit::BudgetLimitLayer::new(
-            limits.max_concurrent_requests,
-            (limits.max_concurrent_requests / limit::DEFAULT_BLOCKING_RELOAD_DIVISOR).max(1),
-            limits.queue_timeout,
-        ))
+        .layer(
+            limit::BudgetLimitLayer::new(
+                limits.max_concurrent_requests,
+                limits.max_blocking_reloads_per_route,
+                limits.queue_timeout,
+            )
+            .with_routes(state.streams.keys().map(String::as_str)),
+        )
 }
 
 /// A real [`router`] over a one-stream (`cam1`) state with `ordinary`

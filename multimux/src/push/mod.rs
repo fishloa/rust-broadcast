@@ -798,7 +798,9 @@ mod tests {
     /// never gets to run the sibling task.
     #[tokio::test(start_paused = true, flavor = "current_thread")]
     async fn drive_push_yields_when_no_listener_slot_is_free() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(1), nz(1), nz(1), nz(1), nz(1)));
+        let trunk = Trunk::new(
+            TrunkConfig::new(nz(1), nz(1), nz(1), nz(1), nz(1)).with_waiter_capacity(nz(1)),
+        );
         let _held_slot = trunk.listen().expect("the sole waiter slot is free here");
 
         let sibling_progress = Arc::new(AtomicU64::new(0));

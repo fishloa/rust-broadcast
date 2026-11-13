@@ -56,7 +56,8 @@ fn zero_backoff() -> ReconnectPolicy {
 /// virtual time at all.
 #[tokio::test(start_paused = true)]
 async fn a_push_with_no_free_waiter_slot_returns_promptly_on_cancel() {
-    let trunk = Trunk::new(TrunkConfig::new(nz(1), nz(1), nz(1), nz(1), nz(1)));
+    let trunk =
+        Trunk::new(TrunkConfig::new(nz(1), nz(1), nz(1), nz(1), nz(1)).with_waiter_capacity(nz(1)));
     let held = trunk.listen().expect("the sole waiter slot is free here");
     assert_eq!(trunk.waiter_count(), 1);
 
@@ -96,7 +97,8 @@ async fn a_push_with_no_free_waiter_slot_returns_promptly_on_cancel() {
 /// spin below.
 #[tokio::test(start_paused = true)]
 async fn freeing_a_slot_wakes_a_parked_push() {
-    let trunk = Trunk::new(TrunkConfig::new(nz(1), nz(1), nz(1), nz(1), nz(1)));
+    let trunk =
+        Trunk::new(TrunkConfig::new(nz(1), nz(1), nz(1), nz(1), nz(1)).with_waiter_capacity(nz(1)));
     let held = trunk.listen().expect("the sole waiter slot is free here");
 
     let cancel = tokio_util::sync::CancellationToken::new();
