@@ -33,8 +33,7 @@ async fn caller_drop_releases_its_local_port_for_reuse() {
     let caller = SrtSocket::connect_from_socket(
         sock,
         listener_addr,
-        HandshakeConfig::default(),
-        IoConfig::default(),
+        srt_runtime::io::SrtConfig::new(HandshakeConfig::default()).with_io(IoConfig::default()),
     )
     .await
     .expect("connect_from");

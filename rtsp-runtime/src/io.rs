@@ -88,6 +88,107 @@ fn io_err(context: IoContext, source: std::io::Error) -> Error {
 // Client
 // ===========================================================================
 
+/// What an [`AsyncRtspClient`] is configured by: the session (credentials,
+/// user agent) and the [`Timeouts`] on every awaited I/O. Every client
+/// constructor takes `impl Into<RtspClientConfig>`, so a bare [`ClientSession`]
+/// is accepted as is.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct RtspClientConfig {
+    /// The protocol session, e.g. one carrying
+    /// [`Credentials`](crate::Credentials).
+    pub session: ClientSession,
+    /// Bounds on every awaited I/O; `connect` bounds the TCP connect and
+    /// `handshake` the TLS handshake.
+    pub timeouts: Timeouts,
+}
+
+impl RtspClientConfig {
+    /// A config with `session` and the default [`Timeouts`].
+    pub fn new(session: ClientSession) -> Self {
+        RtspClientConfig {
+            session,
+            timeouts: Timeouts::default(),
+        }
+    }
+
+    /// Replace [`RtspClientConfig::session`].
+    #[must_use]
+    pub fn with_session(mut self, session: ClientSession) -> Self {
+        self.session = session;
+        self
+    }
+
+    /// Replace [`RtspClientConfig::timeouts`].
+    #[must_use]
+    pub fn with_timeouts(mut self, timeouts: Timeouts) -> Self {
+        self.timeouts = timeouts;
+        self
+    }
+}
+
+impl Default for RtspClientConfig {
+    fn default() -> Self {
+        RtspClientConfig::new(ClientSession::new())
+    }
+}
+
+impl From<ClientSession> for RtspClientConfig {
+    fn from(session: ClientSession) -> Self {
+        RtspClientConfig::new(session)
+    }
+}
+
+/// What an [`AsyncRtspServer`] is configured by: the session and the
+/// [`Timeouts`] on every awaited I/O (`handshake` bounds the TLS handshake and
+/// the first complete request). Every server constructor takes
+/// `impl Into<RtspServerConfig>`, so a bare [`ServerSession`] is accepted as is.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct RtspServerConfig {
+    /// The protocol session.
+    pub session: ServerSession,
+    /// Bounds on every awaited I/O.
+    pub timeouts: Timeouts,
+}
+
+impl RtspServerConfig {
+    /// A config with `session` and the default [`Timeouts`].
+    pub fn new(session: ServerSession) -> Self {
+        RtspServerConfig {
+            session,
+            timeouts: Timeouts::default(),
+        }
+    }
+
+    /// Replace [`RtspServerConfig::session`].
+    #[must_use]
+    pub fn with_session(mut self, session: ServerSession) -> Self {
+        self.session = session;
+        self
+    }
+
+    /// Replace [`RtspServerConfig::timeouts`].
+    #[must_use]
+    pub fn with_timeouts(mut self, timeouts: Timeouts) -> Self {
+        self.timeouts = timeouts;
+        self
+    }
+}
+
+impl Default for RtspServerConfig {
+    /// A session whose ids come from the OS random source.
+    fn default() -> Self {
+        RtspServerConfig::new(ServerSession::new(os_session_id))
+    }
+}
+
+impl From<ServerSession> for RtspServerConfig {
+    fn from(session: ServerSession) -> Self {
+        RtspServerConfig::new(session)
+    }
+}
+
 /// An async RTSP client that owns a socket and drives a [`ClientSession`].
 ///
 /// Each request method (`options`/`describe`/`setup`/`play`/`pause`/`teardown`)
@@ -115,32 +216,21 @@ impl AsyncRtspClient<TcpStream> {
     ///
     /// `addr` is any [`tokio::net::ToSocketAddrs`]; for the RTSP default port use
     /// `(host, RTSP_DEFAULT_PORT)`.
-    pub async fn connect<A: tokio::net::ToSocketAddrs>(addr: A) -> Result<Self> {
-        Self::connect_with_timeouts(addr, ClientSession::new(), Timeouts::default()).await
-    }
-
-    /// Connects a plain-TCP client to `addr` using a pre-configured session
-    /// (e.g. one carrying [`Credentials`](crate::Credentials)).
-    pub async fn connect_with<A: tokio::net::ToSocketAddrs>(
+    ///
+    /// `config` is an [`RtspClientConfig`] (or a bare [`ClientSession`], e.g.
+    /// one carrying [`Credentials`](crate::Credentials)).
+    pub async fn connect<A: tokio::net::ToSocketAddrs>(
         addr: A,
-        session: ClientSession,
+        config: impl Into<RtspClientConfig>,
     ) -> Result<Self> {
-        Self::connect_with_timeouts(addr, session, Timeouts::default()).await
-    }
-
-    /// Like [`connect_with`](Self::connect_with), with explicit [`Timeouts`].
-    pub async fn connect_with_timeouts<A: tokio::net::ToSocketAddrs>(
-        addr: A,
-        session: ClientSession,
-        timeouts: Timeouts,
-    ) -> Result<Self> {
-        let stream = bounded(timeouts.connect, "connect", async {
+        let config = config.into();
+        let stream = bounded(config.timeouts.connect, "connect", async {
             TcpStream::connect(addr)
                 .await
                 .map_err(|e| io_err(IoContext::Connect, e))
         })
         .await?;
-        Ok(Self::with_stream_timeouts(stream, session, timeouts))
+        Ok(Self::with_stream(stream, config))
     }
 }
 
@@ -148,19 +238,14 @@ impl<S> AsyncRtspClient<S>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    /// Wraps an already-connected stream (plain or TLS) and a session, with the
-    /// default [`Timeouts`].
-    pub fn with_stream(stream: S, session: ClientSession) -> Self {
-        Self::with_stream_timeouts(stream, session, Timeouts::default())
-    }
-
-    /// Wraps an already-connected stream with explicit [`Timeouts`].
-    pub fn with_stream_timeouts(stream: S, session: ClientSession, timeouts: Timeouts) -> Self {
+    /// Wraps an already-connected stream (plain or TLS) with `config`.
+    pub fn with_stream(stream: S, config: impl Into<RtspClientConfig>) -> Self {
+        let config = config.into();
         AsyncRtspClient {
-            framed: Framed::new(stream, ClientCodec::new(session)),
+            framed: Framed::new(stream, ClientCodec::new(config.session)),
             pending_media: VecDeque::new(),
             deferred_error: None,
-            timeouts,
+            timeouts: config.timeouts,
         }
     }
 
@@ -630,34 +715,8 @@ impl AsyncRtspClient<tokio_rustls::client::TlsStream<TcpStream>> {
     pub async fn connect_tls<A: tokio::net::ToSocketAddrs>(
         addr: A,
         server_name: &str,
-        config: rustls::ClientConfig,
-    ) -> Result<Self> {
-        Self::connect_tls_with(addr, server_name, config, ClientSession::new()).await
-    }
-
-    /// Connects an `rtsps://` (TLS) client to `addr` using a pre-configured
-    /// session (e.g. one carrying [`Credentials`](crate::Credentials) via
-    /// [`ClientSession::with_credentials`]), otherwise identical to
-    /// [`connect_tls`](Self::connect_tls).
-    pub async fn connect_tls_with<A: tokio::net::ToSocketAddrs>(
-        addr: A,
-        server_name: &str,
-        config: rustls::ClientConfig,
-        session: ClientSession,
-    ) -> Result<Self> {
-        Self::connect_tls_with_timeouts(addr, server_name, config, session, Timeouts::default())
-            .await
-    }
-
-    /// Like [`connect_tls_with`](Self::connect_tls_with), with explicit
-    /// [`Timeouts`]: `connect` bounds the TCP connect, `handshake` the TLS
-    /// handshake.
-    pub async fn connect_tls_with_timeouts<A: tokio::net::ToSocketAddrs>(
-        addr: A,
-        server_name: &str,
-        config: rustls::ClientConfig,
-        session: ClientSession,
-        timeouts: Timeouts,
+        tls: rustls::ClientConfig,
+        config: impl Into<RtspClientConfig>,
     ) -> Result<Self> {
         let addr = addr;
         connect_tls_via(
@@ -667,9 +726,8 @@ impl AsyncRtspClient<tokio_rustls::client::TlsStream<TcpStream>> {
                     .map_err(|e| io_err(IoContext::Connect, e))
             },
             server_name,
-            config,
-            session,
-            timeouts,
+            tls,
+            config.into(),
         )
         .await
     }
@@ -681,9 +739,8 @@ impl AsyncRtspClient<tokio_rustls::client::TlsStream<TcpStream>> {
 async fn connect_tls_via<T>(
     dial: impl std::future::Future<Output = Result<T>>,
     server_name: &str,
-    config: rustls::ClientConfig,
-    session: ClientSession,
-    timeouts: Timeouts,
+    tls: rustls::ClientConfig,
+    config: RtspClientConfig,
 ) -> Result<AsyncRtspClient<tokio_rustls::client::TlsStream<T>>>
 where
     T: AsyncRead + AsyncWrite + Unpin,
@@ -691,8 +748,9 @@ where
     use std::sync::Arc;
     use tokio_rustls::TlsConnector;
 
+    let timeouts = config.timeouts;
     let tcp = bounded(timeouts.connect, "connect", dial).await?;
-    let connector = TlsConnector::from(Arc::new(config));
+    let connector = TlsConnector::from(Arc::new(tls));
     let dns = rustls::pki_types::ServerName::try_from(server_name.to_string()).map_err(|e| {
         Error::Tls {
             server_name: server_name.to_string(),
@@ -706,9 +764,7 @@ where
             .map_err(|e| io_err(IoContext::TlsHandshake, e))
     })
     .await?;
-    Ok(AsyncRtspClient::with_stream_timeouts(
-        stream, session, timeouts,
-    ))
+    Ok(AsyncRtspClient::with_stream(stream, config))
 }
 
 /// Builds a [`rustls::ClientConfig`] trusting the `webpki-roots` public-CA
@@ -778,18 +834,14 @@ impl AsyncRtspServer<TcpStream> {
 impl AsyncRtspServer<tokio_rustls::server::TlsStream<TcpStream>> {
     /// Performs the TLS handshake over an accepted TCP connection (an
     /// `rtsps://` server), then wraps the TLS stream with a fresh session.
-    pub async fn accept_tls(stream: TcpStream, config: rustls::ServerConfig) -> Result<Self> {
-        Self::accept_tls_with_timeouts(stream, config, Timeouts::default()).await
-    }
-
-    /// Like [`accept_tls`](Self::accept_tls), with explicit [`Timeouts`]:
-    /// `handshake` bounds the TLS handshake.
-    pub async fn accept_tls_with_timeouts(
+    ///
+    /// `handshake` of the config's [`Timeouts`] bounds the TLS handshake.
+    pub async fn accept_tls(
         stream: TcpStream,
-        config: rustls::ServerConfig,
-        timeouts: Timeouts,
+        tls: rustls::ServerConfig,
+        config: impl Into<RtspServerConfig>,
     ) -> Result<Self> {
-        accept_tls_via(stream, config, timeouts).await
+        accept_tls_via(stream, tls, config.into()).await
     }
 }
 
@@ -797,8 +849,8 @@ impl AsyncRtspServer<tokio_rustls::server::TlsStream<TcpStream>> {
 #[cfg(feature = "tls")]
 async fn accept_tls_via<T>(
     stream: T,
-    config: rustls::ServerConfig,
-    timeouts: Timeouts,
+    tls: rustls::ServerConfig,
+    config: RtspServerConfig,
 ) -> Result<AsyncRtspServer<tokio_rustls::server::TlsStream<T>>>
 where
     T: AsyncRead + AsyncWrite + Unpin,
@@ -806,19 +858,15 @@ where
     use std::sync::Arc;
     use tokio_rustls::TlsAcceptor;
 
-    let acceptor = TlsAcceptor::from(Arc::new(config));
-    let tls = bounded(timeouts.handshake, "handshake", async {
+    let acceptor = TlsAcceptor::from(Arc::new(tls));
+    let tls = bounded(config.timeouts.handshake, "handshake", async {
         acceptor
             .accept(stream)
             .await
             .map_err(|e| io_err(IoContext::TlsHandshake, e))
     })
     .await?;
-    Ok(AsyncRtspServer::with_stream_timeouts(
-        tls,
-        ServerSession::new(os_session_id),
-        timeouts,
-    ))
+    Ok(AsyncRtspServer::with_stream(tls, config))
 }
 
 /// A `Session` id value from the OS random source (RFC 2326 §3.4).
@@ -832,18 +880,13 @@ impl<S> AsyncRtspServer<S>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    /// Wraps an already-connected stream (plain or TLS) and a session, with the
-    /// default [`Timeouts`].
-    pub fn with_stream(stream: S, session: ServerSession) -> Self {
-        Self::with_stream_timeouts(stream, session, Timeouts::default())
-    }
-
-    /// Wraps an already-connected stream with explicit [`Timeouts`].
-    pub fn with_stream_timeouts(stream: S, session: ServerSession, timeouts: Timeouts) -> Self {
+    /// Wraps an already-connected stream (plain or TLS) with `config`.
+    pub fn with_stream(stream: S, config: impl Into<RtspServerConfig>) -> Self {
+        let config = config.into();
         AsyncRtspServer {
             framed: Framed::new(stream, ServerCodec::default()),
-            session,
-            timeouts,
+            session: config.session,
+            timeouts: config.timeouts,
             first_request_seen: false,
             ready: None,
         }
@@ -973,8 +1016,7 @@ mod tls_timeout_tests {
             std::future::pending(),
             "localhost",
             default_tls_client_config(),
-            ClientSession::new(),
-            timeouts(),
+            RtspClientConfig::default().with_timeouts(timeouts()),
         ))
         .await;
         assert!(
@@ -991,8 +1033,7 @@ mod tls_timeout_tests {
             async { Ok(client_io) },
             "localhost",
             default_tls_client_config(),
-            ClientSession::new(),
-            timeouts(),
+            RtspClientConfig::default().with_timeouts(timeouts()),
         ))
         .await;
         assert!(
@@ -1005,7 +1046,12 @@ mod tls_timeout_tests {
     #[tokio::test(start_paused = true)]
     async fn a_silent_client_times_out_the_server_tls_handshake() {
         let (_client_io, server_io) = duplex(4096);
-        let r = guard(accept_tls_via(server_io, server_config(), timeouts())).await;
+        let r = guard(accept_tls_via(
+            server_io,
+            server_config(),
+            RtspServerConfig::default().with_timeouts(timeouts()),
+        ))
+        .await;
         assert!(
             matches!(r, Err(Error::Timeout { what: "handshake" })),
             "{:?}",

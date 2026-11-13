@@ -71,14 +71,14 @@ async fn two_concurrent_callers_do_not_cross_talk() {
             SrtSocket::connect_from_socket(
                 sock_a,
                 bound_addr,
-                HandshakeConfig::default(),
-                IoConfig::default()
+                srt_runtime::io::SrtConfig::new(HandshakeConfig::default())
+                    .with_io(IoConfig::default())
             ),
             SrtSocket::connect_from_socket(
                 sock_b,
                 bound_addr,
-                HandshakeConfig::default(),
-                IoConfig::default()
+                srt_runtime::io::SrtConfig::new(HandshakeConfig::default())
+                    .with_io(IoConfig::default())
             ),
         );
         let mut caller_a = caller_a.expect("caller A connect");

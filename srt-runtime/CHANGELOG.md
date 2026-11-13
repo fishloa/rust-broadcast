@@ -5,6 +5,8 @@ All notable changes to `srt-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Removed
+- BREAKING: `SrtSocket::{connect_with, connect_from_with, rendezvous_with}` and `SrtListener::bind_with`; pass `SrtConfig::new(handshake).with_io(io)` to `connect`, `connect_from`, `rendezvous` and `bind`. `connect_from_socket` and `rendezvous_from_socket` take the config in place of the separate handshake and io arguments (#2514).
 ### Changed
 - BREAKING: `HandshakeConfig` is `#[non_exhaustive]`: build it from `HandshakeConfig::default()` and the `with_*` setters instead of a struct literal; mutating a field of a value you hold still works (#2514).
 - BREAKING: `io::IoConfig`'s `connect`, `handshake`, `read_idle` and `write` fields and their `with_*` setters are one `timeouts: broadcast_common::timeouts::Timeouts` (set with `IoConfig::with_timeouts`), the type the RTSP and RTMP adapters share. The default is the new `io::SRT_TIMEOUTS` (10 s / 5 s / 5 s / 5 s), unchanged in value (#2514).
@@ -12,6 +14,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 - `SrtUrl::parse` ignores a query key whose percent-decoding is not UTF-8 like any other unknown key, instead of rejecting the URL.
 ### Added
+- `io::SrtConfig { handshake, io }` (`new`, `with_handshake`, `with_io`, `Default`, `From<HandshakeConfig>`): every `SrtSocket`/`SrtListener` constructor takes `impl Into<SrtConfig>`, so a bare `HandshakeConfig` is still accepted (#2514).
 - `HandshakeConfig` has a `with_*` setter for every field (`with_latency_ms`, `with_mtu`, `with_max_flow_window_size`, `with_initial_seq_number`, `with_srt_version`, `with_flags`, `with_encryption_field`, `with_stream_id`, `with_group`, `with_local_ip`, `with_retransmit_after_ticks`, `with_max_retries`, and `with_crypto` under `crypto`) (#2514).
 - `url::SrtUrl` (feature `std`): the typed `srt://` URL — `host`/`port` (default `DEFAULT_PORT`, 9000), `stream_id`, `latency_ms` (capped at `MAX_LATENCY_MS`, the draft's practical maximum), `mode` and `passphrase` — with `SrtUrl::parse`, and `dial_addr()` for the handshake. A rejection is a typed `url::UrlRejection` naming the part of the grammar that failed, so a caller keeps its own policy (which modes it accepts, whether it allows a passphrase) and its own wording. Accepts `srt://host:port` and a scheme-less `host:port`, bracketed IPv6, and a raw `streamid` containing `#`; rejects userinfo and a bare (ambiguous) IPv6 literal. The parser moved here from `multimux`'s SRT push (issue #2369).
 
