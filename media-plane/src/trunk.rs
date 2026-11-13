@@ -5767,8 +5767,8 @@ mod tests {
         let cap = nz(4).get();
         for _ in 0..200 {
             let trunk = Trunk::new(
-            TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(4)).with_waiter_capacity(nz(cap)),
-        );
+                TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(4)).with_waiter_capacity(nz(cap)),
+            );
             let mut held: Vec<ProgressListener> = Vec::new();
             for _ in 0..cap {
                 held.push(trunk.listen().expect("succeeds up to the cap"));
