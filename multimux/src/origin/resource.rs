@@ -204,6 +204,7 @@ async fn dynamic_file(
     let priority_value = header::HeaderValue::from_str(&format!("u={}", priority.urgency)).ok();
     let resp = http::resolve_blocking(
         &trunk,
+        serving.warms(),
         &ll_hls,
         request,
         BLOCKING_RELOAD_TIMEOUT,
@@ -529,6 +530,7 @@ async fn fetch_part(
     let name = format!("part-{track}-{seq}.{idx}.m4s");
     let resp = http::resolve_blocking(
         &trunk,
+        serving.warms(),
         &ll_hls,
         HlsRequest::Resource { name },
         BLOCKING_RELOAD_TIMEOUT,
@@ -874,9 +876,9 @@ mod tests {
     #[tokio::test]
     async fn dynamic_file_in_progress_segment_streams_concatenated_parts_and_completes_on_close() {
         // Only part 0 exists when the request is made -- part 1 doesn't
-        // land, and the segment doesn't close, until *after* the handler
-        // must already have committed to a streamed response (it can only
-        // ever see part 0 at call time). This proves genuine incremental
+        // land, and the segment doesn't close, until *after* the handler has
+        // returned its streamed response (it can only ever see part 0 at call
+        // time); the publishes are sequenced after the response, not timed. This proves genuine incremental
         // streaming, not "wait for everything, then answer once": if the
         // handler eagerly required the whole segment up front, this request
         // would have nothing to serve yet and would 404/block differently.
@@ -885,18 +887,8 @@ mod tests {
         route.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 8]);
         route.add_part(crate::route::SPTS_PROGRAM_ID, part(2, 0));
 
-        let route_for_task = route.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            route_for_task.add_part(crate::route::SPTS_PROGRAM_ID, part(2, 1));
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            route_for_task
-                .add_segment(crate::route::SPTS_PROGRAM_ID, seg(2))
-                .expect("add_segment");
-        });
-
         let resp = dynamic_file(
-            State(route),
+            State(route.clone()),
             HeaderMap::new(),
             Path("seg-1-2.m4s".to_string()),
         )
@@ -911,6 +903,10 @@ mod tests {
             "video/iso.segment",
             "streamed in-progress segment is an .m4s resource"
         );
+        route.add_part(crate::route::SPTS_PROGRAM_ID, part(2, 1));
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(2))
+            .expect("add_segment");
         assert_eq!(
             body_bytes(resp).await,
             [vec![0x10; 4], vec![0x11; 4]].concat(),

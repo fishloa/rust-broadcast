@@ -53,6 +53,7 @@ pub(crate) async fn media_playlist_inner(
     let remaining = playlist_timeout.saturating_sub(started.elapsed());
     let (resp, timed_out) = http::resolve_blocking_timed(
         &trunk,
+        serving.warms(),
         &origin,
         request,
         remaining,
@@ -319,7 +320,14 @@ pub(crate) async fn audio_playlist(
     let Some(audio) = serving.audio_servings().get(idx) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    sibling_playlist(&audio.trunk, &audio.origin, audio.track_id, q).await
+    sibling_playlist(
+        serving.warms(),
+        &audio.trunk,
+        &audio.origin,
+        audio.track_id,
+        q,
+    )
+    .await
 }
 
 /// `GET /subs-{slot}.m3u8` — the WebVTT media playlist of one subtitle
@@ -336,10 +344,18 @@ pub(crate) async fn subtitle_playlist(
     let Some(subtitle) = serving.subtitle_servings().into_iter().nth(slot) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    sibling_playlist(&subtitle.trunk, &subtitle.origin, subtitle.track_id, q).await
+    sibling_playlist(
+        serving.warms(),
+        &subtitle.trunk,
+        &subtitle.origin,
+        subtitle.track_id,
+        q,
+    )
+    .await
 }
 
 async fn sibling_playlist(
+    warms: &tokio::sync::Semaphore,
     trunk: &Arc<media_plane::Trunk>,
     origin: &Arc<hls_runtime::server::HlsOrigin>,
     track_id: transmux::TrackId,
@@ -352,6 +368,7 @@ async fn sibling_playlist(
     let priority = origin.http_priority(&request);
     let (resp, timed_out) = http::resolve_blocking_timed(
         trunk,
+        warms,
         origin,
         request,
         hls_runtime::server::playlist_reload_timeout(origin),
@@ -394,6 +411,7 @@ pub(crate) async fn iframe_playlist(
     let priority = ll_hls.http_priority(&request);
     let (resp, timed_out) = http::resolve_blocking_timed(
         &trunk,
+        serving.warms(),
         &ll_hls,
         request,
         hls_runtime::server::playlist_reload_timeout(&ll_hls),

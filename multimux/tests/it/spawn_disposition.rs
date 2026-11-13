@@ -29,12 +29,12 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "route.rs",
-        1232,
+        1244,
         "spawn_blocking DVR persist; awaited inline",
     ),
     (
         "http.rs",
-        233,
+        239,
         "spawn_blocking egress warm-up (ServedEgress::prepare) under a WARMS permit; awaited inline (owned by the request)",
     ),
     ("dvr.rs", 603, "spawn_blocking DVR write; awaited inline"),
@@ -76,23 +76,28 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "source/rtmp.rs",
-        890,
+        900,
         "one read task per admitted RTMP session, on the run loop's JoinSet (dropped with run_rtmp, which aborts every reader); each ends itself on a terminal read or when the outcome channel closes",
     ),
     (
         "source/whip.rs",
-        350,
+        349,
         "WHIP signalling server TaskTracker (WhipInfra)",
     ),
     (
         "source/whip.rs",
-        616,
+        615,
         "WHIP run task; owned by the route supervisor handle",
     ),
     (
         "source/whip.rs",
-        631,
+        630,
         "WHIP accept pump; owned by the route supervisor handle",
+    ),
+    (
+        "source/whip.rs",
+        2001,
+        "one read task per admitted WHIP session, on the run loop's JoinSet (dropped with run_whip, which aborts every reader) with its AbortHandle aborted when the publisher reaps the session; ends itself on a terminal read or when the outcome channel closes",
     ),
     (
         "source/dashif_ingest.rs",
@@ -136,7 +141,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "output/smooth.rs",
-        277,
+        279,
         "spawn_blocking for a Smooth plan or fragment build, bounded by the program's MAX_CONCURRENT_BUILDS semaphore (permit moved into the closure); awaited inline (owned by the request)",
     ),
     (
@@ -146,17 +151,17 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "origin/mod.rs",
-        1661,
+        1662,
         "Ctrl-C/SIGTERM shutdown watcher; aborted/awaited at process shutdown",
     ),
     (
         "origin/mod.rs",
-        1837,
+        1838,
         "spawn_following -> follow_trunk; the returned JoinHandle is owned by the caller and dropped on route teardown (async drop cancels)",
     ),
     (
         "origin/mod.rs",
-        2358,
+        2359,
         "supervise_driver; spawned under the route cancellation token",
     ),
     (
