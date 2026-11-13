@@ -3236,10 +3236,9 @@ mod tests {
             program_date_ms("2026-10-02T05:00:00-0500"),
             Some(1_790_935_200_000)
         );
-        // The production parser is lenient where RFC 8216bis allows it (a zone-less value is
-        // UTC) and where `jiff` does (a bare date is midnight UTC); everything else that is not
-        // RFC 3339 is `None`, never a guess.
-        assert_eq!(program_date_ms("2026-10-02"), Some(1_790_899_200_000));
+        // A zone-less date-time is UTC (RFC 8216bis); a bare date is not a date-time
+        // (RFC 8216 §4.3.2.6) and everything else that is not RFC 3339 is `None`, never a guess.
+        assert_eq!(program_date_ms("2026-10-02"), None, "a bare date");
         for bad in [
             "",
             "2026-13-02T10:00:00Z",
