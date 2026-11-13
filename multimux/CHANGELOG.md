@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Changed
+- The monotonic-to-UTC anchor mapping (`HostClock` callers) comes from `broadcast_common::time::MonoUtc`; reading the host clocks stays in `clock.rs`.
 - Timeline discontinuity detection now uses the per-track detector from `transmux` (broadcast-client semantics); the 10 s `MEDIA_DISCONTINUITY_NS` constant is removed.
 - RTSP pull skips unplayable SDP media sections (and foreign-authority controls and sections beyond the track cap) instead of failing the whole route; fails only when nothing is playable. Skipped sections are logged as route warnings.
 

@@ -3,6 +3,8 @@
 All notable changes to dash-runtime will be documented in this file.
 
 ## [Unreleased]
+### Changed
+- `timing::clock::Anchor::utc_at`/`mono_for_utc` map through `broadcast_common::time::MonoUtc` instead of repeating the anchor arithmetic; the saturation to `i64`/`u64` stays here, and the clock still never reads a time source.
 ### Added
 - `mpd::base_url` (`resolve`, `resolve_chain`, `first_forbidden_char`): RFC 3986 §5 URL-reference and `BaseURL`-chain resolution over `url::Url::join`, moved from `transmux`, whose only caller was this crate; `mpd::urls` now resolves through it instead of `transmux` (#2355).
 ### Fixed
