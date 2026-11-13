@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Changed
+- A WHEP route binds up to 8 media sockets per advertised IP (viewers are spread over them round-robin) instead of one: with 1000 real WebRTC viewers the single socket's send path was the serial point of every SRTP stream (slowest viewer 54% of frames, p99 7.9 s); with 8 sockets every viewer receives 100% at p99 61 ms.
 - The Smooth pull goldens run in the crate's own tests on a session clock 20 times faster than real time, so the deliberately missing fragment's retry backoff costs about 2.7 s of wall time instead of about 54 s; the goldens are unchanged.
 - Every pull input's session queue is also bounded in bytes (`Config::max_queued_bytes`): 32 MiB for the live inputs (TS-over-HTTP, UDP, RTP, SRT caller, RTSP), 128 MiB (two maximum-size segments) for HLS, DASH and Smooth pull, instead of only the 100 000-event count.
 - The session host yields to the runtime every 256 session events it hands to the driver, and the segmenter drives at most 512 queued samples per program per pass (`source::advance_route` yields between passes), so a large queued burst no longer holds a worker thread, or starves a current-thread runtime, for its whole length.
