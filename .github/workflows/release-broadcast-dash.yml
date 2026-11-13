@@ -18,3 +18,4 @@ jobs:
     secrets: inherit
     with:
       crate: broadcast-dash
+      build-gate: no-default
