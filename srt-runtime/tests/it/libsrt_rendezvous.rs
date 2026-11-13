@@ -41,10 +41,7 @@ const ITERATIONS: usize = 6;
 /// (12 retransmissions = ~3 s) can be eaten entirely by the time it takes to
 /// spawn the external `srt-live-transmit` process under heavy machine load.
 fn patient_config() -> HandshakeConfig {
-    HandshakeConfig {
-        max_retries: 60,
-        ..HandshakeConfig::default()
-    }
+    HandshakeConfig::default().with_max_retries(60)
 }
 
 fn patient_io() -> IoConfig {

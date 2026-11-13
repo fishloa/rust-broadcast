@@ -45,8 +45,6 @@ fn without_tlpktdrop() -> srt_runtime::handshake_sm::HandshakeConfig {
     use srt_runtime::packet::HandshakeExtensionMessageFlags;
     use srt_runtime::packet::handshake::HS_MSG_FLAG_TLPKTDROP;
     let config = srt_runtime::handshake_sm::HandshakeConfig::default();
-    srt_runtime::handshake_sm::HandshakeConfig {
-        flags: HandshakeExtensionMessageFlags(config.flags.0 & !HS_MSG_FLAG_TLPKTDROP),
-        ..config
-    }
+    let flags = HandshakeExtensionMessageFlags(config.flags.0 & !HS_MSG_FLAG_TLPKTDROP);
+    config.with_flags(flags)
 }

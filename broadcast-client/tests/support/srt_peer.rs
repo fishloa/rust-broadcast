@@ -50,17 +50,15 @@ impl SrtPeer {
     }
 
     pub fn with_isn(cipher: Cipher, passphrase: Option<&str>, latency_ms: u16, isn: u32) -> Self {
-        let mut config = HandshakeConfig {
-            latency_ms,
-            initial_seq_number: isn,
-            encryption_field: match cipher {
+        let mut config = HandshakeConfig::default()
+            .with_latency_ms(latency_ms)
+            .with_initial_seq_number(isn)
+            .with_encryption_field(match cipher {
                 Cipher::Clear => EncryptionField::NoEncryption,
                 Cipher::Aes128 => EncryptionField::Aes128,
                 Cipher::Aes192 => EncryptionField::Aes192,
                 Cipher::Aes256 => EncryptionField::Aes256,
-            },
-            ..HandshakeConfig::default()
-        };
+            });
         if let Some(p) = passphrase {
             config.crypto = Some(CryptoConfig {
                 passphrase: p.as_bytes().to_vec(),

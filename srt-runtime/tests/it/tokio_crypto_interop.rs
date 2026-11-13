@@ -30,15 +30,13 @@ fn crypto_config(passphrase: &str, key_len: usize) -> HandshakeConfig {
         32 => EncryptionField::Aes256,
         _ => EncryptionField::Aes128,
     };
-    HandshakeConfig {
-        encryption_field,
-        crypto: Some(CryptoConfig {
+    HandshakeConfig::default()
+        .with_encryption_field(encryption_field)
+        .with_crypto(Some(CryptoConfig {
             passphrase: passphrase.as_bytes().to_vec(),
             salt: SALT,
             sek: vec![0x22u8; key_len],
-        }),
-        ..HandshakeConfig::default()
-    }
+        }))
 }
 
 async fn recv_at_least(discard: &TokioUdpSocket, want_len: usize, timeout: Duration) -> Vec<u8> {
@@ -287,10 +285,8 @@ async fn tokio_key_refresh_keeps_delivering() {
             refresh_period: 50,
             pre_announcement_period: 5,
         };
-        let loaded_host_config = || HandshakeConfig {
-            latency_ms: LOADED_HOST_LATENCY_MS,
-            ..crypto_config(PASSPHRASE, 16)
-        };
+        let loaded_host_config =
+            || (crypto_config(PASSPHRASE, 16)).with_latency_ms(LOADED_HOST_LATENCY_MS);
         let io = IoConfig::default().with_km_refresh_thresholds(thresholds);
         let mut listener = SrtListener::bind_with("127.0.0.1:0", loaded_host_config(), io)
             .await

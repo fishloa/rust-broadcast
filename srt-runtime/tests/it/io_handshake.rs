@@ -231,11 +231,9 @@ async fn a_peer_rejection_surfaces_its_reason() {
 #[tokio::test]
 async fn a_silent_peer_times_out_with_a_typed_error() {
     let silent = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    let config = HandshakeConfig {
-        retransmit_after_ticks: 1,
-        max_retries: 2,
-        ..HandshakeConfig::default()
-    };
+    let config = HandshakeConfig::default()
+        .with_retransmit_after_ticks(1)
+        .with_max_retries(2);
     let err = tokio::time::timeout(
         WAIT,
         SrtSocket::connect(silent.local_addr().unwrap(), config),
@@ -482,10 +480,7 @@ async fn a_caller_far_into_its_own_clock_is_delivered_promptly() {
         }
     });
 
-    let config = HandshakeConfig {
-        initial_seq_number: CALLER_ISN,
-        ..HandshakeConfig::default()
-    };
+    let config = HandshakeConfig::default().with_initial_seq_number(CALLER_ISN);
     let (raw, mut hs, mut conclusion) =
         raw_caller_up_to_conclusion(listener_addr, config, 0x0000_0999).await;
     // Stamp the CONCLUSION with the caller's (advanced) clock: `Timestamp`
@@ -535,10 +530,7 @@ async fn the_negotiated_latency_is_the_greater_of_both_sides() {
     const LONG_MS: u16 = 1_000;
     const AT_LEAST: Duration = Duration::from_millis(900);
     let short = HandshakeConfig::default(); // 120 ms
-    let long = HandshakeConfig {
-        latency_ms: LONG_MS,
-        ..HandshakeConfig::default()
-    };
+    let long = HandshakeConfig::default().with_latency_ms(LONG_MS);
 
     // Role 1: the Caller asks for a long latency; the accepted (Listener-role)
     // socket receives.
@@ -690,11 +682,11 @@ async fn nak_datagrams_fit_the_peers_smaller_mtu() {
     const ISN: u32 = 1_000;
     const PEER_MTU: usize = 576;
     const IP_UDP: usize = 28;
-    let (raw, listener_addr, id, _keep) = raw_caller_connected(HandshakeConfig {
-        mtu: u32::try_from(PEER_MTU).unwrap(),
-        initial_seq_number: ISN,
-        ..HandshakeConfig::default()
-    })
+    let (raw, listener_addr, id, _keep) = raw_caller_connected(
+        HandshakeConfig::default()
+            .with_mtu(u32::try_from(PEER_MTU).unwrap())
+            .with_initial_seq_number(ISN),
+    )
     .await;
     // Every other packet: ISN, ISN+2, ... — 400 isolated losses in between.
     for k in 0..=400u32 {
@@ -723,11 +715,11 @@ async fn nak_datagrams_fit_the_peers_smaller_mtu() {
 async fn the_peers_smaller_flow_window_bounds_what_is_tracked() {
     use srt_runtime::packet::LossListEntry;
     const ISN: u32 = 2_000;
-    let (raw, listener_addr, id, _keep) = raw_caller_connected(HandshakeConfig {
-        max_flow_window_size: 64,
-        initial_seq_number: ISN,
-        ..HandshakeConfig::default()
-    })
+    let (raw, listener_addr, id, _keep) = raw_caller_connected(
+        HandshakeConfig::default()
+            .with_max_flow_window_size(64)
+            .with_initial_seq_number(ISN),
+    )
     .await;
     raw.send_to(&send_data(ISN + 100, id), listener_addr)
         .await

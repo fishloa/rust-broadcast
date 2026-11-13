@@ -63,10 +63,7 @@ fn the_caller_plays_a_srt_runtime_listener_stream_exactly() {
         rt.block_on(async move {
             let mut listener = SrtListener::bind(
                 "127.0.0.1:0",
-                HandshakeConfig {
-                    latency_ms: LOCAL_SRT_LATENCY_MS,
-                    ..HandshakeConfig::default()
-                },
+                HandshakeConfig::default().with_latency_ms(LOCAL_SRT_LATENCY_MS),
             )
             .await
             .unwrap();

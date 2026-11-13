@@ -71,13 +71,13 @@ fn first_send(outputs: Vec<HandshakeOutput>) -> Option<Vec<u8>> {
 
 let mut caller = CallerHandshake::new(
     0x1111_1111,
-    HandshakeConfig { latency_ms: 180, stream_id: Some("live/camera-1".into()), ..HandshakeConfig::default() },
+    HandshakeConfig::default().with_latency_ms(180).with_stream_id(Some("live/camera-1".into())),
 );
 // A real listener derives the SYN cookie from the peer address and a secret.
 let mut listener = ListenerHandshake::new(
     0x2222_2222,
     0xC0FF_EE42,
-    HandshakeConfig { latency_ms: 250, ..HandshakeConfig::default() },
+    HandshakeConfig::default().with_latency_ms(250),
 );
 
 let mut to_listener = caller.start().unwrap();

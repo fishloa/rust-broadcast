@@ -29,10 +29,7 @@ async fn loopback_call_to_recv() {
     tokio::time::timeout(TEST_TIMEOUT, async {
         // --- Listener ---
         let listener_addr = "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap();
-        let listener_config = HandshakeConfig {
-            initial_seq_number: LISTENER_ISN,
-            ..HandshakeConfig::default()
-        };
+        let listener_config = HandshakeConfig::default().with_initial_seq_number(LISTENER_ISN);
         let mut listener = SrtListener::bind(listener_addr, listener_config)
             .await
             .expect("listener bind");
@@ -40,10 +37,7 @@ async fn loopback_call_to_recv() {
         let bound_addr = listener.local_addr().expect("listener local addr");
 
         // --- Caller ---
-        let caller_config = HandshakeConfig {
-            initial_seq_number: CALLER_ISN,
-            ..HandshakeConfig::default()
-        };
+        let caller_config = HandshakeConfig::default().with_initial_seq_number(CALLER_ISN);
 
         // Spawn the listener accept in a background task.
         let jh = tokio::spawn(async move { listener.accept().await.expect("listener accept") });
