@@ -33,12 +33,9 @@ use transmux::ll_hls::{LlHlsSegmenter, PartCutReady, PartInfo, SegmentInfo};
 use transmux::pipeline::{Sample, TrackSpec};
 
 use crate::route::{AudioServing, RouteHandle};
+use broadcast_common::units::{MILLIS_PER_SEC, NANOS_PER_SEC};
 use hls_runtime::server::HlsOrigin;
 use media_plane::publish_queue::{PendingPublish, drain_publish_queue, part_entry};
-
-const MILLIS_PER_SEC: u128 = 1_000;
-
-const NANOS_PER_SEC_F64: f64 = 1_000_000_000.0;
 
 /// Leader part boundaries a follower may hold back waiting for its audio to
 /// catch up with the boundary before it applies them regardless (an audio
@@ -168,8 +165,10 @@ fn part_target_for_frame_ms(part_target_ms: u32, frame_ticks: u32, timescale: u3
     let ticks = u128::from(frame_ticks);
     let scale = u128::from(timescale);
     let target_ticks = u128::from(part_target_ms) * scale;
-    let frames = target_ticks.div_ceil(ticks * MILLIS_PER_SEC).max(1);
-    let millis = (frames * ticks * MILLIS_PER_SEC).div_ceil(scale);
+    let frames = target_ticks
+        .div_ceil(ticks * (MILLIS_PER_SEC as u128))
+        .max(1);
+    let millis = (frames * ticks * (MILLIS_PER_SEC as u128)).div_ceil(scale);
     u32::try_from(millis).ok()
 }
 
@@ -394,7 +393,7 @@ impl AudioFollower {
         let start_ns = self.next_timeline_ns;
         self.next_timeline_ns = self
             .next_timeline_ns
-            .saturating_add((duration_secs * NANOS_PER_SEC_F64) as u64);
+            .saturating_add((duration_secs * (NANOS_PER_SEC as f64)) as u64);
         self.pending
             .push_back(PendingPublish::Segment(SegmentEntry::new(
                 bytes,

@@ -40,13 +40,7 @@ use hls_runtime::server::ClosedSegment;
 use media_plane::ids::SegmentSeq;
 
 use crate::dvr::{DvrConfig, IndexEntry};
-
-/// Nanoseconds per second — used to convert `IndexEntry::duration_ns` to
-/// the `f64` seconds `broadcast_hls::MediaSegment::duration` wants, and (as
-/// `u64`) to convert [`apply_window`]'s `window_secs` into the same
-/// nanosecond clock `start_pts_ns` uses.
-const NANOS_PER_SEC_U64: u64 = 1_000_000_000;
-const NANOS_PER_SEC: f64 = NANOS_PER_SEC_U64 as f64;
+use broadcast_common::units::NANOS_PER_SEC;
 
 /// One archived segment, with enough metadata to render it into a
 /// playlist ([`CatchupSegment`]) and locate its exact bytes on disk
@@ -209,7 +203,7 @@ pub(crate) fn read_period_segments(dir: &Path, period_num: u32) -> Arc<Vec<Archi
         .map(|e| ArchivedSegment {
             seq: SegmentSeq::new(e.seq),
             start_pts_ns: e.start_pts_ns,
-            duration_secs: e.duration_ns as f64 / NANOS_PER_SEC,
+            duration_secs: e.duration_ns as f64 / (NANOS_PER_SEC as f64),
             discontinuous: e.discontinuous,
             period_num,
             byte_offset: e.byte_offset,
@@ -813,7 +807,7 @@ mod tests {
     fn apply_window_is_correct_across_a_reconnect_whose_pts_restarted() {
         let seg = |seq: u32, start_s: u64, discontinuous: bool| CatchupSegment {
             seq: SegmentSeq::new(seq),
-            start_pts_ns: start_s * NANOS_PER_SEC_U64,
+            start_pts_ns: start_s * NANOS_PER_SEC,
             duration_secs: 4.0,
             discontinuous,
             init: None,

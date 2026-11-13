@@ -6,12 +6,12 @@
 //! ISO/IEC 23009-1 5.8.5.7 `DIRECT-VALUE`, and the `http-ntp`/`direct` body).
 //! Calendar arithmetic is jiff's; nothing here reads a clock.
 
+use broadcast_common::units::MICROS_PER_SEC;
 use jiff::Span;
 use jiff::civil::{Date, DateTime};
 use jiff::tz::{Offset, TimeZone};
 use thiserror::Error;
 
-const MICROS_PER_SECOND: i64 = 1_000_000;
 const NANOS_DIGITS: usize = 9;
 const MICROS_DIGITS: usize = 6;
 const SECONDS_PER_HOUR: i32 = 3_600;
@@ -63,7 +63,7 @@ impl XsDateTime {
     #[must_use]
     pub fn resolution_us(&self) -> u64 {
         let digits = usize::from(self.fraction_digits).min(MICROS_DIGITS);
-        let mut res = MICROS_PER_SECOND.unsigned_abs();
+        let mut res = (MICROS_PER_SEC as i64).unsigned_abs();
         if self.fraction_digits > 0 {
             res = 10u64.pow(u32::try_from(MICROS_DIGITS - digits).unwrap_or(0));
         }
@@ -239,8 +239,8 @@ pub fn parse_ntp_timestamp(bytes: &[u8]) -> Result<i64, DateTimeError> {
     let arr: [u8; NTP_TIMESTAMP_LEN] = bytes.try_into().map_err(|_| DateTimeError::Ntp)?;
     let seconds = u32::from_be_bytes([arr[0], arr[1], arr[2], arr[3]]);
     let fraction = u32::from_be_bytes([arr[4], arr[5], arr[6], arr[7]]);
-    let micros =
-        (u128::from(fraction) * u128::from(MICROS_PER_SECOND.unsigned_abs())) >> NTP_FRACTION_BITS;
+    let micros = (u128::from(fraction) * u128::from((MICROS_PER_SEC as i64).unsigned_abs()))
+        >> NTP_FRACTION_BITS;
     let micros = i64::try_from(micros).map_err(|_| DateTimeError::Ntp)?;
     let prime_epoch = Date::new(1900, 1, 1)
         .map_err(|_| DateTimeError::Ntp)?
@@ -251,7 +251,7 @@ pub fn parse_ntp_timestamp(bytes: &[u8]) -> Result<i64, DateTimeError> {
         .as_second();
     let unix_seconds = i64::from(seconds) + prime_epoch;
     unix_seconds
-        .checked_mul(MICROS_PER_SECOND)
+        .checked_mul(MICROS_PER_SEC as i64)
         .and_then(|us| us.checked_add(micros))
         .ok_or(DateTimeError::Ntp)
 }

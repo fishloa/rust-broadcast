@@ -5322,7 +5322,13 @@ mod tests {
             forwarded_for_header: Some("X-Forwarded-For".into()),
             trusted_proxies: None,
         };
-        assert_eq!(forwarded.build_verifier("realm").challenge(), "Forwarded");
+        assert_eq!(
+            forwarded
+                .build_verifier("realm")
+                .expect("verifier")
+                .challenge(),
+            "Forwarded"
+        );
     }
 
     /// Biting test: `OutputAuthSpec`'s `Debug` must never render the
@@ -5486,7 +5492,10 @@ mod tests {
             }],
         };
         spec.validate().unwrap();
-        assert_eq!(spec.build_verifier("realm").challenge(), "SignedUrl");
+        assert_eq!(
+            spec.build_verifier("realm").expect("verifier").challenge(),
+            "SignedUrl"
+        );
     }
 
     /// Biting test: `OutputAuthSpec::SignedUrl`'s `Debug` must show `kid`s

@@ -17,6 +17,8 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
+# The shared time-unit ratios (`units`).
+broadcast-common = { path = "../broadcast-common", version = "11.1.0", default-features = false }
 http-auth = { version = "0.1", default-features = false, features = ["basic-scheme", "digest-scheme"] }
 thiserror = "2"
 # Server-side (`server::Verifier`) challenge/verify: decoding a client's

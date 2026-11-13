@@ -21,6 +21,7 @@ use std::convert::Infallible;
 use crate::error::{MultimuxError, Result};
 use crate::source::client_host::{EventIngest, SessionLabels, SessionStep};
 use crate::source::pull_target::{PullKind, PullRoute};
+use broadcast_common::units::MICROS_PER_MILLI;
 
 /// How many times one media resource is requested before the session gives up on it.
 const MAX_RESOURCE_ATTEMPTS: u32 = 8;
@@ -37,7 +38,6 @@ const RESOURCE_RETRY_CAP_MS: u64 = 30_000;
 /// slack only lets a short error page through to be rejected by length instead of by the cap.
 const MAX_KEY_BODY_BYTES: usize = 4096;
 
-const MICROS_PER_MILLI: u64 = 1_000;
 const WHAT: &str = "hls-pull";
 
 /// A remote (LL-)HLS Media Playlist to pull: its URL, which may carry

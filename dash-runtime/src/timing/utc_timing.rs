@@ -11,6 +11,7 @@ use broadcast_dash::xs_datetime::{XsDateTime, parse_ntp_timestamp, parse_xs_date
 
 use super::TimingError;
 use super::http_date::parse_http_date;
+use broadcast_common::units::MICROS_PER_SEC;
 
 /// 5.8.5.7: `urn:mpeg:dash:utc:ntp:2014`.
 pub const SCHEME_NTP: &str = "urn:mpeg:dash:utc:ntp:2014";
@@ -34,7 +35,6 @@ pub const UTC_BODY_MAX_BYTES: usize = 4 * 1024;
 pub const DATE_HEADER_HALF_SECOND_US: u64 = 500_000;
 /// Resolution of an NTP timestamp read over HTTP, in microseconds.
 pub const HTTP_NTP_RESOLUTION_US: u64 = 1_000;
-const MICROS_PER_SECOND: i64 = 1_000_000;
 
 /// The request/response pair the caller timed on its monotonic clock.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,7 +143,8 @@ pub fn sample_from_date_header(
     max_rtt_us: u64,
 ) -> Result<UtcSample, TimingError> {
     let seconds_us = parse_http_date(date)?;
-    let half_second = i64::try_from(DATE_HEADER_HALF_SECOND_US).unwrap_or(MICROS_PER_SECOND / 2);
+    let half_second =
+        i64::try_from(DATE_HEADER_HALF_SECOND_US).unwrap_or((MICROS_PER_SEC as i64) / 2);
     sample_from_exchange(
         exchange,
         seconds_us.saturating_add(half_second),
@@ -174,7 +175,8 @@ fn sample_from_datetime(
     if dt.fraction_digits > 0 {
         return sample_from_exchange(exchange, dt.unix_us, dt.resolution_us(), max_rtt_us);
     }
-    let half_second = i64::try_from(DATE_HEADER_HALF_SECOND_US).unwrap_or(MICROS_PER_SECOND / 2);
+    let half_second =
+        i64::try_from(DATE_HEADER_HALF_SECOND_US).unwrap_or((MICROS_PER_SEC as i64) / 2);
     sample_from_exchange(
         exchange,
         dt.unix_us.saturating_add(half_second),

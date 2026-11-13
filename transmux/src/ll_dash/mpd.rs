@@ -14,11 +14,10 @@ use broadcast_common::Package;
 use crate::dash::DashPackager;
 use crate::error::{Error, Result};
 use crate::media::Media;
+use broadcast_common::units::MILLIS_PER_SEC;
 
 /// `ServiceDescription@id` of the one description this packager emits.
 const SERVICE_DESCRIPTION_ID: u64 = 0;
-/// Milliseconds per second, for rounding to the three-decimal wire form.
-const MILLIS_PER_SECOND: f64 = 1000.0;
 
 // ===========================================================================
 // LlDashPackager — low-latency DASH MPD
@@ -202,7 +201,7 @@ impl LlDashPackager {
 
 /// Round a seconds value to whole milliseconds.
 fn round_millis(v: f64) -> f64 {
-    (v * MILLIS_PER_SECOND).round() / MILLIS_PER_SECOND
+    (v * (MILLIS_PER_SEC as f64)).round() / (MILLIS_PER_SEC as f64)
 }
 
 /// Format a non-negative seconds value with up to three decimal places, trailing

@@ -49,6 +49,7 @@ use crate::pipeline::{FragmentTrackData, Sample, TrackSpec, build_init_segment};
 use crate::segmenter::{
     MAX_PENDING_SAMPLES_PER_TRACK, MediaClock, choose_anchor, no_sync_sample_error,
 };
+use broadcast_common::units::MILLIS_PER_SEC;
 
 /// One finished LL-HLS **partial segment** ("part") — RFC 8216bis §4.4.4.9.
 ///
@@ -1613,7 +1614,6 @@ fn take_span(t: &TrackState, target_ticks: u64) -> usize {
     // the part target is still carried as its own part and the drain advances.
     end
 }
-const MILLIS_PER_SEC: u64 = 1000;
 
 const PERCENT_SCALE: u64 = 100;
 

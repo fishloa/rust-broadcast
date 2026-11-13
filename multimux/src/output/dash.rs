@@ -59,6 +59,7 @@
 //! fields are added (see `DashFlavour::LowLatency`; the route itself is
 //! mounted by [`crate::output::ll_dash`], issue #663 P4.2 / #721 / #2448).
 
+use broadcast_common::units::{MILLIS_PER_SEC, NANOS_PER_MILLI};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[cfg(test)]
@@ -611,16 +612,13 @@ pub(crate) fn publish_time(
         .unwrap_or(Duration::ZERO)
         .as_secs();
     let total_ms = u128::from(ast_secs)
-        .saturating_mul(MILLIS_PER_SEC)
+        .saturating_mul(MILLIS_PER_SEC as u128)
         .saturating_add(end_ms);
     i64::try_from(total_ms)
         .ok()
         .and_then(|ms| jiff::Timestamp::from_millisecond(ms).ok())
         .map_or_else(|| format_iso8601(origin), |ts| ts.to_string())
 }
-
-const NANOS_PER_MILLI: u64 = 1_000_000;
-const MILLIS_PER_SEC: u128 = 1_000;
 
 fn format_iso8601_secs(secs: i64) -> String {
     jiff::Timestamp::from_second(secs)

@@ -55,6 +55,7 @@ use broadcast_common::backoff::{RetrySchedule, mix_seed};
 
 use crate::MultimuxError;
 use crate::route::{HealthState, RouteHandle};
+use broadcast_common::units::MICROS_PER_MILLI;
 
 /// Production default backoff: starts at 500 ms, doubles, caps at 30 s.
 const DEFAULT_BACKOFF_MIN: Duration = Duration::from_millis(500);
@@ -65,8 +66,6 @@ const DEFAULT_BACKOFF_FACTOR: f64 = 2.0;
 /// timer's step table: past this the raw series has long since saturated at
 /// its cap for any sane factor, so every later attempt takes the cap.
 const EXPONENTIAL_STEPS: u32 = 16;
-
-const MICROS_PER_MILLI: u64 = 1_000;
 
 /// `wait` as whole milliseconds, rounded up so a jittered sub-millisecond
 /// delay still schedules a wake rather than collapsing to "now".

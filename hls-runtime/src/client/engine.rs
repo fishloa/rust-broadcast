@@ -21,6 +21,7 @@ use super::action::{Action, BlockingReload, KeyId, ResourceId};
 use super::error::{Error, Result};
 use super::output::{MasterSelection, Output, RenditionInfo, VariantInfo, VariantPolicy};
 use super::url;
+use broadcast_common::units::MILLIS_PER_SEC;
 
 /// Movie timescale of the init segment synthesized for classic TS-segment
 /// HLS: the 90 kHz MPEG-2 system clock the PES PTS/DTS are expressed in
@@ -40,8 +41,6 @@ const MAX_PENDING_KEYED_BYTES: usize = 64 * 1024 * 1024;
 /// Longest the non-blocking reload cadence may wait, however large the
 /// untrusted `EXT-X-TARGETDURATION` says the target duration is.
 const MAX_RELOAD_WAIT_MS: u64 = 60_000;
-
-const MILLIS_PER_SECOND: u64 = 1000;
 
 /// `EXT-X-VERSION` of the one-segment playlist a single `EXT-X-MAP` line is
 /// parsed in: the lowest version that allows `EXT-X-MAP` without
@@ -71,8 +70,7 @@ fn index_u64(i: usize) -> u64 {
 /// §4.3.3.1: no more often than once per Target Duration), clamped because
 /// the Target Duration is untrusted.
 fn reload_wait_ms(target_duration: u32) -> u64 {
-    (u64::from(target_duration.max(1)).saturating_mul(MILLIS_PER_SECOND) / 2)
-        .min(MAX_RELOAD_WAIT_MS)
+    (u64::from(target_duration.max(1)).saturating_mul(MILLIS_PER_SEC) / 2).min(MAX_RELOAD_WAIT_MS)
 }
 
 /// Every `EXT-X-MAP` line of `text` with the identity-`KEYFORMAT` key in effect

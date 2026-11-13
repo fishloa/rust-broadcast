@@ -9,6 +9,7 @@ use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 
 use crate::buffer::{lowest_id_per_kind, negative_origin, pts_to_27mhz_from, raw_27mhz};
 use crate::events::{BufferEvent, Event, PauseReason};
+use broadcast_common::units::MICROS_PER_SEC;
 
 /// Default start lead for VOD sources (HLS with `EXT-X-ENDLIST`, finite TS), microseconds.
 pub const DEFAULT_VOD_START_LEAD_US: u64 = 1_000_000;
@@ -18,7 +19,6 @@ pub const DEFAULT_LIVE_START_LEAD_US: u64 = 6_000_000;
 pub const DEFAULT_PAUSE_LEAD_US: u64 = 0;
 const TICKS_PER_US: u64 = 27;
 const TARGET_DURATION_LEAD_FACTOR: u64 = 3;
-const MICROS_PER_SEC: u64 = 1_000_000;
 
 /// Leads of the playout gate (HLS live, HLS VOD, finite TS). Live TS-over-HTTP keeps using
 /// [`crate::Config::buffer`].

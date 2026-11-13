@@ -17,11 +17,9 @@ use broadcast_common::backoff::RetrySchedule;
 use broadcast_common::http_date::parse_http_date;
 
 use super::wall::WallClock;
+use broadcast_common::units::{MICROS_PER_SEC, MILLIS_PER_SEC, NANOS_PER_MILLI};
 
 const MIN_BACKOFF_MS: u64 = 1;
-const MICROS_PER_MILLI: u64 = 1_000;
-const NANOS_PER_MILLI: u64 = 1_000_000;
-const MICROS_PER_SECOND: u64 = MICROS_PER_MILLI * 1_000;
 const MAX_RETRY_AFTER_SECS: u64 = 60;
 const STATUS_TOO_MANY_REQUESTS: u16 = 429;
 const STATUS_SERVICE_UNAVAILABLE: u16 = 503;
@@ -99,7 +97,7 @@ pub fn retry_after_us(
     };
     let wait_us = if !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()) {
         let secs = value.parse::<u64>().unwrap_or(u64::MAX);
-        i128::from(secs).saturating_mul(i128::from(MICROS_PER_SECOND))
+        i128::from(secs).saturating_mul(i128::from(MICROS_PER_SEC))
     } else {
         let Ok(until) = parse_http_date(value) else {
             return 0;
@@ -115,7 +113,7 @@ pub fn retry_after_us(
         };
         i128::from(until) - now_unix
     };
-    let capped = wait_us.min(i128::from(MAX_RETRY_AFTER_SECS * MICROS_PER_SECOND));
+    let capped = wait_us.min(i128::from(MAX_RETRY_AFTER_SECS * MICROS_PER_SEC));
     u64::try_from(capped).unwrap_or(0)
 }
 
@@ -144,9 +142,8 @@ fn millis_steps(steps_ms: &[u64]) -> Vec<Duration> {
 /// `ms` milliseconds as a [`Duration`], saturating at [`Duration::MAX`] instead of wrapping back
 /// to a tiny delay.
 fn millis(ms: u64) -> Duration {
-    const MILLIS_PER_SECOND: u64 = 1_000;
-    let secs = ms / MILLIS_PER_SECOND;
-    let nanos = u64::from((ms % MILLIS_PER_SECOND) as u32) * NANOS_PER_MILLI;
+    let secs = ms / MILLIS_PER_SEC;
+    let nanos = u64::from((ms % MILLIS_PER_SEC) as u32) * NANOS_PER_MILLI;
     Duration::new(secs, u32::try_from(nanos).unwrap_or(u32::MAX))
 }
 
@@ -364,6 +361,7 @@ fn sanitize_refused_reason(content_type: Option<&str>, body: &[u8]) -> Option<St
 #[cfg(test)]
 mod tests {
     use super::*;
+    use broadcast_common::units::MICROS_PER_MILLI;
 
     fn header(name: &str, value: &str) -> Vec<(String, String)> {
         vec![(name.to_string(), value.to_string())]

@@ -23,8 +23,8 @@ use crate::source::fetch::retry::{Backoff, RefusedCapture, RetryGate, retry_afte
 use crate::source::fetch::wall::WallClock;
 use crate::source::fetch::window::{Lane, Lanes, Window};
 use broadcast_auth::AuthState;
+use broadcast_common::units::MICROS_PER_MILLI;
 
-const MICROS_PER_MILLI: u64 = 1_000;
 const STATUS_FORBIDDEN: u16 = 403;
 const STATUS_NOT_FOUND: u16 = 404;
 const STATUS_GONE: u16 = 410;

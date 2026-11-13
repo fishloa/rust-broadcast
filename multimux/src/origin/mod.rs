@@ -4051,7 +4051,7 @@ mod tests {
         spec: &crate::config::OutputAuthSpec,
         peer: &str,
     ) -> axum::http::StatusCode {
-        let app = app_with_output_auth(spec.build_verifier(OUTPUT_AUTH_REALM));
+        let app = app_with_output_auth(spec.build_verifier(OUTPUT_AUTH_REALM).expect("verifier"));
         let mut req = get_with_header("/cam1/master.m3u8", "X-Forwarded-User", "alice");
         req.extensions_mut().insert(axum::extract::ConnectInfo(
             peer.parse::<std::net::SocketAddr>().unwrap(),
@@ -4091,7 +4091,11 @@ mod tests {
     /// against the allow-list and is refused.
     #[tokio::test]
     async fn output_auth_forwarded_from_config_refuses_a_request_without_a_peer() {
-        let app = app_with_output_auth(forwarded_spec(None).build_verifier(OUTPUT_AUTH_REALM));
+        let app = app_with_output_auth(
+            forwarded_spec(None)
+                .build_verifier(OUTPUT_AUTH_REALM)
+                .expect("verifier"),
+        );
         let resp = app
             .oneshot(get_with_header(
                 "/cam1/master.m3u8",
