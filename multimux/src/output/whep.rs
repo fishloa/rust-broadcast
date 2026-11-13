@@ -361,43 +361,80 @@ fn build_whep_answer(
 ) -> Result<String> {
     render_whep_answer(
         parsed,
-        local_addr,
-        local_ice_ufrag,
-        local_ice_pwd,
-        setup_role,
-        config,
-        media.local_fingerprint(),
-        &media.local_candidates(),
+        &WhepAnswerParams {
+            local_addr,
+            local_ice_ufrag,
+            local_ice_pwd,
+            setup_role,
+            config,
+            fingerprint: media.local_fingerprint(),
+            candidates: &media.local_candidates(),
+        },
     )
 }
 
-/// [`build_whep_answer`]'s deterministic core (test-only export): fingerprint
+/// `build_whep_answer`'s deterministic core (test-only export): fingerprint
 /// and candidate lines are parameters so the goldens pin the document's line
 /// ordering without the random cert/candidate values.
-#[allow(clippy::too_many_arguments)]
-fn render_whep_answer(
-    parsed: &ParsedWhepOffer,
-    local_addr: SocketAddr,
-    local_ice_ufrag: &str,
-    local_ice_pwd: &str,
-    setup_role: SetupRole,
-    config: &transmux::AVCDecoderConfigurationRecord,
-    fingerprint: &str,
-    candidates: &[String],
-) -> Result<String> {
+/// Parameters shared by the WHEP answer renderer and its test hook.
+#[derive(Clone, Copy)]
+pub struct WhepAnswerParams<'a> {
+    /// Local socket address rendered into the candidate/transport lines.
+    pub local_addr: SocketAddr,
+    /// Local ICE username fragment.
+    pub local_ice_ufrag: &'a str,
+    /// Local ICE password.
+    pub local_ice_pwd: &'a str,
+    /// SDP setup role for this side.
+    pub setup_role: SetupRole,
+    /// H.264 decoder configuration record read off the track.
+    pub config: &'a transmux::AVCDecoderConfigurationRecord,
+    /// DTLS fingerprint string.
+    pub fingerprint: &'a str,
+    /// ICE candidate lines.
+    pub candidates: &'a [String],
+}
+
+impl<'a> WhepAnswerParams<'a> {
+    /// Construct the shared answer parameters.
+    #[must_use]
+    pub fn new(
+        local_addr: SocketAddr,
+        local_ice_ufrag: &'a str,
+        local_ice_pwd: &'a str,
+        setup_role: SetupRole,
+        config: &'a transmux::AVCDecoderConfigurationRecord,
+        fingerprint: &'a str,
+        candidates: &'a [String],
+    ) -> Self {
+        Self {
+            local_addr,
+            local_ice_ufrag,
+            local_ice_pwd,
+            setup_role,
+            config,
+            fingerprint,
+            candidates,
+        }
+    }
+}
+
+fn render_whep_answer(parsed: &ParsedWhepOffer, params: &WhepAnswerParams<'_>) -> Result<String> {
     let pt = parsed.payload_type;
     let profile_level_id = format!(
         "{:02X}{:02X}{:02X}",
-        config.profile_indication, config.profile_compatibility, config.level_indication
+        params.config.profile_indication,
+        params.config.profile_compatibility,
+        params.config.level_indication
     );
     let mut sprop = String::new();
-    for (i, sps) in config.sps.iter().enumerate() {
+    for (i, sps) in params.config.sps.iter().enumerate() {
         if i > 0 {
             sprop.push(',');
         }
         sprop.push_str(&broadcast_common::base64::base64_encode(&sps.0));
     }
-    for pps in &config.pps {
+    for pps in &params.config.pps {
         if !sprop.is_empty() {
             sprop.push(',');
         }
@@ -425,16 +462,16 @@ fn render_whep_answer(
         ],
     };
     session_answer(
-        local_addr.ip(),
+        params.local_addr.ip(),
         LocalMediaIdentity {
-            ice_ufrag: local_ice_ufrag,
-            ice_pwd: local_ice_pwd,
-            fingerprint,
+            ice_ufrag: params.local_ice_ufrag,
+            ice_pwd: params.local_ice_pwd,
+            fingerprint: params.fingerprint,
         },
         &parsed.mid,
-        setup_role.name(),
+        params.setup_role.name(),
         &codec,
-        candidates,
+        params.candidates,
     )
     .map_err(|e| MultimuxError::Sdp {
         reason: format!("whep: render the answer: {e}"),
@@ -562,30 +599,10 @@ pub fn whep_router_for_test(
 /// fingerprint and candidate lines all caller-supplied), so the goldens can
 /// pin the document without the random cert/candidate values.
 #[doc(hidden)]
-#[allow(clippy::too_many_arguments)]
 #[cfg(feature = "test-hooks")]
-pub fn render_whep_answer_for_test(
-    offer: &str,
-    local_addr: SocketAddr,
-    local_ice_ufrag: &str,
-    local_ice_pwd: &str,
-    setup_role: SetupRole,
-    config: &transmux::AVCDecoderConfigurationRecord,
-    fingerprint: &str,
-    candidates: &[String],
-) -> Option<String> {
+pub fn render_whep_answer_for_test(offer: &str, params: WhepAnswerParams<'_>) -> Option<String> {
     let parsed = parse_whep_offer(offer).ok()?;
-    render_whep_answer(
-        &parsed,
-        local_addr,
-        local_ice_ufrag,
-        local_ice_pwd,
-        setup_role,
-        config,
-        fingerprint,
-        candidates,
-    )
-    .ok()
+    render_whep_answer(&parsed, &params).ok()
 }
 
 /// The WHEP output-auth middleware: delegates to
