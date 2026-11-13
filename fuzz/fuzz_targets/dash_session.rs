@@ -176,7 +176,6 @@ fn header(name: &str, value: &str) -> (String, String) {
     (name.to_owned(), value.to_owned())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn answer(
     session: &mut Session,
     conn: u32,

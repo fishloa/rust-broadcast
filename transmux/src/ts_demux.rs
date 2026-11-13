@@ -2243,7 +2243,6 @@ impl StreamState {
 /// old-geometry sample, then `TrackUpdated` (if the codec config changed),
 /// then `DisplayChanged`, then the first new-geometry sample - exactly the
 /// order Phase 1a established for `TrackUpdated`.
-#[allow(clippy::too_many_arguments)]
 fn advance_one_behind(
     pending: &mut Option<PendingOneBehind>,
     last_duration: &mut u32,
@@ -2591,7 +2590,6 @@ fn clear_audio_carry(stream: &mut StreamState, events: &mut VecDeque<DemuxEvent>
 /// genuine discontinuity (see [`AudioAnchor`]); every frame split out of
 /// this AU then advances from that base by its own `elapsed` intrinsic
 /// samples, exactly as before.
-#[allow(clippy::too_many_arguments)]
 fn emit_audio_au(
     kind: &AudioKind,
     sample_rate: u32,

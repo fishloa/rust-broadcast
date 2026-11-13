@@ -1125,7 +1125,6 @@ fn scan_tag_lines_for_version(tags: &[String]) -> Option<u8> {
 ///
 /// AttributeName contains only uppercase letters per §4.2, so the `REQ-`
 /// prefix match is case-sensitive.
-#[allow(clippy::too_many_arguments)]
 fn any_typed_req_attr(
     start: Option<&StartPoint>,
     defines: &[Define],

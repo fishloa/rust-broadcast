@@ -739,7 +739,6 @@ fn build_stap_a(
 /// original sample data (the NAL body bytes after the first octet) —
 /// the common case where this crate's move to `Sample.data: Bytes` pays
 /// off on the RTP egress path.
-#[allow(clippy::too_many_arguments)]
 fn fragment_fu_a(
     nal: &[u8],
     sample_data: &Bytes,
