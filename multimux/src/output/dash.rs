@@ -357,7 +357,7 @@ pub(crate) fn render_mpd_at_with_flavour(
     flavour: DashFlavour,
 ) -> Option<String> {
     let program = crate::route::SPTS_PROGRAM_ID;
-    let window = route.window_segments(program);
+    let window = route.dash_window_segments(program);
     let runs = period_runs(&window);
     let first_number = start_number(route);
     let first_period = crate::route::PeriodAnchor {
@@ -365,46 +365,60 @@ pub(crate) fn render_mpd_at_with_flavour(
         first_public_seq: first_number,
         media_start_ns: 0,
     };
-    let current_generation = || {
-        route
-            .serving(program)
-            .map(|s| s.ll_hls().current_init_generation())
-            .unwrap_or_else(|| media_plane::ids::Generation::new(1))
-    };
-    let plans: Vec<PeriodPlan<'_>> = match runs.as_slice() {
-        [] if !window.is_empty() => return None,
-        [] => {
-            let anchor = route
-                .serving(program)
-                .map_or(first_period, |s| s.first_period());
-            vec![PeriodPlan {
+    let serving = route.serving(program);
+    let own_instance = serving.as_ref().map(|s| s.ll_hls().instance());
+    let mut plans: Vec<PeriodPlan> = Vec::new();
+    for run in &runs {
+        let first = run.segments[0];
+        let Some(last) = run.segments.last() else {
+            continue;
+        };
+        let specs = if Some(last.instance) == own_instance {
+            if run.ended_by.is_some() {
+                route.track_specs_at(program, first.segment_seq)
+            } else {
+                route.track_specs(program)
+            }
+        } else {
+            serving
+                .as_ref()
+                .and_then(|s| s.retained_serving(last.instance))
+                .map(|retained| retained.track_specs_at(last.segment_seq))
+                .unwrap_or_default()
+        };
+        plans.push(PeriodPlan {
+            anchor: first.period.unwrap_or(first_period),
+            instance: last.instance,
+            init_generation: last.init_generation,
+            specs,
+            has_segments: true,
+            end_seq: run.ended_by.map(|_| last.public_seq.saturating_add(1)),
+        });
+    }
+    let own_segments = window.iter().any(|s| Some(s.instance) == own_instance);
+    if !own_segments {
+        let anchor = serving.as_ref().map_or(first_period, |s| s.first_period());
+        if plans.last().is_none_or(|last| last.anchor != anchor) {
+            if let Some(previous) = plans.last_mut()
+                && let Some(last) = runs.last().and_then(|run| run.segments.last())
+            {
+                previous.end_seq = Some(last.public_seq.saturating_add(1));
+            }
+            plans.push(PeriodPlan {
                 anchor,
-                init_generation: current_generation(),
+                instance: own_instance.unwrap_or(1),
+                init_generation: serving.as_ref().map_or_else(
+                    || media_plane::ids::Generation::new(1),
+                    |s| s.ll_hls().current_init_generation(),
+                ),
                 specs: route.track_specs(program),
                 has_segments: anchor != first_period,
-                ended_by: None,
-            }]
+                end_seq: None,
+            });
         }
-        runs => runs
-            .iter()
-            .map(|run| {
-                let first = run.segments[0];
-                PeriodPlan {
-                    anchor: first.period.unwrap_or(first_period),
-                    init_generation: first.init_generation,
-                    specs: if run.ended_by.is_some() {
-                        route.track_specs_at(program, first.segment_seq)
-                    } else {
-                        route.track_specs(program)
-                    },
-                    has_segments: true,
-                    ended_by: run.ended_by,
-                }
-            })
-            .collect(),
-    };
+    }
     if let [only] = plans.as_slice()
-        && only.ended_by.is_none()
+        && only.end_seq.is_none()
         && only.anchor == first_period
     {
         return render_period_document(
@@ -414,6 +428,7 @@ pub(crate) fn render_mpd_at_with_flavour(
             &only.specs,
             first_number,
             only.has_segments,
+            only.instance,
             only.init_generation,
             flavour,
         );
@@ -429,6 +444,7 @@ pub(crate) fn render_mpd_at_with_flavour(
             &plan.specs,
             anchor.first_public_seq,
             plan.has_segments,
+            plan.instance,
             plan.init_generation,
             flavour,
         ) else {
@@ -442,10 +458,8 @@ pub(crate) fn render_mpd_at_with_flavour(
         let start = period_start(anchor.first_public_seq, first_number, nominal_secs)?;
         period.id = Some(anchor.ordinal.to_string());
         period.start = Some(start);
-        period.duration = match plan.ended_by {
-            Some(end) => {
-                Some(period_start(end.public_seq, first_number, nominal_secs)?.checked_sub(start)?)
-            }
+        period.duration = match plan.end_seq {
+            Some(end) => Some(period_start(end, first_number, nominal_secs)?.checked_sub(start)?),
             None => None,
         };
         set_presentation_time_offset(&mut period, anchor.media_start_ns)?;
@@ -461,12 +475,16 @@ pub(crate) fn render_mpd_at_with_flavour(
 }
 
 /// What one `Period` element is rendered from.
-struct PeriodPlan<'a> {
+struct PeriodPlan {
     anchor: crate::route::PeriodAnchor,
+    /// The origin whose init segment the Period names, and its generation there.
+    instance: u64,
     init_generation: media_plane::ids::Generation,
     specs: Vec<TrackSpec>,
     has_segments: bool,
-    ended_by: Option<&'a crate::route::DashWindowSegment>,
+    /// The number after the Period's last listed segment, when a later Period or a gap follows:
+    /// `@duration` ends there.
+    end_seq: Option<u64>,
 }
 
 /// Set `@presentationTimeOffset` on every `SegmentTemplate` of `period` to `media_start_ns` in
@@ -507,6 +525,7 @@ fn render_period_document(
     specs: &[TrackSpec],
     start_number: u64,
     has_segments: bool,
+    instance: u64,
     init_generation: media_plane::ids::Generation,
     flavour: DashFlavour,
 ) -> Option<String> {
@@ -551,10 +570,6 @@ fn render_period_document(
 
     let media = Media::new(vec![Track::new(spec, Vec::new())], timescale);
 
-    let instance = route
-        .serving(crate::route::SPTS_PROGRAM_ID)
-        .map(|s| s.ll_hls().instance())
-        .unwrap_or(1);
     let init_template = format!(
         "init-$RepresentationID$-{}-{}.mp4",
         instance,
@@ -1731,7 +1746,7 @@ mod tests {
     }
 
     /// The facts of one rendered `Period` the issue #2611 rules are checked against.
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug, Clone, PartialEq)]
     struct PeriodFacts {
         id: String,
         start: Duration,
@@ -1823,8 +1838,25 @@ mod tests {
         new.add_segment(program, seg(1, 4.0)).expect("add_segment");
         let mpd = render_mpd_at(&new, now).expect("new MPD");
         let after = period_facts(&mpd);
-        assert_eq!(after.len(), 1, "{mpd}");
-        let period = &after[0];
+        assert_eq!(after.len(), 2, "the replaced Period stays listed: {mpd}");
+        let (replaced_period, period) = (&after[0], &after[1]);
+        assert_eq!(
+            PeriodFacts {
+                duration: None,
+                ..replaced_period.clone()
+            },
+            before[0],
+            "the replaced Period keeps its identity: {mpd}"
+        );
+        assert_eq!(
+            replaced_period.duration,
+            Some(Duration::from_secs(12)),
+            "the replaced Period ends with the last segment it closed (1..=3): {mpd}"
+        );
+        assert!(
+            replaced_period.start + Duration::from_secs(12) <= period.start,
+            "and before the new Period starts: {mpd}"
+        );
         assert_ne!(period.id, before[0].id, "a new Period has a new id: {mpd}");
         assert_eq!(period.id, "1", "{mpd}");
         assert_eq!(
@@ -1874,12 +1906,30 @@ mod tests {
         let (_old, new) = replaced(vec![0xA1; 8], vec![0xB2; 8]);
         new.add_segment(program, seg(1, 4.0)).expect("add_segment");
         let opened = period_facts(&render_mpd_at(&new, now).expect("MPD"));
+        assert_eq!(opened.len(), 2);
+        let serving = new.serving(program).expect("published");
         for seq in 2..=6 {
             new.add_segment(program, seg(seq, 4.0))
                 .expect("add_segment");
             let mpd = render_mpd_at(&new, now).expect("MPD");
-            assert_eq!(period_facts(&mpd), opened, "after segment {seq}: {mpd}");
+            let facts = period_facts(&mpd);
+            assert_eq!(facts.last(), opened.last(), "after segment {seq}: {mpd}");
+            let replaced_listed = facts.len() == 2;
+            if replaced_listed {
+                assert_eq!(facts[0], opened[0], "after segment {seq}: {mpd}");
+            }
+            assert_eq!(
+                serving.retained_servings().is_empty(),
+                !replaced_listed,
+                "the replaced program is retained exactly while its Period is listed: {mpd}"
+            );
+            validate_against_ed6_schema(&mpd, "reload-slide");
         }
+        assert_eq!(
+            period_facts(&render_mpd_at(&new, now).expect("MPD")).len(),
+            1,
+            "the replaced Period ages out with its last segment"
+        );
     }
 
     /// The in-stream Periods keep their identity too: once the window has slid past the first

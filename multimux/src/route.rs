@@ -349,6 +349,10 @@ pub struct DashWindowSegment {
     /// The DASH Period this segment is listed in; `None` only for a gap placeholder cut before
     /// the program's first Period opened.
     pub(crate) period: Option<PeriodAnchor>,
+    /// [`HlsOrigin::instance`] of the program that cut this segment: this program's own, or a
+    /// predecessor's whose segments are still in the DASH window (see
+    /// [`ProgramServing::dash_window_segments`]).
+    pub(crate) instance: u64,
 }
 
 /// The identity of one DASH Period, fixed when the Period opens and never changed by an MPD
@@ -466,7 +470,7 @@ pub struct ProgramEpoch {
 /// and where its DASH Periods stand. Taken from
 /// the live [`ProgramServing`] on a reconnect, or from the route this one replaces
 /// ([`RouteHandle::continue_from`]).
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct ProgramContinuation {
     next_media_sequence: u64,
     discontinuity_sequence_after: u64,
@@ -475,6 +479,10 @@ pub(crate) struct ProgramContinuation {
     init: Option<Bytes>,
     /// The predecessor's DASH Period position after its last segment.
     period: PeriodCursor,
+    /// The predecessor's DASH window, its own segments and any it still lists of earlier ones.
+    window: Vec<DashWindowSegment>,
+    /// The programs that cut the segments of `window`, which keep serving them.
+    servings: Vec<Arc<ProgramServing>>,
 }
 
 /// The small `Trunk`-drained state DASH/LL-DASH rendering needs beyond any
@@ -500,21 +508,31 @@ pub(crate) struct DashState {
     presentation_origin: SystemTime,
     epoch: ProgramEpoch,
     period: Mutex<PeriodCursor>,
+    /// [`HlsOrigin::instance`] of this program's origin.
+    instance: u64,
 }
 
 impl DashState {
+    /// `inherited` is the predecessor's DASH window: its newest segments stay listed (and age
+    /// out as this program's segments arrive) so a Period whose segments are still inside the
+    /// time-shift buffer is not withdrawn (ISO/IEC 23009-1 §5.3.9.5.3, §5.4.1).
     fn new(
         trunk: &Arc<Trunk>,
         window_segments: NonZeroUsize,
         epoch: ProgramEpoch,
         period: PeriodCursor,
+        instance: u64,
+        inherited: &[DashWindowSegment],
     ) -> Self {
+        let capacity = window_segments.get();
+        let kept = &inherited[inherited.len().saturating_sub(capacity)..];
         DashState {
             epoch,
             period: Mutex::new(period),
+            instance,
             cursor: Mutex::new(trunk.subscribe_segments()),
-            window: Mutex::new(VecDeque::new()),
-            capacity: window_segments.get(),
+            window: Mutex::new(kept.iter().copied().collect()),
+            capacity,
             track_specs: Mutex::new(Vec::new()),
             track_epoch: AtomicU64::new(0),
             presentation_origin: epoch.presentation_origin,
@@ -608,10 +626,11 @@ impl DashState {
                         (public_seq, timeline_position_ns),
                         self.program_start(),
                     ),
+                    instance: self.instance,
                 });
             }
         }
-        if let Some(oldest) = window.front() {
+        if let Some(oldest) = window.iter().find(|s| s.instance == self.instance) {
             self.retire_track_specs_before(oldest.segment_seq);
         }
     }
@@ -720,6 +739,10 @@ pub(crate) struct ProgramServing {
     /// of this program's recorder has flushed the segments it had closed but
     /// not yet archived (see [`Self::flush_predecessor`]).
     predecessor: Mutex<Option<Arc<ProgramServing>>>,
+    /// The replaced programs whose segments this program's DASH window still lists: they keep
+    /// serving those segments and their init segments until the segments age out of the window
+    /// (see [`Self::dash_window_segments`]).
+    retained: Mutex<Vec<Arc<ProgramServing>>>,
     /// Lazily-acquired write handle for [`RouteHandle::add_segment`]/
     /// [`RouteHandle::add_part`] (this crate's own direct-`Trunk`-write test
     /// helpers, standing in for a real `crate::source::segment::ProgramSegmenter`).
@@ -980,7 +1003,14 @@ impl ProgramServing {
         wire_rendition_siblings(&ll_hls, &audio_entries);
 
         let period = previous.map_or_else(PeriodCursor::default, |p| p.period.continued());
-        let dash = Arc::new(DashState::new(&trunk, window_segments, epoch, period));
+        let dash = Arc::new(DashState::new(
+            &trunk,
+            window_segments,
+            epoch,
+            period,
+            ll_hls.instance(),
+            previous.map_or(&[][..], |p| p.window.as_slice()),
+        ));
 
         let ext = match container {
             Container::Fmp4 => ".m4s",
@@ -1027,6 +1057,7 @@ impl ProgramServing {
             dvr: Mutex::new(dvr),
             init_log: Mutex::new(Vec::new()),
             predecessor: Mutex::new(None),
+            retained: Mutex::new(previous.map(|p| p.servings.clone()).unwrap_or_default()),
             segment_writer: Mutex::new(None),
             next_timeline_ns: AtomicU64::new(epoch.media_start_ns),
             audio_rendition_servings: audio_servings,
@@ -1260,7 +1291,7 @@ impl ProgramServing {
         self.dash.track_specs()
     }
 
-    fn track_specs_at(&self, segment: media_plane::ids::SegmentSeq) -> Vec<TrackSpec> {
+    pub(crate) fn track_specs_at(&self, segment: media_plane::ids::SegmentSeq) -> Vec<TrackSpec> {
         self.dash.track_specs_at(segment)
     }
 
@@ -1272,9 +1303,40 @@ impl ProgramServing {
         self.tracks_active.load(Ordering::SeqCst)
     }
 
+    /// This program's own segments in the DASH window.
     pub(crate) fn window_segments(&self) -> Vec<DashWindowSegment> {
-        self.dash
-            .window_segments(|seq| self.ll_hls.init_generation_for(seq))
+        let instance = self.ll_hls.instance();
+        self.dash_window_segments()
+            .into_iter()
+            .filter(|segment| segment.instance == instance)
+            .collect()
+    }
+
+    /// The DASH window: this program's segments, after those of replaced programs it still
+    /// lists. A replaced program stops being retained once none of its segments is listed.
+    pub(crate) fn dash_window_segments(&self) -> Vec<DashWindowSegment> {
+        let window = self
+            .dash
+            .window_segments(|seq| self.ll_hls.init_generation_for(seq));
+        self.retained.lock().retain(|serving| {
+            let instance = serving.ll_hls.instance();
+            window.iter().any(|segment| segment.instance == instance)
+        });
+        window
+    }
+
+    /// The retained replaced program that cut segments under `instance`.
+    pub(crate) fn retained_serving(&self, instance: u64) -> Option<Arc<ProgramServing>> {
+        self.retained
+            .lock()
+            .iter()
+            .find(|serving| serving.ll_hls.instance() == instance)
+            .cloned()
+    }
+
+    /// Every retained replaced program, newest first.
+    pub(crate) fn retained_servings(&self) -> Vec<Arc<ProgramServing>> {
+        self.retained.lock().iter().rev().cloned().collect()
     }
 
     /// The DASH Period an MPD rendered before this program's first segment lists: the one the
@@ -1292,8 +1354,13 @@ impl ProgramServing {
         self.dash.epoch
     }
 
-    fn continuation(&self) -> ProgramContinuation {
+    fn continuation(self: &Arc<Self>) -> ProgramContinuation {
+        let window = self.dash_window_segments();
+        let mut servings = std::mem::take(&mut *self.retained.lock());
+        servings.push(Arc::clone(self));
         ProgramContinuation {
+            window,
+            servings,
             // `next_media_sequence()`, not `- 1`: the number the old origin's *open* segment was
             // shown with is skipped too — its parts were already served and must not be
             // reissued for different media.
@@ -2791,6 +2858,14 @@ impl RouteHandle {
     pub fn window_segments(&self, program: ProgramId) -> Vec<DashWindowSegment> {
         self.serving(program)
             .map(|serving| serving.window_segments())
+            .unwrap_or_default()
+    }
+
+    /// `program`'s DASH window: [`Self::window_segments`] after the segments of replaced
+    /// programs it still lists (see `ProgramServing::dash_window_segments`).
+    pub(crate) fn dash_window_segments(&self, program: ProgramId) -> Vec<DashWindowSegment> {
+        self.serving(program)
+            .map(|serving| serving.dash_window_segments())
             .unwrap_or_default()
     }
 
