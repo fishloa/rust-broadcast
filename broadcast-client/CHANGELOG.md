@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- `Config::preemptive_basic` (off by default): send `Basic` credentials on the first request to the session origin instead of waiting for a `401` (RFC 7617).
+- `ErrorKind::refusal_status()` (the HTTP status behind a failed key, init or segment request) and `ErrorKind::is_permanent()` (content or codec errors a retry cannot fix).
 - `UdpConfig::sdp`: an out-of-band SDP (RFC 4566) that switches an `rtp://` session from MPEG-2 TS (payload type 33) to the H.264 (RFC 6184) and AAC (RFC 3640) streams it declares, routed by RTP payload type and depayloaded with `transmux`'s depacketisers. The tracks are announced when the socket is bound, before any packet; a reconnect flushes the access units still held. `datagram_stats()` counts the datagrams and the ones that were not RTP, and `payload_bytes()` the packets routed to a declared stream.
 - `ErrorKind::RequestRefused { method, status }` (non-fatal, also `ends_connection()`): an RTSP server's DESCRIBE, SETUP or PLAY answer the session cannot proceed on, with the method and the status as the server sent it.
 - `Session::payload_bytes()`: transport-stream payload bytes accepted from the source, excluding control traffic and dropped datagrams, for hosts that measure stalls.
@@ -16,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - BREAKING: `broadcast_client::auth`'s own `AuthState`, `AuthDecision`, `AuthEvent` and `carries_credentials` definitions — they live in `broadcast-auth` now, and this module re-exports them, so the paths keep working but the types are `broadcast_auth`'s.
 ### Changed
+- `Session::payload_bytes()` also counts every response body byte of an HLS, DASH or Smooth session.
 - An RTSP session announces its `Event::Tracks` (from the DESCRIBE SDP) when PLAY is answered instead of with the first access unit, so a host sees the programme before any media arrives.
 - `SrtConfig::latency_ms` accepts any value: a latency below 120 ms is no longer an `InvalidConfig` (the negotiated latency is the larger of the two peers' values).
 - `Retry-After` HTTP-date parsing now uses `broadcast-common::http_date::parse_http_date`.

@@ -384,6 +384,20 @@ pub trait ServedEgress: Send + Sync + 'static {
         now: Timestamp,
         await_policy: AwaitPolicy,
     ) -> EgressResponse<Self::Body>;
+
+    /// `true` when [`resolve`](Self::resolve)ing `request` now is cheap: no
+    /// scan, demux or packaging is left to do. An implementation that has
+    /// such work answers `false` until [`prepare`](Self::prepare) has run, so
+    /// an async host can do that work on a blocking thread rather than on the
+    /// worker that woke the request. The default is always warm.
+    fn is_warm(&self, _request: &Self::Request) -> bool {
+        true
+    }
+
+    /// Do the heavy work `request` needs so that the next
+    /// [`resolve`](Self::resolve) is warm. Blocking and CPU-bound; call it on
+    /// a thread that may block. The default does nothing.
+    fn prepare(&self, _request: Self::Request) {}
 }
 
 /// Which of the currently-known tracks a [`PushEgress`] selected.

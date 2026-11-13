@@ -167,14 +167,14 @@ pub(crate) fn master_playlist_response(
 /// `Await` requests".
 pub(crate) async fn resolve_blocking<E, G>(
     trunk: &Arc<Trunk>,
-    egress: &E,
+    egress: &Arc<E>,
     request: E::Request,
     timeout: Duration,
     on_enter_wait: impl FnOnce() -> G,
 ) -> EgressResponse<E::Body>
 where
     E: ServedEgress,
-    E::Request: Clone,
+    E::Request: Clone + Send + 'static,
 {
     resolve_blocking_timed(trunk, egress, request, timeout, on_enter_wait)
         .await
@@ -187,14 +187,14 @@ where
 /// answers `503` (RFC 8216bis section 6.2.5.2), never `404`.
 pub(crate) async fn resolve_blocking_timed<E, G>(
     trunk: &Arc<Trunk>,
-    egress: &E,
+    egress: &Arc<E>,
     request: E::Request,
     timeout: Duration,
     on_enter_wait: impl FnOnce() -> G,
 ) -> (EgressResponse<E::Body>, bool)
 where
     E: ServedEgress,
-    E::Request: Clone,
+    E::Request: Clone + Send + 'static,
 {
     let mut waited = false;
     let resp =
@@ -203,9 +203,41 @@ where
     (resp, timed_out)
 }
 
+/// Most warm-ups running on the blocking pool at once, across every egress.
+const MAX_CONCURRENT_WARMS: usize = 8;
+
+static WARMS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(MAX_CONCURRENT_WARMS);
+
+/// Run `egress`'s [`ServedEgress::prepare`] for `request` on the blocking pool
+/// when [`ServedEgress::is_warm`] says the resolve is not cheap, so a request
+/// that has just woken never does a scan, demux or packaging on the async
+/// worker that woke it. At most [`MAX_CONCURRENT_WARMS`] run at once; a request
+/// queued on [`WARMS`] re-checks warmth once admitted and skips its own if an
+/// earlier one has finished. `prepare` must itself tolerate running
+/// concurrently with itself.
+async fn ensure_warm<E>(egress: &Arc<E>, request: &E::Request)
+where
+    E: ServedEgress,
+    E::Request: Clone + Send + 'static,
+{
+    if egress.is_warm(request) {
+        return;
+    }
+    let Ok(_permit) = WARMS.acquire().await else {
+        return;
+    };
+    if egress.is_warm(request) {
+        return;
+    }
+    let (egress, request) = (Arc::clone(egress), request.clone());
+    if let Err(error) = tokio::task::spawn_blocking(move || egress.prepare(request)).await {
+        tracing::warn!(%error, "egress warm-up task failed");
+    }
+}
+
 async fn resolve_blocking_inner<E, G>(
     trunk: &Arc<Trunk>,
-    egress: &E,
+    egress: &Arc<E>,
     request: E::Request,
     timeout: Duration,
     on_enter_wait: impl FnOnce() -> G,
@@ -213,7 +245,7 @@ async fn resolve_blocking_inner<E, G>(
 ) -> EgressResponse<E::Body>
 where
     E: ServedEgress,
-    E::Request: Clone,
+    E::Request: Clone + Send + 'static,
 {
     let base = Instant::now();
     let deadline_instant = base + timeout;
@@ -224,6 +256,7 @@ where
     let mut _wait_guard: Option<G> = None;
 
     loop {
+        ensure_warm(egress, &request).await;
         let now = Timestamp::from_instant(base.into_std(), Instant::now().into_std());
         match egress.resolve(request.clone(), now, policy) {
             EgressResponse::Await { .. } => *waited = true,
@@ -236,6 +269,7 @@ where
         // registration landing.
         let listener = trunk.listen();
         if listener.is_some() {
+            ensure_warm(egress, &request).await;
             let now = Timestamp::from_instant(base.into_std(), Instant::now().into_std());
             match egress.resolve(request.clone(), now, policy) {
                 EgressResponse::Await { .. } => *waited = true,
@@ -248,6 +282,7 @@ where
             // Out of patience: one final resolve to get the honest
             // "gave up waiting" answer (`EgressResponse::pending`'s own
             // now-past-deadline path), rather than looping forever.
+            ensure_warm(egress, &request).await;
             let now = Timestamp::from_instant(base.into_std(), Instant::now().into_std());
             return egress.resolve(request.clone(), now, policy);
         }
@@ -517,6 +552,76 @@ mod tests {
         }
     }
 
+    struct ColdEgress {
+        warm: AtomicBool,
+        prepares: AtomicUsize,
+    }
+
+    const PREPARE_DURATION: Duration = Duration::from_millis(300);
+    const TICK: Duration = Duration::from_millis(10);
+
+    impl ServedEgress for ColdEgress {
+        type Request = ();
+        type Body = ();
+
+        fn resolve(&self, (): (), _now: Timestamp, _policy: AwaitPolicy) -> EgressResponse<()> {
+            EgressResponse::Ready {
+                body: (),
+                cache: CachePolicy::NoCache,
+            }
+        }
+
+        fn is_warm(&self, (): &()) -> bool {
+            self.warm.load(Ordering::SeqCst)
+        }
+
+        fn prepare(&self, (): ()) {
+            self.prepares.fetch_add(1, Ordering::SeqCst);
+            std::thread::sleep(PREPARE_DURATION);
+            self.warm.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// #2538: a cold egress is prepared on the blocking pool. On a
+    /// single-threaded runtime the one worker keeps ticking while the
+    /// 300 ms `prepare` runs; inline it would starve the ticker. Concurrent
+    /// requests start at most `MAX_CONCURRENT_WARMS` prepares, never one each.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_cold_egress_is_prepared_off_the_async_worker() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(8), nz(8), nz(4), nz(8), nz(8)));
+        let egress = Arc::new(ColdEgress {
+            warm: AtomicBool::new(false),
+            prepares: AtomicUsize::new(0),
+        });
+        let requests: Vec<_> = (0..16)
+            .map(|_| {
+                let (trunk, egress) = (Arc::clone(&trunk), Arc::clone(&egress));
+                tokio::spawn(async move {
+                    resolve_blocking(&trunk, &egress, (), BLOCKING_TIMEOUT, || ()).await
+                })
+            })
+            .collect();
+
+        let mut ticks = 0u32;
+        let started = tokio::time::Instant::now();
+        while started.elapsed() < PREPARE_DURATION {
+            tokio::time::sleep(TICK).await;
+            ticks += 1;
+        }
+        assert!(
+            ticks >= 10,
+            "the worker was blocked while preparing: {ticks} ticks"
+        );
+        for request in requests {
+            assert!(matches!(
+                request.await.expect("request task"),
+                EgressResponse::Ready { .. }
+            ));
+        }
+        let prepares = egress.prepares.load(Ordering::SeqCst);
+        assert!((1..=MAX_CONCURRENT_WARMS).contains(&prepares), "{prepares}");
+    }
+
     const PARKED_REQUESTS: usize = 200;
     const IDLE_WINDOW: Duration = Duration::from_millis(300);
     const BLOCKING_TIMEOUT: Duration = Duration::from_secs(20);
@@ -536,7 +641,7 @@ mod tests {
             .map(|_| {
                 let (trunk, egress) = (Arc::clone(&trunk), Arc::clone(&egress));
                 tokio::spawn(async move {
-                    resolve_blocking(&trunk, egress.as_ref(), (), BLOCKING_TIMEOUT, || ()).await
+                    resolve_blocking(&trunk, &egress, (), BLOCKING_TIMEOUT, || ()).await
                 })
             })
             .collect();

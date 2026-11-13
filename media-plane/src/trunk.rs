@@ -587,7 +587,7 @@ use std::future::Future;
 use std::num::NonZeroUsize;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 use transmux::TrackId;
@@ -1585,6 +1585,11 @@ pub struct Trunk {
     /// waiter's register-then-poll and a publish with no waiter skips the
     /// `notify` (whose fence would otherwise cost every publish).
     data_waiters: AtomicUsize,
+    /// Bumped, after the mutation and while `state` is still held, by every
+    /// publish that can change a rendered playlist or manifest: a part, a
+    /// segment, an event, a track-set change, a segment start or a time
+    /// anchor. Never by a sample publish. See [`Trunk::generation`].
+    generation: AtomicU64,
 }
 
 impl Trunk {
@@ -1623,6 +1628,7 @@ impl Trunk {
             waiter_cap: config.waiter_capacity.get(),
             data: Event::new(),
             data_waiters: AtomicUsize::new(0),
+            generation: AtomicU64::new(0),
         })
     }
 
@@ -2220,6 +2226,19 @@ impl Trunk {
         })
     }
 
+    /// A counter that changes whenever a part, segment, event, track set,
+    /// segment start or time anchor is published (never for a sample). A
+    /// renderer reads it **before** reading the state it renders and caches
+    /// the output under the value it read: a publish that lands afterwards
+    /// bumps it, so the stale entry is never served for the new state.
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
+    }
+
+    fn bump_generation(&self) {
+        self.generation.fetch_add(1, Ordering::Release);
+    }
+
     /// A listener woken by the next sample, event, track-set change or
     /// writer hand-off published on this trunk. Not counted against
     /// [`TrunkConfig::waiter_capacity`]. **Register before re-checking the
@@ -2439,6 +2458,7 @@ impl TrunkWriter {
     pub fn publish_event(&self, event: TimedEvent, anchor: EventAnchor) {
         let mut state = self.trunk.lock_state();
         state.events.push(event, anchor);
+        self.trunk.bump_generation();
         let waited = self.trunk.data_waiters.load(Ordering::Relaxed) > 0;
         drop(state);
         if waited {
@@ -2481,6 +2501,7 @@ impl TrunkWriter {
         state.track_changes.push(change);
         let timed_base = state.timed.base;
         state.track_changes.prune(timed_base);
+        self.trunk.bump_generation();
         drop(state);
         self.trunk.progress.notify(usize::MAX);
         self.trunk.data.notify(usize::MAX);
@@ -2696,6 +2717,7 @@ impl SegmentWriter {
             // pending.
         }
         state.segments.push(entry);
+        self.trunk.bump_generation();
         drop(state);
         self.trunk.progress.notify(usize::MAX);
         Ok(())
@@ -2829,6 +2851,7 @@ impl SegmentWriter {
             }
         }
         state.segments.push(entry);
+        self.trunk.bump_generation();
         drop(state);
         self.trunk.progress.notify(usize::MAX);
         Ok(())
@@ -2846,6 +2869,7 @@ impl SegmentWriter {
     pub fn publish_part(&self, entry: PartEntry) {
         let mut state = self.trunk.lock_state();
         state.parts.push(entry);
+        self.trunk.bump_generation();
         drop(state);
         self.trunk.progress.notify(usize::MAX);
     }
@@ -2865,6 +2889,7 @@ impl SegmentWriter {
     pub fn note_segment_start(&self, segment_number: SegmentSeq, start: MediaTime) {
         let mut state = self.trunk.lock_state();
         state.events.note_segment_start(segment_number, start);
+        self.trunk.bump_generation();
     }
 
     /// Give the event log a wall-clock↔media-clock mapping. Resolves every
@@ -2878,6 +2903,7 @@ impl SegmentWriter {
     pub fn set_time_anchor(&self, anchor: TimeAnchor) {
         let mut state = self.trunk.lock_state();
         state.events.set_time_anchor(anchor);
+        self.trunk.bump_generation();
     }
 }
 

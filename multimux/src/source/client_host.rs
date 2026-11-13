@@ -127,6 +127,7 @@ pub(crate) struct SessionLabels {
     connect: Duration,
     read: Duration,
     not_found_phase: Option<&'static str>,
+    session_retries: bool,
 }
 
 impl SessionLabels {
@@ -136,6 +137,7 @@ impl SessionLabels {
             connect: timeouts.connect,
             read: timeouts.read,
             not_found_phase: None,
+            session_retries: false,
         }
     }
 
@@ -143,6 +145,15 @@ impl SessionLabels {
     /// treats as permanent after repeated attempts, instead of an ordinary connect failure.
     pub(crate) fn not_found_in_phase(mut self, phase: &'static str) -> Self {
         self.not_found_phase = Some(phase);
+        self
+    }
+
+    /// Leaves request retries, backoff and reconnects to the session (a segmented source such
+    /// as HLS retries each resource itself): a refused request, a not-found answer or a
+    /// reconnect does not end the attempt. Only an authentication or permission refusal and a
+    /// fatal session error do.
+    pub(crate) fn session_retries(mut self) -> Self {
+        self.session_retries = true;
         self
     }
 }
@@ -171,12 +182,13 @@ pub(crate) struct SessionStep {
 impl SessionStep {
     pub(crate) fn open(
         url: &str,
-        config: Config,
+        mut config: Config,
         credentials: Option<broadcast_client::Credentials>,
         labels: SessionLabels,
         route_handle: std::sync::Arc<crate::route::RouteHandle>,
         feed_si: bool,
     ) -> Result<Self, MultimuxError> {
+        config.preemptive_basic = true;
         let start = Instant::now();
         let mut session = Session::open(url, config, 0).map_err(|e| match e {
             Error::InvalidConfig { field } => MultimuxError::ConfigInvalid {
@@ -404,12 +416,12 @@ impl SessionStep {
                     driver.feed(event, now);
                 }
                 Event::Status(Status::Stalled { .. }) => self.stalled_seen = true,
-                Event::Status(Status::Reconnecting { .. }) => {
+                Event::Status(Status::Reconnecting { .. }) if !self.labels.session_retries => {
                     verdict = verdict.max(self.reconnect_verdict());
                 }
                 Event::Finite { .. } => self.finite = true,
                 Event::Status(Status::Ended) => verdict = verdict.max(Verdict::Ended),
-                Event::Status(Status::NotFound) => {
+                Event::Status(Status::NotFound) if !self.labels.session_retries => {
                     verdict = verdict.max(Verdict::Failed(match self.labels.not_found_phase {
                         Some(phase) => MultimuxError::Protocol {
                             phase,
@@ -418,9 +430,15 @@ impl SessionStep {
                         None => self.http_error(404),
                     }));
                 }
-                Event::ServerRefused { status, .. }
-                | Event::Forbidden { status }
-                | Event::AuthRejected { status } => {
+                Event::Forbidden { status } if self.labels.session_retries => {
+                    verdict = verdict.max(Verdict::Failed(MultimuxError::Auth {
+                        reason: format!("{}: HTTP {status}", self.labels.what),
+                    }));
+                }
+                Event::ServerRefused { status, .. } if !self.labels.session_retries => {
+                    verdict = verdict.max(Verdict::Failed(self.http_error(status)));
+                }
+                Event::Forbidden { status } | Event::AuthRejected { status } => {
                     verdict = verdict.max(Verdict::Failed(self.http_error(status)));
                 }
                 Event::AuthRequired { .. } => {
@@ -442,9 +460,26 @@ impl SessionStep {
                         reason: format!("{}: {}", self.labels.what, kind.name()),
                     }));
                 }
+                Event::Error { kind, fatal: false }
+                    if self.labels.session_retries
+                        && matches!(kind.refusal_status(), Some(401 | 403)) =>
+                {
+                    verdict = verdict.max(Verdict::Failed(MultimuxError::Auth {
+                        reason: format!("{}: {}", self.labels.what, kind.name()),
+                    }));
+                }
+                Event::Error { kind, fatal: false }
+                    if self.labels.session_retries && kind.is_permanent() =>
+                {
+                    verdict = verdict.max(Verdict::Failed(MultimuxError::Session {
+                        what: self.labels.what,
+                        kind,
+                    }));
+                }
                 Event::Error { kind, fatal: true } => {
-                    verdict = verdict.max(Verdict::Failed(MultimuxError::Connect {
-                        reason: format!("{}: {kind:?}", self.labels.what),
+                    verdict = verdict.max(Verdict::Failed(MultimuxError::Session {
+                        what: self.labels.what,
+                        kind,
                     }));
                 }
                 _ => {}
