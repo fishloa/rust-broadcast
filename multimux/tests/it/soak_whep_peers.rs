@@ -7,6 +7,15 @@
 //! Gated by `RUST_BROADCAST_SOAK=1` (the nightly soak env); without it the test prints why it
 //! skipped and passes. `SOAK_WHEP_PEERS=<n>` overrides the peer count.
 //!
+//! Measured ceiling (24-core Apple-silicon macOS laptop, `--profile ci`, 8 worker threads shared
+//! by the route AND the in-process viewers, 30 frames per second of 1000-byte NALs, 20 s):
+//! 200 peers: 100% delivery, p99 12 ms (debug profile). 500 peers: 100%, p99 277 ms with one
+//! route socket. 1000 peers with one route socket: slowest viewer 54%, p99 7.9 s (the kernel
+//! `sendto` on that one socket was the serial point, `sample` showed about two busy threads of
+//! eight); with 8 route sockets per IP: 100%, p99 61 ms. 2000 peers saturate the shared worker
+//! threads (the viewers' own decrypt included): about half the sessions fail. The default of 200
+//! leaves a wide margin for a shared CI runner; `SOAK_WHEP_PEERS` raises it.
+//!
 //! Asserts zero failed sessions, that every viewer receives at least `MIN_DELIVERY_PERCENT` of
 //! the frames published after the warm-up, a p99 publish-to-receive ceiling over all viewers and
 //! a bound on the runtime's alive tasks (a few per viewer on each side, not a growing set).
