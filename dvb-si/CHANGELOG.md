@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `skills/dvb-si-basics/SKILL.md`: a Symposium agent skill shipped in the published package, so an AI coding agent working in a project that depends on `dvb-si` gets usage guidance covering the `SiDemux` loop, descriptor loops, the symmetric parse/serialize contract, carousel reassembly, features and the common pitfalls.
 ### Fixed
 - The Satellite Access Table's bit-packed body reader reports a short input in bytes, matching every other `BufferTooShort` in the workspace, instead of absolute bits; its serializer is now `broadcast_common::bits::BitWriter` rather than a second hand-rolled writer, keeping the field-width check the SAT relies on (issue #2461).
 
