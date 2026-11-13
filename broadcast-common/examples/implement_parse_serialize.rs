@@ -19,9 +19,18 @@ struct Toy {
 const LEN: usize = 3;
 
 #[derive(Debug)]
-#[allow(dead_code)] // fields are surfaced via Debug in the error path
 enum ToyError {
     TooShort { need: usize, have: usize },
+}
+
+impl std::fmt::Display for ToyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ToyError::TooShort { need, have } => {
+                write!(f, "toy: need {need} bytes, have {have}")
+            }
+        }
+    }
 }
 
 impl<'a> Parse<'a> for Toy {

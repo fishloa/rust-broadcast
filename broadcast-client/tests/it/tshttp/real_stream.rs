@@ -11,10 +11,14 @@ fn samples_for(chunk_size: usize) -> Option<(usize, usize, usize)> {
     for chunk in bytes.chunks(chunk_size) {
         c.feed(chunk, 0);
         while let Some(e) = c.poll_event() {
-            if let Event::Demux(transmux::DemuxEvent::Sample { .. }) = e {
+            if let Event::Demux(ref ev) = e
+                && matches!(ev.as_ref(), transmux::DemuxEvent::Sample { .. })
+            {
                 total_samples += 1;
             }
-            if let Event::Demux(transmux::DemuxEvent::TrackAdded(spec)) = e {
+            if let Event::Demux(ref ev) = e
+                && let transmux::DemuxEvent::TrackAdded(spec) = ev.as_ref()
+            {
                 tracks.insert(spec.track_id.value());
             }
         }
@@ -72,7 +76,7 @@ fn first_sample_moves_to_playing() {
     for chunk in bytes.chunks(1316) {
         c.feed(chunk, 0);
         while let Some(e) = c.poll_event() {
-            sampled |= matches!(e, Event::Demux(transmux::DemuxEvent::Sample { .. }));
+            sampled |= matches!(&e, Event::Demux(ev) if matches!(ev.as_ref(), transmux::DemuxEvent::Sample { .. }));
         }
         if sampled {
             break;

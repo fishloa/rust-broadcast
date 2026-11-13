@@ -404,76 +404,77 @@ impl TsHttpSource {
                 self.conn_connected = true;
                 self.conn_seen_first_sample = false;
             }
-            crate::tshttp::Event::Demux(DemuxEvent::ClockReference {
-                ticks, clock_hz, ..
-            }) => {
-                self.last_pcr_27mhz = Some(to_27mhz(ticks, clock_hz));
-            }
-            crate::tshttp::Event::Demux(DemuxEvent::Discontinuity { .. }) => {
-                self.push_item(None);
-            }
-            crate::tshttp::Event::Demux(
-                DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec),
-            ) => {
-                self.note_resolved(spec.source_pid);
-                self.tracks.insert(spec.track_id, spec);
-                self.tracks_dirty = true;
-            }
-            crate::tshttp::Event::Demux(DemuxEvent::TrackAbandoned { provenance, .. }) => {
-                self.note_resolved(provenance.pid);
-            }
-            crate::tshttp::Event::Demux(DemuxEvent::TrackRemoved { track_id, .. }) => {
-                self.tracks.remove(&track_id);
-                self.tracks_dirty = true;
-            }
-            crate::tshttp::Event::Demux(DemuxEvent::Sample {
-                track_id, sample, ..
-            }) => {
-                let pts = sample.pts;
-                if !self.conn_seen_first_sample {
-                    self.start_hold_if_unresolved();
-                    self.conn_seen_first_sample = true;
-                    if self.hold.is_none() {
-                        self.declared = None;
-                        if self.tracks_dirty {
-                            let vals: Vec<TrackSpec> = self.tracks.values().cloned().collect();
-                            self.push(Event::Tracks(vals));
-                            self.tracks_dirty = false;
+            crate::tshttp::Event::Demux(ev) => match *ev {
+                DemuxEvent::ClockReference {
+                    ticks, clock_hz, ..
+                } => {
+                    self.last_pcr_27mhz = Some(to_27mhz(ticks, clock_hz));
+                }
+                DemuxEvent::Discontinuity { .. } => {
+                    self.push_item(None);
+                }
+                DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec) => {
+                    self.note_resolved(spec.source_pid);
+                    self.tracks.insert(spec.track_id, spec);
+                    self.tracks_dirty = true;
+                }
+                DemuxEvent::TrackAbandoned { provenance, .. } => {
+                    self.note_resolved(provenance.pid);
+                }
+                DemuxEvent::TrackRemoved { track_id, .. } => {
+                    self.tracks.remove(&track_id);
+                    self.tracks_dirty = true;
+                }
+                DemuxEvent::Sample {
+                    track_id, sample, ..
+                } => {
+                    let pts = sample.pts;
+                    if !self.conn_seen_first_sample {
+                        self.start_hold_if_unresolved();
+                        self.conn_seen_first_sample = true;
+                        if self.hold.is_none() {
+                            self.declared = None;
+                            if self.tracks_dirty {
+                                let vals: Vec<TrackSpec> = self.tracks.values().cloned().collect();
+                                self.push(Event::Tracks(vals));
+                                self.tracks_dirty = false;
+                            }
                         }
+                        if self.conn_connected {
+                            self.push(Event::Status(Status::Live));
+                        }
+                    } else if self.tracks_dirty && self.hold.is_none() {
+                        let vals: Vec<TrackSpec> = self.tracks.values().cloned().collect();
+                        self.push(Event::Tracks(vals));
+                        self.tracks_dirty = false;
                     }
-                    if self.conn_connected {
-                        self.push(Event::Status(Status::Live));
-                    }
-                } else if self.tracks_dirty && self.hold.is_none() {
-                    let vals: Vec<TrackSpec> = self.tracks.values().cloned().collect();
-                    self.push(Event::Tracks(vals));
-                    self.tracks_dirty = false;
+                    self.push(Event::Sample {
+                        track: track_id,
+                        sample,
+                        join: None,
+                    });
+                    self.note_held_sample(track_id, pts);
                 }
-                self.push(Event::Sample {
-                    track: track_id,
-                    sample,
-                    join: None,
-                });
-                self.note_held_sample(track_id, pts);
-            }
-            crate::tshttp::Event::Demux(DemuxEvent::DisplayChanged {
-                track_id,
-                display,
-                pts,
-                ..
-            }) => {
-                self.start_hold_if_unresolved();
-                if self.tracks_dirty && self.hold.is_none() {
-                    let vals: Vec<TrackSpec> = self.tracks.values().cloned().collect();
-                    self.push(Event::Tracks(vals));
-                    self.tracks_dirty = false;
-                }
-                self.push(Event::DisplayChanged {
-                    track: track_id,
-                    pts,
+                DemuxEvent::DisplayChanged {
+                    track_id,
                     display,
-                });
-            }
+                    pts,
+                    ..
+                } => {
+                    self.start_hold_if_unresolved();
+                    if self.tracks_dirty && self.hold.is_none() {
+                        let vals: Vec<TrackSpec> = self.tracks.values().cloned().collect();
+                        self.push(Event::Tracks(vals));
+                        self.tracks_dirty = false;
+                    }
+                    self.push(Event::DisplayChanged {
+                        track: track_id,
+                        pts,
+                        display,
+                    });
+                }
+                _ => {}
+            },
             crate::tshttp::Event::StallNotice { secs } => {
                 self.release_hold();
                 self.push(Event::Status(Status::Stalled { secs }));
@@ -492,7 +493,6 @@ impl TsHttpSource {
                 self.release_hold();
                 self.push(Event::Starved(k));
             }
-            _ => {}
         }
     }
 }

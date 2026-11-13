@@ -31,7 +31,7 @@ macro_rules! declare_commands {
         #[non_exhaustive]
         pub enum AnyCommand<$lt> {
             $(
-                #[allow(missing_docs)]
+                /// A typed splice command carried by this variant.
                 $variant($($path)::+ $(<$plt>)?),
             )+
             /// A `splice_command_type` with no typed implementation; `body` is

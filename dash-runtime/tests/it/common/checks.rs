@@ -2,8 +2,6 @@
 //! before its TRUE availability, no gap and no duplicate in the delivered
 //! segment sequence, a join within the presentation delay of the live edge.
 
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 
 use super::synth::{Geo, parse_segment_url};
@@ -13,7 +11,6 @@ use dash_runtime::client::Output;
 #[derive(Debug, Clone)]
 pub struct SegReq {
     pub rep: String,
-    pub n: u64,
     pub idx: i64,
     pub send_utc_us: i64,
     pub status: Option<u16>,
@@ -28,7 +25,6 @@ pub fn segment_requests(sim: &Sim, geo: Geo) -> Vec<SegReq> {
             let idx = geo.index_of(&rep, n)?;
             Some(SegReq {
                 rep,
-                n,
                 idx,
                 send_utc_us: l.send_utc_us,
                 status: l.status,

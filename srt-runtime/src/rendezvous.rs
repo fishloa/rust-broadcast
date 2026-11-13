@@ -805,8 +805,7 @@ impl RendezvousHandshake {
     /// for the extension-less greeting (§4.3.2.2, L2286-2288: no Stream ID /
     /// Group Membership is ever attached — see module docs).
     fn send_conclusion(&mut self, ext_type: Option<ExtensionType>) -> Result<Vec<HandshakeOutput>> {
-        #[allow(unused_mut)]
-        let (mut ext_bytes, mut ext_flags): (Vec<u8>, u16) = match ext_type {
+        let (ext_bytes, ext_flags): (Vec<u8>, u16) = match ext_type {
             None => (Vec::new(), 0),
             Some(t) => {
                 let hs_msg = HsExtMessage {
@@ -818,6 +817,10 @@ impl RendezvousHandshake {
                 handshake_sm::build_conclusion_extensions(t, &hs_msg, None, None)?
             }
         };
+        #[cfg(feature = "crypto")]
+        let mut ext_bytes = ext_bytes;
+        #[cfg(feature = "crypto")]
+        let mut ext_flags = ext_flags;
         // §6.1.5: the Initiator (cookie-contest winner) sends the Key
         // Material request piggybacked on its CONCLUSION's HSREQ block;
         // the Responder echoes it back on its HSRSP CONCLUSION.

@@ -146,7 +146,7 @@ impl RtmpSource {
                 let mut sampled = false;
                 while let Some(ev) = demux.poll_event() {
                     sampled |= matches!(ev, DemuxEvent::Sample { .. });
-                    events.push_back(crate::tshttp::Event::Demux(ev));
+                    events.push_back(crate::tshttp::Event::Demux(Box::new(ev)));
                 }
                 sampled
             });
@@ -306,7 +306,8 @@ impl RtmpSource {
         let mut sampled = false;
         while let Some(ev) = self.demux.poll_event() {
             sampled |= matches!(ev, DemuxEvent::Sample { .. });
-            self.policy.push_event(crate::tshttp::Event::Demux(ev));
+            self.policy
+                .push_event(crate::tshttp::Event::Demux(Box::new(ev)));
         }
         sampled
     }
@@ -423,53 +424,54 @@ impl RtmpSource {
                 self.seen_first_sample = false;
                 self.stalled = false;
             }
-            crate::tshttp::Event::Demux(
-                DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec),
-            ) => {
-                self.tracks.insert(spec.track_id, spec);
-                self.tracks_dirty = true;
-            }
-            crate::tshttp::Event::Demux(DemuxEvent::TrackRemoved { track_id, .. }) => {
-                self.tracks.remove(&track_id);
-                self.tracks_dirty = true;
-            }
-            crate::tshttp::Event::Demux(DemuxEvent::Sample {
-                track_id, sample, ..
-            }) => {
-                if !self.seen_first_sample {
-                    self.seen_first_sample = true;
+            crate::tshttp::Event::Demux(ev) => match *ev {
+                DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec) => {
+                    self.tracks.insert(spec.track_id, spec);
+                    self.tracks_dirty = true;
+                }
+                DemuxEvent::TrackRemoved { track_id, .. } => {
+                    self.tracks.remove(&track_id);
+                    self.tracks_dirty = true;
+                }
+                DemuxEvent::Sample {
+                    track_id, sample, ..
+                } => {
+                    if !self.seen_first_sample {
+                        self.seen_first_sample = true;
+                        if self.tracks_dirty {
+                            self.announce_tracks();
+                        }
+                        self.events.push_back(Event::Status(Status::Live));
+                    } else if self.tracks_dirty {
+                        self.announce_tracks();
+                    }
+                    if self.stalled {
+                        self.stalled = false;
+                        self.events.push_back(Event::Status(Status::Live));
+                    }
+                    self.events.push_back(Event::Sample {
+                        track: track_id,
+                        sample,
+                        join: None,
+                    });
+                }
+                DemuxEvent::DisplayChanged {
+                    track_id,
+                    display,
+                    pts,
+                    ..
+                } => {
                     if self.tracks_dirty {
                         self.announce_tracks();
                     }
-                    self.events.push_back(Event::Status(Status::Live));
-                } else if self.tracks_dirty {
-                    self.announce_tracks();
+                    self.events.push_back(Event::DisplayChanged {
+                        track: track_id,
+                        pts,
+                        display,
+                    });
                 }
-                if self.stalled {
-                    self.stalled = false;
-                    self.events.push_back(Event::Status(Status::Live));
-                }
-                self.events.push_back(Event::Sample {
-                    track: track_id,
-                    sample,
-                    join: None,
-                });
-            }
-            crate::tshttp::Event::Demux(DemuxEvent::DisplayChanged {
-                track_id,
-                display,
-                pts,
-                ..
-            }) => {
-                if self.tracks_dirty {
-                    self.announce_tracks();
-                }
-                self.events.push_back(Event::DisplayChanged {
-                    track: track_id,
-                    pts,
-                    display,
-                });
-            }
+                _ => {}
+            },
             crate::tshttp::Event::StallNotice { secs } => {
                 self.events
                     .push_back(Event::Status(Status::Stalled { secs }));

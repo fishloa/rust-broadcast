@@ -35,7 +35,7 @@ fn demux_event_serializes_as_its_bare_tag() {
         .next()
         .expect("demuxer emits an event");
     assert_eq!(
-        serde_json::to_string(&Event::Demux(ev)).expect("serialize"),
+        serde_json::to_string(&Event::Demux(Box::new(ev))).expect("serialize"),
         "\"Demux\""
     );
 }
