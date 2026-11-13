@@ -30,7 +30,7 @@ use transmux::{TrackId, TrackSpec};
 use crate::clock::{HostClock, SystemHostClock};
 use crate::error::MultimuxError;
 use crate::source::driver::{IngestStep, StepOutcome, ts};
-use crate::source::ts_program::ProgramTracker;
+use media_plane::ts_session::ProgramTracker;
 use transmux::stitch::Stitcher;
 
 const MESSAGE_QUEUE: usize = 64;
@@ -50,7 +50,8 @@ pub(crate) struct EventIngest {
 impl EventIngest {
     pub(crate) fn new() -> Self {
         Self {
-            tracker: ProgramTracker::new(),
+            tracker: ProgramTracker::new()
+                .with_backlog_drop_observer(crate::source::count_ts_backlog_dropped),
             known: BTreeMap::new(),
             stitch: None,
         }
@@ -163,11 +164,11 @@ pub(crate) struct SessionLabels {
 }
 
 impl SessionLabels {
-    pub(crate) fn new(what: &'static str, timeouts: crate::source::IngestTimeouts) -> Self {
+    pub(crate) fn new(what: &'static str, timeouts: broadcast_common::timeouts::Timeouts) -> Self {
         Self {
             what,
             connect: timeouts.connect,
-            read: timeouts.read,
+            read: timeouts.read_idle,
             not_found_phase: None,
             session_retries: false,
         }
@@ -793,7 +794,7 @@ impl UdpHost {
 }
 
 async fn receive(socket: std::sync::Arc<UdpSocket>, conn: u32, tx: mpsc::Sender<Message>) {
-    let mut buf = vec![0u8; crate::source::MAX_TS_READ];
+    let mut buf = vec![0u8; media_plane::ts_session::MAX_TS_READ];
     loop {
         let message = match socket.recv(&mut buf).await {
             Ok(n) => Message::Data {
@@ -954,7 +955,7 @@ mod tests {
         let mut config = Config::relay();
         config.kind = broadcast_client::SourceKind::Udp;
         config.udp.reorder_packets = 0;
-        let labels = SessionLabels::new("ts/udp", crate::source::IngestTimeouts::default());
+        let labels = SessionLabels::new("ts/udp", broadcast_common::timeouts::Timeouts::default());
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
         let error = SessionStep::open(
             "udp://127.0.0.1:5000",
@@ -977,12 +978,12 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn a_large_queued_event_burst_does_not_starve_another_task() {
-        use crate::source::ts_program::test_support::{build_ts_bytes, handshake};
         use broadcast_client::Action;
+        use media_plane::ts_session::test_support::{build_ts_bytes, handshake};
         use transmux::TrackId;
 
         let ring = |n: usize| std::num::NonZeroUsize::new(n).expect("non-zero ring");
-        let labels = SessionLabels::new("ts/http", crate::source::IngestTimeouts::default());
+        let labels = SessionLabels::new("ts/http", broadcast_common::timeouts::Timeouts::default());
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
         let mut step = SessionStep::open(
             "http://127.0.0.1:1/stream.ts",

@@ -16,9 +16,9 @@ use media_plane::ingress::{HandshakePolicy, IngestDriver};
 use media_plane::trunk::TrunkConfig;
 
 use crate::error::Result;
-use crate::source::IngestTimeouts;
 use crate::source::client_host::{EventIngest, SessionLabels, SessionStep};
 use crate::source::pull_target::{PullKind, PullRoute};
+use broadcast_common::timeouts::Timeouts;
 
 /// An MPEG-2 TS-over-HTTP route: an `http(s)://` URL, which may carry
 /// `user:pass@` userinfo (see [`Debug`]'s redaction and
@@ -63,8 +63,8 @@ fn duration_ms(d: Duration) -> u64 {
 /// route's connect budget (the driver is `Live` from the first byte, so the
 /// handshake deadline alone never bounds a connection that sends bytes but no
 /// media), and backoff is unused because the supervisor owns reconnect.
-pub(crate) fn policy_config(timeouts: IngestTimeouts) -> PolicyConfig {
-    let reconnect = duration_ms(timeouts.read).max(MIN_STALL_RECONNECT_MS);
+pub(crate) fn policy_config(timeouts: Timeouts) -> PolicyConfig {
+    let reconnect = duration_ms(timeouts.read_idle).max(MIN_STALL_RECONNECT_MS);
     PolicyConfig {
         start_timeout_ms: duration_ms(timeouts.connect).max(MIN_START_TIMEOUT_MS),
         stall_notice_ms: reconnect / STALL_NOTICE_DIVISOR,
@@ -132,13 +132,13 @@ pub async fn run_ts_http(
 mod tests {
     use super::*;
     use crate::error::MultimuxError;
-    use crate::source::ts_program::test_support::{build_ts_bytes, handshake, trunk_config};
     use axum::Router;
     use axum::body::Body;
     use axum::response::{IntoResponse, Response as AxumResponse};
     use axum::routing::get;
     use broadcast_auth::Credentials;
     use media_plane::trunk::SampleCursorItem;
+    use media_plane::ts_session::test_support::{build_ts_bytes, handshake, trunk_config};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use transmux::TrackId;
 
@@ -290,10 +290,9 @@ mod tests {
             std::future::pending::<()>().await;
         });
         let route = TsHttpRoute::new("stalled", format!("http://{addr}/stream.ts")).with_timeouts(
-            IngestTimeouts {
-                connect: Duration::from_secs(5),
-                read: Duration::from_secs(2),
-            },
+            broadcast_common::timeouts::Timeouts::default()
+                .with_connect(Duration::from_secs(5))
+                .with_read_idle(Duration::from_secs(2)),
         );
         let (result, _) = run(&route, handshake(), Duration::from_secs(10)).await;
         assert!(
@@ -336,10 +335,9 @@ mod tests {
 
     async fn run_against(addr: std::net::SocketAddr) -> (Result<()>, Duration) {
         let route = TsHttpRoute::new("pre-pmt", format!("http://{addr}/stream.ts")).with_timeouts(
-            IngestTimeouts {
-                connect: HANDSHAKE_BUDGET,
-                read: LONG_READ,
-            },
+            broadcast_common::timeouts::Timeouts::default()
+                .with_connect(HANDSHAKE_BUDGET)
+                .with_read_idle(LONG_READ),
         );
         let started = std::time::Instant::now();
         let (result, _) = run(

@@ -2884,9 +2884,9 @@ mod tests {
     /// prove the archive is independently playable.
     #[tokio::test]
     async fn ingest_pipeline_records_and_demux_from_disk() {
-        use crate::source::ts_program::{TsIngestSession, test_support::build_ts_bytes};
         use crate::source::{DriverProgress, advance_route};
         use media_plane::ingress::{HandshakePolicy, IngestDriver};
+        use media_plane::ts_session::{TsIngestSession, test_support::build_ts_bytes};
 
         let tmp = temp_dir();
 
@@ -3030,9 +3030,9 @@ mod tests {
             return;
         };
 
-        use crate::source::ts_program::TsIngestSession;
         use crate::source::{DriverProgress, advance_route};
         use media_plane::ingress::{HandshakePolicy, IngestDriver};
+        use media_plane::ts_session::TsIngestSession;
 
         let tmp = temp_dir();
 

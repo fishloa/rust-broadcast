@@ -13,7 +13,6 @@ use broadcast_common::Timestamp;
 use media_plane::ingress::HandshakePolicy;
 use media_plane::trunk::{SampleCursorItem, TrunkConfig};
 use multimux::RouteHandle;
-use multimux::source::IngestTimeouts;
 use multimux::source::ts_http::{TsHttpRoute, run_ts_http};
 use tokio_util::sync::CancellationToken;
 
@@ -73,10 +72,11 @@ async fn eight_ts_http_pulls_all_progress_on_the_multi_thread_runtime() {
     let mut pulls = Vec::new();
     for i in 0..PULLS {
         let url = origin(body.clone()).await;
-        let route = TsHttpRoute::new(format!("pull-{i}"), url).with_timeouts(IngestTimeouts {
-            connect: CONNECT,
-            read: READ,
-        });
+        let route = TsHttpRoute::new(format!("pull-{i}"), url).with_timeouts(
+            broadcast_common::timeouts::Timeouts::default()
+                .with_connect(CONNECT)
+                .with_read_idle(READ),
+        );
         let route_handle = Arc::new(RouteHandle::new(4.0, 500, 4));
         let config = TrunkConfig::default()
             .with_timed_capacity(nz(TIMED_RING))

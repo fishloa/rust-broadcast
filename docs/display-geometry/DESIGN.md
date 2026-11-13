@@ -100,7 +100,7 @@ existing paths (`TrackSpec`, `DemuxEvent`, `Sample`), the same way
 - `CodecConfig::Avc`/`Hevc` carry `config`, `width: u16`, `height: u16` only.
   These are struct variants of a `#[non_exhaustive]` enum, but the **variants
   themselves are not** `#[non_exhaustive]`: `multimux` constructs them with
-  struct literals in production code (`multimux/src/source/ts_program.rs:470`,
+  struct literals in production code (`media-plane/src/ts_session.rs:470`,
   `multimux/src/source/whip.rs:1429`) and ~100 test sites do. Adding a field to
   a variant is therefore a **breaking** change (see §9).
 - `TrackSpec` **is** `#[non_exhaustive]` (`transmux/src/ir/track.rs`). Adding a
@@ -632,7 +632,7 @@ TS (and the FLV/RTP audit in §7); per-AU tags in batch `Media`; fMP4 in-band
 
 Semver: additive (new variant on `#[non_exhaustive]` enum, new field on
 `#[non_exhaustive]` struct) -> 0.27.x. Downstream `match`es already need a
-wildcard arm; `multimux/src/source/ts_program.rs` (70 `DemuxEvent::` sites)
+wildcard arm; `media-plane/src/ts_session.rs` (70 `DemuxEvent::` sites)
 must be audited for a wildcard that logs "unexpected event" noisily.
 
 Acceptance tests:

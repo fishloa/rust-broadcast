@@ -47,7 +47,6 @@ pub(crate) mod split_audio;
 pub(crate) mod split_subtitle;
 pub mod srt;
 pub mod ts_http;
-pub mod ts_program;
 pub mod ts_udp;
 pub mod udp;
 // WHIP push input (issue #740) — needs `webrtc_runtime::media`, MSRV 1.88 (see
@@ -56,6 +55,7 @@ pub mod udp;
 #[cfg(feature = "whip")]
 pub mod whip;
 
+use broadcast_common::timeouts::Timeouts;
 use std::time::Duration;
 use transmux::TrackId;
 use transmux::pipeline::CodecConfig;
@@ -63,12 +63,10 @@ use transmux::rtp::RtpMediaKind;
 
 pub(crate) use crate::secure_random::seed_entropy;
 
-/// Read-size hint every MPEG-2 TS transport reports via
-/// [`broadcast_common::Stage::demand`], and the read-buffer size the
-/// datagram transports allocate — comfortably above a typical 7×188-byte
-/// (1316-byte) TS-over-UDP payload and any legal UDP datagram (65 507 bytes
-/// over IPv4), so a single `recv` always captures a whole datagram.
-pub const MAX_TS_READ: usize = 65_536;
+/// Counts samples the TS pre-resolution backlog dropped on overflow.
+pub(crate) fn count_ts_backlog_dropped(dropped: u64) {
+    metrics::counter!(crate::prometheus::TS_BACKLOG_DROPPED_TOTAL).increment(dropped);
+}
 
 /// Hard cap on concurrently in-flight HTTP fetches a pull source
 /// (`hls_pull`/`dash_pull`/`smooth_pull`, plan step 5a round 3) keeps open at
@@ -129,50 +127,29 @@ pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// within 30 s) while still bounding a genuinely dead connection.
 pub const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Ingest connect/read timeout bounds (issue #663 P5, audit-ingest #3),
-/// shared by every source kind so [`crate::config::Config`] only needs two
-/// process-wide knobs rather than one pair per input type — mirrors
-/// [`crate::origin::HttpLimits`]'s "one config-surfaced struct, sane
-/// [`Default`], per-source `with_timeouts` builder" shape.
-///
-/// A source's `connect()` wraps its whole connect handshake in
-/// [`Self::connect`]; its `next_samples()`/read loop wraps each individual
-/// read in [`Self::read`]. Either expiring surfaces as a
-/// [`crate::error::MultimuxError`], which
-/// [`crate::origin::supervisor::supervise_driver`] treats exactly like any
-/// other ingest error — log, mark the route reconnecting, retry with
-/// backoff — never a silent hang.
-#[derive(Debug, Clone, Copy)]
-pub struct IngestTimeouts {
-    /// Bound on the whole connect handshake.
-    pub connect: Duration,
-    /// Bound on a single read/receive step once connected.
-    pub read: Duration,
-}
-
-impl Default for IngestTimeouts {
-    fn default() -> Self {
-        IngestTimeouts {
-            connect: DEFAULT_CONNECT_TIMEOUT,
-            read: DEFAULT_READ_TIMEOUT,
-        }
-    }
-}
-
-impl From<&crate::config::Config> for IngestTimeouts {
-    fn from(cfg: &crate::config::Config) -> Self {
-        // `Duration::from_secs_f64` PANICS on a negative, NaN or overflowing
-        // value (audit run 7, W19). `Config::validate` rejects those, but a
-        // config built in-process (an embedder, an unvalidated admin add)
-        // reaches here without validation, so fall back to the default rather
-        // than panicking at startup — matching `HttpLimits::from`'s own clamp.
-        IngestTimeouts {
-            connect: Duration::try_from_secs_f64(cfg.ingest_connect_timeout_secs)
+/// The ingest [`Timeouts`] a [`crate::config::Config`] selects (issue #663 P5,
+/// audit-ingest #3), shared by every source kind so `Config` needs two
+/// process-wide knobs rather than one pair per input type: `connect` bounds the
+/// whole connect handshake and `read_idle` each read/receive step once
+/// connected. Either expiring surfaces as a [`crate::error::MultimuxError`],
+/// which [`crate::origin::supervisor::supervise_driver`] treats exactly like
+/// any other ingest error: log, mark the route reconnecting, retry with
+/// backoff, never a silent hang.
+pub fn ingest_timeouts(cfg: &crate::config::Config) -> Timeouts {
+    // `Duration::from_secs_f64` PANICS on a negative, NaN or overflowing
+    // value (audit run 7, W19). `Config::validate` rejects those, but a
+    // config built in-process (an embedder, an unvalidated admin add)
+    // reaches here without validation, so fall back to the default rather
+    // than panicking at startup — matching `HttpLimits::from`'s own clamp.
+    Timeouts::default()
+        .with_connect(
+            Duration::try_from_secs_f64(cfg.ingest_connect_timeout_secs)
                 .unwrap_or(DEFAULT_CONNECT_TIMEOUT),
-            read: Duration::try_from_secs_f64(cfg.ingest_read_timeout_secs)
+        )
+        .with_read_idle(
+            Duration::try_from_secs_f64(cfg.ingest_read_timeout_secs)
                 .unwrap_or(DEFAULT_READ_TIMEOUT),
-        }
-    }
+        )
 }
 
 // --- issue #805 task 2: driver-backed ingest <-> RouteHandle registry glue ---
@@ -250,7 +227,7 @@ pub(crate) fn pull_trunk_config(window_segments: usize) -> media_plane::trunk::T
 /// caller cannot observe in advance, since it doesn't exist until `run_*` is
 /// actually called. Expressing the deadline as "nanoseconds since a start
 /// near zero" (matching this crate's own test fixtures, e.g.
-/// `ts_program::test_support::handshake`) rather than a predicted absolute
+/// `media_plane::ts_session::test_support::handshake`) rather than a predicted absolute
 /// instant sidesteps that: both clocks start within microseconds of each
 /// other in practice (this function runs immediately before the `run_*` call
 /// it bounds), which is immaterial against a multi-second `timeout`.
@@ -639,7 +616,7 @@ mod driver_progress_tests {
                 if self.feed_count == 2 {
                     self.pending.push_back(SessionEvent::NewProgram {
                         program: ProgramId(0),
-                        tracks: vec![crate::source::ts_program::test_support::track_spec(
+                        tracks: vec![media_plane::ts_session::test_support::track_spec(
                             TrackId::new(1),
                         )],
                     });
@@ -726,10 +703,10 @@ mod advance_route_tests {
 
     use super::*;
     use crate::route::{ProgramResolution, RouteHandle, SPTS_PROGRAM_ID};
-    use crate::source::ts_program::TsIngestSession;
-    use crate::source::ts_program::test_support::{build_ts_bytes, handshake, trunk_config};
     use broadcast_common::Timestamp;
     use media_plane::ingress::IngestDriver;
+    use media_plane::ts_session::TsIngestSession;
+    use media_plane::ts_session::test_support::{build_ts_bytes, handshake, trunk_config};
 
     /// MUTATION VERIFIED: changing `advance_route`'s body to call only
     /// `report_driver_progress` (dropping the

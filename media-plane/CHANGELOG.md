@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `ts_session` (feature `std`): the shared MPEG-2 TS ingest session moved from multimux. `TsIngestSession` feeds `transmux::StreamingTsDemux` and translates its events into `SessionEvent`s, `ProgramTracker` (public) tracks which `ProgramId` owns each track and holds pre-resolution samples within `MAX_HELD_SAMPLES`/`MAX_HELD_BYTES`, `SILENT_PID_SETTLE`, `MAX_TS_READ`, and a backlog-drop observer (`with_backlog_drop_observer`) in place of the multimux metric. Feature `test-support` adds `ts_session::test_support` (muxed TS bytes and configs) for a host's tests (issue #2554).
 ### Removed
 - BREAKING: the four-positional `IngestDriver::new(session, trunk_config, handshake, max_programs)` and `ListenDriver::new(listener, ..)`; both take `(session_or_listener, IngestConfig)` (#2514).
 - BREAKING: `TrunkConfig::new` (five positional `NonZeroUsize`, any reorder compiled). Start from `TrunkConfig::default()` (64 timed, 16 sparse, 8 segment, 64 event, 64 part entries) and set what differs with `with_timed_capacity`, `with_sparse_capacity`, `with_segment_capacity`, `with_event_capacity`, `with_part_capacity` (and the existing `with_waiter_capacity`) (#2514).

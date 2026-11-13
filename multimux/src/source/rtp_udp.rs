@@ -16,7 +16,7 @@ use tokio::net::UdpSocket;
 use crate::error::MultimuxError;
 use crate::source::client_host::{EventIngest, SessionLabels, SessionStep, UdpHost};
 use crate::source::sdp::load_sdp;
-use crate::source::{IngestTimeouts, Source};
+use crate::source::{Source, Timeouts};
 
 /// A raw RTP-over-UDP route: no control plane — a bind address and an
 /// out-of-band SDP describing the codec/fmtp. Replaces the old (pre-5a)
@@ -30,7 +30,7 @@ pub struct RtpUdpRoute {
     /// Socket options for the bind (SP1.6); the default reproduces the
     /// pre-SP1.6 bind.
     socket: crate::source::udp::UdpBindOptions,
-    timeouts: IngestTimeouts,
+    timeouts: Timeouts,
     /// A socket bound by the caller: used once by the first attempt, so a test can own the exact
     /// port without a reserve-then-rebind race. `None` (the production shape) binds `addr`.
     prebound: std::sync::Arc<std::sync::Mutex<Option<UdpSocket>>>,
@@ -64,7 +64,7 @@ impl RtpUdpRoute {
             sdp: sdp.into(),
             multicast_group,
             socket: crate::source::udp::UdpBindOptions::default(),
-            timeouts: IngestTimeouts::default(),
+            timeouts: Timeouts::default(),
             prebound: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
@@ -82,7 +82,7 @@ impl RtpUdpRoute {
             sdp: sdp.into(),
             multicast_group: None,
             socket: crate::source::udp::UdpBindOptions::default(),
-            timeouts: IngestTimeouts::default(),
+            timeouts: Timeouts::default(),
             prebound: std::sync::Arc::new(std::sync::Mutex::new(Some(socket))),
         }
     }
@@ -101,9 +101,9 @@ impl RtpUdpRoute {
         self
     }
 
-    /// Overrides the default [`IngestTimeouts`].
+    /// Overrides the default [`Timeouts`].
     #[must_use]
-    pub fn with_timeouts(mut self, timeouts: IngestTimeouts) -> Self {
+    pub fn with_timeouts(mut self, timeouts: Timeouts) -> Self {
         self.timeouts = timeouts;
         self
     }
@@ -134,7 +134,7 @@ impl RtpUdpRoute {
 }
 
 /// Opens `route`'s socket through a relay-mode [`broadcast_client::Session`] carrying the route's
-/// SDP and drives it until a read stall (bounded by [`IngestTimeouts::read`]). Returns the error
+/// SDP and drives it until a read stall (bounded by [`Timeouts::read_idle`]). Returns the error
 /// that ended the loop; the caller (the route supervisor) reconnects on it.
 ///
 /// `route_handle` is the driver-backed registry side of issue #805 task 2 — see
@@ -204,8 +204,8 @@ pub async fn run_rtp_udp(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::source::ts_program::test_support::{handshake, trunk_config};
     use media_plane::trunk::SampleCursorItem;
+    use media_plane::ts_session::test_support::{handshake, trunk_config};
     use std::time::Duration;
     use tokio_util::sync::CancellationToken;
 
@@ -334,11 +334,11 @@ mod tests {
     async fn a_source_that_never_sends_fails_at_the_read_timeout() {
         const READ_TIMEOUT: Duration = Duration::from_millis(300);
         let socket = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
-        let route =
-            RtpUdpRoute::with_socket("cam-udp", sdp_body(), socket).with_timeouts(IngestTimeouts {
-                connect: Duration::from_secs(5),
-                read: READ_TIMEOUT,
-            });
+        let route = RtpUdpRoute::with_socket("cam-udp", sdp_body(), socket).with_timeouts(
+            broadcast_common::timeouts::Timeouts::default()
+                .with_connect(Duration::from_secs(5))
+                .with_read_idle(READ_TIMEOUT),
+        );
         let error = tokio::time::timeout(
             Duration::from_secs(10),
             run_rtp_udp(

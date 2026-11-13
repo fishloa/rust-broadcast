@@ -5,7 +5,6 @@ use broadcast_common::Timestamp;
 use media_plane::ingress::HandshakePolicy;
 use media_plane::trunk::{SampleCursorItem, TrunkConfig};
 use multimux::RouteHandle;
-use multimux::source::IngestTimeouts;
 use multimux::source::rtsp::{RtspRoute, run_rtsp};
 use rtsp_runtime::{InterleavedFrame, TransportSpec};
 use tokio_util::sync::CancellationToken;
@@ -153,11 +152,11 @@ async fn rtsp_pull_golden() {
             serve_one_session(sock).await
         });
 
-        let route =
-            RtspRoute::new("golden", format!("rtsp://{addr}/test")).with_timeouts(IngestTimeouts {
-                connect: TEST_TIMEOUT,
-                read: TEST_TIMEOUT,
-            });
+        let route = RtspRoute::new("golden", format!("rtsp://{addr}/test")).with_timeouts(
+            broadcast_common::timeouts::Timeouts::default()
+                .with_connect(TEST_TIMEOUT)
+                .with_read_idle(TEST_TIMEOUT),
+        );
         let route_handle = Arc::new(RouteHandle::new(4.0, 500, 4));
         let config = TrunkConfig::default()
             .with_timed_capacity(nz(TIMED_RING))

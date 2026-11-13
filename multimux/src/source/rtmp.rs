@@ -82,7 +82,7 @@
 //! never called `connect()` again until that one call returned, **no other
 //! publisher could be accepted in the meantime** — one stalled connection
 //! wedged the entire route (`#738 T11b review, Critical`; previously
-//! mitigated only by `IngestTimeouts` eventually giving up on that one
+//! mitigated only by `Timeouts` eventually giving up on that one
 //! connection). [`run_rtmp`]'s `ListenDriver` admits and drives up to
 //! `max_sessions` sessions **concurrently** — each session's read is its own
 //! independent `tokio` task that owns its connection and hands outcomes to the
@@ -117,7 +117,7 @@
 //!   pair that same `feed` call produces — nothing observed during
 //!   establishment is silently discarded. See this module's
 //!   `first_sample_observed_during_establishment_is_not_dropped` test.
-//! - **Timeouts still bound reads.** [`IngestTimeouts::read`] wraps every
+//! - **Timeouts still bound reads.** [`Timeouts::read_idle`] wraps every
 //!   [`RtmpConnection::next_events`] call (`with_timeouts`, mirroring every
 //!   other source in this module); on expiry that session is ended (treated
 //!   the same as a clean EOF — see `read_one`'s doc for why the exact
@@ -148,7 +148,7 @@ use media_plane::trunk::{RetentionClass, TrunkConfig};
 
 use crate::error::{MultimuxError, Result};
 use crate::route::RouteHandle;
-use crate::source::{DriverProgress, IngestTimeouts, Source};
+use crate::source::{DriverProgress, Source, Timeouts};
 
 /// Default cap on concurrently admitted RTMP publishers per route
 /// ([`Listener::max_sessions`]) — generous for a single origin's worth of
@@ -215,7 +215,7 @@ pub struct RtmpRoute {
     listen: String,
     app: Option<String>,
     stream_key: Option<String>,
-    timeouts: IngestTimeouts,
+    timeouts: Timeouts,
     max_sessions: usize,
     /// Bind-once, reuse-forever — see the module doc.
     infra: OnceCell<Arc<RtmpInfra>>,
@@ -246,18 +246,18 @@ impl RtmpRoute {
             listen: listen.into(),
             app: None,
             stream_key: None,
-            timeouts: IngestTimeouts::default(),
+            timeouts: Timeouts::default(),
             max_sessions: DEFAULT_RTMP_MAX_SESSIONS,
             infra: OnceCell::new(),
         }
     }
 
-    /// Overrides the default [`IngestTimeouts`]: `connect` bounds how long a
+    /// Overrides the default [`Timeouts`]: `connect` bounds how long a
     /// still-establishing session (no `Sample` observed yet) may sit before
     /// [`HandshakePolicy::establish_by`] reaps it; `read` bounds every
     /// individual [`RtmpConnection::next_events`] call.
     #[must_use]
-    pub fn with_timeouts(mut self, timeouts: IngestTimeouts) -> Self {
+    pub fn with_timeouts(mut self, timeouts: Timeouts) -> Self {
         self.timeouts = timeouts;
         self
     }
@@ -501,7 +501,7 @@ impl FlvEvents {
                     // A track resolving *after* establishment is a
                     // genuinely non-conformant encoder (Annex E requires the
                     // sequence header before any media for that track) —
-                    // ignored, mirroring `ts_program::ProgramTracker`'s own
+                    // ignored, mirroring `media_plane::ts_session::ProgramTracker`'s own
                     // "unrouted track" policy for a post-connect PMT bump.
                 }
                 DemuxEvent::Sample {
@@ -522,7 +522,7 @@ impl FlvEvents {
                     }
                     // A sample for a track not in `known_track_ids` (only
                     // possible for the non-conformant late-track case noted
-                    // above) is dropped, exactly like `ts_program`'s
+                    // above) is dropped, exactly like `media_plane::ts_session`'s
                     // unrouted-track policy.
                 }
                 // A mid-stream codec-config change (a new `avcC`/ASC sequence
@@ -636,7 +636,7 @@ enum ReadOutcome {
     Eof,
     /// The underlying read/parse failed.
     TransportError(String),
-    /// No data within [`IngestTimeouts::read`] — see the module doc's
+    /// No data within [`Timeouts::read_idle`] — see the module doc's
     /// "Timeouts still bound reads" note for why this is treated the same
     /// as [`Self::Eof`] rather than surfacing a distinct `HealthState::Failed`.
     TimedOut,
@@ -822,7 +822,7 @@ pub(crate) async fn run_rtmp_with_clock(
         Err(e) => return e,
     };
     let start = clock();
-    let read_timeout = route.timeouts.read;
+    let read_timeout = route.timeouts.read_idle;
     let (outcomes_tx, mut outcomes) =
         mpsc::channel(route.max_sessions.max(1) * OUTCOMES_PER_SESSION);
     let mut readers: JoinSet<()> = JoinSet::new();
@@ -908,7 +908,7 @@ pub(crate) async fn run_rtmp_with_clock(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::source::ts_program::test_support::{handshake, trunk_config};
+    use media_plane::ts_session::test_support::{handshake, trunk_config};
     use rtmp_runtime::server::ServerSession;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{TcpListener, TcpStream};
@@ -1322,13 +1322,11 @@ mod tests {
         let addr = reserve_addr().await;
         let route = RtmpRoute::new("cam-rtmp-concurrent", addr.to_string())
             .with_max_sessions(4)
-            .with_timeouts(IngestTimeouts {
-                connect: IngestTimeouts::default().connect,
-                // Long enough that the mutation above would still be running
-                // its sequential wait when this test's own (much shorter)
-                // hang guard gives up.
-                read: Duration::from_secs(30),
-            });
+            .with_timeouts(
+                broadcast_common::timeouts::Timeouts::default()
+                    .with_connect(Timeouts::default().connect)
+                    .with_read_idle(Duration::from_secs(30)),
+            );
         let fixture = load_fixture();
         let stall_prefix_len = fixture_offset_after_publish_before_any_media(&fixture);
         assert!(
@@ -1525,7 +1523,7 @@ mod tests {
     /// bound reads"): a publisher that connects and never sends a single
     /// byte (not even the RTMP handshake) must not pin its `max_sessions`
     /// slot forever — every [`RtmpConnection::next_events`] call is wrapped
-    /// in [`IngestTimeouts::read`], even before establishment. With
+    /// in [`Timeouts::read_idle`], even before establishment. With
     /// `max_sessions` set to 1, a second, well-behaved publisher can only
     /// ever be admitted once the first's slot is freed, so a passing
     /// `landed` here is only possible if the read timeout genuinely reaped
@@ -1547,10 +1545,11 @@ mod tests {
         let addr = reserve_addr().await;
         let route = RtmpRoute::new("cam-rtmp-idle", addr.to_string())
             .with_max_sessions(1)
-            .with_timeouts(IngestTimeouts {
-                connect: IngestTimeouts::default().connect,
-                read: Duration::from_millis(200),
-            });
+            .with_timeouts(
+                broadcast_common::timeouts::Timeouts::default()
+                    .with_connect(Timeouts::default().connect)
+                    .with_read_idle(Duration::from_millis(200)),
+            );
         let route_handle = Arc::new(RouteHandle::new(1.0, 500, 8));
         let route_handle_for_task = Arc::clone(&route_handle);
         let run_task = tokio::spawn(async move {

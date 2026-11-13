@@ -2223,10 +2223,10 @@ pub struct Config {
     pub concurrency_queue_timeout_secs: f64,
     /// Ingest connect-handshake timeout, in seconds, applied to every route's
     /// source (issue #663 P5, audit-ingest #3) — see
-    /// [`crate::source::IngestTimeouts::connect`].
+    /// [`broadcast_common::timeouts::Timeouts::connect`].
     pub ingest_connect_timeout_secs: f64,
     /// Ingest per-read timeout, in seconds, applied to every route's source
-    /// — see [`crate::source::IngestTimeouts::read`].
+    /// — see [`broadcast_common::timeouts::Timeouts::read_idle`].
     pub ingest_read_timeout_secs: f64,
     /// The media-playlist filename served at `/{stream}/{playlist_name}`
     /// (issue #663 "configurable `playlist_name`") — `master.m3u8`'s
@@ -3600,7 +3600,7 @@ mod tests {
     }
 
     /// An unvalidated config with an extreme timeout must not panic
-    /// `IngestTimeouts::from` — it falls back to the default.
+    /// `Timeouts::from` — it falls back to the default.
     #[test]
     fn ingest_timeouts_from_extreme_config_does_not_panic() {
         let cfg = Config {
@@ -3608,9 +3608,9 @@ mod tests {
             ingest_read_timeout_secs: 1e20,
             ..Config::default()
         };
-        let timeouts = crate::source::IngestTimeouts::from(&cfg);
+        let timeouts = crate::source::ingest_timeouts(&cfg);
         assert_eq!(timeouts.connect, crate::source::DEFAULT_CONNECT_TIMEOUT);
-        assert_eq!(timeouts.read, crate::source::DEFAULT_READ_TIMEOUT);
+        assert_eq!(timeouts.read_idle, crate::source::DEFAULT_READ_TIMEOUT);
     }
 
     // --- issue #663 P4: per-route `outputs` ---

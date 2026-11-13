@@ -1,12 +1,12 @@
 //! SRT (Secure Reliable Transport) ingest source (issue #739; ported onto
 //! the media-plane ingress traits at plan step 5a): an [`srt_runtime::io`]
 //! socket (listener or caller mode) carrying an MPEG-2 Transport Stream,
-//! feeding the shared [`crate::source::ts_program::TsIngestSession`].
+//! feeding the shared [`media_plane::ts_session::TsIngestSession`].
 //!
 //! Like [`crate::source::ts_udp`] and [`crate::source::ts_http`], this module
 //! owns **only the transport** — all PAT/PMT/PES demuxing and
 //! `DemuxEvent`→`SessionEvent` translation (including the B5 mid-stream
-//! `NewProgram` handling) lives in [`crate::source::ts_program`]. Before this
+//! `NewProgram` handling) lives in [`media_plane::ts_session`]. Before this
 //! port this file carried its own near-identical copy of that drain loop.
 //!
 //! SRT has two connection modes ([`draft-sharabayko-srt-01`] §3), and after
@@ -79,8 +79,8 @@ use tokio::sync::{Mutex, OnceCell};
 
 use crate::error::{MultimuxError, Result};
 use crate::source::client_host::{EventIngest, SessionLabels, SessionStep};
-use crate::source::ts_program::TsIngestSession;
-use crate::source::{IngestTimeouts, Source};
+use crate::source::{Source, Timeouts};
+use media_plane::ts_session::TsIngestSession;
 
 /// An SRT-over-MPEG-TS route, in either listener (bind + accept) or caller
 /// (dial out) mode — see the module doc. Replaces the old (pre-5a)
@@ -94,7 +94,7 @@ pub struct SrtRoute {
     remote: Option<String>,
     stream_id: Option<String>,
     latency_ms: Option<u16>,
-    timeouts: IngestTimeouts,
+    timeouts: Timeouts,
     /// Bind-once, reuse-forever (listener mode only) — see the module doc.
     /// [`SrtListener::accept`] takes `&mut self`, hence the `Mutex` (an
     /// `OnceCell` alone only gives shared access).
@@ -125,7 +125,7 @@ impl SrtRoute {
             remote: None,
             stream_id: None,
             latency_ms: None,
-            timeouts: IngestTimeouts::default(),
+            timeouts: Timeouts::default(),
             listener: OnceCell::new(),
         }
     }
@@ -138,7 +138,7 @@ impl SrtRoute {
             remote: Some(remote.into()),
             stream_id: None,
             latency_ms: None,
-            timeouts: IngestTimeouts::default(),
+            timeouts: Timeouts::default(),
             listener: OnceCell::new(),
         }
     }
@@ -159,9 +159,9 @@ impl SrtRoute {
         self
     }
 
-    /// Overrides the default [`IngestTimeouts`].
+    /// Overrides the default [`Timeouts`].
     #[must_use]
-    pub fn with_timeouts(mut self, timeouts: IngestTimeouts) -> Self {
+    pub fn with_timeouts(mut self, timeouts: Timeouts) -> Self {
         self.timeouts = timeouts;
         self
     }
@@ -197,7 +197,8 @@ impl Dialer for SrtDialer {
     type Error = Infallible;
 
     fn dial(&mut self) -> core::result::Result<TsIngestSession, Infallible> {
-        Ok(TsIngestSession::new())
+        Ok(TsIngestSession::new()
+            .with_backlog_drop_observer(crate::source::count_ts_backlog_dropped))
     }
 }
 
@@ -208,7 +209,7 @@ impl Dialer for SrtDialer {
 /// idle (nothing is wrong), not stalled — the same reasoning the pre-5a
 /// `connect()` used, preserved so the accept side's behaviour is unchanged
 /// by this port. The post-accept read is bounded by
-/// [`IngestTimeouts::read`] in the drive loop's first bounded read.
+/// [`Timeouts::read_idle`] in the drive loop's first bounded read.
 pub async fn accept_listener(route: &SrtRoute) -> Result<SrtSocket> {
     let listen = route
         .listen
@@ -334,10 +335,9 @@ pub async fn drive_socket(
         route_handle,
         &mut progress,
         tokio_util::sync::CancellationToken::new(),
-        crate::source::IngestTimeouts {
-            connect: read_timeout,
-            read: read_timeout,
-        },
+        broadcast_common::timeouts::Timeouts::default()
+            .with_connect(read_timeout)
+            .with_read_idle(read_timeout),
         crate::source::driver::DEFAULT_WRITE_TIMEOUT,
         &mut sink,
         &mut step,
@@ -437,7 +437,7 @@ pub async fn run_srt_listener_once(
     };
     drive_socket(
         sock,
-        route.timeouts.read,
+        route.timeouts.read_idle,
         trunk_config,
         handshake,
         route_handle,
@@ -449,10 +449,10 @@ pub async fn run_srt_listener_once(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::source::ts_program::test_support::{build_ts_bytes, handshake, trunk_config};
     use crate::testutil::drain;
     use media_plane::ingress::ProgramId;
     use media_plane::trunk::SampleCursor;
+    use media_plane::ts_session::test_support::{build_ts_bytes, handshake, trunk_config};
     use parking_lot::Mutex as StdMutex;
 
     const LOW_LATENCY_MS: u16 = 20;
@@ -479,11 +479,11 @@ mod tests {
         // explicit SRT Shutdown control packet, so once the client stops
         // sending, the drive loop would otherwise wait the full default
         // 30 s read timeout before returning.
-        let route =
-            SrtRoute::new_listener("cam-srt", addr.to_string()).with_timeouts(IngestTimeouts {
-                connect: IngestTimeouts::default().connect,
-                read: Duration::from_secs(2),
-            });
+        let route = SrtRoute::new_listener("cam-srt", addr.to_string()).with_timeouts(
+            broadcast_common::timeouts::Timeouts::default()
+                .with_connect(Timeouts::default().connect)
+                .with_read_idle(Duration::from_secs(2)),
+        );
         let ts_bytes = build_ts_bytes(TrackId::new(1), 0xAA, 40);
 
         let client = tokio::spawn(async move {
@@ -574,10 +574,9 @@ mod tests {
         });
 
         let route = SrtRoute::new_caller("cam-srt-caller", bound_addr.to_string()).with_timeouts(
-            IngestTimeouts {
-                connect: Duration::from_secs(5),
-                read: Duration::from_millis(300),
-            },
+            broadcast_common::timeouts::Timeouts::default()
+                .with_connect(Duration::from_secs(5))
+                .with_read_idle(Duration::from_millis(300)),
         );
         let route_handle = Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
         let _ = tokio::time::timeout(
@@ -627,10 +626,11 @@ mod tests {
 
         let route = SrtRoute::new_caller("cam-srt-low-latency", bound_addr.to_string())
             .with_latency_ms(Some(LOW_LATENCY_MS))
-            .with_timeouts(IngestTimeouts {
-                connect: Duration::from_secs(5),
-                read: Duration::from_millis(300),
-            });
+            .with_timeouts(
+                broadcast_common::timeouts::Timeouts::default()
+                    .with_connect(Duration::from_secs(5))
+                    .with_read_idle(Duration::from_millis(300)),
+            );
         let route_handle = Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
         let _ = tokio::time::timeout(
             Duration::from_secs(60),
@@ -679,10 +679,9 @@ mod tests {
         });
 
         let route = SrtRoute::new_caller("cam-srt-idle", bound_addr.to_string()).with_timeouts(
-            IngestTimeouts {
-                connect: Duration::from_secs(5),
-                read: READ_TIMEOUT,
-            },
+            broadcast_common::timeouts::Timeouts::default()
+                .with_connect(Duration::from_secs(5))
+                .with_read_idle(READ_TIMEOUT),
         );
         let route_handle = Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
         // DISCRIMINATOR (issue #826): must prove the operation returns
@@ -724,11 +723,11 @@ mod tests {
             .expect("bind blackhole");
         let addr = blackhole.local_addr().expect("local addr");
 
-        let route =
-            SrtRoute::new_caller("cam-srt-dead", addr.to_string()).with_timeouts(IngestTimeouts {
-                connect: CONNECT_TIMEOUT,
-                read: Duration::from_secs(30),
-            });
+        let route = SrtRoute::new_caller("cam-srt-dead", addr.to_string()).with_timeouts(
+            broadcast_common::timeouts::Timeouts::default()
+                .with_connect(CONNECT_TIMEOUT)
+                .with_read_idle(Duration::from_secs(30)),
+        );
         let route_handle = Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
         let started = std::time::Instant::now();
         let outcome = tokio::time::timeout(

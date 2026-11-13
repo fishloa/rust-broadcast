@@ -40,17 +40,17 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ("dvr.rs", 603, "spawn_blocking DVR write; awaited inline"),
     (
         "source/client_host.rs",
-        332,
+        333,
         "one HTTP request task per Action::HttpRequest of the session; owned by SessionStep, which aborts it on Action::Close and aborts every outstanding one on drop",
     ),
     (
         "source/client_host.rs",
-        379,
+        380,
         "one TCP read task per Action::TcpConnect of the session; owned by SessionStep, which aborts it on Action::Close and aborts every outstanding one on drop",
     ),
     (
         "source/client_host.rs",
-        429,
+        430,
         "one datagram receive task per Action::UdpBind of the session; owned by SessionStep, which aborts it on Action::Close and aborts every outstanding one on drop",
     ),
     (
@@ -186,27 +186,27 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "source/dash_pull/tests.rs",
-        197,
+        196,
         "test pull task; cancelled and aborted by the harness",
     ),
     (
         "source/dash_pull/tests.rs",
-        212,
+        211,
         "test collector task; stopped by the harness",
     ),
     (
         "source/dash_pull/tests.rs",
-        457,
+        456,
         "test server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        486,
+        485,
         "test server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        811,
+        810,
         "test HTTP server task; aborted at test end",
     ),
     (

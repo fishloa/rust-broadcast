@@ -21,6 +21,9 @@ pub mod retention;
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub mod trunk;
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+pub mod ts_session;
 
 pub use byte_merge::{ByteMerge, MergeError, MergePolicy, SourceId};
 pub use byte_stage::ByteStage;

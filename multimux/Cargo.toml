@@ -326,7 +326,7 @@ multimux         = { path = ".", features = ["test-seams"] }
 socket2          = { workspace = true, features = ["all"] }
 # `ProgramId` for the SPTS program in `multimux/tests/it/origin_gzip.rs` (already a
 # dependency of the library, so no new lock entry).
-media-plane         = { path = "../media-plane", version = "0.11.0", default-features = false, features = ["std"] }
+media-plane         = { path = "../media-plane", version = "0.11.0", default-features = false, features = ["std", "test-support"] }
 # `parking_lot::Mutex` so a test can prove the no-poison
 # property directly (the library uses it internally but does not re-export it).
 parking_lot      = "0.13"

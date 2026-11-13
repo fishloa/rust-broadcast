@@ -16,11 +16,11 @@ const HANDSHAKE_PREFIX: usize = 1 + 1536 + 1536;
 /// RTMP message type id of an AMF0 command (Adobe RTMP 1.0 §7.1.1).
 const MSG_COMMAND_AMF0: u8 = 20;
 
-/// `write_timeout` is the config knob that mirrors the existing
-/// `connect_timeout: Option<Duration>`.
+/// The write bound is the `write` field of the config's `timeouts`.
 fn config_with_write_bound() -> RtmpTransportConfig {
     RtmpTransportConfig {
-        write_timeout: Some(Duration::from_millis(300)),
+        timeouts: broadcast_common::timeouts::Timeouts::default()
+            .with_write(Duration::from_millis(300)),
         ..Default::default()
     }
 }

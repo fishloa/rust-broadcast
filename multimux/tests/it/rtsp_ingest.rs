@@ -40,7 +40,6 @@ use broadcast_auth::{AuthResult, RequestContext, Verifier};
 use broadcast_common::Timestamp;
 use media_plane::ingress::{HandshakePolicy, ProgramId};
 use media_plane::trunk::{SampleCursorItem, TrunkConfig};
-use multimux::source::IngestTimeouts;
 use multimux::source::rtsp::{RtspRoute, run_rtsp};
 use multimux::{MultimuxError, RouteHandle};
 use rtsp_runtime::{Credentials, InterleavedFrame, TransportSpec};
@@ -168,10 +167,11 @@ struct Pull {
 fn start_pull(url: String, auth: Option<Credentials>) -> Pull {
     let route = RtspRoute::new("rtsp-ingest", url)
         .with_auth(auth)
-        .with_timeouts(IngestTimeouts {
-            connect: TEST_TIMEOUT,
-            read: TEST_TIMEOUT,
-        });
+        .with_timeouts(
+            broadcast_common::timeouts::Timeouts::default()
+                .with_connect(TEST_TIMEOUT)
+                .with_read_idle(TEST_TIMEOUT),
+        );
     let route_handle = Arc::new(RouteHandle::new(4.0, 500, 4));
     let config = TrunkConfig::default()
         .with_timed_capacity(nz(TIMED_RING))

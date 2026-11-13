@@ -117,7 +117,7 @@ pub fn parse_iso8601_utc_for_test(s: &str) -> Option<u64> {
 }
 
 fn session_config(route: &DashPullRoute) -> Config {
-    let read_us = u64::try_from(route.target.timeouts.read.as_micros())
+    let read_us = u64::try_from(route.target.timeouts.read_idle.as_micros())
         .unwrap_or(u64::MAX)
         .max(MICROS_PER_MILLI);
     let mut config = Config::relay();

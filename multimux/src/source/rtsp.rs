@@ -252,10 +252,9 @@ mod tests {
         // production `DEFAULT_CONNECT_TIMEOUT` default — this changes no
         // production timeout, only this one test route's own value.
         let route = RtspRoute::new("fail-safe", format!("rtsps://{addr}/stream")).with_timeouts(
-            crate::source::IngestTimeouts {
-                connect: std::time::Duration::from_millis(500),
-                read: std::time::Duration::from_millis(500),
-            },
+            broadcast_common::timeouts::Timeouts::default()
+                .with_connect(std::time::Duration::from_millis(500))
+                .with_read_idle(std::time::Duration::from_millis(500)),
         );
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
 
@@ -406,10 +405,9 @@ mod tests {
         });
 
         let route = RtspRoute::new("auth", format!("rtsp://{addr}/stream")).with_timeouts(
-            crate::source::IngestTimeouts {
-                connect: std::time::Duration::from_secs(5),
-                read: std::time::Duration::from_secs(5),
-            },
+            broadcast_common::timeouts::Timeouts::default()
+                .with_connect(std::time::Duration::from_secs(5))
+                .with_read_idle(std::time::Duration::from_secs(5)),
         );
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
         let err = tokio::time::timeout(
@@ -451,10 +449,9 @@ mod tests {
             .await
         });
         let route = RtspRoute::new("unavailable", format!("rtsp://{addr}/stream")).with_timeouts(
-            crate::source::IngestTimeouts {
-                connect: Duration::from_secs(5),
-                read: READ,
-            },
+            broadcast_common::timeouts::Timeouts::default()
+                .with_connect(Duration::from_secs(5))
+                .with_read_idle(READ),
         );
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
         let started = std::time::Instant::now();
@@ -505,10 +502,9 @@ mod tests {
         });
 
         let route = RtspRoute::new("notfound", format!("rtsp://{addr}/stream")).with_timeouts(
-            crate::source::IngestTimeouts {
-                connect: std::time::Duration::from_secs(5),
-                read: std::time::Duration::from_secs(5),
-            },
+            broadcast_common::timeouts::Timeouts::default()
+                .with_connect(std::time::Duration::from_secs(5))
+                .with_read_idle(std::time::Duration::from_secs(5)),
         );
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
         let err = tokio::time::timeout(
@@ -591,10 +587,9 @@ mod tests {
         });
 
         let route = RtspRoute::new("keepalive", format!("rtsp://{addr}/stream")).with_timeouts(
-            crate::source::IngestTimeouts {
-                connect: std::time::Duration::from_secs(5),
-                read: std::time::Duration::from_secs(5),
-            },
+            broadcast_common::timeouts::Timeouts::default()
+                .with_connect(std::time::Duration::from_secs(5))
+                .with_read_idle(std::time::Duration::from_secs(5)),
         );
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
         // The route only ends when the server closes; run it concurrently and
@@ -661,10 +656,9 @@ mod tests {
         });
 
         let route = RtspRoute::new("teardown", format!("rtsp://{addr}/stream")).with_timeouts(
-            crate::source::IngestTimeouts {
-                connect: Duration::from_secs(5),
-                read: Duration::from_secs(30),
-            },
+            broadcast_common::timeouts::Timeouts::default()
+                .with_connect(Duration::from_secs(5))
+                .with_read_idle(Duration::from_secs(30)),
         );
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
         let cancel = tokio_util::sync::CancellationToken::new();
@@ -826,10 +820,11 @@ mod tests {
             });
 
             let route = RtspRoute::new("tls", format!("rtsps://localhost:{}/stream", addr.port()))
-                .with_timeouts(crate::source::IngestTimeouts {
-                    connect: HANG_GUARD,
-                    read: HANG_GUARD,
-                });
+                .with_timeouts(
+                    broadcast_common::timeouts::Timeouts::default()
+                        .with_connect(HANG_GUARD)
+                        .with_read_idle(HANG_GUARD),
+                );
             let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
             let cancel = tokio_util::sync::CancellationToken::new();
             let run = tokio::spawn({
@@ -912,10 +907,9 @@ mod tests {
                 .await
             });
             let route = RtspRoute::new("hostile", format!("rtsp://{addr}/stream")).with_timeouts(
-                crate::source::IngestTimeouts {
-                    connect: std::time::Duration::from_secs(5),
-                    read: std::time::Duration::from_secs(5),
-                },
+                broadcast_common::timeouts::Timeouts::default()
+                    .with_connect(std::time::Duration::from_secs(5))
+                    .with_read_idle(std::time::Duration::from_secs(5)),
             );
             let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
             let run = tokio::spawn(async move {
@@ -984,10 +978,9 @@ mod tests {
         });
 
         let route = RtspRoute::new("stall", format!("rtsp://{addr}/stream")).with_timeouts(
-            crate::source::IngestTimeouts {
-                connect: Duration::from_secs(5),
-                read: Duration::from_millis(300),
-            },
+            broadcast_common::timeouts::Timeouts::default()
+                .with_connect(Duration::from_secs(5))
+                .with_read_idle(Duration::from_millis(300)),
         );
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
         let err = tokio::time::timeout(
