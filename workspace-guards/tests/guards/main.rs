@@ -10,6 +10,8 @@ mod handroll_lines;
 mod handroll_needles;
 mod label;
 mod label_data;
+mod lint_suppressions;
+mod lint_suppressions_data;
 mod msv_runner;
 mod no_dom;
 mod no_dom_data;

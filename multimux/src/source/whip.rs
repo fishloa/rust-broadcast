@@ -1971,8 +1971,7 @@ pub(crate) async fn run_whip_with_clock(
             Err(e) => return e,
         };
         for (id, (socket, control, media)) in admitted_now {
-            #[cfg_attr(not(feature = "test-hooks"), allow(unused_mut))]
-            let Some(mut media) = media else {
+            let Some(media) = media else {
                 tracing::error!(
                     "whip: media transport of a just-admitted session was already taken; skipping its read loop"
                 );
@@ -1981,6 +1980,8 @@ pub(crate) async fn run_whip_with_clock(
             // Test seam: a staged fatal timer error is applied to the
             // freshly-admitted transport so its next `handle_timeout` ends the
             // session (finding N3).
+            #[cfg(feature = "test-hooks")]
+            let mut media = media;
             #[cfg(feature = "test-hooks")]
             {
                 if let Some(err) = infra
