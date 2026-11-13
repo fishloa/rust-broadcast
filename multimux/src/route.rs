@@ -3356,7 +3356,7 @@ mod program_registry_tests {
             (old, successor, generation)
         };
 
-        let (_, same, generation) = replace(vec![0xA1; 4], vec![0xA1; 4]);
+        let (_, _same, generation) = replace(vec![0xA1; 4], vec![0xA1; 4]);
         assert_eq!(
             generation,
             Some(1),
@@ -3368,11 +3368,6 @@ mod program_registry_tests {
                 .find(|name| name.starts_with("init"))
                 .unwrap_or_else(|| panic!("no init in the playlist"))
         };
-        assert_eq!(
-            init_url(&same),
-            init_url(&same),
-            "the same generation keeps one init URL"
-        );
 
         let (old, changed, generation) = replace(vec![0xA1; 4], vec![0xB2; 4]);
         assert_eq!(
