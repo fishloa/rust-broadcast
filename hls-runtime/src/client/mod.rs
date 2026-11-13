@@ -34,7 +34,7 @@
 //! ```
 //! use hls_runtime::client::{Action, HlsClient};
 //!
-//! let mut client = HlsClient::new("http://origin/live/stream.m3u8");
+//! let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new("http://origin/live/stream.m3u8"));
 //! // The caller performs this GET; here we just inspect the first action.
 //! match client.poll() {
 //!     Some(Action::FetchPlaylist { url, blocking, .. }) => {
@@ -52,6 +52,6 @@ mod output;
 mod url;
 
 pub use action::{Action, BlockingReload, KeyId, ResourceId};
-pub use engine::{HlsClient, choose_variant};
+pub use engine::{HlsClient, HlsClientConfig, choose_variant};
 pub use error::{Error, Result};
 pub use output::{MasterSelection, Output, RenditionInfo, VariantInfo, VariantPolicy};

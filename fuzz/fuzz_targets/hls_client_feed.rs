@@ -9,7 +9,7 @@ const MAX_ACTIONS_PER_ROUND: usize = 64;
 const SPLIT_SEED: usize = 3;
 
 fuzz_target!(|data: &[u8]| {
-    let mut client = HlsClient::new(PLAYLIST_URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(PLAYLIST_URL));
     let mut rest = data;
     for round in 0..MAX_ROUNDS {
         let cut = rest.len() / (SPLIT_SEED + round % 3).max(1);

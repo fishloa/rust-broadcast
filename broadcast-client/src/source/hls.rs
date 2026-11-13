@@ -6,7 +6,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use hls_runtime::client::{
-    Action as HlsAction, Error as CoreError, HlsClient, KeyId, Output, ResourceId,
+    Action as HlsAction, Error as CoreError, HlsClient, HlsClientConfig, KeyId, Output, ResourceId,
 };
 use transmux::TrackId;
 use url::Url;
@@ -129,8 +129,9 @@ impl HlsSource {
         role: Role,
         seed: u64,
     ) -> Self {
-        let mut client = HlsClient::new(url.as_str());
-        client.set_variant_policy(config.variant_policy.clone());
+        let client = HlsClient::new(
+            HlsClientConfig::new(url.as_str()).with_variant_policy(config.variant_policy.clone()),
+        );
         let mut source = Self {
             client,
             body_limits: BodyLimits {

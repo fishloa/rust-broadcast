@@ -525,12 +525,51 @@ pub fn choose_variant(variants: &[VariantInfo], policy: &VariantPolicy) -> usize
     }
 }
 
-impl HlsClient {
-    /// Create a new client for the Media Playlist at `playlist_url`, seeding
-    /// the first [`Action::FetchPlaylist`] (a plain, non-blocking GET — the
-    /// client does not yet know whether the origin supports blocking reload).
+/// What an [`HlsClient`] is configured by: the playlist it follows and how it
+/// chooses variants.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct HlsClientConfig {
+    /// The Media (or Master) Playlist URL to follow.
+    pub playlist_url: String,
+    /// How a Master Playlist's variant is chosen.
+    pub variant_policy: VariantPolicy,
+    /// The URL relative playlist URIs resolve against until the first playlist
+    /// response says otherwise; `None` resolves against `playlist_url`.
+    pub playlist_base: Option<String>,
+}
+
+impl HlsClientConfig {
+    /// A config following `playlist_url` with the default [`VariantPolicy`].
     pub fn new(playlist_url: impl Into<String>) -> Self {
-        let playlist_url = playlist_url.into();
+        HlsClientConfig {
+            playlist_url: playlist_url.into(),
+            variant_policy: VariantPolicy::default(),
+            playlist_base: None,
+        }
+    }
+
+    /// Replace [`HlsClientConfig::variant_policy`].
+    #[must_use]
+    pub fn with_variant_policy(mut self, variant_policy: VariantPolicy) -> Self {
+        self.variant_policy = variant_policy;
+        self
+    }
+
+    /// Replace [`HlsClientConfig::playlist_base`].
+    #[must_use]
+    pub fn with_playlist_base(mut self, playlist_base: impl Into<String>) -> Self {
+        self.playlist_base = Some(playlist_base.into());
+        self
+    }
+}
+
+impl HlsClient {
+    /// Create a new client from `config`, seeding the first
+    /// [`Action::FetchPlaylist`] (a plain, non-blocking GET — the client does
+    /// not yet know whether the origin supports blocking reload).
+    pub fn new(config: HlsClientConfig) -> Self {
+        let playlist_url = config.playlist_url;
         let mut pending_actions = VecDeque::new();
         pending_actions.push_back(Action::FetchPlaylist {
             url: playlist_url.clone(),
@@ -539,8 +578,8 @@ impl HlsClient {
         });
         Self {
             playlist_url,
-            base_override: None,
-            variant_policy: VariantPolicy::default(),
+            base_override: config.playlist_base,
+            variant_policy: config.variant_policy,
             master: None,
             pending_actions,
             pending_errors: VecDeque::new(),
@@ -610,12 +649,6 @@ impl HlsClient {
     /// was processed.
     pub fn target_duration_secs(&self) -> Option<u32> {
         self.last_full_playlist.as_ref().map(|p| p.target_duration)
-    }
-
-    /// Set the variant selection policy. Must be callable before the first
-    /// `on_playlist`.
-    pub fn set_variant_policy(&mut self, policy: VariantPolicy) {
-        self.variant_policy = policy;
     }
 
     /// Switch to a different variant by index (stall switching).
@@ -2684,7 +2717,7 @@ mod tests {
     // accepted. Must FAIL if that check is ever removed.
     #[test]
     fn on_resource_rejects_a_never_requested_id() {
-        let mut client = HlsClient::new("http://example.com/playlist.m3u8");
+        let mut client = HlsClient::new(HlsClientConfig::new("http://example.com/playlist.m3u8"));
         let id = ResourceId::Segment { msn: 0 };
 
         let err = client
@@ -2717,7 +2750,7 @@ mod tests {
     // must still be accepted, not spuriously rejected.
     #[test]
     fn on_resource_accepts_a_previously_requested_id() {
-        let mut client = HlsClient::new("http://example.com/playlist.m3u8");
+        let mut client = HlsClient::new(HlsClientConfig::new("http://example.com/playlist.m3u8"));
         let id = ResourceId::Segment { msn: 0 };
         client.request_resource(id, "http://example.com/seg0.m4s".to_string(), None);
 
@@ -2739,7 +2772,7 @@ mod tests {
     // say yes to a genuine TS resource (sync byte, no map ever seen)...
     #[test]
     fn is_ts_segment_true_when_no_map_seen_and_sync_byte_present() {
-        let client = HlsClient::new("http://example.com/playlist.m3u8");
+        let client = HlsClient::new(HlsClientConfig::new("http://example.com/playlist.m3u8"));
         assert!(client.is_ts_segment(&[TS_SYNC_BYTE, 0x40, 0x11, 0x00]));
     }
 
@@ -2749,7 +2782,7 @@ mod tests {
     // misrouted into `TsDemux` (which would reject it as malformed TS).
     #[test]
     fn is_ts_segment_false_for_an_isobmff_resource_with_no_map_seen() {
-        let client = HlsClient::new("http://example.com/playlist.m3u8");
+        let client = HlsClient::new(HlsClientConfig::new("http://example.com/playlist.m3u8"));
         let ftyp_box = b"\x00\x00\x00\x18ftypiso5\x00\x00\x02\x00iso5iso6mp41";
         assert!(!client.is_ts_segment(ftyp_box));
     }
@@ -2762,7 +2795,7 @@ mod tests {
     // fetched bytes belong with.
     #[test]
     fn is_ts_segment_false_once_a_map_has_been_requested() {
-        let mut client = HlsClient::new("http://example.com/playlist.m3u8");
+        let mut client = HlsClient::new(HlsClientConfig::new("http://example.com/playlist.m3u8"));
         client
             .ensure_init_requested(&MapTag {
                 uri: "init.mp4".to_string(),
@@ -2790,7 +2823,7 @@ mod tests {
     // observe that exact panic, then restored the checked_add.
     #[test]
     fn resolve_byte_range_rejects_an_offset_plus_length_that_overflows_u64() {
-        let mut client = HlsClient::new("http://example.com/playlist.m3u8");
+        let mut client = HlsClient::new(HlsClientConfig::new("http://example.com/playlist.m3u8"));
         let br = Some(ByteRange {
             length: u64::MAX,
             offset: Some(1),
@@ -2819,7 +2852,7 @@ mod tests {
     // `offset + length` itself overflows.
     #[test]
     fn resolve_byte_range_rejects_a_cursor_accumulation_that_overflows_u64() {
-        let mut client = HlsClient::new("http://example.com/playlist.m3u8");
+        let mut client = HlsClient::new(HlsClientConfig::new("http://example.com/playlist.m3u8"));
         let url = "http://example.com/seg0.m4s";
         // Seed the cursor near the top of the u64 range with an explicit
         // offset, then the next omitted-offset range pushes it over.
@@ -2868,7 +2901,7 @@ mod tests {
     // checked/try_from guard.
     #[test]
     fn merge_delta_does_not_panic_on_an_overflowing_skipped_segments() {
-        let mut client = HlsClient::new("http://example.com/playlist.m3u8");
+        let mut client = HlsClient::new(HlsClientConfig::new("http://example.com/playlist.m3u8"));
         let prev = MediaPlaylist {
             media_sequence: 0,
             segments: vec![MediaSegment::default(); 2],
@@ -2912,7 +2945,7 @@ mod tests {
     // the life of the pull. Expected contents are literals.
     #[test]
     fn state_is_pruned_to_the_current_window() {
-        let mut client = HlsClient::new("http://example.com/p.m3u8");
+        let mut client = HlsClient::new(HlsClientConfig::new("http://example.com/p.m3u8"));
         client
             .on_playlist(byte_range_playlist(0, "a.ts").as_bytes())
             .unwrap();
@@ -2951,7 +2984,7 @@ mod tests {
     // bookkeeping below the window is dropped too.
     #[test]
     fn discontinuity_bookkeeping_below_the_window_is_dropped() {
-        let mut client = HlsClient::new("http://example.com/p.m3u8");
+        let mut client = HlsClient::new(HlsClientConfig::new("http://example.com/p.m3u8"));
         let pl = |first: u64| {
             format!(
                 "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n\
@@ -3001,7 +3034,7 @@ mod tests {
 
     #[test]
     fn pending_keyed_is_pruned_with_the_window() {
-        let mut client = HlsClient::new("http://example.com/p.m3u8");
+        let mut client = HlsClient::new(HlsClientConfig::new("http://example.com/p.m3u8"));
         client
             .on_playlist(keyed_playlist(0, 1, "key.bin").as_bytes())
             .unwrap();
@@ -3025,7 +3058,7 @@ mod tests {
 
     #[test]
     fn pending_keyed_is_capped_and_drops_the_oldest_with_a_typed_error() {
-        let mut client = HlsClient::new("http://example.com/p.m3u8");
+        let mut client = HlsClient::new(HlsClientConfig::new("http://example.com/p.m3u8"));
         client
             .on_playlist(keyed_playlist(0, 2, "key.bin").as_bytes())
             .unwrap();
@@ -3057,7 +3090,7 @@ mod tests {
 
     #[test]
     fn key_maps_do_not_grow_with_per_reload_tokenised_key_urls() {
-        let mut client = HlsClient::new("http://example.com/p.m3u8");
+        let mut client = HlsClient::new(HlsClientConfig::new("http://example.com/p.m3u8"));
         for n in 0..8u64 {
             client
                 .on_playlist(keyed_playlist(n, 2, &format!("key.bin?t={n}")).as_bytes())
@@ -3075,7 +3108,7 @@ mod tests {
     #[cfg(feature = "std")]
     fn next_wait_reports_the_queued_wait_hint_without_consuming_it() {
         use core::time::Duration;
-        let mut c = HlsClient::new("http://h/p.m3u8");
+        let mut c = HlsClient::new(HlsClientConfig::new("http://h/p.m3u8"));
         assert_eq!(c.next_wait(), None, "the first queued action is a fetch");
         let _ = c.poll();
         c.on_playlist(
