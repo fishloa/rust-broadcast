@@ -15,128 +15,243 @@
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 #[repr(u8)]
-#[allow(missing_docs)]
 #[rustfmt::skip] // deliberate column-aligned discriminants
 pub enum DescriptorTag {
     // ── MPEG-2 descriptors (0x02..=0x3F) ───────────────────────────────────
     // Populated as phases 2+ land.
+    /// `VideoStream` (descriptor tag 0x02).
     VideoStream                = 0x02,
+    /// `AudioStream` (descriptor tag 0x03).
     AudioStream                = 0x03,
+    /// `Hierarchy` (descriptor tag 0x04).
     Hierarchy                  = 0x04,
+    /// `Registration` (descriptor tag 0x05).
     Registration               = 0x05,
+    /// `DataStreamAlignment` (descriptor tag 0x06).
     DataStreamAlignment        = 0x06,
+    /// `TargetBackgroundGrid` (descriptor tag 0x07).
     TargetBackgroundGrid       = 0x07,
+    /// `VideoWindow` (descriptor tag 0x08).
     VideoWindow                = 0x08,
+    /// `ConditionalAccess` (descriptor tag 0x09).
     ConditionalAccess          = 0x09,
+    /// `Iso639Language` (descriptor tag 0x0A).
     Iso639Language             = 0x0A,
+    /// `SystemClock` (descriptor tag 0x0B).
     SystemClock                = 0x0B,
+    /// `MultiplexBufferUtilization` (descriptor tag 0x0C).
     MultiplexBufferUtilization = 0x0C,
+    /// `Copyright` (descriptor tag 0x0D).
     Copyright                  = 0x0D,
+    /// `MaximumBitrate` (descriptor tag 0x0E).
     MaximumBitrate             = 0x0E,
+    /// `PrivateDataIndicator` (descriptor tag 0x0F).
     PrivateDataIndicator       = 0x0F,
+    /// `SmoothingBuffer` (descriptor tag 0x10).
     SmoothingBuffer            = 0x10,
+    /// `Std` (descriptor tag 0x11).
     Std                        = 0x11,
+    /// `Ibp` (descriptor tag 0x12).
     Ibp                        = 0x12,
+    /// `CarouselIdentifier` (descriptor tag 0x13).
     CarouselIdentifier         = 0x13,
+    /// `AssociationTag` (descriptor tag 0x14).
     AssociationTag             = 0x14,
+    /// `DeferredAssociationTags` (descriptor tag 0x15).
     DeferredAssociationTags    = 0x15,
+    /// `Mpeg4Video` (descriptor tag 0x1B).
     Mpeg4Video                 = 0x1B,
+    /// `Mpeg4Audio` (descriptor tag 0x1C).
     Mpeg4Audio                 = 0x1C,
+    /// `Iod` (descriptor tag 0x1D).
     Iod                        = 0x1D,
+    /// `Sl` (descriptor tag 0x1E).
     Sl                         = 0x1E,
+    /// `Fmc` (descriptor tag 0x1F).
     Fmc                        = 0x1F,
+    /// `ExternalEsId` (descriptor tag 0x20).
     ExternalEsId               = 0x20,
+    /// `Muxcode` (descriptor tag 0x21).
     Muxcode                    = 0x21,
+    /// `FmxBufferSize` (descriptor tag 0x22).
     FmxBufferSize              = 0x22,
+    /// `MultiplexBuffer` (descriptor tag 0x23).
     MultiplexBuffer            = 0x23,
+    /// `ContentLabeling` (descriptor tag 0x24).
     ContentLabeling            = 0x24,
+    /// `MetadataPointer` (descriptor tag 0x25).
     MetadataPointer            = 0x25,
+    /// `Metadata` (descriptor tag 0x26).
     Metadata                   = 0x26,
+    /// `MetadataStd` (descriptor tag 0x27).
     MetadataStd                = 0x27,
+    /// `AvcVideo` (descriptor tag 0x28).
     AvcVideo                   = 0x28,
+    /// `AvcTimingAndHrd` (descriptor tag 0x2A).
     AvcTimingAndHrd            = 0x2A,
+    /// `Mpeg2AacAudio` (descriptor tag 0x2B).
     Mpeg2AacAudio              = 0x2B,
+    /// `FlexMuxTiming` (descriptor tag 0x2C).
     FlexMuxTiming              = 0x2C,
+    /// `Mpeg4Text` (descriptor tag 0x2D).
     Mpeg4Text                  = 0x2D,
+    /// `Mpeg4AudioExtension` (descriptor tag 0x2E).
     Mpeg4AudioExtension        = 0x2E,
+    /// `AuxiliaryVideoStream` (descriptor tag 0x2F).
     AuxiliaryVideoStream       = 0x2F,
+    /// `SvcExtension` (descriptor tag 0x30).
     SvcExtension               = 0x30,
+    /// `MvcExtension` (descriptor tag 0x31).
     MvcExtension               = 0x31,
+    /// `J2kVideo` (descriptor tag 0x32).
     J2kVideo                   = 0x32,
+    /// `MvcOperationPoint` (descriptor tag 0x33).
     MvcOperationPoint          = 0x33,
+    /// `Mpeg2StereoscopicVideoFormat` (descriptor tag 0x34).
     Mpeg2StereoscopicVideoFormat = 0x34,
+    /// `StereoscopicProgramInfo` (descriptor tag 0x35).
     StereoscopicProgramInfo    = 0x35,
+    /// `StereoscopicVideoInfo` (descriptor tag 0x36).
     StereoscopicVideoInfo      = 0x36,
+    /// `TransportProfile` (descriptor tag 0x37).
     TransportProfile           = 0x37,
+    /// `HevcVideo` (descriptor tag 0x38).
     HevcVideo                  = 0x38,
+    /// `VvcVideo` (descriptor tag 0x39).
     VvcVideo                   = 0x39,
+    /// `EvcVideo` (descriptor tag 0x3A).
     EvcVideo                   = 0x3A,
+    /// `Mpeg2Extension` (descriptor tag 0x3F).
     Mpeg2Extension             = 0x3F,
 
     // ── DVB SI descriptors (0x40..=0x7F) ───────────────────────────────────
+    /// `NetworkName` (descriptor tag 0x40).
     NetworkName                = 0x40,
+    /// `ServiceList` (descriptor tag 0x41).
     ServiceList                = 0x41,
+    /// `Stuffing` (descriptor tag 0x42).
     Stuffing                   = 0x42,
+    /// `SatelliteDeliverySystem` (descriptor tag 0x43).
     SatelliteDeliverySystem    = 0x43,
+    /// `CableDeliverySystem` (descriptor tag 0x44).
     CableDeliverySystem        = 0x44,
+    /// `VbiData` (descriptor tag 0x45).
     VbiData                    = 0x45,
+    /// `VbiTeletext` (descriptor tag 0x46).
     VbiTeletext                = 0x46,
+    /// `BouquetName` (descriptor tag 0x47).
     BouquetName                = 0x47,
+    /// `Service` (descriptor tag 0x48).
     Service                    = 0x48,
+    /// `CountryAvailability` (descriptor tag 0x49).
     CountryAvailability        = 0x49,
+    /// `Linkage` (descriptor tag 0x4A).
     Linkage                    = 0x4A,
+    /// `NvodReference` (descriptor tag 0x4B).
     NvodReference              = 0x4B,
+    /// `TimeShiftedService` (descriptor tag 0x4C).
     TimeShiftedService         = 0x4C,
+    /// `ShortEvent` (descriptor tag 0x4D).
     ShortEvent                 = 0x4D,
+    /// `ExtendedEvent` (descriptor tag 0x4E).
     ExtendedEvent              = 0x4E,
+    /// `TimeShiftedEvent` (descriptor tag 0x4F).
     TimeShiftedEvent           = 0x4F,
+    /// `Component` (descriptor tag 0x50).
     Component                  = 0x50,
+    /// `Mosaic` (descriptor tag 0x51).
     Mosaic                     = 0x51,
+    /// `StreamIdentifier` (descriptor tag 0x52).
     StreamIdentifier           = 0x52,
+    /// `CaIdentifier` (descriptor tag 0x53).
     CaIdentifier               = 0x53,
+    /// `Content` (descriptor tag 0x54).
     Content                    = 0x54,
+    /// `ParentalRating` (descriptor tag 0x55).
     ParentalRating             = 0x55,
+    /// `Teletext` (descriptor tag 0x56).
     Teletext                   = 0x56,
+    /// `Telephone` (descriptor tag 0x57).
     Telephone                  = 0x57,
+    /// `LocalTimeOffset` (descriptor tag 0x58).
     LocalTimeOffset            = 0x58,
+    /// `Subtitling` (descriptor tag 0x59).
     Subtitling                 = 0x59,
+    /// `TerrestrialDeliverySystem` (descriptor tag 0x5A).
     TerrestrialDeliverySystem  = 0x5A,
+    /// `MultilingualNetworkName` (descriptor tag 0x5B).
     MultilingualNetworkName    = 0x5B,
+    /// `MultilingualBouquetName` (descriptor tag 0x5C).
     MultilingualBouquetName    = 0x5C,
+    /// `MultilingualServiceName` (descriptor tag 0x5D).
     MultilingualServiceName    = 0x5D,
+    /// `MultilingualComponent` (descriptor tag 0x5E).
     MultilingualComponent      = 0x5E,
+    /// `PrivateDataSpecifier` (descriptor tag 0x5F).
     PrivateDataSpecifier       = 0x5F,
+    /// `ServiceMove` (descriptor tag 0x60).
     ServiceMove                = 0x60,
+    /// `ShortSmoothingBuffer` (descriptor tag 0x61).
     ShortSmoothingBuffer       = 0x61,
+    /// `FrequencyList` (descriptor tag 0x62).
     FrequencyList              = 0x62,
+    /// `PartialTransportStream` (descriptor tag 0x63).
     PartialTransportStream     = 0x63,
+    /// `DataBroadcast` (descriptor tag 0x64).
     DataBroadcast              = 0x64,
+    /// `Scrambling` (descriptor tag 0x65).
     Scrambling                 = 0x65,
+    /// `DataBroadcastId` (descriptor tag 0x66).
     DataBroadcastId            = 0x66,
+    /// `TransportStream` (descriptor tag 0x67).
     TransportStream            = 0x67,
+    /// `Dsng` (descriptor tag 0x68).
     Dsng                       = 0x68,
+    /// `Pdc` (descriptor tag 0x69).
     Pdc                        = 0x69,
+    /// `Ac3` (descriptor tag 0x6A).
     Ac3                        = 0x6A,
+    /// `AncillaryData` (descriptor tag 0x6B).
     AncillaryData              = 0x6B,
+    /// `CellList` (descriptor tag 0x6C).
     CellList                   = 0x6C,
+    /// `CellFrequencyLink` (descriptor tag 0x6D).
     CellFrequencyLink          = 0x6D,
+    /// `AnnouncementSupport` (descriptor tag 0x6E).
     AnnouncementSupport        = 0x6E,
+    /// `ApplicationSignalling` (descriptor tag 0x6F).
     ApplicationSignalling      = 0x6F,
+    /// `AdaptationFieldData` (descriptor tag 0x70).
     AdaptationFieldData        = 0x70,
+    /// `ServiceIdentifier` (descriptor tag 0x71).
     ServiceIdentifier          = 0x71,
+    /// `ServiceAvailability` (descriptor tag 0x72).
     ServiceAvailability        = 0x72,
+    /// `DefaultAuthority` (descriptor tag 0x73).
     DefaultAuthority           = 0x73,
+    /// `RelatedContent` (descriptor tag 0x74).
     RelatedContent             = 0x74,
+    /// `TvaId` (descriptor tag 0x75).
     TvaId                      = 0x75,
+    /// `ContentIdentifier` (descriptor tag 0x76).
     ContentIdentifier          = 0x76,
+    /// `TimeSliceFecIdentifier` (descriptor tag 0x77).
     TimeSliceFecIdentifier     = 0x77,
+    /// `EcmRepetitionRate` (descriptor tag 0x78).
     EcmRepetitionRate          = 0x78,
+    /// `S2SatelliteDeliverySystem` (descriptor tag 0x79).
     S2SatelliteDeliverySystem  = 0x79,
+    /// `EnhancedAc3` (descriptor tag 0x7A).
     EnhancedAc3                = 0x7A,
+    /// `Dts` (descriptor tag 0x7B).
     Dts                        = 0x7B,
+    /// `Aac` (descriptor tag 0x7C).
     Aac                        = 0x7C,
+    /// `XaitLocation` (descriptor tag 0x7D).
     XaitLocation               = 0x7D,
+    /// `FtaContentManagement` (descriptor tag 0x7E).
     FtaContentManagement       = 0x7E,
+    /// `Extension` (descriptor tag 0x7F).
     Extension                  = 0x7F,
 }
 impl DescriptorTag {

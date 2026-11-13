@@ -223,7 +223,6 @@ impl<'a> crate::traits::TableDef<'a> for MetadataSection<'a> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unusual_byte_groupings)] // bit-field-wise literals mirror the syntax tables
 mod tests {
     use super::*;
     use alloc::{vec, vec::Vec};
@@ -246,7 +245,7 @@ mod tests {
         };
         let b = rt(&s);
         // 1 0 1 0 | length hi 0 -> 0xA0; length = 5 + 3 + 4 = 12
-        assert_eq!(&b[..8], &[0x06, 0xA0, 0x0C, 0x21, 0xFF, 0b10_00101_1, 0, 2]);
+        assert_eq!(&b[..8], &[0x06, 0xA0, 0x0C, 0x21, 0xFF, 0b1000_1011, 0, 2]);
         assert_eq!(&b[8..11], &[1, 2, 3]);
         assert_eq!(broadcast_common::crc32_mpeg2::compute(&b), 0);
     }

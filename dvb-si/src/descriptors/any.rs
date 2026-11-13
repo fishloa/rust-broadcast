@@ -80,11 +80,11 @@ macro_rules! declare_descriptors {
         #[non_exhaustive]
         pub enum AnyDescriptor<$lt> {
             $(
-                #[allow(missing_docs)]
-                $variant($($path)::+ $(<$plt>)?),
+                #[doc = concat!("The `", stringify!($variant), "` descriptor.")]
+            $variant($($path)::+ $(<$plt>)?),
             )+
             $($(
-                #[allow(missing_docs)]
+                #[doc = concat!("The `", stringify!($nd_variant), "` descriptor.")]
                 $nd_variant($($nd_path)::+ $(<$nd_plt>)?),
             )+)?
             /// Runtime-registered custom descriptor (see [`DescriptorRegistry`]).
