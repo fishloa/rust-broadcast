@@ -22,7 +22,6 @@
 //! steps it bundles — both `pub(crate)` (issue #805 task 6 narrowed them back
 //! from `pub`; see [`advance_route`]'s own doc for why one call replaced two).
 
-pub(crate) mod audio_profile;
 pub mod dash_pull;
 pub mod dashif_ingest;
 pub(crate) mod driver;

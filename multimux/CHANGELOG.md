@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Removed
+- BREAKING: `config::{AudioTrackSelector, AudioProfile, AudioProfileOverride}` moved to `transmux::audio_profile` (same serde forms); the route logs declarations that did not apply as before (issue #2554).
 ### Fixed
 - A reload no longer installs over a runtime a concurrent admin add registered while the reload waited for its locks (every runtime carries a generation and the re-plan compares them, not just the touched names), which used to leave the replaced runtime running undrained. A reload that restarts a changed route now drains the old runtime before reading the route's archive floor and spawning the replacement, so the new runtime cannot number below a segment the old one still writes; if a later step of the reload fails, the stopped routes are started again from their old configuration (#2578, #2579).
 ### Changed

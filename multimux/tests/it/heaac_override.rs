@@ -15,7 +15,8 @@ use broadcast_common::Parse;
 use broadcast_hls::{MasterPlaylist, MediaPlaylist};
 use transmux::{MovieBox, MovieFragmentBox};
 
-use multimux::config::{AudioProfile, AudioProfileOverride, AudioTrackSelector, Config};
+use multimux::config::Config;
+use transmux::audio_profile::{AudioProfile, AudioProfileOverride, AudioTrackSelector};
 
 const V1_FIXTURE: &str = "ts/heaac/heaac-v1-adts.ts";
 const V2_FIXTURE: &str = "ts/heaac/heaac-v2-adts.ts";

@@ -153,6 +153,7 @@ pub mod ac3;
 pub mod ac4;
 pub mod annexb;
 pub mod au;
+pub mod audio_profile;
 pub mod av1;
 pub mod avc_config;
 pub mod avc_parameter_set;
