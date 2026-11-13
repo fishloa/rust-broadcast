@@ -102,7 +102,7 @@ fn session_config(route: &HlsPullRoute) -> Config {
 ///
 /// Returns `Ok(())` when the origin's `#EXT-X-ENDLIST` is fully accounted for (the route is then
 /// marked ended: a finite playlist has nothing more to pull) and `Err` on a failure the session
-/// does not retry. Each fetch is bounded by [`Timeouts::read_idle`](broadcast_common::timeouts::Timeouts::read),
+/// does not retry. Each fetch is bounded by [`Timeouts::read_idle`](broadcast_common::timeouts::Timeouts::read_idle),
 /// and the handshake (until the first track set resolves) by `handshake`.
 ///
 /// `route_handle` is the driver-backed registry side of issue #805 task 2 — see
