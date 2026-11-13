@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- `skills/transmux-basics/SKILL.md`: a Symposium agent skill shipped in the published package, so an AI coding agent working in a project that depends on `transmux` gets usage guidance covering the `Unpackage`/`Package` hub loop, the `Media`/`Track`/`Sample`/`TrackSpec`/`CodecConfig` IR, streaming demux and segmentation, repackaging, timeline transforms and splice, CENC decrypt, the fMP4/CMAF validator, the `cli` packager, features and the common pitfalls.
 - `audio_profile` (serde behind the `serde` feature): `AudioTrackSelector` (with `position`), `AudioProfile`, `AudioProfileOverride` and `apply_overrides`, the operator-declared HE-AAC description moved from multimux; it reports unmatched and refused declarations instead of logging them (issue #2554).
 ### Added
 - `transmux::Container` (`Fmp4`, `MpegTs`, `WebVtt`) with `name()` and `segment_extension()`: which container a segmenter cuts and an origin serves, defined once here; moved from `hls_runtime::server` (issue #2554).
