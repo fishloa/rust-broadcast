@@ -1,3 +1,4 @@
+mod send_sync;
 mod client_adapter;
 mod error_variants;
 mod ffmpeg_publish;

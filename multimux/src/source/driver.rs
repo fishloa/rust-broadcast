@@ -87,7 +87,7 @@ pub(crate) const DEFAULT_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 /// since the connection is closing either way.
 async fn send_farewell<S, W>(driver: &mut IngestDriver<S>, writer: &mut W, write_timeout: Duration)
 where
-    S: IngestSession + Sync,
+    S: IngestSession,
     S::Error: Send + Sync,
     S::Request: AsRef<[u8]>,
     W: AsyncWrite + Unpin + Send,
@@ -127,7 +127,7 @@ pub(crate) async fn run_ingest_scaffold<S, W, T>(
     map_failed: fn(S::Error) -> MultimuxError,
 ) -> MultimuxError
 where
-    S: IngestSession + Sync,
+    S: IngestSession,
     S::Error: Send + Sync,
     S::Request: AsRef<[u8]>,
     W: AsyncWrite + Unpin + Send,
@@ -248,32 +248,6 @@ where
         other => MultimuxError::Connect {
             reason: format!("session ended: {:?}", std::mem::discriminant(&other)),
         },
-    }
-}
-
-/// Turns a driver that has reached a terminal [`HealthState`] into this
-/// crate's own `Result`, moving the concrete session error out via
-/// [`media_plane::ingress::IngestDriver::into_health`].
-///
-/// **This is why a pull drive loop must check `health()` after every feed at
-/// all**: `IngestDriver::feed` records a session error in `health` and
-/// returns `()`, so a loop that only ever calls `feed` never observes it. A
-/// `smooth_pull` session rejecting a PlayReady-protected manifest, or an
-/// `hls_pull` session rejecting a malformed playlist, would otherwise leave
-/// the loop spinning against a session that can never make progress.
-pub(crate) fn terminal_result<S>(driver: IngestDriver<S>, what: &str) -> crate::error::Result<()>
-where
-    S: IngestSession<Error = MultimuxError>,
-{
-    match driver.into_health() {
-        HealthState::Failed(e) => Err(e),
-        HealthState::HandshakeTimedOut { deadline } => Err(MultimuxError::Connect {
-            reason: format!("{what}: handshake deadline {deadline:?} passed"),
-        }),
-        // `Ended` is a clean finish; the two running states are unreachable
-        // here (callers only call this once `health().is_running()` is false)
-        // but map to `Ok` rather than panicking on a future variant.
-        _ => Ok(()),
     }
 }
 

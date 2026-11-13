@@ -54,11 +54,6 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
         "one datagram receive task per Action::UdpBind of the session; owned by SessionStep, which aborts it on Action::Close and aborts every outstanding one on drop",
     ),
     (
-        "source/pull.rs",
-        246,
-        "PullScheduler's `inflight` JoinSet (drained on drop); the shared engine for the three pull sources",
-    ),
-    (
         "push/rtsp.rs",
         307,
         "RTSP push `close` best-effort TEARDOWN: spawned on the current runtime handle (`Handle::try_current`, skipped outside one), the JoinHandle is stored on the transport and an already-running one is aborted on a superseding close, bounded by TEARDOWN_TIMEOUT",

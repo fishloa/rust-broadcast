@@ -212,7 +212,7 @@ async fn dynamic_file(
     )
     .await;
     let mut resp = match http::into_response(resp, StatusCode::NOT_FOUND, |body| {
-        let body = inject_segment_events(&trunk, &file, body);
+        let body = inject_segment_events(&trunk, &serving.spliced, &file, body);
         resource_body_response(&headers, body, container, &file)
     }) {
         // A resource that resolved NotFound might still be a whole-segment
@@ -375,7 +375,12 @@ fn unique_emsg_id(
 /// SCTE-35-sourced events are injected; non-segment resources (init, parts),
 /// segments with no (relevant) events, and non-SCTE-35 events all pass
 /// through unchanged.
-fn inject_segment_events(trunk: &Trunk, file: &str, body: HlsBody) -> HlsBody {
+fn inject_segment_events(
+    trunk: &Trunk,
+    cache: &SplicedSegments,
+    file: &str,
+    body: HlsBody,
+) -> HlsBody {
     let HlsBody::Resource(bytes) = &body else {
         return body;
     };
@@ -441,9 +446,71 @@ fn inject_segment_events(trunk: &Trunk, file: &str, body: HlsBody) -> HlsBody {
     }
 
     let segment = bytes.as_ref();
+    if let Some(cached) = cache.get(seq, bytes, &emsg_bytes) {
+        return HlsBody::Resource(cached);
+    }
+    #[cfg(test)]
+    cache
+        .splices
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let spliced = transmux::insert_event_message_boxes_after_styp(segment, &emsg_bytes);
 
-    HlsBody::Resource(Bytes::from(spliced))
+    let spliced = Bytes::from(spliced);
+    cache.insert(seq, bytes.clone(), emsg_bytes, spliced.clone());
+    HlsBody::Resource(spliced)
+}
+
+/// How many spliced segments a program keeps: enough for the live edge's
+/// segments across every track, so a request for a segment already spliced
+/// for another viewer copies nothing.
+const SPLICED_SEGMENTS_KEPT: usize = 16;
+
+struct Spliced {
+    seq: u32,
+    /// The segment as served without events; held so its address identifies it.
+    source: Bytes,
+    /// The serialized `emsg` boxes spliced in.
+    events: Vec<u8>,
+    result: Bytes,
+}
+
+/// Segments with their SCTE-35 `emsg` boxes spliced in, kept per program so a
+/// request does not copy the whole segment again for a segment and event set
+/// already served.
+#[derive(Default)]
+pub(crate) struct SplicedSegments {
+    entries: parking_lot::Mutex<std::collections::VecDeque<Spliced>>,
+    #[cfg(test)]
+    splices: std::sync::atomic::AtomicUsize,
+}
+
+impl SplicedSegments {
+    fn get(&self, seq: u32, source: &Bytes, events: &[u8]) -> Option<Bytes> {
+        self.entries
+            .lock()
+            .iter()
+            .rev()
+            .find(|cached| {
+                cached.seq == seq
+                    && cached.source.as_ptr() == source.as_ptr()
+                    && cached.source.len() == source.len()
+                    && cached.events == events
+            })
+            .map(|cached| cached.result.clone())
+    }
+
+    fn insert(&self, seq: u32, source: Bytes, events: Vec<u8>, result: Bytes) {
+        let mut entries = self.entries.lock();
+        if entries.len() == SPLICED_SEGMENTS_KEPT {
+            entries.pop_front();
+        }
+        entries.push_back(Spliced {
+            seq,
+            source,
+            events,
+            result,
+        });
+    }
 }
 
 /// Serve a not-yet-closed whole-segment filename (`seg-{track}-{seq}.m4s`)
@@ -1056,6 +1123,30 @@ mod tests {
         trunk
     }
 
+    /// A segment already spliced for its events is not copied and spliced again
+    /// for the next request; a different segment is.
+    #[test]
+    fn a_segment_is_spliced_once_for_repeated_requests() {
+        const REQUESTS: usize = 8;
+        let trunk = event_trunk();
+        let cache = SplicedSegments::default();
+        let styp = [
+            0u8, 0, 0, 12, b's', b't', b'y', b'p', b'm', b's', b'd', b'h',
+        ];
+        let mut seg = styp.to_vec();
+        seg.extend_from_slice(b"moof_placeholder");
+        let body = HlsBody::Resource(Bytes::from(seg));
+        let first = inject_segment_events(&trunk, &cache, "seg-1-1.m4s", body.clone());
+        for _ in 0..REQUESTS {
+            assert_eq!(
+                inject_segment_events(&trunk, &cache, "seg-1-1.m4s", body.clone()),
+                first
+            );
+        }
+        assert_eq!(cache.splices.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(cache.entries.lock().len(), 1);
+    }
+
     #[test]
     fn inject_segment_events_prepends_emsg_after_styp() {
         // issue #969: a segment filename with a resolved SCTE-35 event must
@@ -1075,7 +1166,8 @@ mod tests {
         seg_bytes.extend_from_slice(moof);
 
         let body = HlsBody::Resource(Bytes::from(seg_bytes));
-        let result = inject_segment_events(&trunk, "seg-1-1.m4s", body);
+        let result =
+            inject_segment_events(&trunk, &SplicedSegments::default(), "seg-1-1.m4s", body);
 
         let HlsBody::Resource(result_bytes) = result else {
             panic!("expected Resource body");
@@ -1140,6 +1232,7 @@ mod tests {
         seg_bytes.extend_from_slice(b"moof_placeholder");
         let result = inject_segment_events(
             &trunk,
+            &SplicedSegments::default(),
             "seg-1-1.m4s",
             HlsBody::Resource(Bytes::from(seg_bytes)),
         );
@@ -1183,7 +1276,8 @@ mod tests {
         let trunk = event_trunk();
 
         let init_body = HlsBody::Resource(Bytes::from(vec![0xAA; 8]));
-        let init_result = inject_segment_events(&trunk, "init-1.mp4", init_body);
+        let init_result =
+            inject_segment_events(&trunk, &SplicedSegments::default(), "init-1.mp4", init_body);
         let HlsBody::Resource(init_bytes) = init_result else {
             panic!("init expected Resource body");
         };
@@ -1193,7 +1287,8 @@ mod tests {
         let seg_body = HlsBody::Resource(Bytes::from(vec![
             0x00, 0x00, 0x00, 0x0C, b's', b't', b'y', b'p', 0, 0, 0, 0,
         ]));
-        let seg_result = inject_segment_events(&trunk, "seg-1-2.m4s", seg_body);
+        let seg_result =
+            inject_segment_events(&trunk, &SplicedSegments::default(), "seg-1-2.m4s", seg_body);
         let HlsBody::Resource(seg_bytes) = seg_result else {
             panic!("segment expected Resource body");
         };
@@ -1499,7 +1594,8 @@ mod tests {
         seg_bytes.extend_from_slice(&styp);
         seg_bytes.extend_from_slice(b"moof_placeholder");
         let body = HlsBody::Resource(Bytes::from(seg_bytes.clone()));
-        let spliced = inject_segment_events(&trunk, "seg-1-1.m4s", body);
+        let spliced =
+            inject_segment_events(&trunk, &SplicedSegments::default(), "seg-1-1.m4s", body);
         let HlsBody::Resource(spliced_bytes) = spliced else {
             panic!("expected resource");
         };
@@ -1561,7 +1657,8 @@ mod tests {
 
         // compute spliced bytes
         let body = HlsBody::Resource(Bytes::from(seg_bytes.clone()));
-        let spliced = inject_segment_events(&trunk, "seg-1-1.m4s", body);
+        let spliced =
+            inject_segment_events(&trunk, &SplicedSegments::default(), "seg-1-1.m4s", body);
         let HlsBody::Resource(spliced_bytes) = spliced else {
             panic!("expected resource");
         };

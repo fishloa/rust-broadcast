@@ -1,7 +1,6 @@
 //! The target every pull route shares: a name for logging/metrics, the source
 //! URL (which may carry `user:pass@` userinfo), the ingest timeouts and the
-//! config-supplied credentials (which take precedence over URL userinfo, see
-//! `crate::source::http_auth::resolve_credentials`).
+//! config-supplied credentials (which take precedence over URL userinfo).
 
 use std::future::Future;
 use std::sync::Arc;

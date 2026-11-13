@@ -68,7 +68,7 @@ pub enum ServerEvent {
 }
 
 /// The source of `Session` id values a [`ServerSession`] draws from.
-type SessionIdSource = Box<dyn FnMut() -> u64 + Send>;
+type SessionIdSource = Box<dyn FnMut() -> u64 + Send + Sync>;
 
 /// A driveable RTSP server session (RFC 2326 §A.2).
 pub struct ServerSession {
@@ -109,8 +109,9 @@ impl ServerSession {
     /// `session_ids` is called once per allocated `Session` id and must return
     /// values from a cryptographically secure random source (RFC 2326 §3.4) —
     /// the id is the only thing tying later requests to this session. The
-    /// `tokio` adapter's `io::AsyncRtspServer::accept` supplies the OS RNG.
-    pub fn new(session_ids: impl FnMut() -> u64 + Send + 'static) -> Self {
+    /// `tokio` adapter's `io::AsyncRtspServer::accept` supplies the OS RNG. The
+    /// source must be `Send + Sync`, so a session can be shared behind an `Arc`.
+    pub fn new(session_ids: impl FnMut() -> u64 + Send + Sync + 'static) -> Self {
         ServerSession {
             state: SessionState::Init,
             session_id: None,

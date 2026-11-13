@@ -1,3 +1,4 @@
+mod send_sync;
 mod client_push_methods;
 mod golden_wire;
 mod integration;

@@ -5,6 +5,8 @@ All notable changes to `rtsp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- BREAKING: `ServerSession::new` takes a session-id source that is `Send + Sync` (it was `Send`), so a `ServerSession` is `Sync` and can be shared behind an `Arc`; a test pins it (issue #2533).
 ### Removed
 - BREAKING: `RtspTimeouts`; the adapters take `broadcast_common::timeouts::Timeouts` (the same four fields and defaults), shared with the RTMP and SRT adapters (#2514).
 ### Added

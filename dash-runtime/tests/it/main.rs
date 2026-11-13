@@ -1,3 +1,4 @@
+mod send_sync;
 mod address_fuzz_availability;
 mod availability;
 mod base_url;

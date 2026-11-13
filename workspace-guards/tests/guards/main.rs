@@ -1,3 +1,4 @@
+mod blocking_publish;
 mod clock33;
 mod clock33_data;
 mod common;
@@ -20,5 +21,7 @@ mod secret_debug;
 mod secret_debug_data;
 mod serialize_mask;
 mod serialize_mask_data;
+mod spawn_sites;
+mod spawn_sites_data;
 mod truncation;
 mod truncation_data;

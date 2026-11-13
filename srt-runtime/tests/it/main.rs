@@ -1,3 +1,4 @@
+mod send_sync;
 mod arq_recovery;
 mod crypto_handshake;
 mod crypto_vectors;

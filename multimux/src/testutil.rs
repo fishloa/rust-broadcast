@@ -3,7 +3,7 @@
 //! gates a router behind Basic (RFC 7617), Digest (RFC 7616), or Bearer (RFC
 //! 6750) auth, for `source::ts_http`/`source::hls_pull`'s own loopback tests
 //! to drive the *real* `TsHttpRoute`/`HlsPullRoute` (and therefore the real
-//! `source::http_auth` challenge-response code) against.
+//! `broadcast_client::Session` challenge-response code) against.
 //!
 //! A thin wrapper over the real [`broadcast_auth::Verifier`] — the same
 //! production challenge/verify code `crate::origin::output_auth_gate` gates
@@ -42,7 +42,7 @@ pub(crate) enum MockAuthScheme {
     /// HTTP Basic (RFC 7617).
     Basic { username: String, password: String },
     /// HTTP Digest (RFC 7616), `qop=auth`/`algorithm=MD5` — the shape
-    /// [`crate::source::http_auth`]'s client answers.
+    /// the session's client answers.
     Digest {
         username: String,
         password: String,

@@ -520,6 +520,8 @@ pub(crate) struct ProgramServing {
     trunk: Arc<Trunk>,
     ll_hls: Arc<HlsOrigin>,
     dash: Arc<DashState>,
+    /// Segments with SCTE-35 `emsg` boxes spliced in, shared by every request.
+    pub(crate) spliced: crate::origin::resource::SplicedSegments,
     /// The Smooth origin over this program, with the plan and fragments it has
     /// cached; built by the first Smooth request.
     pub(crate) smooth: std::sync::OnceLock<Arc<crate::output::smooth::SmoothServing>>,
@@ -849,6 +851,7 @@ impl ProgramServing {
             trunk,
             ll_hls,
             dash,
+            spliced: Default::default(),
             smooth: std::sync::OnceLock::new(),
             tracks_active: std::sync::atomic::AtomicBool::new(true),
             route_name: route_name.to_string(),
