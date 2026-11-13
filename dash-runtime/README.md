@@ -114,6 +114,7 @@ cargo run -p dash-runtime --example play_live -- --mpd fixtures/dash/live-timeli
 - Lazy segment plans for `SegmentTemplate`, `SegmentTimeline`, `SegmentList` and `SegmentBase` with `sidx`, including availability windows.
 - The UTC clock (`UTCTiming`, host clock, response `Date`) and live-edge arithmetic.
 - `DashClient`, playing static and dynamic MPDs to ordered `Fmp4Demux` samples with typed failure classes.
+- `ingest`: the DASH-IF Live Media Ingest (Interface-1) sans-IO engine: request classification (`classify`), MPD manifest grouping, the §5.3 status mapping and the per-track header/segment state machine (`DashifIngestSession` with `DashifIngestConfig` limits).
 
 ## Static presentations: behaviour worth knowing
 

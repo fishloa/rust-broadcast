@@ -119,6 +119,7 @@ assert!(matches!(parsed.clear.as_ref().unwrap().command, AnyCommand::TimeSignal(
 - **DVB-TA** (`dvb_ta`): `DVB_DAS_descriptor`, compact SCTE 35 (Tables 6 and 8 as
   re-aligned from the PDF, typed preserved `reserved` fields), stream-event payload
   with an RFC 4648 base-64 helper, PPO/DPO profiling helpers.
+- **Live cue tracking** (`tracker`): `SpliceTracker` (open `splice_insert` events, bounded by `MAX_OPEN_EVENTS`), `splice_event`, `judge_splice_time` and the `SpliceSanity`/`SpliceObservation` verdicts, the one cue-sanity engine shared by `media-doctor` and `compliance-probe`.
 - **Dispatch**: `AnyCommand` and `AnySpliceDescriptor` are generated from single
   `declare_*!` lists with compile-time drift tests; adding a type is one line.
 
