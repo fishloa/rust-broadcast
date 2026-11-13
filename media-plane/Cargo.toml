@@ -28,6 +28,8 @@ event-listener   = { version = "5", default-features = false, features = ["std"]
 # poisoning (the hand-written `lock_state` poison-recovery wrapper is gone) and
 # `Condvar::wait_until(&mut guard, Instant)`.
 parking_lot      = { version = "0.13", optional = true }
+tracing          = { version = "0.1", optional = true }
+container-probe  = { path = "../container-probe", version = "0.3.1", optional = true }
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
@@ -42,7 +44,7 @@ criterion     = { workspace = true, features = ["html_reports"] }
 default = ["std"]
 # The `ts_session::test_support` helpers (muxed TS bytes, configs) for a host's tests.
 test-support = ["std"]
-std     = ["broadcast-common/std", "thiserror/std", "dep:transmux", "dep:timed-metadata", "dep:event-listener", "dep:parking_lot"]
+std     = ["broadcast-common/std", "thiserror/std", "dep:transmux", "transmux/std", "dep:timed-metadata", "dep:event-listener", "dep:parking_lot", "dep:container-probe", "dep:tracing"]
 
 [package.metadata.docs.rs]
 # `all-features = true` alone is not enough here: this crate's `std` feature

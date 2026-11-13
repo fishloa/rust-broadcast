@@ -327,7 +327,7 @@
 //! [`IngestSession::Request`], an opaque associated type with **no default**.
 //! A byte-stream source states `type In<'a> = &'a [u8]; type Request =
 //! Bytes;` — one extra line, no behaviour change (see
-//! `multimux::source::ts_program::TsIngestSession`). A pull source states its
+//! `media_plane::ts_session::TsIngestSession`). A pull source states its
 //! own honest shape instead — e.g. `type In<'a> = (HlsResourceId, &'a [u8]);
 //! type Request = hls_runtime::client::Action;` — and correlates an
 //! arriving response to the request that caused it via whatever identity type

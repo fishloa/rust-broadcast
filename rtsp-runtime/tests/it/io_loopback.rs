@@ -46,7 +46,9 @@ async fn plain_tcp_full_session() {
         states
     });
 
-    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+        .await
+        .unwrap();
 
     let ev = client.options(URI).await.unwrap();
     assert!(matches!(ev, ClientEvent::Response { status, .. } if status == StatusCode::Ok));
@@ -114,7 +116,9 @@ async fn interleaved_media_over_tcp() {
         let _ = done_rx.await;
     });
 
-    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+        .await
+        .unwrap();
     client.setup(URI, &tcp_interleaved()).await.unwrap();
     client.play(URI).await.unwrap();
 
@@ -176,7 +180,7 @@ async fn digest_auth_over_loopback() {
     });
 
     let session = ClientSession::new().with_credentials(Credentials::new("admin", "12345"));
-    let mut client = AsyncRtspClient::connect_with(addr, session).await.unwrap();
+    let mut client = AsyncRtspClient::connect(addr, session).await.unwrap();
     // describe() must complete transparently through the 401 -> retry -> 200.
     let ev = client.describe(URI).await.unwrap();
     assert!(matches!(ev, ClientEvent::Response { status, .. } if status == StatusCode::Ok));
@@ -233,9 +237,13 @@ async fn tls_full_session_over_loopback() {
 
     let server = tokio::spawn(async move {
         let (tcp, _) = listener.accept().await.unwrap();
-        let mut srv = AsyncRtspServer::accept_tls(tcp, server_config)
-            .await
-            .expect("TLS handshake (server)");
+        let mut srv = AsyncRtspServer::accept_tls(
+            tcp,
+            server_config,
+            rtsp_runtime::RtspServerConfig::default(),
+        )
+        .await
+        .expect("TLS handshake (server)");
         let mut states = Vec::new();
         for _ in 0..4 {
             srv.next_request().await.unwrap().expect("request");
@@ -244,9 +252,14 @@ async fn tls_full_session_over_loopback() {
         states
     });
 
-    let mut client = AsyncRtspClient::connect_tls(addr, "localhost", client_config)
-        .await
-        .expect("TLS handshake (client)");
+    let mut client = AsyncRtspClient::connect_tls(
+        addr,
+        "localhost",
+        client_config,
+        rtsp_runtime::RtspClientConfig::default(),
+    )
+    .await
+    .expect("TLS handshake (client)");
 
     let ev = client.options(URI).await.unwrap();
     assert!(matches!(ev, ClientEvent::Response { status, .. } if status == StatusCode::Ok));
@@ -311,7 +324,9 @@ async fn stray_response_for_an_abandoned_request_does_not_win() {
         sock.write_all(&out).await.unwrap();
     });
 
-    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+        .await
+        .unwrap();
 
     // CSeq 1: written to the socket, then abandoned before any response
     // arrives (the server above never answers until CSeq 2 is also sent).
@@ -484,7 +499,9 @@ async fn pending_media_queue_is_capped_while_exchange_waits() {
         srv.next_request().await.unwrap().expect("GET_PARAMETER");
     });
 
-    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+        .await
+        .unwrap();
     client.setup(URI, &tcp_interleaved()).await.unwrap();
     client.play(URI).await.unwrap();
     client.get_parameter(URI, &[]).await.unwrap();

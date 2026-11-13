@@ -19,10 +19,9 @@ use std::time::Duration;
 use transmux::TrackId;
 
 use container_probe::{Probe, probe_with_budget};
+use media_plane::file_source::{DemuxerKind, FileReaderError, select_demuxer};
 use media_plane::trunk::{SampleCursorItem, Trunk, TrunkConfig};
-use multimux::source::file_reader::{
-    DemuxerKind, FileReader, FileReaderConfig, FileReaderError, select_demuxer,
-};
+use multimux::source::file_reader::{FileReader, FileReaderConfig};
 use transmux::{DemuxEvent, StreamingTsDemux};
 
 /// Workspace-root fixture path for a `rel` path like `"fixtures/ts/h264-aac.ts"`.
@@ -593,7 +592,7 @@ async fn random_bytes_yield_a_probe_error_never_panic() {
     assert!(
         matches!(
             result,
-            Err(multimux::source::file_reader::FileReaderError::FileTooShortToIdentify { .. })
+            Err(media_plane::file_source::FileReaderError::FileTooShortToIdentify { .. })
         ),
         "random bytes must fail, and must never panic"
     );

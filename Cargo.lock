@@ -2435,6 +2435,7 @@ version = "0.11.0"
 dependencies = [
  "broadcast-common",
  "bytes",
+ "container-probe",
  "criterion",
  "event-listener",
  "parking_lot 0.13.0",
@@ -2442,6 +2443,7 @@ dependencies = [
  "test-fixtures",
  "thiserror 2.0.21",
  "timed-metadata",
+ "tracing",
  "transmux",
 ]
 

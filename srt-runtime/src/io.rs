@@ -125,8 +125,58 @@ pub const SRT_TIMEOUTS: Timeouts = Timeouts::new(
     Duration::from_secs(5),
 );
 
-/// Timeouts and sizes for the tokio adapter ([`SrtSocket::connect_with`],
-/// [`SrtListener::bind_with`]).
+/// Everything one SRT connection or listener is configured by: the handshake
+/// this side advertises and the adapter's timeouts and sizes. Every
+/// `SrtSocket` and `SrtListener` constructor takes `impl Into<SrtConfig>`, so
+/// a bare [`HandshakeConfig`] (default [`IoConfig`]) is accepted as is and a
+/// full config is `SrtConfig::new(handshake).with_io(io)`.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct SrtConfig {
+    /// The handshake values this side advertises.
+    pub handshake: HandshakeConfig,
+    /// The tokio adapter's timeouts and sizes.
+    pub io: IoConfig,
+}
+
+impl SrtConfig {
+    /// A config with `handshake` and the default [`IoConfig`].
+    pub fn new(handshake: HandshakeConfig) -> Self {
+        SrtConfig {
+            handshake,
+            io: IoConfig::default(),
+        }
+    }
+
+    /// Replace [`SrtConfig::handshake`].
+    #[must_use]
+    pub fn with_handshake(mut self, handshake: HandshakeConfig) -> Self {
+        self.handshake = handshake;
+        self
+    }
+
+    /// Replace [`SrtConfig::io`].
+    #[must_use]
+    pub fn with_io(mut self, io: IoConfig) -> Self {
+        self.io = io;
+        self
+    }
+}
+
+impl Default for SrtConfig {
+    fn default() -> Self {
+        SrtConfig::new(HandshakeConfig::default())
+    }
+}
+
+impl From<HandshakeConfig> for SrtConfig {
+    fn from(handshake: HandshakeConfig) -> Self {
+        SrtConfig::new(handshake)
+    }
+}
+
+/// Timeouts and sizes for the tokio adapter, carried by [`SrtConfig`] into
+/// [`SrtSocket::connect`] and [`SrtListener::bind`].
 ///
 /// Every field has a documented default; use the `with_*` builders so new
 /// fields can be added without breaking callers.
@@ -514,19 +564,10 @@ impl SrtSocket {
     /// stage it happened in.
     pub async fn connect<A: tokio::net::ToSocketAddrs>(
         remote_addr: A,
-        config: HandshakeConfig,
-    ) -> Result<Self> {
-        Self::connect_with(remote_addr, config, IoConfig::default()).await
-    }
-
-    /// Like [`Self::connect`], with explicit timeouts and datagram size.
-    pub async fn connect_with<A: tokio::net::ToSocketAddrs>(
-        remote_addr: A,
-        config: HandshakeConfig,
-        io: IoConfig,
+        config: impl Into<SrtConfig>,
     ) -> Result<Self> {
         let local = std::net::SocketAddr::from(([0, 0, 0, 0], 0));
-        Self::connect_from_with(local, remote_addr, config, io).await
+        Self::connect_from(local, remote_addr, config).await
     }
 
     /// Connect from a specific local address.
@@ -537,40 +578,34 @@ impl SrtSocket {
     pub async fn connect_from<A: tokio::net::ToSocketAddrs>(
         local_addr: std::net::SocketAddr,
         remote_addr: A,
-        config: HandshakeConfig,
+        config: impl Into<SrtConfig>,
     ) -> Result<Self> {
-        Self::connect_from_with(local_addr, remote_addr, config, IoConfig::default()).await
-    }
-
-    /// Like [`Self::connect_from`], with explicit timeouts and datagram size.
-    pub async fn connect_from_with<A: tokio::net::ToSocketAddrs>(
-        local_addr: std::net::SocketAddr,
-        remote_addr: A,
-        config: HandshakeConfig,
-        io: IoConfig,
-    ) -> Result<Self> {
-        let socket = bounded(io.timeouts.connect, "bind", async {
+        let config = config.into();
+        let socket = bounded(config.io.timeouts.connect, "bind", async {
             UdpSocket::bind(local_addr)
                 .await
                 .map_err(|e| io_err("bind", e))
         })
         .await?;
-        Self::connect_from_socket(socket, remote_addr, config, io).await
+        Self::connect_from_socket(socket, remote_addr, config).await
     }
 
-    /// Like [`Self::connect_from_with`], but takes an already-bound UDP socket
+    /// Like [`Self::connect_from`], but takes an already-bound UDP socket
     /// instead of binding one. The socket's own local address is used as the
     /// connection's local endpoint, which lets a caller hold the port from
     /// bind to use and avoid a bind/read/drop/rebind race.
     ///
     /// # Errors
-    /// Same as [`Self::connect_from_with`].
+    /// Same as [`Self::connect_from`].
     pub async fn connect_from_socket<A: tokio::net::ToSocketAddrs>(
         socket: tokio::net::UdpSocket,
         remote_addr: A,
-        config: HandshakeConfig,
-        io: IoConfig,
+        config: impl Into<SrtConfig>,
     ) -> Result<Self> {
+        let SrtConfig {
+            handshake: config,
+            io,
+        } = config.into();
         let max_datagram = io.max_datagram.clamp(MIN_MAX_DATAGRAM, MAX_MAX_DATAGRAM);
         let peer = bounded(io.timeouts.connect, "resolve", resolve_one(remote_addr)).await?;
         let socket = Arc::new(socket);
@@ -787,40 +822,34 @@ impl SrtSocket {
     pub async fn rendezvous<A: tokio::net::ToSocketAddrs>(
         local_addr: std::net::SocketAddr,
         remote_addr: A,
-        config: HandshakeConfig,
+        config: impl Into<SrtConfig>,
     ) -> Result<Self> {
-        Self::rendezvous_with(local_addr, remote_addr, config, IoConfig::default()).await
-    }
-
-    /// Like [`Self::rendezvous`], with explicit timeouts and datagram size.
-    pub async fn rendezvous_with<A: tokio::net::ToSocketAddrs>(
-        local_addr: std::net::SocketAddr,
-        remote_addr: A,
-        config: HandshakeConfig,
-        io: IoConfig,
-    ) -> Result<Self> {
-        let socket = bounded(io.timeouts.connect, "bind", async {
+        let config = config.into();
+        let socket = bounded(config.io.timeouts.connect, "bind", async {
             UdpSocket::bind(local_addr)
                 .await
                 .map_err(|e| io_err("bind", e))
         })
         .await?;
-        Self::rendezvous_from_socket(socket, remote_addr, config, io).await
+        Self::rendezvous_from_socket(socket, remote_addr, config).await
     }
 
-    /// Like [`Self::rendezvous_with`], but takes an already-bound UDP socket
+    /// Like [`Self::rendezvous`], but takes an already-bound UDP socket
     /// instead of binding one. The socket's own local address is used as the
     /// connection's local endpoint, which lets a caller hold the port from
     /// bind to use and avoid a bind/read/drop/rebind race.
     ///
     /// # Errors
-    /// Same as [`Self::rendezvous_with`].
+    /// Same as [`Self::rendezvous`].
     pub async fn rendezvous_from_socket<A: tokio::net::ToSocketAddrs>(
         socket: tokio::net::UdpSocket,
         remote_addr: A,
-        config: HandshakeConfig,
-        io: IoConfig,
+        config: impl Into<SrtConfig>,
     ) -> Result<Self> {
+        let SrtConfig {
+            handshake: config,
+            io,
+        } = config.into();
         let max_datagram = io.max_datagram.clamp(MIN_MAX_DATAGRAM, MAX_MAX_DATAGRAM);
         let peer = bounded(io.timeouts.connect, "resolve", resolve_one(remote_addr)).await?;
         let socket = Arc::new(socket);
@@ -2368,17 +2397,12 @@ impl SrtListener {
     /// decrypts the data path.
     pub async fn bind<A: tokio::net::ToSocketAddrs>(
         addr: A,
-        config: HandshakeConfig,
+        config: impl Into<SrtConfig>,
     ) -> Result<Self> {
-        Self::bind_with(addr, config, IoConfig::default()).await
-    }
-
-    /// Like [`Self::bind`], with explicit timeouts and datagram size.
-    pub async fn bind_with<A: tokio::net::ToSocketAddrs>(
-        addr: A,
-        config: HandshakeConfig,
-        io: IoConfig,
-    ) -> Result<Self> {
+        let SrtConfig {
+            handshake: config,
+            io,
+        } = config.into();
         let socket = Arc::new(UdpSocket::bind(addr).await.map_err(|e| io_err("bind", e))?);
         let local = socket.local_addr().map_err(|e| io_err("local_addr", e))?;
         let routes: RouteTable = Arc::new(Mutex::new(std::collections::HashMap::new()));
@@ -3606,10 +3630,9 @@ mod adapter_tests {
         let budget = Duration::from_millis(400);
         let io = IoConfig::default().with_timeouts(SRT_TIMEOUTS.with_handshake(budget));
         let t0 = Instant::now();
-        let err =
-            SrtSocket::connect_with(hole.local_addr().unwrap(), HandshakeConfig::default(), io)
-                .await
-                .expect_err("nobody answers");
+        let err = SrtSocket::connect(hole.local_addr().unwrap(), SrtConfig::default().with_io(io))
+            .await
+            .expect_err("nobody answers");
         // The default retransmit budget (12 x 250 ms) would end an unanswered connect at ~3 s with
         // stage "caller retransmit budget"; only the configured deadline yields "caller connect".
         assert!(

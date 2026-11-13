@@ -50,7 +50,9 @@ async fn announce_then_record_round_trips_over_loopback() {
         methods
     });
 
-    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+        .await
+        .unwrap();
     let ev = client.announce(URI, SDP).await.unwrap();
     assert!(
         matches!(ev, ClientEvent::Response { status, .. } if status == StatusCode::Ok),
@@ -92,7 +94,9 @@ async fn a_client_interleaved_send_arrives_as_a_frame_at_the_server() {
         }
     });
 
-    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+        .await
+        .unwrap();
     client.send_interleaved(0, b"media-payload").await.unwrap();
 
     let got = tokio::time::timeout(Duration::from_secs(5), server)
@@ -110,8 +114,10 @@ async fn a_stalled_interleaved_send_times_out_at_the_write_bound() {
     // write blocks, and the `write` bound must fail it (paused virtual time).
     let (client_io, _server_io) = duplex(8);
     let timeouts = Timeouts::default().with_write(Duration::from_secs(1));
-    let mut client =
-        AsyncRtspClient::with_stream_timeouts(client_io, ClientSession::new(), timeouts);
+    let mut client = AsyncRtspClient::with_stream(
+        client_io,
+        rtsp_runtime::RtspClientConfig::new(ClientSession::new()).with_timeouts(timeouts),
+    );
     // Wrapped in an outer virtual-time bound so a MISSING write bound fails
     // with a clear message instead of hanging the suite.
     let err = tokio::time::timeout(
@@ -169,7 +175,9 @@ async fn announce_carries_the_sdp_body_and_content_type_to_the_server() {
         buf
     });
 
-    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+        .await
+        .unwrap();
     let ev = client.announce(URI, SDP).await.unwrap();
     assert!(matches!(ev, ClientEvent::Response { .. }), "{ev:?}");
 
@@ -201,8 +209,11 @@ async fn announce_carries_the_sdp_body_and_content_type_to_the_server() {
 #[tokio::test(start_paused = true)]
 async fn a_send_only_pusher_still_emits_a_get_parameter_keepalive() {
     let (client_io, mut peer) = duplex(64 * 1024);
-    let mut client =
-        AsyncRtspClient::with_stream_timeouts(client_io, ClientSession::new(), Timeouts::default());
+    let mut client = AsyncRtspClient::with_stream(
+        client_io,
+        rtsp_runtime::RtspClientConfig::new(ClientSession::new())
+            .with_timeouts(Timeouts::default()),
+    );
 
     // Advertise `GET_PARAMETER`, so the keepalive below is that method.
     let resp = tokio::join!(
@@ -284,8 +295,11 @@ async fn read_one_interleaved(peer: &mut tokio::io::DuplexStream) -> Vec<u8> {
 async fn a_454_keepalive_response_is_surfaced_not_discarded() {
     // 64 KiB each way — the manually-driven peer never fills them.
     let (client_io, mut peer) = duplex(64 * 1024);
-    let mut client =
-        AsyncRtspClient::with_stream_timeouts(client_io, ClientSession::new(), Timeouts::default());
+    let mut client = AsyncRtspClient::with_stream(
+        client_io,
+        rtsp_runtime::RtspClientConfig::new(ClientSession::new())
+            .with_timeouts(Timeouts::default()),
+    );
 
     // Advertise `GET_PARAMETER`, so the keepalive below is that method.
     let resp = tokio::join!(
@@ -425,7 +439,9 @@ async fn a_flooding_peer_does_not_starve_the_send() {
         }
     });
 
-    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+        .await
+        .unwrap();
     // `send_interleaved` drains inbound first; against a peer that never stops
     // writing it must still return promptly (the drain is capped per call).
     let sent =
@@ -450,8 +466,11 @@ async fn send_interleaved_never_parks_on_the_inbound_probe() {
     const FRAMES: usize = 1000;
     const BOUND: Duration = Duration::from_millis(750);
     let (client_io, _server_io) = duplex(8 << 20);
-    let mut client =
-        AsyncRtspClient::with_stream_timeouts(client_io, ClientSession::new(), Timeouts::default());
+    let mut client = AsyncRtspClient::with_stream(
+        client_io,
+        rtsp_runtime::RtspClientConfig::new(ClientSession::new())
+            .with_timeouts(Timeouts::default()),
+    );
     let start = std::time::Instant::now();
     for _ in 0..FRAMES {
         client.send_interleaved(0, &[0u8; 1316]).await.unwrap();
@@ -514,7 +533,9 @@ async fn start_record_announces_sets_up_the_control_url_and_records() {
         }
     });
 
-    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+        .await
+        .unwrap();
     let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
     client.start_record(&url, SDP, 0).await.unwrap();
     assert_eq!(client.state(), SessionState::Recording);
@@ -591,7 +612,9 @@ async fn start_record_fails_a_rejected_request_naming_its_method() {
         }
     });
 
-    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+        .await
+        .unwrap();
     let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
     let err = client.start_record(&url, SDP, 0).await.expect_err("461");
     assert!(
@@ -694,7 +717,9 @@ async fn start_play_describes_sets_up_and_plays() {
         }
     });
 
-    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+        .await
+        .unwrap();
     let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
     let session = client.start_play(&url, 0).await.unwrap();
     assert_eq!(session.tracks.len(), 1);
@@ -805,7 +830,9 @@ async fn start_play_assigns_consecutive_interleaved_pairs_per_media() {
         setup_transport: None,
     })
     .await;
-    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+        .await
+        .unwrap();
     let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
     let session = client.start_play(&url, 0).await.unwrap();
     let channels: Vec<u8> = session.tracks.iter().map(|t| t.channel).collect();
@@ -838,7 +865,9 @@ async fn start_play_skips_foreign_authority_media() {
         setup_transport: None,
     })
     .await;
-    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+        .await
+        .unwrap();
     let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
     let session = client.start_play(&url, 0).await.unwrap();
     assert_eq!(session.tracks.len(), 1);
@@ -864,7 +893,9 @@ async fn start_play_rejects_a_server_reusing_an_interleaved_channel() {
         setup_transport: Some("RTP/AVP/TCP;unicast;interleaved=0-1"),
     })
     .await;
-    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+        .await
+        .unwrap();
     let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
     let err = client.start_play(&url, 0).await.expect_err("collision");
     assert!(matches!(
@@ -881,7 +912,9 @@ async fn start_play_resolves_controls_against_content_base() {
         setup_transport: None,
     })
     .await;
-    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+        .await
+        .unwrap();
     let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
     client.start_play(&url, 0).await.unwrap();
     drop(client);
@@ -904,7 +937,9 @@ async fn start_play_fails_when_channels_run_out() {
         setup_transport: None,
     })
     .await;
-    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+        .await
+        .unwrap();
     let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
     let err = client.start_play(&url, 254).await.expect_err("exhausted");
     assert!(matches!(
@@ -959,7 +994,9 @@ async fn start_play_unexpected_response_yields_typed_error() {
             }
         }
     });
-    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+        .await
+        .unwrap();
     let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
     let err = client.start_play(&url, 0).await.expect_err("461");
     assert!(matches!(
@@ -999,7 +1036,9 @@ async fn start_record_announce_rejected_sends_only_one_request() {
         }
     });
 
-    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+        .await
+        .unwrap();
     let url = url::Url::parse(&format!("rtsp://user:secret@{addr}/live/key")).unwrap();
     let err = client.start_record(&url, SDP, 0).await.expect_err("403");
     assert!(
@@ -1031,7 +1070,9 @@ async fn start_record_channel_255_is_exhausted() {
     let server = tokio::spawn(async move {
         let _ = listener.accept().await;
     });
-    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+        .await
+        .unwrap();
     let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
     let err = client
         .start_record(&url, SDP, 255)
@@ -1095,7 +1136,9 @@ async fn start_record_does_not_leak_password_in_request_line() {
         }
     });
 
-    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+        .await
+        .unwrap();
     let url = url::Url::parse(&format!("rtsp://user:secret@{addr}/live/key")).unwrap();
     client.start_record(&url, SDP, 0).await.unwrap();
     client

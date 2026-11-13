@@ -73,16 +73,11 @@ fn caller_and_listener_converge_on_connected_with_matching_params() {
         weight: 3,
     };
 
-    let caller_config = HandshakeConfig {
-        latency_ms: 180,
-        stream_id: Some(stream_id.clone()),
-        group: Some(group),
-        ..HandshakeConfig::default()
-    };
-    let listener_config = HandshakeConfig {
-        latency_ms: 250,
-        ..HandshakeConfig::default()
-    };
+    let caller_config = HandshakeConfig::default()
+        .with_latency_ms(180)
+        .with_stream_id(Some(stream_id.clone()))
+        .with_group(Some(group));
+    let listener_config = HandshakeConfig::default().with_latency_ms(250);
 
     let mut caller = CallerHandshake::new(CALLER_SOCKET_ID, caller_config);
     let mut listener = ListenerHandshake::new(LISTENER_SOCKET_ID, SYN_COOKIE, listener_config);
@@ -233,10 +228,7 @@ fn listener_rejects_a_caller_with_the_wrong_cookie() {
 fn caller_handshake_emits_the_configured_isn_exactly() {
     const CONFIGURED_ISN: u32 = 0x1234_5678;
 
-    let config = HandshakeConfig {
-        initial_seq_number: CONFIGURED_ISN,
-        ..HandshakeConfig::default()
-    };
+    let config = HandshakeConfig::default().with_initial_seq_number(CONFIGURED_ISN);
     let mut caller = CallerHandshake::new(CALLER_SOCKET_ID, config);
     let induction = caller.start().expect("caller start");
 
@@ -254,14 +246,8 @@ fn caller_handshake_emits_the_configured_isn_exactly() {
 #[test]
 fn listener_rejects_a_caller_advertising_zero_mtu_or_flow_window() {
     for bad in [
-        HandshakeConfig {
-            mtu: 0,
-            ..HandshakeConfig::default()
-        },
-        HandshakeConfig {
-            max_flow_window_size: 0,
-            ..HandshakeConfig::default()
-        },
+        HandshakeConfig::default().with_mtu(0),
+        HandshakeConfig::default().with_max_flow_window_size(0),
     ] {
         let mut caller = CallerHandshake::new(CALLER_SOCKET_ID, bad);
         let mut listener =
@@ -275,14 +261,8 @@ fn listener_rejects_a_caller_advertising_zero_mtu_or_flow_window() {
 #[test]
 fn caller_rejects_a_listener_advertising_zero_mtu_or_flow_window() {
     for bad in [
-        HandshakeConfig {
-            mtu: 0,
-            ..HandshakeConfig::default()
-        },
-        HandshakeConfig {
-            max_flow_window_size: 0,
-            ..HandshakeConfig::default()
-        },
+        HandshakeConfig::default().with_mtu(0),
+        HandshakeConfig::default().with_max_flow_window_size(0),
     ] {
         let mut caller = CallerHandshake::new(CALLER_SOCKET_ID, HandshakeConfig::default());
         let mut listener = ListenerHandshake::new(LISTENER_SOCKET_ID, SYN_COOKIE, bad);

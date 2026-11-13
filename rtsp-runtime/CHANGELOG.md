@@ -8,8 +8,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 - BREAKING: `ServerSession::new` takes a session-id source that is `Send + Sync` (it was `Send`), so a `ServerSession` is `Sync` and can be shared behind an `Arc`; a test pins it (issue #2533).
 ### Removed
+- BREAKING: the `connect_with`, `connect_with_timeouts`, `connect_tls_with`, `connect_tls_with_timeouts`, `accept_tls_with_timeouts` and `with_stream_timeouts` ladder. `AsyncRtspClient::connect(addr, config)`, `connect_tls(addr, server_name, tls, config)`, `with_stream(stream, config)` and `AsyncRtspServer::accept_tls(stream, tls, config)` / `with_stream(stream, config)` take the config; `connect(addr)` and `connect_tls(addr, name, tls)` without one now pass `RtspClientConfig::default()` (#2514).
 - BREAKING: `RtspTimeouts`; the adapters take `broadcast_common::timeouts::Timeouts` (the same four fields and defaults), shared with the RTMP and SRT adapters (#2514).
 ### Added
+- `RtspClientConfig { session, timeouts }` and `RtspServerConfig { session, timeouts }` (`new`, `with_session`, `with_timeouts`, `Default`, `From<ClientSession>`/`From<ServerSession>`): every client and server constructor takes `impl Into<..Config>` (#2514).
 - `MAX_TRACKS` (16): the track cap owned by rtsp-runtime, used by `PlayPlan` consumers.
 - `AsyncRtspClient::start_record(url, sdp, interleaved_channel)` runs the whole publish flow: `ANNOUNCE` (RFC 2326 §10.3), `SETUP` on the track's control URL in `mode=record` (§10.4, §12.39) and `RECORD` (§10.11), returning `Error::UnexpectedResponse { method, status }` for the first request a server rejects and `Error::UnexpectedEvent` when a request draws anything but a response, so a pushing caller supplies only its SDP and its payload.
 - `sdp::control_url(base)` and `TRACK_CONTROL`: the track's control URL, `base` with `trackID=0` appended as a final path segment (RFC 2326 Appendix C.1.1) via `Url::path_segments_mut`, and the attribute value that names it; a URL with no authority (`rtsp:cam`) is `Error::InvalidUrl`. `url` is now a plain dependency.
