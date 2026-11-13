@@ -67,6 +67,7 @@ mod relay_mode;
 mod rendered_redeclare_start;
 mod rtmp;
 mod rtmp_pull;
+mod rtp_sdp;
 mod rtsp;
 mod rtsp_avsync;
 mod rtsp_chunking;

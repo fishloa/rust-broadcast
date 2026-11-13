@@ -684,7 +684,16 @@ impl Session {
         let Some(d) = self.datagram.as_mut() else {
             return;
         };
+        let (events, accepted) = d.take_sdp_output();
         let effects = d.take_effects();
+        self.payload_bytes = self.payload_bytes.saturating_add(accepted);
+        for event in events {
+            self.screen_passthrough(event);
+        }
+        if self.datagram_sdp_active() {
+            let drained = self.buffer.drain();
+            self.events.extend(drained);
+        }
         let Some(conn) = self.live_conn else {
             return;
         };
@@ -705,6 +714,10 @@ impl Session {
             let error = (!clean).then(|| "srt link lost".to_string());
             self.on_closed(conn, error, now_us);
         }
+    }
+
+    fn datagram_sdp_active(&self) -> bool {
+        self.config.udp.sdp.is_some()
     }
 
     fn feed_released(&mut self, released: crate::source::datagram::Released, now_us: u64) {

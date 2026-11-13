@@ -1133,7 +1133,7 @@ impl Listener for WhipListener {
 type CapturedConfig = Option<AVCConfigurationBox>;
 
 /// An admitted WHIP publisher: the depacketiser plus payload-type routing
-/// (identical shape to `crate::source::rtp_udp::RtpUdpIngestSession`), plus
+/// (the same shape the raw RTP-over-UDP session uses), plus
 /// the deferred-`avcC`-capture state this route needs because the SDP offer
 /// alone doesn't carry real parameter sets (see the module doc). Also holds
 /// the shared handles [`run_whip`]'s own read loop needs — the socket and
