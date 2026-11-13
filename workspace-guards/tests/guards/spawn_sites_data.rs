@@ -31,47 +31,47 @@ pub const TABLE: &[Crate] = &[
         sites: &[
             (
                 "src/io.rs",
-                983,
+                971,
                 "connection driver task; its JoinHandle is stored in SrtSocket and aborted in Drop",
             ),
             (
                 "src/io.rs",
-                2116,
+                2104,
                 "listener-side forwarder; owned by a TaskGuard that aborts it on drop",
             ),
             (
                 "src/io.rs",
-                2424,
+                2412,
                 "listener routing pump on the listener's TaskTracker; cancelled with the listener's CancellationToken when the handle and every accepted socket drop",
             ),
             (
                 "src/io.rs",
-                2432,
+                2420,
                 "listener core on the listener's TaskTracker; cancelled with the listener's CancellationToken when the handle and every accepted socket drop",
             ),
             (
                 "src/io.rs",
-                3528,
+                3516,
                 "test-only: inside `#[cfg(all(test, feature = \"tokio\"))] mod adapter_tests`, which the shared lexer cannot yet blank (a feature term); the test owns and awaits or aborts the task",
             ),
             (
                 "src/io.rs",
-                3801,
+                3789,
                 "test-only: inside `#[cfg(all(test, feature = \"tokio\"))] mod adapter_tests`, which the shared lexer cannot yet blank (a feature term); the test owns and awaits or aborts the task",
             ),
             (
                 "src/io.rs",
-                4541,
+                4529,
                 "test-only: inside `#[cfg(all(test, feature = \"tokio\"))] mod adapter_tests`, which the shared lexer cannot yet blank (a feature term); the test owns and awaits or aborts the task",
             ),
             (
                 "src/io.rs",
-                4746,
+                4734,
                 "test-only: inside `#[cfg(all(test, feature = \"tokio\"))] mod adapter_tests`, which the shared lexer cannot yet blank (a feature term); the test owns and awaits or aborts the task",
             ),
             (
                 "src/io.rs",
-                5034,
+                5022,
                 "test-only: inside `#[cfg(all(test, feature = \"tokio\"))] mod adapter_tests`, which the shared lexer cannot yet blank (a feature term); the test owns and awaits or aborts the task",
             ),
         ],

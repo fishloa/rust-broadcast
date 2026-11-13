@@ -1,4 +1,3 @@
-mod send_sync;
 mod arq_recovery;
 mod crypto_handshake;
 mod crypto_vectors;
@@ -27,6 +26,7 @@ mod no_panic;
 mod pacing_throughput;
 mod rendezvous_round_trip;
 mod rfc_vectors;
+mod send_sync;
 mod tokio_crypto_interop;
 mod trait_round_trip;
 mod tsbpd_delivery;
