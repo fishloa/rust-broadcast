@@ -1,4 +1,4 @@
-//! One continuous sample timeline across Period boundaries and gaps.
+//! One continuous sample timeline across discontinuities (DASH Period boundaries, skipped segments).
 //!
 //! `dash_runtime` hands samples on the container's own media timeline: a
 //! Period that restarts its clock at zero (GPAC's multi-Period output does),
@@ -27,7 +27,7 @@ struct TrackClock {
 }
 
 #[derive(Default)]
-pub(super) struct Stitcher {
+pub(crate) struct Stitcher {
     tracks: HashMap<TrackId, TrackClock>,
     offset_us: i128,
     generation: u64,
@@ -47,7 +47,7 @@ fn us_to_ticks(us: i128, timescale: u32) -> i64 {
 }
 
 impl Stitcher {
-    pub(super) fn set_tracks(&mut self, specs: &[TrackSpec]) {
+    pub(crate) fn set_tracks(&mut self, specs: &[TrackSpec]) {
         for spec in specs {
             let clock = self.tracks.entry(spec.track_id).or_insert(TrackClock {
                 timescale: spec.timescale,
@@ -59,11 +59,11 @@ impl Stitcher {
         }
     }
 
-    pub(super) fn discontinuity(&mut self) {
+    pub(crate) fn discontinuity(&mut self) {
         self.pending = true;
     }
 
-    pub(super) fn apply(&mut self, track: TrackId, samples: &mut [Sample]) {
+    pub(crate) fn apply(&mut self, track: TrackId, samples: &mut [Sample]) {
         for sample in samples {
             let Some(clock) = self.tracks.get(&track) else {
                 continue;

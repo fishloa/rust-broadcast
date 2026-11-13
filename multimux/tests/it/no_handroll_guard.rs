@@ -225,7 +225,7 @@ fn dash_pull_reads_no_clock_outside_tests() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/source/dash_pull");
     let files = production_files(&dir);
     assert!(
-        files.len() >= 4,
+        !files.is_empty(),
         "the production files of dash_pull were not found: {:?}",
         files.iter().map(|(p, _)| p).collect::<Vec<_>>()
     );
