@@ -370,17 +370,28 @@ pub(crate) struct PeriodAnchor {
     /// The media time of that segment's earliest sample, nanoseconds:
     /// `@presentationTimeOffset` once scaled to the Representation's timescale.
     pub(crate) media_start_ns: u64,
+    /// The ordinal of the Period this one is period-connected to (ISO/IEC 23009-1 §5.3.2.4):
+    /// the previous Period, when this one opened only because the numbering skipped the
+    /// replaced program's unfinished segment and the init segment stayed the same.
+    pub(crate) connected_to: Option<u64>,
+    /// The ordinal of the first Period of the run of period-connected Periods this one belongs
+    /// to, which names their shared asset (§5.8.4.10); `None` for a Period connected to none.
+    pub(crate) asset: Option<u64>,
 }
 
 /// Where a program's DASH Periods stand: the Period now open and what the last segment was cut
-/// under. A media segment opens a new Period after a gap placeholder or when its init generation
+/// under. A media segment opens a new Period after a gap placeholder, when its init generation
 /// differs from the previous segment's (a Period has one fixed set of encoded versions,
-/// ISO/IEC 23009-1 §5.3.2.4); otherwise it joins the open one.
+/// ISO/IEC 23009-1 §5.3.2.4), or when it is a continued program's first segment and the
+/// numbering skipped the replaced program's unfinished segment, which no origin serves; otherwise
+/// it joins the open one.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct PeriodCursor {
     anchor: Option<PeriodAnchor>,
-    /// `(gap, init generation)` of the last segment drained.
-    last: Option<(bool, media_plane::ids::Generation)>,
+    /// `(gap, init generation, public number)` of the last segment drained.
+    last: Option<(bool, media_plane::ids::Generation, u64)>,
+    /// The next segment does not follow `last`'s number: the open Period ends at `last`.
+    skipped_numbers: bool,
 }
 
 impl PeriodCursor {
@@ -388,25 +399,34 @@ impl PeriodCursor {
     /// `generation`, would be listed in. `program_start` is the program's first segment: the
     /// presentation's first Period opens there even when the segments before `segment` were
     /// never drained (the `Trunk` evicted them before an MPD was rendered).
+    ///
+    /// A Period opened only because numbers were skipped keeps the init segment, so it is
+    /// period-connected to the open one (§5.3.2.4: equivalent Initialization Segments, timestamps
+    /// non-continuous across the skipped segment; DASH-IF IOP 4.3 4.11.4.2).
     fn anchor_for(
         &self,
         generation: media_plane::ids::Generation,
         segment: (u64, u64),
         program_start: (u64, u64),
     ) -> PeriodAnchor {
-        let joins = matches!(self.last, Some((false, last)) if last == generation);
+        let same_init = matches!(self.last, Some((false, last, _)) if last == generation);
         let (first_public_seq, media_start_ns) = if self.last.is_none() {
             program_start
         } else {
             segment
         };
         match self.anchor {
-            Some(open) if joins => open,
-            previous => PeriodAnchor {
-                ordinal: previous.map_or(0, |p| p.ordinal.saturating_add(1)),
-                first_public_seq,
-                media_start_ns,
-            },
+            Some(open) if same_init && !self.skipped_numbers => open,
+            previous => {
+                let connected = previous.filter(|_| same_init);
+                PeriodAnchor {
+                    ordinal: previous.map_or(0, |p| p.ordinal.saturating_add(1)),
+                    first_public_seq,
+                    media_start_ns,
+                    connected_to: connected.map(|p| p.ordinal),
+                    asset: connected.map(|p| p.asset.unwrap_or(p.ordinal)),
+                }
+            }
         }
     }
 
@@ -420,17 +440,23 @@ impl PeriodCursor {
         if !gap {
             self.anchor = Some(self.anchor_for(generation, segment, program_start));
         }
-        self.last = Some((gap, generation));
+        self.last = Some((gap, generation, segment.0));
+        self.skipped_numbers = false;
         self.anchor
     }
 
     /// This cursor as the successor program sees it: its origin numbers init generations from
     /// [`SEEDED_INIT_GENERATION`] again, with the predecessor's last init seeded as that
-    /// generation (see [`ProgramServing::new`]).
-    fn continued(self) -> Self {
+    /// generation (see [`ProgramServing::new`]), and its first segment is `first_public_seq`.
+    fn continued(self, first_public_seq: u64) -> Self {
         PeriodCursor {
             anchor: self.anchor,
-            last: self.last.map(|(gap, _)| (gap, SEEDED_INIT_GENERATION)),
+            last: self
+                .last
+                .map(|(gap, _, number)| (gap, SEEDED_INIT_GENERATION, number)),
+            skipped_numbers: self
+                .last
+                .is_some_and(|(_, _, number)| number.saturating_add(1) != first_public_seq),
         }
     }
 }
@@ -1002,7 +1028,9 @@ impl ProgramServing {
             .collect();
         wire_rendition_siblings(&ll_hls, &audio_entries);
 
-        let period = previous.map_or_else(PeriodCursor::default, |p| p.period.continued());
+        let period = previous.map_or_else(PeriodCursor::default, |p| {
+            p.period.continued(epoch.seq_offset.saturating_add(1))
+        });
         let dash = Arc::new(DashState::new(
             &trunk,
             window_segments,

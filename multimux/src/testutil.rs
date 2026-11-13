@@ -233,9 +233,12 @@ pub(crate) fn mpd_attribute(xml: &str, key: &str) -> String {
 
 /// A source reconnect on a route serving `output` at `manifest_path`: the
 /// numbers keep counting, `availabilityStartTime`, `startNumber` and the
-/// Period are unchanged, every advertised segment is served and its `tfdt` is
-/// the time its number derives (`tfdt(1)` plus whole segments; the stream has a
-/// one-second GOP and the lost open segment's slot stays empty).
+/// Period's identity are unchanged, every advertised segment is served and its
+/// `tfdt` is the time its number derives (`tfdt(1)` plus whole segments; the
+/// stream has a one-second GOP and the lost open segment's slot stays empty).
+/// That slot is advertised by no Period (issue #2625): the first Period is early
+/// terminated before it and the new run continues in a period-connected Period
+/// starting at the next number.
 pub(crate) async fn assert_dash_continues_across_a_reconnect(
     output: std::sync::Arc<dyn crate::output::Output>,
     manifest_path: &str,
@@ -270,7 +273,42 @@ pub(crate) async fn assert_dash_continues_across_a_reconnect(
         let at = xml.find("<Period").expect("Period");
         xml[at..].split('>').next().expect("tag").to_string()
     };
-    assert_eq!(period(&before), period(&after));
+    assert_eq!(period(&before), "<Period id=\"0\" start=\"PT0S\"");
+    let parsed = broadcast_dash::Mpd::parse(after.as_bytes()).expect("MPD parses");
+    assert_eq!(parsed.periods.len(), 2, "{after}");
+    let (replaced, continued) = (&parsed.periods[0], &parsed.periods[1]);
+    assert_eq!(replaced.id.as_deref(), Some("0"), "{after}");
+    assert_eq!(replaced.start, Some(std::time::Duration::ZERO), "{after}");
+    assert_eq!(
+        replaced.duration,
+        Some(std::time::Duration::from_secs(7)),
+        "the first Period ends before the lost open segment 8: {after}"
+    );
+    assert_eq!(
+        continued.start,
+        Some(std::time::Duration::from_secs(8)),
+        "{after}"
+    );
+    let set = &continued.adaptation_sets[0];
+    assert_eq!(
+        set.representations[0]
+            .segment
+            .template
+            .as_ref()
+            .and_then(|t| t.multi.start_number),
+        Some(9),
+        "{after}"
+    );
+    assert_eq!(set.supplemental_properties.len(), 1, "{after}");
+    assert_eq!(
+        set.supplemental_properties[0].scheme_id_uri,
+        broadcast_dash::descriptors::SCHEME_PERIOD_CONNECTIVITY
+    );
+    assert_eq!(
+        set.supplemental_properties[0].value.as_deref(),
+        Some("0"),
+        "{after}"
+    );
 
     let start: i64 = mpd_attribute(&after, "startNumber=\"")
         .parse()
