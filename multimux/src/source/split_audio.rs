@@ -32,10 +32,10 @@ use transmux::TrackId;
 use transmux::ll_hls::{LlHlsSegmenter, PartCutReady, PartInfo, SegmentInfo};
 use transmux::pipeline::{Sample, TrackSpec};
 
-use super::segment::{PendingPublish, drain_publish_queue, part_entry};
 use crate::config::AudioTrackSelector;
 use crate::route::{AudioServing, RouteHandle};
 use hls_runtime::server::HlsOrigin;
+use media_plane::publish_queue::{PendingPublish, drain_publish_queue, part_entry};
 
 const MILLIS_PER_SEC: u128 = 1_000;
 

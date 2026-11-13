@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- The segmenters' shared publish queue (`PendingPublish`, `drain_publish_queue`, `part_entry`) lives in `media_plane::publish_queue` (issue #2554).
 ### Added
 - `whep_media_sockets_per_ip` (config, default 8; `WhepRoute::with_media_sockets_per_ip`): the number of UDP media sockets a WHEP output binds per advertised IP, over which its viewers are spread round-robin. `0` is `ConfigInvalid`. More sockets spread the viewers' SRTP sends across cores at the cost of one file descriptor and one receive task each.
 ### Removed
