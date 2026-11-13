@@ -6,7 +6,7 @@ use test_fixtures::process::KillOnDrop;
 
 use srt_runtime::Error;
 use srt_runtime::handshake_sm::{CryptoConfig, HandshakeConfig};
-use srt_runtime::io::{IoConfig, SrtListener, SrtSocket};
+use srt_runtime::io::{IoConfig, SRT_TIMEOUTS, SrtListener, SrtSocket};
 use srt_runtime::packet::EncryptionField;
 use tokio::net::UdpSocket as TokioUdpSocket;
 
@@ -397,7 +397,8 @@ async fn rendezvous_with_libsrt(key_len: usize, seed: u8) {
                     .parse::<SocketAddr>()
                     .unwrap(),
                 crypto_patient_config(PASSPHRASE, key_len),
-                IoConfig::default().with_handshake(Duration::from_secs(20)),
+                IoConfig::default()
+                    .with_timeouts(SRT_TIMEOUTS.with_handshake(Duration::from_secs(20))),
             ),
         )
         .await
@@ -450,7 +451,8 @@ async fn rendezvous_wrong_passphrase_is_refused() {
                     .parse::<SocketAddr>()
                     .unwrap(),
                 crypto_patient_config("wrong-passphrase-xxxxxxxx", 16),
-                IoConfig::default().with_handshake(Duration::from_secs(20)),
+                IoConfig::default()
+                    .with_timeouts(SRT_TIMEOUTS.with_handshake(Duration::from_secs(20))),
             ),
         )
         .await
@@ -473,7 +475,8 @@ async fn tokio_rendezvous_pair_encrypted_round_trip() {
         let sock_b = TokioUdpSocket::bind("127.0.0.1:0").await.unwrap();
         let port_b = sock_b.local_addr().unwrap().port();
         let cfg = crypto_config(PASSPHRASE, 16);
-        let io = IoConfig::default().with_handshake(Duration::from_secs(20));
+        let io =
+            IoConfig::default().with_timeouts(SRT_TIMEOUTS.with_handshake(Duration::from_secs(20)));
         let cfg_a = cfg.clone();
         let cfg_b = cfg.clone();
         let io_a = io;

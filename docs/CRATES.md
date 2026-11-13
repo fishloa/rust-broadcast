@@ -174,7 +174,7 @@ The base of the workspace: the zero-copy `Parse<'a>` / `Serialize` trait pair ev
 - **Cargo description:** Foundation for the rust-broadcast crates: symmetric Parse/Serialize traits, CRC-32/MPEG-2, BCD + MJD time codecs, bit I/O, 33-bit/PCR clock arithmetic, checked field widths, container-mux and Stage traits. no_std + alloc.
 - **Version (in-tree):** 11.1.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 0
 - **Depends on (workspace):** none
-- **Used by (workspace):** 55 workspace crates
+- **Used by (workspace):** 56 workspace crates
 - **Links:** [README](../broadcast-common/README.md) · [CHANGELOG](../broadcast-common/CHANGELOG.md) · [crates.io](https://crates.io/crates/broadcast-common) · [docs.rs](https://docs.rs/broadcast-common)
 
 ### MPEG-2 TS / PES / PS framing
@@ -542,7 +542,7 @@ Driveable client and server state machines with CSeq correlation, Transport nego
 - **Standards:** RFC 2326 (RTSP 1.0) incl. Appendix A state machines, §10.12 interleaving, §12.39 Transport, §14 auth
 - **Cargo description:** Sans-IO RTSP 1.0 (RFC 2326) session engine — driveable client + server state machines, interleaved RTP/RTCP framing, Basic/Digest/Bearer auth (via broadcast-auth), over the rtsp-types codec; optional tokio (+ rustls) socket adapter.
 - **Version (in-tree):** 0.11.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 1
-- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth)
+- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux)
 - **Links:** [README](../rtsp-runtime/README.md) · [CHANGELOG](../rtsp-runtime/CHANGELOG.md) · [crates.io](https://crates.io/crates/rtsp-runtime) · [docs.rs](https://docs.rs/rtsp-runtime)
 
@@ -1049,6 +1049,7 @@ flowchart BT
   rtmp_runtime --> broadcast_common
   rtp_packet --> broadcast_common
   rtsp_runtime --> broadcast_auth
+  rtsp_runtime --> broadcast_common
   scte104 --> broadcast_common
   scte35_splice --> mpeg_ts
   smooth_runtime --> media_plane

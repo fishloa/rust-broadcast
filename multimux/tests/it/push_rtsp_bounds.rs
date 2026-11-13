@@ -33,7 +33,7 @@ const STALLED_PEER_RCVBUF: usize = 4096;
 /// hits `GUARD`.
 fn config_with_bounds() -> RtspTransportConfig {
     RtspTransportConfig::default().with_timeouts(
-        rtsp_runtime::RtspTimeouts::default()
+        broadcast_common::timeouts::Timeouts::default()
             .with_read_idle(Duration::from_millis(300))
             .with_write(Duration::from_millis(300)),
     )

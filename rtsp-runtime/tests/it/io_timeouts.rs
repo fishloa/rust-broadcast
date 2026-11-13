@@ -4,13 +4,14 @@
 
 use std::time::Duration;
 
-use rtsp_runtime::{AsyncRtspClient, ClientSession, Error, RtspTimeouts};
+use broadcast_common::timeouts::Timeouts;
+use rtsp_runtime::{AsyncRtspClient, ClientSession, Error};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, duplex};
 
 const URI: &str = "rtsp://h/s";
 
-fn short() -> RtspTimeouts {
-    RtspTimeouts::default()
+fn short() -> Timeouts {
+    Timeouts::default()
         .with_read_idle(Duration::from_secs(5))
         .with_write(Duration::from_secs(5))
 }
@@ -66,7 +67,7 @@ use rtsp_runtime::{AsyncRtspServer, ServerSession};
 
 fn server_over(
     io: tokio::io::DuplexStream,
-    t: RtspTimeouts,
+    t: Timeouts,
 ) -> AsyncRtspServer<tokio::io::DuplexStream> {
     AsyncRtspServer::with_stream_timeouts(io, ServerSession::new(|| 7).with_session_seed(1), t)
 }
@@ -76,7 +77,7 @@ async fn an_idle_connection_that_never_sends_a_request_times_out_at_handshake() 
     let (_client_io, server_io) = duplex(4096);
     let mut s = server_over(
         server_io,
-        RtspTimeouts::default().with_handshake(Duration::from_secs(4)),
+        Timeouts::default().with_handshake(Duration::from_secs(4)),
     );
     let err = s.next_request().await.expect_err("handshake deadline");
     assert!(
@@ -98,7 +99,7 @@ async fn slow_loris_request_dripped_a_byte_every_few_seconds_times_out() {
     });
     let mut s = server_over(
         server_io,
-        RtspTimeouts::default().with_handshake(Duration::from_secs(10)),
+        Timeouts::default().with_handshake(Duration::from_secs(10)),
     );
     let err = s
         .next_request()
@@ -113,7 +114,7 @@ async fn slow_loris_request_dripped_a_byte_every_few_seconds_times_out() {
 #[tokio::test(start_paused = true)]
 async fn a_header_block_that_never_terminates_is_rejected_at_the_head_cap() {
     let (mut client_io, server_io) = duplex(256 * 1024);
-    let mut s = server_over(server_io, RtspTimeouts::default());
+    let mut s = server_over(server_io, Timeouts::default());
     tokio::spawn(async move {
         let _ = client_io
             .write_all(b"OPTIONS rtsp://h/s RTSP/1.0\r\nX-Pad: ")
@@ -129,7 +130,7 @@ async fn a_header_block_that_never_terminates_is_rejected_at_the_head_cap() {
 #[tokio::test(start_paused = true)]
 async fn a_content_length_larger_than_the_message_cap_is_rejected_up_front() {
     let (mut client_io, server_io) = duplex(4096);
-    let mut s = server_over(server_io, RtspTimeouts::default());
+    let mut s = server_over(server_io, Timeouts::default());
     tokio::spawn(async move {
         let _ = client_io
             .write_all(
@@ -156,7 +157,7 @@ async fn recv_interleaved_sends_a_keepalive_before_the_session_expires() {
             ServerSession::new(|| 9)
                 .with_session_seed(9)
                 .with_session_timeout(20),
-            RtspTimeouts::default().with_read_idle(Duration::from_secs(120)),
+            Timeouts::default().with_read_idle(Duration::from_secs(120)),
         );
         let mut n = 0;
         while let Ok(Some(events)) = s.next_request().await {
@@ -173,7 +174,7 @@ async fn recv_interleaved_sends_a_keepalive_before_the_session_expires() {
     let mut c = AsyncRtspClient::with_stream_timeouts(
         client_io,
         ClientSession::new(),
-        RtspTimeouts::default().with_read_idle(Duration::from_secs(120)),
+        Timeouts::default().with_read_idle(Duration::from_secs(120)),
     );
     c.setup(
         URI,
@@ -211,7 +212,7 @@ async fn keepalive_is_sent_while_interleaved_media_flows() {
             ServerSession::new(|| 9)
                 .with_session_seed(9)
                 .with_session_timeout(20),
-            RtspTimeouts::default().with_read_idle(Duration::from_secs(120)),
+            Timeouts::default().with_read_idle(Duration::from_secs(120)),
         );
         let (mut n, mut tick) = (0, tokio::time::interval(Duration::from_secs(1)));
         loop {
@@ -234,7 +235,7 @@ async fn keepalive_is_sent_while_interleaved_media_flows() {
     let mut c = AsyncRtspClient::with_stream_timeouts(
         client_io,
         ClientSession::new(),
-        RtspTimeouts::default().with_read_idle(Duration::from_secs(120)),
+        Timeouts::default().with_read_idle(Duration::from_secs(120)),
     );
     c.setup(
         URI,
@@ -276,7 +277,7 @@ async fn a_cancelled_server_next_request_neither_loses_events_nor_duplicates_the
     assert!(expected.len() > 48, "response must not fit the pipe");
     let (mut client, server_io) = duplex(48);
     client.write_all(req).await.unwrap();
-    let mut s = server_over(server_io, RtspTimeouts::default());
+    let mut s = server_over(server_io, Timeouts::default());
     tokio::select! {
         biased;
         r = s.next_request() => panic!("must block on the write: {r:?}"),
