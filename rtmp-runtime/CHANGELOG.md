@@ -5,6 +5,8 @@ All notable changes to `rtmp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Removed
+- BREAKING: `io::RtmpTimeouts`; the adapters take `broadcast_common::timeouts::Timeouts` (the same four fields and defaults), shared with the RTSP and SRT adapters (#2514).
 ### Changed
 - **BREAKING**: `RtmpConnection`'s default stream type is now the erased `BoxStream` (a TCP socket, a TLS stream over one, or any other byte stream), so a caller naming one `RtmpConnection` no longer names its transport. `AsyncRtmpServer::accept` returns the new `AcceptedRtmpConnection` (the publisher's address, which an erased stream cannot report, plus the connection) instead of a `RtmpConnection`; call `into_connection()` for the connection itself.
 

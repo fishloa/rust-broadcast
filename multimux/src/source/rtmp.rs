@@ -1629,7 +1629,7 @@ mod tests {
     /// own task, not futures the publisher loop polls between its own work.
     #[tokio::test]
     async fn session_reads_progress_while_the_publisher_is_not_receiving() {
-        use rtmp_runtime::io::RtmpTimeouts;
+        use broadcast_common::timeouts::Timeouts;
         let (tx, _unread) = mpsc::channel(OUTCOMES_PER_SESSION);
         let mut readers = JoinSet::new();
         let mut clients = Vec::new();
@@ -1638,7 +1638,7 @@ mod tests {
             let conn = RtmpConnection::from_stream_erased(
                 server,
                 ServerSession::new(ServerConfig::default()),
-                RtmpTimeouts::default(),
+                Timeouts::default(),
             );
             readers.spawn(read_session(
                 SessionId(id),

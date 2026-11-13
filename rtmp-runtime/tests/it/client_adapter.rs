@@ -5,7 +5,8 @@
 use std::io::ErrorKind;
 use std::time::Duration;
 
-use rtmp_runtime::io::{AsyncRtmpClient, AsyncRtmpServer, RtmpTimeouts};
+use broadcast_common::timeouts::Timeouts;
+use rtmp_runtime::io::{AsyncRtmpClient, AsyncRtmpServer};
 use rtmp_runtime::server::{ServerConfig, ServerEvent};
 use rtmp_runtime::target::RtmpTarget;
 
@@ -32,7 +33,7 @@ async fn publish_roundtrip(bind: &str, url_host: &str) {
         seen
     });
     let target = RtmpTarget::parse(&format!("rtmp://{url_host}:{port}/live/testkey")).unwrap();
-    let mut c = AsyncRtmpClient::connect(&target, RtmpTimeouts::default())
+    let mut c = AsyncRtmpClient::connect(&target, Timeouts::default())
         .await
         .unwrap();
     c.publish().await.unwrap();
@@ -70,7 +71,7 @@ async fn publish_to_a_peer_that_never_answers_times_out_at_handshake() {
     let mut c = AsyncRtmpClient::from_stream(
         client_io,
         &target,
-        RtmpTimeouts::default().with_handshake(Duration::from_secs(4)),
+        Timeouts::default().with_handshake(Duration::from_secs(4)),
     );
     let t0 = tokio::time::Instant::now();
     let err = c.publish().await.expect_err("handshake deadline");
@@ -92,7 +93,7 @@ async fn a_server_that_rejects_publish_surfaces_connection_refused() {
         while let Ok(Some(_)) = conn.next_events().await {}
     });
     let target = RtmpTarget::parse(&format!("rtmp://127.0.0.1:{port}/live/wrong")).unwrap();
-    let mut c = AsyncRtmpClient::connect(&target, RtmpTimeouts::default())
+    let mut c = AsyncRtmpClient::connect(&target, Timeouts::default())
         .await
         .unwrap();
     let err = c.publish().await.expect_err("BadName");
@@ -110,7 +111,7 @@ async fn send_video_to_a_peer_that_stops_reading_times_out_the_write() {
         let mut conn = RtmpConnection::from_stream(
             server_io,
             rtmp_runtime::server::ServerSession::with_defaults(),
-            RtmpTimeouts::default(),
+            Timeouts::default(),
         );
         while let Ok(Some(batch)) = conn.next_events().await {
             if batch
@@ -125,7 +126,7 @@ async fn send_video_to_a_peer_that_stops_reading_times_out_the_write() {
     let mut c = AsyncRtmpClient::from_stream(
         client_io,
         &target,
-        RtmpTimeouts::default().with_write(Duration::from_secs(4)),
+        Timeouts::default().with_write(Duration::from_secs(4)),
     );
     c.publish().await.unwrap();
     let t0 = tokio::time::Instant::now();
@@ -147,7 +148,7 @@ async fn next_events_on_a_silent_server_times_out_at_read_idle() {
         let mut conn = RtmpConnection::from_stream(
             server_io,
             rtmp_runtime::server::ServerSession::with_defaults(),
-            RtmpTimeouts::default(),
+            Timeouts::default(),
         );
         while let Ok(Some(batch)) = conn.next_events().await {
             if batch
@@ -162,7 +163,7 @@ async fn next_events_on_a_silent_server_times_out_at_read_idle() {
     let mut c = AsyncRtmpClient::from_stream(
         client_io,
         &target,
-        RtmpTimeouts::default().with_read_idle(Duration::from_secs(5)),
+        Timeouts::default().with_read_idle(Duration::from_secs(5)),
     );
     c.publish().await.unwrap();
     let t0 = tokio::time::Instant::now();

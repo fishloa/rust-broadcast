@@ -5,12 +5,13 @@
 use std::io::ErrorKind;
 use std::time::Duration;
 
+use broadcast_common::timeouts::Timeouts;
 use rtmp_runtime::client::{ClientConfig, ClientSession};
-use rtmp_runtime::io::{RtmpConnection, RtmpTimeouts};
+use rtmp_runtime::io::RtmpConnection;
 use rtmp_runtime::server::ServerSession;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, duplex};
 
-fn conn(io: tokio::io::DuplexStream, t: RtmpTimeouts) -> RtmpConnection<tokio::io::DuplexStream> {
+fn conn(io: tokio::io::DuplexStream, t: Timeouts) -> RtmpConnection<tokio::io::DuplexStream> {
     RtmpConnection::from_stream(io, ServerSession::with_defaults(), t)
 }
 
@@ -19,7 +20,7 @@ async fn an_idle_peer_times_out_at_read_idle() {
     let (_client, server) = duplex(4096);
     let mut c = conn(
         server,
-        RtmpTimeouts::default()
+        Timeouts::default()
             .with_handshake(Duration::from_secs(300))
             .with_read_idle(Duration::from_secs(5)),
     );
@@ -41,7 +42,7 @@ async fn a_peer_that_never_completes_connect_times_out_at_handshake() {
     client.write_all(&cs.start()).await.unwrap();
     let mut c = conn(
         server,
-        RtmpTimeouts::default()
+        Timeouts::default()
             .with_handshake(Duration::from_secs(3))
             .with_read_idle(Duration::from_secs(60)),
     );
@@ -61,7 +62,7 @@ async fn a_peer_that_stops_reading_times_out_the_write() {
     client.write_all(&cs.start()).await.unwrap(); // 1537 B fits
     let mut c = conn(
         server,
-        RtmpTimeouts::default().with_write(Duration::from_secs(4)),
+        Timeouts::default().with_write(Duration::from_secs(4)),
     );
     let err = c.next_events().await.expect_err("write deadline");
     assert_eq!(err.kind(), ErrorKind::TimedOut, "{err}");
@@ -81,7 +82,7 @@ async fn a_cancelled_next_events_neither_loses_nor_duplicates_the_reply() {
 
     let (mut client, server) = duplex(2048);
     client.write_all(&c0c1).await.unwrap();
-    let mut c = conn(server, RtmpTimeouts::default());
+    let mut c = conn(server, Timeouts::default());
 
     // First call: decodes C0+C1, starts writing the 3073-byte reply into a 2048-byte pipe, blocks.
     // `biased` + an always-ready arm cancels the call right after its first suspension.
@@ -142,7 +143,7 @@ async fn a_peer_dripping_empty_chunks_is_bounded_by_read_idle_across_batches() {
     });
     let mut c = conn(
         server,
-        RtmpTimeouts::default()
+        Timeouts::default()
             .with_handshake(Duration::from_secs(300))
             .with_read_idle(Duration::from_secs(5)),
     );

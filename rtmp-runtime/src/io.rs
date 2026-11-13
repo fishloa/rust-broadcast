@@ -14,12 +14,11 @@
 //! one does not need to detect message boundaries itself: any chunk size,
 //! split anywhere, is fine to feed straight through.
 //!
-//! Every awaited IO is bounded by [`RtmpTimeouts`] (W1 SP1.3).
+//! Every awaited IO is bounded by [`Timeouts`] (W1 SP1.3).
 
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -32,62 +31,7 @@ use crate::client::{ClientConfig, ClientEvent, ClientSession};
 use crate::codec::{ClientCodec, RtmpSession, ServerCodec, SessionCodec, io_err};
 use crate::server::{ServerConfig, ServerEvent, ServerSession};
 use crate::target::RtmpTarget;
-
-/// Explicit bounds on every awaited IO of the RTMP adapters (W1 SP1.3): no wait
-/// is unbounded.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct RtmpTimeouts {
-    /// DNS + TCP connect (client). Default 10 s.
-    pub connect: Duration,
-    /// From connection start until the `connect` command is accepted
-    /// ([`ServerEvent::Connected`]). Default 10 s.
-    pub handshake: Duration,
-    /// Longest wait for the next non-empty batch of events. One deadline covers the
-    /// whole wait: chunks that yield no events (a partial chunk, a handshake step)
-    /// do not restart it, so a peer dripping bytes still times out. Default 30 s.
-    pub read_idle: Duration,
-    /// Longest wait for the socket to accept pending writes. Default 10 s.
-    pub write: Duration,
-}
-
-impl Default for RtmpTimeouts {
-    fn default() -> Self {
-        Self {
-            connect: Duration::from_secs(10),
-            handshake: Duration::from_secs(10),
-            read_idle: Duration::from_secs(30),
-            write: Duration::from_secs(10),
-        }
-    }
-}
-
-impl RtmpTimeouts {
-    /// Sets [`connect`](Self::connect).
-    #[must_use]
-    pub fn with_connect(mut self, d: Duration) -> Self {
-        self.connect = d;
-        self
-    }
-    /// Sets [`handshake`](Self::handshake).
-    #[must_use]
-    pub fn with_handshake(mut self, d: Duration) -> Self {
-        self.handshake = d;
-        self
-    }
-    /// Sets [`read_idle`](Self::read_idle).
-    #[must_use]
-    pub fn with_read_idle(mut self, d: Duration) -> Self {
-        self.read_idle = d;
-        self
-    }
-    /// Sets [`write`](Self::write).
-    #[must_use]
-    pub fn with_write(mut self, d: Duration) -> Self {
-        self.write = d;
-        self
-    }
-}
+use broadcast_common::timeouts::Timeouts;
 
 fn timed_out(what: &str) -> io::Error {
     io::Error::new(io::ErrorKind::TimedOut, format!("RTMP {what} timed out"))
@@ -99,7 +43,7 @@ fn timed_out(what: &str) -> io::Error {
 pub struct AsyncRtmpServer {
     listener: TcpListener,
     config: ServerConfig,
-    timeouts: RtmpTimeouts,
+    timeouts: Timeouts,
 }
 
 impl AsyncRtmpServer {
@@ -111,13 +55,13 @@ impl AsyncRtmpServer {
         Ok(Self {
             listener,
             config,
-            timeouts: RtmpTimeouts::default(),
+            timeouts: Timeouts::default(),
         })
     }
 
-    /// Replaces the [`RtmpTimeouts`] given to every accepted connection.
+    /// Replaces the [`Timeouts`] given to every accepted connection.
     #[must_use]
-    pub fn with_timeouts(mut self, timeouts: RtmpTimeouts) -> Self {
+    pub fn with_timeouts(mut self, timeouts: Timeouts) -> Self {
         self.timeouts = timeouts;
         self
     }
@@ -159,11 +103,11 @@ struct Driver<S, T: RtmpSession> {
     /// out, so `read_idle` bounds a whole frame/batch, not each (possibly empty) chunk
     /// a peer drips.
     idle_deadline: Option<Instant>,
-    timeouts: RtmpTimeouts,
+    timeouts: Timeouts,
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin, T: RtmpSession> Driver<S, T> {
-    fn new(framed: Framed<S, SessionCodec<T>>, timeouts: RtmpTimeouts) -> Self {
+    fn new(framed: Framed<S, SessionCodec<T>>, timeouts: Timeouts) -> Self {
         Self {
             framed,
             ready: None,
@@ -290,7 +234,7 @@ impl RtmpConnection<BoxStream> {
     /// Wrap any connected stream, erasing its type — the constructor
     /// [`AsyncRtmpServer::accept`] uses, so one `RtmpConnection` names the
     /// connection whatever the transport.
-    pub fn from_stream_erased<S>(stream: S, session: ServerSession, timeouts: RtmpTimeouts) -> Self
+    pub fn from_stream_erased<S>(stream: S, session: ServerSession, timeouts: Timeouts) -> Self
     where
         S: RtmpStream + 'static,
     {
@@ -301,8 +245,8 @@ impl RtmpConnection<BoxStream> {
 
 impl<S: AsyncRead + AsyncWrite + Unpin> RtmpConnection<S> {
     /// Wraps an already-connected stream with a session and explicit
-    /// [`RtmpTimeouts`].
-    pub fn from_stream(stream: S, session: ServerSession, timeouts: RtmpTimeouts) -> Self {
+    /// [`Timeouts`].
+    pub fn from_stream(stream: S, session: ServerSession, timeouts: Timeouts) -> Self {
         Self {
             driver: Driver::new(Framed::new(stream, ServerCodec::new(session)), timeouts),
         }
@@ -329,7 +273,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> RtmpConnection<S> {
     /// unrecoverable (per `handle_data`'s own doc): this connection is torn
     /// down immediately — marked closed and not driven further, even if the
     /// caller keeps calling `next_events`. A deadline expiry
-    /// ([`RtmpTimeouts`]) is [`io::ErrorKind::TimedOut`] and closes the
+    /// ([`Timeouts`]) is [`io::ErrorKind::TimedOut`] and closes the
     /// connection too.
     pub async fn next_events(&mut self) -> io::Result<Option<Vec<ServerEvent>>> {
         self.driver.next_events().await
@@ -338,7 +282,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> RtmpConnection<S> {
 
 /// A publishing RTMP client over a stream (a [`TcpStream`] by default): the
 /// adapter for [`ClientSession`], mirroring
-/// [`RtmpConnection`]. Every awaited IO is bounded by [`RtmpTimeouts`].
+/// [`RtmpConnection`]. Every awaited IO is bounded by [`Timeouts`].
 #[derive(Debug)]
 pub struct AsyncRtmpClient<S = TcpStream> {
     driver: Driver<S, ClientSession>,
@@ -346,7 +290,7 @@ pub struct AsyncRtmpClient<S = TcpStream> {
 
 impl AsyncRtmpClient<TcpStream> {
     /// DNS + TCP connect bounded by `timeouts.connect`; `publish` is NOT started.
-    pub async fn connect(target: &RtmpTarget, timeouts: RtmpTimeouts) -> io::Result<Self> {
+    pub async fn connect(target: &RtmpTarget, timeouts: Timeouts) -> io::Result<Self> {
         let stream = tokio::time::timeout(timeouts.connect, async {
             let addrs = target.resolve().await?;
             TcpStream::connect(&addrs[..]).await
@@ -360,7 +304,7 @@ impl AsyncRtmpClient<TcpStream> {
 impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRtmpClient<S> {
     /// Wraps an already-connected stream; the handshake bytes are queued and go
     /// out with the first call that flushes.
-    pub fn from_stream(stream: S, target: &RtmpTarget, timeouts: RtmpTimeouts) -> Self {
+    pub fn from_stream(stream: S, target: &RtmpTarget, timeouts: Timeouts) -> Self {
         let cfg = ClientConfig {
             app: target.app.clone(),
             stream_key: target.stream_key.clone(),
@@ -377,7 +321,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRtmpClient<S> {
     }
 
     /// Runs handshake -> connect -> createStream -> publish; returns once the
-    /// server accepted the publish. Bounded by [`RtmpTimeouts::handshake`] as a
+    /// server accepted the publish. Bounded by [`Timeouts::handshake`] as a
     /// whole. A server error (`ClientEvent::Error`) is
     /// [`io::ErrorKind::ConnectionRefused`].
     pub async fn publish(&mut self) -> io::Result<()> {
@@ -477,7 +421,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRtmpClient<S> {
     }
 
     /// Writes one already-framed message verbatim (the async half of the
-    /// `encode_*` methods above), bounded by [`RtmpTimeouts::write`].
+    /// `encode_*` methods above), bounded by [`Timeouts::write`].
     pub async fn write_frame(&mut self, bytes: Vec<u8>) -> io::Result<()> {
         self.queue(bytes).await
     }
@@ -628,7 +572,7 @@ mod tests {
             medias
         });
 
-        let mut client = AsyncRtmpClient::connect(&target, RtmpTimeouts::default())
+        let mut client = AsyncRtmpClient::connect(&target, Timeouts::default())
             .await
             .expect("connect");
         client.publish().await.expect("publish");

@@ -28,7 +28,7 @@ Verified against a real ffmpeg publish capture (`../fixtures/rtmp/obs-publish.bi
 | Feature | Default | Description |
 |---|---|---|
 | `serde` | no | `Serialize`/`Deserialize` on `ServerEvent`, `ServerConfig`, `Amf0Value`, `Command`. |
-| `tokio` | no | `io::AsyncRtmpServer`, `RtmpConnection`, `io::AsyncRtmpClient`, `io::RtmpTimeouts` and `target::RtmpTarget` (`rtmp://host[:port]/app/key`, parsed with `url`). |
+| `tokio` | no | `io::AsyncRtmpServer`, `RtmpConnection`, `io::AsyncRtmpClient`, `io::Timeouts` and `target::RtmpTarget` (`rtmp://host[:port]/app/key`, parsed with `url`). |
 
 The core is `std` and needs no runtime; it has `#![forbid(unsafe_code)]`.
 
