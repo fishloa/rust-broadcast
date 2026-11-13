@@ -61,7 +61,7 @@ The crate is `#![no_std]` + `alloc` and `#![forbid(unsafe_code)]`;
 [dependencies]
 mpeg-ts = "0.8"
 # embedded:
-# mpeg-ts = { version = "0.5", default-features = false }
+# mpeg-ts = { version = "0.8", default-features = false }
 ```
 
 ## Quick start

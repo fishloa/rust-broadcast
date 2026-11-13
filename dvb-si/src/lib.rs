@@ -315,7 +315,7 @@
 //! | `flate2` | off | zlib decompression of `compressed_module_descriptor` modules in object carousels (implies `std`). |
 //!
 //! ```toml
-//! dvb-si = { version = "11", default-features = false }  # no_std + alloc
+//! dvb-si = { version = "14", default-features = false }  # no_std + alloc
 //! ```
 //!
 //! MSRV 1.95.0. `MIGRATION-4.0.md` covers the 3.x → 4.0 API break.

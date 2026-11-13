@@ -49,7 +49,7 @@ the specification each primitive follows.
 [dependencies]
 broadcast-common = "12"
 # embedded (no_std + alloc):
-# broadcast-common = { version = "9", default-features = false }
+# broadcast-common = { version = "12", default-features = false }
 ```
 
 ## Quick start
