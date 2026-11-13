@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `skills/multimux-basics/SKILL.md`: a Symposium agent skill shipped in the published package, so an AI coding agent working in a project that depends on `multimux` gets usage guidance covering route configuration, embedding the origin on tokio, the runtime admin API, the `multimux-cli` quick start, the scheme plugin registry, features and the pitfalls.
 ### Changed
 - The teletext subtitle follower's segmenting lives in `media_plane::segmenter::subtitle`; `source::split_subtitle` keeps the HLS rendition declarations and the pairing of pages to the route's `SubtitleServing`s (issue #2554).
 ### Changed
