@@ -1,3 +1,4 @@
+use broadcast_common::backoff::{RetrySchedule, mix_seed};
 use smooth_runtime::{Dropped, ManifestFault, Output, SmoothConfig, SmoothError};
 
 use crate::common::{Host, Reply, fixture, is_ended, is_fatal};
@@ -35,6 +36,68 @@ fn retries_wait_out_the_configured_backoff() {
     let times = host.times_of(FIRST_VIDEO);
     assert_eq!(times.len(), 2);
     assert_eq!(times[1] - times[0], 1_000_000);
+}
+
+const STEPS_MS: [u64; 3] = [2_000, 4_000, 8_000];
+const CAP_MS: u64 = 10_000;
+
+/// The waits between the attempts of a fragment that fails `failures` times before it is served.
+fn retry_waits_us(seed: u64, failures: usize) -> Vec<u64> {
+    let good = fixture(&format!("av/{FIRST_VIDEO}"));
+    let mut host = av_host(SmoothConfig {
+        backoff_ms: STEPS_MS.to_vec(),
+        backoff_cap_ms: CAP_MS,
+        jitter_seed: seed,
+        ..SmoothConfig::default()
+    });
+    let mut replies = vec![Reply::Transport; failures];
+    replies.push(Reply::Body(good));
+    host.route(FIRST_VIDEO, replies);
+    host.run_until(|o| o.iter().any(is_ended));
+    let times = host.times_of(FIRST_VIDEO);
+    assert_eq!(times.len(), failures + 1);
+    times.windows(2).map(|pair| pair[1] - pair[0]).collect()
+}
+
+/// Smooth's retries are the shared `RetrySchedule`: the first failure waits exactly its step, each
+/// later one the step times the next jitter term of the seed, and two clients with different seeds
+/// do not retry in lockstep.
+#[test]
+fn retries_follow_the_shared_retry_schedule() {
+    let steps: Vec<std::time::Duration> = STEPS_MS
+        .iter()
+        .map(|ms| std::time::Duration::from_millis(*ms))
+        .collect();
+    let seed = 7;
+    let waits = retry_waits_us(seed, 3);
+
+    let schedule = RetrySchedule::from_steps(
+        &steps,
+        std::time::Duration::from_millis(CAP_MS),
+        mix_seed(seed),
+    );
+    let expected: Vec<u64> = (0..3)
+        .map(|attempt| u64::try_from(schedule.delay_for_attempt(attempt).as_micros()).unwrap())
+        .collect();
+    assert_eq!(
+        waits, expected,
+        "the waits are the schedule's delays in order"
+    );
+    assert_eq!(
+        waits[0], 2_000_000,
+        "the first retry waits exactly its step"
+    );
+    for (wait, step_ms) in waits.iter().zip(STEPS_MS).skip(1) {
+        let step_us = step_ms * 1_000;
+        assert!(
+            *wait >= step_us * 5 / 6 && *wait <= step_us,
+            "{wait} us is outside the jitter band of the {step_ms} ms step"
+        );
+    }
+
+    let other = retry_waits_us(seed + 1, 3);
+    assert_eq!(other[0], waits[0]);
+    assert_ne!(other[1..], waits[1..], "different seeds retry apart");
 }
 
 #[test]

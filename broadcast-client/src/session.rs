@@ -230,6 +230,7 @@ impl Session {
                 &parsed,
                 &config,
                 ConnAlloc::new(),
+                Self::jitter_seed(now_us),
             ))))
         } else {
             None

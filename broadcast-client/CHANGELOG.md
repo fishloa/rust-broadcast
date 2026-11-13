@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- Smooth sessions jitter their fragment and manifest retries like every other source: the session passes its jitter seed to the engine (`SmoothConfig::jitter_seed`); the first retry still waits exactly its step (#2589).
 ### Added
 - `SrtConfig::timeouts` and `SrtConfig::with_timeouts`: the SRT handshake and peer-idle bounds read and set as `broadcast_common::timeouts::Timeouts` (`handshake`, `read_idle`), so a host maps its own timeouts once instead of converting to the `_ms` fields (#2514).
 - `Config::max_queued_bytes` (default 256 MiB, `DEFAULT_MAX_QUEUED_BYTES`; `0` is `InvalidConfig`): a byte budget on the queued `Event::Sample` payloads next to `max_queued_events`. A host that does not drain loses the oldest samples (counted by `dropped_events`, each burst leaving one `Event::Discontinuity`) once either bound is exceeded.
