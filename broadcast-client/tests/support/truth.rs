@@ -22,8 +22,8 @@ type Keyed = Vec<(Vec<u8>, f64)>;
 
 #[derive(Default)]
 pub struct Truth {
-    video: Vec<(Vec<u8>, f64)>,
-    audio: Vec<(Vec<u8>, f64)>,
+    pub video: Vec<(Vec<u8>, f64)>,
+    pub audio: Vec<(Vec<u8>, f64)>,
 }
 
 fn video_key(data: &[u8]) -> Vec<u8> {
@@ -105,10 +105,6 @@ impl Truth {
             list.sort_by(|a, b| a.1.total_cmp(&b.1));
         }
         truth
-    }
-
-    pub fn source_start_gap(&self) -> f64 {
-        self.audio.first().map_or(0.0, |s| s.1) - self.video.first().map_or(0.0, |s| s.1)
     }
 
     pub fn measure<'a>(&self, samples: impl Iterator<Item = (bool, &'a [u8], f64)>) -> GroundTruth {

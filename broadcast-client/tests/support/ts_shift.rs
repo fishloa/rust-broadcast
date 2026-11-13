@@ -1,15 +1,19 @@
 pub const PACKET: usize = 188;
 pub const SYNC_BYTE: u8 = 0x47;
 pub const PTS_WRAP: i64 = 1 << 33;
+#[cfg(feature = "test-seams")]
 pub const PCR_HZ: u64 = 27_000_000;
+#[cfg(feature = "test-seams")]
 pub const VIDEO_TIMESCALE: u32 = 90_000;
 const VIDEO_STREAM_IDS: std::ops::RangeInclusive<u8> = 0xE0..=0xEF;
 const AUDIO_STREAM_IDS: std::ops::RangeInclusive<u8> = 0xC0..=0xDF;
 const PRIVATE_STREAM_1: u8 = 0xBD;
 const AF_PCR_FLAG: u8 = 0x10;
 const AF_PRESENT: u8 = 0x20;
+#[cfg(feature = "test-seams")]
 pub const AF_DISCONTINUITY_FLAG: u8 = 0x80;
 
+#[cfg(feature = "test-seams")]
 pub fn pts27(pts: i64, timescale: u32) -> u64 {
     u64::try_from(i128::from(pts) * i128::from(PCR_HZ) / i128::from(timescale)).unwrap()
 }
@@ -73,6 +77,7 @@ fn stream_kind(p: &[u8], off: usize) -> Option<Shift> {
     }
 }
 
+#[cfg(feature = "test-seams")]
 pub fn pes_starts(bytes: &[u8], kind: Shift) -> Vec<usize> {
     bytes
         .chunks(PACKET)

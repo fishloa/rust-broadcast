@@ -1,8 +1,6 @@
 //! Invariants every live session run asserts (DESIGN 3.6): no segment requested before its TRUE
 //! availability, no gap and no duplicate in the delivered segment sequence.
 
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 
 use super::dash_common::synth::{Geo, parse_segment_url};
@@ -11,7 +9,6 @@ use super::dash_sim::{DashSim, Logged};
 #[derive(Debug, Clone)]
 pub struct SegReq {
     pub rep: String,
-    pub n: u64,
     pub idx: i64,
     pub send_utc_us: i64,
     pub status: Option<u16>,
@@ -25,7 +22,6 @@ pub fn segment_requests(sim: &DashSim, geo: Geo) -> Vec<SegReq> {
             let idx = geo.index_of(&rep, n)?;
             Some(SegReq {
                 rep,
-                n,
                 idx,
                 send_utc_us: l.send_utc_us,
                 status: l.status,

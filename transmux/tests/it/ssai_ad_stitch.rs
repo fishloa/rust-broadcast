@@ -1,14 +1,13 @@
 //! Integration test for the SSAI ad-stitch walkthrough (issue #664).
 //!
-//! `#[path]`-includes `examples/ssai_ad_stitch.rs` as a module so this test
+//! `#[path]`-includes `examples/ssai_ad_stitch/demo.rs` as a module so this test
 //! exercises the *exact* pipeline the example runs (fixture -> hand-built
 //! SCTE-35 cue -> TS extraction -> `splice_insert` -> HLS/DASH), then asserts
 //! on the concrete rendered text/bytes — not just "it ran without panicking".
 #![cfg(feature = "std")]
 
-#[allow(dead_code)]
 #[allow(clippy::module_inception)]
-#[path = "../../examples/ssai_ad_stitch.rs"]
+#[path = "../../examples/ssai_ad_stitch/demo.rs"]
 mod ssai_ad_stitch;
 
 use timed_metadata::convert::emsg_to_scte35;

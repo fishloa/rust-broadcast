@@ -13,6 +13,7 @@ pub const EXEMPT: &[&str] = &[
     "dvb-stream",
     "test-alloc",
     "test-fixtures",
+    "test-harness",
 ];
 
 pub const TABLE: &[Crate] = &[

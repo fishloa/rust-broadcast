@@ -104,6 +104,7 @@ cli    = ["dep:clap", "dep:container-probe", "std"]
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
+test-harness = { path = "../test-harness" }
 container-probe = { path = "../container-probe", version = "0.3.1" }
 # `tests/it/rtp.rs` / `golden_wire.rs` render the session description over
 # `RtpOutput::medias` with the one workspace builder (`rtsp-runtime::sdp`).

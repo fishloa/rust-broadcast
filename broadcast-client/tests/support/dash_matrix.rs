@@ -3,14 +3,12 @@
 //! panics, never hangs, never loops on the wire, never delivers a duplicate or out-of-order
 //! segment, and ends in the state the fault calls for.
 
-#![allow(dead_code)]
-
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;
 
-use broadcast_client::{Config, Event, Status};
+use broadcast_client::{Event, Status};
 
 use super::dash_common::synth::parse_segment_url;
 use super::dash_sim::{Answer, Backend, DashSim, Logged, SEC};
@@ -698,7 +696,6 @@ pub struct Src {
     pub name: &'static str,
     pub live: bool,
     pub caps: &'static [Cap],
-    pub config: Config,
     pub limits: fn() -> Limits,
     pub build: Box<dyn Fn() -> (DashSim, Vec<Stage>)>,
     pub horizon_us: u64,

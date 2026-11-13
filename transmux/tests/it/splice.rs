@@ -18,7 +18,7 @@
 //! runs on the committed `fixtures/ts/h264-aac.ts` capture — real H.264 +
 //! AAC, real keyframes, and genuinely different track timescales (90 000
 //! video / 44 100 audio) — reusing the exact base/ad split that
-//! `examples/ssai_ad_stitch.rs` (issue #664) performs, so the mixed-timescale
+//! `examples/ssai_ad_stitch/main.rs` (issue #664) performs, so the mixed-timescale
 //! and SSAI-continuity claims rest on real demuxed data rather than on
 //! hand-chosen numbers. The remaining `#782` tests are synthetic
 //! (`video_track`/`data_track`/`media_of*`), because no committed capture
@@ -992,7 +992,7 @@ fn concat_leaves_untimed_section_samples_as_none() {
 // ---------------------------------------------------------------------------
 // #782 Test 7 (REAL FIXTURE) — the same defect on real demuxed data, with
 // real mixed timescales. Reuses the base/ad split that
-// `examples/ssai_ad_stitch.rs` (issue #664) performs on the committed
+// `examples/ssai_ad_stitch/main.rs` (issue #664) performs on the committed
 // `fixtures/ts/h264-aac.ts` capture: an `ad` Media whose tracks are anchored
 // `start_decode_time: 0` while their samples keep the capture's real absolute
 // `dts` — precisely the anchor/stamp disagreement #782 is about, and exactly
@@ -1084,7 +1084,7 @@ fn splice_insert_rebases_real_fixture_onto_the_join() {
         source.movie_timescale,
     );
     // The ad: anchored at 0 while its samples keep the capture's real
-    // absolute dts — the #782 condition, as `examples/ssai_ad_stitch.rs`
+    // absolute dts — the #782 condition, as `examples/ssai_ad_stitch/main.rs`
     // builds it.
     let ad_video_first_dts = video.samples[content_split].dts.unwrap();
     let ad = Media::new(

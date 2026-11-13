@@ -75,17 +75,6 @@ impl Host {
         }
     }
 
-    pub fn buffer_events(&self) -> Vec<(usize, &'static str)> {
-        self.log
-            .iter()
-            .enumerate()
-            .filter_map(|(i, e)| match e {
-                Event::Buffer(b) => Some((i, b.name())),
-                _ => None,
-            })
-            .collect()
-    }
-
     pub fn feed(&mut self, bytes: &[u8], chunk: usize) {
         let bytes = &bytes[..bytes.len() / TS_PACKET * TS_PACKET];
         for part in bytes.chunks(chunk) {
@@ -95,6 +84,7 @@ impl Host {
         }
     }
 
+    #[cfg(feature = "test-seams")]
     pub fn reconnect(&mut self) {
         self.session.reconnect(self.now);
         self.settle();
@@ -112,6 +102,7 @@ impl Host {
         })
     }
 
+    #[cfg(feature = "test-seams")]
     pub fn samples_on(&self, track: u32) -> usize {
         self.log
             .iter()
@@ -119,6 +110,7 @@ impl Host {
             .count()
     }
 
+    #[cfg(feature = "test-seams")]
     pub fn mark(&self) -> usize {
         self.log.len()
     }

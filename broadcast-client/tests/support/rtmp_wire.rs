@@ -22,7 +22,6 @@ impl<T: Read + Write> Io for T {}
 #[derive(Debug, Clone, Copy)]
 pub enum Serve {
     All,
-    DropAfter(usize),
 }
 
 #[derive(Default)]
@@ -35,7 +34,6 @@ pub struct Log {
 
 pub struct PeerServer {
     pub addr: SocketAddr,
-    pub log: Arc<Mutex<Log>>,
     stop: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -96,7 +94,6 @@ impl PeerServer {
         });
         Self {
             addr,
-            log,
             stop,
             thread: Some(thread),
         }
@@ -112,7 +109,7 @@ impl Drop for PeerServer {
     }
 }
 
-fn serve(mut io: Box<dyn Io>, mut peer: PlayPeer, scenario: Serve, stop: &AtomicBool) -> Vec<u32> {
+fn serve(mut io: Box<dyn Io>, mut peer: PlayPeer, _scenario: Serve, stop: &AtomicBool) -> Vec<u32> {
     let mut buf = vec![0u8; READ_CHUNK];
     let mut streamed = false;
     while !stop.load(Ordering::Relaxed) {
@@ -129,10 +126,7 @@ fn serve(mut io: Box<dyn Io>, mut peer: PlayPeer, scenario: Serve, stop: &Atomic
         }
         if peer.is_playing() && !streamed {
             streamed = true;
-            let limit = match scenario {
-                Serve::All => usize::MAX,
-                Serve::DropAfter(n) => n,
-            };
+            let limit = usize::MAX;
             for (i, (t, ts, b)) in fixture_tags().into_iter().enumerate() {
                 if i >= limit {
                     return peer.acks();

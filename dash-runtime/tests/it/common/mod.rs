@@ -133,10 +133,10 @@ impl Rng {
         lo + self.below(hi - lo + 1)
     }
 }
-pub mod capture;
 pub mod checks;
-pub mod loopback;
 pub mod scan;
 pub mod scenario;
-pub mod synth;
-pub mod world;
+pub use test_harness::dash::capture;
+pub use test_harness::dash::loopback;
+pub use test_harness::dash::synth;
+pub use test_harness::dash::world;

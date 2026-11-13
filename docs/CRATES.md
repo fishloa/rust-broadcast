@@ -81,7 +81,7 @@ builds (see the table above against the in-tree versions below).
 ## The crates
 
 <!-- BEGIN GENERATED: crate-index (tools/gen-crate-index.py) -->
-**63 workspace members.** 55 are on crates.io; 47 are proven `no_std` by CI (built with `--no-default-features` for `thumbv7em-none-eabi`). Versions below are the **in-tree** versions on this branch; the badge shows what crates.io currently serves.
+**64 workspace members.** 55 are on crates.io; 47 are proven `no_std` by CI (built with `--no-default-features` for `thumbv7em-none-eabi`). Versions below are the **in-tree** versions on this branch; the badge shows what crates.io currently serves.
 
 ### Overview
 
@@ -150,6 +150,7 @@ builds (see the table above against the in-tree versions below).
 | [`test-alloc`](#test-alloc) | Internal test helpers (never published) | 0.1.0 | — | no | 0 | internal, `publish = false` |
 | [`test-fixtures`](#test-fixtures) | Internal test helpers (never published) | 0.1.0 | — | no | 0 | internal, `publish = false` |
 | [`workspace-guards`](#workspace-guards) | Internal test helpers (never published) | 0.1.0 | — | no | 0 | internal, `publish = false` |
+| [`test-harness`](#test-harness) | Internal test helpers (never published) | 0.1.0 | — | no | 7 | internal, `publish = false` |
 
 ### Foundation
 
@@ -163,7 +164,7 @@ The base of the workspace: the zero-copy `Parse<'a>` / `Serialize` trait pair ev
 - **Cargo description:** Foundation for the rust-broadcast crates: symmetric Parse/Serialize traits, CRC-32/MPEG-2, BCD + MJD time codecs, bit I/O, 33-bit/PCR clock arithmetic, checked field widths, container-mux and Stage traits. no_std + alloc.
 - **Version (in-tree):** 11.1.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 0
 - **Depends on (workspace):** none
-- **Used by (workspace):** 57 workspace crates
+- **Used by (workspace):** 58 workspace crates
 - **Links:** [README](../broadcast-common/README.md) · [CHANGELOG](../broadcast-common/CHANGELOG.md) · [crates.io](https://crates.io/crates/broadcast-common) · [docs.rs](https://docs.rs/broadcast-common)
 
 #### broadcast-auth
@@ -484,7 +485,7 @@ Demuxes any supported container into one neutral IR (`Media` / `Track`) and muxe
 - **Cargo description:** Any-to-any media container muxing hub: demux TS, fMP4/CMAF, MPEG-PS, WebM, FLV, or RTMP into one neutral IR and mux to CMAF/fMP4, progressive MP4, TS, DASH, low-latency DASH, HLS, low-latency HLS, Smooth Streaming, or RTMP. CENC/CBCS encrypt+decrypt, SSAI splice, RTP/RTCP, and an fMP4/CMAF conformance validator; parses codec config headers only, samples stay opaque. no_std + alloc, except the XML manifest paths (DASH/Smooth/PlayReady), which need the std feature.
 - **Version (in-tree):** 0.31.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 3
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-dash`](#broadcast-dash), [`broadcast-hls`](#broadcast-hls), [`broadcast-smooth`](#broadcast-smooth), [`cc-data`](#cc-data), [`container-probe`](#container-probe), [`dvb-si`](#dvb-si), [`mp4-emsg`](#mp4-emsg), [`mpeg-pes`](#mpeg-pes), [`mpeg-ps`](#mpeg-ps), [`mpeg-ts`](#mpeg-ts), [`rtmp-runtime`](#rtmp-runtime), [`rtp-packet`](#rtp-packet)
-- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`dash-runtime`](#dash-runtime), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux), [`smooth-runtime`](#smooth-runtime)
+- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`dash-runtime`](#dash-runtime), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux), [`smooth-runtime`](#smooth-runtime), [`test-harness`](#test-harness)
 - **Links:** [README](../transmux/README.md) · [CHANGELOG](../transmux/CHANGELOG.md) · [crates.io](https://crates.io/crates/transmux) · [docs.rs](https://docs.rs/transmux)
 
 ### Live transport protocols
@@ -521,7 +522,7 @@ Server-side publish session engine (`connect` -> `createStream` -> `publish`) ov
 - **Cargo description:** Sans-IO RTMP 1.0 (Adobe Real-Time Messaging Protocol) ingest session engine — a driveable server-side publish state machine over the handshake, chunk stream, AMF0, and message layers; optional tokio socket adapter.
 - **Version (in-tree):** 0.9.1 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
-- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux), [`transmux`](#transmux)
+- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux), [`test-harness`](#test-harness), [`transmux`](#transmux)
 - **Links:** [README](../rtmp-runtime/README.md) · [CHANGELOG](../rtmp-runtime/CHANGELOG.md) · [crates.io](https://crates.io/crates/rtmp-runtime) · [docs.rs](https://docs.rs/rtmp-runtime)
 
 #### rtp-packet
@@ -598,7 +599,7 @@ The player on top of `broadcast-dash` (the MPD model and parser live there): a l
 - **Cargo description:** Sans-IO MPEG-DASH (ISO/IEC 23009-1): MPD model and parser, segment addressing, UTC clock and live-edge arithmetic, and a client for static and dynamic presentations. No I/O, no clock reads.
 - **Version (in-tree):** 0.4.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 6
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-dash`](#broadcast-dash), [`container-probe`](#container-probe), [`media-plane`](#media-plane), [`transmux`](#transmux)
-- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`media-doctor`](#media-doctor), [`multimux`](#multimux)
+- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`media-doctor`](#media-doctor), [`multimux`](#multimux), [`test-harness`](#test-harness)
 - **Links:** [README](../dash-runtime/README.md) · [CHANGELOG](../dash-runtime/CHANGELOG.md) · [docs + spec pointer](../dash-runtime/docs/)
 
 #### hls-runtime
@@ -881,7 +882,7 @@ Resolves `<workspace>/fixtures` once, in one place, so test suites cannot get th
 - **Cargo description:** Workspace fixture loader shared by test suites (unpublished).
 - **Version (in-tree):** 0.1.0 · **Status:** internal, `publish = false` · **`no_std` proven in CI:** no · **Layer:** 0
 - **Depends on (workspace):** none
-- **Used by (workspace):** none
+- **Used by (workspace):** [`test-harness`](#test-harness)
 
 #### workspace-guards
 
@@ -891,6 +892,16 @@ One test binary that walks every crate named in each guard's data table (`non_ex
 - **Cargo description:** Workspace-wide lexical guard tests with per-crate data tables (unpublished).
 - **Version (in-tree):** 0.1.0 · **Status:** internal, `publish = false` · **`no_std` proven in CI:** no · **Layer:** 0
 - **Depends on (workspace):** none
+- **Used by (workspace):** none
+
+#### test-harness
+
+One copy of the DASH loopback simulator (world/synth/capture/loopback), the RTMP play peer, and fmp4_split, exposed as pub modules for dev-dependency use by dash-runtime, broadcast-client, transmux and hls-runtime.
+
+- **Standards:** n/a
+- **Cargo description:** Shared test harnesses for workspace integration tests (unpublished).
+- **Version (in-tree):** 0.1.0 · **Status:** internal, `publish = false` · **`no_std` proven in CI:** no · **Layer:** 7
+- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`dash-runtime`](#dash-runtime), [`rtmp-runtime`](#rtmp-runtime), [`test-fixtures`](#test-fixtures), [`transmux`](#transmux)
 - **Used by (workspace):** none
 
 ### Dependency layers
@@ -905,7 +916,7 @@ layer 3: dvb-ci, dvb-conformance, dvb-stream, dvb-tools, playout-runtime, timed-
 layer 4: caption-convert, dvb-ci-runtime, ts-fix
 layer 5: media-plane
 layer 6: dash-runtime, hls-runtime, smooth-runtime
-layer 7: broadcast-client, media-doctor
+layer 7: broadcast-client, media-doctor, test-harness
 layer 8: compliance-probe, multimux
 layer 9: multimux-cli
 ```
@@ -1062,6 +1073,8 @@ flowchart BT
   st291 --> rtp_packet
   st337 --> broadcast_common
   st377_1 --> broadcast_common
+  test_harness --> dash_runtime
+  test_harness --> test_fixtures
   timed_metadata --> broadcast_hls
   timed_metadata --> cc_data
   timed_metadata --> dvb_vbi

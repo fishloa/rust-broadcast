@@ -3,8 +3,6 @@
 //! the client to a terminal state the way an adapter would (zenith-style
 //! loopback servers of `broadcast-client/tests/support`).
 
-#![allow(dead_code)]
-
 use std::collections::{BTreeMap, VecDeque};
 
 use broadcast_common::Unpackage;
@@ -474,12 +472,4 @@ pub fn assert_matches_oracle(run: &Run, expected_by_track: &[Vec<Sig>]) {
 
 pub fn mpd_text(rel: &str) -> String {
     test_fixtures::read_to_string(&format!("dash/{rel}"))
-}
-
-pub fn fatal_status(run: &Run) -> Option<u16> {
-    match &run.fatal {
-        Some(FatalKind::SegmentFetchFailed { status, .. })
-        | Some(FatalKind::InitFetchFailed { status, .. }) => *status,
-        _ => None,
-    }
 }
