@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 ### Changed
+- WHEP packetises each sample once per route instead of once per viewer: the route keeps the last 64 samples' RTP packets, and each viewer only sets its own sequence number, timestamp, SSRC and payload type on a copy before SRTP (issue #2529).
+- A WHEP session's UDP receive buffer is 1500 bytes (one Ethernet MTU) instead of 64 KiB.
 - Each admitted WHIP session runs on its own task, which owns its `MediaTransport`, its ICE/DTLS timers and its idle deadline; the route's publisher receives only the outcomes it must act on over a bounded channel, so a slow publisher or a stalled session no longer holds up another session's reads. A session whose publisher ends it is aborted, which closes its media socket at once. This completes the one-task-per-session work for RTMP and WHIP (issue #2525).
 - RTMP: a session the route's publisher ends (a rejected feed, say) now has its read task aborted, so its connection closes immediately instead of staying open until the peer quits.
 ### Fixed
