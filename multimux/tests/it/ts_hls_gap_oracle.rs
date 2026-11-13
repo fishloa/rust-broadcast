@@ -114,7 +114,7 @@ impl Rig {
         writer.set_tracks(tracks.iter().map(|(spec, _)| spec.clone()).collect());
         let route = Arc::new(
             RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, WINDOW_SEGMENTS)
-                .with_container(hls_runtime::server::Container::MpegTs),
+                .with_container(transmux::Container::MpegTs),
         );
         route.publish_program(ProgramId(0), Arc::clone(&trunk));
         let segmenter =

@@ -5,6 +5,7 @@
 - A reload no longer installs over a runtime a concurrent admin add registered while the reload waited for its locks (every runtime carries a generation and the re-plan compares them, not just the touched names), which used to leave the replaced runtime running undrained. A reload that restarts a changed route now drains the old runtime before reading the route's archive floor and spawning the replacement, so the new runtime cannot number below a segment the old one still writes; if a later step of the reload fails, the stopped routes are started again from their old configuration (#2578, #2579).
 ### Changed
 - The SRT pull maps its connect bound onto the session's handshake bound through `SrtConfig::with_timeouts` instead of converting to milliseconds itself (#2514).
+- Route and output code names the container as `transmux::Container` (issue #2554).
 - The segmenters' shared publish queue (`PendingPublish`, `drain_publish_queue`, `part_entry`) lives in `media_plane::publish_queue` (issue #2554).
 ### Added
 - `whep_media_sockets_per_ip` (config, default 8; `WhepRoute::with_media_sockets_per_ip`): the number of UDP media sockets a WHEP output binds per advertised IP, over which its viewers are spread round-robin. `0` is `ConfigInvalid`. More sockets spread the viewers' SRTP sends across cores at the cost of one file descriptor and one receive task each.

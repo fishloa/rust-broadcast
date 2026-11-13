@@ -52,7 +52,7 @@ mod engine;
 
 pub use engine::{
     AudioRenditionDecl, BLOCKING_RELOAD_TARGET_DURATIONS, BLOCKING_RELOAD_TIMEOUT, BlockingQuery,
-    CLOSED_CAPTIONS_GROUP_ID, ClosedCaptionDecl, ClosedSegment, Container, DEFAULT_TRACK_ID,
+    CLOSED_CAPTIONS_GROUP_ID, ClosedCaptionDecl, ClosedSegment, DEFAULT_TRACK_ID,
     HOLD_COLD_PLAYLIST_DEFAULT, HlsBody, HlsMasterError, HlsOrigin, HlsOriginBuildError,
     HlsOriginBuilder, HlsRequest, HttpPriority, IFRAME_SEGMENT_PREFIX, RenditionSibling,
     SUBTITLES_GROUP_ID, SkipDirective, SubtitleRenditionDecl, master_playlist_m3u8,

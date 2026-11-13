@@ -46,7 +46,7 @@ fn fmp4_route() -> Arc<RouteHandle> {
 }
 
 fn ts_route() -> Arc<RouteHandle> {
-    use hls_runtime::server::Container;
+    use transmux::Container;
     let route = Arc::new(RouteHandle::new(4.0, 500, 4).with_container(Container::MpegTs));
     route.publish_new_program(media_plane::ProgramId(0));
     route
