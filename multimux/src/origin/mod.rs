@@ -1601,10 +1601,16 @@ async fn serve_with_registry_impl(
             .with_audio_rendition_sources(route.audio_rendition_sources.clone())
             .with_audio_profiles(route.audio_profiles.clone())
             .with_subtitles(route.subtitles);
+        // Issue #900: without this, `route.dvr` was validated
+        // (`Route::validate_dvr`) but never actually reached the
+        // `RouteHandle` that `ProgramServing::new` builds a `DvrRecorder`
+        // from — DVR recording configured via `Config`/JSON silently never
+        // ran outside this crate's own `with_dvr`-calling unit tests.
         let store = Arc::new(
             RouteHandle::new(route_config)
                 .with_archive_floor(archive_floor)
-                .with_name(route.name.clone()),
+                .with_name(route.name.clone())
+                .with_dvr(route.dvr.clone()),
         );
         let outputs: Vec<Arc<dyn Output>> = route
             .outputs

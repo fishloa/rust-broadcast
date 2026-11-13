@@ -151,6 +151,10 @@ const DEFAULT_PART_CAPACITY: usize = 64;
 /// Default for [`RouteHandle::with_max_concurrent_warms`].
 pub const DEFAULT_MAX_CONCURRENT_WARMS: usize = 8;
 
+/// [`RouteConfig`]'s default advertised-window depth (segments), and so the
+/// default segment capacity of every trunk a route builds.
+pub const DEFAULT_WINDOW_SEGMENTS: usize = 8;
+
 /// [`RouteHandle::name`]'s value until [`RouteHandle::with_name`] sets a real
 /// one — matches `crate::origin::mod`'s own `"unknown"` fallback token for an
 /// unrecognized route in its HTTP-path metrics labelling, so a route driven
@@ -1383,9 +1387,11 @@ impl ProgramServing {
 pub struct RouteConfig {
     pub target_duration_secs: f64,
     pub part_target_ms: u32,
-    /// Advertised-window depth (the segment log's capacity and the playlist
-    /// window's article). Clamped up to `1`.
-    pub window_segments_cap: NonZeroUsize,
+    /// Advertised-window depth: the segment log's capacity, the playlist
+    /// window's article, and the segment capacity of every program/trunk
+    /// this route builds — one number, one source of truth. Clamped up to
+    /// `1`.
+    pub window_segments: usize,
     pub container: Container,
     pub ts_cut_policy: transmux::SegmentCutPolicy,
     pub ts_idr_fallback: crate::config::TsHlsIdrFallback,
@@ -1394,8 +1400,6 @@ pub struct RouteConfig {
     pub declared_bandwidth_bps: Option<u64>,
     pub audio_renditions: Vec<hls_runtime::server::AudioRenditionDecl>,
     pub audio_rendition_sources: Vec<transmux::audio_profile::AudioTrackSelector>,
-    /// Capacities of every sibling (audio/subtitle rendition) trunk.
-    pub trunk_config: TrunkConfig,
     pub closed_caption_overrides: Vec<hls_runtime::server::ClosedCaptionDecl>,
     pub audio_profiles: Vec<transmux::audio_profile::AudioProfileOverride>,
     pub subtitles: bool,
@@ -1406,11 +1410,10 @@ pub struct RouteConfig {
 
 impl Default for RouteConfig {
     fn default() -> Self {
-        let window_segments_cap = NonZeroUsize::MIN.saturating_add(7);
         RouteConfig {
             target_duration_secs: 1.0,
             part_target_ms: 250,
-            window_segments_cap,
+            window_segments: DEFAULT_WINDOW_SEGMENTS,
             container: Container::default(),
             ts_cut_policy: transmux::SegmentCutPolicy::default(),
             ts_idr_fallback: crate::config::TsHlsIdrFallback::default(),
@@ -1419,12 +1422,6 @@ impl Default for RouteConfig {
             declared_bandwidth_bps: None,
             audio_renditions: Vec::new(),
             audio_rendition_sources: Vec::new(),
-            trunk_config: TrunkConfig::default()
-                .with_timed_capacity(nz(DEFAULT_TIMED_CAPACITY))
-                .with_sparse_capacity(nz(DEFAULT_SPARSE_CAPACITY))
-                .with_segment_capacity(window_segments_cap)
-                .with_event_capacity(nz(DEFAULT_EVENT_CAPACITY))
-                .with_part_capacity(nz(DEFAULT_PART_CAPACITY)),
             closed_caption_overrides: Vec::new(),
             audio_profiles: Vec::new(),
             subtitles: true,
@@ -1446,19 +1443,11 @@ impl RouteConfig {
         self
     }
 
-    /// Sets the advertised-window depth; a zero is clamped up to `1`.
+    /// Sets the advertised-window depth (and so every trunk's segment
+    /// capacity; a zero is clamped up to `1`).
     #[must_use]
     pub fn with_window_segments(mut self, segments: usize) -> Self {
-        self.window_segments_cap = NonZeroUsize::new(segments).unwrap_or(NonZeroUsize::MIN);
-        self
-    }
-
-    /// Sets the advertised-window depth, and the sibling trunks' segment
-    /// capacity to match.
-    #[must_use]
-    pub fn with_window_segments_cap(mut self, v: NonZeroUsize) -> Self {
-        self.window_segments_cap = v;
-        self.trunk_config = self.trunk_config.with_segment_capacity(v);
+        self.window_segments = segments;
         self
     }
 
@@ -1513,12 +1502,6 @@ impl RouteConfig {
         v: Vec<transmux::audio_profile::AudioTrackSelector>,
     ) -> Self {
         self.audio_rendition_sources = v;
-        self
-    }
-
-    #[must_use]
-    pub fn with_trunk_config(mut self, v: TrunkConfig) -> Self {
-        self.trunk_config = v;
         self
     }
 
@@ -1696,7 +1679,8 @@ impl RouteHandle {
     /// later [`Self::publish_program`] builds each program's `Trunk`/
     /// `HlsOrigin`/`DashState` consistently.
     pub fn new(config: RouteConfig) -> Self {
-        let window_segments = config.window_segments_cap;
+        let window_segments =
+            NonZeroUsize::new(config.window_segments).unwrap_or(NonZeroUsize::MIN);
         let RouteConfig {
             target_duration_secs,
             part_target_ms,
@@ -1708,7 +1692,6 @@ impl RouteHandle {
             declared_bandwidth_bps,
             audio_renditions,
             audio_rendition_sources,
-            trunk_config,
             closed_caption_overrides,
             audio_profiles,
             subtitles,
@@ -1738,7 +1721,12 @@ impl RouteHandle {
             declared_bandwidth_bps,
             audio_renditions,
             audio_rendition_sources,
-            trunk_config,
+            trunk_config: TrunkConfig::default()
+                .with_timed_capacity(nz(DEFAULT_TIMED_CAPACITY))
+                .with_sparse_capacity(nz(DEFAULT_SPARSE_CAPACITY))
+                .with_segment_capacity(window_segments)
+                .with_event_capacity(nz(DEFAULT_EVENT_CAPACITY))
+                .with_part_capacity(nz(DEFAULT_PART_CAPACITY)),
             closed_caption_overrides,
             audio_profiles,
             subtitles,

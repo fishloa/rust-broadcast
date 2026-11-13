@@ -462,10 +462,14 @@ impl RouteRegistry {
             .with_audio_rendition_sources(route.audio_rendition_sources.clone())
             .with_audio_profiles(route.audio_profiles.clone())
             .with_subtitles(route.subtitles);
+        // Issue #900 — see the identical fix (and its own doc) in
+        // `super::serve_with_registry_impl`'s per-route loop; this is the
+        // admin-API (`POST /admin/routes`/reload) equivalent.
         let store = Arc::new(
             RouteHandle::new(route_config)
                 .with_archive_floor(archive_floor)
-                .with_name(route.name.clone()),
+                .with_name(route.name.clone())
+                .with_dvr(route.dvr.clone()),
         );
         if let Some(old) = continues {
             store.continue_from(old);
