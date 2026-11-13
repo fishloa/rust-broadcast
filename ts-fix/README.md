@@ -129,7 +129,7 @@ wrote 450 packets (84600 bytes) to keep.ts
   trait; operations are builder methods only, and every configuration and error
   enum is `#[non_exhaustive]`, so a new operation is a purely additive change.
 - **Canonical order is enforced** by `build()`, not by the caller.
-- **Reused judgements.** Legal duplicate packets are `broadcast_common::ts_dup`
+- **Reused judgements.** Legal duplicate packets are `mpeg_ts::ts_dup`
   (same rule as `dvb-conformance` and `media-doctor`, issue #956); PCR wrap
   arithmetic is `clock33` (`workspace-guards/tests/guards/clock33.rs` bans a local 2^33).
 - **`--regen-psi` after a filter that drops every PMT** (e.g. `--keep-pids`
