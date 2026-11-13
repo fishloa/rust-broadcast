@@ -366,8 +366,10 @@ impl<'a> Burst<'a> {
                 extended_offset_bits,
             });
         }
-        #[allow(clippy::cast_possible_truncation)]
-        let length_code = payload_bits as u16;
+        let length_code = u16::try_from(payload_bits).map_err(|_| Error::PayloadTooLarge {
+            payload_bits: payload_bits as u32,
+            extended_offset_bits,
+        })?;
         let preamble = BurstPreamble {
             data_type,
             data_mode,

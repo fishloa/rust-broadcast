@@ -34,12 +34,11 @@ use crate::device::{CaDevice, DeviceOpError, SlotInfo};
 // `Nsecs` is `i64` on rustix's linux_raw backend (where `From<u32>` would do) but
 // `c_long` (`i32`) under its libc backend on 32-bit targets, where only
 // `TryFrom` exists; keep the portable form.
-#[allow(clippy::unnecessary_fallible_conversions)]
 fn poll_readable(fd: &impl AsFd, timeout: Duration) -> io::Result<bool> {
     let mut fds = [PollFd::new(fd, PollFlags::IN)];
     let ts = Timespec {
         tv_sec: i64::try_from(timeout.as_secs()).unwrap_or(i64::MAX),
-        tv_nsec: Nsecs::try_from(timeout.subsec_nanos()).unwrap_or(0),
+        tv_nsec: timeout.subsec_nanos() as Nsecs,
     };
     rustix::event::poll(&mut fds, Some(&ts))?;
     Ok(fds[0].revents().contains(PollFlags::IN))
@@ -48,12 +47,11 @@ fn poll_readable(fd: &impl AsFd, timeout: Duration) -> io::Result<bool> {
 /// Poll a file descriptor for writability (`POLLOUT`) up to `timeout`; the
 /// write-side twin of [`poll_readable`] (same timeout handling, same `EINTR`
 /// behaviour). `POLLERR`/`POLLHUP` alone report `false`.
-#[allow(clippy::unnecessary_fallible_conversions)]
 fn poll_writable(fd: &impl AsFd, timeout: Duration) -> io::Result<bool> {
     let mut fds = [PollFd::new(fd, PollFlags::OUT)];
     let ts = Timespec {
         tv_sec: i64::try_from(timeout.as_secs()).unwrap_or(i64::MAX),
-        tv_nsec: Nsecs::try_from(timeout.subsec_nanos()).unwrap_or(0),
+        tv_nsec: timeout.subsec_nanos() as Nsecs,
     };
     rustix::event::poll(&mut fds, Some(&ts))?;
     Ok(fds[0].revents().contains(PollFlags::OUT))

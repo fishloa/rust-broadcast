@@ -1,6 +1,5 @@
 //! Shared test support: the real subtitle `PES_data_field`s of the committed
 //! M6 capture.
-#![allow(dead_code)]
 
 use std::fs;
 

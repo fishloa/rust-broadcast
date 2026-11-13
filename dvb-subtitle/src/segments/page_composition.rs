@@ -68,11 +68,6 @@ pub struct PageRegionEntry {
 }
 
 impl PageRegionEntry {
-    #[allow(dead_code)]
-    fn serialized_len() -> usize {
-        REGION_ENTRY_LEN
-    }
-
     fn serialize_into(&self, buf: &mut [u8]) {
         buf[0] = self.region_id;
         buf[1] = self.reserved;

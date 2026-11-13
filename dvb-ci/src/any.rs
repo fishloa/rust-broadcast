@@ -34,7 +34,7 @@ macro_rules! declare_apdus {
         #[non_exhaustive]
         pub enum AnyApdu<$lt> {
             $(
-                #[allow(missing_docs)]
+                #[doc = concat!(stringify!($variant), " APDU object.")]
                 $variant($($path)::+ $(<$plt>)?),
             )+
             /// An `apdu_tag` with no typed implementation; the fields are the

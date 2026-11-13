@@ -1,7 +1,5 @@
 //! Test support helpers for `ts-fix` tests.
 
-#![allow(dead_code)]
-
 use broadcast_common::traits::Serialize;
 use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::tables::pat::{PatEntry, PatSection};

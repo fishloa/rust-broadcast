@@ -213,7 +213,6 @@ fn scanner_flags_a_derived_debug_secret_and_ignores_the_rest() {
 /// comparison (an XOR accumulated with `|=`, or an XOR/OR `fold`) instead of
 /// `subtle::ConstantTimeEq` (audit r09-O1, #1142). Lexical: a renamed helper
 /// evades it.
-#[allow(dead_code)] // not every including crate runs the compare scan (cipher crates XOR legitimately)
 fn assert_no_handrolled_ct_compare(manifest_dir: &str) {
     let mut files = Vec::new();
     collect_rs(&Path::new(manifest_dir).join("src"), &mut files);
