@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- Smooth sessions jitter their fragment and manifest retries like every other source: the session passes its jitter seed to the engine (`SmoothConfig::jitter_seed`); the first retry still waits exactly its step (#2589).
 ### Added
 - `SrtConfig::timeouts` and `SrtConfig::with_timeouts`: the SRT handshake and peer-idle bounds read and set as `broadcast_common::timeouts::Timeouts` (`handshake`, `read_idle`), so a host maps its own timeouts once instead of converting to the `_ms` fields (#2514).
 - `Config::max_queued_bytes` (default 256 MiB, `DEFAULT_MAX_QUEUED_BYTES`; `0` is `InvalidConfig`): a byte budget on the queued `Event::Sample` payloads next to `max_queued_events`. A host that does not drain loses the oldest samples (counted by `dropped_events`, each burst leaving one `Event::Discontinuity`) once either bound is exceeded.
@@ -35,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - RTSP pull skips an SDP media section whose `m=` format is not a numeric RTP payload type (RFC 4566 §5.14) instead of playing it, matching multimux; the skip is reported in `skipped`.
 - Timeline-jump detection now uses the detector moved to `transmux` (re-exported). `Config::timeline_jump` is now `Option<transmux::TimelineJumpConfig>`; the `broadcast_client::TimelineJumpConfig` re-export remains, but the type path changed (breaking for users naming `broadcast_client::timeline::TimelineJumpConfig`).
 ### Fixed
+- RTMP URLs are parsed by `rtmp_runtime::target::RtmpTarget` (the second parser in `source/rtmp.rs` and the duplicated default-port constants are deleted); behaviour follows rtmp-runtime's grammar: `rtmps` default port 443, percent-decoded path (#2588).
 - A `206` `Content-Range` is parsed by one RFC 9110 §14.4 parser (`broadcast_common::content_range`) instead of three: `bytes 5-20/10` is refused for a ranged fetch (it was accepted), `bytes 0-9/*` is a finite ts/http body of 10 bytes (it was not), and stray whitespace inside the value is invalid (ts/http accepted it) (#2586).
 - A redirect `Location` (HTTP and RTSP) carrying a control character or space is no longer followed: it resolves through `broadcast_common::url_ref::resolve` instead of the raw `Url::join`, which deleted a TAB/CR/LF and followed a different URL than the header names (RFC 3986 §2) (#2585).
 - A Smooth quality switch to a level with a different SPS/PPS or resolution now succeeds (it was refused as `NoSuchVariant`): the engine's `Output::TracksChanged` surfaces as a new `Event::Tracks`, the event DASH variant switches already use.

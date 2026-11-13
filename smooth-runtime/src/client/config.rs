@@ -18,6 +18,8 @@ pub const DEFAULT_MAX_REFRESH_MISSES: u32 = 5;
 pub const DEFAULT_BACKOFF_MS: [u64; 4] = [250, 500, 1_000, 2_000];
 /// Backoff once the list is exhausted, in milliseconds.
 pub const DEFAULT_BACKOFF_CAP_MS: u64 = 4_000;
+/// Default [`SmoothConfig::jitter_seed`]; a host that runs more than one client sets its own.
+pub const DEFAULT_JITTER_SEED: u64 = 0;
 /// Shortest live manifest refresh wait, in microseconds.
 pub const DEFAULT_REFRESH_MIN_US: u64 = 500_000;
 /// Longest live manifest refresh wait, in microseconds.
@@ -68,6 +70,12 @@ pub struct SmoothConfig {
     pub backoff_ms: Vec<u64>,
     /// Retry delay past the end of [`Self::backoff_ms`], in milliseconds.
     pub backoff_cap_ms: u64,
+    /// Seed of the retry jitter ([`broadcast_common::backoff::RetrySchedule`]): the first retry of
+    /// a fragment or manifest waits exactly its step, every later one a term of `[5/6, 1.0)` of its
+    /// step drawn from this seed, so a fleet of clients that fail together does not retry in
+    /// lockstep. The engine reads no clock and no RNG, so a host gives each client its own entropy;
+    /// two clients with the same seed retry identically (which is what makes a replay reproducible).
+    pub jitter_seed: u64,
     /// Lower clamp of the live refresh wait, in microseconds.
     pub refresh_min_us: u64,
     /// Upper clamp of the live refresh wait, in microseconds.
@@ -85,6 +93,7 @@ impl Default for SmoothConfig {
             max_refresh_misses: DEFAULT_MAX_REFRESH_MISSES,
             backoff_ms: DEFAULT_BACKOFF_MS.to_vec(),
             backoff_cap_ms: DEFAULT_BACKOFF_CAP_MS,
+            jitter_seed: DEFAULT_JITTER_SEED,
             refresh_min_us: DEFAULT_REFRESH_MIN_US,
             refresh_max_us: DEFAULT_REFRESH_MAX_US,
             video_quality: QualitySelector::first(),

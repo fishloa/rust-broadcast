@@ -1,6 +1,7 @@
 //! [`SmoothClient`]: the sans-IO Smooth Streaming session.
 
 use std::collections::VecDeque;
+use std::time::Duration;
 
 use broadcast_smooth::{SmoothManifest, StreamIndex, StreamType};
 use transmux::dash::rfc6381_track_codec_string;
@@ -11,6 +12,7 @@ use transmux::smooth_fragment::{
 use transmux::{TrackId, TrackSpec, track_spec_from_quality_level};
 use url::Url;
 
+use broadcast_common::backoff::{RetrySchedule, mix_seed};
 use broadcast_common::url_ref;
 
 use super::action::{Action, FetchFailure, RequestId, StreamId};
@@ -18,8 +20,10 @@ use super::config::{SYNTHETIC_MOVIE_TIMESCALE, SmoothConfig};
 use super::output::{Dropped, ManifestFault, Output, QualityInfo};
 use super::stream::{Chunk, Cursor, HeldFragment, Stream, demux_fragment, live_join};
 use crate::error::SmoothError;
-use broadcast_common::units::{MICROS_PER_MILLI, MICROS_PER_SEC};
+use broadcast_common::units::MICROS_PER_SEC;
 
+/// The shortest retry delay: a zero step must never become a burst of retries at one instant.
+const MIN_BACKOFF_MS: u64 = 1;
 const REFRESH_DIVISOR: u64 = 2;
 const FIRST_TRACK_ID: u32 = 1;
 const FOURCC_AVC: [&str; 2] = ["H264", "AVC1"];
@@ -71,6 +75,7 @@ pub struct SmoothClient {
     manifest: ManifestCursor,
     manifest_at: Option<u64>,
     manifest_failures: u32,
+    retry: RetrySchedule,
     next_request: u64,
     actions: VecDeque<Action>,
     outputs: VecDeque<Output>,
@@ -79,6 +84,15 @@ pub struct SmoothClient {
 impl SmoothClient {
     /// A client for the manifest at `manifest_url`; the first [`Action`] is its fetch.
     pub fn new(manifest_url: Url, config: SmoothConfig) -> Self {
+        let retry = RetrySchedule::from_steps(
+            &config
+                .backoff_ms
+                .iter()
+                .map(|ms| Duration::from_millis((*ms).max(MIN_BACKOFF_MS)))
+                .collect::<Vec<_>>(),
+            Duration::from_millis(config.backoff_cap_ms.max(MIN_BACKOFF_MS)),
+            mix_seed(config.jitter_seed),
+        );
         Self {
             config,
             manifest_url,
@@ -92,6 +106,7 @@ impl SmoothClient {
             manifest: ManifestCursor::Idle,
             manifest_at: Some(0),
             manifest_failures: 0,
+            retry,
             next_request: 0,
             actions: VecDeque::new(),
             outputs: VecDeque::new(),
@@ -289,15 +304,12 @@ impl SmoothClient {
             })
     }
 
+    /// The wait before retry number `attempt` (1-based: the first failure is attempt 1). The
+    /// shared [`RetrySchedule`] counts retries from 0, so the first failure takes its first step
+    /// exactly and every later one a jittered step.
     fn backoff_us(&self, attempt: u32) -> u64 {
-        let index = usize::try_from(attempt.saturating_sub(1)).unwrap_or(usize::MAX);
-        self.config
-            .backoff_ms
-            .get(index)
-            .copied()
-            .unwrap_or(self.config.backoff_cap_ms)
-            .max(1)
-            .saturating_mul(MICROS_PER_MILLI)
+        let delay = self.retry.delay_for_attempt(attempt.saturating_sub(1));
+        u64::try_from(delay.as_micros()).unwrap_or(u64::MAX)
     }
 
     fn fire_timers(&mut self, now: u64) {
