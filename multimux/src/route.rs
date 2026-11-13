@@ -347,7 +347,7 @@ pub struct DashWindowSegment {
 /// What a replacement program continues from its predecessor on the same
 /// route: the public segment numbering ([`HlsOrigin`]'s media sequence
 /// offset, the DVR archive's index, DASH `startNumber`, Smooth fragment
-/// names) and the program timeline ([`DashState`]'s window and the DVR's
+/// names) and the program timeline (`DashState`'s window and the DVR's
 /// `start_pts_ns`), which a fresh `Trunk` would otherwise restart from
 /// segment 1 and position 0. One value per published program, computed once
 /// in [`RouteHandle::publish_program`] so no output keeps its own copy.
