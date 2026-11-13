@@ -19,7 +19,7 @@
 //! leader's fMP4 timeline starts at zero at the first decode time it cut on
 //! (the follower's timeline origin, the same one the split-audio followers
 //! use), so cue time `t` is the cue's PTS minus that origin and
-//! `LOCAL 0` is output time `0` ([`MPEGTS_AT_ORIGIN`]).
+//! `LOCAL 0` is output time `0` (`MPEGTS_AT_ORIGIN`).
 //!
 //! # Partial segments and open cues
 //!

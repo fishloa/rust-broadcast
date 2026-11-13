@@ -151,7 +151,7 @@ Computed from `cargo metadata` over normal + build edges **and versioned dev-dep
 14. `rtp-packet-v0.5.0`  
    needs live first: `broadcast-common`
 15. `rtsp-runtime-v0.8.0`  
-   needs live first: `broadcast-auth`
+   needs live first: `broadcast-auth`, `broadcast-common`
 16. `scte104-v0.6.0`  
    needs live first: `broadcast-common`
 17. `srt-runtime-v0.6.0`  
@@ -208,17 +208,17 @@ Computed from `cargo metadata` over normal + build edges **and versioned dev-dep
 42. `dvb-ci-runtime-v0.18.0`  
    needs live first: `v12.0.0`, `broadcast-common`, `dvb-ci`, `mpeg-ts`
 43. `media-doctor-v0.11.0`  
-   needs live first: `v12.0.0`, `broadcast-common`, `broadcast-hls`, `container-probe`, `mpeg-pes`, `mpeg-ts`, `scte35-splice`, `timed-metadata`, `transmux`
-44. `media-plane-v0.7.0`  
-   needs live first: `broadcast-common`, `scte35-splice`, `timed-metadata`, `transmux`
-45. `playout-runtime-v0.3.0`  
+   needs live first: `v12.0.0`, `broadcast-common`, `broadcast-hls`, `container-probe`, `dvb-stream`, `mpeg-pes`, `mpeg-ts`, `scte35-splice`, `timed-metadata`, `transmux`
+44. `playout-runtime-v0.3.0`  
    needs live first: `broadcast-common`, `mp4-emsg`, `scte35-splice`, `ssai-runtime`
+45. `media-plane-v0.7.0`  
+   needs live first: `v12.0.0`, `broadcast-common`, `caption-convert`, `container-probe`, `scte35-splice`, `timed-metadata`, `transmux`
 46. `compliance-probe-v0.4.0`  
    needs live first: `v12.0.0`, `broadcast-common`, `media-doctor`, `media-plane`, `mpeg-ts`, `scte35-splice`, `timed-metadata`
 47. `hls-runtime-v0.9.0`  
-   needs live first: `broadcast-auth`, `broadcast-common`, `broadcast-hls`, `container-probe`, `media-plane`, `mpeg-ts`, `timed-metadata`, `transmux`
+   needs live first: `broadcast-common`, `broadcast-hls`, `container-probe`, `media-plane`, `mpeg-ts`, `timed-metadata`, `transmux`
 48. `multimux-v0.13.0`  
-   needs live first: `v12.0.0`, `broadcast-auth`, `broadcast-common`, `broadcast-hls`, `caption-convert`, `container-probe`, `hls-runtime`, `media-doctor`, `media-plane`, `mpeg-ts`, `rtmp-runtime`, `rtp-packet`, `rtsp-runtime`, `scte35-splice`, `srt-runtime`, `timed-metadata`, `transmux`, `webrtc-runtime`
+   needs live first: `v12.0.0`, `broadcast-auth`, `broadcast-common`, `broadcast-hls`, `caption-convert`, `container-probe`, `dvb-stream`, `hls-runtime`, `media-doctor`, `media-plane`, `mpeg-ts`, `rtmp-runtime`, `rtp-packet`, `rtsp-runtime`, `scte35-splice`, `srt-runtime`, `timed-metadata`, `transmux`, `webrtc-runtime`
 49. `multimux-cli-v0.11.0`  
    needs live first: `multimux`
 
