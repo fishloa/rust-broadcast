@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- The docs of `SegmentWriter::publish_segment`, `ProgressListener::wait_deadline` and `SlotFreedFuture::wait_deadline` state that they park the calling thread and must not run on an async worker (issue #2533).
 ### Added
 - `Trunk::generation`: a counter bumped by every part, segment, event, track-set, segment-start and time-anchor publish (never a sample), for caching a render keyed by the state it was made from.
 - `ServedEgress::is_warm` and `ServedEgress::prepare` (default always warm / no-op): an egress with heavy first-use work says so, so an async host runs `prepare` on a blocking thread instead of on the worker that woke the request.
