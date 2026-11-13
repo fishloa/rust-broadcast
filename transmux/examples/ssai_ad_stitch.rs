@@ -580,6 +580,7 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
     })
 }
 
+#[allow(dead_code)]
 fn main() -> Result<(), Box<dyn Error>> {
     let demo = run()?;
 
