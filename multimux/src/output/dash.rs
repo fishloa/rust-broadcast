@@ -274,24 +274,22 @@ pub fn render_ll_dash_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<
     render_mpd_at_with_flavour(route, origin, DashFlavour::LowLatency)
 }
 
-/// One Period of the MPD: a run of consecutive media segments, closed by the
-/// gap placeholder or the first segment of the next init generation that
-/// follows it (if any).
+/// One Period of the MPD: a run of consecutive media segments of one Period, closed by the
+/// gap placeholder or the first segment of the next Period that follows it (if any).
 struct PeriodRun<'a> {
     segments: &'a [crate::route::DashWindowSegment],
     ended_by: Option<&'a crate::route::DashWindowSegment>,
 }
 
-/// Split `window` into the runs that each become one Period: a run ends at a
-/// gap placeholder (which belongs to no Period) and where the init generation
-/// changes (the new generation opens the next run).
+/// Split `window` into the runs that each become one Period: a run ends at a gap placeholder
+/// (which belongs to no Period) and where the next Period opens (an init generation change,
+/// see [`crate::route::PeriodAnchor`]).
 fn period_runs(window: &[crate::route::DashWindowSegment]) -> Vec<PeriodRun<'_>> {
     let mut runs = Vec::new();
     let mut start = 0;
     for (at, segment) in window.iter().enumerate() {
-        let codec_boundary =
-            at > 0 && at > start && segment.init_generation != window[at - 1].init_generation;
-        if segment.gap || codec_boundary {
+        let period_boundary = at > 0 && at > start && segment.period != window[at - 1].period;
+        if segment.gap || period_boundary {
             if start < at {
                 runs.push(PeriodRun {
                     segments: &window[start..at],
@@ -318,18 +316,40 @@ fn period_runs(window: &[crate::route::DashWindowSegment]) -> Vec<PeriodRun<'_>>
 /// golden can freeze the wall-clock value (`render_mpd` delegates with the
 /// program's own `presentation_origin`). `#[doc(hidden)]` and only reachable from tests.
 ///
-/// Each run of media segments between gap placeholders is its own Period
-/// (ISO/IEC 23009-1 §5.3.2: a Period is a span of the presentation with a
-/// fixed set of encoded versions; `private/specs-verified/dash/iso-23009-1/`
-/// Period clause): the Period ends where the gap begins, and the next one
-/// starts at its first segment's number with the track set that segment was
-/// cut under.
+/// Each run of media segments of one Period is its own `Period` element (ISO/IEC 23009-1
+/// §5.3.2: a Period is a span of the presentation with a fixed set of encoded versions;
+/// `private/specs-verified/dash/23009-1/05-3-2-period.md`). A Period opens at the first segment
+/// after a gap placeholder and at the first segment of a new init generation, including the
+/// first segment of a reloaded route whose init differs from the one it replaced (issue #2611).
+/// See [`render_mpd_at_with_flavour`] for the attributes each Period carries.
 #[doc(hidden)]
 pub fn render_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<String> {
     render_mpd_at_with_flavour(route, origin, DashFlavour::Standard)
 }
 
 /// Render the MPD with an explicit presentation `origin` and `flavour`.
+///
+/// The Period that opened at the presentation's first segment is `id="0"`, `start="PT0S"`
+/// with the presentation's `startNumber` and no `@presentationTimeOffset`. Every later Period
+/// is identified by its [`crate::route::PeriodAnchor`], fixed when it opened, so an MPD update
+/// never changes it (`private/specs-verified/dash/23009-1/05-4_to_5-7.md` §5.4.1):
+///
+/// - `@id` is the Period's ordinal in the presentation (§5.3.2.2: unique, present and unchanged
+///   in a dynamic MPD);
+/// - `@start` is its first segment's nominal MPD start, `(number - startNumber) * @duration`
+///   of the presentation's numbering, and a Period followed by another in the window carries
+///   `@duration` up to that one's `@start` or to the gap that ended it (§5.3.2.1);
+/// - `SegmentTemplate@startNumber` is its first segment's number and
+///   `@presentationTimeOffset` that segment's media start in the template's timescale, so the
+///   first segment presents at the Period start (§5.3.9.5;
+///   `private/specs-verified/dash/dashif-iop-4.3/ch04-06-deployment-scenarios.md` 4.11.4.2).
+///
+/// A Period opened at an init change is neither period-continuous nor period-connected
+/// (§5.3.2.4: both need functionally equivalent Initialization Segments), so no
+/// `urn:mpeg:dash:period-continuity:2015`/`period-connectivity:2015` descriptor is written, and
+/// no `AssetIdentifier`: the route has no asset identity to name, and DASH-IF IOP 5.5.1 forbids
+/// one for a Period without a known continuation
+/// (`private/specs-verified/dash/dashif-iop-4.3/ch05-ad-insertion.md`).
 #[doc(hidden)]
 pub(crate) fn render_mpd_at_with_flavour(
     route: &RouteHandle,
@@ -340,66 +360,76 @@ pub(crate) fn render_mpd_at_with_flavour(
     let window = route.window_segments(program);
     let runs = period_runs(&window);
     let first_number = start_number(route);
-    let nominal_secs = route.target_duration_secs();
-    if runs.is_empty() {
-        if !window.is_empty() {
-            return None;
-        }
-        let init_gen = route
+    let first_period = crate::route::PeriodAnchor {
+        ordinal: 0,
+        first_public_seq: first_number,
+        media_start_ns: 0,
+    };
+    let current_generation = || {
+        route
             .serving(program)
             .map(|s| s.ll_hls().current_init_generation())
-            .unwrap_or_else(|| media_plane::ids::Generation::new(1));
-        return render_period_document(
-            route,
-            origin,
-            &window,
-            &route.track_specs(program),
-            first_number,
-            false,
-            init_gen,
-            flavour,
-        );
-    }
-    if let [only] = runs.as_slice()
-        && only.ended_by.is_none()
-    {
-        let init_gen = window
-            .first()
-            .map(|s| s.init_generation)
-            .or_else(|| {
-                route
-                    .serving(program)
-                    .map(|s| s.ll_hls().current_init_generation())
+            .unwrap_or_else(|| media_plane::ids::Generation::new(1))
+    };
+    let plans: Vec<PeriodPlan<'_>> = match runs.as_slice() {
+        [] if !window.is_empty() => return None,
+        [] => {
+            let anchor = route
+                .serving(program)
+                .map_or(first_period, |s| s.first_period());
+            vec![PeriodPlan {
+                anchor,
+                init_generation: current_generation(),
+                specs: route.track_specs(program),
+                has_segments: anchor != first_period,
+                ended_by: None,
+            }]
+        }
+        runs => runs
+            .iter()
+            .map(|run| {
+                let first = run.segments[0];
+                PeriodPlan {
+                    anchor: first.period.unwrap_or(first_period),
+                    init_generation: first.init_generation,
+                    specs: if run.ended_by.is_some() {
+                        route.track_specs_at(program, first.segment_seq)
+                    } else {
+                        route.track_specs(program)
+                    },
+                    has_segments: true,
+                    ended_by: run.ended_by,
+                }
             })
-            .unwrap_or_else(|| media_plane::ids::Generation::new(1));
+            .collect(),
+    };
+    if let [only] = plans.as_slice()
+        && only.ended_by.is_none()
+        && only.anchor == first_period
+    {
         return render_period_document(
             route,
             origin,
             &window,
-            &route.track_specs(program),
+            &only.specs,
             first_number,
-            true,
-            init_gen,
+            only.has_segments,
+            only.init_generation,
             flavour,
         );
     }
+    let nominal_secs = route.target_duration_secs();
     let mut mpd: Option<broadcast_dash::Mpd> = None;
-    for (index, run) in runs.iter().enumerate() {
-        let first = run.segments[0];
-        let specs = if run.ended_by.is_some() {
-            route.track_specs_at(program, first.segment_seq)
-        } else {
-            route.track_specs(program)
-        };
-        let init_gen = first.init_generation;
+    for plan in &plans {
+        let anchor = plan.anchor;
         let Some(xml) = render_period_document(
             route,
             origin,
             &window,
-            &specs,
-            first.public_seq,
-            true,
-            init_gen,
+            &plan.specs,
+            anchor.first_public_seq,
+            plan.has_segments,
+            plan.init_generation,
             flavour,
         ) else {
             continue;
@@ -409,15 +439,16 @@ pub(crate) fn render_mpd_at_with_flavour(
             continue;
         }
         let mut period = parsed.periods.remove(0);
-        let start = period_start(first.public_seq, first_number, nominal_secs)?;
-        period.id = Some(index.to_string());
+        let start = period_start(anchor.first_public_seq, first_number, nominal_secs)?;
+        period.id = Some(anchor.ordinal.to_string());
         period.start = Some(start);
-        period.duration = match run.ended_by {
-            Some(gap) => {
-                Some(period_start(gap.public_seq, first_number, nominal_secs)?.checked_sub(start)?)
+        period.duration = match plan.ended_by {
+            Some(end) => {
+                Some(period_start(end.public_seq, first_number, nominal_secs)?.checked_sub(start)?)
             }
             None => None,
         };
+        set_presentation_time_offset(&mut period, anchor.media_start_ns)?;
         match mpd.as_mut() {
             Some(base) => base.periods.push(period),
             None => {
@@ -427,6 +458,41 @@ pub(crate) fn render_mpd_at_with_flavour(
         }
     }
     mpd?.to_xml().ok()
+}
+
+/// What one `Period` element is rendered from.
+struct PeriodPlan<'a> {
+    anchor: crate::route::PeriodAnchor,
+    init_generation: media_plane::ids::Generation,
+    specs: Vec<TrackSpec>,
+    has_segments: bool,
+    ended_by: Option<&'a crate::route::DashWindowSegment>,
+}
+
+/// Set `@presentationTimeOffset` on every `SegmentTemplate` of `period` to `media_start_ns` in
+/// that template's timescale, rounded to the nearest tick (left absent when it is zero, the attribute's default). `None` if
+/// the offset does not fit the attribute.
+fn set_presentation_time_offset(
+    period: &mut broadcast_dash::Period,
+    media_start_ns: u64,
+) -> Option<()> {
+    for adaptation_set in &mut period.adaptation_sets {
+        let templates = std::iter::once(&mut adaptation_set.segment).chain(
+            adaptation_set
+                .representations
+                .iter_mut()
+                .map(|r| &mut r.segment),
+        );
+        for template in templates.filter_map(|layer| layer.template.as_mut()) {
+            let timescale = template.multi.base.timescale.unwrap_or(1);
+            let nanos_per_sec = u128::from(broadcast_common::units::NANOS_PER_SEC);
+            let ticks = (u128::from(media_start_ns) * u128::from(timescale) + nanos_per_sec / 2)
+                / nanos_per_sec;
+            let ticks = u64::try_from(ticks).ok()?;
+            template.multi.base.presentation_time_offset = (ticks > 0).then_some(ticks);
+        }
+    }
+    Some(())
 }
 
 fn period_start(public_seq: u64, first_number: u64, nominal_secs: f64) -> Option<Duration> {
@@ -1662,5 +1728,254 @@ mod tests {
             mpd.contains("urn:scte:scte35:2013:bin"),
             "InbandEventStream must use the SCTE-35 scheme URI: {mpd}"
         );
+    }
+
+    /// The facts of one rendered `Period` the issue #2611 rules are checked against.
+    #[derive(Debug, PartialEq)]
+    struct PeriodFacts {
+        id: String,
+        start: Duration,
+        duration: Option<Duration>,
+        start_number: u64,
+        presentation_time_offset: Option<u64>,
+        timescale: u64,
+        template_duration: u64,
+    }
+
+    fn period_facts(mpd: &str) -> Vec<PeriodFacts> {
+        let parsed = broadcast_dash::Mpd::parse(mpd.as_bytes()).expect("the MPD parses");
+        parsed
+            .periods
+            .iter()
+            .map(|period| {
+                let template = period.adaptation_sets[0].representations[0]
+                    .segment
+                    .template
+                    .as_ref()
+                    .expect("a SegmentTemplate");
+                PeriodFacts {
+                    id: period.id.clone().expect("Period@id"),
+                    start: period.start.expect("Period@start"),
+                    duration: period.duration,
+                    start_number: template.multi.start_number.expect("startNumber"),
+                    presentation_time_offset: template.multi.base.presentation_time_offset,
+                    timescale: template.multi.base.timescale.expect("timescale"),
+                    template_duration: template.multi.duration.unwrap_or_default(),
+                }
+            })
+            .collect()
+    }
+
+    fn validate_against_ed6_schema(mpd: &str, name: &str) {
+        if let Some(schema) = test_fixtures::process::xsd::dash_mpd_schema("multimux dash") {
+            test_fixtures::process::xsd::validate(&schema, name, mpd)
+                .unwrap_or_else(|e| panic!("{name} fails the ISO ed6 MPD schema: {e}\n{mpd}"));
+        }
+    }
+
+    fn reload_route() -> RouteHandle {
+        RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration_secs(4.0)
+                .with_part_target_ms(500)
+                .with_window_segments(3),
+        )
+    }
+
+    /// A route that published `init` and segments `1..=3`, and its replacement continuing it
+    /// ([`RouteHandle::continue_from`]) with its program published and its init set to
+    /// `new_init`, before its first segment.
+    fn replaced(init: Vec<u8>, new_init: Vec<u8>) -> (RouteHandle, RouteHandle) {
+        let program = crate::route::SPTS_PROGRAM_ID;
+        let old = reload_route();
+        old.publish_new_program(program);
+        old.set_init(program, init);
+        old.set_track_specs(program, vec![video_spec(TrackId::new(1))]);
+        for seq in 1..=3 {
+            old.add_segment(program, seg(seq, 4.0))
+                .expect("add_segment");
+        }
+        let new = reload_route();
+        new.continue_from(&old);
+        new.publish_new_program(program);
+        new.set_init(program, new_init);
+        new.set_track_specs(program, vec![video_spec(TrackId::new(1))]);
+        (old, new)
+    }
+
+    const RELOAD_NOW_SECS: u64 = 1_700_000_000;
+
+    /// Issue #2611, ISO/IEC 23009-1 §5.3.2.1/§5.3.9.5: a replacement whose init differs opens
+    /// a new Period at its first segment. The Period's `@start` is that segment's MPD start on
+    /// the presentation's numbering, so the replaced Period (open-ended in the old MPD) ends
+    /// exactly there; `startNumber` is the segment's own number and `@presentationTimeOffset`
+    /// its media start, so it presents at the Period start.
+    #[test]
+    fn a_replacement_with_a_different_init_opens_a_new_period_at_its_first_segment() {
+        let program = crate::route::SPTS_PROGRAM_ID;
+        let now = UNIX_EPOCH + Duration::from_secs(RELOAD_NOW_SECS);
+        let (old, new) = replaced(vec![0xA1; 8], vec![0xB2; 8]);
+        let before = period_facts(&render_mpd_at(&old, now).expect("old MPD"));
+        assert_eq!(before.len(), 1);
+        assert_eq!(before[0].id, "0");
+        assert_eq!(before[0].start, Duration::ZERO);
+
+        new.add_segment(program, seg(1, 4.0)).expect("add_segment");
+        let mpd = render_mpd_at(&new, now).expect("new MPD");
+        let after = period_facts(&mpd);
+        assert_eq!(after.len(), 1, "{mpd}");
+        let period = &after[0];
+        assert_ne!(period.id, before[0].id, "a new Period has a new id: {mpd}");
+        assert_eq!(period.id, "1", "{mpd}");
+        assert_eq!(
+            period.start_number,
+            new.window_segments(program)[0].public_seq,
+            "startNumber is the first new segment's number: {mpd}"
+        );
+        assert!(
+            period.start_number > 3,
+            "the numbering continues past the replaced route's: {mpd}"
+        );
+        let ticks_per_segment = before[0].template_duration;
+        let elapsed_ticks = (period.start_number - before[0].start_number) * ticks_per_segment;
+        assert_eq!(
+            period.start,
+            Duration::from_secs(elapsed_ticks / before[0].timescale),
+            "Period@start is the first new segment's MPD start on the replaced numbering: {mpd}"
+        );
+        assert_eq!(
+            period.presentation_time_offset,
+            Some(elapsed_ticks),
+            "@presentationTimeOffset is the first new segment's media start: {mpd}"
+        );
+        validate_against_ed6_schema(&mpd, "reload-new-period");
+    }
+
+    /// The MPD a replacement serves before its first segment already names the Period that
+    /// segment will open, so no update ever shows the new init's Representation under the
+    /// replaced Period's id (§5.4.1).
+    #[test]
+    fn before_its_first_segment_a_changed_replacement_already_lists_the_new_period() {
+        let program = crate::route::SPTS_PROGRAM_ID;
+        let now = UNIX_EPOCH + Duration::from_secs(RELOAD_NOW_SECS);
+        let (_old, new) = replaced(vec![0xA1; 8], vec![0xB2; 8]);
+        let empty = period_facts(&render_mpd_at(&new, now).expect("MPD before a segment"));
+        new.add_segment(program, seg(1, 4.0)).expect("add_segment");
+        let first = period_facts(&render_mpd_at(&new, now).expect("MPD after a segment"));
+        assert_eq!(empty, first);
+    }
+
+    /// §5.4.1: `Period@id`, `@start`, `startNumber` and `@presentationTimeOffset` never change
+    /// in an MPD update, even once the window has slid past the Period's first segment.
+    #[test]
+    fn a_reload_period_keeps_its_identity_as_the_window_slides() {
+        let program = crate::route::SPTS_PROGRAM_ID;
+        let now = UNIX_EPOCH + Duration::from_secs(RELOAD_NOW_SECS);
+        let (_old, new) = replaced(vec![0xA1; 8], vec![0xB2; 8]);
+        new.add_segment(program, seg(1, 4.0)).expect("add_segment");
+        let opened = period_facts(&render_mpd_at(&new, now).expect("MPD"));
+        for seq in 2..=6 {
+            new.add_segment(program, seg(seq, 4.0))
+                .expect("add_segment");
+            let mpd = render_mpd_at(&new, now).expect("MPD");
+            assert_eq!(period_facts(&mpd), opened, "after segment {seq}: {mpd}");
+        }
+    }
+
+    /// The in-stream Periods keep their identity too: once the window has slid past the first
+    /// Period entirely, the second is still `id="1"` starting at its own first segment, not
+    /// renumbered to the window's front.
+    #[test]
+    fn an_init_change_period_keeps_its_identity_once_the_earlier_period_slid_out() {
+        let program = crate::route::SPTS_PROGRAM_ID;
+        let now = UNIX_EPOCH + Duration::from_secs(RELOAD_NOW_SECS);
+        let route = reload_route();
+        route.publish_new_program(program);
+        route.set_init(program, vec![0xA1; 8]);
+        route.set_track_specs(program, vec![video_spec(TrackId::new(1))]);
+        for seq in 1..=2 {
+            route
+                .add_segment(program, seg(seq, 4.0))
+                .expect("add_segment");
+        }
+        route.set_init(program, vec![0xB2; 8]);
+        route
+            .add_segment(program, seg(3, 4.0))
+            .expect("add_segment");
+        let both = period_facts(&render_mpd_at(&route, now).expect("MPD"));
+        assert_eq!(both.len(), 2);
+        assert_eq!(
+            both[0].duration.map(|d| both[0].start + d),
+            Some(both[1].start),
+            "the earlier Period ends where the next one starts"
+        );
+        for seq in 4..=6 {
+            route
+                .add_segment(program, seg(seq, 4.0))
+                .expect("add_segment");
+        }
+        let mpd = render_mpd_at(&route, now).expect("MPD");
+        let later = period_facts(&mpd);
+        assert_eq!(later.len(), 1, "{mpd}");
+        assert_eq!(later[0], both[1], "{mpd}");
+        validate_against_ed6_schema(&mpd, "slid-period");
+    }
+
+    /// Issue #2611's other half: a byte-identical init continues the replaced Period, unchanged.
+    #[test]
+    fn a_replacement_with_an_identical_init_stays_in_the_same_period() {
+        let program = crate::route::SPTS_PROGRAM_ID;
+        let now = UNIX_EPOCH + Duration::from_secs(RELOAD_NOW_SECS);
+        let (old, new) = replaced(vec![0xA1; 8], vec![0xA1; 8]);
+        let before = period_facts(&render_mpd_at(&old, now).expect("old MPD"));
+        new.add_segment(program, seg(1, 4.0)).expect("add_segment");
+        let mpd = render_mpd_at(&new, now).expect("new MPD");
+        assert_eq!(period_facts(&mpd), before, "{mpd}");
+        assert_eq!(
+            new.window_segments(program)[0].init_generation,
+            media_plane::ids::Generation::new(1),
+            "no new init generation"
+        );
+        validate_against_ed6_schema(&mpd, "reload-same-period");
+    }
+
+    /// §5.3.2.4: continuity and connectivity both need functionally equivalent Initialization
+    /// Segments, which an init change rules out; and with no asset identity there is no
+    /// `AssetIdentifier` (DASH-IF IOP 5.5.1). None of the three is written.
+    #[test]
+    fn a_period_opened_by_an_init_change_signals_no_continuity_connectivity_or_asset() {
+        let program = crate::route::SPTS_PROGRAM_ID;
+        let now = UNIX_EPOCH + Duration::from_secs(RELOAD_NOW_SECS);
+        let (_old, new) = replaced(vec![0xA1; 8], vec![0xB2; 8]);
+        new.add_segment(program, seg(1, 4.0)).expect("add_segment");
+        let parsed = broadcast_dash::Mpd::parse(render_mpd_at(&new, now).expect("MPD").as_bytes())
+            .expect("parses");
+        for period in &parsed.periods {
+            assert!(period.asset_identifier.is_none());
+            assert!(period.supplemental_properties.is_empty());
+            for adaptation_set in &period.adaptation_sets {
+                assert!(adaptation_set.supplemental_properties.is_empty());
+            }
+        }
+    }
+
+    /// `MPD@publishTime` keeps increasing across the hand-off and `availabilityStartTime` /
+    /// `minimumUpdatePeriod` stay as they were (ISO/IEC 23009-1 §5.3.1.2, §5.4.1).
+    #[test]
+    fn a_reload_keeps_the_mpd_level_timing() {
+        let program = crate::route::SPTS_PROGRAM_ID;
+        let now = UNIX_EPOCH + Duration::from_secs(RELOAD_NOW_SECS);
+        let (old, new) = replaced(vec![0xA1; 8], vec![0xB2; 8]);
+        let before = broadcast_dash::Mpd::parse(render_mpd_at(&old, now).expect("old").as_bytes())
+            .expect("parses");
+        new.add_segment(program, seg(1, 4.0)).expect("add_segment");
+        let after = broadcast_dash::Mpd::parse(render_mpd_at(&new, now).expect("new").as_bytes())
+            .expect("parses");
+        assert_eq!(
+            after.availability_start_time_us,
+            before.availability_start_time_us
+        );
+        assert_eq!(after.minimum_update_period, before.minimum_update_period);
+        assert!(after.publish_time_us > before.publish_time_us);
     }
 }
