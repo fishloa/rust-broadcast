@@ -361,7 +361,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_bad_sdp_fails_the_route_with_the_sdp_error() {
+    async fn a_bad_sdp_is_an_invalid_route_config() {
         let socket = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
         let route = RtpUdpRoute::with_socket("cam-udp", "not an sdp", socket);
         let error = run_rtp_udp(
@@ -375,7 +375,7 @@ mod tests {
         assert!(
             matches!(
                 error,
-                MultimuxError::Connect { .. } | MultimuxError::Sdp { .. }
+                MultimuxError::ConfigInvalid { field, .. } if field == "udp.sdp"
             ),
             "{error:?}"
         );
