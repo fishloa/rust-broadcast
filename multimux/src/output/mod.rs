@@ -32,6 +32,8 @@ pub mod smooth;
 // feature doc).
 #[cfg(feature = "whep")]
 pub mod whep;
+#[cfg(feature = "whep")]
+mod whep_socket;
 
 use std::sync::Arc;
 

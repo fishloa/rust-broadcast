@@ -129,6 +129,7 @@ use crate::webrtc_session::{
 };
 
 use crate::error::{MultimuxError, Result};
+use crate::output::whep_socket::{Attachment, Inbound, SharedSockets};
 use axum::response::IntoResponse as _;
 
 /// Default cap on concurrently admitted WHEP viewers per route — mirrors
@@ -140,10 +141,6 @@ pub const DEFAULT_WHEP_MAX_SESSIONS: usize = 64;
 /// Bound on the accept-pump's admission channel — see
 /// `crate::source::whip::ACCEPT_QUEUE_CAPACITY`'s identical reasoning.
 const ACCEPT_QUEUE_CAPACITY: usize = 32;
-
-/// Max UDP datagram this output reads in one `recv` — matches
-/// `crate::source::whip::MAX_UDP_DATAGRAM`.
-const MAX_UDP_DATAGRAM: usize = 1500;
 
 /// Ends a WHEP session (freeing its `active_sessions` slot) once no inbound
 /// datagram — STUN, DTLS, or SRTP/RTCP, valid or not — has arrived for this
@@ -219,7 +216,12 @@ impl WhepRoute {
 /// the time this exists (see the module doc) — what remains is the media
 /// session itself.
 struct AdmittedWhep {
+    /// The route's shared media socket, which the session sends through.
     socket: Arc<UdpSocket>,
+    /// Datagrams the shared socket's demux routed to this session.
+    inbound: mpsc::Receiver<Inbound>,
+    /// Unregisters the session from the shared socket when it ends.
+    attachment: Attachment,
     /// The sans-IO [`MediaTransport`], owned outright (SP6.3): the session
     /// task drives it by value and holds no lock across `send_to().await`.
     media: MediaTransport,
@@ -446,6 +448,8 @@ struct WhepServeState {
     max_sessions: usize,
     /// Live session resources, keyed by the id in the `Location` URL.
     resources: Arc<ResourceTable<WhepSession>>,
+    /// The route's media sockets, shared by all its viewers.
+    sockets: Arc<SharedSockets>,
     /// Packetisations shared by every viewer of this route.
     packets: Arc<PacketCache>,
 }
@@ -466,6 +470,7 @@ impl WhepServeState {
             active_sessions: Arc::new(AtomicUsize::new(0)),
             max_sessions,
             resources: ResourceTable::new(),
+            sockets: Arc::default(),
             packets: Arc::default(),
         }
     }
@@ -652,14 +657,13 @@ async fn whep_post_inner(
     let advertise_ip = local
         .map(|a| a.ip())
         .unwrap_or_else(|| loopback_ip_for(peer));
-    let socket = UdpSocket::bind((advertise_ip, 0))
-        .await
+    let shared = state
+        .sockets
+        .socket_for(advertise_ip)
         .map_err(|e| MultimuxError::Connect {
             reason: format!("whep: bind media socket on {advertise_ip}: {e}"),
         })?;
-    let local_addr = socket.local_addr().map_err(|e| MultimuxError::Connect {
-        reason: format!("whep: media socket local_addr: {e}"),
-    })?;
+    let local_addr = shared.local_addr();
 
     let setup_role = choose_setup_role(parsed.setup.as_deref());
     let local_ice_ufrag = crate::secure_random::token(8);
@@ -682,6 +686,10 @@ async fn whep_post_inner(
     .map_err(|e| MultimuxError::Connect {
         reason: format!("whep: build media transport: {e}"),
     })?;
+
+    let Some((attachment, inbound)) = shared.attach(&local_ice_ufrag) else {
+        return Ok(axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response());
+    };
 
     for raw in &parsed.candidates {
         let _ = media.add_remote_candidate(raw);
@@ -720,7 +728,9 @@ async fn whep_post_inner(
     );
 
     let admitted = AdmittedWhep {
-        socket: Arc::new(socket),
+        socket: shared.socket(),
+        inbound,
+        attachment,
         media,
         spec,
         pt: parsed.payload_type,
@@ -841,6 +851,7 @@ pub async fn serve_whep_for_test_with_trunk(
         active_sessions: Arc::new(AtomicUsize::new(0)),
         max_sessions: 64,
         resources: ResourceTable::new(),
+        sockets: Arc::default(),
         packets: Arc::default(),
     });
     (whep_router(state, verifier), CancellationToken::new())
@@ -1313,6 +1324,8 @@ async fn run_whep_session_with_silence_timeout(
 ) {
     let AdmittedWhep {
         socket,
+        mut inbound,
+        attachment,
         mut media,
         spec,
         pt,
@@ -1332,7 +1345,6 @@ async fn run_whep_session_with_silence_timeout(
     let mut peer_addr: Option<SocketAddr> = None;
     let mut handshake_done = false;
     let mut next_seq: u16 = 0;
-    let mut buf = vec![0u8; MAX_UDP_DATAGRAM];
     // RFC 7675 consent-freshness bound (issue r07-C11) — updated only when
     // `handle_datagram` returns `Ok` *and* [`is_liveness_event`] accepts at
     // least one of the produced events (a decrypted RTP/RTCP packet, or the
@@ -1372,15 +1384,18 @@ async fn run_whep_session_with_silence_timeout(
         ice.candidates
             .fetch_add(applied.candidates, Ordering::Relaxed);
         ice.restarts.fetch_add(applied.restarts, Ordering::Relaxed);
+        for ufrag in &applied.restart_ufrags {
+            attachment.register_ufrag(ufrag);
+        }
         // The transport's own next ICE/DTLS deadline (defect 1, WHEP): drive
         // it directly instead of only on the fixed poll tick so retransmits
         // fire at the transport's scheduled instant.
         let poll_deadline = media.poll_timeout();
         tokio::select! {
-            received = socket.recv_from(&mut buf) => match received {
-                Ok((n, peer)) => {
+            received = inbound.recv() => match received {
+                Some(Inbound { peer, bytes }) => {
                     peer_addr = Some(peer);
-                    match media.handle_datagram(Instant::now(), peer, &buf[..n]) {
+                    match media.handle_datagram(Instant::now(), peer, &bytes) {
                         Ok(events) => {
                             if events.iter().any(is_liveness_event) {
                                 last_inbound = Instant::now();
@@ -1414,8 +1429,8 @@ async fn run_whep_session_with_silence_timeout(
                         }
                     }
                 }
-                Err(e) => {
-                    tracing::warn!(error = %e, "whep: session socket read failed");
+                None => {
+                    tracing::warn!("whep: session inbound queue closed");
                     break;
                 }
             },
@@ -1616,6 +1631,7 @@ pub async fn run_whep_on_probed(
         active_sessions: Arc::clone(&active_sessions),
         max_sessions,
         resources,
+        sockets: Arc::default(),
         packets: Arc::default(),
     });
     let serve_cancel = cancel.clone();
@@ -1889,6 +1905,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             active_sessions: Arc::clone(&active),
             max_sessions,
             resources: ResourceTable::new(),
+            sockets: Arc::default(),
             packets: Arc::default(),
         });
         (whep_router(state, verifier), active, rx)
@@ -2075,12 +2092,15 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
     }
 
     async fn test_admitted_whep() -> AdmittedWhep {
-        let s = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-        s.set_nonblocking(true).unwrap();
+        let shared = SharedSockets::default()
+            .socket_for("127.0.0.1".parse().unwrap())
+            .unwrap();
+        let ufrag = crate::secure_random::token(8);
+        let (attachment, inbound) = shared.attach(&ufrag).unwrap();
         let media = MediaTransport::new(
             MediaTransportConfig {
-                local_addr: "127.0.0.1:0".parse().unwrap(),
-                local_ice_ufrag: crate::secure_random::token(8),
+                local_addr: shared.local_addr(),
+                local_ice_ufrag: ufrag,
                 local_ice_pwd: crate::secure_random::token(24),
                 remote_ice_ufrag: crate::secure_random::token(8),
                 remote_ice_pwd: crate::secure_random::token(24),
@@ -2095,7 +2115,9 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
         .unwrap();
         let control = SessionControl::new();
         AdmittedWhep {
-            socket: Arc::new(UdpSocket::from_std(s).unwrap()),
+            socket: shared.socket(),
+            inbound,
+            attachment,
             media,
             spec: test_track_spec(),
             pt: 96,
@@ -2598,6 +2620,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
                 active_sessions: Arc::new(AtomicUsize::new(0)),
                 max_sessions: 64,
                 resources: ResourceTable::new(),
+                sockets: Arc::default(),
                 packets: Arc::default(),
             });
             let cancel = CancellationToken::new();

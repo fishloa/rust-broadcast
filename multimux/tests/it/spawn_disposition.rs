@@ -106,28 +106,33 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "output/whep.rs",
-        811,
+        830,
         "WHEP saturated-accept test harness server; cancelled by the returned token",
     ),
     (
         "output/whep.rs",
-        865,
+        886,
         "serve_whep_run_for_test -> run_whep_with_tracker; cancelled by the returned token",
     ),
     (
         "output/whep.rs",
-        903,
+        924,
         "serve_whep_run_probed_for_test -> run_whep_on_probed; cancelled by the returned WhepRunHarness token (test-hooks only)",
     ),
     (
         "output/whep.rs",
-        1524,
+        1638,
         "WHEP signalling server; JOINED before run_whep returns (port-release ordering)",
     ),
     (
         "output/whep.rs",
-        1546,
+        1660,
         "WHEP viewer session on the run's session TaskTracker (close()+wait() on cancel)",
+    ),
+    (
+        "output/whep_socket.rs",
+        74,
+        "the shared media socket's receive loop; owned by its SharedSocket, whose Drop aborts it when the route's state (and every attached viewer) is gone",
     ),
     (
         "origin/mod.rs",
