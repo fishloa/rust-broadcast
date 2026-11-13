@@ -25,8 +25,7 @@ macro_rules! declare_tag_namespace {
         #[non_exhaustive]
         pub enum $Enum<$lt> {
             $(
-                /// `$variant` variant.
-                /// `$variant` variant.
+                #[doc = concat!("The `", stringify!($variant), "` descriptor.")]
             $variant($($path)::+ $(<$plt>)?),
             )+
             /// Tag with no typed implementation; `body` is the payload sans
