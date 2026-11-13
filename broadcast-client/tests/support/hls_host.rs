@@ -157,11 +157,7 @@ impl Host {
         while let Some(action) = self.session.poll(self.now) {
             match action {
                 Action::HttpRequest {
-                    conn,
-                    url,
-                    headers,
-                    byte_range: _,
-                    ..
+                    conn, url, headers, ..
                 } => {
                     let seen = Seen {
                         conn,
