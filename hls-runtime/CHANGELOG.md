@@ -6,6 +6,8 @@ documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- The client's RFC 3339 tests exercise `broadcast_hls::ProgramDateTime::parse`, the parser the client actually uses, instead of a test-only `jiff::Timestamp` copy that rejected the zone-less and whitespace-padded values the production parser accepts (the test-only parser is gone) (#2591).
 ### Removed
 - BREAKING: `server::Container` moved to `transmux::Container` (same variants and methods, `segment_extension` now public); `HlsOriginBuilder` and the origin take and report that type (issue #2554).
 ### Removed
