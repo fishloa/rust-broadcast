@@ -8,8 +8,8 @@ use zeroize::Zeroize;
 /// Length of the entropy seed in bytes.
 pub const ENTROPY_SEED_LEN: usize = 32;
 
-/// Default [`SrtConfig::latency_ms`]: the SRT receiver latency floor (120 ms), which suits a LAN or
-/// a well-provisioned WAN. The negotiated value is the larger of this and the peer's.
+/// Default [`SrtConfig::latency_ms`] (120 ms, libsrt's default), which suits a LAN or a
+/// well-provisioned WAN. The negotiated value is the larger of this and the peer's.
 pub const DEFAULT_LATENCY_MS: u16 = 120;
 /// Default [`SrtConfig::handshake_timeout_ms`]: libsrt's 3 s connect timeout.
 pub const DEFAULT_HANDSHAKE_TIMEOUT_MS: u64 = 3_000;
@@ -125,7 +125,7 @@ impl core::fmt::Debug for SrtEntropySeed {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SrtConfig {
     /// TSBPD latency this side asks for in milliseconds (the connection uses the larger of this
-    /// and the peer's). At least 120: the receiver's floor.
+    /// and the peer's); any value is accepted, a smaller one trades loss recovery for delay.
     pub latency_ms: u16,
     /// Stream id sent in the handshake (an access-control string such as `#!::r=name,m=request`).
     pub stream_id: Option<String>,
@@ -155,9 +155,6 @@ impl Default for SrtConfig {
 impl SrtConfig {
     pub(crate) fn validate(&self) -> Result<(), crate::Error> {
         let invalid = |field| Err(crate::Error::InvalidConfig { field });
-        if self.latency_ms < DEFAULT_LATENCY_MS {
-            return invalid("srt.latency_ms");
-        }
         if self.handshake_timeout_ms == 0 {
             return invalid("srt.handshake_timeout_ms");
         }

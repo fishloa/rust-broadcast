@@ -455,6 +455,8 @@ mod tests {
     use media_plane::trunk::SampleCursor;
     use parking_lot::Mutex as StdMutex;
 
+    const LOW_LATENCY_MS: u16 = 20;
+
     /// Loopback biting test (issue #739): a real `SrtSocket` caller connects
     /// to a real listener-mode `SrtRoute` bound to an ephemeral loopback
     /// port and sends a muxed TS stream in SRT-payload-sized (~1316-byte,
@@ -577,6 +579,58 @@ mod tests {
                 read: Duration::from_millis(300),
             },
         );
+        let route_handle = Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let _ = tokio::time::timeout(
+            Duration::from_secs(60),
+            run_srt_caller(
+                &route,
+                trunk_config(),
+                handshake(),
+                &route_handle,
+                tokio_util::sync::CancellationToken::new(),
+            ),
+        )
+        .await;
+        let trunk = route_handle.await_first_trunk().await;
+        let mut cursor = trunk.subscribe_from_backlog();
+        let total = drain(&mut cursor);
+        assert!(
+            total > 0,
+            "caller-mode SRT must land real samples in the Trunk, got {total}"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn loopback_srt_caller_with_a_low_latency_route_connects_and_yields_samples() {
+        let listener_addr = "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap();
+        let mut listener = SrtListener::bind(
+            listener_addr,
+            HandshakeConfig {
+                latency_ms: LOW_LATENCY_MS,
+                ..HandshakeConfig::default()
+            },
+        )
+        .await
+        .expect("listener bind");
+        let bound_addr = listener.local_addr().expect("listener local addr");
+
+        let ts_bytes = build_ts_bytes(TrackId::new(1), 0xBB, 40);
+        let server = tokio::spawn(async move {
+            let mut sock = listener.accept().await.expect("listener accept");
+            for chunk in ts_bytes.chunks(7 * 188) {
+                sock.send(chunk).await.expect("send TS payload");
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        });
+
+        let route = SrtRoute::new_caller("cam-srt-low-latency", bound_addr.to_string())
+            .with_latency_ms(Some(LOW_LATENCY_MS))
+            .with_timeouts(IngestTimeouts {
+                connect: Duration::from_secs(5),
+                read: Duration::from_millis(300),
+            });
         let route_handle = Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
         let _ = tokio::time::timeout(
             Duration::from_secs(60),

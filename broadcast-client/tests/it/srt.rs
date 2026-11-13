@@ -467,10 +467,23 @@ fn the_entropy_seed_is_required_and_every_attempt_derives_fresh_identifiers() {
 }
 
 #[test]
+fn a_latency_below_the_default_is_accepted_and_the_stream_plays() {
+    let ts = small();
+    let mut sim = SrtSim::open_with_peers(
+        URL,
+        cfg(|c| c.srt.latency_ms = 20),
+        vec![SrtPeer::new(Cipher::Clear, None, 20)],
+    );
+    sim.connect();
+    stream(&mut sim, &ts, 7);
+    finish(&mut sim);
+    assert!(sim.count(|e| matches!(e, Event::Sample { .. })) > 0);
+}
+
+#[test]
 fn bad_srt_settings_are_typed_errors() {
     let open = |f: fn(&mut Config)| Session::open(URL, cfg(f), 0).unwrap_err();
     for (err, field) in [
-        (open(|c| c.srt.latency_ms = 119), "srt.latency_ms"),
         (
             open(|c| c.srt.handshake_timeout_ms = 0),
             "srt.handshake_timeout_ms",
