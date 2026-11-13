@@ -1585,27 +1585,13 @@ async fn serve_with_registry_impl(
         // (a previous process's), or the archive and any HTTP cache would
         // see numbers reused for different media (audit r07-C5, #1083).
         let archive_floor = admin::archive_floor_of(route).await;
-        let store = Arc::new(
-            RouteHandle::new(
-                RouteConfig::default()
-                    .with_target_duration_secs(target_duration_secs)
-                    .with_part_target_ms(part_target_ms)
-                    .with_window_segments(config.window_segments),
-            )
-            .with_archive_floor(archive_floor)
-            .with_name(route.name.clone())
+        let route_config = RouteConfig::default()
+            .with_target_duration_secs(target_duration_secs)
+            .with_part_target_ms(part_target_ms)
+            .with_window_segments(config.window_segments)
             .with_container(route_container(route))
             .with_ts_cut_policy(route.ts_hls_cut.into())
             .with_ts_idr_fallback(route.ts_hls_idr_fallback)
-            // Issue #900: without this, `route.dvr` was validated
-            // (`Route::validate_dvr`) but never actually reached the
-            // `RouteHandle` that `ProgramServing::new` builds a
-            // `DvrRecorder` from — DVR recording configured via
-            // `Config`/JSON silently never ran outside this crate's own
-            // `with_dvr`-calling unit tests. `with_dvr` is a no-op when
-            // `route.dvr.enabled` is `false` (the default), so wiring it
-            // unconditionally is safe for every existing config.
-            .with_dvr(route.dvr.clone())
             .with_program_date_time(config.program_date_time)
             .with_hold_cold_playlist(config.hold_cold_playlist)
             .with_max_concurrent_warms(config.max_concurrent_warms_per_route)
@@ -1614,7 +1600,11 @@ async fn serve_with_registry_impl(
             .with_closed_caption_overrides(route.closed_caption_overrides.clone())
             .with_audio_rendition_sources(route.audio_rendition_sources.clone())
             .with_audio_profiles(route.audio_profiles.clone())
-            .with_subtitles(route.subtitles),
+            .with_subtitles(route.subtitles);
+        let store = Arc::new(
+            RouteHandle::new(route_config)
+                .with_archive_floor(archive_floor)
+                .with_name(route.name.clone()),
         );
         let outputs: Vec<Arc<dyn Output>> = route
             .outputs
