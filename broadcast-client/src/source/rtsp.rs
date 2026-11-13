@@ -54,6 +54,14 @@ enum Req {
 }
 
 impl Req {
+    fn method_name(self) -> &'static str {
+        match self {
+            Self::Describe => "DESCRIBE",
+            Self::Setup(_) => "SETUP",
+            Self::Play => "PLAY",
+        }
+    }
+
     fn answers(self, method: &Method) -> bool {
         match self {
             Self::Describe => *method == Method::Describe,
@@ -596,6 +604,13 @@ impl RtspSource {
             return;
         }
         if !status.is_success() {
+            self.events.push_back(Event::Error {
+                kind: ErrorKind::RequestRefused {
+                    method: req.method_name(),
+                    status: status.to_string(),
+                },
+                fatal: false,
+            });
             self.fail_connection(now);
             return;
         }
