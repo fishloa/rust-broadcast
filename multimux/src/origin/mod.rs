@@ -1595,6 +1595,7 @@ async fn serve_with_registry_impl(
                 .with_dvr(route.dvr.clone())
                 .with_program_date_time(config.program_date_time)
                 .with_hold_cold_playlist(config.hold_cold_playlist)
+                .with_max_concurrent_warms(config.max_concurrent_warms_per_route)
                 .with_declared_bandwidth_bps(route.declared_bandwidth_bps)
                 .with_audio_renditions(route.audio_renditions.clone())
                 .with_closed_caption_overrides(route.closed_caption_overrides.clone())
