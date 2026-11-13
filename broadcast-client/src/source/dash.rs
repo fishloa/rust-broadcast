@@ -24,7 +24,6 @@ use hls_runtime::client::{MasterSelection, RenditionInfo, VariantInfo};
 use transmux::{TrackId, TrackSpec};
 use url::Url;
 
-use crate::auth::AuthState;
 use crate::error::Error;
 use crate::events::{Action, Config, ErrorKind, Event, Status};
 use crate::playout::Source;
@@ -36,6 +35,7 @@ use crate::source::fetch::inflight::{
 use crate::source::fetch::resume::{HeadOutcome, Stash, accept_head};
 use crate::source::fetch::retry::{Backoff, RefusedCapture, retry_after_us};
 use crate::source::fetch::wall::WallClock;
+use broadcast_auth::AuthState;
 
 const MICROS_PER_MILLI: u64 = 1_000;
 const STATUS_FORBIDDEN: u16 = 403;
@@ -242,7 +242,7 @@ pub(crate) struct DashSource {
 }
 
 impl DashSource {
-    pub(crate) fn new(url: &Url, config: &Config, conn_alloc: ConnAlloc) -> Self {
+    pub(crate) fn new(url: &Url, config: &Config, conn_alloc: ConnAlloc, seed: u64) -> Self {
         let mut pull = PullLimits::default();
         pull.policy = Policy::default();
         pull.policy.max_bandwidth = config.variant_policy.max_bandwidth.map(u64::from);
@@ -269,7 +269,7 @@ impl DashSource {
                 manifest: config.max_manifest_bytes,
                 segment: config.max_segment_bytes,
             },
-            backoff: Backoff::new(&config.backoff_ms, config.backoff_cap_ms),
+            backoff: Backoff::new(&config.backoff_ms, config.backoff_cap_ms, seed),
             max_redirects: config.max_redirects,
             max_key_failures: config.max_key_failures,
             mpd_failures: Attempts::default(),
@@ -981,7 +981,7 @@ impl DashSource {
     fn send(&mut self, mut req: Req, auth: &mut AuthState, now: u64) {
         self.flush_refused();
         let mut headers = auth.request_headers(&req.url, now);
-        req.authed = crate::auth::carries_credentials(&headers);
+        req.authed = broadcast_auth::carries_credentials(&headers);
         headers.extend(req.extra.conditional.iter().cloned());
         let method = req.extra.method;
         self.flight

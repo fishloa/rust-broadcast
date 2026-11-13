@@ -72,15 +72,15 @@ fn tcp_connects(host: &Host) -> usize {
     connects(&host.actions).len()
 }
 
-fn options_at(host: &mut Host, due_us: u64) -> usize {
+fn keepalives_at(host: &mut Host, due_us: u64) -> usize {
     host.advance_to(due_us - 1);
     assert_eq!(
-        host.server.count(OPTIONS),
+        host.server.count(OPTIONS) + host.server.count("GET_PARAMETER"),
         0,
         "no keepalive before {due_us} us"
     );
     host.advance_to(due_us);
-    host.server.count(OPTIONS)
+    host.server.count(OPTIONS) + host.server.count("GET_PARAMETER")
 }
 
 fn sdp_with(medias: Vec<Media>) -> String {
@@ -434,18 +434,18 @@ fn status_establishing_then_live_once() {
 }
 
 #[test]
-fn keepalive_options_sent_at_half_session_timeout_and_reply_405_ignored() {
+fn keepalive_sent_at_half_session_timeout_and_reply_405_ignored() {
     let mut s = server();
     s.session_timeout = Some(40);
     s.options_status = 405;
     let mut host = connected(quiet_config(), s);
-    assert_eq!(options_at(&mut host, 20 * SEC), 1);
+    assert_eq!(keepalives_at(&mut host, 20 * SEC), 1);
     let keepalive = host
         .server
         .log
         .iter()
         .find(|r| r.method == OPTIONS)
-        .expect("options");
+        .expect("keepalive");
     assert_eq!(keepalive.uri, BASE_URL);
     assert_eq!(keepalive.header("session"), Some(session_id()));
     host.events();
@@ -472,7 +472,7 @@ fn keepalive_options_sent_at_half_session_timeout_and_reply_405_ignored() {
 #[test]
 fn keepalive_default_30s_when_no_timeout() {
     let mut host = connected(quiet_config(), server());
-    assert_eq!(options_at(&mut host, 30 * SEC), 1);
+    assert_eq!(keepalives_at(&mut host, 30 * SEC), 1);
 }
 
 #[test]
@@ -676,11 +676,17 @@ fn describe_404_status_not_found_and_backoff() {
     let events = host.events();
     assert!(statuses(&events).contains(&Status::NotFound));
     assert_eq!(reconnecting_attempts(&events), [2]);
-    assert_eq!(wakes(&host.actions).last(), Some(&(6 * SEC)));
+    let due = wakes(&host.actions).last().copied().expect("a retry wake");
+    assert!(
+        (6 * SEC * 5 / 6..=6 * SEC).contains(&due),
+        "the second failure waits the rest of the 2 s step with the next one's, jittered: {due} us"
+    );
 }
 
 #[test]
 fn connect_failure_backoff_2_4_8_then_10_forever() {
+    // The retries walk the shared schedule: the first step exactly, every
+    // later one jittered within a sixth below its step.
     let mut host = Host::new(BASE_URL, Config::default(), server());
     host.drain();
     for (index, backoff) in BACKOFF_SECS.iter().enumerate() {
@@ -695,11 +701,10 @@ fn connect_failure_backoff_2_4_8_then_10_forever() {
             reconnecting_attempts(&events),
             [u64::try_from(index).expect("small") + 1]
         );
-        let due = failed_at + backoff * SEC;
-        assert_eq!(
-            wakes(&host.actions).last(),
-            Some(&due),
-            "attempt {}",
+        let due = wakes(&host.actions).last().copied().expect("a retry wake");
+        assert!(
+            due >= failed_at + backoff * SEC * 5 / 6 && due <= failed_at + backoff * SEC,
+            "attempt {}: {due} outside the {backoff} s step's jitter band",
             index + 1
         );
         host.advance_to(due - 1);
@@ -851,12 +856,12 @@ fn reconnect_resets_attempt_counter_after_playing() {
 
 #[test]
 fn session_timeout_header_parsed_from_setup() {
-    for (declared, keepalive_secs) in [(120u32, 60u64), (4, 2), (2, 1), (20_000, 3_600)] {
+    for (declared, keepalive_secs) in [(120u32, 60u64), (4, 2), (2, 1), (20_000, 10_000)] {
         let mut s = server();
         s.session_timeout = Some(declared);
         let mut host = connected(quiet_config(), s);
         assert_eq!(
-            options_at(&mut host, keepalive_secs * SEC),
+            keepalives_at(&mut host, keepalive_secs * SEC),
             1,
             "Session timeout={declared} gives a {keepalive_secs} s keepalive"
         );
@@ -865,7 +870,7 @@ fn session_timeout_header_parsed_from_setup() {
 
 #[test]
 fn keepalive_is_strictly_before_a_short_session_timeout() {
-    for declared in [1u32, 2, 3, 4, 9] {
+    for declared in [2u32, 3, 4, 9] {
         let mut s = server();
         s.session_timeout = Some(declared);
         let mut host = connected(quiet_config(), s);

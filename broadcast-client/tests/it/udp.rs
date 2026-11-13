@@ -93,6 +93,17 @@ fn a_multicast_url_asks_the_host_to_bind_and_join_the_group() {
 }
 
 #[test]
+fn an_ipv6_group_carries_the_interface_index_to_the_host() {
+    let config = config_with(|cfg| cfg.udp.interface_index = Some(7));
+    let mut s = Session::open("udp://[ff02::1]:5000", config, 0).unwrap();
+    let Action::UdpBind { multicast, .. } = bind_of(&mut s) else {
+        unreachable!()
+    };
+    let join = multicast.expect("a multicast join");
+    assert_eq!((join.interface, join.interface_index), (None, Some(7)));
+}
+
+#[test]
 fn a_unicast_or_at_prefixed_url_binds_without_a_join() {
     for url in [
         "udp://127.0.0.1:5000",
@@ -157,6 +168,16 @@ fn bad_udp_urls_and_configs_are_typed_errors() {
             GROUP,
             udp_cfg(|c| c.source = v4(239, 1, 1, 2)),
             "udp.source",
+        ),
+        (
+            "udp://127.0.0.1:5000",
+            udp_cfg(|c| c.interface_index = Some(2)),
+            "udp.interface_index",
+        ),
+        (
+            GROUP,
+            udp_cfg(|c| c.interface_index = Some(2)),
+            "udp.interface_index",
         ),
         (
             GROUP,
@@ -443,11 +464,56 @@ fn a_backward_jump_beyond_the_window_is_a_restart_and_a_forward_jump_is_loss() {
     let stats = host.session.datagram_stats();
     assert_eq!(stats.lost, u64::from(window) + 100);
     assert_eq!(stats.resyncs, 0);
-    let behind = rtp_datagram(10, SSRC_A, MP2T_PAYLOAD_TYPE, &ts[..7 * TS_PACKET]);
-    host.datagram(&behind);
+    let mut run = rtp_datagrams(&ts, 7, 10, SSRC_A);
+    run.truncate(4);
+    for d in &run {
+        host.datagram(d);
+    }
     let stats = host.session.datagram_stats();
     assert_eq!(stats.resyncs, 1);
     assert!(host.count(|e| matches!(e, Event::Discontinuity)) >= 1);
+}
+
+/// The input the pre-unification handlers disagreed on: one duplicate
+/// arriving far behind the delivery point, with no run after it. RFC 3550
+/// §A.1 makes that a wild jump — the packet is discarded and `bad_seq` armed
+/// for confirmation — so it must not move the sequence space; the
+/// pre-unification heuristic resynced onto it and reported a discontinuity.
+#[test]
+fn a_single_far_behind_duplicate_is_not_a_restart() {
+    let ts = small();
+    let rtp = rtp_datagrams(&ts, 7, 0, SSRC_A);
+    let mut host = UdpHost::open("rtp://239.1.1.1:5000", Config::default());
+    host.datagram(&rtp[0]);
+    host.datagram(&rtp[1]);
+    host.datagram(&rtp[2]);
+    host.advance_to(2 * UdpConfig::default().reorder_wait_us);
+    let behind = u16::MAX - 200;
+    let misordered = rtp_datagram(
+        behind,
+        SSRC_A,
+        MP2T_PAYLOAD_TYPE,
+        &ts[7 * TS_PACKET..14 * TS_PACKET],
+    );
+    host.datagram(&misordered);
+    let stats = host.session.datagram_stats();
+    assert_eq!(stats.resyncs, 0, "a stray packet is not a restart");
+    assert_eq!(host.count(|e| matches!(e, Event::Discontinuity)), 0);
+}
+
+#[test]
+fn payload_bytes_counts_delivered_ts_and_not_dropped_datagrams() {
+    let ts = small();
+    let good = ts_datagrams(&ts, 7);
+    let mut host = UdpHost::open(GROUP, Config::default());
+    host.datagram(&good[0][..TS_PACKET - 1]);
+    assert_eq!(host.session.payload_bytes(), 0);
+    host.datagram(&good[0]);
+    host.datagram(&good[1]);
+    assert_eq!(
+        host.session.payload_bytes(),
+        (good[0].len() + good[1].len()) as u64
+    );
 }
 
 #[test]

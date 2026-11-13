@@ -27,6 +27,11 @@
 
 use core::fmt;
 
+use crate::error::BufferTooShort;
+
+/// Bits in one byte: the unit every `BufferTooShort` count is expressed in.
+const BITS_PER_BYTE: usize = 8;
+
 /// Error from a [`BitReader`] / [`BitWriter`] operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -73,6 +78,41 @@ impl fmt::Display for BitError {
 }
 
 impl core::error::Error for BitError {}
+
+impl From<BitError> for BufferTooShort {
+    /// The one conversion from a bit-level failure to the workspace's
+    /// [`BufferTooShort`], which counts **bytes** (its `Display` says
+    /// "bytes"), never bits. [`BitError::OutOfBounds`] carries the bits a
+    /// read needed and the bits that were left, and an adapter may report
+    /// either as a width (`need 17 bits, 6 left`) or as a position (`needed
+    /// 17, 8 remaining`), so both are read the same way: `need` is the larger
+    /// rounded up to a whole byte and `have` the smaller rounded down. A
+    /// partial byte therefore never counts as a whole one available, and a
+    /// read that needs one more bit asks for one more byte.
+    ///
+    /// A [`BitError::TooManyBits`] or [`BitError::ValueTooWide`] is not a
+    /// short buffer and becomes `need: 0, have: 0`: a caller with a typed
+    /// "wider than 64 bits" / "value does not fit" error converts that
+    /// itself, and one that does not still gets a `BufferTooShort` naming no
+    /// real shortfall rather than a fabricated byte count.
+    fn from(error: BitError) -> Self {
+        match error {
+            BitError::OutOfBounds {
+                needed_bits,
+                remaining_bits,
+            } => BufferTooShort {
+                need: needed_bits.max(remaining_bits).div_ceil(BITS_PER_BYTE),
+                have: needed_bits.min(remaining_bits) / BITS_PER_BYTE,
+                what: "",
+            },
+            BitError::TooManyBits { .. } | BitError::ValueTooWide { .. } => BufferTooShort {
+                need: 0,
+                have: 0,
+                what: "",
+            },
+        }
+    }
+}
 
 /// Reads fields MSB-first from a borrowed byte slice.
 #[derive(Debug, Clone)]
@@ -157,10 +197,13 @@ impl<'a> BitReader<'a> {
     /// Skip `n` bits without interpreting them.
     ///
     /// # Errors
-    /// [`BitError::OutOfBounds`] if fewer than `n` bits remain.
+    /// [`BitError::OutOfBounds`] if fewer than `n` bits remain. The cursor is
+    /// then left at the end of the buffer, never past it, so `bits_remaining`
+    /// stays a real count after a failed skip.
     pub fn skip_bits(&mut self, n: usize) -> Result<(), BitError> {
         let remaining = self.bits_remaining();
         if n > remaining {
+            self.bit_pos = self.total_bits();
             return Err(BitError::OutOfBounds {
                 needed_bits: n,
                 remaining_bits: remaining,
@@ -347,6 +390,104 @@ mod tests {
                 remaining_bits: 1,
             }
         );
+    }
+
+    #[test]
+    fn an_overrun_converts_to_a_byte_shortfall() {
+        // Seven bits left, sixteen wanted: two whole bytes needed and none of
+        // the seven bits left is a whole one.
+        let buf = [0xFFu8];
+        let mut r = BitReader::new(&buf);
+        r.read_bits(1).unwrap();
+        assert_eq!(
+            BufferTooShort::from(r.read_bits(16).unwrap_err()),
+            BufferTooShort {
+                need: 2,
+                have: 0,
+                what: "",
+            }
+        );
+
+        // One bit left, one more wanted: a single byte both spans and holds
+        // the shortfall, so a partial byte rounds up and down to it.
+        let mut r = BitReader::new(&buf);
+        r.read_bits(7).unwrap();
+        assert_eq!(
+            BufferTooShort::from(r.read_bits(2).unwrap_err()),
+            BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "",
+            }
+        );
+
+        // A whole byte available and a two-byte read wanted: the shortfall is
+        // one whole byte, so both counts agree on it.
+        let buf = [0u8; 2];
+        let mut r = BitReader::new(&buf);
+        r.read_bits(8).unwrap();
+        assert_eq!(
+            BufferTooShort::from(r.read_bits(12).unwrap_err()),
+            BufferTooShort {
+                need: 2,
+                have: 1,
+                what: "",
+            }
+        );
+    }
+
+    #[test]
+    fn a_position_and_a_width_convert_alike() {
+        // An adapter reporting the position (12 bits needed) and one reporting
+        // the width (12 bits wanted) both mean two bytes.
+        for error in [
+            BitError::OutOfBounds {
+                needed_bits: 12,
+                remaining_bits: 8,
+            },
+            BitError::OutOfBounds {
+                needed_bits: 12,
+                remaining_bits: 4,
+            },
+        ] {
+            assert_eq!(BufferTooShort::from(error).need, 2);
+        }
+    }
+
+    #[test]
+    fn a_non_shortage_converts_to_no_shortfall() {
+        for error in [
+            BitError::TooManyBits { requested: 65 },
+            BitError::ValueTooWide {
+                value: 0b100,
+                bits: 2,
+            },
+        ] {
+            assert_eq!(
+                BufferTooShort::from(error),
+                BufferTooShort {
+                    need: 0,
+                    have: 0,
+                    what: "",
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn a_failed_skip_leaves_the_cursor_at_the_end() {
+        let buf = [0xFFu8];
+        let mut r = BitReader::new(&buf);
+        r.skip_bits(3).unwrap();
+        assert_eq!(
+            r.skip_bits(9),
+            Err(BitError::OutOfBounds {
+                needed_bits: 9,
+                remaining_bits: 5,
+            })
+        );
+        assert_eq!(r.bits_remaining(), 0, "never past the end");
+        assert_eq!(r.bits_read(), r.total_bits());
     }
 
     #[test]

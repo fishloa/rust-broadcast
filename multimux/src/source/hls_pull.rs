@@ -4,22 +4,15 @@
 //! (RFC 8216bis) playback engine — feeding real fetch bytes in and turning
 //! its `Output`s into [`SessionEvent`]s.
 //!
-//! # Why this reuses `HlsClient`, not `TokioClient`
+//! # Why this drives the sans-IO `HlsClient`
 //!
-//! Before this port, this module wrapped
-//! `hls_runtime::client::tokio_client::TokioClient` — the executor-bound
-//! adapter that owns its own `reqwest` fetch loop internally. That fit the
-//! pre-5a `connect()`/`next_samples()` shape, but it cannot fit
-//! [`IngestSession`]: `TokioClient` performs its own I/O, so there is nothing
-//! for `Stage::feed`/[`IngestSession::poll_transmit`] to drive. `HlsClient`
-//! is the sans-IO core `TokioClient` itself wraps —
-//! `poll() -> Option<Action>` out, `on_playlist`/`on_resource` in — which is
-//! exactly the [`IngestSession::Request`]/`Stage::In` shape round 3 added.
-//! This module is now the *other* adapter over the same sans-IO engine,
-//! parallel to `TokioClient`, driven by [`media_plane::ingress::IngestDriver`] instead of a bespoke
-//! `connect`/`next_samples` pair — so the actual LL-HLS logic (reload
-//! scheduling, part/segment dedup, fMP4/classic-TS demux) is still owned
-//! entirely by `hls-runtime`, never duplicated here.
+//! [`HlsClient`] is the engine — `poll() -> Option<Action>` out,
+//! `on_playlist`/`on_resource` in — which is exactly the
+//! [`IngestSession::Request`]/`Stage::In` shape this module needs. Its I/O
+//! stays here, driven by [`media_plane::ingress::IngestDriver`], so the actual
+//! LL-HLS logic (reload scheduling, part/segment dedup, fMP4/classic-TS demux)
+//! is owned entirely by `hls-runtime`, never duplicated here, and the fetch
+//! policy (auth, cookies, retries, pacing) is this crate's own.
 //!
 //! # Establishment is genuinely ordinary driving here
 //!
@@ -83,7 +76,7 @@ use crate::source::http_auth::{
     authenticated_get, credentials_from_url, resolve_credentials, scope_credentials, strip_userinfo,
 };
 use crate::source::pull_target::{PullKind, PullRoute};
-use broadcast_client::auth::AuthState;
+use broadcast_auth::{AuthState, CookieWatch};
 
 /// How long a `run_*_pull` drive loop parks when its session has, momentarily,
 /// neither an outbound request queued nor a fetch in flight — and has not
@@ -130,10 +123,11 @@ fn retry_backoff(attempt: u32) -> Duration {
     // The workspace's one capped-exponential implementation (audit r07-O1 /
     // #1141; SP1.5 moved it onto `backon`); `attempt` here is 1-based,
     // `delay_for_attempt` 0-based.
-    crate::reconnect::ReconnectSchedule::from_parts(
+    broadcast_common::backoff::RetrySchedule::new(
         RESOURCE_RETRY_BASE_DELAY,
         RESOURCE_RETRY_MAX_DELAY,
         RESOURCE_RETRY_FACTOR,
+        crate::source::seed_entropy(),
     )
     .delay_for_attempt(attempt.saturating_sub(1))
 }
@@ -144,22 +138,25 @@ fn retry_backoff(attempt: u32) -> Duration {
 /// [`PullScheduler::pump`], not here.
 fn resource_fetch(
     http: HttpClient,
-    creds: Option<AuthState>,
+    session: &Session,
+    now_us: u64,
     fetch_id: HlsFetchId,
     url: String,
     read_timeout: Duration,
     delay: Duration,
-) -> crate::source::pull::PendingFetch<HlsFetchId> {
+) -> crate::source::pull::PendingFetch<HlsFetchId, Fetched> {
     let cap = match fetch_id {
         HlsFetchId::Key(_) => MAX_KEY_BODY_BYTES,
         _ => crate::source::MAX_HTTP_BODY_BYTES,
     };
+    let mut auth = session.auth.clone();
+    let watch = session.watch.clone();
     crate::source::pull::PendingFetch {
         delay,
         fut: Box::pin(async move {
             let (result, retry_after) = tokio::time::timeout(
                 read_timeout,
-                fetch_bytes_capped_with_retry_after(&http, &url, creds.as_ref(), cap),
+                fetch_bytes_capped_with_retry_after(&http, &url, &mut auth, cap, now_us),
             )
             .await
             .unwrap_or_else(|_| {
@@ -185,8 +182,15 @@ fn resource_fetch(
             (
                 fetch_id,
                 match result {
-                    Ok(b) => crate::source::pull::FetchResult::Ready(b),
-                    Err(e) => crate::source::pull::FetchResult::failed_after(e, retry_after),
+                    Ok(bytes) => crate::source::pull::FetchResult::Ready(Fetched { bytes, watch }),
+                    Err(e) => crate::source::pull::FetchResult::Failed {
+                        error: e,
+                        learned: Fetched {
+                            bytes: Vec::new(),
+                            watch,
+                        },
+                        retry_after,
+                    },
                 },
             )
         }),
@@ -197,21 +201,25 @@ fn resource_fetch(
 /// issue is not transient; see the W14 note below).
 fn playlist_fetch(
     http: HttpClient,
-    creds: Option<AuthState>,
+    session: &Session,
+    now_us: u64,
     url: String,
     read_timeout: Duration,
-) -> crate::source::pull::PendingFetch<HlsFetchId> {
-    playlist_fetch_after(http, creds, url, read_timeout, Duration::ZERO)
+) -> crate::source::pull::PendingFetch<HlsFetchId, Fetched> {
+    playlist_fetch_after(http, session, now_us, url, read_timeout, Duration::ZERO)
 }
 
 /// [`playlist_fetch`] dispatched after `delay`, the server's `Retry-After`.
 fn playlist_fetch_after(
     http: HttpClient,
-    creds: Option<AuthState>,
+    session: &Session,
+    now_us: u64,
     url: String,
     read_timeout: Duration,
     delay: Duration,
-) -> crate::source::pull::PendingFetch<HlsFetchId> {
+) -> crate::source::pull::PendingFetch<HlsFetchId, Fetched> {
+    let mut auth = session.auth.clone();
+    let watch = session.watch.clone();
     crate::source::pull::PendingFetch {
         delay,
         fut: Box::pin(async move {
@@ -220,8 +228,9 @@ fn playlist_fetch_after(
                 fetch_bytes_capped_with_retry_after(
                     &http,
                     &url,
-                    creds.as_ref(),
+                    &mut auth,
                     crate::source::MAX_HTTP_BODY_BYTES,
+                    now_us,
                 ),
             )
             .await
@@ -236,8 +245,15 @@ fn playlist_fetch_after(
             (
                 HlsFetchId::Playlist,
                 match result {
-                    Ok(b) => crate::source::pull::FetchResult::Ready(b),
-                    Err(e) => crate::source::pull::FetchResult::failed_after(e, retry_after),
+                    Ok(bytes) => crate::source::pull::FetchResult::Ready(Fetched { bytes, watch }),
+                    Err(e) => crate::source::pull::FetchResult::Failed {
+                        error: e,
+                        learned: Fetched {
+                            bytes: Vec::new(),
+                            watch,
+                        },
+                        retry_after,
+                    },
                 },
             )
         }),
@@ -294,6 +310,10 @@ pub struct HlsIngestSession {
     /// queuing a second `Established`/`NewProgram` pair (see the module doc's
     /// "Known limitation").
     program_announced: bool,
+    /// The first `Output::Init` received, kept so a caller driving this
+    /// session directly (rather than through the trunk) gets the client's own
+    /// Media Initialization Section; see [`Self::take_init`].
+    init: Option<Vec<u8>>,
     /// `Output::EndOfStream` reached: the origin's `#EXT-X-ENDLIST` was seen
     /// and every fetch it named is accounted for. Read by [`run_hls_pull`]
     /// via [`media_plane::ingress::IngestDriver::session`] to decide when to call
@@ -310,6 +330,7 @@ impl HlsIngestSession {
             client: HlsClient::new(playlist_url),
             pending: VecDeque::new(),
             program_announced: false,
+            init: None,
             ended: false,
         }
     }
@@ -325,10 +346,26 @@ impl HlsIngestSession {
         self.client.on_key_error(id);
     }
 
+    /// The Media Initialization Section the client received, once. `None`
+    /// until the first `Output::Init` arrives.
+    pub fn take_init(&mut self) -> Option<Vec<u8>> {
+        self.init.take()
+    }
+
+    /// Gives up on the part or segment `id` the origin no longer serves — the
+    /// live edge moved past it — and carries on with the next one, which the
+    /// client reports as a discontinuity. No-op for the init segment.
+    pub fn resource_gone(&mut self, id: ResourceId) {
+        self.client.skip_resource(id);
+    }
+
     fn drain_outputs(&mut self) -> Result<()> {
         while let Some(out) = self.client.next_output() {
             match out {
                 HlsOutput::Init(bytes) => {
+                    if self.init.is_none() {
+                        self.init = Some(bytes.clone());
+                    }
                     if self.program_announced {
                         continue; // mid-stream re-Init: see "Known limitation".
                     }
@@ -417,10 +454,16 @@ impl Dialer for HlsPullDialer {
 /// Performs `GET url` (answering a Digest challenge if `creds` names one),
 /// returning an error on any non-2xx status.
 #[cfg(test)]
-async fn fetch_bytes(client: &HttpClient, url: &str, creds: Option<&AuthState>) -> Result<Vec<u8>> {
-    fetch_bytes_capped_with_retry_after(client, url, creds, crate::source::MAX_HTTP_BODY_BYTES)
-        .await
-        .0
+async fn fetch_bytes(client: &HttpClient, url: &str, auth: &mut AuthState) -> Result<Vec<u8>> {
+    fetch_bytes_capped_with_retry_after(
+        client,
+        url,
+        auth,
+        crate::source::MAX_HTTP_BODY_BYTES,
+        crate::clock::SystemHostClock::now_us(),
+    )
+    .await
+    .0
 }
 
 /// `GET url` capped at `cap` bytes, also returning any `Retry-After` delay carried by a
@@ -428,13 +471,14 @@ async fn fetch_bytes(client: &HttpClient, url: &str, creds: Option<&AuthState>) 
 async fn fetch_bytes_capped_with_retry_after(
     client: &HttpClient,
     url: &str,
-    creds: Option<&AuthState>,
+    auth: &mut AuthState,
     cap: usize,
+    now_us: u64,
 ) -> (
     core::result::Result<Vec<u8>, MultimuxError>,
     Option<Duration>,
 ) {
-    let response = match authenticated_get(client, url, creds).await {
+    let response = match authenticated_get(client, url, auth, now_us).await {
         Ok(r) => r,
         Err(e) => return (Err(e), None),
     };
@@ -460,6 +504,22 @@ async fn fetch_bytes_capped_with_retry_after(
         crate::source::read_body_capped(response, cap, "hls-pull").await,
         None,
     )
+}
+
+/// The pull session's auth state and a watch on its cookie jar: what every
+/// fetch of the session is built from.
+#[derive(Debug, Clone)]
+struct Session {
+    auth: AuthState,
+    watch: CookieWatch,
+}
+
+/// One fetch's outcome as the drive loop sees it: the body (empty on a failed
+/// fetch) and the watch the fetch carried.
+#[derive(Debug)]
+pub struct Fetched {
+    bytes: Vec<u8>,
+    watch: CookieWatch,
 }
 
 /// Opens `route`'s connect-time HTTP client and userinfo-stripped URL —
@@ -500,7 +560,7 @@ impl PlaylistPacing {
     }
 }
 
-fn build_client(route: &HlsPullRoute) -> Result<(HttpClient, Url, Option<AuthState>)> {
+fn build_client(route: &HlsPullRoute) -> Result<(HttpClient, Url, AuthState)> {
     let parsed = Url::parse(&route.target.url).map_err(|e| MultimuxError::Connect {
         reason: format!(
             "bad HLS-pull URL {}: {e}",
@@ -524,7 +584,7 @@ fn build_client(route: &HlsPullRoute) -> Result<(HttpClient, Url, Option<AuthSta
 /// [`media_plane::ingress::IngestDriver::poll_transmit`] → fetch → [`media_plane::ingress::IngestDriver::feed`] until the
 /// origin's playlist reports end-of-stream or a fetch fails outright — the
 /// new drive loop, replacing the pre-5a `HlsPullSource::connect`/
-/// `HlsPullSession::next_samples` pair (and their `TokioClient` wrapper).
+/// `HlsPullSession::next_samples` pair.
 ///
 /// Bounded fan-out: never more than
 /// [`crate::source::MAX_INFLIGHT_FETCHES`] concurrent
@@ -541,7 +601,23 @@ pub async fn run_hls_pull(
     handshake: HandshakePolicy,
     route_handle: &std::sync::Arc<crate::route::RouteHandle>,
 ) -> Result<()> {
-    let (http, clean_url, credentials) = build_client(route)?;
+    drive(route, trunk_config, handshake, route_handle).await
+}
+
+/// The one drive loop: dial (no I/O), then pump `poll_transmit` → fetch →
+/// `feed` until the origin's playlist reports end-of-stream or a fetch fails
+/// outright.
+async fn drive(
+    route: &HlsPullRoute,
+    trunk_config: TrunkConfig,
+    handshake: HandshakePolicy,
+    route_handle: &std::sync::Arc<crate::route::RouteHandle>,
+) -> Result<()> {
+    let (http, clean_url, auth) = build_client(route)?;
+    let session = Session {
+        watch: auth.cookie_watch(),
+        auth,
+    };
     let mut dialer = HlsPullDialer {
         playlist_url: clean_url.to_string(),
     };
@@ -554,10 +630,14 @@ pub async fn run_hls_pull(
     .unwrap_or_else(|never: Infallible| match never {});
 
     let read_timeout = route.target.timeouts.read;
+    // Everything this session needs an instant for comes from this one clock:
+    // `Timestamp`s are nanoseconds from it, and cookies are stamped in
+    // microseconds since the same open.
+    let clock = crate::clock::SystemHostClock::new();
     // The fetch/retry/wait engine (SP6.2) owns the backlog, the in-flight
     // bound, the retries and the waits; this loop owns only the `Action`
     // translation and the `feed`.
-    let mut scheduler: crate::source::pull::PullScheduler<HlsFetchId> =
+    let mut scheduler: crate::source::pull::PullScheduler<HlsFetchId, Fetched> =
         crate::source::pull::PullScheduler::new(crate::source::MAX_INFLIGHT_FETCHES);
     // Tracks resource fetches so a transient failure (a 404 from an eviction
     // race, a dropped connection) can be retried instead of ending the whole
@@ -599,8 +679,25 @@ pub async fn run_hls_pull(
                     // fast playlist response is not re-fetched immediately.
                     let floor = pacing.on_push(tokio::time::Instant::now());
                     playlist_url = Some(url.clone());
-                    scheduler.push_at(
-                        playlist_fetch(http.clone(), credentials.clone(), url, read_timeout),
+                    // Built when the scheduler dispatches it, so it carries
+                    // whatever the session's auth state holds by then — a
+                    // reload is queued behind another fetch as often as not.
+                    let (fetch, session_now) = (http.clone(), session.clone());
+                    let now_us = clock.unix_us();
+                    scheduler.push_lazy_at(
+                        crate::source::pull::LazyFetch {
+                            delay: Duration::ZERO,
+                            at_dispatch: Box::new(move || {
+                                playlist_fetch(
+                                    fetch.clone(),
+                                    &session_now,
+                                    now_us,
+                                    url,
+                                    read_timeout,
+                                )
+                                .fut
+                            }),
+                        },
                         floor,
                     );
                 }
@@ -611,14 +708,23 @@ pub async fn run_hls_pull(
                     resource_retries
                         .entry(fetch_id)
                         .or_insert_with(|| (url.clone(), 1));
-                    scheduler.push(resource_fetch(
-                        http.clone(),
-                        credentials.clone(),
-                        fetch_id,
-                        url,
-                        read_timeout,
-                        Duration::ZERO,
-                    ));
+                    let (fetch, session_now) = (http.clone(), session.clone());
+                    let now_us = clock.unix_us();
+                    scheduler.push_lazy(crate::source::pull::LazyFetch {
+                        delay: Duration::ZERO,
+                        at_dispatch: Box::new(move || {
+                            resource_fetch(
+                                fetch.clone(),
+                                &session_now,
+                                now_us,
+                                fetch_id,
+                                url,
+                                read_timeout,
+                                Duration::ZERO,
+                            )
+                            .fut
+                        }),
+                    });
                 }
                 Action::FetchKey { id, url } => {
                     let fetch_id = HlsFetchId::Key(id);
@@ -626,14 +732,23 @@ pub async fn run_hls_pull(
                         continue;
                     }
                     resource_retries.insert(fetch_id, (url.clone(), 1));
-                    scheduler.push(resource_fetch(
-                        http.clone(),
-                        credentials.clone(),
-                        fetch_id,
-                        url,
-                        read_timeout,
-                        Duration::ZERO,
-                    ));
+                    let (fetch, session_now) = (http.clone(), session.clone());
+                    let now_us = clock.unix_us();
+                    scheduler.push_lazy(crate::source::pull::LazyFetch {
+                        delay: Duration::ZERO,
+                        at_dispatch: Box::new(move || {
+                            resource_fetch(
+                                fetch.clone(),
+                                &session_now,
+                                now_us,
+                                fetch_id,
+                                url,
+                                read_timeout,
+                                Duration::ZERO,
+                            )
+                            .fut
+                        }),
+                    });
                 }
                 // `Action` is `#[non_exhaustive]`: a future variant is simply
                 // dropped from the backlog rather than failing the whole
@@ -665,27 +780,32 @@ pub async fn run_hls_pull(
         let joined = scheduler.next(reload_hint, IDLE_POLL_INTERVAL).await;
         let now = Timestamp::from_instant(start, std::time::Instant::now());
         match joined {
-            Some(crate::source::pull::FetchOutcome::Ready(fetch_id, bytes)) => {
+            Some(crate::source::pull::FetchOutcome::Ready(fetch_id, fetched)) => {
                 resource_retries.remove(&fetch_id);
                 if fetch_id == HlsFetchId::Playlist {
                     playlist_waits = 0;
                 }
-                driver.feed((fetch_id, bytes.as_slice()), now);
+                driver.feed((fetch_id, fetched.bytes.as_slice()), now);
                 crate::source::advance_route(&driver, route_handle, &mut progress).await;
             }
-            Some(crate::source::pull::FetchOutcome::Failed(fetch_id, e, retry_after)) => {
-                // A failed **resource** fetch is retried (bounded) rather than
-                // ending the session (audit run 7, W14): a single part that
-                // 404s on an eviction race, or one dropped connection, must
-                // not reconnect the whole route (which disrupts every
-                // viewer). A failed **playlist** fetch is still terminal — a
-                // broken manifest is not a transient error.
+            Some(crate::source::pull::FetchOutcome::Failed(fetch_id, e, learned, retry_after)) => {
+                // A resource or key refused for want of a credential the
+                // attempt itself could not carry is retried on the session's
+                // own state, which has it: a key server that answers before a
+                // preemptive Basic header is armed, or a live playlist that
+                // hands out its first parts before its challenge is answered.
+                // `retry_for_auth` marks exactly that refusal.
+                let retry_for_auth = matches!(e, MultimuxError::Auth { .. })
+                    && !learned.watch.cookies(clock.unix_us()).is_empty();
                 match fetch_id {
                     HlsFetchId::Resource(_) | HlsFetchId::Key(_) => {
                         // A permanent auth/permission failure is not retried —
                         // retrying 8 times over ~2 min would only delay the
-                        // reconnect for a credential that will never work.
-                        if matches!(e, MultimuxError::Auth { .. }) {
+                        // reconnect for a credential that will never work —
+                        // unless the refusal is one the session can now answer
+                        // (see `retry_for_auth`), which gets the retry the
+                        // bound allows.
+                        if matches!(e, MultimuxError::Auth { .. }) && !retry_for_auth {
                             tracing::error!(
                                 resource = ?fetch_id,
                                 error = %e,
@@ -722,7 +842,8 @@ pub async fn run_hls_pull(
                                 retry_backoff(next_attempt).max(retry_after.unwrap_or_default());
                             scheduler.push_retry(resource_fetch(
                                 http.clone(),
-                                credentials.clone(),
+                                &session,
+                                clock.unix_us(),
                                 fetch_id,
                                 url,
                                 read_timeout,
@@ -749,7 +870,8 @@ pub async fn run_hls_pull(
                             );
                             scheduler.push_retry(playlist_fetch_after(
                                 http.clone(),
-                                credentials.clone(),
+                                &session,
+                                clock.unix_us(),
                                 url,
                                 read_timeout,
                                 wait,
@@ -828,11 +950,11 @@ mod tests {
                 .unwrap_or(RESOURCE_RETRY_MAX_DELAY)
                 .min(RESOURCE_RETRY_MAX_DELAY);
             let got = retry_backoff(attempt);
-            // Equal jitter: `raw * [0.5, 1.0)`.
+            // The shared schedule's jitter: `raw * [5/6, 1.0]`.
             assert!(
-                got >= raw / 2 && got < raw + Duration::from_nanos(1),
-                "attempt {attempt}: {got:?} outside [{:?}, {raw:?})",
-                raw / 2
+                got >= raw.mul_f64(5.0 / 6.0) && got <= raw + Duration::from_nanos(1),
+                "attempt {attempt}: {got:?} outside [{:?}, {raw:?}]",
+                raw.mul_f64(5.0 / 6.0)
             );
         }
         // C2: once raw saturates at the cap the delay stays jittered in
@@ -840,8 +962,8 @@ mod tests {
         for _ in 0..40 {
             let d = retry_backoff(20);
             assert!(
-                d >= RESOURCE_RETRY_MAX_DELAY / 2 && d < RESOURCE_RETRY_MAX_DELAY,
-                "capped retry {d:?} must stay jittered in [cap/2, cap)"
+                d >= RESOURCE_RETRY_MAX_DELAY.mul_f64(5.0 / 6.0) && d <= RESOURCE_RETRY_MAX_DELAY,
+                "capped retry {d:?} must stay jittered in [cap*5/6, cap]"
             );
         }
     }
@@ -904,7 +1026,11 @@ Content-Length: {over}
         let client = reqwest::Client::new();
         let result = tokio::time::timeout(
             Duration::from_secs(30),
-            fetch_bytes(&client, &format!("http://{addr}/x"), None),
+            fetch_bytes(
+                &client,
+                &format!("http://{addr}/x"),
+                &mut scope_credentials(None, &Url::parse("http://127.0.0.1/").expect("url")),
+            ),
         )
         .await
         .expect("fetch must return, not hang");
@@ -1085,10 +1211,16 @@ Content-Length: {over}
         (format!("http://{addr}/key.bin"), task)
     }
 
-    async fn run_key_fetch(url: String) -> crate::source::pull::FetchResult {
+    async fn run_key_fetch(url: String) -> crate::source::pull::FetchResult<Fetched> {
+        let auth = scope_credentials(None, &Url::parse(&url).expect("url"));
+        let session = Session {
+            watch: auth.cookie_watch(),
+            auth,
+        };
         let pending = resource_fetch(
             HttpClient::new(),
-            None,
+            &session,
+            crate::clock::SystemHostClock::now_us(),
             HlsFetchId::Key(first_key_id()),
             url,
             Duration::from_secs(10),
@@ -1133,7 +1265,8 @@ Content-Length: {over}
         let result = run_key_fetch(url).await;
         server.abort();
         match result {
-            crate::source::pull::FetchResult::Ready(bytes) => {
+            crate::source::pull::FetchResult::Ready(fetched) => {
+                let bytes = fetched.bytes;
                 assert_eq!(bytes, vec![0x66; AES128_KEY_LEN]);
             }
             _ => panic!("expected the key bytes"),
@@ -1354,7 +1487,7 @@ Content-Length: {over}
     async fn drive_session_and_count(
         route: &HlsPullRoute,
     ) -> Result<(Vec<TrackSpec>, HashMap<TrackId, usize>)> {
-        let (http, clean_url, credentials) = build_client(route)?;
+        let (http, clean_url, mut credentials) = build_client(route)?;
         let mut session = HlsIngestSession::new(clean_url.to_string());
         let mut backlog: VecDeque<Action> = VecDeque::new();
         let mut specs: Vec<TrackSpec> = Vec::new();
@@ -1391,11 +1524,11 @@ Content-Length: {over}
                 Action::WaitMs(ms) => tokio::time::sleep(Duration::from_millis(ms)).await,
                 Action::FetchPlaylist { .. } => {
                     let url = action.playlist_request_url().expect("playlist URL");
-                    let bytes = fetch_bytes(&http, &url, credentials.as_ref()).await?;
+                    let bytes = fetch_bytes(&http, &url, &mut credentials).await?;
                     session.feed((HlsFetchId::Playlist, bytes.as_slice()), now)?;
                 }
                 Action::FetchResource { id, url, .. } => {
-                    let bytes = fetch_bytes(&http, &url, credentials.as_ref()).await?;
+                    let bytes = fetch_bytes(&http, &url, &mut credentials).await?;
                     session.feed((HlsFetchId::Resource(id), bytes.as_slice()), now)?;
                 }
                 _ => {}
@@ -1412,7 +1545,7 @@ Content-Length: {over}
     /// *after* it subscribes, and the first batch is published in the same
     /// `feed` that mints the `Trunk` (see [`drive_session_and_count`]'s doc).
     async fn assert_samples_reach_the_trunk(route: &HlsPullRoute) {
-        let (http, clean_url, credentials) = build_client(route).expect("build client");
+        let (http, clean_url, mut credentials) = build_client(route).expect("build client");
         let mut dialer = HlsPullDialer {
             playlist_url: clean_url.to_string(),
         };
@@ -1484,13 +1617,13 @@ Content-Length: {over}
                 Action::WaitMs(ms) => tokio::time::sleep(Duration::from_millis(ms)).await,
                 Action::FetchPlaylist { .. } => {
                     let url = action.playlist_request_url().expect("playlist URL");
-                    let bytes = fetch_bytes(&http, &url, credentials.as_ref())
+                    let bytes = fetch_bytes(&http, &url, &mut credentials)
                         .await
                         .expect("fetch");
                     driver.feed((HlsFetchId::Playlist, bytes.as_slice()), now);
                 }
                 Action::FetchResource { id, url, .. } => {
-                    let bytes = fetch_bytes(&http, &url, credentials.as_ref())
+                    let bytes = fetch_bytes(&http, &url, &mut credentials)
                         .await
                         .expect("fetch");
                     driver.feed((HlsFetchId::Resource(id), bytes.as_slice()), now);

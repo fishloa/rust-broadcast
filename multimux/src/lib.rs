@@ -4,7 +4,6 @@
 pub(crate) mod catchup;
 pub(crate) mod clock;
 pub mod config;
-pub mod dashif_ingest;
 pub mod dvr;
 pub mod error;
 mod http;
@@ -15,7 +14,6 @@ pub mod origin;
 pub mod output;
 pub mod prometheus;
 pub mod push;
-pub mod reconnect;
 pub mod redact;
 pub mod registry;
 pub mod route;

@@ -1,6 +1,6 @@
 //! DASH-IF Live Media Ingest (Interface-1) — sans-IO ingest session (increment P2a).
 //!
-//! Mirrors `crate::source::dash_pull::DashIngestSession` for per-Representation
+//! Mirrors multimux's DASH pull ingest session for per-Representation
 //! init bytes + the `local_to_global` track-id remap in fixed MPD order, but
 //! driven by pushed objects (`IngestObject`) instead of a pull plan. One
 //! `Manifest` announces the presentation; `Header`s register tracks; `Segment`s
@@ -30,12 +30,13 @@ use transmux::TrackId;
 use transmux::media::Fmp4Demux;
 use transmux::pipeline::TrackSpec;
 
-use crate::dashif_ingest::{IngestError, IngestState, ManifestGrouping, ObjectKind};
-use crate::source::MAX_TS_READ;
+use super::{IngestError, IngestState, ManifestGrouping, ObjectKind};
 
 use tracing::{debug, warn};
 
-/// One pushed ingest object: its classified kind (from [`crate::dashif_ingest::classify`])
+const MAX_TS_READ: usize = 65_536;
+
+/// One pushed ingest object: its classified kind (from [`crate::ingest::classify`])
 /// plus the raw body bytes. The session never re-parses paths.
 #[derive(Debug)]
 pub struct IngestObject<'a> {
@@ -270,7 +271,7 @@ impl DashifIngestSession {
             .on_segment(rep_id, number, time)
             .map_err(SessionError::Ingest)?;
 
-        if disp == crate::dashif_ingest::SegmentDisposition::Regression {
+        if disp == super::SegmentDisposition::Regression {
             warn!("dashif-ingest: segment regression for {rep_id}");
         }
 
@@ -280,7 +281,7 @@ impl DashifIngestSession {
             rep_id: rep_id.to_string(),
             number,
             time,
-            skip: disp == crate::dashif_ingest::SegmentDisposition::Duplicate,
+            skip: disp == super::SegmentDisposition::Duplicate,
             buf: Vec::new(),
         })
     }
@@ -469,7 +470,7 @@ impl Stage for DashifIngestSession {
     fn feed(&mut self, input: Self::In<'_>, _now: Timestamp) -> Result<(), Self::Error> {
         match input.kind {
             ObjectKind::Probe => Ok(()),
-            ObjectKind::Manifest(crate::dashif_ingest::ManifestFormat::Dash) => {
+            ObjectKind::Manifest(super::ManifestFormat::Dash) => {
                 if self.grouping.is_some() {
                     debug!("dashif-ingest: re-sent manifest ignored");
                     return Ok(());
@@ -486,7 +487,7 @@ impl Stage for DashifIngestSession {
                 }
                 Ok(())
             }
-            ObjectKind::Manifest(crate::dashif_ingest::ManifestFormat::Hls) => {
+            ObjectKind::Manifest(super::ManifestFormat::Hls) => {
                 debug!("dashif-ingest: HLS manifest ignored (§6.2.17e)");
                 Ok(())
             }

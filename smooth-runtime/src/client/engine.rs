@@ -11,6 +11,8 @@ use transmux::smooth_fragment::{
 use transmux::{TrackId, TrackSpec, track_spec_from_quality_level};
 use url::Url;
 
+use broadcast_common::url_ref;
+
 use super::action::{Action, FetchFailure, RequestId, StreamId};
 use super::config::{SYNTHETIC_MOVIE_TIMESCALE, SmoothConfig};
 use super::output::{Dropped, ManifestFault, Output, QualityInfo};
@@ -345,7 +347,7 @@ impl SmoothClient {
         let relative = stream
             .index
             .resolve_fragment_url(stream.quality.bitrate, chunk.0);
-        let Ok(url) = self.manifest_url.join(&relative) else {
+        let Ok(url) = url_ref::resolve(&self.manifest_url, &relative) else {
             self.streams[si].cursor = Cursor::Idle;
             self.outputs
                 .push_back(Output::Dropped(Dropped::FragmentUrl {

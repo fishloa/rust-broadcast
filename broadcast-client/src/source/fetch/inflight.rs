@@ -7,7 +7,6 @@ use alloc::vec::Vec;
 use std::collections::HashMap;
 use url::Url;
 
-use crate::auth::{AuthDecision, AuthState};
 use crate::events::{Action, ErrorKind, Event, ResumeMode, Status};
 use crate::redirect;
 use crate::source::fetch::body::BodyAcc;
@@ -16,6 +15,7 @@ use crate::source::fetch::deadlines::Deadlines;
 use crate::source::fetch::inactivity::{Expired, Inactivity};
 use crate::source::fetch::resume::{Basis, Parked, Stash};
 use crate::source::fetch::retry::RefusedCapture;
+use broadcast_auth::{AuthDecision, AuthState};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum TimeoutClass {
@@ -344,10 +344,11 @@ pub(crate) fn route_head<P: PurposeKind, X>(
                 HeadRoute::Send(req)
             }
             AuthDecision::Wait(wait) => {
-                events.extend(wait);
+                events.extend(wait.into_iter().map(Event::from));
                 parked.push(req);
                 HeadRoute::Parked
             }
+            _ => HeadRoute::Other(req),
         };
     }
     HeadRoute::Other(req)

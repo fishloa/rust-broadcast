@@ -3041,3 +3041,34 @@ fn eit_following_section_vanishing_after_both_were_seen_is_detected() {
         "section '1' (following) of the P/F sub-table absent for 8 s (limit 2 s) while section '0' keeps arriving: no 3.6.a/3.6.c indication was raised"
     );
 }
+
+/// `indicator_counts()` is the accounting the live monitors publish: it must
+/// agree with the events actually raised, carry the indicator's own priority
+/// tier and clause label, and stay monotonic as more events arrive.
+#[test]
+fn indicator_counts_agree_with_the_events_raised() {
+    let mut rig = Rig::new();
+    let mut pz = SectionPacketiser::new(Pid::new(0x10));
+    let s = rig_nit_bytes(NitKind::Other, 0);
+    for t in [0u64, 1_000, 20_000, 21_000, 22_000, 45_000] {
+        rig_send(&mut rig, &mut pz, &s, t);
+    }
+
+    let counts = rig.m.indicator_counts();
+    let total: u64 = counts.iter().map(|c| c.count).sum();
+    assert_eq!(
+        total,
+        u64::try_from(rig.events.len()).expect("event count fits u64"),
+        "every raised event is accounted for exactly once"
+    );
+    let nit_other = counts
+        .iter()
+        .find(|c| c.indicator == Indicator::NitOtherError.name())
+        .expect("NIT_other_error was raised and must be counted");
+    assert_eq!(nit_other.count, rig.count(Indicator::NitOtherError) as u64);
+    assert_eq!(
+        nit_other.priority,
+        Indicator::NitOtherError.priority().name()
+    );
+    assert_eq!(nit_other.clause, Indicator::NitOtherError.clause());
+}

@@ -522,7 +522,13 @@ impl ReconnectPolicy {
     }
 
     pub fn backoff_for(&self, attempt: u32) -> std::time::Duration {
-        crate::reconnect::ReconnectSchedule::from_policy(self).delay_for_attempt(attempt)
+        broadcast_common::backoff::RetrySchedule::new(
+            std::time::Duration::from_millis(self.initial_backoff_ms),
+            std::time::Duration::from_millis(self.max_backoff_ms),
+            RECONNECT_BACKOFF_FACTOR,
+            crate::source::seed_entropy(),
+        )
+        .delay_for_attempt(attempt)
     }
 
     /// Validate the policy (audit run 7, W19): a zero backoff (either bound)

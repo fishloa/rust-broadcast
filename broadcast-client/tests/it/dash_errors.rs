@@ -75,7 +75,11 @@ fn an_mpd_that_is_not_xml_is_a_parse_error_reported_once_and_fatal_at_the_key_fa
         .windows(2)
         .map(|w| (w[1].send_elapsed_us - w[0].send_elapsed_us) / SEC)
         .collect();
-    assert_eq!(gaps, [2, 4], "the 2 s then 4 s backoff steps");
+    assert_eq!(gaps[0], 2, "the first backoff step, exactly");
+    assert!(
+        (3..=4).contains(&gaps[1]),
+        "the second step is 4 s, jittered below it: {gaps:?}"
+    );
     assert_eq!(sim.count(|e| matches!(e, Event::Sample { .. })), 0);
 }
 
@@ -352,10 +356,11 @@ fn a_vod_segment_that_keeps_failing_is_fatal_after_the_configured_count_with_bac
         .map(|l| l.send_elapsed_us)
         .collect();
     assert_eq!(at.len(), 3);
-    assert_eq!(
-        [(at[1] - at[0]) / SEC, (at[2] - at[1]) / SEC],
-        [2, 4],
-        "the shared 2 s / 4 s backoff"
+    let gaps = [(at[1] - at[0]) / SEC, (at[2] - at[1]) / SEC];
+    assert_eq!(gaps[0], 2, "the first step of the shared backoff, exactly");
+    assert!(
+        (3..=4).contains(&gaps[1]),
+        "the shared 4 s step, jittered below it: {gaps:?}"
     );
     assert!(!sim.ended());
     let after = sim.log.len();

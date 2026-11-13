@@ -309,6 +309,17 @@ fn an_idle_link_is_kept_alive_then_dropped_and_rebuilt_with_fresh_identifiers() 
     sim.peer_listening = false;
     sim.advance_by(7 * SECOND_US);
     assert_eq!(sim.closes.len(), 1, "the silent link is closed");
+    assert_eq!(
+        sim.count(|e| matches!(
+            e,
+            Event::Error {
+                kind: broadcast_client::ErrorKind::SrtPeerIdle,
+                fatal: false
+            }
+        )),
+        1,
+        "the idle drop is reported once"
+    );
     assert_eq!(sim.binds_count(), 2, "and rebuilt at once");
     sim.peer_listening = true;
     sim.advance_by(SECOND_US);
@@ -456,10 +467,23 @@ fn the_entropy_seed_is_required_and_every_attempt_derives_fresh_identifiers() {
 }
 
 #[test]
+fn a_latency_below_the_default_is_accepted_and_the_stream_plays() {
+    let ts = small();
+    let mut sim = SrtSim::open_with_peers(
+        URL,
+        cfg(|c| c.srt.latency_ms = 20),
+        vec![SrtPeer::new(Cipher::Clear, None, 20)],
+    );
+    sim.connect();
+    stream(&mut sim, &ts, 7);
+    finish(&mut sim);
+    assert!(sim.count(|e| matches!(e, Event::Sample { .. })) > 0);
+}
+
+#[test]
 fn bad_srt_settings_are_typed_errors() {
     let open = |f: fn(&mut Config)| Session::open(URL, cfg(f), 0).unwrap_err();
     for (err, field) in [
-        (open(|c| c.srt.latency_ms = 119), "srt.latency_ms"),
         (
             open(|c| c.srt.handshake_timeout_ms = 0),
             "srt.handshake_timeout_ms",

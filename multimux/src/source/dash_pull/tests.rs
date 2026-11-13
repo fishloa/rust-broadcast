@@ -291,6 +291,9 @@ struct FileState {
     dir: PathBuf,
     stall: Option<&'static str>,
     honour_range: bool,
+    /// Answer a `Range` with a `206` that carries no `Content-Range`: a
+    /// malformed answer the fetch must refuse (RFC 9110 §15.3.7).
+    omit_content_range: bool,
     throttle_once: Option<&'static str>,
     throttled: Arc<std::sync::atomic::AtomicBool>,
     hits: Arc<Mutex<Vec<Hit>>>,
@@ -344,9 +347,12 @@ async fn file_handler(
         };
         let slice = bytes[first as usize..=last as usize].to_vec();
         let mut response = (AxumStatus::PARTIAL_CONTENT, slice).into_response();
-        response.headers_mut().typed_insert(
-            headers::ContentRange::bytes(first..=last, bytes.len() as u64).expect("valid range"),
-        );
+        if !state.omit_content_range {
+            response.headers_mut().typed_insert(
+                headers::ContentRange::bytes(first..=last, bytes.len() as u64)
+                    .expect("valid range"),
+            );
+        }
         return respond(AxumStatus::PARTIAL_CONTENT, response);
     }
     respond(AxumStatus::OK, bytes.into_response())
@@ -397,6 +403,7 @@ async fn serve_files_throttling(
             dir,
             stall,
             honour_range,
+            omit_content_range: false,
             throttle_once,
             throttled: Arc::default(),
             hits: Arc::clone(&hits),
@@ -404,6 +411,35 @@ async fn serve_files_throttling(
     if let Some(scheme) = auth {
         app = crate::testutil::require_auth(app, scheme);
     }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind ephemeral loopback port");
+    let addr = listener.local_addr().expect("local addr");
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("axum server");
+    });
+    FileOrigin {
+        base: format!("http://{addr}"),
+        hits,
+        task,
+    }
+}
+
+/// The on-demand fixture's origin, honouring `Range` but answering every
+/// `206` without a `Content-Range`.
+async fn serve_ranged_without_content_range(dir: PathBuf) -> FileOrigin {
+    let hits = Arc::new(Mutex::new(Vec::new()));
+    let app = Router::new()
+        .route("/{name}", get(file_handler))
+        .with_state(FileState {
+            dir,
+            stall: None,
+            honour_range: true,
+            omit_content_range: true,
+            throttle_once: None,
+            throttled: Arc::default(),
+            hits: Arc::clone(&hits),
+        });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind ephemeral loopback port");
@@ -570,6 +606,36 @@ async fn a_server_that_ignores_range_is_sliced_to_the_requested_part() {
         .collect();
     assert_same(&delivered.video(), &whole, "video");
     assert!(origin.hits().iter().all(|h| h.status == 200));
+}
+
+/// A `206 Partial Content` whose payload is not named by a `Content-Range` is
+/// refused (RFC 9110 §15.3.7), not accepted for happening to be the right
+/// length: the presentation cannot play, and the session says so rather than
+/// serving bytes it cannot vouch for.
+#[tokio::test]
+async fn a_206_without_content_range_is_refused_not_judged_by_its_length() {
+    let origin = serve_ranged_without_content_range(fixture("ondemand-sidx")).await;
+    let (delivered, result) = Pull::start(route(origin.url("ondemand.mpd")), SkewedClock::new(0))
+        .finish()
+        .await;
+    let error = result.expect_err("a 206 without Content-Range cannot be trusted");
+    assert!(
+        delivered.video().is_empty(),
+        "nothing unverified is served: {} samples",
+        delivered.video().len()
+    );
+    assert!(
+        origin
+            .hits()
+            .iter()
+            .any(|h| h.status == 206 && h.range.is_some()),
+        "the origin did answer 206 to a ranged request: {:?}",
+        origin.hits()
+    );
+    assert!(
+        format!("{error}").contains("InitFetchFailed"),
+        "the unranged answer fails the initialisation fetch: {error}"
+    );
 }
 
 /// Two Periods whose media clock restarts at zero (GPAC `multiperiod`): both
@@ -1570,12 +1636,13 @@ mod exchange {
     const BIG_CAP: usize = 1 << 20;
 
     fn net(read_timeout: Duration, cap: usize) -> Net {
+        let origin = url::Url::parse("http://127.0.0.1:1/").expect("origin");
         Net {
             http: reqwest::Client::builder()
                 .redirect(crate::source::redirect_policy(true))
                 .build()
                 .expect("client"),
-            credentials: None,
+            credentials: broadcast_auth::AuthState::new(origin, Vec::new()),
             clock: SkewedClock::new(0),
             read_timeout,
             utc_timeout: read_timeout,
@@ -1607,7 +1674,7 @@ mod exchange {
         (format!("http://{addr}"), task)
     }
 
-    async fn run(net: &Net, req: Request) -> (DashFetch, FetchResult) {
+    async fn run(net: &mut Net, req: Request) -> (DashFetch, FetchResult) {
         drive::exchange(net, &req, 0).await
     }
 
@@ -1660,16 +1727,16 @@ mod exchange {
     #[tokio::test]
     async fn a_304_is_unchanged_for_the_mpd_and_a_failure_for_anything_else() {
         let (base, server) = serve(status_route(304)).await;
-        let net = net(Duration::from_secs(5), BIG_CAP);
+        let mut net = net(Duration::from_secs(5), BIG_CAP);
         let (mpd, _) = run(
-            &net,
+            &mut net,
             request(format!("{base}/x"), FetchTarget::Mpd, BIG_CAP),
         )
         .await;
         assert_eq!(mpd.outcome, Outcome::Unchanged);
         let (resource, _) = ids();
         let (seg, _) = run(
-            &net,
+            &mut net,
             request(
                 format!("{base}/x"),
                 FetchTarget::Resource(resource),
@@ -1683,7 +1750,7 @@ mod exchange {
 
     #[tokio::test]
     async fn a_401_is_unauthorized_and_other_statuses_are_counted_failures() {
-        let net = net(Duration::from_secs(5), BIG_CAP);
+        let mut net = net(Duration::from_secs(5), BIG_CAP);
         for (status, want) in [
             (401, Outcome::Unauthorized),
             (404, Outcome::Failed(Failure::Status(404))),
@@ -1693,7 +1760,7 @@ mod exchange {
         ] {
             let (base, server) = serve(status_route(status)).await;
             let (fetch, result) = run(
-                &net,
+                &mut net,
                 request(format!("{base}/x"), FetchTarget::Mpd, BIG_CAP),
             )
             .await;
@@ -1709,9 +1776,9 @@ mod exchange {
     #[tokio::test]
     async fn a_401_is_an_authentication_error() {
         let (base, server) = serve(status_route(401)).await;
-        let net = net(Duration::from_secs(5), BIG_CAP);
+        let mut net = net(Duration::from_secs(5), BIG_CAP);
         let (_, result) = run(
-            &net,
+            &mut net,
             request(format!("{base}/x"), FetchTarget::Mpd, BIG_CAP),
         )
         .await;
@@ -1747,9 +1814,9 @@ mod exchange {
             )
             .route("/plain", get(|| async { "mpd" }));
         let (base, server) = serve(app).await;
-        let net = net(Duration::from_secs(5), BIG_CAP);
+        let mut net = net(Duration::from_secs(5), BIG_CAP);
         let (fetch, result) = run(
-            &net,
+            &mut net,
             request(format!("{base}/a"), FetchTarget::Mpd, BIG_CAP),
         )
         .await;
@@ -1772,7 +1839,7 @@ mod exchange {
         assert!(fetch.received_us > 0, "read from the injected clock");
 
         let (plain, _) = run(
-            &net,
+            &mut net,
             request(format!("{base}/plain"), FetchTarget::Mpd, BIG_CAP),
         )
         .await;
@@ -1795,15 +1862,15 @@ mod exchange {
                 }),
             );
         let (base, server) = serve(app).await;
-        let net = net(Duration::from_secs(5), SMALL_CAP);
+        let mut net = net(Duration::from_secs(5), SMALL_CAP);
         let (big, _) = run(
-            &net,
+            &mut net,
             request(format!("{base}/big"), FetchTarget::Mpd, SMALL_CAP),
         )
         .await;
         assert_eq!(big.outcome, Outcome::Failed(Failure::TooLarge));
         let (cut, _) = run(
-            &net,
+            &mut net,
             request(format!("{base}/cut"), FetchTarget::Mpd, SMALL_CAP),
         )
         .await;
@@ -1813,14 +1880,14 @@ mod exchange {
 
     #[tokio::test]
     async fn a_refused_connection_is_transport_and_a_silent_server_is_a_timeout() {
-        let net = net(Duration::from_millis(150), BIG_CAP);
+        let mut net = net(Duration::from_millis(150), BIG_CAP);
         let closed = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind");
         let dead = closed.local_addr().expect("addr");
         drop(closed);
         let (refused, _) = run(
-            &net,
+            &mut net,
             request(format!("http://{dead}/x"), FetchTarget::Mpd, BIG_CAP),
         )
         .await;
@@ -1867,15 +1934,15 @@ mod exchange {
             .route("/x", get(echo))
             .with_state(seen.clone());
         let (base, server) = serve(app).await;
-        let net = net(Duration::from_secs(5), BIG_CAP);
+        let mut net = net(Duration::from_secs(5), BIG_CAP);
         let mut conditional = request(format!("{base}/x"), FetchTarget::Mpd, BIG_CAP);
         conditional.conditional = vec![(header::IF_NONE_MATCH, "\"e1\"".to_owned())];
-        run(&net, conditional).await;
+        run(&mut net, conditional).await;
         let (_, utc) = ids();
         let mut head = request(format!("{base}/x"), FetchTarget::Utc(utc), BIG_CAP);
         head.method = Method::HEAD;
         head.with_credentials = false;
-        let (fetch, result) = run(&net, head).await;
+        let (fetch, result) = run(&mut net, head).await;
         assert_eq!(fetch.outcome, Outcome::Body);
         assert!(matches!(result, FetchResult::Ready(ref b) if b.is_empty()));
         let seen = seen.0.lock().unwrap().clone();
@@ -1908,7 +1975,7 @@ mod exchange {
             .route("/x", get(echo))
             .with_state(seen.clone());
         let (base, server) = serve(app).await;
-        let net = net(Duration::from_secs(5), BIG_CAP);
+        let mut net = net(Duration::from_secs(5), BIG_CAP);
         let (resource, _) = ids();
         let mut req = request(
             format!("{base}/x"),
@@ -1916,7 +1983,7 @@ mod exchange {
             BIG_CAP,
         );
         req.byte_range = Some((10, 20));
-        let (_, result) = run(&net, req).await;
+        let (_, result) = run(&mut net, req).await;
         assert!(matches!(result, FetchResult::Ready(ref b) if b.len() == 20));
         assert_eq!(seen.0.lock().unwrap().as_slice(), ["bytes=10-29"]);
         server.abort();
@@ -1933,17 +2000,25 @@ fn the_retry_delay_doubles_from_half_a_second_to_a_cap() {
         let d = drive::backoff(attempt);
         let raw = Duration::from_millis(raw_ms);
         assert!(
-            d >= raw / 2 && d < raw,
-            "attempt {attempt}: {d:?} outside [{:?}, {raw:?})",
-            raw / 2
+            d >= raw.mul_f64(5.0 / 6.0) && d <= raw,
+            "attempt {attempt}: {d:?} outside [{:?}, {raw:?}]",
+            raw.mul_f64(5.0 / 6.0)
         );
     };
-    in_band(1, 500);
+    assert_eq!(
+        drive::backoff(1),
+        Duration::from_millis(500),
+        "the first step"
+    );
     in_band(2, 1_000);
     in_band(3, 2_000);
     in_band(4, 4_000);
     in_band(5, 4_000);
-    in_band(0, 500);
+    assert_eq!(
+        drive::backoff(0),
+        Duration::from_millis(500),
+        "attempt 0 is the first step"
+    );
     in_band(u32::MAX, 4_000);
 }
 
@@ -1959,8 +2034,8 @@ fn only_the_requested_part_of_a_ranged_answer_is_accepted() {
     );
     assert_eq!(
         ok(partial, None, body[10..20].to_vec(), (10, 10)),
-        Some(body[10..20].to_vec()),
-        "a 206 without Content-Range is judged by its length"
+        None,
+        "a 206 without Content-Range does not name the payload (RFC 9110 §15.3.7)"
     );
     assert_eq!(
         ok(partial, Some((11, 20)), body[10..20].to_vec(), (10, 10)),

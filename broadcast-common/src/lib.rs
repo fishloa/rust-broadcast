@@ -48,6 +48,9 @@
 
 extern crate alloc;
 
+pub mod backoff;
+#[cfg(feature = "base64")]
+pub mod base64;
 pub mod bcd;
 pub mod ber;
 pub mod bits;
@@ -57,6 +60,9 @@ pub mod crc32_mpeg2;
 pub mod erased;
 pub mod error;
 pub mod hex;
+#[cfg(feature = "std")]
+#[cfg(feature = "http-date")]
+pub mod http_date;
 pub mod klv;
 #[cfg(feature = "lang")]
 pub mod lang;
@@ -69,7 +75,8 @@ pub mod stage;
 pub mod time;
 pub mod timescale;
 pub mod traits;
-pub mod ts_dup;
+#[cfg(feature = "url")]
+pub mod url_ref;
 #[cfg(feature = "xml")]
 pub mod xml;
 #[cfg(feature = "xml")]

@@ -1,11 +1,33 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- A Smooth fragment request the origin's window does not hold answers `404`, as an evicted HLS segment does, instead of `500`: the Smooth fallback passed its server-error status as the not-found status too, so every `EgressResponse::NotFound` from the origin (a start time before the window or past its end) became an internal error (issue #2506).
+- An HTTP pull (HLS, DASH, Smooth, TS-over-HTTP) keeps the auth state for the whole session: a cookie an origin sets on the playlist is sent with the segments, and a Digest challenge is negotiated once instead of on every request, because the state is updated in place rather than cloned per request. Cookies are stamped with the pull's own clock instead of `0`.
+- A `407` from an HTTP pull is returned unchanged instead of being retried; there is no proxy-credential configuration, and the origin's credentials are never sent as a proxy's.
+- The challenge-answer flag a pull passes on reports whether the request really carried an `Authorization` header, so a Digest state that has not negotiated its first nonce is not treated as a rejected credential.
 ### Changed
+- SRT caller pull runs the relay `broadcast_client::Session` through the shared session host (the session owns the handshake, ARQ and TSBPD; the host performs its connected UDP socket); listener mode is unchanged.
+- TS-over-UDP pull (unicast and multicast) runs the same relay `broadcast_client::Session` through the shared session host: the session names the socket, the host binds it with the route's socket options (`SO_RCVBUF`, reuse, multicast interface as address or IPv6 index) and feeds each datagram to the session. A pre-bound socket is still consumed once and still cannot join a group.
+- TS-over-HTTP pull runs one `broadcast_client::Session` in relay mode (`Config::relay()`) through a shared async session host (`source::client_host`): the session owns redirects, cookies, Basic/Digest/Bearer auth, the finite-body decision and the stall policy, and the host performs its HTTP requests with `reqwest`; the programme split of a multi-programme stream keys on each track's `program_number` as before.
+- DASH-IF ingest sans-IO engine moved to `dash-runtime::ingest`; multimux keeps the axum glue.
+### Removed
+- BREAKING: `source::srt::connect_caller`; `run_srt_caller` is the caller entry point.
+- BREAKING: `source::ts_udp::{bind, TsUdpDialer}`; `run_ts_udp` is the entry point.
+- BREAKING: `source::ts_http::{open_stream, recv_and_feed, StreamStatus, TsHttpDialer, TsHttpStream}`; `run_ts_http` is the entry point (the session replaces the hand-driven GET and stall policy).
+- BREAKING: the public `multimux::dashif_ingest` module; use `dash_runtime::ingest` (issue #2480).
+- Blocking-reload timeout policy now lives in `hls-runtime::server` (multimux calls it).
+- The DASH/LL-DASH manifests render their `xs:duration` attributes with `broadcast_dash::duration::xs_duration`, the one writer in the workspace, instead of `transmux::dash::xs_duration` (removed); the rendered bytes are unchanged (#2465).
+- RTSP keepalive is now `rtsp_runtime::ClientSession`'s schedule driven from `next_deadline`/`on_deadline`, instead of a second timer with its own clamp, and it follows the method the server advertises: the first keepalive is a `GET_PARAMETER` probe whose `Public` answer settles the rest (`OPTIONS` for a server that does not list it).
+- The Smooth output no longer disagrees with the packager's own Smooth path (issue #2453): AAC without a `DecoderSpecificInfo` is a server error instead of a manifest advertising `CodecPrivateData=""`, a second track of a kind (`audio`/`audio_2`) gets its own `Name` and `Url` and stays reachable by its fragment URL, `stpp`/`wvtt` subtitle tracks are advertised as a `text` `StreamIndex` (`Subtype="SUBT"`), and video geometry comes from the SPS rather than from a `CodecConfig` that RTSP/WHIP ingest leaves at 0.
+
+- The Smooth output's `Manifest` and fragment responses carry the `Cache-Control` they always did (`no-cache`, from the router's own `cache_control_for`): an egress `CachePolicy` still reaches the wire nowhere in this crate, and `smooth_responses_carry_no_cache` pins a success and an error alike (issue #2453 round 2).
+- The Smooth output is an adapter over `smooth_runtime::SmoothOrigin` (issue #2453): `multimux/src/output/smooth.rs` keeps only the axum routes and response mapping. The manifest model and its XML writer, the chunk timeline, the fragment-URL grammar, stream identity and the codec parameters now live in `smooth-runtime`/`broadcast-smooth`/`transmux`. An egress answer of `BadRequest` because a track cannot be described maps to a 5xx (`crate::http::into_response_with_message`).
 - The monotonic-to-UTC anchor mapping (`HostClock` callers) comes from `broadcast_common::time::MonoUtc`; reading the host clocks stays in `clock.rs`.
 - Timeline discontinuity detection now uses the per-track detector from `transmux` (broadcast-client semantics); the 10 s `MEDIA_DISCONTINUITY_NS` constant is removed.
 - RTSP pull skips unplayable SDP media sections (and foreign-authority controls and sections beyond the track cap) instead of failing the whole route; fails only when nothing is playable. Skipped sections are logged as route warnings.
-
+### Removed
+- The `hls-runtime` `tokio` feature is no longer enabled: `hls-runtime` no longer has one.
 ### Added
 - LL-DASH renders through the shared DASH renderer (`manifest-ll.mpd` is the standard MPD model with the low-latency fields layered on: `ServiceDescription`/`Latency`, per-segment `availabilityTimeOffset`/`availabilityTimeComplete`, `minimumUpdatePeriod` at the chunk interval), so it gains what only `manifest.mpd` had: the Period split at a gap placeholder and at every init generation, each Period naming the versioned init segment its segments were cut under, and the SCTE-35 `InbandEventStream` declaration. A test pins that both flavours render the same Periods for a window through a gap and a codec change.
 
@@ -69,6 +91,7 @@
 - `rescale_to_90k` now wraps the rescaled RTP timestamp into the 32-bit range explicitly (RFC 3550 §5.1) instead of relying on `as u32`.
 - `Recorder::lines` and `Recorder::len` recover a poisoned lock via `PoisonError::into_inner` instead of returning an empty golden.
 
+### Changed
 ## [0.18.0] - 2026-11-10
 ### Changed
 - LL-HLS and TS-HLS outputs now share one HLS media-playlist implementation (parameterised by held/insert-priority), removing the duplicated route/playlist code.

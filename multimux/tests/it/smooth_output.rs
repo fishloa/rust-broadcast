@@ -947,3 +947,390 @@ fn config_smooth_deserializes_and_validates() {
     );
     cfg.validate().expect("smooth config must validate");
 }
+
+// ---------------------------------------------------------------------------
+// Shared-origin regressions: the four places the former hand-written Smooth
+// output diverged from transmux's own Smooth path.
+// ---------------------------------------------------------------------------
+
+/// An AAC-LC `AudioSpecificConfig` for 48 kHz stereo.
+const ASC_48K_STEREO: [u8; 2] = [0x11, 0x90];
+/// The AAC media timescale.
+const AAC_TIMESCALE: u32 = 48_000;
+/// An AAC-LC frame duration, in [`AAC_TIMESCALE`] ticks.
+const AAC_FRAME_DUR: u32 = 1024;
+/// The channel count the AAC config reports.
+const AAC_CHANNELS: u16 = 2;
+/// The `stpp` namespace a TTML subtitle track carries.
+const TTML_NAMESPACE: &str = "http://www.w3.org/ns/ttml";
+
+/// An `esds` carrying `dsi` as its DecoderSpecificInfo (or none when `None`).
+fn esds(dsi: Option<Vec<u8>>) -> transmux::EsdsBox {
+    use transmux::{
+        DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,
+    };
+    const SL_CONFIG_PREDEFINED_MP4: u8 = 2;
+    let decoder = DecoderConfigDescriptor::new(
+        0x40,
+        0x15,
+        false,
+        0,
+        0,
+        0,
+        dsi.map(DecoderSpecificInfo::new),
+    );
+    EsdsBox::new(ESDescriptor::new(
+        1,
+        0,
+        Some(decoder),
+        Some(SLConfigDescriptor::new(vec![SL_CONFIG_PREDEFINED_MP4])),
+    ))
+}
+
+/// An AAC track of `track_id` whose `esds` carries `dsi`.
+fn audio_spec(track_id: u32, dsi: Option<Vec<u8>>) -> TrackSpec {
+    TrackSpec::new(
+        TrackId::new(track_id),
+        AAC_TIMESCALE,
+        CodecConfig::Aac {
+            esds: esds(dsi),
+            sample_rate: AAC_TIMESCALE,
+            channel_count: AAC_CHANNELS,
+            sample_size: 16,
+        },
+    )
+}
+
+/// A TTML (`stpp`) subtitle track of `track_id`.
+fn subtitle_spec(track_id: u32) -> TrackSpec {
+    TrackSpec::new(
+        TrackId::new(track_id),
+        1000,
+        CodecConfig::Subtitle {
+            format: transmux::ir::SubtitleFormat::Ttml,
+            sample_entry: Some(transmux::pipeline::SubtitleSampleEntry::Ttml(
+                transmux::XmlSubtitleSampleEntry::new(TTML_NAMESPACE),
+            )),
+        },
+    )
+}
+
+/// Publish a stable, multi-segment route for `specs`, with tracks recorded so
+/// the origin knows what the window describes.
+fn publish_route(specs: Vec<TrackSpec>) -> Arc<RouteHandle> {
+    let store = Arc::new(RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8));
+    let mut batches = Vec::new();
+    for i in 0..60u32 {
+        let is_sync = i % 30 == 0;
+        let video_dts = i64::from(i) * i64::from(FRAME_DUR);
+        let audio_dts = i64::from(i) * i64::from(AAC_FRAME_DUR);
+        let mut batch = Vec::new();
+        for spec in &specs {
+            let sample = match spec.config {
+                CodecConfig::Avc { .. } => Sample::new(
+                    vec![0xAAu8.wrapping_add((i % 251) as u8); 64],
+                    Some(video_dts),
+                    Some(video_dts),
+                    Some(FRAME_DUR),
+                    is_sync,
+                ),
+                CodecConfig::Aac { .. } => Sample::new(
+                    vec![0x5A; 32],
+                    Some(audio_dts),
+                    Some(audio_dts),
+                    Some(AAC_FRAME_DUR),
+                    true,
+                ),
+                _ => Sample::new(
+                    vec![0x54; 8],
+                    Some(video_dts),
+                    Some(video_dts),
+                    Some(FRAME_DUR),
+                    true,
+                ),
+            };
+            batch.push((spec.track_id.value(), sample));
+        }
+        batches.push(batch);
+    }
+    feed_via_segmenter(&store, specs.clone(), batches);
+    store.set_track_specs(media_plane::ProgramId(0), specs);
+    store
+}
+
+/// A route with two AAC audio tracks serves both: the manifest names them
+/// distinctly and a fragment request for the second returns that track's
+/// fragment, not the first's.
+#[tokio::test]
+async fn two_audio_tracks_are_both_advertised_and_served() {
+    let store = publish_route(vec![
+        audio_spec(1, Some(ASC_48K_STEREO.to_vec())),
+        audio_spec(2, Some(ASC_48K_STEREO.to_vec())),
+    ]);
+    let app = build_app(store, Arc::new(SmoothOutput));
+    let manifest_xml = body_string(
+        app.clone()
+            .oneshot(get("/cam/Manifest"))
+            .await
+            .expect("router"),
+    )
+    .await;
+    let manifest = SmoothManifest::parse(&manifest_xml).expect("manifest parses");
+    assert_eq!(
+        manifest.streams.len(),
+        2,
+        "both audio tracks are advertised:\n{manifest_xml}"
+    );
+    let names: Vec<Option<&str>> = manifest
+        .streams
+        .iter()
+        .map(|stream| stream.name.as_deref())
+        .collect();
+    assert_eq!(names, vec![None, Some("audio_2")], "{manifest_xml}");
+    assert_ne!(
+        manifest.streams[0].url, manifest.streams[1].url,
+        "each stream has its own fragment URL template"
+    );
+
+    let bitrate = manifest.streams[1].qualities[0].bitrate;
+    let url = manifest.streams[1].resolve_fragment_url(bitrate, 0);
+    let bytes = body_bytes(
+        app.clone()
+            .oneshot(get(&format!("/cam/{url}")))
+            .await
+            .expect("router"),
+    )
+    .await;
+    let second = read_tfxd(&bytes).expect("the served fragment carries a tfxd");
+    let first_bytes = body_bytes(
+        app.clone()
+            .oneshot(get(&format!(
+                "/cam/{}",
+                manifest.streams[0].resolve_fragment_url(bitrate, 0)
+            )))
+            .await
+            .expect("router"),
+    )
+    .await;
+    let first = read_tfxd(&first_bytes).expect("the first stream's fragment carries a tfxd");
+    assert_eq!(
+        second, first,
+        "both streams are addressed at the same start"
+    );
+    assert_eq!(
+        second.0, 0,
+        "the second stream's fragment is the first chunk of its own timeline"
+    );
+}
+
+/// AAC with no DecoderSpecificInfo has no `CodecPrivateData` a client could
+/// initialise from, so the manifest is an error rather than an empty value.
+#[tokio::test]
+async fn aac_without_decoder_specific_info_is_an_error() {
+    let store = publish_route(vec![audio_spec(1, None)]);
+    let app = build_app(store, Arc::new(SmoothOutput));
+    let resp = app
+        .oneshot(get("/cam/Manifest"))
+        .await
+        .expect("router call");
+    assert_eq!(
+        resp.status(),
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "an undescribable track is a server failure, not a client error"
+    );
+    let body = body_string(resp).await;
+    assert!(
+        !body.contains("CodecPrivateData"),
+        "an unusable manifest must not be served: {body}"
+    );
+}
+
+/// Video ingested without geometry in its `CodecConfig` (what RTSP/WHEP
+/// ingest produces) is advertised at the SPS's own size.
+#[tokio::test]
+async fn video_geometry_comes_from_the_sps() {
+    let spec = video_track_spec_sized(0, 0);
+    let store = publish_route(vec![spec]);
+    let app = build_app(store, Arc::new(SmoothOutput));
+    let manifest_xml = body_string(
+        app.oneshot(get("/cam/Manifest"))
+            .await
+            .expect("router call"),
+    )
+    .await;
+    let manifest = SmoothManifest::parse(&manifest_xml).expect("manifest parses");
+    let level = &manifest.streams[0].qualities[0];
+    assert!(
+        level.width.is_some_and(|w| w > 0),
+        "MaxWidth must come from the SPS, not the empty CodecConfig:\n{manifest_xml}"
+    );
+    assert!(
+        level.height.is_some_and(|h| h > 0),
+        "MaxHeight must come from the SPS:\n{manifest_xml}"
+    );
+}
+
+/// A route with a subtitle track advertises it as a `text` stream.
+#[tokio::test]
+async fn a_subtitle_track_is_advertised() {
+    let store = publish_route(vec![video_track_spec_sized(0, 0), subtitle_spec(2)]);
+    let app = build_app(store, Arc::new(SmoothOutput));
+    let manifest_xml = body_string(
+        app.oneshot(get("/cam/Manifest"))
+            .await
+            .expect("router call"),
+    )
+    .await;
+    let manifest = SmoothManifest::parse(&manifest_xml).expect("manifest parses");
+    let text = manifest
+        .streams
+        .iter()
+        .find(|stream| stream.stream_type == broadcast_smooth::StreamType::Text)
+        .unwrap_or_else(|| panic!("no text StreamIndex in:\n{manifest_xml}"));
+    assert_eq!(text.subtype.as_deref(), Some("SUBT"));
+    assert!(
+        !text.enumerate_chunks().expect("chunks").is_empty(),
+        "the subtitle stream advertises its chunks"
+    );
+}
+
+/// Smooth's responses carry the `Cache-Control` the origin already sent: an
+/// egress answer's `CachePolicy` has never reached the wire (the former
+/// hand-built handlers passed `NoCache` and then built their own response,
+/// dropping it), and the router's `cache_control_for` classifies a `Manifest`
+/// and a `Fragments(...)` path as "anything else", which is `no-cache` for a
+/// success and for an error alike. Both routes must keep that.
+#[tokio::test]
+async fn smooth_responses_carry_no_cache() {
+    const NO_CACHE: &str = "no-cache";
+    let store = Arc::new(RouteHandle::new(W13_TARGET_SECS, PART_TARGET_MS, 2));
+    let specs = vec![video_track_spec()];
+    let program = media_plane::ProgramId(0);
+    store.publish_new_program(program);
+    let mut seg = LlHlsSegmenter::with_part_target(
+        specs.clone(),
+        transmux::VIDEO_CLOCK_RATE,
+        W13_TARGET_SECS,
+        PART_TARGET_MS,
+    )
+    .expect("segmenter builds");
+    store.set_init(program, seg.init_segment().expect("init"));
+    store.set_track_specs(program, specs);
+    for i in 0..=W13_SYNC_EVERY {
+        let sample = Sample::new(
+            vec![0xAAu8.wrapping_add((i % 251) as u8); 64],
+            Some(i64::from(i) * i64::from(W13_FRAME_DUR)),
+            Some(i64::from(i) * i64::from(W13_FRAME_DUR)),
+            Some(W13_FRAME_DUR),
+            i.is_multiple_of(W13_SYNC_EVERY),
+        );
+        seg.push(TrackId::new(1), sample).expect("push");
+    }
+    seg.flush().expect("flush");
+    for segment in seg.take_ready_segments() {
+        store.add_segment(program, segment).expect("add_segment");
+    }
+
+    let app = build_app(store, Arc::new(SmoothOutput));
+    let resp = app
+        .clone()
+        .oneshot(get("/cam/Manifest"))
+        .await
+        .expect("router call");
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()
+            .get(axum::http::header::CACHE_CONTROL)
+            .expect("manifest carries Cache-Control"),
+        NO_CACHE
+    );
+    let manifest = SmoothManifest::parse(&body_string(resp).await).expect("manifest parses");
+
+    let stream = &manifest.streams[0];
+    let bitrate = stream.qualities.first().map(|q| q.bitrate).unwrap_or(0);
+    let (start, _) = stream.enumerate_chunks().expect("chunks")[0];
+    let url = stream.resolve_fragment_url(bitrate, start);
+    let resp = app
+        .clone()
+        .oneshot(get(&format!("/cam/{url}")))
+        .await
+        .expect("router call");
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()
+            .get(axum::http::header::CACHE_CONTROL)
+            .expect("fragment carries Cache-Control"),
+        NO_CACHE
+    );
+
+    // An error answer is `no-cache` too — never a cacheable failure.
+    let resp = app
+        .oneshot(get("/cam/QualityLevels(1)/Fragments(video=999999999)"))
+        .await
+        .expect("router call");
+    assert!(
+        resp.status().is_client_error() || resp.status().is_server_error(),
+        "a fragment time outside the window is not a success: {}",
+        resp.status()
+    );
+    assert_eq!(
+        resp.headers()
+            .get(axum::http::header::CACHE_CONTROL)
+            .expect("an error carries Cache-Control"),
+        NO_CACHE
+    );
+}
+
+/// A fragment the live window does not hold answers `404`, never a `500` and
+/// never a panic: one tick before the window's first chunk and one tick after
+/// the end of its last are both outside it. The addresses are the manifest's
+/// own `c@t` values shifted by one tick, so each request is exactly as
+/// well-formed as the ones that do resolve.
+#[tokio::test]
+async fn a_fragment_outside_the_window_is_not_found() {
+    let store = publish_route(vec![video_track_spec()]);
+    let app = build_app(store, Arc::new(SmoothOutput));
+    let manifest_xml = body_string(
+        app.clone()
+            .oneshot(get("/cam/Manifest"))
+            .await
+            .expect("router"),
+    )
+    .await;
+    let manifest = SmoothManifest::parse(&manifest_xml).expect("manifest parses");
+    let stream = &manifest.streams[0];
+    let bitrate = stream.qualities[0].bitrate;
+    let chunks = stream.enumerate_chunks().expect("chunks");
+    let (last_start, last_duration) = chunks.last().copied().expect("a last chunk");
+    let end = last_start.checked_add(last_duration).expect("the end fits");
+    let outside = [
+        ("after the last chunk", end),
+        ("the largest start", u64::MAX),
+    ];
+    for (what, start) in outside {
+        let url = stream.resolve_fragment_url(bitrate, start);
+        let resp = app
+            .clone()
+            .oneshot(get(&format!("/cam/{url}")))
+            .await
+            .expect("router call");
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "a start {what} ({start}) is not in the window"
+        );
+    }
+    for (start, _) in &chunks {
+        let url = stream.resolve_fragment_url(bitrate, *start);
+        let resp = app
+            .clone()
+            .oneshot(get(&format!("/cam/{url}")))
+            .await
+            .expect("router call");
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "the window holds a chunk starting at {start}"
+        );
+    }
+}

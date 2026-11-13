@@ -9,6 +9,7 @@ use mpeg_ts::ts::TS_SYNC_BYTE;
 use transmux::TrackId;
 
 use broadcast_common::Unpackage;
+use broadcast_common::url_ref;
 use broadcast_hls::{
     ByteRange, EncryptionMethod, MapTag, MasterPlaylist, MediaKey, MediaPlaylist, MediaSegment,
     OpenSegment, PreloadHintType,
@@ -383,6 +384,9 @@ pub struct HlsClient {
     #[cfg(feature = "std")]
     wait_anchor: Option<std::time::Instant>,
     pending_outputs: VecDeque<Output>,
+    /// Playlist references the guarded resolver refused (issue #2458), reported
+    /// through [`Self::next_error`] in the order the playlist named them.
+    pending_errors: VecDeque<Error>,
 
     /// Every Media Initialization Section the client holds or wants, by id.
     inits: BTreeMap<InitId, InitSlot>,
@@ -539,6 +543,7 @@ impl HlsClient {
             variant_policy: VariantPolicy::default(),
             master: None,
             pending_actions,
+            pending_errors: VecDeque::new(),
             #[cfg(feature = "std")]
             wait_anchor: None,
             pending_outputs: VecDeque::new(),
@@ -700,8 +705,11 @@ impl HlsClient {
             let base = self.base().to_string();
             let mut variants: Vec<VariantInfo> = Vec::new();
             for v in &master.variants {
+                let Some(resolved) = self.fetch_url(&base, &v.uri) else {
+                    continue;
+                };
                 variants.push(VariantInfo {
-                    url: url::resolve(&base, &v.uri),
+                    url: resolved,
                     bandwidth: v.bandwidth,
                     average_bandwidth: v.average_bandwidth,
                     resolution: v.resolution,
@@ -719,7 +727,10 @@ impl HlsClient {
                     language: m.language.clone(),
                     default: m.default,
                     autoselect: m.autoselect,
-                    url: m.uri.as_ref().map(|u| url::resolve(&base, u)),
+                    url: match m.uri.as_deref() {
+                        Some(u) => self.fetch_url(&base, u),
+                        None => None,
+                    },
                 });
             }
             let chosen = choose_variant(&variants, &self.variant_policy);
@@ -1077,7 +1088,9 @@ impl HlsClient {
             let key = match keyed.iter().rev().find(|(m, _)| m == map) {
                 Some((_, key)) => key.clone(),
                 None => self
-                    .init_slot_for(&url::resolve(self.base(), &map.uri), &map.byte_range)
+                    .resolved_url(self.base(), &map.uri)
+                    .ok()
+                    .and_then(|url| self.init_slot_for(&url, &map.byte_range))
                     .and_then(|id| self.inits.get(&id))
                     .and_then(|slot| slot.encryption.clone()),
             };
@@ -1114,7 +1127,7 @@ impl HlsClient {
     /// client has none for that resource yet; a slot whose fetch failed is
     /// queued again.
     fn init_for_map(&mut self, map: &MapTag) -> Result<InitId> {
-        let url = url::resolve(self.base(), &map.uri);
+        let url = self.resolved_url(self.base(), &map.uri)?;
         if let Some(id) = self.init_slot_for(&url, &map.byte_range)
             && let Some(slot) = self.inits.get_mut(&id)
         {
@@ -1135,7 +1148,7 @@ impl HlsClient {
         let byte_range = self.resolve_byte_range(&url, &map.byte_range)?;
         let crypto = match key.as_ref().and_then(|k| k.uri.as_deref().map(|u| (k, u))) {
             Some((key, uri)) => {
-                let key_id = self.ensure_key_requested(uri);
+                let key_id = self.ensure_key_requested(uri)?;
                 let iv = key.iv.unwrap_or_else(|| media_sequence_iv(first_msn));
                 Some(SegmentCrypto { key_id, iv })
             }
@@ -1503,8 +1516,8 @@ impl HlsClient {
 
     /// Request key `uri` once per distinct URI; the id is stable for the life
     /// of the client.
-    fn ensure_key_requested(&mut self, uri: &str) -> KeyId {
-        let url = url::resolve(self.base(), uri);
+    fn ensure_key_requested(&mut self, uri: &str) -> Result<KeyId> {
+        let url = self.resolved_url(self.base(), uri)?;
         let id = match self.key_ids.get(&url) {
             Some(id) => *id,
             None => {
@@ -1516,7 +1529,7 @@ impl HlsClient {
             }
         };
         self.request_key(id);
-        id
+        Ok(id)
     }
 
     /// Queue the fetch of key `id` unless it is held or already in flight.
@@ -1588,7 +1601,7 @@ impl HlsClient {
             self.request_key(existing.key_id);
             return Ok(());
         }
-        let id = self.ensure_key_requested(uri);
+        let id = self.ensure_key_requested(uri)?;
         let iv = key.iv.unwrap_or_else(|| media_sequence_iv(msn));
         self.segment_crypto
             .insert(msn, SegmentCrypto { key_id: id, iv });
@@ -1786,8 +1799,10 @@ impl HlsClient {
             }
             let id = ResourceId::Segment { msn };
             if !self.requested.contains(&id) {
+                let Some(url) = self.segment_url(msn, &seg.uri) else {
+                    return Ok(());
+                };
                 self.bind_init(msn, seg.map.as_ref())?;
-                let url = url::resolve(self.base(), &seg.uri);
                 let byte_range = self.request_byte_range(id, &url, &seg.byte_range)?;
                 self.request_resource(id, url, byte_range);
             }
@@ -1803,8 +1818,10 @@ impl HlsClient {
             fully_accounted = false;
             let id = ResourceId::Part { msn, part: i };
             if !self.requested.contains(&id) {
+                let Some(url) = self.segment_url(msn, &part.uri) else {
+                    return Ok(());
+                };
                 self.bind_init(msn, seg.map.as_ref())?;
-                let url = url::resolve(self.base(), &part.uri);
                 let byte_range = self.request_byte_range(id, &url, &part.byte_range)?;
                 self.request_resource(id, url, byte_range);
             }
@@ -1856,8 +1873,10 @@ impl HlsClient {
             }
             let id = ResourceId::Part { msn, part: i };
             if !self.requested.contains(&id) {
+                let Some(url) = self.segment_url(msn, &part.uri) else {
+                    return Ok(());
+                };
                 self.bind_init(msn, open.map.as_ref())?;
-                let url = url::resolve(self.base(), &part.uri);
                 let byte_range = self.request_byte_range(id, &url, &part.byte_range)?;
                 self.request_resource(id, url, byte_range);
             }
@@ -1869,6 +1888,69 @@ impl HlsClient {
         self.init_for_map(map)?;
         self.pump_init_fetch();
         Ok(())
+    }
+
+    /// The URL `uri` resolves to against `base`, or `None` (with the typed
+    /// [`Error::UnresolvableReference`] pushed as this client's pending error)
+    /// when the guarded resolver in `broadcast_common::url_ref` refuses it:
+    /// a reference carrying an ASCII control character is never sanitised into
+    /// a different URL and never requested (issue #2458).
+    fn fetch_url(&mut self, base: &str, uri: &str) -> Option<String> {
+        match self.resolved_url(base, uri) {
+            Ok(url) => Some(url),
+            Err(report) => {
+                self.pending_errors.push_back(report);
+                None
+            }
+        }
+    }
+
+    /// The resolved URL, or the [`Error::UnresolvableReference`] to report for
+    /// it — without reporting it, so a caller that fails the whole playlist
+    /// (an unusable init) can return the error directly.
+    fn resolved_url(&self, base: &str, uri: &str) -> core::result::Result<String, Error> {
+        url_ref::resolve_str(base, uri).map_err(|source| Error::UnresolvableReference {
+            uri: uri.to_string(),
+            source,
+        })
+    }
+
+    /// The URL segment URI `uri` (with its query, which the byte-range cursor
+    /// keeps) resolves to, or `None` (with the report queued) when the guarded
+    /// resolver refuses it: the segment stays unrequested instead of being
+    /// silently renamed (issue #2458).
+    fn segment_url(&mut self, msn: u64, uri: &str) -> Option<String> {
+        match url_ref::resolve_str(self.base(), uri) {
+            Ok(url) => Some(url),
+            Err(source) => {
+                self.report_unresolvable(msn, uri, source);
+                None
+            }
+        }
+    }
+
+    /// Report an unresolvable reference naming segment `msn`, and drop the
+    /// segment's decryption parameters so a key it would have fetched is not
+    /// left stranded.
+    fn report_unresolvable(
+        &mut self,
+        msn: u64,
+        uri: &str,
+        source: broadcast_common::url_ref::Error,
+    ) {
+        self.segment_crypto.remove(&msn);
+        self.pending_errors.push_back(Error::UnresolvableReference {
+            uri: uri.to_string(),
+            source,
+        });
+    }
+
+    /// The errors [`Self::poll`] and [`Self::next_output`] raise on the
+    /// caller's behalf: every playlist reference the guarded resolver refused
+    /// (issue #2458), in playlist order. Reported once, in order, and never
+    /// turned into a fetch.
+    pub fn next_error(&mut self) -> Option<Error> {
+        self.pending_errors.pop_front()
     }
 
     fn request_resource(&mut self, id: ResourceId, url: String, byte_range: Option<(u64, u64)>) {

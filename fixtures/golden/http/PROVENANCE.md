@@ -209,3 +209,13 @@ GOLDEN_OUT=<this directory> cargo test -p multimux --lib <that test> --locked
 `GOLDEN_BLESS=<dir>` in the migration's `announce_sdp_golden` test writes the file instead of
 asserting.
 
+
+### Addition after the baseline
+
+`media_doctor_scte35_cues_total{timing="in_future"|"in_past"|"immediate"}`
+(post-#2476) reports each SCTE-35 `splice_insert` cue judged against the
+program's reference decode timestamp. It is an addition, not a change: every
+series the baseline goldens carry still has the same value, and both goldens
+predate the family, so `watch_metrics`'s golden test compares the baseline
+series one way and names the added family in `ADDED_SINCE_GOLDEN`. Nothing in
+the goldens is regenerated.

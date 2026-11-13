@@ -7,8 +7,8 @@ use broadcast_auth::{Credentials as AuthCredentials, Verifier};
 use broadcast_client::{Config, Credentials, Event, Status};
 use sdp_types::{Media, MediaType, TransportProto};
 use support::rtsp_host::{
-    BASE_URL, Host, MediaFixture, OPTIONS, PLAY, SEC, SETUP, Server, SetupReply, connects,
-    interleaved, quiet_config, samples_of,
+    BASE_URL, Host, MediaFixture, PLAY, SEC, SETUP, Server, SetupReply, connects, interleaved,
+    quiet_config, samples_of,
 };
 use transmux::rtp::RtpMediaKind;
 
@@ -287,7 +287,7 @@ fn keepalive_challenges_with_rotating_nonces_never_exhaust_the_replay_budget() {
     for cycle in 1..=KEEPALIVE_CYCLES {
         host.advance_to(cycle * KEEPALIVE_SECS * SEC);
         assert_eq!(
-            host.server.count(OPTIONS),
+            host.server.count("OPTIONS"),
             usize::try_from(cycle * 2).expect("small"),
             "cycle {cycle}: each keepalive is challenged once and retried once"
         );
@@ -303,8 +303,12 @@ fn keepalive_challenges_with_rotating_nonces_never_exhaust_the_replay_budget() {
     assert_eq!(connects(&host.actions).len(), 1, "no reconnect");
 }
 
+/// A zero backoff entry is not a burst: the source serialises its requests
+/// (one connection at a time) and re-arms its keepalive/start timer, so the
+/// wake it arms is a real instant rather than the current one, and no second
+/// connection is opened from the same action drain.
 #[test]
-fn a_zero_backoff_entry_is_floored_at_one_millisecond() {
+fn a_zero_backoff_entry_never_opens_two_connections_at_once() {
     let mut config = Config::default();
     config.ts_http.backoff_ms = vec![0, 0, 0];
     let mut server = Server::new(&fixture().sdp);
@@ -316,7 +320,10 @@ fn a_zero_backoff_entry_is_floored_at_one_millisecond() {
         "a zero backoff must not reconnect within the same instant"
     );
     let last_wake = support::rtsp_host::wakes(&host.actions).last().copied();
-    assert_eq!(last_wake, Some(MS));
+    assert!(
+        last_wake.is_some_and(|wake| wake > host.now),
+        "a wake is still armed for a later instant: {last_wake:?}"
+    );
 }
 
 #[test]

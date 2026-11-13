@@ -11,7 +11,6 @@ use hls_runtime::client::{
 use transmux::TrackId;
 use url::Url;
 
-use crate::auth::AuthState;
 use crate::error::Error;
 use crate::events::{AUDIO_TRACK_ID_OFFSET, Action, Config, ErrorKind, Event, Status};
 use crate::source::fetch::conn::ConnAlloc;
@@ -23,6 +22,7 @@ use crate::source::fetch::resume::{HeadOutcome, Stash, accept_head};
 use crate::source::fetch::retry::{Backoff, RefusedCapture, RetryGate, retry_after_us};
 use crate::source::fetch::wall::WallClock;
 use crate::source::fetch::window::{Lane, Lanes, Window};
+use broadcast_auth::AuthState;
 
 const MICROS_PER_MILLI: u64 = 1_000;
 const STATUS_FORBIDDEN: u16 = 403;
@@ -122,7 +122,13 @@ pub(crate) struct HlsSource {
 }
 
 impl HlsSource {
-    pub(crate) fn new(url: &Url, config: &Config, conn_alloc: ConnAlloc, role: Role) -> Self {
+    pub(crate) fn new(
+        url: &Url,
+        config: &Config,
+        conn_alloc: ConnAlloc,
+        role: Role,
+        seed: u64,
+    ) -> Self {
         let mut client = HlsClient::new(url.as_str());
         client.set_variant_policy(config.variant_policy.clone());
         let mut source = Self {
@@ -147,7 +153,7 @@ impl HlsSource {
             skipped_kind: None,
             damaged_reported: false,
             oversize_reported: BTreeSet::new(),
-            backoff: Backoff::new(&config.backoff_ms, config.backoff_cap_ms),
+            backoff: Backoff::new(&config.backoff_ms, config.backoff_cap_ms, seed),
             max_redirects: config.max_redirects,
             flight: InFlight::new(
                 Timeouts {
@@ -861,7 +867,7 @@ impl HlsSource {
     fn send(&mut self, mut req: Req, auth: &mut AuthState, now: u64) {
         self.flush_refused();
         let headers = auth.request_headers(&req.url, now);
-        req.authed = crate::auth::carries_credentials(&headers);
+        req.authed = broadcast_auth::carries_credentials(&headers);
         self.flight
             .start(req, headers, METHOD_GET, now, &mut self.actions);
     }
@@ -1065,6 +1071,9 @@ fn classify(error: &CoreError) -> Option<(ErrorKind, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A fixed jitter seed, so a test asserting an exact retry delay is reproducible.
+    const TEST_SEED: u64 = 0x5EED;
     use crate::source::fetch::body::BodyAcc;
     use crate::source::fetch::resume::{Basis, Parked};
 
@@ -1074,7 +1083,13 @@ mod tests {
     fn source_with_auth() -> (HlsSource, AuthState, Url) {
         let url = Url::parse("http://o.test/p.m3u8").unwrap();
         let auth = AuthState::new(url.clone(), Vec::new());
-        let source = HlsSource::new(&url, &Config::default(), ConnAlloc::new(), Role::Main);
+        let source = HlsSource::new(
+            &url,
+            &Config::default(),
+            ConnAlloc::new(),
+            Role::Main,
+            TEST_SEED,
+        );
         (source, auth, url)
     }
 

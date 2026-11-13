@@ -434,6 +434,9 @@ pub enum ErrorKind {
     /// The SRT handshake did not finish inside `SrtConfig::handshake_timeout_ms`. Non-fatal: the
     /// connect-failure backoff follows.
     SrtHandshakeTimeout,
+    /// The SRT peer sent nothing, not even a keepalive, for `SrtConfig::peer_idle_timeout_ms`.
+    /// Non-fatal: the link is dropped and rebuilt at once.
+    SrtPeerIdle,
     /// A Smooth Streaming client manifest could not be read as XML, broke a size or structure
     /// bound or is not a manifest (`reason` is a stable token). Non-fatal and reported once per
     /// reason until a good manifest arrives; the session keeps the last good manifest and
@@ -459,6 +462,17 @@ pub enum ErrorKind {
 }
 
 impl ErrorKind {
+    /// `true` when the error ended the connection the session was reading from, so a host that
+    /// owns reconnection (rather than letting the session rebuild the link) should treat the
+    /// attempt as failed.
+    #[must_use]
+    pub fn ends_connection(&self) -> bool {
+        matches!(
+            self,
+            Self::SrtRejected { .. } | Self::SrtHandshakeTimeout | Self::SrtPeerIdle
+        )
+    }
+
     /// Stable snake_case label.
     #[must_use]
     pub fn name(&self) -> &'static str {
@@ -485,6 +499,7 @@ impl ErrorKind {
             Self::PendingTrackUnresolved { .. } => "pending_track_unresolved",
             Self::SrtRejected { .. } => "srt_rejected",
             Self::SrtHandshakeTimeout => "srt_handshake_timeout",
+            Self::SrtPeerIdle => "srt_peer_idle",
             Self::SmoothManifest { .. } => "smooth_manifest",
             Self::RtmpStatus { .. } => "rtmp_status",
             Self::BufferInputsDropped => "buffer_inputs_dropped",
@@ -1097,6 +1112,23 @@ pub struct Config {
 }
 
 impl Config {
+    /// A relay configuration: the host forwards samples as they are demuxed and never plays
+    /// them, so there is no start-pending wait and no timeline-jump screening that would drop
+    /// samples. The initial-tracks hold stays: it is what coalesces a live multiplex's first
+    /// [`Event::Tracks`] into the whole track set (bounded by [`Config::tracks_hold_max_wall_us`]),
+    /// which a relay needs to build one init segment. [`Event::Buffer`] events are advisory and a
+    /// relay ignores them. Each [`TrackSpec`] keeps its `program_number`, so a multi-programme
+    /// stream splits per programme.
+    #[must_use]
+    pub fn relay() -> Self {
+        Self {
+            start_pending_track_wait_us: 0,
+            start_pending_track_hard_cap_us: 0,
+            timeline_jump: None,
+            ..Self::default()
+        }
+    }
+
     /// The exact controller configuration a session opened with this `Config` builds its
     /// buffering controller from: [`Config::buffer`] with the track-silence timeout raised above
     /// the start-pending wait. Build the replay `buffering_runtime::BufferController` from this,
@@ -1292,5 +1324,28 @@ impl core::fmt::Debug for Config {
             .field("client_identity", &self.client_identity)
             .field("client_identity_scope", &self.client_identity_scope)
             .finish()
+    }
+}
+
+impl From<broadcast_auth::AuthEvent> for Event {
+    fn from(value: broadcast_auth::AuthEvent) -> Self {
+        match value {
+            broadcast_auth::AuthEvent::AuthRequired {
+                scheme,
+                realm,
+                origin,
+                resource_metadata,
+            } => Event::AuthRequired {
+                scheme,
+                realm,
+                origin,
+                resource_metadata,
+            },
+            broadcast_auth::AuthEvent::AuthRejected { status } => Event::AuthRejected { status },
+            broadcast_auth::AuthEvent::StatusWaitingForCredentials => {
+                Event::Status(Status::WaitingForCredentials)
+            }
+            _ => Event::Status(Status::WaitingForCredentials),
+        }
     }
 }

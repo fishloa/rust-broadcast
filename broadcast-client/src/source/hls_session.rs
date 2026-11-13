@@ -10,13 +10,13 @@ use hls_runtime::client::{MasterSelection, RenditionInfo};
 use transmux::TrackSpec;
 use url::Url;
 
-use crate::auth::AuthState;
 use crate::error::Error;
 use crate::events::{Action, Config, Event, Status};
 use crate::playout::Source;
 use crate::source::fetch::conn::ConnAlloc;
 use crate::source::fetch::wall::WallClock;
 use crate::source::hls::{HlsSource, Role};
+use broadcast_auth::AuthState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AudioMode {
@@ -39,6 +39,10 @@ struct Audio {
 
 pub(crate) struct HlsSession {
     config: Config,
+    /// The session's jitter seed: every source it builds (the main playlist and each audio
+    /// rendition) derives a fresh one from it, so an audio rendition never shares the main
+    /// playlist's retry sequence.
+    seed: u64,
     alloc: ConnAlloc,
     main: HlsSource,
     audio: Option<Audio>,
@@ -58,9 +62,9 @@ pub(crate) struct HlsSession {
 }
 
 impl HlsSession {
-    pub(crate) fn new(url: &Url, config: &Config) -> Self {
+    pub(crate) fn new(url: &Url, config: &Config, seed: u64) -> Self {
         let alloc = ConnAlloc::new();
-        let main = HlsSource::new(url, config, alloc.clone(), Role::Main);
+        let main = HlsSource::new(url, config, alloc.clone(), Role::Main, seed);
         let mode = if config.auto_select_audio {
             AudioMode::Auto
         } else {
@@ -68,6 +72,7 @@ impl HlsSession {
         };
         Self {
             config: config.clone(),
+            seed,
             alloc,
             main,
             audio: None,
@@ -254,7 +259,7 @@ impl HlsSession {
                 (r.autoselect || r.default)
                     && r.language
                         .as_deref()
-                        .is_some_and(|l| language_matches(l, pref))
+                        .is_some_and(|l| broadcast_common::lang::language_matches(pref, l))
             })
         {
             return Some(i);
@@ -306,7 +311,13 @@ impl HlsSession {
         if self.audio.as_ref().map(|a| &a.url) != want_url.as_ref() {
             self.stop_audio();
             if let Some(url) = want_url.as_deref().and_then(|u| Url::parse(u).ok()) {
-                let source = HlsSource::new(&url, &self.config, self.alloc.clone(), Role::Audio);
+                let source = HlsSource::new(
+                    &url,
+                    &self.config,
+                    self.alloc.clone(),
+                    Role::Audio,
+                    broadcast_common::backoff::mix_seed(self.seed),
+                );
                 self.audio = Some(Audio {
                     source,
                     url: url.to_string(),
@@ -498,13 +509,4 @@ impl HlsSession {
 
 fn is_fatal_error(event: &Event) -> bool {
     matches!(event, Event::Error { fatal: true, .. })
-}
-
-fn language_matches(language: &str, preferred: &str) -> bool {
-    let language = language.to_ascii_lowercase();
-    let preferred = preferred.to_ascii_lowercase();
-    language == preferred
-        || language
-            .strip_prefix(preferred.as_str())
-            .is_some_and(|rest| rest.starts_with('-'))
 }

@@ -1,5 +1,23 @@
 # smooth-runtime
 
+Sans-IO Microsoft Smooth Streaming (MS-SSTR) engine, both ends: a pull client and a live origin.
+
+`SmoothClient` pulls; `server::SmoothOrigin` serves. Both are sans-IO: the host performs the GETs the client asks for, and maps the origin's answers onto HTTP.
+
+## The live origin (`server`, feature `std`)
+
+`SmoothOrigin` is the server-side counterpart of `SmoothClient`: given a `media_plane::Trunk`, the program's published segments and track set, and its init segment, it
+
+- renders the MS-SSTR client Manifest through `broadcast_smooth::SmoothManifest::live(..)`/`to_xml` (no hand-written XML),
+- resolves a fragment request (`QualityLevels(BITRATE)/Fragments(KIND=START)`) to that stream's re-muxed fragment bytes, with the `tfxd` the manifest advertises,
+- reports each track's `FourCC`, `CodecPrivateData` and parameters through `transmux::resolve_codec`, the resolver the packager uses, so the manifest never disagrees with the fragments.
+
+A second stream of a kind is named `TYPE_N` (`audio`, `audio_2`), subtitle tracks are a `text` `StreamIndex` with `Subtype="SUBT"`, and a track whose codec cannot be described (an AAC track with no `AudioSpecificConfig`) makes the Manifest a refusal rather than an empty `CodecPrivateData`.
+
+`resolve` answers `Ready`, `Await` (nothing to describe yet — wait on `Trunk::listen`), `BadRequest` (a track cannot be described) or `NotFound`; it never blocks, sleeps or reads a clock.
+
+## The pull client
+
 Sans-IO Microsoft Smooth Streaming (MS-SSTR) pull client: `SmoothClient` plays a static or live client manifest to ordered, demuxed samples. The manifest syntax is `broadcast-smooth`'s and the codec glue (init segment synthesis, fMP4 demux) is `transmux`'s; this crate decides what to fetch next and what the bytes mean.
 
 Use it to build a Smooth player or ingest without taking a dependency on an HTTP stack or an async runtime: the host performs the GETs the engine asks for, tells it the time, and reads back tracks, samples and typed outcomes. `broadcast-client` and `multimux` are both thin adapters over it.

@@ -1,40 +1,17 @@
-//! MPEG-2 Transport Stream over UDP ingest source (issue #663 P3a; ported
-//! onto the media-plane ingress traits at plan step 5a): a UDP socket
-//! (unicast or multicast) feeding the shared
-//! [`crate::source::ts_program::TsIngestSession`].
+//! MPEG-2 Transport Stream over UDP ingest source: a UDP socket (unicast or multicast) driven by
+//! a [`broadcast_client::Session`] in relay mode through the shared `crate::source::client_host`.
 //!
-//! This module owns **only the socket**. All PAT/PMT/PES demuxing,
-//! codec-config recovery, and `DemuxEvent`→`SessionEvent` translation
-//! (including the B5 mid-stream `NewProgram` handling) live in
-//! [`crate::source::ts_program`], shared verbatim with
-//! [`crate::source::ts_http`] and [`crate::source::srt`].
-//!
-//! # Why this source fits the sans-IO reshape with zero executor bridge
-//!
-//! UDP is connectionless: binding a local socket is a purely local operation
-//! (no peer round-trip at all), so [`TsUdpDialer::dial`] performs **no I/O**
-//! — it just constructs a fresh `TsIngestSession`, which immediately queues
-//! [`media_plane::ingress::SessionEvent::Established`]. The actual
-//! `UdpSocket::bind` (still real I/O, just never a multi-round-trip
-//! *handshake*) happens in [`bind`]/[`run_ts_udp`], the multimux-side driver
-//! that owns the socket and pumps
-//! [`media_plane::ingress::IngestDriver`] — exactly where the plan
-//! (`docs/superpowers/plans/2026-07-26-media-plane-implementation.md` step 5)
-//! says tokio belongs.
+//! The session decides the socket (bind, multicast join, `SO_RCVBUF`) and the host performs it;
+//! TS alignment checks, demux and the programme split are the session's and `EventIngest`'s.
 
 use std::convert::Infallible;
-use std::time::Duration;
-#[cfg(test)]
-use transmux::TrackId;
 
-use broadcast_common::Timestamp;
-use media_plane::ingress::Dialer;
+use broadcast_client::{Config, SourceKind};
 use tokio::net::UdpSocket;
 
-use crate::error::{MultimuxError, Result};
-use crate::source::ts_program::TsIngestSession;
-use crate::source::udp::bind_udp;
-use crate::source::{IngestTimeouts, MAX_TS_READ, Source};
+use crate::error::MultimuxError;
+use crate::source::client_host::{EventIngest, SessionLabels, SessionStep, UdpHost};
+use crate::source::{IngestTimeouts, Source};
 
 /// An MPEG-2 TS-over-UDP route: bind address (+ optional multicast group) —
 /// no control plane, no out-of-band SDP (the PMT carries the track set
@@ -93,7 +70,7 @@ impl TsUdpRoute {
     ///
     /// The supplied socket is used verbatim, so a `multicast_group` cannot be
     /// joined on it: setting one (via [`Self::with_multicast_group`]) makes
-    /// [`bind`] return an error rather than silently ignore the group.
+    /// [`run_ts_udp`] fail rather than silently ignore the group.
     pub fn with_socket(name: impl Into<String>, socket: UdpSocket) -> Self {
         let addr = socket
             .local_addr()
@@ -111,7 +88,7 @@ impl TsUdpRoute {
 
     /// Configure the multicast group to join. Meaningful only for a route that
     /// binds its own `addr`; on a [`Self::with_socket`] route it is a
-    /// contradiction (`bind` returns an error rather than silently dropping
+    /// contradiction (`run_ts_udp` fails rather than silently dropping
     /// it) — see that ctor.
     #[must_use]
     pub fn with_multicast_group(mut self, group: impl Into<String>) -> Self {
@@ -140,115 +117,69 @@ impl Source for TsUdpRoute {
     }
 }
 
-/// Constructs a [`TsIngestSession`] — performs **no I/O** (see the module
-/// doc's "zero executor bridge" section).
-#[derive(Clone, Copy, Debug, Default)]
-pub struct TsUdpDialer;
-
-impl Dialer for TsUdpDialer {
-    type Session = TsIngestSession;
-    /// Construction cannot fail — there is no fallible local step (unlike,
-    /// say, parsing a URL).
-    type Error = Infallible;
-
-    fn dial(&mut self) -> core::result::Result<TsIngestSession, Infallible> {
-        Ok(TsIngestSession::new())
-    }
-}
-
-/// Binds `route`'s UDP socket and returns it, ready for
-/// [`run_ts_udp`] — split out so tests can synchronise on
-/// the bound address before a synthetic sender starts writing to it (UDP has
-/// no connect-then-accept handshake to synchronise on otherwise).
-///
-/// A caller-supplied pre-bound socket ([`TsUdpRoute::with_socket`]) is
-/// consumed **once**: the first `bind` takes it, and every later call (a
-/// reconnect after the read loop ends) falls back to binding `route.addr`.
-/// The pre-bound socket exists only so a *test* can own the exact port for its
-/// first attempt; a production route never sets one, so a reconnect always
-/// re-binds its configured `addr`, exactly as before `with_socket` existed.
-pub async fn bind(route: &TsUdpRoute) -> Result<UdpSocket> {
-    let prebound = match route.prebound.lock() {
-        Ok(mut slot) => slot.take(),
-        Err(poisoned) => poisoned.into_inner().take(),
-    };
-    if let Some(socket) = prebound {
-        // A caller-supplied socket is used as-is; joining a multicast group on
-        // it is not implemented, so refuse rather than silently ignoring the
-        // configured group (which would leave the operator's multicast source
-        // unreachable with no signal).
-        if let Some(group) = route.multicast_group.as_deref() {
-            return Err(crate::MultimuxError::ConfigInvalid {
-                field: "routes.input.multicast_group",
-                reason: format!(
-                    "a pre-bound socket cannot join multicast_group {group:?}; drop the group, \
-                     or let the route bind its own addr"
-                ),
-            });
+impl TsUdpRoute {
+    fn take_prebound(&self) -> Option<UdpSocket> {
+        match self.prebound.lock() {
+            Ok(mut slot) => slot.take(),
+            Err(poisoned) => poisoned.into_inner().take(),
         }
-        return Ok(socket);
     }
-    bind_udp(
-        &route.addr,
-        route.multicast_group.as_deref(),
-        route.socket.clone(),
-    )
-    .await
-}
 
-/// The ts/udp source's [`IngestStep`](crate::source::driver::IngestStep):
-/// one bounded datagram receive, feeding the driver and the route's DVR EIT
-/// tracker (`feed_si_ts`).
-pub(crate) struct TsUdpStep {
-    pub socket: UdpSocket,
-    pub buf: Vec<u8>,
-    pub start: tokio::time::Instant,
-    pub route_handle: std::sync::Arc<crate::route::RouteHandle>,
-}
+    fn session_url(&self) -> Result<String, MultimuxError> {
+        let bind: std::net::SocketAddr = self.addr.parse().map_err(|e| MultimuxError::Connect {
+            reason: format!("bad UDP bind address {:?}: {e}", self.addr),
+        })?;
+        let host = match self.multicast_group.as_deref() {
+            Some(group) if group.contains(':') => format!("[{group}]"),
+            Some(group) => group.to_owned(),
+            None if bind.is_ipv6() => format!("[{}]", bind.ip()),
+            None => bind.ip().to_string(),
+        };
+        Ok(format!("udp://{host}:{}", bind.port()))
+    }
 
-impl crate::source::driver::IngestStep<TsIngestSession> for TsUdpStep {
-    async fn step(
-        &mut self,
-        driver: &mut media_plane::ingress::IngestDriver<TsIngestSession>,
-        window: Duration,
-    ) -> crate::source::driver::StepOutcome {
-        use crate::source::driver::StepOutcome;
-        match tokio::time::timeout(window, self.socket.recv(&mut self.buf)).await {
-            Ok(Ok(n)) => {
-                let now = Timestamp::from_instant(
-                    self.start.into_std(),
-                    tokio::time::Instant::now().into_std(),
-                );
-                driver.feed(&self.buf[..n], now);
-                // EIT p/f tracking (issue #903) — a no-op unless some program
-                // on this route has DVR enabled with `dvb_service_id` set.
-                self.route_handle.feed_si_ts(&self.buf[..n]);
-                StepOutcome::Received
+    fn session_config(&self) -> Result<Config, MultimuxError> {
+        let mut config = Config::relay();
+        config.kind = SourceKind::Udp;
+        let invalid =
+            |field: &'static str, reason: String| MultimuxError::ConfigInvalid { field, reason };
+        config.udp.recv_buffer_bytes = self
+            .socket
+            .recv_buffer_bytes
+            .map(u32::try_from)
+            .transpose()
+            .map_err(|e| invalid("routes.input.recv_buffer_bytes", e.to_string()))?;
+        if self.multicast_group.is_some()
+            && let Some(interface) = self.socket.multicast_interface.as_deref()
+        {
+            match interface.parse::<std::net::IpAddr>() {
+                Ok(address) => config.udp.interface = Some(address),
+                Err(_) => {
+                    config.udp.interface_index = Some(interface.parse().map_err(|e| {
+                        invalid(
+                            "routes.input.multicast_interface",
+                            format!("{interface:?} is neither an address nor an index: {e}"),
+                        )
+                    })?);
+                }
             }
-            Ok(Err(e)) => StepOutcome::Failed(MultimuxError::Connect {
-                reason: format!("udp recv: {e}"),
-            }),
-            Err(_) => StepOutcome::Idle,
         }
-    }
-
-    fn stalled(&self, read: Duration) -> MultimuxError {
-        MultimuxError::Connect {
-            reason: format!("ts/udp recv: no data within {read:?}"),
-        }
+        Ok(config)
     }
 }
 
-/// Binds `route`'s socket and drives a fresh [`TsIngestSession`] through
-/// [`media_plane::ingress::IngestDriver`] until a read stall (bounded by
-/// [`IngestTimeouts::read`]) — the new `connect()`+`next_samples()` loop,
-/// replacing the pre-5a `TsUdpSource`/`TsUdpSession` pair. Returns the error
-/// that ended the loop (always a read-side error — see the step below);
-/// the caller (the route supervisor) reconnects on it.
+/// Opens `route`'s socket through a relay-mode [`broadcast_client::Session`] and drives it until a
+/// read stall (bounded by [`IngestTimeouts::read`]). Returns the error that ended the loop
+/// (always a read-side error); the caller (the route supervisor) reconnects on it.
 ///
-/// `route_handle` is the driver-backed registry side of issue #805 task 2 —
-/// see `rtsp::run_rtsp`'s own doc for what
-/// `crate::source::report_driver_progress` does with it each iteration.
+/// A caller-supplied pre-bound socket ([`TsUdpRoute::with_socket`]) is consumed **once**: the
+/// first attempt uses it, and every later attempt (a reconnect after the read loop ends) binds
+/// `route.addr` itself. The pre-bound socket exists only so a *test* can own the exact port for
+/// its first attempt.
+///
+/// `route_handle` is the driver-backed registry side of issue #805 task 2 — see
+/// `rtsp::run_rtsp`'s own doc for what `crate::source::report_driver_progress` does with it each
+/// iteration.
 pub async fn run_ts_udp(
     route: &TsUdpRoute,
     trunk_config: media_plane::trunk::TrunkConfig,
@@ -256,29 +187,48 @@ pub async fn run_ts_udp(
     route_handle: &std::sync::Arc<crate::route::RouteHandle>,
     cancel: tokio_util::sync::CancellationToken,
 ) -> MultimuxError {
-    let socket = match bind(route).await {
-        Ok(s) => s,
+    let prebound = route.take_prebound();
+    if prebound.is_some()
+        && let Some(group) = route.multicast_group.as_deref()
+    {
+        return MultimuxError::ConfigInvalid {
+            field: "routes.input.multicast_group",
+            reason: format!(
+                "a pre-bound socket cannot join multicast_group {group:?}; drop the group, \
+                 or let the route bind its own addr"
+            ),
+        };
+    }
+    let (url, config) = match (route.session_url(), route.session_config()) {
+        (Ok(url), Ok(config)) => (url, config),
+        (Err(e), _) | (_, Err(e)) => return e,
+    };
+    let step = SessionStep::open(
+        &url,
+        config,
+        None,
+        SessionLabels {
+            what: WHAT,
+            connect: route.timeouts.connect,
+            read: route.timeouts.read,
+        },
+        std::sync::Arc::clone(route_handle),
+        true,
+    );
+    let mut step = match step {
+        Ok(step) => step.with_udp(UdpHost {
+            prebound,
+            options: route.socket.clone(),
+        }),
         Err(e) => return e,
     };
-    let mut dialer = TsUdpDialer;
-    let session = dialer
-        .dial()
-        .unwrap_or_else(|never: Infallible| match never {});
     let driver = media_plane::ingress::IngestDriver::new(
-        session,
+        EventIngest::new(),
         trunk_config,
         handshake,
         media_plane::DEFAULT_MAX_PROGRAMS,
     );
-    let mut step = TsUdpStep {
-        socket,
-        buf: vec![0u8; MAX_TS_READ],
-        start: tokio::time::Instant::now(),
-        route_handle: std::sync::Arc::clone(route_handle),
-    };
     let mut progress = crate::source::DriverProgress::new();
-    // A connectionless datagram source has no `poll_transmit`, so the write
-    // half is a sink; the scaffold still bounds it (defect 4 discipline).
     let mut sink = tokio::io::sink();
     crate::source::driver::run_ingest_scaffold(
         driver,
@@ -294,235 +244,171 @@ pub async fn run_ts_udp(
     .await
 }
 
+const WHAT: &str = "ts/udp";
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::source::driver::{IngestStep, StepOutcome};
     use crate::source::ts_program::test_support::{build_ts_bytes, handshake, trunk_config};
-    use media_plane::ingress::{HealthState, IngestDriver, ProgramId};
+    use media_plane::trunk::SampleCursorItem;
+    use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
+    use transmux::TrackId;
+
+    const TRUNK_WAIT: Duration = Duration::from_secs(10);
+
+    fn route_handle() -> std::sync::Arc<crate::route::RouteHandle> {
+        std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4))
+    }
 
     #[tokio::test]
-    async fn loopback_udp_established_and_samples_land_in_trunk() {
-        // Bind `127.0.0.1:0` and hand the LIVE socket to `with_socket` — no
-        // reserve-then-rebind window (SP7.1).
+    async fn loopback_udp_samples_land_in_trunk() {
         let socket = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
         let addr = socket.local_addr().expect("local addr");
         let route = TsUdpRoute::with_socket("cam-ts", socket);
-        // Enough samples (spread over several 7*188-byte datagrams, each
-        // paced 5ms apart) that the PMT resolves on an early datagram while
-        // later datagrams still carry fresh samples — otherwise the whole
-        // stream could fit in the single datagram that also resolves the
-        // PMT, and `Trunk::subscribe`'s "starting from now" contract (no
-        // backlog) would have nothing left to observe.
         let ts_bytes = build_ts_bytes(TrackId::new(1), 0xAB, 60);
         let sender = UdpSocket::bind("127.0.0.1:0").await.expect("bind sender");
-
-        let socket = bind(&route).await.expect("bind route socket");
+        let handle = route_handle();
+        let cancel = CancellationToken::new();
+        let run = tokio::spawn({
+            let handle = std::sync::Arc::clone(&handle);
+            let cancel = cancel.clone();
+            async move { run_ts_udp(&route, trunk_config(), handshake(), &handle, cancel).await }
+        });
         let send_task = tokio::spawn(async move {
-            for chunk in ts_bytes.chunks(7 * 188) {
-                sender.send_to(chunk, addr).await.expect("send TS datagram");
-                tokio::time::sleep(Duration::from_millis(5)).await;
+            for _ in 0..200 {
+                for chunk in ts_bytes.chunks(7 * 188) {
+                    sender.send_to(chunk, addr).await.expect("send TS datagram");
+                }
+                tokio::task::yield_now().await;
             }
         });
-
-        let mut dialer = TsUdpDialer;
-        let session = dialer.dial().unwrap();
-        let mut driver = IngestDriver::new(
-            session,
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
-        );
-        assert!(matches!(driver.health(), HealthState::Establishing));
-
-        let mut step = TsUdpStep {
-            socket,
-            buf: vec![0u8; MAX_TS_READ],
-            start: tokio::time::Instant::now(),
-            route_handle: std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4)),
-        };
-        let mut cursor = None;
-        let mut saw_sample = false;
-        for _ in 0..200u64 {
-            // HANG GUARD (issue #826): per-iteration read timeout in a
-            // real-socket loopback test. Real UDP on loopback resolves in
-            // ~ms; this only exists to keep the 200-iteration loop from
-            // spinning on an empty socket, not a timing claim.
-            if !matches!(
-                IngestStep::step(&mut step, &mut driver, Duration::from_secs(60)).await,
-                StepOutcome::Received
-            ) {
-                break;
-            }
-            if cursor.is_none() {
-                cursor = driver.trunk(ProgramId(0)).map(|t| t.subscribe());
-            }
-            if let Some(c) = cursor.as_mut() {
-                while let Some(item) = c.poll() {
-                    if matches!(item, media_plane::trunk::SampleCursorItem::Timed { .. }) {
-                        saw_sample = true;
-                    }
+        let trunk = tokio::time::timeout(TRUNK_WAIT, handle.await_first_trunk())
+            .await
+            .expect("the ingest must publish a trunk");
+        let mut cursor = trunk.subscribe_from_backlog();
+        let saw_sample = loop {
+            if let Some(item) = cursor.poll() {
+                if matches!(item, SampleCursorItem::Timed { .. }) {
+                    break true;
                 }
+            } else if send_task.is_finished() {
+                break false;
+            } else {
+                tokio::task::yield_now().await;
             }
-            if saw_sample {
-                break;
-            }
-        }
-        let _ = send_task.await;
-        assert!(matches!(driver.health(), HealthState::Live));
-        assert!(
-            saw_sample,
-            "expected at least one sample published into the Trunk"
-        );
+        };
+        cancel.cancel();
+        send_task.abort();
+        let ended = tokio::time::timeout(TRUNK_WAIT, run)
+            .await
+            .expect("a cancelled run must stop")
+            .expect("run task");
+        assert!(saw_sample, "expected at least one sample in the Trunk");
+        assert!(matches!(ended, MultimuxError::Connect { .. }), "{ended:?}");
     }
 
-    /// A source that stops sending datagrams must fail (not hang) within a
-    /// bounded multiple of the configured read timeout — issue #663 P5.2,
-    /// preserved from the pre-5a test of the same intent.
     #[tokio::test]
-    async fn recv_and_feed_times_out_when_source_goes_silent() {
-        let reserved = UdpSocket::bind("127.0.0.1:0").await.expect("reserve port");
-        let addr = reserved.local_addr().expect("local addr");
-        drop(reserved);
-
+    async fn a_source_that_goes_silent_fails_at_the_read_timeout() {
         const READ_TIMEOUT: Duration = Duration::from_secs(2);
-        let route = TsUdpRoute::new("cam-ts", addr.to_string(), None);
-        let socket = bind(&route).await.expect("bind");
-
-        let mut dialer = TsUdpDialer;
-        let session = dialer.dial().unwrap();
-        let mut driver = IngestDriver::new(
-            session,
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
-        );
-        let mut step = TsUdpStep {
-            socket,
-            buf: vec![0u8; MAX_TS_READ],
-            start: tokio::time::Instant::now(),
-            route_handle: std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4)),
-        };
-
-        // DISCRIMINATOR (issue #826): the assertion window must prove the
-        // operation returns through the CONFIGURED read timeout, not via
-        // any longer default/system timeout. Widen the gap rather than
-        // only the assertion side: the configured READ_TIMEOUT was raised
-        // from 100ms to 2s (generous for scheduling under load) and the
-        // assertion window from 500ms to 10s — 10s is still well below
-        // any plausible fallback, so a broken implementation that ignores
-        // the configured timeout and falls through to a 30+s system
-        // default is still caught. MUTATION CHECKED: inflating
-        // READ_TIMEOUT to 30s makes the 10s outer timeout fire first,
-        // producing `Elapsed` instead of the step's own idle outcome,
-        // proving this bound still discriminates.
-        let outcome = tokio::time::timeout(
+        let socket = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
+        let route = TsUdpRoute::with_socket("cam-ts", socket).with_timeouts(IngestTimeouts {
+            connect: Duration::from_secs(5),
+            read: READ_TIMEOUT,
+        });
+        let handle = route_handle();
+        let error = tokio::time::timeout(
             Duration::from_secs(10),
-            IngestStep::step(&mut step, &mut driver, READ_TIMEOUT),
+            run_ts_udp(
+                &route,
+                trunk_config(),
+                handshake(),
+                &handle,
+                CancellationToken::new(),
+            ),
         )
         .await
-        .expect("the read must not exceed the assertion window");
-        assert!(
-            matches!(outcome, StepOutcome::Idle),
-            "a silent source is idle, and the loop turns that into a stall"
-        );
-        assert!(matches!(
-            step.stalled(READ_TIMEOUT),
-            MultimuxError::Connect { .. }
-        ));
+        .expect("the stall must end the run through the configured read timeout");
+        match error {
+            MultimuxError::Connect { reason } => {
+                assert!(reason.contains("no data within"), "{reason}");
+            }
+            other => panic!("expected a stall error, got {other:?}"),
+        }
     }
 
-    /// A pre-bound socket handed to [`TsUdpRoute::with_socket`] is consumed
-    /// **once**: the first [`bind`] takes it (its address equals the socket
-    /// the caller bound), and a second `bind` (a reconnect after the read loop
-    /// ends) falls back to binding `route.addr` — a *fresh* socket, not the
-    /// pre-bound one. Pins the documented reconnect-after-take behaviour.
     #[tokio::test]
-    async fn with_socket_is_consumed_once_then_reconnect_rebinds_addr() {
+    async fn with_socket_is_consumed_once() {
         let socket = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
         let addr = socket.local_addr().expect("local addr");
         let route = TsUdpRoute::with_socket("cam-ts", socket);
-        // The pre-bound socket is present until the first `bind` takes it.
-        assert!(
-            route
-                .prebound
-                .lock()
-                .expect("prebound lock")
-                .as_ref()
-                .is_some(),
-            "with_socket must install the caller's socket"
-        );
-
-        // First bind: the caller's own pre-bound socket (same address), and the
-        // slot is now empty (consumed once).
-        let first = bind(&route).await.expect("first bind");
-        assert_eq!(
-            first.local_addr().expect("addr"),
-            addr,
-            "the first bind must return the caller's pre-bound socket"
-        );
-        assert!(
-            route
-                .prebound
-                .lock()
-                .expect("prebound lock")
-                .as_ref()
-                .is_none(),
-            "the pre-bound socket must be consumed by the first bind"
-        );
-        // Drop the first socket so the port is free for the reconnect's bind.
-        drop(first);
-
-        // Second bind (reconnect): the pre-bound socket is gone, so the route
-        // re-binds its own `addr`.
-        let second = bind(&route).await.expect("second bind");
-        assert_eq!(
-            second.local_addr().expect("addr"),
-            addr,
-            "the reconnect must re-bind the configured addr"
-        );
+        let first = route.take_prebound().expect("the caller's socket");
+        assert_eq!(first.local_addr().expect("addr"), addr);
+        assert!(route.take_prebound().is_none());
     }
 
-    /// A `with_socket` route carrying a configured `multicast_group` must be
-    /// REJECTED by `bind`, not silently use the caller's socket without joining
-    /// the group (which would leave the multicast source unreachable with no
-    /// signal). PRE-FIX `bind` returned the pre-bound socket and dropped the
-    /// group, so this returned `Ok`.
     #[tokio::test]
     async fn with_socket_rejects_a_configured_multicast_group() {
         let socket = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
         let route = TsUdpRoute::with_socket("cam-ts", socket).with_multicast_group("239.1.2.3");
-        let err = bind(&route)
-            .await
-            .expect_err("a pre-bound socket cannot join a multicast group");
+        let error = run_ts_udp(
+            &route,
+            trunk_config(),
+            handshake(),
+            &route_handle(),
+            CancellationToken::new(),
+        )
+        .await;
         assert!(
             matches!(
-                err,
-                crate::MultimuxError::ConfigInvalid { field, .. }
+                error,
+                MultimuxError::ConfigInvalid { field, .. }
                     if field == "routes.input.multicast_group"
             ),
-            "got {err:?}"
+            "got {error:?}"
         );
     }
 
-    /// A poisoned pre-bound lock must NOT panic [`bind`] (production code has
-    /// no `.expect`): it recovers the inner value and binds normally. Reverting
-    /// `bind`'s match to `.expect("ts-udp prebound lock")` makes the poisoning
-    /// thread's drop panic propagate and this test fail.
-    #[tokio::test]
-    async fn bind_recovers_from_a_poisoned_prebound_lock() {
+    #[test]
+    fn a_poisoned_prebound_lock_does_not_panic() {
         let route = TsUdpRoute::new("cam-ts", "127.0.0.1:0", None);
-        // Poison the lock: hold it across a panic.
         let prebound = std::sync::Arc::clone(&route.prebound);
         let _ = std::thread::spawn(move || {
             let _guard = prebound.lock().expect("lock");
             panic!("poison the prebound lock");
         })
         .join();
+        assert!(route.take_prebound().is_none());
+    }
 
-        // `bind` must recover and bind the configured (ephemeral) addr, not
-        // panic on the poisoned lock.
-        let socket = bind(&route).await.expect("bind must not panic");
-        assert!(socket.local_addr().is_ok());
+    #[test]
+    fn the_session_url_names_the_group_or_the_bind_address() {
+        let unicast = TsUdpRoute::new("a", "127.0.0.1:5000", None);
+        assert_eq!(unicast.session_url().unwrap(), "udp://127.0.0.1:5000");
+        let multicast = TsUdpRoute::new("a", "0.0.0.0:5000", Some("239.1.1.1".into()));
+        assert_eq!(multicast.session_url().unwrap(), "udp://239.1.1.1:5000");
+        let v6 = TsUdpRoute::new("a", "[::]:5000", Some("ff02::1".into()));
+        assert_eq!(v6.session_url().unwrap(), "udp://[ff02::1]:5000");
+    }
+
+    #[test]
+    fn the_session_config_carries_the_socket_options() {
+        let options = crate::source::udp::UdpBindOptions {
+            recv_buffer_bytes: Some(1 << 20),
+            multicast_interface: Some("192.168.1.10".into()),
+            ..Default::default()
+        };
+        let route = TsUdpRoute::new("a", "0.0.0.0:5000", Some("239.1.1.1".into()))
+            .with_socket_options(options.clone());
+        let config = route.session_config().unwrap();
+        assert_eq!(config.udp.recv_buffer_bytes, Some(1 << 20));
+        assert_eq!(config.udp.interface, Some("192.168.1.10".parse().unwrap()));
+        let indexed = crate::source::udp::UdpBindOptions {
+            multicast_interface: Some("3".into()),
+            ..options
+        };
+        let route =
+            TsUdpRoute::new("a", "[::]:5000", Some("ff02::1".into())).with_socket_options(indexed);
+        assert_eq!(route.session_config().unwrap().udp.interface_index, Some(3));
     }
 }

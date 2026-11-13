@@ -20,6 +20,24 @@ fn fill(buf: &mut [u8]) {
     getrandom::fill(buf).expect("OS random source unavailable");
 }
 
+/// 64 bits of OS randomness, for a seed that only has to be unpredictable
+/// enough to keep two peers from pacing a retry in lockstep (the backoff
+/// jitter). Unlike [`fill`]'s callers this is not a security boundary, so an
+/// unavailable source degrades to `0` (which the jitter's own mixing turns
+/// into a non-degenerate sequence) rather than taking the process down.
+pub(crate) fn seed_entropy() -> u64 {
+    let mut buf = [0u8; 8];
+    getrandom::fill(&mut buf).map_or(0, |()| u64::from_le_bytes(buf))
+}
+
+/// 32 bytes of OS randomness: the secret an SRT caller session derives its identifiers and
+/// stream key from.
+pub(crate) fn entropy_seed() -> [u8; broadcast_client::srt::ENTROPY_SEED_LEN] {
+    let mut buf = [0u8; broadcast_client::srt::ENTROPY_SEED_LEN];
+    fill(&mut buf);
+    buf
+}
+
 #[cfg(any(feature = "whip", feature = "whep"))]
 /// A uniformly random alphanumeric token of `len` characters.
 pub(crate) fn token(len: usize) -> String {

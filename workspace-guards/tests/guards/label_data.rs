@@ -80,7 +80,13 @@ pub const TABLE: &[Crate] = &[
         name: "broadcast-auth",
         scope: Scope::Crate,
         matcher: Matcher::Strict,
-        skip: &["Error", "Credentials", "AuthResult"],
+        skip: &[
+            "Error",
+            "Credentials",
+            "AuthResult",
+            "AuthDecision",
+            "AuthEvent",
+        ],
         expected: None,
         min_enums: None,
     },
@@ -143,7 +149,14 @@ pub const TABLE: &[Crate] = &[
         // `BerLength`: a serialization-form choice (`Minimal` vs a preserved
         // on-wire `Fixed` width), not a wire field. `Frame`: the XML reader's
         // own traversal stack, not a label.
-        skip: &["BitError", "KlvError", "XmlError", "BerLength", "Frame"],
+        skip: &[
+            "BitError",
+            "KlvError",
+            "XmlError",
+            "BerLength",
+            "Frame",
+            "HttpDateError",
+        ],
         expected: None,
         min_enums: None,
     },
@@ -364,14 +377,23 @@ pub const TABLE: &[Crate] = &[
     // `Failure`, `FailureClass`: data-carrying protocol messages of the client,
     // whose payload a static label would drop (their label-bearing parts,
     // `FailureKind`, `Rejection`, `FatalKind`, `DropCause`, `Notice`, are covered).
-    // `SmoothError`: `thiserror` error. `Action`, `Output`, `Dropped`: data-carrying
-    // protocol messages of the engine, whose payload a static label would drop;
+    // `SmoothError`, `SmoothOriginError`: `thiserror` errors. `Action`, `Output`,
+    // `Dropped`, `SmoothRequest`, `SmoothBody`: data-carrying protocol messages of
+    // the engine and of the origin, whose payload a static label would drop;
     // `ManifestFault` is the label-bearing part.
     Crate {
         name: "smooth-runtime",
         scope: Scope::Crate,
         matcher: Matcher::Loose,
-        skip: &["SmoothError", "Action", "Output", "Dropped"],
+        skip: &[
+            "SmoothError",
+            "Action",
+            "Output",
+            "Dropped",
+            "SmoothOriginError",
+            "SmoothRequest",
+            "SmoothBody",
+        ],
         expected: Some(&["ManifestFault"]),
         min_enums: None,
     },
@@ -381,6 +403,8 @@ pub const TABLE: &[Crate] = &[
         matcher: Matcher::Dash,
         skip: &[
             "MpdError",
+            "IngestError",
+            "SessionError",
             "AddressError",
             "PlanError",
             "TimingError",

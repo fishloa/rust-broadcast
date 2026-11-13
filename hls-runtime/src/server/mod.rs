@@ -51,11 +51,12 @@
 mod engine;
 
 pub use engine::{
-    AudioRenditionDecl, BlockingQuery, CLOSED_CAPTIONS_GROUP_ID, ClosedCaptionDecl, ClosedSegment,
-    Container, DEFAULT_TRACK_ID, HOLD_COLD_PLAYLIST_DEFAULT, HlsBody, HlsMasterError, HlsOrigin,
-    HlsOriginBuildError, HlsOriginBuilder, HlsRequest, HttpPriority, IFRAME_SEGMENT_PREFIX,
-    RenditionSibling, SUBTITLES_GROUP_ID, SkipDirective, SubtitleRenditionDecl,
-    master_playlist_m3u8, validate_audio_renditions, validate_audio_renditions_relaxed,
+    AudioRenditionDecl, BLOCKING_RELOAD_TARGET_DURATIONS, BLOCKING_RELOAD_TIMEOUT, BlockingQuery,
+    CLOSED_CAPTIONS_GROUP_ID, ClosedCaptionDecl, ClosedSegment, Container, DEFAULT_TRACK_ID,
+    HOLD_COLD_PLAYLIST_DEFAULT, HlsBody, HlsMasterError, HlsOrigin, HlsOriginBuildError,
+    HlsOriginBuilder, HlsRequest, HttpPriority, IFRAME_SEGMENT_PREFIX, RenditionSibling,
+    SUBTITLES_GROUP_ID, SkipDirective, SubtitleRenditionDecl, master_playlist_m3u8,
+    playlist_reload_timeout, validate_audio_renditions, validate_audio_renditions_relaxed,
     validate_closed_caption_overrides, validate_subtitle_renditions,
 };
 pub use media_plane::ids::{Generation, PartIndex, SegmentSeq};

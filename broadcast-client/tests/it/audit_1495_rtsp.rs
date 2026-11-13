@@ -56,6 +56,7 @@ fn a_session_level_control_is_the_aggregate_url_for_play_options_and_teardown() 
     let mut host = connected(&with_session_control(AGGREGATE), quiet_config());
     assert_eq!(uris(&host, PLAY), [AGGREGATE]);
     host.advance_to(KEEPALIVE_SECS * SEC);
+    // This server advertises no `GET_PARAMETER`, so its keepalive is OPTIONS.
     assert_eq!(uris(&host, OPTIONS), [AGGREGATE]);
     host.session.close();
     host.drain();

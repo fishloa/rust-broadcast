@@ -44,7 +44,7 @@ struct PidState {
     /// duplicate of it must carry too.
     last_out_cc: u8,
     /// Input bytes of the most recent payload-bearing packet, used with
-    /// [`broadcast_common::ts_dup::is_legal_duplicate_pair`] to identify
+    /// [`mpeg_ts::ts_dup::is_legal_duplicate_pair`] to identify
     /// legal §2.4.3.3 duplicates (identical bytes except a re-encoded
     /// PCR). Replaces a hand-rolled hash that duplicated the same rule
     /// already implemented in `dvb-conformance` and `media-doctor`.
@@ -177,7 +177,7 @@ impl Op for ContinuityOp {
         }
 
         // Check for legal duplicate (§2.4.3.3, via the shared
-        // `broadcast_common::ts_dup` rule this crate's own test suite and
+        // `mpeg_ts::ts_dup` rule this crate's own test suite and
         // `dvb-conformance`/`media-doctor` all delegate to): a packet with
         // the same CC as the previous payload-bearing packet on this PID
         // and byte-identical content (except a re-encoded PCR).
@@ -185,7 +185,7 @@ impl Op for ContinuityOp {
         // A duplicate is preserved as a duplicate: it carries the CC the
         // original was given, and `state.expected` does not advance.
         if current_cc == state.last_wire_cc
-            && broadcast_common::ts_dup::is_legal_duplicate_pair(&state.last_packet, packet)
+            && mpeg_ts::ts_dup::is_legal_duplicate_pair(&state.last_packet, packet)
         {
             state.last_packet = packet.to_vec();
             if state.last_out_cc == current_cc {

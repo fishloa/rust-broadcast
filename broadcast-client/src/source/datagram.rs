@@ -10,7 +10,7 @@ use core::net::IpAddr;
 
 use broadcast_common::Parse;
 use mpeg_ts::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE};
-use rtp_packet::RtpPacket;
+use rtp_packet::{RtpPacket, SeqValidity, SeqVerdict};
 
 use url::{Host, Url};
 
@@ -45,6 +45,7 @@ pub(crate) struct Ingest {
     next_seq: u16,
     next_ext: u64,
     held: BTreeMap<u64, Held>,
+    validity: SeqValidity,
     stats: DatagramStats,
     discontinuity: bool,
 }
@@ -64,6 +65,7 @@ impl Ingest {
             next_seq: 0,
             next_ext: 0,
             held: BTreeMap::new(),
+            validity: SeqValidity::default(),
             stats: DatagramStats::default(),
             discontinuity: false,
         }
@@ -76,6 +78,7 @@ impl Ingest {
     pub(crate) fn reset(&mut self) {
         self.ssrc = None;
         self.held.clear();
+        self.validity = SeqValidity::default();
         self.discontinuity = false;
     }
 
@@ -135,6 +138,20 @@ impl Ingest {
             }
             self.ssrc = Some(packet.ssrc);
             self.next_seq = seq;
+            self.validity.new_source(seq);
+        }
+        match self.validity.update_seq(seq) {
+            SeqVerdict::WildJumpArmed => {
+                self.stats.late = self.stats.late.saturating_add(1);
+                return;
+            }
+            SeqVerdict::Valid { restarted: true } => {
+                self.resync();
+                self.next_seq = seq;
+                self.next_ext = 0;
+                self.validity.new_source(seq);
+            }
+            _ => {}
         }
         let delta = i64::from(seq.wrapping_sub(self.next_seq) as i16);
         let window = i64::try_from(self.window).unwrap_or(i64::MAX);
@@ -268,8 +285,14 @@ impl Datagram {
                     field: "udp.source",
                 });
             }
+            if config.interface_index.is_some() && (ip.is_ipv4() || config.interface.is_some()) {
+                return Err(Error::InvalidConfig {
+                    field: "udp.interface_index",
+                });
+            }
             Some(MulticastJoin {
                 interface: config.interface,
+                interface_index: config.interface_index,
                 source: config.source,
             })
         } else {
@@ -281,6 +304,11 @@ impl Datagram {
             if config.interface.is_some() {
                 return Err(Error::InvalidConfig {
                     field: "udp.interface",
+                });
+            }
+            if config.interface_index.is_some() {
+                return Err(Error::InvalidConfig {
+                    field: "udp.interface_index",
                 });
             }
             None

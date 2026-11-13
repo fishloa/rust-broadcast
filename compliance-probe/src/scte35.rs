@@ -1,7 +1,12 @@
 //! SCTE-35 cue sanity: well-formedness, arrival, and future-vs-past `pts_time`
 //! judgement (ANSI/SCTE 35:2023 §9.7.3.1 `splice_insert`).
 //!
-//! The future-vs-past verdict is computed on the adjusted splice time (`pts_time + pts_adjustment` modulo 2^33), as SCTE 35 defines.
+//! The cue's own semantics — its direction, its effective splice time
+//! (`pts_time + pts_adjustment`, §9.6.1) and where that time lands on the
+//! 90 kHz wrap — live in [`scte35_splice::tracker`], the engine this crate
+//! shares with `media-doctor`. What stays here is this crate's own reporting:
+//! the [`Scte35Sanity`] vocabulary and the `compliance_probe_scte35_*`
+//! counters.
 //!
 //! Two independent entry points, because "well-formed" is only observable at
 //! one of them:
@@ -19,21 +24,11 @@
 //!   [`crate::metric_names`]'s module docs for why that is stated rather than left
 //!   to be discovered from an always-zero metric.
 
-use scte35_splice::SpliceInfoSection;
-use scte35_splice::commands::AnyCommand;
+use scte35_splice::{SpliceInfoSection, judge_splice_time, splice_event};
 
 use broadcast_common::Parse;
 
 use crate::record::record_counter;
-
-/// Half of the 33-bit `pts_time` range (ANSI/SCTE 35 §9.2, `PTS_MODULUS` =
-/// `1 << 33`) — the same wrap-vs-genuine-past threshold
-/// `scte35_splice::time::pts_add_wrapping` and `media_doctor::pts_check`'s
-/// decode-timestamp tracker both apply: a forward distance greater than half
-/// the modulus is a wrap artefact of "actually behind", not "far ahead".
-/// Alias for [`broadcast_common::clock33::WRAP_33BIT_HALF`] — the shared
-/// owner of that threshold and of the [`judge`] distance calculation below.
-const PTS_HALF: u64 = broadcast_common::clock33::WRAP_33BIT_HALF;
 
 /// The result of checking one SCTE-35 `splice_insert` cue's target time
 /// against a reference "now".
@@ -82,18 +77,6 @@ impl Scte35Sanity {
 }
 broadcast_common::impl_spec_display!(Scte35Sanity);
 
-/// `out_of_network_indicator` as this crate's cue-kind label — mirrors
-/// `timed_metadata::EventKind::name()`'s `break_start`/`break_end` tokens so
-/// the wire path and the Trunk-cursor path ([`crate::trunk_bridge`]) report
-/// the same label vocabulary for `compliance_probe_scte35_cues_total`.
-fn kind_label(out_of_network_indicator: bool) -> &'static str {
-    if out_of_network_indicator {
-        "break_start"
-    } else {
-        "break_end"
-    }
-}
-
 /// Check one raw `splice_info_section` (as reassembled from a PMT-declared
 /// SCTE-35 PID, ANSI/SCTE 35 §9.6.1, `table_id = 0xFC`) against a reference
 /// "now" on the **same 33-bit 90 kHz `pts_time` clock**
@@ -112,59 +95,33 @@ pub fn check_section(section: &[u8], now_pts: u64) -> Scte35Sanity {
         record_counter!(crate::metric_names::SCTE35_ENCRYPTED_TOTAL);
         return Scte35Sanity::Encrypted;
     };
-    let AnyCommand::SpliceInsert(si) = &clear.command else {
+    let Some(event) = splice_event(&clear.command, sis.pts_adjustment) else {
+        if matches!(
+            clear.command,
+            scte35_splice::commands::AnyCommand::SpliceInsert(_)
+        ) {
+            record_counter!(crate::metric_names::SCTE35_CUES_TOTAL, "kind" => "cancel");
+            return Scte35Sanity::Cancelled;
+        }
         record_counter!(crate::metric_names::SCTE35_CUES_TOTAL, "kind" => "other");
         return Scte35Sanity::NotSpliceInsert;
     };
 
-    if si.splice_event_cancel_indicator {
-        record_counter!(crate::metric_names::SCTE35_CUES_TOTAL, "kind" => "cancel");
-        return Scte35Sanity::Cancelled;
-    }
-
     record_counter!(
         crate::metric_names::SCTE35_CUES_TOTAL,
-        "kind" => kind_label(si.out_of_network_indicator)
+        "kind" => event.kind()
     );
 
-    let program_time = si.splice_time.as_ref().and_then(|st| st.pts_time);
-    let component_times = si
-        .components
-        .iter()
-        .filter_map(|c| c.splice_time.as_ref().and_then(|st| st.pts_time));
-    let mut times: alloc::vec::Vec<u64> = if si.program_splice_flag {
-        program_time.into_iter().collect()
-    } else {
-        component_times.collect()
-    };
-    if si.splice_immediate_flag || times.is_empty() {
+    if event.times.is_empty() {
         record_counter!(crate::metric_names::SCTE35_IMMEDIATE_TOTAL);
         return Scte35Sanity::Immediate;
     }
 
-    // §9.6.1 defines the effective splice time as `pts_time + pts_adjustment`
-    // (mod 2^33) — the field exists precisely so a downstream splicer/remux
-    // can rebase cues without rewriting them (W-CP-1).
-    for pts_time in &mut times {
-        *pts_time = scte35_splice::time::pts_add_wrapping(*pts_time, sis.pts_adjustment);
-    }
-
-    let mut verdict = Scte35Sanity::InFuture;
-    for effective_pts in times {
-        if judge(effective_pts, now_pts) == Scte35Sanity::InPast {
-            verdict = Scte35Sanity::InPast;
-        }
-    }
-    verdict
-}
-
-/// The future-vs-past judgement shared by both entry points: a forward
-/// wrap-aware distance from `now` to `target`, both already on the same
-/// 33-bit tick clock.
-pub(crate) fn judge(target_pts: u64, now_pts: u64) -> Scte35Sanity {
-    let forward_distance =
-        broadcast_common::clock33::wrapping_forward_distance(now_pts, target_pts);
-    if forward_distance > PTS_HALF {
+    if event
+        .times
+        .iter()
+        .any(|&target| !judge_splice_time(target, now_pts))
+    {
         record_counter!(crate::metric_names::SCTE35_PTS_IN_PAST_TOTAL);
         Scte35Sanity::InPast
     } else {
@@ -176,7 +133,7 @@ pub(crate) fn judge(target_pts: u64, now_pts: u64) -> Scte35Sanity {
 mod tests {
     use super::*;
     use broadcast_common::Serialize;
-    use scte35_splice::SpliceInfoSection;
+    use scte35_splice::commands::AnyCommand;
     use scte35_splice::commands::{SpliceInsert, SpliceInsertComponent};
     use scte35_splice::time::{PTS_MODULUS, SpliceTime};
 
@@ -191,7 +148,13 @@ mod tests {
         };
         let section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
         let mut buf = alloc::vec![0u8; section.serialized_len()];
-        section.serialize_into(&mut buf).unwrap();
+        section.serialize_into(&mut buf).expect("serialize");
+        buf
+    }
+
+    fn bytes(section: &SpliceInfoSection<'_>) -> alloc::vec::Vec<u8> {
+        let mut buf = alloc::vec![0u8; section.serialized_len()];
+        section.serialize_into(&mut buf).expect("serialize");
         buf
     }
 
@@ -211,8 +174,8 @@ mod tests {
 
     #[test]
     fn cue_target_ahead_of_now_is_in_future() {
-        let now = 90_000; // 1s @ 90kHz
-        let target = now + 90_000 * 5; // 5s ahead
+        let now = 90_000;
+        let target = now + 90_000 * 5;
         let bytes = splice_insert_section(Some(target), true);
         assert_eq!(check_section(&bytes, now), Scte35Sanity::InFuture);
     }
@@ -220,7 +183,7 @@ mod tests {
     #[test]
     fn cue_target_behind_now_is_in_past() {
         let now = 90_000 * 10;
-        let target = 90_000 * 3; // 7s behind
+        let target = 90_000 * 3;
         let bytes = splice_insert_section(Some(target), true);
         assert_eq!(check_section(&bytes, now), Scte35Sanity::InPast);
     }
@@ -240,8 +203,8 @@ mod tests {
     #[test]
     fn judgement_is_correct_across_the_33_bit_wrap() {
         let now = PTS_MODULUS - 1_000;
-        let target = 2_000; // 3000 ticks after `now`, having wrapped once
-        assert_eq!(judge(target, now), Scte35Sanity::InFuture);
+        let target = 2_000;
+        assert!(judge_splice_time(target, now));
     }
 
     /// W-CP-1: a cue whose `pts_adjustment` rebases a stale-looking
@@ -249,9 +212,9 @@ mod tests {
     /// (`pts_time + pts_adjustment`), not the raw wire `pts_time`.
     #[test]
     fn pts_adjustment_is_applied_before_judging() {
-        let now = 90_000 * 10; // 10s @ 90kHz
-        let raw_pts_time = 90_000 * 3; // 7s behind `now` on its own
-        let adjustment = 90_000 * 8; // rebases it to 11s: ahead of `now`
+        let now = 90_000 * 10;
+        let raw_pts_time = 90_000 * 3;
+        let adjustment = 90_000 * 8;
 
         let si = SpliceInsert {
             splice_event_id: 7,
@@ -264,7 +227,7 @@ mod tests {
         let mut section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
         section.pts_adjustment = adjustment;
         let mut buf = alloc::vec![0u8; section.serialized_len()];
-        section.serialize_into(&mut buf).unwrap();
+        section.serialize_into(&mut buf).expect("serialize");
 
         assert_eq!(
             check_section(&buf, now),
@@ -290,7 +253,7 @@ mod tests {
         let mut section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
         section.pts_adjustment = adjustment;
         let mut buf = alloc::vec![0u8; section.serialized_len()];
-        section.serialize_into(&mut buf).unwrap();
+        section.serialize_into(&mut buf).expect("serialize");
         assert_eq!(check_section(&buf, now), Scte35Sanity::InPast);
     }
 
@@ -310,7 +273,7 @@ mod tests {
         let mut section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
         section.pts_adjustment = adjustment;
         let mut buf = alloc::vec![0u8; section.serialized_len()];
-        section.serialize_into(&mut buf).unwrap();
+        section.serialize_into(&mut buf).expect("serialize");
         assert_eq!(check_section(&buf, now), Scte35Sanity::InFuture);
     }
 
@@ -319,14 +282,8 @@ mod tests {
         use scte35_splice::commands::SpliceNull;
         let section = SpliceInfoSection::new_clear(AnyCommand::SpliceNull(SpliceNull), &[]);
         let mut buf = alloc::vec![0u8; section.serialized_len()];
-        section.serialize_into(&mut buf).unwrap();
+        section.serialize_into(&mut buf).expect("serialize");
         assert_eq!(check_section(&buf, 0), Scte35Sanity::NotSpliceInsert);
-    }
-
-    fn bytes(section: &SpliceInfoSection<'_>) -> alloc::vec::Vec<u8> {
-        let mut buf = alloc::vec![0u8; section.serialized_len()];
-        section.serialize_into(&mut buf).unwrap();
-        buf
     }
 
     #[test]

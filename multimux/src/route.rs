@@ -971,7 +971,7 @@ impl ProgramServing {
             .find(|s| s.track_id == track_id)
     }
 
-    fn init_bytes(&self) -> Option<Bytes> {
+    pub(crate) fn init_bytes(&self) -> Option<Bytes> {
         self.ll_hls.init_bytes()
     }
 
@@ -1009,7 +1009,7 @@ impl ProgramServing {
         }
     }
 
-    fn track_specs(&self) -> Vec<TrackSpec> {
+    pub(crate) fn track_specs(&self) -> Vec<TrackSpec> {
         self.dash.track_specs()
     }
 
@@ -1025,7 +1025,7 @@ impl ProgramServing {
         self.tracks_active.load(Ordering::SeqCst)
     }
 
-    fn window_segments(&self) -> Vec<DashWindowSegment> {
+    pub(crate) fn window_segments(&self) -> Vec<DashWindowSegment> {
         self.dash.window_segments()
     }
 
@@ -1866,6 +1866,16 @@ impl RouteHandle {
             .iter()
             .min_by_key(|(id, _)| **id)
             .map(|(_, serving)| serving.trunk())
+    }
+
+    /// `test-seams` hook over [`Self::first_trunk`]: an integration test that
+    /// drives [`crate::source::hls_pull::run_hls_pull`] itself reads back what
+    /// the route published, exactly as egress would.
+    #[doc(hidden)]
+    #[cfg(feature = "test-seams")]
+    #[must_use]
+    pub fn first_trunk_for_test(&self) -> Option<Arc<Trunk>> {
+        self.first_trunk()
     }
 
     /// Wait until at least one program is published on this route, then return

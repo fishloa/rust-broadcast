@@ -19,40 +19,24 @@
 //!   implement [`media_plane::ingress::Listener`]** — see
 //!   [Why listener mode is not a `Listener` yet](#why-listener-mode-is-not-a-listener-yet).
 //!
-//! # Where the I/O boundary falls (caller mode)
+//! # Caller mode
 //!
-//! `SrtSocket::connect` **is** a genuine multi-round-trip handshake
-//! (INDUCTION → CONCLUSION), and unlike [`crate::source::rtsp`] it cannot be
-//! driven through `poll_transmit`/`feed`, because `srt-runtime` does not
-//! expose a usable sans-IO connection type — see
-//! [The srt-runtime sans-IO gap](#the-srt-runtime-sans-io-gap). But that
-//! handshake is entirely *transport-opening*: it establishes the SRT
-//! connection the way a TLS handshake establishes a `TlsStream`, and once it
-//! completes, the whole remaining protocol is "payloads arrive, demux them".
-//! So [`SrtDialer::dial`] constructs the sans-IO session and performs no
-//! I/O, and [`connect_caller`]/[`run_srt_caller`] — the tokio-side driver —
-//! opens the socket and feeds payloads in, exactly as
-//! [`crate::source::ts_http`] does with its GET.
+//! [`run_srt_caller`] opens a relay-mode [`broadcast_client::Session`] on `srt://remote` and
+//! runs it through the shared session host (`crate::source::client_host`): the session owns
+//! the INDUCTION/CONCLUSION handshake, the ARQ receiver and TSBPD delivery, and the host performs
+//! its connected UDP socket.
 //!
-//! # The `srt-runtime` sans-IO gap
+//! # Listener mode
 //!
-//! This is worth recording precisely, because at first glance SRT *looks*
-//! like the RTSP case (where a sans-IO engine already existed and the whole
-//! handshake moved onto `poll_transmit`/`feed` with no executor bridge).
-//! `srt-runtime` **does** ship a large sans-IO core —
-//! `srt_runtime::caller::CallerHandshake` / `listener::ListenerHandshake`
-//! (`start()`/`feed(&ControlPacket)`/`tick()` → `HandshakeOutput::Send(..)`),
-//! plus sans-IO `arq::Sender`/`arq::Receiver`, `tsbpd::TsbpdScheduler` and
-//! `livecc::LiveCC`. But `srt_runtime::io` composes all of those inside a
-//! **private** `Driver` struct owning the `UdpSocket` on a spawned task, and
-//! the only public handle, `SrtSocket`, is a pair of `mpsc` channels — its
-//! `recv()` is a channel read, not a byte-level API. There is **no public
-//! "feed a datagram in, get a payload out" SRT connection type**, so an
-//! `IngestSession` that owned the SRT protocol itself would have to
-//! re-compose `ArqReceiver` + `TsbpdScheduler` + `LiveCC` and duplicate
-//! `Driver` wholesale. That is a real, bounded piece of work in
-//! `srt-runtime` (not `multimux`), and it is the prerequisite for both a
-//! genuinely sans-IO SRT caller and the listener redesign below.
+//! Listener mode still uses `srt_runtime::io` (`SrtListener`/`SrtSocket`), because
+//! `broadcast-client`'s session is a caller.
+//!
+//! # The listener's sans-IO gap
+//!
+//! `srt_runtime::io` composes the sans-IO `ListenerHandshake`, `arq::Receiver` and
+//! `tsbpd::TsbpdScheduler` inside a private `Driver` that owns the socket on a spawned task; the
+//! only public handle, `SrtSocket`, is a pair of `mpsc` channels. A sans-IO listener session, as
+//! `broadcast-client` has for the caller, is the prerequisite for the listener redesign below.
 //!
 //! # Why listener mode is not a `Listener` yet
 //!
@@ -94,6 +78,7 @@ use srt_runtime::io::{SrtListener, SrtSocket};
 use tokio::sync::{Mutex, OnceCell};
 
 use crate::error::{MultimuxError, Result};
+use crate::source::client_host::{EventIngest, SessionLabels, SessionStep};
 use crate::source::ts_program::TsIngestSession;
 use crate::source::{IngestTimeouts, Source};
 
@@ -200,49 +185,19 @@ impl Source for SrtRoute {
 }
 
 /// Constructs a [`TsIngestSession`] — performs **no I/O**. The SRT
-/// handshake lives in [`connect_caller`]/[`accept_listener`]; see the module
+/// handshake lives in [`accept_listener`]; see the module
 /// doc for why it cannot move onto `poll_transmit`/`feed`.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SrtDialer;
 
 impl Dialer for SrtDialer {
     type Session = TsIngestSession;
-    /// Construction cannot fail — the dial itself belongs to
-    /// [`connect_caller`], the I/O side.
+    /// Construction cannot fail — the accept itself belongs to
+    /// [`accept_listener`], the I/O side.
     type Error = Infallible;
 
     fn dial(&mut self) -> core::result::Result<TsIngestSession, Infallible> {
         Ok(TsIngestSession::new())
-    }
-}
-
-/// Dials `route`'s remote SRT listener (caller mode), bounded by
-/// [`IngestTimeouts::connect`] — **transport-opening I/O, deliberately
-/// outside `dial()`**.
-///
-/// The whole dial is wrapped in the timeout (rather than the timeout only
-/// bounding a subsequent read) because `srt-runtime` runs its own internal
-/// handshake-retry budget: a `tokio::time::timeout` around a later step
-/// would never get a chance to interrupt a dial against a blackholed remote,
-/// since the dial future runs to its own completion first (issue #739
-/// review).
-pub async fn connect_caller(route: &SrtRoute) -> Result<SrtSocket> {
-    let remote = route
-        .remote
-        .as_ref()
-        .ok_or_else(|| MultimuxError::Connect {
-            reason: "srt: connect_caller on a listener-mode route".into(),
-        })?;
-    let cfg = route.handshake_config();
-    let connect_timeout = route.timeouts.connect;
-    match tokio::time::timeout(connect_timeout, SrtSocket::connect(remote.as_str(), cfg)).await {
-        Ok(Ok(sock)) => Ok(sock),
-        Ok(Err(e)) => Err(MultimuxError::Connect {
-            reason: format!("srt: connect {remote}: {e}"),
-        }),
-        Err(_) => Err(MultimuxError::Connect {
-            reason: format!("srt: connect {remote}: no response within {connect_timeout:?}"),
-        }),
     }
 }
 
@@ -400,26 +355,72 @@ pub async fn drive_socket(
     }
 }
 
-/// Caller mode: dial `route`'s remote and drive it — the new drive loop,
-/// replacing the pre-5a `SrtSource::connect`/`SrtSession::next_samples`
-/// pair.
+/// Caller mode: dial `route`'s remote through a relay-mode [`broadcast_client::Session`] and
+/// drive it until the peer shuts down or a read fails. The session owns the SRT handshake, the
+/// ARQ and TSBPD delivery; the host performs its UDP socket.
+///
+/// Returns `Ok(())` on a clean peer shutdown and `Err` on a genuine failure.
 pub async fn run_srt_caller(
     route: &SrtRoute,
     trunk_config: TrunkConfig,
     handshake: HandshakePolicy,
     route_handle: &std::sync::Arc<crate::route::RouteHandle>,
-    _cancel: tokio_util::sync::CancellationToken,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<()> {
-    let sock = connect_caller(route).await?;
-    drive_socket(
-        sock,
-        route.timeouts.read,
+    let remote = route
+        .remote
+        .as_ref()
+        .ok_or_else(|| MultimuxError::Connect {
+            reason: "srt: run_srt_caller on a listener-mode route".into(),
+        })?;
+    let mut config = broadcast_client::Config::relay();
+    config.kind = broadcast_client::SourceKind::Srt;
+    config.srt.stream_id.clone_from(&route.stream_id);
+    if let Some(latency) = route.latency_ms {
+        config.srt.latency_ms = latency;
+    }
+    config.srt.handshake_timeout_ms = u64::try_from(route.timeouts.connect.as_millis())
+        .unwrap_or(u64::MAX)
+        .max(1);
+    config.srt.entropy_seed = Some(broadcast_client::SrtEntropySeed::new(
+        crate::secure_random::entropy_seed(),
+    ));
+    let mut step = SessionStep::open(
+        &format!("srt://{remote}"),
+        config,
+        None,
+        SessionLabels {
+            what: "srt",
+            connect: route.timeouts.connect,
+            read: route.timeouts.read,
+        },
+        std::sync::Arc::clone(route_handle),
+        true,
+    )?;
+    let driver = IngestDriver::new(
+        EventIngest::new(),
         trunk_config,
         handshake,
+        media_plane::DEFAULT_MAX_PROGRAMS,
+    );
+    let mut progress = crate::source::DriverProgress::new();
+    let mut sink = tokio::io::sink();
+    let err = crate::source::driver::run_ingest_scaffold(
+        driver,
         route_handle,
-        |_| {},
+        &mut progress,
+        cancel,
+        route.timeouts,
+        crate::source::driver::DEFAULT_WRITE_TIMEOUT,
+        &mut sink,
+        &mut step,
+        |never: Infallible| match never {},
     )
-    .await
+    .await;
+    match err {
+        MultimuxError::Connect { reason } if reason.starts_with("session ended") => Ok(()),
+        other => Err(other),
+    }
 }
 
 /// Listener mode: accept **exactly one** inbound Caller and drive it, then
@@ -453,6 +454,8 @@ mod tests {
     use media_plane::ingress::ProgramId;
     use media_plane::trunk::SampleCursor;
     use parking_lot::Mutex as StdMutex;
+
+    const LOW_LATENCY_MS: u16 = 20;
 
     /// Loopback biting test (issue #739): a real `SrtSocket` caller connects
     /// to a real listener-mode `SrtRoute` bound to an ephemeral loopback
@@ -576,39 +579,73 @@ mod tests {
                 read: Duration::from_millis(300),
             },
         );
-        // HANG GUARD (issue #826): real-SRT caller dial over loopback UDP
-        // normally resolves in ~ms. Only job is to fail "never connects"
-        // rather than hang, not a timing claim.
-        let sock = tokio::time::timeout(Duration::from_secs(60), connect_caller(&route))
-            .await
-            .expect("caller dial must not hang")
-            .expect("caller dial");
-
-        let cursor: Arc<StdMutex<Option<SampleCursor>>> = Arc::new(StdMutex::new(None));
-        let cursor_for_cb = Arc::clone(&cursor);
         let route_handle = Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
-        // HANG GUARD (issue #826): backstop around the whole drive loop.
-        // The 300 ms read timeout makes it return on its own well within
-        // this ceiling; only exists to fail "never returns" rather than hang.
         let _ = tokio::time::timeout(
             Duration::from_secs(60),
-            drive_socket(
-                sock,
-                Duration::from_millis(300),
+            run_srt_caller(
+                &route,
                 trunk_config(),
                 handshake(),
                 &route_handle,
-                move |driver| {
-                    if let Some(t) = driver.trunk(ProgramId(0)) {
-                        *cursor_for_cb.lock() = Some(t.subscribe());
-                    }
-                },
+                tokio_util::sync::CancellationToken::new(),
             ),
         )
         .await;
+        let trunk = route_handle.await_first_trunk().await;
+        let mut cursor = trunk.subscribe_from_backlog();
+        let total = drain(&mut cursor);
+        assert!(
+            total > 0,
+            "caller-mode SRT must land real samples in the Trunk, got {total}"
+        );
+        server.abort();
+    }
 
-        let mut guard = cursor.lock();
-        let total = guard.as_mut().map(drain).unwrap_or(0);
+    #[tokio::test]
+    async fn loopback_srt_caller_with_a_low_latency_route_connects_and_yields_samples() {
+        let listener_addr = "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap();
+        let mut listener = SrtListener::bind(
+            listener_addr,
+            HandshakeConfig {
+                latency_ms: LOW_LATENCY_MS,
+                ..HandshakeConfig::default()
+            },
+        )
+        .await
+        .expect("listener bind");
+        let bound_addr = listener.local_addr().expect("listener local addr");
+
+        let ts_bytes = build_ts_bytes(TrackId::new(1), 0xBB, 40);
+        let server = tokio::spawn(async move {
+            let mut sock = listener.accept().await.expect("listener accept");
+            for chunk in ts_bytes.chunks(7 * 188) {
+                sock.send(chunk).await.expect("send TS payload");
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        });
+
+        let route = SrtRoute::new_caller("cam-srt-low-latency", bound_addr.to_string())
+            .with_latency_ms(Some(LOW_LATENCY_MS))
+            .with_timeouts(IngestTimeouts {
+                connect: Duration::from_secs(5),
+                read: Duration::from_millis(300),
+            });
+        let route_handle = Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let _ = tokio::time::timeout(
+            Duration::from_secs(60),
+            run_srt_caller(
+                &route,
+                trunk_config(),
+                handshake(),
+                &route_handle,
+                tokio_util::sync::CancellationToken::new(),
+            ),
+        )
+        .await;
+        let trunk = route_handle.await_first_trunk().await;
+        let mut cursor = trunk.subscribe_from_backlog();
+        let total = drain(&mut cursor);
         assert!(
             total > 0,
             "caller-mode SRT must land real samples in the Trunk, got {total}"
@@ -678,13 +715,10 @@ mod tests {
 
     /// A caller dialling a bound-but-never-replying remote must fail within
     /// the *configured* connect timeout, not srt-runtime's own internal
-    /// handshake-retry budget — the biting test for wrapping the dial in the
-    /// timeout (issue #739 review). Preserved in intent from the pre-5a
-    /// suite, retargeted at `connect_caller`.
+    /// handshake-retry budget (issue #739 review).
     #[tokio::test]
     async fn caller_connect_times_out_against_an_unreachable_remote() {
         const CONNECT_TIMEOUT: Duration = Duration::from_millis(200);
-        // A bound UDP socket that never answers the SRT handshake.
         let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0")
             .await
             .expect("bind blackhole");
@@ -695,21 +729,23 @@ mod tests {
                 connect: CONNECT_TIMEOUT,
                 read: Duration::from_secs(30),
             });
+        let route_handle = Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
         let started = std::time::Instant::now();
-        // HANG GUARD (issue #826): backstop around `connect_caller`. The
-        // configured 200 ms connect timeout (the timeout under test) causes
-        // it to return on its own within a fraction of this ceiling. Only
-        // job is to fail "never returns" rather than hang, not a timing
-        // claim. The test's semantic assertion — that `connect_caller`
-        // returns an `Err` and that `started.elapsed()` stays within the
-        // configured timeout × 4 — gates on the inner connect timeout, not
-        // this ceiling.
-        let outcome = tokio::time::timeout(Duration::from_secs(60), connect_caller(&route))
-            .await
-            .expect("connect_caller must not hang");
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(60),
+            run_srt_caller(
+                &route,
+                trunk_config(),
+                handshake(),
+                &route_handle,
+                tokio_util::sync::CancellationToken::new(),
+            ),
+        )
+        .await
+        .expect("a blackholed dial must not hang");
         assert!(
             matches!(outcome, Err(crate::error::MultimuxError::Connect { .. })),
-            "a blackholed remote must fail the dial"
+            "a blackholed remote must fail the dial: {outcome:?}"
         );
         assert!(
             started.elapsed() < CONNECT_TIMEOUT * 4,

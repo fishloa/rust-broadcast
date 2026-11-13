@@ -13,6 +13,10 @@ use core::net::IpAddr;
 pub struct UdpConfig {
     /// Local interface address a multicast group is joined on; `None` lets the host pick.
     pub interface: Option<IpAddr>,
+    /// Interface index an IPv6 multicast group is joined on, when the interface is named by
+    /// index rather than address; `None` lets the host pick. Only valid for an IPv6 group, and
+    /// not together with [`UdpConfig::interface`].
+    pub interface_index: Option<u32>,
     /// Source address for a source-specific multicast join (RFC 4607); `None` joins any-source.
     /// Must be of the same address family as the group.
     pub source: Option<IpAddr>,
@@ -38,6 +42,7 @@ impl Default for UdpConfig {
     fn default() -> Self {
         Self {
             interface: None,
+            interface_index: None,
             source: None,
             recv_buffer_bytes: None,
             reorder_packets: DEFAULT_REORDER_PACKETS,
@@ -96,6 +101,9 @@ pub struct MulticastJoin {
     /// Interface address to join on; for an IPv6 group the host maps it to its interface index.
     /// `None` lets the host pick.
     pub interface: Option<IpAddr>,
+    /// Interface index to join an IPv6 group on; `None` lets the host pick. Never set together
+    /// with `interface`.
+    pub interface_index: Option<u32>,
     /// Source address of a source-specific join (`IP_ADD_SOURCE_MEMBERSHIP`,
     /// `MCAST_JOIN_SOURCE_GROUP`); `None` is an any-source join.
     pub source: Option<IpAddr>,

@@ -24,7 +24,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "source/file_reader.rs",
-        484,
+        485,
         "spawn_blocking for a blocking file read; awaited inline (owned by the caller)",
     ),
     (
@@ -34,8 +34,18 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     ("dvr.rs", 603, "spawn_blocking DVR write; awaited inline"),
     (
+        "source/client_host.rs",
+        223,
+        "one HTTP request task per Action::HttpRequest of the session; owned by SessionStep, which aborts it on Action::Close and aborts every outstanding one on drop",
+    ),
+    (
+        "source/client_host.rs",
+        289,
+        "one datagram receive task per Action::UdpBind of the session; owned by SessionStep, which aborts it on Action::Close and aborts every outstanding one on drop",
+    ),
+    (
         "source/pull.rs",
-        200,
+        246,
         "PullScheduler's `inflight` JoinSet (drained on drop); the shared engine for the three pull sources",
     ),
     (
@@ -91,12 +101,12 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "output/whep.rs",
-        1543,
+        1531,
         "WHEP signalling server; JOINED before run_whep returns (port-release ordering)",
     ),
     (
         "output/whep.rs",
-        1565,
+        1553,
         "WHEP viewer session on the run's session TaskTracker (close()+wait() on cancel)",
     ),
     (
@@ -113,21 +123,6 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
         "output/catchup.rs",
         343,
         "spawn_blocking catch-up scan under an owned scan permit; awaited inline, and the permit rides the blocking task",
-    ),
-    (
-        "output/smooth.rs",
-        132,
-        "spawn_blocking Smooth layout build; awaited inline",
-    ),
-    (
-        "output/smooth.rs",
-        186,
-        "spawn_blocking Smooth layout locate; awaited inline",
-    ),
-    (
-        "output/smooth.rs",
-        235,
-        "spawn_blocking Smooth fragment build; awaited inline",
     ),
     (
         "origin/mod.rs",
@@ -166,27 +161,32 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "source/dash_pull/tests.rs",
-        411,
+        418,
         "test server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        706,
+        447,
+        "test server task; aborted at test end",
+    ),
+    (
+        "source/dash_pull/tests.rs",
+        772,
         "test HTTP server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        863,
+        929,
         "test HTTP server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        1198,
+        1264,
         "test HTTP server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        1606,
+        1673,
         "test HTTP server task; aborted at test end",
     ),
 ];

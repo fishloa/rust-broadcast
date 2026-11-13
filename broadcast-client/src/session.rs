@@ -11,7 +11,6 @@ use url::Url;
 use crate::ClientIdentityScope;
 use crate::Credentials;
 use crate::Hint;
-use crate::auth::AuthState;
 use crate::error::{Error, TransportError};
 use crate::events::{Action, Config, ErrorKind, Event, SourceKind, Status};
 use crate::headers;
@@ -30,6 +29,7 @@ use crate::source::smooth::SmoothSource;
 use crate::source::srt::Notice;
 use crate::source::ts_http::TsHttpSource;
 use crate::source::ts_http_hold::{HoldLimits, StreamKind};
+use broadcast_auth::AuthState;
 use transmux::JumpDetector;
 use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 
@@ -94,12 +94,22 @@ pub struct Session {
     stale_dropped: u64,
     hls_joins: crate::source::hls_join::HlsJoins,
     wall: Option<WallClock>,
+    payload_bytes: u64,
 }
 
 impl Session {
     /// Open a session.
     pub fn open(url: &str, config: Config, now_us: u64) -> Result<Self, Error> {
         Self::open_with_memory(url, config, now_us, None)
+    }
+
+    /// The seed every retry jitter in this session is drawn from.
+    ///
+    /// A session reads no clock, so it is a pure function of the caller's `now_us`: two sessions
+    /// opened at one instant behave identically (which is what makes a caller's replay
+    /// reproducible), while sessions opened a microsecond apart jitter apart.
+    fn jitter_seed(now_us: u64) -> u64 {
+        now_us
     }
 
     /// Open a session seeded with stall memory.
@@ -189,15 +199,25 @@ impl Session {
         if let Some(creds) = userinfo {
             auth.set_credentials(creds);
         }
-        let source = TsHttpSource::new(parsed.clone(), config.ts_http.clone(), now_us)
-            .with_hold_limits(HoldLimits::from_config(&config));
+        let source = TsHttpSource::with_seed(
+            parsed.clone(),
+            config.ts_http.clone(),
+            now_us,
+            Session::jitter_seed(now_us),
+        )
+        .with_hold_limits(HoldLimits::from_config(&config));
         let adaptive = if use_hls {
-            Some(Adaptive::Hls(Box::new(HlsSession::new(&parsed, &config))))
+            Some(Adaptive::Hls(Box::new(HlsSession::new(
+                &parsed,
+                &config,
+                Self::jitter_seed(now_us),
+            ))))
         } else if use_dash {
             Some(Adaptive::Dash(Box::new(DashSource::new(
                 &parsed,
                 &config,
                 ConnAlloc::new(),
+                Self::jitter_seed(now_us),
             ))))
         } else if use_smooth {
             Some(Adaptive::Smooth(Box::new(SmoothSource::new(
@@ -265,6 +285,7 @@ impl Session {
             stale_dropped: 0,
             hls_joins: crate::source::hls_join::HlsJoins::default(),
             wall: None,
+            payload_bytes: 0,
         })
     }
 
@@ -407,9 +428,10 @@ impl Session {
                 lineage.stale_replayed,
             );
             match decision {
-                crate::auth::AuthDecision::Replay | crate::auth::AuthDecision::ReplayStale => {
+                broadcast_auth::AuthDecision::Replay
+                | broadcast_auth::AuthDecision::ReplayStale => {
                     let stale_replayed = lineage.stale_replayed
-                        || matches!(decision, crate::auth::AuthDecision::ReplayStale);
+                        || matches!(decision, broadcast_auth::AuthDecision::ReplayStale);
                     let new_headers = self.auth.request_headers(&req_url, self.now_us);
                     let authed = has_authorization(&new_headers);
                     if !replay_allowed(lineage, authed) {
@@ -434,11 +456,12 @@ impl Session {
                         identity: None,
                     });
                 }
-                crate::auth::AuthDecision::Wait(events) => {
-                    self.events.extend(events);
+                broadcast_auth::AuthDecision::Wait(events) => {
+                    self.events.extend(events.into_iter().map(Event::from));
                     self.actions.retain(|a| !matches!(a, Action::WakeAt(_)));
                     self.ts_wake = None;
                 }
+                _ => {}
             }
             return;
         }
@@ -538,6 +561,7 @@ impl Session {
             return;
         }
         self.now_us = now_us;
+        self.payload_bytes = self.payload_bytes.saturating_add(bytes.len() as u64);
         self.source.on_data(bytes, now_us);
         self.drain_source();
         if !bytes.is_empty() {
@@ -635,6 +659,16 @@ impl Session {
         }
     }
 
+    /// Transport-stream payload bytes the session has accepted from its source: HTTP body bytes
+    /// of a TS-over-HTTP session, and the payloads a UDP, RTP or SRT session delivers after
+    /// alignment checks, reordering and decryption. Control traffic (SRT keepalives, ACKs) and
+    /// dropped datagrams do not count, so a host that measures stalls by this counter is not
+    /// kept alive by a peer that only keeps the link up.
+    #[must_use]
+    pub fn payload_bytes(&self) -> u64 {
+        self.payload_bytes
+    }
+
     /// Datagram counters of a UDP, RTP or SRT session; all zero for any other source.
     #[must_use]
     pub fn datagram_stats(&self) -> crate::udp::DatagramStats {
@@ -659,7 +693,7 @@ impl Session {
             let (kind, clean) = match notice {
                 Notice::Rejected(reason) => (Some(ErrorKind::SrtRejected { reason }), false),
                 Notice::HandshakeTimedOut => (Some(ErrorKind::SrtHandshakeTimeout), false),
-                Notice::PeerIdle => (None, false),
+                Notice::PeerIdle => (Some(ErrorKind::SrtPeerIdle), false),
                 Notice::PeerShutdown => (None, true),
             };
             if let Some(kind) = kind {
@@ -678,6 +712,7 @@ impl Session {
             self.emit(Event::Discontinuity);
         }
         for payload in &released.payloads {
+            self.payload_bytes = self.payload_bytes.saturating_add(payload.len() as u64);
             self.source.on_data(payload, now_us);
             self.drain_source();
             let pcr = self.source.take_last_pcr();
@@ -1509,7 +1544,7 @@ fn take_userinfo(url: &mut Url) -> Result<Option<Credentials>, Error> {
 }
 
 fn has_authorization(headers: &[(String, String)]) -> bool {
-    crate::auth::carries_credentials(headers)
+    broadcast_auth::carries_credentials(headers)
 }
 
 fn has_mpd_extension(url: &Url) -> bool {

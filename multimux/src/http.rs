@@ -32,20 +32,7 @@ use crate::route::ProgramServing;
 /// Upper bound on how long [`resolve_blocking`] parks a caller waiting for a
 /// [`ServedEgress::resolve`] to stop answering [`EgressResponse::Await`] — no
 /// call site may wait longer than this.
-pub(crate) const BLOCKING_RELOAD_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// RFC 8216bis section 6.2.5.2: a Server "that cannot provide the requested
-/// Playlist after blocking for more than three Target Durations SHOULD return
-/// Service Unavailable".
-pub(crate) const BLOCKING_RELOAD_TARGET_DURATIONS: u32 = 3;
-
-/// How long a Playlist blocking reload waits on `origin`: three of its
-/// published Target Durations, never less than [`BLOCKING_RELOAD_TIMEOUT`]
-/// (which also covers the time before the first segment fixes a target).
-pub(crate) fn playlist_reload_timeout(origin: &hls_runtime::server::HlsOrigin) -> Duration {
-    (origin.published_target_duration() * BLOCKING_RELOAD_TARGET_DURATIONS)
-        .max(BLOCKING_RELOAD_TIMEOUT)
-}
+pub(crate) const BLOCKING_RELOAD_TIMEOUT: Duration = hls_runtime::server::BLOCKING_RELOAD_TIMEOUT;
 
 /// Resolves `route`'s single-program-route [`ProgramServing`] bundle
 /// ([`crate::route::SPTS_PROGRAM_ID`]) against its registry, handling the
@@ -333,10 +320,28 @@ pub(crate) fn into_response<B>(
     not_found_status: StatusCode,
     render_ready: impl FnOnce(B) -> Response,
 ) -> Response {
+    into_response_with_message(
+        resp,
+        not_found_status,
+        StatusCode::BAD_REQUEST,
+        render_ready,
+    )
+}
+
+/// [`into_response`] for a route whose `BadRequest` answer is *not* the
+/// client's fault: an egress that returns `BadRequest` because it cannot
+/// describe what it holds (rather than because the request is malformed)
+/// reports it as the caller's chosen `refused_status`.
+pub(crate) fn into_response_with_message<B>(
+    resp: EgressResponse<B>,
+    not_found_status: StatusCode,
+    refused_status: StatusCode,
+    render_ready: impl FnOnce(B) -> Response,
+) -> Response {
     match resp {
         EgressResponse::Ready { body, .. } => render_ready(body),
         EgressResponse::NotFound => not_found_status.into_response(),
-        EgressResponse::BadRequest { .. } => StatusCode::BAD_REQUEST.into_response(),
+        EgressResponse::BadRequest { .. } => refused_status.into_response(),
         // `EgressResponse` is `#[non_exhaustive]`, and `Await` should never
         // reach here (`resolve_blocking` only ever returns once `resolve`
         // stops answering it, or its own deadline has passed and

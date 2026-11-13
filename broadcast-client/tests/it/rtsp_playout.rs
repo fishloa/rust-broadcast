@@ -66,8 +66,8 @@ fn truncate_sprop_sps(sdp: &str) -> String {
     let at = sdp.find(SPROP_ATTRIBUTE).expect("sprop") + SPROP_ATTRIBUTE.len();
     let end = at + sdp[at..].find(['\r', '\n', ';']).expect("sprop end");
     let (sps_b64, rest) = sdp[at..end].split_once(',').expect("sps,pps");
-    let sps = transmux::rtp::base64_decode(sps_b64).expect("sps b64");
-    let truncated = transmux::rtp::base64_encode(&sps[..SPS_HEADER_LEN]);
+    let sps = broadcast_common::base64::base64_decode_lenient(sps_b64).unwrap();
+    let truncated = broadcast_common::base64::base64_encode(&sps[..SPS_HEADER_LEN]);
     format!("{}{truncated},{rest}{}", &sdp[..at], &sdp[end..])
 }
 

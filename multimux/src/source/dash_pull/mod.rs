@@ -55,7 +55,7 @@ use crate::source::http_auth::{
     credentials_from_url, resolve_credentials, scope_credentials, strip_userinfo,
 };
 use crate::source::pull_target::{PullKind, PullRoute};
-use broadcast_client::auth::AuthState;
+use broadcast_auth::AuthState;
 
 mod drive;
 mod session;
@@ -165,7 +165,7 @@ pub fn parse_iso8601_utc_for_test(s: &str) -> Option<u64> {
     parse_iso8601_utc(s)
 }
 
-fn build_client(route: &DashPullRoute) -> Result<(HttpClient, Url, Option<AuthState>)> {
+fn build_client(route: &DashPullRoute) -> Result<(HttpClient, Url, AuthState)> {
     let parsed = Url::parse(&route.target.url).map_err(|e| MultimuxError::Connect {
         reason: format!(
             "bad DASH-pull URL {}: {e}",

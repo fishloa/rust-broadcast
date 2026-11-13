@@ -10,6 +10,8 @@ use alloc::string::{String, ToString};
 
 use url::Url;
 
+use broadcast_common::url_ref;
+
 /// Base used when the playlist URL is itself relative; stripped from results.
 const SYNTHETIC_BASE: &str = "hls-relative:///";
 /// The synthetic base without its path slash.
@@ -17,7 +19,8 @@ const SYNTHETIC_ROOT: &str = "hls-relative://";
 
 /// The synthetic-base form of a relative URL (or reference).
 fn synthetic(relative: &str) -> Option<Url> {
-    Url::parse(SYNTHETIC_BASE).ok()?.join(relative).ok()
+    let base = Url::parse(SYNTHETIC_BASE).ok()?;
+    url_ref::resolve(&base, relative).ok()
 }
 
 /// Resolve `uri` (as it appears in a playlist) against `base` (the URL the
@@ -32,7 +35,7 @@ pub(crate) fn resolve(base: &str, uri: &str) -> String {
             None => return uri.to_string(),
         },
     };
-    match base_url.join(uri) {
+    match url_ref::resolve(&base_url, uri) {
         Ok(joined) if is_synthetic => strip_synthetic(
             joined.as_str(),
             base.starts_with('/') || uri.starts_with('/'),
@@ -185,8 +188,13 @@ mod tests {
             "http://h.example/X"
         );
         assert_eq!(
+            resolve("http://h/a/p.m3u8", "my_seg.m4s"),
+            "http://h/a/my_seg.m4s"
+        );
+        assert_eq!(
             resolve("http://h/a/p.m3u8", "my seg.m4s"),
-            "http://h/a/my%20seg.m4s"
+            "my seg.m4s",
+            "a reference with a forbidden character is passed through, never percent-encoded into a different URL"
         );
         assert_eq!(
             resolve("http://h:80/a/p.m3u8", "s.m4s"),
