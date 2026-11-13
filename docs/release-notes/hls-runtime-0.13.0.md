@@ -20,8 +20,9 @@ let origin = HlsOrigin::builder(trunk)
 
 ## Added
 
-- `HlsOriginBuilder::discontinuity_sequence(u64)` and `HlsOrigin::discontinuity_sequence_after()`: an origin that replaces another starts its `EXT-X-DISCONTINUITY-SEQUENCE` where the previous one ended.
-- `HlsOriginBuilder::hold_cold_playlist(bool)` and `HOLD_COLD_PLAYLIST_DEFAULT` (`true`).
+- `HlsOriginBuilder::with_discontinuity_sequence(u64)` and `HlsOrigin::discontinuity_sequence_after()`: an origin that replaces another starts its `EXT-X-DISCONTINUITY-SEQUENCE` where the previous one ended.
+- `HlsOriginBuilder::with_hold_cold_playlist(bool)` and `HOLD_COLD_PLAYLIST_DEFAULT` (`true`).
+- `HlsOrigin::init_generation_for(seq)` and `HlsOrigin::current_init_generation()`: the init-segment generation a segment was cut against and the current one, so a DASH Period can reference the init it was cut under (#2446).
 
 ## Fixed
 
@@ -49,7 +50,7 @@ Origin:
 ### Removed
 - BREAKING: `server::Container` moved to `transmux::Container` (same variants and methods, `segment_extension` now public); `HlsOriginBuilder` and the origin take and report that type (issue #2554).
 - BREAKING: `client::tokio_client` (`TokioClient`, `TokioClientConfig`, `TokioClientStats`, `TokioError`) and the `tokio` client feature, plus its tests and its now-unused `tokio`, `reqwest`, `broadcast-auth`, `backon`, `headers` and `tokio-util` dependencies. It carried its own copies of the retry, digest and body-cap policy, reachable only from tests; the IO belongs with the crate that drives the engine. Drive the sans-IO `HlsClient` core instead (`poll` out, `on_playlist`/`on_resource` in), as `multimux`'s HLS pull and `multimux/tests/golden_gate.rs`/`glass_to_glass.rs` do.
-- `bcp47_language` (moved to `broadcast-common::lang::bcp47_language`).
+- BREAKING: `server::bcp47_language` (moved to `broadcast_common::lang::bcp47_language`, feature `lang`).
 
 ### Added
 - `HlsOrigin` caches each rendered media and I-frame playlist per state stamp (the trunk's publish counter, the origin's setter epoch, the drained head, and the same for rendition siblings): concurrent requests share one render instead of each re-rendering (#2526). `HlsOrigin::render_epoch` exposes the setter epoch.

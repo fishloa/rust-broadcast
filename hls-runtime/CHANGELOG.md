@@ -11,7 +11,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Removed
 - BREAKING: `server::Container` moved to `transmux::Container` (same variants and methods, `segment_extension` now public); `HlsOriginBuilder` and the origin take and report that type (issue #2554).
 - BREAKING: `client::tokio_client` (`TokioClient`, `TokioClientConfig`, `TokioClientStats`, `TokioError`) and the `tokio` client feature, plus its tests and its now-unused `tokio`, `reqwest`, `broadcast-auth`, `backon`, `headers` and `tokio-util` dependencies. It carried its own copies of the retry, digest and body-cap policy, reachable only from tests; the IO belongs with the crate that drives the engine. Drive the sans-IO `HlsClient` core instead (`poll` out, `on_playlist`/`on_resource` in), as `multimux`'s HLS pull and `multimux/tests/golden_gate.rs`/`glass_to_glass.rs` do.
-- `bcp47_language` (moved to `broadcast-common::lang::bcp47_language`).
+- BREAKING: `server::bcp47_language` (moved to `broadcast_common::lang::bcp47_language`, feature `lang`).
 
 ### Changed
 - The client's RFC 3339 tests exercise `broadcast_hls::ProgramDateTime::parse`, the parser the client actually uses, instead of a test-only `jiff::Timestamp` copy that rejected the zone-less and whitespace-padded values the production parser accepts (the test-only parser is gone) (#2591).
@@ -26,8 +26,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `HlsOrigin` implements `ServedEgress::is_warm`/`prepare`: the I-frame and bitrate byte scans of a newly published segment run in `prepare`, which a host calls on a blocking thread, so no async worker waits on the drain gate.
 - `BLOCKING_RELOAD_TARGET_DURATIONS`, `BLOCKING_RELOAD_TIMEOUT` and `playlist_reload_timeout` moved here from `multimux` (RFC 8216bis §6.2.5.2).
 - `HlsOrigin::set_init_from`: `set_init` for a caller that names the first segment cut against the new init, for segments closed but not yet published.
-- `HlsOriginBuilder::discontinuity_sequence(u64)` and `HlsOrigin::discontinuity_sequence_after()`: an origin that replaces another starts its `EXT-X-DISCONTINUITY-SEQUENCE` where the previous one ended.
-- `HlsOriginBuilder::hold_cold_playlist(bool)` and `HOLD_COLD_PLAYLIST_DEFAULT` (`true`).
+- `HlsOriginBuilder::with_discontinuity_sequence(u64)` and `HlsOrigin::discontinuity_sequence_after()`: an origin that replaces another starts its `EXT-X-DISCONTINUITY-SEQUENCE` where the previous one ended.
+- `HlsOriginBuilder::with_hold_cold_playlist(bool)` and `HOLD_COLD_PLAYLIST_DEFAULT` (`true`).
+- `HlsOrigin::init_generation_for(seq)` and `HlsOrigin::current_init_generation()`: the init-segment generation a segment was cut against and the current one, so a DASH Period can reference the init it was cut under (#2446).
 
 ### Fixed
 - Client: a failed omitted-offset `EXT-X-BYTERANGE` segment or part is re-requested with its own range, not one continued from a cursor the first request advanced; a restart clears the stored ranges.
