@@ -598,7 +598,6 @@ mod tests {
     async fn a_cold_egress_is_prepared_off_the_async_worker() {
         let trunk = Trunk::new(TrunkConfig::new(nz(8), nz(8), nz(4), nz(8), nz(8)));
         let warms = Arc::new(Semaphore::new(WARM_PERMITS));
-        let warms = Arc::new(Semaphore::new(WARM_PERMITS));
         let egress = Arc::new(ColdEgress {
             warm: AtomicBool::new(false),
             prepares: AtomicUsize::new(0),
