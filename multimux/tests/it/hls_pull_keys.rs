@@ -16,9 +16,9 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use broadcast_auth::Credentials;
+use broadcast_client::ErrorKind;
 use broadcast_common::Timestamp;
 use futures_util::StreamExt;
-use hls_runtime::client::Error as ClientError;
 use media_plane::ingress::HandshakePolicy;
 use media_plane::trunk::{SampleCursorItem, TrunkConfig};
 use multimux::MultimuxError;
@@ -294,7 +294,16 @@ async fn assert_key_is_retried_not_stalled_not_ingested(playlist_url: &str, key_
     let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
     let task = {
         let route_handle = Arc::clone(&route_handle);
-        tokio::spawn(async move { run_hls_pull(&route, config, handshake, &route_handle).await })
+        tokio::spawn(async move {
+            run_hls_pull(
+                &route,
+                config,
+                handshake,
+                &route_handle,
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .await
+        })
     };
     key_hits.wait_at_least(KEY_ATTEMPTS_OBSERVED).await;
     assert!(
@@ -345,7 +354,13 @@ async fn ingest(
     let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
     let result = tokio::time::timeout(
         RUN_CEILING,
-        run_hls_pull(&route, config, handshake, &route_handle),
+        run_hls_pull(
+            &route,
+            config,
+            handshake,
+            &route_handle,
+            tokio_util::sync::CancellationToken::new(),
+        ),
     )
     .await
     .expect("run_hls_pull must terminate, not stall");
@@ -557,7 +572,10 @@ async fn wrong_key_surfaces_typed_decrypt_error_not_stall() {
     assert!(
         matches!(
             result,
-            Err(MultimuxError::LlHls(ClientError::DecryptFailed { .. }))
+            Err(MultimuxError::Session {
+                kind: ErrorKind::DecryptFailed,
+                ..
+            })
         ),
         "{result:?}"
     );
@@ -577,9 +595,10 @@ async fn sample_aes_surfaces_typed_unsupported_encryption() {
         assert!(
             matches!(
                 result,
-                Err(MultimuxError::LlHls(
-                    ClientError::UnsupportedEncryption { .. }
-                ))
+                Err(MultimuxError::Session {
+                    kind: ErrorKind::UnsupportedEncryption { .. },
+                    ..
+                })
             ),
             "{method}: {result:?}"
         );

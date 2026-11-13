@@ -95,6 +95,16 @@ pub enum MultimuxError {
     #[error("hls-pull client: {0}")]
     LlHls(#[from] hls_runtime::client::Error),
 
+    /// A `broadcast_client::Session` reported an error that retrying cannot fix (undecryptable
+    /// or unsupported content, a bad key) or that ended the session.
+    #[error("{what}: {kind:?}")]
+    Session {
+        /// Which source reported it.
+        what: &'static str,
+        /// The session's own classification.
+        kind: broadcast_client::ErrorKind,
+    },
+
     /// An I/O error (socket, bind) not already covered by [`Self::Connect`]
     /// or [`Self::ConfigRead`].
     #[error("io: {0}")]

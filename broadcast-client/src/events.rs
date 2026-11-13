@@ -485,6 +485,32 @@ impl ErrorKind {
         )
     }
 
+    /// The HTTP status behind a failed key, initialization-section or segment request, when the
+    /// server sent one.
+    #[must_use]
+    pub fn refusal_status(&self) -> Option<u16> {
+        match self {
+            Self::KeyFetchFailed { status }
+            | Self::InitFetchFailed { status }
+            | Self::SegmentFetchFailed { status } => *status,
+            _ => None,
+        }
+    }
+
+    /// `true` when retrying cannot help because the content or its codec is wrong, not the
+    /// network or a key server that may answer correctly later: a host that owns reconnection should fail the attempt at once.
+    #[must_use]
+    pub fn is_permanent(&self) -> bool {
+        matches!(
+            self,
+            Self::UnsupportedEncryption { .. }
+                | Self::InitDecodeFailed
+                | Self::DecryptFailed
+                | Self::UnsupportedCodec { .. }
+                | Self::TrackIdReserved { .. }
+        )
+    }
+
     /// Stable snake_case label.
     #[must_use]
     pub fn name(&self) -> &'static str {
@@ -1122,6 +1148,12 @@ pub struct Config {
     pub client_identity: Option<crate::identity::ClientIdentity>,
     /// Which TLS connections offer [`Config::client_identity`].
     pub client_identity_scope: crate::identity::ClientIdentityScope,
+    /// Send `Basic` credentials on the first request to the session origin instead of waiting for
+    /// a `401` challenge (RFC 7617 permits preemptive Basic). Off by default: a player offers
+    /// credentials only when asked. A relay pulling from a source it is configured for turns it
+    /// on, so a resource that answers without a challenge (an AES key server) is still asked
+    /// with the credentials.
+    pub preemptive_basic: bool,
 }
 
 impl Config {
@@ -1273,6 +1305,7 @@ impl Default for Config {
             srt: crate::srt::SrtConfig::default(),
             client_identity: None,
             client_identity_scope: crate::identity::ClientIdentityScope::default(),
+            preemptive_basic: false,
         }
     }
 }

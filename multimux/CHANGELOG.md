@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Changed
+- HLS pull runs the relay `broadcast_client::Session` through the shared session host: the session owns playlist reload and Low-Latency blocking reload, preload-hint prefetch, AES-128 keys, fMP4 and classic-TS demux, per-resource retry with backoff (eight attempts, 0.5 s doubling to 30 s), `Retry-After`, redirects, cookies and auth; the host performs the HTTP requests. A finite playlist still ends the pull cleanly and the route is served as ended; a `401`/`403` on a resource or key still fails the attempt at once. Fatal and permanent session errors (undecryptable or unsupported content) surface as the new typed `MultimuxError::Session`.
 - The Smooth output keeps one `SmoothOrigin` per program, so its cached plan and packaged fragments survive between requests, and hands it the segments as shared `Bytes` instead of copying every window segment per request. A request that misses the cache builds on the blocking pool (`spawn_blocking`, at most four at once per program); the module doc that claimed `http::resolve_blocking` did so was wrong (issue #2522).
 ### Added
 - `max_blocking_reloads_per_route` (config; `HttpLimits::max_blocking_reloads_per_route`, default 1024): LL-HLS blocking-reload requests are budgeted per route instead of one listener-wide pool of `max_concurrent_requests / 4`, so a reload flood on one route cannot shed another's.
@@ -22,6 +23,7 @@
 - TS-over-HTTP pull runs one `broadcast_client::Session` in relay mode (`Config::relay()`) through a shared async session host (`source::client_host`): the session owns redirects, cookies, Basic/Digest/Bearer auth, the finite-body decision and the stall policy, and the host performs its HTTP requests with `reqwest`; the programme split of a multi-programme stream keys on each track's `program_number` as before.
 - DASH-IF ingest sans-IO engine moved to `dash-runtime::ingest`; multimux keeps the axum glue.
 ### Removed
+- BREAKING: `source::hls_pull::{HlsIngestSession, HlsFetchId, HlsPullDialer, Fetched}` and the `hls_pull` drive loop; `run_hls_pull` now takes the route's `CancellationToken` as a fifth argument. `MultimuxError::LlHls` is no longer produced by the pull.
 - BREAKING: `source::rtp_udp::{bind, RtpUdpDialer, RtpUdpIngestSession}`; `run_rtp_udp` is the entry point.
 - BREAKING: `origin::limit::DEFAULT_BLOCKING_RELOAD_DIVISOR`, replaced by `DEFAULT_MAX_BLOCKING_RELOADS_PER_ROUTE`.
 - BREAKING: `source::rtsp::{RtspDialer, RtspIngestSession, route_channel}`; `run_rtsp` is the entry point (the session replaces the hand-driven RTSP engine, depayload and alignment).
