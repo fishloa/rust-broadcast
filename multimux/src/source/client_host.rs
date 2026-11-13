@@ -27,11 +27,12 @@ use tokio::task::AbortHandle;
 use tokio::time::Instant;
 use transmux::{TrackId, TrackSpec};
 
+use crate::clock::{HostClock, SystemHostClock};
 use crate::error::MultimuxError;
 use crate::source::driver::{IngestStep, StepOutcome, ts};
+use crate::source::stitch::Stitcher;
 use crate::source::ts_program::ProgramTracker;
 
-const MICROS_PER_NANO_DIVISOR: u128 = 1_000;
 const MESSAGE_QUEUE: usize = 64;
 
 /// Splits the session's track and sample events per programme, with the same programme policy
@@ -39,6 +40,7 @@ const MESSAGE_QUEUE: usize = 64;
 pub(crate) struct EventIngest {
     tracker: ProgramTracker,
     known: BTreeMap<TrackId, TrackSpec>,
+    stitch: Option<Stitcher>,
 }
 
 impl EventIngest {
@@ -46,7 +48,16 @@ impl EventIngest {
         Self {
             tracker: ProgramTracker::new(),
             known: BTreeMap::new(),
+            stitch: None,
         }
+    }
+
+    /// Keeps one continuous sample timeline across the source's discontinuities (a DASH Period
+    /// that restarts its clock, a skipped segment): the first sample after one is placed where
+    /// the previous content ended. A `Trunk` feeds segmenters that expect time to move forward.
+    pub(crate) fn stitching(mut self) -> Self {
+        self.stitch = Some(Stitcher::default());
+        self
     }
 
     fn tracks(&mut self, specs: Vec<TrackSpec>) {
@@ -81,8 +92,25 @@ impl Stage for EventIngest {
 
     fn feed(&mut self, input: Event, _now: Timestamp) -> Result<(), Infallible> {
         match input {
-            Event::Tracks(specs) => self.tracks(specs),
-            Event::Sample { track, sample, .. } => self.tracker.sample(track, sample),
+            Event::Tracks(specs) => {
+                if let Some(stitch) = self.stitch.as_mut() {
+                    stitch.set_tracks(&specs);
+                }
+                self.tracks(specs);
+            }
+            Event::Sample {
+                track, mut sample, ..
+            } => {
+                if let Some(stitch) = self.stitch.as_mut() {
+                    stitch.apply(track, std::slice::from_mut(&mut sample));
+                }
+                self.tracker.sample(track, sample);
+            }
+            Event::Discontinuity => {
+                if let Some(stitch) = self.stitch.as_mut() {
+                    stitch.discontinuity();
+                }
+            }
             _ => {}
         }
         Ok(())
@@ -163,6 +191,9 @@ pub(crate) struct SessionStep {
     client: reqwest::Client,
     labels: SessionLabels,
     start: Instant,
+    clock: std::sync::Arc<dyn HostClock>,
+    resync_us: Option<u64>,
+    next_anchor_us: u64,
     tx: mpsc::Sender<Message>,
     rx: mpsc::Receiver<Message>,
     requests: BTreeMap<u32, AbortHandle>,
@@ -213,11 +244,14 @@ impl SessionStep {
                 reason: format!("reqwest client: {e}"),
             })?;
         let (tx, rx) = mpsc::channel(MESSAGE_QUEUE);
-        Ok(Self {
+        let mut step = Self {
             session,
             client,
             labels,
             start,
+            clock: std::sync::Arc::new(SystemHostClock::new()),
+            resync_us: None,
+            next_anchor_us: 0,
             tx,
             rx,
             requests: BTreeMap::new(),
@@ -232,12 +266,36 @@ impl SessionStep {
             stalled_seen: false,
             finite: false,
             transport_error: None,
-        })
+        };
+        step.anchor_wall_clock();
+        Ok(step)
     }
 
     fn now_us(&self) -> u64 {
-        let micros = self.start.elapsed().as_nanos() / MICROS_PER_NANO_DIVISOR;
-        u64::try_from(micros).unwrap_or(u64::MAX)
+        self.clock.mono_us()
+    }
+
+    /// Takes the session's instants from `clock` (monotonic microseconds since the source opened,
+    /// and the UTC clock the session's wall-clock anchor is read from).
+    pub(crate) fn with_clock(mut self, clock: std::sync::Arc<dyn HostClock>) -> Self {
+        self.clock = clock;
+        self.anchor_wall_clock();
+        self
+    }
+
+    /// Re-reads the UTC clock into the session every `resync_us` microseconds, so the session's
+    /// wall-clock anchor follows the host clock's own corrections.
+    pub(crate) fn with_clock_resync(mut self, resync_us: u64) -> Self {
+        self.resync_us = Some(resync_us);
+        self.next_anchor_us = self.now_us().saturating_add(resync_us);
+        self
+    }
+
+    fn anchor_wall_clock(&mut self) {
+        let now = self.now_us();
+        let unix = self.clock.unix_us();
+        self.session.set_wall_clock(now, unix);
+        self.next_anchor_us = now.saturating_add(self.resync_us.unwrap_or(u64::MAX));
     }
 
     pub(crate) fn with_udp(mut self, udp: UdpHost) -> Self {
@@ -415,6 +473,7 @@ impl SessionStep {
                     verdict = verdict.max(Verdict::Fed);
                     driver.feed(event, now);
                 }
+                Event::Discontinuity => driver.feed(event, now),
                 Event::Status(Status::Stalled { .. }) => self.stalled_seen = true,
                 Event::Status(Status::Reconnecting { .. }) if !self.labels.session_retries => {
                     verdict = verdict.max(self.reconnect_verdict());
@@ -565,6 +624,9 @@ impl IngestStep<EventIngest> for SessionStep {
         driver: &mut IngestDriver<EventIngest>,
         window: Duration,
     ) -> StepOutcome {
+        if self.resync_us.is_some() && self.now_us() >= self.next_anchor_us {
+            self.anchor_wall_clock();
+        }
         if let Err(e) = self.perform_actions().await {
             return StepOutcome::Failed(e);
         }

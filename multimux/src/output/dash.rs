@@ -120,7 +120,15 @@ pub(crate) async fn serve_mpd(route: Arc<RouteHandle>, flavour: DashFlavour) -> 
     };
     let trunk = serving.trunk();
     let origin = Arc::new(MpdOrigin { route, flavour });
-    let resp = http::resolve_blocking(&trunk, &origin, (), BLOCKING_RELOAD_TIMEOUT, || ()).await;
+    let resp = http::resolve_blocking(
+        &trunk,
+        serving.warms(),
+        &origin,
+        (),
+        BLOCKING_RELOAD_TIMEOUT,
+        || (),
+    )
+    .await;
     http::into_response(resp, StatusCode::SERVICE_UNAVAILABLE, |body| {
         ([(header::CONTENT_TYPE, DASH_MANIFEST_CONTENT_TYPE)], body).into_response()
     })

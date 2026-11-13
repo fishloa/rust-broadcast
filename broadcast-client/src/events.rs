@@ -1154,6 +1154,11 @@ pub struct Config {
     /// on, so a resource that answers without a challenge (an AES key server) is still asked
     /// with the credentials.
     pub preemptive_basic: bool,
+    /// DASH: send the session's credentials (`Authorization`, `Proxy-Authorization`, `Cookie`) to a
+    /// `UTCTiming` server on the session origin. On by default. A relay turns it off: the MPD
+    /// names that server, so a remote manifest could otherwise direct the credentials at any
+    /// address on the origin.
+    pub utc_timing_credentials: bool,
 }
 
 impl Config {
@@ -1306,6 +1311,7 @@ impl Default for Config {
             client_identity: None,
             client_identity_scope: crate::identity::ClientIdentityScope::default(),
             preemptive_basic: false,
+            utc_timing_credentials: true,
         }
     }
 }

@@ -29,28 +29,28 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "route.rs",
-        1232,
+        1244,
         "spawn_blocking DVR persist; awaited inline",
     ),
     (
         "http.rs",
-        233,
+        239,
         "spawn_blocking egress warm-up (ServedEgress::prepare) under a WARMS permit; awaited inline (owned by the request)",
     ),
     ("dvr.rs", 603, "spawn_blocking DVR write; awaited inline"),
     (
         "source/client_host.rs",
-        270,
+        328,
         "one HTTP request task per Action::HttpRequest of the session; owned by SessionStep, which aborts it on Action::Close and aborts every outstanding one on drop",
     ),
     (
         "source/client_host.rs",
-        317,
+        375,
         "one TCP read task per Action::TcpConnect of the session; owned by SessionStep, which aborts it on Action::Close and aborts every outstanding one on drop",
     ),
     (
         "source/client_host.rs",
-        367,
+        425,
         "one datagram receive task per Action::UdpBind of the session; owned by SessionStep, which aborts it on Action::Close and aborts every outstanding one on drop",
     ),
     (
@@ -146,7 +146,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "output/smooth.rs",
-        277,
+        279,
         "spawn_blocking for a Smooth plan or fragment build, bounded by the program's MAX_CONCURRENT_BUILDS semaphore (permit moved into the closure); awaited inline (owned by the request)",
     ),
     (
@@ -156,17 +156,17 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "origin/mod.rs",
-        1661,
+        1662,
         "Ctrl-C/SIGTERM shutdown watcher; aborted/awaited at process shutdown",
     ),
     (
         "origin/mod.rs",
-        1837,
+        1838,
         "spawn_following -> follow_trunk; the returned JoinHandle is owned by the caller and dropped on route teardown (async drop cancels)",
     ),
     (
         "origin/mod.rs",
-        2358,
+        2359,
         "supervise_driver; spawned under the route cancellation token",
     ),
     (
@@ -186,37 +186,37 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "source/dash_pull/tests.rs",
-        190,
+        192,
+        "test pull task; cancelled and aborted by the harness",
+    ),
+    (
+        "source/dash_pull/tests.rs",
+        207,
+        "test collector task; stopped by the harness",
+    ),
+    (
+        "source/dash_pull/tests.rs",
+        452,
         "test server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        418,
+        481,
         "test server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        447,
-        "test server task; aborted at test end",
-    ),
-    (
-        "source/dash_pull/tests.rs",
-        772,
+        806,
         "test HTTP server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        929,
+        964,
         "test HTTP server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        1264,
-        "test HTTP server task; aborted at test end",
-    ),
-    (
-        "source/dash_pull/tests.rs",
-        1673,
+        1306,
         "test HTTP server task; aborted at test end",
     ),
 ];
