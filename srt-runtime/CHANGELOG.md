@@ -7,7 +7,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 ### Changed
 - BREAKING: `io::IoConfig`'s `connect`, `handshake`, `read_idle` and `write` fields and their `with_*` setters are one `timeouts: broadcast_common::timeouts::Timeouts` (set with `IoConfig::with_timeouts`), the type the RTSP and RTMP adapters share. The default is the new `io::SRT_TIMEOUTS` (10 s / 5 s / 5 s / 5 s), unchanged in value (#2514).
-### Changed
 - Test-harness `tool_available` now uses `test-fixtures::process::tool_available_lenient`.
 ### Fixed
 - `SrtUrl::parse` ignores a query key whose percent-decoding is not UTF-8 like any other unknown key, instead of rejecting the URL.
