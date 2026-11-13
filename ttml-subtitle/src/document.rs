@@ -4615,7 +4615,6 @@ fn push_inlines<'a>(
 // (#1110/TT-W1).
 
 /// Serialize the root `<tt>` element — TTML2 §8.1.1.
-#[allow(clippy::too_many_lines)]
 fn serialize_tt_element(tt: &TtElement, w: &mut W, indent: usize, ns: &mut NamespaceMap) {
     put_indent(w, indent);
     let mut t = BytesStart::new("tt");
@@ -6005,7 +6004,6 @@ fn serialize_style_attrs_skip_extent(attrs: &StyleAttributes, t: &mut BytesStart
     serialize_opt_attr(t, "ebutts:multiRowAlign", &attrs.ebutts_multi_row_align);
 }
 
-#[allow(clippy::too_many_lines)]
 fn serialize_style_attrs(attrs: &StyleAttributes, t: &mut BytesStart<'_>) {
     serialize_opt_attr(t, "tts:backgroundColor", &attrs.tts_background_color);
     serialize_opt_attr(t, "tts:backgroundClip", &attrs.tts_background_clip);
