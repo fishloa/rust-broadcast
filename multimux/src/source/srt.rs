@@ -375,6 +375,7 @@ pub async fn run_srt_caller(
         })?;
     let mut config = broadcast_client::Config::relay();
     config.kind = broadcast_client::SourceKind::Srt;
+    config.max_queued_bytes = crate::source::LIVE_EVENT_QUEUE_BYTES;
     config.srt.stream_id.clone_from(&route.stream_id);
     if let Some(latency) = route.latency_ms {
         config.srt.latency_ms = latency;

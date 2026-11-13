@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Changed
+- Every pull input's session queue is also bounded in bytes (`Config::max_queued_bytes`): 32 MiB for the live inputs (TS-over-HTTP, UDP, RTP, SRT caller, RTSP), 128 MiB (two maximum-size segments) for HLS, DASH and Smooth pull, instead of only the 100 000-event count.
 - The session host yields to the runtime every 256 session events it hands to the driver, and the segmenter drives at most 512 queued samples per program per pass (`source::advance_route` yields between passes), so a large queued burst no longer holds a worker thread, or starves a current-thread runtime, for its whole length.
 - Smooth pull uses one process-wide HTTP client (one connection pool and TLS root store) instead of building a client per connection attempt (issue #2533).
 - A segment served with SCTE-35 `emsg` boxes spliced in is spliced once per program (the last 16 are kept) instead of copied and rebuilt on every request (issue #2533).

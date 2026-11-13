@@ -129,6 +129,7 @@ impl TsUdpRoute {
     fn session_config(&self) -> Result<Config, MultimuxError> {
         let mut config = Config::relay();
         config.kind = SourceKind::Udp;
+        config.max_queued_bytes = crate::source::LIVE_EVENT_QUEUE_BYTES;
         crate::source::udp::apply_socket_options(
             &mut config,
             self.multicast_group.as_deref(),

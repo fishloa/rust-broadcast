@@ -191,6 +191,7 @@ impl Session {
         let start_pending_hard_cap_us = config.start_pending_track_hard_cap_us;
         let jump = JumpDetector::new(config.timeline_jump);
         let event_cap = config.max_queued_events;
+        let event_byte_budget = config.max_queued_bytes;
         let record_inputs = config.record_buffer_inputs;
         let record_cap = config.max_recorded_buffer_inputs;
         let mut playout = Playout::new(config.playout);
@@ -268,7 +269,7 @@ impl Session {
             conn_auth: HashMap::new(),
             ts_wake: None,
             actions: VecDeque::new(),
-            events: EventQueue::new(event_cap),
+            events: EventQueue::new(event_cap).with_byte_budget(event_byte_budget),
             buffer: {
                 let mut feeder = crate::buffer::Feeder::new(
                     buffer_cfg,

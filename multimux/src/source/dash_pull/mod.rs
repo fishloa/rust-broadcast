@@ -122,6 +122,7 @@ fn session_config(route: &DashPullRoute) -> Config {
         .max(MICROS_PER_MILLI);
     let mut config = Config::relay();
     config.kind = SourceKind::Dash;
+    config.max_queued_bytes = crate::source::SEGMENTED_EVENT_QUEUE_BYTES;
     config.dash.cross_origin_urls = route.allow_cross_origin();
     config.utc_timing_credentials = false;
     config.request_timeout_us = read_us;

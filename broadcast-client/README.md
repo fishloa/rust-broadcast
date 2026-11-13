@@ -264,7 +264,9 @@ goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbid
 - `Config::max_queued_events` (default 100 000) bounds the whole event queue of a host that does not drain
   `Session::next_event`: transient `Status`/`Starved` events coalesce to the latest, then the oldest `Sample`s
   are dropped (counted by `Session::dropped_events()`), each burst leaving one `Event::Discontinuity`;
-  tracks, errors, buffer events and terminal statuses are never dropped.
+  tracks, errors, buffer events and terminal statuses are never dropped. `Config::max_queued_bytes` (default
+  256 MiB) is the same bound on the queued `Sample` payload bytes, so a few very large samples cannot outgrow the
+  event count.
 - Redirects are followed only to `http`/`https` targets and never from `https` to `http`. A 401/407 from an
   origin other than the session origin is a connect failure (backoff), never a credential prompt.
 - Live TS-over-HTTP holds the first media of each connection behind ONE `Event::Tracks`. The hold ends when
@@ -287,7 +289,7 @@ goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbid
   below the default 1.8 s (zenith-tv: 0.5 s) and a first-frame budget to protect, 0.5 s to 1 s covers the measured
   audio resolution gaps (0.16 s to 0.48 s of media) at a bounded cost; `0` gives the earliest `Start`.
   `Session::open` returns `Error::InvalidConfig` when the quiet limit is `0` or exceeds the input limit.
-  It also rejects every other value that silently disables output: `max_queued_events`, `max_manifest_bytes`,
+  It also rejects every other value that silently disables output: `max_queued_events`, `max_queued_bytes`, `max_manifest_bytes`,
   `max_segment_bytes`, `max_key_bytes`, `request_timeout_us`, `segment_timeout_us`,
   `segment_inactivity_timeout_us`, `hls_key_timeout_us`, `timeline_jump.backward_us` and `timeline_jump.forward_slack_us` of `0`, an invalid
   `dash` field (see the clock section), and a
