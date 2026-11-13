@@ -983,6 +983,8 @@ pub const DEFAULT_START_PENDING_TRACK_WAIT_US: u64 = 1_500_000;
 pub const DEFAULT_START_PENDING_TRACK_HARD_CAP_US: u64 = 4_000_000;
 /// Default cap on events queued for the host, see [`Config::max_queued_events`].
 pub const DEFAULT_MAX_QUEUED_EVENTS: usize = 100_000;
+/// Default cap on the sample bytes queued for the host, see [`Config::max_queued_bytes`].
+pub const DEFAULT_MAX_QUEUED_BYTES: usize = 256 * 1024 * 1024;
 
 /// Default cap on recorded buffering inputs, see [`Config::max_recorded_buffer_inputs`].
 pub const DEFAULT_MAX_RECORDED_BUFFER_INPUTS: usize = 1_000_000;
@@ -1079,6 +1081,12 @@ pub struct Config {
     /// statuses) is kept, so the queue is bounded by this cap plus the undroppable events a
     /// stalled host leaves unread. Must be non-zero (a zero cap would drop every sample).
     pub max_queued_events: usize,
+    /// Bytes of [`Event::Sample`] payload the session keeps queued for the host, next to
+    /// [`Config::max_queued_events`]: when a host does not drain and the queued sample bytes exceed
+    /// this budget, the oldest samples are dropped, counted and replaced by an
+    /// [`Event::Discontinuity`] exactly as for the event cap. A single sample larger than the whole
+    /// budget is dropped as well. Must be non-zero (a zero budget would drop every sample).
+    pub max_queued_bytes: usize,
     /// Record every call the session makes into its buffering controller so the host can drain
     /// them with [`crate::Session::drain_buffer_inputs`] and replay them offline through a
     /// `buffering_runtime::BufferController` built from [`Config::controller_config`] (see
@@ -1197,6 +1205,9 @@ impl Config {
         if self.max_queued_events == 0 {
             return invalid("max_queued_events");
         }
+        if self.max_queued_bytes == 0 {
+            return invalid("max_queued_bytes");
+        }
         if self.max_recorded_buffer_inputs == 0 {
             return invalid("max_recorded_buffer_inputs");
         }
@@ -1296,6 +1307,7 @@ impl Default for Config {
             preferred_audio_language: None,
             auto_select_audio: true,
             max_queued_events: DEFAULT_MAX_QUEUED_EVENTS,
+            max_queued_bytes: DEFAULT_MAX_QUEUED_BYTES,
             record_buffer_inputs: false,
             max_recorded_buffer_inputs: DEFAULT_MAX_RECORDED_BUFFER_INPUTS,
             timeline_jump: Some(transmux::TimelineJumpConfig::default()),
@@ -1346,6 +1358,7 @@ impl core::fmt::Debug for Config {
             .field("preferred_audio_language", &self.preferred_audio_language)
             .field("auto_select_audio", &self.auto_select_audio)
             .field("max_queued_events", &self.max_queued_events)
+            .field("max_queued_bytes", &self.max_queued_bytes)
             .field("record_buffer_inputs", &self.record_buffer_inputs)
             .field(
                 "max_recorded_buffer_inputs",

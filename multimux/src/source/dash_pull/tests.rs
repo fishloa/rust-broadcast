@@ -1813,3 +1813,12 @@ async fn bltrackid_multi_period_audio_only_middle_keeps_track_ids_stable() {
         12 * 12800
     );
 }
+
+#[test]
+fn the_session_queue_is_budgeted_in_bytes() {
+    let config = super::session_config(&DashPullRoute::new("q", "http://127.0.0.1:1/a.mpd"));
+    assert_eq!(
+        config.max_queued_bytes,
+        crate::source::SEGMENTED_EVENT_QUEUE_BYTES
+    );
+}

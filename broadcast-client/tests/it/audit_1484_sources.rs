@@ -413,6 +413,51 @@ fn queued_events_are_capped_by_dropping_the_oldest_samples() {
 }
 
 #[test]
+fn queued_sample_bytes_are_capped_by_dropping_the_oldest_samples() {
+    let bytes = tf1_bytes!();
+    let (status, headers) = tf1_headers!();
+    let drive = |config: Config| {
+        let mut s = Session::open(TS_URL, config, 0).unwrap();
+        let c = first_request(&mut s, 0);
+        s.on_response(c, status, &headers, 0);
+        for chunk in bytes.chunks(CHUNK) {
+            s.on_data(c, chunk, 0);
+        }
+        let mut evs = Vec::new();
+        while let Some(e) = s.next_event() {
+            evs.push(e);
+        }
+        (evs, s.dropped_events())
+    };
+    let sample_bytes = |evs: &[Event]| -> usize {
+        evs.iter()
+            .map(|e| match e {
+                Event::Sample { sample, .. } => sample.data.len(),
+                _ => 0,
+            })
+            .sum()
+    };
+    let (all, none_dropped) = drive(Config::default());
+    assert_eq!(none_dropped, 0);
+    let total = sample_bytes(&all);
+    let budget = total / 4;
+    let capped_cfg = {
+        let mut new_config = Config::default();
+        new_config.max_queued_bytes = budget;
+        new_config
+    };
+    let (capped, dropped) = drive(capped_cfg);
+    assert!(dropped > 0, "a quarter of the bytes must shed samples");
+    assert!(
+        sample_bytes(&capped) <= budget,
+        "queued sample bytes {} exceed the budget {budget}",
+        sample_bytes(&capped)
+    );
+    assert!(capped.iter().any(|e| matches!(e, Event::Discontinuity)));
+    assert!(capped.iter().any(|e| matches!(e, Event::Tracks(_))));
+}
+
+#[test]
 fn kind_is_unaffected_by_rtsp_url_with_forced_ts_http() {
     let config = {
         let mut new_config = Config::default();

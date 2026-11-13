@@ -84,6 +84,7 @@ fn session_config(route: &HlsPullRoute) -> Config {
         .max(MICROS_PER_MILLI);
     let mut config = Config::relay();
     config.kind = SourceKind::Hls;
+    config.max_queued_bytes = crate::source::SEGMENTED_EVENT_QUEUE_BYTES;
     config.request_timeout_us = read_us;
     config.segment_timeout_us = read_us;
     config.hls_key_timeout_us = read_us;
@@ -154,6 +155,15 @@ pub async fn run_hls_pull(
 mod tests {
 
     use super::*;
+
+    #[test]
+    fn the_session_queue_is_budgeted_in_bytes() {
+        let config = session_config(&HlsPullRoute::new("q", "http://127.0.0.1:1/media.m3u8"));
+        assert_eq!(
+            config.max_queued_bytes,
+            crate::source::SEGMENTED_EVENT_QUEUE_BYTES
+        );
+    }
     use crate::source::IngestTimeouts;
     use crate::testutil::MockAuthScheme;
     use broadcast_auth::Credentials;
