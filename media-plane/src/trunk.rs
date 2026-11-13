@@ -1580,6 +1580,11 @@ pub struct Trunk {
     /// [`Trunk::data_listener`] await. Separate from `progress` so the
     /// per-sample notify never wakes a part/segment waiter.
     data: Event,
+    /// Registered, not-yet-dropped [`DataWake`]s. A publisher reads it
+    /// while still holding `state`, so the mutex alone orders it against a
+    /// waiter's register-then-poll and a publish with no waiter skips the
+    /// `notify` (whose fence would otherwise cost every publish).
+    data_waiters: AtomicUsize,
 }
 
 impl Trunk {
@@ -1617,6 +1622,7 @@ impl Trunk {
             lock_takes: AtomicUsize::new(0),
             waiter_cap: config.waiter_capacity.get(),
             data: Event::new(),
+            data_waiters: AtomicUsize::new(0),
         })
     }
 
@@ -2219,8 +2225,33 @@ impl Trunk {
     /// [`TrunkConfig::waiter_capacity`]. **Register before re-checking the
     /// condition you wait on**, as with [`Trunk::listen`]; a consumer of a
     /// [`SampleCursor`] should prefer [`SampleCursor::next`].
-    pub fn data_listener(&self) -> EventListener {
-        self.data.listen()
+    pub fn data_listener(self: &Arc<Self>) -> DataWake {
+        self.data_waiters.fetch_add(1, Ordering::Relaxed);
+        DataWake {
+            trunk: Arc::clone(self),
+            listener: self.data.listen(),
+        }
+    }
+}
+
+/// The wake-up [`Trunk::data_listener`] returns: resolves after the next
+/// sample, event, track-set change or writer hand-off published on the trunk.
+pub struct DataWake {
+    trunk: Arc<Trunk>,
+    listener: EventListener,
+}
+
+impl Future for DataWake {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        Pin::new(&mut self.get_mut().listener).poll(cx)
+    }
+}
+
+impl Drop for DataWake {
+    fn drop(&mut self) {
+        self.trunk.data_waiters.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -2390,8 +2421,11 @@ impl TrunkWriter {
             }
             RetentionClass::Sparse => state.sparse.push(track_id, sample),
         }
+        let waited = self.trunk.data_waiters.load(Ordering::Relaxed) > 0;
         drop(state);
-        self.trunk.data.notify(usize::MAX);
+        if waited {
+            self.trunk.data.notify(usize::MAX);
+        }
     }
 
     /// Publish one event. Never blocks and never rejects — a full event log
@@ -2405,8 +2439,11 @@ impl TrunkWriter {
     pub fn publish_event(&self, event: TimedEvent, anchor: EventAnchor) {
         let mut state = self.trunk.lock_state();
         state.events.push(event, anchor);
+        let waited = self.trunk.data_waiters.load(Ordering::Relaxed) > 0;
         drop(state);
-        self.trunk.data.notify(usize::MAX);
+        if waited {
+            self.trunk.data.notify(usize::MAX);
+        }
     }
 
     /// Replace this program's track set wholesale — the write side of
