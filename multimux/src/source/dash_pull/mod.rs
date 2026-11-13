@@ -34,7 +34,7 @@ use crate::clock::HostClock;
 use crate::error::{MultimuxError, Result};
 use crate::source::client_host::{EventIngest, SessionLabels, SessionStep};
 use crate::source::pull_target::{PullKind, PullRoute};
-use broadcast_common::units::{MICROS_PER_MILLI, MICROS_PER_SEC};
+use broadcast_common::units::MICROS_PER_SEC;
 
 #[cfg(test)]
 mod tests;
