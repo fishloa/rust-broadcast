@@ -2031,6 +2031,186 @@ async fn a_reload_whose_init_is_unchanged_keeps_one_dash_period() {
     );
 }
 
+/// The Media Segment numbers `period` of `mpd` lists that are available at `MPD@publishTime`:
+/// every number from `startNumber` whose segment lies inside the Period (before its
+/// `@duration` ends, or before the next Period's `@start`, ISO/IEC 23009-1 §5.3.2.1), has
+/// become available by `publishTime` and is still inside the time-shift buffer
+/// ([`available_numbers`], §5.3.9.5.3).
+fn listed_available_numbers(mpd: &broadcast_dash::Mpd, index: usize) -> Vec<u64> {
+    const NANOS: u128 = 1_000_000_000;
+    let period = &mpd.periods[index];
+    let template = template(period);
+    let timescale = u128::from(template.multi.base.timescale.expect("timescale"));
+    let ticks = u128::from(template.multi.duration.expect("@duration"));
+    let first = template.multi.start_number.expect("startNumber");
+    let start_ns = period.start.expect("Period@start").as_nanos();
+    let end_ns = period
+        .duration
+        .map(|duration| start_ns + duration.as_nanos())
+        .or_else(|| {
+            mpd.periods
+                .get(index + 1)
+                .map(|next| next.start.expect("Period@start").as_nanos())
+        });
+    let publish_ns = u128::try_from(
+        mpd.publish_time_us.expect("publishTime") - mpd.availability_start_time_us.expect("AST"),
+    )
+    .expect("publishTime after AST")
+        * 1_000;
+    let candidates = (first..)
+        .take_while(|number| {
+            let segment_start = start_ns + u128::from(number - first) * ticks * NANOS / timescale;
+            let segment_end = segment_start + ticks * NANOS / timescale;
+            segment_end <= publish_ns && end_ns.is_none_or(|end| segment_start < end)
+        })
+        .collect::<Vec<_>>();
+    available_numbers(mpd, period, candidates)
+}
+
+/// Issue #2625: across a reload onto a source whose init segment is BYTE-IDENTICAL, every Media
+/// Segment any MPD lists inside the time-shift buffer answers `200` (ISO/IEC 23009-1
+/// §5.3.9.5.3), including around the number of the replaced route's unfinished segment, which
+/// no origin ever serves.
+///
+/// That number is not listed: the replaced Period is early terminated at the end of its last
+/// finished segment (§5.3.2.1), and the replacement opens the next Period at its first segment
+/// with `@startNumber` that segment's number and `@presentationTimeOffset` its media start (DASH-IF
+/// IOP 4.3 4.11.4.2). Because the init is identical, the two Periods are associated (equivalent
+/// `AssetIdentifier`s, the same `AdaptationSet@id` and `Representation@id`) and the new
+/// Adaptation Set signals `urn:mpeg:dash:period-connectivity:2015` with the replaced Period's
+/// `@id` (§5.3.2.4: connected, not continuous, as the skipped segment leaves the timestamps
+/// non-continuous). Every MPD validates against the ISO ed6 schema.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_identical_init_reload_lists_only_served_dash_segments() {
+    let seen = observe_reload("dash-identical-hole", TAG_TICKER, TAG_TICKER).await;
+    let text = &seen.new_mpd_text;
+    let start_number = seen.new_playlist.media_sequence;
+    let skipped = start_number - 1;
+    assert!(
+        skipped > seen.old_last_number,
+        "the replacement skips the replaced route's unfinished segment: {text}"
+    );
+
+    let checks = tokio::time::timeout(RELOAD_DEADLINE, async {
+        let mut checked_skipped_window = false;
+        let mut mpd_text = text.clone();
+        loop {
+            let mpd = broadcast_dash::Mpd::parse(mpd_text.as_bytes()).expect("MPD parses");
+            validate_mpd(&mpd_text, "reload-identical-init");
+            let mut oldest = u64::MAX;
+            for index in 0..mpd.periods.len() {
+                let init = template(&mpd.periods[index])
+                    .initialization
+                    .as_deref()
+                    .expect("SegmentTemplate@initialization")
+                    .replace("$RepresentationID$", "1");
+                let (status, _) = seen.status_and_body(&init).await;
+                assert_eq!(status, reqwest::StatusCode::OK, "{init}: {mpd_text}");
+                for number in listed_available_numbers(&mpd, index) {
+                    oldest = oldest.min(number);
+                    if number == skipped {
+                        checked_skipped_window = true;
+                    }
+                    let name = format!("seg-1-{number}.m4s");
+                    let (status, _) = seen.status_and_body(&name).await;
+                    assert_eq!(
+                        status,
+                        reqwest::StatusCode::OK,
+                        "listed segment {number} (the replaced route's unfinished one is \
+                         {skipped}): {mpd_text}"
+                    );
+                }
+            }
+            if oldest != u64::MAX && oldest > skipped {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            mpd_text = seen.mpd().await.1;
+        }
+        assert!(
+            !checked_skipped_window,
+            "the unfinished segment {skipped} was listed"
+        );
+    })
+    .await;
+    assert!(
+        checks.is_ok(),
+        "the listed-segment checks exceeded {RELOAD_DEADLINE:?}"
+    );
+
+    let mpd = &seen.new_mpd;
+    assert_eq!(mpd.periods.len(), 2, "{text}");
+    let (replaced, period) = (&mpd.periods[0], &mpd.periods[1]);
+    let old_period = &seen.old_mpd.periods[0];
+    assert_eq!(replaced.id, old_period.id, "{text}");
+    assert_eq!(replaced.start, old_period.start, "{text}");
+    let old_template = template(replaced);
+    let new_template = template(period);
+    assert_eq!(
+        old_template.multi.start_number,
+        template(old_period).multi.start_number,
+        "{text}"
+    );
+    assert_eq!(new_template.multi.start_number, Some(start_number), "{text}");
+    let timescale = old_template.multi.base.timescale.expect("timescale");
+    let ticks = old_template.multi.duration.expect("@duration");
+    let first = old_template.multi.start_number.expect("startNumber");
+    let at = |number: u64| {
+        Duration::from_nanos((number - first) * ticks * 1_000_000_000 / u64::from(timescale))
+    };
+    assert_eq!(
+        replaced.start.expect("start") + replaced.duration.expect("early terminated"),
+        at(skipped),
+        "the replaced Period ends with its last finished segment: {text}"
+    );
+    assert_eq!(period.start, Some(at(start_number)), "{text}");
+    assert_eq!(
+        new_template.multi.base.presentation_time_offset,
+        Some((start_number - first) * ticks),
+        "{text}"
+    );
+    let mut init_and_segment = seen.new_init.clone();
+    init_and_segment.extend_from_slice(&seen.new_first_segment);
+    let media =
+        broadcast_common::Unpackage::unpackage(&mut transmux::Fmp4Demux::new(), &init_and_segment)
+            .expect("the first new segment demuxes with the new init");
+    assert_eq!(
+        u64::try_from(media.tracks[0].samples[0].dts.expect("dts")).expect("non-negative"),
+        (start_number - first) * ticks,
+        "@presentationTimeOffset is the first new segment's decode time"
+    );
+    assert_eq!(seen.new_init, seen.old_init, "functionally equivalent inits");
+
+    let (old_set, new_set) = (&replaced.adaptation_sets[0], &period.adaptation_sets[0]);
+    assert_eq!(old_set.id, new_set.id, "{text}");
+    assert_eq!(
+        old_set.representations[0].id, new_set.representations[0].id,
+        "{text}"
+    );
+    assert_eq!(
+        old_set.representations[0].common.mime_type,
+        new_set.representations[0].common.mime_type,
+        "{text}"
+    );
+    let connectivity = new_set
+        .supplemental_properties
+        .iter()
+        .filter(|d| d.scheme_id_uri == broadcast_dash::descriptors::SCHEME_PERIOD_CONNECTIVITY)
+        .collect::<Vec<_>>();
+    assert_eq!(connectivity.len(), 1, "{text}");
+    assert_eq!(connectivity[0].value, replaced.id, "{text}");
+    assert!(
+        new_set
+            .supplemental_properties
+            .iter()
+            .all(|d| d.scheme_id_uri != broadcast_dash::descriptors::SCHEME_PERIOD_CONTINUITY),
+        "the skipped segment rules out period continuity: {text}"
+    );
+    assert!(old_set.supplemental_properties.is_empty(), "{text}");
+    let asset = replaced.asset_identifier.as_ref().expect("AssetIdentifier");
+    assert_eq!(period.asset_identifier.as_ref(), Some(asset), "{text}");
+}
+
 /// `Config` is `Deserialize`-only (no `Serialize` — several nested types
 /// carry credentials that must never round-trip to JSON in production), so
 /// this test-only helper hand-builds the equivalent JSON `serde_json::Value`
