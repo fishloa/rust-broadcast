@@ -1,8 +1,8 @@
 //! [`TsIngestSession`] — the shared MPEG-2 TS ingest session (plan step 5a).
 //!
-//! Every TS-carrying ingest source in this crate — [`crate::source::ts_udp`]
-//! (UDP datagrams), [`crate::source::ts_http`] (a chunked HTTP body),
-//! [`crate::source::srt`] (SRT payloads) — differs *only* in its transport.
+//! Every TS-carrying ingest source of a host — its TS-over-UDP source
+//! (UDP datagrams), its TS-over-HTTP source (a chunked HTTP body),
+//! its SRT source (SRT payloads) — differs *only* in its transport.
 //! Once the bytes are in hand, all three do the identical thing: feed
 //! [`transmux::StreamingTsDemux`] and translate its
 //! [`transmux::DemuxEvent`]s into [`SessionEvent`]s. Before this port each
@@ -132,6 +132,12 @@ struct PerProgram {
     program_id: ProgramId,
     /// Complete current track specs for this program, keyed by `track_id`.
     track_specs: BTreeMap<TrackId, TrackSpec>,
+}
+
+impl Default for ProgramTracker {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ProgramTracker {
