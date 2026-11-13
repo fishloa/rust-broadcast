@@ -2200,7 +2200,7 @@ pub struct SrtListener {
     accepted: mpsc::Receiver<Result<SrtSocket>>,
     /// Shared demux table (see [`RouteTable`]); the core and the routing pump
     /// hold the same `Arc`. Read by tests only.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     routes: RouteTable,
     unrouted_dropped: Arc<AtomicU64>,
     overflow_dropped: Arc<AtomicU64>,
@@ -2441,11 +2441,16 @@ impl SrtListener {
             life.cancel.clone(),
         ));
         life.tasks.spawn(core.run(life.cancel.clone()));
+        #[cfg(test)]
+        let listener_routes = Arc::clone(&routes);
+        #[cfg(test)]
+        let _ = &listener_routes;
         Ok(SrtListener {
             _life: life,
             local,
             accepted,
-            routes,
+            #[cfg(test)]
+            routes: listener_routes,
             unrouted_dropped,
             overflow_dropped,
             send_errors,

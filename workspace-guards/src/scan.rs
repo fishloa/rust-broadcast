@@ -346,3 +346,130 @@ pub fn next_item_is_mod(lines: &[&str], attr: usize) -> Option<usize> {
     let t = t.strip_prefix("pub ").unwrap_or(t);
     t.starts_with("mod ").then_some(j)
 }
+
+/// Blank every comment and string/char literal in `src`, replacing each byte
+/// with a space (newlines preserved), so a lexical scan can tell a real
+/// attribute or keyword from one that only appears in a comment or string.
+pub fn blank_comments_and_strings(src: &str) -> String {
+    let b = src.as_bytes();
+    let mut out = String::with_capacity(src.len());
+    let mut i = 0;
+    while i < b.len() {
+        // line comment
+        if i + 1 < b.len() && b[i] == b'/' && b[i + 1] == b'/' {
+            while i < b.len() && b[i] != b'\n' {
+                out.push(' ');
+                i += 1;
+            }
+            continue;
+        }
+        // block comment (nested)
+        if i + 1 < b.len() && b[i] == b'/' && b[i + 1] == b'*' {
+            let mut depth = 1;
+            out.push(' ');
+            out.push(' ');
+            i += 2;
+            while i < b.len() && depth > 0 {
+                if i + 1 < b.len() && b[i] == b'/' && b[i + 1] == b'*' {
+                    depth += 1;
+                    out.push(' ');
+                    out.push(' ');
+                    i += 2;
+                } else if i + 1 < b.len() && b[i] == b'*' && b[i + 1] == b'/' {
+                    depth -= 1;
+                    out.push(' ');
+                    out.push(' ');
+                    i += 2;
+                } else {
+                    if b[i] == b'\n' {
+                        out.push('\n');
+                    } else {
+                        out.push(' ');
+                    }
+                    i += 1;
+                }
+            }
+            continue;
+        }
+        // raw string
+        if is_raw_string_start(b, i) {
+            let end = skip_raw_string(b, i);
+            for &byte in &b[i..end] {
+                if byte == b'\n' {
+                    out.push('\n');
+                } else {
+                    out.push(' ');
+                }
+            }
+            i = end;
+            continue;
+        }
+        // normal string
+        if b[i] == b'"' {
+            out.push(' ');
+            i += 1;
+            while i < b.len() && b[i] != b'"' {
+                if b[i] == b'\\' {
+                    if b[i] == b'\n' {
+                        out.push('\n');
+                    } else {
+                        out.push(' ');
+                    }
+                    i += 1;
+                    if i < b.len() {
+                        if b[i] == b'\n' {
+                            out.push('\n');
+                        } else {
+                            out.push(' ');
+                        }
+                        i += 1;
+                    }
+                } else {
+                    if b[i] == b'\n' {
+                        out.push('\n');
+                    } else {
+                        out.push(' ');
+                    }
+                    i += 1;
+                }
+            }
+            if i < b.len() {
+                out.push(' ');
+                i += 1;
+            }
+            continue;
+        }
+        // char literal
+        if b[i] == b'\'' {
+            let is_char = if b.get(i + 1) == Some(&b'\\') {
+                true
+            } else {
+                b.get(i + 2) == Some(&b'\'')
+            };
+            if is_char {
+                let mut j = i + 1;
+                if b.get(j) == Some(&b'\\') {
+                    j += 2;
+                } else {
+                    j += 1;
+                }
+                if b.get(j) == Some(&b'\'') {
+                    j += 1;
+                    for &byte in &b[i..j] {
+                        if byte == b'\n' {
+                            out.push('\n');
+                        } else {
+                            out.push(' ');
+                        }
+                    }
+                    i = j;
+                    continue;
+                }
+            }
+        }
+        let ch = src[i..].chars().next().unwrap_or('\0');
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
