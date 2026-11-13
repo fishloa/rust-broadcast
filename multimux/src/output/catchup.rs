@@ -163,7 +163,7 @@ async fn catchup_playlist(
     // shared with the DVR persist, so an unauthenticated catch-up flood must
     // not be able to occupy every blocking thread and delay a route's
     // recording (whose `StallIngest` pin would then force-expire at 30 s).
-    let archived = match run_scan(move || catchup::scan_archive(&scan_dir)).await {
+    let archived = match run_scan(&route, move || catchup::scan_archive(&scan_dir)).await {
         Ok(a) => a,
         Err(e) => {
             tracing::error!(error = %e, "catch-up: archive scan task failed");
@@ -244,7 +244,7 @@ async fn vod_playlist(
     // synchronous filesystem I/O — off the runtime worker, and bounded by the
     // same scan semaphore as the archive-wide scan (item 4).
     let read_dir = dir.clone();
-    let (segments, period_nums) = match run_scan(move || {
+    let (segments, period_nums) = match run_scan(&route, move || {
         (
             catchup::read_period_segments(&read_dir, period_num),
             catchup::list_period_nums(&read_dir),
@@ -301,7 +301,7 @@ async fn vod_playlist(
         .into_response()
 }
 
-/// Bounds how many archive *scans* run on the blocking pool at once — held
+/// Bounds how many archive *scans* of one route run on the blocking pool at once — held
 /// by all three catch-up paths (`catchup_playlist`'s `scan_archive`,
 /// `vod_playlist`'s period read, and `catchup_resource`'s
 /// `find_archived_segment`), each of which reads every `pN.idx` until it
@@ -310,9 +310,12 @@ async fn vod_playlist(
 /// Conservative ceiling: the DVR persist must always be able to run.
 const MAX_CONCURRENT_SCANS: usize = 4;
 
-fn scan_permit() -> &'static Arc<tokio::sync::Semaphore> {
-    static SEM: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
-    SEM.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_SCANS)))
+/// The route's own scan pool, so one route's slow archive never holds the
+/// permits another route's viewers wait for.
+fn scan_permit(route: &RouteHandle) -> &Arc<tokio::sync::Semaphore> {
+    route
+        .catchup_scans()
+        .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_SCANS)))
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -327,9 +330,10 @@ enum ScanError {
 /// the blocking task, so a request dropped mid-scan (a client disconnect)
 /// does not free the slot while the scan it bounds is still running.
 async fn run_scan<T: Send + 'static>(
+    route: &RouteHandle,
     scan: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, ScanError> {
-    run_scan_on(scan_permit(), scan).await
+    run_scan_on(scan_permit(route), scan).await
 }
 
 async fn run_scan_on<T: Send + 'static>(
@@ -378,7 +382,7 @@ async fn catchup_resource(
     // synchronous disk I/O, so both run on the blocking pool, bounded by the
     // same scan semaphore (item 4).
     let find_dir = dir.clone();
-    let found = match run_scan(move || {
+    let found = match run_scan(&route, move || {
         catchup::find_archived_segment(&find_dir, media_plane::ids::SegmentSeq::new(seq))
     })
     .await
@@ -391,7 +395,7 @@ async fn catchup_resource(
     };
     if let Some(seg) = found {
         let read_dir = dir.clone();
-        let read = run_scan(move || {
+        let read = run_scan(&route, move || {
             catchup::read_archived_bytes(
                 &read_dir,
                 ext,
@@ -472,7 +476,7 @@ async fn catchup_init(route: &RouteHandle, ext: &'static str, period: u32) -> Re
         return StatusCode::NOT_FOUND.into_response();
     }
     let dir: PathBuf = catchup::archive_dir(dvr, route.name());
-    let read = run_scan(move || {
+    let read = run_scan(&route, move || {
         let init_len = catchup::read_period_segments(&dir, period)
             .first()
             .map(|s| s.byte_offset)?;
@@ -535,11 +539,11 @@ mod tests {
 
     /// Take every permit from the shared scan semaphore, waiting for permits
     /// held by concurrently running tests.
-    async fn scan_permit_wait_all() -> tokio::sync::SemaphorePermit<'static> {
+    async fn scan_permit_wait_all(route: &RouteHandle) -> tokio::sync::SemaphorePermit<'_> {
         let n = u32::try_from(MAX_CONCURRENT_SCANS).expect("pool size fits u32");
         tokio::time::timeout(
             std::time::Duration::from_secs(30),
-            scan_permit().acquire_many(n),
+            scan_permit(route).acquire_many(n),
         )
         .await
         .expect("timed out waiting for every scan permit")
@@ -714,6 +718,26 @@ mod tests {
             .expect("pool open");
     }
 
+    /// One route's exhausted scan pool does not delay another route's scan.
+    #[tokio::test]
+    async fn one_routes_exhausted_scan_pool_does_not_delay_another_route() {
+        let busy = Arc::new(RouteHandle::new(1.0, 250, 8));
+        let idle = Arc::new(RouteHandle::new(1.0, 250, 8));
+        let _held = scan_permit_wait_all(&busy).await;
+        assert_eq!(scan_permit(&busy).available_permits(), 0);
+        let blocked = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            run_scan(&busy, || ()),
+        )
+        .await;
+        assert!(blocked.is_err(), "the busy route's scan must wait");
+        let done = tokio::time::timeout(std::time::Duration::from_secs(5), run_scan(&idle, || 7))
+            .await
+            .expect("the other route's scan is not delayed")
+            .expect("scan runs");
+        assert_eq!(done, 7);
+    }
+
     // --- item 4: every catch-up scan path is bounded by the scan semaphore ---
 
     /// With every permit held, each of the three catch-up scan paths must
@@ -741,8 +765,8 @@ mod tests {
         route.drain_dvr().await;
 
         // Exhaust the pool.
-        let held = scan_permit_wait_all().await;
-        assert_eq!(scan_permit().available_permits(), 0);
+        let held = scan_permit_wait_all(&route).await;
+        assert_eq!(scan_permit(&route).available_permits(), 0);
 
         // Each path must not complete while no permit is free. Each is
         // driven in its own owned task so the borrow of `route` is explicit.
