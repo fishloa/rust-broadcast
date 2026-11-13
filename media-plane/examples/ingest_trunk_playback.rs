@@ -21,8 +21,8 @@ use std::num::NonZeroUsize;
 
 use broadcast_common::{Demand, Stage, Timestamp};
 use media_plane::{
-    DEFAULT_MAX_PROGRAMS, HandshakePolicy, IngestDriver, IngestSession, ProgramId, RetentionClass,
-    SampleCursorItem, SessionEvent, TrunkConfig,
+    HandshakePolicy, IngestDriver, IngestSession, ProgramId, RetentionClass, SampleCursorItem,
+    SessionEvent, TrunkConfig,
 };
 use transmux::{DemuxEvent, StreamingTsDemux};
 
@@ -124,12 +124,20 @@ fn main() {
         announced: false,
         pending: VecDeque::new(),
     };
-    let trunk_config = TrunkConfig::new(nz(1024), nz(64), nz(32), nz(32), nz(16));
+    let trunk_config = TrunkConfig::default()
+        .with_timed_capacity(nz(1024))
+        .with_sparse_capacity(nz(64))
+        .with_segment_capacity(nz(32))
+        .with_event_capacity(nz(32))
+        .with_part_capacity(nz(16));
     let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
     // `max_programs` bounds how many `Trunk`s one session may mint (the fifth
     // unbounded-allocation vector this workspace has had). A single capture
     // announces one program, so the default ceiling is ample here.
-    let mut driver = IngestDriver::new(session, trunk_config, handshake, DEFAULT_MAX_PROGRAMS);
+    let mut driver = IngestDriver::new(
+        session,
+        media_plane::IngestConfig::new(handshake).with_trunk(trunk_config),
+    );
 
     // Feed the capture in bounded chunks, subscribing a `SampleCursor` the
     // moment the program is announced (right after the first chunk that

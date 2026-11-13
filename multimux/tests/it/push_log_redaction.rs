@@ -61,7 +61,14 @@ fn drive<T: PushTransport>(url: &str, config: T::Config) -> impl std::future::Fu
 where
     T::Config: Send + 'static,
 {
-    let trunk = Trunk::new(TrunkConfig::new(nz(1), nz(1), nz(1), nz(1), nz(1)));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(1))
+            .with_sparse_capacity(nz(1))
+            .with_segment_capacity(nz(1))
+            .with_event_capacity(nz(1))
+            .with_part_capacity(nz(1)),
+    );
     let reconnect = ReconnectPolicy {
         initial_backoff_ms: 1,
         max_backoff_ms: 1,

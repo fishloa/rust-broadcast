@@ -349,9 +349,7 @@ pub async fn run_dashif_ingest(
     let pump_handle = tokio::spawn(async move {
         let mut driver = IngestDriver::new(
             TolerantSession::new(),
-            trunk_config,
-            handshake,
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake).with_trunk(trunk_config),
         );
         let mut progress = DriverProgress::new();
         let mut rx = rx;

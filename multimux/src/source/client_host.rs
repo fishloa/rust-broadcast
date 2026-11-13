@@ -1006,9 +1006,14 @@ mod tests {
             .on_data(conn, &build_ts_bytes(TrackId::new(1), 0xAB, frames), 2);
         let mut driver = IngestDriver::new(
             EventIngest::new(),
-            media_plane::trunk::TrunkConfig::new(ring(8192), ring(64), ring(8), ring(8), ring(8)),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake()).with_trunk(
+                media_plane::trunk::TrunkConfig::default()
+                    .with_timed_capacity(ring(8192))
+                    .with_sparse_capacity(ring(64))
+                    .with_segment_capacity(ring(8))
+                    .with_event_capacity(ring(8))
+                    .with_part_capacity(ring(8)),
+            ),
         );
         let ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let flag = std::sync::Arc::clone(&ran);

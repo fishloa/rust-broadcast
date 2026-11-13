@@ -377,9 +377,18 @@ mod tests {
     fn driver(session: QuietSession) -> IngestDriver<QuietSession> {
         IngestDriver::new(
             session,
-            TrunkConfig::new(nz(4), nz(4), nz(4), nz(4), nz(4)),
-            HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX)),
-            nz(4),
+            media_plane::IngestConfig::new(HandshakePolicy::establish_by(Timestamp::from_nanos(
+                u64::MAX,
+            )))
+            .with_trunk(
+                TrunkConfig::default()
+                    .with_timed_capacity(nz(4))
+                    .with_sparse_capacity(nz(4))
+                    .with_segment_capacity(nz(4))
+                    .with_event_capacity(nz(4))
+                    .with_part_capacity(nz(4)),
+            )
+            .with_max_programs(nz(4)),
         )
     }
 

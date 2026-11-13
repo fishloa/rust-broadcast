@@ -39,7 +39,14 @@ fn video_sample(byte: u8, display: Option<Arc<DisplayInfo>>) -> Sample {
 
 #[test]
 fn the_per_sample_display_tag_survives_the_trunk() {
-    let trunk = Trunk::new(TrunkConfig::new(nz(100), nz(10), nz(4), nz(8), nz(8)));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(100))
+            .with_sparse_capacity(nz(10))
+            .with_segment_capacity(nz(4))
+            .with_event_capacity(nz(8))
+            .with_part_capacity(nz(8)),
+    );
     let mut cursor = trunk.subscribe();
     let writer = trunk.writer().expect("the single writer");
 

@@ -59,7 +59,7 @@ use broadcast_common::Timestamp;
 use bytes::Bytes;
 use hls_runtime::server::{DEFAULT_TRACK_ID, HlsBody, HlsOrigin, HlsRequest};
 use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
-use smooth_runtime::server::{SmoothBody, SmoothOrigin, SmoothRequest};
+use smooth_runtime::server::{SmoothBody, SmoothOrigin, SmoothOriginConfig, SmoothRequest};
 use tokio::sync::Semaphore;
 
 use crate::http::{self, BLOCKING_RELOAD_TIMEOUT};
@@ -222,9 +222,9 @@ impl SmoothServing {
         let window: Weak<ProgramServing> = Arc::downgrade(serving);
         let ll_hls = serving.ll_hls();
         let tracks: Weak<ProgramServing> = Arc::downgrade(serving);
-        let origin = SmoothOrigin::new(
-            serving.trunk(),
-            Arc::new(move || {
+        let origin = SmoothOrigin::new(SmoothOriginConfig {
+            trunk: serving.trunk(),
+            segments: Arc::new(move || {
                 let Some(window) = window.upgrade() else {
                     return Vec::new();
                 };
@@ -238,13 +238,13 @@ impl SmoothServing {
                     })
                     .collect::<Vec<_>>()
             }),
-            Arc::new(move || {
+            tracks: Arc::new(move || {
                 tracks
                     .upgrade()
                     .map(|tracks| tracks.track_specs())
                     .unwrap_or_default()
             }),
-        );
+        });
         Self {
             origin: Arc::new(origin),
             builds: Arc::new(Semaphore::new(MAX_CONCURRENT_BUILDS)),

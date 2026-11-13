@@ -666,13 +666,14 @@ fn dvr_period_file_from_real_samples_replays_decodably() {
     let track_id = spec.track_id;
 
     let dir = scratch_dir("dvr-replay");
-    let trunk = Trunk::new(TrunkConfig::new(
-        std::num::NonZeroUsize::new(4096).unwrap(),
-        std::num::NonZeroUsize::new(64).unwrap(),
-        std::num::NonZeroUsize::new(64).unwrap(),
-        std::num::NonZeroUsize::new(64).unwrap(),
-        std::num::NonZeroUsize::new(64).unwrap(),
-    ));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(std::num::NonZeroUsize::new(4096).unwrap())
+            .with_sparse_capacity(std::num::NonZeroUsize::new(64).unwrap())
+            .with_segment_capacity(std::num::NonZeroUsize::new(64).unwrap())
+            .with_event_capacity(std::num::NonZeroUsize::new(64).unwrap())
+            .with_part_capacity(std::num::NonZeroUsize::new(64).unwrap()),
+    );
     let seg_writer = trunk.segment_writer().expect("segment writer");
 
     let cfg = DvrConfig {

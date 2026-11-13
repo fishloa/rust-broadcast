@@ -35,13 +35,14 @@ const EXPECTED_MASTER: &str = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=16000000,AVE
 async fn master_without_captions_is_unchanged() {
     let bytes = test_fixtures::read("ts/h264-aac.ts");
     let media = TsDemux::new().unpackage(&bytes).expect("demux fixture");
-    let trunk = Trunk::new(TrunkConfig::new(
-        nz(RING),
-        nz(SIDE_RINGS),
-        nz(WINDOW_SEGMENTS),
-        nz(SIDE_RINGS),
-        nz(RING),
-    ));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(RING))
+            .with_sparse_capacity(nz(SIDE_RINGS))
+            .with_segment_capacity(nz(WINDOW_SEGMENTS))
+            .with_event_capacity(nz(SIDE_RINGS))
+            .with_part_capacity(nz(RING)),
+    );
     let writer = trunk.writer().expect("trunk writer");
     let specs: Vec<_> = media
         .tracks

@@ -1504,7 +1504,7 @@ pub struct RenditionSibling {
 /// # use hls_runtime::server::{Container, HlsOrigin};
 /// # use media_plane::trunk::{Trunk, TrunkConfig};
 /// # let nz = |n: usize| NonZeroUsize::new(n).unwrap();
-/// # let trunk = Arc::new(Trunk::new(TrunkConfig::new(nz(16), nz(4), nz(8), nz(4), nz(16))));
+/// # let trunk = Arc::new(Trunk::new(TrunkConfig::default().with_timed_capacity(nz(16)).with_sparse_capacity(nz(4)).with_segment_capacity(nz(8)).with_event_capacity(nz(4)).with_part_capacity(nz(16))));
 /// let classic_ts = HlsOrigin::builder(Arc::clone(&trunk))
 ///     .target_duration_secs(6.0)
 ///     .window_segments(nz(4))
@@ -4266,7 +4266,14 @@ mod tests {
     /// `HlsOrigin` under test — `Fmp4` + low-latency, matching every
     /// pre-#873 test in this module (regression guard).
     fn make_origin() -> (Arc<Trunk>, HlsOrigin, media_plane::trunk::SegmentWriter) {
-        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(8))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(64)),
+        );
         let writer = trunk.segment_writer().expect("first segment writer");
         let origin = HlsOrigin::builder(Arc::clone(&trunk))
             .target_duration_secs(4.0)
@@ -4301,7 +4308,14 @@ mod tests {
             "part-3-7-5.2.m4s"
         );
 
-        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(8))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(64)),
+        );
         let offset = HlsOrigin::builder(trunk)
             .target_duration_secs(4.0)
             .window_segments(nz(4))
@@ -4363,7 +4377,14 @@ mod tests {
     // --- cold Media Playlist hold ---------------------------------------
 
     fn make_cold_origin(hold: bool) -> (Arc<Trunk>, HlsOrigin, media_plane::trunk::SegmentWriter) {
-        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(8))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(64)),
+        );
         let writer = trunk.segment_writer().expect("first segment writer");
         let origin = HlsOrigin::builder(Arc::clone(&trunk))
             .target_duration_secs(4.0)
@@ -4410,7 +4431,14 @@ mod tests {
     #[test]
     fn hold_cold_playlist_defaults_on() {
         const { assert!(HOLD_COLD_PLAYLIST_DEFAULT) };
-        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(8))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(64)),
+        );
         let origin = HlsOrigin::builder(trunk)
             .target_duration_secs(4.0)
             .window_segments(nz(4))
@@ -4475,7 +4503,14 @@ mod tests {
 
     #[test]
     fn cold_iframe_playlist_request_is_answered_once_a_segment_closes() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(8))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(64)),
+        );
         let writer = trunk.segment_writer().expect("first segment writer");
         let origin = HlsOrigin::builder(Arc::clone(&trunk))
             .target_duration_secs(4.0)
@@ -5305,7 +5340,14 @@ mod tests {
         container: Container,
         low_latency_ms: Option<u32>,
     ) -> (Arc<Trunk>, HlsOrigin, media_plane::trunk::SegmentWriter) {
-        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(8))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(64)),
+        );
         let writer = trunk.segment_writer().expect("first segment writer");
         let mut builder = HlsOrigin::builder(Arc::clone(&trunk))
             .target_duration_secs(4.0)
@@ -5742,7 +5784,14 @@ mod tests {
 
     #[test]
     fn builder_errors_on_missing_required_fields() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(8))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(64)),
+        );
         match HlsOrigin::builder(Arc::clone(&trunk))
             .window_segments(nz(4))
             .instance(7)

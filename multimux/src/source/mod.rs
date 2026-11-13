@@ -208,13 +208,12 @@ const DRIVER_PART_CAPACITY: usize = 64;
 pub(crate) fn driver_trunk_config(window_segments: usize) -> media_plane::trunk::TrunkConfig {
     let window_segments =
         std::num::NonZeroUsize::new(window_segments).unwrap_or(std::num::NonZeroUsize::MIN);
-    media_plane::trunk::TrunkConfig::new(
-        source_nz(DRIVER_TIMED_CAPACITY),
-        source_nz(DRIVER_SPARSE_CAPACITY),
-        window_segments,
-        source_nz(DRIVER_EVENT_CAPACITY),
-        source_nz(DRIVER_PART_CAPACITY),
-    )
+    media_plane::trunk::TrunkConfig::default()
+        .with_timed_capacity(source_nz(DRIVER_TIMED_CAPACITY))
+        .with_sparse_capacity(source_nz(DRIVER_SPARSE_CAPACITY))
+        .with_segment_capacity(window_segments)
+        .with_event_capacity(source_nz(DRIVER_EVENT_CAPACITY))
+        .with_part_capacity(source_nz(DRIVER_PART_CAPACITY))
 }
 
 /// Timed-ring depth for a pull source's `Trunk`. A pull source delivers a
@@ -232,13 +231,12 @@ const PULL_TIMED_CAPACITY: usize = 2048;
 pub(crate) fn pull_trunk_config(window_segments: usize) -> media_plane::trunk::TrunkConfig {
     let window_segments =
         std::num::NonZeroUsize::new(window_segments).unwrap_or(std::num::NonZeroUsize::MIN);
-    media_plane::trunk::TrunkConfig::new(
-        source_nz(PULL_TIMED_CAPACITY),
-        source_nz(DRIVER_SPARSE_CAPACITY),
-        window_segments,
-        source_nz(DRIVER_EVENT_CAPACITY),
-        source_nz(DRIVER_PART_CAPACITY),
-    )
+    media_plane::trunk::TrunkConfig::default()
+        .with_timed_capacity(source_nz(PULL_TIMED_CAPACITY))
+        .with_sparse_capacity(source_nz(DRIVER_SPARSE_CAPACITY))
+        .with_segment_capacity(window_segments)
+        .with_event_capacity(source_nz(DRIVER_EVENT_CAPACITY))
+        .with_part_capacity(source_nz(DRIVER_PART_CAPACITY))
 }
 
 /// Builds a production [`media_plane::ingress::HandshakePolicy`] bounding a
@@ -436,7 +434,12 @@ mod driver_progress_tests {
     }
 
     fn trunk_config() -> TrunkConfig {
-        TrunkConfig::new(nz(4), nz(4), nz(4), nz(4), nz(4))
+        TrunkConfig::default()
+            .with_timed_capacity(nz(4))
+            .with_sparse_capacity(nz(4))
+            .with_segment_capacity(nz(4))
+            .with_event_capacity(nz(4))
+            .with_part_capacity(nz(4))
     }
 
     /// A session that queues `Established` at construction, then a single
@@ -504,9 +507,11 @@ mod driver_progress_tests {
         let session = dialer.dial().unwrap();
         IngestDriver::new(
             session,
-            trunk_config(),
-            HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX)),
-            nz(4),
+            media_plane::IngestConfig::new(HandshakePolicy::establish_by(Timestamp::from_nanos(
+                u64::MAX,
+            )))
+            .with_trunk(trunk_config())
+            .with_max_programs(nz(4)),
         )
     }
 
@@ -666,9 +671,11 @@ mod driver_progress_tests {
         };
         let mut driver = IngestDriver::new(
             session,
-            trunk_config(),
-            HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX)),
-            nz(4),
+            media_plane::IngestConfig::new(HandshakePolicy::establish_by(Timestamp::from_nanos(
+                u64::MAX,
+            )))
+            .with_trunk(trunk_config())
+            .with_max_programs(nz(4)),
         );
         let route = crate::route::RouteHandle::new(4.0, 500, 4);
         let mut published = HashSet::new();
@@ -738,9 +745,7 @@ mod advance_route_tests {
         let route = RouteHandle::new(1.0, 250, 8);
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
         );
         let mut progress = DriverProgress::new();
 

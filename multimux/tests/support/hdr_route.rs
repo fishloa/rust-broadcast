@@ -59,13 +59,14 @@ pub fn load(fixture: &str) -> Vec<Source> {
 
 pub fn new_trunk() -> Arc<Trunk> {
     let nz = |n: usize| NonZeroUsize::new(n).expect("non-zero");
-    Trunk::new(TrunkConfig::new(
-        nz(RING),
-        nz(64),
-        nz(WINDOW_SEGMENTS),
-        nz(64),
-        nz(RING),
-    ))
+    Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(RING))
+            .with_sparse_capacity(nz(64))
+            .with_segment_capacity(nz(WINDOW_SEGMENTS))
+            .with_event_capacity(nz(64))
+            .with_part_capacity(nz(RING)),
+    )
 }
 
 /// One route per fixture, built once per process. The first request to a

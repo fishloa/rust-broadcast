@@ -897,7 +897,14 @@ mod tests {
     #[test]
     fn scan_archive_recovers_real_recorder_output_byte_exact() {
         let tmp = temp_dir();
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(8), nz(4), nz(4)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(8))
+                .with_event_capacity(nz(4))
+                .with_part_capacity(nz(4)),
+        );
         let writer = trunk.segment_writer().expect("segment writer");
         let mut recorder =
             DvrRecorder::new("straddle".to_string(), recorder_cfg(&tmp), ".m4s", &trunk)
@@ -947,7 +954,14 @@ mod tests {
     #[test]
     fn find_archived_segment_locates_the_right_period_and_range() {
         let tmp = temp_dir();
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(8), nz(4), nz(4)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(8))
+                .with_event_capacity(nz(4))
+                .with_part_capacity(nz(4)),
+        );
         let writer = trunk.segment_writer().expect("segment writer");
         let mut recorder = DvrRecorder::new("find".to_string(), recorder_cfg(&tmp), ".m4s", &trunk)
             .expect("recorder");
@@ -995,7 +1009,14 @@ mod tests {
     #[test]
     fn read_archived_bytes_rejects_a_byte_len_the_file_cannot_back() {
         let tmp = temp_dir();
-        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(8), nz(4), nz(4)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(8))
+                .with_event_capacity(nz(4))
+                .with_part_capacity(nz(4)),
+        );
         let writer = trunk.segment_writer().expect("segment writer");
         let mut recorder =
             DvrRecorder::new("corrupt".to_string(), recorder_cfg(&tmp), ".m4s", &trunk)

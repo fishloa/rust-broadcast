@@ -35,8 +35,8 @@ pub use egress::{
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub use ingress::{
     AcceptOutcome, AdmittedDriver, DEFAULT_MAX_PROGRAMS, DialAttempt, DialSupervisor, Dialer,
-    HandshakePolicy, HealthState, IngestDriver, IngestSession, ListenDriver, Listener, ProgramId,
-    ReconnectPolicy, SessionEvent, SessionId, run_dial, run_listen,
+    HandshakePolicy, HealthState, IngestConfig, IngestDriver, IngestSession, ListenDriver,
+    Listener, ProgramId, ReconnectPolicy, SessionEvent, SessionId, run_dial, run_listen,
 };
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]

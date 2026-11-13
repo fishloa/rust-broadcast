@@ -297,7 +297,14 @@ async fn wait_for_connections(accepted: &AtomicUsize, connected: &tokio::sync::N
 async fn drive_push_reconnects_at_the_transport_write_bound_not_the_ten_second_flush_bound() {
     use media_plane::trunk::{RetentionClass, Trunk, TrunkConfig};
     let nz = |n| std::num::NonZeroUsize::new(n).unwrap();
-    let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(64), nz(64), nz(64)));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(64))
+            .with_sparse_capacity(nz(64))
+            .with_segment_capacity(nz(64))
+            .with_event_capacity(nz(64))
+            .with_part_capacity(nz(64)),
+    );
     let writer = trunk.writer().expect("writer is free");
     writer.set_tracks(vec![avc_spec(TrackId::new(1))]);
 

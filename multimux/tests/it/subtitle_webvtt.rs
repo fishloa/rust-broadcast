@@ -137,13 +137,14 @@ fn start_rig(media: transmux::Media, subtitles: bool) -> Driver {
 }
 
 fn start_rig_on(media: transmux::Media, route: Arc<RouteHandle>, reconnect: bool) -> Driver {
-    let trunk = Trunk::new(TrunkConfig::new(
-        nz(RING),
-        nz(SIDE_RINGS),
-        nz(WINDOW_SEGMENTS),
-        nz(SIDE_RINGS),
-        nz(RING),
-    ));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(RING))
+            .with_sparse_capacity(nz(SIDE_RINGS))
+            .with_segment_capacity(nz(WINDOW_SEGMENTS))
+            .with_event_capacity(nz(SIDE_RINGS))
+            .with_part_capacity(nz(RING)),
+    );
     let writer = trunk.writer().expect("trunk writer");
     writer.set_tracks(media.tracks.iter().map(|t| t.spec.clone()).collect());
     route.publish_program(ProgramId(0), Arc::clone(&trunk));
