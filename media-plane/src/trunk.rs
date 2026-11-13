@@ -601,10 +601,6 @@ use event_listener::{Event, EventListener, Listener};
 use thiserror::Error;
 use timed_metadata::{MediaTime, PTS_HZ, TimeAnchor, TimedEvent};
 
-/// Re-exported so a caller of [`Trunk::waiter_slot_freed`] can name (and
-/// `await`) the returned slot-freed listener without a direct `event-listener`
-/// dependency of its own.
-pub use event_listener::EventListener as SlotFreedFuture;
 use transmux::{Sample, SegmentMeta, TrackSpec};
 
 /// Which retention discipline a published entry follows once inside the
@@ -2206,12 +2202,16 @@ impl Trunk {
     /// between the two cannot be missed (a check-then-listen would leave the
     /// caller parked with no timeout until some unrelated part/segment wakes
     /// the shared `progress` event, or forever on an idle source).
-    pub fn waiter_slot_freed(&self) -> Option<EventListener> {
+    pub fn waiter_slot_freed(self: &Arc<Self>) -> Option<SlotFreedFuture> {
         let listener = self.slot_freed.listen();
         if self.waiter_count.load(Ordering::Acquire) < self.waiter_cap {
             return None;
         }
-        Some(listener)
+        Some(SlotFreedFuture {
+            trunk: Arc::clone(self),
+            listener: Some(listener),
+            woken: false,
+        })
     }
 
     /// A listener woken by the next sample, event, track-set change or
@@ -2221,6 +2221,54 @@ impl Trunk {
     /// [`SampleCursor`] should prefer [`SampleCursor::next`].
     pub fn data_listener(&self) -> EventListener {
         self.data.listen()
+    }
+}
+
+/// The wake-up [`Trunk::waiter_slot_freed`] returns: resolves once a
+/// [`Trunk::listen`] slot frees.
+///
+/// A freed slot wakes exactly one parked caller. A caller woken here that then
+/// answers without taking the slot would leave it free with the rest still
+/// parked, so dropping a woken future while a slot is free wakes the next
+/// parked caller: the hand-off continues until the slot is taken or nobody is
+/// parked.
+pub struct SlotFreedFuture {
+    trunk: Arc<Trunk>,
+    listener: Option<EventListener>,
+    woken: bool,
+}
+
+impl SlotFreedFuture {
+    /// Block the calling thread until a slot frees or `deadline` passes.
+    pub fn wait_deadline(mut self, deadline: Instant) -> Option<()> {
+        let listener = self.listener.take()?;
+        let woken = listener.wait_deadline(deadline);
+        self.woken = woken.is_some();
+        woken
+    }
+}
+
+impl Future for SlotFreedFuture {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        let this = self.get_mut();
+        let Some(listener) = this.listener.as_mut() else {
+            return Poll::Ready(());
+        };
+        let polled = Pin::new(listener).poll(cx);
+        if polled.is_ready() {
+            this.woken = true;
+        }
+        polled
+    }
+}
+
+impl Drop for SlotFreedFuture {
+    fn drop(&mut self) {
+        if self.woken && self.trunk.waiter_count.load(Ordering::Acquire) < self.trunk.waiter_cap {
+            self.trunk.slot_freed.notify(1);
+        }
     }
 }
 

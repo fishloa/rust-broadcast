@@ -17,11 +17,14 @@
 //!   into an outage. The admin API is a separate listener with its own router
 //!   and never passes through here at all.
 //! - **Blocking-reload** requests (LL-HLS `_HLS_msn`/`_HLS_part`,
-//!   RFC 8216bis §6.2.5.2) get their own pool. A blocking reload legitimately
-//!   holds its connection up to the LL-HLS cap, so a few thousand viewers can
-//!   occupy every main permit; with a shared pool they would then `503` every
-//!   ordinary manifest/segment request too. Separating the two means a reload
-//!   flood starves only other reloads.
+//!   RFC 8216bis §6.2.5.2) get their own pools, one per route. A blocking
+//!   reload legitimately holds its connection up to the LL-HLS cap, so a few
+//!   thousand viewers can occupy every main permit; with a shared pool they
+//!   would then `503` every ordinary manifest/segment request too. Separating
+//!   the two means a reload flood starves only other reloads, and keying the
+//!   pool by route means it starves only that route's reloads. A request for a
+//!   path that names no registered route draws from one shared `unrouted`
+//!   pool, so the pool count is fixed by configuration, never by the client.
 //! - **Ordinary** requests share one pool.
 //!
 //! A request that cannot acquire a permit within the queue timeout is
@@ -31,6 +34,7 @@
 //! ([`PermitBody`]), so it bounds the entire response — a streamed body
 //! included, not merely the headers.
 
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::future::Future;
 use std::pin::Pin;
@@ -52,11 +56,10 @@ pub(crate) use crate::prometheus::HTTP_SHED_TOTAL;
 /// limit too.
 pub const DEFAULT_QUEUE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Default size of the blocking-reload budget, as a divisor of the main
-/// bound. Blocking reloads hold a permit for up to the LL-HLS cap, so they
-/// need a *smaller*, separately-bounded pool than the burst capacity ordinary
-/// requests want.
-pub const DEFAULT_BLOCKING_RELOAD_DIVISOR: usize = 4;
+/// Default per-route size of the blocking-reload budget. Blocking reloads
+/// hold a permit for up to the LL-HLS cap, so they are bounded separately
+/// from the burst capacity ordinary requests want.
+pub const DEFAULT_MAX_BLOCKING_RELOADS_PER_ROUTE: usize = 1024;
 
 /// The `Retry-After` value as a static header value.
 const RETRY_AFTER: axum::http::HeaderValue = axum::http::HeaderValue::from_static("1");
@@ -129,21 +132,58 @@ fn shed_into_response(budget: Budget) -> Response<Body> {
 #[derive(Clone)]
 pub struct BudgetLimitLayer {
     ordinary: Arc<Semaphore>,
-    reload: Arc<Semaphore>,
+    reload: Arc<ReloadPools>,
+    reload_permits: usize,
     queue_timeout: Duration,
 }
 
+/// The blocking-reload pools: one per registered route plus the shared
+/// `unrouted` pool for any other path. Immutable after construction.
+struct ReloadPools {
+    per_route: HashMap<Box<str>, Arc<Semaphore>>,
+    unrouted: Arc<Semaphore>,
+}
+
+impl ReloadPools {
+    fn new<'a>(permits: usize, routes: impl IntoIterator<Item = &'a str>) -> Self {
+        let permits = permits.max(1);
+        ReloadPools {
+            per_route: routes
+                .into_iter()
+                .map(|name| (Box::from(name), Arc::new(Semaphore::new(permits))))
+                .collect(),
+            unrouted: Arc::new(Semaphore::new(permits)),
+        }
+    }
+
+    fn pool_for(&self, path: &str) -> Arc<Semaphore> {
+        let route = path.trim_start_matches('/').split('/').next().unwrap_or("");
+        Arc::clone(self.per_route.get(route).unwrap_or(&self.unrouted))
+    }
+}
+
 impl BudgetLimitLayer {
-    /// A bound admitting `ordinary` ordinary requests and `reload` blocking
-    /// reloads at once, with `queue_timeout` before either pool sheds.
-    /// `0` is meaningless for `Semaphore` (every request would be rejected)
-    /// so both are clamped up to `1`.
+    /// A bound admitting `ordinary` ordinary requests at once, and `reload`
+    /// blocking reloads per route (see [`BudgetLimitLayer::with_routes`]),
+    /// with `queue_timeout` before either pool sheds. `0` is meaningless for
+    /// `Semaphore` (every request would be rejected) so both are clamped up
+    /// to `1`. Until routes are registered every blocking reload draws from
+    /// the one `unrouted` pool.
     pub fn new(ordinary: usize, reload: usize, queue_timeout: Duration) -> Self {
         Self {
             ordinary: Arc::new(Semaphore::new(ordinary.max(1))),
-            reload: Arc::new(Semaphore::new(reload.max(1))),
+            reload: Arc::new(ReloadPools::new(reload, [])),
+            reload_permits: reload,
             queue_timeout,
         }
+    }
+
+    /// Give each of `routes` its own blocking-reload pool of the size passed
+    /// to [`BudgetLimitLayer::new`].
+    #[must_use]
+    pub fn with_routes<'a>(mut self, routes: impl IntoIterator<Item = &'a str>) -> Self {
+        self.reload = Arc::new(ReloadPools::new(self.reload_permits, routes));
+        self
     }
 }
 
@@ -165,7 +205,7 @@ impl<S> tower::Layer<S> for BudgetLimitLayer {
 pub struct BudgetLimit<S> {
     inner: S,
     ordinary: Arc<Semaphore>,
-    reload: Arc<Semaphore>,
+    reload: Arc<ReloadPools>,
     queue_timeout: Duration,
 }
 
@@ -238,7 +278,7 @@ where
                 let mut svc = self.inner.clone();
                 return Box::pin(async move { svc.ready().await?.call(req).await });
             }
-            Budget::BlockingReload => Arc::clone(&self.reload),
+            Budget::BlockingReload => self.reload.pool_for(req.uri().path()),
             Budget::Ordinary => Arc::clone(&self.ordinary),
         };
         let mut svc = self.inner.clone();
