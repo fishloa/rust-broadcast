@@ -19,7 +19,7 @@ Version: 0.9.0 -> 0.10.0.
 
 ### Changed
 - BREAKING: `RtmpTarget::stream_key` and `app` are percent-decoded (they were raw), and `AsyncRtmpClient::connect` refuses an `rtmps` target (plain TCP to a TLS port would leak the key; use `from_stream` over TLS) (#2588).
-- **BREAKING**: `RtmpConnection`'s default stream type is now the erased `BoxStream` (a TCP socket, a TLS stream over one, or any other byte stream), so a caller naming one `RtmpConnection` no longer names its transport. `AsyncRtmpServer::accept` returns the new `AcceptedRtmpConnection` (the publisher's address, which an erased stream cannot report, plus the connection) instead of a `RtmpConnection`; call `into_connection()` for the connection itself.
+- **BREAKING**: `RtmpConnection`'s default stream type is now the erased `BoxStream` (a TCP socket, a TLS stream over one, or any other byte stream), so a caller naming one `RtmpConnection` no longer names its transport. `AsyncRtmpServer::accept` returns the new `AcceptedRtmpConnection` (the publisher's address, which an erased stream cannot report, plus the connection) instead of a `RtmpConnection`; call `into_connection()` for the connection itself. `RtmpConnection::peer_addr` is removed; use `AcceptedRtmpConnection::peer_addr`.
 
 ### Added
 - `target::RtmpTarget` accepts `rtmps://` (`RtmpTarget::tls`, default port `RTMPS_DEFAULT_PORT` 443, `SCHEME_RTMP`/`SCHEME_RTMPS`), percent-decodes the app and stream-key path (RFC 3986 §2.1; the query stays as written), and refuses a key that is only a query (`RtmpUrlError::PathNotUtf8` for undecodable text). A new `target` feature (implied by `tokio`) exposes the URL grammar without sockets (#2588).
