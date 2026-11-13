@@ -50,6 +50,7 @@ pub(crate) struct Ingest {
     discontinuity: bool,
 }
 
+#[derive(Default)]
 pub(crate) struct Released {
     pub payloads: Vec<Vec<u8>>,
     pub discontinuity: bool,
@@ -244,6 +245,7 @@ impl Ingest {
 
 enum Kind {
     Udp(Ingest),
+    Sdp(Box<crate::source::rtp_sdp::SdpRtp>),
     Srt(Box<SrtCaller>),
 }
 
@@ -313,13 +315,18 @@ impl Datagram {
             }
             None
         };
+        let kind = match config.sdp.as_deref() {
+            Some(sdp) if rtp => Kind::Sdp(Box::new(crate::source::rtp_sdp::SdpRtp::new(sdp)?)),
+            Some(_) => return Err(Error::InvalidConfig { field: "udp.sdp" }),
+            None => Kind::Udp(Ingest::new(rtp, config)),
+        };
         Ok(Self {
             host: ip.to_string(),
             port,
             mode: UdpMode::Receive,
             multicast,
             recv_buffer_bytes: config.recv_buffer_bytes,
-            kind: Kind::Udp(Ingest::new(rtp, config)),
+            kind,
             sends: Vec::new(),
             notices: Vec::new(),
         })
@@ -351,6 +358,7 @@ impl Datagram {
     pub(crate) fn bind_action(&mut self, conn: u32) -> Action {
         match &mut self.kind {
             Kind::Udp(i) => i.reset(),
+            Kind::Sdp(s) => s.reset(),
             Kind::Srt(s) => s.reset(),
         }
         Action::UdpBind {
@@ -364,15 +372,23 @@ impl Datagram {
     }
 
     pub(crate) fn on_connected(&mut self, now_us: u64) {
-        if let Kind::Srt(s) = &mut self.kind {
-            s.on_connected(now_us);
-            self.collect();
+        match &mut self.kind {
+            Kind::Srt(s) => {
+                s.on_connected(now_us);
+                self.collect();
+            }
+            Kind::Sdp(s) => s.announce(),
+            Kind::Udp(_) => {}
         }
     }
 
     pub(crate) fn on_datagram(&mut self, bytes: &[u8], now_us: u64) -> Released {
         match &mut self.kind {
             Kind::Udp(i) => i.push(bytes, now_us),
+            Kind::Sdp(s) => {
+                s.push(bytes);
+                Released::default()
+            }
             Kind::Srt(s) => {
                 s.on_datagram(bytes, now_us);
                 self.collect()
@@ -383,6 +399,7 @@ impl Datagram {
     pub(crate) fn poll(&mut self, now_us: u64) -> Released {
         match &mut self.kind {
             Kind::Udp(i) => i.poll(now_us),
+            Kind::Sdp(_) => Released::default(),
             Kind::Srt(s) => {
                 s.poll(now_us);
                 self.collect()
@@ -416,13 +433,14 @@ impl Datagram {
     pub(crate) fn shutdown_datagram(&mut self, now_us: u64) -> Option<Vec<u8>> {
         match &mut self.kind {
             Kind::Srt(s) => s.shutdown_datagram(now_us),
-            Kind::Udp(_) => None,
+            Kind::Udp(_) | Kind::Sdp(_) => None,
         }
     }
 
     pub(crate) fn next_deadline_us(&self, now_us: u64) -> Option<u64> {
         match &self.kind {
             Kind::Udp(i) => i.next_deadline_us(),
+            Kind::Sdp(_) => None,
             Kind::Srt(s) => s.next_deadline_us(now_us),
         }
     }
@@ -430,7 +448,17 @@ impl Datagram {
     pub(crate) fn stats(&self) -> DatagramStats {
         match &self.kind {
             Kind::Udp(i) => i.stats(),
+            Kind::Sdp(s) => s.stats(),
             Kind::Srt(s) => s.stats(),
+        }
+    }
+
+    /// The events an SDP-described RTP session produced since the last call, and the payload
+    /// bytes it accepted; both empty for every other kind.
+    pub(crate) fn take_sdp_output(&mut self) -> (Vec<crate::Event>, u64) {
+        match &mut self.kind {
+            Kind::Sdp(s) => (s.take_events(), s.take_accepted_bytes()),
+            Kind::Udp(_) | Kind::Srt(_) => (Vec::new(), 0),
         }
     }
 }

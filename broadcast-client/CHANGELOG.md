@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- `UdpConfig::sdp`: an out-of-band SDP (RFC 4566) that switches an `rtp://` session from MPEG-2 TS (payload type 33) to the H.264 (RFC 6184) and AAC (RFC 3640) streams it declares, routed by RTP payload type and depayloaded with `transmux`'s depacketisers. The tracks are announced when the socket is bound, before any packet; a reconnect flushes the access units still held. `datagram_stats()` counts the datagrams and the ones that were not RTP, and `payload_bytes()` the packets routed to a declared stream.
+- `ErrorKind::RequestRefused { method, status }` (non-fatal, also `ends_connection()`): an RTSP server's DESCRIBE, SETUP or PLAY answer the session cannot proceed on, with the method and the status as the server sent it.
 - `Session::payload_bytes()`: transport-stream payload bytes accepted from the source, excluding control traffic and dropped datagrams, for hosts that measure stalls.
 - `ErrorKind::SrtPeerIdle` (non-fatal) when the SRT peer goes silent past `peer_idle_timeout_ms`, and `ErrorKind::ends_connection()` naming the errors that end the connection the session was reading.
 - `UdpConfig::interface_index` and `MulticastJoin::interface_index`: join an IPv6 multicast group on an interface named by index (valid only for an IPv6 group, not together with `interface`).
