@@ -159,9 +159,10 @@ pub(crate) async fn ingest_run(
 
     let mut driver = IngestDriver::new(
         TsIngestSession::new(),
-        crate::source::pull_trunk_config(8),
-        HandshakePolicy::establish_by(broadcast_common::Timestamp::from_nanos(u64::MAX)),
-        media_plane::DEFAULT_MAX_PROGRAMS,
+        media_plane::IngestConfig::new(HandshakePolicy::establish_by(
+            broadcast_common::Timestamp::from_nanos(u64::MAX),
+        ))
+        .with_trunk(crate::source::pull_trunk_config(8)),
     );
     driver.feed(
         &crate::source::ts_program::test_support::build_ts_bytes_with_gop(

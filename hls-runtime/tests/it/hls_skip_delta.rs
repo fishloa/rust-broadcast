@@ -22,7 +22,14 @@ fn nz(n: usize) -> NonZeroUsize {
 }
 
 fn make_origin() -> (Arc<Trunk>, HlsOrigin, SegmentWriter) {
-    let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(16), nz(8), nz(64)));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(64))
+            .with_sparse_capacity(nz(8))
+            .with_segment_capacity(nz(16))
+            .with_event_capacity(nz(8))
+            .with_part_capacity(nz(64)),
+    );
     let writer = trunk.segment_writer().expect("writer");
     let origin = HlsOrigin::builder(Arc::clone(&trunk))
         .target_duration_secs(4.0)
@@ -133,7 +140,14 @@ fn skip_v2_emits_recently_removed() {
 #[test]
 fn no_can_skip_until_means_no_skip() {
     // classic origin (no low latency) does not advertise CAN-SKIP-UNTIL
-    let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(16), nz(8), nz(64)));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(64))
+            .with_sparse_capacity(nz(8))
+            .with_segment_capacity(nz(16))
+            .with_event_capacity(nz(8))
+            .with_part_capacity(nz(64)),
+    );
     let writer = trunk.segment_writer().expect("writer");
     let origin = HlsOrigin::builder(Arc::clone(&trunk))
         .target_duration_secs(4.0)

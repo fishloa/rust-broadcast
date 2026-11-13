@@ -544,7 +544,14 @@ mod tests {
     /// Recompiled and re-run to confirm the failure, then reverted.
     #[test]
     fn segment_is_cold_for_the_window_then_evicted() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(10))
+                .with_sparse_capacity(nz(10))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.segment_writer().unwrap();
         let retention = Retention::Tiered {
             on_overrun: ArchiveOverrun::Gap,
@@ -594,7 +601,14 @@ mod tests {
     /// on a fast machine.
     #[test]
     fn publish_segment_never_touches_the_sink() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(10))
+                .with_sparse_capacity(nz(10))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.segment_writer().unwrap();
         let retention = Retention::Tiered {
             on_overrun: ArchiveOverrun::Gap,
@@ -635,7 +649,14 @@ mod tests {
     ///    `offered` accumulates.
     #[test]
     fn slow_sink_pending_hand_off_queue_is_bounded_to_one() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(64), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(10))
+                .with_sparse_capacity(nz(10))
+                .with_segment_capacity(nz(64))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.segment_writer().unwrap();
         let retention = Retention::Tiered {
             on_overrun: ArchiveOverrun::Gap,
@@ -696,7 +717,14 @@ mod tests {
     /// reverted.
     #[test]
     fn archive_overrun_gap_reports_loss_and_locate_reflects_it() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(2), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(10))
+                .with_sparse_capacity(nz(10))
+                .with_segment_capacity(nz(2))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.segment_writer().unwrap();
         let retention = Retention::Tiered {
             on_overrun: ArchiveOverrun::Gap,
@@ -748,7 +776,14 @@ mod tests {
     /// recorded.
     #[test]
     fn archive_overrun_stall_ingest_blocks_writer_until_driver_advances() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(1), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(10))
+                .with_sparse_capacity(nz(10))
+                .with_segment_capacity(nz(1))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = Arc::new(trunk.segment_writer().unwrap());
         let retention = Retention::Tiered {
             on_overrun: ArchiveOverrun::StallIngest,
@@ -838,7 +873,14 @@ mod tests {
     /// Recompiled and re-run to confirm the failure, then reverted.
     #[test]
     fn archive_overrun_terminate_drops_pin_and_locate_stays_honest() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(1), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(10))
+                .with_sparse_capacity(nz(10))
+                .with_segment_capacity(nz(1))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.segment_writer().unwrap();
         let retention = Retention::Tiered {
             on_overrun: ArchiveOverrun::Terminate,
@@ -882,7 +924,14 @@ mod tests {
     /// yet. Recompiled and re-run to confirm the failure, then reverted.
     #[test]
     fn locate_is_hot_before_drive_and_reflects_the_real_outcome_after() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(10))
+                .with_sparse_capacity(nz(10))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.segment_writer().unwrap();
         let retention = Retention::Tiered {
             on_overrun: ArchiveOverrun::Gap,
@@ -916,7 +965,14 @@ mod tests {
     /// `Evicted`.
     #[test]
     fn locate_is_hot_for_the_segment_stuck_in_flight_behind_a_busy_sink() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(8), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(10))
+                .with_sparse_capacity(nz(10))
+                .with_segment_capacity(nz(8))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.segment_writer().unwrap();
         let retention = Retention::Tiered {
             on_overrun: ArchiveOverrun::Gap,
@@ -951,7 +1007,14 @@ mod tests {
     /// `drained_up_to` — see `RetentionDriver::drive`'s `Gap` arm doc.
     #[test]
     fn locate_reports_evicted_for_a_gapped_segment() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(1), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(10))
+                .with_sparse_capacity(nz(10))
+                .with_segment_capacity(nz(1))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.segment_writer().unwrap();
         let retention = Retention::Tiered {
             on_overrun: ArchiveOverrun::Gap,
@@ -993,7 +1056,14 @@ mod tests {
     /// then reverted.
     #[test]
     fn segment_writer_reissue_rejects_reused_numbers_and_resumes_from_next_sequence_number() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(8), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(10))
+                .with_sparse_capacity(nz(10))
+                .with_segment_capacity(nz(8))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let retention = Retention::Tiered {
             on_overrun: ArchiveOverrun::Gap,
             cold_window: Duration::from_secs(10),
@@ -1035,7 +1105,14 @@ mod tests {
 
     #[test]
     fn cold_len_counts_hand_offs_until_the_cold_window_expires() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(64), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(10))
+                .with_sparse_capacity(nz(10))
+                .with_segment_capacity(nz(64))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.segment_writer().unwrap();
         let retention = Retention::Tiered {
             on_overrun: ArchiveOverrun::Gap,

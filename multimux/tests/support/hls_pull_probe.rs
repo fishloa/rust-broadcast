@@ -121,7 +121,12 @@ pub async fn pull_samples(
         },
     );
     let route_handle = Arc::new(RouteHandle::new(4.0, 500, 4));
-    let config = TrunkConfig::new(nz(TIMED_RING), nz(RING), nz(RING), nz(RING), nz(RING));
+    let config = TrunkConfig::default()
+        .with_timed_capacity(nz(TIMED_RING))
+        .with_sparse_capacity(nz(RING))
+        .with_segment_capacity(nz(RING))
+        .with_event_capacity(nz(RING))
+        .with_part_capacity(nz(RING));
     let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
     let cancel = CancellationToken::new();
     let run = tokio::spawn({

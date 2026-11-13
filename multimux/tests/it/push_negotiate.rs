@@ -63,7 +63,14 @@ async fn drive_push_negotiates_and_carries_only_flv_compatible_tracks() {
     // A real `Trunk`, exactly as a driver-backed ingest route mints one --
     // three tracks: the fixture's real AVC + AAC, plus one opaque track
     // `drive_push` must negotiate around, never attempt to frame.
-    let trunk: Arc<Trunk> = Trunk::new(TrunkConfig::new(nz(256), nz(64), nz(8), nz(64), nz(64)));
+    let trunk: Arc<Trunk> = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(256))
+            .with_sparse_capacity(nz(64))
+            .with_segment_capacity(nz(8))
+            .with_event_capacity(nz(64))
+            .with_part_capacity(nz(64)),
+    );
     let opaque_track_id = 99;
     let mut specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
     specs.push(opaque_spec(TrackId::new(opaque_track_id)));

@@ -596,7 +596,14 @@ mod tests {
     /// requests start at most `WARM_PERMITS` prepares, never one each.
     #[tokio::test(flavor = "current_thread")]
     async fn a_cold_egress_is_prepared_off_the_async_worker() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(8), nz(8), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(8))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let warms = Arc::new(Semaphore::new(WARM_PERMITS));
         let egress = Arc::new(ColdEgress {
             warm: AtomicBool::new(false),
@@ -636,7 +643,14 @@ mod tests {
     /// not delay another route's: each route owns its own semaphore.
     #[tokio::test(flavor = "multi_thread")]
     async fn one_routes_slow_prepare_does_not_delay_another_route() {
-        let trunk = Trunk::new(TrunkConfig::new(nz(8), nz(8), nz(4), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(8))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let cold = || {
             Arc::new(ColdEgress {
                 warm: AtomicBool::new(false),
@@ -731,13 +745,14 @@ mod tests {
     /// park on the trunk's wake instead of sleep-polling.
     #[tokio::test(flavor = "multi_thread")]
     async fn more_blocking_requests_than_part_capacity_all_park_and_answer() {
-        assert_all_parked_requests_answer_without_polling(TrunkConfig::new(
-            nz(8),
-            nz(8),
-            nz(4),
-            nz(8),
-            nz(64),
-        ))
+        assert_all_parked_requests_answer_without_polling(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(8))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(64)),
+        )
         .await;
     }
 
@@ -746,7 +761,13 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn requests_beyond_the_waiter_cap_park_and_answer() {
         assert_all_parked_requests_answer_without_polling(
-            TrunkConfig::new(nz(8), nz(8), nz(4), nz(8), nz(64)).with_waiter_capacity(nz(2)),
+            TrunkConfig::default()
+                .with_timed_capacity(nz(8))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(64))
+                .with_waiter_capacity(nz(2)),
         )
         .await;
     }

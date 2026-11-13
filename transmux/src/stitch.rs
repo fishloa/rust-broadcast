@@ -13,11 +13,11 @@
 //! A boundary the core marks as continuous, and a presentation that never
 //! signals a discontinuity, are passed through untouched.
 
-use std::collections::HashMap;
+use alloc::collections::BTreeMap;
 
 use broadcast_common::timescale::{Rounding, from_micros, to_micros};
 
-use transmux::{Sample, TrackId, TrackSpec};
+use crate::{Sample, TrackId, TrackSpec};
 
 struct TrackClock {
     timescale: u32,
@@ -26,9 +26,13 @@ struct TrackClock {
     offset_ticks: i64,
 }
 
+/// Removes timeline jumps from the samples a host hands on, one offset for
+/// every track. Feed it the announced tracks ([`Self::set_tracks`]), each
+/// discontinuity the source reports ([`Self::discontinuity`]) and every batch
+/// of samples ([`Self::apply`]).
 #[derive(Default)]
-pub(crate) struct Stitcher {
-    tracks: HashMap<TrackId, TrackClock>,
+pub struct Stitcher {
+    tracks: BTreeMap<TrackId, TrackClock>,
     offset_us: i128,
     generation: u64,
     pending: bool,
@@ -47,7 +51,8 @@ fn us_to_ticks(us: i128, timescale: u32) -> i64 {
 }
 
 impl Stitcher {
-    pub(crate) fn set_tracks(&mut self, specs: &[TrackSpec]) {
+    /// Register the tracks (or a changed timescale) the samples belong to.
+    pub fn set_tracks(&mut self, specs: &[TrackSpec]) {
         for spec in specs {
             let clock = self.tracks.entry(spec.track_id).or_insert(TrackClock {
                 timescale: spec.timescale,
@@ -59,11 +64,13 @@ impl Stitcher {
         }
     }
 
-    pub(crate) fn discontinuity(&mut self) {
+    /// The next sample starts a new timeline: place it where the content so far ended.
+    pub fn discontinuity(&mut self) {
         self.pending = true;
     }
 
-    pub(crate) fn apply(&mut self, track: TrackId, samples: &mut [Sample]) {
+    /// Shift `samples` of `track` onto the continuous timeline, in place.
+    pub fn apply(&mut self, track: TrackId, samples: &mut [Sample]) {
         for sample in samples {
             let Some(clock) = self.tracks.get(&track) else {
                 continue;
@@ -103,9 +110,8 @@ impl Stitcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::media::Fmp4Demux;
     use broadcast_common::Unpackage;
-    use transmux::Sample;
-    use transmux::media::Fmp4Demux;
 
     fn spec(id: u32, timescale: u32) -> TrackSpec {
         let init = std::fs::read(test_fixtures::path("dash/init-stream1.m4s")).expect("init");

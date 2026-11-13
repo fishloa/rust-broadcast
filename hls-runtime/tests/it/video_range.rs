@@ -16,7 +16,14 @@ fn nz(n: usize) -> NonZeroUsize {
 }
 
 fn origin() -> HlsOrigin {
-    let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(64))
+            .with_sparse_capacity(nz(8))
+            .with_segment_capacity(nz(8))
+            .with_event_capacity(nz(8))
+            .with_part_capacity(nz(64)),
+    );
     HlsOrigin::builder(trunk)
         .target_duration_secs(4.0)
         .window_segments(nz(4))
@@ -153,7 +160,14 @@ fn first_video_track_by_track_id_decides_video_range() {
 
 #[test]
 fn set_init_reset_clears_video_range() {
-    let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(64))
+            .with_sparse_capacity(nz(8))
+            .with_segment_capacity(nz(8))
+            .with_event_capacity(nz(8))
+            .with_part_capacity(nz(64)),
+    );
     let origin = HlsOrigin::builder(trunk)
         .target_duration_secs(4.0)
         .window_segments(nz(4))
@@ -180,7 +194,14 @@ fn real_sdr_capture_omits_video_range() {
     };
     let media = TsDemux::new().demux(&data).expect("demux");
     let specs: Vec<TrackSpec> = media.tracks.into_iter().map(|t| t.spec).collect();
-    let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(64))
+            .with_sparse_capacity(nz(8))
+            .with_segment_capacity(nz(8))
+            .with_event_capacity(nz(8))
+            .with_part_capacity(nz(64)),
+    );
     let origin = HlsOrigin::builder(trunk)
         .target_duration_secs(4.0)
         .window_segments(nz(4))
@@ -202,7 +223,14 @@ fn real_sdr_krone_omits_video_range() {
     };
     let media = TsDemux::new().demux(&data).expect("demux");
     let specs: Vec<TrackSpec> = media.tracks.into_iter().map(|t| t.spec).collect();
-    let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
+    let trunk = Trunk::new(
+        TrunkConfig::default()
+            .with_timed_capacity(nz(64))
+            .with_sparse_capacity(nz(8))
+            .with_segment_capacity(nz(8))
+            .with_event_capacity(nz(8))
+            .with_part_capacity(nz(64)),
+    );
     let origin = HlsOrigin::builder(trunk)
         .target_duration_secs(4.0)
         .window_segments(nz(4))

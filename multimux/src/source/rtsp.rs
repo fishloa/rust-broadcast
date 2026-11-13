@@ -105,9 +105,7 @@ pub(crate) async fn run_rtsp_with(
     };
     let driver = IngestDriver::new(
         EventIngest::new(),
-        trunk_config,
-        handshake,
-        media_plane::DEFAULT_MAX_PROGRAMS,
+        media_plane::IngestConfig::new(handshake).with_trunk(trunk_config),
     );
     let mut progress = crate::source::DriverProgress::new();
     let mut sink = tokio::io::sink();
@@ -133,7 +131,12 @@ mod tests {
 
     fn trunk_config() -> TrunkConfig {
         let nz = |n: usize| std::num::NonZeroUsize::new(n).unwrap();
-        TrunkConfig::new(nz(64), nz(16), nz(8), nz(8), nz(8))
+        TrunkConfig::default()
+            .with_timed_capacity(nz(64))
+            .with_sparse_capacity(nz(16))
+            .with_segment_capacity(nz(8))
+            .with_event_capacity(nz(8))
+            .with_part_capacity(nz(8))
     }
 
     fn handshake() -> HandshakePolicy {

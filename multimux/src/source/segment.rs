@@ -2092,9 +2092,7 @@ mod tests {
         let route = RouteHandle::new(1.0, 250, 8);
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
         );
         let mut published = HashSet::new();
         let mut segmenters = HashMap::new();
@@ -2141,9 +2139,14 @@ mod tests {
         let ring = |n: usize| std::num::NonZeroUsize::new(n).expect("non-zero ring");
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
-            media_plane::trunk::TrunkConfig::new(ring(8192), ring(64), ring(8), ring(8), ring(8)),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake()).with_trunk(
+                media_plane::trunk::TrunkConfig::default()
+                    .with_timed_capacity(ring(8192))
+                    .with_sparse_capacity(ring(64))
+                    .with_segment_capacity(ring(8))
+                    .with_event_capacity(ring(8))
+                    .with_part_capacity(ring(8)),
+            ),
         );
         driver.feed(
             &build_ts_bytes(TrackId::new(1), 0xAB, frames),
@@ -2221,9 +2224,7 @@ mod tests {
         let route = RouteHandle::new(1.0, 250, 8).with_name("segment-metrics-probe-route");
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
         );
         let mut published = HashSet::new();
         let mut segmenters = HashMap::new();
@@ -2301,7 +2302,14 @@ mod tests {
         // ring's own 90 kHz clock).
         // A sample ring large enough to retain every frame (the segmenter
         // subscribes from the backlog; a small ring would evict the head).
-        let trunk = Trunk::new(TrunkConfig::new(nz(512), nz(16), nz(8), nz(16), nz(16)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(512))
+                .with_sparse_capacity(nz(16))
+                .with_segment_capacity(nz(8))
+                .with_event_capacity(nz(16))
+                .with_part_capacity(nz(16)),
+        );
         let writer = trunk.writer().expect("first trunk writer");
         writer.set_tracks(vec![track_spec(TrackId::new(1))]);
 
@@ -2363,7 +2371,14 @@ mod tests {
     fn a_pending_anchor_does_not_change_the_in_progress_segment() {
         use media_plane::trunk::TrunkConfig;
 
-        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(16), nz(8), nz(16), nz(16)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(16))
+                .with_segment_capacity(nz(8))
+                .with_event_capacity(nz(16))
+                .with_part_capacity(nz(16)),
+        );
         trunk
             .writer()
             .expect("writer")
@@ -2455,9 +2470,7 @@ mod tests {
         let route = RouteHandle::new(1.0, 250, 8);
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
         );
         let mut published = HashSet::new();
         let mut segmenters = HashMap::new();
@@ -2494,7 +2507,7 @@ mod tests {
     ///
     /// MUTATION VERIFIED: changing `ProgramSegmenter::try_new` to take its
     /// `segment_writer` from a freshly-constructed `Trunk` (i.e.
-    /// `Trunk::new(media_plane::trunk::TrunkConfig::new(nz(1), nz(1), nz(8), nz(1), nz(8))).segment_writer()`)
+    /// `Trunk::new(media_plane::trunk::TrunkConfig::default().with_timed_capacity(nz(1)).with_sparse_capacity(nz(1)).with_segment_capacity(nz(8)).with_event_capacity(nz(1)).with_part_capacity(nz(8))).segment_writer()`)
     /// instead of `trunk.segment_writer()`, while still subscribing the
     /// *real* `trunk`'s `SampleCursor` (so samples keep flowing into the
     /// segmenter), makes this test's
@@ -2509,9 +2522,7 @@ mod tests {
         let route = RouteHandle::new(1.0, 250, 8);
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
         );
         let mut published = HashSet::new();
         let mut segmenters = HashMap::new();
@@ -2686,9 +2697,7 @@ mod tests {
         let route = RouteHandle::new(1.0, 500, 8);
         let mut driver = IngestDriver::new(
             TwoProgramSession::new(),
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
         );
         let mut published = HashSet::new();
         let mut segmenters = HashMap::new();
@@ -2855,9 +2864,7 @@ mod tests {
         let route = RouteHandle::new(1.0, 500, 8).with_container(Container::MpegTs);
         let mut driver = IngestDriver::new(
             TwoProgramSession::new(),
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
         );
         let mut published = HashSet::new();
         let mut segmenters = HashMap::new();
@@ -3121,9 +3128,7 @@ mod tests {
         let route = RouteHandle::new(1.0, 250, 8);
         let mut driver = IngestDriver::new(
             TrackChangeSession::new(),
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
         );
         let mut published = HashSet::new();
         let mut segmenters = HashMap::new();
@@ -3226,9 +3231,7 @@ mod tests {
         let route = RouteHandle::new(1.0, 250, 8);
         let mut driver = IngestDriver::new(
             TrackChangeSession::new(),
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
         );
         let mut published = HashSet::new();
         let mut segmenters = HashMap::new();
@@ -3316,9 +3319,7 @@ mod tests {
         let route = RouteHandle::new(1.0, 250, 8);
         let mut driver = IngestDriver::new(
             TrackChangeSession::new(),
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
         );
         let mut published = HashSet::new();
         let mut segmenters = HashMap::new();
@@ -3426,9 +3427,7 @@ mod tests {
         let route = RouteHandle::new(1.0, 250, 8);
         let mut driver = IngestDriver::new(
             TrackChangeSession::new(),
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
         );
         let mut published = HashSet::new();
         let mut segmenters = HashMap::new();
@@ -3578,9 +3577,7 @@ mod tests {
                 route: RouteHandle::new(1.0, 250, 16).with_container(container),
                 driver: IngestDriver::new(
                     GapSession::new(),
-                    trunk_config(),
-                    handshake(),
-                    media_plane::DEFAULT_MAX_PROGRAMS,
+                    media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
                 ),
                 published: HashSet::new(),
                 segmenters: HashMap::new(),
@@ -3826,7 +3823,14 @@ mod tests {
     fn try_new_ts_arm_seeds_from_an_already_populated_trunk() {
         use media_plane::trunk::TrunkConfig;
 
-        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         trunk
             .writer()
             .expect("first take succeeds")
@@ -3877,7 +3881,14 @@ mod tests {
     fn apply_track_change_ts_rebuild_seeds_from_next_sequence_number() {
         use media_plane::trunk::TrunkConfig;
 
-        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         trunk
             .writer()
             .expect("first take succeeds")
@@ -3943,7 +3954,14 @@ mod tests {
     fn fmp4_rebuild_with_a_data_track_keeps_fmp4_and_numbering() {
         use media_plane::trunk::TrunkConfig;
 
-        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(64)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(64)),
+        );
         let writer = trunk.writer().expect("first take succeeds");
         writer.set_tracks(vec![track_spec(TrackId::new(1))]);
         let route = RouteHandle::new(1.0, 250, 8);
@@ -4004,7 +4022,14 @@ mod tests {
     fn fmp4_rebuild_with_no_muxable_track_keeps_the_current_segmenter() {
         use media_plane::trunk::TrunkConfig;
 
-        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(64)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(64)),
+        );
         let writer = trunk.writer().expect("first take succeeds");
         writer.set_tracks(vec![track_spec(TrackId::new(1))]);
         let route = RouteHandle::new(1.0, 250, 8);
@@ -4048,7 +4073,14 @@ mod tests {
     #[test]
     fn route_track_specs_follow_the_in_band_marker_not_the_trunk_generation() {
         use media_plane::trunk::{RetentionClass, TrunkConfig};
-        let trunk = Trunk::new(TrunkConfig::new(nz(512), nz(16), nz(8), nz(16), nz(16)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(512))
+                .with_sparse_capacity(nz(16))
+                .with_segment_capacity(nz(8))
+                .with_event_capacity(nz(16))
+                .with_part_capacity(nz(16)),
+        );
         let writer = trunk.writer().expect("first take succeeds");
         writer.set_tracks(vec![track_spec(TrackId::new(1))]);
         let route = RouteHandle::new(1.0, 250, 8).with_container(Container::MpegTs);
@@ -4083,7 +4115,14 @@ mod tests {
     #[test]
     fn apply_track_change_ts_changed_spec_arms_discontinuity() {
         use media_plane::trunk::TrunkConfig;
-        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().expect("first take succeeds");
         writer.set_tracks(vec![track_spec(TrackId::new(1))]);
         let route = RouteHandle::new(1.0, 250, 8).with_container(Container::MpegTs);
@@ -4123,7 +4162,14 @@ mod tests {
         );
 
         // Unchanged re-announce: no discontinuity armed.
-        let trunk2 = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(8)));
+        let trunk2 = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer2 = trunk2.writer().expect("first take succeeds");
         writer2.set_tracks(vec![track_spec(TrackId::new(1))]);
         let route2 = RouteHandle::new(1.0, 250, 8).with_container(Container::MpegTs);
@@ -4173,7 +4219,14 @@ mod tests {
 
     fn ts_playlist_after_respec(initial: Vec<TrackSpec>, respec: Vec<TrackSpec>) -> String {
         use media_plane::trunk::TrunkConfig;
-        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().expect("first take succeeds");
         writer.set_tracks(initial);
         let route = RouteHandle::new(1.0, 250, 8).with_container(Container::MpegTs);
@@ -4283,7 +4336,14 @@ mod tests {
         // the pre-fix, direct `publish_segment` call. Only 5 entries — well
         // under `PENDING_PUBLISH_QUEUE_CAP` — so the queue-depth expiry
         // (tested separately below) does not also fire here.
-        let trunk = Trunk::new(TrunkConfig::new(nz(8), nz(8), nz(1), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(8))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(1))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let _pinned_cursor = trunk.pin_segments(ArchiveOverrun::StallIngest);
         let mut segmenter = bare_segmenter(&trunk);
 
@@ -4328,7 +4388,14 @@ mod tests {
     fn pending_queue_is_capped_even_before_the_deadline_elapses() {
         use media_plane::trunk::{ArchiveOverrun, SegmentCursorItem, TrunkConfig};
 
-        let trunk = Trunk::new(TrunkConfig::new(nz(8), nz(8), nz(1), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(8))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(1))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let mut stall = trunk.pin_segments(ArchiveOverrun::StallIngest);
         let mut segmenter = bare_segmenter(&trunk);
 
@@ -4375,7 +4442,14 @@ mod tests {
     fn queue_cap_counts_stuck_segments_not_queued_parts() {
         use media_plane::trunk::{ArchiveOverrun, SegmentCursorItem, TrunkConfig};
 
-        let trunk = Trunk::new(TrunkConfig::new(nz(8), nz(8), nz(1), nz(64), nz(64)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(8))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(1))
+                .with_event_capacity(nz(64))
+                .with_part_capacity(nz(64)),
+        );
         let mut stall = trunk.pin_segments(ArchiveOverrun::StallIngest);
         let mut segmenter = bare_segmenter(&trunk);
 
@@ -4423,7 +4497,14 @@ mod tests {
     fn stuck_segment_under_the_deadline_is_not_expired() {
         use media_plane::trunk::{ArchiveOverrun, SegmentCursorItem, TrunkConfig};
 
-        let trunk = Trunk::new(TrunkConfig::new(nz(8), nz(8), nz(1), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(8))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(1))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let mut stall = trunk.pin_segments(ArchiveOverrun::StallIngest);
         let mut segmenter = bare_segmenter(&trunk);
 
@@ -4461,7 +4542,14 @@ mod tests {
     fn stuck_segment_past_the_deadline_is_expired() {
         use media_plane::trunk::{ArchiveOverrun, SegmentCursorItem, TrunkConfig};
 
-        let trunk = Trunk::new(TrunkConfig::new(nz(8), nz(8), nz(1), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(8))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(1))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let mut stall = trunk.pin_segments(ArchiveOverrun::StallIngest);
         let mut segmenter = bare_segmenter(&trunk);
 
@@ -4511,7 +4599,14 @@ mod tests {
     fn pending_since_resets_when_the_front_item_publishes_not_only_when_the_queue_empties() {
         use media_plane::trunk::{ArchiveOverrun, SegmentCursorItem, TrunkConfig};
 
-        let trunk = Trunk::new(TrunkConfig::new(nz(8), nz(8), nz(1), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(8))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(1))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let mut stall = trunk.pin_segments(ArchiveOverrun::StallIngest);
         let mut segmenter = bare_segmenter(&trunk);
 
@@ -4588,7 +4683,14 @@ mod tests {
     fn stream_order_keeps_a_later_segments_part_from_landing_ahead_of_a_stuck_segment() {
         use media_plane::trunk::{ArchiveOverrun, TrunkConfig};
 
-        let trunk = Trunk::new(TrunkConfig::new(nz(8), nz(8), nz(1), nz(64), nz(64)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(8))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(1))
+                .with_event_capacity(nz(64))
+                .with_part_capacity(nz(64)),
+        );
         let _stall = trunk.pin_segments(ArchiveOverrun::StallIngest);
         let mut segmenter = bare_segmenter(&trunk);
 
@@ -4666,7 +4768,14 @@ mod tests {
     #[test]
     fn start_gate_drops_leading_non_sync_video() {
         use media_plane::trunk::{RetentionClass, TrunkConfig};
-        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().expect("writer");
         writer.set_tracks(vec![track_spec(TrackId::new(1))]);
         let route = RouteHandle::new(1.0, 250, 8);
@@ -4688,7 +4797,14 @@ mod tests {
     #[test]
     fn start_gate_anchor_pins_to_the_first_kept_sync_sample() {
         use media_plane::trunk::{RetentionClass, TrunkConfig};
-        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().expect("writer");
         writer.set_tracks(vec![track_spec(TrackId::new(1))]);
         let route = RouteHandle::new(1.0, 250, 8);
@@ -4733,7 +4849,14 @@ mod tests {
     #[test]
     fn start_gate_safety_valve_opens_without_any_sync_sample() {
         use media_plane::trunk::{RetentionClass, TrunkConfig};
-        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().expect("writer");
         writer.set_tracks(vec![track_spec(TrackId::new(1))]);
         let route = RouteHandle::new(1.0, 250, 8);
@@ -4756,7 +4879,14 @@ mod tests {
     #[test]
     fn start_gate_no_drop_when_starts_on_sync() {
         use media_plane::trunk::{RetentionClass, TrunkConfig};
-        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().expect("writer");
         writer.set_tracks(vec![track_spec(TrackId::new(1))]);
         let route = RouteHandle::new(1.0, 250, 8);
@@ -4772,7 +4902,14 @@ mod tests {
     #[test]
     fn start_gate_audio_only_drops_nothing() {
         use media_plane::trunk::{RetentionClass, TrunkConfig};
-        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().expect("writer");
         writer.set_tracks(vec![TrackSpec::new(
             TrackId::new(2),
@@ -4795,7 +4932,14 @@ mod tests {
     #[test]
     fn start_gate_video_plus_audio_drops_audio_before_first_video_sync() {
         use media_plane::trunk::{RetentionClass, TrunkConfig};
-        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(8)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
         let writer = trunk.writer().expect("writer");
         writer.set_tracks(vec![
             track_spec(TrackId::new(1)),
@@ -4844,7 +4988,14 @@ mod tests {
     #[test]
     fn samples_published_before_a_track_change_are_not_muxed_under_the_new_set() {
         use media_plane::trunk::{RetentionClass, TrunkConfig};
-        let trunk = Trunk::new(TrunkConfig::new(nz(256), nz(64), nz(16), nz(8), nz(64)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(256))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(64)),
+        );
         let writer = trunk.writer().expect("writer");
         writer.set_tracks(vec![track_spec(TrackId::new(1))]);
         let route = RouteHandle::new(1.0, 250, 8);
@@ -4892,7 +5043,14 @@ mod tests {
     #[test]
     fn audio_keeps_flowing_across_a_video_only_track_change() {
         use media_plane::trunk::{RetentionClass, TrunkConfig};
-        let trunk = Trunk::new(TrunkConfig::new(nz(256), nz(64), nz(16), nz(8), nz(64)));
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(256))
+                .with_sparse_capacity(nz(64))
+                .with_segment_capacity(nz(16))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(64)),
+        );
         let writer = trunk.writer().expect("writer");
         let video = track_spec(TrackId::new(1));
         let audio = aac_track_spec(TrackId::new(2));
@@ -4950,7 +5108,14 @@ mod tests {
     impl JumpRig {
         fn new() -> Self {
             use media_plane::trunk::TrunkConfig;
-            let trunk = Trunk::new(TrunkConfig::new(nz(256), nz(64), nz(16), nz(8), nz(8)));
+            let trunk = Trunk::new(
+                TrunkConfig::default()
+                    .with_timed_capacity(nz(256))
+                    .with_sparse_capacity(nz(64))
+                    .with_segment_capacity(nz(16))
+                    .with_event_capacity(nz(8))
+                    .with_part_capacity(nz(8)),
+            );
             let writer = trunk.writer().expect("writer");
             writer.set_tracks(vec![track_spec(TrackId::new(1))]);
             let route = RouteHandle::new(1.0, 250, 8);

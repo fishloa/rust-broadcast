@@ -615,13 +615,12 @@ async fn serve_read_load_inner(
     let run_task = tokio::spawn(async move {
         let _ = run_whip(
             &route_clone,
-            TrunkConfig::new(
-                NonZeroUsize::new(64).unwrap(),
-                NonZeroUsize::new(16).unwrap(),
-                NonZeroUsize::new(8).unwrap(),
-                NonZeroUsize::new(8).unwrap(),
-                NonZeroUsize::new(8).unwrap(),
-            ),
+            TrunkConfig::default()
+                .with_timed_capacity(NonZeroUsize::new(64).unwrap())
+                .with_sparse_capacity(NonZeroUsize::new(16).unwrap())
+                .with_segment_capacity(NonZeroUsize::new(8).unwrap())
+                .with_event_capacity(NonZeroUsize::new(8).unwrap())
+                .with_part_capacity(NonZeroUsize::new(8).unwrap()),
             policy,
             &route_handle,
         )
@@ -1895,9 +1894,7 @@ pub(crate) async fn run_whip_with_clock(
                 accept_rx: Arc::clone(&infra.accept_rx),
                 max_sessions: route.max_sessions,
             },
-            trunk_config,
-            handshake,
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake).with_trunk(trunk_config),
         ),
         start,
     );

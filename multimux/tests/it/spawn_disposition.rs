@@ -29,7 +29,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "route.rs",
-        1247,
+        1249,
         "spawn_blocking DVR persist; awaited inline",
     ),
     (
@@ -71,7 +71,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "source/rtmp.rs",
-        900,
+        903,
         "one read task per admitted RTMP session, on the run loop's JoinSet (dropped with run_rtmp, which aborts every reader); each ends itself on a terminal read or when the outcome channel closes",
     ),
     (
@@ -86,12 +86,12 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "source/whip.rs",
-        630,
+        629,
         "WHIP accept pump; owned by the route supervisor handle",
     ),
     (
         "source/whip.rs",
-        2001,
+        1998,
         "one read task per admitted WHIP session, on the run loop's JoinSet (dropped with run_whip, which aborts every reader) with its AbortHandle aborted when the publisher reaps the session; ends itself on a terminal read or when the outcome channel closes",
     ),
     (
@@ -101,27 +101,27 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "output/whep.rs",
-        830,
+        831,
         "WHEP saturated-accept test harness server; cancelled by the returned token",
     ),
     (
         "output/whep.rs",
-        886,
+        887,
         "serve_whep_run_for_test -> run_whep_with_tracker; cancelled by the returned token",
     ),
     (
         "output/whep.rs",
-        924,
+        925,
         "serve_whep_run_probed_for_test -> run_whep_on_probed; cancelled by the returned WhepRunHarness token (test-hooks only)",
     ),
     (
         "output/whep.rs",
-        1638,
+        1640,
         "WHEP signalling server; JOINED before run_whep returns (port-release ordering)",
     ),
     (
         "output/whep.rs",
-        1660,
+        1662,
         "WHEP viewer session on the run's session TaskTracker (close()+wait() on cancel)",
     ),
     (
@@ -186,37 +186,37 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "source/dash_pull/tests.rs",
-        192,
+        197,
         "test pull task; cancelled and aborted by the harness",
     ),
     (
         "source/dash_pull/tests.rs",
-        207,
+        212,
         "test collector task; stopped by the harness",
     ),
     (
         "source/dash_pull/tests.rs",
-        452,
+        457,
         "test server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        481,
+        486,
         "test server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        806,
+        811,
         "test HTTP server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        964,
+        969,
         "test HTTP server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        1306,
+        1311,
         "test HTTP server task; aborted at test end",
     ),
 ];

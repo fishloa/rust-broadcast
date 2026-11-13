@@ -290,7 +290,12 @@ fn resetting_key_server() -> (String, Arc<Counter>) {
 async fn assert_key_is_retried_not_stalled_not_ingested(playlist_url: &str, key_hits: &Counter) {
     let route = HlsPullRoute::new("keys", playlist_url);
     let route_handle = Arc::new(RouteHandle::new(4.0, 500, 4));
-    let config = TrunkConfig::new(nz(TIMED_RING), nz(RING), nz(RING), nz(RING), nz(RING));
+    let config = TrunkConfig::default()
+        .with_timed_capacity(nz(TIMED_RING))
+        .with_sparse_capacity(nz(RING))
+        .with_segment_capacity(nz(RING))
+        .with_event_capacity(nz(RING))
+        .with_part_capacity(nz(RING));
     let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
     let task = {
         let route_handle = Arc::clone(&route_handle);
@@ -350,7 +355,12 @@ async fn ingest(
 ) -> (Result<(), MultimuxError>, Fingerprint) {
     let route = HlsPullRoute::new("keys", playlist_url).with_auth(auth);
     let route_handle = Arc::new(RouteHandle::new(4.0, 500, 4));
-    let config = TrunkConfig::new(nz(TIMED_RING), nz(RING), nz(RING), nz(RING), nz(RING));
+    let config = TrunkConfig::default()
+        .with_timed_capacity(nz(TIMED_RING))
+        .with_sparse_capacity(nz(RING))
+        .with_segment_capacity(nz(RING))
+        .with_event_capacity(nz(RING))
+        .with_part_capacity(nz(RING));
     let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
     let result = tokio::time::timeout(
         RUN_CEILING,
