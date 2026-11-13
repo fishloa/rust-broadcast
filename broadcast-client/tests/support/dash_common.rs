@@ -1,15 +1,11 @@
-//! The DASH test scaffolding of `dash-runtime` (the DESIGN 3.6 `World`, the synthesised live origin,
-//! the real captures and the static loopback origin), shared so the session suites drive the same
-//! origins as the core suites. Cross-crate tests live in the highest crate.
-
-#[path = "../../../dash-runtime/tests/it/common/world.rs"]
-pub mod world;
-
-#[path = "../../../dash-runtime/tests/it/common/synth.rs"]
-pub mod synth;
-
-#[path = "../../../dash-runtime/tests/it/common/capture.rs"]
+#[path = "dash_runtime/capture.rs"]
 pub mod capture;
 
-#[path = "../../../dash-runtime/tests/it/common/loopback.rs"]
+#[path = "dash_runtime/loopback.rs"]
 pub mod loopback;
+
+#[path = "dash_runtime/synth.rs"]
+pub mod synth;
+
+#[path = "dash_runtime/world.rs"]
+pub mod world;

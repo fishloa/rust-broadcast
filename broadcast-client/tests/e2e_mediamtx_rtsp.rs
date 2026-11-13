@@ -18,8 +18,9 @@ use broadcast_client::{Action, AvSync, BufferEvent, Config, Event, Session, Stat
 use broadcast_common::Unpackage;
 use transmux::{CodecConfig, TsDemux};
 
-mod support;
-use support::truth::Truth;
+#[path = "support/truth.rs"]
+mod truth;
+use truth::Truth;
 
 const REQUIRE_ENV: &str = "REQUIRE_MEDIAMTX_E2E";
 const MEDIAMTX: &str = "mediamtx";
