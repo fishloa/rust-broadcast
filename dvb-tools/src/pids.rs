@@ -16,7 +16,7 @@ use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
 use crate::util::PacketReader;
 
 /// PCR clock frequency on which PCR_27mhz ticks (ISO/IEC 13818-1 §2.4.3.5).
-use broadcast_common::clock33::PCR_HZ as PCR_CLOCK_HZ;
+use broadcast_common::clock33::{self, PCR_HZ as PCR_CLOCK_HZ};
 
 /// Bits carried by one 188-byte TS packet (`TS_PACKET_SIZE * 8`).
 const BITS_PER_PACKET: u64 = (TS_PACKET_SIZE as u64) * 8;
@@ -37,7 +37,7 @@ struct PidRow {
 /// `bitrate = packets · 188 · 8 · 27 MHz / Δpcr`. Returns `None` when fewer than
 /// two PCRs were seen, or when the PCR did not advance (wrap / duplicate),
 /// which would make the estimate meaningless.
-fn estimate_bitrate_mbps(first: Option<(u64, u64)>, last: Option<(u64, u64)>) -> Option<f64> {
+fn estimate_bitrate_mbps(first: Option<(u64, i128)>, last: Option<(u64, i128)>) -> Option<f64> {
     match (first, last) {
         (Some((first_idx, first_v)), Some((last_idx, last_v)))
             if last_v > first_v && last_idx > first_idx =>
@@ -60,17 +60,17 @@ fn estimate_bitrate_mbps(first: Option<(u64, u64)>, last: Option<(u64, u64)>) ->
 /// delta. Tracking per-PID keeps the estimate on a single, consistent clock.
 ///
 /// `first`/`last` store **unwrapped** 27 MHz values (ever-growing, not
-/// reduced mod `broadcast_common::clock33::PCR_WRAP_27MHZ`) so a capture whose PCR crosses the
+/// reduced mod [`clock33::PCR_WRAP_27MHZ`]) so a capture whose PCR crosses the
 /// ~26.5h wrap still yields a monotonic `last - first`; `prev_raw` /
 /// `prev_unwrapped` are the running state [`PcrTrack::push`] needs to detect
 /// the next wrap.
 #[derive(Default)]
 struct PcrTrack {
-    first: Option<(u64, u64)>,
-    last: Option<(u64, u64)>,
+    first: Option<(u64, i128)>,
+    last: Option<(u64, i128)>,
     samples: u64,
     prev_raw: Option<u64>,
-    prev_unwrapped: u64,
+    prev_unwrapped: i128,
 }
 
 impl PcrTrack {
@@ -79,11 +79,9 @@ impl PcrTrack {
     /// sample on this same PID.
     fn push(&mut self, packet_index: u64, pcr_27: u64) {
         let unwrapped = match self.prev_raw {
-            None => pcr_27,
+            None => i128::from(pcr_27),
             Some(prev_raw) => {
-                let delta =
-                    broadcast_common::clock33::pcr_signed_distance(prev_raw, pcr_27) as i128;
-                (i128::from(self.prev_unwrapped) + delta) as u64
+                self.prev_unwrapped + i128::from(clock33::pcr_signed_distance(prev_raw, pcr_27))
             }
         };
         if self.first.is_none() {
@@ -120,7 +118,7 @@ pub fn run(path: &str) -> ExitCode {
             // `as_27mhz()` unwraps the 33-bit base / 9-bit extension pair
             // into a single 27 MHz tick count (ISO/IEC 13818-1 §2.4.3.5);
             // `PcrTrack::push` separately unwraps that value's own ~26.5h
-            // rollover (`broadcast_common::clock33::PCR_WRAP_27MHZ`, §2.4.2.2) across samples.
+            // rollover (`clock33::PCR_WRAP_27MHZ`, §2.4.2.2) across samples.
             let pcr_27 = pcr.as_27mhz();
             pcr_tracks
                 .entry(pid.value())
@@ -194,7 +192,7 @@ mod tests {
         // 10_000 packets carried across exactly one second of PCR (27 MHz):
         // 10_000 * 188 * 8 bits / 1 s = 15.04 Mbit/s.
         let first = Some((10, 0));
-        let last = Some((10_010, PCR_CLOCK_HZ));
+        let last = Some((10_010, PCR_CLOCK_HZ as i128));
         let mbps = estimate_bitrate_mbps(first, last).expect("two valid PCRs");
         assert!(
             (mbps - 15.04).abs() < 1e-9,
@@ -231,7 +229,7 @@ mod tests {
     #[test]
     fn pcr_track_unwraps_a_forward_wrap() {
         let mut track = PcrTrack::default();
-        let near_top = broadcast_common::clock33::PCR_WRAP_27MHZ - 3;
+        let near_top = clock33::PCR_WRAP_27MHZ - 3;
         track.push(1, near_top);
         track.push(2, 2); // wraps forward by 5 ticks: near_top -> 0 -> 2
         let (first_idx, first_v) = track.first.expect("first sample recorded");
@@ -247,6 +245,16 @@ mod tests {
             5,
             "wrap must unwrap to a 5-tick forward step"
         );
+    }
+
+    #[test]
+    fn pcr_track_backward_step_near_zero_yields_no_bitrate() {
+        let mut track = PcrTrack::default();
+        track.push(1, 5);
+        track.push(2, 2);
+        assert_eq!(track.first, Some((1, 5)));
+        assert_eq!(track.last, Some((2, 2)));
+        assert_eq!(estimate_bitrate_mbps(track.first, track.last), None);
     }
 
     #[test]

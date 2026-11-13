@@ -5,6 +5,7 @@
 //! source, it only maps instants it is given.
 
 use broadcast_common::impl_spec_display;
+use broadcast_common::time::MonoUtc;
 
 use super::utc_timing::UtcSample;
 
@@ -62,16 +63,16 @@ impl Anchor {
     /// UTC at `now_us`, saturating at the `i64` range.
     #[must_use]
     pub fn utc_at(&self, now_us: u64) -> i64 {
-        let delta = i128::from(now_us) - i128::from(self.mono_us);
-        saturate(i128::from(self.utc_us) + delta)
+        let m = MonoUtc::new(self.mono_us, i128::from(self.utc_us));
+        saturate(m.utc_at(now_us))
     }
 
     /// The monotonic instant at which UTC reaches `utc_us`, saturating at
     /// `0..=u64::MAX`.
     #[must_use]
     pub fn mono_for_utc(&self, utc_us: i64) -> u64 {
-        let delta = i128::from(utc_us) - i128::from(self.utc_us);
-        let mono = i128::from(self.mono_us) + delta;
+        let m = MonoUtc::new(self.mono_us, i128::from(self.utc_us));
+        let mono = m.mono_for_utc(i128::from(utc_us));
         u64::try_from(mono.clamp(0, i128::from(u64::MAX))).unwrap_or(u64::MAX)
     }
 }
