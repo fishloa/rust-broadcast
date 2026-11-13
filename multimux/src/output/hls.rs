@@ -53,7 +53,7 @@ pub(crate) async fn media_playlist_inner(
     let remaining = playlist_timeout.saturating_sub(started.elapsed());
     let (resp, timed_out) = http::resolve_blocking_timed(
         &trunk,
-        origin.as_ref(),
+        &origin,
         request,
         remaining,
         BlockingRequestGuard::new,
@@ -352,7 +352,7 @@ async fn sibling_playlist(
     let priority = origin.http_priority(&request);
     let (resp, timed_out) = http::resolve_blocking_timed(
         trunk,
-        origin.as_ref(),
+        origin,
         request,
         hls_runtime::server::playlist_reload_timeout(origin),
         BlockingRequestGuard::new,
@@ -394,7 +394,7 @@ pub(crate) async fn iframe_playlist(
     let priority = ll_hls.http_priority(&request);
     let (resp, timed_out) = http::resolve_blocking_timed(
         &trunk,
-        ll_hls.as_ref(),
+        &ll_hls,
         request,
         hls_runtime::server::playlist_reload_timeout(&ll_hls),
         BlockingRequestGuard::new,

@@ -378,6 +378,8 @@ pub(crate) struct DashState {
     window: Mutex<VecDeque<DashWindowSegment>>,
     capacity: usize,
     track_specs: Mutex<Vec<(u32, Vec<TrackSpec>)>>,
+    /// Bumped by every change to `track_specs`; part of an MPD cache stamp.
+    track_epoch: AtomicU64,
     /// Wall-clock instant the route's presentation began: when its first
     /// `Trunk` was minted, carried unchanged across a reconnect. The source of
     /// `MPD@availabilityStartTime` (ISO/IEC 23009-1 §5.3.1.2 Table 3: "the
@@ -396,6 +398,7 @@ impl DashState {
             window: Mutex::new(VecDeque::new()),
             capacity: window_segments.get(),
             track_specs: Mutex::new(Vec::new()),
+            track_epoch: AtomicU64::new(0),
             presentation_origin: epoch.presentation_origin,
         }
     }
@@ -406,6 +409,7 @@ impl DashState {
             Some((_, latest)) => *latest = specs,
             None => log.push((0, specs)),
         }
+        self.track_epoch.fetch_add(1, Ordering::Release);
     }
 
     fn begin_track_specs(
@@ -419,6 +423,7 @@ impl DashState {
             Some((from, latest)) if *from >= first => *latest = specs,
             _ => log.push((first, specs)),
         }
+        self.track_epoch.fetch_add(1, Ordering::Release);
     }
 
     fn track_specs(&self) -> Vec<TrackSpec> {
@@ -443,6 +448,7 @@ impl DashState {
         let mut log = self.track_specs.lock();
         while log.len() > 1 && log[1].0 <= oldest.value() {
             log.remove(0);
+            self.track_epoch.fetch_add(1, Ordering::Release);
         }
     }
 
@@ -514,6 +520,11 @@ pub(crate) struct ProgramServing {
     /// The Smooth origin over this program, with the plan and fragments it has
     /// cached; built by the first Smooth request.
     pub(crate) smooth: std::sync::OnceLock<Arc<crate::output::smooth::SmoothServing>>,
+    /// Rendered MPDs, valid for one [`MpdStamp`].
+    mpd_cache: Mutex<MpdCache>,
+    /// Test probe: MPD renders actually performed (cache misses).
+    #[cfg(test)]
+    pub(crate) mpd_renders: std::sync::atomic::AtomicUsize,
     /// Whether the program has muxable media now. Cleared when the source
     /// drops every muxable track; the specs and segments already published
     /// are unaffected.
@@ -643,7 +654,54 @@ fn wire_rendition_siblings(primary: &Arc<HlsOrigin>, others: &[(Arc<HlsOrigin>, 
     }
 }
 
+/// What a rendered MPD was produced from: the trunk's publish counter, the
+/// origin's setter epoch and the track-spec log's epoch, read **before**
+/// rendering so a change that lands mid-render only ever leaves the cached MPD
+/// older than its stamp claims.
+#[derive(Clone, PartialEq, Eq)]
+struct MpdStamp {
+    trunk: u64,
+    origin: u64,
+    tracks: u64,
+}
+
+#[derive(Default)]
+struct MpdCache {
+    stamp: Option<MpdStamp>,
+    entries: HashMap<crate::output::dash::DashFlavour, Arc<std::sync::OnceLock<Option<String>>>>,
+}
+
 impl ProgramServing {
+    /// `render`'s MPD for `flavour`, computed once per [`MpdStamp`]: a
+    /// concurrent request waits for the one render rather than repeating it,
+    /// and the cache lock is never held across a render.
+    pub(crate) fn cached_mpd(
+        &self,
+        flavour: crate::output::dash::DashFlavour,
+        render: impl FnOnce() -> Option<String>,
+    ) -> Option<String> {
+        let stamp = MpdStamp {
+            trunk: self.trunk.generation(),
+            origin: self.ll_hls.render_epoch(),
+            tracks: self.dash.track_epoch.load(Ordering::Acquire),
+        };
+        let cell = {
+            let mut cache = self.mpd_cache.lock();
+            if cache.stamp.as_ref() != Some(&stamp) {
+                cache.entries.clear();
+                cache.stamp = Some(stamp);
+            }
+            Arc::clone(cache.entries.entry(flavour).or_default())
+        };
+        cell.get_or_init(|| {
+            #[cfg(test)]
+            self.mpd_renders
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            render()
+        })
+        .clone()
+    }
+
     /// Build a fresh bundle over `trunk`: the [`HlsOrigin`] and
     /// [`DashState`] every egress call site reads, both bound to `trunk` from
     /// construction, plus an optional DVR recorder if `dvr_config` is
@@ -777,6 +835,9 @@ impl ProgramServing {
         });
 
         Ok(Arc::new(ProgramServing {
+            mpd_cache: Mutex::new(MpdCache::default()),
+            #[cfg(test)]
+            mpd_renders: std::sync::atomic::AtomicUsize::new(0),
             trunk,
             ll_hls,
             dash,
@@ -1278,6 +1339,8 @@ impl ProgramServing {
 /// serving state lives in `Self::programs` (the `programs` field, below),
 /// created only by [`Self::publish_program`].
 pub struct RouteHandle {
+    /// This route's catch-up scan permits; built by the first catch-up request.
+    catchup_scans: std::sync::OnceLock<Arc<tokio::sync::Semaphore>>,
     health: Mutex<HealthState>,
     target_duration_secs: f64,
     part_target_ms: u32,
@@ -1403,6 +1466,7 @@ impl RouteHandle {
     pub fn new(target_duration_secs: f64, part_target_ms: u32, window_segments: usize) -> Self {
         let window_segments = NonZeroUsize::new(window_segments).unwrap_or(NonZeroUsize::MIN);
         RouteHandle {
+            catchup_scans: std::sync::OnceLock::new(),
             health: Mutex::new(HealthState::Connecting),
             target_duration_secs,
             part_target_ms,
@@ -1662,6 +1726,10 @@ impl RouteHandle {
     /// the on-disk archive root — `crate::dvr::DvrRecorder` itself reads
     /// `self.dvr_config` directly, not through this accessor, since it is
     /// built once at [`Self::publish_program`] time.
+    pub(crate) fn catchup_scans(&self) -> &std::sync::OnceLock<Arc<tokio::sync::Semaphore>> {
+        &self.catchup_scans
+    }
+
     pub(crate) fn dvr_config(&self) -> Option<&crate::dvr::DvrConfig> {
         self.dvr_config.as_ref().filter(|c| c.enabled)
     }

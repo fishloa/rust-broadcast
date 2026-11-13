@@ -9,6 +9,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Removed
 - BREAKING: `client::tokio_client` (`TokioClient`, `TokioClientConfig`, `TokioClientStats`, `TokioError`) and the `tokio` client feature, plus its tests and its now-unused `tokio`, `reqwest`, `broadcast-auth`, `backon`, `headers` and `tokio-util` dependencies. It carried its own copies of the retry, digest and body-cap policy, reachable only from tests; the IO belongs with the crate that drives the engine. Drive the sans-IO `HlsClient` core instead (`poll` out, `on_playlist`/`on_resource` in), as `multimux`'s HLS pull and `multimux/tests/golden_gate.rs`/`glass_to_glass.rs` do.
 ### Added
+- `HlsOrigin` caches each rendered media and I-frame playlist per state stamp (the trunk's publish counter, the origin's setter epoch, the drained head, and the same for rendition siblings): concurrent requests share one render instead of each re-rendering (#2526). `HlsOrigin::render_epoch` exposes the setter epoch.
+- `HlsOrigin` implements `ServedEgress::is_warm`/`prepare`: the I-frame and bitrate byte scans of a newly published segment run in `prepare`, which a host calls on a blocking thread, so no async worker waits on the drain gate.
 - `BLOCKING_RELOAD_TARGET_DURATIONS`, `BLOCKING_RELOAD_TIMEOUT` and `playlist_reload_timeout` moved here from `multimux` (RFC 8216bis §6.2.5.2).
 ### Changed
 - URL-reference resolution now uses the shared guarded resolver in `broadcast-common::url_ref` (control characters rejected before joining) (issue #2458).
