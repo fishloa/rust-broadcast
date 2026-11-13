@@ -13,7 +13,9 @@
 //! route socket. 1000 peers with one route socket: slowest viewer 54%, p99 7.9 s (the kernel
 //! `sendto` on that one socket was the serial point, `sample` showed about two busy threads of
 //! eight); with 8 route sockets per IP: 100%, p99 61 ms. 2000 peers saturate the shared worker
-//! threads (the viewers' own decrypt included): about half the sessions fail. The default of 200
+//! threads (the viewers' own decrypt included): about half the sessions fail.
+//! Linux (aarch64 Docker VM, 24 CPUs, rust:1.97, `--profile ci`, 8 sockets per IP): 1000 peers,
+//! 100% delivery, latency p50 9 ms, p99 13 ms. The default of 200
 //! leaves a wide margin for a shared CI runner; `SOAK_WHEP_PEERS` raises it.
 //!
 //! Asserts zero failed sessions, that every viewer receives at least `MIN_DELIVERY_PERCENT` of
