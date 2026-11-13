@@ -2,6 +2,7 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use broadcast_common::timeouts::Timeouts;
 
 use zeroize::Zeroize;
 
@@ -153,6 +154,27 @@ impl Default for SrtConfig {
 }
 
 impl SrtConfig {
+    /// The handshake and peer-idle bounds as [`Timeouts`]: `handshake` and
+    /// `read_idle` come from this config, `connect` and `write` are the
+    /// [`Timeouts`] defaults (the session performs no I/O of its own).
+    #[must_use]
+    pub fn timeouts(&self) -> Timeouts {
+        Timeouts::default()
+            .with_handshake(core::time::Duration::from_millis(self.handshake_timeout_ms))
+            .with_read_idle(core::time::Duration::from_millis(self.peer_idle_timeout_ms))
+    }
+
+    /// Take the handshake bound from `timeouts.handshake` and the peer-idle
+    /// bound from `timeouts.read_idle`, each at least one millisecond.
+    #[must_use]
+    pub fn with_timeouts(mut self, timeouts: Timeouts) -> Self {
+        let millis =
+            |d: core::time::Duration| u64::try_from(d.as_millis()).unwrap_or(u64::MAX).max(1);
+        self.handshake_timeout_ms = millis(timeouts.handshake);
+        self.peer_idle_timeout_ms = millis(timeouts.read_idle);
+        self
+    }
+
     pub(crate) fn validate(&self) -> Result<(), crate::Error> {
         let invalid = |field| Err(crate::Error::InvalidConfig { field });
         if self.handshake_timeout_ms == 0 {
@@ -169,5 +191,38 @@ impl SrtConfig {
             return invalid("srt.encryption.passphrase");
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod timeouts_tests {
+    use super::*;
+    use core::time::Duration;
+
+    #[test]
+    fn with_timeouts_sets_the_handshake_and_idle_bounds_and_timeouts_reads_them_back() {
+        let timeouts = Timeouts::default()
+            .with_handshake(Duration::from_millis(1500))
+            .with_read_idle(Duration::from_millis(7000));
+        let config = SrtConfig::default().with_timeouts(timeouts);
+        assert_eq!(config.handshake_timeout_ms, 1500);
+        assert_eq!(config.peer_idle_timeout_ms, 7000);
+        let back = config.timeouts();
+        assert_eq!(back.handshake, Duration::from_millis(1500));
+        assert_eq!(back.read_idle, Duration::from_millis(7000));
+    }
+
+    #[test]
+    fn a_zero_bound_is_raised_to_one_millisecond() {
+        let config = SrtConfig::default().with_timeouts(
+            Timeouts::default()
+                .with_handshake(Duration::ZERO)
+                .with_read_idle(Duration::ZERO),
+        );
+        assert_eq!(
+            (config.handshake_timeout_ms, config.peer_idle_timeout_ms),
+            (1, 1)
+        );
+        assert!(config.validate().is_ok());
     }
 }

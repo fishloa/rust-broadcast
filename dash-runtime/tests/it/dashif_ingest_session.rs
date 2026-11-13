@@ -43,7 +43,7 @@ fn session_basic_flow() {
         sample_counts.insert(rid.clone(), 5.min(t.samples.len()));
     }
 
-    let mut session = DashifIngestSession::new();
+    let mut session = DashifIngestSession::new(dash_runtime::ingest::DashifIngestConfig::default());
     let ts = Timestamp::from_nanos(0);
 
     // probe no events
@@ -192,7 +192,7 @@ fn session_basic_flow() {
     }
 
     // segment-first => 412 for rep with no header? already have. Test new session segment before header
-    let mut s2 = DashifIngestSession::new();
+    let mut s2 = DashifIngestSession::new(dash_runtime::ingest::DashifIngestConfig::default());
     s2.feed(
         IngestObject {
             kind: ObjectKind::Manifest(dash_runtime::ingest::ManifestFormat::Dash),
@@ -307,7 +307,7 @@ fn session_lmsg() {
     lmsg_seg.extend_from_slice(&styp_bytes);
     lmsg_seg.extend_from_slice(rest);
 
-    let mut session = DashifIngestSession::new();
+    let mut session = DashifIngestSession::new(dash_runtime::ingest::DashifIngestConfig::default());
     let ts = Timestamp::from_nanos(0);
     session
         .feed(

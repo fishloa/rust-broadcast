@@ -90,7 +90,7 @@ fn oracle(init: &[u8], seg: &[u8]) -> Vec<Sample> {
 }
 
 fn live_session(p: &Presentation) -> DashifIngestSession {
-    let mut s = DashifIngestSession::new();
+    let mut s = DashifIngestSession::new(dash_runtime::ingest::DashifIngestConfig::default());
     feed(
         &mut s,
         ObjectKind::Manifest(ManifestFormat::Dash),
@@ -110,7 +110,7 @@ fn live_session(p: &Presentation) -> DashifIngestSession {
 #[test]
 fn new_program_carries_remapped_ids_and_specs_in_mpd_order() {
     let p = presentation();
-    let mut s = DashifIngestSession::new();
+    let mut s = DashifIngestSession::new(dash_runtime::ingest::DashifIngestConfig::default());
     feed(
         &mut s,
         ObjectKind::Manifest(ManifestFormat::Dash),
@@ -169,7 +169,7 @@ fn errors_are_the_exact_section_5_3_variants() {
     let p = presentation();
 
     // Segment before any manifest: no grouping to place it.
-    let mut s = DashifIngestSession::new();
+    let mut s = DashifIngestSession::new(dash_runtime::ingest::DashifIngestConfig::default());
     let e = feed(&mut s, segment("1", 1), &p.reps[0].2[0]).unwrap_err();
     assert!(
         matches!(e, SessionError::Ingest(IngestError::NoManifest)),
@@ -177,7 +177,7 @@ fn errors_are_the_exact_section_5_3_variants() {
     );
 
     // Segment for a rep with no header: 412.
-    let mut s = DashifIngestSession::new();
+    let mut s = DashifIngestSession::new(dash_runtime::ingest::DashifIngestConfig::default());
     feed(
         &mut s,
         ObjectKind::Manifest(ManifestFormat::Dash),

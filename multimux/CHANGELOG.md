@@ -4,10 +4,12 @@
 ### Fixed
 - A reload no longer installs over a runtime a concurrent admin add registered while the reload waited for its locks (every runtime carries a generation and the re-plan compares them, not just the touched names), which used to leave the replaced runtime running undrained. A reload that restarts a changed route now drains the old runtime before reading the route's archive floor and spawning the replacement, so the new runtime cannot number below a segment the old one still writes; if a later step of the reload fails, the stopped routes are started again from their old configuration (#2578, #2579).
 ### Changed
+- The SRT pull maps its connect bound onto the session's handshake bound through `SrtConfig::with_timeouts` instead of converting to milliseconds itself (#2514).
 - The segmenters' shared publish queue (`PendingPublish`, `drain_publish_queue`, `part_entry`) lives in `media_plane::publish_queue` (issue #2554).
 ### Added
 - `whep_media_sockets_per_ip` (config, default 8; `WhepRoute::with_media_sockets_per_ip`): the number of UDP media sockets a WHEP output binds per advertised IP, over which its viewers are spread round-robin. `0` is `ConfigInvalid`. More sockets spread the viewers' SRTP sends across cores at the cost of one file descriptor and one receive task each.
 ### Removed
+- BREAKING: `source::dashif_ingest::{MAX_OBJECT_BYTES, MAX_BUFFERED_OBJECT_BYTES, BUFFERED_BUDGET_BYTES}`; the defaults are `dash_runtime::ingest::DEFAULT_*` and a route carries a `DashifIngestConfig` (#2514).
 - BREAKING: `source::IngestTimeouts` (a `{connect, read}` copy of the adapters' timeout struct): every source's `with_timeouts` takes `broadcast_common::timeouts::Timeouts` (`read` is `read_idle`), and `source::ingest_timeouts(&Config)` replaces `IngestTimeouts::from(&Config)`. `push::RtmpTransportConfig`'s `connect_timeout`/`write_timeout` options are one `timeouts: Timeouts` (#2514).
 - BREAKING: `source::file_reader::{FileReaderError, DemuxerKind, select_demuxer}` moved to `media_plane::file_source`; `FileReader` (the file IO, pacing and supervision) stays (issue #2554).
 - BREAKING: the public `source::ts_program` module and `source::MAX_TS_READ`; use `media_plane::ts_session` (issue #2554). The TS backlog-drop counter is reported through its observer, unchanged.
