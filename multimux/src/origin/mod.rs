@@ -570,7 +570,6 @@ where
 /// incremented when a connection task is spawned and decremented when it
 /// finishes, so a test can assert the finished-task set is reaped (bounded)
 /// rather than accumulating one entry per connection.
-#[allow(clippy::too_many_arguments)]
 async fn serve_impl_with_task_gauge<A, Fut>(
     listener: tokio::net::TcpListener,
     app: axum::Router,

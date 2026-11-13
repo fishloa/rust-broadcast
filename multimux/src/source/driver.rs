@@ -114,7 +114,6 @@ where
 /// shortened to wake for a keepalive) never resets it, so a peer that holds
 /// the socket open and answers keepalives but sends nothing fails the session
 /// `read` after the last byte, exactly as before.
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_ingest_scaffold<S, W, T>(
     mut driver: IngestDriver<S>,
     route_handle: &Arc<RouteHandle>,

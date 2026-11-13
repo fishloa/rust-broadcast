@@ -16,11 +16,11 @@ use tower::ServiceExt;
 use transmux::pipeline::{Sample, TrackSpec};
 use transmux::ts_demux::TsDemux;
 
+use media_plane::segmenter::ProgramSegmenter;
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
 use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
-use multimux::source::segment::ProgramSegmenter;
 
 use crate::support::shared;
 
@@ -104,7 +104,7 @@ pub fn route_app_with_profiles(
     route.publish_program(ProgramId(0), Arc::clone(&trunk));
     route.set_track_specs(ProgramId(0), trunk.tracks().to_vec());
     let mut segmenter =
-        ProgramSegmenter::try_new(&trunk, &route, TARGET_DURATION_SECS, PART_TARGET_MS)
+        ProgramSegmenter::try_new_with_siblings(&trunk, route.segmenter_config(), route.as_ref())
             .expect("segmenter");
     if let Some(init) = segmenter.init_segment() {
         route.set_init(ProgramId(0), init);
@@ -127,10 +127,10 @@ pub fn route_app_with_profiles(
             sources[ti].samples[si].clone(),
         );
         if n % PUMP_EVERY == 0 {
-            segmenter.pump(ProgramId(0), &trunk, &route);
+            multimux::source::segment::pump_segmenter(&mut segmenter, ProgramId(0), &trunk, &route);
         }
     }
-    segmenter.pump(ProgramId(0), &trunk, &route);
+    multimux::source::segment::pump_segmenter(&mut segmenter, ProgramId(0), &trunk, &route);
     segmenter.flush();
     let mut streams = HashMap::new();
     streams.insert(

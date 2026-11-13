@@ -23,12 +23,12 @@ use transmux::validate::{Severity, validate_init_segment, validate_media_segment
 use crate::support::shared;
 
 use crate::support::shared_it::nz;
+use media_plane::segmenter::ProgramSegmenter;
 use multimux::config::Config;
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
 use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
-use multimux::source::segment::ProgramSegmenter;
 use transmux::audio_profile::AudioTrackSelector;
 
 const TARGET_DURATION_SECS: f64 = 1.0;
@@ -150,10 +150,10 @@ fn feed(
             sources[ti].samples[si].clone(),
         );
         if n % PUMP_EVERY == 0 {
-            segmenter.pump(ProgramId(0), trunk, route);
+            multimux::source::segment::pump_segmenter(segmenter, ProgramId(0), trunk, route);
         }
     }
-    segmenter.pump(ProgramId(0), trunk, route);
+    multimux::source::segment::pump_segmenter(segmenter, ProgramId(0), trunk, route);
 }
 
 fn publish_interleaved(
@@ -280,7 +280,7 @@ fn build_rig(
     route.publish_program(ProgramId(0), Arc::clone(&trunk));
     route.set_track_specs(ProgramId(0), trunk.tracks().to_vec());
     let mut segmenter =
-        ProgramSegmenter::try_new(&trunk, &route, TARGET_DURATION_SECS, PART_TARGET_MS)
+        ProgramSegmenter::try_new_with_siblings(&trunk, route.segmenter_config(), route.as_ref())
             .expect("segmenter");
     if let Some(init) = segmenter.init_segment() {
         route.set_init(ProgramId(0), init);
@@ -873,7 +873,7 @@ async fn split_audio_track_appearing_mid_stream_starts_at_next_cut() {
     );
     route.publish_program(ProgramId(0), Arc::clone(&trunk));
     let mut segmenter =
-        ProgramSegmenter::try_new(&trunk, &route, TARGET_DURATION_SECS, PART_TARGET_MS)
+        ProgramSegmenter::try_new_with_siblings(&trunk, route.segmenter_config(), route.as_ref())
             .expect("segmenter");
     if let Some(init) = segmenter.init_segment() {
         route.set_init(ProgramId(0), init);
@@ -887,7 +887,7 @@ async fn split_audio_track_appearing_mid_stream_starts_at_next_cut() {
     };
     publish(early_video, 0..half(early_video));
     publish(a0, 0..half(a0));
-    segmenter.pump(ProgramId(0), &trunk, &route);
+    multimux::source::segment::pump_segmenter(&mut segmenter, ProgramId(0), &trunk, &route);
 
     writer.set_tracks(vec![
         early_video.spec.clone(),
@@ -897,7 +897,7 @@ async fn split_audio_track_appearing_mid_stream_starts_at_next_cut() {
     publish(early_video, half(early_video)..early_video.samples.len());
     publish(a0, half(a0)..a0.samples.len());
     publish(a1, half(a1)..a1.samples.len());
-    segmenter.pump(ProgramId(0), &trunk, &route);
+    multimux::source::segment::pump_segmenter(&mut segmenter, ProgramId(0), &trunk, &route);
     segmenter.flush();
 
     let rig = Rig {
@@ -2111,9 +2111,14 @@ async fn run_on(route: &Arc<RouteHandle>, trunk: &Arc<Trunk>, sources: &[Source]
     route.publish_program(ProgramId(0), Arc::clone(trunk));
     route.set_track_specs(ProgramId(0), trunk.tracks().to_vec());
     let mut segmenter =
-        ProgramSegmenter::try_new(trunk, route, TARGET_DURATION_SECS, PART_TARGET_MS)
+        ProgramSegmenter::try_new_with_siblings(trunk, route.segmenter_config(), route.as_ref())
             .expect("segmenter");
-    segmenter.continue_after_reconnect(route, ProgramId(0));
+    segmenter.continue_after_reconnect(
+        route
+            .epoch(ProgramId(0))
+            .map(|e| e.media_start_ns)
+            .unwrap_or(0),
+    );
     if let Some(init) = segmenter.init_segment() {
         route.set_init(ProgramId(0), init);
     }

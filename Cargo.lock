@@ -2435,6 +2435,7 @@ name = "media-plane"
 version = "0.11.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-hls",
  "bytes",
  "caption-convert",
  "container-probe",

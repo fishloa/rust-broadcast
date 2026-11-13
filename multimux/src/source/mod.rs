@@ -286,7 +286,7 @@ pub(crate) fn report_driver_progress<S: media_plane::ingress::IngestSession>(
 
 /// Opaque per-attempt state [`advance_route`] threads across every call for
 /// one connection attempt: the dedup set `report_driver_progress` needs, plus
-/// the `segment::ProgramSegmenter` map `segment::drive_program_segmenters`
+/// the `media_plane::segmenter::program::ProgramSegmenter` map `segment::drive_program_segmenters`
 /// needs. A caller (every in-tree `run_*`, or an external
 /// [`crate::registry::SchemeRegistry`] `Custom` factory's own drive loop —
 /// see `examples/custom_scheme.rs`) declares one fresh [`DriverProgress::new`]
@@ -298,8 +298,10 @@ pub(crate) fn report_driver_progress<S: media_plane::ingress::IngestSession>(
 #[derive(Default)]
 pub struct DriverProgress {
     published: std::collections::HashSet<media_plane::ingress::ProgramId>,
-    segmenters:
-        std::collections::HashMap<media_plane::ingress::ProgramId, segment::ProgramSegmenter>,
+    segmenters: std::collections::HashMap<
+        media_plane::ingress::ProgramId,
+        media_plane::segmenter::program::ProgramSegmenter,
+    >,
 }
 
 impl DriverProgress {

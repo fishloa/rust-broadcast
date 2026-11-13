@@ -13,11 +13,11 @@ use tower::ServiceExt;
 use transmux::ts_demux::TsDemux;
 
 use crate::support::shared_it::nz;
+use media_plane::segmenter::ProgramSegmenter;
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
 use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
-use multimux::source::segment::ProgramSegmenter;
 
 const TARGET_DURATION_SECS: f64 = 1.0;
 const PART_TARGET_MS: u32 = 200;
@@ -58,7 +58,7 @@ async fn master_without_captions_is_unchanged() {
     route.publish_program(ProgramId(0), Arc::clone(&trunk));
     route.set_track_specs(ProgramId(0), trunk.tracks().to_vec());
     let mut segmenter =
-        ProgramSegmenter::try_new(&trunk, &route, TARGET_DURATION_SECS, PART_TARGET_MS)
+        ProgramSegmenter::try_new_with_siblings(&trunk, route.segmenter_config(), route.as_ref())
             .expect("segmenter");
     if let Some(init) = segmenter.init_segment() {
         route.set_init(ProgramId(0), init);
@@ -80,10 +80,10 @@ async fn master_without_captions_is_unchanged() {
         sample.dts = sample.dts.or(sample.pts);
         writer.publish(track.spec.track_id, RetentionClass::Timed, sample);
         if n % PUMP_EVERY == 0 {
-            segmenter.pump(ProgramId(0), &trunk, &route);
+            multimux::source::segment::pump_segmenter(&mut segmenter, ProgramId(0), &trunk, &route);
         }
     }
-    segmenter.pump(ProgramId(0), &trunk, &route);
+    multimux::source::segment::pump_segmenter(&mut segmenter, ProgramId(0), &trunk, &route);
     segmenter.flush();
 
     let mut streams = HashMap::new();

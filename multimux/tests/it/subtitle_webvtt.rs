@@ -27,11 +27,11 @@ use tower::ServiceExt;
 use transmux::pipeline::CodecConfig;
 use transmux::ts_demux::TsDemux;
 
+use media_plane::segmenter::ProgramSegmenter;
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
 use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
-use multimux::source::segment::ProgramSegmenter;
 
 const TARGET_DURATION_SECS: f64 = 1.0;
 const PART_TARGET_MS: u32 = 200;
@@ -150,10 +150,15 @@ fn start_rig_on(media: transmux::Media, route: Arc<RouteHandle>, reconnect: bool
     route.publish_program(ProgramId(0), Arc::clone(&trunk));
     route.set_track_specs(ProgramId(0), trunk.tracks().to_vec());
     let mut segmenter =
-        ProgramSegmenter::try_new(&trunk, &route, TARGET_DURATION_SECS, PART_TARGET_MS)
+        ProgramSegmenter::try_new_with_siblings(&trunk, route.segmenter_config(), route.as_ref())
             .expect("segmenter");
     if reconnect {
-        segmenter.continue_after_reconnect(&route, ProgramId(0));
+        segmenter.continue_after_reconnect(
+            route
+                .epoch(ProgramId(0))
+                .map(|e| e.media_start_ns)
+                .unwrap_or(0),
+        );
     }
     if let Some(init) = segmenter.init_segment() {
         route.set_init(ProgramId(0), init);
@@ -207,13 +212,23 @@ impl Driver {
             sample.dts = sample.dts.or(sample.pts);
             self.writer
                 .publish(track.spec.track_id, RetentionClass::Timed, sample);
-            self.segmenter.pump(ProgramId(0), &self.trunk, &self.route);
+            multimux::source::segment::pump_segmenter(
+                &mut self.segmenter,
+                ProgramId(0),
+                &self.trunk,
+                &self.route,
+            );
         }
     }
 
     fn finish(mut self) -> Rig {
         self.feed(usize::MAX);
-        self.segmenter.pump(ProgramId(0), &self.trunk, &self.route);
+        multimux::source::segment::pump_segmenter(
+            &mut self.segmenter,
+            ProgramId(0),
+            &self.trunk,
+            &self.route,
+        );
         self.segmenter.flush();
         self.rig
     }

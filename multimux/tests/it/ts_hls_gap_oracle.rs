@@ -24,12 +24,12 @@ use test_fixtures::process::msv;
 use tower::ServiceExt;
 
 use media_plane::ProgramId;
+use media_plane::segmenter::ProgramSegmenter;
 use media_plane::trunk::{RetentionClass, Trunk, TrunkConfig, TrunkWriter};
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
 use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
-use multimux::source::segment::ProgramSegmenter;
 use transmux::pipeline::Sample;
 use transmux::ts_demux::TsDemux;
 
@@ -117,9 +117,12 @@ impl Rig {
                 .with_container(transmux::Container::MpegTs),
         );
         route.publish_program(ProgramId(0), Arc::clone(&trunk));
-        let segmenter =
-            ProgramSegmenter::try_new(&trunk, &route, TARGET_DURATION_SECS, PART_TARGET_MS)
-                .expect("TS-HLS segmenter builds");
+        let segmenter = ProgramSegmenter::try_new_with_siblings(
+            &trunk,
+            route.segmenter_config(),
+            route.as_ref(),
+        )
+        .expect("TS-HLS segmenter builds");
         route.set_track_specs(
             ProgramId(0),
             tracks.iter().map(|(spec, _)| spec.clone()).collect(),
@@ -147,7 +150,12 @@ impl Rig {
     }
 
     fn pump(&mut self) {
-        self.segmenter.pump(ProgramId(0), &self.trunk, &self.route);
+        multimux::source::segment::pump_segmenter(
+            &mut self.segmenter,
+            ProgramId(0),
+            &self.trunk,
+            &self.route,
+        );
     }
 
     /// Publishes every sample of the fixture once more, merging the tracks in

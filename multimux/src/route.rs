@@ -352,13 +352,13 @@ pub struct DashWindowSegment {
 /// segment 1 and position 0. One value per published program, computed once
 /// in [`RouteHandle::publish_program`] so no output keeps its own copy.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct ProgramEpoch {
+pub struct ProgramEpoch {
     pub(crate) seq_offset: u64,
     /// Where this program's media timeline starts: the time the DASH
     /// manifest derives for its first number, `(first public number -
     /// startNumber)` nominal segments, so the segment bytes, the manifests
     /// and the DVR agree. `0` for the first program.
-    pub(crate) media_start_ns: u64,
+    pub media_start_ns: u64,
     /// The previous origin's Discontinuity Sequence Number, so
     /// `EXT-X-DISCONTINUITY-SEQUENCE` never decreases across a reconnect.
     pub(crate) discontinuity_sequence: u64,
@@ -716,24 +716,24 @@ impl ProgramServing {
     /// construction, plus an optional DVR recorder if `dvr_config` is
     /// provided. The one and only place either is created — see
     /// [`RouteHandle::publish_program`].
-    #[allow(clippy::too_many_arguments)] // one private constructor; a params struct adds nothing
     fn new(
         trunk: Arc<Trunk>,
-        target_duration_secs: f64,
-        part_target_ms: u32,
-        window_segments: NonZeroUsize,
-        container: Container,
-        dvr_config: Option<crate::dvr::DvrConfig>,
-        route_name: &str,
+        route: &RouteHandle,
         epoch: ProgramEpoch,
-        program_date_time: crate::config::ProgramDateTimeSource,
-        declared_bandwidth_bps: Option<u64>,
-        audio_renditions: Vec<hls_runtime::server::AudioRenditionDecl>,
-        closed_caption_overrides: Vec<hls_runtime::server::ClosedCaptionDecl>,
-        split_audio: bool,
-        hold_cold_playlist: bool,
-        warms: Arc<tokio::sync::Semaphore>,
     ) -> Result<Arc<Self>, hls_runtime::server::HlsOriginBuildError> {
+        let target_duration_secs = route.target_duration_secs;
+        let part_target_ms = route.part_target_ms;
+        let window_segments = route.window_segments_cap;
+        let container = route.container;
+        let dvr_config = route.dvr_config.clone();
+        let route_name = route.name.as_str();
+        let program_date_time = route.program_date_time;
+        let declared_bandwidth_bps = route.declared_bandwidth_bps;
+        let audio_renditions = &route.audio_renditions;
+        let closed_caption_overrides = &route.closed_caption_overrides;
+        let split_audio = !route.audio_rendition_sources.is_empty();
+        let hold_cold_playlist = route.hold_cold_playlist;
+        let warms = Arc::clone(&route.warms);
         let media_sequence_offset = epoch.seq_offset;
         let mut builder = HlsOrigin::builder(Arc::clone(&trunk))
             .with_target_duration_secs(target_duration_secs)
@@ -757,7 +757,7 @@ impl ProgramServing {
             builder = builder.with_audio_renditions(audio_renditions.clone());
         }
         if !closed_caption_overrides.is_empty() {
-            builder = builder.with_closed_caption_overrides(closed_caption_overrides);
+            builder = builder.with_closed_caption_overrides(closed_caption_overrides.clone());
         }
         builder = builder.with_playlist_uri("media.m3u8");
         // Sibling trunks + origins for the split audio renditions (issue #1428
@@ -765,19 +765,12 @@ impl ProgramServing {
         // own `HlsOrigin`; the primary trunk carries the remaining (video)
         // tracks.
         let sibling_decls: &[hls_runtime::server::AudioRenditionDecl] =
-            if split_audio { &audio_renditions } else { &[] };
+            if split_audio { audio_renditions } else { &[] };
         let mut audio_servings = Vec::with_capacity(sibling_decls.len());
         let mut sibling_origins: Vec<Arc<hls_runtime::server::HlsOrigin>> =
             Vec::with_capacity(sibling_decls.len());
         for (idx, decl) in sibling_decls.iter().enumerate() {
-            let sibling_trunk = Arc::new(Trunk::new(
-                TrunkConfig::default()
-                    .with_timed_capacity(nz(DEFAULT_TIMED_CAPACITY))
-                    .with_sparse_capacity(nz(DEFAULT_SPARSE_CAPACITY))
-                    .with_segment_capacity(window_segments)
-                    .with_event_capacity(nz(DEFAULT_EVENT_CAPACITY))
-                    .with_part_capacity(nz(DEFAULT_PART_CAPACITY)),
-            ));
+            let sibling_trunk = Arc::new(Trunk::new(route.trunk_config));
             let track_id = transmux::TrackId::new(u32::try_from(idx + 2).unwrap_or(u32::MAX));
             let mut ab = HlsOrigin::builder(Arc::clone(&sibling_trunk))
                 .with_target_duration_secs(target_duration_secs)
@@ -1459,6 +1452,10 @@ pub struct RouteHandle {
     /// Source track per audio rendition for the opt-in split-mux (issue
     /// #1428 slice 2b); empty means no split.
     audio_rendition_sources: Vec<transmux::audio_profile::AudioTrackSelector>,
+    /// Sibling (audio/subtitle rendition) trunk capacities (issue #2554): taken
+    /// from this route's [`SegmenterConfig::trunk_config`] so a host can size
+    /// every sibling trunk consistently. Defaults to the standard capacities.
+    trunk_config: TrunkConfig,
     /// `NAME`/`LANGUAGE` overrides for detected closed captions (issue #1428).
     closed_caption_overrides: Vec<hls_runtime::server::ClosedCaptionDecl>,
     /// Operator-declared HE-AAC profile per audio track (issue #1428).
@@ -1511,6 +1508,12 @@ impl RouteHandle {
             declared_bandwidth_bps: None,
             audio_renditions: Vec::new(),
             audio_rendition_sources: Vec::new(),
+            trunk_config: TrunkConfig::default()
+                .with_timed_capacity(nz(DEFAULT_TIMED_CAPACITY))
+                .with_sparse_capacity(nz(DEFAULT_SPARSE_CAPACITY))
+                .with_segment_capacity(window_segments)
+                .with_event_capacity(nz(DEFAULT_EVENT_CAPACITY))
+                .with_part_capacity(nz(DEFAULT_PART_CAPACITY)),
             closed_caption_overrides: Vec::new(),
             audio_profiles: Vec::new(),
             subtitles: true,
@@ -1634,15 +1637,12 @@ impl RouteHandle {
         *self.ts_idr_status.lock()
     }
 
-    /// Record that this route's output cannot serve what the program
-    /// delivered. Returns `true` only for the first failure, so a caller
-    /// retrying every poll logs once.
-    pub(crate) fn fail_output(&self, error: &crate::MultimuxError) -> bool {
+    pub(crate) fn fail_output_message(&self, message: String) -> bool {
         let mut slot = self.output_error.lock();
         if slot.is_some() {
             return false;
         }
-        *slot = Some(error.to_string());
+        *slot = Some(message);
         true
     }
 
@@ -1755,8 +1755,28 @@ impl RouteHandle {
         self
     }
 
-    pub(crate) fn subtitles_enabled(&self) -> bool {
+    pub fn subtitles_enabled(&self) -> bool {
         self.subtitles
+    }
+
+    /// Sets the [`TrunkConfig`] used for sibling (audio/subtitle rendition)
+    /// trunks built by [`Self::publish_program`] (issue #2554): capacities
+    /// propagate to every sibling trunk.
+    #[must_use]
+    pub fn with_trunk_config(mut self, value: TrunkConfig) -> Self {
+        self.trunk_config = value;
+        self
+    }
+
+    /// Alias for [`Self::with_trunk_config`].
+    #[must_use]
+    pub fn with_sibling_trunk_config(mut self, value: TrunkConfig) -> Self {
+        self.trunk_config = value;
+        self
+    }
+
+    pub fn trunk_config(&self) -> &TrunkConfig {
+        &self.trunk_config
     }
 
     /// Declares the HE-AAC profile of audio tracks (issue #1428) — a consuming
@@ -1795,6 +1815,12 @@ impl RouteHandle {
 
     pub(crate) fn audio_rendition_sources(&self) -> &[transmux::audio_profile::AudioTrackSelector] {
         &self.audio_rendition_sources
+    }
+
+    pub(crate) fn audio_profiles_for_segmenter(
+        &self,
+    ) -> Vec<transmux::audio_profile::AudioProfileOverride> {
+        self.audio_profiles.clone()
     }
 
     /// This route's configured container (see [`Self::with_container`]) —
@@ -1926,23 +1952,7 @@ impl RouteHandle {
             presentation_origin: previous_epoch
                 .map_or_else(SystemTime::now, |e| e.presentation_origin),
         };
-        let serving = match ProgramServing::new(
-            Arc::clone(&trunk),
-            self.target_duration_secs,
-            self.part_target_ms,
-            self.window_segments_cap,
-            self.container,
-            self.dvr_config.clone(),
-            &self.name,
-            epoch,
-            self.program_date_time,
-            self.declared_bandwidth_bps,
-            self.audio_renditions.clone(),
-            self.closed_caption_overrides.clone(),
-            !self.audio_rendition_sources.is_empty(),
-            self.hold_cold_playlist,
-            Arc::clone(&self.warms),
-        ) {
+        let serving = match ProgramServing::new(Arc::clone(&trunk), self, epoch) {
             Ok(serving) => serving,
             Err(e) => {
                 // An unservable configuration (e.g. a NaN target duration
@@ -2427,7 +2437,7 @@ impl RouteHandle {
         self.serving(program).map(|s| s.presentation_origin())
     }
 
-    pub(crate) fn epoch(&self, program: ProgramId) -> Option<ProgramEpoch> {
+    pub fn epoch(&self, program: ProgramId) -> Option<ProgramEpoch> {
         self.serving(program).map(|s| s.epoch())
     }
 
@@ -2506,6 +2516,12 @@ impl IntoDeclaredBandwidth for u64 {
 
 impl IntoDeclaredBandwidth for Option<u64> {
     fn into_declared_bandwidth(self) -> Option<u64> {
+        self
+    }
+}
+
+impl AsRef<RouteHandle> for RouteHandle {
+    fn as_ref(&self) -> &RouteHandle {
         self
     }
 }

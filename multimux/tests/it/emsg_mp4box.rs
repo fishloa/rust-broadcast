@@ -18,12 +18,12 @@ use transmux::TrackId;
 
 use broadcast_common::Parse;
 use media_plane::ProgramId;
+use media_plane::segmenter::ProgramSegmenter;
 use media_plane::trunk::{EventAnchor, RetentionClass, Trunk, TrunkConfig};
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
 use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
-use multimux::source::segment::ProgramSegmenter;
 use scte35_splice::SpliceInfoSection;
 use timed_metadata::MediaTime;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
@@ -113,7 +113,8 @@ fn build_real_trunk(pts_origin: i64, frames: u32) -> (Arc<RouteHandle>, Arc<Trun
     route.publish_program(ProgramId(0), Arc::clone(&trunk));
 
     let mut segmenter =
-        ProgramSegmenter::try_new(&trunk, &route, TARGET_DURATION_SECS, 200).expect("segmenter");
+        ProgramSegmenter::try_new_with_siblings(&trunk, route.segmenter_config(), route.as_ref())
+            .expect("segmenter");
 
     for i in 0..frames {
         let pts = pts_origin + i64::from(i) * i64::from(FRAME_DUR);
@@ -123,7 +124,7 @@ fn build_real_trunk(pts_origin: i64, frames: u32) -> (Arc<RouteHandle>, Arc<Trun
             sample_at(pts, i % SYNC_INTERVAL == 0),
         );
     }
-    segmenter.pump(ProgramId(0), &trunk, &route);
+    multimux::source::segment::pump_segmenter(&mut segmenter, ProgramId(0), &trunk, &route);
     segmenter.flush();
     (Arc::new(route), trunk)
 }

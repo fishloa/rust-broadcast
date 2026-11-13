@@ -1610,6 +1610,9 @@ pub struct Trunk {
     /// Copy of [`TrunkConfig::waiter_capacity`], read without locking `state` —
     /// the cap [`Trunk::listen`] enforces against `waiter_count`.
     waiter_cap: usize,
+    /// The configuration this trunk was built from (issue #2554): capacities
+    /// are readable via [`Self::config`].
+    config: TrunkConfig,
     /// Wake for new sample-ring-group data: bumped by every
     /// [`TrunkWriter::publish`]/[`TrunkWriter::publish_event`]/
     /// [`TrunkWriter::set_tracks`] and by a [`TrunkWriter`] drop (a writer
@@ -1663,13 +1666,23 @@ impl Trunk {
             #[cfg(test)]
             lock_takes: AtomicUsize::new(0),
             waiter_cap: config.waiter_capacity.get(),
+            config,
             data: Event::new(),
             data_waiters: AtomicUsize::new(0),
             generation: AtomicU64::new(0),
         })
     }
 
-    /// Lock `state`. `parking_lot::Mutex` does not poison: a panic on some
+    /// The [`TrunkConfig`] this trunk was built from, so callers (and tests)
+    /// can read back the capacities it carries (issue #2554).
+    pub fn config(&self) -> &TrunkConfig {
+        &self.config
+    }
+
+    /// Alias for [`Self::config`].
+    pub fn trunk_config(&self) -> &TrunkConfig {
+        &self.config
+    }
     /// other thread while it held this lock cannot turn every later writer or
     /// reader into a panic, so no recovery wrapper is needed. (Every critical
     /// section here is a bounded push/pop or counter update with no foreign
