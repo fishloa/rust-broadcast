@@ -251,6 +251,18 @@ pub(crate) struct RouteRegistry {
     /// Only mutations take it; reads (`resolve`/`current_router`) stay
     /// lock-free against it, so admin traffic never blocks media serving.
     mutation_lock: tokio::sync::Mutex<()>,
+    /// One lock per route name (lowercased, the same equivalence `add_route`
+    /// uses for collisions), held for a route's whole add / remove / reload
+    /// step **including** the drain of a displaced runtime and the archive
+    /// scan. That ordering is what makes a route's archive sequence floor safe
+    /// to compute outside [`Self::mutation_lock`]: an add of `X` scans the
+    /// archive only after any earlier remove of `X` has fully drained (so the
+    /// old runtime can write no more segments), and a slow scan of `X` holds
+    /// `X`'s lock alone, never the registry-wide one. Always taken in sorted
+    /// name order and before `mutation_lock`.
+    name_locks: parking_lot::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    #[cfg(test)]
+    hooks: TestHooks,
     inner: parking_lot::RwLock<HashMap<String, RouteRuntime>>,
     /// The currently-active media [`Router`], rebuilt whole on every
     /// mutation (see this module's own docs) and read by
@@ -274,12 +286,63 @@ impl RouteRegistry {
         let registry = Arc::new(RouteRegistry {
             ctx,
             mutation_lock: tokio::sync::Mutex::new(()),
+            name_locks: parking_lot::Mutex::new(HashMap::new()),
+            #[cfg(test)]
+            hooks: TestHooks::default(),
             inner: parking_lot::RwLock::new(HashMap::new()),
             router_slot: arc_swap::ArcSwap::from_pointee(Router::new()),
             config_path,
         });
         registry.rebuild_router();
         registry
+    }
+
+    /// Take the per-name lock of every name in `names`, in sorted order.
+    async fn lock_names<'a>(
+        &self,
+        names: impl IntoIterator<Item = &'a str>,
+    ) -> Vec<tokio::sync::OwnedMutexGuard<()>> {
+        let mut keys: Vec<String> = names.into_iter().map(str::to_lowercase).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        let locks: Vec<Arc<tokio::sync::Mutex<()>>> = {
+            let mut table = self.name_locks.lock();
+            table.retain(|_, lock| Arc::strong_count(lock) > 1);
+            keys.iter()
+                .map(|key| Arc::clone(table.entry(key.clone()).or_default()))
+                .collect()
+        };
+        let mut held = Vec::with_capacity(locks.len());
+        for lock in locks {
+            held.push(lock.lock_owned().await);
+        }
+        held
+    }
+
+    /// The highest sequence number `route`'s DVR archive already holds. Callers
+    /// hold the route's name lock, not [`Self::mutation_lock`].
+    async fn archive_floor(&self, route: &Route) -> u32 {
+        #[cfg(test)]
+        self.hooks.wait_floor_gate(&route.name).await;
+        let floor = archive_floor_of(route).await;
+        #[cfg(test)]
+        self.hooks.log(format!("floor:{}", route.name));
+        floor
+    }
+
+    fn check_name_free(&self, route: &Route) -> crate::Result<()> {
+        // Exact-name collision, plus a case-insensitive one (audit run 7,
+        // A4): two names differing only in case share one DVR archive
+        // directory on a case-insensitive filesystem, and the router nests
+        // them under distinct URL segments, which is confusing and wrong.
+        let key = route.name.to_lowercase();
+        let inner = self.inner.read();
+        if inner.contains_key(&route.name) || inner.keys().any(|k| k.to_lowercase() == key) {
+            return Err(crate::MultimuxError::RouteExists {
+                name: route.name.clone(),
+            });
+        }
+        Ok(())
     }
 
     fn streams_snapshot(&self) -> HashMap<String, StreamRoute> {
@@ -434,19 +497,11 @@ impl RouteRegistry {
     /// lockout nor block a concurrent reader.
     pub(crate) async fn add_route(&self, route: Route) -> crate::Result<RouteStatus> {
         route.validate_standalone(&self.ctx.base_config.playlist_name)?;
+        let _name = self.lock_names([route.name.as_str()]).await;
+        self.check_name_free(&route)?;
+        let archive_floor = self.archive_floor(&route).await;
         let _guard = self.mutation_lock.lock().await;
-        // Exact-name collision, plus a case-insensitive one (audit run 7,
-        // A4): two names differing only in case share one DVR archive
-        // directory on a case-insensitive filesystem, and the router nests
-        // them under distinct URL segments, which is confusing and wrong.
-        {
-            let key = route.name.to_lowercase();
-            let inner = self.inner.read();
-            if inner.contains_key(&route.name) || inner.keys().any(|k| k.to_lowercase() == key) {
-                return Err(crate::MultimuxError::RouteExists { name: route.name });
-            }
-        }
-        let archive_floor = archive_floor_of(&route).await;
+        self.check_name_free(&route)?;
         let runtime = self.spawn_route(&route, archive_floor)?;
         let status = RouteStatus::from_runtime(&runtime);
         // The runtime is NOT installed yet. Wrap it so any early return or
@@ -521,21 +576,32 @@ impl RouteRegistry {
     /// — then drains its supervisor task with no lock held (see this
     /// module's own "Concurrency" and "What an in-flight viewer sees" docs).
     pub(crate) async fn remove_route(&self, name: &str) -> crate::Result<()> {
-        let _guard = self.mutation_lock.lock().await;
-        let removed = {
-            let mut guard = self.inner.write();
-            guard.remove(name)
+        let _name = self.lock_names([name]).await;
+        let runtime = {
+            let _guard = self.mutation_lock.lock().await;
+            let removed = {
+                let mut guard = self.inner.write();
+                guard.remove(name)
+            };
+            let Some(runtime) = removed else {
+                return Err(crate::MultimuxError::RouteNotFound {
+                    name: name.to_string(),
+                });
+            };
+            self.rebuild_router();
+            runtime
         };
-        let Some(runtime) = removed else {
-            return Err(crate::MultimuxError::RouteNotFound {
-                name: name.to_string(),
-            });
-        };
-        self.rebuild_router();
+        // The registry-wide lock is released; the name lock is held until the
+        // drain finishes, so an add of this name cannot read the archive floor
+        // while the old runtime can still write to the archive.
+        #[cfg(test)]
+        self.hooks.wait_drain_gate(name).await;
         drain_route(runtime).await;
         // After the drain: the supervisor's own last gauge update cannot race
         // this one back to `1` (audit r07-O5).
         super::supervisor::record_route_removed(name);
+        #[cfg(test)]
+        self.hooks.log(format!("drained:{name}"));
         Ok(())
     }
 
@@ -592,38 +658,29 @@ impl RouteRegistry {
             });
         };
         let new_config = Config::from_json_file(&path)?;
-        let _guard = self.mutation_lock.lock().await;
-
-        let current: std::collections::BTreeMap<String, Route> = {
-            self.inner
-                .read()
-                .iter()
-                .map(|(name, rt)| (name.clone(), rt.route.clone()))
-                .collect()
+        let (_names, global, plan, floors) = loop {
+            let plan = self.plan_reload(&new_config);
+            let names = self
+                .lock_names(plan.touched().iter().map(String::as_str))
+                .await;
+            let mut floors = Vec::with_capacity(plan.added.len() + plan.changed.len());
+            for route in plan.added.iter().chain(plan.changed.iter()) {
+                floors.push(self.archive_floor(route).await);
+            }
+            let global = self.mutation_lock.lock().await;
+            // The registry may have changed while the name locks were being
+            // taken (a route this reload did not lock was added or removed):
+            // plan again with those names locked too.
+            if self.plan_reload(&new_config).touched() == plan.touched() {
+                break (names, global, plan, floors);
+            }
         };
-
-        let mut added_routes: Vec<Route> = Vec::new();
-        let mut changed_routes: Vec<Route> = Vec::new();
-        let mut removed_names: Vec<String> = Vec::new();
-        let mut unchanged_names: Vec<String> = Vec::new();
-
-        let new_by_name: HashMap<&str, &Route> = new_config
-            .routes
-            .iter()
-            .map(|r| (r.name.as_str(), r))
-            .collect();
-        for name in current.keys() {
-            if !new_by_name.contains_key(name.as_str()) {
-                removed_names.push(name.clone());
-            }
-        }
-        for route in &new_config.routes {
-            match current.get(&route.name) {
-                None => added_routes.push(route.clone()),
-                Some(existing) if existing == route => unchanged_names.push(route.name.clone()),
-                Some(_) => changed_routes.push(route.clone()),
-            }
-        }
+        let ReloadPlan {
+            added: added_routes,
+            changed: changed_routes,
+            removed: removed_names,
+            unchanged: unchanged_names,
+        } = plan;
 
         // Validate every to-add/to-restart route BEFORE building any of
         // them (side-effect-free, so a failure here needs no rollback at
@@ -642,8 +699,7 @@ impl RouteRegistry {
         // tasks and aborts their supervisors — never leaving a dialer dialling
         // or a port bound for a route that was never installed (W6/A2).
         let mut prepared: Vec<(Route, PendingRuntime)> = Vec::new();
-        for route in added_routes.iter().chain(changed_routes.iter()) {
-            let archive_floor = archive_floor_of(route).await;
+        for (route, archive_floor) in added_routes.iter().chain(changed_routes.iter()).zip(floors) {
             let runtime = self.spawn_route(route, archive_floor)?;
             prepared.push((route.clone(), PendingRuntime::new(runtime)));
         }
@@ -699,6 +755,7 @@ impl RouteRegistry {
             removed_runtimes
         };
         self.router_slot.store(std::sync::Arc::new(new_router));
+        drop(global);
 
         futures_util::future::join_all(removed_runtimes.into_iter().map(drain_route)).await;
         // Routes that are gone for good (a *changed* route was replaced by a
@@ -715,6 +772,36 @@ impl RouteRegistry {
         })
     }
 
+    /// What reloading `new_config` would add, restart, remove and leave alone,
+    /// against the registry as it is now.
+    fn plan_reload(&self, new_config: &Config) -> ReloadPlan {
+        let current: std::collections::BTreeMap<String, Route> = self
+            .inner
+            .read()
+            .iter()
+            .map(|(name, rt)| (name.clone(), rt.route.clone()))
+            .collect();
+        let new_by_name: HashMap<&str, &Route> = new_config
+            .routes
+            .iter()
+            .map(|r| (r.name.as_str(), r))
+            .collect();
+        let mut plan = ReloadPlan::default();
+        for name in current.keys() {
+            if !new_by_name.contains_key(name.as_str()) {
+                plan.removed.push(name.clone());
+            }
+        }
+        for route in &new_config.routes {
+            match current.get(&route.name) {
+                None => plan.added.push(route.clone()),
+                Some(existing) if existing == route => plan.unchanged.push(route.name.clone()),
+                Some(_) => plan.changed.push(route.clone()),
+            }
+        }
+        plan
+    }
+
     /// Tears down every currently-registered route's supervisor task, in
     /// orderly fashion (mirrors `serve_with_registry`'s own final loop) —
     /// called once, from [`serve_with_admin`]'s own shutdown path.
@@ -725,6 +812,67 @@ impl RouteRegistry {
             guard.drain().map(|(_, rt)| rt).collect()
         };
         futures_util::future::join_all(all.into_iter().map(drain_route)).await;
+    }
+}
+
+/// The difference between the live registry and a reloaded configuration.
+#[derive(Default)]
+struct ReloadPlan {
+    added: Vec<Route>,
+    changed: Vec<Route>,
+    removed: Vec<String>,
+    unchanged: Vec<String>,
+}
+
+impl ReloadPlan {
+    /// The names a reload of this plan changes, sorted: the ones whose locks it
+    /// needs.
+    fn touched(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .added
+            .iter()
+            .chain(self.changed.iter())
+            .map(|route| route.name.clone())
+            .chain(self.removed.iter().cloned())
+            .collect();
+        names.sort_unstable();
+        names
+    }
+}
+
+/// Test-only gates and an event log, so a test can hold a route's archive scan
+/// or drain open and observe the order the registry did things in.
+#[cfg(test)]
+#[derive(Default)]
+struct TestHooks {
+    floor_gates: parking_lot::Mutex<HashMap<String, Arc<tokio::sync::Notify>>>,
+    drain_gates: parking_lot::Mutex<HashMap<String, Arc<tokio::sync::Notify>>>,
+    log: parking_lot::Mutex<Vec<String>>,
+}
+
+#[cfg(test)]
+impl TestHooks {
+    fn gate(
+        map: &parking_lot::Mutex<HashMap<String, Arc<tokio::sync::Notify>>>,
+        name: &str,
+    ) -> Arc<tokio::sync::Notify> {
+        Arc::clone(map.lock().entry(name.to_string()).or_default())
+    }
+
+    async fn wait_floor_gate(&self, name: &str) {
+        if self.floor_gates.lock().contains_key(name) {
+            Self::gate(&self.floor_gates, name).notified().await;
+        }
+    }
+
+    async fn wait_drain_gate(&self, name: &str) {
+        if self.drain_gates.lock().contains_key(name) {
+            Self::gate(&self.drain_gates, name).notified().await;
+        }
+    }
+
+    fn log(&self, event: String) {
+        self.log.lock().push(event);
     }
 }
 
@@ -1250,6 +1398,78 @@ mod tests {
             audio_profiles: Vec::new(),
             subtitles: true,
         }
+    }
+
+    /// A slow archive scan for route `a` holds only `a`'s name lock: an admin
+    /// change to route `b` is not delayed by it.
+    #[tokio::test]
+    async fn a_slow_archive_scan_for_one_route_does_not_block_another() {
+        let registry = RouteRegistry::new(ctx_for_tests(), None);
+        let gate = TestHooks::gate(&registry.hooks.floor_gates, "a");
+        let slow = tokio::spawn({
+            let registry = Arc::clone(&registry);
+            async move { registry.add_route(rtsp_route("a", "rtsp://host/a")).await }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(!slow.is_finished(), "route a's scan is held open");
+
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            registry.add_route(rtsp_route("b", "rtsp://host/b")),
+        )
+        .await
+        .expect("route b is not delayed by route a's scan")
+        .expect("add b");
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            registry.remove_route("b"),
+        )
+        .await
+        .expect("removing b is not delayed either")
+        .expect("remove b");
+
+        gate.notify_one();
+        slow.await.expect("task").expect("add a");
+        assert!(registry.get_route("a").is_some());
+    }
+
+    /// Removing a route and adding the same name again: the add reads the
+    /// archive floor only after the removed route has drained, so the new
+    /// runtime cannot start numbering below a segment the old one still wrote.
+    #[tokio::test]
+    async fn an_add_after_a_remove_reads_the_floor_only_after_the_drain() {
+        let registry = RouteRegistry::new(ctx_for_tests(), None);
+        registry
+            .add_route(rtsp_route("x", "rtsp://host/x"))
+            .await
+            .expect("first add");
+        registry.hooks.log.lock().clear();
+        let drain_gate = TestHooks::gate(&registry.hooks.drain_gates, "x");
+
+        let remove = tokio::spawn({
+            let registry = Arc::clone(&registry);
+            async move { registry.remove_route("x").await }
+        });
+        while registry.get_route("x").is_some() {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        let add = tokio::spawn({
+            let registry = Arc::clone(&registry);
+            async move { registry.add_route(rtsp_route("x", "rtsp://host/x")).await }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        assert!(
+            !add.is_finished() && registry.hooks.log.lock().is_empty(),
+            "the add must wait for the drain, not scan the archive under it"
+        );
+
+        drain_gate.notify_one();
+        remove.await.expect("task").expect("remove");
+        add.await.expect("task").expect("add");
+        assert_eq!(
+            *registry.hooks.log.lock(),
+            ["drained:x".to_string(), "floor:x".to_string()]
+        );
     }
 
     /// MUTATION VERIFIED: changing `add_route` to skip the
