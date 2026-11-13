@@ -4,8 +4,7 @@ use broadcast_client::{Action, Config, Event, Session, SourceKind};
 use broadcast_common::Unpackage;
 use transmux::{FlvDemux, Media};
 
-#[path = "rtmp_play_peer.rs"]
-pub mod play_peer;
+pub use test_harness::rtmp_play_peer as play_peer;
 
 #[allow(unused_imports)]
 pub use play_peer::{PeerConfig, PlayPeer, Seen};

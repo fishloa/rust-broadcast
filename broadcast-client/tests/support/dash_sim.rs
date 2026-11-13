@@ -242,6 +242,9 @@ impl<O: world::Origin> Backend for WorldBackend<O> {
                     body: r.body,
                 }
             }
+            Outcome::Fail(dash_runtime::client::Failure::Transport) => Answer::TransportError,
+            Outcome::Fail(dash_runtime::client::Failure::Status(s)) => Answer::status(s),
+            Outcome::Fail(_) | Outcome::Hang => Answer::Hang,
         }
     }
 }

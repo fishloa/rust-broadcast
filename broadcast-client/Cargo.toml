@@ -51,6 +51,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
 srt-runtime = { path = "../srt-runtime", version = "0.8.1", features = ["tokio", "crypto"] }
 test-fixtures = { path = "../test-fixtures" }
+test-harness = { path = "../test-harness" }
 buffering-runtime = { path = "../buffering-runtime", version = "0.2.2" }
 transmux = { path = "../transmux", version = "0.31.0" }
 broadcast-auth = { path = "../broadcast-auth", version = "0.6.0" }
