@@ -600,9 +600,7 @@ impl Verifier {
                         password,
                         realm,
                         nonces,
-                        ctx.method,
-                        ctx.uri,
-                        ctx.header("host"),
+                        ctx,
                         nonces.now(self.now_secs()),
                     ),
                     DigestCheck::Stale
@@ -675,17 +673,7 @@ impl Verifier {
                 nonces,
             } => ctx.header("authorization").is_some_and(|header| {
                 let now = nonces.now(self.now_secs());
-                match check_digest(
-                    header,
-                    username,
-                    password,
-                    realm,
-                    nonces,
-                    ctx.method,
-                    ctx.uri,
-                    ctx.header("host"),
-                    now,
-                ) {
+                match check_digest(header, username, password, realm, nonces, ctx, now) {
                     DigestCheck::Accept { key, stamp, nc } => nonces.record(key, stamp, nc, now),
                     DigestCheck::Stale | DigestCheck::Reject => false,
                 }
@@ -898,16 +886,13 @@ const MAX_DIGEST_FIELDS: usize = 64;
 /// Rejects outright a header carrying more than [`MAX_DIGEST_FIELDS`]
 /// parameters — see that constant's docs. The parser still allocates one
 /// entry per parameter, bounded by the header size the transport already caps.
-#[allow(clippy::too_many_arguments)]
 fn check_digest(
     header: &str,
     username: &str,
     password: &str,
     realm: &str,
     nonces: &DigestNonces,
-    method: &str,
-    request_uri: &str,
-    host: Option<&str>,
+    ctx: &RequestContext<'_>,
     now_secs: u64,
 ) -> DigestCheck {
     let Some(fields) = parse_digest_fields(header) else {
@@ -935,7 +920,7 @@ fn check_digest(
         return DigestCheck::Reject;
     };
     let client_uri = get("uri");
-    if !digest_uri_matches(client_uri, request_uri, host) {
+    if !digest_uri_matches(client_uri, ctx.uri, ctx.header("host")) {
         return DigestCheck::Reject;
     }
     let nc_text = get("nc");
@@ -964,7 +949,7 @@ fn check_digest(
     };
 
     let ha1 = md5_hex(format!("{username}:{realm}:{password}"));
-    let ha2 = md5_hex(format!("{method}:{client_uri}"));
+    let ha2 = md5_hex(format!("{}:{client_uri}", ctx.method));
     let expected_response = md5_hex(format!("{ha1}:{nonce}:{nc_text}:{cnonce}:{qop}:{ha2}"));
     if !constant_time_eq(expected_response.as_bytes(), client_response.as_bytes()) {
         return DigestCheck::Reject;

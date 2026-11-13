@@ -5,10 +5,9 @@
 //! The renderer is ticked every `tick_us` plus once at every chunk arrival.
 //! Its clock lives in the playback (PTS) domain, which for the trace replays
 //! is the PCR minus a constant `offset_ticks` (the traces carry PCR only).
-#![allow(dead_code)]
 
 use broadcast_common::clock33::PCR_WRAP_27MHZ;
-use buffering_runtime::{BufferController, ControllerConfig, Event, Hint, State, pts90k_to_27mhz};
+use buffering_runtime::{BufferController, ControllerConfig, Event, Hint, State};
 use std::path::Path;
 
 pub const TICKS_PER_US: u64 = 27;
@@ -87,9 +86,6 @@ pub struct Run {
     pub targets: Vec<u64>,
     /// Smallest `lead_us` reported by a tick while Playing.
     pub min_lead_playing: Option<i64>,
-    /// Renderer clock frozen/held count of ticks where data was behind the
-    /// restarted clock (always 0 for an obedient renderer).
-    pub late_restarts: u32,
 }
 
 impl Run {
@@ -237,7 +233,6 @@ impl Session {
             ctl: self.c,
             targets: self.targets,
             min_lead_playing: self.min_lead,
-            late_restarts: 0,
         }
     }
 }
@@ -382,8 +377,3 @@ impl Synth {
 pub const GAP_1S: u64 = 1_000_000;
 pub const GAP_2S: u64 = 2_000_000;
 pub const GAP_4S: u64 = 4_000_000;
-
-/// PTS-domain helper for tests: 90 kHz PTS to 27 MHz.
-pub fn pts(p: u64) -> u64 {
-    pts90k_to_27mhz(p)
-}

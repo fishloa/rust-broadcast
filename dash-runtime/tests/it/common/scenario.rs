@@ -1,7 +1,5 @@
 //! Shared scaffolding of the live `World` tests.
 
-#![allow(dead_code)]
-
 use super::checks::*;
 use super::synth::{Addressing, Geo, MPD_URL, Synth};
 use super::world::{MICROS, Shared, Sim, World};

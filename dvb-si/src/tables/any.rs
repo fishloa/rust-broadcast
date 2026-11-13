@@ -88,11 +88,11 @@ macro_rules! declare_tables {
         #[non_exhaustive]
         pub enum AnyTableSection<$lt> {
             $(
-                #[allow(missing_docs)]
-                $variant($($path)::+ $(<$plt>)?),
+                #[doc = concat!("The `", stringify!($variant), "` table section.")]
+            $variant($($path)::+ $(<$plt>)?),
             )+
             $($(
-                #[allow(missing_docs)]
+                #[doc = concat!("The `", stringify!($nd_variant), "` table section.")]
                 $nd_variant($($nd_path)::+ $(<$nd_plt>)?),
             )+)?
             /// Runtime-registered custom table section (see [`TableRegistry`]).

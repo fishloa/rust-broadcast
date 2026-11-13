@@ -2,8 +2,6 @@
 //! the real captures and the static loopback origin), shared so the session suites drive the same
 //! origins as the core suites. Cross-crate tests live in the highest crate.
 
-#![allow(dead_code)]
-
 #[path = "../../../dash-runtime/tests/it/common/world.rs"]
 pub mod world;
 

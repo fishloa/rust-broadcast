@@ -939,6 +939,7 @@ fn extract_service_name(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use broadcast_common::Serialize;
     use chrono::{TimeZone, Utc};
 
     // ------------------------------------------------------------------
@@ -960,56 +961,9 @@ mod tests {
     }
 
     /// Build the bytes of a minimal EIT present/following section
-    /// with one event. Returns bytes formated as a complete TS section
-    /// (including CRC-32).
-    #[allow(clippy::too_many_arguments)]
-    fn eit_pf_section(
-        service_id: u16,
-        ts_id: u16,
-        on_id: u16,
-        event_id: u16,
-        version: u8,
-        start_raw: [u8; 5],
-        dur_raw: [u8; 3],
-        descriptors: &[u8],
-    ) -> Vec<u8> {
-        let table_id = 0x4Eu8;
-
-        // Header: 3 + ext_header(5) + post_ext(6) = 14
-        // Event: 12 + descriptors.len()
-        // CRC: 4
-        let ev_len = 12 + descriptors.len();
-        let section_length = 5 + 6 + ev_len + 4;
-        let total = 3 + section_length;
-
-        let mut buf = vec![0u8; total];
-        buf[0] = table_id;
-        buf[1] = 0xB0 | ((section_length >> 8) as u8 & 0x0F);
-        buf[2] = (section_length & 0xFF) as u8;
-        buf[3..5].copy_from_slice(&service_id.to_be_bytes());
-        // reserved(2)=0b11, version, current_next=1
-        buf[5] = 0xC0 | ((version & 0x1F) << 1) | 0x01;
-        buf[6] = 0; // section_number
-        buf[7] = 0; // last_section_number
-        buf[8..10].copy_from_slice(&ts_id.to_be_bytes());
-        buf[10..12].copy_from_slice(&on_id.to_be_bytes());
-        buf[12] = 0; // segment_last_section_number
-        buf[13] = 0x5F; // last_table_id
-
-        // Event
-        let ev_off = 14;
-        buf[ev_off..ev_off + 2].copy_from_slice(&event_id.to_be_bytes());
-        buf[ev_off + 2..ev_off + 7].copy_from_slice(&start_raw);
-        buf[ev_off + 7..ev_off + 10].copy_from_slice(&dur_raw);
-        let dll = descriptors.len() as u16;
-        buf[ev_off + 10] = ((dll >> 8) as u8) & 0x0F;
-        buf[ev_off + 11] = (dll & 0xFF) as u8;
-        buf[ev_off + 12..ev_off + 12 + descriptors.len()].copy_from_slice(descriptors);
-
-        // CRC-32
-        let crc_pos = total - 4;
-        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..crc_pos]);
-        buf[crc_pos..].copy_from_slice(&crc.to_be_bytes());
+    fn serialize_eit(eit: &crate::tables::eit::EitSection<'_>) -> Vec<u8> {
+        let mut buf = vec![0u8; eit.serialized_len()];
+        eit.serialize_into(&mut buf).unwrap();
         buf
     }
 
@@ -1464,7 +1418,24 @@ mod tests {
         descriptors.extend_from_slice(&crids);
 
         let sr = start_raw(2026, 6, 10, 10);
-        let eit = eit_pf_section(100, 1, 1, 1, 0, sr, [1, 0, 0], &descriptors);
+        let eit = serialize_eit(&crate::tables::eit::EitSection::new(
+            crate::tables::eit::EitKind::PresentFollowingActual,
+            0x4Eu8,
+            100,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
+            1,
+            1,
+            0u8,
+            0x5Fu8,
+            vec![crate::tables::eit::EitEvent::new(
+                1,
+                sr,
+                [1, 0, 0],
+                crate::tables::RunningStatus::Undefined,
+                false,
+                crate::descriptors::DescriptorLoop::new(&descriptors),
+            )],
+        ));
 
         let mut store = EpgStore::new();
         store.feed(&eit).unwrap();
@@ -1670,8 +1641,42 @@ mod tests {
         let desc1 = short_event_bytes(b"News at 10", b"");
         let desc2 = short_event_bytes(b"News at 14", b"");
 
-        let eit1 = eit_pf_section(100, 1, 1, 1, 0, start1, [1, 0, 0], &desc1);
-        let eit2 = eit_pf_section(100, 1, 1, 1, 1, start2, [1, 0, 0], &desc2);
+        let eit1 = serialize_eit(&crate::tables::eit::EitSection::new(
+            crate::tables::eit::EitKind::PresentFollowingActual,
+            0x4Eu8,
+            100,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
+            1,
+            1,
+            0u8,
+            0x5Fu8,
+            vec![crate::tables::eit::EitEvent::new(
+                1,
+                start1,
+                [1, 0, 0],
+                crate::tables::RunningStatus::Undefined,
+                false,
+                crate::descriptors::DescriptorLoop::new(&desc1),
+            )],
+        ));
+        let eit2 = serialize_eit(&crate::tables::eit::EitSection::new(
+            crate::tables::eit::EitKind::PresentFollowingActual,
+            0x4Eu8,
+            100,
+            crate::tables::SectionVersion::new(1, true, 0, 0),
+            1,
+            1,
+            0u8,
+            0x5Fu8,
+            vec![crate::tables::eit::EitEvent::new(
+                1,
+                start2,
+                [1, 0, 0],
+                crate::tables::RunningStatus::Undefined,
+                false,
+                crate::descriptors::DescriptorLoop::new(&desc2),
+            )],
+        ));
 
         let mut store = EpgStore::new();
         store.feed(&eit1).unwrap();
@@ -1694,16 +1699,24 @@ mod tests {
     fn retain_services_drops_rejected_services_and_their_collector_state() {
         let start = start_raw(2026, 6, 10, 10);
         let eit = |service_id: u16, name: &[u8]| {
-            eit_pf_section(
+            serialize_eit(&crate::tables::eit::EitSection::new(
+                crate::tables::eit::EitKind::PresentFollowingActual,
+                0x4Eu8,
                 service_id,
+                crate::tables::SectionVersion::new(0, true, 0, 0),
                 1,
                 1,
-                1,
-                0,
-                start,
-                [1, 0, 0],
-                &short_event_bytes(name, b""),
-            )
+                0u8,
+                0x5Fu8,
+                vec![crate::tables::eit::EitEvent::new(
+                    1,
+                    start,
+                    [1, 0, 0],
+                    crate::tables::RunningStatus::Undefined,
+                    false,
+                    crate::descriptors::DescriptorLoop::new(&short_event_bytes(name, b"")),
+                )],
+            ))
         };
         let key = |service_id: u16| ServiceKey {
             original_network_id: 1,
@@ -1809,20 +1822,71 @@ mod tests {
 
         // Service 100
         let sr1 = start_raw(2026, 6, 10, 10);
-        let eit1 = eit_pf_section(100, 1, 1, 1, 0, sr1, [1, 0, 0], &desc);
+        let eit1 = serialize_eit(&crate::tables::eit::EitSection::new(
+            crate::tables::eit::EitKind::PresentFollowingActual,
+            0x4Eu8,
+            100,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
+            1,
+            1,
+            0u8,
+            0x5Fu8,
+            vec![crate::tables::eit::EitEvent::new(
+                1,
+                sr1,
+                [1, 0, 0],
+                crate::tables::RunningStatus::Undefined,
+                false,
+                crate::descriptors::DescriptorLoop::new(&desc),
+            )],
+        ));
         store.feed(&eit1).unwrap();
         assert_eq!(store.service_count(), 1);
 
         // Service 200
         let sr2 = start_raw(2026, 6, 10, 11);
-        let eit2 = eit_pf_section(200, 1, 1, 3, 0, sr2, [1, 0, 0], &desc);
+        let eit2 = serialize_eit(&crate::tables::eit::EitSection::new(
+            crate::tables::eit::EitKind::PresentFollowingActual,
+            0x4Eu8,
+            200,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
+            1,
+            1,
+            0u8,
+            0x5Fu8,
+            vec![crate::tables::eit::EitEvent::new(
+                3,
+                sr2,
+                [1, 0, 0],
+                crate::tables::RunningStatus::Undefined,
+                false,
+                crate::descriptors::DescriptorLoop::new(&desc),
+            )],
+        ));
         store.feed(&eit2).unwrap();
         assert_eq!(store.service_count(), 2);
 
         // Service 300 — a new key at capacity evicts the least-recently
         // touched service (100), instead of being rejected forever.
         let sr3 = start_raw(2026, 6, 10, 12);
-        let eit3 = eit_pf_section(300, 1, 1, 5, 0, sr3, [1, 0, 0], &desc);
+        let eit3 = serialize_eit(&crate::tables::eit::EitSection::new(
+            crate::tables::eit::EitKind::PresentFollowingActual,
+            0x4Eu8,
+            300,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
+            1,
+            1,
+            0u8,
+            0x5Fu8,
+            vec![crate::tables::eit::EitEvent::new(
+                5,
+                sr3,
+                [1, 0, 0],
+                crate::tables::RunningStatus::Undefined,
+                false,
+                crate::descriptors::DescriptorLoop::new(&desc),
+            )],
+        ));
         store.feed(&eit3).unwrap();
         assert_eq!(
             store.service_count(),
@@ -1866,7 +1930,24 @@ mod tests {
         let sr = start_raw(2026, 6, 10, 10);
 
         for service_id in 0..300u16 {
-            let eit = eit_pf_section(service_id, 1, 1, service_id, 0, sr, [1, 0, 0], &desc);
+            let eit = serialize_eit(&crate::tables::eit::EitSection::new(
+                crate::tables::eit::EitKind::PresentFollowingActual,
+                0x4Eu8,
+                service_id,
+                crate::tables::SectionVersion::new(0, true, 0, 0),
+                1,
+                1,
+                0u8,
+                0x5Fu8,
+                vec![crate::tables::eit::EitEvent::new(
+                    service_id,
+                    sr,
+                    [1, 0, 0],
+                    crate::tables::RunningStatus::Undefined,
+                    false,
+                    crate::descriptors::DescriptorLoop::new(&desc),
+                )],
+            ));
             store.feed(&eit).unwrap();
         }
 
@@ -1905,7 +1986,24 @@ mod tests {
             .enumerate()
         {
             let sr = start_raw(2026, 6, 10, *hour);
-            let eit = eit_pf_section(100, 1, 1, *event_id, version as u8, sr, [1, 0, 0], &desc);
+            let eit = serialize_eit(&crate::tables::eit::EitSection::new(
+                crate::tables::eit::EitKind::PresentFollowingActual,
+                0x4Eu8,
+                100,
+                crate::tables::SectionVersion::new(version as u8, true, 0, 0),
+                1,
+                1,
+                0u8,
+                0x5Fu8,
+                vec![crate::tables::eit::EitEvent::new(
+                    *event_id,
+                    sr,
+                    [1, 0, 0],
+                    crate::tables::RunningStatus::Undefined,
+                    false,
+                    crate::descriptors::DescriptorLoop::new(&desc),
+                )],
+            ));
             store.feed(&eit).unwrap();
         }
 
@@ -1929,7 +2027,24 @@ mod tests {
 
         // Version churn on a still-present event_id works in place:
         let sr_v2 = start_raw(2026, 6, 10, 20);
-        let eit_v2 = eit_pf_section(100, 1, 1, 40, 1, sr_v2, [1, 0, 0], &desc);
+        let eit_v2 = serialize_eit(&crate::tables::eit::EitSection::new(
+            crate::tables::eit::EitKind::PresentFollowingActual,
+            0x4Eu8,
+            100,
+            crate::tables::SectionVersion::new(1, true, 0, 0),
+            1,
+            1,
+            0u8,
+            0x5Fu8,
+            vec![crate::tables::eit::EitEvent::new(
+                40,
+                sr_v2,
+                [1, 0, 0],
+                crate::tables::RunningStatus::Undefined,
+                false,
+                crate::descriptors::DescriptorLoop::new(&desc),
+            )],
+        ));
         store.feed(&eit_v2).unwrap();
         assert_eq!(
             store.event_count(),

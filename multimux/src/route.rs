@@ -370,6 +370,17 @@ pub struct ProgramEpoch {
     pub(crate) presentation_origin: SystemTime,
 }
 
+/// What a program's successor needs of it to continue its numbering and timeline: the next media
+/// sequence number, the discontinuity sequence of its newest segment, and its epoch. Taken from
+/// the live [`ProgramServing`] on a reconnect, or from the route this one replaces
+/// ([`RouteHandle::continue_from`]).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ProgramContinuation {
+    next_media_sequence: u64,
+    discontinuity_sequence_after: u64,
+    epoch: ProgramEpoch,
+}
+
 /// The small `Trunk`-drained state DASH/LL-DASH rendering needs beyond any
 /// `Trunk` ring — see this module's own doc. Shared by
 /// [`crate::output::dash::DashOutput`] and
@@ -1114,6 +1125,22 @@ impl ProgramServing {
         self.dash.epoch
     }
 
+    fn continuation(&self) -> ProgramContinuation {
+        ProgramContinuation {
+            // `next_media_sequence()`, not `- 1`: the number the old origin's *open* segment was
+            // shown with is skipped too — its parts were already served and must not be
+            // reissued for different media.
+            next_media_sequence: self
+                .ll_hls
+                .next_media_sequence()
+                // Keep room for the `u32` sequence range `HlsOrigin` validates (unreachable in
+                // practice: 2^64 segments).
+                .min(u64::MAX - u64::from(u32::MAX)),
+            discontinuity_sequence_after: self.ll_hls.discontinuity_sequence_after(),
+            epoch: self.epoch(),
+        }
+    }
+
     /// Runs `f` against this program's `Trunk` segment writer, acquiring it
     /// (from the `Trunk` itself) on first use. `None` if the writer is
     /// unavailable — already taken by a real `crate::source::segment::ProgramSegmenter`
@@ -1476,6 +1503,9 @@ pub struct RouteHandle {
     /// before this check existed; only a *new* [`Self::publish_program`]
     /// call for the same `ProgramId` is affected by this map at all.
     active_publisher: RwLock<HashMap<ProgramId, Arc<Trunk>>>,
+    /// The programs of the route this one replaces ([`Self::continue_from`]): each program's
+    /// first publication on this route continues their numbering and timeline.
+    predecessor: Mutex<HashMap<ProgramId, ProgramContinuation>>,
 }
 
 impl RouteHandle {
@@ -1519,6 +1549,7 @@ impl RouteHandle {
             subtitles: true,
             program_notify: tokio::sync::Notify::new(),
             active_publisher: RwLock::new(HashMap::new()),
+            predecessor: Mutex::new(HashMap::new()),
         }
     }
 
@@ -1560,6 +1591,21 @@ impl RouteHandle {
     pub fn with_max_concurrent_warms(mut self, permits: usize) -> Self {
         self.warms = Arc::new(tokio::sync::Semaphore::new(permits.max(1)));
         self
+    }
+
+    /// Makes this (new) route continue `old`: the first publication of each program `old` served
+    /// carries on from it with the next media sequence number, the discontinuity sequence of
+    /// `old`'s newest segment, its DASH start number and presentation origin, and the segmenter
+    /// marks the first segment discontinuous (`EXT-X-DISCONTINUITY`, a new DASH Period), exactly as
+    /// a reconnect on the same route does. Call before the first program is published.
+    pub(crate) fn continue_from(&self, old: &RouteHandle) {
+        let continuations: HashMap<ProgramId, ProgramContinuation> = old
+            .programs
+            .read()
+            .iter()
+            .map(|(program, serving)| (*program, serving.continuation()))
+            .collect();
+        *self.predecessor.lock() = continuations;
     }
 
     /// The sequence number a replacement of this route must number above: the highest media
@@ -1921,33 +1967,24 @@ impl RouteHandle {
         // fresh `Trunk`, which numbers its segments from 1 again) continues
         // the previous origin's Media Sequence Number, so clients never see
         // it decrease (RFC 8216bis §6.2.2).
-        let seq_offset = programs
+        // The same holds for the first program of a route that replaces another one.
+        let previous = programs
             .get(&program)
-            .map_or(0, |previous| {
-                previous
-                    .ll_hls
-                    // `next_media_sequence()`, not `- 1`: the number the old
-                    // origin's *open* segment was shown with is skipped too —
-                    // its parts were already served and must not be reissued
-                    // for different media.
-                    .next_media_sequence()
-                    // Keep room for the `u32` sequence range `HlsOrigin`
-                    // validates (unreachable in practice: 2^64 segments).
-                    .min(u64::MAX - u64::from(u32::MAX))
-            })
+            .map(|previous| previous.continuation())
+            .or_else(|| self.predecessor.lock().get(&program).copied());
+        let seq_offset = previous
+            .map_or(0, |previous| previous.next_media_sequence)
             // ...and never at or below what the DVR archive already holds
             // (a previous process's numbers).
             .max(u64::from(self.archive_floor));
-        let previous_epoch = programs.get(&program).map(|previous| previous.epoch());
+        let previous_epoch = previous.map(|previous| previous.epoch);
         let epoch = ProgramEpoch {
             seq_offset,
             media_start_ns: previous_epoch.map_or(0, |e| {
                 let slots = seq_offset.saturating_add(1).saturating_sub(e.first_number);
                 (slots as f64 * self.target_duration_secs * 1e9) as u64
             }),
-            discontinuity_sequence: programs
-                .get(&program)
-                .map_or(0, |previous| previous.ll_hls.discontinuity_sequence_after()),
+            discontinuity_sequence: previous.map_or(0, |p| p.discontinuity_sequence_after),
             first_number: previous_epoch.map_or(seq_offset.saturating_add(1), |e| e.first_number),
             presentation_origin: previous_epoch
                 .map_or_else(SystemTime::now, |e| e.presentation_origin),
@@ -2777,6 +2814,49 @@ mod program_registry_tests {
                 .lines()
                 .any(|l| l.starts_with("seg-1-") && l.ends_with("-4.m4s")),
             "{playlist}"
+        );
+    }
+
+    /// A route that replaces another continues its numbering: its first program's media
+    /// sequence number starts above the replaced route's next one, its epoch (DASH start number,
+    /// media timeline start) carries on, and the replaced route's own numbering is untouched.
+    #[test]
+    fn a_replacing_route_continues_the_replaced_routes_numbering() {
+        let old = RouteHandle::new(4.0, 500, 4).with_archive_floor(41);
+        let trunk = test_trunk();
+        old.publish_program(ProgramId(1), Arc::clone(&trunk));
+        let old_next = old
+            .ll_hls(ProgramId(1))
+            .expect("origin")
+            .next_media_sequence();
+        assert_eq!(old_next, 42);
+
+        let successor = RouteHandle::new(4.0, 500, 4);
+        successor.continue_from(&old);
+        successor.publish_program(ProgramId(1), test_trunk());
+        let origin = successor.ll_hls(ProgramId(1)).expect("origin");
+        assert_eq!(origin.media_sequence_offset(), old_next);
+        assert_eq!(origin.next_media_sequence(), old_next + 1);
+        let (old_epoch, epoch) = (
+            old.epoch(ProgramId(1)).expect("old epoch"),
+            successor.epoch(ProgramId(1)).expect("epoch"),
+        );
+        assert_eq!(epoch.first_number, old_epoch.first_number);
+        assert_eq!(epoch.presentation_origin, old_epoch.presentation_origin);
+        assert!(
+            epoch.media_start_ns > 0,
+            "the timeline carries on, so the segmenter marks a discontinuity"
+        );
+
+        let unrelated = RouteHandle::new(4.0, 500, 4);
+        unrelated.publish_program(ProgramId(1), test_trunk());
+        assert_eq!(
+            unrelated
+                .ll_hls(ProgramId(1))
+                .expect("origin")
+                .media_sequence_offset(),
+            0,
+            "a route that replaces nothing starts from zero"
         );
     }
 

@@ -193,7 +193,6 @@ impl EvcVideoDescriptor {
 impl_h222_descriptor!(EvcVideoDescriptor, TAG, "EvcVideoDescriptor", "EVC_VIDEO");
 
 #[cfg(test)]
-#[allow(clippy::unusual_byte_groupings)] // bit-field-wise literals mirror the syntax tables
 mod tests {
     use super::*;
     use alloc::vec;
@@ -214,10 +213,10 @@ mod tests {
             0,
             0,
             2,
-            0b1001_1_1_0_1,
-            0b01_11_0001,
-            0b11111_000,
-            0b11111_010,
+            0b1001_1101,
+            0b0111_0001,
+            0b1111_1000,
+            0b1111_1010,
         ];
         let mut b = vec![TAG, body.len() as u8];
         b.extend_from_slice(&body);

@@ -323,8 +323,6 @@ mod tests {
     // Binary literals here are grouped by *wire field boundaries* (e.g.
     // `0b1_01_10101` = a 1-bit, 2-bit and 5-bit field) to document the layout,
     // not by nibbles.
-    #![allow(clippy::unusual_byte_groupings)]
-
     use super::*;
 
     #[test]
@@ -336,7 +334,7 @@ mod tests {
         w.write_bits(0b10101, 5).unwrap();
         assert_eq!(w.bits_written(), 8);
         // 1 01 10101 = 0b1_01_10101 = 0xB5
-        assert_eq!(buf[0], 0b1_01_10101);
+        assert_eq!(buf[0], 0b10110101);
 
         let mut r = BitReader::new(&buf);
         assert_eq!(r.read_bits(1).unwrap(), 0b1);

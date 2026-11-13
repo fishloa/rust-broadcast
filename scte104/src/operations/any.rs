@@ -21,7 +21,7 @@ macro_rules! declare_operations {
         #[non_exhaustive]
         pub enum AnyOperation<$lt> {
             $(
-                #[allow(missing_docs)]
+                #[doc = concat!(stringify!($variant), " operation.")]
                 $variant($ty),
             )+
             /// An `opID` with no typed implementation; `body` is the raw

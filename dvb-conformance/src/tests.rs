@@ -190,10 +190,7 @@ fn build_pmt_section_versioned(
 ) -> Vec<u8> {
     let pmt = PmtSection::new(
         program_number,
-        version,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(version, true, 0, 0),
         Pid::new(pcr_pid),
         Default::default(),
         es_pids
@@ -1145,7 +1142,13 @@ fn cat_error_absent_when_cat_seen_then_scrambled() {
 
 /// Build an SDT_actual section's wire bytes.
 fn build_sdt_actual_section() -> Vec<u8> {
-    let sdt = SdtSection::new(SdtKind::Actual, 1, 0, true, 0, 0, 1, vec![]);
+    let sdt = SdtSection::new(
+        SdtKind::Actual,
+        1,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
+        1,
+        vec![],
+    );
     let mut buf = vec![0u8; sdt.serialized_len()];
     sdt.serialize_into(&mut buf).unwrap();
     buf
@@ -1156,10 +1159,7 @@ fn build_nit_actual_section() -> Vec<u8> {
     let nit = NitSection::new(
         NitKind::Actual,
         1,
-        0,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
         DescriptorLoop::new(&[]),
         vec![],
     );
@@ -1174,10 +1174,7 @@ fn build_eit_pf_actual_section() -> Vec<u8> {
         EitKind::PresentFollowingActual,
         dvb_si::tables::eit::TABLE_ID_PF_ACTUAL,
         1,
-        0,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
         1,
         1,
         0,
@@ -2029,10 +2026,7 @@ fn build_nit_actual_section_numbered(section_number: u8) -> Vec<u8> {
     let nit = NitSection::new(
         NitKind::Actual,
         1,
-        0,
-        true,
-        section_number,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, section_number, 0),
         DescriptorLoop::new(&[]),
         vec![],
     );
@@ -2043,7 +2037,13 @@ fn build_nit_actual_section_numbered(section_number: u8) -> Vec<u8> {
 
 /// Build an SDT_actual section with a specific section_number.
 fn build_sdt_actual_section_numbered(section_number: u8) -> Vec<u8> {
-    let sdt = SdtSection::new(SdtKind::Actual, 1, 0, true, section_number, 0, 1, vec![]);
+    let sdt = SdtSection::new(
+        SdtKind::Actual,
+        1,
+        dvb_si::tables::SectionVersion::new(0, true, section_number, 0),
+        1,
+        vec![],
+    );
     let mut buf = vec![0u8; sdt.serialized_len()];
     sdt.serialize_into(&mut buf).unwrap();
     buf
@@ -2060,10 +2060,7 @@ fn build_eit_pf_actual_section_keyed(
         EitKind::PresentFollowingActual,
         dvb_si::tables::eit::TABLE_ID_PF_ACTUAL,
         service_id,
-        0,
-        true,
-        section_number,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, section_number, 0),
         ts_id,
         onw_id,
         0,
@@ -2080,10 +2077,7 @@ fn build_nit_other_section(section_number: u8) -> Vec<u8> {
     let nit = NitSection::new(
         NitKind::Other,
         1,
-        0,
-        true,
-        section_number,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, section_number, 0),
         DescriptorLoop::new(&[]),
         vec![],
     );
@@ -2094,7 +2088,13 @@ fn build_nit_other_section(section_number: u8) -> Vec<u8> {
 
 /// Build an SDT_other section (table_id 0x46) with specific section_number.
 fn build_sdt_other_section(section_number: u8) -> Vec<u8> {
-    let sdt = SdtSection::new(SdtKind::Other, 1, 0, true, section_number, 0, 1, vec![]);
+    let sdt = SdtSection::new(
+        SdtKind::Other,
+        1,
+        dvb_si::tables::SectionVersion::new(0, true, section_number, 0),
+        1,
+        vec![],
+    );
     let mut buf = vec![0u8; sdt.serialized_len()];
     sdt.serialize_into(&mut buf).unwrap();
     buf
@@ -2106,10 +2106,7 @@ fn build_eit_other_section(section_number: u8) -> Vec<u8> {
         EitKind::PresentFollowingOther,
         dvb_si::tables::eit::TABLE_ID_PF_OTHER,
         1,
-        0,
-        true,
-        section_number,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, section_number, 0),
         1,
         1,
         0,
@@ -2853,10 +2850,7 @@ fn rig_nit_bytes(kind: NitKind, section_number: u8) -> Vec<u8> {
     let nit = NitSection::new(
         kind,
         1,
-        0,
-        true,
-        section_number,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, section_number, 0),
         DescriptorLoop::new(&[]),
         vec![],
     );
@@ -2870,10 +2864,7 @@ fn rig_eit_pf_bytes(section_number: u8, service_id: u16) -> Vec<u8> {
         EitKind::PresentFollowingActual,
         dvb_si::tables::eit::TABLE_ID_PF_ACTUAL,
         service_id,
-        0,
-        true,
-        section_number,
-        0,
+        dvb_si::tables::SectionVersion::new(0, true, section_number, 0),
         1,
         1,
         0,

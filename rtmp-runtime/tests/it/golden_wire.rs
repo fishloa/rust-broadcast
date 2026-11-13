@@ -19,7 +19,6 @@ fn hex(label: &str, bytes: &[u8], out: &mut String) {
 }
 
 // `ClientConfig` is `#[non_exhaustive]`: outside its crate a struct expression is not allowed.
-#[allow(clippy::field_reassign_with_default)]
 #[test]
 fn client_publish_transcript_is_byte_identical() {
     let mut cfg = ClientConfig::default();

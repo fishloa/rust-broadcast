@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 pub mod live_fuzz_driver;
 
 use std::collections::HashMap;
@@ -10,7 +9,6 @@ use dash_runtime::selection::RepRef;
 use url::Url;
 
 pub struct Loaded {
-    pub path: PathBuf,
     pub mpd: Mpd,
     pub url: Url,
 }
@@ -21,7 +19,7 @@ pub fn load(rel: &str) -> Loaded {
     let mpd = Mpd::parse(&bytes).unwrap_or_else(|e| panic!("{rel}: {e}"));
     let path = std::fs::canonicalize(&path).unwrap();
     let url = Url::from_file_path(&path).unwrap();
-    Loaded { path, mpd, url }
+    Loaded { mpd, url }
 }
 
 impl Loaded {

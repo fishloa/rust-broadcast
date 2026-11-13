@@ -76,7 +76,8 @@ fn t05_awaiting_first_sample_moves_to_playing_and_resets_attempts() {
     c.feed(D.as_slice(), 6);
     let mut saw_sample = false;
     while let Some(e) = c.poll_event() {
-        if matches!(e, Event::Demux(transmux::DemuxEvent::Sample { .. })) {
+        if matches!(e, Event::Demux(ev) if matches!(ev.as_ref(), transmux::DemuxEvent::Sample { .. }))
+        {
             saw_sample = true;
         }
     }

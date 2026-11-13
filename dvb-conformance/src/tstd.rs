@@ -158,7 +158,6 @@ pub(crate) struct StdBuffer {
     first_byte_arrival: Option<Duration>,
     /// Whether this buffer has been empty at least once since the last
     /// empty-interval check (indicator 3.9).
-    #[allow(dead_code)]
     empty_since_check: bool,
     /// End of the current empty-interval (indicator 3.9) check window.
     ///
@@ -168,7 +167,6 @@ pub(crate) struct StdBuffer {
     /// the empty-interval check fired on the very first packet. The window is
     /// now `None` until the model is anchored to the first observed `t`, and
     /// each window ends one interval after the previous one.
-    #[allow(dead_code)]
     next_check_at: Option<Duration>,
 }
 
@@ -228,7 +226,6 @@ impl StdBuffer {
 
     /// Check whether the buffer overflows at time `now` given `n` incoming
     /// bytes (without actually feeding them — a peek).
-    #[allow(dead_code)]
     pub(crate) fn would_overflow(&self, bytes: u64, now: Duration) -> bool {
         let elapsed_us = now.saturating_sub(self.last_drain).as_micros() as u64;
         let drain_bytes = self.drain_bytes(elapsed_us);
@@ -252,13 +249,6 @@ impl StdBuffer {
         (elapsed_us * self.leak_rate) / 1_000_000
     }
 
-    /// The time at which the oldest byte currently in this buffer arrived.
-    /// `None` if the buffer is empty.
-    #[allow(dead_code)]
-    pub(crate) fn first_byte_arrival(&self) -> Option<Duration> {
-        self.first_byte_arrival
-    }
-
     /// Maximum data delay (in seconds) for bytes currently in this buffer.
     pub(crate) fn delay_secs(&self, now: Duration) -> Option<f64> {
         self.first_byte_arrival
@@ -266,7 +256,6 @@ impl StdBuffer {
     }
 
     /// Current occupancy in bytes.
-    #[allow(dead_code)]
     pub(crate) fn occupancy(&self) -> u64 {
         self.occupancy
     }
@@ -315,7 +304,6 @@ pub(crate) struct PidStdState {
     /// The transport buffer TBn for this PID (512 bytes capacity).
     pub(crate) tb: StdBuffer,
     /// Time this PID first became tracked.
-    #[allow(dead_code)]
     pub(crate) first_seen: Duration,
     /// Accumulated bytes since first_seen (for estimating effective bitrate).
     pub(crate) total_bytes: u64,

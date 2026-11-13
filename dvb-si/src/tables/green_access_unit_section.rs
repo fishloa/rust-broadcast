@@ -133,7 +133,6 @@ impl<'a> crate::traits::TableDef<'a> for GreenAccessUnitSection<'a> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unusual_byte_groupings)] // bit-field-wise literals mirror the syntax tables
 mod tests {
     use super::*;
     use alloc::vec;

@@ -198,50 +198,85 @@ async fn run_hold(route_handle: Arc<RouteHandle>) -> multimux::Result<()> {
     Ok(())
 }
 
-/// A steady live source: one 30 fps AVC track whose segments close every `TICKER_GOP` frames,
-/// published for as long as the route runs (the `instant` source only emits one burst).
-async fn run_ticker(route: Arc<RouteHandle>) -> multimux::Result<()> {
-    const TICKER_GOP: u32 = 6;
-    let spec = TrackSpec::new(
-        TrackId::new(1),
-        VIDEO_TIMESCALE,
-        CodecConfig::Avc {
-            config: transmux::avc_config_from_sprop(SPROP).expect("valid sprop"),
-            width: 0,
-            height: 0,
-        },
+/// A steady live source for the production segmenting path: announces one program and then
+/// publishes one 30 fps AVC sample per `feed`, a sync sample every `TICKER_GOP` frames.
+struct TickerSession {
+    pending: VecDeque<SessionEvent>,
+    frame: u32,
+}
+
+const TICKER_GOP: u32 = 6;
+
+impl Stage for TickerSession {
+    type In<'a> = &'a [u8];
+    type Out = SessionEvent;
+    type Error = Infallible;
+
+    fn demand(&self) -> Demand {
+        Demand::new(1)
+    }
+
+    fn feed(&mut self, _input: &[u8], _now: Timestamp) -> Result<(), Infallible> {
+        if self.frame == 0 {
+            self.pending.push_back(SessionEvent::NewProgram {
+                program: ProgramId(0),
+                tracks: vec![instant_track_spec()],
+            });
+        }
+        let pts = i64::from(self.frame) * i64::from(FRAME_DUR);
+        self.pending.push_back(SessionEvent::Sample {
+            program: ProgramId(0),
+            track_id: TrackId::new(1),
+            retention: RetentionClass::Timed,
+            sample: Sample::new(
+                vec![0xAA; 32],
+                Some(pts),
+                Some(pts),
+                Some(FRAME_DUR),
+                self.frame.is_multiple_of(TICKER_GOP),
+            ),
+        });
+        self.frame += 1;
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Option<SessionEvent> {
+        self.pending.pop_front()
+    }
+
+    fn finish(&mut self) -> Result<(), Infallible> {
+        Ok(())
+    }
+}
+
+impl IngestSession for TickerSession {
+    type Request = Infallible;
+}
+
+/// Feeds a [`TickerSession`] through the real driver, segmenter and publisher
+/// (`advance_route`) at 30 frames per second until the supervisor stops it.
+async fn run_ticker(route_handle: Arc<RouteHandle>) -> multimux::Result<()> {
+    let session = TickerSession {
+        pending: VecDeque::from([SessionEvent::Established]),
+        frame: 0,
+    };
+    let trunk_config = TrunkConfig::default()
+        .with_timed_capacity(nz(256))
+        .with_sparse_capacity(nz(16))
+        .with_segment_capacity(nz(16))
+        .with_event_capacity(nz(64))
+        .with_part_capacity(nz(256));
+    let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
+    let mut driver: IngestDriver<TickerSession> = IngestDriver::new(
+        session,
+        media_plane::IngestConfig::new(handshake).with_trunk(trunk_config),
     );
-    let mut segmenter =
-        transmux::ll_hls::LlHlsSegmenter::with_part_target(vec![spec], VIDEO_TIMESCALE, 0.2, 50)
-            .expect("segmenter builds");
-    let program = media_plane::ProgramId(0);
-    let _trunk = route.publish_new_program(program);
-    route.set_init(program, segmenter.init_segment().expect("init segment"));
-    route.set_health(multimux::route::HealthState::Live);
+    let mut progress = DriverProgress::new();
     let mut ticker = tokio::time::interval(Duration::from_millis(1000 / 30));
-    let mut frame = 0u32;
     loop {
         ticker.tick().await;
-        let pts = i64::from(frame) * i64::from(FRAME_DUR);
-        segmenter
-            .push(
-                TrackId::new(1),
-                Sample::new(
-                    vec![0xAA; 64],
-                    Some(pts),
-                    Some(pts),
-                    Some(FRAME_DUR),
-                    frame.is_multiple_of(TICKER_GOP),
-                ),
-            )
-            .expect("push");
-        for part in segmenter.take_ready_parts() {
-            route.add_part(program, part);
-        }
-        for segment in segmenter.take_ready_segments() {
-            route.add_segment(program, segment).expect("segment");
-        }
-        frame += 1;
+        driver.feed(&[], Timestamp::from_nanos(0));
+        advance_route(&driver, &route_handle, &mut progress).await;
     }
 }
 
@@ -1269,6 +1304,180 @@ async fn removing_a_route_answers_a_parked_blocking_reload_with_404() {
         .expect("the viewer is answered")
         .expect("viewer task");
     assert_eq!(ended, reqwest::StatusCode::NOT_FOUND);
+
+    server.abort();
+    let _ = std::fs::remove_file(&config_path);
+}
+
+/// A changed route's replacement continues the playlist the viewers follow: its media sequence
+/// numbers climb on from the replaced route's, the first segment it publishes carries
+/// `EXT-X-DISCONTINUITY` (and no other segment does), and `EXT-X-DISCONTINUITY-SEQUENCE` counts the
+/// discontinuities the replaced route's playlist already showed (RFC 8216bis section 6.2.2).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_changed_routes_replacement_continues_numbering_with_a_discontinuity() {
+    let (media_addr, media_listener) = bind_tcp();
+    let (admin_addr, admin_listener) = bind_tcp();
+    let config_path = std::env::temp_dir().join(format!(
+        "multimux-admin-api-test-continue-{}-{}.json",
+        std::process::id(),
+        admin_addr.port()
+    ));
+    let with_version = |version: u32| {
+        let mut route = instant_route("live");
+        route.outputs = vec![OutputKind::LlHls, OutputKind::Dash];
+        route.input = InputSpec::Custom {
+            type_tag: "ticker".to_string(),
+            params: serde_json::json!({ "version": version }),
+        };
+        admin_config(media_addr, admin_addr, vec![route])
+    };
+    std::fs::write(
+        &config_path,
+        serde_json::to_string_pretty(&initial_as_json(&with_version(1))).expect("serialize"),
+    )
+    .expect("write config");
+    let server = tokio::spawn(serve_config_file_with_registry_on_admin(
+        media_listener,
+        admin_listener,
+        config_path.clone(),
+        instant_registry(),
+    ));
+    wait_for_port(admin_addr).await;
+    let client = reqwest::Client::new();
+    let url = media_playlist_url(media_addr, "live");
+
+    // Let the first route publish a few segments, then read its playlist as the viewers see it.
+    let old = loop {
+        let body = wait_until_live(&client, media_addr, "live").await;
+        let playlist = broadcast_hls::MediaPlaylist::parse(&body).expect("old playlist parses");
+        if playlist.segments.len() >= 3 {
+            break playlist;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    };
+    let old_last = old.media_sequence + old.segments.len() as u64 - 1;
+    let mpd_url = format!("http://{media_addr}/live/manifest.mpd");
+    let old_mpd = client
+        .get(&mpd_url)
+        .send()
+        .await
+        .expect("old mpd")
+        .text()
+        .await
+        .expect("old mpd body");
+    let before = admin_get(&client, admin_addr, "/admin/routes/live")
+        .await
+        .json::<serde_json::Value>()
+        .await
+        .expect("status before");
+
+    std::fs::write(
+        &config_path,
+        serde_json::to_string_pretty(&initial_as_json(&with_version(2))).expect("serialize"),
+    )
+    .expect("rewrite config");
+    let reload = admin_json(
+        &client,
+        admin_addr,
+        reqwest::Method::POST,
+        "/admin/reload",
+        Some(ADMIN_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(reload.status(), reqwest::StatusCode::OK);
+
+    // The first segment the replacement closes.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    let new = loop {
+        let after = admin_get(&client, admin_addr, "/admin/routes/live")
+            .await
+            .json::<serde_json::Value>()
+            .await
+            .expect("status after");
+        if created_at_nanos(&before) != created_at_nanos(&after)
+            && let Ok(resp) = client.get(&url).send().await
+            && resp.status() == reqwest::StatusCode::OK
+            && let Ok(body) = resp.text().await
+            && let Ok(playlist) = broadcast_hls::MediaPlaylist::parse(&body)
+            && !playlist.segments.is_empty()
+        {
+            break (playlist, body);
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the replacement never published a segment"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    };
+    let (new, new_text) = new;
+
+    assert!(
+        new.media_sequence > old_last,
+        "media sequence {} does not continue past the replaced route's {old_last}",
+        new.media_sequence
+    );
+    assert!(new.segments[0].discontinuous, "{new_text}");
+    assert!(
+        new.segments[1..]
+            .iter()
+            .all(|segment| !segment.discontinuous),
+        "only the replacement's first segment is a discontinuity: {new_text}"
+    );
+    let old_tagged = old.segments.iter().filter(|s| s.discontinuous).count() as u64;
+    assert_eq!(
+        new.discontinuity_sequence,
+        old.discontinuity_sequence + old_tagged,
+        "{new_text}"
+    );
+    let lines: Vec<&str> = new_text.lines().collect();
+    let tag_lines: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| **l == "#EXT-X-DISCONTINUITY")
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(
+        tag_lines.len(),
+        1,
+        "exactly one discontinuity tag: {new_text}"
+    );
+    let first_segment_line = lines
+        .iter()
+        .position(|l| *l == new.segments[0].uri)
+        .expect("first segment line");
+    let segment_lines_between = lines[tag_lines[0]..first_segment_line]
+        .iter()
+        .filter(|l| !l.starts_with('#'))
+        .count();
+    assert_eq!(
+        segment_lines_between, 0,
+        "the tag belongs to the first segment, with no other segment between: {new_text}"
+    );
+    // DASH: the replacement keeps the presentation origin and the start number, so the
+    // timeline and the segment numbers carry on in the same single Period.
+    let attribute = |text: &str, name: &str| -> String {
+        let start = text.find(&format!("{name}=\"")).expect(name) + name.len() + 2;
+        text[start..].split('"').next().expect("value").to_string()
+    };
+    let new_mpd = client
+        .get(&mpd_url)
+        .send()
+        .await
+        .expect("new mpd")
+        .text()
+        .await
+        .expect("new mpd body");
+    assert_eq!(
+        attribute(&new_mpd, "availabilityStartTime"),
+        attribute(&old_mpd, "availabilityStartTime"),
+        "{new_mpd}"
+    );
+    assert_eq!(
+        attribute(&new_mpd, "startNumber"),
+        attribute(&old_mpd, "startNumber"),
+        "{new_mpd}"
+    );
 
     server.abort();
     let _ = std::fs::remove_file(&config_path);

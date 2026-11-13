@@ -16,10 +16,7 @@ fn sdt_section() -> Vec<u8> {
     let sdt = SdtSection::new(
         SdtKind::Actual,
         0x1234,
-        3,
-        true,
-        0,
-        0,
+        dvb_si::tables::SectionVersion::new(3, true, 0, 0),
         0x5678,
         vec![
             SdtService::new(

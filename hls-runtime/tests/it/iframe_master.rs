@@ -1,5 +1,4 @@
 #![cfg(feature = "std")]
-#![allow(clippy::vec_init_then_push)]
 //! I-frame master playlist advertising (P2b).
 
 use std::num::NonZeroUsize;
@@ -199,17 +198,18 @@ fn iframe_master_d3prime_unavailable_omitted() {
         .find(|t| matches!(t.config(), CodecConfig::Avc { .. }))
         .expect("video");
     let samples_n = 5usize.min(video.samples.len()).min(audio.samples.len());
-    let mut frags = Vec::new();
-    frags.push(FragmentTrackData::new(
-        audio.track_id(),
-        audio.start_decode_time,
-        &audio.samples[..samples_n],
-    ));
-    frags.push(FragmentTrackData::new(
-        video.track_id(),
-        video.start_decode_time,
-        &video.samples[..samples_n],
-    ));
+    let frags = vec![
+        FragmentTrackData::new(
+            audio.track_id(),
+            audio.start_decode_time,
+            &audio.samples[..samples_n],
+        ),
+        FragmentTrackData::new(
+            video.track_id(),
+            video.start_decode_time,
+            &video.samples[..samples_n],
+        ),
+    ];
     let seg_bytes = build_media_segment(1, &frags).expect("segment");
 
     let (_trunk, origin, writer) = origin_fmp4(64);

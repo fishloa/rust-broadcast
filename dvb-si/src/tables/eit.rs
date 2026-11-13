@@ -131,16 +131,13 @@ pub struct EitSection<'a> {
 
 impl<'a> EitSection<'a> {
     /// Construct an EIT section with the spec `reserved` fill.
-    #[must_use]
     #[allow(clippy::too_many_arguments)]
+    #[must_use]
     pub fn new(
         kind: EitKind,
         table_id: u8,
         service_id: u16,
-        version_number: u8,
-        current_next_indicator: bool,
-        section_number: u8,
-        last_section_number: u8,
+        section: crate::tables::SectionVersion,
         transport_stream_id: u16,
         original_network_id: u16,
         segment_last_section_number: u8,
@@ -151,10 +148,10 @@ impl<'a> EitSection<'a> {
             kind,
             table_id,
             service_id,
-            version_number,
-            current_next_indicator,
-            section_number,
-            last_section_number,
+            version_number: section.version_number,
+            current_next_indicator: section.current_next_indicator,
+            section_number: section.section_number,
+            last_section_number: section.last_section_number,
             transport_stream_id,
             original_network_id,
             segment_last_section_number,
@@ -407,7 +404,6 @@ impl<'a> EitEvent<'a> {
     /// This is the stable public constructor — the `start_time_raw` and
     /// `duration_raw` fields are `pub(crate)` for in-crate parse/serialize
     /// only.
-    #[allow(clippy::too_many_arguments)]
     #[must_use]
     pub fn new(
         event_id: u16,
@@ -598,10 +594,7 @@ mod tests {
             EitKind::PresentFollowingActual,
             TABLE_ID_PF_ACTUAL,
             0x0100,
-            3,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(3, true, 0, 0),
             0x1234,
             0x0020,
             0,
@@ -805,10 +798,7 @@ mod tests {
             EitKind::PresentFollowingActual,
             TABLE_ID_PF_ACTUAL,
             1,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             1,
             1,
             0,
@@ -836,10 +826,7 @@ mod tests {
             EitKind::PresentFollowingActual,
             TABLE_ID_PF_ACTUAL,
             1,
-            0,
-            true,
-            0,
-            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
             1,
             1,
             0,

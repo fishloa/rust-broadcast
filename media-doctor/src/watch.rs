@@ -969,10 +969,7 @@ pub(crate) mod tests {
             .collect();
         let pmt = PmtSection::new(
             1,
-            version,
-            true,
-            0,
-            0,
+            dvb_si::tables::SectionVersion::new(version, true, 0, 0),
             streams
                 .first()
                 .map(|s| s.elementary_pid)
@@ -999,10 +996,7 @@ pub(crate) mod tests {
         use dvb_si::tables::pmt::{PmtSection, PmtStream};
         let pmt = PmtSection::new(
             program_number,
-            version,
-            true,
-            0,
-            0,
+            dvb_si::tables::SectionVersion::new(version, true, 0, 0),
             elem_pid,
             DescriptorLoop::new(&[]),
             alloc::vec![PmtStream::new(
@@ -1236,10 +1230,7 @@ pub(crate) mod tests {
 
         let pmt = PmtSection::new(
             1,
-            0,
-            true,
-            0,
-            0,
+            dvb_si::tables::SectionVersion::new(0, true, 0, 0),
             wk::NULL,
             DescriptorLoop::new(&[]),
             alloc::vec![PmtStream::new(
@@ -1363,10 +1354,7 @@ pub(crate) mod tests {
 
         let pmt = PmtSection::new(
             1,
-            0,
-            true,
-            0,
-            0,
+            dvb_si::tables::SectionVersion::new(0, true, 0, 0),
             wk::NULL,
             DescriptorLoop::new(&[]),
             alloc::vec![PmtStream::new(
@@ -1489,10 +1477,7 @@ pub(crate) mod tests {
 
         let pmt = PmtSection::new(
             1,
-            0,
-            true,
-            0,
-            0,
+            dvb_si::tables::SectionVersion::new(0, true, 0, 0),
             VIDEO_PID,
             DescriptorLoop::new(&[]),
             alloc::vec![PmtStream::new(
@@ -1609,10 +1594,7 @@ pub(crate) mod tests {
         let pmt_for = |version: u8, stream_type: StreamType| -> alloc::vec::Vec<u8> {
             let pmt = PmtSection::new(
                 1,
-                version,
-                true,
-                0,
-                0,
+                dvb_si::tables::SectionVersion::new(version, true, 0, 0),
                 MIXED_PID,
                 DescriptorLoop::new(&[]),
                 alloc::vec![PmtStream::new(

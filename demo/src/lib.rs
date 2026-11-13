@@ -1306,15 +1306,10 @@ mod tests {
         pat.serialize_into(&mut pat_bytes).unwrap();
 
         let pmt = PmtSection::new(
-            1,
-            0,
-            true,
-            0,
-            0,
-            wk::NULL, // no PCR for this program
-            DescriptorLoop::new(&[]),
-            vec![PmtStream::new(StreamType::Scte35, SCTE35_PID, DescriptorLoop::new(&[]))],
-        );
+            1, dvb_si::tables::SectionVersion::new(0, true, 0, 0), 
+            wk::NULL,  // no PCR for this program
+            DescriptorLoop::new(&[]), 
+            vec![PmtStream::new(StreamType::Scte35, SCTE35_PID, DescriptorLoop::new(&[]))]);
         let mut pmt_bytes = vec![0u8; pmt.serialized_len()];
         pmt.serialize_into(&mut pmt_bytes).unwrap();
 

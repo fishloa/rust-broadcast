@@ -59,33 +59,49 @@ broadcast_common::impl_spec_display!(DeviceRestrictions);
 /// so the wire byte round-trips.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[allow(missing_docs)] // variant names are the spec's own Table 22 names
 #[rustfmt::skip] // deliberate column-aligned table (values in from_u8/to_u8)
 #[non_exhaustive]
 pub enum SegmentationUpidType {
+    /// NotUsed (0x00).
     NotUsed,               // 0x00
+    /// UserDefinedDeprecated (0x01).
     UserDefinedDeprecated, // 0x01
+    /// Isci (0x02).
     Isci,                  // 0x02
+    /// AdId (0x03).
     AdId,                  // 0x03
+    /// Umid (0x04).
     Umid,                  // 0x04
+    /// IsanDeprecated (0x05).
     IsanDeprecated,        // 0x05
+    /// Isan (0x06).
     Isan,                  // 0x06
+    /// Tid (0x07).
     Tid,                   // 0x07
+    /// Ti (0x08).
     Ti,                    // 0x08
+    /// Adi (0x09).
     Adi,                   // 0x09
+    /// Eidr (0x0A).
     Eidr,                  // 0x0A
+    /// AtscContentIdentifier (0x0B).
     AtscContentIdentifier, // 0x0B
+    /// Mpu (0x0C).
     Mpu,                   // 0x0C
+    /// Mid (0x0D).
     Mid,                   // 0x0D
+    /// AdsInformation (0x0E).
     AdsInformation,        // 0x0E
+    /// Uri (0x0F).
     Uri,                   // 0x0F
+    /// Uuid (0x10).
     Uuid,                  // 0x10
+    /// Scr (0x11).
     Scr,                   // 0x11
     /// Any reserved / future value (0x12..=0xFF), carried verbatim.
     Reserved(u8),
 }
 
-#[allow(missing_docs)]
 impl SegmentationUpidType {
     /// Decode the 8-bit `segmentation_upid_type` byte.
     #[must_use]
@@ -173,63 +189,109 @@ broadcast_common::impl_spec_display!(SegmentationUpidType, Reserved);
 /// [`SegmentationTypeId::Reserved`] so the wire byte round-trips.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[allow(missing_docs)] // variant names are the spec's own Table 23 names
 #[rustfmt::skip] // deliberate column-aligned table (values in from_u8/to_u8)
 #[non_exhaustive]
 pub enum SegmentationTypeId {
+    /// NotIndicated (0x00).
     NotIndicated,                                // 0x00
+    /// ContentIdentification (0x01).
     ContentIdentification,                       // 0x01
+    /// Private (0x02).
     Private,                                     // 0x02
+    /// ProgramStart (0x10).
     ProgramStart,                                // 0x10
+    /// ProgramEnd (0x11).
     ProgramEnd,                                  // 0x11
+    /// ProgramEarlyTermination (0x12).
     ProgramEarlyTermination,                     // 0x12
+    /// ProgramBreakaway (0x13).
     ProgramBreakaway,                            // 0x13
+    /// ProgramResumption (0x14).
     ProgramResumption,                           // 0x14
+    /// ProgramRunoverPlanned (0x15).
     ProgramRunoverPlanned,                       // 0x15
+    /// ProgramRunoverUnplanned (0x16).
     ProgramRunoverUnplanned,                     // 0x16
+    /// ProgramOverlapStart (0x17).
     ProgramOverlapStart,                         // 0x17
+    /// ProgramBlackoutOverride (0x18).
     ProgramBlackoutOverride,                     // 0x18
+    /// ProgramJoin (0x19).
     ProgramJoin,                                 // 0x19
+    /// ProgramImmediateResumption (0x1A).
     ProgramImmediateResumption,                  // 0x1A
+    /// ChapterStart (0x20).
     ChapterStart,                                // 0x20
+    /// ChapterEnd (0x21).
     ChapterEnd,                                  // 0x21
+    /// BreakStart (0x22).
     BreakStart,                                  // 0x22
+    /// BreakEnd (0x23).
     BreakEnd,                                     // 0x23
+    /// OpeningCreditStart (0x24).
     OpeningCreditStart,                          // 0x24
+    /// OpeningCreditEnd (0x25).
     OpeningCreditEnd,                            // 0x25
+    /// ClosingCreditStart (0x26).
     ClosingCreditStart,                          // 0x26
+    /// ClosingCreditEnd (0x27).
     ClosingCreditEnd,                            // 0x27
+    /// ProviderAdvertisementStart (0x30).
     ProviderAdvertisementStart,                  // 0x30
+    /// ProviderAdvertisementEnd (0x31).
     ProviderAdvertisementEnd,                    // 0x31
+    /// DistributorAdvertisementStart (0x32).
     DistributorAdvertisementStart,               // 0x32
+    /// DistributorAdvertisementEnd (0x33).
     DistributorAdvertisementEnd,                 // 0x33
+    /// ProviderPlacementOpportunityStart (0x34).
     ProviderPlacementOpportunityStart,           // 0x34
+    /// ProviderPlacementOpportunityEnd (0x35).
     ProviderPlacementOpportunityEnd,             // 0x35
+    /// DistributorPlacementOpportunityStart (0x36).
     DistributorPlacementOpportunityStart,        // 0x36
+    /// DistributorPlacementOpportunityEnd (0x37).
     DistributorPlacementOpportunityEnd,          // 0x37
+    /// ProviderOverlayPlacementOpportunityStart (0x38).
     ProviderOverlayPlacementOpportunityStart,    // 0x38
+    /// ProviderOverlayPlacementOpportunityEnd (0x39).
     ProviderOverlayPlacementOpportunityEnd,      // 0x39
+    /// DistributorOverlayPlacementOpportunityStart (0x3A).
     DistributorOverlayPlacementOpportunityStart, // 0x3A
+    /// DistributorOverlayPlacementOpportunityEnd (0x3B).
     DistributorOverlayPlacementOpportunityEnd,   // 0x3B
+    /// ProviderPromoStart (0x3C).
     ProviderPromoStart,                          // 0x3C
+    /// ProviderPromoEnd (0x3D).
     ProviderPromoEnd,                            // 0x3D
+    /// DistributorPromoStart (0x3E).
     DistributorPromoStart,                       // 0x3E
+    /// DistributorPromoEnd (0x3F).
     DistributorPromoEnd,                         // 0x3F
+    /// UnscheduledEventStart (0x40).
     UnscheduledEventStart,                       // 0x40
+    /// UnscheduledEventEnd (0x41).
     UnscheduledEventEnd,                         // 0x41
+    /// AlternateContentOpportunityStart (0x42).
     AlternateContentOpportunityStart,            // 0x42
+    /// AlternateContentOpportunityEnd (0x43).
     AlternateContentOpportunityEnd,              // 0x43
+    /// ProviderAdBlockStart (0x44).
     ProviderAdBlockStart,                        // 0x44
+    /// ProviderAdBlockEnd (0x45).
     ProviderAdBlockEnd,                          // 0x45
+    /// DistributorAdBlockStart (0x46).
     DistributorAdBlockStart,                     // 0x46
+    /// DistributorAdBlockEnd (0x47).
     DistributorAdBlockEnd,                       // 0x47
+    /// NetworkStart (0x50).
     NetworkStart,                                // 0x50
+    /// NetworkEnd (0x51).
     NetworkEnd,                                  // 0x51
     /// Any reserved / unassigned value, carried verbatim.
     Reserved(u8),
 }
 
-#[allow(missing_docs)]
 #[rustfmt::skip] // mirror the column-aligned enum above
 impl SegmentationTypeId {
     /// Decode the 8-bit `segmentation_type_id` byte.
