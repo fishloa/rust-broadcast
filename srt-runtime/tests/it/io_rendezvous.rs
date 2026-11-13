@@ -22,14 +22,14 @@ async fn two_rendezvous_sockets_connect_and_exchange_data() {
         let a = SrtSocket::rendezvous_from_socket(
             sock_a,
             b_addr,
-            HandshakeConfig::default(),
-            IoConfig::default(),
+            srt_runtime::io::SrtConfig::new(HandshakeConfig::default())
+                .with_io(IoConfig::default()),
         );
         let b = SrtSocket::rendezvous_from_socket(
             sock_b,
             a_addr,
-            HandshakeConfig::default(),
-            IoConfig::default(),
+            srt_runtime::io::SrtConfig::new(HandshakeConfig::default())
+                .with_io(IoConfig::default()),
         );
         let (a, b) = tokio::time::timeout(Duration::from_secs(10), async { tokio::join!(a, b) })
             .await
@@ -65,8 +65,10 @@ async fn rendezvous_without_a_peer_times_out() {
     let err = SrtSocket::rendezvous_from_socket(
         sock_a,
         b_addr,
-        HandshakeConfig::default(),
-        IoConfig::default().with_timeouts(SRT_TIMEOUTS.with_handshake(Duration::from_millis(600))),
+        srt_runtime::io::SrtConfig::new(HandshakeConfig::default()).with_io(
+            IoConfig::default()
+                .with_timeouts(SRT_TIMEOUTS.with_handshake(Duration::from_millis(600))),
+        ),
     )
     .await
     .map(|_| ())
