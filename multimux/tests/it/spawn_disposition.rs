@@ -91,7 +91,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "source/dashif_ingest.rs",
-        283,
+        349,
         "DASH-IF ingest pump task; owned by run_dashif_ingest (aborted on serve exit)",
     ),
     (
@@ -136,7 +136,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "output/catchup.rs",
-        343,
+        347,
         "spawn_blocking catch-up scan under an owned scan permit; awaited inline, and the permit rides the blocking task",
     ),
     (

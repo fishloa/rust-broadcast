@@ -476,7 +476,7 @@ async fn catchup_init(route: &RouteHandle, ext: &'static str, period: u32) -> Re
         return StatusCode::NOT_FOUND.into_response();
     }
     let dir: PathBuf = catchup::archive_dir(dvr, route.name());
-    let read = run_scan(&route, move || {
+    let read = run_scan(route, move || {
         let init_len = catchup::read_period_segments(&dir, period)
             .first()
             .map(|s| s.byte_offset)?;
