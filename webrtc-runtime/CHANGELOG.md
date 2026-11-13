@@ -12,6 +12,7 @@ All notable changes to this crate will be documented in this file.
 
 
 ### Fixed
+- The bearer-token origin check resolves the target through `broadcast_common::url_ref::resolve`, so a target with a control character is a different origin instead of being repaired into the endpoint's own (RFC 3986 §2) (#2585).
 - `sdp::offer_codec_attributes` now echoes `a=rtcp-fb` attributes whose payload-type token is `*` (RFC 4585 wildcard), in addition to the chosen payload type.
 
 ## [0.7.0] - 2026-11-10
