@@ -141,7 +141,7 @@ impl RetrySchedule {
     /// A schedule from `min` (the first raw delay), `max` (the cap), a growth
     /// factor and a jitter seed.
     ///
-    /// A `factor` below one is raised to [`NO_GROWTH`] so the series can never
+    /// A `factor` below one is raised to one (no growth) so the series can never
     /// shrink, and a `max` below `min` is raised to `min` so the cap is never
     /// tighter than the floor.
     #[must_use]
@@ -202,7 +202,7 @@ impl RetrySchedule {
 
     /// The delay before the `attempt + 1`-th retry: the raw delay itself for
     /// the first, then the raw delay times the next term of the schedule's
-    /// jitter sequence (wrapping at [`JITTER_TERMS`]), in `[raw*5/6, raw]`.
+    /// jitter sequence (wrapping at the end of the sequence), in `[raw*5/6, raw]`.
     pub fn delay_for_attempt(&self, attempt: u32) -> Duration {
         let raw = self.raw_delay_for_attempt(attempt);
         if attempt == FIRST_RETRY {
@@ -401,11 +401,7 @@ mod tests {
         for attempt in 0..64 {
             let raw = s.raw_delay_for_attempt(attempt);
             let d = s.delay_for_attempt(attempt);
-            let band = if attempt <= MAX_ATTEMPT_INDEX {
-                raw
-            } else {
-                raw
-            };
+            let band = raw;
             assert!(
                 d >= band.mul_f64(JITTER_LOW) && d <= band,
                 "attempt {attempt}: {d:?} of {band:?}"
