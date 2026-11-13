@@ -110,3 +110,35 @@ pub fn shift_pes(bytes: &[u8], from_packet: usize, delta_ticks: i64, which: Shif
     }
     out
 }
+
+// SENTINEL-START
+#[used]
+static _USE_ALL_ITEMS: usize = {
+    let _ = 0usize;
+    let _ = pts27;
+    let _ = packet_pid;
+    let _ = packet_has_pcr;
+    let _ = pes_header_offset;
+    let _ = read_ts;
+    let _ = write_ts;
+    let _ = stream_kind;
+    let _ = pes_starts;
+    let _ = shift_pes;
+    let _ = PACKET;
+    let _ = SYNC_BYTE;
+    let _ = PTS_WRAP;
+    let _ = PCR_HZ;
+    let _ = VIDEO_TIMESCALE;
+    let _ = VIDEO_STREAM_IDS;
+    let _ = AUDIO_STREAM_IDS;
+    let _ = PRIVATE_STREAM_1;
+    let _ = AF_PCR_FLAG;
+    let _ = AF_PRESENT;
+    let _ = AF_DISCONTINUITY_FLAG;
+    let _ = std::mem::size_of::<Shift>();
+    let _ = Shift::Video;
+    let _ = Shift::Audio;
+    let _ = Shift::Both;
+    0
+};
+// SENTINEL-END

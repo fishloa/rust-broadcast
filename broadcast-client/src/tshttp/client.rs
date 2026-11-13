@@ -20,7 +20,7 @@ fn drain_demux(demux: &mut StreamingTsDemux, mut sink: impl FnMut(Event)) -> boo
         if matches!(ev, DemuxEvent::Sample { .. }) {
             sampled = true;
         }
-        sink(Event::Demux(ev));
+        sink(Event::Demux(Box::new(ev)));
     }
     sampled
 }

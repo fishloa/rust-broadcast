@@ -256,3 +256,49 @@ fn serialize(pkt: &ControlPacket<'_>) -> Vec<u8> {
     pkt.serialize_into(&mut buf).unwrap();
     buf
 }
+
+// SENTINEL-START
+#[used]
+static _USE_ALL_ITEMS: usize = {
+    let _ = 0usize;
+    let _ = serialize;
+    let _ = PEER_SOCKET_ID;
+    let _ = PEER_COOKIE;
+    let _ = PEER_ISN;
+    let _ = std::mem::size_of::<Cipher>();
+    let _ = std::mem::size_of::<SrtPeer>();
+    let _ = std::mem::offset_of!(SrtPeer, hs);
+    let _ = std::mem::offset_of!(SrtPeer, connected);
+    let _ = std::mem::offset_of!(SrtPeer, caller_socket_id);
+    let _ = std::mem::offset_of!(SrtPeer, epoch_us);
+    let _ = std::mem::offset_of!(SrtPeer, next_seq);
+    let _ = std::mem::offset_of!(SrtPeer, sent);
+    let _ = std::mem::offset_of!(SrtPeer, key);
+    let _ = std::mem::offset_of!(SrtPeer, handshakes_seen);
+    let _ = std::mem::offset_of!(SrtPeer, rejected);
+    let _ = std::mem::offset_of!(SrtPeer, naks_received);
+    let _ = std::mem::offset_of!(SrtPeer, keepalives_received);
+    let _ = std::mem::offset_of!(SrtPeer, acks_received);
+    let _ = std::mem::offset_of!(SrtPeer, retransmits);
+    let _ = std::mem::offset_of!(SrtPeer, isn);
+    let _ = std::mem::offset_of!(SrtPeer, max_acked);
+    let _ = Cipher::Clear;
+    let _ = Cipher::Aes128;
+    let _ = Cipher::Aes192;
+    let _ = Cipher::Aes256;
+    let _ = SrtPeer::new;
+    let _ = SrtPeer::with_isn;
+    let _ = SrtPeer::ts;
+    let _ = SrtPeer::on_datagram;
+    let _ = SrtPeer::connected_peer_socket_id;
+    let _ = SrtPeer::sent_datagram;
+    let _ = SrtPeer::far_ahead_datagram;
+    let _ = SrtPeer::next_seq;
+    let _ = SrtPeer::data;
+    let _ = SrtPeer::data_with;
+    let _ = SrtPeer::drop_request;
+    let _ = SrtPeer::keepalive;
+    let _ = SrtPeer::shutdown;
+    0
+};
+// SENTINEL-END

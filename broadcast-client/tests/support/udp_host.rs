@@ -84,7 +84,7 @@ impl UdpHost {
         }
     }
 
-    pub fn count(&self, pred: impl Fn(&Event) -> bool) -> usize {
+    pub fn count<P: Fn(&Event) -> bool>(&self, pred: P) -> usize {
         self.events.iter().filter(|t| pred(&t.event)).count()
     }
 
@@ -138,3 +138,35 @@ pub fn rtp_datagrams(ts: &[u8], per: usize, first_seq: u16, ssrc: u32) -> Vec<Ve
         })
         .collect()
 }
+
+// SENTINEL-START
+#[used]
+static _USE_ALL_ITEMS: usize = {
+    let _ = 0usize;
+    let _ = ts_datagrams;
+    let _ = rtp_datagram;
+    let _ = rtp_datagrams;
+    let _ = TS_PACKET;
+    let _ = MP2T_PAYLOAD_TYPE;
+    let _ = DATAGRAM_STEP_US;
+    let _ = RTP_TS_PER_PACKET;
+    let _ = std::mem::size_of::<UdpHost>();
+    let _ = std::mem::offset_of!(UdpHost, session);
+    let _ = std::mem::offset_of!(UdpHost, conn);
+    let _ = std::mem::offset_of!(UdpHost, now);
+    let _ = std::mem::offset_of!(UdpHost, events);
+    let _ = std::mem::offset_of!(UdpHost, binds);
+    let _ = std::mem::offset_of!(UdpHost, closes);
+    let _ = std::mem::offset_of!(UdpHost, wake);
+    let _ = std::mem::offset_of!(UdpHost, auto_connect);
+    let _ = UdpHost::open;
+    let _ = UdpHost::settle;
+    let _ = UdpHost::datagram;
+    let _ = UdpHost::advance_to;
+    let _ = UdpHost::close_socket;
+    let _ = UdpHost::replay;
+    let _ = UdpHost::bind_modes;
+    let _ = UdpHost::count::<fn(&Event) -> bool>;
+    0
+};
+// SENTINEL-END

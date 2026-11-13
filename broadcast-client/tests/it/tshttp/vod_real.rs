@@ -35,7 +35,9 @@ fn real_finite_capture() {
     let mut ended = false;
     let mut reconnects = 0usize;
     while let Some(e) = c.poll_event() {
-        if let Event::Demux(transmux::DemuxEvent::Sample { .. }) = e {
+        if let Event::Demux(ref ev) = e
+            && matches!(ev.as_ref(), transmux::DemuxEvent::Sample { .. })
+        {
             samples += 1;
         }
         if matches!(e, Event::Ended) {

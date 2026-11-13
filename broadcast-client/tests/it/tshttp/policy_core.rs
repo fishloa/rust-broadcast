@@ -41,7 +41,7 @@ fn drain_client(c: &mut TsHttpClient) -> (Vec<Event>, Vec<broadcast_client::tsht
     let mut events = Vec::new();
     let mut sampled = false;
     while let Some(e) = c.poll_event() {
-        sampled |= matches!(e, Event::Demux(transmux::DemuxEvent::Sample { .. }));
+        sampled |= matches!(&e, Event::Demux(ev) if matches!(ev.as_ref(), transmux::DemuxEvent::Sample { .. }));
         events.push(e);
     }
     let mut actions = Vec::new();

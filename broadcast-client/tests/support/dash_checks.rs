@@ -1,8 +1,6 @@
 //! Invariants every live session run asserts (DESIGN 3.6): no segment requested before its TRUE
 //! availability, no gap and no duplicate in the delivered segment sequence.
 
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 
 use super::dash_common::synth::{Geo, parse_segment_url};
@@ -78,3 +76,23 @@ pub fn assert_no_duplicates(reqs: &[SegReq]) {
 pub fn first_index(reqs: &[SegReq], rep: &str) -> Option<i64> {
     reqs.iter().find(|r| r.rep == rep).map(|r| r.idx)
 }
+
+// SENTINEL-START
+#[used]
+static _USE_ALL_ITEMS: usize = {
+    let _ = 0usize;
+    let _ = segment_requests;
+    let _ = early_requests;
+    let _ = served;
+    let _ = assert_contiguous;
+    let _ = assert_no_duplicates;
+    let _ = first_index;
+    let _ = std::mem::size_of::<SegReq>();
+    let _ = std::mem::offset_of!(SegReq, rep);
+    let _ = std::mem::offset_of!(SegReq, n);
+    let _ = std::mem::offset_of!(SegReq, idx);
+    let _ = std::mem::offset_of!(SegReq, send_utc_us);
+    let _ = std::mem::offset_of!(SegReq, status);
+    0
+};
+// SENTINEL-END

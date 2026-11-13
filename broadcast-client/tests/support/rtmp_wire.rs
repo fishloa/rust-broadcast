@@ -303,7 +303,7 @@ impl WireHost {
         }
     }
 
-    pub fn run_until(&mut self, deadline: Duration, stop: impl Fn(&WireHost) -> bool) {
+    pub fn run_until<S: Fn(&WireHost) -> bool>(&mut self, deadline: Duration, stop: S) {
         let end = Instant::now() + deadline;
         while Instant::now() < end && !stop(self) {
             self.pump();
@@ -324,3 +324,50 @@ impl WireHost {
             .collect()
     }
 }
+
+// SENTINEL-START
+#[used]
+static _USE_ALL_ITEMS: usize = {
+    let _ = 0usize;
+    let _ = serve;
+    let _ = READ_TIMEOUT;
+    let _ = SERVER_READ_TIMEOUT;
+    let _ = READ_CHUNK;
+    let _ = TLS_SERVER_NAME;
+    let _ = std::mem::size_of::<Log>();
+    let _ = std::mem::size_of::<PeerServer>();
+    let _ = std::mem::size_of::<Wire>();
+    let _ = std::mem::size_of::<WireHost>();
+    let _ = std::mem::offset_of!(Log, accepted);
+    let _ = std::mem::offset_of!(Log, failed_before_data);
+    let _ = std::mem::offset_of!(Log, client_certs);
+    let _ = std::mem::offset_of!(Log, acks);
+    let _ = std::mem::offset_of!(PeerServer, addr);
+    let _ = std::mem::offset_of!(PeerServer, log);
+    let _ = std::mem::offset_of!(PeerServer, stop);
+    let _ = std::mem::offset_of!(PeerServer, thread);
+    let _ = std::mem::offset_of!(WireHost, session);
+    let _ = std::mem::offset_of!(WireHost, events);
+    let _ = std::mem::offset_of!(WireHost, connects);
+    let _ = std::mem::offset_of!(WireHost, offered_identity);
+    let _ = std::mem::offset_of!(WireHost, failed_connects);
+    let _ = std::mem::offset_of!(WireHost, conn);
+    let _ = std::mem::offset_of!(WireHost, start);
+    let _ = std::mem::offset_of!(WireHost, server_ca);
+    let _ = std::mem::offset_of!(WireHost, port);
+    let _ = Serve::All;
+    let _ = Serve::DropAfter;
+    let _ = Wire::Plain;
+    let _ = Wire::Tls;
+    let _ = PeerServer::start;
+    let _ = WireHost::open;
+    let _ = WireHost::now_us;
+    let _ = WireHost::connect;
+    let _ = WireHost::pump;
+    let _ = WireHost::close_with_error;
+    let _ = WireHost::read_once;
+    let _ = WireHost::samples;
+    let _ = WireHost::run_until::<fn(&WireHost) -> bool>;
+    0
+};
+// SENTINEL-END

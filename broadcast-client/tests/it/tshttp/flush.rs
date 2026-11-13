@@ -4,7 +4,9 @@ use std::collections::BTreeMap;
 fn samples_by_track(events: &[Event]) -> BTreeMap<u32, usize> {
     let mut m = BTreeMap::new();
     for e in events {
-        if let Event::Demux(transmux::DemuxEvent::Sample { track_id, .. }) = e {
+        if let Event::Demux(ev) = e
+            && let transmux::DemuxEvent::Sample { track_id, .. } = ev.as_ref()
+        {
             *m.entry(track_id.value()).or_insert(0) += 1;
         }
     }

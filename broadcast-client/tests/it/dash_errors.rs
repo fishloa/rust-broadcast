@@ -4,7 +4,6 @@
 
 use crate::support::dash_common;
 use crate::support::dash_sim;
-#[allow(dead_code)]
 use crate::support::fmp4_split;
 
 use broadcast_client::{BufferEvent, Config, ErrorKind, Event, Status};

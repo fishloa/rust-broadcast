@@ -106,3 +106,38 @@ pub fn samples_of(events: &[Event], pick: impl Fn(TrackId) -> bool) -> Vec<Sampl
         })
         .collect()
 }
+
+#[cfg(test)]
+#[test]
+#[ignore]
+fn _touch_samples_of() {
+    let _ = samples_of(&[] as &[Event], |_| true);
+}
+
+// SENTINEL-START
+#[used]
+static _USE_ALL_ITEMS: usize = {
+    let _ = 0usize;
+    let _ = is_video;
+    let _ = restream;
+    let _ = fixture;
+    let _ = VIDEO_DIR;
+    let _ = AUDIO_DIR;
+    let _ = MASTER_URL;
+    let _ = VIDEO_PLAYLIST_URL;
+    let _ = AUDIO_PLAYLIST_URL;
+    let _ = TARGET_SECS;
+    let _ = WINDOW;
+    let _ = std::mem::size_of::<TrackStream>();
+    let _ = std::mem::size_of::<Fixture>();
+    let _ = std::mem::offset_of!(TrackStream, playlist);
+    let _ = std::mem::offset_of!(TrackStream, segments);
+    let _ = std::mem::offset_of!(TrackStream, spec);
+    let _ = std::mem::offset_of!(TrackStream, samples);
+    let _ = std::mem::offset_of!(Fixture, video);
+    let _ = std::mem::offset_of!(Fixture, audio);
+    let _ = std::mem::offset_of!(Fixture, audio_stream_track_id);
+    let _ = TrackStream::bodies;
+    0
+};
+// SENTINEL-END

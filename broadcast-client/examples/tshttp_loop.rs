@@ -28,7 +28,7 @@ fn main() {
         while let Some(e) = client.poll_event() {
             if matches!(
                 e,
-                broadcast_client::tshttp::Event::Demux(transmux::DemuxEvent::Sample { .. })
+                broadcast_client::tshttp::Event::Demux(ev) if matches!(ev.as_ref(), transmux::DemuxEvent::Sample { .. })
             ) {
                 samples += 1;
             }

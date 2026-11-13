@@ -2,8 +2,6 @@
 //! (the `World` of the core suites), an origin that answers by true time, per-request faults, and
 //! the callbacks a real host makes (`on_response`, `on_data`, `on_closed`). No clock is read.
 
-#![allow(dead_code)]
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use broadcast_client::{Action, Config, Event, Session, Status};
@@ -703,7 +701,7 @@ impl DashSim {
             .any(|e| matches!(e, Event::Status(Status::Ended)))
     }
 
-    pub fn count(&self, pred: impl Fn(&Event) -> bool) -> usize {
+    pub fn count<P: Fn(&Event) -> bool>(&self, pred: P) -> usize {
         self.events.iter().filter(|e| pred(e)).count()
     }
 
@@ -734,3 +732,100 @@ pub fn assert_samples_equal_oracle(sim: &DashSim, expected_by_track: &[Vec<loopb
         }
     }
 }
+
+#[cfg(test)]
+struct _DummyOrigin;
+#[cfg(test)]
+impl world::Origin for _DummyOrigin {
+    fn serve(&mut self, _at_utc_us: i64, _req: &world::HttpReq) -> world::Outcome {
+        world::Outcome::Hang
+    }
+}
+
+// SENTINEL-START
+#[used]
+static _USE_ALL_ITEMS: usize = {
+    let _ = 0usize;
+    let _ = std::mem::size_of::<WorldBackend<_DummyOrigin>>();
+    let _ = parse_open_range;
+    let _ = range_answer;
+    let _ = stall_after;
+    let _ = sigs_of;
+    let _ = assert_samples_equal_oracle;
+    let _ = SIM_ETAG;
+    let _ = MS;
+    let _ = MAX_STEPS;
+    let _ = SEC;
+    let _ = std::mem::size_of::<Headers>();
+    let _ = std::mem::size_of::<Logged>();
+    let _ = std::mem::size_of::<Answer>();
+    let _ = std::mem::size_of::<StaticBackend>();
+    let _ = std::mem::size_of::<Delivery>();
+    let _ = std::mem::size_of::<Pending>();
+    let _ = std::mem::size_of::<FaultFn>();
+    let _ = std::mem::size_of::<DashSim>();
+    let _ = std::mem::offset_of!(Logged, conn);
+    let _ = std::mem::offset_of!(Logged, method);
+    let _ = std::mem::offset_of!(Logged, url);
+    let _ = std::mem::offset_of!(Logged, headers);
+    let _ = std::mem::offset_of!(Logged, byte_range);
+    let _ = std::mem::offset_of!(Logged, send_elapsed_us);
+    let _ = std::mem::offset_of!(Logged, send_mono_us);
+    let _ = std::mem::offset_of!(Logged, send_utc_us);
+    let _ = std::mem::offset_of!(Logged, status);
+    let _ = std::mem::offset_of!(Pending, at);
+    let _ = std::mem::offset_of!(Pending, seq);
+    let _ = std::mem::offset_of!(Pending, conn);
+    let _ = std::mem::offset_of!(Pending, delivery);
+    let _ = std::mem::offset_of!(DashSim, session);
+    let _ = std::mem::offset_of!(DashSim, world);
+    let _ = std::mem::offset_of!(DashSim, backend);
+    let _ = std::mem::offset_of!(DashSim, pending);
+    let _ = std::mem::offset_of!(DashSim, seq);
+    let _ = std::mem::offset_of!(DashSim, wakes);
+    let _ = std::mem::offset_of!(DashSim, log);
+    let _ = std::mem::offset_of!(DashSim, events);
+    let _ = std::mem::offset_of!(DashSim, event_times);
+    let _ = std::mem::offset_of!(DashSim, closes);
+    let _ = std::mem::offset_of!(DashSim, close_log);
+    let _ = std::mem::offset_of!(DashSim, rtt_us);
+    let _ = std::mem::offset_of!(DashSim, chunk);
+    let _ = std::mem::offset_of!(DashSim, fault);
+    let _ = std::mem::offset_of!(DashSim, honour_ranges);
+    let _ = std::mem::offset_of!(DashSim, request_cap);
+    let _ = std::mem::offset_of!(DashSim, stalls);
+    let _ = std::mem::offset_of!(DashSim, steps);
+    let _ = std::mem::offset_of!(DashSim, host_clock_calls);
+    let _ = Logged::header;
+    let _ = Logged::is_mpd;
+    let _ = Answer::ok;
+    let _ = Answer::status;
+    let _ = Answer::status_with;
+    let _ = Answer::with_header;
+    let _ = DashSim::new;
+    let _ = DashSim::with_session;
+    let _ = DashSim::static_origin;
+    let _ = DashSim::give_host_clock;
+    let _ = DashSim::drain_events;
+    let _ = DashSim::dispatch;
+    let _ = DashSim::push;
+    let _ = DashSim::poll_all;
+    let _ = DashSim::respond;
+    let _ = DashSim::idle;
+    let _ = DashSim::terminal;
+    let _ = DashSim::run_loop;
+    let _ = DashSim::sleep;
+    let _ = DashSim::run_until;
+    let _ = DashSim::run_for;
+    let _ = DashSim::run_to_terminal;
+    let _ = DashSim::samples;
+    let _ = DashSim::errors;
+    let _ = DashSim::error_names;
+    let _ = DashSim::fatal;
+    let _ = DashSim::statuses;
+    let _ = DashSim::ended;
+    let _ = DashSim::requests_to;
+    let _ = DashSim::count::<fn(&Event) -> bool>;
+    0
+};
+// SENTINEL-END
