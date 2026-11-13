@@ -5,6 +5,8 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- `credentials_from_url` returns credentials for an empty username with a password (`scheme://:pw@host/`) instead of `None`: RFC 3986 §3.2.1 allows an empty user, and RFC 7617 §2 and RFC 7616 §3.4 carry it (#2587).
 ### Added
 - `Verifier::try_new` and `Error::RandomSource`: building a Digest verifier when the OS random source is unavailable returns the typed error instead of panicking. `Verifier::new` stays as the convenience that panics in that one case (documented under `# Panics`) (#2591).
 ### Added
