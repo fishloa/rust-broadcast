@@ -198,6 +198,53 @@ async fn run_hold(route_handle: Arc<RouteHandle>) -> multimux::Result<()> {
     Ok(())
 }
 
+/// A steady live source: one 30 fps AVC track whose segments close every `TICKER_GOP` frames,
+/// published for as long as the route runs (the `instant` source only emits one burst).
+async fn run_ticker(route: Arc<RouteHandle>) -> multimux::Result<()> {
+    const TICKER_GOP: u32 = 6;
+    let spec = TrackSpec::new(
+        TrackId::new(1),
+        VIDEO_TIMESCALE,
+        CodecConfig::Avc {
+            config: transmux::avc_config_from_sprop(SPROP).expect("valid sprop"),
+            width: 0,
+            height: 0,
+        },
+    );
+    let mut segmenter =
+        transmux::ll_hls::LlHlsSegmenter::with_part_target(vec![spec], VIDEO_TIMESCALE, 0.2, 50)
+            .expect("segmenter builds");
+    let program = media_plane::ProgramId(0);
+    let _trunk = route.publish_new_program(program);
+    route.set_init(program, segmenter.init_segment().expect("init segment"));
+    route.set_health(multimux::route::HealthState::Live);
+    let mut ticker = tokio::time::interval(Duration::from_millis(1000 / 30));
+    let mut frame = 0u32;
+    loop {
+        ticker.tick().await;
+        let pts = i64::from(frame) * i64::from(FRAME_DUR);
+        segmenter
+            .push(
+                TrackId::new(1),
+                Sample::new(
+                    vec![0xAA; 64],
+                    Some(pts),
+                    Some(pts),
+                    Some(FRAME_DUR),
+                    frame.is_multiple_of(TICKER_GOP),
+                ),
+            )
+            .expect("push");
+        for part in segmenter.take_ready_parts() {
+            route.add_part(program, part);
+        }
+        for segment in segmenter.take_ready_segments() {
+            route.add_segment(program, segment).expect("segment");
+        }
+        frame += 1;
+    }
+}
+
 /// A [`SchemeRegistry`] with the `"instant"` tag registered — every test
 /// below shares this factory (the tag is arbitrary and route-count-agnostic:
 /// several routes can each independently name `"instant"`, exactly like
@@ -209,6 +256,18 @@ fn instant_registry() -> SchemeRegistry {
         Arc::new(|ctx: InputCtx| {
             Ok(tokio::spawn(multimux::supervise_driver(
                 run_instant,
+                ctx.store,
+                Backoff::production_default(),
+                ctx.name,
+                ctx.cancel,
+            )))
+        }) as InputFactory,
+    );
+    registry.register_input(
+        "ticker",
+        Arc::new(|ctx: InputCtx| {
+            Ok(tokio::spawn(multimux::supervise_driver(
+                run_ticker,
                 ctx.store,
                 Backoff::production_default(),
                 ctx.name,
@@ -977,10 +1036,10 @@ async fn reload_leaves_unchanged_route_running_restarts_changed_route() {
 }
 
 /// A reload that restarts a changed route never leaves its viewers without an answer: while it
-/// runs, a loop requesting the route's media playlist sees only `200`s: the old runtime's store
-/// keeps serving until the replacement is swapped in, and the replacement's store answers from the
-/// first request on. (Blocking-reload requests parked on the old store at the swap are a separate,
-/// open gap: they end in a `503` after the blocking-reload timeout, see #2593.)
+/// runs, a loop requesting the route's media playlist and a viewer following it with LL-HLS
+/// blocking reloads (`_HLS_msn`/`_HLS_part`, parked on the old route when it is replaced) see
+/// only `200`s. The parked request is woken and served again against the replacement, which
+/// answers it as soon as it has that segment.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_reload_of_a_changed_route_never_answers_a_viewer_with_an_error() {
     let (media_addr, media_listener) = bind_tcp();
@@ -993,7 +1052,7 @@ async fn a_reload_of_a_changed_route_never_answers_a_viewer_with_an_error() {
     let with_version = |version: u32| {
         let mut route = instant_route("live");
         route.input = InputSpec::Custom {
-            type_tag: "instant".to_string(),
+            type_tag: "ticker".to_string(),
             params: serde_json::json!({ "version": version }),
         };
         admin_config(media_addr, admin_addr, vec![route])
@@ -1035,6 +1094,41 @@ async fn a_reload_of_a_changed_route_never_answers_a_viewer_with_an_error() {
         }
     });
 
+    let blocking_answered = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let blocking_viewer = tokio::spawn({
+        let (client, stop, answered) = (
+            client.clone(),
+            Arc::clone(&stop),
+            Arc::clone(&blocking_answered),
+        );
+        let url = media_playlist_url(media_addr, "live");
+        async move {
+            let mut statuses = Vec::new();
+            let mut next = url.clone();
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                let Ok(resp) = client.get(&next).send().await else {
+                    statuses.push(Err("transport error".to_string()));
+                    break;
+                };
+                let status = resp.status();
+                statuses.push(Ok(status));
+                if status != reqwest::StatusCode::OK {
+                    break;
+                }
+                answered.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let body = resp.text().await.unwrap_or_default();
+                let first: u64 = body
+                    .lines()
+                    .find_map(|l| l.strip_prefix("#EXT-X-MEDIA-SEQUENCE:"))
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0);
+                let closed = body.lines().filter(|l| l.starts_with("#EXTINF")).count() as u64;
+                next = format!("{url}?_HLS_msn={}&_HLS_part=0", first + closed);
+            }
+            statuses
+        }
+    });
+
     std::fs::write(
         &config_path,
         serde_json::to_string_pretty(&initial_as_json(&with_version(2))).expect("serialize"),
@@ -1062,8 +1156,19 @@ async fn a_reload_of_a_changed_route_never_answers_a_viewer_with_an_error() {
         );
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
+    let blocking_seen = blocking_answered.load(std::sync::atomic::Ordering::Relaxed);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    while blocking_answered.load(std::sync::atomic::Ordering::Relaxed) < blocking_seen + 5 {
+        if tokio::time::Instant::now() >= deadline {
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            let seen = blocking_viewer.await.expect("blocking viewer task");
+            panic!("the blocking-reload viewer stopped being answered: {seen:?}");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
     stop.store(true, std::sync::atomic::Ordering::Relaxed);
-    let statuses = viewer.await.expect("viewer task");
+    let mut statuses = viewer.await.expect("viewer task");
+    statuses.extend(blocking_viewer.await.expect("blocking viewer task"));
 
     let after = admin_get(&client, admin_addr, "/admin/routes/live")
         .await
@@ -1084,6 +1189,86 @@ async fn a_reload_of_a_changed_route_never_answers_a_viewer_with_an_error() {
         "{} requests, non-200 answers during the reload: {bad:?}",
         statuses.len()
     );
+
+    server.abort();
+    let _ = std::fs::remove_file(&config_path);
+}
+
+/// A blocking-reload viewer parked on a route that is then removed is served again against the
+/// router that is live then, which has no route of that name: it ends with `404`, not with a `503`
+/// after the blocking-reload timeout.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn removing_a_route_answers_a_parked_blocking_reload_with_404() {
+    let (media_addr, media_listener) = bind_tcp();
+    let (admin_addr, admin_listener) = bind_tcp();
+    let config_path = std::env::temp_dir().join(format!(
+        "multimux-admin-api-test-remove-parked-{}-{}.json",
+        std::process::id(),
+        admin_addr.port()
+    ));
+    let mut route = instant_route("live");
+    route.input = InputSpec::Custom {
+        type_tag: "ticker".to_string(),
+        params: serde_json::Value::Null,
+    };
+    let config = admin_config(media_addr, admin_addr, vec![route]);
+    std::fs::write(
+        &config_path,
+        serde_json::to_string_pretty(&initial_as_json(&config)).expect("serialize"),
+    )
+    .expect("write config");
+    let server = tokio::spawn(serve_config_file_with_registry_on_admin(
+        media_listener,
+        admin_listener,
+        config_path.clone(),
+        instant_registry(),
+    ));
+    wait_for_port(admin_addr).await;
+    let client = reqwest::Client::new();
+    wait_until_live(&client, media_addr, "live").await;
+
+    let answered = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let viewer = tokio::spawn({
+        let (client, answered) = (client.clone(), Arc::clone(&answered));
+        let url = media_playlist_url(media_addr, "live");
+        async move {
+            let mut next = url.clone();
+            loop {
+                let resp = client.get(&next).send().await.expect("answer");
+                let status = resp.status();
+                if status != reqwest::StatusCode::OK {
+                    return status;
+                }
+                answered.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let body = resp.text().await.unwrap_or_default();
+                let first: u64 = body
+                    .lines()
+                    .find_map(|l| l.strip_prefix("#EXT-X-MEDIA-SEQUENCE:"))
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0);
+                let closed = body.lines().filter(|l| l.starts_with("#EXTINF")).count() as u64;
+                next = format!("{url}?_HLS_msn={}&_HLS_part=0", first + closed);
+            }
+        }
+    });
+    while answered.load(std::sync::atomic::Ordering::Relaxed) < 3 {
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    let removed = admin_json(
+        &client,
+        admin_addr,
+        reqwest::Method::DELETE,
+        "/admin/routes/live",
+        Some(ADMIN_TOKEN),
+        None,
+    )
+    .await;
+    assert!(removed.status().is_success(), "{}", removed.status());
+    let ended = tokio::time::timeout(std::time::Duration::from_secs(20), viewer)
+        .await
+        .expect("the viewer is answered")
+        .expect("viewer task");
+    assert_eq!(ended, reqwest::StatusCode::NOT_FOUND);
 
     server.abort();
     let _ = std::fs::remove_file(&config_path);

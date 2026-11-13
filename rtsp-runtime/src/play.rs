@@ -145,7 +145,7 @@ impl PlayPlan {
 
         let aggregate = content_base
             .or(content_location)
-            .and_then(|b| request_url.join(b).ok());
+            .and_then(|b| broadcast_common::url_ref::resolve(&request_url, b).ok());
         let relative_base = aggregate.clone().unwrap_or_else(|| {
             let mut base = request_url.clone();
             if !base.path().ends_with('/') {
@@ -432,6 +432,19 @@ mod tests {
         assert_eq!(
             plan.setups()[0].control,
             "rtsp://cam.example/base/trackID=0"
+        );
+    }
+
+    /// RFC 3986 §2: a Content-Base carrying a control character names no URL;
+    /// it must not be repaired by the WHATWG join (which deletes a LF) into
+    /// `rtsp://cam.example/base/`.
+    #[test]
+    fn a_content_base_with_a_control_character_is_not_used() {
+        let plan = plan(Some("rtsp://cam.example/ba\nse/"), None, &["trackID=0"], 0).unwrap();
+        assert!(
+            !plan.setups()[0].control.contains("/base/"),
+            "{}",
+            plan.setups()[0].control
         );
     }
 

@@ -1362,6 +1362,8 @@ pub struct RouteHandle {
     catchup_scans: std::sync::OnceLock<Arc<tokio::sync::Semaphore>>,
     /// See [`Self::with_max_concurrent_warms`].
     warms: Arc<tokio::sync::Semaphore>,
+    /// Fires when this route is replaced or removed; see [`Self::retire`].
+    retired: tokio_util::sync::CancellationToken,
     health: Mutex<HealthState>,
     target_duration_secs: f64,
     part_target_ms: u32,
@@ -1489,6 +1491,7 @@ impl RouteHandle {
         RouteHandle {
             catchup_scans: std::sync::OnceLock::new(),
             warms: Arc::new(tokio::sync::Semaphore::new(DEFAULT_MAX_CONCURRENT_WARMS)),
+            retired: tokio_util::sync::CancellationToken::new(),
             health: Mutex::new(HealthState::Connecting),
             target_duration_secs,
             part_target_ms,
@@ -1554,6 +1557,36 @@ impl RouteHandle {
     pub fn with_max_concurrent_warms(mut self, permits: usize) -> Self {
         self.warms = Arc::new(tokio::sync::Semaphore::new(permits.max(1)));
         self
+    }
+
+    /// The sequence number a replacement of this route must number above: the highest media
+    /// sequence number any of its programs has shown (the open segment's included), and what the
+    /// DVR archive already held when it started. A replacement built with
+    /// [`Self::with_archive_floor`] of this value continues the numbering, so a client's
+    /// `_HLS_msn` for this route means the same segment on the replacement.
+    pub(crate) fn media_sequence_floor(&self) -> u32 {
+        let next = self
+            .programs
+            .read()
+            .values()
+            .map(|serving| serving.ll_hls.next_media_sequence())
+            .max()
+            .unwrap_or(0);
+        u32::try_from(next)
+            .unwrap_or(u32::MAX)
+            .max(self.archive_floor)
+    }
+
+    /// Marks this route as replaced or removed: the admin media service drops every request it
+    /// is still serving from this route (a parked blocking reload included) and serves it again
+    /// against the route registered under the name now.
+    pub(crate) fn retire(&self) {
+        self.retired.cancel();
+    }
+
+    /// The token [`Self::retire`] fires.
+    pub(crate) fn retired_token(&self) -> tokio_util::sync::CancellationToken {
+        self.retired.clone()
     }
 
     /// Sets the segment cut rule of this route's classic-TS segmenter

@@ -264,6 +264,21 @@ fn range_end_must_be_below_total() {
     );
 }
 
+/// RFC 9110 §14.4: `*` is a valid complete-length, so the 206 body is still the
+/// finite `last - first + 1` bytes; stray whitespace inside the value is not
+/// in the grammar.
+#[test]
+fn an_unknown_complete_length_is_valid_and_stray_whitespace_is_not() {
+    assert_eq!(
+        finite_after(206, &hdr("Content-Range", "bytes 0-9/*")),
+        Some(10)
+    );
+    assert_eq!(
+        finite_after(206, &hdr("Content-Range", "bytes  0-9 / 10")),
+        None
+    );
+}
+
 #[test]
 fn content_encoding_other_than_identity_is_not_finite() {
     let cl = |enc: &str| {

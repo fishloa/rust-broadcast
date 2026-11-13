@@ -56,6 +56,7 @@ pub mod ber;
 pub mod bits;
 pub mod cenc;
 pub mod clock33;
+pub mod content_range;
 pub mod crc32_mpeg2;
 pub mod erased;
 pub mod error;
