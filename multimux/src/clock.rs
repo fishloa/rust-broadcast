@@ -15,6 +15,11 @@ pub(crate) trait HostClock: Send + Sync + 'static {
     /// Microseconds since 1970-01-01T00:00:00Z (POSIX, no leap seconds) on the
     /// host's own wall clock; `0` for a clock set before the epoch.
     fn unix_us(&self) -> u64;
+    /// The wall-clock wait that spans `session` of this clock's own time; a clock that runs at
+    /// real speed returns it unchanged.
+    fn real_duration(&self, session: std::time::Duration) -> std::time::Duration {
+        session
+    }
 }
 
 /// The operating system's clocks.
@@ -53,6 +58,45 @@ impl HostClock for SystemHostClock {
 
     fn unix_us(&self) -> u64 {
         Self::now_us()
+    }
+}
+
+/// A clock running `factor` times faster than real time, so a test sees a session's retry
+/// backoff elapse in a fraction of the wall time: the host divides every wait it derives from the
+/// session's instants by the same factor ([`HostClock::real_duration`]). The UTC clock is a fixed
+/// epoch plus the scaled monotonic count.
+#[cfg(test)]
+pub(crate) struct ScaledHostClock {
+    opened: Instant,
+    factor: u32,
+}
+
+#[cfg(test)]
+impl ScaledHostClock {
+    const EPOCH_US: u64 = 1_700_000_000 * 1_000_000;
+
+    pub(crate) fn new(factor: u32) -> Self {
+        Self {
+            opened: Instant::now(),
+            factor,
+        }
+    }
+}
+
+#[cfg(test)]
+impl HostClock for ScaledHostClock {
+    fn mono_us(&self) -> u64 {
+        u64::try_from(self.opened.elapsed().as_micros())
+            .unwrap_or(u64::MAX)
+            .saturating_mul(u64::from(self.factor))
+    }
+
+    fn unix_us(&self) -> u64 {
+        Self::EPOCH_US.saturating_add(self.mono_us())
+    }
+
+    fn real_duration(&self, session: std::time::Duration) -> std::time::Duration {
+        session / self.factor
     }
 }
 

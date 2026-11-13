@@ -646,10 +646,10 @@ impl IngestStep<EventIngest> for SessionStep {
             while self.wakes.first().is_some_and(|at| *at <= now) {
                 self.wakes.pop_first();
             }
-            let until_wake = self
-                .wakes
-                .first()
-                .map_or(window, |at| Duration::from_micros(at.saturating_sub(now)));
+            let until_wake = self.wakes.first().map_or(window, |at| {
+                self.clock
+                    .real_duration(Duration::from_micros(at.saturating_sub(now)))
+            });
             if let Ok(Some(message)) =
                 tokio::time::timeout(window.min(until_wake), self.rx.recv()).await
             {

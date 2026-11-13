@@ -1,10 +1,18 @@
 //! Sample-sequence goldens for the Smooth pull ingest session playing the
-//! committed `fixtures/smooth/{av,av-low}` fixtures through an in-memory fetch.
+//! committed `fixtures/smooth/{av,av-low}` fixtures from a loopback origin.
 //! `SMOOTH_PULL_GOLDEN_BLESS=<dir>` writes the traces instead of comparing.
+//!
+//! The session's instants run on a clock [`CLOCK_SPEEDUP`] times faster than real time
+//! ([`ScaledHostClock`]), so its retry backoff for the deliberately missing fragment (2 s, 4 s,
+//! 8 s, then 10 s per attempt) costs a fraction of that in wall time. The loopback origin answers
+//! in real time, well inside the scaled request timers.
 
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::clock::ScaledHostClock;
+use crate::source::smooth_pull::{SmoothPullRoute, run_with_clock};
+use crate::{MultimuxError, RouteHandle};
 use axum::Router;
 use axum::extract::{Path as AxumPath, State};
 use axum::http::StatusCode;
@@ -15,16 +23,15 @@ use broadcast_common::Timestamp;
 use media_plane::ProgramId;
 use media_plane::ingress::HandshakePolicy;
 use media_plane::trunk::{SampleCursorItem, TrunkConfig};
-use multimux::source::smooth_pull::{SmoothPullRoute, run_smooth_pull};
-use multimux::{MultimuxError, RouteHandle};
 use tokio_util::sync::CancellationToken;
 
-use crate::support::shared_it::nz;
+fn nz(n: usize) -> std::num::NonZeroUsize {
+    std::num::NonZeroUsize::new(n).expect("non-zero ring")
+}
 
 const TIMED_RING: usize = 4096;
 const RING: usize = 16;
-/// A fixture with a missing fragment ends only after the session's own retry backoff
-/// (2 s, 4 s, 8 s, then 10 s per attempt) has run out.
+const CLOCK_SPEEDUP: u32 = 20;
 const PULL_CEILING: Duration = Duration::from_secs(150);
 const READ_TIMEOUT: Duration = Duration::from_secs(120);
 const GOLDEN_BLESS_ENV: &str = "SMOOTH_PULL_GOLDEN_BLESS";
@@ -79,11 +86,10 @@ async fn serve_fixture(fixture: &str) -> (String, tokio::task::JoinHandle<()>) {
 /// sample the route published, in the order it published them.
 async fn sample_trace(fixture: &str) -> String {
     let (url, server) = serve_fixture(fixture).await;
-    let route =
-        SmoothPullRoute::new("golden", url).with_timeouts(multimux::source::IngestTimeouts {
-            connect: READ_TIMEOUT,
-            read: READ_TIMEOUT,
-        });
+    let route = SmoothPullRoute::new("golden", url).with_timeouts(crate::source::IngestTimeouts {
+        connect: READ_TIMEOUT,
+        read: READ_TIMEOUT,
+    });
     let route_handle = Arc::new(RouteHandle::new(4.0, 500, 4));
     let config = TrunkConfig::default()
         .with_timed_capacity(nz(TIMED_RING))
@@ -94,12 +100,13 @@ async fn sample_trace(fixture: &str) -> String {
     let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
     let result = tokio::time::timeout(
         PULL_CEILING,
-        run_smooth_pull(
+        run_with_clock(
             &route,
             config,
             handshake,
             &route_handle,
             CancellationToken::new(),
+            Arc::new(ScaledHostClock::new(CLOCK_SPEEDUP)),
         ),
     )
     .await
