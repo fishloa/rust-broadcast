@@ -918,10 +918,11 @@ impl TlsHost {
         addr: &str,
         tcp: TcpStream,
     ) -> Result<(BoxedRead, BoxedWrite), String> {
-        let config = self
-            .config
-            .clone()
-            .unwrap_or_else(rtsp_runtime::io::default_tls_client_config);
+        let config = match self.config.clone() {
+            Some(config) => config,
+            None => rtsp_runtime::io::default_tls_client_config()
+                .map_err(|e| format!("TLS client configuration: {e}"))?,
+        };
         let connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(config));
         let name = rustls::pki_types::ServerName::try_from(host.to_string())
             .map_err(|e| format!("invalid TLS server name {host:?}: {e}"))?;

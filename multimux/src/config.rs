@@ -793,7 +793,7 @@ impl OutputAuthSpec {
             reason: format!("output auth: {e}"),
         };
         Ok(match self {
-            OutputAuthSpec::Basic { username, password } => broadcast_auth::Verifier::try_new(
+            OutputAuthSpec::Basic { username, password } => broadcast_auth::Verifier::new(
                 Credentials::Basic {
                     username: username.clone(),
                     password: password.clone(),
@@ -801,7 +801,7 @@ impl OutputAuthSpec {
                 realm,
             )
             .map_err(auth_error)?,
-            OutputAuthSpec::Digest { username, password } => broadcast_auth::Verifier::try_new(
+            OutputAuthSpec::Digest { username, password } => broadcast_auth::Verifier::new(
                 Credentials::Digest {
                     username: username.clone(),
                     password: password.clone(),
@@ -810,7 +810,7 @@ impl OutputAuthSpec {
             )
             .map_err(auth_error)?,
             OutputAuthSpec::Bearer { token } => {
-                broadcast_auth::Verifier::try_new(Credentials::bearer(token.clone()), realm)
+                broadcast_auth::Verifier::new(Credentials::bearer(token.clone()), realm)
                     .map_err(auth_error)?
             }
             OutputAuthSpec::Forwarded {

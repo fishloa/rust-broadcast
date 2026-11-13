@@ -171,6 +171,11 @@ pub enum Error {
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 
+    /// The default `rtsps://` client TLS configuration could not be built: the crypto provider
+    /// refused the safe default protocol versions (feature `tls`).
+    #[error("TLS client configuration failed")]
+    TlsConfig(#[source] Box<dyn std::error::Error + Send + Sync>),
+
     /// The server answered `454 Session Not Found` (RFC 2326 §11.3.5) to a
     /// request on our session — the session is gone (timed out, or torn down
     /// server-side), so the caller must re-`SETUP`. Surfaced by the send-only

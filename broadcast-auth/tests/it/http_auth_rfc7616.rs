@@ -119,7 +119,8 @@ fn own_digest_challenge_parses_as_one_challenge() {
             password: "12345".into(),
         },
         "cameras",
-    );
+    )
+    .expect("OS random source");
     let header = v.challenge();
     let c = parse_one(&header);
     assert_eq!(c.scheme, "Digest");
@@ -137,7 +138,8 @@ fn own_digest_nonces_are_unique_and_correct_length() {
             password: "12345".into(),
         },
         "cameras",
-    );
+    )
+    .expect("OS random source");
     let mut seen = std::collections::HashSet::new();
     for _ in 0..64 {
         let header = v.challenge();
@@ -151,7 +153,7 @@ fn own_digest_nonces_are_unique_and_correct_length() {
 #[test]
 fn digest_response_computed_for_another_origin_is_not_replayable() {
     use broadcast_auth::{AuthResult, RequestContext, respond};
-    let v = Verifier::new(Credentials::new("u", "p"), "r");
+    let v = Verifier::new(Credentials::new("u", "p"), "r").expect("OS random source");
     let header = respond(
         &v.challenge(),
         &RequestContext::new("GET", "http://other-host.example/x"),

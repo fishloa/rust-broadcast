@@ -472,17 +472,11 @@ impl Verifier {
     /// now; every [`Self::challenge`] then issues a fresh, time-limited nonce
     /// (see the module docs' nonce handling).
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// For `Credentials::Digest`, when the OS random source is unavailable; use
-    /// [`Self::try_new`] to receive that as [`crate::Error::RandomSource`].
-    pub fn new(credentials: Credentials, realm: impl Into<String>) -> Self {
-        Self::try_new(credentials, realm).expect("OS random source unavailable")
-    }
-
-    /// [`Self::new`] that reports an unavailable OS random source (Digest only: the other schemes
-    /// draw no randomness) as [`crate::Error::RandomSource`] instead of panicking.
-    pub fn try_new(credentials: Credentials, realm: impl Into<String>) -> crate::Result<Self> {
+    /// [`crate::Error::RandomSource`] when the OS random source is unavailable (Digest only: the
+    /// other schemes draw no randomness); no verifier is built with a predictable secret.
+    pub fn new(credentials: Credentials, realm: impl Into<String>) -> crate::Result<Self> {
         // Stored in the form it is rendered in, so the realm a client echoes
         // back (and hashes into HA1) is the realm the server compares.
         let realm = sanitize_realm(&realm.into());
@@ -1186,7 +1180,8 @@ mod tests {
                 password: "12345".into(),
             },
             REALM,
-        );
+        )
+        .expect("OS random source");
         assert_eq!(v.challenge(), "Basic realm=\"cameras\"");
     }
 
@@ -1198,7 +1193,8 @@ mod tests {
                 password: "12345".into(),
             },
             REALM,
-        );
+        )
+        .expect("OS random source");
         let challenge = v.challenge();
         assert!(challenge.starts_with("Digest "), "got: {challenge}");
         for needle in [
@@ -1216,7 +1212,7 @@ mod tests {
 
     #[test]
     fn bearer_challenge_is_bare_scheme_name() {
-        let v = Verifier::new(Credentials::bearer("tok"), REALM);
+        let v = Verifier::new(Credentials::bearer("tok"), REALM).expect("OS random source");
         assert_eq!(v.challenge(), "Bearer");
     }
 
@@ -1228,7 +1224,8 @@ mod tests {
                 password: "12345".into(),
             },
             REALM,
-        );
+        )
+        .expect("OS random source");
         assert_ne!(v.challenge(), v.challenge());
     }
 
@@ -1242,7 +1239,8 @@ mod tests {
                 password: "12345".into(),
             },
             REALM,
-        );
+        )
+        .expect("OS random source");
         let header = respond(
             &v.challenge(),
             &RequestContext::new("GET", "/stream"),
@@ -1263,7 +1261,8 @@ mod tests {
                 password: "12345".into(),
             },
             REALM,
-        );
+        )
+        .expect("OS random source");
         let ctx = RequestContext::new("DESCRIBE", "rtsp://cam/live");
         let header = respond(&v.challenge(), &ctx, Credentials::new("admin", "12345")).unwrap();
         assert_eq!(
@@ -1274,7 +1273,7 @@ mod tests {
 
     #[test]
     fn bearer_respond_to_challenge_verifies_ok() {
-        let v = Verifier::new(Credentials::bearer("mytoken123"), REALM);
+        let v = Verifier::new(Credentials::bearer("mytoken123"), REALM).expect("OS random source");
         let header = respond(
             &v.challenge(),
             &RequestContext::new("GET", "/stream"),
@@ -1297,7 +1296,8 @@ mod tests {
                 password: "12345".into(),
             },
             REALM,
-        );
+        )
+        .expect("OS random source");
         let header = respond(
             &v.challenge(),
             &RequestContext::new("GET", "/stream"),
@@ -1318,7 +1318,8 @@ mod tests {
                 password: "12345".into(),
             },
             REALM,
-        );
+        )
+        .expect("OS random source");
         let ctx = RequestContext::new("DESCRIBE", "rtsp://cam/live");
         let header = respond(&v.challenge(), &ctx, Credentials::new("admin", "WRONG")).unwrap();
         assert_eq!(
@@ -1338,7 +1339,8 @@ mod tests {
                 password: "12345".into(),
             },
             REALM,
-        );
+        )
+        .expect("OS random source");
         let ctx = RequestContext::new("DESCRIBE", "rtsp://cam/live");
         let header = respond(&v.challenge(), &ctx, Credentials::new("admin", "12345")).unwrap();
         assert_eq!(
@@ -1365,7 +1367,8 @@ mod tests {
                 password: "12345".into(),
             },
             REALM,
-        );
+        )
+        .expect("OS random source");
         let client_ctx = RequestContext::new("GET", "http://cam.local/stream/media.m3u8");
         let header = respond(
             &v.challenge(),
@@ -1408,7 +1411,8 @@ mod tests {
                 password: "12345".into(),
             },
             REALM,
-        );
+        )
+        .expect("OS random source");
         let client_ctx = RequestContext::new("GET", "http://cam.local/other/path");
         let header = respond(
             &v.challenge(),
@@ -1432,7 +1436,8 @@ mod tests {
                 password: "12345".into(),
             },
             REALM,
-        );
+        )
+        .expect("OS random source");
         let client_ctx = RequestContext::new("GET", "/other/path");
         let header = respond(
             &v.challenge(),
@@ -1512,7 +1517,7 @@ mod tests {
 
     #[test]
     fn bearer_wrong_token_is_unauthorized() {
-        let v = Verifier::new(Credentials::bearer("right-token"), REALM);
+        let v = Verifier::new(Credentials::bearer("right-token"), REALM).expect("OS random source");
         let header = respond(
             &v.challenge(),
             &RequestContext::new("GET", "/stream"),
@@ -1527,7 +1532,7 @@ mod tests {
 
     #[test]
     fn missing_authorization_header_is_unauthorized() {
-        let v = Verifier::new(Credentials::bearer("tok"), REALM);
+        let v = Verifier::new(Credentials::bearer("tok"), REALM).expect("OS random source");
         assert_eq!(
             verify_auth(&v, None, "GET", "/stream"),
             AuthResult::Unauthorized
@@ -1544,7 +1549,8 @@ mod tests {
                 password: "12345".into(),
             },
             REALM,
-        );
+        )
+        .expect("OS random source");
         assert_eq!(
             verify_auth(&v, Some("Bearer sometoken"), "GET", "/stream"),
             AuthResult::Unauthorized
@@ -1701,7 +1707,7 @@ mod tests {
     /// if the request happens to carry an `X-Forwarded-For` header.
     #[test]
     fn forwarded_for_is_none_for_non_forwarded_verifier() {
-        let v = Verifier::new(Credentials::bearer("tok"), REALM);
+        let v = Verifier::new(Credentials::bearer("tok"), REALM).expect("OS random source");
         let headers: &[(&str, &str)] = &[("X-Forwarded-For", "203.0.113.7")];
         let ctx = RequestContext::new("GET", "/stream")
             .with_headers(headers)
@@ -1725,21 +1731,23 @@ mod tests {
     #[test]
     fn a_duplicate_authorization_header_is_a_bad_request_for_every_header_scheme() {
         let verifiers = [
-            Verifier::new(Credentials::bearer("tok"), REALM),
+            Verifier::new(Credentials::bearer("tok"), REALM).expect("OS random source"),
             Verifier::new(
                 Credentials::Basic {
                     username: "u".into(),
                     password: "p".into(),
                 },
                 REALM,
-            ),
+            )
+            .expect("OS random source"),
             Verifier::new(
                 Credentials::Digest {
                     username: "u".into(),
                     password: "p".into(),
                 },
                 REALM,
-            ),
+            )
+            .expect("OS random source"),
         ];
         let headers: &[(&str, &str)] = &[
             ("Authorization", "Bearer tok"),
@@ -1792,7 +1800,8 @@ mod tests {
                 password: "12345".into(),
             },
             REALM,
-        );
+        )
+        .expect("OS random source");
         let mut huge = String::from("Digest ");
         for i in 0..(MAX_DIGEST_FIELDS + 1) {
             if i > 0 {
@@ -1815,6 +1824,7 @@ mod tests {
             },
             REALM,
         )
+        .expect("OS random source")
         .with_clock(move || {
             UNIX_EPOCH + Duration::from_secs(now.load(std::sync::atomic::Ordering::SeqCst))
         })
@@ -1865,7 +1875,8 @@ mod tests {
                 password: "12345".into(),
             },
             REALM,
-        );
+        )
+        .expect("OS random source");
         let header = respond(
             &v.challenge(),
             &RequestContext::new("GET", "/stream"),
@@ -1883,7 +1894,7 @@ mod tests {
 
     #[test]
     fn bearer_scheme_is_matched_case_insensitively() {
-        let v = Verifier::new(Credentials::bearer("mytoken123"), REALM);
+        let v = Verifier::new(Credentials::bearer("mytoken123"), REALM).expect("OS random source");
         let header = respond(
             &v.challenge(),
             &RequestContext::new("GET", "/stream"),
@@ -2064,7 +2075,8 @@ mod tests {
                 password: "12345".into(),
             },
             REALM,
-        );
+        )
+        .expect("OS random source");
         let uri = "/stream/index.m3u8";
         let challenge = v.challenge();
         let start = challenge.find("nonce=\"").unwrap() + "nonce=\"".len();
@@ -2087,7 +2099,8 @@ mod tests {
                 password: "12345".into(),
             },
             REALM,
-        );
+        )
+        .expect("OS random source");
         let header = digest_header(&other.challenge(), uri);
         assert_eq!(
             verify_auth(&v, Some(&header), "GET", uri),
@@ -2206,7 +2219,8 @@ mod tests {
                 password: "12345".into(),
             },
             REALM,
-        );
+        )
+        .expect("OS random source");
         let ctx = RequestContext::new("GET", "/stream/index.m3u8");
         let header = respond(&v.challenge(), &ctx, Credentials::new("admin", "12345")).unwrap();
         assert_eq!(
@@ -2228,11 +2242,13 @@ mod tests {
                 password: "supersecret".into(),
             },
             REALM,
-        );
+        )
+        .expect("OS random source");
         let debug = format!("{v:?}");
         assert!(!debug.contains("supersecret"), "debug: {debug}");
 
-        let v = Verifier::new(Credentials::bearer("topsecrettoken"), REALM);
+        let v =
+            Verifier::new(Credentials::bearer("topsecrettoken"), REALM).expect("OS random source");
         let debug = format!("{v:?}");
         assert!(!debug.contains("topsecrettoken"), "debug: {debug}");
     }

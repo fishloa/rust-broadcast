@@ -7,8 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 ### Fixed
 - `credentials_from_url` returns credentials for an empty username with a password (`scheme://:pw@host/`) instead of `None`: RFC 3986 §3.2.1 allows an empty user, and RFC 7617 §2 and RFC 7616 §3.4 carry it (#2587).
-### Added
-- `Verifier::try_new` and `Error::RandomSource`: building a Digest verifier when the OS random source is unavailable returns the typed error instead of panicking. `Verifier::new` stays as the convenience that panics in that one case (documented under `# Panics`) (#2591).
+### Changed
+- BREAKING: `Verifier::new` returns `Result<Verifier>`; building a Digest verifier when the OS random source is unavailable is the new `Error::RandomSource` instead of a panic. There is no panicking variant (#2591).
 ### Added
 - `AuthState`, `AuthDecision`, `AuthEvent` and `carries_credentials`: the sans-IO 401/407 challenge-answer flow with its cookie jar, moved here from `broadcast-client` so a client primitive is not reached for through the session crate. `AuthState` scopes credentials to one origin (RFC 6454 §4), tries every line of a multi-line `WWW-Authenticate`, replays once after a Digest `stale=true` re-challenge, and stores `Set-Cookie` (RFC 6265) for the origin's later requests; it is `Clone` only as a way to start a fresh exchange (a clone carries no negotiated authenticator and no cookies). `broadcast-client`, `hls-runtime` and `multimux` all answer challenges through it. `broadcast_client::auth` re-exports the same types.
 

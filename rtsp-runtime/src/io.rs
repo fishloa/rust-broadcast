@@ -774,7 +774,7 @@ where
 /// store containing that cert and pass it to
 /// [`AsyncRtspClient::connect_tls`].
 #[cfg(feature = "tls")]
-pub fn default_tls_client_config() -> rustls::ClientConfig {
+pub fn default_tls_client_config() -> crate::Result<rustls::ClientConfig> {
     let mut roots = rustls::RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     // Select the aws-lc-rs provider explicitly rather than via
@@ -783,13 +783,15 @@ pub fn default_tls_client_config() -> rustls::ClientConfig {
     // `CryptoProvider` in the tree, leaving no unambiguous default and making
     // the plain builder panic. Choosing the provider here keeps `rtsp-runtime`
     // working regardless of what else is linked.
-    rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
-        rustls::crypto::aws_lc_rs::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()
-    .expect("aws-lc-rs provider supports the safe default protocol versions")
-    .with_root_certificates(roots)
-    .with_no_client_auth()
+    Ok(
+        rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+            rustls::crypto::aws_lc_rs::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .map_err(|e| Error::TlsConfig(Box::new(e)))?
+        .with_root_certificates(roots)
+        .with_no_client_auth(),
+    )
 }
 
 // ===========================================================================
@@ -1012,7 +1014,7 @@ mod tls_timeout_tests {
         let r = guard(connect_tls_via::<DuplexStream>(
             std::future::pending(),
             "localhost",
-            default_tls_client_config(),
+            default_tls_client_config().expect("TLS client config"),
             RtspClientConfig::default().with_timeouts(timeouts()),
         ))
         .await;
@@ -1029,7 +1031,7 @@ mod tls_timeout_tests {
         let r = guard(connect_tls_via(
             async { Ok(client_io) },
             "localhost",
-            default_tls_client_config(),
+            default_tls_client_config().expect("TLS client config"),
             RtspClientConfig::default().with_timeouts(timeouts()),
         ))
         .await;

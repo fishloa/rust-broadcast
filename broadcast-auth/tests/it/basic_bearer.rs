@@ -16,6 +16,7 @@ fn basic_verifier() -> Verifier {
         },
         "r",
     )
+    .expect("OS random source")
 }
 
 fn b64(s: &[u8]) -> String {
@@ -85,7 +86,7 @@ fn basic_garbage_is_unauthorized_not_a_panic() {
 
 #[test]
 fn bearer_comparison_trims_and_is_exact() {
-    let v = Verifier::new(Credentials::bearer("tok-123"), "r");
+    let v = Verifier::new(Credentials::bearer("tok-123"), "r").expect("OS random source");
     assert_eq!(verify(&v, "Bearer tok-123"), AuthResult::Ok);
     assert_eq!(verify(&v, "bearer   tok-123"), AuthResult::Ok);
     assert_eq!(verify(&v, "Bearer tok-123 "), AuthResult::Ok);
@@ -98,7 +99,7 @@ fn bearer_comparison_trims_and_is_exact() {
 /// compared trimmed, as before the headers migration).
 #[test]
 fn a_configured_token_with_surrounding_spaces_verifies() {
-    let v = Verifier::new(Credentials::bearer("  tok-1 "), "r");
+    let v = Verifier::new(Credentials::bearer("  tok-1 "), "r").expect("OS random source");
     assert_eq!(verify(&v, "Bearer tok-1"), AuthResult::Ok);
     assert_eq!(verify(&v, "Bearer   tok-1  "), AuthResult::Ok);
     assert_eq!(verify(&v, "Bearer tok-2"), AuthResult::Unauthorized);
@@ -133,7 +134,7 @@ fn a_bearer_challenge_error_code_maps_to_its_variant() {
 #[test]
 fn blank_bearer_token_never_verifies_a_blank_credential() {
     for token in ["", "   "] {
-        let v = Verifier::new(Credentials::bearer(token), "r");
+        let v = Verifier::new(Credentials::bearer(token), "r").expect("OS random source");
         assert_eq!(verify(&v, "Bearer "), AuthResult::Unauthorized, "{token:?}");
         assert_eq!(verify(&v, "Bearer"), AuthResult::Unauthorized, "{token:?}");
     }
