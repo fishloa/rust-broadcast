@@ -210,7 +210,7 @@ pub(crate) fn resolve(
     trunk: &Trunk,
     tracks: &[TrackSpec],
 ) -> Vec<(TeletextPage, SubtitleServing)> {
-    if !route.subtitles_enabled() || route.container() != hls_runtime::server::Container::Fmp4 {
+    if !route.subtitles_enabled() || route.container() != transmux::Container::Fmp4 {
         return Vec::new();
     }
     let pages = teletext_pages(route.name(), tracks);

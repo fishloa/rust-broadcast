@@ -171,6 +171,7 @@ pub mod cenc_decrypt;
 pub mod cenc_encrypt;
 #[cfg(feature = "cli")]
 pub mod cli;
+pub mod container;
 #[cfg(feature = "std")]
 pub mod dash;
 pub(crate) mod display_track;
@@ -285,6 +286,7 @@ pub use cenc::{
 pub use cenc_decrypt::{CencDecryptor, KeyMap};
 #[cfg(feature = "cenc")]
 pub use cenc_encrypt::{CencEncryptor, ConstantIvSenc, EncryptConfig, IvGen, SubsamplePolicy};
+pub use container::Container;
 #[cfg(feature = "std")]
 pub use dash::{
     Addressing, ContentProtectionSystem, DashPackager, InbandEventStream,
