@@ -1512,10 +1512,10 @@ pub struct RenditionSibling {
 /// # let nz = |n: usize| NonZeroUsize::new(n).unwrap();
 /// # let trunk = Arc::new(Trunk::new(TrunkConfig::default().with_timed_capacity(nz(16)).with_sparse_capacity(nz(4)).with_segment_capacity(nz(8)).with_event_capacity(nz(4)).with_part_capacity(nz(16))));
 /// let classic_ts = HlsOrigin::builder(Arc::clone(&trunk))
-///     .target_duration_secs(6.0)
-///     .window_segments(nz(4))
-///     .container(Container::MpegTs)
-///     // `.low_latency(..)` omitted entirely -> classic HLS.
+///     .with_target_duration_secs(6.0)
+///     .with_window_segments(nz(4))
+///     .with_container(Container::MpegTs)
+///     // `.with_low_latency(..)` omitted entirely -> classic HLS.
 ///     .build()
 ///     .expect("both required fields were set");
 /// # let _ = classic_ts;
