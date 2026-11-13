@@ -25,8 +25,9 @@ macro_rules! declare_tag_namespace {
         #[non_exhaustive]
         pub enum $Enum<$lt> {
             $(
-                #[allow(missing_docs)]
-                $variant($($path)::+ $(<$plt>)?),
+                /// `$variant` variant.
+                /// `$variant` variant.
+            $variant($($path)::+ $(<$plt>)?),
             )+
             /// Tag with no typed implementation; `body` is the payload sans
             /// the 2-byte (tag, length) header.

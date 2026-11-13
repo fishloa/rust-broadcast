@@ -55,8 +55,9 @@ macro_rules! declare_scoped_namespace {
         #[non_exhaustive]
         pub enum $Enum<$lt> {
             $(
-                #[allow(missing_docs)]
-                $variant($($path)::+ $(<$plt>)?),
+                /// `$variant` variant.
+                /// `$variant` variant.
+            $variant($($path)::+ $(<$plt>)?),
             )+
             /// A tag the spec hands back to EN 300 468 (DVB SI) semantics,
             /// decoded by the SI dispatch.

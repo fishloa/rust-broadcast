@@ -102,7 +102,6 @@ impl_h222_descriptor!(
 );
 
 #[cfg(test)]
-#[allow(clippy::unusual_byte_groupings)] // bit-field-wise literals mirror the syntax tables
 mod tests {
     use super::*;
     use alloc::vec;
@@ -119,11 +118,11 @@ mod tests {
     #[test]
     fn with_and_without_asc() {
         // ASC_flag=1 reserved=111 loops=2, indications 0x2F 0x30, ASC_size=2 + bytes
-        let d = rt(&[TAG, 6, 0b1_111_0010, 0x2F, 0x30, 2, 0x12, 0x10]);
+        let d = rt(&[TAG, 6, 0b1111_0010, 0x2F, 0x30, 2, 0x12, 0x10]);
         assert_eq!(d.audio_profile_level_indications, [0x2F, 0x30]);
         assert_eq!(d.audio_specific_config.as_deref(), Some(&[0x12, 0x10][..]));
         // ASC_flag=0, zero loops, non-default reserved + trailing byte
-        let d = rt(&[TAG, 2, 0b0_000_0000, 0x55]);
+        let d = rt(&[TAG, 2, 0b0000_0000, 0x55]);
         assert_eq!(d.reserved, 0);
         assert_eq!(d.trailing, [0x55]);
     }
@@ -131,7 +130,7 @@ mod tests {
     #[test]
     fn rejects_truncation_and_overflow() {
         assert!(matches!(
-            &(Mpeg4AudioExtensionDescriptor::parse(&[TAG, 3, 0b1_111_0001, 0x2F, 5])),
+            &(Mpeg4AudioExtensionDescriptor::parse(&[TAG, 3, 0b1111_0001, 0x2F, 5])),
             Err(crate::error::Error::BufferTooShort(..))
         ));
         let d = Mpeg4AudioExtensionDescriptor::new(vec![0; 16], None);
