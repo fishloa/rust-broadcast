@@ -84,10 +84,10 @@
 //! channel for it — not a duplicate of anything `Trunk` holds.
 
 use media_plane::ids::{Generation, PartIndex, SegmentSeq};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 use std::time::Duration;
 use transmux::TrackId;
 
@@ -289,7 +289,7 @@ pub fn master_playlist_m3u8(media_playlist_name: &str, bandwidth_bps: u32) -> St
 /// Typed value of the `_HLS_skip` Delivery Directive (RFC 8216bis §6.2.5.1):
 /// `YES` requests a delta update that skips older Media Segments, `v2` also
 /// skips older `EXT-X-DATERANGE` tags.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum SkipDirective {
     /// Skip older Media Segments only (`_HLS_skip=YES`).
@@ -1825,6 +1825,10 @@ impl HlsOriginBuilder {
             cursor: Mutex::new(cursor),
             drained_through: AtomicU64::new(UNDRAINED),
             drain_gate: Mutex::new(()),
+            epoch: AtomicU64::new(0),
+            render_cache: Mutex::new(RenderCache::default()),
+            #[cfg(test)]
+            renders: std::sync::atomic::AtomicUsize::new(0),
             window: Mutex::new({
                 let mut window = Window::new(window_segments);
                 window.discontinuity_sequence = self.discontinuity_sequence;
@@ -1866,6 +1870,39 @@ impl HlsOriginBuilder {
     }
 }
 
+/// What one cached render is keyed by within a [`RenderStamp`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum RenderKey {
+    Media {
+        track_id: TrackId,
+        skip: Option<SkipDirective>,
+    },
+    IFrame {
+        track_id: TrackId,
+        media_playlist_name: String,
+    },
+}
+
+/// The state a rendered playlist was produced from; see
+/// [`HlsOrigin::render_stamp`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RenderStamp {
+    own: (u64, u64, u64),
+    siblings: Vec<(u64, u64, u64)>,
+}
+
+type RenderCell = Arc<OnceLock<core::result::Result<String, String>>>;
+
+#[derive(Default)]
+struct RenderCache {
+    stamp: Option<RenderStamp>,
+    entries: HashMap<RenderKey, RenderCell>,
+}
+
+/// Bound on distinct renders cached per stamp, so a client cannot grow the
+/// cache by varying a request field.
+const MAX_CACHED_RENDERS: usize = 16;
+
 /// The LL-HLS origin [`ServedEgress`]: renders playlists and resolves
 /// blocking-reload/part-availability requests for one stream, backed by a
 /// shared [`Trunk`]. See this module's own doc for exactly what comes
@@ -1883,6 +1920,14 @@ pub struct HlsOrigin {
     /// Serialises whole drains, so a concurrent caller waits for the window to
     /// be populated instead of rendering from a half-drained one.
     drain_gate: Mutex<()>,
+    /// Bumped by every setter that changes what a playlist renders; part of
+    /// the [`RenderStamp`] a cached render is keyed by.
+    epoch: AtomicU64,
+    /// Rendered media and I-frame playlists, valid for one [`RenderStamp`].
+    render_cache: Mutex<RenderCache>,
+    /// Test probe: playlist renders actually performed (cache misses).
+    #[cfg(test)]
+    renders: std::sync::atomic::AtomicUsize,
     // Lock order (never the reverse): `drain_gate` -> `cursor` -> `window` -> `arrival_origin`
     // -> `init`; `codecs` is taken alone. No `Trunk` call is made while
     // `window` is held except inside `drain` (the cursor poll).
@@ -2046,6 +2091,7 @@ impl HlsOrigin {
             }
         }
         locked(&self.init).set(bytes, first_segment);
+        self.bump_epoch();
     }
 
     /// Tell the origin which tracks it serves, so the master playlist can
@@ -2150,6 +2196,7 @@ impl HlsOrigin {
         *locked(&self.resolution) = resolution;
         *locked(&self.frame_rate) = frame_rate;
         *locked(&self.track_specs) = stored_track_specs;
+        self.bump_epoch();
         Ok(())
     }
 
@@ -2192,6 +2239,7 @@ impl HlsOrigin {
     /// way, unless [`HlsOriginBuilder::closed_captions_none`] is set.
     pub fn set_detected_closed_captions(&self, detected: Vec<broadcast_hls::InstreamId>) {
         *locked(&self.detected_closed_captions) = Some(detected);
+        self.bump_epoch();
     }
 
     /// Record the BCP 47 `LANGUAGE` the stream declares for each caption
@@ -2202,6 +2250,7 @@ impl HlsOrigin {
         languages: Vec<(broadcast_hls::InstreamId, String)>,
     ) {
         *locked(&self.declared_closed_caption_languages) = languages;
+        self.bump_epoch();
     }
 
     /// Replace the declared WebVTT subtitle renditions after construction, for
@@ -2219,6 +2268,7 @@ impl HlsOrigin {
     ) -> Result<(), HlsOriginBuildError> {
         validate_subtitle_renditions(&decls)?;
         *locked(&self.subtitle_renditions) = decls;
+        self.bump_epoch();
         Ok(())
     }
 
@@ -2840,6 +2890,7 @@ impl HlsOrigin {
     /// be no longer than it. Has no effect on a classic-HLS origin.
     pub fn set_part_target_ms(&self, ms: u32) {
         self.part_target_override_ms.store(ms, Ordering::Relaxed);
+        self.bump_epoch();
     }
 
     fn effective_part_target_ms(&self) -> Option<u32> {
@@ -2876,6 +2927,7 @@ impl HlsOrigin {
     /// Replace the sibling renditions whose live edge this origin reports.
     pub fn set_rendition_siblings(&self, siblings: Vec<RenditionSibling>) {
         *locked(&self.rendition_siblings) = siblings;
+        self.bump_epoch();
     }
 
     /// Snapshot of this origin's current live edge as `(LAST-MSN, LAST-PART)`,
@@ -2920,14 +2972,17 @@ impl HlsOrigin {
     /// exactly like every other lossy cursor in this workspace, the honest
     /// response is to resume from the next segment, not to fabricate the
     /// lost entries' duration/discontinuity data.
+    fn drain_head(&self) -> u64 {
+        self.trunk
+            .last_closed_segment()
+            .map_or(0, |n| u64::from(n.value()).saturating_add(1))
+    }
+
     fn drain(&self) {
         // Nothing published since the last drain: skip both locks. The head
         // is read *before* draining and stored after, so a segment published
         // in between just makes the next call drain once more (audit r09-O4).
-        let head = self
-            .trunk
-            .last_closed_segment()
-            .map_or(0, |n| u64::from(n.value()).saturating_add(1));
+        let head = self.drain_head();
         if self.drained_through.load(Ordering::Acquire) == head {
             return;
         }
@@ -3029,6 +3084,63 @@ impl HlsOrigin {
             }
         }
         self.drained_through.store(head, Ordering::Release);
+    }
+
+    fn bump_epoch(&self) {
+        self.epoch.fetch_add(1, Ordering::Release);
+    }
+
+    /// Everything a rendered media or I-frame playlist depends on besides the
+    /// request: the trunk's publish counter, this origin's setter epoch, the
+    /// drained head, and the same triple for each rendition sibling (whose
+    /// state `EXT-X-RENDITION-REPORT` quotes). Read **before** rendering, so a
+    /// change that lands mid-render only ever leaves the cached entry older
+    /// than its stamp claims, never newer.
+    fn render_stamp(&self) -> RenderStamp {
+        let own = self.stamp_part();
+        let siblings = locked(&self.rendition_siblings)
+            .iter()
+            .filter_map(|sibling| sibling.origin.upgrade())
+            .map(|origin| origin.stamp_part())
+            .collect();
+        RenderStamp { own, siblings }
+    }
+
+    fn stamp_part(&self) -> (u64, u64, u64) {
+        (
+            self.trunk.generation(),
+            self.epoch.load(Ordering::Acquire),
+            self.drained_through.load(Ordering::Acquire),
+        )
+    }
+
+    /// `render`'s result for `key`, computed once per [`RenderStamp`]: a
+    /// concurrent request for the same key waits for the one render rather
+    /// than repeating it. The cache lock is held only to find or insert the
+    /// cell, never across a render.
+    fn cached_render(
+        &self,
+        key: RenderKey,
+        render: impl FnOnce() -> core::result::Result<String, String>,
+    ) -> core::result::Result<String, String> {
+        let stamp = self.render_stamp();
+        let cell = {
+            let mut cache = locked(&self.render_cache);
+            if cache.stamp.as_ref() != Some(&stamp) {
+                cache.entries.clear();
+                cache.stamp = Some(stamp);
+            }
+            match cache.entries.get(&key) {
+                Some(cell) => Arc::clone(cell),
+                None if cache.entries.len() >= MAX_CACHED_RENDERS => return render(),
+                None => {
+                    let cell = Arc::new(OnceLock::new());
+                    cache.entries.insert(key, Arc::clone(&cell));
+                    cell
+                }
+            }
+        };
+        cell.get_or_init(render).clone()
     }
 
     /// `FRAME-RATE` of the video variants: the SPS VUI timing rate when the
@@ -3273,6 +3385,19 @@ impl HlsOrigin {
         skip: Option<SkipDirective>,
     ) -> core::result::Result<String, String> {
         self.drain();
+        self.cached_render(RenderKey::Media { track_id, skip }, || {
+            self.render_playlist_uncached(track_id, skip)
+        })
+    }
+
+    fn render_playlist_uncached(
+        &self,
+        track_id: TrackId,
+        skip: Option<SkipDirective>,
+    ) -> core::result::Result<String, String> {
+        #[cfg(test)]
+        self.renders
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         // Snapshot the window and release its lock before any `Trunk` call:
         // `live_edge`, the part lookups and the event lookups below take the
         // `Trunk`'s own lock, which must not nest inside this origin's
@@ -3745,6 +3870,23 @@ impl HlsOrigin {
         media_playlist_name: &str,
     ) -> core::result::Result<String, String> {
         self.drain();
+        self.cached_render(
+            RenderKey::IFrame {
+                track_id,
+                media_playlist_name: media_playlist_name.to_string(),
+            },
+            || self.render_iframe_playlist_uncached(track_id, media_playlist_name),
+        )
+    }
+
+    fn render_iframe_playlist_uncached(
+        &self,
+        track_id: TrackId,
+        media_playlist_name: &str,
+    ) -> core::result::Result<String, String> {
+        #[cfg(test)]
+        self.renders
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if self.container != Container::Fmp4 {
             return Err("not fmp4".to_string());
         }
@@ -4020,6 +4162,14 @@ impl ServedEgress for HlsOrigin {
             ),
             HlsRequest::Resource { name } => self.resolve_resource(&name, now, await_policy),
         }
+    }
+
+    fn is_warm(&self, _request: &HlsRequest) -> bool {
+        self.drained_through.load(Ordering::Acquire) == self.drain_head()
+    }
+
+    fn prepare(&self, _request: HlsRequest) {
+        self.drain();
     }
 }
 
@@ -5969,5 +6119,80 @@ mod tests {
             resolve_now(&origin, segment_request("seg-1-7-1.m4s")),
             EgressResponse::Ready { .. }
         ));
+    }
+    const CONCURRENT_RENDERERS: usize = 64;
+
+    fn render_media(origin: &HlsOrigin) -> String {
+        origin
+            .render_playlist(DEFAULT_TRACK_ID, None)
+            .expect("playlist renders")
+    }
+
+    /// #2526: concurrent requests at one stamp share one render.
+    #[test]
+    fn concurrent_playlist_requests_at_one_key_render_once() {
+        let (_trunk, origin, writer) = make_origin();
+        seg(&writer, 1, 4.0, false);
+        seg(&writer, 2, 4.0, false);
+        let origin = Arc::new(origin);
+        let barrier = Arc::new(std::sync::Barrier::new(CONCURRENT_RENDERERS));
+
+        let bodies: Vec<String> = (0..CONCURRENT_RENDERERS)
+            .map(|_| {
+                let (origin, barrier) = (Arc::clone(&origin), Arc::clone(&barrier));
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    render_media(&origin)
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|handle| handle.join().expect("renderer thread"))
+            .collect();
+
+        assert_eq!(
+            origin.renders.load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "one render serves every concurrent request at the same stamp"
+        );
+        assert!(bodies.iter().all(|body| *body == bodies[0]));
+    }
+
+    /// #2526: a publish changes the stamp, so the cached playlist is not
+    /// served for the new state.
+    #[test]
+    fn a_publish_invalidates_the_cached_playlist() {
+        let (_trunk, origin, writer) = make_origin();
+        seg(&writer, 1, 4.0, false);
+        let before = render_media(&origin);
+        assert_eq!(render_media(&origin), before);
+        assert_eq!(origin.renders.load(std::sync::atomic::Ordering::Relaxed), 1);
+
+        part(&writer, 2, 0, true);
+        let with_part = render_media(&origin);
+        assert_ne!(with_part, before, "a new part must change the playlist");
+
+        seg(&writer, 2, 4.0, false);
+        let with_segment = render_media(&origin);
+        assert_ne!(with_segment, with_part);
+        assert_eq!(origin.renders.load(std::sync::atomic::Ordering::Relaxed), 3);
+    }
+
+    /// #2526: `is_warm` is false until the window has been drained, and
+    /// `prepare` makes it true; a segment publish makes it false again.
+    #[test]
+    fn is_warm_tracks_the_drained_head() {
+        let (_trunk, origin, writer) = make_origin();
+        let request = HlsRequest::Playlist {
+            track_id: DEFAULT_TRACK_ID,
+            query: BlockingQuery::default(),
+        };
+        assert!(!origin.is_warm(&request), "nothing drained yet");
+        origin.prepare(request.clone());
+        assert!(origin.is_warm(&request));
+        seg(&writer, 1, 4.0, false);
+        assert!(!origin.is_warm(&request), "a new segment is undrained");
+        origin.prepare(request.clone());
+        assert!(origin.is_warm(&request));
     }
 }
