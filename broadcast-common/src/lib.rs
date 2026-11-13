@@ -73,6 +73,7 @@ pub mod pusi;
 pub mod seq;
 pub mod stage;
 pub mod time;
+pub mod timeouts;
 pub mod timescale;
 pub mod traits;
 #[cfg(feature = "url")]

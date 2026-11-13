@@ -30,6 +30,7 @@ use futures_util::{FutureExt, SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::PlaySession;
+use broadcast_common::timeouts::Timeouts;
 use tokio::net::TcpStream;
 use tokio_util::codec::Framed;
 
@@ -45,61 +46,6 @@ use crate::transport::{Transport, TransportSpec};
 /// zero; the value itself carries no wall-clock meaning.)
 static NOW_EPOCH: std::sync::LazyLock<tokio::time::Instant> =
     std::sync::LazyLock::new(tokio::time::Instant::now);
-
-/// Explicit bounds on every awaited IO of the RTSP adapters (W1 SP1.3): no wait
-/// is unbounded.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct RtspTimeouts {
-    /// TCP connect. Default 10 s.
-    pub connect: Duration,
-    /// TLS handshake (rtsps) / first complete request on a server connection. Default 10 s.
-    pub handshake: Duration,
-    /// Longest wait for the next complete frame (a response, a request, an interleaved frame).
-    /// It bounds the whole frame, not each byte, so a peer dripping one byte at a time still
-    /// times out. Default 30 s.
-    pub read_idle: Duration,
-    /// Longest wait for a write to be accepted by the socket. Default 10 s.
-    pub write: Duration,
-}
-
-impl Default for RtspTimeouts {
-    fn default() -> Self {
-        Self {
-            connect: Duration::from_secs(10),
-            handshake: Duration::from_secs(10),
-            read_idle: Duration::from_secs(30),
-            write: Duration::from_secs(10),
-        }
-    }
-}
-
-impl RtspTimeouts {
-    /// Sets [`connect`](Self::connect).
-    #[must_use]
-    pub fn with_connect(mut self, d: Duration) -> Self {
-        self.connect = d;
-        self
-    }
-    /// Sets [`handshake`](Self::handshake).
-    #[must_use]
-    pub fn with_handshake(mut self, d: Duration) -> Self {
-        self.handshake = d;
-        self
-    }
-    /// Sets [`read_idle`](Self::read_idle).
-    #[must_use]
-    pub fn with_read_idle(mut self, d: Duration) -> Self {
-        self.read_idle = d;
-        self
-    }
-    /// Sets [`write`](Self::write).
-    #[must_use]
-    pub fn with_write(mut self, d: Duration) -> Self {
-        self.write = d;
-        self
-    }
-}
 
 /// Maximum interleaved [`ClientEvent::MediaData`] frames held in
 /// `pending_media` awaiting [`AsyncRtspClient::recv_interleaved`]. A camera
@@ -161,7 +107,7 @@ pub struct AsyncRtspClient<S> {
     /// arriving between control messages), buffered for `recv_interleaved`.
     pending_media: VecDeque<ClientEvent>,
     deferred_error: Option<Error>,
-    timeouts: RtspTimeouts,
+    timeouts: Timeouts,
 }
 
 impl AsyncRtspClient<TcpStream> {
@@ -170,7 +116,7 @@ impl AsyncRtspClient<TcpStream> {
     /// `addr` is any [`tokio::net::ToSocketAddrs`]; for the RTSP default port use
     /// `(host, RTSP_DEFAULT_PORT)`.
     pub async fn connect<A: tokio::net::ToSocketAddrs>(addr: A) -> Result<Self> {
-        Self::connect_with_timeouts(addr, ClientSession::new(), RtspTimeouts::default()).await
+        Self::connect_with_timeouts(addr, ClientSession::new(), Timeouts::default()).await
     }
 
     /// Connects a plain-TCP client to `addr` using a pre-configured session
@@ -179,14 +125,14 @@ impl AsyncRtspClient<TcpStream> {
         addr: A,
         session: ClientSession,
     ) -> Result<Self> {
-        Self::connect_with_timeouts(addr, session, RtspTimeouts::default()).await
+        Self::connect_with_timeouts(addr, session, Timeouts::default()).await
     }
 
-    /// Like [`connect_with`](Self::connect_with), with explicit [`RtspTimeouts`].
+    /// Like [`connect_with`](Self::connect_with), with explicit [`Timeouts`].
     pub async fn connect_with_timeouts<A: tokio::net::ToSocketAddrs>(
         addr: A,
         session: ClientSession,
-        timeouts: RtspTimeouts,
+        timeouts: Timeouts,
     ) -> Result<Self> {
         let stream = bounded(timeouts.connect, "connect", async {
             TcpStream::connect(addr)
@@ -203,13 +149,13 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     /// Wraps an already-connected stream (plain or TLS) and a session, with the
-    /// default [`RtspTimeouts`].
+    /// default [`Timeouts`].
     pub fn with_stream(stream: S, session: ClientSession) -> Self {
-        Self::with_stream_timeouts(stream, session, RtspTimeouts::default())
+        Self::with_stream_timeouts(stream, session, Timeouts::default())
     }
 
-    /// Wraps an already-connected stream with explicit [`RtspTimeouts`].
-    pub fn with_stream_timeouts(stream: S, session: ClientSession, timeouts: RtspTimeouts) -> Self {
+    /// Wraps an already-connected stream with explicit [`Timeouts`].
+    pub fn with_stream_timeouts(stream: S, session: ClientSession, timeouts: Timeouts) -> Self {
         AsyncRtspClient {
             framed: Framed::new(stream, ClientCodec::new(session)),
             pending_media: VecDeque::new(),
@@ -219,7 +165,7 @@ where
     }
 
     /// The timeouts this adapter applies.
-    pub fn timeouts(&self) -> RtspTimeouts {
+    pub fn timeouts(&self) -> Timeouts {
         self.timeouts
     }
 
@@ -245,7 +191,7 @@ where
     }
 
     /// The next decoded event; `Ok(None)` = clean EOF. One deadline covers the WHOLE
-    /// frame (see [`RtspTimeouts::read_idle`]).
+    /// frame (see [`Timeouts::read_idle`]).
     async fn next_event(&mut self) -> Result<Option<ClientEvent>> {
         // Inbound events (media, responses) deliberately do NOT count as keepalive
         // activity: the server's session timeout is refreshed by RTSP *requests*
@@ -446,7 +392,7 @@ where
     /// [`AsyncRtspServer::send_interleaved`], for an RTSP push that delivers
     /// media interleaved over the control connection. The frame is built by
     /// [`crate::interleaved::InterleavedFrame::new`] and the write is bounded
-    /// by [`RtspTimeouts::write`].
+    /// by [`Timeouts::write`].
     ///
     /// Before the write this drives the push keepalive (see
     /// [`poll_keepalive`](Self::poll_keepalive)) and drains any server→client
@@ -555,7 +501,7 @@ where
     /// `CSeq` (audit run-09 W7). Such a stray response is simply dropped: no
     /// one is waiting for it any more.
     ///
-    /// Every awaited IO is bounded by [`RtspTimeouts`]: a write that the peer
+    /// Every awaited IO is bounded by [`Timeouts`]: a write that the peer
     /// does not accept is [`Error::Timeout`] `{ what: "write" }`, a response that
     /// does not complete in `read_idle` is `{ what: "read" }`. Bytes already read
     /// stay in the framed buffer if this future is dropped, but a caller relying
@@ -699,19 +645,19 @@ impl AsyncRtspClient<tokio_rustls::client::TlsStream<TcpStream>> {
         config: rustls::ClientConfig,
         session: ClientSession,
     ) -> Result<Self> {
-        Self::connect_tls_with_timeouts(addr, server_name, config, session, RtspTimeouts::default())
+        Self::connect_tls_with_timeouts(addr, server_name, config, session, Timeouts::default())
             .await
     }
 
     /// Like [`connect_tls_with`](Self::connect_tls_with), with explicit
-    /// [`RtspTimeouts`]: `connect` bounds the TCP connect, `handshake` the TLS
+    /// [`Timeouts`]: `connect` bounds the TCP connect, `handshake` the TLS
     /// handshake.
     pub async fn connect_tls_with_timeouts<A: tokio::net::ToSocketAddrs>(
         addr: A,
         server_name: &str,
         config: rustls::ClientConfig,
         session: ClientSession,
-        timeouts: RtspTimeouts,
+        timeouts: Timeouts,
     ) -> Result<Self> {
         let addr = addr;
         connect_tls_via(
@@ -737,7 +683,7 @@ async fn connect_tls_via<T>(
     server_name: &str,
     config: rustls::ClientConfig,
     session: ClientSession,
-    timeouts: RtspTimeouts,
+    timeouts: Timeouts,
 ) -> Result<AsyncRtspClient<tokio_rustls::client::TlsStream<T>>>
 where
     T: AsyncRead + AsyncWrite + Unpin,
@@ -800,12 +746,12 @@ pub fn default_tls_client_config() -> rustls::ClientConfig {
 /// Reads requests off the socket (framed by a `tokio_util` codec over
 /// `rtsp_types`), calls [`ServerSession::handle_request`], writes the response
 /// bytes back, and returns the [`ServerEvent`]s. Every awaited IO is bounded by
-/// [`RtspTimeouts`].
+/// [`Timeouts`].
 #[derive(Debug)]
 pub struct AsyncRtspServer<S> {
     framed: Framed<S, ServerCodec>,
     session: ServerSession,
-    timeouts: RtspTimeouts,
+    timeouts: Timeouts,
     first_request_seen: bool,
     /// Events of a request whose response is still being written (cancel safety).
     ready: Option<Vec<ServerEvent>>,
@@ -833,15 +779,15 @@ impl AsyncRtspServer<tokio_rustls::server::TlsStream<TcpStream>> {
     /// Performs the TLS handshake over an accepted TCP connection (an
     /// `rtsps://` server), then wraps the TLS stream with a fresh session.
     pub async fn accept_tls(stream: TcpStream, config: rustls::ServerConfig) -> Result<Self> {
-        Self::accept_tls_with_timeouts(stream, config, RtspTimeouts::default()).await
+        Self::accept_tls_with_timeouts(stream, config, Timeouts::default()).await
     }
 
-    /// Like [`accept_tls`](Self::accept_tls), with explicit [`RtspTimeouts`]:
+    /// Like [`accept_tls`](Self::accept_tls), with explicit [`Timeouts`]:
     /// `handshake` bounds the TLS handshake.
     pub async fn accept_tls_with_timeouts(
         stream: TcpStream,
         config: rustls::ServerConfig,
-        timeouts: RtspTimeouts,
+        timeouts: Timeouts,
     ) -> Result<Self> {
         accept_tls_via(stream, config, timeouts).await
     }
@@ -852,7 +798,7 @@ impl AsyncRtspServer<tokio_rustls::server::TlsStream<TcpStream>> {
 async fn accept_tls_via<T>(
     stream: T,
     config: rustls::ServerConfig,
-    timeouts: RtspTimeouts,
+    timeouts: Timeouts,
 ) -> Result<AsyncRtspServer<tokio_rustls::server::TlsStream<T>>>
 where
     T: AsyncRead + AsyncWrite + Unpin,
@@ -887,13 +833,13 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     /// Wraps an already-connected stream (plain or TLS) and a session, with the
-    /// default [`RtspTimeouts`].
+    /// default [`Timeouts`].
     pub fn with_stream(stream: S, session: ServerSession) -> Self {
-        Self::with_stream_timeouts(stream, session, RtspTimeouts::default())
+        Self::with_stream_timeouts(stream, session, Timeouts::default())
     }
 
-    /// Wraps an already-connected stream with explicit [`RtspTimeouts`].
-    pub fn with_stream_timeouts(stream: S, session: ServerSession, timeouts: RtspTimeouts) -> Self {
+    /// Wraps an already-connected stream with explicit [`Timeouts`].
+    pub fn with_stream_timeouts(stream: S, session: ServerSession, timeouts: Timeouts) -> Self {
         AsyncRtspServer {
             framed: Framed::new(stream, ServerCodec::default()),
             session,
@@ -904,7 +850,7 @@ where
     }
 
     /// The timeouts this adapter applies.
-    pub fn timeouts(&self) -> RtspTimeouts {
+    pub fn timeouts(&self) -> Timeouts {
         self.timeouts
     }
 
@@ -931,9 +877,9 @@ where
     /// events, or surfacing an interleaved `$`-frame as
     /// [`ServerEvent::MediaData`].
     ///
-    /// The FIRST call on a connection waits at most [`RtspTimeouts::handshake`]
+    /// The FIRST call on a connection waits at most [`Timeouts::handshake`]
     /// for a complete request; later calls wait at most
-    /// [`RtspTimeouts::read_idle`]. A frame must complete inside that single
+    /// [`Timeouts::read_idle`]. A frame must complete inside that single
     /// deadline, so a client dripping bytes cannot hold the connection forever.
     ///
     /// Cancel-safe: dropping the future while the response is being written
@@ -992,8 +938,8 @@ mod tls_timeout_tests {
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
     use tokio::io::{DuplexStream, duplex};
 
-    fn timeouts() -> RtspTimeouts {
-        RtspTimeouts::default()
+    fn timeouts() -> Timeouts {
+        Timeouts::default()
             .with_connect(Duration::from_secs(3))
             .with_handshake(Duration::from_secs(4))
     }

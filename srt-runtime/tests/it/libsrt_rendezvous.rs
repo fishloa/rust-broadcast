@@ -25,7 +25,7 @@ use std::time::Duration;
 use test_fixtures::process::KillOnDrop;
 
 use srt_runtime::handshake_sm::HandshakeConfig;
-use srt_runtime::io::{IoConfig, SrtSocket};
+use srt_runtime::io::{IoConfig, SRT_TIMEOUTS, SrtSocket};
 use tokio::net::UdpSocket as TokioUdpSocket;
 
 include!("support/skip.rs");
@@ -48,7 +48,7 @@ fn patient_config() -> HandshakeConfig {
 }
 
 fn patient_io() -> IoConfig {
-    IoConfig::default().with_handshake(Duration::from_secs(20))
+    IoConfig::default().with_timeouts(SRT_TIMEOUTS.with_handshake(Duration::from_secs(20)))
 }
 
 fn pattern(n: usize, seed: u8) -> Vec<u8> {

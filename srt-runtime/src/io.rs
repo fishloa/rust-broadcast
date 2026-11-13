@@ -67,6 +67,7 @@
 //! module is compiled.
 
 use broadcast_common::error::InvalidField;
+use broadcast_common::timeouts::Timeouts;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -114,6 +115,16 @@ pub const MIN_MAX_DATAGRAM: usize = 64;
 /// Largest accepted [`IoConfig::max_datagram`]: the biggest UDP payload.
 pub const MAX_MAX_DATAGRAM: usize = 65_535;
 
+/// The SRT adapter's default [`Timeouts`]: 10 s to resolve and bind, a 5 s
+/// caller handshake, and 5 s for both an idle peer (libsrt's
+/// `SRTO_PEERIDLETIMEO` default of 5000 ms) and a single `send_to`.
+pub const SRT_TIMEOUTS: Timeouts = Timeouts::new(
+    Duration::from_secs(10),
+    Duration::from_secs(5),
+    Duration::from_secs(5),
+    Duration::from_secs(5),
+);
+
 /// Timeouts and sizes for the tokio adapter ([`SrtSocket::connect_with`],
 /// [`SrtListener::bind_with`]).
 ///
@@ -127,18 +138,12 @@ pub struct IoConfig {
     /// (UDP would otherwise truncate it silently). Values below
     /// [`MIN_MAX_DATAGRAM`] are clamped up to it.
     pub max_datagram: usize,
-    /// Bound on resolving the remote address and binding the local socket.
-    /// Default 10 s.
-    pub connect: Duration,
-    /// Budget for the whole caller handshake. Default 5 s (the previous
-    /// `HANDSHAKE_TIMEOUT` constant).
-    pub handshake: Duration,
-    /// Longest silence from a connected peer before the connection is torn
-    /// down. Default 5 s: libsrt's `SRTO_PEERIDLETIMEO` default of 5000 ms (the
-    /// previous `PEER_IDLE_TIMEOUT` constant).
-    pub read_idle: Duration,
-    /// Longest a single `send_to` may take. Default 5 s.
-    pub write: Duration,
+    /// The bounds on every awaited I/O: `connect` (resolving the remote
+    /// address and binding the local socket), `handshake` (the whole caller
+    /// handshake), `read_idle` (longest silence from a connected peer before the
+    /// connection is torn down) and `write` (longest a single `send_to` may
+    /// take). Default [`SRT_TIMEOUTS`].
+    pub timeouts: Timeouts,
     /// KM Refresh thresholds (crypto feature / key rotation). Default the
     /// spec-recommended `2^25` / `4000` values. Lower for testing.
     #[cfg(feature = "crypto")]
@@ -149,10 +154,7 @@ impl Default for IoConfig {
     fn default() -> Self {
         IoConfig {
             max_datagram: DEFAULT_MAX_DATAGRAM,
-            connect: Duration::from_secs(10),
-            handshake: Duration::from_secs(5),
-            read_idle: Duration::from_secs(5),
-            write: Duration::from_secs(5),
+            timeouts: SRT_TIMEOUTS,
             #[cfg(feature = "crypto")]
             km_refresh_thresholds: crate::km_refresh::KmRefreshThresholds::RECOMMENDED,
         }
@@ -167,31 +169,10 @@ impl IoConfig {
         self
     }
 
-    /// Set [`connect`](Self::connect).
+    /// Set [`timeouts`](Self::timeouts).
     #[must_use]
-    pub fn with_connect(mut self, d: Duration) -> Self {
-        self.connect = d;
-        self
-    }
-
-    /// Set [`handshake`](Self::handshake).
-    #[must_use]
-    pub fn with_handshake(mut self, d: Duration) -> Self {
-        self.handshake = d;
-        self
-    }
-
-    /// Set [`read_idle`](Self::read_idle).
-    #[must_use]
-    pub fn with_read_idle(mut self, d: Duration) -> Self {
-        self.read_idle = d;
-        self
-    }
-
-    /// Set [`write`](Self::write).
-    #[must_use]
-    pub fn with_write(mut self, d: Duration) -> Self {
-        self.write = d;
+    pub fn with_timeouts(mut self, timeouts: Timeouts) -> Self {
+        self.timeouts = timeouts;
         self
     }
 
@@ -568,7 +549,7 @@ impl SrtSocket {
         config: HandshakeConfig,
         io: IoConfig,
     ) -> Result<Self> {
-        let socket = bounded(io.connect, "bind", async {
+        let socket = bounded(io.timeouts.connect, "bind", async {
             UdpSocket::bind(local_addr)
                 .await
                 .map_err(|e| io_err("bind", e))
@@ -591,7 +572,7 @@ impl SrtSocket {
         io: IoConfig,
     ) -> Result<Self> {
         let max_datagram = io.max_datagram.clamp(MIN_MAX_DATAGRAM, MAX_MAX_DATAGRAM);
-        let peer = bounded(io.connect, "resolve", resolve_one(remote_addr)).await?;
+        let peer = bounded(io.timeouts.connect, "resolve", resolve_one(remote_addr)).await?;
         let socket = Arc::new(socket);
 
         // Both this Caller's own Socket ID and its ISN must be freshly
@@ -608,7 +589,14 @@ impl SrtSocket {
         let epoch = Instant::now();
         hs.set_elapsed(epoch.elapsed());
         let induction = hs.start().map_err(|e| handshake_err("caller start", e))?;
-        send_bounded(&socket, &induction, peer, io.write, "send induction").await?;
+        send_bounded(
+            &socket,
+            &induction,
+            peer,
+            io.timeouts.write,
+            "send induction",
+        )
+        .await?;
 
         // Re-send an unanswered request every `HANDSHAKE_RETRANSMIT_PERIOD`
         // (the engine counts `retransmit_after_ticks` ticks per retransmit),
@@ -617,7 +605,7 @@ impl SrtSocket {
             .max(MIN_HANDSHAKE_TICK);
         let mut ticker = tokio::time::interval_at(Instant::now() + tick_period, tick_period);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        let deadline = Instant::now() + io.handshake;
+        let deadline = Instant::now() + io.timeouts.handshake;
         let mut scratch = vec![0u8; max_datagram + 1];
         // The handshake loop has no `SocketStats` yet; oversize datagrams are
         // simply ignored (the real peer retransmits).
@@ -676,7 +664,7 @@ impl SrtSocket {
             for outcome in outputs {
                 match outcome {
                     HandshakeOutput::Send(bytes) => {
-                        send_bounded(&socket, &bytes, peer, io.write, "send hs").await?;
+                        send_bounded(&socket, &bytes, peer, io.timeouts.write, "send hs").await?;
                     }
                     HandshakeOutput::Connected(params) => {
                         // `Connected` only ever comes out of `feed_bytes`, so
@@ -763,8 +751,8 @@ impl SrtSocket {
             route_cleanup: RouteCleanup(None),
             forwarder_guard: TaskGuard(Some(forwarder)),
             life: None,
-            read_idle: io.read_idle,
-            write: io.write,
+            read_idle: io.timeouts.read_idle,
+            write: io.timeouts.write,
             our_initial_seq,
             peer_initial_seq: peer_hs.initial_seq_number,
             peer_socket_id: params.peer_socket_id,
@@ -811,7 +799,7 @@ impl SrtSocket {
         config: HandshakeConfig,
         io: IoConfig,
     ) -> Result<Self> {
-        let socket = bounded(io.connect, "bind", async {
+        let socket = bounded(io.timeouts.connect, "bind", async {
             UdpSocket::bind(local_addr)
                 .await
                 .map_err(|e| io_err("bind", e))
@@ -834,7 +822,7 @@ impl SrtSocket {
         io: IoConfig,
     ) -> Result<Self> {
         let max_datagram = io.max_datagram.clamp(MIN_MAX_DATAGRAM, MAX_MAX_DATAGRAM);
-        let peer = bounded(io.connect, "resolve", resolve_one(remote_addr)).await?;
+        let peer = bounded(io.timeouts.connect, "resolve", resolve_one(remote_addr)).await?;
         let socket = Arc::new(socket);
 
         // Fresh per-connection Socket ID, ISN and cookie (a zero cookie is
@@ -853,13 +841,13 @@ impl SrtSocket {
         let first = hs
             .start()
             .map_err(|e| handshake_err("rendezvous start", e))?;
-        send_bounded(&socket, &first, peer, io.write, "send waveahand").await?;
+        send_bounded(&socket, &first, peer, io.timeouts.write, "send waveahand").await?;
 
         let tick_period = (HANDSHAKE_RETRANSMIT_PERIOD / config.retransmit_after_ticks.max(1))
             .max(MIN_HANDSHAKE_TICK);
         let mut ticker = tokio::time::interval_at(Instant::now() + tick_period, tick_period);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        let deadline = Instant::now() + io.handshake;
+        let deadline = Instant::now() + io.timeouts.handshake;
         let mut scratch = vec![0u8; max_datagram + 1];
         let hs_oversize = AtomicU64::new(0);
         // The newest Handshake packet the peer sent: every one carries the
@@ -934,7 +922,7 @@ impl SrtSocket {
             for outcome in outputs {
                 match outcome {
                     HandshakeOutput::Send(bytes) => {
-                        send_bounded(&socket, &bytes, peer, io.write, "send hs").await?;
+                        send_bounded(&socket, &bytes, peer, io.timeouts.write, "send hs").await?;
                     }
                     HandshakeOutput::Connected(params) => {
                         let peer_hs = last_peer_hs.ok_or(Error::InvalidField(InvalidField {
@@ -2526,7 +2514,7 @@ impl ListenerCore {
                         self.cookie_keys.rotate_if_due(Instant::now());
                         let _ = self.handle_datagram(src, &bytes);
                         // Raced against cancellation: a stuck send must not
-                        // delay releasing the port by up to `io.write`.
+                        // delay releasing the port by up to `io.timeouts.write`.
                         tokio::select! {
                             _ = cancel.cancelled() => return,
                             r = self.flush_for_peer(src) => self.count_send_error(r),
@@ -2866,8 +2854,8 @@ impl ListenerCore {
             route_cleanup: RouteCleanup(Some((own_socket_id, Arc::clone(&self.routes)))),
             forwarder_guard: TaskGuard(None),
             life: Some(life),
-            read_idle: self.io.read_idle,
-            write: self.io.write,
+            read_idle: self.io.timeouts.read_idle,
+            write: self.io.timeouts.write,
             our_initial_seq,
             peer_initial_seq,
             peer_socket_id,
@@ -2897,7 +2885,7 @@ impl ListenerCore {
     async fn flush_for_peer(&mut self, addr: std::net::SocketAddr) -> Result<()> {
         if let Some(queue) = self.outbound_queue.get_mut(&addr) {
             while let Some(bytes) = queue.pop_front() {
-                send_bounded(&self.udp, &bytes, addr, self.io.write, "send_to").await?;
+                send_bounded(&self.udp, &bytes, addr, self.io.timeouts.write, "send_to").await?;
             }
         }
         Ok(())
@@ -3370,8 +3358,8 @@ mod adapter_tests {
                 route_cleanup: RouteCleanup(None),
                 forwarder_guard: TaskGuard(None),
                 life: None,
-                read_idle: IoConfig::default().read_idle,
-                write: IoConfig::default().write,
+                read_idle: IoConfig::default().timeouts.read_idle,
+                write: IoConfig::default().timeouts.write,
                 our_initial_seq: 0,
                 peer_initial_seq: 0,
                 peer_socket_id: 1,
@@ -3616,7 +3604,7 @@ mod adapter_tests {
         // black hole: bound UDP socket that never answers
         let hole = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let budget = Duration::from_millis(400);
-        let io = IoConfig::default().with_handshake(budget);
+        let io = IoConfig::default().with_timeouts(SRT_TIMEOUTS.with_handshake(budget));
         let t0 = Instant::now();
         let err =
             SrtSocket::connect_with(hole.local_addr().unwrap(), HandshakeConfig::default(), io)
@@ -4686,7 +4674,7 @@ mod adapter_tests {
         let (mut driver, _rx) = test_driver(8192).await;
         // The default (libsrt's SRTO_PEERIDLETIMEO) is five seconds.
         const PEER_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
-        assert_eq!(IoConfig::default().read_idle, PEER_IDLE_TIMEOUT);
+        assert_eq!(IoConfig::default().timeouts.read_idle, PEER_IDLE_TIMEOUT);
         tokio::time::advance(PEER_IDLE_TIMEOUT - Duration::from_millis(1)).await;
         assert!(!driver.peer_idle(Instant::now()));
         tokio::time::advance(Duration::from_millis(1)).await;
@@ -4893,8 +4881,8 @@ mod adapter_tests {
                 route_cleanup: RouteCleanup(None),
                 forwarder_guard: TaskGuard(None),
                 life: None,
-                read_idle: IoConfig::default().read_idle,
-                write: IoConfig::default().write,
+                read_idle: IoConfig::default().timeouts.read_idle,
+                write: IoConfig::default().timeouts.write,
                 our_initial_seq: 0,
                 peer_initial_seq: 0,
                 peer_socket_id: 1,
@@ -5191,8 +5179,8 @@ mod adapter_tests {
                     route_cleanup: RouteCleanup(None),
                     forwarder_guard: TaskGuard(None),
                     life: None,
-                    read_idle: IoConfig::default().read_idle,
-                    write: IoConfig::default().write,
+                    read_idle: IoConfig::default().timeouts.read_idle,
+                    write: IoConfig::default().timeouts.write,
                     our_initial_seq: 0,
                     peer_initial_seq: 0,
                     peer_socket_id: 1,

@@ -30,6 +30,7 @@
 
 use std::num::NonZeroUsize;
 
+use broadcast_common::timeouts::Timeouts;
 use broadcast_common::{Serialize, Timestamp};
 use media_plane::ingress::{HandshakePolicy, ListenDriver, SessionId};
 use media_plane::trunk::TrunkConfig;
@@ -38,7 +39,7 @@ use multimux::ingest_golden::{
 };
 use multimux::source::rtmp::RtmpIngestSession;
 use multimux::source::whip::WhipIngestSession;
-use rtmp_runtime::io::{RtmpConnection, RtmpTimeouts};
+use rtmp_runtime::io::RtmpConnection;
 use rtmp_runtime::server::{ServerConfig, ServerEvent, ServerSession};
 
 const GOLDEN_DIR: &str = "golden/ingest";
@@ -235,7 +236,7 @@ async fn rtmp_publish_event_sequence_matches_the_golden() {
     let conn = RtmpConnection::from_stream_erased(
         server,
         ServerSession::new(ServerConfig::default()),
-        RtmpTimeouts::default(),
+        Timeouts::default(),
     );
     let session = RtmpIngestSession::from_connection(conn);
     let (mut driver, recorder) =

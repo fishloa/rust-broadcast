@@ -52,7 +52,7 @@ pub struct RtmpTransportConfig {
     /// an unusually slow peer) can override it.
     pub connect_timeout: Option<std::time::Duration>,
     /// Bound on one outbound write (SP6.1, defect 4); `None` uses
-    /// `rtmp_runtime::io::RtmpTimeouts::default().write` (10 s). Exposed so a
+    /// `broadcast_common::timeouts::Timeouts::default().write` (10 s). Exposed so a
     /// test can use a tighter bound against a peer that stopped reading.
     pub write_timeout: Option<std::time::Duration>,
 }
@@ -116,7 +116,7 @@ impl PushTransport for RtmpTransport {
         // Every IO the adapter performs is bounded (SP6.1, defect 4):
         // connect/handshake by `connect_timeout` (audit run 7, W17) and each
         // write by `write_timeout`.
-        let mut timeouts = rtmp_runtime::io::RtmpTimeouts::default();
+        let mut timeouts = broadcast_common::timeouts::Timeouts::default();
         if let Some(d) = config.connect_timeout {
             timeouts = timeouts.with_connect(d).with_handshake(d);
         }
