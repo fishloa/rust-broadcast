@@ -82,8 +82,9 @@ use std::task::{Context, Poll};
 
 use axum::Json;
 use axum::Router;
+use axum::body::Body;
 use axum::extract::{ConnectInfo, Path as AxumPath, Request, State};
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::{HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -236,6 +237,13 @@ struct RegistryContext {
     output_auth: Option<Arc<Verifier>>,
 }
 
+/// A media [`Router`] and, for each route it serves, the token that fires when that route is
+/// replaced or removed (see [`crate::route::RouteHandle::retire`]).
+struct LiveRouter {
+    router: Router,
+    retire: HashMap<String, tokio_util::sync::CancellationToken>,
+}
+
 /// The shared, mutable heart of the runtime admin API: every live route,
 /// behind a lock cheap enough to read on every admin request and mutate
 /// rarely — see this module's own "Concurrency" docs.
@@ -275,7 +283,7 @@ pub(crate) struct RouteRegistry {
     /// [`DynamicMediaService`] once per accepted request. `ArcSwap` makes
     /// that read lock-free: a rebuild never blocks a request already in
     /// flight, and a request never takes a lock the rebuild path wants.
-    router_slot: arc_swap::ArcSwap<Router>,
+    router_slot: arc_swap::ArcSwap<LiveRouter>,
     /// The config file this process was loaded from, if any — `None` when
     /// the embedding caller built its [`Config`] in memory (e.g.
     /// `serve_with_registry` directly): [`Self::reload`] has nothing to
@@ -297,7 +305,10 @@ impl RouteRegistry {
             #[cfg(test)]
             hooks: TestHooks::default(),
             inner: parking_lot::RwLock::new(HashMap::new()),
-            router_slot: arc_swap::ArcSwap::from_pointee(Router::new()),
+            router_slot: arc_swap::ArcSwap::from_pointee(LiveRouter {
+                router: Router::new(),
+                retire: HashMap::new(),
+            }),
             config_path,
         });
         registry.rebuild_router();
@@ -366,14 +377,21 @@ impl RouteRegistry {
     /// once it is known to have succeeded (audit run 7, W5 — a router build
     /// panics on e.g. a `Custom` output mounting an overlapping path, and
     /// `add_route` must not have already mutated the registry when it does).
-    fn build_router(&self, streams: HashMap<String, StreamRoute>) -> Router {
+    fn build_router(&self, streams: HashMap<String, StreamRoute>) -> LiveRouter {
+        let retire = streams
+            .iter()
+            .map(|(name, (store, _))| (name.clone(), store.retired_token()))
+            .collect();
         let mut app_state = AppState::new(streams).with_limits(self.ctx.http_limits);
         if let Some(verifier) = &self.ctx.output_auth {
             app_state = app_state.with_output_auth(Arc::clone(verifier));
         }
         // The concurrency bound (and the ops/reload budgets) is applied
         // inside `router()` itself, so it is present here too.
-        router(Arc::new(app_state))
+        LiveRouter {
+            router: router(Arc::new(app_state)),
+            retire,
+        }
     }
 
     /// Rebuilds the whole media [`Router`] from the current route set and
@@ -386,10 +404,10 @@ impl RouteRegistry {
         self.router_slot.store(std::sync::Arc::new(new_router));
     }
 
-    /// A cheap clone of the currently-active media [`Router`] — read once
-    /// per accepted request by [`DynamicMediaService`].
-    pub(crate) fn current_router(&self) -> Router {
-        self.router_slot.load().as_ref().clone()
+    /// The active router together with the retire tokens of the routes it serves, read as one
+    /// snapshot (so a request never pairs a router with the token of a different route set).
+    fn live_router(&self) -> Arc<LiveRouter> {
+        self.router_slot.load_full()
     }
 
     /// Builds `route`'s [`Output`]s and spawns its supervised ingest task —
@@ -599,6 +617,7 @@ impl RouteRegistry {
                 });
             };
             self.rebuild_router();
+            runtime.store.retire();
             runtime
         };
         // The registry-wide lock is released; the name lock is held until the
@@ -717,10 +736,20 @@ impl RouteRegistry {
         }
         let (retired_routes, retired_runtimes): (Vec<Route>, Vec<RouteRuntime>) =
             retired.into_iter().unzip();
+        let retired_stores: Vec<Arc<RouteHandle>> = retired_runtimes
+            .iter()
+            .map(|runtime| Arc::clone(&runtime.store))
+            .collect();
         futures_util::future::join_all(retired_runtimes.into_iter().map(drain_route)).await;
         let mut floors = added_floors;
-        for route in &changed_routes {
-            floors.push(self.archive_floor(route).await);
+        for (route, old_store) in changed_routes.iter().zip(&retired_stores) {
+            // Above what the old runtime showed as well as above the archive, so a client's
+            // `_HLS_msn` for this route keeps its meaning on the replacement.
+            floors.push(
+                self.archive_floor(route)
+                    .await
+                    .max(old_store.media_sequence_floor()),
+            );
         }
 
         // Build (and spawn) every to-add/to-restart route. Each built runtime is held in a
@@ -735,7 +764,7 @@ impl RouteRegistry {
                 Ok(runtime) => prepared.push((route.clone(), PendingRuntime::new(runtime))),
                 Err(e) => {
                     drop(prepared);
-                    self.restore_retired(&retired_routes).await;
+                    self.restore_retired(&retired_routes, &retired_stores).await;
                     return Err(e);
                 }
             }
@@ -768,7 +797,7 @@ impl RouteRegistry {
                     "building the router for a reloaded configuration panicked; no changes applied"
                 );
                 drop(prepared);
-                self.restore_retired(&retired_routes).await;
+                self.restore_retired(&retired_routes, &retired_stores).await;
                 return Err(crate::MultimuxError::ConfigInvalid {
                     field: "routes",
                     reason: "the reloaded routes could not be mounted (a conflicting router path)"
@@ -794,6 +823,14 @@ impl RouteRegistry {
             removed_runtimes
         };
         self.router_slot.store(std::sync::Arc::new(new_router));
+        // Every request parked on a store this reload replaced or removed is woken and served
+        // again by the router that is live now (the replacement, or a 404 when the name is gone).
+        for store in retired_stores
+            .iter()
+            .chain(removed_runtimes.iter().map(|runtime| &runtime.store))
+        {
+            store.retire();
+        }
         drop(global);
 
         futures_util::future::join_all(removed_runtimes.into_iter().map(drain_route)).await;
@@ -862,7 +899,7 @@ impl RouteRegistry {
     /// Starts again, from their old configuration, the routes a failed reload had already
     /// stopped, and rebuilds the router around them. A route that cannot be started again is
     /// logged and left out of the registry.
-    async fn restore_retired(&self, routes: &[Route]) {
+    async fn restore_retired(&self, routes: &[Route], stores: &[Arc<RouteHandle>]) {
         for route in routes {
             let floor = archive_floor_of(route).await;
             match self.spawn_route(route, floor) {
@@ -880,6 +917,9 @@ impl RouteRegistry {
             }
         }
         self.rebuild_router();
+        for store in stores {
+            store.retire();
+        }
     }
 
     /// Tears down every currently-registered route's supervisor task, in
@@ -1249,18 +1289,80 @@ where
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, mut req: Request<B>) -> Self::Future {
-        // Mirrors what `Router::into_make_service_with_connect_info` does
-        // for the static path (`super::serve_with_registry`) — inserted
-        // directly (rather than via `axum::Extension`'s `tower::Layer`,
-        // whose produced service type isn't nameable outside axum itself)
-        // since `ConnectInfo<T>`'s own `FromRequestParts` impl reads it from
-        // the request extensions either way.
-        req.extensions_mut().insert(ConnectInfo(self.remote_addr));
-        let mut router = self.registry.current_router();
-        Box::pin(async move { router.call(req).await })
+    fn call(&mut self, req: Request<B>) -> Self::Future {
+        let registry = Arc::clone(&self.registry);
+        let remote_addr = self.remote_addr;
+        Box::pin(async move {
+            let (mut parts, body) = req.into_parts();
+            // Mirrors what `Router::into_make_service_with_connect_info` does
+            // for the static path (`super::serve_with_registry`) — inserted
+            // directly (rather than via `axum::Extension`'s `tower::Layer`,
+            // whose produced service type isn't nameable outside axum itself)
+            // since `ConnectInfo<T>`'s own `FromRequestParts` impl reads it from
+            // the request extensions either way.
+            parts.extensions.insert(ConnectInfo(remote_addr));
+            let name = parts
+                .uri
+                .path()
+                .trim_start_matches('/')
+                .split('/')
+                .next()
+                .unwrap_or_default()
+                .to_string();
+            // A GET or HEAD has no body, so it can be served again from its parts. Such a
+            // request is bound to the route that served it: when that route is replaced or
+            // removed (its retire token fires) the request is dropped wherever it waits,
+            // including a parked LL-HLS blocking reload, and served again against the router
+            // that is live then, so it continues to wait on the replacement (same msn and
+            // part) or answers 404 when no route of that name is left.
+            let replay = matches!(parts.method, Method::GET | Method::HEAD).then(|| {
+                (
+                    parts.method.clone(),
+                    parts.uri.clone(),
+                    parts.version,
+                    parts.headers.clone(),
+                )
+            });
+            let mut request = Some(Request::from_parts(parts, Body::new(body)));
+            let mut attempts = 0usize;
+            loop {
+                let req = match request.take() {
+                    Some(req) => req,
+                    None => match replay.as_ref() {
+                        Some((method, uri, version, headers)) => {
+                            let mut req = Request::new(Body::empty());
+                            *req.method_mut() = method.clone();
+                            *req.uri_mut() = uri.clone();
+                            *req.version_mut() = *version;
+                            *req.headers_mut() = headers.clone();
+                            req.extensions_mut().insert(ConnectInfo(remote_addr));
+                            req
+                        }
+                        None => return Ok(StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+                    },
+                };
+                let live = registry.live_router();
+                let mut router = live.router.clone();
+                attempts += 1;
+                let token = match (&replay, attempts <= MAX_REDISPATCHES) {
+                    (Some(_), true) => live.retire.get(&name).cloned(),
+                    _ => None,
+                };
+                let Some(token) = token else {
+                    return router.call(req).await;
+                };
+                tokio::select! {
+                    response = router.call(req) => return response,
+                    () = token.cancelled() => {}
+                }
+            }
+        })
     }
 }
+
+/// How many times one request is served again because its route was replaced under it; a route
+/// replaced faster than that is served by the router of the last attempt.
+const MAX_REDISPATCHES: usize = 8;
 
 /// Run the multimux origin with the runtime admin API enabled — reached only
 /// from [`super::serve_with_registry_impl`] when
