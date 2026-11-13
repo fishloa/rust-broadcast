@@ -6,9 +6,10 @@ use broadcast_client::{
     Action, Config, Error, ErrorKind, Event, Session, SourceKind, StarveKind, Status,
 };
 use rtmp_runtime::message::UserControl;
+use test_harness::rtmp_play_peer::Seen;
 
 use crate::support::rtmp_host::{
-    MS, PeerConfig, RtmpHost, SEC, Seen, URL, assert_complete_samples_equal_direct,
+    MS, PeerConfig, RtmpHost, SEC, URL, assert_complete_samples_equal_direct,
     assert_samples_equal_direct, connect_and_play, direct, fixture_tags, peer_config, rtmp_config,
 };
 

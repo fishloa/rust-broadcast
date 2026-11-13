@@ -55,15 +55,10 @@ fn extract_es_data(ts_path: &str, target_pid: u16) -> Vec<u8> {
 const AC3_PID: u16 = 0x0100;
 const EAC3_PID: u16 = 0x0100;
 
-/// Recursively search for a child box with four-CC `tag` inside a parent
-/// box with four-CC `parent_tag`. For audio sample entries (ac-3, ec-3),
-/// skips the 28-byte fixed AudioSampleEntry prefix before searching children.
-#[allow(clippy::only_used_in_recursion)]
-fn find_child_box_body<'a>(
-    data: &'a [u8],
-    parent_tag: &[u8; 4],
-    child_tag: &[u8; 4],
-) -> Option<&'a [u8]> {
+/// Recursively search `data` for a box with four-CC `child_tag`. For audio
+/// sample entries (ac-3, ec-3), skips the 28-byte fixed AudioSampleEntry
+/// prefix before searching their children.
+fn find_child_box_body<'a>(data: &'a [u8], child_tag: &[u8; 4]) -> Option<&'a [u8]> {
     const AUDIO_ENTRY_FIXED: usize = 28;
     const AUDIO_FOURCCS: &[[u8; 4]] = &[*b"ac-3", *b"ec-3"];
 
@@ -86,7 +81,7 @@ fn find_child_box_body<'a>(
             }
         }
         // Recurse into container boxes.
-        if let Some(found) = find_child_box_body(bx.body, parent_tag, child_tag) {
+        if let Some(found) = find_child_box_body(bx.body, child_tag) {
             return Some(found);
         }
     }
@@ -189,7 +184,7 @@ fn ac3_init_segment_sample_entry() {
 
     let init = build_init_segment(&tracks, 1000).unwrap();
 
-    let dac3_body = find_child_box_body(&init, b"ac-3", b"dac3").unwrap();
+    let dac3_body = find_child_box_body(&init, b"dac3").unwrap();
     assert_eq!(dac3_body, &DAC3_ORACLE[..], "dac3 in init segment mismatch");
 }
 
@@ -211,7 +206,7 @@ fn ec3_init_segment_sample_entry() {
 
     let init = build_init_segment(&tracks, 1000).unwrap();
 
-    let dec3_body = find_child_box_body(&init, b"ec-3", b"dec3").unwrap();
+    let dec3_body = find_child_box_body(&init, b"dec3").unwrap();
     assert_eq!(dec3_body, &DEC3_ORACLE[..], "dec3 in init segment mismatch");
 }
 

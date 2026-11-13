@@ -1965,16 +1965,13 @@ fn length_prefix_nals(nals: &[Vec<u8>]) -> Vec<u8> {
 /// A parsed RTP fixed header (RFC 3550 §5.1) — the fields the spoke needs.
 /// Delegates the wire decode to [`rtp_packet::RtpPacket`]; transmux only ever
 /// depacketises the simple `P=0 X=0 CC=0` case it itself emits, so only
-/// `marker`/`sequence`/`timestamp`/`ssrc`/`payload` are read at call sites
-/// (`payload_type` is carried through only for the unit test at the bottom of
-/// this file) — see #646. `sequence`/`ssrc` were dead until issue #779 gave
+/// `marker`/`sequence`/`timestamp`/`ssrc`/`payload` are read at call sites —
+/// see #646. `sequence`/`ssrc` were dead until issue #779 gave
 /// [`crate::rtp_stream::RtpStreamDepacketiser`] a reason to read them (loss
 /// and reorder detection).
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RtpHeader<'a> {
     pub(crate) marker: bool,
-    #[allow(dead_code)]
-    payload_type: u8,
     /// 16-bit sequence number (RFC 3550 §5.1), incrementing by one per
     /// packet and wrapping mod 65536 — read by
     /// [`crate::rtp_stream::RtpStreamDepacketiser`] for loss/reorder
@@ -1998,7 +1995,6 @@ pub(crate) fn parse_rtp_header(pkt: &[u8]) -> Result<RtpHeader<'_>> {
     let parsed = RtpPacketWire::parse(pkt).map_err(map_rtp_error)?;
     Ok(RtpHeader {
         marker: parsed.marker,
-        payload_type: parsed.payload_type,
         sequence: parsed.sequence_number,
         timestamp: parsed.timestamp,
         ssrc: parsed.ssrc,
@@ -2714,6 +2710,7 @@ mod tests {
         assert_eq!(u32::from_be_bytes([h[4], h[5], h[6], h[7]]), 0x0001_0000);
         let parsed = parse_rtp_header(&h).unwrap();
         assert!(parsed.marker);
-        assert_eq!(parsed.payload_type, 96);
+        let wire = RtpPacketWire::parse(&h).unwrap();
+        assert_eq!(wire.payload_type, 96);
     }
 }
