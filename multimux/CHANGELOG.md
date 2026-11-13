@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 ### Changed
+- Each admitted RTMP session reads on its own task, which owns the connection (the `Arc<Mutex<RtmpConnection>>` is gone) and hands its outcomes to the route's publisher over a bounded channel, so a publisher busy segmenting no longer stops other sessions' reads (issue #2525). WHIP still polls its sessions' reads from one task.
+- Catch-up keeps its period-index cache and its scan permits (4 concurrent scans) per route instead of process-wide, so one route's slow archive no longer starves another's viewers (issue #2528).
+- DASH-IF ingest holds at most 64 MiB of buffered non-segment objects per route at once (`DashifIngestRoute::with_buffered_budget_bytes`); a request over the budget answers `503` with `Retry-After`. A buffered non-segment object is capped at 8 MiB (`with_max_buffered_object_bytes`), below the 64 MiB cap that still applies to a streamed segment (issue #2532).
 - The Smooth output keeps one `SmoothOrigin` per program, so its cached plan and packaged fragments survive between requests, and hands it the segments as shared `Bytes` instead of copying every window segment per request. A request that misses the cache builds on the blocking pool (`spawn_blocking`, at most four at once per program); the module doc that claimed `http::resolve_blocking` did so was wrong (issue #2522).
 ### Added
 - `max_blocking_reloads_per_route` (config; `HttpLimits::max_blocking_reloads_per_route`, default 1024): LL-HLS blocking-reload requests are budgeted per route instead of one listener-wide pool of `max_concurrent_requests / 4`, so a reload flood on one route cannot shed another's.

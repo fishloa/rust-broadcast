@@ -58,16 +58,21 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
         307,
         "RTSP push `close` best-effort TEARDOWN: spawned on the current runtime handle (`Handle::try_current`, skipped outside one), the JoinHandle is stored on the transport and an already-running one is aborted on a superseding close, bounded by TEARDOWN_TIMEOUT",
     ),
-    ("source/rtmp.rs", 319, "RTMP accept pump TaskTracker"),
+    ("source/rtmp.rs", 317, "RTMP accept pump TaskTracker"),
     (
         "source/rtmp.rs",
-        738,
+        753,
         "RTMP run task; owned by the route supervisor handle",
     ),
     (
         "source/rtmp.rs",
-        747,
+        762,
         "RTMP accept pump; owned by the route supervisor handle",
+    ),
+    (
+        "source/rtmp.rs",
+        890,
+        "one read task per admitted RTMP session, on the run loop's JoinSet (dropped with run_rtmp, which aborts every reader); each ends itself on a terminal read or when the outcome channel closes",
     ),
     (
         "source/whip.rs",
@@ -86,7 +91,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "source/dashif_ingest.rs",
-        283,
+        349,
         "DASH-IF ingest pump task; owned by run_dashif_ingest (aborted on serve exit)",
     ),
     (
@@ -131,7 +136,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "output/catchup.rs",
-        343,
+        347,
         "spawn_blocking catch-up scan under an owned scan permit; awaited inline, and the permit rides the blocking task",
     ),
     (

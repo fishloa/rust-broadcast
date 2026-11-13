@@ -14,7 +14,7 @@ use bytes::Bytes;
 use media_plane::ingress::{HandshakePolicy, IngestSession, SessionEvent};
 use media_plane::trunk::TrunkConfig;
 use tokio::net::TcpListener;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::error::MultimuxError;
@@ -30,6 +30,17 @@ use media_plane::ingress::IngestDriver;
 /// Hard cap on a single ingested object's body (P2b-1; P2b-2 makes it
 /// configurable).
 pub const MAX_OBJECT_BYTES: usize = 64 * 1024 * 1024;
+
+/// Cap on one buffered (non-segment) object: manifests and init segments are
+/// kilobytes, and every buffered byte is held in memory until the pump has
+/// consumed it, so this is far below [`MAX_OBJECT_BYTES`], which still bounds a
+/// streamed media segment. The effective cap is the smaller of the two.
+pub const MAX_BUFFERED_OBJECT_BYTES: usize = 8 * 1024 * 1024;
+
+/// Bytes of non-segment objects one route holds buffered at once, summed over
+/// its concurrent requests; a request that would exceed it is answered `503`
+/// with `Retry-After` instead of buffering.
+pub const BUFFERED_BUDGET_BYTES: usize = 64 * 1024 * 1024;
 
 /// Bounded channel between HTTP handlers and the per-publishing-point pump.
 const CHANNEL_CAPACITY: usize = 64;
@@ -71,6 +82,8 @@ pub struct DashifIngestRoute {
     timeouts: crate::source::IngestTimeouts,
     auth: Option<Arc<broadcast_auth::Verifier>>,
     max_object_bytes: usize,
+    max_buffered_object_bytes: usize,
+    buffered_budget_bytes: usize,
     body_timeout: Option<tokio::time::Duration>,
 }
 
@@ -100,6 +113,8 @@ impl DashifIngestRoute {
             timeouts: crate::source::IngestTimeouts::default(),
             auth: None,
             max_object_bytes: MAX_OBJECT_BYTES,
+            max_buffered_object_bytes: MAX_BUFFERED_OBJECT_BYTES,
+            buffered_budget_bytes: BUFFERED_BUDGET_BYTES,
             body_timeout: Some(tokio::time::Duration::from_secs(30)),
         }
     }
@@ -121,6 +136,8 @@ impl DashifIngestRoute {
             timeouts: crate::source::IngestTimeouts::default(),
             auth: None,
             max_object_bytes: MAX_OBJECT_BYTES,
+            max_buffered_object_bytes: MAX_BUFFERED_OBJECT_BYTES,
+            buffered_budget_bytes: BUFFERED_BUDGET_BYTES,
             body_timeout: Some(tokio::time::Duration::from_secs(30)),
         }
     }
@@ -140,6 +157,20 @@ impl DashifIngestRoute {
     #[must_use]
     pub fn with_max_object_bytes(mut self, n: usize) -> Self {
         self.max_object_bytes = n;
+        self
+    }
+
+    /// The cap on one buffered (non-segment) object.
+    #[must_use]
+    pub fn with_max_buffered_object_bytes(mut self, n: usize) -> Self {
+        self.max_buffered_object_bytes = n;
+        self
+    }
+
+    /// The bytes of buffered objects this route holds at once.
+    #[must_use]
+    pub fn with_buffered_budget_bytes(mut self, n: usize) -> Self {
+        self.buffered_budget_bytes = n;
         self
     }
 
@@ -225,14 +256,44 @@ impl IngestSession for TolerantSession {
 enum ReadBodyError {
     /// More than the cap.
     TooLarge,
+    /// The route's buffered-bytes budget is spent by other requests.
+    OverBudget,
     /// The client's body failed or was cut short.
     Broken,
 }
 
+/// The buffered bytes a request holds against its route's budget; dropping it
+/// returns them.
+struct BudgetHold(Option<OwnedSemaphorePermit>);
+
+impl BudgetHold {
+    /// Reserve `n` more bytes, or `false` when the route's budget is spent.
+    fn reserve(&mut self, budget: &Arc<Semaphore>, n: usize) -> bool {
+        let Ok(n) = u32::try_from(n) else {
+            return false;
+        };
+        let Ok(more) = Arc::clone(budget).try_acquire_many_owned(n) else {
+            return false;
+        };
+        match self.0.as_mut() {
+            Some(held) => held.merge(more),
+            None => self.0 = Some(more),
+        }
+        true
+    }
+}
+
 /// Collect `body` into one buffer, refusing more than `max` bytes — checked
-/// per frame, so an oversized chunked body is rejected without buffering it.
-async fn read_limited(body: axum::body::Body, max: usize) -> Result<Bytes, ReadBodyError> {
+/// per frame, so an oversized chunked body is rejected without buffering it —
+/// and more than `budget` allows across this route's concurrent requests.
+/// The returned hold keeps the bytes reserved until it is dropped.
+async fn read_limited(
+    body: axum::body::Body,
+    max: usize,
+    budget: &Arc<Semaphore>,
+) -> Result<(Bytes, BudgetHold), ReadBodyError> {
     let mut body = std::pin::pin!(body);
+    let mut hold = BudgetHold(None);
     let mut buf: Vec<u8> = Vec::new();
     while let Some(frame) =
         std::future::poll_fn(|cx| http_body::Body::poll_frame(body.as_mut(), cx)).await
@@ -242,10 +303,13 @@ async fn read_limited(body: axum::body::Body, max: usize) -> Result<Bytes, ReadB
             if buf.len().saturating_add(data.len()) > max {
                 return Err(ReadBodyError::TooLarge);
             }
+            if !hold.reserve(budget, data.len()) {
+                return Err(ReadBodyError::OverBudget);
+            }
             buf.extend_from_slice(&data);
         }
     }
-    Ok(Bytes::from(buf))
+    Ok((Bytes::from(buf), hold))
 }
 
 #[derive(Clone)]
@@ -255,6 +319,8 @@ struct HandlerState {
     grouping: Arc<Mutex<Option<ManifestGrouping>>>,
     auth: Option<Arc<broadcast_auth::Verifier>>,
     max_object_bytes: usize,
+    max_buffered_object_bytes: usize,
+    buffered_budget: Arc<Semaphore>,
     body_timeout: Option<tokio::time::Duration>,
 }
 
@@ -432,6 +498,8 @@ pub async fn run_dashif_ingest(
         grouping: Arc::clone(&grouping),
         auth: route.auth.clone(),
         max_object_bytes: route.max_object_bytes,
+        max_buffered_object_bytes: route.max_buffered_object_bytes,
+        buffered_budget: Arc::new(Semaphore::new(route.buffered_budget_bytes)),
         body_timeout: route.body_timeout,
     };
 
@@ -665,9 +733,9 @@ async fn dashif_handler(
     } else {
         // Buffered path (non-segment objects).
         let body = {
-            let max = state.max_object_bytes;
+            let max = state.max_object_bytes.min(state.max_buffered_object_bytes);
             let timeout = state.body_timeout;
-            let fut = read_limited(req.into_body(), max);
+            let fut = read_limited(req.into_body(), max, &state.buffered_budget);
             let res = if let Some(d) = timeout {
                 match tokio::time::timeout(d, fut).await {
                     Ok(r) => r,
@@ -677,13 +745,22 @@ async fn dashif_handler(
                 fut.await
             };
             match res {
-                Ok(b) => b,
+                Ok(held) => held,
                 Err(ReadBodyError::TooLarge) => {
                     return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+                }
+                Err(ReadBodyError::OverBudget) => {
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        [("retry-after", "1")],
+                        Bytes::new(),
+                    )
+                        .into_response();
                 }
                 Err(ReadBodyError::Broken) => return StatusCode::BAD_REQUEST.into_response(),
             }
         };
+        let (body, _budget_hold) = body;
         let body_empty = body.is_empty();
 
         let meta = RequestMeta {
@@ -728,6 +805,10 @@ async fn dashif_handler(
 mod tests {
     use super::*;
 
+    fn ample() -> Arc<Semaphore> {
+        Arc::new(Semaphore::new(1024))
+    }
+
     fn body_of(frames: Vec<&'static [u8]>) -> axum::body::Body {
         axum::body::Body::from_stream(futures_util::stream::iter(
             frames
@@ -741,12 +822,12 @@ mod tests {
     /// small frames (no `Content-Length` to pre-check).
     #[tokio::test]
     async fn read_limited_enforces_the_cap_across_frames() {
-        let ok = read_limited(body_of(vec![b"abc", b"de"]), 5).await;
-        assert!(matches!(ok, Ok(ref b) if b.as_ref() == b"abcde"));
-        let too_big = read_limited(body_of(vec![b"abc", b"def"]), 5).await;
+        let ok = read_limited(body_of(vec![b"abc", b"de"]), 5, &ample()).await;
+        assert!(matches!(ok, Ok((ref b, _)) if b.as_ref() == b"abcde"));
+        let too_big = read_limited(body_of(vec![b"abc", b"def"]), 5, &ample()).await;
         assert!(matches!(too_big, Err(ReadBodyError::TooLarge)));
-        let empty = read_limited(body_of(vec![]), 5).await;
-        assert!(matches!(empty, Ok(ref b) if b.is_empty()));
+        let empty = read_limited(body_of(vec![]), 5, &ample()).await;
+        assert!(matches!(empty, Ok((ref b, _)) if b.is_empty()));
     }
 
     #[tokio::test]
@@ -755,7 +836,30 @@ mod tests {
             Ok::<Bytes, std::io::Error>(Bytes::from_static(b"ab")),
             Err(std::io::Error::other("reset")),
         ]);
-        let r = read_limited(axum::body::Body::from_stream(stream), 100).await;
+        let r = read_limited(axum::body::Body::from_stream(stream), 100, &ample()).await;
         assert!(matches!(r, Err(ReadBodyError::Broken)));
+    }
+
+    /// Concurrent requests share one route's budget: a body that does not fit
+    /// beside the bytes another request holds is refused, and the bytes return
+    /// when that request is done.
+    #[tokio::test]
+    async fn the_route_budget_is_shared_across_requests() {
+        let budget = Arc::new(Semaphore::new(8));
+        let Ok(first) = read_limited(body_of(vec![b"abcde"]), 100, &budget).await else {
+            panic!("5 of 8 bytes fit");
+        };
+        assert_eq!(budget.available_permits(), 3);
+        let second = read_limited(body_of(vec![b"abcd"]), 100, &budget).await;
+        assert!(matches!(second, Err(ReadBodyError::OverBudget)));
+        assert_eq!(
+            budget.available_permits(),
+            3,
+            "a refused request holds nothing"
+        );
+        drop(first);
+        assert_eq!(budget.available_permits(), 8);
+        let third = read_limited(body_of(vec![b"abcd"]), 100, &budget).await;
+        assert!(third.is_ok());
     }
 }
