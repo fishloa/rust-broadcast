@@ -109,6 +109,10 @@ const ADMIN_AUTH_REALM: &str = "multimux-admin";
 /// serving state every request resolves against, and the handle needed to
 /// stop its supervisor task on removal.
 struct RouteRuntime {
+    /// Assigned from [`RouteRegistry::next_generation`] when the runtime is spawned, so a
+    /// reload can tell that the runtime registered under a name is a different one from the
+    /// one it planned against.
+    generation: u64,
     route: Route,
     store: Arc<RouteHandle>,
     outputs: Vec<Arc<dyn Output>>,
@@ -251,6 +255,8 @@ pub(crate) struct RouteRegistry {
     /// Only mutations take it; reads (`resolve`/`current_router`) stay
     /// lock-free against it, so admin traffic never blocks media serving.
     mutation_lock: tokio::sync::Mutex<()>,
+    /// Source of [`RouteRuntime::generation`].
+    next_generation: std::sync::atomic::AtomicU64,
     /// One lock per route name (lowercased, the same equivalence `add_route`
     /// uses for collisions), held for a route's whole add / remove / reload
     /// step **including** the drain of a displaced runtime and the archive
@@ -286,6 +292,7 @@ impl RouteRegistry {
         let registry = Arc::new(RouteRegistry {
             ctx,
             mutation_lock: tokio::sync::Mutex::new(()),
+            next_generation: std::sync::atomic::AtomicU64::new(0),
             name_locks: parking_lot::Mutex::new(HashMap::new()),
             #[cfg(test)]
             hooks: TestHooks::default(),
@@ -461,6 +468,9 @@ impl RouteRegistry {
         // and installed before the spawns as well.
         let push_cancel = route_cancel.clone();
         let guarded = PendingRuntime::new(RouteRuntime {
+            generation: self
+                .next_generation
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             route: route.clone(),
             store,
             outputs,
@@ -658,21 +668,23 @@ impl RouteRegistry {
             });
         };
         let new_config = Config::from_json_file(&path)?;
-        let (_names, global, plan, floors) = loop {
+        let (_names, global, plan, added_floors) = loop {
             let plan = self.plan_reload(&new_config);
             let names = self
                 .lock_names(plan.touched().iter().map(String::as_str))
                 .await;
-            let mut floors = Vec::with_capacity(plan.added.len() + plan.changed.len());
-            for route in plan.added.iter().chain(plan.changed.iter()) {
-                floors.push(self.archive_floor(route).await);
+            let mut added_floors = Vec::with_capacity(plan.added.len());
+            for route in &plan.added {
+                added_floors.push(self.archive_floor(route).await);
             }
             let global = self.mutation_lock.lock().await;
-            // The registry may have changed while the name locks were being
-            // taken (a route this reload did not lock was added or removed):
-            // plan again with those names locked too.
-            if self.plan_reload(&new_config).touched() == plan.touched() {
-                break (names, global, plan, floors);
+            // The registry may have changed while the locks were being taken: a route this
+            // reload did not lock was added or removed, or a route it did plan was added,
+            // replaced or removed (each runtime carries a generation, so a name whose
+            // runtime is a different one now is noticed even when the set of names is the
+            // same). Plan again against what is there now.
+            if self.plan_reload(&new_config).state == plan.state {
+                break (names, global, plan, added_floors);
             }
         };
         let ReloadPlan {
@@ -680,6 +692,7 @@ impl RouteRegistry {
             changed: changed_routes,
             removed: removed_names,
             unchanged: unchanged_names,
+            ..
         } = plan;
 
         // Validate every to-add/to-restart route BEFORE building any of
@@ -689,19 +702,43 @@ impl RouteRegistry {
             route.validate_standalone(&self.ctx.base_config.playlist_name)?;
         }
 
-        // Build (and spawn) every to-add/to-restart route, rolling back
-        // (abort, no graceful drain needed -- nothing already spawned in
-        // this batch was ever reachable by a request) anything already
-        // built in this batch if a later one fails.
-        // Each built runtime is held in a `PendingRuntime` guard, so an `Err`
-        // from a later route in this batch (or an unwinding panic) drops the
-        // earlier ones and, through their `Drop`, cancels their push/WHEP
-        // tasks and aborts their supervisors — never leaving a dialer dialling
-        // or a port bound for a route that was never installed (W6/A2).
+        // A changed route's old runtime is drained BEFORE its archive floor is read and its
+        // replacement is spawned: until the old runtime has stopped it can still write
+        // segments, and a floor read (or a replacement started) earlier could number below
+        // them. The retired routes are kept so that a failure further down puts them back.
+        let mut retired: Vec<(Route, RouteRuntime)> = Vec::new();
+        {
+            let mut guard = self.inner.write();
+            for route in &changed_routes {
+                if let Some(runtime) = guard.remove(&route.name) {
+                    retired.push((runtime.route.clone(), runtime));
+                }
+            }
+        }
+        let (retired_routes, retired_runtimes): (Vec<Route>, Vec<RouteRuntime>) =
+            retired.into_iter().unzip();
+        futures_util::future::join_all(retired_runtimes.into_iter().map(drain_route)).await;
+        let mut floors = added_floors;
+        for route in &changed_routes {
+            floors.push(self.archive_floor(route).await);
+        }
+
+        // Build (and spawn) every to-add/to-restart route. Each built runtime is held in a
+        // `PendingRuntime` guard, so an `Err` from a later route in this batch (or an
+        // unwinding panic) drops the earlier ones and, through their `Drop`, cancels their
+        // push/WHEP tasks and aborts their supervisors. The changed routes' old runtimes are
+        // already drained, so on a failure they are started again from their old
+        // configuration (`restore_retired`): a failed reload leaves the same routes running.
         let mut prepared: Vec<(Route, PendingRuntime)> = Vec::new();
         for (route, archive_floor) in added_routes.iter().chain(changed_routes.iter()).zip(floors) {
-            let runtime = self.spawn_route(route, archive_floor)?;
-            prepared.push((route.clone(), PendingRuntime::new(runtime)));
+            match self.spawn_route(route, archive_floor) {
+                Ok(runtime) => prepared.push((route.clone(), PendingRuntime::new(runtime))),
+                Err(e) => {
+                    drop(prepared);
+                    self.restore_retired(&retired_routes).await;
+                    return Err(e);
+                }
+            }
         }
 
         // Build the prospective router (current set minus removals/restarts,
@@ -730,6 +767,8 @@ impl RouteRegistry {
                 tracing::error!(
                     "building the router for a reloaded configuration panicked; no changes applied"
                 );
+                drop(prepared);
+                self.restore_retired(&retired_routes).await;
                 return Err(crate::MultimuxError::ConfigInvalid {
                     field: "routes",
                     reason: "the reloaded routes could not be mounted (a conflicting router path)"
@@ -775,12 +814,22 @@ impl RouteRegistry {
     /// What reloading `new_config` would add, restart, remove and leave alone,
     /// against the registry as it is now.
     fn plan_reload(&self, new_config: &Config) -> ReloadPlan {
-        let current: std::collections::BTreeMap<String, Route> = self
-            .inner
-            .read()
-            .iter()
-            .map(|(name, rt)| (name.clone(), rt.route.clone()))
-            .collect();
+        let (current, generations): (
+            std::collections::BTreeMap<String, Route>,
+            HashMap<String, u64>,
+        ) = {
+            let inner = self.inner.read();
+            (
+                inner
+                    .iter()
+                    .map(|(name, rt)| (name.clone(), rt.route.clone()))
+                    .collect(),
+                inner
+                    .iter()
+                    .map(|(name, rt)| (name.clone(), rt.generation))
+                    .collect(),
+            )
+        };
         let new_by_name: HashMap<&str, &Route> = new_config
             .routes
             .iter()
@@ -799,7 +848,38 @@ impl RouteRegistry {
                 Some(_) => plan.changed.push(route.clone()),
             }
         }
+        plan.state = plan
+            .touched()
+            .into_iter()
+            .map(|name| {
+                let generation = generations.get(&name).copied();
+                (name, generation)
+            })
+            .collect();
         plan
+    }
+
+    /// Starts again, from their old configuration, the routes a failed reload had already
+    /// stopped, and rebuilds the router around them. A route that cannot be started again is
+    /// logged and left out of the registry.
+    async fn restore_retired(&self, routes: &[Route]) {
+        for route in routes {
+            let floor = archive_floor_of(route).await;
+            match self.spawn_route(route, floor) {
+                Ok(runtime) => {
+                    self.inner.write().insert(
+                        route.name.clone(),
+                        PendingRuntime::new(runtime).into_installed(),
+                    );
+                }
+                Err(e) => tracing::error!(
+                    route = %route.name,
+                    error = %e,
+                    "admin: a failed reload could not start a stopped route again"
+                ),
+            }
+        }
+        self.rebuild_router();
     }
 
     /// Tears down every currently-registered route's supervisor task, in
@@ -822,6 +902,10 @@ struct ReloadPlan {
     changed: Vec<Route>,
     removed: Vec<String>,
     unchanged: Vec<String>,
+    /// Each touched name with the generation of the runtime registered under it when the
+    /// plan was made (`None` when none was): two plans over the same names are the same plan
+    /// only if every one of them is the same runtime.
+    state: Vec<(String, Option<u64>)>,
 }
 
 impl ReloadPlan {
@@ -1547,6 +1631,104 @@ mod tests {
         assert!(
             registry.list_routes().is_empty(),
             "a rejected add must leave the registry empty"
+        );
+    }
+
+    /// a reload plans `z` as "added", an admin add of `z` (different config) finishes
+    /// while the reload waits for z's name lock; the re-plan sees `z` as "changed" but compares
+    /// only the touched NAMES, so the stale plan installs z over the live runtime without
+    /// draining it.
+    #[tokio::test]
+    async fn a_reload_planned_before_a_concurrent_add_does_not_leak_the_added_runtime() {
+        let dir = std::env::temp_dir().join(format!("audit14-reload-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        std::fs::write(
+            &path,
+            r#"{"routes":[{"name":"z","input":{"type":"rtsp","url":"rtsp://127.0.0.1:554/z2"},"outputs":["llhls"]}]}"#,
+        )
+        .unwrap();
+        let registry = RouteRegistry::new(ctx_for_tests(), Some(path));
+        let gate = TestHooks::gate(&registry.hooks.floor_gates, "z");
+
+        let add = tokio::spawn({
+            let registry = Arc::clone(&registry);
+            async move {
+                registry
+                    .add_route(rtsp_route("z", "rtsp://127.0.0.1:554/z1"))
+                    .await
+            }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let reload = tokio::spawn({
+            let registry = Arc::clone(&registry);
+            async move { registry.reload().await }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        gate.notify_one();
+        add.await.expect("task").expect("add z");
+        let first_runtime_cancel = registry
+            .inner
+            .read()
+            .get("z")
+            .expect("z installed")
+            .cancel
+            .clone();
+        // The reload reads z's floor again on its second plan: keep opening the gate.
+        let opener = tokio::spawn({
+            let gate = Arc::clone(&gate);
+            async move {
+                loop {
+                    gate.notify_one();
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+            }
+        });
+        let summary = tokio::time::timeout(std::time::Duration::from_secs(20), reload)
+            .await
+            .expect("reload finishes")
+            .expect("task")
+            .expect("reload");
+        opener.abort();
+        assert!(
+            first_runtime_cancel.is_cancelled(),
+            "the runtime the add installed was replaced without being cancelled/drained \
+             (summary: {summary:?})"
+        );
+    }
+
+    /// a reload that restarts a CHANGED route reads its archive floor while the old
+    /// runtime is still live and writing; the old runtime is drained only after the new one is
+    /// installed, so the new runtime can number below a segment the old one still writes.
+    #[tokio::test]
+    async fn a_changed_route_reads_its_archive_floor_only_after_the_old_runtime_drained() {
+        let dir = std::env::temp_dir().join(format!("audit14-changed-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        std::fs::write(
+            &path,
+            r#"{"routes":[{"name":"z","input":{"type":"rtsp","url":"rtsp://127.0.0.1:554/z2"},"outputs":["llhls"]}]}"#,
+        )
+        .unwrap();
+        let registry = RouteRegistry::new(ctx_for_tests(), Some(path));
+        registry
+            .add_route(rtsp_route("z", "rtsp://127.0.0.1:554/z1"))
+            .await
+            .expect("add z");
+        let old_cancel = registry.inner.read().get("z").expect("z").cancel.clone();
+        let gate = TestHooks::gate(&registry.hooks.floor_gates, "z");
+        let reload = tokio::spawn({
+            let registry = Arc::clone(&registry);
+            async move { registry.reload().await }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let drained_when_floor_is_read = old_cancel.is_cancelled();
+        gate.notify_one();
+        let _ = reload.await;
+        assert!(
+            drained_when_floor_is_read,
+            "the archive floor of the changed route z was read while the old runtime was live"
         );
     }
 }
