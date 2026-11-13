@@ -4,8 +4,6 @@
 //! crate), answered with the four REAL fMP4 segments of
 //! `fixtures/dash/live-number` recycled in turn. See `world.rs` for why.
 
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 
 use super::world::{
@@ -221,10 +219,6 @@ impl Synth {
             "<UTCTiming schemeIdUri=\"urn:mpeg:dash:utc:{scheme}:2014\" value=\"{value}\"/>"
         ));
         self
-    }
-
-    pub fn url(&self) -> &'static str {
-        MPD_URL
     }
 
     pub fn geo(&self) -> Geo {

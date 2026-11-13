@@ -2,11 +2,9 @@ use std::collections::BTreeSet;
 
 use broadcast_client::{Action, Config, Event, Session, SourceKind};
 use broadcast_common::Unpackage;
-use rtmp_runtime::message::msg_type;
 use transmux::{FlvDemux, Media};
 
-#[path = "../../../transmux/tests/it/rtmp_play_peer.rs"]
-pub mod play_peer;
+pub use test_harness::rtmp_play_peer as play_peer;
 
 #[allow(unused_imports)]
 pub use play_peer::{PeerConfig, PlayPeer, Seen};
@@ -56,19 +54,10 @@ pub fn direct() -> Media {
     FlvDemux::new().unpackage(&flv[..]).expect("direct demux")
 }
 
-pub fn media_tags() -> Vec<(u8, u32, Vec<u8>)> {
-    fixture_tags()
-        .into_iter()
-        .filter(|(t, _, _)| *t == msg_type::AUDIO || *t == msg_type::VIDEO)
-        .collect()
-}
-
 pub struct Connect {
-    pub conn: u32,
     pub host: String,
     pub port: u16,
     pub tls: bool,
-    pub at_us: u64,
 }
 
 pub struct RtmpHost {
@@ -133,13 +122,7 @@ impl RtmpHost {
                 tls,
                 ..
             } => {
-                self.connects.push(Connect {
-                    conn,
-                    host,
-                    port,
-                    tls,
-                    at_us: self.now,
-                });
+                self.connects.push(Connect { host, port, tls });
                 if self.fail_next_connect {
                     self.fail_next_connect = false;
                     self.session
@@ -179,30 +162,6 @@ impl RtmpHost {
 
     pub fn advance_to(&mut self, t: u64) {
         self.now = t;
-        self.collect();
-    }
-
-    pub fn advance_by(&mut self, d: u64) {
-        self.advance_to(self.now + d);
-    }
-
-    pub fn next_wake(&mut self) -> Option<u64> {
-        let t = self.wakes.range((self.now + 1)..).next().copied()?;
-        self.wakes.remove(&t);
-        Some(t)
-    }
-
-    pub fn run_until(&mut self, stop: impl Fn(&[Event]) -> bool, max_steps: usize) {
-        for _ in 0..max_steps {
-            self.collect();
-            if stop(&self.events) {
-                return;
-            }
-            match self.next_wake() {
-                Some(t) => self.now = t,
-                None => return,
-            }
-        }
         self.collect();
     }
 

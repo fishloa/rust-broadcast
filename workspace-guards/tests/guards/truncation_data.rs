@@ -37,6 +37,7 @@ pub const EXEMPT: &[&str] = &[
     "container-probe",
     "test-alloc",
     "test-fixtures",
+    "test-harness",
 ];
 
 pub const TABLE: &[Crate] = &[

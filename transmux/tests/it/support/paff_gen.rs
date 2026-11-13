@@ -24,8 +24,6 @@
 //! Vendored into transmux tests (issue #1161) from the zenith-tv `paff-gen` tool
 //! (same author, same licence); `main()` replaced by [`generate`].
 
-#![allow(dead_code, clippy::all)]
-
 use crate::bit_writer::BitWriter;
 
 /// NAL unit with emulation prevention (§7.3.1, §7.4.1) and a 4-byte start code (Annex B).
@@ -281,12 +279,12 @@ pub fn pes_packets(pts: u64, es: &[u8], cc: &mut u8, out: &mut Vec<u8>) {
             let pad = room - take;
             if af.is_empty() {
                 af = if pad == 1 { vec![] } else { vec![0x00] };
-                af.extend(std::iter::repeat(0xFF).take(pad.saturating_sub(2)));
+                af.extend(std::iter::repeat_n(0xFF, pad.saturating_sub(2)));
                 if pad == 1 {
                     // a 1-byte adaptation field: just adaptation_field_length = 0
                 }
             } else {
-                af.extend(std::iter::repeat(0xFF).take(pad));
+                af.extend(std::iter::repeat_n(0xFF, pad));
             }
         }
         let mut p = Vec::with_capacity(188);
@@ -322,7 +320,7 @@ pub struct Generated {
 /// `frames` frames of `w` x `h` (W % 16 == 0, H % 32 == 0), `bff` = bottom field first.
 pub fn generate(frames: usize, w: usize, h: usize, bff: bool) -> Generated {
     assert!(
-        w % 16 == 0 && h % 32 == 0 && frames >= 1,
+        w.is_multiple_of(16) && h.is_multiple_of(32) && frames >= 1,
         "W%16, H%32, frames>=1"
     );
     let fh = h / 2;

@@ -608,6 +608,15 @@ what = "Resolves `<workspace>/fixtures` once, in one place, so test suites canno
 crates_io = false
 lifecycle = "internal"
 
+[crate.test-harness]
+domain = "internal"
+summary = "Shared test harnesses for workspace integration tests (DASH loopback simulator, RTMP play peer, fmp4_split)."
+standards = "n/a"
+what = "One copy of the DASH loopback simulator (world/synth/capture/loopback), the RTMP play peer, and fmp4_split, exposed as pub modules for dev-dependency use by dash-runtime, broadcast-client, transmux and hls-runtime."
+crates_io = false
+lifecycle = "internal"
+
+
 [crate.workspace-guards]
 domain = "internal"
 summary = "Workspace-wide lexical source guards with per-crate data tables."

@@ -31,6 +31,7 @@ tracing          = "0.1"
 
 [dev-dependencies]
 test-fixtures     = { path = "../test-fixtures" }
+test-harness     = { path = "../test-harness" }
 workspace-guards  = { path = "../workspace-guards" }
 percent-encoding = "2"
 

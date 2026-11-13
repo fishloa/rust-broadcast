@@ -6,12 +6,10 @@
 //! Why the synthesised origin recycles four real segments: the committed live
 //! captures (`fixtures/dash/live-number`, `live-timeline`) hold four segments
 //! per track, and the livesim2 MPDs carry no media at all. A 24-hour or
-//! 6-hour run needs thousands of segments, so [`Synth`] rewrites only the MPD
+//! 6-hour run needs thousands of segments, so [`crate::dash::synth::Synth`] rewrites only the MPD
 //! (availability, window, numbering) and answers every segment request with
 //! one of the four REAL fMP4 segments (and the real init). The client never
 //! sees a hand-made byte.
-
-#![allow(dead_code)]
 
 use std::collections::BTreeMap;
 
@@ -21,7 +19,6 @@ use dash_runtime::client::{
 };
 
 pub const MICROS: i64 = 1_000_000;
-pub const MS: i64 = 1_000;
 
 /// True time, and the host's view of it.
 #[derive(Debug, Clone, Copy)]
@@ -86,7 +83,6 @@ pub enum Method {
 pub struct HttpReq {
     pub method: Method,
     pub url: String,
-    pub range: Option<(u64, u64)>,
     pub if_none_match: Option<String>,
 }
 
@@ -153,7 +149,6 @@ pub struct Logged {
     pub send_utc_us: i64,
     pub send_mono_us: u64,
     pub status: Option<u16>,
-    pub id: Option<ResourceId>,
 }
 
 pub type FaultFn = Box<dyn FnMut(&HttpReq, &Kind, i64) -> Option<Outcome>>;
@@ -313,7 +308,6 @@ impl Sim {
         let req = HttpReq {
             method,
             url: url.clone(),
-            range: action.byte_range(),
             if_none_match,
         };
         let at_utc = self.world.true_utc_at(origin_elapsed);
@@ -341,7 +335,6 @@ impl Sim {
             send_utc_us: self.world.true_utc_at(sent_elapsed),
             send_mono_us: sent_mono,
             status,
-            id: action.id(),
         });
         let mut arrive = arrive;
         if matches!(outcome, Outcome::Hang) {

@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use srt_runtime::crypto::aes_ctr_apply;
 use srt_runtime::handshake_sm::{CryptoConfig, HandshakeConfig, HandshakeOutput};
 use srt_runtime::listener::ListenerHandshake;
-use srt_runtime::packet::misc::{AckAckPacket, KeepAlivePacket, ShutdownPacket};
+use srt_runtime::packet::misc::{AckAckPacket, ShutdownPacket};
 use srt_runtime::packet::{
     ControlPacket, DataPacket, DropReqPacket, EncryptionField, EncryptionKeyField, LossListEntry,
     PacketPosition, SrtPacket,
@@ -40,7 +40,6 @@ pub struct SrtPeer {
     pub keepalives_received: u32,
     pub acks_received: u32,
     pub retransmits: u32,
-    pub isn: u32,
     pub max_acked: Option<u32>,
 }
 
@@ -80,7 +79,6 @@ impl SrtPeer {
             keepalives_received: 0,
             acks_received: 0,
             retransmits: 0,
-            isn,
             max_acked: None,
         }
     }
@@ -182,10 +180,6 @@ impl SrtPeer {
         d
     }
 
-    pub fn next_seq(&self) -> u32 {
-        self.next_seq
-    }
-
     pub fn data(&mut self, payload: &[u8], now_us: u64) -> Vec<u8> {
         self.data_with(payload, now_us, None)
     }
@@ -231,14 +225,6 @@ impl SrtPeer {
             dest_socket_id: self.caller_socket_id,
             first_seq: first,
             last_seq: last,
-        }))
-    }
-
-    pub fn keepalive(&self, now_us: u64) -> Vec<u8> {
-        serialize(&ControlPacket::KeepAlive(KeepAlivePacket {
-            timestamp: self.ts(now_us),
-            dest_socket_id: self.caller_socket_id,
-            libsrt_pad: true,
         }))
     }
 

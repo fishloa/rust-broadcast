@@ -469,6 +469,7 @@ dependencies = [
  "smooth-runtime",
  "srt-runtime",
  "test-fixtures",
+ "test-harness",
  "thiserror 2.0.21",
  "tokio",
  "transmux",
@@ -1100,6 +1101,7 @@ dependencies = [
  "percent-encoding",
  "quick-xml",
  "test-fixtures",
+ "test-harness",
  "thiserror 2.0.21",
  "tracing",
  "transmux",
@@ -1788,6 +1790,7 @@ dependencies = [
  "mpeg-ts",
  "serde",
  "test-fixtures",
+ "test-harness",
  "thiserror 2.0.21",
  "timed-metadata",
  "tokio",
@@ -4306,6 +4309,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-harness"
+version = "0.1.0"
+dependencies = [
+ "broadcast-common",
+ "dash-runtime",
+ "jiff",
+ "rtmp-runtime",
+ "test-fixtures",
+ "transmux",
+ "url",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4662,6 +4678,7 @@ dependencies = [
  "subtle",
  "test-alloc",
  "test-fixtures",
+ "test-harness",
  "thiserror 2.0.21",
  "timed-metadata",
  "url",
