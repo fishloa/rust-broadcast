@@ -473,7 +473,7 @@ Identifies MPEG-2 TS (any of 188/192/204/208-byte strides at any phase), ISOBMFF
 - **Cargo description:** Robust media container-format detection — MPEG-2 TS (188/192/204/208 stride + phase), ISOBMFF, Matroska/WebM, MPEG-PS, FLV, MXF, WAV, Ogg, ASF, and elementary streams.
 - **Version (in-tree):** 0.3.1 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
-- **Used by (workspace):** [`dash-runtime`](#dash-runtime), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`multimux`](#multimux), [`transmux`](#transmux)
+- **Used by (workspace):** [`dash-runtime`](#dash-runtime), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux), [`transmux`](#transmux)
 - **Links:** [README](../container-probe/README.md) · [CHANGELOG](../container-probe/CHANGELOG.md) · [crates.io](https://crates.io/crates/container-probe) · [docs.rs](https://docs.rs/container-probe)
 
 #### transmux
@@ -678,7 +678,7 @@ Four layers (`Dialer`/`Listener` -> byte stages -> `IngestSession` -> IR transfo
 - **Standards:** none of its own (architecture layer)
 - **Cargo description:** The ingress/egress spine for a live media origin: Dialer/Listener -> byte stages -> IngestSession -> Trunk (bounded sample/segment/event/part rings with cursor subscribers), three egress shapes (served/push/segment), and tiered retention with DVR pinning. Built on broadcast_common::Stage. no_std + alloc byte layer; Trunk and above require std.
 - **Version (in-tree):** 0.11.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 4
-- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
+- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`container-probe`](#container-probe), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
 - **Used by (workspace):** [`compliance-probe`](#compliance-probe), [`dash-runtime`](#dash-runtime), [`hls-runtime`](#hls-runtime), [`multimux`](#multimux), [`smooth-runtime`](#smooth-runtime)
 - **Links:** [README](../media-plane/README.md) · [CHANGELOG](../media-plane/CHANGELOG.md) · [crates.io](https://crates.io/crates/media-plane) · [docs.rs](https://docs.rs/media-plane)
 

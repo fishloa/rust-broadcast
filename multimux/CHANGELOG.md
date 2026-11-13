@@ -5,6 +5,7 @@
 - `whep_media_sockets_per_ip` (config, default 8; `WhepRoute::with_media_sockets_per_ip`): the number of UDP media sockets a WHEP output binds per advertised IP, over which its viewers are spread round-robin. `0` is `ConfigInvalid`. More sockets spread the viewers' SRTP sends across cores at the cost of one file descriptor and one receive task each.
 ### Removed
 - BREAKING: `source::IngestTimeouts` (a `{connect, read}` copy of the adapters' timeout struct): every source's `with_timeouts` takes `broadcast_common::timeouts::Timeouts` (`read` is `read_idle`), and `source::ingest_timeouts(&Config)` replaces `IngestTimeouts::from(&Config)`. `push::RtmpTransportConfig`'s `connect_timeout`/`write_timeout` options are one `timeouts: Timeouts` (#2514).
+- BREAKING: `source::file_reader::{FileReaderError, DemuxerKind, select_demuxer}` moved to `media_plane::file_source`; `FileReader` (the file IO, pacing and supervision) stays (issue #2554).
 - BREAKING: the public `source::ts_program` module and `source::MAX_TS_READ`; use `media_plane::ts_session` (issue #2554). The TS backlog-drop counter is reported through its observer, unchanged.
 ### Changed
 - A WHEP route binds up to 8 media sockets per advertised IP (viewers are spread over them round-robin) instead of one: with 1000 real WebRTC viewers the single socket's send path was the serial point of every SRTP stream (slowest viewer 54% of frames, p99 7.9 s); with 8 sockets every viewer receives 100% at p99 61 ms.
