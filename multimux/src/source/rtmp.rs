@@ -821,6 +821,8 @@ pub(crate) async fn run_rtmp_with_clock(
     let (outcomes_tx, mut outcomes) =
         mpsc::channel(route.max_sessions.max(1) * OUTCOMES_PER_SESSION);
     let mut readers: JoinSet<()> = JoinSet::new();
+    let mut reader_handles: std::collections::HashMap<SessionId, tokio::task::AbortHandle> =
+        std::collections::HashMap::new();
 
     // The shared admitted-session driver (media-plane): admission, the
     // per-session clock origin, publish-then-reap and the live-session gauge
@@ -865,7 +867,13 @@ pub(crate) async fn run_rtmp_with_clock(
                     }
                 }
                 advance(&mut admitted, id, route_handle).await;
-                admitted.reap(id);
+                if admitted.reap(id)
+                    && let Some(handle) = reader_handles.remove(&id)
+                {
+                    // A session the publisher ended (a rejected feed, say)
+                    // must not keep its connection open until the peer quits.
+                    handle.abort();
+                }
                 infra
                     .session_count
                     .store(admitted.session_count(), Ordering::SeqCst);
@@ -887,7 +895,10 @@ pub(crate) async fn run_rtmp_with_clock(
             let Some(conn) = conn else { continue };
             infra.admitted_total.fetch_add(1, Ordering::SeqCst);
             infra.admit_count_notify.notify_waiters();
-            readers.spawn(read_session(id, conn, read_timeout, outcomes_tx.clone()));
+            reader_handles.insert(
+                id,
+                readers.spawn(read_session(id, conn, read_timeout, outcomes_tx.clone())),
+            );
         }
     }
 }
