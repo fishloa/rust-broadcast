@@ -353,7 +353,9 @@ pub async fn advance_route<S: media_plane::ingress::IngestSession>(
     state: &mut DriverProgress,
 ) {
     report_driver_progress(driver, route_handle, &mut state.published);
-    segment::drive_program_segmenters(driver, route_handle, &mut state.segmenters);
+    while segment::drive_program_segmenters(driver, route_handle, &mut state.segmenters) {
+        tokio::task::yield_now().await;
+    }
     // Drain DVR cursors for every published program — recording happens
     // after segmenters have published new segments to the Trunk.
     route_handle.drain_dvr().await;
