@@ -362,3 +362,55 @@ impl PlayPeer {
         Ok(self.counted(bytes))
     }
 }
+
+// SENTINEL-START
+#[used]
+static _USE_ALL_ITEMS: usize = {
+    let _ = 0usize;
+    let _ = COMMAND_CSID;
+    let _ = AUDIO_CSID;
+    let _ = VIDEO_CSID;
+    let _ = DATA_CSID;
+    let _ = PLAY_STREAM_ID;
+    let _ = CONNECT_RESULT_CODE;
+    let _ = PLAY_START_CODE;
+    let _ = PLAY_RESET_CODE;
+    let _ = PLAY_NOT_FOUND_CODE;
+    let _ = std::mem::size_of::<PeerConfig>();
+    let _ = std::mem::size_of::<Seen>();
+    let _ = std::mem::size_of::<PlayPeer>();
+    let _ = std::mem::offset_of!(PeerConfig, stream_name);
+    let _ = std::mem::offset_of!(PeerConfig, window_ack_size);
+    let _ = std::mem::offset_of!(PeerConfig, chunk_size_after_connect);
+    let _ = std::mem::offset_of!(PeerConfig, client_chunk_size);
+    let _ = std::mem::offset_of!(PeerConfig, recorded);
+    let _ = std::mem::offset_of!(PlayPeer, config);
+    let _ = std::mem::offset_of!(PlayPeer, handshake);
+    let _ = std::mem::offset_of!(PlayPeer, hs_buf);
+    let _ = std::mem::offset_of!(PlayPeer, assembler);
+    let _ = std::mem::offset_of!(PlayPeer, writer);
+    let _ = std::mem::offset_of!(PlayPeer, seen);
+    let _ = std::mem::offset_of!(PlayPeer, chunk_bytes_received);
+    let _ = std::mem::offset_of!(PlayPeer, bytes_sent_after_handshake);
+    let _ = std::mem::offset_of!(PlayPeer, next_stream_id);
+    let _ = std::mem::offset_of!(PlayPeer, playing);
+    let _ = PlayPeer::commands;
+    let _ = PlayPeer::acks;
+    let _ = PlayPeer::command_args;
+    let _ = PlayPeer::on_bytes;
+    let _ = PlayPeer::on_message;
+    let _ = PlayPeer::on_command;
+    let _ = PlayPeer::is_playing;
+    let _ = PlayPeer::send_control;
+    let _ = PlayPeer::send_command;
+    let _ = PlayPeer::counted;
+    let _ = PlayPeer::on_status;
+    let _ = PlayPeer::send_on_status;
+    let _ = PlayPeer::set_chunk_size;
+    let _ = PlayPeer::ping;
+    let _ = PlayPeer::stream_eof;
+    let _ = PlayPeer::media;
+    let _ = PlayPeer::raw_message;
+    0
+};
+// SENTINEL-END
