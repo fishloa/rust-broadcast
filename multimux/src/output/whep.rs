@@ -562,6 +562,7 @@ pub fn whep_router_for_test(
 /// fingerprint and candidate lines all caller-supplied), so the goldens can
 /// pin the document without the random cert/candidate values.
 #[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
 #[cfg(feature = "test-hooks")]
 pub fn render_whep_answer_for_test(
     offer: &str,
