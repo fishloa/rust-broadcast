@@ -317,9 +317,7 @@ pub async fn drive_socket(
         .unwrap_or_else(|never: Infallible| match never {});
     let driver = IngestDriver::new(
         session,
-        trunk_config,
-        handshake,
-        media_plane::DEFAULT_MAX_PROGRAMS,
+        media_plane::IngestConfig::new(handshake).with_trunk(trunk_config),
     );
     let mut step = SrtStep {
         sock,
@@ -395,9 +393,7 @@ pub async fn run_srt_caller(
     )?;
     let driver = IngestDriver::new(
         EventIngest::new(),
-        trunk_config,
-        handshake,
-        media_plane::DEFAULT_MAX_PROGRAMS,
+        media_plane::IngestConfig::new(handshake).with_trunk(trunk_config),
     );
     let mut progress = crate::source::DriverProgress::new();
     let mut sink = tokio::io::sink();

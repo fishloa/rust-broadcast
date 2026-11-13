@@ -840,9 +840,7 @@ pub(crate) async fn run_rtmp_with_clock(
                 app: route.app.clone(),
                 max_sessions: route.max_sessions,
             },
-            trunk_config,
-            handshake,
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake).with_trunk(trunk_config),
         ),
         start,
     );

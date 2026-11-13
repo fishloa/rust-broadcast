@@ -793,9 +793,7 @@ mod tests {
 
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
         );
 
         // Feed a real muxed TS stream; the driver mints program 0's Trunk
@@ -989,9 +987,7 @@ mod tests {
         // And through the driver: the programme's Trunk exists.
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
         );
         driver.feed(&ts, Timestamp::ZERO);
         assert!(

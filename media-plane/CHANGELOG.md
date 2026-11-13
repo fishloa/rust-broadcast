@@ -7,10 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Removed
+- BREAKING: the four-positional `IngestDriver::new(session, trunk_config, handshake, max_programs)` and `ListenDriver::new(listener, ..)`; both take `(session_or_listener, IngestConfig)` (#2514).
 - BREAKING: `TrunkConfig::new` (five positional `NonZeroUsize`, any reorder compiled). Start from `TrunkConfig::default()` (64 timed, 16 sparse, 8 segment, 64 event, 64 part entries) and set what differs with `with_timed_capacity`, `with_sparse_capacity`, `with_segment_capacity`, `with_event_capacity`, `with_part_capacity` (and the existing `with_waiter_capacity`) (#2514).
 ### Changed
 - The docs of `SegmentWriter::publish_segment`, `ProgressListener::wait_deadline` and `SlotFreedFuture::wait_deadline` state that they park the calling thread and must not run on an async worker (issue #2533).
 ### Added
+- `ingress::IngestConfig` (`new(handshake)`, `with_trunk`, `with_max_programs`): the handshake bound, the per-program `TrunkConfig` and the per-session program bound an ingest driver is built from. A new type rather than fields on `TrunkConfig`, because the deadline and the program bound belong to a connection, not a ring, and callers vary the three independently (#2514).
 - `benches/trunk_parked_readers`: publish cost and wake latency with 1 to 1024 readers parked on `SampleCursor::next` (#2515).
 - `Trunk::generation`: a counter bumped by every part, segment, event, track-set, segment-start and time-anchor publish (never a sample), for caching a render keyed by the state it was made from.
 - `ServedEgress::is_warm` and `ServedEgress::prepare` (default always warm / no-op): an egress with heavy first-use work says so, so an async host runs `prepare` on a blocking thread instead of on the worker that woke the request.

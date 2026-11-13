@@ -2049,9 +2049,7 @@ mod tests {
         let route = RouteHandle::new(1.0, 250, 8);
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
         );
         let mut published = HashSet::new();
         let mut segmenters = HashMap::new();
@@ -2120,9 +2118,7 @@ mod tests {
         let route = RouteHandle::new(1.0, 250, 8).with_name("segment-metrics-probe-route");
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
         );
         let mut published = HashSet::new();
         let mut segmenters = HashMap::new();
@@ -2368,9 +2364,7 @@ mod tests {
         let route = RouteHandle::new(1.0, 250, 8);
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
         );
         let mut published = HashSet::new();
         let mut segmenters = HashMap::new();
@@ -2422,9 +2416,7 @@ mod tests {
         let route = RouteHandle::new(1.0, 250, 8);
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
         );
         let mut published = HashSet::new();
         let mut segmenters = HashMap::new();
@@ -2599,9 +2591,7 @@ mod tests {
         let route = RouteHandle::new(1.0, 500, 8);
         let mut driver = IngestDriver::new(
             TwoProgramSession::new(),
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
         );
         let mut published = HashSet::new();
         let mut segmenters = HashMap::new();
@@ -2768,9 +2758,7 @@ mod tests {
         let route = RouteHandle::new(1.0, 500, 8).with_container(Container::MpegTs);
         let mut driver = IngestDriver::new(
             TwoProgramSession::new(),
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
         );
         let mut published = HashSet::new();
         let mut segmenters = HashMap::new();
@@ -3034,9 +3022,7 @@ mod tests {
         let route = RouteHandle::new(1.0, 250, 8);
         let mut driver = IngestDriver::new(
             TrackChangeSession::new(),
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
         );
         let mut published = HashSet::new();
         let mut segmenters = HashMap::new();
@@ -3139,9 +3125,7 @@ mod tests {
         let route = RouteHandle::new(1.0, 250, 8);
         let mut driver = IngestDriver::new(
             TrackChangeSession::new(),
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
         );
         let mut published = HashSet::new();
         let mut segmenters = HashMap::new();
@@ -3229,9 +3213,7 @@ mod tests {
         let route = RouteHandle::new(1.0, 250, 8);
         let mut driver = IngestDriver::new(
             TrackChangeSession::new(),
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
         );
         let mut published = HashSet::new();
         let mut segmenters = HashMap::new();
@@ -3339,9 +3321,7 @@ mod tests {
         let route = RouteHandle::new(1.0, 250, 8);
         let mut driver = IngestDriver::new(
             TrackChangeSession::new(),
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
         );
         let mut published = HashSet::new();
         let mut segmenters = HashMap::new();
@@ -3491,9 +3471,7 @@ mod tests {
                 route: RouteHandle::new(1.0, 250, 16).with_container(container),
                 driver: IngestDriver::new(
                     GapSession::new(),
-                    trunk_config(),
-                    handshake(),
-                    media_plane::DEFAULT_MAX_PROGRAMS,
+                    media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
                 ),
                 published: HashSet::new(),
                 segmenters: HashMap::new(),

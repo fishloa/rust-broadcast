@@ -238,9 +238,7 @@ async fn run_demo(route_handle: Arc<RouteHandle>) -> multimux::Result<()> {
     let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
     let mut driver: IngestDriver<DemoSession> = IngestDriver::new(
         session,
-        trunk_config,
-        handshake,
-        media_plane::DEFAULT_MAX_PROGRAMS,
+        media_plane::IngestConfig::new(handshake).with_trunk(trunk_config),
     );
 
     let mut progress = DriverProgress::new();

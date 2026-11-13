@@ -2911,14 +2911,17 @@ mod tests {
 
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
-            TrunkConfig::default()
-                .with_timed_capacity(nz2(8))
-                .with_sparse_capacity(nz2(8))
-                .with_segment_capacity(nz2(64))
-                .with_event_capacity(nz2(8))
-                .with_part_capacity(nz2(8)),
-            HandshakePolicy::establish_by(broadcast_common::Timestamp::from_nanos(u64::MAX)),
-            DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(HandshakePolicy::establish_by(
+                broadcast_common::Timestamp::from_nanos(u64::MAX),
+            ))
+            .with_trunk(
+                TrunkConfig::default()
+                    .with_timed_capacity(nz2(8))
+                    .with_sparse_capacity(nz2(8))
+                    .with_segment_capacity(nz2(64))
+                    .with_event_capacity(nz2(8))
+                    .with_part_capacity(nz2(8)),
+            ),
         );
 
         let mut progress = DriverProgress::new();
@@ -3056,14 +3059,17 @@ mod tests {
 
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
-            TrunkConfig::default()
-                .with_timed_capacity(nz2(8))
-                .with_sparse_capacity(nz2(8))
-                .with_segment_capacity(nz2(64))
-                .with_event_capacity(nz2(8))
-                .with_part_capacity(nz2(8)),
-            HandshakePolicy::establish_by(broadcast_common::Timestamp::from_nanos(u64::MAX)),
-            DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(HandshakePolicy::establish_by(
+                broadcast_common::Timestamp::from_nanos(u64::MAX),
+            ))
+            .with_trunk(
+                TrunkConfig::default()
+                    .with_timed_capacity(nz2(8))
+                    .with_sparse_capacity(nz2(8))
+                    .with_segment_capacity(nz2(64))
+                    .with_event_capacity(nz2(8))
+                    .with_part_capacity(nz2(8)),
+            ),
         );
 
         let ts_bytes = std::fs::read(fixture_path).expect("read fixture");

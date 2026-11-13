@@ -1463,9 +1463,11 @@ pub(crate) async fn run_file_source(
         };
     let mut driver = IngestDriver::new(
         session,
-        trunk_config,
-        handshake,
-        std::num::NonZeroUsize::new(1).unwrap_or(std::num::NonZeroUsize::MIN),
+        media_plane::IngestConfig::new(handshake)
+            .with_trunk(trunk_config)
+            .with_max_programs(
+                std::num::NonZeroUsize::new(1).unwrap_or(std::num::NonZeroUsize::MIN),
+            ),
     );
     let start = std::time::Instant::now();
     let mut progress = crate::source::DriverProgress::new();
@@ -1872,11 +1874,11 @@ mod playout_tests {
             FileIngestSession::new(parsed, crate::route::SPTS_PROGRAM_ID, true, true).unwrap();
         let mut driver = media_plane::ingress::IngestDriver::new(
             session,
-            file_trunk_config(8),
-            media_plane::ingress::HandshakePolicy::establish_by(
+            media_plane::IngestConfig::new(media_plane::ingress::HandshakePolicy::establish_by(
                 broadcast_common::Timestamp::from_nanos(u64::MAX),
-            ),
-            std::num::NonZeroUsize::MIN,
+            ))
+            .with_trunk(file_trunk_config(8))
+            .with_max_programs(std::num::NonZeroUsize::MIN),
         );
         driver.feed((), broadcast_common::Timestamp::ZERO);
         let trunk = driver

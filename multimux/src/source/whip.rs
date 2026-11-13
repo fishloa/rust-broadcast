@@ -1894,9 +1894,7 @@ pub(crate) async fn run_whip_with_clock(
                 accept_rx: Arc::clone(&infra.accept_rx),
                 max_sessions: route.max_sessions,
             },
-            trunk_config,
-            handshake,
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake).with_trunk(trunk_config),
         ),
         start,
     );

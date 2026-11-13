@@ -114,7 +114,7 @@ fuzz_target!(|data: &[u8]| {
     // `max_programs` (issue #803) bounds how many `Trunk`s one session may
     // mint -- the fifth unbounded-allocation vector this workspace has had.
     // The default ceiling is what a real driver loop uses.
-    let mut driver = IngestDriver::new(session, trunk_config, handshake, DEFAULT_MAX_PROGRAMS);
+    let mut driver = IngestDriver::new(session, media_plane::IngestConfig::new(handshake).with_trunk(trunk_config));
 
     driver.feed(capped, Timestamp::ZERO);
     driver.on_deadline(Timestamp::from_nanos(1));

@@ -577,9 +577,7 @@ mod custom_dispatch_driver_backed {
         let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
         let mut driver: IngestDriver<RealTsSession> = IngestDriver::new(
             session,
-            trunk_config,
-            handshake,
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake).with_trunk(trunk_config),
         );
         let mut progress = DriverProgress::new();
 
@@ -804,9 +802,7 @@ mod custom_dispatch_driver_backed {
             let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
             let mut driver: IngestDriver<TwoProgSession> = IngestDriver::new(
                 session,
-                trunk_config,
-                handshake,
-                media_plane::DEFAULT_MAX_PROGRAMS,
+                media_plane::IngestConfig::new(handshake).with_trunk(trunk_config),
             );
             let mut progress = DriverProgress::new();
             driver.feed(&[], Timestamp::from_nanos(0));

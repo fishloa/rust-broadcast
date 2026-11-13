@@ -165,9 +165,7 @@ async fn run_instant(route_handle: Arc<RouteHandle>) -> multimux::Result<()> {
     let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
     let mut driver: IngestDriver<InstantSession> = IngestDriver::new(
         session,
-        trunk_config,
-        handshake,
-        media_plane::DEFAULT_MAX_PROGRAMS,
+        media_plane::IngestConfig::new(handshake).with_trunk(trunk_config),
     );
     let mut progress = DriverProgress::new();
     driver.feed(&[], Timestamp::from_nanos(0));
@@ -191,9 +189,7 @@ async fn run_hold(route_handle: Arc<RouteHandle>) -> multimux::Result<()> {
     let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
     let mut driver: IngestDriver<InstantSession> = IngestDriver::new(
         session,
-        trunk_config,
-        handshake,
-        media_plane::DEFAULT_MAX_PROGRAMS,
+        media_plane::IngestConfig::new(handshake).with_trunk(trunk_config),
     );
     let mut progress = DriverProgress::new();
     driver.feed(&[], Timestamp::from_nanos(0));

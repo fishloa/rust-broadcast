@@ -497,9 +497,11 @@ mod driver_progress_tests {
         let session = dialer.dial().unwrap();
         IngestDriver::new(
             session,
-            trunk_config(),
-            HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX)),
-            nz(4),
+            media_plane::IngestConfig::new(HandshakePolicy::establish_by(Timestamp::from_nanos(
+                u64::MAX,
+            )))
+            .with_trunk(trunk_config())
+            .with_max_programs(nz(4)),
         )
     }
 
@@ -659,9 +661,11 @@ mod driver_progress_tests {
         };
         let mut driver = IngestDriver::new(
             session,
-            trunk_config(),
-            HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX)),
-            nz(4),
+            media_plane::IngestConfig::new(HandshakePolicy::establish_by(Timestamp::from_nanos(
+                u64::MAX,
+            )))
+            .with_trunk(trunk_config())
+            .with_max_programs(nz(4)),
         );
         let route = crate::route::RouteHandle::new(4.0, 500, 4);
         let mut published = HashSet::new();
@@ -731,9 +735,7 @@ mod advance_route_tests {
         let route = RouteHandle::new(1.0, 250, 8);
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
         );
         let mut progress = DriverProgress::new();
 
