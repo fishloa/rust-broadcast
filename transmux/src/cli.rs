@@ -297,7 +297,7 @@ impl fmt::Debug for Args {
 /// Never returns the key half, and never the original string verbatim —
 /// even a malformed argument (bad KID half) could still carry a decodable
 /// key half after the `:`.
-#[cfg_attr(not(feature = "cenc"), allow(dead_code))]
+#[cfg(feature = "cenc")]
 fn redact_key_spec(spec: &str) -> String {
     let kid_part = spec.split_once(':').map(|(k, _)| k).unwrap_or(spec);
     let is_kid_hex = kid_part.len() == 32 && kid_part.bytes().all(|b| b.is_ascii_hexdigit());

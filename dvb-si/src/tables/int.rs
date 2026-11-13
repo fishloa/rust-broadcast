@@ -129,7 +129,6 @@ pub struct IntSection<'a> {
 
 impl<'a> IntSection<'a> {
     /// Construct an INT section with the spec `reserved` fill.
-    #[allow(clippy::too_many_arguments)]
     #[must_use]
     pub fn new(
         action_type: IntActionType,

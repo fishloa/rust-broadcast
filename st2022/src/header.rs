@@ -923,7 +923,6 @@ impl<'a> PayloadHeader<'a> {
     /// [`EXTENSION_UNIT_LEN`], or exceeds [`MAX_EXTENSION_UNITS`] units;
     /// [`Error::VideoTimestampMismatch`] if `video_timestamp.is_some()`
     /// disagrees with `clock_frequency != ClockFrequency::NoTimestamp`.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         vsid: VideoSourceId,
         fr_count: u8,

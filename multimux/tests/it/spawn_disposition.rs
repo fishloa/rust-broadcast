@@ -299,12 +299,12 @@ fn surviving_lines(src: &str) -> Vec<(usize, String)> {
     let mut removed = vec![false; n];
     let mut i = 0usize;
     while i < n {
-        if let Some((attr_start, mod_kw, body_open)) = match_cfg_test_mod(b, i) {
-            let end = match body_open {
-                None => find_semicolon(b, mod_kw).unwrap_or(mod_kw),
+        if let Some(span) = match_cfg_test_mod(b, i) {
+            let end = match span.body_open {
+                None => find_semicolon(b, span.mod_kw).unwrap_or(span.mod_kw),
                 Some(open) => match_close_brace(b, open).unwrap_or(n - 1),
             };
-            for r in removed.iter_mut().take(end + 1).skip(attr_start) {
+            for r in removed.iter_mut().take(end + 1).skip(span.attr_start) {
                 *r = true;
             }
             i = end + 1;
@@ -334,8 +334,15 @@ fn surviving_lines(src: &str) -> Vec<(usize, String)> {
     out
 }
 
-#[allow(clippy::type_complexity)]
-fn match_cfg_test_mod(b: &[u8], from: usize) -> Option<(usize, usize, Option<usize>)> {
+/// Where a `#[cfg(test)] mod` starts: the attribute, the `mod` keyword and
+/// the opening brace of its body (`None` for a `mod x;` declaration).
+struct CfgTestMod {
+    attr_start: usize,
+    mod_kw: usize,
+    body_open: Option<usize>,
+}
+
+fn match_cfg_test_mod(b: &[u8], from: usize) -> Option<CfgTestMod> {
     let n = b.len();
     let mut j = from;
     while j < n && (b[j] == b' ' || b[j] == b'\t') {
@@ -378,9 +385,17 @@ fn match_cfg_test_mod(b: &[u8], from: usize) -> Option<(usize, usize, Option<usi
         return None;
     }
     if b[m] == b';' {
-        return Some((attr_start, mod_kw, None));
+        return Some(CfgTestMod {
+            attr_start,
+            mod_kw,
+            body_open: None,
+        });
     }
-    Some((attr_start, mod_kw, Some(m)))
+    Some(CfgTestMod {
+        attr_start,
+        mod_kw,
+        body_open: Some(m),
+    })
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

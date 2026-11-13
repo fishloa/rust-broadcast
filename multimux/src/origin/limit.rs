@@ -512,10 +512,9 @@ mod tests {
                 if let Some(tx) = entered_tx.lock().expect("tx").take() {
                     let _ = tx.send(());
                 }
-                // A response that never resolves (still "producing").
-                std::future::pending::<()>().await;
-                #[allow(unreachable_code)]
-                Ok::<_, Infallible>(Response::new(Body::empty()))
+                // A response that never resolves (still "producing"), so the
+                // permit is held for the whole test.
+                std::future::pending::<Result<Response<Body>, Infallible>>().await
             }
         });
         let mut svc = tower::Layer::layer(&BudgetLimitLayer::new(1, 1, QUEUE_WAIT), inner);

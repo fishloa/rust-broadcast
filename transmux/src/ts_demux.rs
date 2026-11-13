@@ -225,6 +225,7 @@ use crate::display_track::{ActivationOutcome, SpsTracker, TrackCodec};
 use crate::ir::{AfdPersistence, DisplayChangeSet, DisplayInfo};
 use crate::mpeg2_display::{Mpeg2DisplayTracker, Mpeg2Outcome};
 use crate::{ProgramNumber, TrackId};
+use alloc::boxed::Box;
 use alloc::collections::btree_map::Entry;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::sync::Arc;
@@ -1639,13 +1640,6 @@ fn ts_provenance(dts: i64, pts: i64) -> Provenance {
 }
 
 /// Per-track live (config-known) processing state.
-///
-/// `clippy::large_enum_variant` (allow): an AVC/HEVC video track is the
-/// large variant once it carries its SPS-activation tracker (a `BTreeMap` of
-/// geometries and PPS bindings), but `TrackState::Live` owns one per live
-/// PID either way, and boxing it here would only move the allocation, not
-/// reduce it.
-#[allow(clippy::large_enum_variant)]
 enum LiveKind {
     /// H.264/HEVC/MPEG-2 video: one `Sample` per access unit.
     Video {
@@ -1784,13 +1778,6 @@ impl LiveTrack {
 /// itself resolved (see [`StreamingTsDemux::try_promote_ready`]) — at which
 /// point it becomes `Live` and its whole backlog replays as a burst of
 /// `DemuxEvent::Sample`s.
-///
-/// `clippy::large_enum_variant` (allow): `Live` carries a [`LiveTrack`], whose
-/// video `kind` now owns an SPS-activation tracker, so it dwarfs the other
-/// arms. Every `StreamingTsDemux` holds exactly one of these per PID either
-/// way (probe, parked or live), and boxing `Live` would only add a second
-/// allocation per track, not reduce the set.
-#[allow(clippy::large_enum_variant)]
 enum TrackState {
     /// No config recovered yet; `backlog` accumulates every access unit seen
     /// so far (replayed once config resolves and it's this PID's turn).
@@ -1801,15 +1788,10 @@ enum TrackState {
     /// Config resolved, but an earlier-ranked PID hasn't resolved yet.
     /// `backlog` keeps accumulating every access unit that arrives while
     /// parked.
-    Parked {
-        config: CodecConfig,
-        timescale: u32,
-        kind: LiveKind,
-        backlog: Vec<BufferedAu>,
-    },
+    Parked(Box<ParkedTrack>),
     /// Config resolved and this PID's turn has come: `TrackAdded` has fired
     /// and samples stream directly.
-    Live(LiveTrack),
+    Live(Box<LiveTrack>),
     /// [`MAX_PROBE_BACKLOG_BYTES`] overflowed while `Probing` or `Parked`
     /// (issue B8): permanently resolved without ever promoting to `Live` —
     /// every further access unit for this PID is silently discarded (no
@@ -1817,6 +1799,20 @@ enum TrackState {
     /// "never recoverable, skip" conclusion for a probe that never resolves,
     /// just reached early via the byte cap instead of end-of-input.
     Abandoned,
+}
+
+/// The live track of a [`TrackState::Live`] PID, boxed inside the variant: it
+/// dwarfs the other arms (a video `kind` owns an SPS-activation tracker, a
+/// `BTreeMap` of geometries and PPS bindings), and a per-PID `StreamState`
+/// must stay small.
+///
+/// The fields of a [`TrackState::Parked`] PID, boxed inside the variant so the
+/// per-PID `StreamState` stays small.
+struct ParkedTrack {
+    config: CodecConfig,
+    timescale: u32,
+    kind: LiveKind,
+    backlog: Vec<BufferedAu>,
 }
 
 /// What [`WrapState::rebase_at_discontinuity`] concluded about a stamp that
@@ -2243,7 +2239,6 @@ impl StreamState {
 /// old-geometry sample, then `TrackUpdated` (if the codec config changed),
 /// then `DisplayChanged`, then the first new-geometry sample - exactly the
 /// order Phase 1a established for `TrackUpdated`.
-#[allow(clippy::too_many_arguments)]
 fn advance_one_behind(
     pending: &mut Option<PendingOneBehind>,
     last_duration: &mut u32,
@@ -2567,11 +2562,12 @@ fn carried_frame_remainder(live: &LiveTrack, data: &[u8]) -> usize {
 /// partial tail: only the tail is damaged, so the whole held access unit is
 /// emitted ([`flush_audio_carry`]) before the carry is dropped.
 fn clear_audio_carry(stream: &mut StreamState, events: &mut VecDeque<DemuxEvent>) {
-    if let Some(TrackState::Live(LiveTrack {
-        track_id,
-        kind: LiveKind::Audio { kind, anchor, .. },
-        ..
-    })) = stream.track.as_mut()
+    if let Some(TrackState::Live(live)) = stream.track.as_mut()
+        && let LiveTrack {
+            track_id,
+            kind: LiveKind::Audio { kind, anchor, .. },
+            ..
+        } = live.as_mut()
     {
         if anchor.hold_final_au {
             flush_audio_carry(kind, anchor, *track_id, events);
@@ -2591,7 +2587,6 @@ fn clear_audio_carry(stream: &mut StreamState, events: &mut VecDeque<DemuxEvent>
 /// genuine discontinuity (see [`AudioAnchor`]); every frame split out of
 /// this AU then advances from that base by its own `elapsed` intrinsic
 /// samples, exactly as before.
-#[allow(clippy::too_many_arguments)]
 fn emit_audio_au(
     kind: &AudioKind,
     sample_rate: u32,
@@ -3338,12 +3333,12 @@ fn harvest_damaged_au(
             match resolved {
                 Some((config, timescale, kind)) => {
                     stream.damaged_promotion = true;
-                    TrackState::Parked {
+                    TrackState::Parked(Box::new(ParkedTrack {
                         config,
                         timescale,
                         kind,
                         backlog,
-                    }
+                    }))
                 }
                 None => TrackState::Probing { probe, backlog },
             }
@@ -4006,14 +4001,10 @@ fn advance_track(
             TrackState::Live(live)
         }
         TrackState::Abandoned => TrackState::Abandoned,
-        TrackState::Parked {
-            config,
-            timescale,
-            kind,
-            mut backlog,
-        } => {
+        TrackState::Parked(boxed) => {
+            let mut parked = *boxed;
             stream.backlog_bytes = stream.backlog_bytes.saturating_add(data.len());
-            backlog.push(BufferedAu {
+            parked.backlog.push(BufferedAu {
                 data: data.to_vec(),
                 pts_uw,
                 dts_uw,
@@ -4021,12 +4012,7 @@ fn advance_track(
             if stream.backlog_bytes > MAX_PROBE_BACKLOG_BYTES {
                 abandon_backlog(stream, pid, events)
             } else {
-                TrackState::Parked {
-                    config,
-                    timescale,
-                    kind,
-                    backlog,
-                }
+                TrackState::Parked(Box::new(parked))
             }
         }
         TrackState::Probing {
@@ -4158,12 +4144,12 @@ fn advance_track(
                 stream.probe_tail.len()
             };
             match resolved {
-                Some((config, timescale, kind)) => TrackState::Parked {
+                Some((config, timescale, kind)) => TrackState::Parked(Box::new(ParkedTrack {
                     config,
                     timescale,
                     kind,
                     backlog,
-                },
+                })),
                 None if stream.backlog_bytes > MAX_PROBE_BACKLOG_BYTES => {
                     stream.probe_tail = Vec::new();
                     stream.probe_walked_len = 0;
@@ -6075,12 +6061,13 @@ impl StreamingTsDemux {
                 break;
             };
             match track {
-                TrackState::Parked {
-                    config,
-                    timescale,
-                    kind,
-                    backlog,
-                } => {
+                TrackState::Parked(boxed) => {
+                    let ParkedTrack {
+                        config,
+                        timescale,
+                        kind,
+                        backlog,
+                    } = *boxed;
                     let track_id = self.next_track_id;
                     self.next_track_id = track_id.next();
                     // `Track::start_decode_time` is no longer carried by this
@@ -6264,7 +6251,7 @@ impl StreamingTsDemux {
                             &mut self.events,
                         );
                     }
-                    stream.track = Some(TrackState::Live(live));
+                    stream.track = Some(TrackState::Live(Box::new(live)));
                     stream.backlog_bytes = 0;
                     self.resolved.insert(next_pid);
                     if self.skipped.remove(&next_pid) {
@@ -6536,12 +6523,12 @@ impl StreamingTsDemux {
             let resolved = eac3_probe_result(&stream.probe_tail, Eac3Accept::Anything);
             stream.probe_tail = Vec::new();
             stream.track = Some(match resolved {
-                Some((config, timescale, kind)) => TrackState::Parked {
+                Some((config, timescale, kind)) => TrackState::Parked(Box::new(ParkedTrack {
                     config,
                     timescale,
                     kind,
                     backlog,
-                },
+                })),
                 None => TrackState::Probing { probe, backlog },
             });
         }
@@ -11974,19 +11961,20 @@ pub(crate) mod tests {
         // shortcut, not a fabricated state.
         let carriage = data_carriage(STREAM_TYPE);
         assert_eq!(carriage, DataCarriage::Pes);
-        demux.streams.get_mut(&SHARED_PID).unwrap().track = Some(TrackState::Parked {
-            config: CodecConfig::Data {
-                stream_type: STREAM_TYPE,
-                descriptors: Vec::new(),
-                carriage,
-            },
-            timescale: VIDEO_TIMESCALE,
-            kind: LiveKind::Data {
-                pending: None,
-                last_duration: 0,
-            },
-            backlog: Vec::new(),
-        });
+        demux.streams.get_mut(&SHARED_PID).unwrap().track =
+            Some(TrackState::Parked(Box::new(ParkedTrack {
+                config: CodecConfig::Data {
+                    stream_type: STREAM_TYPE,
+                    descriptors: Vec::new(),
+                    carriage,
+                },
+                timescale: VIDEO_TIMESCALE,
+                kind: LiveKind::Data {
+                    pending: None,
+                    last_duration: 0,
+                },
+                backlog: Vec::new(),
+            })));
         demux.try_promote_ready();
         let track_id_before = match demux.streams.get(&SHARED_PID).unwrap().track.as_ref() {
             Some(TrackState::Live(live)) => live.track_id,
@@ -13796,10 +13784,10 @@ pub(crate) mod tests {
     /// Current carry length of the audio PID, if it is a live audio track.
     fn carry_len(d: &StreamingTsDemux) -> Option<usize> {
         match d.streams.get(&ES_PID_UNDER_TEST)?.track.as_ref()? {
-            TrackState::Live(LiveTrack {
-                kind: LiveKind::Audio { anchor, .. },
-                ..
-            }) => Some(anchor.carry.len()),
+            TrackState::Live(live) => match &live.kind {
+                LiveKind::Audio { anchor, .. } => Some(anchor.carry.len()),
+                _ => None,
+            },
             _ => None,
         }
     }

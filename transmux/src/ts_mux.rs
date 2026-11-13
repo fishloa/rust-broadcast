@@ -1758,7 +1758,6 @@ fn packetise_section(pid: Pid, section: &[u8], start_cc: u8) -> Vec<[u8; TS_PACK
 /// an adaptation field with the PCR; the final packet is stuffed via an
 /// adaptation field so the PES ends exactly on a packet boundary.
 /// ISO/IEC 13818-1 §2.4.3.
-#[allow(clippy::too_many_arguments)]
 fn packetise_pes(
     plan: &EsPlan,
     es_payload: &[u8],
@@ -1866,7 +1865,6 @@ fn pcr_for(dts90: u64) -> Pcr {
 /// byte). When `has_pcr` the flags byte sets `PCR_flag` and `pcr` is encoded;
 /// any bytes between the encoded content and `4 + 1 + af_len` stay 0xFF stuffing.
 /// ISO/IEC 13818-1 §2.4.3.4 / §2.4.3.5.
-#[allow(clippy::too_many_arguments)]
 fn write_af_packet(
     pkt: &mut [u8; TS_PACKET_SIZE],
     pid: Pid,

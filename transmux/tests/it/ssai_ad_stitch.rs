@@ -6,9 +6,8 @@
 //! on the concrete rendered text/bytes — not just "it ran without panicking".
 #![cfg(feature = "std")]
 
-#[allow(clippy::module_inception)]
 #[path = "../../examples/ssai_ad_stitch/demo.rs"]
-mod ssai_ad_stitch;
+mod demo;
 
 use timed_metadata::convert::emsg_to_scte35;
 use transmux::EmsgBox;
@@ -17,7 +16,7 @@ use transmux::EmsgBox;
 /// splice join (ad-in + resume = 2), each immediately before an `#EXTINF`.
 #[test]
 fn playlist_has_discontinuity_at_each_splice_point() {
-    let demo = ssai_ad_stitch::run().expect("pipeline runs end to end");
+    let demo = demo::run().expect("pipeline runs end to end");
 
     assert_eq!(
         demo.discontinuity_points.len(),
@@ -57,7 +56,7 @@ fn playlist_has_discontinuity_at_each_splice_point() {
 /// `splice_event_id`, and carry the verbatim SCTE-35 bytes as `SCTE35-OUT`.
 #[test]
 fn daterange_carries_the_real_cue_verbatim() {
-    let demo = ssai_ad_stitch::run().expect("pipeline runs end to end");
+    let demo = demo::run().expect("pipeline runs end to end");
 
     assert_eq!(demo.daterange.id, "100002");
     assert_eq!(
@@ -91,7 +90,7 @@ fn daterange_carries_the_real_cue_verbatim() {
 /// verbatim SCTE-35 cue bytes carried in the HLS DATERANGE.
 #[test]
 fn mpd_declares_inband_event_stream_and_emsg_round_trips() {
-    let demo = ssai_ad_stitch::run().expect("pipeline runs end to end");
+    let demo = demo::run().expect("pipeline runs end to end");
 
     assert!(
         demo.mpd
@@ -126,7 +125,7 @@ fn mpd_declares_inband_event_stream_and_emsg_round_trips() {
 /// written must actually exist on disk with non-trivial content.
 #[test]
 fn output_files_are_written_to_disk() {
-    let demo = ssai_ad_stitch::run().expect("pipeline runs end to end");
+    let demo = demo::run().expect("pipeline runs end to end");
 
     let expect_file = |name: &str| {
         let path = demo.out_dir.join(name);

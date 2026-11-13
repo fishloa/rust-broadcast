@@ -447,7 +447,6 @@ pub struct LinkInfo<'a> {
 impl<'a> LinkInfo<'a> {
     /// Construct a link_info entry with the spec `reserved` fill.
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         link_type: LinkType,
         how_related: HowRelated,
