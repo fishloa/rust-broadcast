@@ -2435,8 +2435,10 @@ version = "0.11.0"
 dependencies = [
  "broadcast-common",
  "bytes",
+ "caption-convert",
  "container-probe",
  "criterion",
+ "dvb-si",
  "event-listener",
  "parking_lot 0.13.0",
  "scte35-splice",

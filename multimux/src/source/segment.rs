@@ -98,9 +98,10 @@ use transmux::ts_hls::StreamingTsHlsSegmenter;
 use transmux::{CaptionDetector, DetectedCaption, declared_caption_services};
 
 use super::split_audio::{self, AudioFollower};
-use super::split_subtitle::{self, LeaderPart, SubtitleFollower};
+use super::split_subtitle;
 use crate::route::{RouteHandle, TsHlsIdrStatus};
 use media_plane::segmenter::audio::{LEADER_DURATION_HISTORY, LeaderDurations, leader_tracks};
+use media_plane::segmenter::subtitle::{LeaderPart, SubtitleFollower};
 
 /// One closed segment, normalised across the two segmenter kinds
 /// [`AnySegmenter`] wraps — [`transmux::ll_hls::SegmentInfo`] (fMP4) and

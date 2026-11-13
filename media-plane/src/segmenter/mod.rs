@@ -2,3 +2,4 @@
 //! serves: the separate-rendition followers that cut where the leader cut.
 
 pub mod audio;
+pub mod subtitle;

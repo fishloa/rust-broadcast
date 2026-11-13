@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 ### Changed
+- The teletext subtitle follower's segmenting lives in `media_plane::segmenter::subtitle`; `source::split_subtitle` keeps the HLS rendition declarations and the pairing of pages to the route's `SubtitleServing`s (issue #2554).
+### Changed
 - The audio follower's segmenting lives in `media_plane::segmenter::audio`; `source::split_audio` keeps the route-facing half: selectors and name from the route, and applying the follower's init segment and part target to the rendition's `HlsOrigin` (issue #2554).
 ### Removed
 - BREAKING: `config::{AudioTrackSelector, AudioProfile, AudioProfileOverride}` moved to `transmux::audio_profile` (same serde forms); the route logs declarations that did not apply as before (issue #2554).
