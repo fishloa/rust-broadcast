@@ -21,7 +21,6 @@ use media_plane::trunk::TrunkConfig;
 use crate::error::{MultimuxError, Result};
 use crate::source::client_host::{EventIngest, SessionLabels, SessionStep};
 use crate::source::pull_target::{PullKind, PullRoute};
-use broadcast_common::units::MICROS_PER_MILLI;
 
 const WHAT: &str = "smooth-pull";
 
