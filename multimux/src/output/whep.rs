@@ -156,6 +156,7 @@ const WHEP_INBOUND_SILENCE_TIMEOUT: Duration = Duration::from_secs(30);
 pub struct WhepRoute {
     listen: String,
     max_sessions: usize,
+    media_sockets_per_ip: usize,
     /// A listener bound by the caller (SP7.1): a test binds `127.0.0.1:0`,
     /// reads the live address, and hands the listener in, so `run_whep` binds
     /// no port and never races reserve-then-rebind. Taken on the first
@@ -173,6 +174,7 @@ impl WhepRoute {
         WhepRoute {
             listen: listen.into(),
             max_sessions: DEFAULT_WHEP_MAX_SESSIONS,
+            media_sockets_per_ip: crate::config::DEFAULT_WHEP_MEDIA_SOCKETS_PER_IP,
             prebound: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
@@ -194,6 +196,7 @@ impl WhepRoute {
         WhepRoute {
             listen,
             max_sessions,
+            media_sockets_per_ip: crate::config::DEFAULT_WHEP_MEDIA_SOCKETS_PER_IP,
             prebound: std::sync::Arc::new(std::sync::Mutex::new(Some(listener))),
         }
     }
@@ -202,6 +205,18 @@ impl WhepRoute {
     #[must_use]
     pub fn with_max_sessions(mut self, max_sessions: usize) -> Self {
         self.max_sessions = max_sessions;
+        self
+    }
+
+    /// UDP media sockets bound per advertised IP (clamped up to `1`), over which the route's
+    /// viewers are spread round-robin; overrides
+    /// [`crate::config::DEFAULT_WHEP_MEDIA_SOCKETS_PER_IP`]. More sockets spread the viewers'
+    /// SRTP sends across cores (one socket's send path serialises them), at the cost of one file
+    /// descriptor and one receive task each. Routes set it from
+    /// [`crate::config::Config::whep_media_sockets_per_ip`].
+    #[must_use]
+    pub fn with_media_sockets_per_ip(mut self, sockets: usize) -> Self {
+        self.media_sockets_per_ip = sockets.max(1);
         self
     }
 
@@ -547,7 +562,6 @@ pub fn whep_router_for_test(
 /// fingerprint and candidate lines all caller-supplied), so the goldens can
 /// pin the document without the random cert/candidate values.
 #[doc(hidden)]
-#[allow(clippy::too_many_arguments)]
 #[cfg(feature = "test-hooks")]
 pub fn render_whep_answer_for_test(
     offer: &str,
@@ -913,6 +927,20 @@ pub struct WhepRunHarness {
 #[cfg(feature = "test-hooks")]
 #[doc(hidden)]
 pub async fn serve_whep_run_probed_for_test(max_sessions: usize) -> WhepRunHarness {
+    serve_whep_run_probed_with_sockets_for_test(
+        max_sessions,
+        crate::config::DEFAULT_WHEP_MEDIA_SOCKETS_PER_IP,
+    )
+    .await
+}
+
+/// [`serve_whep_run_probed_for_test`] with an explicit number of media sockets per IP.
+#[cfg(feature = "test-hooks")]
+#[doc(hidden)]
+pub async fn serve_whep_run_probed_with_sockets_for_test(
+    max_sessions: usize,
+    media_sockets_per_ip: usize,
+) -> WhepRunHarness {
     let trunk = trunk_with_avc_track();
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr");
@@ -923,12 +951,15 @@ pub async fn serve_whep_run_probed_for_test(max_sessions: usize) -> WhepRunHarne
         let cancel = cancel.clone();
         let probes = probes.clone();
         tokio::spawn(async move {
-            run_whep_on_probed(
+            run_whep_on_probed_with_limits(
                 listener,
                 trunk,
                 cancel,
                 None,
-                max_sessions,
+                WhepLimits {
+                    max_sessions,
+                    media_sockets_per_ip,
+                },
                 tokio_util::task::TaskTracker::new(),
                 probes,
             )
@@ -1539,13 +1570,17 @@ pub async fn run_whep_with_tracker(
             }
         },
     };
-    run_whep_on(
+    run_whep_on_probed_with_limits(
         listener,
         trunk,
         cancel,
         output_auth,
-        route.max_sessions,
+        WhepLimits {
+            max_sessions: route.max_sessions,
+            media_sockets_per_ip: route.media_sockets_per_ip,
+        },
         sessions,
+        WhepProbes::default(),
     )
     .await;
 }
@@ -1616,6 +1651,46 @@ pub async fn run_whep_on_probed(
     sessions: tokio_util::task::TaskTracker,
     probes: WhepProbes,
 ) {
+    run_whep_on_probed_with_limits(
+        listener,
+        trunk,
+        cancel,
+        output_auth,
+        WhepLimits {
+            max_sessions,
+            media_sockets_per_ip: crate::config::DEFAULT_WHEP_MEDIA_SOCKETS_PER_IP,
+        },
+        sessions,
+        probes,
+    )
+    .await;
+}
+
+/// The per-route resource limits of a running WHEP route.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub struct WhepLimits {
+    /// Concurrent viewer sessions admitted.
+    pub max_sessions: usize,
+    /// UDP media sockets bound per advertised IP (see [`WhepRoute::with_media_sockets_per_ip`]).
+    pub media_sockets_per_ip: usize,
+}
+
+/// [`run_whep_on_probed`] with explicit [`WhepLimits`].
+#[doc(hidden)]
+pub async fn run_whep_on_probed_with_limits(
+    listener: TcpListener,
+    trunk: Arc<Trunk>,
+    cancel: CancellationToken,
+    output_auth: Option<Arc<Verifier>>,
+    limits: WhepLimits,
+    sessions: tokio_util::task::TaskTracker,
+    probes: WhepProbes,
+) {
+    let WhepLimits {
+        max_sessions,
+        media_sockets_per_ip,
+    } = limits;
     let (admit_tx, mut admit_rx) = mpsc::channel::<AdmittedWhep>(ACCEPT_QUEUE_CAPACITY);
     let active_sessions = Arc::clone(&probes.active_sessions);
     let ice = Arc::clone(&probes.ice);
@@ -1633,7 +1708,7 @@ pub async fn run_whep_on_probed(
         active_sessions: Arc::clone(&active_sessions),
         max_sessions,
         resources,
-        sockets: Arc::default(),
+        sockets: Arc::new(SharedSockets::with_sockets_per_ip(media_sockets_per_ip)),
         packets: Arc::default(),
     });
     let serve_cancel = cancel.clone();
