@@ -30,6 +30,14 @@ pub(crate) fn seed_entropy() -> u64 {
     getrandom::fill(&mut buf).map_or(0, |()| u64::from_le_bytes(buf))
 }
 
+/// 32 bytes of OS randomness: the secret an SRT caller session derives its identifiers and
+/// stream key from.
+pub(crate) fn entropy_seed() -> [u8; broadcast_client::srt::ENTROPY_SEED_LEN] {
+    let mut buf = [0u8; broadcast_client::srt::ENTROPY_SEED_LEN];
+    fill(&mut buf);
+    buf
+}
+
 #[cfg(any(feature = "whip", feature = "whep"))]
 /// A uniformly random alphanumeric token of `len` characters.
 pub(crate) fn token(len: usize) -> String {

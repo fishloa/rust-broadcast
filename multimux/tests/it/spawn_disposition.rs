@@ -40,7 +40,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "source/client_host.rs",
-        239,
+        289,
         "one datagram receive task per Action::UdpBind of the session; owned by SessionStep, which aborts it on Action::Close and aborts every outstanding one on drop",
     ),
     (

@@ -309,6 +309,17 @@ fn an_idle_link_is_kept_alive_then_dropped_and_rebuilt_with_fresh_identifiers() 
     sim.peer_listening = false;
     sim.advance_by(7 * SECOND_US);
     assert_eq!(sim.closes.len(), 1, "the silent link is closed");
+    assert_eq!(
+        sim.count(|e| matches!(
+            e,
+            Event::Error {
+                kind: broadcast_client::ErrorKind::SrtPeerIdle,
+                fatal: false
+            }
+        )),
+        1,
+        "the idle drop is reported once"
+    );
     assert_eq!(sim.binds_count(), 2, "and rebuilt at once");
     sim.peer_listening = true;
     sim.advance_by(SECOND_US);
