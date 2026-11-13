@@ -98,10 +98,10 @@ use transmux::ts_hls::StreamingTsHlsSegmenter;
 use transmux::{CaptionDetector, DetectedCaption, declared_caption_services};
 
 use super::split_audio;
-use media_plane::segmenter::audio::AudioFollower;
 use super::split_subtitle;
 use crate::route::{RouteHandle, TsHlsIdrStatus};
 use broadcast_common::units::NANOS_PER_SEC;
+use media_plane::segmenter::audio::AudioFollower;
 use media_plane::segmenter::audio::{LEADER_DURATION_HISTORY, LeaderDurations, leader_tracks};
 use media_plane::segmenter::subtitle::{LeaderPart, SubtitleFollower};
 

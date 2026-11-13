@@ -2222,7 +2222,9 @@ fn sibling_trunk_carries_trunk_config_capacities() {
                 default: true,
                 autoselect: true,
             }])
-            .with_audio_rendition_sources(vec![transmux::audio_profile::AudioTrackSelector::Index(0)])
+            .with_audio_rendition_sources(vec![transmux::audio_profile::AudioTrackSelector::Index(
+                0,
+            )])
             .with_trunk_config(trunk_config),
     );
     route.publish_program(ProgramId(0), Arc::clone(&trunk));
@@ -2231,8 +2233,14 @@ fn sibling_trunk_carries_trunk_config_capacities() {
     assert!(!serving.is_empty(), "expected a sibling serving");
     let sibling = &serving[0].trunk;
     assert_eq!(sibling.config().timed_capacity, trunk_config.timed_capacity);
-    assert_eq!(sibling.config().sparse_capacity, trunk_config.sparse_capacity);
-    assert_eq!(sibling.config().segment_capacity, trunk_config.segment_capacity);
+    assert_eq!(
+        sibling.config().sparse_capacity,
+        trunk_config.sparse_capacity
+    );
+    assert_eq!(
+        sibling.config().segment_capacity,
+        trunk_config.segment_capacity
+    );
     assert_eq!(sibling.config().event_capacity, trunk_config.event_capacity);
     assert_eq!(sibling.config().part_capacity, trunk_config.part_capacity);
 }

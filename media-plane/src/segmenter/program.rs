@@ -854,7 +854,10 @@ impl ProgramSegmenter {
     /// [`Container::MpegTs`]) itself rejects the track set (logged, not
     /// propagated — a segmentation failure on one program must not tear down
     /// the whole ingest session; see `drive_program_segmenters`'s own doc).
-    pub fn try_new(trunk: &Arc<Trunk>, config: SegmenterConfig) -> (Option<Self>, Vec<SegmenterEvent>) {
+    pub fn try_new(
+        trunk: &Arc<Trunk>,
+        config: SegmenterConfig,
+    ) -> (Option<Self>, Vec<SegmenterEvent>) {
         Self::try_new_with_siblings(trunk, config, &())
     }
 
@@ -1106,7 +1109,7 @@ impl ProgramSegmenter {
         }
     }
 
-    /// [`Self::pump`] for at most [`PUMP_BATCH_ITEMS`] queued items, leaving the rest queued and
+    /// [`Self::pump`] for at most `PUMP_BATCH_ITEMS` queued items, leaving the rest queued and
     /// setting `backlogged` so the caller can yield to the runtime before the next batch.
     pub fn pump_batch(
         &mut self,
