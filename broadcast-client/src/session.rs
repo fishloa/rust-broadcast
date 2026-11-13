@@ -5,11 +5,9 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use std::collections::{HashMap, HashSet};
 
-use percent_encoding::percent_decode_str;
 use url::Url;
 
 use crate::ClientIdentityScope;
-use crate::Credentials;
 use crate::Hint;
 use crate::error::{Error, TransportError};
 use crate::events::{Action, Config, ErrorKind, Event, SourceKind, Status};
@@ -120,8 +118,14 @@ impl Session {
         now_us: u64,
         seed: Option<buffering_runtime::StallMemorySnapshot>,
     ) -> Result<Self, Error> {
-        let mut parsed = Url::parse(url).map_err(|e| Error::InvalidUrl(e.to_string()))?;
-        let userinfo = take_userinfo(&mut parsed)?;
+        let parsed = Url::parse(url).map_err(|e| Error::InvalidUrl(e.to_string()))?;
+        let userinfo = broadcast_auth::credentials_from_url(&parsed)
+            .map_err(|e| Error::InvalidUrl(e.to_string()))?;
+        if let Some(creds) = &userinfo {
+            headers::validate_credentials(creds)?;
+        }
+        let parsed = broadcast_auth::strip_userinfo(&parsed)
+            .map_err(|e| Error::InvalidUrl(e.to_string()))?;
         let scheme = parsed.scheme();
         let is_rtsp_scheme = scheme == SCHEME_RTSP || scheme == SCHEME_RTSPS;
         let is_http_scheme = scheme == SCHEME_HTTP || scheme == SCHEME_HTTPS;
@@ -1544,25 +1548,6 @@ impl Session {
     pub fn dropped_events(&self) -> u64 {
         self.events.dropped()
     }
-}
-
-fn take_userinfo(url: &mut Url) -> Result<Option<Credentials>, Error> {
-    if url.username().is_empty() && url.password().is_none() {
-        return Ok(None);
-    }
-    let decode = |raw: &str| {
-        percent_decode_str(raw)
-            .decode_utf8()
-            .map(|s| s.into_owned())
-            .map_err(|_| Error::InvalidUrl("userinfo is not valid UTF-8".to_string()))
-    };
-    let username = decode(url.username())?;
-    let password = decode(url.password().unwrap_or_default())?;
-    let _ = url.set_username("");
-    let _ = url.set_password(None);
-    let creds = Credentials::new(username, password);
-    headers::validate_credentials(&creds)?;
-    Ok(Some(creds))
 }
 
 fn has_authorization(headers: &[(String, String)]) -> bool {

@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- The audio follower's segmenting lives in `media_plane::segmenter::audio`; `source::split_audio` keeps the route-facing half: selectors and name from the route, and applying the follower's init segment and part target to the rendition's `HlsOrigin` (issue #2554).
 ### Removed
 - BREAKING: `config::{AudioTrackSelector, AudioProfile, AudioProfileOverride}` moved to `transmux::audio_profile` (same serde forms); the route logs declarations that did not apply as before (issue #2554).
 ### Fixed
