@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Removed
+- BREAKING: `config::{AudioTrackSelector, AudioProfile, AudioProfileOverride}` moved to `transmux::audio_profile` (same serde forms); the route logs declarations that did not apply as before (issue #2554).
 ### Fixed
 - An LL-HLS blocking-reload request (or any GET/HEAD) being served by a route that an admin reload replaces or an admin removal deletes is no longer left to time out with a `503`: the admin media service drops it as soon as the route is retired and serves it again against the router that is live then, so it keeps waiting for the same `_HLS_msn`/`_HLS_part` on the replacement, or answers `404` when no route of that name is left. A replacement of a changed route now numbers its media sequence above what the old route had shown (as well as above the archive), so a client's `_HLS_msn` keeps its meaning across the reload (#2593).
 ### Fixed

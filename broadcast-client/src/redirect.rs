@@ -1,5 +1,6 @@
 //! Redirect handling.
 
+use broadcast_common::url_ref;
 use url::Url;
 
 const SCHEME_HTTP: &str = "http";
@@ -17,7 +18,7 @@ pub fn resolve(req_url: &Url, headers: &[(String, String)], taken: u32, max: u32
         .iter()
         .find(|(k, _)| k.eq_ignore_ascii_case("location"))
         .map(|(_, v)| v.clone())?;
-    let target = req_url.join(&loc).ok()?;
+    let target = url_ref::resolve(req_url, &loc).ok()?;
     let allowed = match target.scheme() {
         SCHEME_HTTPS => true,
         SCHEME_HTTP => req_url.scheme() != SCHEME_HTTPS,
@@ -32,7 +33,7 @@ pub fn resolve_rtsp(req_url: &Url, location: &str, taken: u32, max: u32) -> Opti
     if taken >= max {
         return None;
     }
-    let target = req_url.join(location).ok()?;
+    let target = url_ref::resolve(req_url, location).ok()?;
     target.host()?;
     let allowed = match target.scheme() {
         SCHEME_RTSPS => true,
@@ -96,5 +97,20 @@ mod tests {
         assert!(resolve(&https, "https://other/live.ts").is_some());
         assert!(resolve(&http, "http://other/live.ts").is_some());
         assert!(resolve(&https, "/relative.ts").is_some());
+    }
+
+    /// RFC 3986 §2: a reference never contains a control character or a space,
+    /// and the WHATWG parser behind `Url::join` would delete a TAB/CR/LF and
+    /// join a different URL than the header text names. Such a `Location` is
+    /// not followed.
+    #[test]
+    fn a_location_with_a_control_character_or_space_is_not_followed() {
+        let req = Url::parse("http://origin.example/a/live.ts").unwrap();
+        for bad in ["ht\ntp://other.example/x", "/pa\tth", "x y"] {
+            let headers = vec![("Location".to_string(), bad.to_string())];
+            assert!(resolve(&req, &headers, 0, 5).is_none(), "{bad:?}");
+        }
+        let rtsp = Url::parse("rtsp://cam.example/live").unwrap();
+        assert!(resolve_rtsp(&rtsp, "rt\nsp://other.example/x", 0, 5).is_none());
     }
 }

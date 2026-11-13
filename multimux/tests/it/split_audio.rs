@@ -23,12 +23,13 @@ use transmux::validate::{Severity, validate_init_segment, validate_media_segment
 use crate::support::shared;
 
 use crate::support::shared_it::nz;
-use multimux::config::{AudioTrackSelector, Config};
+use multimux::config::Config;
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
 use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
 use multimux::source::segment::ProgramSegmenter;
+use transmux::audio_profile::AudioTrackSelector;
 
 const TARGET_DURATION_SECS: f64 = 1.0;
 const PART_TARGET_MS: u32 = 200;
