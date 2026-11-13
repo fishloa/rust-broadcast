@@ -121,7 +121,7 @@ wrote 450 packets (84600 bytes) to keep.ts
 | `Stuffing` (`drop_nulls()`, `pad_to(packets_per_input)`) | Drop null packets or pad to a rate; `pad_to` rejects a rate below 1.0 or above `Stuffing::MAX_PACKETS_PER_INPUT` with `Error::InvalidPadRate` |
 | `discontinuity::{detect_pcr_discontinuities, PcrDiscontinuity}` | Standalone read-only audit of PCR breaks (flagged vs unflagged) |
 | `pes::{reconstruct_access_units, AccessUnit}` | PES access-unit framing with PTS/DTS (opaque bytes); an input that is not a multiple of 188 bytes is `Error::UnalignedInput` |
-| `Error` (`ShortPacket`, `NoSyncByte`, `UnalignedInput`, ...) | Structured errors |
+| `Error` (`ShortPacket`, `InvalidSync`, `UnalignedInput`, `InvalidPadRate`) | Structured errors |
 
 ## Design notes
 

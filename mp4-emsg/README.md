@@ -74,7 +74,7 @@ Runnable programs: `cargo run -p mp4-emsg --example build_emsg` and `--example p
 - `PresentationTime::{Delta, Absolute}`: selecting the variant selects the box version.
 - `EmsgVersion` with `name()` and `Display`.
 - Constants `EMSG_BOX_TYPE`, `EMSG_FLAGS`, `FULLBOX_HEADER_LEN`, `SCTE35_SCHEME_PREFIX`, `STRING_TERMINATOR`, `VERSION_0`, `VERSION_1`.
-- `Error` (`#[non_exhaustive]`) covers `BufferTooShort`, `OutputBufferTooSmall`, `NotEmsg`, `InvalidSize`, `UnsupportedVersion`, `InvalidString` and `FieldTooWide`.
+- `Error` (`#[non_exhaustive]`) covers `BufferTooShort`, `OutputBufferTooSmall`, `NotEmsg`, `InvalidSize`, `UnsupportedVersion`, `InvalidString` and `FieldOverflow`.
 
 ## Design notes
 

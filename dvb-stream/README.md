@@ -105,7 +105,8 @@ Examples: `cargo run -p dvb-stream --example count_sections` and
 | `SectionStream<R>` (`new`, `with_demux`, `stats`, `resync_stats`, `take_io_error`) | `AsyncRead` to `SectionEvent` stream |
 | `T2miEventStream<R>` (`new(reader, pid: Pid)`, `with_pump`, `stats`, `resync_stats`, `take_io_error`) | `AsyncRead` to `T2miEvent` stream |
 | `UdpSectionStream`, `UdpT2miStream` (`from_socket`, `bind_multicast`, `bind(&MulticastConfig)`, `stats`, `resync_stats`, `take_io_error`) | UDP/multicast sources (`udp` feature) |
-| `udp::MulticastConfig` (`new`, `with_interface`, `with_recv_buffer_size`, `with_reuse_address`, `bind`) | `socket2` socket options; `#[non_exhaustive]` |
+| `udp::MulticastConfig` (`new`, `with_recv_buffer_size`, `with_reuse_address`, `bind`) | `socket2` socket options; `#[non_exhaustive]` |
+| `udp::bind_standard(SocketSpec)`, `udp::SocketSpec` (`new`, `with_multicast`, `with_reuse`, `with_recv_buffer_size`, `with_context`), `udp::MulticastMembership` (`V4`/`V6`) | The workspace's one datagram bind: `SO_REUSEADDR`/`SO_REUSEPORT`, `SO_RCVBUF`, optional IPv4/IPv6 multicast join, non-blocking |
 | `TsDecoder` (`new`, `datagram`, `resync_stats`) | `tokio_util::codec::Decoder` for aligned TS packets; `datagram()` resyncs each datagram independently and unwraps RTP |
 | `resync::{resync, resync_confirmed, unconfirmed_candidate, TS_PACKET_SIZE, TS_SYNC_BYTE}`, `ResyncStats { resyncs, bytes_discarded, desyncs }` | The 188-byte alignment scan shared by every stream |
 

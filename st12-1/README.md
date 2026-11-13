@@ -89,7 +89,7 @@ More: `cargo run -p st12-1 --example build_frame`, `--example parse_frame`.
   tests against spec vectors (`tests/spec_vectors.rs`).
 - Parsing is strict: each BCD digit is range-checked (`Error::InvalidBcdDigit`),
   field maxima are enforced (`Error::InvalidValue`), the sync word must match
-  (`Error::SyncWordMismatch`), so a malformed codeword cannot re-serialize to
+  (`Error::InvalidSync`), so a malformed codeword cannot re-serialize to
   different bytes.
 - Because the rate is not on the wire, `parse` validates frames against the
   widest bound (29) and leaves the tighter per-rate check to
