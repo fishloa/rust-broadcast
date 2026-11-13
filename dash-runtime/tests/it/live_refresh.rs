@@ -353,9 +353,9 @@ fn a_trailing_negative_repeat_runs_to_the_fetch_time_plus_the_update_period() {
 #[test]
 fn a_304_nobody_asked_for_is_an_error() {
     let mut c = dash_runtime::client::DashClient::new(
-        common::synth::MPD_URL,
-        DashConfig::default(),
-        dash_runtime::client::PullLimits::default(),
+        dash_runtime::client::DashClientConfig::new(common::synth::MPD_URL)
+            .with_dash(DashConfig::default())
+            .with_limits(dash_runtime::client::PullLimits::default()),
     );
     let meta = dash_runtime::client::ResponseMeta::at(0);
     assert!(matches!(

@@ -2485,7 +2485,8 @@ mod program_registry_tests {
     }
 
     /// MUTATION VERIFIED: changing `publish_program` to insert a
-    /// freshly-constructed `Trunk::new(TrunkConfig::default().with_timed_capacity(nz(1)).with_sparse_capacity(nz(1)).with_segment_capacity(nz(1)).with_event_capacity(/// nz(1)).with_part_capacity(nz(1)))`-backed bundle instead of the `trunk` argument it was
+    /// freshly-constructed one-slot-per-ring `Trunk` (every `TrunkConfig` capacity set to
+    /// `nz(1)`)-backed bundle instead of the `trunk` argument it was
     /// actually given makes this test fail:
     /// `assert_eq!(Arc::as_ptr(&resolved.trunk()), Arc::as_ptr(&trunk))` fails
     /// (via `ProgramServing::trunk()`), comparing two genuinely different heap

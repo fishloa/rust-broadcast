@@ -104,7 +104,12 @@ fn whip_whep_http_output_is_byte_identical_to_golden() {
     // WHIP client, with and without a bearer token
     for token in [None, Some("tok3n".to_string())] {
         let tag = if token.is_some() { "bearer" } else { "anon" };
-        let mut c = WhipClient::new(URL.into(), token);
+        let mut c = WhipClient::new(match token {
+            Some(t) => {
+                webrtc_runtime::session::client::ClientConfig::new(URL.into()).with_bearer_token(t)
+            }
+            None => webrtc_runtime::session::client::ClientConfig::new(URL.into()),
+        });
         req!(
             out,
             &format!("whip client {tag} offer"),
@@ -150,7 +155,10 @@ fn whip_whep_http_output_is_byte_identical_to_golden() {
     }
 
     // WHEP player
-    let mut p = WhepPlayer::new(URL.into(), Some("tok3n".into()));
+    let mut p = WhepPlayer::new(
+        webrtc_runtime::session::client::ClientConfig::new(URL.into())
+            .with_bearer_token("tok3n".into()),
+    );
     req!(out, "whep player offer", p.offer(b"o".to_vec()).unwrap());
     p.on_response(
         webrtc_runtime::whep::player::HttpResponse::new(StatusCode::CREATED)

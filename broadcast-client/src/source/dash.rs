@@ -260,7 +260,11 @@ impl DashSource {
         pull.max_inflight_segments = config.max_inflight_segments;
         pull.max_segment_failures = config.max_segment_failures;
         pull.max_init_failures = config.max_key_failures;
-        let client = DashClient::new(url.as_str(), config.dash, pull.clone());
+        let client = DashClient::new(
+            dash_runtime::client::DashClientConfig::new(url.as_str())
+                .with_dash(config.dash)
+                .with_limits(pull.clone()),
+        );
         let mut source = Self {
             client,
             mpd_url: url.clone(),
@@ -427,8 +431,11 @@ impl DashSource {
             return;
         }
         self.reset_in_flight();
-        let mut client =
-            DashClient::new(self.mpd_url.as_str(), self.dash_config, self.pull.clone());
+        let mut client = DashClient::new(
+            dash_runtime::client::DashClientConfig::new(self.mpd_url.as_str())
+                .with_dash(self.dash_config)
+                .with_limits(self.pull.clone()),
+        );
         if let Some((mono, unix)) = self.anchor {
             client.set_wall_clock(mono, unix);
         }

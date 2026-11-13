@@ -509,4 +509,7 @@ mod tests {
 }
 
 pub mod session;
-pub use session::{DashifIngestSession, IngestObject, SegmentHandle, SessionError};
+pub use session::{
+    DEFAULT_BUFFERED_BUDGET_BYTES, DEFAULT_MAX_BUFFERED_OBJECT_BYTES, DEFAULT_MAX_OBJECT_BYTES,
+    DashifIngestConfig, DashifIngestSession, IngestObject, SegmentHandle, SessionError,
+};

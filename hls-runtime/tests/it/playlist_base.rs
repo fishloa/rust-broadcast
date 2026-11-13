@@ -17,7 +17,7 @@ fn fetch_urls(client: &mut HlsClient) -> Vec<String> {
 
 #[test]
 fn relative_uris_resolve_against_the_playlist_base_not_the_request_url() {
-    let mut control = HlsClient::new(ORIGIN_URL);
+    let mut control = HlsClient::new(hls_runtime::client::HlsClientConfig::new(ORIGIN_URL));
     control.poll();
     let _ = control.on_playlist(PLAYLIST.as_bytes());
     let before = fetch_urls(&mut control);
@@ -28,7 +28,7 @@ fn relative_uris_resolve_against_the_playlist_base_not_the_request_url() {
         "{before:?}"
     );
 
-    let mut client = HlsClient::new(ORIGIN_URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(ORIGIN_URL));
     client.poll();
     client.set_playlist_base(FINAL_URL);
     let _ = client.on_playlist(PLAYLIST.as_bytes());

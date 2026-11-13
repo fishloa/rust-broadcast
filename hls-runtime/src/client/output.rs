@@ -69,7 +69,7 @@ pub struct MasterSelection {
     /// Index of the chosen variant in [`Self::variants`].
     pub chosen: usize,
     /// Renditions exposed by the master playlist. Renditions with a `url` are
-    /// not fetched by this client; create a second `HlsClient::new(rendition.url)`
+    /// not fetched by this client; create a second `HlsClient::new(hls_runtime::client::HlsClientConfig::new(rendition.url))`
     /// to play one.
     pub renditions: Vec<RenditionInfo>,
 }
@@ -164,6 +164,6 @@ pub enum Output {
     },
     /// A master (multivariant) playlist was parsed and a variant selected.
     /// The caller may inspect [`MasterSelection`] and, for renditions with a
-    /// `url`, create a second client via `HlsClient::new(rendition.url)`.
+    /// `url`, create a second client via `HlsClient::new(hls_runtime::client::HlsClientConfig::new(rendition.url))`.
     Master(MasterSelection),
 }

@@ -100,7 +100,7 @@ fn main() {
     let playlist = canned_playlist();
     println!("--- canned media.m3u8 ---\n{playlist}");
 
-    let mut client = HlsClient::new(PLAYLIST_URL);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(PLAYLIST_URL));
 
     // The client always seeds a plain (non-blocking) GET first — it hasn't
     // seen a playlist yet, so it doesn't know the origin supports blocking

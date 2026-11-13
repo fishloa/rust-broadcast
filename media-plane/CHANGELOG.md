@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- The `test-support` feature (the `ts_session::test_support` helpers for a host's tests) is documented in the README feature table (#2582).
+### Added
+- `publish_queue` (feature `std`): the non-blocking publish queue a segmenter uses, moved from multimux. `PendingPublish` (a part or a finished segment, in stream order), `part_entry`, and `drain_publish_queue`, which hands queued items to a `SegmentWriter` as far as it takes them and force-expires a stalled `StallIngest` pin once the queue has waited `PENDING_PUBLISH_MAX_WAIT` or holds `PENDING_PUBLISH_QUEUE_CAP` segments (issue #2554). `tracing` is now an optional dependency behind `std`.
 ### Added
 - `publish_queue` (feature `std`): the non-blocking publish queue a segmenter uses, moved from multimux. `PendingPublish` (a part or a finished segment, in stream order), `part_entry`, and `drain_publish_queue`, which hands queued items to a `SegmentWriter` as far as it takes them and force-expires a stalled `StallIngest` pin once the queue has waited `PENDING_PUBLISH_MAX_WAIT` or holds `PENDING_PUBLISH_QUEUE_CAP` segments (issue #2554). `tracing` is now an optional dependency behind `std`.
 ### Added

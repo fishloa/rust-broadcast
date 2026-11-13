@@ -588,7 +588,11 @@ fn ffprobe_oracle_real_captures() {
             .find(|t| matches!(t.config(), CodecConfig::Avc { .. }))
             .expect("avc track");
         let out = build(track.spec.clone());
-        let tmp = std::env::temp_dir().join(format!("{}_oracle.mp4", fixture.replace('/', "_")));
+        let tmp = std::env::temp_dir().join(format!(
+            "{}_oracle_{}.mp4",
+            fixture.replace('/', "_"),
+            std::process::id()
+        ));
         std::fs::write(&tmp, &out).expect("write");
         let output = std::process::Command::new("ffprobe")
             .args([
@@ -659,7 +663,7 @@ fn ffprobe_oracle_real_captures() {
             .find(|t| matches!(t.config(), CodecConfig::Avc { .. }))
             .expect("avc track");
         let out = build(track.spec.clone());
-        let tmp = std::env::temp_dir().join("gulli_oracle.mp4");
+        let tmp = std::env::temp_dir().join(format!("gulli_oracle_{}.mp4", std::process::id()));
         std::fs::write(&tmp, &out).expect("write");
         let output = std::process::Command::new("ffprobe")
             .args([

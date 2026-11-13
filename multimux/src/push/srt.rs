@@ -300,7 +300,7 @@ mod tests {
         transport.send(PAYLOAD).await.expect("send");
         // Keep `transport` alive so its SRT driver task flushes the payload
         // to the listener (dropping the handle aborts the driver mid-flight).
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
         while !received.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }

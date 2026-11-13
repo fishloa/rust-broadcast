@@ -86,12 +86,52 @@ impl<P: Profile> core::fmt::Debug for Client<P> {
     }
 }
 
+/// What a [`Client`] is configured by: the endpoint and an optional bearer
+/// token authenticating every request.
+#[derive(Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ClientConfig {
+    /// The WHIP/WHEP endpoint URL requests are sent to.
+    pub endpoint_url: String,
+    /// A bearer token (RFC 6750) sent with every request, if any.
+    pub bearer_token: Option<String>,
+}
+
+impl ClientConfig {
+    /// A config targeting `endpoint_url`, with no authentication.
+    pub fn new(endpoint_url: String) -> Self {
+        ClientConfig {
+            endpoint_url,
+            bearer_token: None,
+        }
+    }
+
+    /// Authenticate every request with `bearer_token`.
+    #[must_use]
+    pub fn with_bearer_token(mut self, bearer_token: String) -> Self {
+        self.bearer_token = Some(bearer_token);
+        self
+    }
+}
+
+/// Manual `Debug`: the bearer token never renders (issue #1142).
+impl core::fmt::Debug for ClientConfig {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ClientConfig")
+            .field("endpoint_url", &self.endpoint_url)
+            .field(
+                "bearer_token",
+                &self.bearer_token.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
+}
+
 impl<P: Profile> Client<P> {
-    /// Create a new client targeting `endpoint_url`, optionally authenticating
-    /// every request with `bearer_token`.
-    pub fn new(endpoint_url: String, bearer_token: Option<String>) -> Self {
+    /// Create a new client from `config`.
+    pub fn new(config: ClientConfig) -> Self {
         Self {
-            core: SessionCore::new(endpoint_url, bearer_token),
+            core: SessionCore::new(config.endpoint_url, config.bearer_token),
             state: State::Idle,
             profile: PhantomData,
         }

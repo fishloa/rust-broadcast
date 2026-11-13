@@ -48,7 +48,7 @@ let playlist = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:1\n#EXT-X-MEDIA
     #EXTINF:1.000000,\nindex0.m4s\n#EXTINF:1.000000,\nindex1.m4s\n#EXTINF:1.000000,\nindex2.m4s\n\
     #EXT-X-ENDLIST\n";
 
-let mut client = HlsClient::new("http://origin/live/index.m3u8");
+let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new("http://origin/live/index.m3u8"));
 // The first action is always a plain playlist GET.
 assert!(matches!(client.poll(), Some(Action::FetchPlaylist { .. })));
 client.on_playlist(playlist.as_bytes()).unwrap();

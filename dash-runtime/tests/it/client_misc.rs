@@ -315,7 +315,11 @@ fn an_absolute_segment_template_cannot_escape_the_pin() {
 #[test]
 fn the_pin_follows_the_base_set_after_a_redirect() {
     let dash = pinned();
-    let mut client = DashClient::new(URL, dash, PullLimits::default());
+    let mut client = DashClient::new(
+        dash_runtime::client::DashClientConfig::new(URL)
+            .with_dash(dash)
+            .with_limits(PullLimits::default()),
+    );
     client.set_mpd_base("http://cdn.test/timeline-ffmpeg-quirk/manifest.mpd");
     let Some(Action::FetchMpd { .. }) = client.poll(0) else {
         panic!("mpd")
@@ -541,7 +545,11 @@ fn a_representation_switch_continues_on_the_new_representation_and_reannounces()
 
 #[test]
 fn switching_to_an_unknown_variant_or_before_the_start_is_an_error() {
-    let mut c = DashClient::new(URL, DashConfig::default(), PullLimits::default());
+    let mut c = DashClient::new(
+        dash_runtime::client::DashClientConfig::new(URL)
+            .with_dash(DashConfig::default())
+            .with_limits(PullLimits::default()),
+    );
     assert_eq!(c.select_representation(0), Err(Error::NotSwitchable));
     let Some(Action::FetchMpd { .. }) = c.poll(0) else {
         panic!()
@@ -552,7 +560,11 @@ fn switching_to_an_unknown_variant_or_before_the_start_is_an_error() {
 
 #[test]
 fn protocol_misuse_is_a_typed_error_and_changes_nothing() {
-    let mut c = DashClient::new(URL, DashConfig::default(), PullLimits::default());
+    let mut c = DashClient::new(
+        dash_runtime::client::DashClientConfig::new(URL)
+            .with_dash(DashConfig::default())
+            .with_limits(PullLimits::default()),
+    );
     let mpd = base_text();
     assert_eq!(c.on_mpd(0, mpd.as_bytes()), Err(Error::MpdNotAwaited));
     let Some(Action::FetchMpd { url, .. }) = c.poll(0) else {
@@ -594,7 +606,11 @@ fn protocol_misuse_is_a_typed_error_and_changes_nothing() {
 fn after_a_fatal_everything_is_ignored() {
     let mut cfg = PullLimits::default();
     cfg.max_init_failures = 0;
-    let mut c = DashClient::new(URL, DashConfig::default(), cfg);
+    let mut c = DashClient::new(
+        dash_runtime::client::DashClientConfig::new(URL)
+            .with_dash(DashConfig::default())
+            .with_limits(cfg),
+    );
     let _ = c.poll(0);
     c.on_mpd(0, base_text().as_bytes()).unwrap();
     let Some(Action::FetchInit { id, .. }) = c.poll(0) else {
@@ -615,7 +631,11 @@ fn after_a_fatal_everything_is_ignored() {
 
 #[test]
 fn accessors_report_the_presentation() {
-    let mut c = DashClient::new(URL, DashConfig::default(), PullLimits::default());
+    let mut c = DashClient::new(
+        dash_runtime::client::DashClientConfig::new(URL)
+            .with_dash(DashConfig::default())
+            .with_limits(PullLimits::default()),
+    );
     assert_eq!(c.mpd_url(), URL);
     assert_eq!(c.is_static(), None);
     assert_eq!(c.max_segment_duration_secs(), None);
@@ -733,7 +753,11 @@ fn a_switch_that_is_not_segment_aligned_is_marked_with_a_discontinuity() {
 #[test]
 fn a_retried_resource_is_requested_before_anything_queued_behind_it() {
     use dash_runtime::client::Failure;
-    let mut c = DashClient::new(URL, DashConfig::default(), PullLimits::default());
+    let mut c = DashClient::new(
+        dash_runtime::client::DashClientConfig::new(URL)
+            .with_dash(DashConfig::default())
+            .with_limits(PullLimits::default()),
+    );
     let _ = c.poll(0);
     c.on_mpd(0, base_text().as_bytes()).unwrap();
     let Some(Action::FetchInit { id: first, .. }) = c.poll(0) else {

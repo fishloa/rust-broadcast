@@ -73,9 +73,9 @@ for seg in planned.plan.iter() {
 Playing a static MPD (the host performs the I/O):
 
 ```rust
-use dash_runtime::client::{Action, DashClient, DashConfig, PullLimits};
+use dash_runtime::client::{Action, DashClient, DashClientConfig};
 
-let mut client = DashClient::new("https://origin.example/vod/manifest.mpd", DashConfig::default(), PullLimits::default());
+let mut client = DashClient::new(DashClientConfig::new("https://origin.example/vod/manifest.mpd"));
 let Some(Action::FetchMpd { url, .. }) = client.poll(0) else { unreachable!() };
 assert_eq!(url, "https://origin.example/vod/manifest.mpd");
 // GET it, then client.on_mpd(now_us, &body); poll() now yields FetchInit / FetchIndex /
@@ -86,9 +86,9 @@ assert_eq!(url, "https://origin.example/vod/manifest.mpd");
 Playing a live MPD (the host performs the I/O and tells the client the time):
 
 ```rust
-use dash_runtime::client::{Action, DashClient, DashConfig, PullLimits};
+use dash_runtime::client::{Action, DashClient, DashClientConfig};
 
-let mut client = DashClient::new("https://origin.example/live/manifest.mpd", DashConfig::default(), PullLimits::default());
+let mut client = DashClient::new(DashClientConfig::new("https://origin.example/live/manifest.mpd"));
 // Optional: the host's UTC clock, read back to back with the monotonic clock. Without it
 // (and without a UTCTiming element) the client falls back to the MPD response's Date.
 client.set_wall_clock(0, 1_788_000_000_000_000);

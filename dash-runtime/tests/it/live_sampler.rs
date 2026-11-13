@@ -21,7 +21,11 @@ fn client_with(elements: &[String], direct: Option<i64>) -> (DashClient, Vec<Act
         synth.utc.skew_us = at;
     }
     let text = synth.mpd_at(AST_US + 41 * MICROS);
-    let mut c = DashClient::new(MPD_URL, DashConfig::default(), PullLimits::default());
+    let mut c = DashClient::new(
+        dash_runtime::client::DashClientConfig::new(MPD_URL)
+            .with_dash(DashConfig::default())
+            .with_limits(PullLimits::default()),
+    );
     assert!(matches!(c.poll(0), Some(Action::FetchMpd { .. })));
     c.on_mpd(0, text.as_bytes()).unwrap();
     let mut actions = Vec::new();

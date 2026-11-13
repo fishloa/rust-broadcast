@@ -145,7 +145,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let avail = availability(&mpd, &url);
     let true_start = publish + START_AFTER_PUBLISH_US;
 
-    let mut client = DashClient::new(url.as_str(), DashConfig::default(), PullLimits::default());
+    let mut client = DashClient::new(
+        dash_runtime::client::DashClientConfig::new(url.as_str())
+            .with_dash(DashConfig::default())
+            .with_limits(PullLimits::default()),
+    );
     let host_unix = |elapsed: u64| {
         u64::try_from(true_start + i64::try_from(elapsed).unwrap_or(0) + args.skew_ms * 1_000)
             .unwrap_or(0)
