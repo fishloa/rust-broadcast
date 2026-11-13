@@ -30,8 +30,8 @@ use transmux::{TrackId, TrackSpec};
 use crate::clock::{HostClock, SystemHostClock};
 use crate::error::MultimuxError;
 use crate::source::driver::{IngestStep, StepOutcome, ts};
-use crate::source::stitch::Stitcher;
 use crate::source::ts_program::ProgramTracker;
+use transmux::stitch::Stitcher;
 
 const MESSAGE_QUEUE: usize = 64;
 
