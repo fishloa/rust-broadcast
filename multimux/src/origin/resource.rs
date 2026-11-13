@@ -204,7 +204,7 @@ async fn dynamic_file(
     let priority_value = header::HeaderValue::from_str(&format!("u={}", priority.urgency)).ok();
     let resp = http::resolve_blocking(
         &trunk,
-        ll_hls.as_ref(),
+        &ll_hls,
         request,
         BLOCKING_RELOAD_TIMEOUT,
         BlockingRequestGuard::new,
@@ -529,7 +529,7 @@ async fn fetch_part(
     let name = format!("part-{track}-{seq}.{idx}.m4s");
     let resp = http::resolve_blocking(
         &trunk,
-        ll_hls.as_ref(),
+        &ll_hls,
         HlsRequest::Resource { name },
         BLOCKING_RELOAD_TIMEOUT,
         BlockingRequestGuard::new,

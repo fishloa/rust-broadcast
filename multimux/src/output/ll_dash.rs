@@ -16,7 +16,7 @@ use axum::response::Response;
 use axum::routing::get;
 
 use crate::origin::resource::cors_preflight;
-use crate::output::dash::serve_mpd;
+use crate::output::dash::{DashFlavour, serve_mpd};
 use crate::output::{Output, OutputKind};
 use crate::route::RouteHandle;
 
@@ -50,11 +50,11 @@ impl Output for LlDashOutput {
 /// low-latency flavour of the MPD renderer (`503` until a track is
 /// representable).
 async fn manifest(State(route): State<Arc<RouteHandle>>) -> Response {
-    serve_mpd(route, render_ll_dash_mpd).await
+    serve_mpd(route, DashFlavour::LowLatency).await
 }
 
-/// Tell the shared renderer to build this route's MPD as the low-latency
-/// flavour (see [`render_mpd_at_with_flavour`](crate::output::dash::render_mpd_at_with_flavour)).
+/// Render the live LL-DASH MPD for `route`, uncached.
+#[cfg(test)]
 fn render_ll_dash_mpd(route: &RouteHandle) -> Option<String> {
     crate::output::dash::render_ll_dash_mpd(route)
 }
