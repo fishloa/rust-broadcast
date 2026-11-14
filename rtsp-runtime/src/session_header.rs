@@ -25,7 +25,7 @@
 
 use std::time::Duration;
 
-use crate::error::{Error, Result};
+use crate::error::{Error, HeaderSerializeError, Result, SessionParseError};
 use crate::rfc2326_lex as lex;
 
 /// §12.37: the session timeout when none is declared.
@@ -72,14 +72,14 @@ impl SessionHeader {
         // do not balance, so `ab"c;timeout=30` keeps id `ab"c` and timeout 30.
         let (id, segs) = lex::split_session_value(value);
         if id.is_empty() {
-            return Err(Error::SessionParse("empty session id".into()));
+            return Err(Error::SessionParse(SessionParseError::Empty));
         }
         // Receive side is lenient (interop): any non-empty id without a control
         // character is kept verbatim, whatever else it contains.
         if lex::has_ctl(id) {
-            return Err(Error::SessionParse(format!(
+            return Err(Error::SessionParse(SessionParseError::Malformed(format!(
                 "control character in session id {id:?}"
-            )));
+            ))));
         }
         let mut out = SessionHeader::new(id);
         let mut warnings = Vec::new();
@@ -87,9 +87,14 @@ impl SessionHeader {
             if lex::trim_lws(seg).is_empty() {
                 continue;
             }
-            let (name, raw) = lex::split_param(seg).map_err(|e| Error::SessionParse(e.0))?;
+            let (name, raw) = lex::split_param(seg)
+                .map_err(|e| Error::SessionParse(SessionParseError::Lex(e.0)))?;
             let value = match raw {
-                Some(v) => Some(lex::unquote(v).map_err(|e| Error::SessionParse(e.0))?.0),
+                Some(v) => Some(
+                    lex::unquote(v)
+                        .map_err(|e| Error::SessionParse(SessionParseError::Lex(e.0)))?
+                        .0,
+                ),
                 None => None,
             };
             if name.eq_ignore_ascii_case(PARAM_TIMEOUT) {
@@ -125,9 +130,8 @@ impl SessionHeader {
     pub fn to_header_value(&self) -> Result<String> {
         // Strict only for what WE emit: non-empty, trimmed, no control characters.
         if self.id.is_empty() || lex::has_ctl(&self.id) || lex::trim_lws(&self.id) != self.id {
-            return Err(Error::HeaderSerialize(format!(
-                "invalid session id {:?}",
-                self.id
+            return Err(Error::HeaderSerialize(HeaderSerializeError::Other(
+                format!("invalid session id {:?}", self.id),
             )));
         }
         let mut s = self.id.clone();
@@ -137,24 +141,26 @@ impl SessionHeader {
         }
         for (name, value) in &self.extensions {
             if !lex::is_token(name) {
-                return Err(Error::HeaderSerialize(format!(
-                    "extension name {name:?} is not a token"
-                )));
+                return Err(Error::HeaderSerialize(HeaderSerializeError::NotToken {
+                    value: name.clone(),
+                }));
             }
             s.push(lex::PARAM_SEP);
             s.push_str(name);
             if let Some(v) = value {
                 s.push(lex::VALUE_SEP);
-                s.push_str(&lex::emit_value(v).map_err(|e| Error::HeaderSerialize(e.0))?);
+                s.push_str(
+                    &lex::emit_value(v)
+                        .map_err(|e| Error::HeaderSerialize(HeaderSerializeError::Other(e.0)))?,
+                );
             }
         }
         // The id must come back as the first `;`-segment (an unbalanced quote in it
         // would swallow the separator): otherwise it cannot be emitted faithfully.
         let first = lex::split_outside_quotes(&s, lex::PARAM_SEP)[0];
         if lex::trim_lws(first) != self.id {
-            return Err(Error::HeaderSerialize(format!(
-                "session id {:?} cannot be emitted unambiguously",
-                self.id
+            return Err(Error::HeaderSerialize(HeaderSerializeError::Other(
+                format!("session id {:?} cannot be emitted unambiguously", self.id),
             )));
         }
         Ok(s)

@@ -24,6 +24,7 @@ pub mod server;
 pub mod target;
 
 pub use error::RtmpError;
+pub use message::ChunkSize;
 
 /// The Adobe RTMP specification version this engine implements.
 pub const RTMP_VERSION: &str = "RTMP 1.0";

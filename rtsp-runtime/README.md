@@ -86,7 +86,7 @@ assert_eq!(client.state(), SessionState::Playing);
 let rtp = [0x80, 0x60, 0x00, 0x01, 0, 0, 0, 0, 0, 0, 0, 1, 0xde, 0xad];
 let wire = InterleavedFrame::slice_to_bytes(0, &rtp).unwrap();
 let events = client.handle_data_strict(&wire).unwrap();
-assert!(matches!(&events[0], ClientEvent::MediaData { channel: 0, data } if data == &rtp));
+assert!(matches!(&events[0], ClientEvent::MediaData { channel: 0, data } if data.as_ref() == rtp));
 
 let req = client.teardown(url).unwrap();
 let (resp, _) = server.handle_request(&req).unwrap();

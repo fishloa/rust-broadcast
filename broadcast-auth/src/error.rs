@@ -15,13 +15,13 @@ pub enum Error {
     /// The `WWW-Authenticate` challenge value could not be parsed (RFC 7235 /
     /// RFC 2326 §14 for a Basic or Digest challenge).
     #[error("failed to parse challenge: {0}")]
-    ChallengeParse(String),
+    ChallengeParse(#[source] HttpAuthError),
 
     /// The `Authorization` response value could not be computed from the
     /// parsed challenge and credentials (e.g. an unsupported Digest
     /// `algorithm`/`qop`).
     #[error("failed to compute Authorization response: {0}")]
-    ResponseCompute(String),
+    ResponseCompute(#[source] HttpAuthError),
 
     /// A trusted-proxy entry was not an IP address or CIDR block (see
     /// [`crate::TrustedProxy`]) — a setup-time error.
@@ -87,3 +87,15 @@ pub enum Error {
     #[error("failed to strip {0} from URL")]
     UserinfoNotRemovable(&'static str),
 }
+
+/// Underlying error returned by the `http-auth` crate (a diagnostic string).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HttpAuthError(pub String);
+
+impl core::fmt::Display for HttpAuthError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl core::error::Error for HttpAuthError {}

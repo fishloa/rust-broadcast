@@ -84,7 +84,7 @@ impl Encoder<Vec<u8>> for ClientCodec {
 /// One server-side frame: a complete request, or an interleaved `$` block (§10.12).
 pub(crate) enum ServerFrame {
     Request(Vec<u8>),
-    Media { channel: u8, data: Vec<u8> },
+    Media { channel: u8, data: bytes::Bytes },
 }
 
 /// Frames a request stream. A bounded framing check (`framing::head_end`, an
@@ -273,7 +273,7 @@ mod tests {
         ));
         assert!(matches!(
             codec.decode(&mut buf).unwrap(),
-            Some(ServerFrame::Media { channel: 3, ref data }) if data == &[0xAA, 0xBB]
+            Some(ServerFrame::Media { channel: 3, ref data }) if data.as_ref() == [0xAA, 0xBB]
         ));
         assert!(codec.decode(&mut buf).unwrap().is_none());
     }

@@ -144,6 +144,51 @@ impl LimitType {
 
 broadcast_common::impl_spec_display!(LimitType);
 
+/// A validated RTMP chunk size (§5.4.1): `1..=0x7FFF_FFFF`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ChunkSize(u32);
+
+impl ChunkSize {
+    /// Minimum valid chunk size.
+    pub const MIN: ChunkSize = ChunkSize(1);
+    /// Maximum valid chunk size.
+    pub const MAX: u32 = 0x7FFF_FFFF;
+
+    /// Construct a validated chunk size.
+    pub fn new(value: u32) -> Result<Self> {
+        Self::try_new(value)
+    }
+
+    /// Construct a validated chunk size.
+    pub const fn try_new(value: u32) -> Result<Self> {
+        if value == 0 || value & SET_CHUNK_SIZE_RESERVED_MASK != 0 {
+            return Err(RtmpError::Malformed {
+                what: "set chunk size value (must be 1..=0x7FFF_FFFF)",
+            });
+        }
+        Ok(Self(value))
+    }
+
+    #[must_use]
+    /// The raw chunk size.
+    pub const fn value(self) -> u32 {
+        self.0
+    }
+}
+
+impl TryFrom<u32> for ChunkSize {
+    type Error = RtmpError;
+    fn try_from(value: u32) -> Result<Self> {
+        Self::new(value)
+    }
+}
+
+impl From<ChunkSize> for u32 {
+    fn from(c: ChunkSize) -> Self {
+        c.0
+    }
+}
+
 // ── Protocol control messages (§4 / §5.4) ───────────────────────────────
 
 /// A Chunk-Stream-layer protocol control message (§4, spec §5.4):
@@ -158,7 +203,7 @@ broadcast_common::impl_spec_display!(LimitType);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProtocolControl {
     /// Set Chunk Size (§5.4.1): the new maximum chunk size (`1..=0x7FFF_FFFF`).
-    SetChunkSize(u32),
+    SetChunkSize(ChunkSize),
     /// Abort Message (§5.4.2): discard any partially-received message on
     /// this chunk stream id.
     Abort {
@@ -244,7 +289,7 @@ impl ProtocolControl {
                         what: "set chunk size value (must be >= 1)",
                     });
                 }
-                Ok(Some(ProtocolControl::SetChunkSize(size)))
+                Ok(Some(ProtocolControl::SetChunkSize(ChunkSize(size))))
             }
             msg_type::ABORT => {
                 let chunk_stream_id = need_u32(payload, "abort message payload")?;
@@ -280,40 +325,17 @@ impl ProtocolControl {
     /// [`CONTROL_CHUNK_STREAM_ID`], message stream id
     /// [`CONTROL_MESSAGE_STREAM_ID`], timestamp `0` (protocol control
     /// messages take effect immediately; timestamps are not meaningful).
-    ///
-    /// # Panics
-    ///
-    /// On a value `serialize_into` rejects (`SetChunkSize` of 0 or with the
-    /// top bit set); use [`try_to_message`](Self::try_to_message) for
-    /// untrusted values.
     #[must_use]
     pub fn to_message(&self) -> Message {
+        let mut payload = alloc::vec![0u8; self.serialized_len()];
+        let _ = self.serialize_into(&mut payload);
         Message {
             chunk_stream_id: CONTROL_CHUNK_STREAM_ID,
             timestamp: 0,
             message_type_id: self.message_type_id(),
             message_stream_id: CONTROL_MESSAGE_STREAM_ID,
-            payload: self
-                .try_to_bytes()
-                .expect("documented panic: see `# Panics`; use try_to_message"),
+            payload,
         }
-    }
-
-    /// Like [`to_message`](Self::to_message) but returns the serializer's
-    /// error instead of panicking — e.g. `SetChunkSize(0)` or a size with
-    /// the reserved top bit set is not a valid wire value (§5.4.1).
-    ///
-    /// # Errors
-    ///
-    /// [`RtmpError::Malformed`] for an out-of-range chunk size.
-    pub fn try_to_message(&self) -> Result<Message> {
-        Ok(Message {
-            chunk_stream_id: CONTROL_CHUNK_STREAM_ID,
-            timestamp: 0,
-            message_type_id: self.message_type_id(),
-            message_stream_id: CONTROL_MESSAGE_STREAM_ID,
-            payload: self.try_to_bytes()?,
-        })
     }
 }
 
@@ -337,12 +359,7 @@ impl Serialize for ProtocolControl {
         need_in(buf, written, "protocol control payload output")?;
         match *self {
             ProtocolControl::SetChunkSize(size) => {
-                if size == 0 || size & SET_CHUNK_SIZE_RESERVED_MASK != 0 {
-                    return Err(RtmpError::Malformed {
-                        what: "set chunk size value (must be 1..=0x7FFF_FFFF)",
-                    });
-                }
-                buf[0..U32_LEN].copy_from_slice(&size.to_be_bytes());
+                buf[0..U32_LEN].copy_from_slice(&size.value().to_be_bytes());
             }
             ProtocolControl::Abort { chunk_stream_id } => {
                 buf[0..U32_LEN].copy_from_slice(&chunk_stream_id.to_be_bytes());
@@ -572,21 +589,12 @@ mod tests {
     // ── LimitType ────────────────────────────────────────────────────────
 
     #[test]
-    fn try_to_message_rejects_invalid_chunk_size() {
-        assert!(matches!(
-            ProtocolControl::SetChunkSize(0).try_to_message(),
-            Err(RtmpError::Malformed { .. })
-        ));
-        assert!(
-            ProtocolControl::SetChunkSize(0x8000_0000)
-                .try_to_message()
-                .is_err()
-        );
+    fn chunk_size_rejects_invalid_values() {
+        assert!(ChunkSize::try_new(0).is_err());
+        assert!(ChunkSize::try_new(0x8000_0000).is_err());
         assert_eq!(
-            ProtocolControl::SetChunkSize(4096)
-                .try_to_message()
-                .unwrap(),
-            ProtocolControl::SetChunkSize(4096).to_message()
+            ProtocolControl::SetChunkSize(ChunkSize::try_new(4096).unwrap()).to_message(),
+            ProtocolControl::SetChunkSize(ChunkSize::try_new(4096).unwrap()).to_message()
         );
     }
 
@@ -631,7 +639,9 @@ mod tests {
 
     #[test]
     fn set_chunk_size_round_trips() {
-        protocol_control_round_trip(ProtocolControl::SetChunkSize(4096));
+        protocol_control_round_trip(ProtocolControl::SetChunkSize(
+            ChunkSize::try_new(4096).unwrap(),
+        ));
     }
 
     #[test]
@@ -675,16 +685,15 @@ mod tests {
             ProtocolControl::from_payload(msg_type::SET_CHUNK_SIZE, &bytes),
             Err(RtmpError::Malformed { .. })
         ));
-        assert!(matches!(
-            ProtocolControl::SetChunkSize(0).serialize_into(&mut [0u8; 4]),
-            Err(RtmpError::Malformed { .. })
-        ));
+        assert!(ChunkSize::try_new(0).is_err());
     }
 
     #[test]
     fn set_chunk_size_serialize_layout_matches_spec() {
         // §5.4.1: reserved bit 0, 31-bit chunk size, big-endian.
-        let bytes = ProtocolControl::SetChunkSize(1).try_to_bytes().unwrap();
+        let bytes = ProtocolControl::SetChunkSize(ChunkSize::try_new(1).unwrap())
+            .try_to_bytes()
+            .unwrap();
         assert_eq!(bytes, vec![0x00, 0x00, 0x00, 0x01]);
     }
 
@@ -724,7 +733,7 @@ mod tests {
 
     #[test]
     fn to_message_uses_control_csid_and_stream_id() {
-        let msg = ProtocolControl::SetChunkSize(4096).to_message();
+        let msg = ProtocolControl::SetChunkSize(ChunkSize::try_new(4096).unwrap()).to_message();
         assert_eq!(msg.chunk_stream_id, CONTROL_CHUNK_STREAM_ID);
         assert_eq!(msg.message_stream_id, CONTROL_MESSAGE_STREAM_ID);
         assert_eq!(msg.message_type_id, msg_type::SET_CHUNK_SIZE);

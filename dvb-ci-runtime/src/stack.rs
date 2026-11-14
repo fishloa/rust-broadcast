@@ -303,7 +303,7 @@ impl CiStack {
         // encoding; surface it as the stack's `Notification::Error`, never
         // a panic.
         built
-            .try_to_bytes()
+            .to_bytes()
             .map_err(|e| format!("ca_pmt serialization failed: {e}"))
     }
 

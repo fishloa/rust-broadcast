@@ -430,7 +430,8 @@ where
                 status,
             });
         }
-        let sdp = String::from_utf8(body).map_err(|e| Error::InvalidSdp(e.to_string()))?;
+        let sdp = String::from_utf8(body)
+            .map_err(|e| Error::InvalidSdp(crate::error::SdpParseError::Utf8(e.to_string())))?;
         let mut plan = crate::PlayPlan::from_describe(
             &clean,
             self.framed.codec_mut().session.content_base(),
@@ -966,7 +967,10 @@ where
     /// Sends an interleaved (`$`-framed) media frame to the client on `channel`
     /// (§10.12), e.g. an RTP or RTCP packet during PLAY.
     pub async fn send_interleaved(&mut self, channel: u8, payload: &[u8]) -> Result<()> {
-        let frame = crate::interleaved::InterleavedFrame::new(channel, payload.to_vec());
+        let frame = crate::interleaved::InterleavedFrame::new(
+            channel,
+            bytes::Bytes::copy_from_slice(payload),
+        );
         let bytes = frame.to_bytes()?;
         bounded(self.timeouts.write, "write", self.framed.send(bytes)).await
     }

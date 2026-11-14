@@ -96,7 +96,7 @@ use broadcast_common::stage::Timestamp;
 use bytes::Bytes;
 use media_plane::{ByteMerge, MergePolicy, SourceId};
 
-let mut merge = ByteMerge::new(MergePolicy::FirstArrival, 2, /* max_queued */ 64);
+let mut merge = ByteMerge::new(MergePolicy::FirstArrival, core::num::NonZeroUsize::new(2).unwrap(), /* max_queued */ core::num::NonZeroUsize::new(64).unwrap()).unwrap();
 merge.feed(SourceId(0), Bytes::from_static(b"ts-packet"), Timestamp::ZERO).unwrap();
 let (msg, _at) = merge.poll().expect("one message queued");
 assert_eq!(&msg[..], b"ts-packet");
