@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Added
+- `reserved::{Reserved, ReservedOnes, ReservedZero}`: the workspace's one typed run of `reserved` / `reserved_future_use` bits in a fixed-width field, moved here from `dvb-ci` so a CAM object and a DVB descriptor use the same type. The width is a `const` (1..=8), so a value wider than the field is unrepresentable and a serializer never re-masks one; `Default` is the spec fill and it serializes as the bare number. `dvb_ci::reserved` re-exports these names (#2738).
 - `backoff::ReconnectPolicy`: the workspace's one reconnect/backoff policy (a `BackoffSteps` schedule plus an `Option<NonZeroU32>` attempt bound), `ReconnectPolicy::doubling` (an exponential schedule from two bounds), and `ReconnectPolicy::exhausted` (#2690).
 - `clock33::Clock27::from_27mhz_wrapping`: the infallible position a raw 27 MHz count names, reduced modulo `PCR_WRAP_27MHZ` when it is past the wrap (a counter that has run over it), unchanged below it; `from_27mhz` stays the checked one (#2687).
 - `range::ByteSpan`: the one byte-range type the pull clients carry (`offset` + non-zero `len`), rendering the `Range: bytes=<first>-<last>` field value via `range_header()`; `broadcast-hls`/`broadcast-dash` convert their own `ByteRange` to and from it at the parser edge (#2655 C1). Needs `serde` for its optional derive.

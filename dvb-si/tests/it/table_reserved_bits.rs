@@ -749,8 +749,8 @@ fn typed_header_bits_round_trip_off_spec_values() {
     let mut pat = PatSection::new(1, 0, true, 0, 0, vec![]);
     let mut bits = SectionBits::dvb();
     bits.private_indicator = false;
-    bits.reserved_b1 = 0;
-    bits.reserved_b5 = 0;
+    bits.reserved_b1 = broadcast_common::reserved::ReservedOnes::<2>::from_bits(0);
+    bits.reserved_b5 = broadcast_common::reserved::ReservedOnes::<2>::from_bits(0);
     pat.bits = bits;
     let b = ser(&pat);
     assert_eq!(
