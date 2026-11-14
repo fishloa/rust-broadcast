@@ -207,7 +207,10 @@ fn the_variants_event_maps_the_manifest_and_names_the_active_audio() {
     assert_eq!(m.chosen, 0);
     assert_eq!(m.variants.len(), 1);
     let v = &m.variants[0];
-    assert_eq!(v.uri, "http://dash.test/init-stream0.m4s");
+    assert_eq!(
+        v.uri.as_ref().map(Url::as_str),
+        Some("http://dash.test/init-stream0.m4s")
+    );
     assert_eq!(v.bandwidth, 58_141);
     assert_eq!(v.average_bandwidth, None);
     assert_eq!(v.resolution, Some((320, 240)));
@@ -250,7 +253,10 @@ fn two_video_representations_list_in_mpd_order_and_the_best_is_chosen() {
     let bw: Vec<u64> = m.variants.iter().map(|v| v.bandwidth).collect();
     assert_eq!(bw, [58_141, 20_000]);
     assert_eq!(m.chosen, 0, "the highest bandwidth");
-    assert_eq!(m.variants[1].uri, "http://dash.test/alt-v-init.m4s");
+    assert_eq!(
+        m.variants[1].uri.as_ref().map(Url::as_str),
+        Some("http://dash.test/alt-v-init.m4s")
+    );
 }
 
 #[test]

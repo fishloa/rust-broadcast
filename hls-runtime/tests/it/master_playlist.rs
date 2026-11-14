@@ -202,7 +202,7 @@ fn relative_and_absolute_variant_uris_resolve_against_master_url() {
     };
     assert_eq!(
         sel.variants[0].uri,
-        "http://example.com/bipbop/gear1/prog_index.m3u8"
+        Some(Url::parse("http://example.com/bipbop/gear1/prog_index.m3u8").unwrap())
     );
 
     // absolute (9.4)
@@ -220,7 +220,10 @@ fn relative_and_absolute_variant_uris_resolve_against_master_url() {
         Output::Master(s) => s,
         o => panic!("{o:?}"),
     };
-    assert_eq!(sel.variants[0].uri, "http://example.com/low.m3u8");
+    assert_eq!(
+        sel.variants[0].uri,
+        Some(Url::parse("http://example.com/low.m3u8").unwrap())
+    );
 }
 
 #[test]

@@ -303,8 +303,14 @@ fn master_emits_variants_event_then_fetches_chosen_variant() {
     };
     assert_eq!(sel.variants.len(), 2);
     assert_eq!(sel.chosen, 1, "highest bandwidth under the default policy");
-    assert_eq!(sel.variants[0].uri, LOW_PLAYLIST_URL);
-    assert_eq!(sel.variants[1].uri, HIGH_PLAYLIST_URL);
+    assert_eq!(
+        sel.variants[0].uri.as_ref().map(Url::as_str),
+        Some(LOW_PLAYLIST_URL)
+    );
+    assert_eq!(
+        sel.variants[1].uri.as_ref().map(Url::as_str),
+        Some(HIGH_PLAYLIST_URL)
+    );
     let (_, next_url) = single_http_request(&drain_actions(&mut s, 0));
     assert_eq!(
         next_url, HIGH_PLAYLIST_URL,
@@ -337,7 +343,10 @@ fn master_emits_variants_event_then_fetches_chosen_variant() {
         "highest bandwidth bipbop variant"
     );
     let (_, chosen_req) = single_http_request(&drain_actions(&mut s2, 0));
-    assert_eq!(chosen_req, sel2.variants[sel2.chosen].uri);
+    assert_eq!(
+        Some(chosen_req.as_str()),
+        sel2.variants[sel2.chosen].uri.as_ref().map(Url::as_str)
+    );
 }
 
 #[test]
