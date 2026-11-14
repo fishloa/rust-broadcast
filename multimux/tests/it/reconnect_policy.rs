@@ -27,15 +27,16 @@ fn schedule(policy: &ReconnectPolicy) -> RetrySchedule {
         BACKOFF_FACTOR,
         0x5EED,
     )
+    .expect("the policy's own bounds")
 }
 
 /// The same for the supervisor's production series (500 ms, 30 s, x2).
 fn from_parts(min: Duration, max: Duration, factor: f64) -> RetrySchedule {
-    RetrySchedule::new(min, max, factor, 0x5EED)
+    RetrySchedule::new(min, max, factor, 0x5EED).expect("bounds a test chose")
 }
 
 fn seeded(min: Duration, max: Duration, factor: f64, seed: u64) -> RetrySchedule {
-    RetrySchedule::new(min, max, factor, seed)
+    RetrySchedule::new(min, max, factor, seed).expect("bounds a test chose")
 }
 
 /// The schedule is jittered, and it is the shared one: the first retry is
