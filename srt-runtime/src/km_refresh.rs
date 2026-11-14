@@ -40,6 +40,10 @@
 
 use alloc::vec::Vec;
 
+use broadcast_common::error::InvalidField;
+
+use crate::error::Error;
+
 /// Which of the two alternating SEKs (`draft-sharabayko-srt-01` §3.1's data
 /// packet `KK` field / §6.1.6's odd/even alternation) is meant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -74,13 +78,10 @@ broadcast_common::impl_spec_display!(KeyParity);
 
 /// KM Refresh packet-count thresholds (`draft-sharabayko-srt-01` §6.1.6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct KmRefreshThresholds {
-    /// Packets an active key is used for before switchover (spec-recommended
-    /// `2^25`).
-    pub refresh_period: u64,
-    /// Packets before switchover the next key is announced, and after
-    /// switchover the old key stays valid (spec-recommended `4000`).
-    pub pre_announcement_period: u64,
+    refresh_period: u64,
+    pre_announcement_period: u64,
 }
 
 impl KmRefreshThresholds {
@@ -90,6 +91,39 @@ impl KmRefreshThresholds {
         refresh_period: 1 << 25,
         pre_announcement_period: 4000,
     };
+
+    /// Thresholds for `refresh_period` packets between switchovers and a
+    /// `pre_announcement_period` ahead of it.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidField`] unless `0 < pre_announcement_period <
+    /// refresh_period`: a zero period would rotate on every packet, and a
+    /// pre-announcement at or past the refresh point would announce the next
+    /// key only once it had already replaced the current one.
+    pub fn new(refresh_period: u64, pre_announcement_period: u64) -> Result<Self, Error> {
+        if pre_announcement_period == 0 || pre_announcement_period >= refresh_period {
+            return Err(Error::InvalidField(InvalidField {
+                field: "pre_announcement_period",
+                reason: "must be non-zero and below refresh_period",
+            }));
+        }
+        Ok(KmRefreshThresholds {
+            refresh_period,
+            pre_announcement_period,
+        })
+    }
+
+    /// Packets an active key is used for before switchover.
+    pub const fn refresh_period(&self) -> u64 {
+        self.refresh_period
+    }
+
+    /// Packets before switchover the next key is announced, and after
+    /// switchover the old key stays valid.
+    pub const fn pre_announcement_period(&self) -> u64 {
+        self.pre_announcement_period
+    }
 }
 
 /// One state transition [`KmRefreshDriver::on_packet_sent`] /
@@ -190,45 +224,55 @@ impl KmRefreshDriver {
     pub fn on_packet_sent(&mut self, n: u64) -> Vec<KmRefreshEvent> {
         self.total_sent = self.total_sent.saturating_add(n);
         let mut events = Vec::new();
-        let since_epoch = self.total_sent.saturating_sub(self.epoch_start);
-
         let pre_announce_at = self
             .thresholds
             .refresh_period
             .saturating_sub(self.thresholds.pre_announcement_period);
-        if !self.pre_announced && since_epoch >= pre_announce_at {
-            self.pre_announced = true;
-            events.push(KmRefreshEvent::PreAnnounce {
-                next_parity: self.active.other(),
-            });
-        }
+        loop {
+            let since_epoch = self.total_sent.saturating_sub(self.epoch_start);
+            let mut crossed = false;
 
-        if !self.switched_over && since_epoch >= self.thresholds.refresh_period {
-            self.switched_over = true;
-            let new_active = self.active.other();
-            self.active = new_active;
-            // The new epoch starts exactly at the switchover point, so the
-            // decommission threshold below (measured from `epoch_start`) is
-            // `pre_announcement_period` packets *after* switchover — §6.1.6's
-            // `refresh_period + pre_announcement_period`, not
-            // `2 * refresh_period + pre_announcement_period`.
-            self.epoch_start += self.thresholds.refresh_period;
-            events.push(KmRefreshEvent::Switchover { new_active });
-        }
-
-        if self.switched_over && !self.decommissioned {
-            let since_switchover = self.total_sent.saturating_sub(self.epoch_start);
-            if since_switchover >= self.thresholds.pre_announcement_period {
-                self.decommissioned = true;
-                events.push(KmRefreshEvent::Decommission {
-                    retired: self.active.other(),
+            if !self.pre_announced && since_epoch >= pre_announce_at {
+                self.pre_announced = true;
+                crossed = true;
+                events.push(KmRefreshEvent::PreAnnounce {
+                    next_parity: self.active.other(),
                 });
-                // Arm the next cycle: `epoch_start` already marks the
-                // current key's start, so the next PreAnnounce/Switchover
-                // are correctly measured from here.
-                self.pre_announced = false;
-                self.switched_over = false;
-                self.decommissioned = false;
+            }
+
+            if !self.switched_over && since_epoch >= self.thresholds.refresh_period {
+                self.switched_over = true;
+                crossed = true;
+                let new_active = self.active.other();
+                self.active = new_active;
+                // The new epoch starts exactly at the switchover point, so the
+                // decommission threshold below (measured from `epoch_start`) is
+                // `pre_announcement_period` packets *after* switchover — §6.1.6's
+                // `refresh_period + pre_announcement_period`, not
+                // `2 * refresh_period + pre_announcement_period`.
+                self.epoch_start += self.thresholds.refresh_period;
+                events.push(KmRefreshEvent::Switchover { new_active });
+            }
+
+            if self.switched_over && !self.decommissioned {
+                let since_switchover = self.total_sent.saturating_sub(self.epoch_start);
+                if since_switchover >= self.thresholds.pre_announcement_period {
+                    self.decommissioned = true;
+                    crossed = true;
+                    events.push(KmRefreshEvent::Decommission {
+                        retired: self.active.other(),
+                    });
+                    // Arm the next cycle: `epoch_start` already marks the
+                    // current key's start, so the next PreAnnounce/Switchover
+                    // are correctly measured from here.
+                    self.pre_announced = false;
+                    self.switched_over = false;
+                    self.decommissioned = false;
+                }
+            }
+
+            if !crossed {
+                break;
             }
         }
 
@@ -254,11 +298,61 @@ mod tests {
 
     #[test]
     fn recommended_thresholds_match_spec_values() {
-        assert_eq!(KmRefreshThresholds::RECOMMENDED.refresh_period, 1 << 25);
+        assert_eq!(KmRefreshThresholds::RECOMMENDED.refresh_period(), 1 << 25);
         assert_eq!(
-            KmRefreshThresholds::RECOMMENDED.pre_announcement_period,
+            KmRefreshThresholds::RECOMMENDED.pre_announcement_period(),
             4000
         );
+    }
+
+    #[test]
+    fn new_rejects_degenerate_thresholds() {
+        for (refresh, pre_announce) in [(0, 0), (100, 0), (100, 100), (100, 101)] {
+            assert!(
+                matches!(
+                    KmRefreshThresholds::new(refresh, pre_announce),
+                    Err(Error::InvalidField(_))
+                ),
+                "refresh {refresh}, pre-announce {pre_announce} must be rejected"
+            );
+        }
+        let t = KmRefreshThresholds::new(100, 10).unwrap();
+        assert_eq!(t.refresh_period(), 100);
+        assert_eq!(t.pre_announcement_period(), 10);
+    }
+
+    #[test]
+    fn one_batch_larger_than_a_refresh_period_rotates_every_cycle_it_crosses() {
+        let mut d = KmRefreshDriver::new(SCALED, KeyParity::Even);
+        let events = d.on_packet_sent(295);
+        assert_eq!(
+            events,
+            alloc::vec![
+                KmRefreshEvent::PreAnnounce {
+                    next_parity: KeyParity::Odd
+                },
+                KmRefreshEvent::Switchover {
+                    new_active: KeyParity::Odd
+                },
+                KmRefreshEvent::Decommission {
+                    retired: KeyParity::Even
+                },
+                KmRefreshEvent::PreAnnounce {
+                    next_parity: KeyParity::Even
+                },
+                KmRefreshEvent::Switchover {
+                    new_active: KeyParity::Even
+                },
+                KmRefreshEvent::Decommission {
+                    retired: KeyParity::Odd
+                },
+                KmRefreshEvent::PreAnnounce {
+                    next_parity: KeyParity::Odd
+                },
+            ]
+        );
+        assert_eq!(d.active_parity(), KeyParity::Even);
+        assert_eq!(d.total_sent(), 295);
     }
 
     #[test]

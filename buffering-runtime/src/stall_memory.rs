@@ -2,7 +2,7 @@
 
 use core::time::Duration;
 
-use crate::time::{duration_add, duration_micros, micros_as_duration};
+use crate::time::{duration_add, instant_micros, micros_as_duration};
 
 /// Plain-data snapshot of the stall memory, for session persistence.
 ///
@@ -120,9 +120,9 @@ impl MaxHold {
     }
 
     pub(crate) fn restore(&mut self, s: StallMemorySnapshot) {
-        self.peak = duration_micros(s.peak);
+        self.peak = instant_micros(s.peak);
         self.at = None;
-        self.pending_age = Some(duration_micros(s.age));
+        self.pending_age = Some(instant_micros(s.age));
     }
 
     pub(crate) fn clear(&mut self) {

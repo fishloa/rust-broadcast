@@ -15,7 +15,7 @@ use core::time::Duration;
 use broadcast_common::clock33::PCR_HZ;
 
 use crate::error::{ConfigField, Error};
-use crate::time::{duration_micros, micros_as_duration};
+use crate::time::{micros_as_duration, window_micros};
 
 /// Microseconds per second.
 pub const US_PER_S: u64 = 1_000_000;
@@ -96,7 +96,7 @@ impl JitterConfig {
         if self.interval.is_zero() {
             return Err(Error::InvalidConfig(ConfigField::Interval));
         }
-        if duration_micros(self.min_window) < duration_micros(self.interval).saturating_mul(2) {
+        if window_micros(self.min_window) < window_micros(self.interval).saturating_mul(2) {
             return Err(Error::InvalidConfig(ConfigField::MinWindow));
         }
         if self.bucket.is_zero() || self.buckets == 0 {
@@ -130,7 +130,7 @@ impl JitterConfig {
     }
 
     pub(crate) fn range_us(&self) -> u64 {
-        u64::from(self.buckets) * duration_micros(self.bucket)
+        u64::from(self.buckets) * window_micros(self.bucket)
     }
 }
 
@@ -347,7 +347,7 @@ impl ControllerConfig {
     pub fn validate(&self) -> Result<(), Error> {
         self.jitter.validate()?;
         self.policy.validate()?;
-        if duration_micros(self.policy.max) > self.jitter.range_us() {
+        if window_micros(self.policy.max) > self.jitter.range_us() {
             return Err(Error::InvalidConfig(ConfigField::Bucket));
         }
         if self.starve_threshold >= self.policy.min || self.nodata_after.is_zero() {

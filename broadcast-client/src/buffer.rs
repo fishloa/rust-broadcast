@@ -10,7 +10,7 @@ use broadcast_common::timescale::{Rounding, Timescale, rescale};
 use buffering_runtime::input_log::Input;
 use buffering_runtime::{
     BufferController, Clock27, ControllerConfig, Event as RtEvent, Hint, StallMemorySnapshot,
-    duration_between, duration_micros, micros_as_duration,
+    duration_between, instant_micros, micros_as_duration,
 };
 use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 
@@ -290,7 +290,7 @@ impl Feeder {
         self.finite = true;
         if let Some(c) = self.controller.take() {
             self.seed = Some(c.snapshot_memory());
-            self.seed_at_us = Some(duration_micros(self.log.last_now()));
+            self.seed_at_us = Some(instant_micros(self.log.last_now()));
         }
         self.pending_registered = false;
         self.started = false;
@@ -494,7 +494,7 @@ impl Feeder {
         if self.holds_start() {
             let at = self.log.last_now();
             for t in removed {
-                self.held.entry(t).or_insert(duration_micros(at));
+                self.held.entry(t).or_insert(instant_micros(at));
             }
         } else {
             for t in removed {
@@ -735,7 +735,7 @@ impl Feeder {
         let now = self.log.last_now();
         let seed = self.seed.map(|s| {
             s.aged(micros_as_duration(self.seed_at_us.map_or(0, |at| {
-                duration_micros(duration_between(micros_as_duration(at), now))
+                instant_micros(duration_between(micros_as_duration(at), now))
             })))
         });
         if let Ok(mut c) = BufferController::new(self.controller_config(), seed) {
@@ -995,18 +995,9 @@ mod tests {
     fn the_27mhz_conversions_use_the_shared_pcr_clock() {
         assert_eq!(PCR_TIMESCALE.as_u64(), PCR_HZ);
         assert_eq!(PCR_HZ, 27_000_000);
+        assert_eq!(raw_27mhz(PCR_HZ as i64, PCR_TIMESCALE), i128::from(PCR_HZ));
         assert_eq!(
-            raw_27mhz(
-                PCR_HZ as i64,
-                Timescale::new(PCR_HZ as u32).expect("27 MHz is a non-zero timescale")
-            ),
-            i128::from(PCR_HZ)
-        );
-        assert_eq!(
-            pts_to_27mhz(
-                90_000,
-                Timescale::new(90_000).expect("90 kHz is a non-zero timescale")
-            ),
+            pts_to_27mhz(90_000, broadcast_common::clock33::PTS_TIMESCALE),
             PCR_HZ
         );
     }

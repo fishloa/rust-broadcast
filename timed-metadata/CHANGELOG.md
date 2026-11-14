@@ -3,6 +3,9 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+### Dependencies
+- `scte35-splice` 6 -> 7: `SpliceTime::pts_time` is a validated `broadcast_common::clock33::Clock33`, and `SpliceInsert` carries its flags and times in one `SpliceMode` (see that crate's changelog).
+
 ### Changed
 - BREAKING: `Timeline::with_anchor(anchor)` is `Timeline::new(anchor)`: a constructor is not named like a builder setter, and the no-argument `Timeline::new()` is gone, so `new` is the one constructor and `set_anchor` the one later change. Migration: `Timeline::with_anchor(a)` becomes `Timeline::new(a)`, and `Timeline::new()` becomes `Timeline::default()` (#2665).
 - BREAKING: `convert::EmsgConfig::timescale` and `convert::SegmentTiming::timescale` are `Timescale` (was `u32`), and `Error::EmsgTimescaleMismatch` carries `Timescale`s, following `mp4_emsg::EmsgBox::timescale` (#2657).

@@ -1,6 +1,7 @@
 use crate::support;
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use broadcast_client::{
     Action, Config, ConnId, Credentials, Error, Event, Session, SourceKind, Status, TransportError,
@@ -619,6 +620,42 @@ fn backoff_2_4_8_then_10_forever() {
         assert!(band.contains(delta), "step {step} s: {delta} us");
     }
     assert_eq!(attempts, vec![1, 2, 3, 4, 5, 6]);
+}
+
+#[test]
+fn a_sub_millisecond_backoff_step_is_waited_exactly() {
+    let mut config = hls_config();
+    config.backoff.steps = vec![Duration::from_micros(1_500)];
+    config.backoff.cap = Duration::from_micros(1_500);
+    let mut s = Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), config, ts(0)).expect("open");
+    let actions = drain_actions(&mut s, 0);
+    let (conn, _) = single_http_request(&actions);
+    s.on_closed(
+        conn,
+        Some(TransportError::Other {
+            reason: "reset".to_string(),
+        }),
+        ts(0),
+    );
+    let after = drain_actions(&mut s, 0);
+    assert_eq!(
+        wake_times(&after),
+        vec![1_500],
+        "a 1.5 ms step is waited to the microsecond, not truncated to 1 ms"
+    );
+}
+
+#[test]
+fn an_unrunnable_backoff_schedule_reports_invalid_config_at_open() {
+    let mut config = hls_config();
+    config.backoff.steps = vec![Duration::MAX];
+    config.backoff.cap = Duration::MAX;
+    let err = Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), config, ts(0))
+        .expect_err("a schedule above MAX_FLOOR is refused");
+    assert!(
+        matches!(err, Error::InvalidConfig { .. }),
+        "reported, never repaired into a zero-cap schedule: {err:?}"
+    );
 }
 
 #[test]

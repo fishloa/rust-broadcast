@@ -36,7 +36,7 @@ pub mod ts_session;
 
 pub use byte_merge::{ByteMerge, MergeError, MergePolicy, SourceId};
 pub use byte_stage::ByteStage;
-pub use byte_tap::{ByteTap, TapItem, TapPoint};
+pub use byte_tap::{ByteTap, TapError, TapItem, TapPoint};
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub use egress::{

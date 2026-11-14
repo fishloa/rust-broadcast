@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use broadcast_client::{Action, Config, Event, Session, TrackId};
 use broadcast_common::stage::Timestamp;
-use buffering_runtime::duration_micros;
+use buffering_runtime::instant_micros;
 use support::replay::{TS_PACKET, bitrate_bps, open_live, replay_paced};
 
 /// The harness's microsecond clock as the session's `now`.
@@ -94,11 +94,11 @@ fn early_release_case(label: &str, bytes: &[u8]) {
         "{label}: released at {at} before the last stream resolved at {last_resolution}"
     );
     assert!(
-        at <= last_resolution + duration_micros(SETTLE),
+        at <= last_resolution + instant_micros(SETTLE),
         "{label}: released at {at}, later than last resolution {last_resolution} + settle"
     );
     assert!(
-        at < duration_micros(FAR.expect("a far limit")) / 10,
+        at < instant_micros(FAR.expect("a far limit")) / 10,
         "{label}: nowhere near the wall limit"
     );
     assert_eq!(
@@ -152,11 +152,11 @@ fn a_stream_that_keeps_sending_but_never_resolves_is_bounded_by_the_wall_limit()
     );
     let at = held.tracks_times()[0];
     assert!(
-        at >= first_media + duration_micros(wall),
+        at >= first_media + instant_micros(wall),
         "released at {at}, before first media {first_media} + wall {:?}: the unresolved PID must be waited for",
         wall
     );
-    assert!(at <= first_media + duration_micros(wall) + 2 * CHUNK as u64 * 8 * 1_000_000 / bps);
+    assert!(at <= first_media + instant_micros(wall) + 2 * CHUNK as u64 * 8 * 1_000_000 / bps);
 }
 
 fn drive(s: &mut Session, now: u64, wake: &mut Option<u64>, events: &mut Vec<Event>) {
@@ -206,7 +206,7 @@ fn the_settle_is_armed_on_the_session_clock_when_the_source_goes_quiet() {
         !events.iter().any(|e| matches!(e, Event::Tracks(_))),
         "the prefix ends at the last resolution: nothing to release yet"
     );
-    let release_at = resolved_at + duration_micros(SETTLE);
+    let release_at = resolved_at + instant_micros(SETTLE);
     for _ in 0..MAX_WAKES {
         let due = wake.take().expect("a wake-up stays armed while holding");
         assert!(

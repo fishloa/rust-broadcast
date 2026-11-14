@@ -287,10 +287,7 @@ async fn tokio_wrong_passphrase_is_refused() {
 async fn tokio_key_refresh_keeps_delivering() {
     tokio::time::timeout(TEST_TIMEOUT, async {
         use srt_runtime::km_refresh::KmRefreshThresholds;
-        let thresholds = KmRefreshThresholds {
-            refresh_period: 50,
-            pre_announcement_period: 5,
-        };
+        let thresholds = KmRefreshThresholds::new(50, 5).unwrap();
         let loaded_host_config = || {
             (crypto_config(PASSPHRASE, 16))
                 .with_latency(Duration::from_millis(u64::from(LOADED_HOST_LATENCY_MS)))

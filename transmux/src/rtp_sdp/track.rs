@@ -181,7 +181,7 @@ fn track_of_payload(media: &sdp_types::Media, payload_type: &str) -> Option<SdpT
     Some(SdpTrack {
         kind,
         config,
-        clock_rate: Timescale::new(clock_rate)?,
+        clock_rate: Timescale::try_new(clock_rate).ok()?,
         payload_type: payload_type.parse::<u8>().ok().filter(|&pt| pt <= 127),
         control: media
             .get_first_attribute_value("control")
