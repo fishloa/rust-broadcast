@@ -3,6 +3,7 @@
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
+use broadcast_common::timescale::Timescale;
 use rtsp_runtime::{MAX_TRACKS, PlayPlan};
 use sdp_types::Media;
 use transmux::pipeline::CodecConfig;
@@ -38,7 +39,7 @@ pub(crate) struct TrackInit {
     pub(crate) track_id: TrackId,
     pub(crate) kind: RtpMediaKind,
     pub(crate) config: CodecConfig,
-    pub(crate) clock_rate: u32,
+    pub(crate) clock_rate: Timescale,
     pub(crate) setup_uri: String,
     pub(crate) channel: u8,
     pub(crate) rtcp_channel: u8,

@@ -122,8 +122,8 @@ pub struct AudioFollower {
     pending: VecDeque<PendingPublish>,
     pending_since: Option<Instant>,
     held: VecDeque<Sample>,
-    origin: Option<(i64, u32)>,
-    timescale: u32,
+    origin: Option<(i64, broadcast_common::timescale::Timescale)>,
+    timescale: broadcast_common::timescale::Timescale,
     cuts: VecDeque<PartCutReady>,
     newest_dts: Option<i64>,
     next_seq: u32,
@@ -145,13 +145,13 @@ fn part_target_millis(part_target: Duration) -> u32 {
 fn part_target_for_frame_ms(
     part_target: Duration,
     frame_ticks: u32,
-    timescale: u32,
+    timescale: broadcast_common::timescale::Timescale,
 ) -> Option<u32> {
-    if frame_ticks == 0 || timescale == 0 {
+    if frame_ticks == 0 {
         return None;
     }
     let ticks = u128::from(frame_ticks);
-    let scale = u128::from(timescale);
+    let scale = u128::from(timescale.get());
     let target_ticks = part_target.as_millis() * scale;
     let frames = target_ticks
         .div_ceil(ticks * (MILLIS_PER_SEC as u128))
@@ -173,7 +173,7 @@ impl AudioFollower {
         let next_seq = writer.next_sequence_number().value();
         let seg = match LlHlsSegmenter::with_part_target_at(
             vec![spec.clone()],
-            transmux::VIDEO_CLOCK_RATE,
+            transmux::VIDEO_CLOCK_TIMESCALE,
             target_duration_secs,
             part_target_millis(part_target),
             next_seq,
@@ -242,7 +242,7 @@ impl AudioFollower {
         if self.part_target_sized {
             return;
         }
-        let Some(frame_ticks) = sample.duration else {
+        let Some(frame_ticks) = sample.timing.map(|t| t.duration) else {
             return;
         };
         self.part_target_sized = true;
@@ -275,7 +275,7 @@ impl AudioFollower {
     }
 
     fn precedes_origin(&self, sample: &Sample) -> bool {
-        match (self.origin, sample.dts) {
+        match (self.origin, sample.timing.map(|t| t.dts)) {
             (Some((origin, origin_ts)), Some(dts)) => {
                 cmp_ticks(dts, self.timescale, origin, origin_ts).is_lt()
             }
@@ -284,7 +284,7 @@ impl AudioFollower {
     }
 
     fn push_now(&mut self, sample: Sample) {
-        if let Some(dts) = sample.dts {
+        if let Some(dts) = sample.timing.map(|t| t.dts) {
             self.newest_dts = Some(self.newest_dts.map_or(dts, |n| n.max(dts)));
         }
         if let Err(e) = self.seg.push(self.source_track_id, sample) {
@@ -337,7 +337,7 @@ impl AudioFollower {
         }
         if first {
             for sample in std::mem::take(&mut self.held) {
-                let at_or_after = sample.dts.is_some_and(|d| {
+                let at_or_after = sample.timing.map(|t| t.dts).is_some_and(|d| {
                     cmp_ticks(d, self.timescale, cut.start_dts, cut.timescale).is_ge()
                 });
                 if at_or_after {
@@ -428,6 +428,7 @@ impl AudioFollower {
 #[cfg(test)]
 mod part_target_tests {
     use super::part_target_for_frame_ms;
+    use broadcast_common::timescale::Timescale;
     use std::time::Duration;
 
     /// Whole milliseconds as the part target the follower is configured with.
@@ -437,11 +438,26 @@ mod part_target_tests {
 
     #[test]
     fn rounds_up_to_whole_frames() {
-        assert_eq!(part_target_for_frame_ms(ms(200), 1536, 48_000), Some(224));
-        assert_eq!(part_target_for_frame_ms(ms(200), 1024, 48_000), Some(214));
-        assert_eq!(part_target_for_frame_ms(ms(200), 960, 48_000), Some(200));
-        assert_eq!(part_target_for_frame_ms(ms(10), 1536, 48_000), Some(32));
-        assert_eq!(part_target_for_frame_ms(ms(200), 0, 48_000), None);
+        assert_eq!(
+            part_target_for_frame_ms(ms(200), 1536, Timescale::from_nonzero(48_000)),
+            Some(224)
+        );
+        assert_eq!(
+            part_target_for_frame_ms(ms(200), 1024, Timescale::from_nonzero(48_000)),
+            Some(214)
+        );
+        assert_eq!(
+            part_target_for_frame_ms(ms(200), 960, Timescale::from_nonzero(48_000)),
+            Some(200)
+        );
+        assert_eq!(
+            part_target_for_frame_ms(ms(10), 1536, Timescale::from_nonzero(48_000)),
+            Some(32)
+        );
+        assert_eq!(
+            part_target_for_frame_ms(ms(200), 0, Timescale::from_nonzero(48_000)),
+            None
+        );
     }
 }
 

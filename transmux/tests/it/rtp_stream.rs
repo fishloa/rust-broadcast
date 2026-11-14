@@ -18,8 +18,9 @@
 //! numbers no real short fixture naturally produces.
 #![cfg(feature = "std")]
 
-#[cfg(feature = "std")]
 use crate::sdp_session;
+#[cfg(feature = "std")]
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Unpackage};
 use std::collections::HashSet;
 use transmux::TrackId;
@@ -133,7 +134,7 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
             width: 0,
             height: 0,
         },
-        90_000,
+        Timescale::from_nonzero(90_000),
     )]);
     let mut recovered = Vec::new();
     for pkt in &video_stream.packets {
@@ -164,7 +165,10 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
         14400, 3600, 3600, 3600, 3600, 3600, 3600, 3600, 3600, 3600, 3600, 3600,
     ];
     const EXPECTED_TOTAL: u64 = 280_800;
-    let got_durations: Vec<u32> = recovered.iter().map(|s| s.duration.unwrap_or(0)).collect();
+    let got_durations: Vec<u32> = recovered
+        .iter()
+        .map(|s| s.timing.map(|t| t.duration).unwrap_or(0))
+        .collect();
     assert_eq!(
         &got_durations[..EXPECTED_FIRST_DURATIONS.len()],
         &EXPECTED_FIRST_DURATIONS[..],
@@ -194,7 +198,8 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
 
     // Recovered video samples build a valid fMP4 init + media segment + part.
     let specs = d.track_specs();
-    let init = build_init_segment(&specs, 90_000).expect("build_init_segment must succeed");
+    let init = build_init_segment(&specs, Timescale::from_nonzero(90_000))
+        .expect("build_init_segment must succeed");
     assert!(!init.is_empty(), "init segment non-empty");
     let init_issues = validate_init_segment(&init);
     assert!(
@@ -211,7 +216,7 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
         .expect("build_media_segment (part 1) must succeed");
     let part1_total: u64 = part1
         .iter()
-        .map(|s| u64::from(s.duration.unwrap_or(0)))
+        .map(|s| u64::from(s.timing.map(|t| t.duration).unwrap_or(0)))
         .sum();
     let seg2 = build_media_segment(
         2,
@@ -310,8 +315,13 @@ fn run_video(
     reorder_depth: usize,
 ) -> (Vec<bytes::Bytes>, bool) {
     let mut d = RtpStreamDepacketiser::new(vec![
-        RtpStreamTrack::new(TrackId::new(1), RtpMediaKind::H264, config.clone(), 90_000)
-            .with_reorder_depth(reorder_depth),
+        RtpStreamTrack::new(
+            TrackId::new(1),
+            RtpMediaKind::H264,
+            config.clone(),
+            Timescale::from_nonzero(90_000),
+        )
+        .with_reorder_depth(reorder_depth),
     ]);
     let mut out = Vec::new();
     for pkt in pkts {
@@ -459,10 +469,20 @@ fn clean_capture_emits_zero_loss_signals() {
         .clone();
 
     let mut d = RtpStreamDepacketiser::new(vec![
-        RtpStreamTrack::new(TrackId::new(1), RtpMediaKind::H264, vconfig, 90_000),
+        RtpStreamTrack::new(
+            TrackId::new(1),
+            RtpMediaKind::H264,
+            vconfig,
+            Timescale::from_nonzero(90_000),
+        ),
         // Clock rate is irrelevant to sequence-gate correctness (only
         // timing derivation, not under test here).
-        RtpStreamTrack::new(TrackId::new(2), RtpMediaKind::Aac, aconfig, 48_000),
+        RtpStreamTrack::new(
+            TrackId::new(2),
+            RtpMediaKind::Aac,
+            aconfig,
+            Timescale::from_nonzero(48_000),
+        ),
     ]);
 
     for pkt in &video_stream(&out).packets {
@@ -542,7 +562,7 @@ fn sequence_wrap_is_not_treated_as_a_gap() {
         TrackId::new(1),
         RtpMediaKind::H264,
         config,
-        90_000,
+        Timescale::from_nonzero(90_000),
     )]);
 
     let seqs: [u16; 5] = [65533, 65534, 65535, 0, 1];
@@ -590,8 +610,13 @@ fn reorder_buffer_is_bounded_under_a_flood_of_out_of_order_packets() {
 
     let config = tiny_avc_config();
     let mut d = RtpStreamDepacketiser::new(vec![
-        RtpStreamTrack::new(TrackId::new(1), RtpMediaKind::H264, config, 90_000)
-            .with_reorder_depth(DEPTH),
+        RtpStreamTrack::new(
+            TrackId::new(1),
+            RtpMediaKind::H264,
+            config,
+            Timescale::from_nonzero(90_000),
+        )
+        .with_reorder_depth(DEPTH),
     ]);
 
     // Establish `expected` with one in-order packet (seq 0).
@@ -734,7 +759,7 @@ fn run_seqs(pairs: &[(u16, u32)]) -> (Vec<Vec<u8>>, Vec<RtpLossEvent>) {
         TrackId::new(1),
         RtpMediaKind::H264,
         tiny_avc_config(),
-        90_000,
+        Timescale::from_nonzero(90_000),
     )]);
     let mut out = Vec::new();
     for (i, &(seq, ts)) in pairs.iter().enumerate() {
@@ -1085,12 +1110,12 @@ fn resync_accounts_for_every_held_reorder_window_au() {
         TrackId::new(1),
         RtpMediaKind::H264,
         tiny_avc_config(),
-        90_000,
+        Timescale::from_nonzero(90_000),
     )]);
     let mut pts = Vec::new();
     for (i, &(seq, ts)) in pairs.iter().enumerate() {
         for s in d.push(TrackId::new(1), &seq_pkt(seq, ts, i as u8)).unwrap() {
-            pts.push(s.pts.unwrap());
+            pts.push(s.timing.map(|t| t.pts).unwrap());
         }
     }
     let mut events = Vec::new();
@@ -1122,7 +1147,7 @@ fn reorder_window_overflow_reports_every_dropped_au() {
         TrackId::new(1),
         RtpMediaKind::H264,
         tiny_avc_config(),
-        90_000,
+        Timescale::from_nonzero(90_000),
     )]);
     let mut emitted_before_flush = 0usize;
     for k in 0..AUS {

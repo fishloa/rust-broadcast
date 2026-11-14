@@ -37,6 +37,7 @@
 
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::timescale::Timescale;
 
 use crate::error::{Error, Result};
 use crate::version::EmsgVersion;
@@ -116,7 +117,7 @@ pub struct EmsgBox<'a> {
     pub value: &'a str,
     /// `timescale` (Table 6-2, u32): ticks per second for the time fields;
     /// equal to the `mdhd` timescale of the Representation.
-    pub timescale: u32,
+    pub timescale: Timescale,
     /// The presentation-time field — selects the box `version` (v0 delta vs v1
     /// absolute).
     pub presentation_time: PresentationTime,
@@ -228,7 +229,7 @@ impl<'a> EmsgBox<'a> {
 
         let need = U32_LEN * 4;
         need_in(rest, need, "emsg v0 integer fields")?;
-        let timescale = read_u32(&rest[0..U32_LEN]);
+        let timescale = Timescale::try_new(read_u32(&rest[0..U32_LEN]))?;
         let delta = read_u32(&rest[U32_LEN..U32_LEN * 2]);
         let event_duration = read_u32(&rest[U32_LEN * 2..U32_LEN * 3]);
         let id = read_u32(&rest[U32_LEN * 3..U32_LEN * 4]);
@@ -251,7 +252,7 @@ impl<'a> EmsgBox<'a> {
     fn parse_v1(body: &'a [u8]) -> Result<Self> {
         let need = U32_LEN + U64_LEN + U32_LEN + U32_LEN;
         need_in(body, need, "emsg v1 integer fields")?;
-        let timescale = read_u32(&body[0..U32_LEN]);
+        let timescale = Timescale::try_new(read_u32(&body[0..U32_LEN]))?;
         let presentation_time = read_u64(&body[U32_LEN..U32_LEN + U64_LEN]);
         let mut off = U32_LEN + U64_LEN;
         let event_duration = read_u32(&body[off..off + U32_LEN]);
@@ -308,14 +309,14 @@ impl<'a> EmsgBox<'a> {
                 // strings first.
                 off = write_cstr(out, off, self.scheme_id_uri);
                 off = write_cstr(out, off, self.value);
-                off = write_u32(out, off, self.timescale);
+                off = write_u32(out, off, self.timescale.get());
                 off = write_u32(out, off, delta);
                 off = write_u32(out, off, self.event_duration);
                 off = write_u32(out, off, self.id);
             }
             PresentationTime::Absolute(pt) => {
                 // integers first, strings last.
-                off = write_u32(out, off, self.timescale);
+                off = write_u32(out, off, self.timescale.get());
                 off = write_u64(out, off, pt);
                 off = write_u32(out, off, self.event_duration);
                 off = write_u32(out, off, self.id);
@@ -425,6 +426,7 @@ fn write_u64(out: &mut [u8], off: usize, v: u64) -> usize {
 mod tests {
     use super::*;
     use alloc::vec;
+    use broadcast_common::error::InvalidValue;
 
     // v0: construct → serialize → exact wire bytes → reparse → equal.
     #[test]
@@ -434,7 +436,7 @@ mod tests {
             flags: EMSG_FLAGS,
             scheme_id_uri: "urn:example:scheme",
             value: "",
-            timescale: 90_000,
+            timescale: Timescale::from_nonzero(90_000),
             presentation_time: PresentationTime::Delta(0x0001_0203),
             event_duration: 0xFFFF_FFFF,
             id: 0x0000_002A,
@@ -477,7 +479,7 @@ mod tests {
             flags: EMSG_FLAGS,
             scheme_id_uri: "urn:scte:scte35:2013:bin",
             value: "1001",
-            timescale: 1000,
+            timescale: Timescale::from_nonzero(1000),
             presentation_time: PresentationTime::Absolute(0x0102_0304_0506_0708),
             event_duration: 250,
             id: 7,
@@ -520,7 +522,7 @@ mod tests {
             flags: EMSG_FLAGS,
             scheme_id_uri: "s",
             value: "v",
-            timescale: 0x1111_1111,
+            timescale: Timescale::from_nonzero(0x1111_1111),
             presentation_time: PresentationTime::Delta(0x2222_2222),
             event_duration: 0x3333_3333,
             id: 0x4444_4444,
@@ -530,7 +532,7 @@ mod tests {
             flags: EMSG_FLAGS,
             scheme_id_uri: "s",
             value: "v",
-            timescale: 0x1111_1111,
+            timescale: Timescale::from_nonzero(0x1111_1111),
             presentation_time: PresentationTime::Absolute(0x2222_2222),
             event_duration: 0x3333_3333,
             id: 0x4444_4444,
@@ -558,7 +560,7 @@ mod tests {
             flags: EMSG_FLAGS,
             scheme_id_uri: "urn:x",
             value: "",
-            timescale: 48_000,
+            timescale: Timescale::from_nonzero(48_000),
             presentation_time: PresentationTime::Delta(10),
             event_duration: 20,
             id,
@@ -585,7 +587,7 @@ mod tests {
             flags: EMSG_FLAGS,
             scheme_id_uri: "x",
             value: "",
-            timescale: 1,
+            timescale: Timescale::from_nonzero(1),
             presentation_time: PresentationTime::Delta(0),
             event_duration: 0,
             id: 0,
@@ -639,7 +641,7 @@ mod tests {
             flags: EMSG_FLAGS,
             scheme_id_uri: "urn:example:scheme",
             value: "a\0b",
-            timescale: 1,
+            timescale: Timescale::from_nonzero(1),
             presentation_time: PresentationTime::Delta(0),
             event_duration: 0,
             id: 0,
@@ -657,7 +659,7 @@ mod tests {
             flags: EMSG_FLAGS,
             scheme_id_uri: "urn:example:\0scheme",
             value: "",
-            timescale: 1,
+            timescale: Timescale::from_nonzero(1),
             presentation_time: PresentationTime::Delta(0),
             event_duration: 0,
             id: 0,
@@ -680,7 +682,7 @@ mod tests {
             flags: 0x00_A5_5A,
             scheme_id_uri: "urn:example:scheme",
             value: "v",
-            timescale: 1,
+            timescale: Timescale::from_nonzero(1),
             presentation_time: PresentationTime::Delta(0),
             event_duration: 0,
             id: 0,
@@ -700,7 +702,7 @@ mod tests {
             flags: 0x0100_0000,
             scheme_id_uri: "urn:example:scheme",
             value: "",
-            timescale: 1,
+            timescale: Timescale::from_nonzero(1),
             presentation_time: PresentationTime::Delta(0),
             event_duration: 0,
             id: 0,
@@ -721,7 +723,7 @@ mod tests {
             flags: EMSG_FLAGS,
             scheme_id_uri: uri,
             value: "",
-            timescale: 1,
+            timescale: Timescale::from_nonzero(1),
             presentation_time: PresentationTime::Delta(0),
             event_duration: 0,
             id: 0,
@@ -738,7 +740,7 @@ mod tests {
             flags: EMSG_FLAGS,
             scheme_id_uri: "urn:scte:scte35:2013:bin",
             value: "",
-            timescale: 1,
+            timescale: Timescale::from_nonzero(1),
             presentation_time: PresentationTime::Delta(0),
             event_duration: 0,
             id: 0,
@@ -750,5 +752,37 @@ mod tests {
             ..b.clone()
         };
         assert!(!nb.is_scte35());
+    }
+
+    fn emsg_with(presentation_time: PresentationTime) -> EmsgBox<'static> {
+        EmsgBox {
+            flags: EMSG_FLAGS,
+            scheme_id_uri: "s",
+            value: "v",
+            timescale: Timescale::from_nonzero(1),
+            presentation_time,
+            event_duration: 0,
+            id: 0,
+            message_data: &[],
+        }
+    }
+
+    #[test]
+    fn a_present_zero_timescale_is_a_typed_error_in_both_versions() {
+        let mut v0 = emsg_with(PresentationTime::Delta(0)).to_vec().unwrap();
+        let v0_timescale = FULLBOX_HEADER_LEN + "s\0v\0".len();
+        v0[v0_timescale..v0_timescale + U32_LEN].fill(0);
+        let mut v1 = emsg_with(PresentationTime::Absolute(0)).to_vec().unwrap();
+        v1[FULLBOX_HEADER_LEN..FULLBOX_HEADER_LEN + U32_LEN].fill(0);
+        for bytes in [v0, v1] {
+            assert!(matches!(
+                EmsgBox::parse(&bytes),
+                Err(Error::InvalidValue(InvalidValue {
+                    field: "timescale",
+                    value: 0,
+                    ..
+                }))
+            ));
+        }
     }
 }

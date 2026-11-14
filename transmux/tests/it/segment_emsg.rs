@@ -18,6 +18,7 @@
 //! - ANSI/SCTE 214-3 §8.3.3: SCTE 35 binary scheme for the inband `emsg`
 //!   `urn:scte:scte35:2013:bin`.
 
+use broadcast_common::timescale::Timescale;
 use mp4_emsg::{EMSG_BOX_TYPE, EmsgBox, EmsgVersion, PresentationTime};
 use transmux::TrackId;
 use transmux::{FragmentTrackData, Sample, build_media_segment, build_media_segment_with_events};
@@ -185,7 +186,7 @@ fn two_emsgs_appear_in_order_before_moof() {
         flags: 0,
         scheme_id_uri: SCTE35_SCHEME,
         value: "",
-        timescale: 90_000,
+        timescale: Timescale::from_nonzero(90_000),
         presentation_time: PresentationTime::Delta(0),
         event_duration: 0xFFFF_FFFF,
         id: 1,
@@ -195,7 +196,7 @@ fn two_emsgs_appear_in_order_before_moof() {
         flags: 0,
         scheme_id_uri: SCTE35_SCHEME,
         value: "",
-        timescale: 90_000,
+        timescale: Timescale::from_nonzero(90_000),
         presentation_time: PresentationTime::Delta(9000),
         event_duration: 0xFFFF_FFFF,
         id: 2,

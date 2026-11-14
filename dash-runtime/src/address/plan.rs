@@ -25,13 +25,13 @@ use crate::error::Unsupported;
 use crate::timing::availability::{
     init_available_from, segment_available_from_ticks, segment_available_until_ticks, ticks_to_us,
 };
-use broadcast_common::timescale::{Rounding, from_micros};
+use broadcast_common::timescale::{Rounding, Timescale, from_micros};
 use broadcast_dash::inherit::{ListInfo, ResolvedMulti, SegmentInfo, TemplateInfo};
 use broadcast_dash::{BaseInfo, ByteRange, UrlType};
 
 const MICROS: i128 = 1_000_000;
 
-fn us_to_ticks_ceil(us: i128, timescale: u64) -> u64 {
+fn us_to_ticks_ceil(us: i128, timescale: Timescale) -> u64 {
     u64::try_from(from_micros(us.max(0), timescale, Rounding::Ceil)).unwrap_or(u64::MAX)
 }
 
@@ -114,7 +114,7 @@ pub struct SegmentRef {
     /// Duration in ticks.
     pub duration_ticks: u64,
     /// Ticks per second.
-    pub timescale: u64,
+    pub timescale: Timescale,
     /// Start relative to the Period start, microseconds
     /// (`(time - PTO) / timescale` for a timeline).
     pub start_us: i128,
@@ -185,7 +185,7 @@ struct MediaTemplate {
 #[derive(Debug, Clone)]
 pub struct SegmentPlan {
     kind: Kind,
-    timescale: u64,
+    timescale: Timescale,
     pto: u64,
     period_start_us: i128,
     avail: Option<Avail>,
@@ -407,11 +407,11 @@ impl SegmentPlan {
             .map(url_ref)
             .or_else(|| b.index_range.map(|r| (String::new(), Some(r))));
         let pto = b.presentation_time_offset.unwrap_or(0);
-        let base_ts = b.timescale.unwrap_or(1);
+        let base_ts = b.effective_timescale();
         if let Some(r) = &b.index_range {
             let (sidx, anchor) = input.index.ok_or(AddressError::IndexRequired)?;
             let _ = base_index::anchor_after(r)?;
-            let ts = u64::from(sidx.timescale).max(1);
+            let ts = sidx.timescale;
             let segs: Vec<IndexedSegment> = base_index::segments(sidx, anchor)?;
             let fixed = segs
                 .into_iter()
@@ -461,7 +461,7 @@ impl SegmentPlan {
 
     /// `@timescale` in effect.
     #[must_use]
-    pub fn timescale(&self) -> u64 {
+    pub fn timescale(&self) -> Timescale {
         self.timescale
     }
 

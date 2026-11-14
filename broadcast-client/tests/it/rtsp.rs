@@ -317,7 +317,7 @@ fn tracks_precede_first_sample_and_samples_equal_oracle() {
             track.samples.len(),
             "track {id}: every original sample is recovered"
         );
-        let origin = track.samples[0].pts.expect("fixture pts");
+        let origin = track.samples[0].timing.map(|t| t.pts).expect("fixture pts");
         for (n, (recovered, original)) in mine.iter().zip(&track.samples).enumerate() {
             assert_eq!(
                 &recovered.data[..],
@@ -325,8 +325,8 @@ fn tracks_precede_first_sample_and_samples_equal_oracle() {
                 "track {id} sample {n}: payload bytes"
             );
             assert_eq!(
-                recovered.pts,
-                original.pts.map(|p| p - origin),
+                recovered.timing.map(|t| t.pts),
+                original.timing.map(|t| t.pts).map(|p| p - origin),
                 "track {id} sample {n}: pts"
             );
             assert_eq!(
@@ -367,8 +367,8 @@ fn media_only(events: &[Event]) -> Vec<Event> {
         .cloned()
         .map(|mut e| {
             if let Event::Sample { sample, join, .. } = &mut e {
-                sample.pts = None;
-                sample.dts = None;
+                sample.timing = None;
+                sample.timing = None;
                 *join = None;
             }
             e

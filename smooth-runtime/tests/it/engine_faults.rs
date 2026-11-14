@@ -280,5 +280,8 @@ fn a_zero_timescale_is_never_delivered() {
     host.route("Manifest", vec![Reply::Body(zero.into_bytes())]);
     host.run_until(|o| o.iter().any(|o| is_fatal(o) || is_ended(o)));
     assert!(!host.has(|o| matches!(o, Output::Tracks(_))));
-    assert!(host.has(|o| matches!(o, Output::Fatal(SmoothError::NoUsableStream))));
+    assert!(host.has(|o| matches!(
+        o,
+        Output::Fatal(SmoothError::Manifest(ManifestFault::Parse))
+    )));
 }

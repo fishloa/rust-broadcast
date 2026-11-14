@@ -2,6 +2,7 @@
 //! `fixtures/ts/h264-aac.ts`, packetised in decode order with RTP timestamps
 //! equal to the presentation time (RFC 6184 §5.1).
 
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Unpackage};
 use transmux::pipeline::CodecConfig;
 use transmux::{
@@ -17,7 +18,11 @@ fn video_durations(skip_aus: usize) -> (Vec<(i64, u32)>, Vec<i64>) {
         .iter()
         .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
         .unwrap();
-    let source_pts: Vec<i64> = track.samples.iter().map(|s| s.pts.unwrap()).collect();
+    let source_pts: Vec<i64> = track
+        .samples
+        .iter()
+        .map(|s| s.timing.map(|t| t.pts).unwrap())
+        .collect();
     let mut p = RtpPacketiser {
         mtu: 1400,
         ssrc: 0x1234_5678,
@@ -34,7 +39,7 @@ fn video_durations(skip_aus: usize) -> (Vec<(i64, u32)>, Vec<i64>) {
         id,
         RtpMediaKind::H264,
         track.spec.config.clone(),
-        VIDEO_CLOCK_RATE,
+        Timescale::from_nonzero(VIDEO_CLOCK_RATE),
     )]);
     let mut samples = Vec::new();
     let mut au_index = 0usize;
@@ -54,7 +59,12 @@ fn video_durations(skip_aus: usize) -> (Vec<(i64, u32)>, Vec<i64>) {
     (
         samples
             .iter()
-            .map(|s| (s.pts.unwrap(), s.duration.unwrap_or(0)))
+            .map(|s| {
+                (
+                    s.timing.map(|t| t.pts).unwrap(),
+                    s.timing.map(|t| t.duration).unwrap_or(0),
+                )
+            })
             .collect(),
         source_pts,
     )

@@ -188,6 +188,7 @@ use crate::rtp_dts::DtsDeriver;
 use crate::slice_header::{AvcParamSets, AvcPicture};
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Demand, Parse, Stage, Timestamp};
 use rtp_packet::{MIN_SEQUENTIAL, RTP_SEQ_MOD_PLUS_ONE, SeqValidity, SeqVerdict};
 
@@ -281,7 +282,7 @@ pub enum RtpLossEvent {
         /// The track this occurred on.
         track_id: TrackId,
         /// The previous access unit's unwrapped presentation timestamp, in the
-        /// track's clock (the same unit as [`crate::ir::Sample::pts`]).
+        /// track's clock (the same unit as `Sample::timing` (`.pts`)).
         previous_pts: i64,
         /// This access unit's, which is earlier.
         pts: i64,
@@ -310,7 +311,7 @@ pub enum RtpLossEvent {
         /// The track this occurred on.
         track_id: TrackId,
         /// The discarded AU's unwrapped presentation timestamp, in the track's
-        /// clock (the same unit as [`crate::ir::Sample::pts`]).
+        /// clock (the same unit as `Sample::timing` (`.pts`)).
         pts: i64,
     },
 }
@@ -331,7 +332,7 @@ pub struct RtpStreamTrack {
     /// Real codec config (e.g. from [`crate::rtp_sdp`]).
     pub config: CodecConfig,
     /// RTP clock rate (Hz) — also used as the IR track timescale.
-    pub clock_rate: u32,
+    pub clock_rate: Timescale,
     /// Bounded reorder-buffer depth (packets) — see [`DEFAULT_REORDER_DEPTH`].
     reorder_depth: usize,
 }
@@ -343,7 +344,7 @@ impl RtpStreamTrack {
         track_id: TrackId,
         kind: RtpMediaKind,
         config: CodecConfig,
-        clock_rate: u32,
+        clock_rate: Timescale,
     ) -> Self {
         Self {
             track_id,
@@ -598,7 +599,7 @@ impl SeqState {
 struct TrackState {
     kind: RtpMediaKind,
     config: CodecConfig,
-    clock_rate: u32,
+    clock_rate: Timescale,
     /// RTP timestamp of the packets currently buffered in `cur_pkts` (the
     /// access unit still being assembled).
     cur_ts: Option<u32>,
@@ -698,7 +699,7 @@ pub struct WallSkewExceeded {
 /// clock_rate` (RFC 3550 §6.4.1's NTP/RTP correlation, generalised from the
 /// SR's own instant to any AU on the same RTP clock). `None` when the distance
 /// is not representable.
-fn wall_seconds(anchor: &SrAnchor, clock_rate: u32, au_unwrapped_ts: u64) -> Option<f64> {
+fn wall_seconds(anchor: &SrAnchor, clock_rate: Timescale, au_unwrapped_ts: u64) -> Option<f64> {
     let rate = i128::from(clock_rate);
     if rate == 0 {
         return None;
@@ -706,7 +707,7 @@ fn wall_seconds(anchor: &SrAnchor, clock_rate: u32, au_unwrapped_ts: u64) -> Opt
     let delta = i128::from(au_unwrapped_ts) - i128::from(anchor.rtp_ts);
     let whole = i32::try_from(delta.div_euclid(rate)).ok()?;
     let remainder = u32::try_from(delta.rem_euclid(rate)).ok()?;
-    Some(anchor.ntp_seconds + f64::from(whole) + f64::from(remainder) / f64::from(clock_rate))
+    Some(anchor.ntp_seconds + f64::from(whole) + f64::from(remainder) / f64::from(clock_rate.get()))
 }
 
 /// Extend a 32-bit wire RTP timestamp to the 64-bit value nearest `reference`
@@ -772,7 +773,7 @@ fn unwrap_ts(prev: Option<u64>, ts: u32) -> u64 {
 }
 
 /// Narrow an unwrapped RTP media-clock value into the `i64` range
-/// [`Sample::dts`]/[`Sample::pts`] carry (media plane step 2c). The unwrapped
+/// `Sample::timing` (`.dts`)/`Sample::timing` (`.pts`) carry (media plane step 2c). The unwrapped
 /// clock is a `u64` accumulating whole `2^32` windows, so this only clamps at
 /// values no real stream reaches (`i64::MAX` ticks is ~3 million years at
 /// 90 kHz) — it makes the narrowing checked rather than a silent truncation.
@@ -799,7 +800,11 @@ const MAX_REORDER_WINDOW: usize = 256;
 /// constraint, which is still its own declaration and is used only after every
 /// observed duration. AAC: `AudioSpecificConfig::samples_per_frame` scaled from the
 /// ASC sampling rate to the RTP clock rate. `None` when nothing is declared.
-fn declared_au_duration(kind: RtpMediaKind, config: &CodecConfig, clock_rate: u32) -> Option<u32> {
+fn declared_au_duration(
+    kind: RtpMediaKind,
+    config: &CodecConfig,
+    clock_rate: Timescale,
+) -> Option<u32> {
     let ticks = match (kind, config) {
         (RtpMediaKind::H264, CodecConfig::Avc { config, .. }) => {
             let sps = config.config.sps.first()?;
@@ -1077,7 +1082,7 @@ impl RtpStreamDepacketiser {
     pub fn try_sync_start_decode_times(
         &self,
     ) -> core::result::Result<Vec<(TrackId, u64)>, WallSkewExceeded> {
-        let anchored: Vec<(TrackId, f64, u32)> = self
+        let anchored: Vec<(TrackId, f64, Timescale)> = self
             .tracks
             .iter()
             .filter_map(|(id, st)| {
@@ -1106,7 +1111,7 @@ impl RtpStreamDepacketiser {
         Ok(anchored
             .into_iter()
             .map(|(id, wall, clock_rate)| {
-                let raw_ticks = ((wall - origin) * f64::from(clock_rate)).max(0.0);
+                let raw_ticks = ((wall - origin) * f64::from(clock_rate.get())).max(0.0);
                 // `f64::round` is a `std`-only inherent method (it needs
                 // libm), unavailable in this crate's `no_std` core build —
                 // round-half-up via a truncating cast instead, which is
@@ -1740,7 +1745,11 @@ mod tests {
         }
     }
 
-    fn single_track(kind: RtpMediaKind, config: CodecConfig, clock: u32) -> RtpStreamDepacketiser {
+    fn single_track(
+        kind: RtpMediaKind,
+        config: CodecConfig,
+        clock: Timescale,
+    ) -> RtpStreamDepacketiser {
         RtpStreamDepacketiser::new(alloc::vec![RtpStreamTrack::new(
             TrackId::new(1),
             kind,
@@ -1765,7 +1774,11 @@ mod tests {
     #[test]
     fn flush_after_first_h264_au_uses_sps_vui_frame_period() {
         let id = TrackId::new(1);
-        let mut d = single_track(RtpMediaKind::H264, avc_with_sps(SPS_25FPS_FIXED), 90_000);
+        let mut d = single_track(
+            RtpMediaKind::H264,
+            avc_with_sps(SPS_25FPS_FIXED),
+            Timescale::from_nonzero(90_000),
+        );
         assert!(
             d.push(id, &vpkt(1, 1000, true, &[0x65, 0xAA]))
                 .unwrap()
@@ -1773,26 +1786,37 @@ mod tests {
         );
         let out = d.flush(id).unwrap();
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].duration, Some(90_000 / 25));
+        assert_eq!(out[0].timing.map(|t| t.duration), Some(90_000 / 25));
     }
 
     #[test]
     fn set_track_config_refreshes_the_declared_duration() {
         let id = TrackId::new(1);
-        let mut d = single_track(RtpMediaKind::H264, avc_with_sps(SPS_NO_TIMING), 90_000);
+        let mut d = single_track(
+            RtpMediaKind::H264,
+            avc_with_sps(SPS_NO_TIMING),
+            Timescale::from_nonzero(90_000),
+        );
         d.set_track_config(id, avc_with_sps(SPS_25FPS_FIXED));
         assert!(
             d.push(id, &vpkt(1, 1000, true, &[0x65, 0xAA]))
                 .unwrap()
                 .is_empty()
         );
-        assert_eq!(d.flush(id).unwrap()[0].duration, Some(3600));
+        assert_eq!(
+            d.flush(id).unwrap()[0].timing.map(|t| t.duration),
+            Some(3600)
+        );
     }
 
     #[test]
     fn flush_without_any_known_duration_holds_instead_of_inventing_one() {
         let id = TrackId::new(1);
-        let mut d = single_track(RtpMediaKind::H264, avc_with_sps(SPS_NO_TIMING), 90_000);
+        let mut d = single_track(
+            RtpMediaKind::H264,
+            avc_with_sps(SPS_NO_TIMING),
+            Timescale::from_nonzero(90_000),
+        );
         assert!(
             d.push(id, &vpkt(1, 1000, true, &[0x65, 0xAA]))
                 .unwrap()
@@ -1801,7 +1825,7 @@ mod tests {
         assert!(d.flush(id).unwrap().is_empty());
         let out = d.push(id, &vpkt(2, 4000, true, &[0x41, 0xBB])).unwrap();
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].duration, Some(3000));
+        assert_eq!(out[0].timing.map(|t| t.duration), Some(3000));
     }
 
     #[test]
@@ -1809,7 +1833,7 @@ mod tests {
         let id = TrackId::new(1);
         for (asc, expected) in [(ASC_LC_48K_STEREO_1024, 1024), (ASC_LC_48K_STEREO_960, 960)] {
             let cfg = crate::rtp_sdp::aac_config_from_asc_bytes(asc.to_vec()).unwrap();
-            let mut d = single_track(RtpMediaKind::Aac, cfg, 48_000);
+            let mut d = single_track(RtpMediaKind::Aac, cfg, Timescale::from_nonzero(48_000));
             assert!(
                 d.push(id, &aac_packet(1, 5000, &[&[1, 2]]))
                     .unwrap()
@@ -1817,7 +1841,7 @@ mod tests {
             );
             let out = d.flush(id).unwrap();
             assert_eq!(out.len(), 1);
-            assert_eq!(out[0].duration, Some(expected));
+            assert_eq!(out[0].timing.map(|t| t.duration), Some(expected));
         }
     }
 
@@ -1826,7 +1850,7 @@ mod tests {
         let id = TrackId::new(1);
         let cfg =
             crate::rtp_sdp::aac_config_from_asc_bytes(ASC_LC_48K_STEREO_1024.to_vec()).unwrap();
-        let mut d = single_track(RtpMediaKind::Aac, cfg, 48_000);
+        let mut d = single_track(RtpMediaKind::Aac, cfg, Timescale::from_nonzero(48_000));
         let aus: [&[u8]; 4] = [&[1], &[2], &[3], &[4]];
         assert!(d.push(id, &aac_packet(1, 10_000, &aus)).unwrap().is_empty());
         assert!(
@@ -1835,7 +1859,10 @@ mod tests {
                 .is_empty()
         );
         let out = d.push(id, &aac_packet(3, 12_000, &[&[6]])).unwrap();
-        let got: Vec<_> = out.iter().map(|s| (s.pts, s.duration)).collect();
+        let got: Vec<_> = out
+            .iter()
+            .map(|s| (s.timing.map(|t| t.pts), s.timing.map(|t| t.duration)))
+            .collect();
         assert_eq!(
             got,
             alloc::vec![
@@ -1850,7 +1877,11 @@ mod tests {
     #[test]
     fn aggregated_group_with_delta_below_au_count_and_no_known_duration_is_not_emitted() {
         let id = TrackId::new(1);
-        let mut d = single_track(RtpMediaKind::Aac, dummy_avc(), 48_000);
+        let mut d = single_track(
+            RtpMediaKind::Aac,
+            dummy_avc(),
+            Timescale::from_nonzero(48_000),
+        );
         let aus: [&[u8]; 4] = [&[1], &[2], &[3], &[4]];
         assert!(d.push(id, &aac_packet(1, 10_000, &aus)).unwrap().is_empty());
         assert!(
@@ -1885,7 +1916,7 @@ mod tests {
             id,
             RtpMediaKind::Aac,
             dummy_avc(),
-            48_000,
+            Timescale::from_nonzero(48_000),
         )]);
         let aus: [&[u8]; 4] = [&[1, 1], &[2, 2], &[3, 3], &[4, 4]];
         assert!(d.push(id, &aac_packet(1, 10_000, &aus)).unwrap().is_empty());
@@ -1895,7 +1926,10 @@ mod tests {
                 .is_empty()
         );
         let out = d.push(id, &aac_packet(3, 15_120, &[&[6, 6]])).unwrap();
-        let got: Vec<_> = out.iter().map(|s| (s.pts, s.duration)).collect();
+        let got: Vec<_> = out
+            .iter()
+            .map(|s| (s.timing.map(|t| t.pts), s.timing.map(|t| t.duration)))
+            .collect();
         assert_eq!(
             got,
             alloc::vec![
@@ -1922,7 +1956,7 @@ mod tests {
             TrackId::new(1),
             RtpMediaKind::H264,
             dummy_avc(),
-            90_000,
+            Timescale::from_nonzero(90_000),
         )]);
         declare_reorder_depth(&mut d, 0);
 
@@ -1938,18 +1972,18 @@ mod tests {
         // AU1 arrives → AU0 emitted with duration 3000, is_sync=true.
         let s0 = d.push(TrackId::new(1), &vpkt(2, 4000, true, &non)).unwrap();
         assert_eq!(s0.len(), 1);
-        assert_eq!(s0[0].duration, Some(3000));
+        assert_eq!(s0[0].timing.map(|t| t.duration), Some(3000));
         assert!(s0[0].flags.is_sync);
         assert_eq!(s0[0].composition_offset(), 0);
         // AU2 arrives → AU1 emitted, duration 3000, is_sync=false.
         let s1 = d.push(TrackId::new(1), &vpkt(3, 7000, true, &non)).unwrap();
         assert_eq!(s1.len(), 1);
-        assert_eq!(s1[0].duration, Some(3000));
+        assert_eq!(s1[0].timing.map(|t| t.duration), Some(3000));
         assert!(!s1[0].flags.is_sync);
         // flush → AU2 emitted with the last-known duration (3000).
         let s2 = d.flush(TrackId::new(1)).unwrap();
         assert_eq!(s2.len(), 1);
-        assert_eq!(s2[0].duration, Some(3000));
+        assert_eq!(s2[0].timing.map(|t| t.duration), Some(3000));
     }
 
     /// [`Stage::feed`]/[`Stage::poll`]/[`Stage::finish`] on a single-track
@@ -1972,7 +2006,7 @@ mod tests {
             TrackId::new(1),
             RtpMediaKind::H264,
             dummy_avc(),
-            90_000,
+            Timescale::from_nonzero(90_000),
         )]);
         let mut oracle_samples: Vec<Sample> = Vec::new();
         for pkt in &packets {
@@ -1985,7 +2019,7 @@ mod tests {
             TrackId::new(1),
             RtpMediaKind::H264,
             dummy_avc(),
-            90_000,
+            Timescale::from_nonzero(90_000),
         )]);
         let mut staged_samples: Vec<Sample> = Vec::new();
         for pkt in &packets {
@@ -2001,9 +2035,9 @@ mod tests {
 
         assert_eq!(staged_samples.len(), oracle_samples.len());
         for (s, o) in staged_samples.iter().zip(oracle_samples.iter()) {
-            assert_eq!(s.dts, o.dts);
-            assert_eq!(s.pts, o.pts);
-            assert_eq!(s.duration, o.duration);
+            assert_eq!(s.timing.map(|t| t.dts), o.timing.map(|t| t.dts));
+            assert_eq!(s.timing.map(|t| t.pts), o.timing.map(|t| t.pts));
+            assert_eq!(s.timing.map(|t| t.duration), o.timing.map(|t| t.duration));
             assert_eq!(s.flags.is_sync, o.flags.is_sync);
             assert_eq!(s.data, o.data);
         }
@@ -2015,8 +2049,18 @@ mod tests {
     #[test]
     fn stage_feed_errors_on_multi_track_construction() {
         let mut d = RtpStreamDepacketiser::new(alloc::vec![
-            RtpStreamTrack::new(TrackId::new(1), RtpMediaKind::H264, dummy_avc(), 90_000),
-            RtpStreamTrack::new(TrackId::new(2), RtpMediaKind::H264, dummy_avc(), 90_000),
+            RtpStreamTrack::new(
+                TrackId::new(1),
+                RtpMediaKind::H264,
+                dummy_avc(),
+                Timescale::from_nonzero(90_000)
+            ),
+            RtpStreamTrack::new(
+                TrackId::new(2),
+                RtpMediaKind::H264,
+                dummy_avc(),
+                Timescale::from_nonzero(90_000)
+            ),
         ]);
         let err = Stage::feed(&mut d, &vpkt(1, 1000, true, &[0x65]), Timestamp::ZERO).unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)));
@@ -2054,7 +2098,7 @@ mod tests {
             TrackId::new(1),
             RtpMediaKind::H264,
             dummy_avc(),
-            90_000,
+            Timescale::from_nonzero(90_000),
         )]);
         declare_reorder_depth(&mut d, 0);
 
@@ -2114,7 +2158,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(s.len(), 1);
-        assert_eq!(s[0].duration, Some(3000));
+        assert_eq!(s[0].timing.map(|t| t.duration), Some(3000));
         assert!(s[0].flags.is_sync);
         assert!(
             d.poll_loss_event().is_none(),
@@ -2130,19 +2174,23 @@ mod tests {
             TrackId::new(7),
             RtpMediaKind::H264,
             dummy_avc(),
-            90_000,
+            Timescale::from_nonzero(90_000),
         )]);
         let specs = d.track_specs();
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].track_id, TrackId::new(7));
-        assert_eq!(specs[0].timescale, 90_000);
+        assert_eq!(specs[0].timescale.get(), 90_000);
     }
     fn max_hold_in_aus(
         presentation_order_of_wire: &[u32],
         depth: usize,
     ) -> (usize, Vec<(u64, u32)>) {
         let id = TrackId::new(1);
-        let mut d = single_track(RtpMediaKind::H264, avc_with_sps(SPS_25FPS_FIXED), 90_000);
+        let mut d = single_track(
+            RtpMediaKind::H264,
+            avc_with_sps(SPS_25FPS_FIXED),
+            Timescale::from_nonzero(90_000),
+        );
         declare_reorder_depth(&mut d, depth);
         let mut emitted = Vec::new();
         let mut max_hold = 0;
@@ -2150,7 +2198,10 @@ mod tests {
             let nal: &[u8] = if n == 0 { &[0x65, 0xAA] } else { &[0x41, 0xBB] };
             let ts = 1000 + frame * 3600;
             for s in d.push(id, &vpkt(n as u16, ts, true, nal)).unwrap() {
-                emitted.push((s.pts.unwrap() as u64, s.duration.unwrap()));
+                emitted.push((
+                    s.timing.map(|t| t.pts).unwrap() as u64,
+                    s.timing.map(|t| t.duration).unwrap(),
+                ));
             }
             max_hold = max_hold.max(n + 1 - emitted.len());
         }

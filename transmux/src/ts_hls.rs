@@ -80,6 +80,7 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Demand, Package, Stage, Timestamp};
 use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment};
 
@@ -323,7 +324,7 @@ impl Package for TsHlsPackager {
                 ticks[ti] = segment_ticks;
             }
             let anchor_ticks = ticks[anchor];
-            let ts_scale = media.tracks[anchor].spec.timescale.max(1) as u64;
+            let ts_scale = media.tracks[anchor].spec.timescale;
             // #EXT-X-TARGETDURATION is an integer ≥ every #EXTINF (RFC 8216
             // §4.3.3.1: the rounded max segment duration).
             let (duration, ceil_secs) = segment_duration_secs(anchor_ticks, ts_scale);
@@ -367,7 +368,7 @@ impl TsHlsPackager {
     /// Convert the configured `target_secs` into anchor-track timescale ticks
     /// (never zero, so a segment can always close).
     fn anchor_target_ticks(&self, anchor: &Track) -> u64 {
-        target_ticks_for(self.target_secs, anchor.spec.timescale)
+        target_ticks_for(self.target_secs, anchor.spec.timescale.get())
     }
 }
 
@@ -406,9 +407,12 @@ impl TsHlsPackager {
 /// A section sample carrying *neither* a duration nor a dts has no time
 /// information anywhere in the IR; it keeps the accumulator's value, i.e. it
 /// stays with the samples around it.
-fn placement_secs(sample: &Sample, acc_ticks: u64, timescale: u64, origin_secs: f64) -> f64 {
-    let timescale = timescale.max(1) as f64;
-    match (sample.duration, sample.dts) {
+fn placement_secs(sample: &Sample, acc_ticks: u64, timescale: Timescale, origin_secs: f64) -> f64 {
+    let timescale = f64::from(timescale.get());
+    match (
+        sample.timing.map(|t| t.duration).filter(|&d| d != 0),
+        sample.timing.map(|t| t.dts),
+    ) {
         (None, Some(dts)) => (dts.max(0) as f64 / timescale) - origin_secs,
         _ => acc_ticks as f64 / timescale,
     }
@@ -418,8 +422,8 @@ fn placement_secs(sample: &Sample, acc_ticks: u64, timescale: u64, origin_secs: 
 /// sample's absolute decode time, or `0.0` when the anchor carries no `dts`
 /// (segment start times are then relative to the anchor's first sample, which
 /// is the same thing).
-fn timeline_origin_secs(anchor_first_dts: Option<i64>, anchor_scale: u64) -> f64 {
-    anchor_first_dts.map_or(0.0, |d| d.max(0) as f64 / anchor_scale.max(1) as f64)
+fn timeline_origin_secs(anchor_first_dts: Option<i64>, anchor_scale: Timescale) -> f64 {
+    anchor_first_dts.map_or(0.0, |d| d.max(0) as f64 / f64::from(anchor_scale.get()))
 }
 
 /// Convert a whole-seconds target duration into anchor-track timescale ticks
@@ -431,10 +435,9 @@ fn target_ticks_for(target_secs: u32, ts_scale: u32) -> u64 {
 /// Segment duration in seconds, plus the RFC 8216 `#EXT-X-TARGETDURATION`
 /// ceiling (whole seconds, rounded up) for `anchor_ticks` of buffered anchor
 /// media at `ts_scale` ticks/second.
-fn segment_duration_secs(anchor_ticks: u64, ts_scale: u64) -> (f64, u32) {
-    let ts_scale = ts_scale.max(1);
-    let duration = anchor_ticks as f64 / ts_scale as f64;
-    let ceil_secs = anchor_ticks.div_ceil(ts_scale) as u32;
+fn segment_duration_secs(anchor_ticks: u64, ts_scale: Timescale) -> (f64, u32) {
+    let duration = anchor_ticks as f64 / f64::from(ts_scale.get());
+    let ceil_secs = anchor_ticks.div_ceil(ts_scale.as_u64()) as u32;
     (duration, ceil_secs)
 }
 
@@ -496,9 +499,11 @@ fn partition_tracks(
 ) -> Vec<SegmentRanges> {
     let n_segs = anchor_boundaries.len();
     let anchor_samples = &tracks[anchor].samples;
-    let anchor_scale = tracks[anchor].spec.timescale.max(1) as u64;
-    let origin_secs =
-        timeline_origin_secs(anchor_samples.first().and_then(|s| s.dts), anchor_scale);
+    let anchor_scale = tracks[anchor].spec.timescale.get() as u64;
+    let origin_secs = timeline_origin_secs(
+        anchor_samples.first().and_then(|s| s.timing.map(|t| t.dts)),
+        tracks[anchor].spec.timescale,
+    );
 
     // Segment start times (seconds) on the anchor timeline; the last segment
     // runs to +∞ so it captures any trailing tail on longer tracks. Accumulated
@@ -541,7 +546,7 @@ fn partition_tracks(
         }
 
         // Time-based split for non-anchor tracks.
-        let scale = track.spec.timescale.max(1) as u64;
+        let scale = track.spec.timescale;
         // For each segment, find the [start_idx, end_idx) of samples whose
         // decode-start time falls in this segment's window.
         let mut seg = 0usize;
@@ -677,7 +682,7 @@ struct StreamTrackState {
 /// #         bit_depth_chroma_minus8: None,
 /// #         sps_ext: vec![],
 /// #     };
-/// #     TrackSpec::new(transmux::TrackId::new(1), 90_000, CodecConfig::Avc {
+/// #     TrackSpec::new(transmux::TrackId::new(1), broadcast_common::timescale::Timescale::from_nonzero(90_000), CodecConfig::Avc {
 /// #         config: AVCConfigurationBox::new(record),
 /// #         width: 16,
 /// #         height: 16,
@@ -836,7 +841,7 @@ impl StreamingTsHlsSegmenter {
             return;
         }
         for t in &mut self.tracks {
-            let ticks = u128::from(start_ns) * u128::from(t.spec.timescale) / 1_000_000_000;
+            let ticks = u128::from(start_ns) * u128::from(t.spec.timescale.get()) / 1_000_000_000;
             t.base_decode = u64::try_from(ticks).unwrap_or(u64::MAX);
         }
     }
@@ -877,7 +882,7 @@ impl StreamingTsHlsSegmenter {
 
         let anchor = choose_anchor(tracks.iter().map(|t| &t.config))?;
         let target_secs = target_secs.max(1);
-        let target_ticks = target_ticks_for(target_secs, tracks[anchor].timescale);
+        let target_ticks = target_ticks_for(target_secs, tracks[anchor].timescale.get());
 
         let tracks = tracks
             .into_iter()
@@ -1105,8 +1110,8 @@ impl StreamingTsHlsSegmenter {
         if idx == self.anchor {
             if self.origin_secs.is_none() {
                 self.origin_secs = Some(timeline_origin_secs(
-                    sample.dts,
-                    self.tracks[self.anchor].spec.timescale.max(1) as u64,
+                    sample.timing.map(|t| t.dts),
+                    self.tracks[self.anchor].spec.timescale,
                 ));
             }
             self.anchor_pending_dur += self.anchor_clock.tick(&sample);
@@ -1120,7 +1125,7 @@ impl StreamingTsHlsSegmenter {
     fn cut_or_defer(&mut self) -> Result<()> {
         self.complete_deferred()?;
         let anchor = self.anchor;
-        let anchor_scale = self.tracks[anchor].spec.timescale.max(1) as u64;
+        let anchor_scale = self.tracks[anchor].spec.timescale.get() as u64;
         let next_start_ticks = self.tracks[anchor].base_decode + self.anchor_pending_dur;
         let next_start_secs = next_start_ticks as f64 / anchor_scale as f64;
         if !self.audio_lags(next_start_secs) {
@@ -1146,7 +1151,7 @@ impl StreamingTsHlsSegmenter {
         let Some(cut) = self.deferred_cut else {
             return Ok(());
         };
-        let scale = self.tracks[self.anchor].spec.timescale.max(1) as u64;
+        let scale = self.tracks[self.anchor].spec.timescale.get() as u64;
         let waited_out = self.anchor_pending_dur >= CATCH_UP_MAX_SECS.saturating_mul(scale);
         if waited_out || !self.audio_lags(cut.next_start_secs) {
             self.complete_deferred()?;
@@ -1165,7 +1170,7 @@ impl StreamingTsHlsSegmenter {
             {
                 return false;
             }
-            let scale = t.spec.timescale.max(1) as u64;
+            let scale = t.spec.timescale;
             let mut acc = t.base_decode;
             let mut clock = MediaClock::resumed_at(t.flush_clock.last_dts());
             for s in &t.pending {
@@ -1307,8 +1312,10 @@ impl StreamingTsHlsSegmenter {
 
         if nothing_cut_or_buffered && new_is_video && !current_anchor_is_video {
             self.anchor = new_index;
-            self.target_ticks =
-                target_ticks_for(self.target_secs, self.tracks[self.anchor].spec.timescale);
+            self.target_ticks = target_ticks_for(
+                self.target_secs,
+                self.tracks[self.anchor].spec.timescale.get(),
+            );
         }
 
         Ok(())
@@ -1343,8 +1350,10 @@ impl StreamingTsHlsSegmenter {
         self.tracks[idx].spec = spec;
         if discontinuity {
             if idx == self.anchor && self.tracks[idx].spec.timescale != old_timescale {
-                self.target_ticks =
-                    target_ticks_for(self.target_secs, self.tracks[self.anchor].spec.timescale);
+                self.target_ticks = target_ticks_for(
+                    self.target_secs,
+                    self.tracks[self.anchor].spec.timescale.get(),
+                );
             }
             self.mark_discontinuity();
             Ok(UpdateTrackOutcome::Changed)
@@ -1419,7 +1428,7 @@ impl StreamingTsHlsSegmenter {
     fn cut_segment_with(&mut self, final_cut: bool, deferred: Option<DeferredCut>) -> Result<()> {
         let closed_anchor_dur = deferred.map_or(self.anchor_pending_dur, |d| d.closed_anchor_dur);
         let anchor = self.anchor;
-        let anchor_scale = self.tracks[anchor].spec.timescale.max(1) as u64;
+        let anchor_scale = self.tracks[anchor].spec.timescale.get() as u64;
         let origin_secs = self.origin_secs.unwrap_or(0.0);
         // The new segment's start time = this track's cumulative decode time
         // so far (already-flushed ticks + the pending anchor buffer) — the
@@ -1441,7 +1450,7 @@ impl StreamingTsHlsSegmenter {
                 if i == anchor {
                     return deferred.map_or(t.pending.len(), |d| d.anchor_split);
                 }
-                let scale = t.spec.timescale.max(1) as u64;
+                let scale = t.spec.timescale;
                 let mut acc = t.base_decode;
                 // Same `MediaClock`/`placement_secs` pair the batch
                 // `partition_tracks` uses, so both paths place a given sample
@@ -1477,7 +1486,8 @@ impl StreamingTsHlsSegmenter {
         let bytes =
             mux_tracks_at_continuing(&mux_tracks, &sample_slices, &base_dts, &mut self.continuity)?;
 
-        let (duration, ceil_secs) = segment_duration_secs(closed_anchor_dur, anchor_scale);
+        let (duration, ceil_secs) =
+            segment_duration_secs(closed_anchor_dur, self.tracks[anchor].spec.timescale);
         if ceil_secs > self.target_duration {
             self.target_duration = ceil_secs;
         }
@@ -1586,9 +1596,7 @@ mod tests {
             data: vec![0u8; 4].into(),
             // Boundary selection is duration-driven; absolute time is not
             // what this helper exercises.
-            dts: None,
-            pts: None,
-            duration: Some(dur),
+            timing: crate::ir::SampleTiming::from_options(None, None, Some(dur)),
             flags: crate::ir::SampleFlags::new(sync),
             provenance: None,
             display: None,
@@ -1650,7 +1658,7 @@ mod tests {
     fn scte35_track(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
-            90_000,
+            Timescale::from_nonzero(90_000),
             CodecConfig::Data {
                 stream_type: 0x86,
                 descriptors: Vec::new(),
@@ -1665,9 +1673,7 @@ mod tests {
     fn section_sample() -> Sample {
         Sample {
             data: vec![0xFCu8, 0x30, 0x11].into(),
-            dts: None,
-            pts: None,
-            duration: None,
+            timing: crate::ir::SampleTiming::from_options(None, None, None),
             flags: crate::ir::SampleFlags::SYNC,
             provenance: None,
             display: None,
@@ -1677,7 +1683,7 @@ mod tests {
     fn aac_track(track_id: TrackId, timescale: u32) -> TrackSpec {
         TrackSpec::new(
             track_id,
-            timescale,
+            broadcast_common::timescale::Timescale::try_new(timescale).expect("timescale"),
             CodecConfig::Aac {
                 esds: dummy_esds(),
                 channel_count: 2,
@@ -1905,7 +1911,7 @@ mod tests {
         };
         let video_spec = TrackSpec::new(
             TrackId::new(1),
-            90_000,
+            Timescale::from_nonzero(90_000),
             CodecConfig::Avc {
                 config: crate::avc_config::AVCConfigurationBox::new(record),
                 width: 320,
@@ -1919,7 +1925,7 @@ mod tests {
         let audio: Vec<Sample> = (0..count).map(|i| sample(90_000, i % gop == 0)).collect();
         Media::new(
             vec![Track::new(video_spec, video), Track::new(audio_spec, audio)],
-            1000,
+            Timescale::from_nonzero(1000),
         )
     }
 

@@ -23,8 +23,9 @@ fn a_segment_address_error_after_the_initial_plan_drops_the_track() {
  timeShiftBufferDepth="PT30S">
  <Period id="0" start="PT0S">
   <AdaptationSet mimeType="video/mp4" contentType="video">
-   <SegmentTemplate timescale="17179869184" duration="34359738368"
-    initialization="init.mp4" media="seg-$Number$.m4s"/>
+   <SegmentTemplate timescale="90000" initialization="init.mp4" media="seg-$Number$.m4s">
+    <SegmentTimeline><S t="100" d="10"/><S t="0" d="10"/></SegmentTimeline>
+   </SegmentTemplate>
    <Representation id="V" bandwidth="1000" codecs="avc1.4d400d" width="320" height="240"/>
   </AdaptationSet>
  </Period>
@@ -83,8 +84,9 @@ fn an_init_lookup_plan_error_drops_the_track() {
  timeShiftBufferDepth="PT30S">
  <Period id="0" start="PT0S">
   <AdaptationSet mimeType="video/mp4" contentType="video">
-   <SegmentTemplate timescale="17179869184" duration="34359738368"
-    initialization="init.mp4" media="seg-$Number$.m4s"/>
+   <SegmentTemplate timescale="90000" initialization="init.mp4" media="seg-$Number$.m4s">
+    <SegmentTimeline><S t="100" d="10"/><S t="0" d="10"/></SegmentTimeline>
+   </SegmentTemplate>
    <Representation id="V" bandwidth="1000" codecs="avc1.4d400d" width="320" height="240"/>
   </AdaptationSet>
  </Period>

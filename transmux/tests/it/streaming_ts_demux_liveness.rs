@@ -128,7 +128,7 @@ fn per_source_pid(data: &[u8], strict: bool, chunk: usize) -> PerPid {
                 } => out
                     .entry(pid_of[&track_id.value()])
                     .or_default()
-                    .push((sample.dts, sample.data.to_vec())),
+                    .push((sample.timing.map(|t| t.dts), sample.data.to_vec())),
                 _ => {}
             }
         }

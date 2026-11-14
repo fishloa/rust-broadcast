@@ -360,7 +360,13 @@ fn rtp_packetiser_per_packet_cost_is_independent_of_payload_size() {
             for _ in 0..10 {
                 big.extend_from_slice(&s.data);
             }
-            Sample::new(big, s.dts, s.pts, s.duration, s.flags.is_sync)
+            Sample::new(
+                big,
+                s.timing.map(|t| t.dts),
+                s.timing.map(|t| t.pts),
+                s.timing.map(|t| t.duration),
+                s.flags.is_sync,
+            )
         })
         .collect();
     let scaled_track = Track::new(spec, scaled_samples);

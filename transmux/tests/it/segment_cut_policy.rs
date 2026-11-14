@@ -60,9 +60,14 @@ fn require_video(rel: &str) -> Video {
 }
 
 fn span_ticks(samples: &[Sample]) -> i64 {
-    let first = samples.first().and_then(|s| s.dts).expect("dts");
+    let first = samples
+        .first()
+        .and_then(|s| s.timing.map(|t| t.dts))
+        .expect("dts");
     let last = samples.last().expect("sample");
-    last.dts.expect("dts") + i64::from(last.duration.expect("duration")) - first
+    last.timing.map(|t| t.dts).expect("dts")
+        + i64::from(last.timing.map(|t| t.duration).expect("duration"))
+        - first
 }
 
 fn looped(samples: &[Sample], reps: usize) -> Vec<Sample> {
@@ -72,9 +77,9 @@ fn looped(samples: &[Sample], reps: usize) -> Vec<Sample> {
         for s in samples {
             out.push(Sample::new(
                 s.data.to_vec(),
-                s.dts.map(|d| d + span * k),
-                s.pts.map(|p| p + span * k),
-                s.duration,
+                s.timing.map(|t| t.dts).map(|d| d + span * k),
+                s.timing.map(|t| t.pts).map(|p| p + span * k),
+                s.timing.map(|t| t.duration),
                 s.flags.is_sync,
             ));
         }
@@ -84,7 +89,7 @@ fn looped(samples: &[Sample], reps: usize) -> Vec<Sample> {
 
 fn looped_to_seconds(v: &Video) -> Vec<Sample> {
     let span = span_ticks(&v.samples);
-    let want = LOOP_SECONDS * i64::from(v.spec.timescale);
+    let want = LOOP_SECONDS * i64::from(v.spec.timescale.get());
     let reps = (want / span).max(1) as usize + 1;
     looped(&v.samples, reps)
 }
@@ -145,13 +150,17 @@ fn oracle_cuts(samples: &[Sample], timescale: u32) -> Vec<usize> {
             cuts.push(i);
             buffered = 0;
         }
-        let tick = match (s.duration, s.dts, prev_dts) {
+        let tick = match (
+            s.timing.map(|t| t.duration),
+            s.timing.map(|t| t.dts),
+            prev_dts,
+        ) {
             (Some(d), _, _) if d > 0 => u64::from(d),
             (_, Some(now), Some(prev)) => (now - prev).max(0) as u64,
             _ => 0,
         };
         buffered += tick;
-        prev_dts = s.dts;
+        prev_dts = s.timing.map(|t| t.dts);
     }
     cuts
 }
@@ -199,9 +208,9 @@ fn hevc_patch_irap(sample: &Sample, nal_type: u8) -> Sample {
     assert!(patched, "fixture sample must carry an IRAP NAL to patch");
     Sample::new(
         data,
-        sample.dts,
-        sample.pts,
-        sample.duration,
+        sample.timing.map(|t| t.dts),
+        sample.timing.map(|t| t.pts),
+        sample.timing.map(|t| t.duration),
         sample.flags.is_sync,
     )
 }
@@ -289,7 +298,7 @@ fn any_rap_cut_points_equal_the_pre_change_predicate() {
     let mut non_idr_cuts = 0usize;
     for (rel, v) in &fixtures {
         let stream = looped_to_seconds(v);
-        let want = oracle_cuts(&stream, v.spec.timescale);
+        let want = oracle_cuts(&stream, v.spec.timescale.get());
         assert!(
             !want.is_empty(),
             "{rel}: oracle found no cut; fixture too weak"
@@ -466,7 +475,13 @@ fn with_sps_prefix(idr: &Sample, p_frame: &Sample, dts: i64) -> Sample {
             data.extend_from_slice(&p_frame.data[a..b]);
         }
     }
-    Sample::new(data, Some(dts), Some(dts), p_frame.duration, true)
+    Sample::new(
+        data,
+        Some(dts),
+        Some(dts),
+        p_frame.timing.map(|t| t.duration),
+        true,
+    )
 }
 
 #[test]
@@ -481,8 +496,8 @@ fn sps_only_picture_is_not_a_cut_under_idr_only() {
     );
 
     let mut stream = vec![idr.clone()];
-    let step = i64::from(p_frames[0].duration.expect("duration"));
-    let mut dts = idr.dts.expect("dts") + step;
+    let step = i64::from(p_frames[0].timing.map(|t| t.duration).expect("duration"));
+    let mut dts = idr.timing.map(|t| t.dts).expect("dts") + step;
     for k in 0..(LOOP_SECONDS * 25) as usize {
         let p = p_frames[k % p_frames.len()];
         stream.push(with_sps_prefix(idr, p, dts));
@@ -570,7 +585,7 @@ fn default_policy_is_any_rap() {
         .expect("segmenter");
     assert_eq!(seg.cut_policy(), SegmentCutPolicy::AnyRap);
     let stream = looped_to_seconds(&v);
-    let want = oracle_cuts(&stream, v.spec.timescale);
+    let want = oracle_cuts(&stream, v.spec.timescale.get());
     assert!(!want.is_empty());
     let got = run_with(&v.spec, &stream, seg);
     assert_eq!(

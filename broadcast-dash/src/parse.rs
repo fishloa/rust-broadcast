@@ -3,6 +3,7 @@
 use std::collections::BTreeSet;
 use std::time::Duration;
 
+use broadcast_common::timescale::Timescale;
 use broadcast_common::xml::{Elem, Namespace, read_tree};
 
 use crate::descriptors::XLINK_RESOLVE_TO_ZERO;
@@ -96,6 +97,12 @@ fn opt_u64(e: &Elem<Ns>, name: &'static str) -> Result<Option<u64>, MpdError> {
 
 fn opt_u32(e: &Elem<Ns>, name: &'static str) -> Result<Option<u32>, MpdError> {
     opt_parse(e, name)
+}
+
+fn opt_timescale(e: &Elem<Ns>) -> Result<Option<Timescale>, MpdError> {
+    opt_u32(e, "timescale")?
+        .map(|v| Timescale::new(v).ok_or_else(|| invalid("timescale", "must be greater than zero")))
+        .transpose()
 }
 
 fn opt_i64(e: &Elem<Ns>, name: &'static str) -> Result<Option<i64>, MpdError> {
@@ -288,7 +295,7 @@ fn base_info(e: &Elem<Ns>, ctx: &mut Ctx<'_>) -> Result<BaseInfo, MpdError> {
         ctx.features.low_latency = true;
     }
     Ok(BaseInfo {
-        timescale: positive_u64(e, "timescale")?,
+        timescale: opt_timescale(e)?,
         presentation_time_offset: opt_u64(e, "presentationTimeOffset")?,
         ept_delta: opt_i64(e, "eptDelta")?,
         pd_delta: opt_i64(e, "pdDelta")?,
@@ -650,7 +657,7 @@ fn event_stream(e: &Elem<Ns>, ctx: &mut Ctx<'_>) -> Result<EventStream, MpdError
             .ok_or_else(|| invalid("schemeIdUri", "missing on EventStream"))?
             .to_owned(),
         value: opt_str(e, "value"),
-        timescale: opt_u32(e, "timescale")?,
+        timescale: opt_timescale(e)?,
         presentation_time_offset: opt_u64(e, "presentationTimeOffset")?,
         events: e
             .children_named("Event")

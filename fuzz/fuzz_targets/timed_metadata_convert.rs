@@ -1,5 +1,6 @@
 #![no_main]
 
+use broadcast_common::timescale::Timescale;
 use libfuzzer_sys::fuzz_target;
 use mp4_emsg::EmsgBox;
 use timed_metadata::DateRange;
@@ -22,10 +23,13 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
     let (head, body) = data.split_at(TIMING_LEN);
+    let Some(timescale) = Timescale::new(u32::from_le_bytes(head[0..4].try_into().unwrap())) else {
+        return;
+    };
     let timing = SegmentTiming {
         earliest_presentation_time: u64::from_le_bytes(head[0..8].try_into().unwrap()),
         presentation_time_offset: u64::from_le_bytes(head[8..16].try_into().unwrap()),
-        timescale: u32::from_le_bytes(head[0..4].try_into().unwrap()),
+        timescale,
     };
     let Ok(emsg) = EmsgBox::parse(body) else {
         return;

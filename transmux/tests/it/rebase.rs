@@ -29,6 +29,7 @@
 //! 5. A `None`-timed (section-carried) sample is never given a fabricated
 //!    timestamp by any transform.
 
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Unpackage};
 use transmux::TrackId;
 use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
@@ -60,7 +61,7 @@ fn avc_spec() -> TrackSpec {
     };
     TrackSpec::new(
         TrackId::new(1),
-        90_000,
+        Timescale::from_nonzero(90_000),
         CodecConfig::Avc {
             config: AVCConfigurationBox::new(record),
             width: 16,
@@ -88,12 +89,19 @@ fn media_with_anchor(start: u64, durs: &[u32]) -> Media {
         samples.push(sample_at(dts, d));
         dts += i64::from(d);
     }
-    Media::new(vec![Track::new_at(avc_spec(), samples, start)], 90_000)
+    Media::new(
+        vec![Track::new_at(avc_spec(), samples, start)],
+        Timescale::from_nonzero(90_000),
+    )
 }
 
 /// The absolute dts of every sample in track 0.
 fn dts_seq(media: &Media) -> Vec<Option<i64>> {
-    media.tracks[0].samples.iter().map(|s| s.dts).collect()
+    media.tracks[0]
+        .samples
+        .iter()
+        .map(|s| s.timing.map(|t| t.dts))
+        .collect()
 }
 
 /// Parse the first `moof`/`traf`/`tfdt` baseMediaDecodeTime out of an fMP4.
@@ -127,7 +135,8 @@ fn fmp4_demux_populates_start_decode_time_from_tfdt() {
     let samples = [sample_at(0, 3000), sample_at(3000, 3000)];
 
     // Build a real init + media segment at a KNOWN non-zero tfdt.
-    let mut fmp4 = build_init_segment(std::slice::from_ref(&spec), 90_000).expect("init");
+    let mut fmp4 = build_init_segment(std::slice::from_ref(&spec), Timescale::from_nonzero(90_000))
+        .expect("init");
     let frag = FragmentTrackData::new(TrackId::new(1), KNOWN_BASE, &samples);
     let media_seg = build_media_segment(1, &[frag]).expect("media segment");
     fmp4.extend_from_slice(&media_seg);
@@ -214,7 +223,11 @@ fn insert_discontinuity_gap_bites() {
 
     // Samples before the insertion point are untouched; the one at the
     // insertion point and everything after it is pushed out by exactly GAP.
-    let seq: Vec<Option<i64>> = track.samples.iter().map(|s| s.dts).collect();
+    let seq: Vec<Option<i64>> = track
+        .samples
+        .iter()
+        .map(|s| s.timing.map(|t| t.dts))
+        .collect();
     assert_eq!(
         seq,
         vec![
@@ -241,7 +254,11 @@ fn insert_discontinuity_gap_at_zero_shifts_anchor_and_samples() {
     insert_discontinuity_gap(track, 0, GAP);
     assert_eq!(track.start_decode_time, 1000 + u64::from(GAP));
     assert_eq!(
-        track.samples.iter().map(|s| s.dts).collect::<Vec<_>>(),
+        track
+            .samples
+            .iter()
+            .map(|s| s.timing.map(|t| t.dts))
+            .collect::<Vec<_>>(),
         vec![Some(1250), Some(1350)]
     );
 }
@@ -255,24 +272,41 @@ fn insert_discontinuity_gap_at_zero_shifts_anchor_and_samples() {
 fn transforms_never_fabricate_a_timestamp() {
     let mut media = media_with_anchor(5000, &[100, 100]);
     // Make the second sample untimed, as a section-carried sample would be.
-    media.tracks[0].samples[1].dts = None;
-    media.tracks[0].samples[1].pts = None;
+    media.tracks[0].samples[1].timing = None;
 
     rebase_to_zero(&mut media);
-    assert_eq!(media.tracks[0].samples[1].dts, None, "rebase_to_zero");
-    assert_eq!(media.tracks[0].samples[1].pts, None, "rebase_to_zero");
+    assert_eq!(
+        media.tracks[0].samples[1].timing.map(|t| t.dts),
+        None,
+        "rebase_to_zero"
+    );
+    assert_eq!(
+        media.tracks[0].samples[1].timing.map(|t| t.pts),
+        None,
+        "rebase_to_zero"
+    );
 
     apply_offset(&mut media, 1234);
-    assert_eq!(media.tracks[0].samples[1].dts, None, "apply_offset");
-    assert_eq!(media.tracks[0].samples[1].pts, None, "apply_offset");
+    assert_eq!(
+        media.tracks[0].samples[1].timing.map(|t| t.dts),
+        None,
+        "apply_offset"
+    );
+    assert_eq!(
+        media.tracks[0].samples[1].timing.map(|t| t.pts),
+        None,
+        "apply_offset"
+    );
 
     insert_discontinuity_gap(&mut media.tracks[0], 1, 999);
     assert_eq!(
-        media.tracks[0].samples[1].dts, None,
+        media.tracks[0].samples[1].timing.map(|t| t.dts),
+        None,
         "insert_discontinuity_gap"
     );
     assert_eq!(
-        media.tracks[0].samples[1].pts, None,
+        media.tracks[0].samples[1].timing.map(|t| t.pts),
+        None,
         "insert_discontinuity_gap"
     );
 }

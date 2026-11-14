@@ -8,6 +8,7 @@
 
 use crate::box_walk::find_box_range;
 use broadcast_common::Parse;
+use broadcast_common::timescale::Timescale;
 use transmux::TrackId;
 use transmux::{
     CodecConfig, FragmentTrackData, MovieBox, MovieFragmentBox, Sample, SampleEntryVariant,
@@ -61,7 +62,7 @@ fn track_stsd_entry(moov: &MovieBox, track_idx: usize) -> SampleEntryVariant {
         .clone()
 }
 
-fn track_timescale(moov: &MovieBox, track_idx: usize) -> u32 {
+fn track_timescale(moov: &MovieBox, track_idx: usize) -> Timescale {
     moov.tracks[track_idx]
         .mdia
         .as_ref()
@@ -123,7 +124,7 @@ fn clean_init() -> Vec<u8> {
     let data = fixture();
     let (_, moov_bytes) = find_top_box(&data, b"moov");
     let moov = MovieBox::parse(&moov_bytes).unwrap();
-    build_init_segment(&[video_spec(&moov)], 1000).expect("build init")
+    build_init_segment(&[video_spec(&moov)], Timescale::from_nonzero(1000)).expect("build init")
 }
 
 /// A clean media segment with the given sequence_number + base decode time,
@@ -260,7 +261,10 @@ fn clean_track_has_no_errors() {
     let data = fixture();
     let samples = video_samples(&data);
     let init = clean_init();
-    let total: u64 = samples.iter().map(|s| s.duration.unwrap_or(0) as u64).sum();
+    let total: u64 = samples
+        .iter()
+        .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
+        .sum();
     let seg1 = clean_media(1, 0, &samples);
     let seg2 = clean_media(2, total, &samples);
     let issues = validate_cmaf_track(&init, &[&seg1, &seg2]);
@@ -433,7 +437,10 @@ fn mdat_orphan_bites() {
 fn tfdt_continuity_bites() {
     let data = fixture();
     let samples = video_samples(&data);
-    let total: u64 = samples.iter().map(|s| s.duration.unwrap_or(0) as u64).sum();
+    let total: u64 = samples
+        .iter()
+        .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
+        .sum();
     let init = clean_init();
 
     // positive: two contiguous segments → no continuity error.
@@ -460,7 +467,10 @@ fn tfdt_continuity_bites() {
 fn mfhd_sequence_bites() {
     let data = fixture();
     let samples = video_samples(&data);
-    let total: u64 = samples.iter().map(|s| s.duration.unwrap_or(0) as u64).sum();
+    let total: u64 = samples
+        .iter()
+        .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
+        .sum();
     let init = clean_init();
 
     let seg1 = clean_media(5, 0, &samples);
@@ -481,7 +491,7 @@ fn zero_duration_sample_bites() {
     let mut samples = video_samples(&data);
     // positive path already covered by clean_media_has_no_errors.
     // negative: force a zero-duration sample.
-    samples[0].duration = Some(0);
+    samples[0].timing = Some(transmux::ir::SampleTiming::new(0, 0, 0));
     let media = clean_media(1, 0, &samples);
     let issues = validate_media_segment(&media);
     assert!(
@@ -665,7 +675,10 @@ fn multi_moof_segment_has_no_false_tfdt_discontinuity() {
     let (a, b) = all.split_at(half);
 
     let seg1 = clean_media(1, 0, a);
-    let dur_a: u64 = a.iter().map(|s| u64::from(s.duration.unwrap_or(0))).sum();
+    let dur_a: u64 = a
+        .iter()
+        .map(|s| u64::from(s.timing.map(|t| t.duration).unwrap_or(0)))
+        .sum();
     let seg2 = clean_media(2, dur_a, b);
 
     // Concatenating two media segments gives one byte string with two moofs —
@@ -674,7 +687,10 @@ fn multi_moof_segment_has_no_false_tfdt_discontinuity() {
     let mut multi = seg1.clone();
     multi.extend_from_slice(&seg2);
 
-    let dur_b: u64 = b.iter().map(|s| u64::from(s.duration.unwrap_or(0))).sum();
+    let dur_b: u64 = b
+        .iter()
+        .map(|s| u64::from(s.timing.map(|t| t.duration).unwrap_or(0)))
+        .sum();
     let seg3 = clean_media(3, dur_a + dur_b, a);
 
     let issues = validate_cmaf_track(&clean_init(), &[&multi, &seg3]);
@@ -718,7 +734,11 @@ fn zero_duration_reported_once_per_traf() {
     let data = fixture();
     let mut samples = video_samples(&data);
     for s in &mut samples {
-        s.duration = Some(0);
+        if let Some(t) = s.timing.as_mut() {
+            t.duration = 0;
+        } else {
+            s.timing = Some(transmux::ir::SampleTiming::new(0, 0, 0));
+        }
     }
     let media = clean_media(1, 0, &samples);
 

@@ -20,6 +20,7 @@
 //! than a second, independently-behaving oracle.
 
 use crate::route::RouteConfig;
+use broadcast_common::timescale::Timescale;
 use std::sync::Arc;
 
 use axum::Router;
@@ -140,7 +141,7 @@ pub(crate) fn drain(cursor: &mut media_plane::trunk::SampleCursor) -> usize {
 pub(crate) fn video_spec(track_id: transmux::TrackId) -> transmux::pipeline::TrackSpec {
     transmux::pipeline::TrackSpec::new(
         track_id,
-        90_000,
+        Timescale::from_nonzero(90_000),
         transmux::pipeline::CodecConfig::Vp8 {
             width: 1280,
             height: 720,
@@ -223,7 +224,10 @@ pub(crate) async fn served_first_dts(app: &axum::Router, seq: u64) -> i64 {
     let media = transmux::Fmp4Demux::new()
         .unpackage(&[init, segment].concat())
         .expect("demux");
-    media.tracks[0].samples[0].dts.expect("dts")
+    media.tracks[0].samples[0]
+        .timing
+        .map(|t| t.dts)
+        .expect("dts")
 }
 
 pub(crate) fn mpd_attribute(xml: &str, key: &str) -> String {

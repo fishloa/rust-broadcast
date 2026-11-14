@@ -32,7 +32,8 @@ const LOOP_REPS: usize = 4;
 const MIN_CLOSED_SEGMENTS: usize = 3;
 const HANG_GUARD: Duration = Duration::from_secs(40);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
-const MOVIE_TIMESCALE: u32 = 90_000;
+const MOVIE_TIMESCALE: broadcast_common::timescale::Timescale =
+    broadcast_common::timescale::Timescale::from_nonzero(90_000);
 
 fn france2_video() -> (TrackSpec, Vec<Sample>) {
     let bytes = std::fs::read(test_fixtures::path("ts/france2.ts")).expect("france2.ts fixture");
@@ -47,17 +48,19 @@ fn france2_video() -> (TrackSpec, Vec<Sample>) {
 
 fn looped_from(samples: &[Sample], start: usize, reps: usize) -> Vec<Sample> {
     let body = &samples[start..];
-    let first = body[0].dts.expect("dts");
+    let first = body[0].timing.map(|t| t.dts).expect("dts");
     let last = body.last().expect("sample");
-    let span = last.dts.expect("dts") + i64::from(last.duration.expect("duration")) - first;
+    let span = last.timing.map(|t| t.dts).expect("dts")
+        + i64::from(last.timing.map(|t| t.duration).expect("duration"))
+        - first;
     let mut out = Vec::new();
     for k in 0..reps as i64 {
         for s in body {
             out.push(Sample::new(
                 s.data.to_vec(),
-                s.dts.map(|d| d + span * k),
-                s.pts.map(|p| p + span * k),
-                s.duration,
+                s.timing.map(|t| t.dts).map(|d| d + span * k),
+                s.timing.map(|t| t.pts).map(|p| p + span * k),
+                s.timing.map(|t| t.duration),
                 s.flags.is_sync,
             ));
         }

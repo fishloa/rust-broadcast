@@ -176,7 +176,7 @@ fn largesize_uuid_child_round_trips_in_every_container() {
     let mut mvhd = vec![0u8; 108];
     mvhd[..4].copy_from_slice(&108u32.to_be_bytes());
     mvhd[4..8].copy_from_slice(b"mvhd");
-    mvhd[12..16].copy_from_slice(&1000u32.to_be_bytes());
+    mvhd[20..24].copy_from_slice(&1000u32.to_be_bytes());
     mvhd[104..108].copy_from_slice(&2u32.to_be_bytes());
 
     let mut body = mvhd.clone();

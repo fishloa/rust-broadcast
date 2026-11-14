@@ -12,6 +12,7 @@
 //! (below) — no hardcoded offsets — so the tables must be internally consistent
 //! with the real mdat layout for the assertions to hold.
 
+use broadcast_common::timescale::Timescale;
 use transmux::TrackId;
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
@@ -506,12 +507,12 @@ fn faststart_false_same_samples_different_order() {
 /// `mp4/cenc-boxes/v1-mvhd.mp4`) that a few minutes of media
 /// overflows `u32::MAX` ticks — the real-world trigger for the version-1
 /// `mvhd`/`tkhd`/`mdhd` layouts.
-const HUGE_TIMESCALE: u32 = 2_000_000_000;
+const HUGE_TIMESCALE: Timescale = Timescale::from_nonzero(2_000_000_000);
 
 fn huge_timescale_media() -> Media {
     let mut media = demux_media();
-    // Give the video track and the movie a huge timescale so `mdhd.duration`,
-    // the *presentation* duration derived from it, and therefore `mvhd.duration`
+    // Give the video track and the movie a huge timescale so `mdhd.timing.map(|t| t.duration)`,
+    // the *presentation* duration derived from it, and therefore `mvhd.timing.map(|t| t.duration)`
     // all overflow 32 bits: the sample durations are ~3000 ticks each, and
     // 1000 × 2 000 000 000 / 90 000 ticks per sample is well past `u32::MAX`.
     // The same sample durations in the *huge* track timescale are the large
@@ -522,9 +523,11 @@ fn huge_timescale_media() -> Media {
         track.spec.timescale = HUGE_TIMESCALE;
         track.start_decode_time = track.start_decode_time.saturating_mul(scale);
         for s in &mut track.samples {
-            s.dts = s.dts.map(|v| v.saturating_mul(scale as i64));
-            s.pts = s.pts.map(|v| v.saturating_mul(scale as i64));
-            s.duration = s.duration.map(|d| d.saturating_mul(scale as u32));
+            if let Some(t) = s.timing.as_mut() {
+                t.dts = t.dts.saturating_mul(scale as i64);
+                t.pts = t.pts.saturating_mul(scale as i64);
+                t.duration = t.duration.saturating_mul(scale as u32);
+            }
         }
     }
     media.movie_timescale = HUGE_TIMESCALE;
@@ -552,7 +555,7 @@ fn oversized_durations_promote_headers_to_version_1() {
     let mvhd_duration = be64(out.as_slice(), mvhd.start + 8 + 24);
     assert!(
         mvhd_duration > u64::from(u32::MAX),
-        "mvhd.duration {mvhd_duration} must survive at 64 bits"
+        "mvhd.timing.map(|t| t.duration) {mvhd_duration} must survive at 64 bits"
     );
 
     let trak_list = traks(&out);
@@ -832,7 +835,7 @@ fn interleaved_chunk_contents_match_the_reference() {
 }
 
 /// `format=duration` on the version-1-promoted file must equal the duration
-/// ffmpeg derives from the sample count, i.e. the 64-bit `mvhd.duration` is
+/// ffmpeg derives from the sample count, i.e. the 64-bit `mvhd.timing.map(|t| t.duration)` is
 /// really read (a truncated one would come back as a wrapped, tiny value).
 #[test]
 fn promoted_v1_duration_is_read_by_ffprobe() {
@@ -888,7 +891,7 @@ fn duration_version_boundary_is_exact() {
         flags: 0,
         creation_time: 0,
         modification_time: 0,
-        timescale: 1000,
+        timescale: Timescale::from_nonzero(1000),
         duration: u64::from(u32::MAX),
         rate: 0x0001_0000,
         volume: 0x0100,
@@ -959,7 +962,7 @@ fn non_monotonic_dts_still_packages() {
         .iter()
         .position(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
         .expect("a video track");
-    let ts = i64::from(media.tracks[video].spec.timescale.max(1));
+    let ts = i64::from(media.tracks[video].spec.timescale.get());
     // Sample 0 sits at t=0 and the rest advance 40 ms each, except that a run
     // jumps *forward* 60 s and the samples after it resume roughly where they
     // were — so one chunk start lands far ahead and a later chunk start lands
@@ -985,8 +988,12 @@ fn non_monotonic_dts_still_packages() {
             4 | 7 => 0,
             _ => base,
         };
-        s.dts = Some(t);
-        s.pts = Some(t);
+        if let Some(timing) = s.timing.as_mut() {
+            timing.dts = t;
+            timing.pts = t;
+        } else {
+            s.timing = Some(transmux::ir::SampleTiming::new(t, t, 0));
+        }
         let _ = step;
     }
 

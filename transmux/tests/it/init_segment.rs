@@ -6,6 +6,7 @@
 //!   mp4a sample entry (assert both found).
 //! EXIT CRITERION 3: A leaf-box unit test (mvhd v0) round-trips (in `init_segment` module).
 
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize};
 use transmux::TrackId;
 use transmux::{MovieBox, SampleDescriptionBox, SampleEntryVariant};
@@ -93,7 +94,11 @@ fn moov_real_fixture_round_trip() {
 
     // Verify key mvhd fields
     assert_eq!(moov.mvhd.version, 0, "mvhd version");
-    assert_eq!(moov.mvhd.timescale, 1000, "mvhd timescale");
+    assert_eq!(
+        moov.mvhd.timescale,
+        Timescale::from_nonzero(1000),
+        "mvhd timescale"
+    );
     assert_eq!(moov.mvhd.duration, 2000, "mvhd duration");
     assert_eq!(
         moov.mvhd.next_track_id,

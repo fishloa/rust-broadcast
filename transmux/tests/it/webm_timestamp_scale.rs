@@ -88,7 +88,7 @@ fn zeroing_the_scale_of_a_real_file_keeps_its_timeline() {
     let times = |m: &transmux::Media| -> Vec<Vec<Option<i64>>> {
         m.tracks
             .iter()
-            .map(|t| t.samples.iter().map(|s| s.pts).collect())
+            .map(|t| t.samples.iter().map(|s| s.timing.map(|t| t.pts)).collect())
             .collect()
     };
     assert_eq!(times(&got), times(&want));

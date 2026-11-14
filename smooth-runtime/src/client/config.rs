@@ -9,6 +9,7 @@ use url::Url;
 
 use super::output::QualityInfo;
 use broadcast_common::backoff::BackoffSteps;
+use broadcast_common::timescale::Timescale;
 
 /// Fragments before the live edge a live join starts at.
 pub const DEFAULT_LIVE_JOIN_FRAGMENTS: usize = 2;
@@ -35,7 +36,7 @@ pub const DEFAULT_REFRESH_MIN: Duration = Duration::from_millis(500);
 /// Longest live manifest refresh wait.
 pub const DEFAULT_REFRESH_MAX: Duration = Duration::from_secs(5);
 /// `mvhd` timescale of each synthesized init segment (ISO/IEC 14496-12:2026 §8.2.2).
-pub const SYNTHETIC_MOVIE_TIMESCALE: u32 = 90_000;
+pub const SYNTHETIC_MOVIE_TIMESCALE: Timescale = transmux::VIDEO_CLOCK_TIMESCALE;
 /// [`SmoothClientConfig::default`]'s placeholder manifest URL: a default has no
 /// real manifest, so a client built from one is only useful after
 /// [`SmoothClientConfig::new`] or `with_manifest_url`.

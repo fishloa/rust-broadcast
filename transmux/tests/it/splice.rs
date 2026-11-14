@@ -28,6 +28,7 @@
 //! track — each needs values chosen to make the property observable.
 
 use broadcast_common::Unpackage;
+use broadcast_common::timescale::Timescale;
 use transmux::TrackId;
 use transmux::pipeline::DataCarriage;
 use transmux::{
@@ -36,7 +37,7 @@ use transmux::{
     snap_to_preceding_sync, splice_insert,
 };
 
-const TIMESCALE: u32 = 90_000;
+const TIMESCALE: Timescale = Timescale::from_nonzero(90_000);
 
 fn avc_spec(track_id: u32) -> TrackSpec {
     let record = AVCDecoderConfigurationRecord {
@@ -97,14 +98,21 @@ fn media_of(mut track: Track, start_decode_time: u64) -> Media {
     // time as `start_decode_time + Σ duration`).
     let delta = start_decode_time as i64;
     for s in &mut track.samples {
-        if let Some(d) = s.dts {
-            s.dts = Some(d + delta);
+        if let Some(d) = s.timing.map(|t| t.dts)
+            && let Some(t) = s.timing.as_mut()
+        {
+            t.dts = d + delta;
         }
-        if let Some(p) = s.pts {
-            s.pts = Some(p + delta);
+        if let Some(p) = s.timing.map(|t| t.pts)
+            && let Some(t) = s.timing.as_mut()
+        {
+            t.pts = p + delta;
         }
     }
-    Media::new(vec![track.with_start_decode_time(start_decode_time)], 1000)
+    Media::new(
+        vec![track.with_start_decode_time(start_decode_time)],
+        Timescale::from_nonzero(1000),
+    )
 }
 
 /// A video track whose samples sit on an absolute dts grid starting at
@@ -153,7 +161,7 @@ fn data_track_at(
     Track::new_at(
         TrackSpec::new(
             TrackId::new(track_id),
-            timescale,
+            Timescale::try_new(timescale).unwrap(),
             CodecConfig::Data {
                 stream_type: 0x86,
                 descriptors: Vec::new(),
@@ -199,7 +207,7 @@ fn data_track(
     Track::new(
         TrackSpec::new(
             TrackId::new(track_id),
-            timescale,
+            Timescale::try_new(timescale).unwrap(),
             CodecConfig::Data {
                 stream_type: 0x86, // SCTE-35 (ISO/IEC 13818-1 Table 2-34) — arbitrary; only used as a non-video codec-kind stand-in here
                 descriptors: Vec::new(),
@@ -216,18 +224,22 @@ fn media_of_two(video: Track, video_start: u64, other: Track, other_start: u64) 
     fn shifted(mut t: Track, start: u64) -> Track {
         let delta = start as i64;
         for s in &mut t.samples {
-            if let Some(d) = s.dts {
-                s.dts = Some(d + delta);
+            if let Some(d) = s.timing.map(|t| t.dts)
+                && let Some(t) = s.timing.as_mut()
+            {
+                t.dts = d + delta;
             }
-            if let Some(p) = s.pts {
-                s.pts = Some(p + delta);
+            if let Some(p) = s.timing.map(|t| t.pts)
+                && let Some(t) = s.timing.as_mut()
+            {
+                t.pts = p + delta;
             }
         }
         t.with_start_decode_time(start)
     }
     Media::new(
         vec![shifted(video, video_start), shifted(other, other_start)],
-        1000,
+        Timescale::from_nonzero(1000),
     )
 }
 
@@ -235,7 +247,7 @@ fn track_span(track: &Track) -> u64 {
     track
         .samples
         .iter()
-        .map(|s| s.duration.unwrap_or(0) as u64)
+        .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
         .sum()
 }
 
@@ -245,7 +257,7 @@ fn dts_sequence(track: &Track) -> Vec<u64> {
     let mut out = Vec::new();
     for s in &track.samples {
         out.push(dts);
-        dts += s.duration.unwrap_or(0) as u64;
+        dts += s.timing.map(|t| t.duration).unwrap_or(0) as u64;
     }
     out
 }
@@ -327,26 +339,6 @@ fn concat_is_contiguous_and_preserves_bytes() {
     assert_eq!(res.discontinuity_points[0].presentation_time, ta_end);
 }
 
-#[test]
-fn concat_with_a_zero_track_timescale_is_a_typed_error() {
-    // Audit #2462: `rescale_ticks` returned its input unchanged for a zero
-    // timescale, silently splicing two incomparable clocks together.
-    let a = media_of(video_track(1, 0xA0, 6, 3000, 3), 90_000);
-    let mut spec = avc_spec(1);
-    spec.timescale = 0;
-    let samples = (0..4).map(|i| sample(0xB0, i, 3000, i == 0)).collect();
-    let b = Media::new(vec![Track::new(spec, samples)], 1000);
-    assert!(
-        matches!(
-            concat(&a, &b),
-            Err(transmux::error::Error::InvalidInput(
-                "timescale must be non-zero"
-            ))
-        ),
-        "a zero timescale must be a typed error, not a silent identity rescale"
-    );
-}
-
 // ---------------------------------------------------------------------------
 // Test 2 — concat end-to-end tfdt monotonic through the segmenter/muxer.
 // ---------------------------------------------------------------------------
@@ -361,7 +353,12 @@ fn concat_muxed_tfdts_are_monotonic_across_join() {
 
     // Segment at ~0.1s (3 samples/GOP × 3000/90000 ≈ 0.1s) so several segments
     // straddle the join, anchored at the joined track's start_decode_time.
-    let mut seg = Segmenter::new(vec![joined.spec.clone()], 1000, 0.1).unwrap();
+    let mut seg = Segmenter::new(
+        vec![joined.spec.clone()],
+        Timescale::from_nonzero(1000),
+        0.1,
+    )
+    .unwrap();
     // The segmenter counts from 0; offset every emitted tfdt by the anchor.
     let anchor = joined.start_decode_time;
     for s in &joined.samples {
@@ -517,7 +514,12 @@ fn discontinuity_points_drive_segmenter() {
     // just before pushing the sample at index `(s + 1) * GOP` (the flush handles
     // the trailing segment). Map each join sample index → the segment it opens.
     const GOP: usize = 3;
-    let mut seg = Segmenter::new(vec![joined.spec.clone()], 1000, 0.1).unwrap();
+    let mut seg = Segmenter::new(
+        vec![joined.spec.clone()],
+        Timescale::from_nonzero(1000),
+        0.1,
+    )
+    .unwrap();
     let mut expected_disc_segments: Vec<usize> = disc_indices.iter().map(|i| i / GOP).collect();
     expected_disc_segments.sort_unstable();
     for (i, s) in joined.samples.iter().enumerate() {
@@ -573,11 +575,17 @@ fn concat_and_snap_honour_a_genuine_tfdt_gap() {
     let mut a_track = video_track(1, 0xA0, 3, 3000, 1);
     let gap: i64 = 50_000;
     let last = a_track.samples.len() - 1;
-    a_track.samples[last].dts = Some(a_track.samples[last].dts.unwrap() + gap);
-    a_track.samples[last].pts = Some(a_track.samples[last].pts.unwrap() + gap);
-    let a = Media::new(vec![a_track], 1000);
-    let true_last_dts = a.tracks[0].samples[last].dts.unwrap() as u64;
-    let true_end = true_last_dts + a.tracks[0].samples[last].duration.unwrap() as u64;
+    if let Some(t) = a_track.samples[last].timing.as_mut() {
+        t.dts += gap;
+        t.pts += gap;
+    }
+    let a = Media::new(vec![a_track], Timescale::from_nonzero(1000));
+    let true_last_dts = a.tracks[0].samples[last].timing.map(|t| t.dts).unwrap() as u64;
+    let true_end = true_last_dts
+        + a.tracks[0].samples[last]
+            .timing
+            .map(|t| t.duration)
+            .unwrap() as u64;
     assert_eq!(true_last_dts, 56_000);
     assert_eq!(true_end, 59_000);
 
@@ -614,14 +622,15 @@ fn concat_and_snap_honour_a_genuine_tfdt_gap() {
 #[test]
 fn concat_rebases_unrelated_timelines_onto_the_join() {
     // a: a "programme" 10 hours into its own broadcast day (90 kHz ticks).
-    let ten_hours_ticks: u64 = 10 * 3600 * u64::from(TIMESCALE);
+    let ten_hours_ticks: u64 = 10 * 3600 * TIMESCALE.as_u64();
     let a = media_of(video_track(1, 0xA0, 5, 3000, 5), ten_hours_ticks);
     // b: an independently-demuxed asset anchored at 0 — its own file's
     // clock, unrelated to `a`'s.
     let b = media_of(video_track(1, 0xB0, 4, 3000, 4), 0);
 
     let a_last = a.tracks[0].samples.last().unwrap();
-    let a_end = a_last.dts.unwrap() + a_last.duration.unwrap() as i64;
+    let a_end =
+        a_last.timing.map(|t| t.dts).unwrap() + a_last.timing.map(|t| t.duration).unwrap() as i64;
 
     let res = concat(&a, &b).unwrap();
     let out = &res.media.tracks[0];
@@ -629,7 +638,11 @@ fn concat_rebases_unrelated_timelines_onto_the_join() {
     // Real per-sample dts — NOT `dts_sequence`'s `start_decode_time + Σ
     // duration` reconstruction, which cannot see this bug at all (it never
     // reads `Sample::dts`).
-    let real_dts: Vec<i64> = out.samples.iter().map(|s| s.dts.unwrap()).collect();
+    let real_dts: Vec<i64> = out
+        .samples
+        .iter()
+        .map(|s| s.timing.map(|t| t.dts).unwrap())
+        .collect();
 
     for w in real_dts.windows(2) {
         assert!(
@@ -663,10 +676,14 @@ fn concat_preserves_composition_offsets_exactly() {
     // reorder pattern would produce.
     let offsets = [0i64, 500, -250, 1200];
     for (i, s) in a.tracks[0].samples.iter_mut().enumerate() {
-        s.pts = Some(s.dts.unwrap() + offsets[i % offsets.len()]);
+        if let Some(t) = s.timing.as_mut() {
+            t.pts = t.dts + offsets[i % offsets.len()];
+        }
     }
     for (i, s) in b.tracks[0].samples.iter_mut().enumerate() {
-        s.pts = Some(s.dts.unwrap() + offsets[i % offsets.len()]);
+        if let Some(t) = s.timing.as_mut() {
+            t.pts = t.dts + offsets[i % offsets.len()];
+        }
     }
     let b_offsets_before: Vec<i64> = b.tracks[0]
         .samples
@@ -687,8 +704,14 @@ fn concat_preserves_composition_offsets_exactly() {
     }
     // a's own samples are untouched entirely (both dts and pts).
     for i in 0..k {
-        assert_eq!(out.samples[i].dts, a.tracks[0].samples[i].dts);
-        assert_eq!(out.samples[i].pts, a.tracks[0].samples[i].pts);
+        assert_eq!(
+            out.samples[i].timing.map(|t| t.dts),
+            a.tracks[0].samples[i].timing.map(|t| t.dts)
+        );
+        assert_eq!(
+            out.samples[i].timing.map(|t| t.pts),
+            a.tracks[0].samples[i].timing.map(|t| t.pts)
+        );
     }
 }
 
@@ -710,7 +733,11 @@ fn splice_insert_ssai_round_trip_is_continuous_on_real_stamps() {
     let at = 9000; // sample index 3, a keyframe
     let res = splice_insert(&base, &ad, at).unwrap();
     let out = &res.media.tracks[0];
-    let real_dts: Vec<i64> = out.samples.iter().map(|s| s.dts.unwrap()).collect();
+    let real_dts: Vec<i64> = out
+        .samples
+        .iter()
+        .map(|s| s.timing.map(|t| t.dts).unwrap())
+        .collect();
 
     // Base head (indices 0..3) unchanged.
     for (i, &d) in real_dts[..3].iter().enumerate() {
@@ -782,8 +809,14 @@ fn concat_preserves_av_alignment_across_mixed_timescales() {
     let video_join_index = 5; // a_video had 5 samples
     let audio_join_index = 5; // a_audio had 5 samples
 
-    let video_join_dts = video_out.samples[video_join_index].dts.unwrap();
-    let audio_join_dts = audio_out.samples[audio_join_index].dts.unwrap();
+    let video_join_dts = video_out.samples[video_join_index]
+        .timing
+        .map(|t| t.dts)
+        .unwrap();
+    let audio_join_dts = audio_out.samples[audio_join_index]
+        .timing
+        .map(|t| t.dts)
+        .unwrap();
 
     assert_eq!(
         video_join_dts, 15_000,
@@ -856,8 +889,8 @@ fn concat_repeated_does_not_accumulate_rounding_drift() {
             .last()
             .unwrap()
             .clone();
-        let video_join_dts_exact =
-            video_before_last.dts.unwrap() + video_before_last.duration.unwrap() as i64;
+        let video_join_dts_exact = video_before_last.timing.map(|t| t.dts).unwrap()
+            + video_before_last.timing.map(|t| t.duration).unwrap() as i64;
 
         // Each increment is its own small, unrelated, independently-anchored
         // asset — never derived from the growing result so far. Anchors are
@@ -884,13 +917,19 @@ fn concat_repeated_does_not_accumulate_rounding_drift() {
             .find(|t| t.spec.track_id == TrackId::new(2))
             .unwrap();
 
-        let video_join_dts = video_out.samples[video_before_len].dts.unwrap();
+        let video_join_dts = video_out.samples[video_before_len]
+            .timing
+            .map(|t| t.dts)
+            .unwrap();
         assert_eq!(
             video_join_dts, video_join_dts_exact,
             "step {step}: reference track join is always exact (same timescale, no rescale)"
         );
 
-        let audio_join_dts = audio_out.samples[audio_before_len].dts.unwrap();
+        let audio_join_dts = audio_out.samples[audio_before_len]
+            .timing
+            .map(|t| t.dts)
+            .unwrap();
         let offset = expected_offset_48k(video_join_dts_exact, increment_video_start);
         let expected_audio_join = increment_audio_start + offset;
         assert_eq!(
@@ -921,7 +960,7 @@ fn concat_leaves_untimed_section_samples_as_none() {
             DataCarriage::Sections,
             false,
         )],
-        1000,
+        Timescale::from_nonzero(1000),
     );
     let b = Media::new(
         vec![data_track(
@@ -933,13 +972,13 @@ fn concat_leaves_untimed_section_samples_as_none() {
             DataCarriage::Sections,
             false,
         )],
-        1000,
+        Timescale::from_nonzero(1000),
     );
     let res = concat(&a, &b).unwrap();
     assert_eq!(res.media.tracks[0].samples.len(), 4);
     for s in &res.media.tracks[0].samples {
         assert!(
-            s.dts.is_none() && s.pts.is_none(),
+            s.timing.map(|t| t.dts).is_none() && s.timing.map(|t| t.pts).is_none(),
             "section-carried sample must stay untimed, never fabricated"
         );
     }
@@ -976,7 +1015,10 @@ fn concat_leaves_untimed_section_samples_as_none() {
         .unwrap();
     assert_eq!(video_out.samples.len(), 5);
     assert!(
-        video_out.samples.iter().all(|s| s.dts.is_some()),
+        video_out
+            .samples
+            .iter()
+            .all(|s| s.timing.map(|t| t.dts).is_some()),
         "video track stays timed"
     );
     assert_eq!(data_out.samples.len(), 4);
@@ -984,7 +1026,7 @@ fn concat_leaves_untimed_section_samples_as_none() {
         data_out
             .samples
             .iter()
-            .all(|s| s.dts.is_none() && s.pts.is_none()),
+            .all(|s| s.timing.map(|t| t.dts).is_none() && s.timing.map(|t| t.pts).is_none()),
         "section track stays untimed even though a reference track exists elsewhere"
     );
 }
@@ -1026,8 +1068,8 @@ fn splice_insert_rebases_real_fixture_onto_the_join() {
 
     // The timescales genuinely differ — this is what makes the rescale path
     // real rather than an identity no-op.
-    assert_eq!(video.spec.timescale, 90_000, "real video timescale");
-    assert_eq!(audio.spec.timescale, 44_100, "real audio timescale");
+    assert_eq!(video.spec.timescale.get(), 90_000, "real video timescale");
+    assert_eq!(audio.spec.timescale.get(), 44_100, "real audio timescale");
     assert_ne!(
         video.spec.timescale, audio.spec.timescale,
         "the mixed-timescale path must not degenerate to an identity rescale"
@@ -1052,10 +1094,10 @@ fn splice_insert_rebases_real_fixture_onto_the_join() {
     // Split the audio at the same wall-clock offset as the content split.
     let content_split_ticks: u64 = video.samples[..content_split]
         .iter()
-        .map(|s| s.duration.unwrap_or(0) as u64)
+        .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
         .sum();
-    let content_split_secs = content_split_ticks as f64 / f64::from(video.spec.timescale);
-    let audio_target = (content_split_secs * f64::from(audio.spec.timescale)).round() as u64;
+    let content_split_secs = content_split_ticks as f64 / f64::from(video.spec.timescale.get());
+    let audio_target = (content_split_secs * f64::from(audio.spec.timescale.get())).round() as u64;
     let mut acc = 0u64;
     let mut audio_split = audio.samples.len();
     for (i, s) in audio.samples.iter().enumerate() {
@@ -1063,10 +1105,10 @@ fn splice_insert_rebases_real_fixture_onto_the_join() {
             audio_split = i;
             break;
         }
-        acc += s.duration.unwrap_or(0) as u64;
+        acc += s.timing.map(|t| t.duration).unwrap_or(0) as u64;
     }
 
-    let splice_dts = video.samples[splice_idx].dts.unwrap() as u64;
+    let splice_dts = video.samples[splice_idx].timing.map(|t| t.dts).unwrap() as u64;
 
     let base = Media::new(
         vec![
@@ -1086,7 +1128,7 @@ fn splice_insert_rebases_real_fixture_onto_the_join() {
     // The ad: anchored at 0 while its samples keep the capture's real
     // absolute dts — the #782 condition, as `examples/ssai_ad_stitch/main.rs`
     // builds it.
-    let ad_video_first_dts = video.samples[content_split].dts.unwrap();
+    let ad_video_first_dts = video.samples[content_split].timing.map(|t| t.dts).unwrap();
     let ad = Media::new(
         vec![
             Track::new_at(
@@ -1134,7 +1176,11 @@ fn splice_insert_rebases_real_fixture_onto_the_join() {
         let dts: Vec<i64> = t
             .samples
             .iter()
-            .map(|s| s.dts.expect("real fixture samples are all timed"))
+            .map(|s| {
+                s.timing
+                    .map(|t| t.dts)
+                    .expect("real fixture samples are all timed")
+            })
             .collect();
         for (i, w) in dts.windows(2).enumerate() {
             assert!(
@@ -1156,7 +1202,11 @@ fn splice_insert_rebases_real_fixture_onto_the_join() {
 
     // The ad's first video sample now decodes exactly at the splice boundary,
     // regardless of its own 306 000-tick position in the source capture.
-    let out_video_dts: Vec<i64> = out_video.samples.iter().map(|s| s.dts.unwrap()).collect();
+    let out_video_dts: Vec<i64> = out_video
+        .samples
+        .iter()
+        .map(|s| s.timing.map(|t| t.dts).unwrap())
+        .collect();
     assert_eq!(
         out_video_dts[splice_idx], splice_dts as i64,
         "the ad opens exactly at the real splice boundary"
@@ -1167,7 +1217,7 @@ fn splice_insert_rebases_real_fixture_onto_the_join() {
     let ad_len = video.samples.len() - content_split;
     let ad_span: u64 = video.samples[content_split..]
         .iter()
-        .map(|s| s.duration.unwrap_or(0) as u64)
+        .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
         .sum();
     assert_eq!(
         out_video_dts[splice_idx + ad_len],
@@ -1196,8 +1246,8 @@ fn match_tracks_never_collides_on_partial_id_overlap() {
     let b0 = data_track(1, 1000, b'C', 3, 1000, DataCarriage::Pes, true);
     let b1 = data_track(7, 1000, b'D', 3, 1000, DataCarriage::Pes, true);
 
-    let a = Media::new(vec![a0, a1], 1000);
-    let b = Media::new(vec![b0, b1], 1000);
+    let a = Media::new(vec![a0, a1], Timescale::from_nonzero(1000));
+    let b = Media::new(vec![b0, b1], Timescale::from_nonzero(1000));
 
     match concat(&a, &b) {
         // Ambiguous input (a[1] has no real counterpart in b once a[0]
@@ -1264,8 +1314,8 @@ fn match_tracks_prefers_unclaimed_id_match_over_positional_fallback() {
         data_track(3, 1000, b'Y', 3, 1000, DataCarriage::Pes, true),
         data_track(2, 1000, b'Z', 3, 1000, DataCarriage::Pes, true),
     ];
-    let a = Media::new(a_tracks, 1000);
-    let b = Media::new(b_tracks, 1000);
+    let a = Media::new(a_tracks, Timescale::from_nonzero(1000));
+    let b = Media::new(b_tracks, Timescale::from_nonzero(1000));
 
     let res = concat(&a, &b).expect("an unclaimed id match exists for every a track");
 
@@ -1333,15 +1383,19 @@ fn splice_cut_on_a_gapped_track_uses_absolute_dts() {
     let mut other = data_track(9, 1000, b'A', 12, 1000, DataCarriage::Pes, true);
     for (i, s) in other.samples.iter_mut().enumerate() {
         let dts = 5000 + i as i64 * 1000;
-        s.dts = Some(dts);
-        s.pts = Some(dts);
+        if let Some(t) = s.timing.as_mut() {
+            t.dts = dts;
+            t.pts = dts;
+        } else {
+            s.timing = Some(transmux::ir::SampleTiming::new(dts, dts, 0));
+        }
     }
-    let base = Media::new(vec![video, other], 1000);
+    let base = Media::new(vec![video, other], Timescale::from_nonzero(1000));
 
     // Ad: same two tracks, zero-based.
     let ad_video = video_track(7, b'W', 2, 1000, 1);
     let ad_other = data_track(9, 1000, b'B', 2, 1000, DataCarriage::Pes, true);
-    let ad = Media::new(vec![ad_video, ad_other], 1000);
+    let ad = Media::new(vec![ad_video, ad_other], Timescale::from_nonzero(1000));
 
     let res = splice_insert(&base, &ad, 4500).expect("splice_insert");
 
@@ -1395,11 +1449,19 @@ fn nonvideo_cut_uses_the_absolute_instant_not_the_track_relative_offset() {
     // Audio (Data stand-in): the same timescale, but its first sample sits
     // 90000 ticks after the video's start (a 1 s late join), and it runs long
     // enough that a track-relative cut would land far away.
-    let audio = data_track_at(9, TIMESCALE, b'A', 4000, 1000, 90_000, DataCarriage::Pes);
+    let audio = data_track_at(
+        9,
+        TIMESCALE.get(),
+        b'A',
+        4000,
+        1000,
+        90_000,
+        DataCarriage::Pes,
+    );
 
     let base = Media::new(vec![video, audio], TIMESCALE);
     let ad_video = video_track_at(7, b'W', 2, 1000, 1, 0);
-    let ad_audio = data_track_at(9, TIMESCALE, b'B', 2, 1000, 0, DataCarriage::Pes);
+    let ad_audio = data_track_at(9, TIMESCALE.get(), b'B', 2, 1000, 0, DataCarriage::Pes);
     let ad = Media::new(vec![ad_video, ad_audio], TIMESCALE);
 
     // Request a splice well past the audio's first sample, so a
@@ -1435,7 +1497,7 @@ fn nonvideo_cut_uses_the_absolute_instant_not_the_track_relative_offset() {
         "a splice point is a boundary, not a deletion: all 4000 base audio          samples survive"
     );
     assert_eq!(
-        spliced.samples[point.sample_index].dts,
+        spliced.samples[point.sample_index].timing.map(|t| t.dts),
         Some(100_000),
         "the boundary sample must be the first at the absolute cut instant"
     );
@@ -1465,11 +1527,11 @@ fn cut_rescale_rounds_up_so_audio_is_never_ahead_of_video() {
     let video = video_track_at(7, b'V', 120_000, 1, 1, 0);
     // Audio: 48 kHz, 1-tick samples, starting at absolute 0.
     let audio = data_track_at(9, 48_000, b'A', 120_000, 1, 0, DataCarriage::Pes);
-    let base = Media::new(vec![video, audio], 90_000);
+    let base = Media::new(vec![video, audio], Timescale::from_nonzero(90_000));
 
     let ad_video = video_track_at(7, b'W', 2, 1, 1, 0);
     let ad_audio = data_track_at(9, 48_000, b'B', 2, 1, 0, DataCarriage::Pes);
-    let ad = Media::new(vec![ad_video, ad_audio], 90_000);
+    let ad = Media::new(vec![ad_video, ad_audio], Timescale::from_nonzero(90_000));
 
     // Ask for a splice at 90001 video ticks: 90001 * 48000 / 90000 = 48000.53.
     let res = splice_insert(&base, &ad, 90_001).expect("splice_insert");
@@ -1515,15 +1577,19 @@ fn negative_dts_track_cut_is_not_saturated_to_a_wrong_index() {
     let mut audio = data_track_at(9, 90_000, b'A', 200, 1, 0, DataCarriage::Pes);
     for (i, s) in audio.samples.iter_mut().enumerate() {
         let dts = i as i64 - 100;
-        s.dts = Some(dts);
-        s.pts = Some(dts);
+        if let Some(t) = s.timing.as_mut() {
+            t.dts = dts;
+            t.pts = dts;
+        } else {
+            s.timing = Some(transmux::ir::SampleTiming::new(dts, dts, 0));
+        }
     }
     audio.start_decode_time = 0;
-    let base = Media::new(vec![video, audio], 90_000);
+    let base = Media::new(vec![video, audio], Timescale::from_nonzero(90_000));
 
     let ad_video = video_track_at(7, b'W', 1, 1, 1, 0);
     let ad_audio = data_track_at(9, 90_000, b'B', 1, 1, 0, DataCarriage::Pes);
-    let ad = Media::new(vec![ad_video, ad_audio], 90_000);
+    let ad = Media::new(vec![ad_video, ad_audio], Timescale::from_nonzero(90_000));
 
     // Cutting at video tick 0 must land on the first audio sample whose own dts
     // is >= 0 — index 100, since the first hundred are negative. Wrapping the

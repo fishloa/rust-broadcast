@@ -374,7 +374,7 @@
 //! rather than any one track's clock. This is also why the event log is a
 //! genuinely separate ring from the sample rings, not a third
 //! [`RetentionClass`]: a [`transmux::Sample`] is timestamped in its
-//! *track's* clock ([`transmux::Sample::pts`]/`dts`, per §4 of the spec);
+//! *track's* clock (transmux::Sample::timing `.pts`/`.dts`), per §4 of the spec);
 //! an event lives on the trunk's own, track-independent clock.
 //!
 //! **Carries [`timed_metadata::TimedEvent`], not a parallel type.** It is
@@ -3525,6 +3525,7 @@ pub(crate) fn wait_until_stalled(trunk: &Trunk, n: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use broadcast_common::timescale::Timescale;
     use std::sync::mpsc;
     use std::thread;
     use transmux::pipeline::{CodecConfig, DataCarriage};
@@ -3536,7 +3537,7 @@ mod tests {
     fn opaque_track(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
-            90_000,
+            Timescale::from_nonzero(90_000),
             CodecConfig::Data {
                 stream_type: 0x06,
                 descriptors: Vec::new(),

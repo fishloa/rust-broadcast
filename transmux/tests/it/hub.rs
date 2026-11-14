@@ -12,6 +12,7 @@
 //! 3. `CmafMux::package` bytes == `build_init_segment ++ build_media_segment`
 //!    for the equivalent input (the wrapper is byte-transparent).
 
+use broadcast_common::timescale::Timescale;
 use std::fs;
 use transmux::TrackId;
 
@@ -138,8 +139,8 @@ fn cmaf_package_reunpackage_preserves_structure() {
                 a.track_id()
             );
             assert_eq!(
-                sa.duration,
-                sb.duration,
+                sa.timing.map(|t| t.duration),
+                sb.timing.map(|t| t.duration),
                 "track {} sample {i} duration preserved",
                 a.track_id()
             );
@@ -217,7 +218,7 @@ fn cmaf_package_is_byte_transparent_over_build_helpers() {
 /// A `Media` with no tracks is rejected by the packagers.
 #[test]
 fn empty_media_rejected() {
-    let media = Media::new(vec![], 1000);
+    let media = Media::new(vec![], Timescale::from_nonzero(1000));
     let mut mux = CmafMux::default();
     assert!(
         matches!(

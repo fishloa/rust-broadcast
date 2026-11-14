@@ -187,8 +187,16 @@ fn assert_media_round_trips(original: &Media, remuxed: &Media) {
         assert_codec_config_equal(&ta.spec.config, &tb.spec.config);
         assert_eq!(ta.samples.len(), tb.samples.len(), "track {i} sample count");
         for (j, (sa, sb)) in ta.samples.iter().zip(&tb.samples).enumerate() {
-            assert_eq!(sa.pts, sb.pts, "track {i} sample {j} pts");
-            assert_eq!(sa.dts, sb.dts, "track {i} sample {j} dts");
+            assert_eq!(
+                sa.timing.map(|t| t.pts),
+                sb.timing.map(|t| t.pts),
+                "track {i} sample {j} pts"
+            );
+            assert_eq!(
+                sa.timing.map(|t| t.dts),
+                sb.timing.map(|t| t.dts),
+                "track {i} sample {j} dts"
+            );
             assert_eq!(
                 sa.flags.is_sync, sb.flags.is_sync,
                 "track {i} sample {j} keyframe flag"

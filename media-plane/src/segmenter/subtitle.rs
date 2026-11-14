@@ -43,7 +43,7 @@ use std::time::{Duration, Instant};
 use broadcast_common::Timestamp;
 use broadcast_common::bcp47_language;
 use broadcast_common::clock33;
-use broadcast_common::timescale::{Rounding, rescale_i64};
+use broadcast_common::timescale::{Rounding, Timescale, rescale_i64};
 use caption_convert::{Cue, MediaTime, TeletextToWebVtt, cue_block};
 use dvb_si::descriptors::teletext::{TeletextEntry, TeletextType};
 use dvb_si::descriptors::{AnyDescriptor, parse_loop};
@@ -226,7 +226,7 @@ pub struct LeaderPart {
 struct Core<D: CueDecoder> {
     decoder: D,
     origin_raw: Option<u64>,
-    origin_dts: Option<(i64, u32)>,
+    origin_dts: Option<(i64, Timescale)>,
     spans: BTreeMap<u32, Span>,
     next_msn: Option<u32>,
     closed: Vec<Cue>,
@@ -234,8 +234,13 @@ struct Core<D: CueDecoder> {
     mpegts_at_origin: u64,
 }
 
-fn rescale_90k(value: i64, timescale: u32) -> i64 {
-    rescale_i64(value, timescale, clock33::PTS_HZ, Rounding::TowardZero)
+fn rescale_90k(value: i64, timescale: Timescale) -> i64 {
+    rescale_i64(
+        value,
+        timescale,
+        clock33::PTS_TIMESCALE,
+        Rounding::TowardZero,
+    )
 }
 
 fn to_media_time(local: i64) -> MediaTime {
@@ -435,7 +440,7 @@ impl<D: CueDecoder> Core<D> {
 /// One teletext page being published as a WebVTT rendition.
 pub struct SubtitleFollower {
     pub source_track_id: TrackId,
-    timescale: u32,
+    timescale: Timescale,
     core: Core<TeletextToWebVtt>,
     writer: SegmentWriter,
     pending: VecDeque<PendingPublish>,
@@ -446,7 +451,7 @@ pub struct SubtitleFollower {
 
 impl SubtitleFollower {
     /// Build a follower for `page` that publishes into the sibling `trunk`; `None` when its segment writer is already claimed.
-    pub fn try_new(page: &TeletextPage, timescale: u32, trunk: &Arc<Trunk>) -> Option<Self> {
+    pub fn try_new(page: &TeletextPage, timescale: Timescale, trunk: &Arc<Trunk>) -> Option<Self> {
         let writer = trunk.segment_writer()?;
         Some(SubtitleFollower {
             source_track_id: page.source_track,
@@ -469,7 +474,11 @@ impl SubtitleFollower {
     }
 
     pub fn push(&mut self, sample: &Sample) {
-        let Some(pts) = sample.pts.or(sample.dts) else {
+        let Some(pts) = sample
+            .timing
+            .map(|t| t.pts)
+            .or(sample.timing.map(|t| t.dts))
+        else {
             return;
         };
         let wrap = i64::try_from(clock33::WRAP_33BIT).unwrap_or(i64::MAX);
@@ -553,7 +562,7 @@ mod tests {
                 msn,
                 part_index,
                 start_dts,
-                timescale: 90_000,
+                timescale: Timescale::from_nonzero(90_000),
             },
             duration_secs: PART_SECS,
         }

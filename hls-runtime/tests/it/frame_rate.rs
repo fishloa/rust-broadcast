@@ -155,9 +155,13 @@ fn ts_origin_fed_with(
     .expect("segmenter");
     let mut timeline: Vec<(f64, transmux::TrackId, transmux::Sample)> = Vec::new();
     for track in &tracks {
-        let scale = f64::from(track.spec.timescale);
+        let scale = f64::from(track.spec.timescale.get());
         for (i, sample) in track.samples.iter().enumerate() {
-            let dts = sample.dts.or(sample.pts).expect("timed sample");
+            let dts = sample
+                .timing
+                .map(|t| t.dts)
+                .or(sample.timing.map(|t| t.pts))
+                .expect("timed sample");
             let mut sample = sample.clone();
             if shape(i, dts, &mut sample) {
                 timeline.push((dts as f64 / scale, track.spec.track_id, sample));
@@ -265,14 +269,24 @@ fn variable_frame_rate_reports_the_maximum_not_the_overall_mean() {
     let Some(tracks) = ts_fixture_tracks(IPHONE_30FPS, true) else {
         return;
     };
-    let first = tracks[0].samples.first().and_then(|s| s.dts).unwrap();
-    let last = tracks[0].samples.last().and_then(|s| s.dts).unwrap();
+    let first = tracks[0]
+        .samples
+        .first()
+        .and_then(|s| s.timing.map(|t| t.dts))
+        .unwrap();
+    let last = tracks[0]
+        .samples
+        .last()
+        .and_then(|s| s.timing.map(|t| t.dts))
+        .unwrap();
     let midpoint = first + (last - first) / 2;
     let (origin, _segments) = ts_origin_fed_with(tracks, |i, dts, sample| {
         if dts < midpoint {
             return true;
         }
-        sample.duration = sample.duration.map(|d| d * 2);
+        if let Some(t) = sample.timing.as_mut() {
+            t.duration = t.duration.saturating_mul(2);
+        }
         i % 2 == 0
     });
     assert_eq!(
@@ -363,7 +377,11 @@ fn video_piece(
     .expect("segmenter");
     for sample in track.samples.iter().take(samples) {
         let mut sample = sample.clone();
-        sample.duration = Some(ticks);
+        if let Some(t) = sample.timing.as_mut() {
+            t.duration = ticks;
+        } else {
+            sample.timing = Some(transmux::ir::SampleTiming::new(0, 0, ticks));
+        }
         segmenter.push(track.spec.track_id, sample).expect("push");
     }
     segmenter.finish().expect("finish");

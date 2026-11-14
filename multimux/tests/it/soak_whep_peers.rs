@@ -287,7 +287,7 @@ async fn soak_real_whep_peers_receive_the_route() {
     let writer = trunk.writer().expect("trunk writer");
     writer.set_tracks(vec![TrackSpec::new(
         TrackId::new(1),
-        transmux::VIDEO_CLOCK_RATE,
+        transmux::VIDEO_CLOCK_TIMESCALE,
         CodecConfig::Avc {
             config: avc_config_from_sprop(SPROP).expect("valid sprop"),
             width: 0,

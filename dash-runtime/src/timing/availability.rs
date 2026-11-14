@@ -8,7 +8,7 @@
 //!   time-shift buffer; Annex A.3.4 prints the same quantity)
 //! * Initialization Segment: available from `AST + PeriodStart` (5.3.9.5.2).
 
-use broadcast_common::timescale::{Rounding, to_micros};
+use broadcast_common::timescale::{Rounding, Timescale, to_micros};
 use broadcast_common::units::MICROS_PER_SEC;
 
 const ATO_CLAMP_US: i128 = 1 << 80;
@@ -23,7 +23,7 @@ pub fn ato_seconds_to_us(seconds: f64) -> i128 {
 
 /// Ticks to microseconds, rounded toward negative infinity.
 #[must_use]
-pub fn ticks_to_us(ticks: i128, timescale: u64) -> i128 {
+pub fn ticks_to_us(ticks: i128, timescale: Timescale) -> i128 {
     to_micros(ticks, timescale, Rounding::Floor)
 }
 
@@ -36,7 +36,7 @@ pub fn segment_available_from_ticks(
     period_start_us: i128,
     start_ticks: i128,
     duration_ticks: i128,
-    timescale: u64,
+    timescale: Timescale,
     ato_us: i128,
 ) -> i128 {
     segment_available_from(
@@ -55,7 +55,7 @@ pub fn segment_available_until_ticks(
     period_start_us: i128,
     start_ticks: i128,
     duration_ticks: i128,
-    timescale: u64,
+    timescale: Timescale,
     tsb_us: Option<i128>,
 ) -> Option<i128> {
     let end2 = start_ticks.saturating_add(duration_ticks.saturating_mul(2));
@@ -120,9 +120,9 @@ pub fn complete_count_constant(
     period_start_us: i128,
     ato_us: i128,
     duration_ticks: u64,
-    timescale: u64,
+    timescale: Timescale,
 ) -> u64 {
-    if duration_ticks == 0 || timescale == 0 {
+    if duration_ticks == 0 {
         return 0;
     }
     let x = utc_us
@@ -133,7 +133,9 @@ pub fn complete_count_constant(
     if x1 <= 0 {
         return 0;
     }
-    let numerator = x1.saturating_mul(i128::from(timescale)).saturating_sub(1);
+    let numerator = x1
+        .saturating_mul(i128::from(timescale.get()))
+        .saturating_sub(1);
     let denominator = i128::from(duration_ticks).saturating_mul(MICROS_PER_SEC as i128);
     let n = numerator / denominator;
     u64::try_from(n.max(0)).unwrap_or(u64::MAX)

@@ -50,7 +50,7 @@ impl SampleFlags {
 /// Debug-only provenance: the source container's **raw wire-clock**
 /// timestamps, before any rollover unwrap — e.g. the folded 33-bit TS/PES
 /// value straight off the PES optional header (ISO/IEC 13818-1 §2.4.3.7),
-/// still modulo `1 << 33`, *distinct* from [`Sample::dts`]/[`Sample::pts`]
+/// still modulo `1 << 33`, *distinct* from `Sample::timing` (`.dts`)/`Sample::timing` (`.pts`)
 /// which carry the unwrapped absolute value. Kept for inspection when
 /// diagnosing an unwrap bug (`provenance.wire_dts % (1 << 33)` should always
 /// equal `dts as u64 % (1 << 33)`); no mux or demux logic in this crate reads
@@ -79,6 +79,44 @@ impl Provenance {
     }
 }
 
+/// Absolute decode/presentation timing for a [`Sample`], all in the track's
+/// media timescale ticks. `None` on [`Sample::timing`] **only** for
+/// section-carried tracks (SCTE-35/DSM-CC/private sections), which carry no
+/// timestamp at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SampleTiming {
+    /// Absolute decode timestamp.
+    pub dts: i64,
+    /// Absolute presentation timestamp.
+    pub pts: i64,
+    /// Sample duration, when known.
+    pub duration: u32,
+}
+
+impl SampleTiming {
+    /// Build a timing triple.
+    #[must_use]
+    pub const fn new(dts: i64, pts: i64, duration: u32) -> Self {
+        Self { dts, pts, duration }
+    }
+
+    /// Combine three optional wire values into one optional timing. `None`
+    /// only when all three are `None` (section-carried tracks).
+    #[must_use]
+    pub fn from_options(dts: Option<i64>, pts: Option<i64>, duration: Option<u32>) -> Option<Self> {
+        if dts.is_none() && pts.is_none() && duration.is_none() {
+            None
+        } else {
+            Some(Self::new(
+                dts.unwrap_or(0),
+                pts.unwrap_or(dts.unwrap_or(0)),
+                duration.unwrap_or(0),
+            ))
+        }
+    }
+}
+
 /// A single coded sample (access unit) fed to [`crate::pipeline::build_media_segment`].
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -94,24 +132,9 @@ pub struct Sample {
     /// rewrite paths (`cenc_encrypt`/`cenc_decrypt`) — see those modules'
     /// `Bytes::try_into_mut` fast path.
     pub data: Bytes,
-    /// Absolute decode timestamp, in the track's media timescale
-    /// ([`crate::ir::TrackSpec::timescale`]) ticks. `None` **only** for
-    /// section-carried tracks (SCTE-35 `stream_type` 0x86, DSM-CC, private
-    /// sections — see `crate::ts_demux`), which carry no timestamp at all;
-    /// never fabricated. 33-bit (TS) / 32-bit (RTP) rollover is unwrapped
-    /// once, at the demux edge — this value is already absolute, not a wire
-    /// wrap-modulo value (see [`Provenance`] for the pre-unwrap wire stamp).
-    pub dts: Option<i64>,
-    /// Absolute presentation timestamp, in the track's media timescale ticks
-    /// (`dts + composition_offset` under the old relative model — the offset
-    /// is now folded directly into the absolute pair). `None` under the same
-    /// rule as [`Sample::dts`].
-    pub pts: Option<i64>,
-    /// Sample duration in the track's media timescale, when known. `None`
-    /// alongside `dts`/`pts` for section-carried tracks (a section has no
-    /// duration either); every timed (video/audio) sample from every
-    /// demuxer in this crate carries `Some`.
-    pub duration: Option<u32>,
+    /// Absolute decode/presentation timestamps and duration, in the track's
+    /// media timescale. `None` **only** for section-carried tracks.
+    pub timing: Option<SampleTiming>,
     /// Per-sample flags (currently just the sync-sample bit).
     pub flags: SampleFlags,
     /// Debug-only original wire timestamps, when the source container
@@ -136,15 +159,25 @@ impl Sample {
     /// `from` Hz media timescale in a `to` Hz one; the instant each describes
     /// is unchanged.
     #[must_use]
-    pub fn rescale_timescale(mut self, from: u32, to: u32) -> Self {
+    pub fn rescale_timescale(
+        mut self,
+        from: broadcast_common::timescale::Timescale,
+        to: broadcast_common::timescale::Timescale,
+    ) -> Self {
         if from == to {
             return self;
         }
-        self.dts = self.dts.map(|t| rescale_i64(t, from, to, Rounding::Floor));
-        self.pts = self.pts.map(|t| rescale_i64(t, from, to, Rounding::Floor));
-        self.duration = self.duration.map(|d| {
-            u32::try_from(rescale_i64(i64::from(d), from, to, Rounding::Floor)).unwrap_or(u32::MAX)
-        });
+        if let Some(t) = self.timing.as_mut() {
+            t.dts = rescale_i64(t.dts, from, to, Rounding::Floor);
+            t.pts = rescale_i64(t.pts, from, to, Rounding::Floor);
+            t.duration = u32::try_from(rescale_i64(
+                i64::from(t.duration),
+                from,
+                to,
+                Rounding::Floor,
+            ))
+            .unwrap_or(u32::MAX);
+        }
         self
     }
 
@@ -167,9 +200,15 @@ impl Sample {
     ) -> Self {
         Self {
             data: data.into(),
-            dts,
-            pts,
-            duration,
+            timing: if dts.is_none() && pts.is_none() && duration.is_none() {
+                None
+            } else {
+                Some(SampleTiming::new(
+                    dts.unwrap_or(0),
+                    pts.unwrap_or(dts.unwrap_or(0)),
+                    duration.unwrap_or(0),
+                ))
+            },
             flags: SampleFlags::new(is_sync),
             provenance: None,
             display: None,
@@ -188,9 +227,15 @@ impl Sample {
     ) -> Self {
         Self {
             data: annexb_to_length_prefixed(annexb).into(),
-            dts,
-            pts,
-            duration,
+            timing: if dts.is_none() && pts.is_none() && duration.is_none() {
+                None
+            } else {
+                Some(SampleTiming::new(
+                    dts.unwrap_or(0),
+                    pts.unwrap_or(dts.unwrap_or(0)),
+                    duration.unwrap_or(0),
+                ))
+            },
             flags: SampleFlags::new(is_sync),
             provenance: None,
             display: None,
@@ -208,9 +253,15 @@ impl Sample {
     ) -> Self {
         Self {
             data: data.into(),
-            dts,
-            pts,
-            duration,
+            timing: if dts.is_none() && pts.is_none() && duration.is_none() {
+                None
+            } else {
+                Some(SampleTiming::new(
+                    dts.unwrap_or(0),
+                    pts.unwrap_or(dts.unwrap_or(0)),
+                    duration.unwrap_or(0),
+                ))
+            },
             flags: SampleFlags::SYNC,
             provenance: None,
             display: None,
@@ -236,9 +287,9 @@ impl Sample {
     /// old relative model's default for a sample carrying no explicit
     /// offset).
     pub fn composition_offset(&self) -> i32 {
-        match (self.dts, self.pts) {
-            (Some(d), Some(p)) => (p - d).clamp(i32::MIN as i64, i32::MAX as i64) as i32,
-            _ => 0,
+        match self.timing {
+            Some(t) => (t.pts - t.dts).clamp(i32::MIN as i64, i32::MAX as i64) as i32,
+            None => 0,
         }
     }
 }

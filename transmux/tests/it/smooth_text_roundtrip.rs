@@ -3,6 +3,7 @@
 //! parser must read back (real artifact: ffmpeg CMAF `av-subtitle-frag.mp4`,
 //! AVC + `stpp`/TTML).
 
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Unpackage};
 use broadcast_smooth::{SmoothManifest, StreamType};
 use transmux::pipeline::CodecConfig;
@@ -38,7 +39,7 @@ fn packager_text_stream_parses_back() {
     // ...and the text level resolves to a muxable subtitle TrackSpec.
     let spec = transmux::track_spec_from_quality_level(
         transmux::TrackId::new(7),
-        90_000,
+        Timescale::from_nonzero(90_000),
         text.stream_type,
         &text.qualities[0],
     )

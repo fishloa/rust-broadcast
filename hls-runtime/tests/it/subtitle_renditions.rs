@@ -4,6 +4,7 @@
 //! origin's media playlist. Content-type of served segments is decided in
 //! `multimux`, not here, so there is no `text/vtt` test in this crate.
 
+use broadcast_common::timescale::Timescale;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
@@ -60,7 +61,7 @@ fn avc_spec() -> TrackSpec {
     });
     TrackSpec::new(
         TrackId::new(1),
-        90_000,
+        Timescale::from_nonzero(90_000),
         CodecConfig::Avc {
             config,
             width: 320,

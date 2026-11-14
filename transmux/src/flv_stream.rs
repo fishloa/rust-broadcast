@@ -171,7 +171,7 @@ struct TrackState {
 
 impl TrackState {
     /// Advance the pending slot with a newly-decoded tag at `dts`, emitting
-    /// the *previous* pending sample now that its duration (`dts - prev.dts`)
+    /// the *previous* pending sample now that its duration (`dts - prev.timing.map(|t| t.dts)`)
     /// is known.
     fn advance(&mut self, sample: Sample, dts: i64, events: &mut VecDeque<DemuxEvent>) {
         let track_id = self
@@ -181,7 +181,11 @@ impl TrackState {
             let duration = u32::try_from((dts - prev.dts).max(0)).unwrap_or(u32::MAX);
             self.last_duration = duration;
             let mut emitted = prev.sample;
-            emitted.duration = Some(duration);
+            if let Some(t) = emitted.timing.as_mut() {
+                t.duration = duration;
+            } else {
+                emitted.timing = Some(crate::ir::SampleTiming::new(0, 0, duration));
+            }
             events.push_back(DemuxEvent::Sample {
                 track_id,
                 sample: emitted,
@@ -198,7 +202,11 @@ impl TrackState {
         };
         if let Some(prev) = self.pending.take() {
             let mut emitted = prev.sample;
-            emitted.duration = Some(self.last_duration);
+            if let Some(t) = emitted.timing.as_mut() {
+                t.duration = self.last_duration;
+            } else {
+                emitted.timing = Some(crate::ir::SampleTiming::new(0, 0, self.last_duration));
+            }
             events.push_back(DemuxEvent::Sample {
                 track_id,
                 sample: emitted,
@@ -592,9 +600,11 @@ impl StreamingFlvDemux {
                 )?;
                 let sample = Sample {
                     data: data.into(),
-                    dts: Some(dts_abs),
-                    pts: Some(pts_abs),
-                    duration: None, // filled in by `TrackState::advance`/`flush`
+                    timing: crate::ir::SampleTiming::from_options(
+                        Some(dts_abs),
+                        Some(pts_abs),
+                        None,
+                    ), // filled in by `TrackState::advance`/`flush`
                     flags: crate::ir::SampleFlags::new(frame_type == FRAME_TYPE_KEYFRAME),
                     provenance: None,
                     display: None,
@@ -680,9 +690,11 @@ impl StreamingFlvDemux {
                 let dts_abs = timestamp;
                 let sample = Sample {
                     data: data.to_vec().into(),
-                    dts: Some(dts_abs),
-                    pts: Some(dts_abs),
-                    duration: None, // filled in by `TrackState::advance`/`flush`
+                    timing: crate::ir::SampleTiming::from_options(
+                        Some(dts_abs),
+                        Some(dts_abs),
+                        None,
+                    ), // filled in by `TrackState::advance`/`flush`
                     flags: crate::ir::SampleFlags::SYNC,
                     provenance: None,
                     display: None,
@@ -957,7 +969,8 @@ mod tests {
             .filter_map(|e| match e {
                 DemuxEvent::Sample { sample, .. } => Some((
                     sample
-                        .duration
+                        .timing
+                        .map(|t| t.duration)
                         .expect("FLV video samples always carry a duration"),
                     sample.data.clone(),
                 )),
@@ -1208,7 +1221,10 @@ mod tests {
         let stamps: Vec<(Option<i64>, Option<u32>)> = events
             .iter()
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => Some((sample.dts, sample.duration)),
+                DemuxEvent::Sample { sample, .. } => Some((
+                    sample.timing.map(|t| t.dts),
+                    sample.timing.map(|t| t.duration),
+                )),
                 _ => None,
             })
             .collect();

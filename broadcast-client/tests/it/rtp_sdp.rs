@@ -73,7 +73,7 @@ fn the_sdp_tracks_are_announced_when_the_socket_is_bound_before_any_packet() {
         .collect();
     assert_eq!(tracks.len(), 1);
     assert_eq!(tracks[0].len(), 1);
-    assert_eq!(tracks[0][0].timescale, CLOCK_HZ);
+    assert_eq!(tracks[0][0].timescale.get(), CLOCK_HZ);
     assert_eq!(host.session.payload_bytes(), 0);
 }
 

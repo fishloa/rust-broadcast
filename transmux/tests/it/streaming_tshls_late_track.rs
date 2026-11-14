@@ -72,8 +72,9 @@ fn add_track_registers_audio_after_video_only_segments_were_already_cut() {
 
     let video_track_id = video_spec.track_id;
     let audio_track_id = audio_spec.track_id;
-    let video_scale = video_spec.timescale.max(1) as u64;
-    let audio_scale = audio_spec.timescale.max(1) as u64;
+    let video_timescale = video_spec.timescale;
+    let video_scale = video_spec.timescale.get() as u64;
+    let audio_scale = audio_spec.timescale.get() as u64;
 
     // ── Phase 1: build video-only (as if audio hadn't resolved yet) ─────────
     let mut seg = StreamingTsHlsSegmenter::new(vec![video_spec], 1, usize::MAX)
@@ -108,7 +109,7 @@ fn add_track_registers_audio_after_video_only_segments_were_already_cut() {
     seg.add_track(audio_spec).expect("add_track: audio");
 
     // Duplicate track_id must be rejected.
-    let dup = transmux::pipeline::TrackSpec::new(video_track_id, video_scale as u32, {
+    let dup = transmux::pipeline::TrackSpec::new(video_track_id, video_timescale, {
         // Reuse the already-registered video codec config via the IR clone.
         let re_demux = demux(&load_ts());
         re_demux.tracks[video_pos].spec.config.clone()
@@ -121,17 +122,17 @@ fn add_track_registers_audio_after_video_only_segments_were_already_cut() {
     // ── Phase 3: push the remaining video + all audio, interleaved by decode time ─
     let mut acc: u64 = video_samples[..=split_idx]
         .iter()
-        .map(|s| s.duration.unwrap_or(0) as u64)
+        .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
         .sum();
     let mut items: Vec<(f64, bool, usize)> = Vec::new();
     for (i, s) in video_samples.iter().enumerate().skip(split_idx + 1) {
         items.push((acc as f64 / video_scale as f64, true, i));
-        acc += s.duration.unwrap_or(0) as u64;
+        acc += s.timing.map(|t| t.duration).unwrap_or(0) as u64;
     }
     let mut aacc: u64 = 0;
     for (i, s) in audio_samples.iter().enumerate() {
         items.push((aacc as f64 / audio_scale as f64, false, i));
-        aacc += s.duration.unwrap_or(0) as u64;
+        aacc += s.timing.map(|t| t.duration).unwrap_or(0) as u64;
     }
     items.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then(a.1.cmp(&b.1)));
 

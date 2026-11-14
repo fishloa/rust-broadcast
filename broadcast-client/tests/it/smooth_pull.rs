@@ -340,7 +340,7 @@ fn smooth_samples_are_placed_at_tfxd_time() {
     let has_late = h
         .events
         .iter()
-        .any(|e| matches!(e, Event::Sample { sample, .. } if sample.dts == Some(10_000_000)));
+        .any(|e| matches!(e, Event::Sample { sample, .. } if sample.timing.map(|t| t.dts) == Some(10_000_000)));
     assert!(has_late, "expected a sample at tfxd time 10000000");
 }
 
@@ -682,9 +682,9 @@ fn sample_trace(fixture: &str) -> String {
             Event::Sample { track, sample, .. } => out.push_str(&format!(
                 "sample track={} dts={:?} pts={:?} dur={:?} sync={} len={} fnv={:016x}\n",
                 track.value(),
-                sample.dts,
-                sample.pts,
-                sample.duration,
+                sample.timing.map(|t| t.dts),
+                sample.timing.map(|t| t.pts),
+                sample.timing.map(|t| t.duration),
                 sample.flags.is_sync,
                 sample.data.len(),
                 fnv1a(&sample.data),

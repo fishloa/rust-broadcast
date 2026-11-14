@@ -15,6 +15,7 @@
 //! This test must FAIL on pre-fix code with `tracks=0, skipped=1`.
 
 use broadcast_common::Unpackage;
+use broadcast_common::timescale::Timescale;
 use transmux::Fmp4Demux;
 use transmux::TrackId;
 use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
@@ -101,14 +102,15 @@ fn genuinely_malformed_stsd_names_the_real_reason() {
     };
     let spec = TrackSpec::new(
         TrackId::new(1),
-        90_000,
+        Timescale::from_nonzero(90_000),
         CodecConfig::Avc {
             config: AVCConfigurationBox::new(record),
             width: 320,
             height: 240,
         },
     );
-    let mut moov = build_init_segment(&[spec], 90_000).expect("build a valid init segment");
+    let mut moov = build_init_segment(&[spec], Timescale::from_nonzero(90_000))
+        .expect("build a valid init segment");
 
     // Corrupt the SPS NALU length field inside the `avcC` body (the 2 bytes
     // right after configurationVersion/profile/compat/level/lenSize/numSPS)

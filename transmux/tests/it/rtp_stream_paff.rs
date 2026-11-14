@@ -6,6 +6,7 @@
 #![cfg(feature = "std")]
 
 use crate::bit_writer::BitWriter;
+use broadcast_common::timescale::Timescale;
 use transmux::TrackId;
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::RtpMediaKind;
@@ -134,7 +135,7 @@ fn field_pictures_use_a_depth_widened_for_fields() {
         id,
         RtpMediaKind::H264,
         config(),
-        90_000,
+        Timescale::from_nonzero(90_000),
     )]);
     let mut samples = Vec::new();
     let mut seq = 0u16;
@@ -164,9 +165,17 @@ fn field_pictures_use_a_depth_widened_for_fields() {
         "{events:?}"
     );
     for w in samples.windows(2) {
-        assert!(w[0].dts < w[1].dts, "dts must increase");
+        assert!(
+            w[0].timing.map(|t| t.dts) < w[1].timing.map(|t| t.dts),
+            "dts must increase"
+        );
     }
     for s in &samples {
-        assert!(s.dts <= s.pts, "dts {:?} > pts {:?}", s.dts, s.pts);
+        assert!(
+            s.timing.map(|t| t.dts) <= s.timing.map(|t| t.pts),
+            "dts {:?} > pts {:?}",
+            s.timing.map(|t| t.dts),
+            s.timing.map(|t| t.pts)
+        );
     }
 }

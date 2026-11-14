@@ -18,6 +18,7 @@
 //! box bytes (the PTO is unused in the arithmetic, only documented for
 //! higher-layer Period-level adjustment).
 use crate::error::{Error, Result};
+use broadcast_common::timescale::Timescale;
 use mp4_emsg::{EmsgBox, PresentationTime};
 
 /// Segment-level timing parameters needed for emsg version conversion.
@@ -35,7 +36,7 @@ pub struct SegmentTiming {
     /// one Representation is PTO-independent).
     pub presentation_time_offset: u64,
     /// Ticks per second; MUST equal the emsg's `timescale`.
-    pub timescale: u32,
+    pub timescale: Timescale,
 }
 
 /// Convert an emsg to **version 1** (absolute `presentation_time` on the
@@ -103,7 +104,7 @@ fn movie_timeline_t(emsg: &EmsgBox<'_>, timing: &SegmentTiming) -> Result<u64> {
 }
 
 /// Validate that the emsg timescale matches the SegmentTiming timescale.
-fn validate_timescale(emsg: u32, timing: u32) -> Result<()> {
+fn validate_timescale(emsg: Timescale, timing: Timescale) -> Result<()> {
     if emsg != timing {
         return Err(Error::EmsgTimescaleMismatch { emsg, timing });
     }
@@ -120,7 +121,7 @@ mod tests {
             flags: mp4_emsg::EMSG_FLAGS,
             scheme_id_uri: "urn:scte:scte35:2013:bin",
             value: "1",
-            timescale: 90_000,
+            timescale: Timescale::from_nonzero(90_000),
             presentation_time: PresentationTime::Delta(1),
             event_duration: 0,
             id: 1,
@@ -129,7 +130,7 @@ mod tests {
         let timing = SegmentTiming {
             earliest_presentation_time: u64::MAX,
             presentation_time_offset: 0,
-            timescale: 90_000,
+            timescale: Timescale::from_nonzero(90_000),
         };
         assert!(matches!(
             emsg_to_v1(&emsg, &timing),
@@ -147,7 +148,7 @@ mod tests {
             flags: mp4_emsg::EMSG_FLAGS,
             scheme_id_uri: "urn:scte:scte35:2013:bin",
             value: "1",
-            timescale: 90_000,
+            timescale: Timescale::from_nonzero(90_000),
             presentation_time: PresentationTime::Delta(0),
             event_duration: 2_160_000,
             id: 1,
@@ -156,7 +157,7 @@ mod tests {
         let timing = SegmentTiming {
             earliest_presentation_time: 500_000,
             presentation_time_offset: 0,
-            timescale: 90_000,
+            timescale: Timescale::from_nonzero(90_000),
         };
         let v1 = emsg_to_v1(&emsg, &timing).unwrap();
         assert_eq!(v1.presentation_time, PresentationTime::Absolute(500_000));
@@ -170,7 +171,7 @@ mod tests {
             flags: mp4_emsg::EMSG_FLAGS,
             scheme_id_uri: "urn:scte:scte35:2013:bin",
             value: "2",
-            timescale: 90_000,
+            timescale: Timescale::from_nonzero(90_000),
             presentation_time: PresentationTime::Absolute(1_000_000),
             event_duration: 0,
             id: 42,
@@ -179,7 +180,7 @@ mod tests {
         let timing = SegmentTiming {
             earliest_presentation_time: 900_000,
             presentation_time_offset: 0,
-            timescale: 90_000,
+            timescale: Timescale::from_nonzero(90_000),
         };
         let v0 = emsg_to_v0(&emsg, &timing).unwrap();
         assert_eq!(v0.presentation_time, PresentationTime::Delta(100_000));
@@ -193,7 +194,7 @@ mod tests {
             flags: mp4_emsg::EMSG_FLAGS,
             scheme_id_uri: "urn:scte:scte35:2013:bin",
             value: "",
-            timescale: 90_000,
+            timescale: Timescale::from_nonzero(90_000),
             presentation_time: PresentationTime::Delta(0),
             event_duration: 0,
             id: 0,
@@ -202,7 +203,7 @@ mod tests {
         let timing = SegmentTiming {
             earliest_presentation_time: 0,
             presentation_time_offset: 0,
-            timescale: 48_000,
+            timescale: Timescale::from_nonzero(48_000),
         };
         assert!(matches!(
             emsg_to_v1(&emsg, &timing),
@@ -220,7 +221,7 @@ mod tests {
             flags: mp4_emsg::EMSG_FLAGS,
             scheme_id_uri: "urn:scte:scte35:2013:bin",
             value: "",
-            timescale: 90_000,
+            timescale: Timescale::from_nonzero(90_000),
             presentation_time: PresentationTime::Delta(10),
             event_duration: 0,
             id: 0,
@@ -229,7 +230,7 @@ mod tests {
         let timing = SegmentTiming {
             earliest_presentation_time: 1_000,
             presentation_time_offset: 0,
-            timescale: 90_000,
+            timescale: Timescale::from_nonzero(90_000),
         };
 
         // v1 with presentation_time < EPT: v1→v0 should fail.

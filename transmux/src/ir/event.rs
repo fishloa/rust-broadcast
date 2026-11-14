@@ -383,7 +383,7 @@ pub enum DemuxEvent {
         ticks: u64,
         /// The rate, in Hz, `ticks` is expressed in (27 MHz for an MPEG-2 TS
         /// PCR).
-        clock_hz: u32,
+        clock_hz: broadcast_common::timescale::Timescale,
         /// `true` when this observation follows a signalled discontinuity in
         /// the source clock (e.g. the same TS packet's adaptation-field
         /// `discontinuity_indicator`, §2.4.3.5).
@@ -524,7 +524,7 @@ impl DemuxEvent {
     /// wall-clock/UTC anchor) is not a breaking change.
     pub fn clock_reference(
         ticks: u64,
-        clock_hz: u32,
+        clock_hz: broadcast_common::timescale::Timescale,
         discontinuous: bool,
         provenance: EventProvenance,
     ) -> Self {

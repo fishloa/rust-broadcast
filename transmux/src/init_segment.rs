@@ -18,6 +18,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use broadcast_common::error::BufferTooShort;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize};
 
 const BOX_HDR: usize = 8;
@@ -576,7 +577,8 @@ pub struct MovieHeaderBox {
     pub flags: u32,
     pub creation_time: u64,
     pub modification_time: u64,
-    pub timescale: u32,
+    #[cfg_attr(feature = "serde", serde(serialize_with = "crate::ser_timescale"))]
+    pub timescale: Timescale,
     pub duration: u64,
     pub rate: u32,
     pub volume: u16,
@@ -600,7 +602,9 @@ impl<'a> Parse<'a> for MovieHeaderBox {
                     as u64,
                 modification_time: u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]])
                     as u64,
-                timescale: u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]),
+                timescale: Timescale::try_new(u32::from_be_bytes([
+                    bytes[20], bytes[21], bytes[22], bytes[23],
+                ]))?,
                 duration: u32::from_be_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]) as u64,
                 rate: u32::from_be_bytes([bytes[28], bytes[29], bytes[30], bytes[31]]),
                 volume: u16::from_be_bytes([bytes[32], bytes[33]]),
@@ -638,7 +642,9 @@ impl<'a> Parse<'a> for MovieHeaderBox {
                     bytes[20], bytes[21], bytes[22], bytes[23], bytes[24], bytes[25], bytes[26],
                     bytes[27],
                 ]),
-                timescale: u32::from_be_bytes([bytes[28], bytes[29], bytes[30], bytes[31]]),
+                timescale: Timescale::try_new(u32::from_be_bytes([
+                    bytes[28], bytes[29], bytes[30], bytes[31],
+                ]))?,
                 duration: u64::from_be_bytes([
                     bytes[32], bytes[33], bytes[34], bytes[35], bytes[36], bytes[37], bytes[38],
                     bytes[39],
@@ -708,7 +714,7 @@ impl Serialize for MovieHeaderBox {
             "mvhd modification_time",
         )?;
         c += mt_sz as usize;
-        buf[c..c + 4].copy_from_slice(&self.timescale.to_be_bytes());
+        buf[c..c + 4].copy_from_slice(&self.timescale.get().to_be_bytes());
         c += 4;
         write_u64(buf, c, dur_sz, self.duration, "mvhd duration")?;
         c += dur_sz as usize;
@@ -918,7 +924,8 @@ pub struct MediaHeaderBox {
     pub flags: u32,
     pub creation_time: u64,
     pub modification_time: u64,
-    pub timescale: u32,
+    #[cfg_attr(feature = "serde", serde(serialize_with = "crate::ser_timescale"))]
+    pub timescale: Timescale,
     pub duration: u64,
     pub language: u16,
 }
@@ -938,7 +945,9 @@ impl<'a> Parse<'a> for MediaHeaderBox {
                     as u64,
                 modification_time: u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]])
                     as u64,
-                timescale: u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]),
+                timescale: Timescale::try_new(u32::from_be_bytes([
+                    bytes[20], bytes[21], bytes[22], bytes[23],
+                ]))?,
                 duration: u32::from_be_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]) as u64,
                 language: u16::from_be_bytes([bytes[28], bytes[29]]),
             })
@@ -949,7 +958,9 @@ impl<'a> Parse<'a> for MediaHeaderBox {
                 flags,
                 creation_time: crate::wire_cursor::be_u64(bytes, 12, "mdhd v1")?,
                 modification_time: crate::wire_cursor::be_u64(bytes, 20, "mdhd v1")?,
-                timescale: u32::from_be_bytes([bytes[28], bytes[29], bytes[30], bytes[31]]),
+                timescale: Timescale::try_new(u32::from_be_bytes([
+                    bytes[28], bytes[29], bytes[30], bytes[31],
+                ]))?,
                 duration: crate::wire_cursor::be_u64(bytes, 32, "mdhd v1")?,
                 language: u16::from_be_bytes([bytes[40], bytes[41]]),
             })
@@ -990,7 +1001,7 @@ impl Serialize for MediaHeaderBox {
                     .to_be_bytes(),
             );
             c += 4;
-            buf[c..c + 4].copy_from_slice(&self.timescale.to_be_bytes());
+            buf[c..c + 4].copy_from_slice(&self.timescale.get().to_be_bytes());
             c += 4;
             buf[c..c + 4].copy_from_slice(
                 &(broadcast_common::len::fit_bits(self.duration, 32, "mdhd duration")? as u32)
@@ -1004,7 +1015,7 @@ impl Serialize for MediaHeaderBox {
             c += 8;
             buf[c..c + 8].copy_from_slice(&self.modification_time.to_be_bytes());
             c += 8;
-            buf[c..c + 4].copy_from_slice(&self.timescale.to_be_bytes());
+            buf[c..c + 4].copy_from_slice(&self.timescale.get().to_be_bytes());
             c += 4;
             buf[c..c + 8].copy_from_slice(&self.duration.to_be_bytes());
             c += 8;
@@ -4487,7 +4498,7 @@ mod tests {
             flags: 0,
             creation_time: 0,
             modification_time: 0,
-            timescale: 1000,
+            timescale: Timescale::from_nonzero(1000),
             duration: 2000,
             rate: 0x00010000,
             volume: 0x0100,
@@ -4509,7 +4520,7 @@ mod tests {
         let m = sample_mvhd_v0();
         let orig = m.try_to_bytes().unwrap();
         let mut m2 = m.clone();
-        m2.timescale = 30000;
+        m2.timescale = Timescale::from_nonzero(30000);
         let mutated = m2.try_to_bytes().unwrap();
         assert_ne!(orig, mutated);
         // Verify the right field changed
@@ -4832,7 +4843,7 @@ mod tests {
                 flags: 0,
                 creation_time: 1,
                 modification_time: 2,
-                timescale: 90_000,
+                timescale: Timescale::from_nonzero(90_000),
                 duration: 180_000,
                 language: 0x55C4,
             },

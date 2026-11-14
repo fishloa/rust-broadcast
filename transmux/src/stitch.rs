@@ -12,15 +12,19 @@
 //!
 //! A boundary the core marks as continuous, and a presentation that never
 //! signals a discontinuity, are passed through untouched.
+//!
+//! Every track's timescale is a `broadcast_common::timescale::Timescale`
+//! (non-zero by construction: a wire `mdhd.timescale` of `0` is refused when
+//! the box parses), so nothing here can treat a zero as `1`.
 
 use alloc::collections::BTreeMap;
 
-use broadcast_common::timescale::{Rounding, from_micros, to_micros};
+use broadcast_common::timescale::{Rounding, Timescale, from_micros, to_micros};
 
 use crate::{Sample, TrackId, TrackSpec};
 
 struct TrackClock {
-    timescale: u32,
+    timescale: Timescale,
     end_us: Option<i128>,
     generation: u64,
     offset_ticks: i64,
@@ -38,14 +42,14 @@ pub struct Stitcher {
     pending: bool,
 }
 
-fn ticks_to_us(ticks: i64, timescale: u32) -> i128 {
+fn ticks_to_us(ticks: i64, timescale: Timescale) -> i128 {
     to_micros(i128::from(ticks), timescale, Rounding::TowardZero)
 }
 
 /// `us` microseconds as ticks at `timescale`, saturating at the `i64` range.
 /// Uses `broadcast_common::timescale` so the conversion lives in one place;
 /// `us_to_ticks_agrees_with_the_old_arithmetic` pins the rounding.
-fn us_to_ticks(us: i128, timescale: u32) -> i64 {
+fn us_to_ticks(us: i128, timescale: Timescale) -> i64 {
     let ticks = from_micros(us, timescale, Rounding::Nearest);
     i64::try_from(ticks.clamp(i128::from(i64::MIN), i128::from(i64::MAX))).unwrap_or(0)
 }
@@ -76,11 +80,11 @@ impl Stitcher {
                 continue;
             };
             let timescale = clock.timescale;
-            if timescale == 0 {
-                continue;
-            }
             if self.pending
-                && let Some(first) = sample.dts.or(sample.pts)
+                && let Some(first) = sample
+                    .timing
+                    .map(|t| t.dts)
+                    .or(sample.timing.map(|t| t.pts))
             {
                 self.pending = false;
                 let stitch = self.tracks.values().filter_map(|t| t.end_us).max();
@@ -97,10 +101,13 @@ impl Stitcher {
                 clock.offset_ticks = us_to_ticks(self.offset_us, timescale);
             }
             let shift = clock.offset_ticks;
-            sample.dts = sample.dts.map(|t| t.saturating_add(shift));
-            sample.pts = sample.pts.map(|t| t.saturating_add(shift));
-            if let Some(dts) = sample.dts {
-                let end = dts.saturating_add(i64::from(sample.duration.unwrap_or(0)));
+            if let Some(t) = sample.timing.as_mut() {
+                t.dts = t.dts.saturating_add(shift);
+                t.pts = t.pts.saturating_add(shift);
+            }
+            if let Some(dts) = sample.timing.map(|t| t.dts) {
+                let dur = sample.timing.map(|t| t.duration).unwrap_or(0);
+                let end = dts.saturating_add(i64::from(dur));
                 clock.end_us = Some(ticks_to_us(end, timescale));
             }
         }
@@ -110,9 +117,10 @@ impl Stitcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::Error;
     use crate::media::Fmp4Demux;
-    use broadcast_common::Unpackage;
     use broadcast_common::units::MICROS_PER_SEC;
+    use broadcast_common::{Parse, Unpackage};
 
     fn spec(id: u32, timescale: u32) -> TrackSpec {
         let init = std::fs::read(test_fixtures::path("dash/init-stream1.m4s")).expect("init");
@@ -123,7 +131,7 @@ mod tests {
             .remove(0)
             .spec;
         spec.track_id = TrackId::new(id);
-        spec.timescale = timescale;
+        spec.timescale = Timescale::try_new(timescale).expect("test timescale is non-zero");
         spec
     }
 
@@ -132,12 +140,10 @@ mod tests {
     }
 
     fn dts_of(samples: &[Sample]) -> Vec<i64> {
-        samples.iter().map(|s| s.dts.unwrap()).collect()
-    }
-
-    #[test]
-    fn a_zero_timescale_converts_without_dividing_by_zero() {
-        assert_eq!(ticks_to_us(5, 0), 5_000_000);
+        samples
+            .iter()
+            .map(|s| s.timing.map(|t| t.dts).unwrap())
+            .collect()
     }
 
     fn old_us_to_ticks(us: i128, timescale: u32) -> i64 {
@@ -165,11 +171,44 @@ mod tests {
         ];
         for (us, timescale) in cases {
             assert_eq!(
-                us_to_ticks(us, timescale),
+                us_to_ticks(us, Timescale::try_new(timescale).expect("non-zero")),
                 old_us_to_ticks(us, timescale),
                 "us={us} timescale={timescale}"
             );
         }
+    }
+
+    /// A minimal `mdhd` **v0** box carrying `timescale` (ISO/IEC 14496-12:2026
+    /// §8.4.2): full-box header, creation/modification time, then the 32-bit
+    /// `timescale`, the 32-bit duration and the packed `language`.
+    fn mdhd_v0(timescale: u32) -> alloc::vec::Vec<u8> {
+        let mut body = alloc::vec![0u8; 32];
+        body[4..8].copy_from_slice(b"mdhd");
+        body[20..24].copy_from_slice(&timescale.to_be_bytes());
+        body[28..30].copy_from_slice(&0x55C4u16.to_be_bytes()); // "und"
+        body
+    }
+
+    /// A zero timescale never reaches the stitcher: a track's timescale is a
+    /// `Timescale` (non-zero by construction), so the boundary that reads a
+    /// wire `mdhd.timescale` is where a real zero is refused — with a typed
+    /// error naming the field, not a silent 1 Hz fallback.
+    #[test]
+    fn a_track_with_a_zero_timescale_is_a_typed_error_not_a_silent_one() {
+        let err = crate::init_segment::MediaHeaderBox::parse(&mdhd_v0(0))
+            .expect_err("a wire mdhd.timescale of 0 must not parse");
+        assert_eq!(
+            err,
+            Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "timescale",
+                value: 0,
+                reason: "must be non-zero",
+            })
+        );
+        let ok = crate::init_segment::MediaHeaderBox::parse(&mdhd_v0(90_000))
+            .expect("a non-zero mdhd.timescale parses");
+        assert_eq!(ok.timescale, Timescale::from_nonzero(90_000));
+        assert!(Timescale::new(0).is_none(), "the type has no zero value");
     }
 
     #[test]
@@ -194,7 +233,11 @@ mod tests {
         let mut second = [sample(0, 2_000), sample(2_000, 2_000)];
         st.apply(TrackId::new(1), &mut second);
         assert_eq!(dts_of(&second), [4_000, 6_000]);
-        assert_eq!(second[1].pts, Some(6_000), "pts moves with dts");
+        assert_eq!(
+            second[1].timing.map(|t| t.pts),
+            Some(6_000),
+            "pts moves with dts"
+        );
     }
 
     #[test]
@@ -298,16 +341,6 @@ mod tests {
             [90_001],
             "the previous end is 1 000 011 us, which is 90 000.99 ticks"
         );
-    }
-
-    #[test]
-    fn a_track_with_a_zero_timescale_is_left_alone() {
-        let mut st = Stitcher::default();
-        st.set_tracks(&[spec(1, 0)]);
-        let mut a = [sample(5, 1)];
-        st.discontinuity();
-        st.apply(TrackId::new(1), &mut a);
-        assert_eq!(dts_of(&a), [5]);
     }
 
     #[test]

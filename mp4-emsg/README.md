@@ -40,6 +40,7 @@ Verified against a real version 1 `emsg` extracted from the DASH-IF livesim2 sim
 Read the real livesim2 version 1 box, then build a version 0 box from typed fields:
 
 ```rust
+use broadcast_common::timescale::Timescale;
 use mp4_emsg::{EMSG_FLAGS, EmsgBox, EmsgVersion, PresentationTime};
 
 // A genuine v1 emsg from a live DASH segment (SCTE 35 splice).
@@ -56,7 +57,7 @@ let b = EmsgBox {
     flags: EMSG_FLAGS,
     scheme_id_uri: "urn:scte:scte35:2013:bin",
     value: "",
-    timescale: 90_000,
+    timescale: Timescale::from_nonzero(90_000),
     presentation_time: PresentationTime::Delta(0),
     event_duration: 0xFFFF_FFFF,
     id: 1,
@@ -74,7 +75,7 @@ Runnable programs: `cargo run -p mp4-emsg --example build_emsg` and `--example p
 - `PresentationTime::{Delta, Absolute}`: selecting the variant selects the box version.
 - `EmsgVersion` with `name()` and `Display`.
 - Constants `EMSG_BOX_TYPE`, `EMSG_FLAGS`, `FULLBOX_HEADER_LEN`, `SCTE35_SCHEME_PREFIX`, `STRING_TERMINATOR`, `VERSION_0`, `VERSION_1`.
-- `Error` (`#[non_exhaustive]`) covers `BufferTooShort`, `OutputBufferTooSmall`, `NotEmsg`, `InvalidSize`, `UnsupportedVersion`, `InvalidString` and `FieldOverflow`.
+- `Error` (`#[non_exhaustive]`) covers `BufferTooShort`, `OutputBufferTooSmall`, `NotEmsg`, `InvalidSize`, `UnsupportedVersion`, `InvalidString`, `InvalidValue` (a zero `timescale`) and `FieldOverflow`.
 
 ## Design notes
 

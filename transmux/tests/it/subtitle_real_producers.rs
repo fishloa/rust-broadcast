@@ -219,9 +219,9 @@ fn ours(track: &Track) -> Vec<Pkt> {
         .samples
         .iter()
         .map(|s| Pkt {
-            dts: s.dts.expect("dts"),
-            cts: s.pts.expect("pts"),
-            dur: u64::from(s.duration.expect("duration")),
+            dts: s.timing.map(|t| t.dts).expect("dts"),
+            cts: s.timing.map(|t| t.pts).expect("pts"),
+            dur: u64::from(s.timing.map(|t| t.duration).expect("duration")),
             size: s.data.len(),
             crc32: broadcast_common::crc32_mpeg2::compute(&s.data),
         })
@@ -241,7 +241,7 @@ fn every_real_file_demuxes_to_gpacs_own_samples() {
             (false, Some(SubtitleSampleEntry::Ttml(_))) => {}
             (_, other) => panic!("{}: unexpected sample entry {other:?}", c.label),
         }
-        assert_eq!(track.spec.timescale, 1000, "{}", c.label);
+        assert_eq!(track.spec.timescale.get(), 1000, "{}", c.label);
         assert_eq!(ours(track), oracle(c.oracle), "{}", c.label);
     }
 }

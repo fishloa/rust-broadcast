@@ -331,7 +331,8 @@ async fn run() {
     // video-only conformant fixture can't distinguish the two. `rtpmap_clock_rate`
     // parsing is bitten separately in transmux's `rtp_sdp` unit tests.
     assert_eq!(
-        tracks[0].timescale, 90_000,
+        tracks[0].timescale.get(),
+        90_000,
         "RTP clock rate becomes the IR timescale"
     );
     match &tracks[0].config {

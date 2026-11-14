@@ -566,7 +566,7 @@ fn livesim2_pair() -> (Livesim2Pair, i64, i64) {
                 &dash_runtime::address::PlanOptions::default(),
             )
             .unwrap();
-            let scale = planned.plan.timescale() as i64;
+            let scale = i64::from(planned.plan.timescale().get());
             for s in planned.plan.iter() {
                 let end = s.time_ticks as i64 + s.duration_ticks as i64;
                 avail.insert(

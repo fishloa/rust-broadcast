@@ -103,11 +103,16 @@ fn compose(video: &[u8], teletext: &[u8]) -> transmux::Media {
         .into_iter()
         .find(|t| matches!(t.spec.config, CodecConfig::Data { .. }))
         .expect("teletext track");
-    let first_pts = teletext.samples[0].pts.expect("teletext PES PTS");
+    let first_pts = teletext.samples[0]
+        .timing
+        .map(|t| t.pts)
+        .expect("teletext PES PTS");
     let shift = first_video_dts + TELETEXT_STARTS_AFTER_VIDEO_TICKS - first_pts;
     for sample in &mut teletext.samples {
-        sample.pts = sample.pts.map(|p| p + shift);
-        sample.dts = sample.dts.map(|d| d + shift);
+        if let Some(t) = sample.timing.as_mut() {
+            t.pts = t.pts.saturating_add(shift);
+            t.dts = t.dts.saturating_add(shift);
+        }
     }
     teletext.spec.track_id = transmux::TrackId::new(TELETEXT_TRACK_ID);
     media.tracks.push(teletext);
@@ -173,13 +178,21 @@ fn start_rig_on(media: transmux::Media, route: Arc<RouteHandle>, reconnect: bool
     let mut timed: Vec<(f64, usize, usize)> = Vec::new();
     for (ti, track) in media.tracks.iter().enumerate() {
         for (si, s) in track.samples.iter().enumerate() {
-            let at = s.dts.or(s.pts).unwrap_or(0);
+            let at = s
+                .timing
+                .map(|t| t.dts)
+                .or(s.timing.map(|t| t.pts))
+                .unwrap_or(0);
             let delay = if matches!(track.spec.config, CodecConfig::Data { .. }) {
                 TELETEXT_MUX_DELAY_SECS
             } else {
                 0.0
             };
-            timed.push((at as f64 / f64::from(track.spec.timescale) + delay, ti, si));
+            timed.push((
+                at as f64 / f64::from(track.spec.timescale.get()) + delay,
+                ti,
+                si,
+            ));
         }
     }
     timed.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -216,7 +229,11 @@ impl Driver {
             self.next += 1;
             let track = &self.rig.media.tracks[ti];
             let mut sample = track.samples[si].clone();
-            sample.dts = sample.dts.or(sample.pts);
+            if let Some(t) = sample.timing.as_mut()
+                && t.dts == 0
+            {
+                t.dts = t.pts;
+            }
             self.writer
                 .publish(track.spec.track_id, RetentionClass::Timed, sample);
             multimux::source::segment::pump_segmenter(
@@ -690,7 +707,7 @@ fn first_video_sync_dts(media: &transmux::Media) -> i64 {
         .samples
         .iter()
         .find(|s| s.flags.is_sync)
-        .and_then(|s| s.dts.or(s.pts))
+        .and_then(|s| s.timing.map(|t| t.dts).or(s.timing.map(|t| t.pts)))
         .expect("video sync sample")
 }
 
@@ -702,7 +719,7 @@ fn teletext_pts(media: &transmux::Media) -> Vec<i64> {
         .expect("teletext track")
         .samples
         .iter()
-        .map(|s| s.pts.expect("teletext PES PTS"))
+        .map(|s| s.timing.map(|t| t.pts).expect("teletext PES PTS"))
         .collect()
 }
 
@@ -739,7 +756,7 @@ impl OutputMap {
             .tracks
             .iter()
             .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
-            .map(|t| f64::from(t.spec.timescale))
+            .map(|t| f64::from(t.spec.timescale.get()))
             .expect("video track");
         let teletext = teletext_pts(&rig.media);
         OutputMap {

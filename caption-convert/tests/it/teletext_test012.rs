@@ -31,7 +31,11 @@ fn samples() -> Option<Vec<(u64, Vec<u8>)>> {
             .samples
             .iter()
             .map(|s| {
-                let pts = s.pts.expect("teletext PES carries a PTS").max(0) as u64;
+                let pts = s
+                    .timing
+                    .map(|t| t.pts)
+                    .expect("teletext PES carries a PTS")
+                    .max(0) as u64;
                 (pts, s.data.to_vec())
             })
             .collect(),
