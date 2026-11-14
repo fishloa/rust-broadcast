@@ -16,7 +16,7 @@ fn bearer_preemptive() {
     match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { headers, .. } => {
             assert!(headers.iter().any(
-                |(k, v)| k.eq_ignore_ascii_case("authorization") && v == "Bearer secret-token"
+                |(k, v)| k.as_str().eq_ignore_ascii_case("authorization") && v.to_str().unwrap_or("") == "Bearer secret-token"
             ));
         }
         _ => panic!(),
@@ -40,7 +40,7 @@ fn explicit_basic_is_sent_on_the_first_request_only_when_preemptive_basic_is_on(
         };
         let sent = headers
             .iter()
-            .any(|(k, v)| k.eq_ignore_ascii_case("authorization") && v.starts_with("Basic "));
+            .any(|(k, v)| k.as_str().eq_ignore_ascii_case("authorization") && v.to_str().unwrap_or("").starts_with("Basic "));
         assert_eq!(sent, expected, "preemptive_basic = {preemptive}");
     }
 }
@@ -55,7 +55,7 @@ fn an_empty_username_in_the_url_userinfo_is_credentials() {
     let Some(Action::HttpRequest { conn, url, .. }) = session.poll(ts(0)) else {
         panic!("a first request");
     };
-    assert!(!url.contains("pw"), "{url}");
+    assert!(!url.as_str().contains("pw"), "{url}");
     session.on_response(
         conn,
         401,
@@ -73,7 +73,7 @@ fn an_empty_username_in_the_url_userinfo_is_credentials() {
     assert!(
         headers
             .iter()
-            .any(|(k, v)| k.eq_ignore_ascii_case("authorization") && v == "Basic OnB3"),
+            .any(|(k, v)| k.as_str().eq_ignore_ascii_case("authorization") && v.to_str().unwrap_or("") == "Basic OnB3"),
         "{headers:?}"
     );
 }
@@ -103,7 +103,7 @@ fn basic_401_replay_then_200() {
             assert!(
                 !headers
                     .iter()
-                    .any(|(k, _)| k.eq_ignore_ascii_case("authorization"))
+                    .any(|(k, _)| k.as_str().eq_ignore_ascii_case("authorization"))
             );
             conn
         }
@@ -123,7 +123,7 @@ fn basic_401_replay_then_200() {
             Action::Close { conn } if conn == conn1 => saw_close = true,
             Action::HttpRequest { conn, headers, .. } => {
                 assert!(headers.iter().any(
-                    |(k, v)| k.eq_ignore_ascii_case("authorization") && v.starts_with("Basic ")
+                    |(k, v)| k.as_str().eq_ignore_ascii_case("authorization") && v.to_str().unwrap_or("").starts_with("Basic ")
                 ));
                 conn2 = Some(conn);
             }
@@ -159,8 +159,8 @@ fn digest_401_replay_then_200() {
             assert!(
                 headers
                     .iter()
-                    .any(|(k, v)| k.eq_ignore_ascii_case("authorization")
-                        && v.starts_with("Digest "))
+                    .any(|(k, v)| k.as_str().eq_ignore_ascii_case("authorization")
+                        && v.to_str().unwrap_or("").starts_with("Digest "))
             );
             conn2 = Some(conn);
         }
@@ -202,7 +202,7 @@ fn basic_digest_preemptive_after_replay() {
         if let Action::HttpRequest { headers, .. } = a
             && headers
                 .iter()
-                .any(|(k, v)| k.eq_ignore_ascii_case("authorization") && v.starts_with("Basic "))
+                .any(|(k, v)| k.as_str().eq_ignore_ascii_case("authorization") && v.to_str().unwrap_or("").starts_with("Basic "))
         {
             saw_auth = true;
         }
@@ -250,8 +250,8 @@ fn digest_stale_rechallenge_replays() {
                 assert!(
                     headers
                         .iter()
-                        .any(|(k, v)| k.eq_ignore_ascii_case("authorization")
-                            && v.starts_with("Digest "))
+                        .any(|(k, v)| k.as_str().eq_ignore_ascii_case("authorization")
+                            && v.to_str().unwrap_or("").starts_with("Digest "))
                 );
                 conn3 = Some(conn);
             }
@@ -420,7 +420,7 @@ fn set_credentials_while_streaming_stored_not_interrupt() {
             assert!(
                 !headers
                     .iter()
-                    .any(|(k, _)| k.eq_ignore_ascii_case("authorization"))
+                    .any(|(k, _)| k.as_str().eq_ignore_ascii_case("authorization"))
             );
             conn
         }
@@ -451,8 +451,8 @@ fn set_credentials_while_streaming_stored_not_interrupt() {
             if let Action::HttpRequest { headers, .. } = a {
                 next_auth = headers
                     .iter()
-                    .find(|(k, _)| k.eq_ignore_ascii_case("authorization"))
-                    .map(|(_, v)| v.clone());
+                    .find(|(k, _)| k.as_str().eq_ignore_ascii_case("authorization"))
+                    .map(|(_, v)| v.to_str().unwrap_or("").to_string());
             }
         }
         if next_auth.is_some() {
@@ -510,7 +510,13 @@ fn debug_does_not_contain_secret() {
 fn first_request_headers(session: &mut Session, now: u64) -> (ConnId, Vec<(String, String)>) {
     while let Some(a) = session.poll(ts(now)) {
         if let Action::HttpRequest { conn, headers, .. } = a {
-            return (conn, headers);
+            return (
+                conn,
+                headers
+                    .iter()
+                    .map(|(n, v)| (n.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
+                    .collect(),
+            );
         }
     }
     panic!("no HttpRequest was issued");
@@ -519,7 +525,7 @@ fn first_request_headers(session: &mut Session, now: u64) -> (ConnId, Vec<(Strin
 fn authorization(headers: &[(String, String)]) -> Option<&str> {
     headers
         .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case("authorization"))
+        .find(|(k, _)| k.as_str().eq_ignore_ascii_case("authorization"))
         .map(|(_, v)| v.as_str())
 }
 

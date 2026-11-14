@@ -58,8 +58,11 @@ pub fn requests(session: &mut Session, now: u64) -> Vec<Req> {
             out.push(Req {
                 now,
                 conn,
-                url,
-                headers,
+                url: url.to_string(),
+                headers: headers
+                    .iter()
+                    .map(|(n, v)| (n.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
+                    .collect(),
             });
         }
     }

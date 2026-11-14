@@ -148,9 +148,9 @@ impl<P: PurposeKind + PartialEq, X> InFlight<P, X> {
         let timeout = self.timeouts.of(req.purpose.timeout_class());
         actions.push_back(Action::HttpRequest {
             conn,
-            method: method.to_string(),
-            url: req.url.to_string(),
-            headers,
+            method: http::Method::from_bytes(method.as_bytes()).unwrap_or(http::Method::GET),
+            url: req.url.clone(),
+            headers: crate::headers::to_header_map(&headers),
             byte_range: req.byte_range.filter(|_| resume.is_none()),
             identity: None,
         });

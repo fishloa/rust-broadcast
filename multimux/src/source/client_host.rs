@@ -734,13 +734,13 @@ impl IngestStep<EventIngest> for SessionStep {
 
 fn http_request(
     client: &reqwest::Client,
-    method: &str,
-    url: &str,
-    headers: &[(String, String)],
+    method: &http::Method,
+    url: &url::Url,
+    headers: &http::HeaderMap,
     byte_range: Option<(u64, u64)>,
 ) -> Result<reqwest::RequestBuilder, String> {
-    let method = reqwest::Method::from_bytes(method.as_bytes()).map_err(|e| e.to_string())?;
-    let mut request = client.request(method, url);
+    let method = reqwest::Method::from_bytes(method.as_str().as_bytes()).map_err(|e| e.to_string())?;
+    let mut request = client.request(method, url.clone());
     for (name, value) in headers {
         request = request.header(name, value);
     }

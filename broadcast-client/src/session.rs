@@ -413,9 +413,9 @@ impl Session {
                 );
                 self.actions.push_back(Action::HttpRequest {
                     conn: new_conn,
-                    method: "GET".to_string(),
-                    url: target.to_string(),
-                    headers: new_headers,
+                    method: http::Method::GET,
+                    url: target.clone(),
+                    headers: crate::headers::to_header_map(&new_headers),
                     byte_range: None,
                     identity: None,
                 });
@@ -467,9 +467,9 @@ impl Session {
                     );
                     self.actions.push_back(Action::HttpRequest {
                         conn: new_conn,
-                        method: "GET".to_string(),
-                        url: req_url.to_string(),
-                        headers: new_headers,
+                        method: http::Method::GET,
+                        url: req_url.clone(),
+                        headers: crate::headers::to_header_map(&new_headers),
                         byte_range: None,
                         identity: None,
                     });
@@ -1349,10 +1349,7 @@ impl Session {
                 identity: slot,
                 ..
             } => {
-                let Ok(target) = Url::parse(url) else {
-                    return;
-                };
-                if target.scheme() == SCHEME_HTTPS && (any || target.origin() == session.origin()) {
+                if url.scheme() == SCHEME_HTTPS && (any || url.origin() == session.origin()) {
                     *slot = Some(identity.clone());
                 }
             }
@@ -1529,9 +1526,9 @@ impl Session {
                 );
                 self.actions.push_back(Action::HttpRequest {
                     conn,
-                    method: "GET".to_string(),
-                    url: target.to_string(),
-                    headers,
+                    method: http::Method::GET,
+                    url: target.clone(),
+                    headers: crate::headers::to_header_map(&headers),
                     byte_range: None,
                     identity: None,
                 });

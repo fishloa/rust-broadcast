@@ -163,9 +163,9 @@ impl SmoothSource {
         req.last_activity_us = now;
         self.actions.push_back(HostAction::HttpRequest {
             conn,
-            method: "GET".to_string(),
-            url: req.url.to_string(),
-            headers,
+            method: http::Method::GET,
+            url: req.url.clone(),
+            headers: crate::headers::to_header_map(&headers),
             byte_range: None,
             identity: None,
         });
