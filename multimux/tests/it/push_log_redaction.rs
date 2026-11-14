@@ -129,11 +129,14 @@ fn push_logs_and_errors_never_contain_the_destination_secrets() {
     }
 
     // The capture is process-wide, so other tests' events are in the buffer
-    // too; a line is this test's own when it carries both the connect-failure
-    // message and one of this test's destinations.
+    // too. Each event contributes one line: its message text followed by its
+    // `name=value` fields (`url=…`, `error=…`). A line is this test's own when
+    // it carries both the connect-failure message and one of this test's
+    // destinations.
     let all = crate::support::shared_it::captured_events();
     let logs: String = all
-        .lines()
+        .split("message=")
+        .skip(1)
         .filter(|line| {
             line.contains("push connect failed")
                 && (line.contains("rtmp://127.0.0.1:1/")
