@@ -5,7 +5,7 @@
 use crate::support::dash_common;
 use crate::support::dash_sim;
 
-use broadcast_client::{Config, Event, Status};
+use broadcast_client::{Config, ConnId, Event, Status};
 use broadcast_common::stage::Timestamp;
 use dash_common::loopback::{Sig, oracle};
 use dash_sim::{DashSim, SEC, assert_samples_equal_oracle};
@@ -429,8 +429,8 @@ fn close_is_terminal_and_closes_every_connection_in_flight_exactly_once() {
     );
     assert!(sim.session.poll(ts(sim.world.mono())).is_none());
     assert!(sim.session.next_event().is_none());
-    sim.session.on_response(1, 200, &[], ts(0));
-    sim.session.on_data(1, b"x", ts(0));
+    sim.session.on_response(ConnId::new(1), 200, &[], ts(0));
+    sim.session.on_data(ConnId::new(1), b"x", ts(0));
     assert!(sim.session.next_event().is_none());
 }
 

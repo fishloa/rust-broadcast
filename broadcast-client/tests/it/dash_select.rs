@@ -6,6 +6,7 @@
 
 use crate::support::dash_common;
 use crate::support::dash_sim;
+use url::Url;
 
 use broadcast_client::{Config, Error, Event, Session, Status, TrackId};
 use broadcast_common::stage::Timestamp;
@@ -268,7 +269,12 @@ fn select_variant_switches_at_the_next_segment_and_keeps_the_samples_intact() {
 
 #[test]
 fn an_unknown_variant_is_an_error_and_nothing_is_known_before_the_manifest() {
-    let mut early = Session::open(&format!("{HOST}/{MANIFEST}"), Config::default(), ts(0)).unwrap();
+    let mut early = Session::open(
+        format!("{HOST}/{MANIFEST}").parse().unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     assert!(matches!(
         early.select_variant(0),
         Err(Error::NoSuchVariant(0))
@@ -500,7 +506,12 @@ fn auto_select_audio_off_plays_video_only_until_a_rendition_is_chosen() {
 
 #[test]
 fn a_ts_over_http_session_has_no_variants_or_renditions() {
-    let mut s = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut s = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     assert!(matches!(s.select_variant(0), Err(Error::NotHls)));
     assert!(matches!(s.select_audio_rendition(None), Err(Error::NotHls)));
 }

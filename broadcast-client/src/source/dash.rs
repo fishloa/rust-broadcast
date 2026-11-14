@@ -25,6 +25,7 @@ use hls_runtime::client::{MasterSelection, RenditionInfo, VariantInfo};
 use transmux::{TrackId, TrackSpec};
 use url::Url;
 
+use crate::ConnId;
 use crate::error::{Error, TransportError};
 use crate::events::{Action, Config, ErrorKind, Event, Status};
 use crate::playout::Source;
@@ -213,7 +214,7 @@ pub(crate) struct DashSource {
     mpd_failures: Attempts,
     mpd_accepted: bool,
     retry_after_us: u64,
-    refused_captures: BTreeMap<u32, RefusedCapture>,
+    refused_captures: BTreeMap<ConnId, RefusedCapture>,
     flight: InFlight<Purpose, DashExtra>,
     stash: Stash<Purpose>,
     parked: Vec<Req>,
@@ -344,7 +345,7 @@ impl DashSource {
         core::mem::take(&mut self.events)
     }
 
-    pub(crate) fn conns(&self) -> Vec<u32> {
+    pub(crate) fn conns(&self) -> Vec<ConnId> {
         self.flight
             .reqs
             .keys()
@@ -474,7 +475,7 @@ impl DashSource {
 
     pub(crate) fn on_response(
         &mut self,
-        conn: u32,
+        conn: ConnId,
         status: u16,
         headers: &[(String, String)],
         now: u64,
@@ -590,7 +591,7 @@ impl DashSource {
         }
     }
 
-    pub(crate) fn on_data(&mut self, conn: u32, bytes: &[u8], now: u64, auth: &mut AuthState) {
+    pub(crate) fn on_data(&mut self, conn: ConnId, bytes: &[u8], now: u64, auth: &mut AuthState) {
         if self.fatal {
             return;
         }
@@ -615,7 +616,7 @@ impl DashSource {
 
     pub(crate) fn on_closed(
         &mut self,
-        conn: u32,
+        conn: ConnId,
         error: Option<&TransportError>,
         now: u64,
         auth: &mut AuthState,
@@ -1036,7 +1037,7 @@ impl DashSource {
     }
 
     fn reset_in_flight(&mut self) {
-        let mut conns: Vec<u32> = self.flight.reqs.keys().copied().collect();
+        let mut conns: Vec<ConnId> = self.flight.reqs.keys().copied().collect();
         conns.sort_unstable();
         for conn in conns {
             self.actions.push_back(Action::Close { conn });

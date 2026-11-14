@@ -1,6 +1,7 @@
 use crate::support;
+use url::Url;
 
-use broadcast_client::{Action, Config, Credentials, ErrorKind, Event, Session, Status};
+use broadcast_client::{Action, Config, ConnId, Credentials, ErrorKind, Event, Session, Status};
 use broadcast_common::stage::Timestamp;
 use support::hls_host::*;
 use transmux::sample_aes::aes128_encrypt_segment;
@@ -619,7 +620,8 @@ fn chunked_key_body_1_byte_chunks_ok() {
 fn late_key_callbacks_after_close_ignored() {
     let iv = iv_seq(0x40);
     let entries = vec![entry(key_tag(KEY_URL, Some(&iv)), "index0.ts")];
-    let mut s = Session::open(TS_PLAYLIST_URL, hls_config(), ts(0)).expect("open");
+    let mut s =
+        Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), hls_config(), ts(0)).expect("open");
     let first = drain_actions(&mut s, 0);
     let (playlist_conn, _) = http_requests(&first)[0].clone();
     s.on_response(playlist_conn, 200, &[], ts(0));
@@ -669,7 +671,7 @@ fn fatal_error_stops_session_no_more_requests() {
         new_config.max_key_failures = 1;
         new_config
     };
-    let mut s = Session::open(TS_PLAYLIST_URL, config, ts(0)).expect("open");
+    let mut s = Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), config, ts(0)).expect("open");
     let first = drain_actions(&mut s, 0);
     let (pconn, _) = http_requests(&first)[0].clone();
     s.on_response(pconn, 200, &[], ts(3));
@@ -677,7 +679,7 @@ fn fatal_error_stops_session_no_more_requests() {
     s.on_closed(pconn, None, ts(0));
     let reqs = http_requests(&drain_actions(&mut s, 0));
     let key_conn = reqs.iter().find(|(_, u)| u == KEY_URL).expect("key").0;
-    let seg_conns: Vec<u32> = reqs
+    let seg_conns: Vec<ConnId> = reqs
         .iter()
         .filter(|(_, u)| u != KEY_URL)
         .map(|(c, _)| *c)
@@ -695,7 +697,7 @@ fn fatal_error_stops_session_no_more_requests() {
         assert!(
             actions
                 .iter()
-                .any(|a| matches!(a, Action::Close {conn } if conn == c)),
+                .any(|a| matches!(a, Action::Close {conn } if *conn == *c)),
             "open connection {c} closed on fatal: {actions:?}"
         );
     }

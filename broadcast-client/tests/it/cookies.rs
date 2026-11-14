@@ -1,4 +1,5 @@
 use crate::support;
+use url::Url;
 
 use broadcast_client::{Config, Credentials, Event, Session, TransportError};
 use broadcast_common::stage::Timestamp;
@@ -379,7 +380,7 @@ fn invalid_initial_cookies_rejected_at_open() {
         };
         assert!(
             matches!(
-                Session::open(TS_URL, config, ts(0)),
+                Session::open(Url::parse(TS_URL).unwrap(), config, ts(0)),
                 Err(broadcast_client::Error::InvalidHeader { .. })
             ),
             "{name:?}={value:?}"

@@ -5,6 +5,7 @@
 
 use crate::support;
 use broadcast_common::stage::Timestamp;
+use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -210,7 +211,7 @@ fn delta_seconds_and_garbage_behave_as_before_with_an_anchor_set() {
 
 #[test]
 fn set_wall_clock_after_close_is_harmless() {
-    let mut s = Session::open(URL, hls_config(), ts(0)).unwrap();
+    let mut s = Session::open(Url::parse(URL).unwrap(), hls_config(), ts(0)).unwrap();
     s.close();
     s.set_wall_clock(ts(1), 2);
     s.set_wall_clock(Timestamp::from_nanos(u64::MAX), u64::MAX);
@@ -219,8 +220,8 @@ fn set_wall_clock_after_close_is_harmless() {
 
 #[test]
 fn set_wall_clock_emits_nothing_by_itself() {
-    let mut s = Session::open(URL, hls_config(), ts(0)).unwrap();
-    let mut control = Session::open(URL, hls_config(), ts(0)).unwrap();
+    let mut s = Session::open(Url::parse(URL).unwrap(), hls_config(), ts(0)).unwrap();
+    let mut control = Session::open(Url::parse(URL).unwrap(), hls_config(), ts(0)).unwrap();
     s.set_wall_clock(ts(0), BASE_UNIX_US);
     s.set_wall_clock(ts(0), BASE_UNIX_US);
     let drain = |s: &mut Session| {
@@ -240,7 +241,12 @@ fn set_wall_clock_emits_nothing_by_itself() {
 #[test]
 fn a_ts_http_session_ignores_the_anchor_even_with_an_http_date_retry_after() {
     let run = |anchor: bool| {
-        let mut s = Session::open("http://h/live.ts", Config::default(), ts(0)).unwrap();
+        let mut s = Session::open(
+            Url::parse("http://h/live.ts").unwrap(),
+            Config::default(),
+            ts(0),
+        )
+        .unwrap();
         if anchor {
             s.set_wall_clock(ts(0), BASE_UNIX_US);
         }
@@ -297,7 +303,7 @@ fn no_source_emits_clock_synced_before_the_dash_source_exists() {
 }
 
 fn field_of(config: Config) -> Option<&'static str> {
-    match Session::open(URL, config, ts(0)) {
+    match Session::open(Url::parse(URL).unwrap(), config, ts(0)) {
         Err(Error::InvalidConfig { field }) => Some(field),
         Err(other) => panic!("unexpected error {other}"),
         Ok(_) => None,
@@ -393,7 +399,7 @@ fn an_invalid_dash_config_fails_a_session_that_does_not_play_dash() {
     let mut config = with_dash(|d| d.early_retry_us = 0);
     config.kind = broadcast_client::SourceKind::TsHttp;
     assert!(matches!(
-        Session::open("http://h/live.ts", config, ts(0)),
+        Session::open(Url::parse("http://h/live.ts").unwrap(), config, ts(0)),
         Err(Error::InvalidConfig {
             field: "dash.early_retry_us"
         })
@@ -499,7 +505,12 @@ fn the_clock_source_labels_reach_the_host() {
 #[test]
 fn the_not_hls_error_names_both_adaptive_sources() {
     assert!(Error::NotHls.to_string().contains("HLS or DASH"));
-    let mut s = Session::open("http://h/live.ts", Config::default(), ts(0)).unwrap();
+    let mut s = Session::open(
+        Url::parse("http://h/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     assert!(matches!(s.select_variant(0), Err(Error::NotHls)));
     assert!(matches!(s.select_audio_rendition(None), Err(Error::NotHls)));
 }

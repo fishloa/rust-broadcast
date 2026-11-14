@@ -1,4 +1,5 @@
 use crate::support;
+use url::Url;
 
 use broadcast_common::stage::Timestamp;
 use support::hls_host::{Host, Reply, TS_PLAYLIST_URL, hls_config, ts_playlist, ts_segment};
@@ -70,7 +71,8 @@ const LONG_WAIT_US: u64 = 40_000_000;
 #[test]
 fn a_redirect_answered_after_a_long_wait_gets_a_fresh_deadline() {
     use broadcast_client::{Action, Config, Event, Session};
-    let mut session = Session::open(TS_PLAYLIST_URL, hls_config(), ts(0)).unwrap();
+    let mut session =
+        Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), hls_config(), ts(0)).unwrap();
     let mut conn = None;
     while let Some(a) = session.poll(ts(0)) {
         if let Action::HttpRequest { conn: c, .. } = a {
@@ -90,7 +92,7 @@ fn a_redirect_answered_after_a_long_wait_gets_a_fresh_deadline() {
     while let Some(a) = session.poll(ts(later)) {
         match a {
             Action::Close { conn } => closes.push(conn),
-            Action::HttpRequest { conn, url, .. } => requests.push((conn, url)),
+            Action::HttpRequest { conn, url, .. } => requests.push((conn, url.to_string())),
             _ => {}
         }
     }

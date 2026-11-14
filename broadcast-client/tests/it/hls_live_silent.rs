@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
+use url::Url;
 
-use broadcast_client::{Action, Config, Event, Session, Status};
+use broadcast_client::{Action, Config, ConnId, Event, Session, Status};
 use broadcast_common::stage::Timestamp;
 
 /// The harness's microsecond clock as the session's `now`.
@@ -98,7 +99,14 @@ enum Order {
     PlaylistLast,
 }
 
-fn answer(session: &mut Session, origin: &Origin, conn: u32, url: &str, now: u64, t: &mut Tally) {
+fn answer(
+    session: &mut Session,
+    origin: &Origin,
+    conn: ConnId,
+    url: &str,
+    now: u64,
+    t: &mut Tally,
+) {
     let (body, ctype) = origin.body(url);
     let mut headers = vec![("Content-Type".to_string(), ctype.to_string())];
     if origin.content_length {
@@ -113,17 +121,17 @@ fn answer(session: &mut Session, origin: &Origin, conn: u32, url: &str, now: u64
 }
 
 fn run(mut origin: Origin, order: Order, mut on_tick: impl FnMut(u64, &mut Origin)) -> Tally {
-    let mut session = Session::open(INDEX, Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(Url::parse(INDEX).unwrap(), Config::default(), ts(0)).unwrap();
     let mut t = Tally::default();
     let mut now = 0;
     while now <= END_US {
         on_tick(now, &mut origin);
-        let mut pending: VecDeque<(u32, String)> = VecDeque::new();
+        let mut pending: VecDeque<(ConnId, String)> = VecDeque::new();
         loop {
             while let Some(a) = session.poll(ts(now)) {
                 if let Action::HttpRequest { conn, url, .. } = a {
-                    t.urls.push(url.clone());
-                    pending.push_back((conn, url));
+                    t.urls.push(url.to_string());
+                    pending.push_back((conn, url.to_string()));
                 }
             }
             if pending.is_empty() {

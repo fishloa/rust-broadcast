@@ -1,6 +1,6 @@
 use crate::support;
 
-use broadcast_client::{Action, Config, Credentials, Event, Session};
+use broadcast_client::{Action, Config, ConnId, Credentials, Event, Session};
 use broadcast_common::stage::Timestamp;
 use support::ts_probe::{Req, TS_URL, location, one, open, respond, set_cookies};
 
@@ -36,7 +36,7 @@ fn events(session: &mut Session) -> Vec<Event> {
     out
 }
 
-fn closes(actions: &[Action]) -> Vec<u32> {
+fn closes(actions: &[Action]) -> Vec<ConnId> {
     actions
         .iter()
         .filter_map(|a| match a {
@@ -55,8 +55,11 @@ fn http_requests(actions: &[Action]) -> Vec<Req> {
             } => Some(Req {
                 now: 0,
                 conn: *conn,
-                url: url.clone(),
-                headers: headers.clone(),
+                url: url.to_string(),
+                headers: headers
+                    .iter()
+                    .map(|(n, v)| (n.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
+                    .collect(),
             }),
             _ => None,
         })

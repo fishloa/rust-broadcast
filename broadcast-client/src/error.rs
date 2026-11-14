@@ -7,8 +7,11 @@ use thiserror::Error;
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum Error {
     /// The session URL uses a scheme that is not supported in BC-1.
-    #[error("unsupported scheme: {0}")]
-    UnsupportedScheme(String),
+    #[error("unsupported scheme: {scheme}")]
+    UnsupportedScheme {
+        /// The offending scheme.
+        scheme: String,
+    },
     /// The session URL could not be parsed.
     #[error("invalid url: {0}")]
     InvalidUrl(String),

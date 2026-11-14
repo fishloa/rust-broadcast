@@ -1,4 +1,5 @@
 use crate::support::replay::{TS_PACKET, bitrate_bps, open_live};
+use url::Url;
 
 use broadcast_client::{
     BufferEvent, BufferInput, Config, ErrorKind, Event, InputLog, PauseReason, Session,
@@ -110,7 +111,12 @@ fn run(config: Config, drain: bool) -> Run {
 }
 
 fn open_placeholder() -> Session {
-    Session::open("http://placeholder/live.ts", Config::default(), ts(0)).unwrap()
+    Session::open(
+        Url::parse("http://placeholder/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap()
 }
 
 fn recording() -> Config {
@@ -236,5 +242,5 @@ fn a_full_queue_drops_counts_and_reports_once() {
 fn a_zero_cap_is_rejected() {
     let mut config = Config::default();
     config.max_recorded_buffer_inputs = 0;
-    assert!(Session::open("http://h/live.ts", config, ts(0)).is_err());
+    assert!(Session::open(Url::parse("http://h/live.ts").unwrap(), config, ts(0)).is_err());
 }

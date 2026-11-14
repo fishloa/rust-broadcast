@@ -2,8 +2,9 @@
 //! or cost samples beyond the pre-discontinuity tail.
 
 use std::collections::{BTreeMap, VecDeque};
+use url::Url;
 
-use broadcast_client::{Action, Config, Event, Session};
+use broadcast_client::{Action, Config, ConnId, Event, Session};
 use broadcast_common::stage::Timestamp;
 
 /// The harness's microsecond clock as the session's `now`.
@@ -77,17 +78,22 @@ fn run(segs: &[Vec<u8>], disc_at: Option<usize>) -> Outcome {
         }
         pl
     };
-    let mut s = Session::open("http://h/p/index.m3u8", Config::default(), ts(0)).unwrap();
+    let mut s = Session::open(
+        Url::parse("http://h/p/index.m3u8").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let mut out = Outcome::default();
     let mut now = 0u64;
     while now <= RUN_US {
         let visible = (START_VISIBLE + (now / SEGMENT_US) as usize).min(n);
         let pl = playlist(visible, visible == n, visible.saturating_sub(WINDOW));
-        let mut pending: VecDeque<(u32, String)> = VecDeque::new();
+        let mut pending: VecDeque<(ConnId, String)> = VecDeque::new();
         loop {
             while let Some(a) = s.poll(ts(now)) {
                 if let Action::HttpRequest { conn, url, .. } = a {
-                    pending.push_back((conn, url));
+                    pending.push_back((conn, url.to_string()));
                 }
             }
             let Some((c, u)) = pending.pop_front() else {

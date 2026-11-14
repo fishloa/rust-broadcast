@@ -3,6 +3,7 @@ use broadcast_client::{Config, Error, Event, Session, SourceKind};
 use broadcast_common::Serialize;
 use broadcast_common::stage::Timestamp;
 use rtp_packet::RtpPacket;
+use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -125,11 +126,17 @@ fn a_reconnect_flushes_the_access_units_still_held() {
 
 #[test]
 fn an_sdp_needs_an_rtp_url_and_a_playable_media_section() {
-    let open = |url: &str, sdp: &str| Session::open(url, config(Some(sdp.to_string())), ts(0));
+    let open = |url: &str, sdp: &str| {
+        Session::open(
+            Url::parse(url).unwrap(),
+            config(Some(sdp.to_string())),
+            ts(0),
+        )
+    };
     let mut udp = config(Some(sdp()));
     udp.kind = SourceKind::Udp;
     assert!(matches!(
-        Session::open("udp://127.0.0.1:5004", udp, ts(0)),
+        Session::open(Url::parse("udp://127.0.0.1:5004").unwrap(), udp, ts(0)),
         Err(Error::InvalidConfig { field: "udp.sdp" })
     ));
     assert!(matches!(

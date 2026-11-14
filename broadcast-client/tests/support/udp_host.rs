@@ -1,6 +1,7 @@
-use broadcast_client::{Action, Config, Event, Session, UdpMode};
+use broadcast_client::{Action, Config, ConnId, Event, Session, UdpMode};
 use broadcast_common::Serialize;
 use broadcast_common::stage::Timestamp;
+use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -18,18 +19,18 @@ const RTP_TS_PER_PACKET: u32 = 90;
 
 pub struct UdpHost {
     pub session: Session,
-    pub conn: Option<u32>,
+    pub conn: Option<ConnId>,
     pub now: u64,
     pub events: Vec<TimedEvent>,
     pub binds: Vec<Action>,
-    pub closes: Vec<u32>,
+    pub closes: Vec<ConnId>,
     pub wake: Option<u64>,
     pub auto_connect: bool,
 }
 
 impl UdpHost {
     pub fn open(url: &str, config: Config) -> Self {
-        let session = Session::open(url, config, ts(0)).unwrap();
+        let session = Session::open(Url::parse(url).unwrap(), config, ts(0)).unwrap();
         let mut host = Self {
             session,
             conn: None,

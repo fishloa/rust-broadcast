@@ -1,6 +1,9 @@
 use crate::support;
+use url::Url;
 
-use broadcast_client::{Action, Config, Event, Session, StarveKind, Status, TransportError};
+use broadcast_client::{
+    Action, Config, ConnId, Event, Session, StarveKind, Status, TransportError,
+};
 use broadcast_common::stage::Timestamp;
 use support::*;
 
@@ -13,7 +16,12 @@ fn ts(us: u64) -> Timestamp {
 fn tracks_precede_first_sample() {
     let bytes = tf1_bytes!();
     let (status, headers) = tf1_headers!();
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let evs = feed_chunks(&mut session, &bytes, 1316, status, &headers, 0);
     let first_sample = evs
         .iter()
@@ -29,7 +37,12 @@ fn tracks_precede_first_sample() {
 fn tracks_coalesced_one_per_change() {
     let bytes = tf1_bytes!();
     let (status, headers) = tf1_headers!();
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let evs = feed_chunks(&mut session, &bytes, 1316, status, &headers, 0);
     let tracks_count = evs.iter().filter(|e| matches!(e, Event::Tracks(_))).count();
     assert!(tracks_count >= 1);
@@ -39,7 +52,12 @@ fn tracks_coalesced_one_per_change() {
 fn display_changed_keeps_position_between_samples() {
     let bytes = tf1_bytes!();
     let (status, headers) = tf1_headers!();
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let evs = feed_chunks(&mut session, &bytes, 1316, status, &headers, 0);
     let positions = |pred: fn(&Event) -> bool| -> Vec<usize> {
         evs.iter()
@@ -84,7 +102,12 @@ fn display_changed_keeps_position_between_samples() {
 fn status_establishing_then_live_once() {
     let bytes = tf1_bytes!();
     let (status, headers) = tf1_headers!();
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let evs = feed_chunks(&mut session, &bytes, 1316, status, &headers, 0);
     let live_count = evs
         .iter()
@@ -101,7 +124,12 @@ fn status_establishing_then_live_once() {
 fn stall_gives_stalled_then_live_on_next_byte() {
     let bytes = tf1_bytes!();
     let (status, headers) = tf1_headers!();
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
@@ -135,7 +163,8 @@ fn server_close_reconnects_with_discontinuity_before_first_sample() {
     let (status, headers) = tf1_headers!();
     let mut config = Config::default();
     config.ts_http.min_reconnect_interval = std::time::Duration::ZERO;
-    let mut session = Session::open("http://example/live.ts", config, ts(0)).unwrap();
+    let mut session =
+        Session::open(Url::parse("http://example/live.ts").unwrap(), config, ts(0)).unwrap();
     let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
@@ -163,7 +192,12 @@ fn server_close_reconnects_with_discontinuity_before_first_sample() {
 #[test]
 fn not_found_status_and_keeps_retrying_at_cap() {
     let (status, headers) = missing_headers!();
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
@@ -190,7 +224,12 @@ fn not_found_status_and_keeps_retrying_at_cap() {
 fn starved_event_passthrough() {
     let bytes = tf1_bytes!();
     let (status, headers) = tf1_headers!();
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
@@ -212,7 +251,12 @@ fn starved_event_passthrough() {
         "one notice per stall"
     );
 
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
@@ -233,14 +277,27 @@ fn starved_event_passthrough() {
 
 #[test]
 fn unsupported_scheme_error() {
-    let err = Session::open("ftp://example/live.ts", Config::default(), ts(0)).unwrap_err();
-    assert!(matches!(err, broadcast_client::Error::UnsupportedScheme(_)));
+    let err = Session::open(
+        Url::parse("ftp://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        broadcast_client::Error::UnsupportedScheme { .. }
+    ));
 }
 
 #[test]
 fn close_is_terminal_and_emits_close_once() {
     let (status, headers) = tf1_headers!();
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
@@ -262,12 +319,17 @@ fn close_is_terminal_and_emits_close_once() {
 fn unknown_conn_callbacks_ignored() {
     let bytes = tf1_bytes!();
     let (status, headers) = tf1_headers!();
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
     };
-    let unknown = conn.wrapping_add(998);
+    let unknown = ConnId::new(conn.0.wrapping_add(998));
     session.on_response(unknown, 200, &[], ts(0));
     session.on_data(unknown, &bytes[..4096], ts(0));
     session.on_closed(unknown, None, ts(1_000));
