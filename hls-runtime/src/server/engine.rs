@@ -383,8 +383,8 @@ pub struct ClosedSegment {
     /// (e.g. multimux's DVR archive, whose own `IndexEntry::start` is exactly
     /// this same media time).
     pub start: timed_metadata::MediaTime,
-    /// Segment duration in seconds.
-    pub duration_secs: f64,
+    /// This segment's duration, as the `Duration` the `Trunk` cut it with.
+    pub duration: core::time::Duration,
     /// Whether `#EXT-X-DISCONTINUITY` precedes this segment (RFC 8216
     /// §4.3.2.3).
     pub discontinuous: bool,
@@ -403,13 +403,13 @@ impl ClosedSegment {
     pub fn new(
         sequence_number: SegmentSeq,
         start: timed_metadata::MediaTime,
-        duration_secs: f64,
+        duration: core::time::Duration,
         discontinuous: bool,
     ) -> Self {
         ClosedSegment {
             sequence_number,
             start,
-            duration_secs,
+            duration,
             discontinuous,
             init_generation: Generation::new(1),
         }
@@ -3188,7 +3188,7 @@ impl HlsOrigin {
             .map(|s| ClosedSegment {
                 sequence_number: s.sequence_number,
                 start: s.start,
-                duration_secs: s.duration.as_secs_f64(),
+                duration: s.duration,
                 discontinuous: s.discontinuous,
                 init_generation: s.init_gen,
             })
@@ -4289,14 +4289,14 @@ mod tests {
     fn seg(
         writer: &media_plane::trunk::SegmentWriter,
         seq: u32,
-        duration_secs: f64,
+        duration: Duration,
         discontinuous: bool,
     ) {
         writer
             .publish_segment(SegmentEntry::new(
                 Bytes::from(vec![seq as u8; 8]),
                 SegmentSeq::new(seq),
-                Duration::from_secs_f64(duration_secs),
+                duration,
                 Timestamp::from_nanos(0),
                 SegmentMeta { discontinuous },
             ))
@@ -4411,7 +4411,7 @@ mod tests {
         let (_trunk, origin, writer) = make_cold_origin(true);
         part(&writer, 1, 0, true);
         part(&writer, 1, 1, false);
-        seg(&writer, 1, 4.0, false);
+        seg(&writer, 1, Duration::from_secs_f64(4.0), false);
         let response = resolve_with_deadline(
             &origin,
             playlist_request(BlockingQuery::default()),
@@ -4615,7 +4615,7 @@ mod tests {
         // Segment 1 spans [0, 4_000_000) — includes the cue's PTS.
         writer.note_segment_start(SegmentSeq::new(1), MediaTime(0));
         writer.note_segment_start(SegmentSeq::new(2), MediaTime(4_000_000));
-        seg(&writer, 1, 4.0, false);
+        seg(&writer, 1, Duration::from_secs_f64(4.0), false);
 
         let playlist = origin
             .render_playlist(DEFAULT_TRACK_ID, None)
@@ -4671,7 +4671,7 @@ mod tests {
 
         writer.note_segment_start(SegmentSeq::new(1), MediaTime(0));
         writer.note_segment_start(SegmentSeq::new(2), MediaTime(4_000_000));
-        seg(&writer, 1, 4.0, false);
+        seg(&writer, 1, Duration::from_secs_f64(4.0), false);
 
         let playlist = origin
             .render_playlist(DEFAULT_TRACK_ID, None)
@@ -4713,7 +4713,7 @@ mod tests {
     #[test]
     fn playlist_rendered_from_populated_trunk_matches_expected_shape() {
         let (_trunk, origin, writer) = make_origin();
-        seg(&writer, 1, 4.0, false);
+        seg(&writer, 1, Duration::from_secs_f64(4.0), false);
         part(&writer, 2, 0, true);
         part(&writer, 2, 1, false);
 
@@ -4776,7 +4776,7 @@ mod tests {
         let (_trunk, origin, writer) = make_origin();
         part(&writer, 1, 0, true);
         part(&writer, 1, 1, false);
-        seg(&writer, 1, 4.0, false);
+        seg(&writer, 1, Duration::from_secs_f64(4.0), false);
 
         let body = render_body(&origin);
         assert!(body.contains("#EXT-X-PART:"), "body: {body}");
@@ -4946,7 +4946,7 @@ mod tests {
         let (_trunk, origin, writer) = make_origin();
         part(&writer, 1, 0, true);
         part(&writer, 1, 1, false); // segment 1's final part
-        seg(&writer, 1, 4.0, false); // close segment 1
+        seg(&writer, 1, Duration::from_secs_f64(4.0), false); // close segment 1
 
         match resolve_now(
             &origin,
@@ -5028,10 +5028,10 @@ mod tests {
     fn media_sequence_and_discontinuity_sequence_advance_as_window_rolls() {
         let (_trunk, origin, writer) = make_origin(); // window_segments = 4
 
-        seg(&writer, 1, 4.0, false);
-        seg(&writer, 2, 4.0, true); // discontinuous
-        seg(&writer, 3, 4.0, false);
-        seg(&writer, 4, 4.0, false);
+        seg(&writer, 1, Duration::from_secs_f64(4.0), false);
+        seg(&writer, 2, Duration::from_secs_f64(4.0), true); // discontinuous
+        seg(&writer, 3, Duration::from_secs_f64(4.0), false);
+        seg(&writer, 4, Duration::from_secs_f64(4.0), false);
 
         // Window (capacity 4) holds exactly 1..=4 -- MEDIA-SEQUENCE=1, and
         // segment 2's own #EXT-X-DISCONTINUITY renders in-window (no
@@ -5059,7 +5059,7 @@ mod tests {
         // Roll the window: segment 5 evicts segment 1 (not discontinuous;
         // DISCONTINUITY-SEQUENCE stays 0), segment 6 evicts segment 2
         // (discontinuous -- DISCONTINUITY-SEQUENCE becomes 1).
-        seg(&writer, 5, 4.0, false);
+        seg(&writer, 5, Duration::from_secs_f64(4.0), false);
         let body = match resolve_now(
             &origin,
             HlsRequest::Playlist {
@@ -5079,7 +5079,7 @@ mod tests {
             "evicted segment 1 was not discontinuous: {body}"
         );
 
-        seg(&writer, 6, 4.0, false);
+        seg(&writer, 6, Duration::from_secs_f64(4.0), false);
         let body = match resolve_now(
             &origin,
             HlsRequest::Playlist {
@@ -5106,7 +5106,7 @@ mod tests {
     fn published_target_duration_matches_the_rendered_playlist() {
         let (_trunk, origin, writer) = make_origin(); // configured target 4.0
         assert_eq!(origin.published_target_duration(), Duration::from_secs(4));
-        seg(&writer, 1, 7.5, false);
+        seg(&writer, 1, Duration::from_secs_f64(7.5), false);
         let _ = resolve_now(
             &origin,
             HlsRequest::Playlist {
@@ -5115,14 +5115,14 @@ mod tests {
             },
         );
         assert_eq!(origin.published_target_duration(), Duration::from_secs(8));
-        seg(&writer, 2, 20.0, false);
+        seg(&writer, 2, Duration::from_secs_f64(20.0), false);
         assert_eq!(origin.published_target_duration(), Duration::from_secs(8));
     }
 
     #[test]
     fn target_duration_is_max_of_configured_and_actual_segment_duration() {
         let (_trunk, origin, writer) = make_origin(); // configured target 4.0
-        seg(&writer, 1, 7.5, false);
+        seg(&writer, 1, Duration::from_secs_f64(7.5), false);
         let body = match resolve_now(
             &origin,
             HlsRequest::Playlist {
@@ -5145,7 +5145,7 @@ mod tests {
     #[test]
     fn far_future_msn_rejected() {
         let (_trunk, origin, writer) = make_origin();
-        seg(&writer, 1, 4.0, false);
+        seg(&writer, 1, Duration::from_secs_f64(4.0), false);
         let outcome = resolve_now(
             &origin,
             HlsRequest::Playlist {
@@ -5168,7 +5168,7 @@ mod tests {
     #[test]
     fn msn_at_spec_bound_is_accepted() {
         let (_trunk, origin, writer) = make_origin();
-        seg(&writer, 1, 4.0, false);
+        seg(&writer, 1, Duration::from_secs_f64(4.0), false);
         let outcome = resolve_now(
             &origin,
             HlsRequest::Playlist {
@@ -5194,7 +5194,7 @@ mod tests {
     #[test]
     fn msn_one_beyond_spec_bound_is_rejected() {
         let (_trunk, origin, writer) = make_origin();
-        seg(&writer, 1, 4.0, false);
+        seg(&writer, 1, Duration::from_secs_f64(4.0), false);
         // With segments up to 1 closed, in_progress_seg is 1.
         // _HLS_msn > 1 + 2 == 3 → rejected. So msn=4 is rejected.
         let outcome = resolve_now(
@@ -5406,7 +5406,7 @@ mod tests {
         // RFC's own classic examples) -- so RFC 8216bis §8 row 3
         // (floating-point EXTINF) genuinely fires and the version assertion
         // below is not `None == None`.
-        seg(&writer, 1, 4.004, false);
+        seg(&writer, 1, Duration::from_secs_f64(4.004), false);
 
         let body = render_body(&origin);
         assert!(!body.contains("#EXT-X-MAP"), "body: {body}");
@@ -5451,7 +5451,7 @@ mod tests {
         // A closed segment with a fractional (keyframe-cut) duration, so
         // RFC 8216bis §8 row 3 fires and the version assertion below is not
         // `None == None`; segment 2 is then the open one carrying live parts.
-        seg(&writer, 1, 4.004, false);
+        seg(&writer, 1, Duration::from_secs_f64(4.004), false);
         part(&writer, 2, 0, true);
         part(&writer, 2, 1, false);
 
@@ -5545,7 +5545,7 @@ mod tests {
     #[test]
     fn mpegts_classic_integral_extinf_emits_no_version_tag() {
         let (_trunk, origin, writer) = make_origin_with(Container::MpegTs, None);
-        seg(&writer, 1, 4.0, false);
+        seg(&writer, 1, Duration::from_secs_f64(4.0), false);
         let body = render_body(&origin);
         // A whole number of seconds renders as an integer, so the playlist
         // genuinely contains no floating-point EXTINF value -- §8 row 3
@@ -5569,11 +5569,11 @@ mod tests {
     #[test]
     fn low_latency_does_not_raise_the_derived_version() {
         let (_t1, classic, w1) = make_origin_with(Container::MpegTs, None);
-        seg(&w1, 1, 4.004, false);
+        seg(&w1, 1, Duration::from_secs_f64(4.004), false);
         let classic_version = assert_version_present_and_matches_derivation(&render_body(&classic));
 
         let (_t2, low_latency, w2) = make_origin_with(Container::MpegTs, Some(500));
-        seg(&w2, 1, 4.004, false);
+        seg(&w2, 1, Duration::from_secs_f64(4.004), false);
         part(&w2, 2, 0, true);
         let ll_body = render_body(&low_latency);
         assert!(ll_body.contains("#EXT-X-PART:"), "body: {ll_body}");
@@ -5592,7 +5592,7 @@ mod tests {
         // EXT-X-I-FRAMES-ONLY). `max(6, 3) = 6`, so the rendered value is
         // unchanged -- this removes the ambiguity of an integral EXTINF
         // leaving row 3 entirely untested here.
-        seg(&writer, 1, 4.004, false);
+        seg(&writer, 1, Duration::from_secs_f64(4.004), false);
 
         let body = render_body(&origin);
         assert!(
@@ -5641,7 +5641,7 @@ mod tests {
         let (_trunk, origin, writer) = make_origin_with(Container::Fmp4, Some(500));
         origin.set_init(vec![0xAAu8; 8]);
         // Fractional for the same reason as the Fmp4-classic cell above.
-        seg(&writer, 1, 4.004, false);
+        seg(&writer, 1, Duration::from_secs_f64(4.004), false);
         part(&writer, 2, 0, true);
         part(&writer, 2, 1, false);
 
@@ -5806,7 +5806,7 @@ mod tests {
     fn closed_segments_reflects_window_eviction() {
         let (_trunk, origin, writer) = make_origin(); // window_segments = 4
         for seq in 1..=5 {
-            seg(&writer, seq, 4.0, false);
+            seg(&writer, seq, Duration::from_secs_f64(4.0), false);
         }
         let snapshot = origin.closed_segments();
         let seqs: Vec<u32> = snapshot.iter().map(|s| s.sequence_number.value()).collect();
@@ -6031,7 +6031,7 @@ mod tests {
     #[test]
     fn a_request_with_nothing_new_does_not_take_the_cursor_lock() {
         let (_trunk, origin, writer) = make_origin();
-        seg(&writer, 1, 4.0, false);
+        seg(&writer, 1, Duration::from_secs_f64(4.0), false);
         assert!(matches!(
             resolve_now(&origin, segment_request("seg-1-7-1.m4s")),
             EgressResponse::Ready { .. }
@@ -6057,7 +6057,7 @@ mod tests {
     #[test]
     fn a_segment_published_after_a_drain_is_served_by_the_next_request() {
         let (_trunk, origin, writer) = make_origin();
-        seg(&writer, 1, 4.0, false);
+        seg(&writer, 1, Duration::from_secs_f64(4.0), false);
         assert!(matches!(
             resolve_now(&origin, segment_request("seg-1-7-1.m4s")),
             EgressResponse::Ready { .. }
@@ -6066,7 +6066,7 @@ mod tests {
             resolve_now(&origin, segment_request("seg-1-7-2.m4s")),
             EgressResponse::NotFound
         );
-        seg(&writer, 2, 4.0, false);
+        seg(&writer, 2, Duration::from_secs_f64(4.0), false);
         assert!(matches!(
             resolve_now(&origin, segment_request("seg-1-7-2.m4s")),
             EgressResponse::Ready { .. }
@@ -6078,7 +6078,7 @@ mod tests {
     #[test]
     fn a_poisoned_lock_does_not_cascade_into_later_requests() {
         let (_trunk, origin, writer) = make_origin();
-        seg(&writer, 1, 4.0, false);
+        seg(&writer, 1, Duration::from_secs_f64(4.0), false);
         std::thread::scope(|s| {
             let origin = &origin;
             for which in 0..4 {
@@ -6099,7 +6099,7 @@ mod tests {
         assert!(origin.init.is_poisoned());
         assert!(origin.codecs.is_poisoned());
         // Every public entry point still answers.
-        seg(&writer, 2, 4.0, false);
+        seg(&writer, 2, Duration::from_secs_f64(4.0), false);
         assert_eq!(origin.closed_segments().len(), 2);
         assert!(origin.init_bytes().is_some());
         assert!(origin.master_playlist("media.m3u8").is_ok());
@@ -6122,8 +6122,8 @@ mod tests {
     #[test]
     fn concurrent_playlist_requests_at_one_key_render_once() {
         let (_trunk, origin, writer) = make_origin();
-        seg(&writer, 1, 4.0, false);
-        seg(&writer, 2, 4.0, false);
+        seg(&writer, 1, Duration::from_secs_f64(4.0), false);
+        seg(&writer, 2, Duration::from_secs_f64(4.0), false);
         let origin = Arc::new(origin);
         let barrier = Arc::new(std::sync::Barrier::new(CONCURRENT_RENDERERS));
 
@@ -6153,7 +6153,7 @@ mod tests {
     #[test]
     fn a_publish_invalidates_the_cached_playlist() {
         let (_trunk, origin, writer) = make_origin();
-        seg(&writer, 1, 4.0, false);
+        seg(&writer, 1, Duration::from_secs_f64(4.0), false);
         let before = render_media(&origin);
         assert_eq!(render_media(&origin), before);
         assert_eq!(origin.renders.load(std::sync::atomic::Ordering::Relaxed), 1);
@@ -6162,7 +6162,7 @@ mod tests {
         let with_part = render_media(&origin);
         assert_ne!(with_part, before, "a new part must change the playlist");
 
-        seg(&writer, 2, 4.0, false);
+        seg(&writer, 2, Duration::from_secs_f64(4.0), false);
         let with_segment = render_media(&origin);
         assert_ne!(with_segment, with_part);
         assert_eq!(origin.renders.load(std::sync::atomic::Ordering::Relaxed), 3);
@@ -6180,7 +6180,7 @@ mod tests {
         assert!(!origin.is_warm(&request), "nothing drained yet");
         origin.prepare(request.clone());
         assert!(origin.is_warm(&request));
-        seg(&writer, 1, 4.0, false);
+        seg(&writer, 1, Duration::from_secs_f64(4.0), false);
         assert!(!origin.is_warm(&request), "a new segment is undrained");
         origin.prepare(request.clone());
         assert!(origin.is_warm(&request));
