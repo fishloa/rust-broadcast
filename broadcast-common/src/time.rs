@@ -2,8 +2,9 @@
 //!
 //! DVB carries wall-clock time as a 16-bit Modified Julian Date plus 24-bit BCD
 //! HHMMSS (EN 300 468 Annex C), and event durations as 24-bit BCD HHMMSS. The
-//! duration codec is dependency-free; the MJD↔calendar conversion needs a date
-//! library and so lives behind the `chrono` feature.
+//! duration codec and the MJD↔calendar conversion are dependency-free; only the
+//! functions that return or take a [`jiff::Timestamp`] live behind the `jiff`
+//! feature.
 //!
 //! # 2038 MJD wrap-around (EN 300 468 v1.20.1 clauses 5.2.4 / 5.2.5 / 5.2.6)
 //!
@@ -72,7 +73,7 @@ pub struct MjdBcdDateTime {
 /// Decode a 5-byte DVB UTC time (16-bit MJD + 24-bit BCD `HHMMSS`) to a
 /// plain [`MjdBcdDateTime`].
 ///
-/// Unlike [`decode_mjd_bcd_utc`], this is dependency-free (no `chrono`
+/// Unlike `decode_mjd_bcd_utc`, this is dependency-free (no `jiff`
 /// feature required). Returns `None` if the BCD nibbles are out of range
 /// or the minute/second fields exceed 59. The MJD→calendar conversion
 /// is proleptic Gregorian (EN 300 468 Annex C's formula is only valid to 2100-02-28; see `mjd_to_ymd_core`).
@@ -131,7 +132,7 @@ const JDN_OF_MJD_0: i64 = 2_400_001;
 /// 2100-02-28 (its NOTE 2: it treats 2100 as a leap year), which the v1.20.1
 /// 2038 wrap rule outgrows; this conversion applies the full Gregorian leap
 /// rule (divisible by 4, except centuries not divisible by 400). Both
-/// [`mjd_to_ymd_nogate`] and the chrono-gated `mjd_to_ymd` share it.
+/// [`mjd_to_ymd_nogate`] and [`mjd_to_ymd`] share it.
 fn mjd_to_ymd_core(field: u16) -> (i64, i64, i64) {
     const Y_BASE: i64 = 4716;
     const J_OFFSET: i64 = 1401;
@@ -150,8 +151,8 @@ fn mjd_to_ymd_core(field: u16) -> (i64, i64, i64) {
 
 /// Convert a 16-bit Modified Julian Date to `(year, month, day)`.
 ///
-/// MJD→calendar per ETSI EN 300 468 Annex C. This is the dependency-free
-/// version of the chrono-gated [`mjd_to_ymd`].
+/// MJD→calendar per ETSI EN 300 468 Annex C, narrowed to the
+/// [`MjdBcdDateTime`] field widths.
 fn mjd_to_ymd_nogate(mjd: u16) -> Option<(u16, u8, u8)> {
     let (y, m, d) = mjd_to_ymd_core(mjd);
     let y_u16 = u16::try_from(y).ok()?;
@@ -178,8 +179,8 @@ fn ymd_to_mjd_core(year: i32, month: u32, day: u32) -> i64 {
 
 /// Convert a `(year, month, day)` date to a 16-bit Modified Julian Date.
 ///
-/// Calendar→MJD per ETSI EN 300 468 Annex C. This is the dependency-free
-/// version of the chrono-gated [`ymd_to_mjd`].
+/// Calendar→MJD per ETSI EN 300 468 Annex C; [`ymd_to_mjd`] is its public
+/// face.
 fn ymd_to_mjd_nogate(year: i32, month: u32, day: u32) -> Option<u16> {
     if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
         return None;
@@ -237,8 +238,6 @@ pub fn encode_bcd_duration(duration: Duration) -> Option<[u8; 3]> {
 /// 2038 wrap rule) to `(year, month, day)`.
 ///
 /// Inverse of [`ymd_to_mjd`]; MJD→calendar per ETSI EN 300 468 Annex C.
-#[cfg(feature = "chrono")]
-#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
 #[must_use]
 pub fn mjd_to_ymd(mjd: u16) -> (i32, u32, u32) {
     let (y, m, d) = mjd_to_ymd_core(mjd);
@@ -250,55 +249,57 @@ pub fn mjd_to_ymd(mjd: u16) -> (i32, u32, u32) {
 /// Forward of [`mjd_to_ymd`], calendar→MJD per ETSI EN 300 468 Annex C. Returns
 /// `None` if the field is out of range or the date is not representable in a
 /// 16-bit MJD.
-#[cfg(feature = "chrono")]
-#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
 #[must_use]
 pub fn ymd_to_mjd(year: i32, month: u32, day: u32) -> Option<u16> {
     ymd_to_mjd_nogate(year, month, day)
 }
 
 /// Decode a 5-byte DVB UTC time (16-bit MJD + 24-bit BCD `HHMMSS`) to a
-/// [`chrono::DateTime<chrono::Utc>`].
+/// [`jiff::Timestamp`].
 ///
 /// Returns `None` if the BCD nibbles are out of range or the date/time is
 /// invalid.
-#[cfg(feature = "chrono")]
-#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
+#[cfg(feature = "jiff")]
+#[cfg_attr(docsrs, doc(cfg(feature = "jiff")))]
 #[must_use]
-pub fn decode_mjd_bcd_utc(raw: [u8; 5]) -> Option<chrono::DateTime<chrono::Utc>> {
-    use chrono::{NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
-    let (mjd_bytes, _) = raw.split_first_chunk::<2>().unwrap();
-    let mjd = u16::from_be_bytes(*mjd_bytes);
-    let (y, m, d) = mjd_to_ymd(mjd);
-    let h = from_bcd_byte(raw[2])?;
-    let mi = from_bcd_byte(raw[3])?;
-    let s = from_bcd_byte(raw[4])?;
-    let date = NaiveDate::from_ymd_opt(y, m, d)?;
-    let time = NaiveTime::from_hms_opt(u32::from(h), u32::from(mi), u32::from(s))?;
-    chrono::Utc
-        .from_local_datetime(&NaiveDateTime::new(date, time))
-        .single()
+pub fn decode_mjd_bcd_utc(raw: [u8; 5]) -> Option<jiff::Timestamp> {
+    let [m0, m1, h, mi, s] = raw;
+    let (y, m, d) = mjd_to_ymd(u16::from_be_bytes([m0, m1]));
+    let dt = jiff::civil::DateTime::new(
+        i16::try_from(y).ok()?,
+        i8::try_from(m).ok()?,
+        i8::try_from(d).ok()?,
+        i8::try_from(from_bcd_byte(h)?).ok()?,
+        i8::try_from(from_bcd_byte(mi)?).ok()?,
+        i8::try_from(from_bcd_byte(s)?).ok()?,
+        0,
+    )
+    .ok()?;
+    jiff::tz::TimeZone::UTC.to_timestamp(dt).ok()
 }
 
-/// Encode a [`chrono::DateTime<chrono::Utc>`] to a 5-byte DVB UTC time
-/// (16-bit MJD + 24-bit BCD `HHMMSS`).
+/// Encode a [`jiff::Timestamp`] to a 5-byte DVB UTC time (16-bit MJD + 24-bit
+/// BCD `HHMMSS`).
 ///
 /// Sub-second precision is truncated. Returns `None` if the date is not
 /// representable in a 16-bit MJD.
-#[cfg(feature = "chrono")]
-#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
+#[cfg(feature = "jiff")]
+#[cfg_attr(docsrs, doc(cfg(feature = "jiff")))]
 #[must_use]
-pub fn encode_mjd_bcd_utc(dt: chrono::DateTime<chrono::Utc>) -> Option<[u8; 5]> {
-    use chrono::{Datelike, Timelike};
-    let naive = dt.naive_utc();
-    let mjd = ymd_to_mjd(naive.year(), naive.month(), naive.day())?;
+pub fn encode_mjd_bcd_utc(ts: jiff::Timestamp) -> Option<[u8; 5]> {
+    let dt = jiff::tz::TimeZone::UTC.to_datetime(ts);
+    let mjd = ymd_to_mjd(
+        i32::from(dt.year()),
+        u32::try_from(dt.month()).ok()?,
+        u32::try_from(dt.day()).ok()?,
+    )?;
     let [m0, m1] = mjd.to_be_bytes();
     Some([
         m0,
         m1,
-        to_bcd_byte(naive.hour() as u8)?,
-        to_bcd_byte(naive.minute() as u8)?,
-        to_bcd_byte(naive.second() as u8)?,
+        to_bcd_byte(u8::try_from(dt.hour()).ok()?)?,
+        to_bcd_byte(u8::try_from(dt.minute()).ok()?)?,
+        to_bcd_byte(u8::try_from(dt.second()).ok()?)?,
     ])
 }
 
@@ -311,7 +312,7 @@ pub fn encode_mjd_bcd_utc(dt: chrono::DateTime<chrono::Utc>) -> Option<[u8; 5]> 
 pub const SECS_2000_EPOCH: i64 = 946_684_800;
 
 /// Decode a T2-MI `seconds_since_2000` / subsecond-nanoseconds pair to a
-/// [`chrono::DateTime<chrono::Utc>`], applying a `utco` leap-second offset.
+/// [`jiff::Timestamp`], applying a `utco` leap-second offset.
 ///
 /// The T2-MI spec (ETSI TS 102 773 §5.2.7) defines:
 /// - `seconds_since_2000`: whole seconds since 2000-01-01T00:00:00 UTC (the
@@ -321,46 +322,45 @@ pub const SECS_2000_EPOCH: i64 = 946_684_800;
 /// - `subsec_nanos`: sub-second component in nanoseconds (caller converts from
 ///   the bandwidth-dependent `subseconds` field).
 ///
-/// Returns `None` if the resulting timestamp is out of range.
-#[cfg(feature = "chrono")]
-#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
+/// Returns `None` if the resulting timestamp is out of range or
+/// `subsec_nanos` is a whole second or more.
+#[cfg(feature = "jiff")]
+#[cfg_attr(docsrs, doc(cfg(feature = "jiff")))]
 #[must_use]
 pub fn decode_seconds_since_2000_utc(
     seconds_since_2000: u64,
     subsec_nanos: u32,
     utco: u16,
-) -> Option<chrono::DateTime<chrono::Utc>> {
-    use chrono::TimeZone;
+) -> Option<jiff::Timestamp> {
     let unix_secs = SECS_2000_EPOCH
         .checked_add(i64::try_from(seconds_since_2000).ok()?)?
         .checked_sub(i64::from(utco))?;
-    chrono::Utc.timestamp_opt(unix_secs, subsec_nanos).single()
+    jiff::Timestamp::new(unix_secs, i32::try_from(subsec_nanos).ok()?).ok()
 }
 
-/// Encode a [`chrono::DateTime<chrono::Utc>`] to `seconds_since_2000` with a
-/// `utco` leap-second offset.
+/// Largest `seconds_since_2000` the 40-bit T2-MI field holds (ETSI TS 102 773
+/// §5.2.7).
+#[cfg(feature = "jiff")]
+const SECONDS_SINCE_2000_MAX: u64 = (1 << 40) - 1;
+
+/// Encode a [`jiff::Timestamp`] to `seconds_since_2000` with a `utco`
+/// leap-second offset.
 ///
 /// Inverse of [`decode_seconds_since_2000_utc`]. Returns `None` if the date
 /// is before the 2000 epoch or `seconds_since_2000` would not fit in 40 bits.
-#[cfg(feature = "chrono")]
-#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
+#[cfg(feature = "jiff")]
+#[cfg_attr(docsrs, doc(cfg(feature = "jiff")))]
 #[must_use]
-pub fn encode_seconds_since_2000_utc(
-    dt: chrono::DateTime<chrono::Utc>,
-    utco: u16,
-) -> Option<(u64, u32)> {
-    use chrono::Timelike;
-    let unix_secs = dt.timestamp();
-    // seconds_since_2000 = (unix_secs - SECS_2000_EPOCH) + utco
-    let raw = unix_secs
+pub fn encode_seconds_since_2000_utc(ts: jiff::Timestamp, utco: u16) -> Option<(u64, u32)> {
+    let raw = ts
+        .as_second()
         .checked_sub(SECS_2000_EPOCH)?
         .checked_add(i64::from(utco))?;
     let secs = u64::try_from(raw).ok()?;
-    // 40-bit field maximum
-    if secs > 0xFF_FFFF_FFFF {
+    if secs > SECONDS_SINCE_2000_MAX {
         return None;
     }
-    Some((secs, dt.nanosecond()))
+    Some((secs, u32::try_from(ts.subsec_nanosecond()).ok()?))
 }
 
 /// A pure (no clock read) mapping between a monotonic microsecond counter and
@@ -443,15 +443,15 @@ mod tests {
         assert_eq!(decode_bcd_duration([0x01, 0x00, 0x1A]), None); // bad nibble
     }
 
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "jiff")]
     #[test]
-    fn ymd_to_mjd_matches_chrono_epoch_arithmetic() {
-        use chrono::NaiveDate;
+    fn ymd_to_mjd_matches_jiff_epoch_arithmetic() {
+        use jiff::civil::date;
         // MJD epoch is 1858-11-17.
-        let epoch = NaiveDate::from_ymd_opt(1858, 11, 17).unwrap();
+        let epoch = date(1858, 11, 17);
         for &(y, m, d) in &[(1993, 10, 13), (2000, 1, 1), (2023, 6, 8), (1949, 1, 23)] {
-            let date = NaiveDate::from_ymd_opt(y, m, d).unwrap();
-            let full = (date - epoch).num_days() as u32;
+            let day = date(y as i16, m as i8, d as i8);
+            let full = (day - epoch).get_days() as u32;
             let expected = u16::try_from(if full >= 0x1_0000 {
                 full - 0x1_0000
             } else {
@@ -462,7 +462,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "chrono")]
     #[test]
     fn mjd_ymd_round_trips() {
         for mjd in [40_587u16, 49_273, 51_544, 59_945, 60_000] {
@@ -471,7 +470,7 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "jiff")]
     #[test]
     fn utc_round_trips() {
         let raw = [0xE4, 0x09, 0x12, 0x34, 0x56];
@@ -479,14 +478,17 @@ mod tests {
         assert_eq!(encode_mjd_bcd_utc(dt), Some(raw));
     }
 
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "jiff")]
     #[test]
     fn utc_decode_known_vector() {
-        use chrono::{Datelike, Timelike};
         // MJD 0xE409 = 58377, BCD 12:34:56.
-        let dt = decode_mjd_bcd_utc([0xE4, 0x09, 0x12, 0x34, 0x56]).expect("decodes");
+        let ts = decode_mjd_bcd_utc([0xE4, 0x09, 0x12, 0x34, 0x56]).expect("decodes");
+        let dt = jiff::tz::TimeZone::UTC.to_datetime(ts);
         assert_eq!((dt.hour(), dt.minute(), dt.second()), (12, 34, 56));
         assert_eq!(dt.year(), 2018);
+        assert_eq!(ts.as_second(), 1_537_101_296);
+        assert_eq!(decode_mjd_bcd_utc([0xE4, 0x09, 0x24, 0x00, 0x00]), None);
+        assert_eq!(decode_mjd_bcd_utc([0xE4, 0x09, 0x12, 0x60, 0x00]), None);
     }
 
     /// EN 300 468 v1.20.1 clause 5.2.4 EXAMPLE 3: 25 December 2040 12:34:56
@@ -609,42 +611,42 @@ mod tests {
     }
 
     #[test]
-    fn mjd_bcd_matches_chrono_when_available() {
+    fn mjd_bcd_matches_jiff_when_available() {
         let raw = [0xE4, 0x09, 0x12, 0x34, 0x56];
         let plain = decode_mjd_bcd(raw).expect("decodes");
-        #[cfg(feature = "chrono")]
+        #[cfg(feature = "jiff")]
         {
-            use chrono::{Datelike, Timelike};
-            let chrono_dt = decode_mjd_bcd_utc(raw).expect("decodes");
-            assert_eq!(plain.year as i32, chrono_dt.year());
-            assert_eq!(plain.month as u32, chrono_dt.month());
-            assert_eq!(plain.day as u32, chrono_dt.day());
-            assert_eq!(plain.hour as u32, chrono_dt.hour());
-            assert_eq!(plain.minute as u32, chrono_dt.minute());
-            assert_eq!(plain.second as u32, chrono_dt.second());
+            let dt = jiff::tz::TimeZone::UTC.to_datetime(decode_mjd_bcd_utc(raw).expect("decodes"));
+            assert_eq!(plain.year as i16, dt.year());
+            assert_eq!(plain.month as i8, dt.month());
+            assert_eq!(plain.day as i8, dt.day());
+            assert_eq!(plain.hour as i8, dt.hour());
+            assert_eq!(plain.minute as i8, dt.minute());
+            assert_eq!(plain.second as i8, dt.second());
         }
-        // Even without chrono, the plain decode must produce 2018-09-16 12:34:56.
+        // Even without jiff, the plain decode must produce 2018-09-16 12:34:56.
         assert_eq!(plain.year, 2018);
         assert_eq!(plain.month, 9);
         assert_eq!(plain.day, 16);
     }
 
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "jiff")]
     #[test]
     fn secs_2000_epoch_is_correct() {
-        use chrono::{Datelike, TimeZone, Timelike};
         // SECS_2000_EPOCH must decode to 2000-01-01T00:00:00 UTC.
-        let dt = chrono::Utc.timestamp_opt(SECS_2000_EPOCH, 0).unwrap();
+        let dt = jiff::tz::TimeZone::UTC
+            .to_datetime(jiff::Timestamp::from_second(SECS_2000_EPOCH).unwrap());
         assert_eq!((dt.year(), dt.month(), dt.day()), (2000, 1, 1));
         assert_eq!((dt.hour(), dt.minute(), dt.second()), (0, 0, 0));
     }
 
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "jiff")]
     #[test]
     fn decode_seconds_since_2000_utc_known_value() {
-        use chrono::{Datelike, Timelike};
         // seconds_since_2000 = 0, utco = 0 → 2000-01-01T00:00:00 UTC.
-        let dt = decode_seconds_since_2000_utc(0, 0, 0).expect("decodes");
+        let ts = decode_seconds_since_2000_utc(0, 0, 0).expect("decodes");
+        assert_eq!(ts.as_second(), SECS_2000_EPOCH);
+        let dt = jiff::tz::TimeZone::UTC.to_datetime(ts);
         assert_eq!((dt.year(), dt.month(), dt.day()), (2000, 1, 1));
         assert_eq!((dt.hour(), dt.minute(), dt.second()), (0, 0, 0));
     }
@@ -665,13 +667,12 @@ mod tests {
         assert!(m.utc_at(995) < m.utc_us);
     }
 
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "jiff")]
     #[test]
     fn encode_decode_seconds_since_2000_utc_round_trips() {
-        use chrono::TimeZone;
         // 2023-06-08T12:34:56 UTC, utco = 37 (current at time of writing).
-        let dt = chrono::Utc
-            .with_ymd_and_hms(2023, 6, 8, 12, 34, 56)
+        let dt = jiff::tz::TimeZone::UTC
+            .to_timestamp(jiff::civil::date(2023, 6, 8).at(12, 34, 56, 0))
             .unwrap();
         let (secs, nanos) = encode_seconds_since_2000_utc(dt, 37).expect("encodes");
         let decoded = decode_seconds_since_2000_utc(secs, nanos, 37).expect("decodes");

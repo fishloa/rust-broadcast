@@ -338,7 +338,7 @@ impl<'a> EitEvent<'a> {
     /// date-time struct.
     ///
     /// Returns `None` if the date/time fields are out of range. MJD→calendar
-    /// conversion per ETSI EN 300 468 Annex C. Available without the `chrono`
+    /// conversion per ETSI EN 300 468 Annex C. Available without the `jiff`
     /// feature.
     #[must_use]
     pub fn start_time(&self) -> Option<broadcast_common::time::MjdBcdDateTime> {
@@ -365,7 +365,7 @@ impl<'a> EitEvent<'a> {
     /// Decode the 24-bit BCD `duration` (HHMMSS) to a [`core::time::Duration`].
     ///
     /// Returns `None` if the BCD nibbles are out of range. Available without the
-    /// `chrono` feature — a duration is a plain elapsed-seconds value.
+    /// `jiff` feature — a duration is a plain elapsed-seconds value.
     #[must_use]
     pub fn duration(&self) -> Option<core::time::Duration> {
         broadcast_common::time::decode_bcd_duration(self.duration_raw)
@@ -423,14 +423,14 @@ impl<'a> EitEvent<'a> {
     }
 }
 
-#[cfg(feature = "chrono")]
+#[cfg(feature = "jiff")]
 impl EitEvent<'_> {
     /// Decode `start_time_raw` (16-bit MJD + 24-bit BCD UTC) to a UTC datetime.
     ///
     /// Returns `None` if the date/time fields are out of range. MJD→calendar
     /// conversion per ETSI EN 300 468 Annex C.
     #[must_use]
-    pub fn start_time_chrono(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+    pub fn start_time_utc(&self) -> Option<jiff::Timestamp> {
         broadcast_common::time::decode_mjd_bcd_utc(self.start_time_raw)
     }
 
@@ -439,10 +439,7 @@ impl EitEvent<'_> {
     /// # Errors
     /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) if the date is
     /// outside the representable 16-bit MJD range.
-    pub fn set_start_time(
-        &mut self,
-        start_time: chrono::DateTime<chrono::Utc>,
-    ) -> crate::Result<()> {
+    pub fn set_start_time(&mut self, start_time: jiff::Timestamp) -> crate::Result<()> {
         self.start_time_raw = broadcast_common::time::encode_mjd_bcd_utc(start_time).ok_or(
             crate::Error::ValueOutOfRange {
                 field: "EitEvent::start_time",
@@ -631,7 +628,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "jiff")]
     fn event_start_time_decodes_to_utc_datetime() {
         // MJD 59945 is 2023-01-01 per ETSI EN 300 468 Annex C; BCD time 12:34:56.
         let mjd: u16 = 59945;
@@ -643,19 +640,17 @@ mod tests {
             false,
             DescriptorLoop::new(&[]),
         );
-        let dt = ev.start_time_chrono().unwrap();
-        use chrono::Datelike;
+        let dt = jiff::tz::TimeZone::UTC.to_datetime(ev.start_time_utc().unwrap());
         assert_eq!(dt.year(), 2023);
         assert_eq!(dt.month(), 1);
         assert_eq!(dt.day(), 1);
-        use chrono::Timelike;
         assert_eq!(dt.hour(), 12);
         assert_eq!(dt.minute(), 34);
         assert_eq!(dt.second(), 56);
     }
 
     #[test]
-    fn event_start_time_decodes_without_chrono() {
+    fn event_start_time_decodes_without_jiff() {
         let mjd: u16 = 59945;
         let ev = EitEvent::new(
             1,

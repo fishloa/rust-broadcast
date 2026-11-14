@@ -40,7 +40,7 @@
 //! ```rust
 //! use dvb_si::epg::{EpgStore, ServiceKey};
 //! use dvb_si::collect::SectionSetCollector;
-//! use chrono::{TimeZone, Utc};
+//! use jiff::{civil::date, tz::TimeZone};
 //!
 //! let mut store = EpgStore::new();
 //!
@@ -54,12 +54,12 @@
 //! };
 //!
 //! // Query now/next (requires EIT present/following data to be fed first)
-//! let now = Utc.with_ymd_and_hms(2026, 6, 10, 20, 0, 0).unwrap();
+//! let now = TimeZone::UTC.to_timestamp(date(2026, 6, 10).at(20, 0, 0, 0)).unwrap();
 //! let (now_evt, next_evt) = store.now_and_next(key, now);
 //! if let Some(evt) = now_evt {
 //!     println!("Now:  {} (until {})",
 //!         evt.event_name.as_deref().unwrap_or("?"),
-//!         evt.start_time.map(|t| t + evt.duration.unwrap_or_default())
+//!         evt.start_time.and_then(|t| t.checked_add(evt.duration.unwrap_or_default()).ok())
 //!             .map(|e| e.to_string()).unwrap_or_default());
 //! }
 //! if let Some(evt) = next_evt {
@@ -68,12 +68,12 @@
 //!         evt.start_time.map(|t| t.to_string()).unwrap_or_default());
 //! }
 //! // Print tonight's schedule (events from 20:00 to midnight)
-//! let tonight = Utc.with_ymd_and_hms(2026, 6, 10, 20, 0, 0).unwrap();
-//! let midnight = Utc.with_ymd_and_hms(2026, 6, 11, 0, 0, 0).unwrap();
+//! let tonight = TimeZone::UTC.to_timestamp(date(2026, 6, 10).at(20, 0, 0, 0)).unwrap();
+//! let midnight = TimeZone::UTC.to_timestamp(date(2026, 6, 11).at(0, 0, 0, 0)).unwrap();
 //! if let Some(events) = store.schedule(key, tonight, midnight) {
 //!     for evt in &events {
 //!         println!("{:>5}  {}",
-//!             evt.start_time.map(|t| t.format("%H:%M").to_string()).unwrap_or_default(),
+//!             evt.start_time.map(|t| t.strftime("%H:%M").to_string()).unwrap_or_default(),
 //!             evt.event_name.as_deref().unwrap_or("?"));
 //!     }
 //! }
@@ -228,7 +228,7 @@ pub struct EpgEvent {
     /// 16-bit event_id.
     pub event_id: u16,
     /// Decoded start time (MJD + BCD UTC), if valid.
-    pub start_time: Option<chrono::DateTime<chrono::Utc>>,
+    pub start_time: Option<jiff::Timestamp>,
     /// Decoded BCD duration, if valid.
     pub duration: Option<core::time::Duration>,
     /// 3-bit running status (EN 300 468 Table 6).
@@ -336,7 +336,6 @@ pub const DEFAULT_MAX_EVENTS_PER_SERVICE: usize = 8192;
 ///
 /// ```no_run
 /// use dvb_si::epg::{EpgStore, ServiceKey};
-/// use chrono::Utc;
 ///
 /// let mut store = EpgStore::new();
 /// // store.feed(&eit_section_bytes).unwrap();
@@ -347,7 +346,7 @@ pub const DEFAULT_MAX_EVENTS_PER_SERVICE: usize = 8192;
 ///     service_id: 100,
 /// };
 ///
-/// let (now_evt, _next) = store.now_and_next(key, Utc::now());
+/// let (now_evt, _next) = store.now_and_next(key, jiff::Timestamp::now());
 /// if let Some(e) = now_evt {
 ///     println!("Now playing: {:?}", e.event_name);
 /// }
@@ -589,7 +588,7 @@ impl EpgStore {
     pub fn now_and_next(
         &self,
         key: ServiceKey,
-        at: chrono::DateTime<chrono::Utc>,
+        at: jiff::Timestamp,
     ) -> (Option<&EpgEvent>, Option<&EpgEvent>) {
         let Some(svc) = self.cache.get(&key) else {
             return (None, None);
@@ -597,8 +596,9 @@ impl EpgStore {
 
         let now = svc.events.values().find(|e| {
             if let (Some(start), Some(dur)) = (e.start_time, e.duration) {
-                let end = start + dur;
-                return at >= start && at < end;
+                return start
+                    .checked_add(dur)
+                    .is_ok_and(|end| at >= start && at < end);
             }
             false
         });
@@ -626,8 +626,8 @@ impl EpgStore {
     pub fn schedule(
         &self,
         key: ServiceKey,
-        from: chrono::DateTime<chrono::Utc>,
-        to: chrono::DateTime<chrono::Utc>,
+        from: jiff::Timestamp,
+        to: jiff::Timestamp,
     ) -> Option<Vec<&EpgEvent>> {
         let svc = self.cache.get(&key)?;
         let mut events: Vec<&EpgEvent> = svc
@@ -940,7 +940,13 @@ fn extract_service_name(
 mod tests {
     use super::*;
     use broadcast_common::Serialize;
-    use chrono::{TimeZone, Utc};
+    use jiff::Timestamp;
+
+    fn utc(y: i16, mo: i8, d: i8, h: i8, mi: i8, s: i8) -> Timestamp {
+        jiff::tz::TimeZone::UTC
+            .to_timestamp(jiff::civil::date(y, mo, d).at(h, mi, s, 0))
+            .unwrap()
+    }
 
     // ------------------------------------------------------------------
     // Helpers
@@ -1047,7 +1053,7 @@ mod tests {
     #[test]
     fn now_and_next_no_data_returns_none() {
         let store = EpgStore::new();
-        let now = Utc::now();
+        let now = Timestamp::now();
         let key = ServiceKey {
             original_network_id: 1,
             transport_stream_id: 1,
@@ -1073,7 +1079,7 @@ mod tests {
 
     fn empty_event(
         id: u16,
-        start: Option<chrono::DateTime<chrono::Utc>>,
+        start: Option<jiff::Timestamp>,
         dur: Option<core::time::Duration>,
     ) -> EpgEvent {
         EpgEvent {
@@ -1097,7 +1103,7 @@ mod tests {
     fn events_sorts_valid_before_invalid() {
         let valid = empty_event(
             1,
-            Some(Utc::now()),
+            Some(Timestamp::now()),
             Some(core::time::Duration::from_secs(3600)),
         );
         let invalid = empty_event(2, None, None);
@@ -1269,9 +1275,9 @@ mod tests {
 
     #[test]
     fn now_and_next_event_boundary() {
-        let t1000 = Utc.with_ymd_and_hms(2026, 6, 10, 10, 0, 0).unwrap();
-        let t1100 = Utc.with_ymd_and_hms(2026, 6, 10, 11, 0, 0).unwrap();
-        let t1200 = Utc.with_ymd_and_hms(2026, 6, 10, 12, 0, 0).unwrap();
+        let t1000 = utc(2026, 6, 10, 10, 0, 0);
+        let t1100 = utc(2026, 6, 10, 11, 0, 0);
+        let t1200 = utc(2026, 6, 10, 12, 0, 0);
 
         // Event 1: 10:00-11:00
         // Event 2: 12:00-13:00
@@ -1319,7 +1325,7 @@ mod tests {
         svc.events.insert(2, ev2);
 
         // At 10:30 — now=Event 1, next=Event 2
-        let at = Utc.with_ymd_and_hms(2026, 6, 10, 10, 30, 0).unwrap();
+        let at = utc(2026, 6, 10, 10, 30, 0);
         let (now, next) = store.now_and_next(key, at);
         assert_eq!(now.unwrap().event_id, 1);
         assert_eq!(next.unwrap().event_id, 2);
@@ -1348,16 +1354,16 @@ mod tests {
         // Query at 10:00 — "next" must be Event 12:00 (earliest future),
         // not Event 14:00 (which would win if the code used arbitrary
         // HashMap iteration order).
-        let t1200 = Utc.with_ymd_and_hms(2026, 6, 10, 12, 0, 0).unwrap();
-        let t1400 = Utc.with_ymd_and_hms(2026, 6, 10, 14, 0, 0).unwrap();
-        let t1600 = Utc.with_ymd_and_hms(2026, 6, 10, 16, 0, 0).unwrap();
-        let t1000 = Utc.with_ymd_and_hms(2026, 6, 10, 10, 0, 0).unwrap();
+        let t1200 = utc(2026, 6, 10, 12, 0, 0);
+        let t1400 = utc(2026, 6, 10, 14, 0, 0);
+        let t1600 = utc(2026, 6, 10, 16, 0, 0);
+        let t1000 = utc(2026, 6, 10, 10, 0, 0);
 
         let sec = core::time::Duration::from_secs(3600);
 
         fn named_event(
             id: u16,
-            start: chrono::DateTime<chrono::Utc>,
+            start: jiff::Timestamp,
             dur: core::time::Duration,
             name: &str,
         ) -> EpgEvent {
@@ -1618,8 +1624,8 @@ mod tests {
     fn version_churn_bounded_growth() {
         // Feed an event, then feed the same event_id with updated data.
         // Store size must stay at 1 event.
-        let s = |hh: u32| {
-            let t = Utc.with_ymd_and_hms(2026, 6, 10, hh, 0, 0).unwrap();
+        let s = |hh: i8| {
+            let t = utc(2026, 6, 10, hh, 0, 0);
             let days = 61785u16; // MJD for 2026-06-10
             let mjd_bytes = days.to_be_bytes();
             let bcd_time = [(hh / 10 * 16 + hh % 10) as u8, 0, 0];
@@ -1752,10 +1758,10 @@ mod tests {
 
     #[test]
     fn schedule_range_query() {
-        let t0900 = Utc.with_ymd_and_hms(2026, 6, 10, 9, 0, 0).unwrap();
-        let t1000 = Utc.with_ymd_and_hms(2026, 6, 10, 10, 0, 0).unwrap();
-        let t1100 = Utc.with_ymd_and_hms(2026, 6, 10, 11, 0, 0).unwrap();
-        let t1200 = Utc.with_ymd_and_hms(2026, 6, 10, 12, 0, 0).unwrap();
+        let t0900 = utc(2026, 6, 10, 9, 0, 0);
+        let t1000 = utc(2026, 6, 10, 10, 0, 0);
+        let t1100 = utc(2026, 6, 10, 11, 0, 0);
+        let t1200 = utc(2026, 6, 10, 12, 0, 0);
 
         let sec = core::time::Duration::from_secs(1800);
         let mut store = EpgStore::new();
@@ -2073,7 +2079,7 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn serde_serializes_store_as_json() {
-        let t = Utc.with_ymd_and_hms(2026, 6, 10, 20, 0, 0).unwrap();
+        let t = utc(2026, 6, 10, 20, 0, 0);
         let mut store = EpgStore::new();
         let key = ServiceKey {
             original_network_id: 1,

@@ -32,7 +32,7 @@ pub struct TdtSection {
 }
 
 impl TdtSection {
-    /// Decode the UTC time to a plain date-time struct (no `chrono` feature
+    /// Decode the UTC time to a plain date-time struct (no `jiff` feature
     /// required).
     ///
     /// Returns `None` if the date/time fields are out of range. MJD→calendar
@@ -75,13 +75,13 @@ impl TdtSection {
     }
 }
 
-#[cfg(feature = "chrono")]
+#[cfg(feature = "jiff")]
 impl TdtSection {
-    /// Decode the UTC time to a chrono DateTime when the `chrono` feature is on.
+    /// Decode the UTC time to a [`jiff::Timestamp`] when the `jiff` feature is on.
     ///
     /// MJD→calendar conversion per ETSI EN 300 468 Annex C.
     #[must_use]
-    pub fn utc_time(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+    pub fn utc_time(&self) -> Option<jiff::Timestamp> {
         broadcast_common::time::decode_mjd_bcd_utc(self.utc_time_raw)
     }
 
@@ -90,7 +90,7 @@ impl TdtSection {
     /// # Errors
     /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) if the date is
     /// outside the representable 16-bit MJD range.
-    pub fn set_utc_time(&mut self, utc_time: chrono::DateTime<chrono::Utc>) -> Result<()> {
+    pub fn set_utc_time(&mut self, utc_time: jiff::Timestamp) -> Result<()> {
         self.utc_time_raw =
             broadcast_common::time::encode_mjd_bcd_utc(utc_time).ok_or(Error::ValueOutOfRange {
                 field: "TdtSection::utc_time",
@@ -186,16 +186,21 @@ mod tests {
         assert_eq!(tdt, re);
     }
 
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "jiff")]
     #[test]
-    fn utc_time_decodes_to_chrono() {
+    fn utc_time_decodes_to_timestamp() {
         let tdt = TdtSection::new([0xEA, 0x19, 0x12, 0x34, 0x56]);
         let dt = tdt.utc_time();
         assert!(dt.is_some());
+        let ts = TdtSection::new([0xE4, 0x09, 0x12, 0x34, 0x56])
+            .utc_time()
+            .unwrap();
+        // 2018-09-16T12:34:56Z
+        assert_eq!(ts.as_second(), 1_537_101_296);
     }
 
     #[test]
-    fn utc_time_decodes_without_chrono() {
+    fn utc_time_decodes_without_jiff() {
         let tdt = TdtSection::new([0xE4, 0x09, 0x12, 0x34, 0x56]);
         let dt = tdt.utc_time_decoded().unwrap();
         assert_eq!(dt.year, 2018);

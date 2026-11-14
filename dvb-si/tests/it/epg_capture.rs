@@ -5,7 +5,7 @@
 //! This drives the full pipeline `SiDemux` → EIT section bytes →
 //! `EpgStore::feed` → `now_and_next` on real broadcast data, not synthetic
 //! vectors.
-#![cfg(all(feature = "ts", feature = "chrono"))]
+#![cfg(all(feature = "ts", feature = "jiff"))]
 
 use dvb_si::demux::SiDemux;
 use dvb_si::epg::EpgStore;

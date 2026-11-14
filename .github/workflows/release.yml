@@ -84,7 +84,7 @@ jobs:
       # dvb-si and dvb-bbframe each depend on broadcast-common (already live).
       # dvb-t2mi depends on broadcast-common AND (optionally, ts-gated) dvb-bbframe,
       # so it must publish after dvb-bbframe is on the index.
-      # dvb-tools depends on both dvb-si (ts + serde + chrono) and dvb-t2mi (ts),
+      # dvb-tools depends on both dvb-si (ts + serde + jiff) and dvb-t2mi (ts),
       # so it publishes LAST. Hence:
       #   bbframe → si → conformance → t2mi → tools.
       # `broadcast-common` is NOT gated or published here. It was ejected from

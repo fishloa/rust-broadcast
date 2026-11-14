@@ -37,36 +37,41 @@ fn eit_event_set_duration_rejects_100_hours() {
     ));
 }
 
-#[cfg(feature = "chrono")]
+#[cfg(feature = "jiff")]
+fn utc(y: i16, mo: i8, d: i8, h: i8, mi: i8, s: i8) -> jiff::Timestamp {
+    jiff::tz::TimeZone::UTC
+        .to_timestamp(jiff::civil::date(y, mo, d).at(h, mi, s, 0))
+        .unwrap()
+}
+
+#[cfg(feature = "jiff")]
 #[test]
 fn eit_event_start_time_round_trips() {
-    use chrono::{Datelike, TimeZone, Timelike, Utc};
     let mut ev = eit_event();
-    let dt = Utc.with_ymd_and_hms(2023, 6, 8, 12, 34, 56).unwrap();
+    let dt = utc(2023, 6, 8, 12, 34, 56);
     ev.set_start_time(dt).unwrap();
-    let got = ev.start_time_chrono().unwrap();
+    assert_eq!(ev.start_time_utc(), Some(dt));
+    let got = jiff::tz::TimeZone::UTC.to_datetime(ev.start_time_utc().unwrap());
     assert_eq!((got.year(), got.month(), got.day()), (2023, 6, 8));
     assert_eq!((got.hour(), got.minute(), got.second()), (12, 34, 56));
 }
 
-#[cfg(feature = "chrono")]
+#[cfg(feature = "jiff")]
 #[test]
 fn tot_utc_time_round_trips() {
-    use chrono::{TimeZone, Utc};
     use dvb_si::tables::tot::TotSection;
     let mut tot = TotSection::new([0; 5], DescriptorLoop::new(&[]));
-    let dt = Utc.with_ymd_and_hms(2024, 12, 31, 23, 59, 59).unwrap();
+    let dt = utc(2024, 12, 31, 23, 59, 59);
     tot.set_utc_time(dt).unwrap();
     assert_eq!(tot.utc_time(), Some(dt));
 }
 
-#[cfg(feature = "chrono")]
+#[cfg(feature = "jiff")]
 #[test]
 fn tdt_utc_time_round_trips() {
-    use chrono::{TimeZone, Utc};
     use dvb_si::tables::tdt::TdtSection;
     let mut tdt = TdtSection::new([0; 5]);
-    let dt = Utc.with_ymd_and_hms(2025, 1, 2, 3, 4, 5).unwrap();
+    let dt = utc(2025, 1, 2, 3, 4, 5);
     tdt.set_utc_time(dt).unwrap();
     assert_eq!(tdt.utc_time(), Some(dt));
 }
@@ -172,34 +177,34 @@ fn frequency_list_decoded_accessors() {
     ));
 }
 
-#[cfg(feature = "chrono")]
+#[cfg(feature = "jiff")]
 #[test]
 fn local_time_offset_decoded_accessors() {
-    use chrono::{Duration, TimeZone, Utc};
     use dvb_si::descriptors::local_time_offset::LocalTimeOffsetEntry;
     use dvb_si::text::LangCode;
+    use jiff::SignedDuration as Duration;
 
     let mut e = LocalTimeOffsetEntry::new(LangCode(*b"GBR"), 0, false, 0, [0; 5], 0);
 
-    e.set_offsets(Duration::hours(1), Duration::hours(2))
+    e.set_offsets(Duration::from_hours(1), Duration::from_hours(2))
         .unwrap();
     assert!(!e.local_time_offset_negative);
-    assert_eq!(e.local_time_offset(), Some(Duration::hours(1)));
-    assert_eq!(e.next_time_offset(), Some(Duration::hours(2)));
+    assert_eq!(e.local_time_offset(), Some(Duration::from_hours(1)));
+    assert_eq!(e.next_time_offset(), Some(Duration::from_hours(2)));
 
     // Negative (west) offsets share the single polarity bit.
-    e.set_offsets(Duration::minutes(-330), Duration::minutes(-270))
+    e.set_offsets(Duration::from_mins(-330), Duration::from_mins(-270))
         .unwrap();
     assert!(e.local_time_offset_negative);
-    assert_eq!(e.local_time_offset(), Some(Duration::minutes(-330)));
+    assert_eq!(e.local_time_offset(), Some(Duration::from_mins(-330)));
 
     // Mixed signs can't be represented by one polarity bit.
     assert!(matches!(
-        &(e.set_offsets(Duration::hours(1), Duration::hours(-1))),
+        &(e.set_offsets(Duration::from_hours(1), Duration::from_hours(-1))),
         Err(dvb_si::error::Error::ValueOutOfRange { .. })
     ));
 
-    let dt = Utc.with_ymd_and_hms(2024, 3, 31, 1, 0, 0).unwrap();
+    let dt = utc(2024, 3, 31, 1, 0, 0);
     e.set_time_of_change(dt).unwrap();
     assert_eq!(e.time_of_change(), Some(dt));
 }

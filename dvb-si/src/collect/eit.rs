@@ -701,9 +701,9 @@ impl CompleteEitEvent<'_> {
     ///
     /// Returns `None` if the date/time fields are out of range. MJD→calendar
     /// conversion per ETSI EN 300 468 Annex C.
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "jiff")]
     #[must_use]
-    pub fn start_time(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+    pub fn start_time(&self) -> Option<jiff::Timestamp> {
         broadcast_common::time::decode_mjd_bcd_utc(self.start_time_raw)
     }
 }

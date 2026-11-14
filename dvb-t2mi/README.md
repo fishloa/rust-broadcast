@@ -41,7 +41,7 @@ are skipped, never mis-decoded).
 | `std` | yes | Links `std`; off gives `no_std` + `alloc` |
 | `ts` | yes | `pump::T2miPump` (PID-filtered TS reassembly + CRC validation), `ts::PacketReassembler`, `inner_ts::InnerTsRecovery`; pulls in `bytes`, `mpeg-ts`, `dvb-bbframe` |
 | `serde` | no | `serde::Serialize` on every header/payload type (serialize-only; re-parse from wire bytes) |
-| `chrono` | no | `T2TimestampPayload::utc_emission_time()` returning `DateTime<Utc>` |
+| `jiff` | no | `T2TimestampPayload::emission_time_utc()` returning `jiff::Timestamp` (and `set_emission_time_utc`) |
 | `yoke` | no | `yoke::Yokeable` on the zero-copy payload views, to own a parsed payload past the input borrow |
 
 Every optional feature except `std` is `no_std` + `alloc` clean (built on
@@ -117,7 +117,7 @@ Examples: `cargo run -p dvb-t2mi --example parse_header` and `--example pump_cap
 | Payloads (`payload`) | `BbframePayload`, `AuxIqPayload`, `ArbitraryCellsPayload`, `L1CurrentPayload`, `L1FuturePayload`, `P2BiasPayload`, `T2TimestampPayload` (+ `Bandwidth`), `IndividualAddressingPayload` (+ addressing functions), `FefNullPayload` (+ `S1Field`), `FefIqPayload`, `FefCompositePayload`, `FefSubPartPayload` (+ `SubpartVariety`, `PrbsType`); `FrequencySource` |
 | Dispatch | `payload::AnyPayload` (generated from one `declare_payloads!` list with a drift test pinning each `packet_type` to its `PayloadDef::PACKET_TYPE`), `traits::PayloadDef` |
 | L1 signalling | `L1Pre`, `L1Post` (`L1PostConfigurable`, `L1PostDynamic`, `PlpConfig`, `PlpDynamic`, `FefInfo`, `AuxConfig`, `AuxDynamic`, `L1ExtBlock`) and the coded-value enums `GuardInterval`, `L1Modulation`, `L1CodeRate`, `L1FecType`, `PilotPattern`, `PaprReduction`, `PlpType`, `PlpPayloadType`, `PlpModulation`, `PlpCodeRate`, `PlpFecType`, `PlpMode`, `AuxStreamType`, `TxInputStreamType`, `T2Version`, `RfFrequency` |
-| Timestamp | `T2TimestampPayload::emission_offset()` (`Option<Duration>`, per-bandwidth `T_sub` units, Table 4), `is_null()`; `utc_emission_time()` with `chrono` |
+| Timestamp | `T2TimestampPayload::emission_offset()` (`Option<Duration>`, per-bandwidth `T_sub` units, Table 4), `is_null()`; `emission_time_utc()` with `jiff` |
 | Private types | `payload::{PayloadRegistry, PayloadObject}`; `T2miEvent::payload_with(&registry)` yields `AnyPayload::Other` carrying your type for downcast |
 | TS front door (`ts`) | `pump::{T2miPump, T2miEvent, Stats}` (`new`, `raw`, `feed_ts`, `feed_raw`, `stats`), `ts::PacketReassembler`, `inner_ts::InnerTsRecovery` |
 

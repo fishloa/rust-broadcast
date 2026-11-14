@@ -189,7 +189,7 @@ Every parser has a symmetric serializer and a **round-trip test** (parse → ser
 - `carousel/` — DSM-CC DSI/DII/DDB messages + `ModuleReassembler`, layered on `tables/dsmcc.rs` section framing.
 - `text/` — EN 300 468 Annex A string decoding. `DvbText<'a>` wraps raw wire bytes and decodes on demand (`.decode()`/`Display`/serde); `LangCode` is the 3-byte language/country newtype. Serde serializes both as decoded strings; `DvbText`-bearing structs are serialize-only.
 - `demux.rs` (feature `ts`) — `SiDemux`: PID-filtered, version-gated, PAT-following section pump. Feed 188-byte TS packets, get a `SectionEvent` per *changed* section; `event.table_section()` gives an `AnyTableSection`. `section.rs`/`ts.rs` provide the underlying TS packet handling and `SectionReassembler`.
-- Features: `chrono` (MJD+BCD → `DateTime<Utc>`), `ts` and `legacy-charsets` (KS X 1001 / GB-2312 / Big5 text via `encoding_rs`; off → `DvbText::try_decode` returns `Error::CharsetNotEnabled`) are on by default, `serde` is opt-in (as in every crate); everything must also build `--no-default-features`.
+- Features: `jiff` (MJD+BCD → `jiff::Timestamp`, BCD offsets → `jiff::SignedDuration`, the `epg` module), `ts` and `legacy-charsets` (KS X 1001 / GB-2312 / Big5 text via `encoding_rs`; off → `DvbText::try_decode` returns `Error::CharsetNotEnabled`) are on by default, `serde` is opt-in (as in every crate); everything must also build `--no-default-features`.
 
 ### Trait-driven dispatch (the `*Def` trait + `declare_*!` macro pattern)
 

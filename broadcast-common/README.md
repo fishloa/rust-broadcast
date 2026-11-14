@@ -20,7 +20,7 @@ need one of those primitives.
 
 It deliberately has no shared error enum (each crate owns a domain `Error`,
 reached through `type Error` on the traits), no CRC-8 (only `dvb-bbframe` needs
-it), no concrete media or codec types, and no heavy dependencies (`chrono`,
+it), no concrete media or codec types, and no heavy dependencies (`jiff`,
 `serde` are optional; `hex` is the only unconditional one).
 
 ## Standards supported
@@ -41,8 +41,8 @@ the specification each primitive follows.
 
 | Feature | Default | What it enables |
 |---|---|---|
-| `std` | yes | Links `std`: `std::error::Error` glue, `Timestamp::from_instant`, and `chrono`'s clock when `chrono` is on. Off gives `#![no_std]` + `alloc`. |
-| `chrono` | no | `chrono::DateTime<Utc>` conversions in `time` (`decode_mjd_bcd_utc`, `encode_mjd_bcd_utc`, ...). Without it the plain `MjdBcdDateTime` and duration helpers stay available. |
+| `std` | yes | Links `std`: `std::error::Error` glue, `Timestamp::from_instant`, and `jiff/std` when `jiff` is on. Off gives `#![no_std]` + `alloc`. |
+| `jiff` | no | `jiff::Timestamp` conversions in `time` (`decode_mjd_bcd_utc`/`encode_mjd_bcd_utc`, `decode_seconds_since_2000_utc`/`encode_seconds_since_2000_utc`); no_std compatible. Without it the plain `MjdBcdDateTime`, MJD and duration helpers stay available. |
 | `serde` | no | `serde::Serialize` on the shared spec types (currently `cenc::CencScheme`). |
 | `xml` | no | `xml` (the bounded quick-xml tree reader: depth, attribute, size limits; DOCTYPE refused) and `xml_chars` (XML 1.0 character data, `XmlLimits`/`XmlBudget`, `XmlWriter`). Implies `std`. |
 | `lang` | no | `lang`: ISO 639 -> BCP 47 canonicalisation (`bcp47_language`, also at the crate root) and `language_matches`. Implies `std`. |
@@ -113,7 +113,7 @@ Runnable examples: `cargo run -p broadcast-common --example crc_and_bcd` and
 | `traits` | `Parse<'a>` (`parse`), `Serialize` (`serialized_len`, `serialize_into`, `try_to_bytes`). `to_bytes()` no longer exists: it panicked on failure; `try_to_bytes` is the only allocate-and-serialize entry point. |
 | `crc32_mpeg2` | `compute` (poly `0x04C1_1DB7`, init `0xFFFF_FFFF`, MSB-first, no reflection, no final XOR; table built at compile time) |
 | `bcd` | `from_bcd_byte`, `to_bcd_byte` and wider helpers; `None` on out-of-range input, never garbage |
-| `time` | `MjdBcdDateTime`, `decode_mjd_bcd`/`encode_mjd_bcd`, `decode_bcd_duration`/`encode_bcd_duration`, `mjd_to_ymd`/`ymd_to_mjd`, `decode_seconds_since_2000_utc`/`encode_seconds_since_2000_utc`; with `chrono`: `decode_mjd_bcd_utc`/`encode_mjd_bcd_utc`. The encoder rejects impossible days (31 Feb) |; `MonoUtc` (monotonic-to-UTC anchor mapping)
+| `time` | `MjdBcdDateTime`, `decode_mjd_bcd`/`encode_mjd_bcd`, `decode_bcd_duration`/`encode_bcd_duration`, `mjd_to_ymd`/`ymd_to_mjd`; with `jiff`: `decode_mjd_bcd_utc`/`encode_mjd_bcd_utc`, `decode_seconds_since_2000_utc`/`encode_seconds_since_2000_utc` (`jiff::Timestamp`). The encoder rejects impossible days (31 Feb) |; `MonoUtc` (monotonic-to-UTC anchor mapping)
 | `bits` | `BitReader`, `BitWriter` (MSB-first, up to 64 bits per field, spans bytes), `BitError` |
 | `clock33` | `WRAP_33BIT`, `unwrap_delta`, `wrapping_forward_distance`, `add`, `add_signed`, `signed_distance`; PCR: `PTS_HZ`, `PCR_HZ`, `PCR_EXT_MODULUS`, `PCR_WRAP_27MHZ`, `pcr_from_parts`, `pcr_split`, `pcr_forward_distance`, `pcr_signed_distance`; marker-bit timestamp field: `Marked`, `MARKERS_ALL_SET`, `unpack_marked`, `pack_marked`, `pack_marked_with` |
 | `error` | The shared failure kinds (`BufferTooShort`, `OutputBufferTooSmall`, `FieldOverflow`, `CrcMismatch`, `InvalidSync`, `ReservedBits`, `InvalidValue`, `InvalidField`, `UnsupportedVersion`, `LengthMismatch`) that crate error enums wrap with `#[error(transparent)]` + `#[from]` |

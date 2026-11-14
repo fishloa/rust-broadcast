@@ -182,7 +182,7 @@ rtp-packet        = { path = "../rtp-packet", version = "0.7.0", default-feature
 # reassembles EIT p/f sections from raw TS packets so `DvrRecorder` can roll
 # the archive period on the programme boundary rather than only on the
 # clock. `default-features = false` — only `std` (this crate always links
-# std) + `ts` (the section reassembler `SiDemux` needs); `chrono`/`serde`
+# std) + `ts` (the section reassembler `SiDemux` needs); `jiff`/`serde`
 # are not needed since `dvr::EitProgramme` decodes MJD+BCD itself.
 # `legacy-charsets` keeps KS X 1001 / GB-2312 / Big5 event names decoding.
 dvb-si            = { path = "../dvb-si", version = "14.0.0", default-features = false, features = ["std", "ts", "legacy-charsets"] }
