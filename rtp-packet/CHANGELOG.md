@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - BREAKING: each typed RTCP packet (`SenderReport`, `ReceiverReport`, `SourceDescription`, `Bye`, `App`) now carries its trailing `P` (padding) octets as a public `padding: Option<RtcpPadding>` field, so a padded packet re-serializes byte-identically with its padding and `P` bit intact (audit19b #2742). The unpadded body region is validated separately from the padding octets.
 
+### Fixed
+- AV3A `Av3aDepacketizer` no longer emits the tail of an over-size frame as a bogus short frame: once a fragment overflows the cap, the depacketizer discards every later fragment up to the over-size frame's marker, then resumes on the next frame (audit19b #2750). Its bit-read truncation errors now carry the real byte counts, not fabricated `need/have` of 0.
+
 ## [0.7.0] - 2026-11-14
 ### Added
 - `seq` module: RFC 3550 §A.1 `SeqValidity`/`SeqVerdict` and constants, the single implementation used by transmux and broadcast-client.
