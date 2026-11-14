@@ -340,7 +340,7 @@ struct WindowSegment {
     /// [`InitStore`]).
     init_gen: Generation,
     bytes: Bytes,
-    duration_secs: f64,
+    duration: Duration,
     discontinuous: bool,
     /// Byte length of the leading I-frame slice of this segment's first
     /// video sample, when the segment is usable in an I-frame playlist;
@@ -543,8 +543,9 @@ impl Window {
             discontinuous = true;
         }
 
-        let duration_secs = entry.duration.as_secs_f64();
-        self.max_segment_duration_secs = self.max_segment_duration_secs.max(duration_secs);
+        self.max_segment_duration_secs = self
+            .max_segment_duration_secs
+            .max(entry.duration.as_secs_f64());
         if let Some(bps) = segment_bandwidth_bps(entry.bytes.len(), entry.duration) {
             self.peak_bandwidth_bps = self.peak_bandwidth_bps.max(bps);
         }
@@ -586,7 +587,7 @@ impl Window {
             sequence_number: entry.sequence_number,
             init_gen,
             bytes: entry.bytes,
-            duration_secs,
+            duration: entry.duration,
             discontinuous,
             start_ns: entry.timeline_position.as_nanos(),
             iframe_len,
@@ -2864,14 +2865,12 @@ impl HlsOrigin {
     }
 
     fn part_timing(&self) -> Option<(DecimalSeconds, DecimalSeconds)> {
-        let part_target = self.effective_part_target()?.as_secs_f64();
-        let hold_basis = self
-            .max_part_target()
-            .map_or(part_target, |d| d.as_secs_f64());
-        let part_target = DecimalSeconds::new(part_target).expect("a Duration is finite and >= 0");
-        let part_hold_back = DecimalSeconds::new(hold_basis * PART_HOLD_BACK_MULTIPLIER)
-            .expect("finite, >= 0 times a positive constant is finite, >= 0");
-        Some((part_target, part_hold_back))
+        let part_target = self.effective_part_target()?;
+        let hold_basis = self.max_part_target().unwrap_or(part_target);
+        Some((
+            DecimalSeconds::from_duration(part_target),
+            DecimalSeconds::from_duration_scaled(hold_basis, PART_HOLD_BACK_MULTIPLIER),
+        ))
     }
 
     /// Replace the sibling renditions whose live edge this origin reports.
@@ -3186,7 +3185,7 @@ impl HlsOrigin {
             .map(|s| ClosedSegment {
                 sequence_number: s.sequence_number,
                 start_ns: s.start_ns,
-                duration_secs: s.duration_secs,
+                duration_secs: s.duration.as_secs_f64(),
                 discontinuous: s.discontinuous,
                 init_generation: s.init_gen,
             })
@@ -3272,9 +3271,7 @@ impl HlsOrigin {
             .values()
             .map(|p| PartSpec {
                 uri: self.part_uri(track_id, p.segment_number, p.part_index, ext),
-                // `Duration::as_secs_f64`: finite and >= 0 (issue #1140).
-                duration: DecimalSeconds::new(p.duration.as_secs_f64())
-                    .expect("Duration::as_secs_f64 is finite, >= 0"),
+                duration: DecimalSeconds::from_duration(p.duration),
                 independent: p.independent,
                 ..Default::default()
             })
@@ -3410,7 +3407,11 @@ impl HlsOrigin {
         // (from their start to the end of the last segment) exceeds the Skip
         // Boundary; never skip every segment in the window.
         let omitted = if skip_accepted {
-            let durations: Vec<f64> = window.segments.iter().map(|s| s.duration_secs).collect();
+            let durations: Vec<f64> = window
+                .segments
+                .iter()
+                .map(|s| s.duration.as_secs_f64())
+                .collect();
             let total: f64 = durations.iter().sum();
             let mut prefix = 0.0_f64;
             let mut count = 0usize;
@@ -3445,7 +3446,7 @@ impl HlsOrigin {
             } else {
                 Vec::new()
             });
-            behind_secs += s.duration_secs;
+            behind_secs += s.duration.as_secs_f64();
         }
         closed_parts.reverse();
         let any_closed_parts = closed_parts.iter().any(|parts| !parts.is_empty());
@@ -3470,11 +3471,7 @@ impl HlsOrigin {
                 MediaSegment {
                     map: map_for(s.init_gen),
                     uri: self.segment_uri(track_id, s.sequence_number, ext),
-                    // `duration_secs` is always `Duration::as_secs_f64()`
-                    // (issue #1140): a `std::time::Duration` can never be
-                    // negative or non-finite.
-                    duration: DecimalSeconds::new(s.duration_secs)
-                        .expect("Duration::as_secs_f64 is finite, >= 0"),
+                    duration: DecimalSeconds::from_duration(s.duration),
                     discontinuous: s.discontinuous,
                     parts,
                     program_date_time,
@@ -3504,10 +3501,7 @@ impl HlsOrigin {
                     .iter()
                     .map(|p| PartSpec {
                         uri: self.part_uri(track_id, p.segment_number, p.part_index, ext),
-                        // `p.duration` is a `std::time::Duration`: always
-                        // finite and non-negative (issue #1140).
-                        duration: DecimalSeconds::new(p.duration.as_secs_f64())
-                            .expect("Duration::as_secs_f64 is finite, >= 0"),
+                        duration: DecimalSeconds::from_duration(p.duration),
                         independent: p.independent,
                         ..Default::default()
                     })
@@ -3521,9 +3515,8 @@ impl HlsOrigin {
             // segment yet it is omitted. The explicit-anchor path is handled
             // inside `segment_pdt` via `segment_start_time(open_seq)`.
             let open_start_ns = window.segments.back().map(|s| {
-                s.start_ns.saturating_add(
-                    u64::try_from((s.duration_secs * 1_000_000_000.0).round() as i64).unwrap_or(0),
-                )
+                s.start_ns
+                    .saturating_add(u64::try_from(s.duration.as_nanos()).unwrap_or(u64::MAX))
             });
             open.program_date_time = match open_start_ns {
                 Some(sn) => self.segment_pdt(open_seq, sn, None),
@@ -3881,7 +3874,7 @@ impl HlsOrigin {
                     s.sequence_number,
                     self.container.segment_extension(),
                 ),
-                duration: DecimalSeconds::new(s.duration_secs).unwrap_or_default(),
+                duration: DecimalSeconds::from_duration(s.duration),
                 discontinuous: s.discontinuous,
                 byte_range: Some(ByteRange {
                     length: *len,
