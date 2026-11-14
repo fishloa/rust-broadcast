@@ -115,6 +115,7 @@ mod mpegh_ts;
 mod nal_keyframe;
 mod opengop_anchor;
 mod paff_pairing;
+mod pcr_off_clock_extension;
 mod pipeline;
 mod pmt_version_diff;
 mod pps_real_capture;
