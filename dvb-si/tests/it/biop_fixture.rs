@@ -36,7 +36,7 @@ fn m6_sections_pid_ab() -> Vec<Vec<u8>> {
             Ok(p) => p,
             Err(_) => continue,
         };
-        if pkt.header.pid != Pid::new(0x00AB) {
+        if pkt.header.pid != Pid::from_const(0x00AB) {
             continue;
         }
         if let Some(payload) = pkt.payload {

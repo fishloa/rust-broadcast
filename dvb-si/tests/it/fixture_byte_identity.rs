@@ -93,8 +93,8 @@ fn feed_and_assert_byte_identity(demux: &mut SiDemux, data: &[u8], fixture_name:
 fn m6_demux() -> SiDemux {
     use mpeg_ts::pid::Pid;
     SiDemux::builder()
-        .pid(Pid::new(0x00AA)) // AIT
-        .pid(Pid::new(0x00AB)) // DSM-CC HbbTV carousel
+        .pid(Pid::from_const(0x00AA)) // AIT
+        .pid(Pid::from_const(0x00AB)) // DSM-CC HbbTV carousel
         .build()
 }
 

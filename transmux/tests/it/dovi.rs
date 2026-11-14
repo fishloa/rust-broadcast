@@ -336,7 +336,7 @@ fn descriptor_with_reserved_bits_set_still_signals_dolby_vision() {
     let spec = video(&media)
         .spec
         .clone()
-        .with_source(mpeg_ts::pid::Pid::new(0x65), es_info);
+        .with_source(mpeg_ts::pid::Pid::from_const(0x65), es_info);
     expect_p81(spec.dovi.expect("dovi despite non-zero reserved bits"));
     let init = build_init_segment(&[spec], 1000).expect("init");
     let (fourcc, boxes) = sample_entry(&init);

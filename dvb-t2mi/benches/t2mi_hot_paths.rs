@@ -16,7 +16,7 @@ static COLOMBIA_FIXTURE: std::sync::LazyLock<Vec<u8>> =
     std::sync::LazyLock::new(|| test_fixtures::read("t2mi/colombia-capital-t2mi.ts"));
 
 /// PID carrying T2-MI in the Colombia fixture (from the PMT).
-const T2MI_PID: Pid = Pid::new(0x0040);
+const T2MI_PID: Pid = Pid::from_const(0x0040);
 
 const TS_PACKET_SIZE: usize = 188;
 

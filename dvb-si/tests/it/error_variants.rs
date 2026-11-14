@@ -12,7 +12,7 @@ fn pat_section(version: u8, section_number: u8, last_section_number: u8, pid: u1
         true,
         section_number,
         last_section_number,
-        vec![PatEntry::new(1, Pid::new(pid))],
+        vec![PatEntry::new(1, Pid::from_wire_masked(pid))],
     );
     let mut bytes = vec![0u8; pat.serialized_len()];
     pat.serialize_into(&mut bytes).unwrap();

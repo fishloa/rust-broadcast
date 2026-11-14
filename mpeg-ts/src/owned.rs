@@ -11,8 +11,9 @@
 use crate::error::{Error, Result};
 use crate::pid::Pid;
 use crate::ts::{
-    ADAPTATION_FLAG, AF_PCR_FLAG, AdaptationField, AdaptationFieldControl, CC_MASK, PCR_FIELD_LEN,
-    Pcr, ScramblingControl, TS_PACKET_SIZE, TS_SYNC_BYTE, TsHeader,
+    ADAPTATION_FLAG, AF_PCR_FLAG, AdaptationField, AdaptationFieldControl, CC_MASK,
+    ContinuityCounter, PCR_FIELD_LEN, Pcr, ScramblingControl, TS_PACKET_SIZE, TS_SYNC_BYTE,
+    TsHeader,
 };
 
 /// The 13-bit PID value used for null packets — `0x1FFF`
@@ -56,9 +57,9 @@ pub struct OwnedTsPacket {
     /// Transport Error Indicator (byte 1 bit 7).
     tei: bool,
     /// 2-bit transport_scrambling_control (byte 3 bits 7–6).
-    scrambling: u8,
+    scrambling: ScramblingControl,
     /// 4-bit continuity_counter (byte 3 bits 3–0).
-    continuity_counter: u8,
+    continuity_counter: ContinuityCounter,
     /// Discontinuity flag: `true` if the adaptation-field `discontinuity_indicator`
     /// was set in the source packet, or if the caller marks this as a
     /// continuity-counter discontinuity boundary. Defaults to `false` on parse.
@@ -111,14 +112,13 @@ impl OwnedTsPacket {
         self.tei
     }
 
-    /// Raw 2-bit `transport_scrambling_control` (byte 3 bits 7–6); see
-    /// [`scrambling_control`](Self::scrambling_control) for the typed view.
-    pub fn scrambling(&self) -> u8 {
+    /// 2-bit `transport_scrambling_control` (byte 3 bits 7–6).
+    pub fn scrambling(&self) -> ScramblingControl {
         self.scrambling
     }
 
     /// 4-bit continuity_counter (byte 3 bits 3–0).
-    pub fn continuity_counter(&self) -> u8 {
+    pub fn continuity_counter(&self) -> ContinuityCounter {
         self.continuity_counter
     }
 
@@ -140,21 +140,13 @@ impl OwnedTsPacket {
             raw,
             pid: hdr.pid,
             pusi: hdr.pusi,
-            has_adaptation: hdr.has_adaptation,
-            has_payload: hdr.has_payload,
+            has_adaptation: hdr.has_adaptation(),
+            has_payload: hdr.has_payload(),
             tei: hdr.tei,
             scrambling: hdr.scrambling,
             continuity_counter: hdr.continuity_counter,
             discontinuity: false,
         })
-    }
-
-    /// Typed view of the 2-bit `transport_scrambling_control` field.
-    ///
-    /// See [`ScramblingControl`] for the spec citation (H.222.0 Table 2-4 +
-    /// ETSI TS 100 289 §5.1 Table 1).
-    pub fn scrambling_control(&self) -> ScramblingControl {
-        ScramblingControl::from_bits(self.scrambling)
     }
 
     /// Typed view of the `adaptation_field_control` 2-bit field, derived from the
@@ -235,7 +227,7 @@ impl OwnedTsPacket {
     pub fn serialize_with_payload(
         pid: Pid,
         pusi: bool,
-        cc: u8,
+        cc: ContinuityCounter,
         payload: &[u8],
     ) -> Result<[u8; TS_PACKET_SIZE]> {
         if payload.len() > Self::MAX_PAYLOAD_LEN {
@@ -249,10 +241,9 @@ impl OwnedTsPacket {
             tei: false,
             pusi,
             pid,
-            scrambling: 0,
-            has_adaptation: false,
-            has_payload: true,
-            continuity_counter: cc & CC_MASK,
+            scrambling: ScramblingControl::NotScrambled,
+            adaptation: AdaptationFieldControl::PayloadOnly,
+            continuity_counter: cc,
         };
         // Cannot fail: buf is 188 bytes, need 4.
         hdr.serialize_into(&mut pkt)
@@ -264,22 +255,21 @@ impl OwnedTsPacket {
     /// Build a 188-byte null packet (PID `0x1FFF`) with `0xFF`-stuffed payload.
     ///
     /// Null packets carry PID `0x1FFF` and have no meaningful payload
-    /// (ISO/IEC 13818-1 §2.4.1). The continuity counter `cc` is masked to 4
-    /// bits. Transport scrambling is `00` (not scrambled).
+    /// (ISO/IEC 13818-1 §2.4.1). Transport scrambling is `00` (not scrambled).
     ///
     /// # Example
     ///
     /// ```
     /// use mpeg_ts::OwnedTsPacket;
-    /// use mpeg_ts::ts::{TsPacket, TS_PACKET_SIZE};
-    /// let raw = OwnedTsPacket::null_packet(3);
+    /// use mpeg_ts::ts::{ContinuityCounter, TsPacket, TS_PACKET_SIZE};
+    /// let raw = OwnedTsPacket::null_packet(ContinuityCounter::try_new(3).unwrap());
     /// assert_eq!(raw.len(), TS_PACKET_SIZE);
     /// let pkt = TsPacket::parse(&raw).unwrap();
     /// assert_eq!(pkt.header.pid, mpeg_ts::pid::well_known::NULL);
-    /// assert_eq!(pkt.header.continuity_counter, 3);
+    /// assert_eq!(pkt.header.continuity_counter.value(), 3);
     /// ```
     #[must_use]
-    pub fn null_packet(cc: u8) -> [u8; TS_PACKET_SIZE] {
+    pub fn null_packet(cc: ContinuityCounter) -> [u8; TS_PACKET_SIZE] {
         // Cannot fail: an empty payload never exceeds MAX_PAYLOAD_LEN.
         Self::serialize_with_payload(NULL_PID, false, cc, &[])
             .expect("empty payload always fits a TS packet")
@@ -287,23 +277,29 @@ impl OwnedTsPacket {
 
     /// Overwrite the `continuity_counter` field in `packet` without re-parsing.
     ///
-    /// Writes the low 4 bits of `cc` into byte 3 bits `[3:0]` in place
-    /// (ISO/IEC 13818-1 §2.4.3.3). The other bits of byte 3 are preserved.
+    /// Writes `cc` into byte 3 bits `[3:0]` in place (ISO/IEC 13818-1
+    /// §2.4.3.3). The other bits of byte 3 are preserved.
     ///
     /// # Example
     ///
     /// ```
     /// use mpeg_ts::OwnedTsPacket;
     /// use mpeg_ts::pid::Pid;
-    /// use mpeg_ts::ts::TsPacket;
-    /// let mut raw = OwnedTsPacket::serialize_with_payload(Pid::new(0x0100), false, 0, &[]).unwrap();
-    /// OwnedTsPacket::set_continuity_counter(&mut raw, 7);
+    /// use mpeg_ts::ts::{ContinuityCounter, TsPacket};
+    /// let mut raw = OwnedTsPacket::serialize_with_payload(
+    ///     Pid::from_const(0x0100),
+    ///     false,
+    ///     ContinuityCounter::ZERO,
+    ///     &[],
+    /// )
+    /// .unwrap();
+    /// OwnedTsPacket::set_continuity_counter(&mut raw, ContinuityCounter::try_new(7).unwrap());
     /// let pkt = TsPacket::parse(&raw).unwrap();
-    /// assert_eq!(pkt.header.continuity_counter, 7);
+    /// assert_eq!(pkt.header.continuity_counter.value(), 7);
     /// ```
-    pub fn set_continuity_counter(packet: &mut [u8; TS_PACKET_SIZE], cc: u8) {
+    pub fn set_continuity_counter(packet: &mut [u8; TS_PACKET_SIZE], cc: ContinuityCounter) {
         // Byte 3 bits [3:0] = continuity_counter (ISO/IEC 13818-1 §2.4.3.3).
-        packet[3] = (packet[3] & !CC_MASK) | (cc & CC_MASK);
+        packet[3] = (packet[3] & !CC_MASK) | cc.value();
     }
 
     /// Overwrite the PCR value in an existing adaptation field in `packet`.
@@ -335,7 +331,7 @@ impl OwnedTsPacket {
     /// raw[5] = AF_PCR_FLAG;
     /// raw[6..12].copy_from_slice(&[0u8; 6]);
     ///
-    /// let new_pcr = Pcr { base: 10_000, extension: 0 };
+    /// let new_pcr = Pcr::from_parts(10_000, 0).unwrap();
     /// OwnedTsPacket::set_pcr(&mut raw, new_pcr).unwrap();
     ///
     /// let pkt = TsPacket::parse(&raw).unwrap();
@@ -409,6 +405,10 @@ impl OwnedTsPacket {
 mod tests {
     use super::*;
 
+    fn cc(v: u8) -> ContinuityCounter {
+        ContinuityCounter::try_new(v).expect("4-bit counter")
+    }
+
     /// The getters decode the header bytes literally (H.222.0 §2.4.3.2): a
     /// hand-built header 0x47 | TEI=1 PUSI=1 prio=0 PID=0x1ABC | scr=0b10
     /// afc=0b01 cc=0xC.
@@ -422,11 +422,11 @@ mod tests {
         let pkt = OwnedTsPacket::parse(raw).unwrap();
         assert!(pkt.tei());
         assert!(pkt.pusi());
-        assert_eq!(pkt.pid(), Pid::new(0x1ABC));
-        assert_eq!(pkt.scrambling(), 0b10);
+        assert_eq!(pkt.pid(), Pid::from_const(0x1ABC));
+        assert_eq!(pkt.scrambling(), ScramblingControl::EvenKey);
         assert!(!pkt.has_adaptation());
         assert!(pkt.has_payload());
-        assert_eq!(pkt.continuity_counter(), 0xC);
+        assert_eq!(pkt.continuity_counter().value(), 0xC);
         assert_eq!(pkt.raw(), &raw);
     }
 
@@ -434,12 +434,13 @@ mod tests {
     fn owned_round_trip_and_payload_mut() {
         let payload = [0xAAu8; 184];
         let mut pkt = OwnedTsPacket::parse(
-            OwnedTsPacket::serialize_with_payload(Pid::new(0x0100), true, 7, &payload).unwrap(),
+            OwnedTsPacket::serialize_with_payload(Pid::from_const(0x0100), true, cc(7), &payload)
+                .unwrap(),
         )
         .unwrap();
-        assert_eq!(pkt.pid(), Pid::new(0x0100));
+        assert_eq!(pkt.pid(), Pid::from_const(0x0100));
         assert!(pkt.pusi);
-        assert_eq!(pkt.continuity_counter, 7);
+        assert_eq!(pkt.continuity_counter.value(), 7);
         assert_eq!(pkt.payload().unwrap()[..184], payload[..]);
         pkt.payload_mut().unwrap()[0] = 0x55;
         assert_eq!(pkt.payload().unwrap()[0], 0x55);
@@ -454,7 +455,12 @@ mod tests {
     fn oversized_payload_is_rejected_not_truncated() {
         let payload = [0xAAu8; 185];
         assert_eq!(
-            OwnedTsPacket::serialize_with_payload(Pid::new(0x0100), true, 0, &payload),
+            OwnedTsPacket::serialize_with_payload(
+                Pid::from_const(0x0100),
+                true,
+                ContinuityCounter::ZERO,
+                &payload
+            ),
             Err(Error::PayloadTooLarge { len: 185, max: 184 })
         );
     }
@@ -464,8 +470,13 @@ mod tests {
     #[test]
     fn max_payload_len_round_trips() {
         let payload = [0xBBu8; OwnedTsPacket::MAX_PAYLOAD_LEN];
-        let raw =
-            OwnedTsPacket::serialize_with_payload(Pid::new(0x0100), true, 0, &payload).unwrap();
+        let raw = OwnedTsPacket::serialize_with_payload(
+            Pid::from_const(0x0100),
+            true,
+            ContinuityCounter::ZERO,
+            &payload,
+        )
+        .unwrap();
         let pkt = OwnedTsPacket::parse(raw).unwrap();
         assert_eq!(pkt.payload().unwrap(), &payload[..]);
     }
@@ -473,19 +484,21 @@ mod tests {
     #[test]
     fn owned_scrambling_control_accessor() {
         let make = |scrambling_bits: u8| -> OwnedTsPacket {
-            let mut raw =
-                OwnedTsPacket::serialize_with_payload(Pid::new(0x0100), false, 0, &[]).unwrap();
+            let mut raw = OwnedTsPacket::serialize_with_payload(
+                Pid::from_const(0x0100),
+                false,
+                ContinuityCounter::ZERO,
+                &[],
+            )
+            .unwrap();
             // byte 3 bits [7:6] = scrambling
             raw[3] = (raw[3] & 0x3F) | (scrambling_bits << 6);
             OwnedTsPacket::parse(raw).unwrap()
         };
-        assert_eq!(
-            make(0b00).scrambling_control(),
-            ScramblingControl::NotScrambled
-        );
-        assert_eq!(make(0b01).scrambling_control(), ScramblingControl::Reserved);
-        assert_eq!(make(0b10).scrambling_control(), ScramblingControl::EvenKey);
-        assert_eq!(make(0b11).scrambling_control(), ScramblingControl::OddKey);
+        assert_eq!(make(0b00).scrambling(), ScramblingControl::NotScrambled);
+        assert_eq!(make(0b01).scrambling(), ScramblingControl::Reserved);
+        assert_eq!(make(0b10).scrambling(), ScramblingControl::EvenKey);
+        assert_eq!(make(0b11).scrambling(), ScramblingControl::OddKey);
     }
 
     #[test]
@@ -537,10 +550,7 @@ mod tests {
         // raw[6..] is payload (0xFF stuffing here).
         let payload_before = raw[6..].to_vec();
 
-        let pcr = Pcr {
-            base: 10_000,
-            extension: 0,
-        };
+        let pcr = Pcr::from_parts(10_000, 0).expect("in range");
         let err = OwnedTsPacket::set_pcr(&mut raw, pcr).unwrap_err();
         assert!(matches!(err, Error::BufferTooShort(..)));
         assert_eq!(

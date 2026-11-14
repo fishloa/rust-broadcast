@@ -38,7 +38,7 @@ fn pat_version_number_32_is_rejected_not_wrapped_to_0() {
 
 #[test]
 fn pat_entry_reserved_wider_than_3_bits_is_rejected() {
-    let mut e = PatEntry::new(1, Pid::new(0x100));
+    let mut e = PatEntry::new(1, Pid::from_const(0x100));
     e.reserved = 0x0F; // 4 bits into a reserved(3)
     let r = ser(&PatSection::new(1, 0, true, 0, 0, vec![e]));
     assert!(

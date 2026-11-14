@@ -192,7 +192,10 @@ fn pcr_packet_times_us(data: &[u8]) -> Vec<f64> {
         if *first_pid.get_or_insert(pid) != pid {
             continue;
         }
-        pcrs.push((i, pcr.as_27mhz() as f64 / 27.0));
+        let Ok(clock) = pcr.to_clock27() else {
+            continue;
+        };
+        pcrs.push((i, clock.ticks() as f64 / 27.0));
     }
     assert!(pcrs.len() >= 2, "capture carries a repeating PCR PID");
     let mut out = Vec::with_capacity(n);

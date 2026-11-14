@@ -222,7 +222,7 @@ fn audio_language_and_subtitle_descriptors_recoverable() {
         media
             .tracks
             .iter()
-            .find(|t| t.spec.source_pid == Some(Pid::new(pid)))
+            .find(|t| t.spec.source_pid == Some(Pid::from_wire_masked(pid)))
             .unwrap_or_else(|| panic!("no track for PID {pid:#06x}"))
     };
 
@@ -325,7 +325,7 @@ fn fmp4_round_trip_has_no_ts_provenance() {
         .expect("an AVC video track");
     assert_eq!(
         video_track.spec.source_pid,
-        Some(Pid::new(EXPECTED_VIDEO_PID)),
+        Some(Pid::from_const(EXPECTED_VIDEO_PID)),
         "sanity: TS-demuxed video track carries its source PID"
     );
 

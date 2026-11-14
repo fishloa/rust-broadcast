@@ -114,7 +114,10 @@ fn pat_section_versioned(
         true,
         section_number,
         last_section_number,
-        vec![PatEntry::new(section_number as u16 + 1, Pid::new(pid))],
+        vec![PatEntry::new(
+            section_number as u16 + 1,
+            Pid::from_wire_masked(pid),
+        )],
     );
     let mut bytes = vec![0u8; pat.serialized_len()];
     pat.serialize_into(&mut bytes).unwrap();
@@ -182,7 +185,7 @@ fn generic_complete_table_handles_pat_sections() {
         .iter()
         .flat_map(|section| section.entries.iter().map(|entry| entry.pid))
         .collect();
-    assert_eq!(pids, [Pid::new(0x0100), Pid::new(0x0101)]);
+    assert_eq!(pids, [Pid::from_const(0x0100), Pid::from_const(0x0101)]);
 }
 
 #[test]

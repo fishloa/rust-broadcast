@@ -104,7 +104,7 @@ fn find_pmt_pid(data: &[u8]) -> u16 {
         let Ok(pkt) = TsPacket::parse(chunk) else {
             continue;
         };
-        if pkt.header.pid != Pid::new(PAT_PID) {
+        if pkt.header.pid != Pid::from_const(PAT_PID) {
             continue;
         }
         let Some(payload) = pkt.payload else {
@@ -147,7 +147,7 @@ fn collect_pmt_es(data: &[u8], pmt_pid: u16) -> Vec<(u8, u16, Vec<u8>)> {
         let Ok(pkt) = TsPacket::parse(chunk) else {
             continue;
         };
-        if pkt.header.pid != Pid::new(pmt_pid) {
+        if pkt.header.pid != Pid::try_new(pmt_pid).expect("pid fits the 13-bit field") {
             continue;
         }
         let Some(payload) = pkt.payload else {
@@ -202,7 +202,12 @@ fn live_pmt_es(data: &[u8]) -> Vec<LiveEs> {
     let pusi_counts = pusi_seen_pids(data);
     let mut by_pid: BTreeMap<u16, (u8, BTreeSet<Vec<u8>>)> = BTreeMap::new();
     for (stream_type, pid, descriptors) in collect_pmt_es(data, pmt_pid) {
-        if pusi_counts.get(&Pid::new(pid)).copied().unwrap_or(0) == 0 {
+        if pusi_counts
+            .get(&Pid::from_wire_masked(pid))
+            .copied()
+            .unwrap_or(0)
+            == 0
+        {
             continue; // PMT-listed but never starts a PES/section on the wire
         }
         let entry = by_pid.entry(pid).or_insert((stream_type, BTreeSet::new()));
@@ -262,7 +267,7 @@ fn find_track_by_pid(media: &Media, pid: u16) -> &Track {
     media
         .tracks
         .iter()
-        .find(|t| t.spec.source_pid == Some(Pid::new(pid)))
+        .find(|t| t.spec.source_pid == Some(Pid::from_wire_masked(pid)))
         .unwrap_or_else(|| panic!("no track with source_pid {pid:#06x}"))
 }
 

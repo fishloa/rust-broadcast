@@ -61,7 +61,7 @@ async fn section_stream_distinguishes_io_error_from_eof() {
 /// T2-MI call site too (it was a separately-maintained copy).
 #[tokio::test]
 async fn t2mi_stream_distinguishes_io_error_from_eof() {
-    let mut stream = T2miEventStream::new(FailingReader, Pid::new(0x0006));
+    let mut stream = T2miEventStream::new(FailingReader, Pid::from_const(0x0006));
 
     let item = std::future::poll_fn(|cx| Pin::new(&mut stream).poll_next(cx)).await;
     assert!(item.is_none(), "stream must end on a reader error");

@@ -21,26 +21,28 @@
 
 use broadcast_common::{Unpackage, crc32_mpeg2};
 use mpeg_ts::pid::Pid;
-use mpeg_ts::ts::{TS_PACKET_SIZE, TsHeader};
+use mpeg_ts::ts::{
+    AdaptationFieldControl, ContinuityCounter, ScramblingControl, TS_PACKET_SIZE, TsHeader,
+};
 use transmux::TrackId;
 use transmux::pipeline::TrackSpec;
 use transmux::{AbandonReason, CodecConfig, DemuxEvent, StreamingTsDemux, TsDemux};
 
 // ── Fixture constants ───────────────────────────────────────────────────────
 
-const PAT_PID: Pid = Pid::new(0x0000);
-const PMT_PID: Pid = Pid::new(0x1000);
+const PAT_PID: Pid = Pid::from_const(0x0000);
+const PMT_PID: Pid = Pid::from_const(0x1000);
 /// Second program's PMT PID — used only by the two-program refcount test.
-const PMT_PID_2: Pid = Pid::new(0x1001);
+const PMT_PID_2: Pid = Pid::from_const(0x1001);
 const TRANSPORT_STREAM_ID: u16 = 1;
 const PROGRAM_NUMBER: u16 = 1;
 /// Second program — used by the PAT-remap and two-program refcount tests.
 const PROGRAM_NUMBER_2: u16 = 2;
 
-const PID_V: Pid = Pid::new(0x0101); // "video" (informal — just the first-ranked ES)
-const PID_A: Pid = Pid::new(0x0102); // "audioA"
-const PID_B: Pid = Pid::new(0x0103); // "audioB"
-const PID_C: Pid = Pid::new(0x0104); // used only by the count-collision test
+const PID_V: Pid = Pid::from_const(0x0101); // "video" (informal — just the first-ranked ES)
+const PID_A: Pid = Pid::from_const(0x0102); // "audioA"
+const PID_B: Pid = Pid::from_const(0x0103); // "audioB"
+const PID_C: Pid = Pid::from_const(0x0104); // used only by the count-collision test
 
 // Deliberately unrecognised (ISO/IEC 13818-1 Table 2-34 has nothing at these
 // values) so every ES here classifies as opaque `Codec::Data` (PES-carried) —
@@ -119,7 +121,7 @@ fn build_pmt_for(
     entries: &[(u16, u8, &[u8])],
 ) -> Vec<u8> {
     const TABLE_ID_PMT: u8 = 0x02;
-    const NO_PCR_PID: Pid = Pid::new(0x1FFF);
+    const NO_PCR_PID: Pid = Pid::from_const(0x1FFF);
     let mut body = Vec::new();
     body.extend_from_slice(&program_number.to_be_bytes()); // table_id_extension
     body.push(0xC0 | (version << 1) | u8::from(current_next_indicator));
@@ -151,10 +153,9 @@ fn ts_packet(pid: Pid, pusi: bool, cc: u8, payload: &[u8]) -> [u8; TS_PACKET_SIZ
         tei: false,
         pusi,
         pid,
-        scrambling: 0,
-        has_adaptation: false,
-        has_payload: true,
-        continuity_counter: cc,
+        scrambling: ScramblingControl::NotScrambled,
+        adaptation: AdaptationFieldControl::PayloadOnly,
+        continuity_counter: ContinuityCounter::from_wire_masked(cc),
     };
     header
         .serialize_into(&mut pkt)
@@ -244,7 +245,7 @@ fn corrupt_crc(mut section: Vec<u8>) -> Vec<u8> {
 fn feed_locked(demux: &mut StreamingTsDemux, bytes: &[u8]) {
     let mut buf = bytes.to_vec();
     while buf.len() / TS_PACKET_SIZE < mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
-        buf.extend_from_slice(&ts_packet(Pid::new(0x1FFF), false, 0, &[]));
+        buf.extend_from_slice(&ts_packet(Pid::from_const(0x1FFF), false, 0, &[]));
     }
     demux.feed(&buf);
 }
@@ -270,11 +271,21 @@ fn feed_bootstrap(demux: &mut StreamingTsDemux, version: u8, entries: &[(u16, u8
     bytes.extend_from_slice(&psi_packet(PMT_PID, 0, &build_pmt(version, true, entries)));
     for (i, &(pid, _, _)) in entries.iter().enumerate() {
         let cc = (i as u8) * 2;
-        bytes.extend_from_slice(&ts_packet(Pid::new(pid), true, cc, &pes_bytes(b"au1")));
-        bytes.extend_from_slice(&ts_packet(Pid::new(pid), true, cc + 1, &pes_bytes(b"au2")));
+        bytes.extend_from_slice(&ts_packet(
+            Pid::from_wire_masked(pid),
+            true,
+            cc,
+            &pes_bytes(b"au1"),
+        ));
+        bytes.extend_from_slice(&ts_packet(
+            Pid::from_wire_masked(pid),
+            true,
+            cc + 1,
+            &pes_bytes(b"au2"),
+        ));
     }
     while bytes.len() / TS_PACKET_SIZE < mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
-        bytes.extend_from_slice(&ts_packet(Pid::new(0x1FFF), false, 0, &[]));
+        bytes.extend_from_slice(&ts_packet(Pid::from_const(0x1FFF), false, 0, &[]));
     }
     demux.feed(&bytes);
 }

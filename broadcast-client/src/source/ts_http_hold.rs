@@ -122,7 +122,7 @@ impl DeclaredStreams {
     pub(crate) fn feed(&mut self, bytes: &[u8]) {
         for packet in self.resync.feed(bytes) {
             if let Ok(header) = TsHeader::parse(&packet)
-                && header.has_payload
+                && header.has_payload()
                 && !header.tei
             {
                 self.sent.insert(header.pid);

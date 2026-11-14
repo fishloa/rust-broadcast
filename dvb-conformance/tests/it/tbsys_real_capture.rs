@@ -29,7 +29,7 @@ const READ_BYTES: usize = 60_000_000;
 fn pcr_of(p: &[u8]) -> Option<(u16, u64)> {
     let packet = TsPacket::parse(p).ok()?;
     let pcr = packet.adaptation_field()?.ok()?.pcr?;
-    Some((packet.header.pid.value(), pcr.as_27mhz()))
+    Some((packet.header.pid.value(), pcr.to_clock27().ok()?.ticks()))
 }
 
 #[test]

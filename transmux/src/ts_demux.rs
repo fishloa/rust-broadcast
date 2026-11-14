@@ -239,7 +239,9 @@ use broadcast_common::timescale::{Rounding, rescale};
 use broadcast_common::{Demand, Serialize, Stage, Timestamp, Unpackage};
 use mpeg_pes::{PesAssembler, PesPacket};
 use mpeg_ts::resync::TsResync;
-use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
+use mpeg_ts::ts::{
+    ContinuityCounter, ScramblingControl, SectionReassembler, TS_PACKET_SIZE, TsPacket,
+};
 
 use crate::aac_asc::{
     ADTS_BLOCK_POSITION_SIZE, ADTS_CRC_SIZE, ADTS_HEADER_SIZE, AdtsHeader, AudioSpecificConfig,
@@ -270,7 +272,7 @@ use crate::pipeline::{CodecConfig, DataCarriage, Provenance, Sample, SampleFlags
 // ── PSI constants (ISO/IEC 13818-1 §2.4.4) ──────────────────────────────────
 
 /// PID carrying the Program Association Table (§2.4.4.4).
-const PAT_PID: Pid = Pid::new(0x0000);
+const PAT_PID: Pid = Pid::from_const(0x0000);
 /// `table_id` of a PAT section (§2.4.4.4, Table 2-31).
 pub(crate) const TABLE_ID_PAT: u8 = 0x00;
 /// `table_id` of a PMT section (§2.4.4.9, Table 2-31).
@@ -308,7 +310,7 @@ const NETWORK_PROGRAM_NUMBER: u16 = 0x0000;
 /// The null packet PID — always stuffing, never meaningful payload
 /// (ISO/IEC 13818-1 §2.4.3.2 Table 2-3) — excluded from the
 /// `unattributed`-payload replay buffer.
-const NULL_PACKET_PID: Pid = Pid::new(0x1FFF);
+const NULL_PACKET_PID: Pid = Pid::from_const(0x1FFF);
 /// Hard cap on the total bytes retained across all pre-PMT `unattributed` PID
 /// buffers before the oldest payloads are evicted (FIFO). Bounds memory on a
 /// full-multiplex feed whose unrelated-service PIDs never appear in the
@@ -1188,7 +1190,9 @@ fn parse_pat(section: &[u8]) -> Result<Vec<(u16, Pid)>> {
     let mut off = 0usize;
     while off + PAT_ENTRY_LEN <= body.len() {
         let program_number = u16::from_be_bytes([body[off], body[off + 1]]);
-        let pid = Pid::new((((body[off + 2] & PID_HI_MASK) as u16) << 8) | body[off + 3] as u16);
+        let pid = Pid::from_wire_masked(
+            (((body[off + 2] & PID_HI_MASK) as u16) << 8) | body[off + 3] as u16,
+        );
         if program_number != NETWORK_PROGRAM_NUMBER {
             programs.push((program_number, pid));
         }
@@ -1242,7 +1246,9 @@ fn parse_pmt_section_header(section: &[u8]) -> Result<PmtSectionHeader> {
         // PCR_PID sits at the start of the section body, which is
         // `section[8..]` (the 8-byte header ends at index 8): reserved(3) +
         // PCR_PID(13).
-        pcr_pid: Pid::new((((section[8] & PID_HI_MASK) as u16) << 8) | section[9] as u16),
+        pcr_pid: Pid::from_wire_masked(
+            (((section[8] & PID_HI_MASK) as u16) << 8) | section[9] as u16,
+        ),
     })
 }
 
@@ -1268,7 +1274,9 @@ fn parse_pmt(section: &[u8]) -> Result<Vec<(Pid, Codec, Vec<u8>)>> {
     // reserved(4)/ES_info_length(12) [2] + descriptor()×ES_info_length.
     while off + 5 <= body.len() {
         let stream_type = body[off];
-        let es_pid = Pid::new((((body[off + 1] & PID_HI_MASK) as u16) << 8) | body[off + 2] as u16);
+        let es_pid = Pid::from_wire_masked(
+            (((body[off + 1] & PID_HI_MASK) as u16) << 8) | body[off + 2] as u16,
+        );
         let es_info_length =
             (((body[off + 3] & INFO_LENGTH_HI_MASK) as usize) << 8) | body[off + 4] as usize;
         let desc_start = off + 5;
@@ -4682,7 +4690,7 @@ struct CcState {
     /// Whether we've seen the first payload-bearing packet for this PID.
     initialized: bool,
     /// Last continuity counter value on this PID (payload-bearing only).
-    last_cc: u8,
+    last_cc: ContinuityCounter,
     /// The whole last packet, for the §2.4.3.3 legal-duplicate comparison —
     /// which is defined over every byte with only the PCR field excepted, so
     /// the payload slice alone is not enough (r04-W49).
@@ -5127,7 +5135,7 @@ impl StreamingTsDemux {
         // CC check (issue #778) — payload-bearing, non-null packets only,
         // excluding signalled discontinuities (the adaptation-field check
         // that follows).
-        let discontinuity_signalled = pkt.header.has_adaptation
+        let discontinuity_signalled = pkt.header.has_adaptation()
             && raw
                 .get(4)
                 .is_some_and(|af_len| *af_len > 0 && raw.get(5).is_some_and(|b| b & 0x80 != 0));
@@ -5164,7 +5172,7 @@ impl StreamingTsDemux {
                         .filter(|(_, pmt_pids)| {
                             pmt_pids.iter().any(|pmt_pid| {
                                 self.pmt_reasm
-                                    .get(&Pid::new((pmt_pid).value()))
+                                    .get(pmt_pid)
                                     .is_some_and(|pmt| pmt.pcr_pid == Some(pid))
                             })
                         })
@@ -5232,7 +5240,7 @@ impl StreamingTsDemux {
         // lib.rs:979-982 and media-doctor's CcAnomalyCheck at cc_anomaly.rs:110-113
         // — both update last_cc unconditionally on every payload-bearing packet,
         // including those with discontinuity_indicator set).
-        if pkt.header.has_payload && pkt.header.pid != NULL_PACKET_PID {
+        if pkt.header.has_payload() && pkt.header.pid != NULL_PACKET_PID {
             cc_verdict = self.check_cc(
                 pkt.header.pid,
                 pkt.header.continuity_counter,
@@ -5358,7 +5366,9 @@ impl StreamingTsDemux {
         if let Some(stream) = self.streams.get_mut(&pid) {
             stream.payload_packets = stream.payload_packets.saturating_add(1);
             let epoch = self.program_epochs.entry(stream.epoch_key).or_default();
-            if pkt.header.scrambling != 0 && matches!(stream.carrier, Carrier::Pes(_)) {
+            if pkt.header.scrambling != ScramblingControl::NotScrambled
+                && matches!(stream.carrier, Carrier::Pes(_))
+            {
                 drop_scrambled_payload(stream, pid, pusi, idx, epoch, &mut self.events);
                 self.try_promote_ready();
                 return;
@@ -5521,7 +5531,7 @@ impl StreamingTsDemux {
     fn check_cc(
         &mut self,
         pid: Pid,
-        cc: u8,
+        cc: ContinuityCounter,
         raw: &[u8; TS_PACKET_SIZE],
         discontinuity_signalled: bool,
         packet_index: u64,
@@ -5573,8 +5583,8 @@ impl StreamingTsDemux {
                                 self.events.push_back(DemuxEvent::InputDegraded {
                                     track,
                                     kind: InputDegradation::ContinuityGap {
-                                        expected: (state.last_cc + 1) & 0x0F,
-                                        got: cc,
+                                        expected: state.last_cc.next().value(),
+                                        got: cc.value(),
                                     },
                                     provenance: EventProvenance {
                                         pid: Some(pid),
@@ -5589,12 +5599,15 @@ impl StreamingTsDemux {
                         _ => {}
                     }
                 }
-                let expected = (state.last_cc + 1) & 0x0F;
+                let expected = state.last_cc.next();
                 let mut verdict = CcVerdict::Deliver;
                 if !discontinuity_signalled && cc != expected {
                     self.events.push_back(DemuxEvent::InputDegraded {
                         track,
-                        kind: InputDegradation::ContinuityGap { expected, got: cc },
+                        kind: InputDegradation::ContinuityGap {
+                            expected: expected.value(),
+                            got: cc.value(),
+                        },
                         provenance: EventProvenance {
                             pid: Some(pid),
                             packet_index: Some(packet_index),
@@ -5673,12 +5686,12 @@ impl StreamingTsDemux {
             let Some(pid) = self.unattributed_order.pop_front() else {
                 break;
             };
-            if let Some(buf) = self.unattributed.get_mut(&Pid::new(pid)) {
+            if let Some(buf) = self.unattributed.get_mut(&Pid::from_wire_masked(pid)) {
                 if let Some((_, payload)) = buf.pop_front() {
                     self.unattributed_bytes = self.unattributed_bytes.saturating_sub(payload.len());
                 }
                 if buf.is_empty() {
-                    self.unattributed.remove(&Pid::new(pid));
+                    self.unattributed.remove(&Pid::from_wire_masked(pid));
                 }
             }
         }
@@ -6797,7 +6810,7 @@ impl<'a> TsDemux<'a> {
                     // ClockReference always carries a PID/packet_index — the
                     // fallbacks are unreachable in practice, not a silent
                     // downgrade.
-                    pid: provenance.pid.unwrap_or(Pid::new(0)),
+                    pid: provenance.pid.unwrap_or(Pid::from_const(0)),
                     packet_index: provenance.packet_index.unwrap_or(0),
                     discontinuity: discontinuous,
                 }),
@@ -6919,7 +6932,7 @@ pub(crate) mod tests {
         // so eviction must have run.
         let target_bytes = MAX_UNATTRIBUTED_BYTES * 3;
         let packet_count = target_bytes / PACKET_PAYLOAD_LEN + 1;
-        let unclaimed_pid: Pid = Pid::new(0x0123); // never introduced via PAT/PMT
+        let unclaimed_pid: Pid = Pid::from_const(0x0123); // never introduced via PAT/PMT
 
         let mut demux = StreamingTsDemux::new();
         for i in 0..packet_count {
@@ -6970,7 +6983,7 @@ pub(crate) mod tests {
         // units), muxed by this crate's own `TsMux` — registers one H.264 ES
         // (`Carrier::Pes`) at the single-track convention PID (`ES_PID_BASE`
         // in `ts_mux.rs`, `0x0100`).
-        const ES_PID: Pid = Pid::new(0x0100);
+        const ES_PID: Pid = Pid::from_const(0x0100);
         let avc = avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==").unwrap();
         let spec = TrackSpec::new(
             TrackId::new(1),
@@ -7193,7 +7206,7 @@ pub(crate) mod tests {
 
         // PID A specifically must never have resolved — its parameter sets
         // never arrived, so it must be Abandoned, not Live.
-        const PID_A: Pid = Pid::new(0x0100);
+        const PID_A: Pid = Pid::from_const(0x0100);
         let abandoned = matches!(
             demux.streams.get(&PID_A).and_then(|s| s.track.as_ref()),
             Some(TrackState::Abandoned)
@@ -7204,7 +7217,7 @@ pub(crate) mod tests {
         // promoted to Live once PID A was abandoned, or itself abandoned —
         // never left permanently wedged in Probing/Parked with an
         // ever-growing backlog.
-        const PID_B: Pid = Pid::new(0x0101);
+        const PID_B: Pid = Pid::from_const(0x0101);
         let pid_b_resolved = matches!(
             demux.streams.get(&PID_B).and_then(|s| s.track.as_ref()),
             Some(TrackState::Live(_)) | Some(TrackState::Abandoned)
@@ -7231,7 +7244,7 @@ pub(crate) mod tests {
         use crate::rtp_sdp::avc_config_from_sprop;
         use broadcast_common::Package;
 
-        const PID_A: Pid = Pid::new(0x0100);
+        const PID_A: Pid = Pid::from_const(0x0100);
         let frame_dur = VIDEO_TIMESCALE / 30;
         let avc = avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==").unwrap();
         let video_spec = TrackSpec::new(
@@ -7396,9 +7409,9 @@ pub(crate) mod tests {
     }
 
     /// PID/table constants for [`probe_sync_scan_work_is_linear_in_the_input_not_quadratic`].
-    pub(crate) const PAT_PID_UNDER_TEST: Pid = Pid::new(0x0000);
-    pub(crate) const PMT_PID_UNDER_TEST: Pid = Pid::new(0x1000);
-    pub(crate) const ES_PID_UNDER_TEST: Pid = Pid::new(0x1100);
+    pub(crate) const PAT_PID_UNDER_TEST: Pid = Pid::from_const(0x0000);
+    pub(crate) const PMT_PID_UNDER_TEST: Pid = Pid::from_const(0x1000);
+    pub(crate) const ES_PID_UNDER_TEST: Pid = Pid::from_const(0x1100);
     /// PMT `program_number` for the one-program PAT below.
     const PROGRAM_NUMBER_UNDER_TEST: u16 = 1;
 
@@ -7414,7 +7427,7 @@ pub(crate) mod tests {
 
     /// PMT section body (ISO/IEC 13818-1 Table 2-33): one elementary stream.
     pub(crate) fn pmt_body(es_pid: Pid, stream_type: u8) -> Vec<u8> {
-        pmt_body_with_pcr_pid(es_pid, stream_type, Pid::new(0))
+        pmt_body_with_pcr_pid(es_pid, stream_type, Pid::from_const(0))
     }
 
     /// A PMT body with **two** elementary streams, declaring `pcr_pid` as the
@@ -8039,8 +8052,8 @@ pub(crate) mod tests {
         flood_payload: impl Fn(usize) -> Vec<u8>,
         flood_packets: usize,
     ) -> Vec<u8> {
-        let head = Pid::new(0x0100);
-        let flood = Pid::new(0x0101);
+        let head = Pid::from_const(0x0100);
+        let flood = Pid::from_const(0x0101);
         let mut ts = psi_section_packets(PAT_PID_UNDER_TEST, 0, 0x00, &pat_body());
         ts.extend(psi_section_packets(
             PMT_PID_UNDER_TEST,
@@ -8141,7 +8154,7 @@ pub(crate) mod tests {
             }
             prev = demux
                 .streams
-                .get(&Pid::new(0x0101))
+                .get(&Pid::from_const(0x0101))
                 .map_or(0, |s| s.backlog_bytes);
         }
         None
@@ -8232,8 +8245,8 @@ pub(crate) mod tests {
     /// is not a silent head, so only the byte cap can release the audio.
     #[test]
     fn present_but_unresolved_video_head_still_blocks_past_the_silent_bound() {
-        let head = Pid::new(0x0100);
-        let flood = Pid::new(0x0101);
+        let head = Pid::from_const(0x0100);
+        let flood = Pid::from_const(0x0101);
         let mut ts = psi_section_packets(PAT_PID_UNDER_TEST, 0, 0x00, &pat_body());
         ts.extend(psi_section_packets(
             PMT_PID_UNDER_TEST,
@@ -8296,12 +8309,12 @@ pub(crate) mod tests {
         let mut demux = StreamingTsDemux::new();
         demux.feed(&ts);
         assert!(
-            demux.skipped.contains(&Pid::new(0x0100)),
+            demux.skipped.contains(&Pid::from_const(0x0100)),
             "the silent head was stepped over"
         );
         demux.finish();
         assert!(
-            demux.resolved.contains(&Pid::new(0x0100)),
+            demux.resolved.contains(&Pid::from_const(0x0100)),
             "finish abandoned the head"
         );
         assert!(
@@ -8930,13 +8943,13 @@ pub(crate) mod tests {
     fn signalled_discontinuity_is_scoped_to_the_signalling_program() {
         /// Program A: PMT PID, ES PIDs (the first is also its PCR PID),
         /// program_number.
-        const A_PMT: Pid = Pid::new(0x1000);
-        const A_ES: Pid = Pid::new(0x1100);
+        const A_PMT: Pid = Pid::from_const(0x1000);
+        const A_ES: Pid = Pid::from_const(0x1100);
         /// Program A's second elementary stream (audio).
-        const A_ES2: Pid = Pid::new(0x1101);
+        const A_ES2: Pid = Pid::from_const(0x1101);
         /// Program B: likewise.
-        const B_PMT: Pid = Pid::new(0x1001);
-        const B_ES: Pid = Pid::new(0x1200);
+        const B_PMT: Pid = Pid::from_const(0x1001);
+        const B_ES: Pid = Pid::from_const(0x1200);
         /// Program numbers for the two PAT entries.
         const A_PROGRAM: u16 = 1;
         const B_PROGRAM: u16 = 2;
@@ -9051,7 +9064,7 @@ pub(crate) mod tests {
                 && let Some(dts) = sample.dts
             {
                 samples_by_pid
-                    .entry(Pid::new((*pid).value()))
+                    .entry(Pid::try_new((*pid).value()).expect("pid fits the 13-bit field"))
                     .or_default()
                     .push(dts);
             }
@@ -9102,9 +9115,9 @@ pub(crate) mod tests {
     /// base carried and replaced it with the old base's.
     #[test]
     fn splice_lift_is_common_to_the_program_so_new_base_av_skew_survives() {
-        const PMT: Pid = Pid::new(0x1000);
-        const ES1: Pid = Pid::new(0x1100);
-        const ES2: Pid = Pid::new(0x1101);
+        const PMT: Pid = Pid::from_const(0x1000);
+        const ES1: Pid = Pid::from_const(0x1100);
+        const ES2: Pid = Pid::from_const(0x1101);
         const PROGRAM: u16 = 1;
         const FRAME_PERIOD: i64 = 3600;
         const FRAMES: i64 = 8;
@@ -11933,19 +11946,19 @@ pub(crate) mod tests {
     fn codec_change_on_shared_pid_does_not_tear_down_other_program_track() {
         const PMT_A: u16 = 0x1000;
         const PMT_B: u16 = 0x1001;
-        const SHARED_PID: Pid = Pid::new(0x0050);
+        const SHARED_PID: Pid = Pid::from_const(0x0050);
         const STREAM_TYPE: u8 = 0x7F; // opaque data, PES-carried (see `data_carriage`)
 
         let mut demux = StreamingTsDemux::new();
 
         // PMT A declares the shared PID; PMT B declares it too (same codec).
         demux.apply_pmt_diff(
-            Pid::new(PMT_A),
+            Pid::from_const(PMT_A),
             &BTreeSet::new(),
             alloc::vec![(SHARED_PID, Codec::Data(STREAM_TYPE), Vec::new())],
         );
         demux.apply_pmt_diff(
-            Pid::new(PMT_B),
+            Pid::from_const(PMT_B),
             &BTreeSet::new(),
             alloc::vec![(SHARED_PID, Codec::Data(STREAM_TYPE), Vec::new())],
         );
@@ -11988,7 +12001,7 @@ pub(crate) mod tests {
         let mut pmt_a_applied = BTreeSet::new();
         pmt_a_applied.insert(SHARED_PID);
         demux.apply_pmt_diff(
-            Pid::new(PMT_A),
+            Pid::from_const(PMT_A),
             &pmt_a_applied,
             alloc::vec![(SHARED_PID, Codec::Ac3, Vec::new())],
         );
@@ -12026,7 +12039,7 @@ pub(crate) mod tests {
         // (last) declarer.
         let mut pmt_b_applied = BTreeSet::new();
         pmt_b_applied.insert(SHARED_PID);
-        demux.apply_pmt_diff(Pid::new(PMT_B), &pmt_b_applied, Vec::new());
+        demux.apply_pmt_diff(Pid::from_const(PMT_B), &pmt_b_applied, Vec::new());
         assert_eq!(
             demux.es_declarers.get(&SHARED_PID).map(|d| d.len()),
             Some(1),
@@ -12036,7 +12049,7 @@ pub(crate) mod tests {
         // PMT A reclassifies again: as the *last* declarer, the
         // teardown-and-rebuild now proceeds.
         demux.apply_pmt_diff(
-            Pid::new(PMT_A),
+            Pid::from_const(PMT_A),
             &pmt_a_applied,
             alloc::vec![(SHARED_PID, Codec::Aac, Vec::new())],
         );
@@ -12060,12 +12073,12 @@ pub(crate) mod tests {
     #[test]
     fn codec_change_reregistration_preserves_declaration_order_slot() {
         const PMT: u16 = 0x1000;
-        const PID_X: Pid = Pid::new(0x0050);
-        const PID_Y: Pid = Pid::new(0x0051);
+        const PID_X: Pid = Pid::from_const(0x0050);
+        const PID_Y: Pid = Pid::from_const(0x0051);
 
         let mut demux = StreamingTsDemux::new();
         demux.apply_pmt_diff(
-            Pid::new(PMT),
+            Pid::from_const(PMT),
             &BTreeSet::new(),
             alloc::vec![
                 (PID_X, Codec::Data(0x06), Vec::new()),
@@ -12080,7 +12093,7 @@ pub(crate) mod tests {
         old_applied.insert(PID_X);
         old_applied.insert(PID_Y);
         demux.apply_pmt_diff(
-            Pid::new(PMT),
+            Pid::from_const(PMT),
             &old_applied,
             alloc::vec![
                 (PID_X, Codec::Data(0x08), Vec::new()),
@@ -12150,7 +12163,7 @@ pub(crate) mod tests {
         }
         let pkt = ts_packet_degradation(
             true, // tei
-            Pid::new(0x0100),
+            Pid::from_const(0x0100),
             0,
             0x10, // AFC=01 (payload only)
             None,
@@ -12169,7 +12182,7 @@ pub(crate) mod tests {
             .collect();
         assert_eq!(degraded.len(), 1, "expected exactly one InputDegraded");
         assert_eq!(degraded[0].0, InputDegradation::TransportError);
-        assert_eq!(degraded[0].1.pid, Some(Pid::new(0x0100)));
+        assert_eq!(degraded[0].1.pid, Some(Pid::from_const(0x0100)));
         // packet_index includes the bootstrap null packets.
         assert_eq!(
             degraded[0].1.packet_index,
@@ -12541,7 +12554,7 @@ pub(crate) mod tests {
                 got: 5
             }
         );
-        assert_eq!(degraded[0].1.pid, Some(Pid::new(0x0042)));
+        assert_eq!(degraded[0].1.pid, Some(Pid::from_const(0x0042)));
         // packet_index of the second packet (the gap), offset by bootstrap nulls.
         assert_eq!(
             degraded[0].1.packet_index,
@@ -12659,7 +12672,7 @@ pub(crate) mod tests {
         // First packet: CC=0, no adaptation, PID=0x0077.
         demux.feed(&ts_packet_degradation(
             false,
-            Pid::new(0x0077),
+            Pid::from_const(0x0077),
             0,
             0x10,
             None,
@@ -12674,7 +12687,7 @@ pub(crate) mod tests {
         ];
         demux.feed(&ts_packet_degradation(
             false,
-            Pid::new(0x0077),
+            Pid::from_const(0x0077),
             5,
             0x30,
             Some(&af),
@@ -12759,7 +12772,7 @@ pub(crate) mod tests {
         // First: normal packet, CC=0, PID=0x0083.
         demux.feed(&ts_packet_degradation(
             false,
-            Pid::new(0x0083),
+            Pid::from_const(0x0083),
             0,
             0x10,
             None,
@@ -12769,7 +12782,7 @@ pub(crate) mod tests {
         let af = [0x80u8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
         demux.feed(&ts_packet_degradation(
             false,
-            Pid::new(0x0083),
+            Pid::from_const(0x0083),
             5,
             0x30,
             Some(&af),
@@ -12778,7 +12791,7 @@ pub(crate) mod tests {
         // Third: legal follow-up, CC=6 ((5+1) & 0x0F). Must NOT fire ContinuityGap.
         demux.feed(&ts_packet_degradation(
             false,
-            Pid::new(0x0083),
+            Pid::from_const(0x0083),
             6,
             0x10,
             None,
@@ -12829,7 +12842,7 @@ pub(crate) mod tests {
         ];
         demux.feed(&ts_packet_degradation(
             false,
-            Pid::new(0x0100),
+            Pid::from_const(0x0100),
             0,
             0x30, // AFC=11: adaptation + payload
             Some(&af_pcr_100),
@@ -12844,7 +12857,7 @@ pub(crate) mod tests {
         ];
         demux.feed(&ts_packet_degradation(
             false,
-            Pid::new(0x0100),
+            Pid::from_const(0x0100),
             0, // same CC
             0x30,
             Some(&af_pcr_200),
@@ -13911,8 +13924,8 @@ pub(crate) mod tests {
     /// reassembler's length is the one answer, and it is what the cap reads.
     #[test]
     fn the_pre_pmt_replay_caps_a_pes_with_the_assembler_floor() {
-        const PMT_PID: Pid = Pid::new(0x1000);
-        const ES_PID: Pid = Pid::new(0x1100);
+        const PMT_PID: Pid = Pid::from_const(0x1000);
+        const ES_PID: Pid = Pid::from_const(0x1100);
         let mut demux = StreamingTsDemux::new();
         let pmt = psi_section_packets(PMT_PID, 0, 0x02, &pmt_body(ES_PID, 0x1B));
         // No PAT yet: these payloads land in `unattributed`, and the lead is a
@@ -13937,7 +13950,12 @@ pub(crate) mod tests {
             pkt[4..4 + payload.len()].copy_from_slice(payload);
             demux.feed(&pkt);
         }
-        demux.feed(&psi_section_packets(Pid::new(0), 0, 0x00, &pat_body()));
+        demux.feed(&psi_section_packets(
+            Pid::from_const(0),
+            0,
+            0x00,
+            &pat_body(),
+        ));
         demux.feed(&pmt); // the replay runs now
         let held = match demux.streams.get(&ES_PID).map(|s| &s.carrier) {
             Some(Carrier::Pes(a)) => a.len(),

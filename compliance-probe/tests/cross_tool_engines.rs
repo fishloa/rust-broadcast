@@ -191,7 +191,7 @@ fn both_tools_agree_on_the_canonical_cues_splice_state() {
             .all(|f| f.severity != Severity::Error),
         "a complete, self-closing break is a clean stream"
     );
-    let cue_pid = Pid::new(0x01F0);
+    let cue_pid = Pid::from_const(0x01F0);
     assert!(
         bytes
             .chunks(TS_PACKET_SIZE)

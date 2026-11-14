@@ -20,7 +20,7 @@ use broadcast_common::{Parse, Serialize};
 /// table_id for the Satellite Access Table.
 pub const TABLE_ID: u8 = 0x4D;
 /// Well-known PID on which the SAT is carried (EN 300 468 Table 1, §5.1.3).
-pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x001B);
+pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::from_const(0x001B);
 
 const HEADER_LEN: usize = 9;
 const SECTION_LENGTH_PREFIX: usize = 3;

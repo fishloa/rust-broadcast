@@ -13,7 +13,7 @@
 //! # #[cfg(feature = "ts")] {
 //! use dvb_t2mi::inner_ts::InnerTsRecovery;
 //! use mpeg_ts::pid::Pid;
-//! let mut rec = InnerTsRecovery::new(Pid::new(0x1000)); // the T2-MI PID
+//! let mut rec = InnerTsRecovery::new(Pid::from_const(0x1000)); // the T2-MI PID
 //! for ts_packet in outer_stream() {            // 188-byte outer TS packets
 //!     for inner in rec.feed(&ts_packet) {       // recovered inner TS packets
 //!         feed_to_si_demux(inner);
@@ -283,9 +283,12 @@ mod tests {
     fn recovers_inner_ts_from_nm_bbframe_chain() {
         let pid = 0x1000;
         let inner = inner_packet();
-        let outer = outer_ts(Pid::new(pid), &t2mi_packet(&nm_bbframe(&inner)));
+        let outer = outer_ts(
+            Pid::from_wire_masked(pid),
+            &t2mi_packet(&nm_bbframe(&inner)),
+        );
 
-        let mut rec = InnerTsRecovery::new(Pid::new(pid));
+        let mut rec = InnerTsRecovery::new(Pid::from_wire_masked(pid));
         let mut recovered: Vec<[u8; TS_LEN]> = Vec::new();
         for pkt in &outer {
             recovered.extend_from_slice(rec.feed(pkt));
@@ -300,8 +303,8 @@ mod tests {
     #[test]
     fn wrong_pid_yields_nothing() {
         let inner = inner_packet();
-        let outer = outer_ts(Pid::new(0x1000), &t2mi_packet(&nm_bbframe(&inner)));
-        let mut rec = InnerTsRecovery::new(Pid::new(0x0064)); // different PID
+        let outer = outer_ts(Pid::from_const(0x1000), &t2mi_packet(&nm_bbframe(&inner)));
+        let mut rec = InnerTsRecovery::new(Pid::from_const(0x0064)); // different PID
         let mut n = 0;
         for pkt in &outer {
             n += rec.feed(pkt).len();
@@ -311,7 +314,7 @@ mod tests {
 
     #[test]
     fn garbage_packet_no_panic_no_output() {
-        let mut rec = InnerTsRecovery::new(Pid::new(0x1000));
+        let mut rec = InnerTsRecovery::new(Pid::from_const(0x1000));
         let junk = [0u8; TS_LEN];
         assert!(rec.feed(&junk).is_empty());
     }
@@ -356,10 +359,10 @@ mod tests {
         // Interleave: PLP 0 then PLP 1 (two separate T2-MI packets).
         let mut combined = t2mi_plp0;
         combined.extend_from_slice(&t2mi_plp1);
-        let outer = outer_ts(Pid::new(pid), &combined);
+        let outer = outer_ts(Pid::from_wire_masked(pid), &combined);
 
         // --- Test: new_for_plp(pid, 0) should only get plp 0 ---
-        let mut rec0 = InnerTsRecovery::new_for_plp(Pid::new(pid), 0);
+        let mut rec0 = InnerTsRecovery::new_for_plp(Pid::from_wire_masked(pid), 0);
         let mut recovered_0: Vec<[u8; TS_LEN]> = Vec::new();
         for pkt in &outer {
             recovered_0.extend_from_slice(rec0.feed(pkt));
@@ -377,7 +380,7 @@ mod tests {
         );
 
         // --- Test: new_for_plp(pid, 1) should only get plp 1 ---
-        let mut rec1 = InnerTsRecovery::new_for_plp(Pid::new(pid), 1);
+        let mut rec1 = InnerTsRecovery::new_for_plp(Pid::from_wire_masked(pid), 1);
         let mut recovered_1: Vec<[u8; TS_LEN]> = Vec::new();
         for pkt in &outer {
             recovered_1.extend_from_slice(rec1.feed(pkt));
@@ -395,7 +398,7 @@ mod tests {
         );
 
         // --- Test: new(pid) should get BOTH ---
-        let mut all = InnerTsRecovery::new(Pid::new(pid));
+        let mut all = InnerTsRecovery::new(Pid::from_wire_masked(pid));
         let mut recovered_all: Vec<[u8; TS_LEN]> = Vec::new();
         for pkt in &outer {
             recovered_all.extend_from_slice(all.feed(pkt));

@@ -86,18 +86,26 @@ fn parsed_fields_match_wire_bytes() {
         assert_eq!(hdr.tei, (b1 & 0x80) != 0, "pkt {i}: tei");
         assert_eq!(hdr.pusi, (b1 & 0x40) != 0, "pkt {i}: pusi");
         let pid_expected = (((b1 & 0x1F) as u16) << 8) | (chunk[2] as u16);
-        assert_eq!(hdr.pid, Pid::new(pid_expected), "pkt {i}: pid");
+        assert_eq!(
+            hdr.pid,
+            Pid::try_new(pid_expected).expect("pid fits the 13-bit field"),
+            "pkt {i}: pid"
+        );
 
         // byte 3
         let b3 = chunk[3];
-        assert_eq!(hdr.scrambling, (b3 >> 6) & 0x3, "pkt {i}: scrambling");
         assert_eq!(
-            hdr.has_adaptation,
+            hdr.scrambling.to_bits(),
+            (b3 >> 6) & 0x3,
+            "pkt {i}: scrambling"
+        );
+        assert_eq!(
+            hdr.has_adaptation(),
             (b3 & 0x20) != 0,
             "pkt {i}: has_adaptation"
         );
-        assert_eq!(hdr.has_payload, (b3 & 0x10) != 0, "pkt {i}: has_payload");
-        assert_eq!(hdr.continuity_counter, b3 & 0x0F, "pkt {i}: cc");
+        assert_eq!(hdr.has_payload(), (b3 & 0x10) != 0, "pkt {i}: has_payload");
+        assert_eq!(hdr.continuity_counter.value(), b3 & 0x0F, "pkt {i}: cc");
     }
 }
 
@@ -123,7 +131,7 @@ fn all_packets_are_not_scrambled() {
     let mut scrambled_count = 0usize;
 
     for pkt in iter_packets(&buf) {
-        if pkt.header.scrambling_control() != ScramblingControl::NotScrambled {
+        if pkt.header.scrambling != ScramblingControl::NotScrambled {
             scrambled_count += 1;
         }
     }
@@ -142,7 +150,7 @@ fn adaptation_field_control_accessor_on_real_data() {
     let mut counts = [0usize; 4];
 
     for pkt in iter_packets(&buf) {
-        let afc = pkt.header.adaptation_field_control();
+        let afc = pkt.header.adaptation;
         match afc {
             AdaptationFieldControl::Reserved => counts[0] += 1,
             AdaptationFieldControl::PayloadOnly => counts[1] += 1,
@@ -166,7 +174,7 @@ fn pat_section_reassembles_and_crc_validates() {
     let mut reasm = SectionReassembler::default();
 
     for pkt in iter_packets(&buf) {
-        if pkt.header.pid != Pid::new(PAT_PID) {
+        if pkt.header.pid != Pid::from_const(PAT_PID) {
             continue;
         }
         if let Some(payload) = pkt.payload {

@@ -356,7 +356,10 @@ mod tests {
             ts.extend_from_slice(&one);
             // A genuine PMT on the aliased PID, its version changing between
             // repetitions — the shape the old walk misreports as `pmt-version`.
-            ts.extend_from_slice(&build_pmt_ts_on_pid(Pid::new(aliased_pid), cycle));
+            ts.extend_from_slice(&build_pmt_ts_on_pid(
+                Pid::try_new(aliased_pid).expect("pid fits the 13-bit field"),
+                cycle,
+            ));
         }
 
         let report = check(&ts);

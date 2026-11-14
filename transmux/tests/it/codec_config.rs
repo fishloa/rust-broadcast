@@ -33,7 +33,7 @@ fn demux_annexb_nals<P: AsRef<std::path::Path>>(path: P, pid: u16) -> Vec<Vec<u8
             Some(p) => p,
             None => continue,
         };
-        if pkt.pid() != Pid::new(pid) {
+        if pkt.pid() != Pid::from_wire_masked(pid) {
             continue;
         }
         if let Some(completed) = assembler.feed(pkt.pusi(), payload) {

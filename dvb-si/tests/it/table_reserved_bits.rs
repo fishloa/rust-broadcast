@@ -629,7 +629,7 @@ fn defaults_carry_spec_fill_psi_private_indicator_zero() {
         true,
         0,
         0,
-        vec![PatEntry::new(1, Pid::new(0x0100))],
+        vec![PatEntry::new(1, Pid::from_const(0x0100))],
     ));
     assert_eq!(pat[1] & 0xF0, 0xB0, "PAT: ssi=1, '0', reserved=11");
     assert_eq!(pat[5] & 0xC0, 0xC0, "PAT: reserved(2) before version");
@@ -637,9 +637,13 @@ fn defaults_carry_spec_fill_psi_private_indicator_zero() {
     let pmt = ser(&PmtSection::new(
         1,
         dvb_si::tables::SectionVersion::new(0, true, 0, 0),
-        Pid::new(0x0101),
+        Pid::from_const(0x0101),
         dl(&[]),
-        vec![PmtStream::new(StreamType::H264, Pid::new(0x0101), dl(&[]))],
+        vec![PmtStream::new(
+            StreamType::H264,
+            Pid::from_const(0x0101),
+            dl(&[]),
+        )],
     ));
     assert_eq!(pmt[1] & 0xF0, 0xB0);
     assert_eq!(pmt[8] & 0xE0, 0xE0, "PMT: reserved(3) before PCR_PID");

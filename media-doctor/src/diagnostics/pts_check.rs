@@ -105,7 +105,7 @@ impl Diagnostic for PtsCheck {
             // break, so skipping it would silently drop that access unit and
             // leave the first post-break timestamp unbaselined and unchecked
             // (audit MD-W5).
-            if pkt.header.has_adaptation
+            if pkt.header.has_adaptation()
                 && let Some(Ok(af)) = pkt.adaptation_field()
                 && af.discontinuity_indicator
             {
@@ -319,12 +319,12 @@ mod tests {
         let mut ts = Vec::new();
         // AU 0: pts=dts=90_000. AU 1: pts=87_000 (backward, reorder) dts=93_000 (forward).
         ts.extend_from_slice(&make_pes_packet(
-            Pid::new(pid),
+            Pid::from_wire_masked(pid),
             0,
             &build_pes_with_pts_dts(0xE0, 90_000, 90_000, &[0xAA]),
         ));
         ts.extend_from_slice(&make_pes_packet(
-            Pid::new(pid),
+            Pid::from_wire_masked(pid),
             1,
             &build_pes_with_pts_dts(0xE0, 87_000, 93_000, &[0xBB]),
         ));
@@ -343,13 +343,13 @@ mod tests {
         let pid = 0x0100;
         let mut ts = Vec::new();
         ts.extend_from_slice(&make_pes_packet(
-            Pid::new(pid),
+            Pid::from_wire_masked(pid),
             0,
             &build_pes_with_pts_dts(0xE0, 90_000, 90_000, &[0xAA]),
         ));
         // dts=84_000 < prev 90_000 → backward decode timestamp.
         ts.extend_from_slice(&make_pes_packet(
-            Pid::new(pid),
+            Pid::from_wire_masked(pid),
             1,
             &build_pes_with_pts_dts(0xE0, 96_000, 84_000, &[0xBB]),
         ));
@@ -390,7 +390,7 @@ mod tests {
     fn single_pes_no_findings() {
         let pid = 0x0100;
         let pes = build_pes_with_pts(0xE0, 90_000, &[0xAA, 0xBB]);
-        let ts = make_pes_packet(Pid::new(pid), 0, &pes);
+        let ts = make_pes_packet(Pid::from_wire_masked(pid), 0, &pes);
         let mut report = Report::new();
         PtsCheck.run(&ts, &mut report);
         assert!(
@@ -405,12 +405,12 @@ mod tests {
         let pid = 0x0100;
         let mut ts = Vec::new();
         ts.extend_from_slice(&make_pes_packet(
-            Pid::new(pid),
+            Pid::from_wire_masked(pid),
             0,
             &build_pes_with_pts(0xE0, 90_000, &[0xAA]),
         ));
         ts.extend_from_slice(&make_pes_packet(
-            Pid::new(pid),
+            Pid::from_wire_masked(pid),
             1,
             &build_pes_with_pts(0xE0, 93_000, &[0xBB]),
         ));
@@ -428,12 +428,12 @@ mod tests {
         let pid = 0x0100;
         let mut ts = Vec::new();
         ts.extend_from_slice(&make_pes_packet(
-            Pid::new(pid),
+            Pid::from_wire_masked(pid),
             0,
             &build_pes_with_pts(0xE0, 90_000, &[0xAA]),
         ));
         ts.extend_from_slice(&make_pes_packet(
-            Pid::new(pid),
+            Pid::from_wire_masked(pid),
             1,
             &build_pes_with_pts(0xE0, 40_000, &[0xBB]),
         ));
@@ -460,13 +460,13 @@ mod tests {
         // Near the top of the 33-bit range.
         let near_wrap = PTS_MOD - 5000;
         ts.extend_from_slice(&make_pes_packet(
-            Pid::new(pid),
+            Pid::from_wire_masked(pid),
             0,
             &build_pes_with_pts(0xE0, near_wrap, &[0xAA]),
         ));
         // Just past wrap.
         ts.extend_from_slice(&make_pes_packet(
-            Pid::new(pid),
+            Pid::from_wire_masked(pid),
             1,
             &build_pes_with_pts(0xE0, 1000, &[0xBB]),
         ));
@@ -488,7 +488,7 @@ mod tests {
     fn forbidden_pts_dts_flags_detected() {
         let pid = 0x0100;
         let pes = build_pes_forbidden_flags(0xE0, &[0xAA, 0xBB]);
-        let ts = make_pes_packet(Pid::new(pid), 0, &pes);
+        let ts = make_pes_packet(Pid::from_wire_masked(pid), 0, &pes);
         let mut report = Report::new();
         PtsCheck.run(&ts, &mut report);
         let ff: Vec<_> = report
@@ -532,9 +532,9 @@ mod tests {
         let pes2 = build_pes_with_pts(0xE0, 45_000, &[0xCC]);
 
         let mut ts = Vec::new();
-        ts.extend_from_slice(&make_disc_pkt(Pid::new(pid), 0, &pes0, false));
-        ts.extend_from_slice(&make_disc_pkt(Pid::new(pid), 1, &pes1, true));
-        ts.extend_from_slice(&make_disc_pkt(Pid::new(pid), 2, &pes2, false));
+        ts.extend_from_slice(&make_disc_pkt(Pid::from_wire_masked(pid), 0, &pes0, false));
+        ts.extend_from_slice(&make_disc_pkt(Pid::from_wire_masked(pid), 1, &pes1, true));
+        ts.extend_from_slice(&make_disc_pkt(Pid::from_wire_masked(pid), 2, &pes2, false));
         let mut report = Report::new();
         PtsCheck.run(&ts, &mut report);
         let bw: Vec<_> = report
@@ -581,9 +581,19 @@ mod tests {
         let pes_after = build_pes_with_pts(0xE0, 100_000, &[0xCC]);
 
         let mut ts = Vec::new();
-        ts.extend_from_slice(&make_disc_pkt(Pid::new(pid), 0, &pes0, false));
-        ts.extend_from_slice(&make_disc_pkt(Pid::new(pid), 1, &pes_disc, true));
-        ts.extend_from_slice(&make_disc_pkt(Pid::new(pid), 2, &pes_after, false));
+        ts.extend_from_slice(&make_disc_pkt(Pid::from_wire_masked(pid), 0, &pes0, false));
+        ts.extend_from_slice(&make_disc_pkt(
+            Pid::from_wire_masked(pid),
+            1,
+            &pes_disc,
+            true,
+        ));
+        ts.extend_from_slice(&make_disc_pkt(
+            Pid::from_wire_masked(pid),
+            2,
+            &pes_after,
+            false,
+        ));
 
         let mut report = Report::new();
         PtsCheck.run(&ts, &mut report);

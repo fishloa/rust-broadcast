@@ -87,7 +87,7 @@ impl<'a> Parse<'a> for CaDescriptor<'a> {
                 })?;
         let ca_system_id = u16::from_be_bytes([fixed[0], fixed[1]]);
         // ca_pid: upper 3 bits are reserved (should be 0b111), lower 13 bits are the PID
-        let ca_pid = Pid::new(u16::from_be_bytes([fixed[2], fixed[3]]));
+        let ca_pid = Pid::from_wire_masked(u16::from_be_bytes([fixed[2], fixed[3]]));
         Ok(Self {
             reserved: fixed[2] >> 5,
             ca_system_id,
@@ -138,7 +138,7 @@ mod tests {
         let bytes = [TAG, 4, 0x05, 0x00, 0xE1, 0x01];
         let d = CaDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.ca_system_id, 0x0500);
-        assert_eq!(d.ca_pid, Pid::new(0x0101));
+        assert_eq!(d.ca_pid, Pid::from_const(0x0101));
         assert!(d.private_data.is_empty());
     }
 
@@ -148,7 +148,7 @@ mod tests {
         let bytes = [TAG, 6, 0x05, 0x00, 0xE1, 0x01, 0xAA, 0xBB];
         let d = CaDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.ca_system_id, 0x0500);
-        assert_eq!(d.ca_pid, Pid::new(0x0101));
+        assert_eq!(d.ca_pid, Pid::from_const(0x0101));
         assert_eq!(d.private_data, &[0xAA, 0xBB]);
     }
 
@@ -170,7 +170,7 @@ mod tests {
         // bits separately, so a parsed descriptor re-serializes identically.
         let bytes = [TAG, 4, 0x05, 0x00, 0xE1, 0x01];
         let d = CaDescriptor::parse(&bytes).unwrap();
-        assert_eq!(d.ca_pid, Pid::new(0x0101));
+        assert_eq!(d.ca_pid, Pid::from_const(0x0101));
     }
 
     #[test]
@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn serialize_round_trip() {
-        let d = CaDescriptor::new(0x1800, Pid::new(0x0200), &[0xDE, 0xAD]);
+        let d = CaDescriptor::new(0x1800, Pid::from_const(0x0200), &[0xDE, 0xAD]);
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         let reparsed = CaDescriptor::parse(&buf).unwrap();
@@ -210,7 +210,7 @@ mod tests {
 
     #[test]
     fn serialize_round_trip_no_private_data() {
-        let d = CaDescriptor::new(0x0500, Pid::new(0x0101), &[]);
+        let d = CaDescriptor::new(0x0500, Pid::from_const(0x0101), &[]);
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         let reparsed = CaDescriptor::parse(&buf).unwrap();
@@ -219,7 +219,7 @@ mod tests {
 
     #[test]
     fn serialize_rejects_small_buffer() {
-        let d = CaDescriptor::new(0x0500, Pid::new(0x0101), &[]);
+        let d = CaDescriptor::new(0x0500, Pid::from_const(0x0101), &[]);
         let mut tiny = vec![0u8; 3];
         let err = d.serialize_into(&mut tiny).unwrap_err();
         assert!(matches!(err, Error::OutputBufferTooSmall(..)));
@@ -227,7 +227,7 @@ mod tests {
 
     #[test]
     fn descriptor_length_matches_payload() {
-        let d = CaDescriptor::new(0x0500, Pid::new(0x0101), &[0xAA]);
+        let d = CaDescriptor::new(0x0500, Pid::from_const(0x0101), &[0xAA]);
         assert_eq!(d.serialized_len() - 2, 5);
     }
 
@@ -271,7 +271,7 @@ mod tests {
 
     #[test]
     fn default_reserved_is_ones() {
-        let d = CaDescriptor::new(0x0500, Pid::new(0x0101), &[]);
+        let d = CaDescriptor::new(0x0500, Pid::from_const(0x0101), &[]);
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(buf, [TAG, 4, 0x05, 0x00, 0xE1, 0x01]);
