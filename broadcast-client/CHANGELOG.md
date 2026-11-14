@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
+- BREAKING: `UdpConfig`'s `interface`, `interface_index`, `source` and `recv_buffer_bytes` fields are replaced by one `options: broadcast_common::net::UdpOptions`, and `MulticastJoin` is now the shared `broadcast_common::net::MulticastJoin` (`group`, `interface: MulticastInterface`, `source`). The session fills the join's group from the URL, so `interface` + `interface_index` "never set together" is unrepresentable. Migration: `cfg.udp.interface = Some(ip); cfg.udp.source = Some(src);` becomes `cfg.udp.options = cfg.udp.options.with_join(MulticastJoin::new(group).with_interface(MulticastInterface::V4(ip)).with_source(src));`, `cfg.udp.interface_index = Some(i)` becomes `.with_interface(MulticastInterface::V6Index(i))` (set on `options.join`), and `cfg.udp.recv_buffer_bytes = Some(n)` becomes `cfg.udp.options = cfg.udp.options.with_recv_buffer_bytes(n)`. `broadcast_client::MulticastJoin` is no longer re-exported from the crate root.
+- BREAKING: `Action::UdpBind` carries `options: broadcast_common::net::UdpOptions` (the `multicast` and `recv_buffer_bytes` fields are gone): a host applies `options` as one unit, so `SO_REUSEADDR`/`SO_REUSEPORT` ride along with the join (multimux now does).
+- The config-error fields name the new shape: a join interface of the wrong family is `udp.options.join.interface`, a bad source is `udp.options.join.source`, a join on a unicast URL is `udp.options.join` (#2663).
+### Fixed
+- A malformed multicast join (an interface of the other family, a source that is not a unicast address of the group's family) is a typed config error at `Session::open` rather than reaching the host (#2663).
 - Dev-dependency `rtsp-types` 0.1 to 0.2, following `rtsp-runtime`.
 ### Fixed
 - `Config::with_timeouts` maps SRT exactly as `SrtConfig::with_timeouts` does (`handshake` to the handshake bound, `read_idle` to the peer-idle bound; it used `connect` for the handshake), and under the default `SourceKind::Auto` applies every protocol's mapping so the one the URL resolves to takes effect, instead of only the TS-over-HTTP stall policy (#2639).

@@ -372,18 +372,43 @@ impl std::fmt::Debug for UdpSocketSpec {
 }
 
 impl UdpSocketSpec {
-    /// The bind options these settings describe.
-    pub(crate) fn to_bind_options(&self) -> crate::source::udp::UdpBindOptions {
-        crate::source::udp::UdpBindOptions {
-            recv_buffer_bytes: self.recv_buffer_bytes,
-            reuse_address: self.reuse_address,
-            multicast_interface: self.multicast_interface.clone(),
-            reuse_port: self.reuse_port,
+    /// The socket options these settings describe. A
+    /// `multicast_interface` is an IPv4 address, else an IPv6 interface
+    /// index (a decimal number), else a system interface name the host
+    /// resolves.
+    ///
+    /// # Errors
+    ///
+    /// [`MultimuxError::ConfigInvalid`] when the interface is written like an
+    /// IPv4 address or an index but is neither.
+    pub(crate) fn to_bind_options(&self) -> Result<broadcast_common::net::UdpOptions> {
+        let mut options = broadcast_common::net::UdpOptions::new()
+            .with_reuse_address(self.reuse_address)
+            .with_reuse_port(self.reuse_port);
+        if let Some(bytes) = self.recv_buffer_bytes {
+            options = options.with_recv_buffer_bytes(bytes);
         }
+        if let Some(text) = self.multicast_interface.as_deref() {
+            let interface =
+                broadcast_common::net::MulticastInterface::parse(text).map_err(|error| {
+                    MultimuxError::ConfigInvalid {
+                        field: "routes.input.multicast_interface",
+                        reason: error.to_string(),
+                    }
+                })?;
+            options = options.with_join(
+                broadcast_common::net::MulticastJoin::new(std::net::IpAddr::V4(
+                    std::net::Ipv4Addr::UNSPECIFIED,
+                ))
+                .with_interface(interface),
+            );
+        }
+        Ok(options)
     }
 
     /// Reject a zero receive buffer (a request for a zero-length buffer is
-    /// never what an operator means).
+    /// never what an operator means) and a `multicast_interface` that is
+    /// written like an address or an index but is neither.
     fn validate(&self) -> Result<()> {
         if self.recv_buffer_bytes == Some(0) {
             return Err(MultimuxError::ConfigInvalid {
@@ -391,6 +416,7 @@ impl UdpSocketSpec {
                 reason: "must be greater than zero".into(),
             });
         }
+        self.to_bind_options()?;
         Ok(())
     }
 }
@@ -3912,8 +3938,14 @@ mod tests {
                 assert_eq!(socket.recv_buffer_bytes, Some(4_194_304));
                 assert!(socket.reuse_address);
                 assert_eq!(socket.multicast_interface.as_deref(), Some("192.168.1.10"));
-                let opts = socket.to_bind_options();
+                let opts = socket.to_bind_options().unwrap();
                 assert_eq!(opts.recv_buffer_bytes, Some(4_194_304));
+                assert_eq!(
+                    opts.join.unwrap().interface,
+                    broadcast_common::net::MulticastInterface::V4(std::net::Ipv4Addr::new(
+                        192, 168, 1, 10
+                    ))
+                );
             }
             other => panic!("expected InputSpec::TsUdp, got {other:?}"),
         }

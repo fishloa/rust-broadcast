@@ -1975,14 +1975,14 @@ fn spawn_ingest(
             multicast_group,
             socket,
         } => {
-            let route_cfg = crate::source::rtp_udp::RtpUdpRoute::new(
-                name,
-                addr.clone(),
-                sdp.clone(),
-                multicast_group.clone(),
-            )
-            .with_socket_options(socket.to_bind_options())
-            .with_timeouts(timeouts);
+            let route_cfg =
+                crate::source::rtp_udp::RtpUdpRoute::new(name, addr.clone(), sdp.clone())
+                    .with_socket_options(crate::source::udp::bind_options(
+                        addr,
+                        multicast_group.as_deref(),
+                        &socket.to_bind_options()?,
+                    )?)
+                    .with_timeouts(timeouts);
             spawn_supervised(
                 route_cfg,
                 ctx,
@@ -2003,27 +2003,24 @@ fn spawn_ingest(
             multicast_group,
             socket,
         } => {
+            let bind = crate::source::udp::bind_options(
+                addr,
+                multicast_group.as_deref(),
+                &socket.to_bind_options()?,
+            )?;
             // A `test-hooks` caller may have bound this exact `addr` itself and
             // handed the live socket in (`Config::prebound`), so the route
             // consumes it rather than racing reserve-then-rebind. A configured
             // `multicast_group` cannot be joined on a caller-bound socket, so
-            // carry it onto the route: `bind` then rejects the contradiction
-            // instead of silently dropping the group.
+            // its join stays on the route's options: `bind` then rejects the
+            // contradiction instead of silently dropping the group.
             let route_cfg = match config.prebound_udp(addr) {
-                Some(socket) => {
-                    let mut route = crate::source::ts_udp::TsUdpRoute::with_socket(name, socket);
-                    if let Some(group) = multicast_group.clone() {
-                        route = route.with_multicast_group(group);
-                    }
-                    route.with_timeouts(timeouts)
-                }
-                None => crate::source::ts_udp::TsUdpRoute::new(
-                    name,
-                    addr.clone(),
-                    multicast_group.clone(),
-                )
-                .with_socket_options(socket.to_bind_options())
-                .with_timeouts(timeouts),
+                Some(socket) => crate::source::ts_udp::TsUdpRoute::with_socket(name, socket)
+                    .with_socket_options(bind)
+                    .with_timeouts(timeouts),
+                None => crate::source::ts_udp::TsUdpRoute::new(name, addr.clone())
+                    .with_socket_options(bind)
+                    .with_timeouts(timeouts),
             };
             spawn_supervised(
                 route_cfg,

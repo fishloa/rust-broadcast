@@ -2,12 +2,12 @@
 //! OS-assigned (port 0); no fixed ports, no sleeps.
 #![cfg(feature = "udp")]
 
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::pin::Pin;
 use std::time::Duration;
 
+use broadcast_common::net::{MulticastInterface, MulticastJoin, UdpOptions};
 use dvb_stream::UdpSectionStream;
-use dvb_stream::udp::MulticastConfig;
 use futures_core::Stream;
 use test_fixtures::psi::pat_packet;
 
@@ -87,23 +87,24 @@ async fn a_junk_datagram_between_good_ones_is_isolated() {
 }
 
 #[test]
-fn multicast_config_applies_the_socket_options() {
+fn udp_options_apply_the_socket_options() {
     // 64 KiB is below the default `SO_RCVBUF` of both macOS (~768 KiB) and Linux (~208 KiB),
     // so the assertion discriminates "option applied" from "OS default" on either.
     const REQUESTED: usize = 64 * 1024;
-    let cfg = MulticastConfig::new(
-        SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0),
-        Ipv4Addr::new(239, 255, 42, 1),
-    )
-    .with_recv_buffer_size(REQUESTED);
+    let bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0);
+    let join = MulticastJoin::new(IpAddr::V4(Ipv4Addr::new(239, 255, 42, 1)))
+        .with_interface(MulticastInterface::V4(*bind_addr.ip()));
+    let cfg = UdpOptions::new().with_join(join);
     assert!(
-        !cfg.reuse_address,
+        !cfg.reuse_address && !cfg.reuse_port,
         "default matches the plain UdpSocket::bind it replaces (no address reuse)"
     );
-    let cfg = cfg.with_reuse_address(true);
+    let cfg = cfg
+        .with_recv_buffer_bytes(REQUESTED)
+        .with_reuse_address(true);
     // Join may be refused in a sandbox with no multicast route: that is an environment limit,
     // not a failure of the option wiring, so only the Ok path asserts.
-    match cfg.bind() {
+    match dvb_stream::udp::bind_udp(SocketAddr::V4(bind_addr), &cfg) {
         Ok(sock) => {
             let s = socket2::SockRef::from(&sock);
             let applied = s.recv_buffer_size().unwrap();
@@ -117,8 +118,8 @@ fn multicast_config_applies_the_socket_options() {
                 s.reuse_address().unwrap(),
                 "SO_REUSEADDR applied when requested"
             );
-            assert!(sock.local_addr().unwrap().port() != 0);
+            assert!(sock.local_addr().unwrap().as_socket().unwrap().port() != 0);
         }
-        Err(e) => eprintln!("skipping multicast_config_applies_the_socket_options: {e}"),
+        Err(e) => eprintln!("skipping udp_options_apply_the_socket_options: {e}"),
     }
 }

@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `net` module: `UdpOptions` (the one UDP bind/join option set: `recv_buffer_bytes`, `reuse_address`, `reuse_port`, `multicast`), `MulticastJoin` (`group` + `interface` + optional source-specific `source`) and `MulticastInterface` (`Any` / `V4(Ipv4Addr)` / `V6Index(u32)` / `Name(String)`, `parse`/`as_str`), plus `UdpOptions::validate` and `JoinMismatch`. Plain `core::net` data, `no_std`, so a sans-IO engine can carry it in an action (#2663).
 ### Changed
 - BREAKING: the `chrono` feature is replaced by `jiff` (no alias): `time::decode_mjd_bcd_utc`, `encode_mjd_bcd_utc`, `decode_seconds_since_2000_utc` and `encode_seconds_since_2000_utc` take and return `jiff::Timestamp` instead of `chrono::DateTime<Utc>`, with the same MJD + BCD semantics; `chrono` is no longer a dependency. `decode_seconds_since_2000_utc` returns `None` for `subsec_nanos` of a whole second or more (chrono accepted 1–2 s as a leap second). `jiff` stays `no_std`-compatible (#2635).
 - `time::mjd_to_ymd` and `time::ymd_to_mjd` no longer need a feature (#2635).

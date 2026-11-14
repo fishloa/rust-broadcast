@@ -26,10 +26,9 @@ pub struct RtpUdpRoute {
     name: String,
     addr: String,
     sdp: String,
-    multicast_group: Option<String>,
-    /// Socket options for the bind (SP1.6); the default reproduces the
-    /// pre-SP1.6 bind.
-    socket: crate::source::udp::UdpBindOptions,
+    /// Socket options for the bind (SP1.6), the multicast join included;
+    /// the default reproduces the pre-SP1.6 bind.
+    socket: broadcast_common::net::UdpOptions,
     timeouts: Timeouts,
     /// A socket bound by the caller: used once by the first attempt, so a test can own the exact
     /// port without a reserve-then-rebind race. `None` (the production shape) binds `addr`.
@@ -42,7 +41,6 @@ impl std::fmt::Debug for RtpUdpRoute {
             .field("name", &self.name)
             .field("addr", &self.addr)
             .field("sdp_len", &self.sdp.len())
-            .field("multicast_group", &self.multicast_group)
             .field("socket", &self.socket)
             .finish()
     }
@@ -52,26 +50,21 @@ impl RtpUdpRoute {
     /// Build a route descriptor. `sdp` is either an inline SDP body or an
     /// `@path` reference to a file containing one (see
     /// [`crate::source::sdp::load_sdp`]).
-    pub fn new(
-        name: impl Into<String>,
-        addr: impl Into<String>,
-        sdp: impl Into<String>,
-        multicast_group: Option<String>,
-    ) -> Self {
+    pub fn new(name: impl Into<String>, addr: impl Into<String>, sdp: impl Into<String>) -> Self {
         RtpUdpRoute {
             name: name.into(),
             addr: addr.into(),
             sdp: sdp.into(),
-            multicast_group,
-            socket: crate::source::udp::UdpBindOptions::default(),
+            socket: broadcast_common::net::UdpOptions::default(),
             timeouts: Timeouts::default(),
             prebound: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
     /// Builds a route over an already-bound UDP socket (the mirror of
-    /// `TsUdpRoute::with_socket`). The socket is used verbatim, so a multicast group cannot be
-    /// joined on it: [`run_rtp_udp`] fails if one is set.
+    /// `TsUdpRoute::with_socket`). The socket is used verbatim, so a socket
+    /// option carrying a multicast join cannot be applied on it:
+    /// [`run_rtp_udp`] fails if one is set.
     pub fn with_socket(name: impl Into<String>, sdp: impl Into<String>, socket: UdpSocket) -> Self {
         let addr = socket
             .local_addr()
@@ -80,23 +73,15 @@ impl RtpUdpRoute {
             name: name.into(),
             addr,
             sdp: sdp.into(),
-            multicast_group: None,
-            socket: crate::source::udp::UdpBindOptions::default(),
+            socket: broadcast_common::net::UdpOptions::default(),
             timeouts: Timeouts::default(),
             prebound: std::sync::Arc::new(std::sync::Mutex::new(Some(socket))),
         }
     }
 
-    /// Joins `group` on the route's own bind.
-    #[must_use]
-    pub fn with_multicast_group(mut self, group: impl Into<String>) -> Self {
-        self.multicast_group = Some(group.into());
-        self
-    }
-
     /// Set the UDP socket options applied at bind (SP1.6).
     #[must_use]
-    pub fn with_socket_options(mut self, socket: crate::source::udp::UdpBindOptions) -> Self {
+    pub fn with_socket_options(mut self, socket: broadcast_common::net::UdpOptions) -> Self {
         self.socket = socket;
         self
     }
@@ -124,11 +109,7 @@ impl RtpUdpRoute {
         config.udp.sdp = Some(
             String::from_utf8(sdp).map_err(|e| MultimuxError::Sdp(format!("parse: {e}").into()))?,
         );
-        crate::source::udp::apply_socket_options(
-            &mut config,
-            self.multicast_group.as_deref(),
-            &self.socket,
-        )?;
+        crate::source::udp::apply_socket_options(&mut config, &self.socket)?;
         Ok(config)
     }
 }
@@ -149,18 +130,19 @@ pub async fn run_rtp_udp(
 ) -> MultimuxError {
     let prebound = crate::source::udp::take_prebound(&route.prebound);
     if prebound.is_some()
-        && let Some(group) = route.multicast_group.as_deref()
+        && let Some(join) = &route.socket.join
     {
         return MultimuxError::ConfigInvalid {
             field: "routes.input.multicast_group",
             reason: format!(
-                "a pre-bound socket cannot join multicast_group {group:?}; drop the group, \
-                 or let the route bind its own addr"
+                "a pre-bound socket cannot join multicast group {}; drop the group, \
+                 or let the route bind its own addr",
+                join.group
             ),
         };
     }
     let (url, config) = match (
-        crate::source::udp::session_url("rtp", &route.addr, route.multicast_group.as_deref()),
+        crate::source::udp::session_url("rtp", &route.addr, route.socket.join.as_ref()),
         route.session_config(),
     ) {
         (Ok(url), Ok(config)) => (url, config),
@@ -202,6 +184,7 @@ pub async fn run_rtp_udp(
 mod tests {
     use super::*;
     use crate::route::RouteConfig;
+    use broadcast_common::net::{MulticastJoin, UdpOptions};
     use media_plane::trunk::SampleCursorItem;
     use media_plane::ts_session::test_support::{handshake, trunk_config};
     use std::time::Duration;
@@ -386,8 +369,9 @@ mod tests {
     #[tokio::test]
     async fn with_socket_rejects_a_configured_multicast_group() {
         let socket = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
+        let join = MulticastJoin::new("239.1.2.3".parse().unwrap());
         let route = RtpUdpRoute::with_socket("cam-udp", sdp_body(), socket)
-            .with_multicast_group("239.1.2.3");
+            .with_socket_options(UdpOptions::new().with_join(join));
         let error = run_rtp_udp(
             &route,
             trunk_config(),

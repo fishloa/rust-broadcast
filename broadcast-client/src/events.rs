@@ -597,11 +597,12 @@ pub enum Action {
     /// datagram it then receives goes to [`crate::Session::on_data`], one call per datagram.
     ///
     /// With `socket2` the host does, in `Receive` mode: `Socket::new(DGRAM)`, `set_reuse_address`
-    /// (and `set_reuse_port` where it exists) so several players can share a group,
-    /// `set_recv_buffer_size(recv_buffer_bytes)`, `bind(host:port)`, then for a multicast `host`
-    /// `join_multicast_v4(group, interface)` or `join_ssm_v4(source, group, interface)` (the v6
-    /// forms with an interface index); in `Connect` mode it resolves `host`, binds an ephemeral
-    /// local port and `connect`s to `host:port`.
+    /// (and `set_reuse_port`) when `options` asks, `set_recv_buffer_size(recv_buffer_bytes)`,
+    /// `bind(host:port)`, then for a multicast `host` `join_multicast_v4(group, interface)` or
+    /// `join_ssm_v4(source, group, interface)` (the v6 forms with an interface index), as
+    /// `options.join` describes ([`broadcast_common::net::UdpOptions`]; the crate's
+    /// [`crate::udp::UdpMode::Receive`] docs describe the ordered step list); in `Connect` mode it
+    /// resolves `host`, binds an ephemeral local port and `connect`s to `host:port`.
     UdpBind {
         /// Connection id.
         conn: ConnId,
@@ -612,10 +613,9 @@ pub enum Action {
         port: u16,
         /// What to do with the socket.
         mode: crate::udp::UdpMode,
-        /// Multicast membership; `Some` only when `host` is a multicast group in `Receive` mode.
-        multicast: Option<crate::udp::MulticastJoin>,
-        /// Requested `SO_RCVBUF` in bytes.
-        recv_buffer_bytes: Option<u32>,
+        /// The socket options to apply: `SO_RCVBUF`, `SO_REUSEADDR`/`SO_REUSEPORT`, and the
+        /// multicast join (`options.join`, whose `group` is `host` in `Receive` mode).
+        options: broadcast_common::net::UdpOptions,
     },
     /// Write bytes to an open TCP connection (RTSP), or send them as one datagram on a
     /// [`crate::udp::UdpMode::Connect`] socket (SRT).
@@ -676,16 +676,14 @@ impl core::fmt::Debug for Action {
                 host,
                 port,
                 mode,
-                multicast,
-                recv_buffer_bytes,
+                options,
             } => f
                 .debug_struct("UdpBind")
                 .field("conn", conn)
                 .field("host", host)
                 .field("port", port)
                 .field("mode", mode)
-                .field("multicast", multicast)
-                .field("recv_buffer_bytes", recv_buffer_bytes)
+                .field("options", options)
                 .finish(),
             Self::Send { conn, bytes } => f
                 .debug_struct("Send")

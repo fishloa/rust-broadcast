@@ -88,26 +88,19 @@ impl WatchArgs {
     ///
     /// A message naming `--udp-interface` when its value is neither an IPv4
     /// address nor an interface index.
-    pub fn udp_config(&self) -> Result<crate::udp::UdpConfig, String> {
-        use crate::udp::{MulticastInterface, UdpConfig};
-        let interface = match self.udp_interface.as_deref() {
-            None => None,
-            Some(s) => Some(
-                s.parse::<std::net::Ipv4Addr>()
-                    .map(MulticastInterface::V4)
-                    .or_else(|_| s.parse::<u32>().map(MulticastInterface::V6Index))
-                    .map_err(|_| {
-                        format!(
-                            "invalid --udp-interface {s:?}: expected an IPv4 address or an interface index"
-                        )
-                    })?,
-            ),
-        };
-        Ok(UdpConfig {
-            recv_buffer: self.udp_rcvbuf,
-            reuse_addr: self.udp_reuse_addr,
+    pub fn udp_config(&self) -> Result<broadcast_common::net::UdpOptions, String> {
+        use broadcast_common::net::MulticastInterface;
+        let interface = self
+            .udp_interface
+            .as_deref()
+            .map(MulticastInterface::parse)
+            .transpose()
+            .map_err(|error| format!("invalid --udp-interface {error}"))?;
+        Ok(crate::udp::udp_options(
+            self.udp_rcvbuf,
+            self.udp_reuse_addr,
             interface,
-        })
+        ))
     }
 }
 

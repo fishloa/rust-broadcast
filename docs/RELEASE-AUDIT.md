@@ -60,6 +60,8 @@ Run an adversarial, read-only auditor per new crate AND per new module added to 
 
 ---
 
+- **API conventions:** changed public APIs follow [`API-CONVENTIONS.md`](API-CONVENTIONS.md); report drift as findings.
+
 ## 3.5 Documentation-accuracy audit (docs match the CODE, not just build clean)
 
 The gate suite proves docs *compile* (examples build, doctests run, rustdoc is warning-free) — it does **not** prove they are *accurate*. A README coverage table can be green-building and still silently omit a shipped feature (real incident: transmux 0.12.0 shipped ProgressiveDemux / streaming TS-HLS / `source_pid` while the README listed none of them). For **every crate with a non-empty `[Unreleased]`**, verify — reading the source as ground truth, not the prose:

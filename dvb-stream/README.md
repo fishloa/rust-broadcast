@@ -44,7 +44,7 @@ delegated.
 
 | Feature | Default | What it enables |
 |---|---|---|
-| `udp` | yes | `UdpSectionStream`, `UdpT2miStream`, `udp::MulticastConfig` (`socket2` bind and join: `SO_RCVBUF`, opt-in `SO_REUSEADDR`/`SO_REUSEPORT`, multicast interface), `tokio_util::udp::UdpFramed` framing |
+| `udp` | yes | `UdpSectionStream`, `UdpT2miStream`, `udp::bind_udp` over `broadcast_common::net::UdpOptions` (`socket2` bind and join: `SO_RCVBUF`, opt-in `SO_REUSEADDR`/`SO_REUSEPORT`, multicast interface), `tokio_util::udp::UdpFramed` framing |
 
 `std` only. Versioned and released independently of the `dvb-si`/`dvb-t2mi`
 lockstep (0.x), because tokio's MSRV moves faster than the workspace pin.
@@ -81,16 +81,19 @@ Multicast (not run here, needs a network):
 
 ```rust,no_run
 # #[cfg(feature = "udp")] {
-use std::net::{Ipv4Addr, SocketAddrV4};
-use dvb_stream::{UdpSectionStream, udp::MulticastConfig};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
+use broadcast_common::net::{MulticastInterface, MulticastJoin, UdpOptions};
+use dvb_stream::UdpSectionStream;
 
 # async fn run() -> std::io::Result<()> {
-let cfg = MulticastConfig::new(
-    SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 5004),
-    Ipv4Addr::new(239, 0, 0, 1),
-)
-.with_recv_buffer_size(4 << 20);
-let _stream = UdpSectionStream::bind(&cfg).await?;
+let bind_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 5004));
+let join = MulticastJoin::new(IpAddr::V4(Ipv4Addr::new(239, 0, 0, 1)))
+    .with_interface(MulticastInterface::V4(Ipv4Addr::UNSPECIFIED));
+let options = UdpOptions::new()
+    .with_join(join)
+    .with_recv_buffer_bytes(4 << 20);
+let socket = dvb_stream::udp::bind_udp(bind_addr, &options)?;
+let _stream = UdpSectionStream::from_socket(tokio::net::UdpSocket::from_std(socket.into())?);
 # Ok(()) }
 # }
 ```
@@ -104,9 +107,8 @@ Examples: `cargo run -p dvb-stream --example count_sections` and
 |---|---|
 | `SectionStream<R>` (`new`, `with_demux`, `stats`, `resync_stats`, `take_io_error`) | `AsyncRead` to `SectionEvent` stream |
 | `T2miEventStream<R>` (`new(reader, pid: Pid)`, `with_pump`, `stats`, `resync_stats`, `take_io_error`) | `AsyncRead` to `T2miEvent` stream |
-| `UdpSectionStream`, `UdpT2miStream` (`from_socket`, `bind_multicast`, `bind(&MulticastConfig)`, `stats`, `resync_stats`, `take_io_error`) | UDP/multicast sources (`udp` feature) |
-| `udp::MulticastConfig` (`new`, `with_recv_buffer_size`, `with_reuse_address`, `bind`) | `socket2` socket options; `#[non_exhaustive]` |
-| `udp::bind_standard(SocketSpec)`, `udp::SocketSpec` (`new`, `with_multicast`, `with_reuse`, `with_recv_buffer_size`, `with_context`), `udp::MulticastMembership` (`V4`/`V6`) | The workspace's one datagram bind: `SO_REUSEADDR`/`SO_REUSEPORT`, `SO_RCVBUF`, optional IPv4/IPv6 multicast join, non-blocking |
+| `UdpSectionStream`, `UdpT2miStream` (`from_socket`, `bind_multicast`, `bind(bind_addr, &MulticastJoin)`, `stats`, `resync_stats`, `take_io_error`) | UDP/multicast sources (`udp` feature) |
+| `udp::bind_udp(SocketAddr, &UdpOptions)`, `udp::check_udp` | The workspace's one datagram bind: `SO_REUSEADDR`/`SO_REUSEPORT`, `SO_RCVBUF`, optional IPv4/IPv6 multicast join (any-source or source-specific), non-blocking. Options are `broadcast_common::net::UdpOptions` |
 | `TsDecoder` (`new`, `datagram`, `resync_stats`) | `tokio_util::codec::Decoder` for aligned TS packets; `datagram()` resyncs each datagram independently and unwraps RTP |
 | `resync::{resync, resync_confirmed, unconfirmed_candidate, TS_PACKET_SIZE, TS_SYNC_BYTE}`, `ResyncStats { resyncs, bytes_discarded, desyncs }` | The 188-byte alignment scan shared by every stream |
 
