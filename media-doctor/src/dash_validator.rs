@@ -50,7 +50,7 @@ fn parse_mpd(text: &str, report: &mut Report) -> Option<broadcast_dash::Mpd> {
         Err(err) => {
             report.push(Finding::new(
                 Severity::Error,
-                Location::new(1, 0),
+                Location::new(1),
                 "dash-parse-error",
                 alloc::format!("MPD XML failed to parse: {err}"),
             ));
@@ -76,7 +76,7 @@ pub fn check_dash_mpd(text: &str, report: &mut Report) {
     {
         report.push(Finding::new(
             Severity::Error,
-            Location::new(1, 0),
+            Location::new(1),
             "dash-static-mpd-missing-duration",
             "Static MPD is missing required @mediaPresentationDuration — ISO/IEC 23009-1:2012 §5.3.1.2 Table 3 (CM: mandatory for @type='static')",
         ));
@@ -87,7 +87,7 @@ pub fn check_dash_mpd(text: &str, report: &mut Report) {
     if mpd.kind == PresentationType::Dynamic && mpd.availability_start_time_us.is_none() {
         report.push(Finding::new(
             Severity::Error,
-            Location::new(1, 0),
+            Location::new(1),
             "dash-dynamic-mpd-no-availability-start",
             "Dynamic MPD is missing required @availabilityStartTime — §5.3.1.2 Table 3",
         ));
@@ -100,7 +100,7 @@ pub fn check_dash_mpd(text: &str, report: &mut Report) {
         if period.adaptation_sets.is_empty() && period.imported_mpd.is_none() {
             report.push(Finding::new(
                 Severity::Error,
-                Location::new(period_idx + 1, 0),
+                Location::new(period_idx + 1),
                 "dash-period-no-adaptation-sets",
                 alloc::format!(
                     "Period '{}' has no AdaptationSets — §5.3.2",
@@ -187,7 +187,7 @@ fn check_representation_id_duplicates(
                 } else {
                     Severity::Error
                 },
-                Location::new(1, 0),
+                Location::new(1),
                 "dash-representation-id-duplicate",
                 alloc::format!(
                     "Period {period_idx} (AdaptationSet {as_idx}): duplicate Representation @id=\"{}\" — ISO/IEC 23009-1 §5.3.5.2 requires @id to be unique within a Period{}",
@@ -257,7 +257,7 @@ fn validate_segment_timeline(
             let t_str = timescale_str(start_time, timescale);
             report.push(Finding::new(
                 Severity::Error,
-                Location::new(s_idx + 1, 0),
+                Location::new(s_idx + 1),
                 "dash-segment-timeline-monotonic",
                 alloc::format!(
                     "SegmentTimeline {r_key}: <S t={t_str}> starts before previous segment ends (prev_end={prev_str}) — §5.3.9.6",
@@ -271,7 +271,7 @@ fn validate_segment_timeline(
         if s.r < -1 {
             report.push(Finding::new(
                 Severity::Error,
-                Location::new(s_idx + 1, 0),
+                Location::new(s_idx + 1),
                 "dash-segment-timeline-r-range",
                 alloc::format!(
                     "SegmentTimeline {r_key}: <S r={}> is out of range — Table 17 defines                      @r >= -1 (with -1 meaning repeat until the next S element or the end                      of the Period)",

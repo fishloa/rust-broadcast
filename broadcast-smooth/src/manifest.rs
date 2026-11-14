@@ -245,6 +245,17 @@ impl Namespace for Ns {
     }
 }
 
+impl From<broadcast_common::xml_chars::XmlCharError> for SmoothParseError {
+    /// A character-data or namespace failure, at the position the caller
+    /// that raised it reports (the pull reader's own offset).
+    fn from(e: broadcast_common::xml_chars::XmlCharError) -> Self {
+        Self::Xml {
+            pos: 0,
+            message: e.to_string(),
+        }
+    }
+}
+
 impl From<XmlError> for SmoothParseError {
     fn from(e: XmlError) -> Self {
         match e {

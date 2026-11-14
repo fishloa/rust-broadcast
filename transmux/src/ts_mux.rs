@@ -1410,7 +1410,7 @@ fn write_pcr_only_packet(
         pusi: false,
         pid,
         scrambling: ScramblingControl::NotScrambled,
-        adaptation: AdaptationFieldControl::AdaptationOnly,
+        adaptation_field_control: AdaptationFieldControl::AdaptationOnly,
         continuity_counter: cc,
     };
     hdr.serialize_into(&mut pkt[..4]).expect("4-byte TS header");
@@ -1709,7 +1709,7 @@ fn packetise_section(pid: Pid, section: &[u8], start_cc: u8) -> Vec<[u8; TS_PACK
             pusi: first,
             pid,
             scrambling: ScramblingControl::NotScrambled,
-            adaptation: AdaptationFieldControl::PayloadOnly,
+            adaptation_field_control: AdaptationFieldControl::PayloadOnly,
             continuity_counter: ContinuityCounter::from_wire_masked(cc),
         };
         hdr.serialize_into(&mut pkt[..4]).expect("4-byte TS header");
@@ -1813,7 +1813,7 @@ fn packetise_pes(
                 pusi: first,
                 pid: plan.pid,
                 scrambling: ScramblingControl::NotScrambled,
-                adaptation: AdaptationFieldControl::PayloadOnly,
+                adaptation_field_control: AdaptationFieldControl::PayloadOnly,
                 continuity_counter: ContinuityCounter::from_wire_masked(*cc),
             };
             hdr.serialize_into(&mut pkt[..4]).expect("4-byte TS header");
@@ -1861,7 +1861,7 @@ fn write_af_packet(
         pusi,
         pid,
         scrambling: ScramblingControl::NotScrambled,
-        adaptation: AdaptationFieldControl::AdaptationAndPayload,
+        adaptation_field_control: AdaptationFieldControl::AdaptationAndPayload,
         continuity_counter: ContinuityCounter::from_wire_masked(cc),
     };
     // serialize_into sets both AF + payload control bits from the booleans above.

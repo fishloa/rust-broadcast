@@ -35,7 +35,7 @@ fn main() {
         *pid_counts.entry(hdr.pid.value()).or_insert(0) += 1;
 
         let sc = hdr.scrambling;
-        let afc = hdr.adaptation;
+        let afc = hdr.adaptation_field_control;
 
         if sc != ScramblingControl::NotScrambled {
             scrambled += 1;

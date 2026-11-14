@@ -150,7 +150,7 @@ fn adaptation_field_control_accessor_on_real_data() {
     let mut counts = [0usize; 4];
 
     for pkt in iter_packets(&buf) {
-        let afc = pkt.header.adaptation;
+        let afc = pkt.header.adaptation_field_control;
         match afc {
             AdaptationFieldControl::Reserved => counts[0] += 1,
             AdaptationFieldControl::PayloadOnly => counts[1] += 1,
