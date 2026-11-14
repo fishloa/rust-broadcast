@@ -114,6 +114,14 @@ pub struct SubSegments {
     pub sub_segments_expected: u8,
 }
 
+impl SubSegments {
+    /// The plain `(sub_segment_num, sub_segments_expected)` pair.
+    #[must_use]
+    pub const fn pair(self) -> (u8, u8) {
+        (self.sub_segment_num, self.sub_segments_expected)
+    }
+}
+
 /// segmentation_descriptor() — §10.3.3, Table 20.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
