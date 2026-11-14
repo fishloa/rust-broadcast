@@ -294,11 +294,8 @@ mod tests {
     #[tokio::test]
     async fn the_plain_tcp_adapter_refuses_a_tls_target() {
         let t = RtmpTarget::parse("rtmps://127.0.0.1:1/live/key").unwrap();
-        let refused = crate::io::AsyncRtmpClient::connect(
-            &t,
-            broadcast_common::timeouts::Timeouts::default(),
-        )
-        .await;
+        let refused =
+            crate::io::AsyncRtmpClient::connect(crate::io::RtmpClientConfig::new(t)).await;
         assert!(matches!(refused, Err(e) if e.kind() == std::io::ErrorKind::Unsupported));
     }
 }

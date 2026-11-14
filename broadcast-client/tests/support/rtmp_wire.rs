@@ -131,7 +131,7 @@ fn serve(mut io: Box<dyn Io>, mut peer: PlayPeer, _scenario: Serve, stop: &Atomi
                 if i >= limit {
                     return peer.acks();
                 }
-                let bytes = peer.media(t, ts, &b).unwrap();
+                let bytes = peer.media(t.into(), ts, &b).unwrap();
                 if io.write_all(&bytes).is_err() {
                     return peer.acks();
                 }

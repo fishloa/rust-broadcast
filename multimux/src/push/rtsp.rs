@@ -199,7 +199,9 @@ impl PushTransport for RtspTransport {
         // ANNOUNCE/SETUP/RECORD and interleaved write.
         let mut client = rtsp_runtime::AsyncRtspClient::connect(
             &addr,
-            rtsp_runtime::RtspClientConfig::new(session).with_timeouts(config.timeouts),
+            rtsp_runtime::RtspClientConfig::default()
+                .with_session(session)
+                .with_timeouts(config.timeouts),
         )
         .await
         .map_err(|e| RtspPushError::Connect(e.to_string()))?;
@@ -759,7 +761,8 @@ mod tests {
 
         let mut client = rtsp_runtime::AsyncRtspClient::connect(
             &addr,
-            rtsp_runtime::RtspClientConfig::new(ClientSession::new())
+            rtsp_runtime::RtspClientConfig::default()
+                .with_session(ClientSession::new())
                 .with_timeouts(broadcast_common::timeouts::Timeouts::default()),
         )
         .await

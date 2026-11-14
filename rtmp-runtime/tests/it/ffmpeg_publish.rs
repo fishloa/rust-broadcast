@@ -7,8 +7,8 @@
 use std::process::Stdio;
 use std::time::Duration;
 
-use rtmp_runtime::io::AsyncRtmpServer;
-use rtmp_runtime::server::{ServerConfig, ServerEvent};
+use rtmp_runtime::io::{AsyncRtmpServer, RtmpServerConfig};
+use rtmp_runtime::server::ServerEvent;
 
 /// FLV tag types carried by `ServerEvent::Media` (Adobe FLV v10.1 E.4.1).
 const TAG_AUDIO: u8 = 8;
@@ -29,7 +29,7 @@ async fn ffmpeg_publish_delivers_audio_and_video() {
         return;
     }
 
-    let server = AsyncRtmpServer::bind("127.0.0.1:0", ServerConfig::default())
+    let server = AsyncRtmpServer::bind("127.0.0.1:0", RtmpServerConfig::default())
         .await
         .expect("bind");
     let port = server.local_addr().expect("local_addr").port();

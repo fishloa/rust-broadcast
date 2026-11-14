@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- BREAKING: `SmoothConfig` is `SmoothClientConfig`, matching `RtspClientConfig`/`RtmpClientConfig`/`HlsClientConfig`. Migration: every `SmoothConfig` becomes `SmoothClientConfig` with the same fields and `with_*` setters.
+- BREAKING: `SmoothClient::new(manifest_url, config)` is `SmoothClient::new(config)`: the manifest URL is `SmoothClientConfig::manifest_url`, set with the new `SmoothClientConfig::new(manifest_url: impl Into<String>)` (the same shape as `HlsClientConfig::new`/`DashClientConfig::new`) or `with_manifest_url(Url)`. Migration: `SmoothClient::new(url, SmoothClientConfig::default().with_x(..))` -> `SmoothClient::new(SmoothClientConfig::new(url.as_str()).with_x(..))`, or `.with_manifest_url(url)` for a `Url` already parsed.
+
 ## [0.1.0] - 2026-11-14
 Initial release: sans-IO Smooth Streaming (MS-SSTR) client and origin engines over
 `broadcast-smooth`, replacing the two diverged pull clients that lived in `broadcast-client` and

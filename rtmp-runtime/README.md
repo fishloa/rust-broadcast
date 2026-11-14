@@ -63,14 +63,14 @@ assert!(published && flv.starts_with(b"FLV"));
 Or connect the two roles in memory (a publisher and an ingest server, no socket):
 
 ```rust
-use rtmp_runtime::client::{ClientConfig, ClientEvent, ClientSession};
-use rtmp_runtime::server::{ServerConfig, ServerEvent, ServerSession};
+use rtmp_runtime::client::{ClientEvent, ClientSession, RtmpClientConfig};
+use rtmp_runtime::server::{RtmpServerConfig, ServerEvent, ServerSession};
 
-let mut config = ClientConfig::default();
+let mut config = RtmpClientConfig::default();
 config.app = "live".into();
 config.stream_key = "key".into();
 let mut client = ClientSession::new(config);
-let mut server = ServerSession::new(ServerConfig::default());
+let mut server = ServerSession::new(RtmpServerConfig::default());
 
 let mut to_server = client.start();
 let (mut publishing, mut accepted) = (false, false);

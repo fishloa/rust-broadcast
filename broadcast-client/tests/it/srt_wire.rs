@@ -14,7 +14,7 @@ use crate::support::udp_host::{TS_PACKET, ts_datagrams};
 use crate::support::wire_host::WireHost;
 use broadcast_client::{Config, Event, SrtEncryption, SrtKeyLength};
 use srt_runtime::handshake_sm::HandshakeConfig;
-use srt_runtime::io::SrtListener;
+use srt_runtime::io::{SrtListener, SrtSocketConfig};
 
 const SMALL: &str = "ts/h264-aac.ts";
 const LIVE_CAPTURE: &str = "ts/live-channels/tf-1-8-mb.ts";
@@ -63,7 +63,9 @@ fn the_caller_plays_a_srt_runtime_listener_stream_exactly() {
         rt.block_on(async move {
             let mut listener = SrtListener::bind(
                 "127.0.0.1:0",
-                HandshakeConfig::default().with_latency_ms(LOCAL_SRT_LATENCY_MS),
+                SrtSocketConfig::new(
+                    HandshakeConfig::default().with_latency_ms(LOCAL_SRT_LATENCY_MS),
+                ),
             )
             .await
             .unwrap();

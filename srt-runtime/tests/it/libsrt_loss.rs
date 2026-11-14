@@ -30,7 +30,7 @@ use std::time::Duration;
 use test_fixtures::process::KillOnDrop;
 
 use srt_runtime::handshake_sm::HandshakeConfig;
-use srt_runtime::io::{SrtListener, SrtSocket};
+use srt_runtime::io::{SrtListener, SrtSocket, SrtSocketConfig};
 use srt_runtime::packet::{ControlPacket, SrtPacket};
 use tokio::net::UdpSocket as TokioUdpSocket;
 
@@ -237,7 +237,7 @@ async fn libsrt_listener_naks_are_served_by_our_sender() {
             format!("127.0.0.1:{}", relay.front_port)
                 .parse::<SocketAddr>()
                 .unwrap(),
-            crate::without_tlpktdrop(),
+            SrtSocketConfig::new(crate::without_tlpktdrop()),
         )
         .await
         .expect("connect through the relay");
@@ -313,9 +313,12 @@ async fn our_listener_behind_a_relay(
     forward_drop: impl Fn(u32) -> bool + Send + 'static,
     backward_drop: impl Fn(&SrtPacket<'_>) -> bool + Send + 'static,
 ) -> (SrtSocket, Relay, KillOnDrop, u16) {
-    let mut listener = SrtListener::bind("127.0.0.1:0".parse::<SocketAddr>().unwrap(), config)
-        .await
-        .expect("bind");
+    let mut listener = SrtListener::bind(
+        "127.0.0.1:0".parse::<SocketAddr>().unwrap(),
+        SrtSocketConfig::new(config),
+    )
+    .await
+    .expect("bind");
     let bound = listener.local_addr().unwrap();
     let accept = tokio::spawn(async move { listener.accept().await.expect("accept") });
     let relay = Relay::spawn(bound, forward_drop, backward_drop, blackhole);

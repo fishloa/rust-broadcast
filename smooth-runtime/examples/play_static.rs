@@ -12,7 +12,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use smooth_runtime::{Action, FetchFailure, Output, SmoothClient, SmoothConfig};
+use smooth_runtime::{Action, FetchFailure, Output, SmoothClient, SmoothClientConfig};
 use url::Url;
 
 const DEFAULT_DIR: &str = "../fixtures/smooth/av";
@@ -33,10 +33,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let mut client = SmoothClient::new(
+    let config = SmoothClientConfig::new(format!("{ORIGIN}{MANIFEST_FILE}"));
+    assert_eq!(
+        config.manifest_url,
         Url::parse(&format!("{ORIGIN}{MANIFEST_FILE}"))?,
-        SmoothConfig::default(),
+        "the constructor carries the manifest URL"
     );
+    let mut client = SmoothClient::new(config);
     let mut samples: BTreeMap<u32, usize> = BTreeMap::new();
     let mut now = 0u64;
     loop {

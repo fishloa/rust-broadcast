@@ -25,7 +25,7 @@ use broadcast_common::{Parse, Serialize};
 
 use crate::RtmpError;
 use crate::chunk::Message;
-use crate::message::msg_type;
+use crate::message::MessageTypeId;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
@@ -71,7 +71,7 @@ pub(crate) const AGG_TIMESTAMP_EXTENDED_SHIFT: u32 = 24;
 /// [`RtmpError::Malformed`] as above, or whatever `deliver` returns.
 pub(crate) fn unpack_aggregate(
     msg: &Message,
-    mut deliver: impl FnMut(u8, u32, &[u8]) -> FlvResult<()>,
+    mut deliver: impl FnMut(MessageTypeId, u32, &[u8]) -> FlvResult<()>,
 ) -> FlvResult<()> {
     let body = &msg.payload;
     let mut first_ts: Option<u32> = None;
@@ -83,7 +83,7 @@ pub(crate) fn unpack_aggregate(
             });
         }
         let header = &body[offset..offset + AGG_SUB_MESSAGE_HEADER_LEN];
-        let tag_type = header[0];
+        let tag_type = MessageTypeId::from_u8(header[0]);
         let data_size = u32::from_be_bytes([0, header[1], header[2], header[3]]) as usize;
         let ts_low24 = u32::from_be_bytes([0, header[4], header[5], header[6]]);
         // Same layout `flv_tag` writes (Annex E.4.1): the 24-bit
@@ -338,9 +338,9 @@ impl TagType {
     /// The wire byte this tag type carries (§E.4.1).
     pub fn to_byte(self) -> u8 {
         match self {
-            Self::Audio => msg_type::AUDIO,
-            Self::Video => msg_type::VIDEO,
-            Self::Script => msg_type::DATA_AMF0,
+            Self::Audio => MessageTypeId::Audio.to_u8(),
+            Self::Video => MessageTypeId::Video.to_u8(),
+            Self::Script => MessageTypeId::DataAmf0.to_u8(),
             Self::Reserved(v) => v,
         }
     }
@@ -349,9 +349,9 @@ impl TagType {
     /// [`TagType::Reserved`].
     pub fn from_byte(byte: u8) -> Self {
         match byte {
-            msg_type::AUDIO => Self::Audio,
-            msg_type::VIDEO => Self::Video,
-            msg_type::DATA_AMF0 => Self::Script,
+            byte if byte == MessageTypeId::Audio.to_u8() => Self::Audio,
+            byte if byte == MessageTypeId::Video.to_u8() => Self::Video,
+            byte if byte == MessageTypeId::DataAmf0.to_u8() => Self::Script,
             other => Self::Reserved(other),
         }
     }
@@ -697,10 +697,12 @@ impl<'a> Iterator for Tags<'a> {
 fn plausible_tag_header(input: &[u8], off: usize, known_type: bool) -> bool {
     off.saturating_add(FLV_TAG_HEADER_LEN) <= input.len()
         && (!known_type
-            || matches!(
-                input[off],
-                msg_type::AUDIO | msg_type::VIDEO | msg_type::DATA_AMF0
-            ))
+            || [
+                MessageTypeId::Audio,
+                MessageTypeId::Video,
+                MessageTypeId::DataAmf0,
+            ]
+            .contains(&MessageTypeId::from_u8(input[off])))
         && input[off + TAG_STREAM_ID_AT..off + FLV_TAG_HEADER_LEN] == [0, 0, 0]
 }
 
@@ -844,11 +846,11 @@ impl FlvTagWriter {
     /// `DataSize`, or the session's FLV bytes cannot be built.
     pub(crate) fn tag(
         &mut self,
-        tag_type: u8,
+        tag_type: MessageTypeId,
         timestamp: u32,
         payload: &[u8],
     ) -> FlvResult<Vec<u8>> {
-        let payload = if tag_type == msg_type::DATA_AMF0 {
+        let payload = if tag_type == MessageTypeId::DataAmf0 {
             strip_set_data_frame(payload)
         } else {
             payload
@@ -859,7 +861,7 @@ impl FlvTagWriter {
             self.header_sent = true;
             FlvHeader::new(true, true).try_to_bytes()?
         };
-        let tag = FlvTag::new(TagType::from_byte(tag_type), timestamp, payload);
+        let tag = FlvTag::new(TagType::from_byte(tag_type.to_u8()), timestamp, payload);
         flv.extend_from_slice(&tag.try_to_bytes()?);
         Ok(flv)
     }

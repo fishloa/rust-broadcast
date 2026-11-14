@@ -11,7 +11,7 @@ use rtmp_runtime::RtmpError;
 use rtmp_runtime::amf0::{Amf0Value, Command};
 use rtmp_runtime::chunk::{ChunkAssembler, ChunkWriter, Message};
 use rtmp_runtime::handshake::Handshake;
-use rtmp_runtime::message::{ChunkSize, LimitType, ProtocolControl, UserControl, msg_type};
+use rtmp_runtime::message::{ChunkSize, LimitType, MessageTypeId, ProtocolControl, UserControl};
 
 pub const COMMAND_CSID: u32 = 3;
 pub const AUDIO_CSID: u32 = 4;
@@ -162,13 +162,13 @@ impl PlayPeer {
             }
             return Ok(());
         }
-        if msg.message_type_id == msg_type::USER_CONTROL {
+        if msg.message_type_id == MessageTypeId::UserControl {
             if let Ok(uc) = UserControl::parse(&msg.payload) {
                 self.seen.push(Seen::UserControl(uc));
             }
             return Ok(());
         }
-        if msg.message_type_id == msg_type::COMMAND_AMF0 {
+        if msg.message_type_id == MessageTypeId::CommandAmf0 {
             let cmd = Command::parse(&msg.payload)?;
             self.seen.push(Seen::Command {
                 name: cmd.name.clone(),
@@ -272,7 +272,7 @@ impl PlayPeer {
         let msg = Message {
             chunk_stream_id: COMMAND_CSID,
             timestamp: 0,
-            message_type_id: msg_type::COMMAND_AMF0,
+            message_type_id: MessageTypeId::CommandAmf0,
             message_stream_id: stream_id,
             payload: cmd.to_body()?,
         };
@@ -338,13 +338,13 @@ impl PlayPeer {
 
     pub fn media(
         &mut self,
-        tag_type: u8,
+        tag_type: MessageTypeId,
         timestamp: u32,
         payload: &[u8],
     ) -> Result<Vec<u8>, RtmpError> {
         let csid = match tag_type {
-            msg_type::AUDIO => AUDIO_CSID,
-            msg_type::VIDEO => VIDEO_CSID,
+            MessageTypeId::Audio => AUDIO_CSID,
+            MessageTypeId::Video => VIDEO_CSID,
             _ => DATA_CSID,
         };
         let bytes = self.writer.write(&Message {

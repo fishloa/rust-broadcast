@@ -107,7 +107,7 @@ async fn our_rendezvous_completes_real_handshake_and_data_with_libsrt() {
                     format!("127.0.0.1:{lib_port}")
                         .parse::<SocketAddr>()
                         .unwrap(),
-                    srt_runtime::io::SrtConfig::new(patient_config()).with_io(patient_io()),
+                    srt_runtime::io::SrtSocketConfig::new(patient_config()).with_io(patient_io()),
                 ),
             )
             .await
@@ -160,7 +160,7 @@ async fn real_libsrt_rendezvous_sender_delivers_data_to_our_rendezvous_side() {
                 Duration::from_secs(60),
                 SrtSocket::rendezvous_from_socket(our_sock, format!("127.0.0.1:{lib_port}")
                         .parse::<SocketAddr>()
-                        .unwrap(), srt_runtime::io::SrtConfig::new(patient_config()).with_io(patient_io())),
+                        .unwrap(), srt_runtime::io::SrtSocketConfig::new(patient_config()).with_io(patient_io())),
             )
             .await
             .unwrap_or_else(|_| panic!("iteration {iteration}: rendezvous never completed"))

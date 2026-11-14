@@ -27,7 +27,7 @@ use media_plane::SampleCursorItem;
 use mpeg_ts::ts::TsPacket;
 use multimux::push::{PushTransport, SrtTransport, SrtTransportConfig};
 use srt_runtime::HandshakeConfig;
-use srt_runtime::io::SrtListener;
+use srt_runtime::io::{SrtListener, SrtSocketConfig};
 use transmux::{Media, Sample, StreamingTsMux, Track, TsDemux, TsMux};
 
 use broadcast_common::{Package, Unpackage};
@@ -179,7 +179,7 @@ fn es_packets(ts: &[u8]) -> BTreeMap<u16, Vec<Vec<u8>>> {
 async fn push_over_srt(media: &Media, samples: &[(usize, Sample)]) -> Vec<u8> {
     let mut listener = SrtListener::bind(
         "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap(),
-        HandshakeConfig::default(),
+        SrtSocketConfig::new(HandshakeConfig::default()),
     )
     .await
     .expect("bind");

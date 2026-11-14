@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- The RTMP spokes match `rtmp_runtime::message::MessageTypeId` instead of the `msg_type` byte constants for the message types they dispatch on (`SetChunkSize`, `Audio`, `Video`, `DataAmf0`); no public transmux type changes (#2666).
 
 #### Changed
 - PSI parsing/building in `ts_demux`/`ts_mux` now uses `dvb_si::tables::pat::PatSection` and `dvb_si::tables::pmt::PmtSection` instead of hand-rolled copies; behaviour and goldens unchanged (#2667).

@@ -340,12 +340,12 @@ fn a_chunk_size_change_in_the_middle_of_the_stream_leaves_the_samples_unchanged(
     let tags = fixture_tags();
     let (head, tail) = tags.split_at(tags.len() / 3);
     for (t, ts, b) in head {
-        let bytes = h.peer.as_mut().unwrap().media(*t, *ts, b).unwrap();
+        let bytes = h.peer.as_mut().unwrap().media((*t).into(), *ts, b).unwrap();
         h.send_to_session(&bytes);
     }
     let mut wire = h.peer.as_mut().unwrap().set_chunk_size(31).unwrap();
     for (t, ts, b) in tail {
-        wire.extend(h.peer.as_mut().unwrap().media(*t, *ts, b).unwrap());
+        wire.extend(h.peer.as_mut().unwrap().media((*t).into(), *ts, b).unwrap());
     }
     h.send_to_session(&wire);
     assert_samples_equal_direct(&h.samples());
@@ -369,7 +369,7 @@ fn media_split_into_one_byte_reads_is_the_same() {
     connect_and_play(&mut h);
     let mut wire = Vec::new();
     for (t, ts, b) in fixture_tags() {
-        wire.extend(h.peer.as_mut().unwrap().media(t, ts, &b).unwrap());
+        wire.extend(h.peer.as_mut().unwrap().media(t.into(), ts, &b).unwrap());
     }
     for b in wire.chunks(1) {
         h.send_to_session(b);

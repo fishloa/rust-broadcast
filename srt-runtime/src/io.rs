@@ -127,35 +127,37 @@ pub const SRT_TIMEOUTS: Timeouts = Timeouts::new(
 
 /// Everything one SRT connection or listener is configured by: the handshake
 /// this side advertises and the adapter's timeouts and sizes. Every
-/// `SrtSocket` and `SrtListener` constructor takes `impl Into<SrtConfig>`, so
-/// a bare [`HandshakeConfig`] (default [`IoConfig`]) is accepted as is and a
-/// full config is `SrtConfig::new(handshake).with_io(io)`.
+/// `SrtSocket` and `SrtListener` constructor takes the config:
+/// `SrtSocketConfig::default()` (a default [`HandshakeConfig`] and [`IoConfig`])
+/// or `SrtSocketConfig::new(handshake).with_io(io)` for its own values. It is
+/// named for its role, not `SrtClientConfig`, because one config serves both
+/// the caller (`SrtSocket::connect`) and the listener (`SrtListener::bind`).
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
-pub struct SrtConfig {
+pub struct SrtSocketConfig {
     /// The handshake values this side advertises.
     pub handshake: HandshakeConfig,
     /// The tokio adapter's timeouts and sizes.
     pub io: IoConfig,
 }
 
-impl SrtConfig {
+impl SrtSocketConfig {
     /// A config with `handshake` and the default [`IoConfig`].
     pub fn new(handshake: HandshakeConfig) -> Self {
-        SrtConfig {
+        SrtSocketConfig {
             handshake,
             io: IoConfig::default(),
         }
     }
 
-    /// Replace [`SrtConfig::handshake`].
+    /// Replace [`SrtSocketConfig::handshake`].
     #[must_use]
     pub fn with_handshake(mut self, handshake: HandshakeConfig) -> Self {
         self.handshake = handshake;
         self
     }
 
-    /// Replace [`SrtConfig::io`].
+    /// Replace [`SrtSocketConfig::io`].
     #[must_use]
     pub fn with_io(mut self, io: IoConfig) -> Self {
         self.io = io;
@@ -163,19 +165,13 @@ impl SrtConfig {
     }
 }
 
-impl Default for SrtConfig {
+impl Default for SrtSocketConfig {
     fn default() -> Self {
-        SrtConfig::new(HandshakeConfig::default())
+        SrtSocketConfig::new(HandshakeConfig::default())
     }
 }
 
-impl From<HandshakeConfig> for SrtConfig {
-    fn from(handshake: HandshakeConfig) -> Self {
-        SrtConfig::new(handshake)
-    }
-}
-
-/// Timeouts and sizes for the tokio adapter, carried by [`SrtConfig`] into
+/// Timeouts and sizes for the tokio adapter, carried by [`SrtSocketConfig`] into
 /// [`SrtSocket::connect`] and [`SrtListener::bind`].
 ///
 /// Every field has a documented default; use the `with_*` builders so new
@@ -564,7 +560,7 @@ impl SrtSocket {
     /// stage it happened in.
     pub async fn connect<A: tokio::net::ToSocketAddrs>(
         remote_addr: A,
-        config: impl Into<SrtConfig>,
+        config: SrtSocketConfig,
     ) -> Result<Self> {
         let local = std::net::SocketAddr::from(([0, 0, 0, 0], 0));
         Self::connect_from(local, remote_addr, config).await
@@ -578,9 +574,8 @@ impl SrtSocket {
     pub async fn connect_from<A: tokio::net::ToSocketAddrs>(
         local_addr: std::net::SocketAddr,
         remote_addr: A,
-        config: impl Into<SrtConfig>,
+        config: SrtSocketConfig,
     ) -> Result<Self> {
-        let config = config.into();
         let socket = bounded(config.io.timeouts.connect, "bind", async {
             UdpSocket::bind(local_addr)
                 .await
@@ -600,12 +595,12 @@ impl SrtSocket {
     pub async fn connect_from_socket<A: tokio::net::ToSocketAddrs>(
         socket: tokio::net::UdpSocket,
         remote_addr: A,
-        config: impl Into<SrtConfig>,
+        config: SrtSocketConfig,
     ) -> Result<Self> {
-        let SrtConfig {
+        let SrtSocketConfig {
             handshake: config,
             io,
-        } = config.into();
+        } = config;
         let max_datagram = io.max_datagram.clamp(MIN_MAX_DATAGRAM, MAX_MAX_DATAGRAM);
         let peer = bounded(io.timeouts.connect, "resolve", resolve_one(remote_addr)).await?;
         let socket = Arc::new(socket);
@@ -821,9 +816,8 @@ impl SrtSocket {
     pub async fn rendezvous<A: tokio::net::ToSocketAddrs>(
         local_addr: std::net::SocketAddr,
         remote_addr: A,
-        config: impl Into<SrtConfig>,
+        config: SrtSocketConfig,
     ) -> Result<Self> {
-        let config = config.into();
         let socket = bounded(config.io.timeouts.connect, "bind", async {
             UdpSocket::bind(local_addr)
                 .await
@@ -843,12 +837,12 @@ impl SrtSocket {
     pub async fn rendezvous_from_socket<A: tokio::net::ToSocketAddrs>(
         socket: tokio::net::UdpSocket,
         remote_addr: A,
-        config: impl Into<SrtConfig>,
+        config: SrtSocketConfig,
     ) -> Result<Self> {
-        let SrtConfig {
+        let SrtSocketConfig {
             handshake: config,
             io,
-        } = config.into();
+        } = config;
         let max_datagram = io.max_datagram.clamp(MIN_MAX_DATAGRAM, MAX_MAX_DATAGRAM);
         let peer = bounded(io.timeouts.connect, "resolve", resolve_one(remote_addr)).await?;
         let socket = Arc::new(socket);
@@ -1618,7 +1612,7 @@ impl Driver {
         let mut cif = vec![0u8; km.serialized_len()];
         km.serialize_into(&mut cif).ok()?;
         let ud = ControlPacket::UserDefined(crate::packet::UserDefinedPacket {
-            control_type: crate::packet::control::CONTROL_TYPE_USER_DEFINED,
+            control_type: crate::packet::ControlType::UserDefined.to_bits(),
             subtype,
             type_specific_info: 0,
             timestamp: self.elapsed_us(),
@@ -2396,12 +2390,12 @@ impl SrtListener {
     /// decrypts the data path.
     pub async fn bind<A: tokio::net::ToSocketAddrs>(
         addr: A,
-        config: impl Into<SrtConfig>,
+        config: SrtSocketConfig,
     ) -> Result<Self> {
-        let SrtConfig {
+        let SrtSocketConfig {
             handshake: config,
             io,
-        } = config.into();
+        } = config;
         let socket = Arc::new(UdpSocket::bind(addr).await.map_err(|e| io_err("bind", e))?);
         let local = socket.local_addr().map_err(|e| io_err("local_addr", e))?;
         let routes: RouteTable = Arc::new(Mutex::new(std::collections::HashMap::new()));
@@ -3634,9 +3628,12 @@ mod adapter_tests {
         let budget = Duration::from_millis(400);
         let io = IoConfig::default().with_timeouts(SRT_TIMEOUTS.with_handshake(budget));
         let t0 = Instant::now();
-        let err = SrtSocket::connect(hole.local_addr().unwrap(), SrtConfig::default().with_io(io))
-            .await
-            .expect_err("nobody answers");
+        let err = SrtSocket::connect(
+            hole.local_addr().unwrap(),
+            SrtSocketConfig::default().with_io(io),
+        )
+        .await
+        .expect_err("nobody answers");
         // The default retransmit budget (12 x 250 ms) would end an unanswered connect at ~3 s with
         // stage "caller retransmit budget"; only the configured deadline yields "caller connect".
         assert!(
@@ -4253,7 +4250,7 @@ mod adapter_tests {
         let mut km_buf = vec![0u8; km.serialized_len()];
         km.serialize_into(&mut km_buf).unwrap();
         let ud = ControlPacket::UserDefined(crate::packet::UserDefinedPacket {
-            control_type: crate::packet::control::CONTROL_TYPE_USER_DEFINED,
+            control_type: crate::packet::ControlType::UserDefined.to_bits(),
             subtype: crate::packet::handshake::EXT_TYPE_KMREQ,
             type_specific_info: 0,
             timestamp: 0,
@@ -4548,18 +4545,24 @@ mod adapter_tests {
     /// `Driver`, and so by the task's future — is dropped.
     #[tokio::test]
     async fn dropping_an_accepted_socket_removes_its_route_entry() {
-        let mut listener = SrtListener::bind("127.0.0.1:0", HandshakeConfig::default())
-            .await
-            .expect("bind");
+        let mut listener = SrtListener::bind(
+            "127.0.0.1:0",
+            SrtSocketConfig::new(HandshakeConfig::default()),
+        )
+        .await
+        .expect("bind");
         let listener_addr = listener.local_addr().expect("local addr");
 
         let accept_jh = tokio::spawn(async move {
             let s = listener.accept().await.expect("accept");
             (listener, s)
         });
-        let caller = SrtSocket::connect(listener_addr, HandshakeConfig::default())
-            .await
-            .expect("connect");
+        let caller = SrtSocket::connect(
+            listener_addr,
+            SrtSocketConfig::new(HandshakeConfig::default()),
+        )
+        .await
+        .expect("connect");
         let (listener, accepted) = accept_jh.await.expect("join accept");
 
         assert_eq!(
@@ -5084,7 +5087,7 @@ mod adapter_tests {
             // fails immediately.
             let outcome = tokio::time::timeout(
                 Duration::from_millis(150),
-                SrtSocket::connect(silent.local_addr().unwrap(), config),
+                SrtSocket::connect(silent.local_addr().unwrap(), SrtSocketConfig::new(config)),
             )
             .await;
             assert!(

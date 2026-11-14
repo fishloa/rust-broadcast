@@ -74,7 +74,7 @@ use broadcast_common::Timestamp;
 use media_plane::ingress::{Dialer, HandshakePolicy, IngestDriver};
 use media_plane::trunk::TrunkConfig;
 use srt_runtime::HandshakeConfig;
-use srt_runtime::io::{SrtListener, SrtSocket};
+use srt_runtime::io::{SrtListener, SrtSocket, SrtSocketConfig};
 use tokio::sync::{Mutex, OnceCell};
 
 use crate::error::{MultimuxError, Result};
@@ -218,7 +218,7 @@ pub async fn accept_listener(route: &SrtRoute) -> Result<SrtSocket> {
     let listener = route
         .listener
         .get_or_try_init(|| async {
-            SrtListener::bind(listen.as_str(), cfg.clone())
+            SrtListener::bind(listen.as_str(), SrtSocketConfig::new(cfg.clone()))
                 .await
                 .map(|l| Arc::new(Mutex::new(l)))
                 .map_err(|e| MultimuxError::Connect {
@@ -480,7 +480,7 @@ mod tests {
             let cfg = HandshakeConfig::default();
             let mut sock = None;
             for _ in 0..200 {
-                match SrtSocket::connect(addr, cfg.clone()).await {
+                match SrtSocket::connect(addr, SrtSocketConfig::new(cfg.clone())).await {
                     Ok(s) => {
                         sock = Some(s);
                         break;
@@ -553,7 +553,7 @@ mod tests {
     #[tokio::test]
     async fn loopback_srt_caller_connects_and_yields_samples() {
         let listener_addr = "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap();
-        let mut listener = SrtListener::bind(listener_addr, HandshakeConfig::default())
+        let mut listener = SrtListener::bind(listener_addr, SrtSocketConfig::default())
             .await
             .expect("listener bind");
         let bound_addr = listener.local_addr().expect("listener local addr");
@@ -605,7 +605,7 @@ mod tests {
         let listener_addr = "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap();
         let mut listener = SrtListener::bind(
             listener_addr,
-            HandshakeConfig::default().with_latency_ms(LOW_LATENCY_MS),
+            SrtSocketConfig::new(HandshakeConfig::default().with_latency_ms(LOW_LATENCY_MS)),
         )
         .await
         .expect("listener bind");
@@ -664,7 +664,7 @@ mod tests {
         const READ_TIMEOUT: Duration = Duration::from_secs(2);
 
         let listener_addr = "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap();
-        let mut listener = SrtListener::bind(listener_addr, HandshakeConfig::default())
+        let mut listener = SrtListener::bind(listener_addr, SrtSocketConfig::default())
             .await
             .expect("listener bind");
         let bound_addr = listener.local_addr().expect("listener local addr");

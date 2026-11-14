@@ -2,8 +2,8 @@
 //! must not copy each read into a scratch `Vec` before the chunk assembler
 //! buffers it — it used to `to_vec()` the input, then copy it again.
 
-use rtmp_runtime::client::{ClientConfig, ClientEvent, ClientSession};
-use rtmp_runtime::server::{ServerConfig, ServerEvent, ServerSession};
+use rtmp_runtime::client::{ClientEvent, ClientSession, RtmpClientConfig};
+use rtmp_runtime::server::{RtmpServerConfig, ServerEvent, ServerSession};
 use test_alloc::ThreadCounting;
 
 #[global_allocator]
@@ -12,11 +12,11 @@ static ALLOC: ThreadCounting = ThreadCounting::new();
 /// Drive a client and a server session in memory until the client is
 /// publishing; returns both, ready for media.
 fn publishing_pair() -> (ClientSession, ServerSession) {
-    let mut config = ClientConfig::default();
+    let mut config = RtmpClientConfig::default();
     config.app = "live".into();
     config.stream_key = "key".into();
     let mut client = ClientSession::new(config);
-    let mut server = ServerSession::new(ServerConfig::default());
+    let mut server = ServerSession::new(RtmpServerConfig::default());
     let mut to_server = client.start();
     let mut publishing = false;
     let mut server_published = false;
