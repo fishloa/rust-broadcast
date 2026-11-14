@@ -134,7 +134,14 @@ impl SmoothClient {
     /// engine still has to hold something) the client never consults, since it
     /// fails at construction.
     fn plain_schedule() -> RetrySchedule {
-        RetrySchedule::from_steps(&[], MIN_BACKOFF, 0).unwrap_or_else(|_| unreachable!())
+        RetrySchedule::from_steps(&[], MIN_BACKOFF, 0)
+            .unwrap_or_else(|_| Self::no_delay_schedule(0))
+    }
+
+    /// The schedule no bound can refuse: a zero cap with no step table.
+    fn no_delay_schedule(seed: u64) -> RetrySchedule {
+        RetrySchedule::from_steps(&[], Duration::ZERO, seed)
+            .unwrap_or_else(|_| Self::no_delay_schedule(0))
     }
 
     /// Re-base relative fragment URLs on `url`, after a redirect of the manifest.

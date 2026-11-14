@@ -128,20 +128,27 @@ pub enum InvalidBackoff {
     },
 }
 
-impl fmt::Display for InvalidBackoff {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl InvalidBackoff {
+    /// The failure's message.
+    #[must_use]
+    pub fn reason(&self) -> alloc::string::String {
         match self {
             Self::CapBelowFloor { floor, cap } => {
-                write!(f, "retry cap {cap:?} is below the first retry's {floor:?}")
+                alloc::format!("retry cap {cap:?} is below the first retry's {floor:?}")
             }
-            Self::FloorAboveCeiling { floor, ceiling } => write!(
-                f,
-                "retry floor {floor:?} is above the largest accepted {ceiling:?}"
-            ),
+            Self::FloorAboveCeiling { floor, ceiling } => {
+                alloc::format!("retry floor {floor:?} is above the largest accepted {ceiling:?}")
+            }
             Self::GrowthBelowOne { factor } => {
-                write!(f, "retry growth factor {factor} is under 1")
+                alloc::format!("retry growth factor {factor} is under 1")
             }
         }
+    }
+}
+
+impl fmt::Display for InvalidBackoff {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.reason())
     }
 }
 
@@ -439,7 +446,7 @@ fn term_power(base: f64, exponent: u32) -> f64 {
 /// without the multiplication. A schedule's cap never exceeds [`MAX_FLOOR`], so
 /// `cap` is what the product would have been clamped to anyway.
 fn in_bounds(raw: Duration, factor: f64, cap: Duration) -> Duration {
-    let ceiling = (raw.as_secs_f64() * factor).floor();
+    let ceiling = raw.as_secs_f64() * factor;
     if !ceiling.is_finite() || ceiling >= MAX_FLOOR_SECS as f64 {
         cap
     } else {

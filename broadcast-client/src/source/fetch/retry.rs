@@ -156,7 +156,12 @@ fn steps_schedule(steps: &[Duration], cap: Duration, seed: u64) -> RetrySchedule
     RetrySchedule::from_steps(steps, cap, seed)
         .or_else(|_| RetrySchedule::from_steps(&[], cap.min(MAX_FLOOR), seed))
         .or_else(|_| RetrySchedule::from_steps(&[], Duration::ZERO, seed))
-        .unwrap_or_else(|_| unreachable!())
+        .unwrap_or_else(|_| zero_cap(seed))
+}
+
+/// The one schedule no bound can refuse: a zero cap with no step table.
+fn zero_cap(seed: u64) -> RetrySchedule {
+    RetrySchedule::from_steps(&[], Duration::ZERO, seed).unwrap_or_else(|_| zero_cap(0))
 }
 
 /// `ms` milliseconds as a [`Duration`], saturating at [`Duration::MAX`] instead of wrapping back
