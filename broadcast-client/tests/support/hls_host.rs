@@ -1,6 +1,12 @@
 use std::collections::{BTreeSet, HashMap, VecDeque};
 
 use broadcast_client::{Action, Config, Event, Session, SourceKind};
+use broadcast_common::stage::Timestamp;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 pub const ORIGIN: &str = "http://origin.test";
 pub const TS_PLAYLIST_URL: &str = "http://origin.test/hls/index.m3u8";
@@ -116,7 +122,7 @@ pub struct Host {
 
 impl Host {
     pub fn new(url: &str, config: Config) -> Self {
-        let session = Session::open(url, config, 0).expect("open");
+        let session = Session::open(url, config, ts(0)).expect("open");
         Self {
             session,
             now: 0,
@@ -154,7 +160,7 @@ impl Host {
     }
 
     pub fn collect(&mut self) {
-        while let Some(action) = self.session.poll(self.now) {
+        while let Some(action) = self.session.poll(ts(self.now)) {
             match action {
                 Action::HttpRequest {
                     conn, url, headers, ..
@@ -173,8 +179,8 @@ impl Host {
                     self.inflight.retain(|s| s.conn != conn);
                     self.hung.retain(|s| s.conn != conn);
                 }
-                Action::WakeAt(t) if t > self.now => {
-                    self.wakes.insert(t);
+                Action::WakeAt(t) if t.as_micros() > self.now => {
+                    self.wakes.insert(t.as_micros());
                 }
                 _ => {}
             }
@@ -199,47 +205,47 @@ impl Host {
         let conn = req.conn;
         match reply {
             Reply::Ok(body) => {
-                self.session.on_response(conn, 200, &[], self.now);
+                self.session.on_response(conn, 200, &[], ts(self.now));
                 for chunk in body.chunks(self.chunk.max(1)) {
-                    self.session.on_data(conn, chunk, self.now);
+                    self.session.on_data(conn, chunk, ts(self.now));
                 }
-                self.session.on_closed(conn, None, self.now);
+                self.session.on_closed(conn, None, ts(self.now));
             }
             Reply::OkHeaders(body, headers) => {
-                self.session.on_response(conn, 200, &headers, self.now);
+                self.session.on_response(conn, 200, &headers, ts(self.now));
                 for chunk in body.chunks(self.chunk.max(1)) {
-                    self.session.on_data(conn, chunk, self.now);
+                    self.session.on_data(conn, chunk, ts(self.now));
                 }
-                self.session.on_closed(conn, None, self.now);
+                self.session.on_closed(conn, None, ts(self.now));
             }
             Reply::Full(code, body, headers) => {
-                self.session.on_response(conn, code, &headers, self.now);
+                self.session.on_response(conn, code, &headers, ts(self.now));
                 for chunk in body.chunks(self.chunk.max(1)) {
-                    self.session.on_data(conn, chunk, self.now);
+                    self.session.on_data(conn, chunk, ts(self.now));
                 }
-                self.session.on_closed(conn, None, self.now);
+                self.session.on_closed(conn, None, ts(self.now));
             }
             Reply::Status(code) => {
-                self.session.on_response(conn, code, &[], self.now);
-                self.session.on_closed(conn, None, self.now);
+                self.session.on_response(conn, code, &[], ts(self.now));
+                self.session.on_closed(conn, None, ts(self.now));
             }
             Reply::StatusHeaders(code, headers) => {
-                self.session.on_response(conn, code, &headers, self.now);
-                self.session.on_closed(conn, None, self.now);
+                self.session.on_response(conn, code, &headers, ts(self.now));
+                self.session.on_closed(conn, None, ts(self.now));
             }
             Reply::Redirect(loc) => {
                 self.session
-                    .on_response(conn, 302, &[("Location".to_string(), loc)], self.now);
+                    .on_response(conn, 302, &[("Location".to_string(), loc)], ts(self.now));
             }
             Reply::TransportError => {
                 self.session
-                    .on_closed(conn, Some("reset".to_string()), self.now);
+                    .on_closed(conn, Some("reset".to_string()), ts(self.now));
             }
             Reply::ResetMid(partial) => {
-                self.session.on_response(conn, 200, &[], self.now);
-                self.session.on_data(conn, &partial, self.now);
+                self.session.on_response(conn, 200, &[], ts(self.now));
+                self.session.on_data(conn, &partial, ts(self.now));
                 self.session
-                    .on_closed(conn, Some("reset".to_string()), self.now);
+                    .on_closed(conn, Some("reset".to_string()), ts(self.now));
             }
             Reply::Hang => self.hung.push(req),
         }
@@ -291,7 +297,7 @@ pub fn is_ended(e: &Event) -> bool {
 
 pub fn drain_actions(session: &mut Session, now: u64) -> Vec<Action> {
     let mut out = Vec::new();
-    while let Some(a) = session.poll(now) {
+    while let Some(a) = session.poll(ts(now)) {
         out.push(a);
     }
     out

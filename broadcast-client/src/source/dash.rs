@@ -33,9 +33,12 @@ use crate::source::fetch::inflight::{
     self, HeadRoute, InFlight, Outbox, PurposeKind, ResponseHead, TimeoutClass, Timeouts,
 };
 use crate::source::fetch::resume::{HeadOutcome, Stash, accept_head};
-use crate::source::fetch::retry::{Backoff, RefusedCapture, retry_after_us};
+use crate::source::fetch::retry::{
+    Backoff, RefusedCapture, backoff_ms, duration_us, retry_after_us,
+};
 use crate::source::fetch::wall::WallClock;
 use broadcast_auth::AuthState;
+use broadcast_common::stage::Timestamp;
 use broadcast_common::units::MICROS_PER_MILLI;
 
 const STATUS_FORBIDDEN: u16 = 403;
@@ -265,6 +268,7 @@ impl DashSource {
                 .with_dash(config.dash)
                 .with_limits(pull.clone()),
         );
+        let (backoff_steps_ms, backoff_cap_ms) = backoff_ms(&config.backoff);
         let mut source = Self {
             client,
             mpd_url: url.clone(),
@@ -274,7 +278,7 @@ impl DashSource {
                 manifest: config.max_manifest_bytes,
                 segment: config.max_segment_bytes,
             },
-            backoff: Backoff::new(&config.backoff_ms, config.backoff_cap_ms, seed),
+            backoff: Backoff::new(&backoff_steps_ms, backoff_cap_ms, seed),
             max_redirects: config.max_redirects,
             max_key_failures: config.max_key_failures,
             utc_credentials: config.utc_timing_credentials,
@@ -284,11 +288,11 @@ impl DashSource {
             refused_captures: BTreeMap::new(),
             flight: InFlight::new(
                 Timeouts {
-                    manifest_us: config.request_timeout_us,
-                    segment_us: config.segment_timeout_us,
+                    manifest_us: duration_us(config.request_timeout),
+                    segment_us: duration_us(config.segment_timeout),
                     aux_us: config.dash.utc_timeout_us,
                 },
-                config.segment_inactivity_timeout_us,
+                duration_us(config.segment_inactivity_timeout),
                 conn_alloc,
             ),
             stash: Stash::new(),
@@ -809,7 +813,8 @@ impl DashSource {
             self.events.push_back(Event::Status(Status::Reconnecting {
                 attempt: u64::from(attempt),
             }));
-            self.actions.push_back(Action::WakeAt(at));
+            self.actions
+                .push_back(Action::WakeAt(Timestamp::from_micros(at)));
         }
     }
 
@@ -819,7 +824,8 @@ impl DashSource {
         self.mpd_retry_at = Some(at);
         self.events
             .push_back(Event::Status(Status::Reconnecting { attempt }));
-        self.actions.push_back(Action::WakeAt(at));
+        self.actions
+            .push_back(Action::WakeAt(Timestamp::from_micros(at)));
     }
 
     fn go_fatal(&mut self, kind: ErrorKind) {
@@ -911,7 +917,8 @@ impl DashSource {
         };
         if self.wake_pushed != Some(at) {
             self.wake_pushed = Some(at);
-            self.actions.push_back(Action::WakeAt(at));
+            self.actions
+                .push_back(Action::WakeAt(Timestamp::from_micros(at)));
         }
     }
 

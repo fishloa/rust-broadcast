@@ -2,7 +2,13 @@ use crate::support;
 
 use broadcast_client::{Config, Event};
 use broadcast_common::Unpackage;
+use broadcast_common::stage::Timestamp;
 use support::rtsp_host::{BASE_URL, Host, Server, interleaved};
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const FRAME_STEP_US: u64 = 10_000;
 const IDLE_STEPS: usize = 200;
@@ -65,13 +71,13 @@ fn play(sdp: &str, packets: &[Vec<u8>]) -> Vec<Stamp> {
     for packet in packets {
         host.now += FRAME_STEP_US;
         host.deliver(&interleaved(VIDEO_CHANNEL, packet));
-        host.session.on_playback_position(host.now, None);
+        host.session.on_playback_position(ts(host.now), None);
         host.drain();
         collect(&mut host);
     }
     for _ in 0..IDLE_STEPS {
         host.now += FRAME_STEP_US;
-        host.session.on_playback_position(host.now, None);
+        host.session.on_playback_position(ts(host.now), None);
         host.drain();
         collect(&mut host);
     }

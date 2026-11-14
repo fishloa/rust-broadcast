@@ -1,8 +1,14 @@
 use crate::support;
 
 use broadcast_client::{Action, Config, Credentials, ErrorKind, Event, Session, Status};
+use broadcast_common::stage::Timestamp;
 use support::hls_host::*;
 use transmux::sample_aes::aes128_encrypt_segment;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const BASE: &str = "http://origin.test/hls";
 const KEY_URL: &str = "http://origin.test/hls/key.bin";
@@ -409,7 +415,7 @@ fn key_404_retries_not_not_found_status() {
 fn key_timeout_aborts_and_retries() {
     let config = {
         let mut new_config = hls_config();
-        new_config.hls_key_timeout_us = KEY_TIMEOUT_US;
+        new_config.hls_key_timeout = std::time::Duration::from_micros(KEY_TIMEOUT_US);
         new_config
     };
     let mut h = encrypted_host(config, vec![Reply::Hang, good_key()]);
@@ -581,7 +587,7 @@ fn session_reconnect_keeps_key_cache_or_refetches() {
         1000,
     );
     assert_eq!(h.hits(KEY_URL), 1);
-    h.session.reconnect(h.now);
+    h.session.reconnect(ts(h.now));
     for _ in 0..2000 {
         if h.hits(SEG2_URL) > 0 {
             break;
@@ -613,12 +619,12 @@ fn chunked_key_body_1_byte_chunks_ok() {
 fn late_key_callbacks_after_close_ignored() {
     let iv = iv_seq(0x40);
     let entries = vec![entry(key_tag(KEY_URL, Some(&iv)), "index0.ts")];
-    let mut s = Session::open(TS_PLAYLIST_URL, hls_config(), 0).expect("open");
+    let mut s = Session::open(TS_PLAYLIST_URL, hls_config(), ts(0)).expect("open");
     let first = drain_actions(&mut s, 0);
     let (playlist_conn, _) = http_requests(&first)[0].clone();
-    s.on_response(playlist_conn, 200, &[], 0);
-    s.on_data(playlist_conn, &playlist(0, &entries, true), 0);
-    s.on_closed(playlist_conn, None, 0);
+    s.on_response(playlist_conn, 200, &[], ts(0));
+    s.on_data(playlist_conn, &playlist(0, &entries, true), ts(0));
+    s.on_closed(playlist_conn, None, Timestamp::from_micros(0));
     let actions = drain_actions(&mut s, 0);
     let reqs = http_requests(&actions);
     let key_conn = reqs
@@ -634,11 +640,11 @@ fn late_key_callbacks_after_close_ignored() {
             .iter()
             .any(|a| matches!(a, Action::Close { conn } if *conn == key_conn))
     );
-    s.on_response(key_conn, 200, &[], 0);
-    s.on_data(key_conn, &KEY_A, 2);
-    s.on_closed(key_conn, None, 2);
+    s.on_response(key_conn, 200, &[], ts(0));
+    s.on_data(key_conn, &KEY_A, ts(2));
+    s.on_closed(key_conn, None, Timestamp::from_micros(2));
     assert!(s.next_event().is_none());
-    assert!(s.poll(3).is_none());
+    assert!(s.poll(ts(3)).is_none());
 }
 
 #[test]
@@ -663,12 +669,12 @@ fn fatal_error_stops_session_no_more_requests() {
         new_config.max_key_failures = 1;
         new_config
     };
-    let mut s = Session::open(TS_PLAYLIST_URL, config, 0).expect("open");
+    let mut s = Session::open(TS_PLAYLIST_URL, config, ts(0)).expect("open");
     let first = drain_actions(&mut s, 0);
     let (pconn, _) = http_requests(&first)[0].clone();
-    s.on_response(pconn, 200, &[], 3);
-    s.on_data(pconn, &playlist(0, &entries, true), 0);
-    s.on_closed(pconn, None, 0);
+    s.on_response(pconn, 200, &[], ts(3));
+    s.on_data(pconn, &playlist(0, &entries, true), ts(0));
+    s.on_closed(pconn, None, Timestamp::from_micros(0));
     let reqs = http_requests(&drain_actions(&mut s, 0));
     let key_conn = reqs.iter().find(|(_, u)| u == KEY_URL).expect("key").0;
     let seg_conns: Vec<u32> = reqs
@@ -679,9 +685,9 @@ fn fatal_error_stops_session_no_more_requests() {
     assert_eq!(seg_conns.len(), 2);
     let _ = drain_events(&mut s);
 
-    s.on_response(key_conn, 200, &[], 3);
-    s.on_data(key_conn, &KEY_A[..9], 0);
-    s.on_closed(key_conn, None, 0);
+    s.on_response(key_conn, 200, &[], ts(3));
+    s.on_data(key_conn, &KEY_A[..9], ts(0));
+    s.on_closed(key_conn, None, Timestamp::from_micros(0));
     let events = drain_events(&mut s);
     assert_eq!(errors(&events), vec![(ErrorKind::BadKey, true)]);
     let actions = drain_actions(&mut s, 0);
@@ -696,16 +702,16 @@ fn fatal_error_stops_session_no_more_requests() {
     assert!(http_requests(&actions).is_empty());
 
     for c in &seg_conns {
-        s.on_response(*c, 200, &[], 3);
-        s.on_data(*c, &plain_seg(0), 1);
-        s.on_closed(*c, None, 1);
+        s.on_response(*c, 200, &[], ts(3));
+        s.on_data(*c, &plain_seg(0), ts(1));
+        s.on_closed(*c, None, Timestamp::from_micros(1));
     }
     s.set_credentials(Credentials::bearer(BEARER)).unwrap();
-    s.reconnect(2);
+    s.reconnect(ts(2));
     let mut t = 0u64;
     for _ in 0..50 {
         t += 30 * SEC;
-        assert!(s.poll(t).is_none(), "terminal session issues nothing");
+        assert!(s.poll(ts(t)).is_none(), "terminal session issues nothing");
     }
     assert!(
         drain_events(&mut s).is_empty(),

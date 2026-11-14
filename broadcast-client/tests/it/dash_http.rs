@@ -6,10 +6,16 @@ use crate::support::dash_common;
 use crate::support::dash_sim;
 
 use broadcast_client::{Config, Credentials, ErrorKind, Event, Status};
+use broadcast_common::stage::Timestamp;
 use dash_common::loopback::{Origin, Sig, oracle};
 use dash_common::synth::{Addressing, MPD_URL, Synth};
 use dash_common::world::{MICROS, World};
 use dash_sim::{Answer, Backend, DashSim, Logged, SEC, StaticBackend, WorldBackend};
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const HOST: &str = "http://dash.test";
 const MANIFEST: &str = "manifest.mpd";
@@ -392,7 +398,7 @@ fn no_redirects_allowed_fails_an_mpd_redirect_and_retries_it() {
 #[test]
 fn a_hung_segment_is_closed_at_the_segment_timeout_and_requested_again() {
     let mut config = Config::default();
-    config.segment_timeout_us = 3 * SEC;
+    config.segment_timeout = std::time::Duration::from_secs(3);
     let mut sim = DashSim::static_origin(&url_of(MANIFEST), config);
     let mut hung = false;
     sim.fault = Some(Box::new(move |req: &Logged, _| {
@@ -539,23 +545,23 @@ fn a_whole_file_answer_too_short_for_the_range_is_a_failure_and_data_before_the_
     );
 
     let mut session =
-        broadcast_client::Session::open(&url_of(MANIFEST), Config::default(), 0).unwrap();
+        broadcast_client::Session::open(&url_of(MANIFEST), Config::default(), ts(0)).unwrap();
     let conn = loop {
-        match session.poll(0) {
+        match session.poll(ts(0)) {
             Some(broadcast_client::Action::HttpRequest { conn, .. }) => break conn,
             Some(_) => {}
             None => panic!("no request"),
         }
     };
-    session.on_data(conn, b"<MPD junk before any response head", 0);
+    session.on_data(conn, b"<MPD junk before any response head", ts(0));
     let text = test_fixtures::read(&format!("dash/{MANIFEST}"));
-    session.on_response(conn, 200, &[], 0);
-    session.on_data(conn, &text, 0);
-    session.on_closed(conn, None, 0);
+    session.on_response(conn, 200, &[], ts(0));
+    session.on_data(conn, &text, ts(0));
+    session.on_closed(conn, None, Timestamp::from_micros(0));
     while let Some(e) = session.next_event() {
         assert!(!matches!(e, Event::Error { .. }), "{e:?}");
     }
-    let asked: Vec<String> = std::iter::from_fn(|| session.poll(0))
+    let asked: Vec<String> = std::iter::from_fn(|| session.poll(ts(0)))
         .filter_map(|a| match a {
             broadcast_client::Action::HttpRequest { url, .. } => Some(url),
             _ => None,
@@ -571,8 +577,8 @@ fn a_whole_file_answer_too_short_for_the_range_is_a_failure_and_data_before_the_
 fn a_utc_request_is_abandoned_at_the_utc_timeout_and_an_init_at_the_request_timeout() {
     let synth = Synth::new(AST_US, Addressing::Number).with_utc("http-xsdate", UTC_URL);
     let mut config = Config::default();
-    config.request_timeout_us = 4 * SEC;
-    config.segment_timeout_us = 30 * SEC;
+    config.request_timeout = std::time::Duration::from_secs(4);
+    config.segment_timeout = std::time::Duration::from_secs(30);
     config.dash.utc_timeout_us = 2 * SEC;
     config.dash.utc_wait_us = 5 * SEC;
     let mut sim = DashSim::new(

@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use broadcast_common::stage::Timestamp;
 use broadcast_client::{Action, Config, Credentials, DashClockPolicy, Event, Session, Status};
 use libfuzzer_sys::fuzz_target;
 use test_fixtures::fuzz::{
@@ -65,7 +66,7 @@ struct Watch {
 impl Watch {
     fn pump(&mut self, session: &mut Session, now: u64) {
         let mut steps = 0usize;
-        while let Some(action) = session.poll(now) {
+        while let Some(action) = session.poll(Timestamp::from_micros(now)) {
             steps += 1;
             assert!(steps <= MAX_PUMP_ACTIONS, "runaway action loop at {now}");
             match action {
@@ -107,6 +108,7 @@ impl Watch {
                     self.live.remove(&conn);
                 }
                 Action::WakeAt(at) => {
+                    let at = at.as_micros();
                     assert!(at > now, "WakeAt({at}) is not after now {now}");
                     self.wake = Some(self.wake.map_or(at, |w| w.min(at)));
                 }
@@ -161,14 +163,15 @@ fn deliver(
     body: &[u8],
     chunk: usize,
 ) {
-    session.on_response(conn, status, headers, now);
+    let at = Timestamp::from_micros(now);
+    session.on_response(conn, status, headers, at);
     let chunk = if chunk == 1 && body.len() > SMALL_BODY {
         CHUNK_BYTES[2]
     } else {
         chunk
     };
     for piece in body.chunks(chunk.max(1)) {
-        session.on_data(conn, piece, now);
+        session.on_data(conn, piece, at);
     }
 }
 
@@ -187,6 +190,7 @@ fn answer(
     publish: i64,
     rest: &mut &[u8],
 ) {
+    let at = Timestamp::from_micros(now);
     let is_mpd = req
         .url
         .split('?')
@@ -213,28 +217,28 @@ fn answer(
     match mode % MODES {
         0..=7 => {
             if req.method == "HEAD" {
-                session.on_response(conn, 200, &headers, now);
+                session.on_response(conn, 200, &headers, at);
             } else {
                 deliver(session, conn, now, 200, &headers, &real, chunk);
             }
-            session.on_closed(conn, None, now);
+            session.on_closed(conn, None, at);
         }
         8 => {
             let mut body = real.clone();
             truncate_tail(&mut body, aux);
             deliver(session, conn, now, 200, &headers, &body, chunk);
-            session.on_closed(conn, None, now);
+            session.on_closed(conn, None, at);
         }
         9 => {
             let mut body = real.clone();
             flip_byte(&mut body, aux);
             deliver(session, conn, now, 200, &headers, &body, chunk);
-            session.on_closed(conn, None, now);
+            session.on_closed(conn, None, at);
         }
         10 => {
             let body = take_arbitrary(rest, aux);
             deliver(session, conn, now, 200, &[], &body, chunk);
-            session.on_closed(conn, None, now);
+            session.on_closed(conn, None, at);
         }
         11..=14 => {
             let status = [404, 410, 425, 503][usize::from(mode % MODES - 11)];
@@ -246,40 +250,40 @@ fn answer(
                 ));
             }
             deliver(session, conn, now, status, &h, b"nope", chunk);
-            session.on_closed(conn, None, now);
+            session.on_closed(conn, None, at);
         }
-        15 => session.on_closed(conn, Some("reset".to_owned()), now),
+        15 => session.on_closed(conn, Some("reset".to_owned()), at),
         16 => {
             let half = real.len() / 2;
             deliver(session, conn, now, 200, &headers, &real[..half], chunk);
-            session.on_closed(conn, Some("reset".to_owned()), now);
+            session.on_closed(conn, Some("reset".to_owned()), at);
         }
         17 => {
             let status = if is_mpd { 304 } else { 200 };
             let h = [header("ETag", "\"x\"")];
             if status == 304 {
-                session.on_response(conn, 304, &h, now);
+                session.on_response(conn, 304, &h, at);
             } else {
                 deliver(session, conn, now, 200, &headers, &real, chunk);
             }
-            session.on_closed(conn, None, now);
+            session.on_closed(conn, None, at);
         }
         18 => {
             let mpds = &DashWorld::loaded().mpds;
             let alt = &mpds[usize::from(aux) % mpds.len()];
             deliver(session, conn, now, 200, &[], alt, chunk);
-            session.on_closed(conn, None, now);
+            session.on_closed(conn, None, at);
         }
         19 => {
             let h = [header(
                 "Location",
                 LOCATIONS[usize::from(aux) % LOCATIONS.len()],
             )];
-            session.on_response(conn, [301, 302, 307][usize::from(aux / 4) % 3], &h, now);
+            session.on_response(conn, [301, 302, 307][usize::from(aux / 4) % 3], &h, at);
         }
         _ => {
-            session.on_response(conn, 405, &[], now);
-            session.on_closed(conn, None, now);
+            session.on_response(conn, 405, &[], at);
+            session.on_closed(conn, None, at);
         }
     }
 }
@@ -301,8 +305,9 @@ fuzz_target!(|data: &[u8]| {
     config.max_inflight_segments = WINDOWS[usize::from(head[3] & 3)];
     config.max_segment_failures = CAPS[usize::from((head[3] >> 2) & 3)];
     config.max_key_failures = config.max_segment_failures;
-    config.request_timeout_us = TIMEOUT_US[usize::from(head[6] & 3)];
-    config.segment_timeout_us = TIMEOUT_US[usize::from((head[6] >> 2) & 3)];
+    config.request_timeout = std::time::Duration::from_micros(TIMEOUT_US[usize::from(head[6] & 3)]);
+    config.segment_timeout =
+        std::time::Duration::from_micros(TIMEOUT_US[usize::from((head[6] >> 2) & 3)]);
     config.max_manifest_bytes =
         [4_096, MAX_INPUT, MAX_INPUT, MAX_INPUT][usize::from((head[6] >> 4) & 3)];
     config.initial_cookies = vec![("seed".to_owned(), "1".to_owned())];
@@ -321,7 +326,7 @@ fuzz_target!(|data: &[u8]| {
         .and_then(|m| m.publish_time_us)
         .unwrap_or(DEFAULT_PUBLISH_US);
 
-    let Ok(mut session) = Session::open(MPD_URL, config, 0) else {
+    let Ok(mut session) = Session::open(MPD_URL, config, Timestamp::from_micros(0)) else {
         return;
     };
     if head[7] & 1 != 0 {
@@ -331,7 +336,7 @@ fuzz_target!(|data: &[u8]| {
         let unix = publish
             .saturating_add(i64::try_from(now).unwrap_or(0))
             .saturating_add(skew);
-        session.set_wall_clock(now, u64::try_from(unix.max(0)).unwrap_or(0));
+        session.set_wall_clock(Timestamp::from_micros(now), u64::try_from(unix.max(0)).unwrap_or(0));
     };
     match head[5] % 4 {
         1 => give_clock(&mut session, 0, 0),
@@ -377,7 +382,7 @@ fuzz_target!(|data: &[u8]| {
                 let _ = session
                     .select_audio_rendition(Some(usize::from(aux % 3)).filter(|_| aux % 5 != 0));
             }
-            2 => session.reconnect(now),
+            2 => session.reconnect(Timestamp::from_micros(now)),
             3 if aux == u8::MAX => {
                 session.close();
                 watch.closed = true;
@@ -413,13 +418,13 @@ fuzz_target!(|data: &[u8]| {
         watch.closed = true;
     }
     watch.live.clear();
-    while let Some(action) = session.poll(now) {
+    while let Some(action) = session.poll(Timestamp::from_micros(now)) {
         if let Action::HttpRequest { .. } = action {
             panic!("a request after close()");
         }
     }
     assert!(
-        session.poll(now).is_none(),
+        session.poll(Timestamp::from_micros(now)).is_none(),
         "action after a drained close()"
     );
 });

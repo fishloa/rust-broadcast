@@ -16,6 +16,12 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use broadcast_client::{Action, Config, DashClockPolicy, Event, Session};
+use broadcast_common::stage::Timestamp;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const PINNED_VERSION: &str = "v1.15.2";
 const MODULE_DIR: &str = "github.com/!dash-!industry-!forum/livesim2";
@@ -292,22 +298,22 @@ fn perform(
                 .iter()
                 .filter_map(|(k, v)| Some((k.as_str().to_owned(), v.to_str().ok()?.to_owned())))
                 .collect();
-            session.on_response(conn, resp.status().as_u16(), &headers, mono());
+            session.on_response(conn, resp.status().as_u16(), &headers, ts(mono()));
             let mut buf = vec![0u8; 16 * 1024];
             loop {
                 match resp.read(&mut buf) {
                     Ok(0) => break,
-                    Ok(n) => session.on_data(conn, &buf[..n], mono()),
+                    Ok(n) => session.on_data(conn, &buf[..n], ts(mono())),
                     Err(_) => {
-                        session.on_closed(conn, Some("read".to_owned()), mono());
+                        session.on_closed(conn, Some("read".to_owned()), ts(mono()));
                         observed.requests.push(record);
                         return;
                     }
                 }
             }
-            session.on_closed(conn, None, mono());
+            session.on_closed(conn, None, ts(mono()));
         }
-        Err(_) => session.on_closed(conn, Some("connect".to_owned()), mono()),
+        Err(_) => session.on_closed(conn, Some("connect".to_owned()), ts(mono())),
     }
     observed.requests.push(record);
 }
@@ -330,15 +336,15 @@ fn play(port: u16, shape: &Shape) -> Observed {
     let url = format!("http://127.0.0.1:{port}/livesim2/{}", shape.path);
     let start = Instant::now();
     let mono = || u64::try_from(start.elapsed().as_micros()).expect("mono fits");
-    let mut session = Session::open(&url, config_for(shape), mono()).expect("open");
-    session.set_wall_clock(mono(), u64::try_from(unix_us()).expect("unix"));
+    let mut session = Session::open(&url, config_for(shape), ts(mono())).expect("open");
+    session.set_wall_clock(ts(mono()), u64::try_from(unix_us()).expect("unix"));
     let client = http();
     let mut observed = Observed::default();
     while start.elapsed() < RUN {
         let now = mono();
         let mut pending = Vec::new();
-        let mut wake: Option<u64> = None;
-        while let Some(action) = session.poll(now) {
+        let mut wake: Option<Timestamp> = None;
+        while let Some(action) = session.poll(ts(now)) {
             match action {
                 Action::HttpRequest {
                     conn,
@@ -363,7 +369,7 @@ fn play(port: u16, shape: &Shape) -> Observed {
         }
         drain(&mut session, &mut observed);
         let sleep = wake
-            .map(|t| Duration::from_micros(t.saturating_sub(mono())))
+            .map(|t| t.saturating_sub(ts(mono())))
             .unwrap_or(IDLE_SLEEP)
             .min(IDLE_SLEEP);
         thread::sleep(sleep);

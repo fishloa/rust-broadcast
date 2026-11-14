@@ -33,6 +33,7 @@ use transmux::JumpDetector;
 use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 
 use crate::tshttp::Action as TsAction;
+use broadcast_common::stage::Timestamp;
 use broadcast_common::units::MICROS_PER_MILLI;
 
 const SCHEME_HTTP: &str = "http";
@@ -98,8 +99,8 @@ pub struct Session {
 
 impl Session {
     /// Open a session.
-    pub fn open(url: &str, config: Config, now_us: u64) -> Result<Self, Error> {
-        Self::open_with_memory(url, config, now_us, None)
+    pub fn open(url: &str, config: Config, now: Timestamp) -> Result<Self, Error> {
+        Self::open_with_memory(url, config, now, None)
     }
 
     /// The seed every retry jitter in this session is drawn from.
@@ -115,9 +116,10 @@ impl Session {
     pub fn open_with_memory(
         url: &str,
         config: Config,
-        now_us: u64,
+        now: Timestamp,
         seed: Option<buffering_runtime::StallMemorySnapshot>,
     ) -> Result<Self, Error> {
+        let now_us = now.as_micros();
         let parsed = Url::parse(url).map_err(|e| Error::InvalidUrl(e.to_string()))?;
         let userinfo = broadcast_auth::credentials_from_url(&parsed)
             .map_err(|e| Error::InvalidUrl(e.to_string()))?;
@@ -297,7 +299,8 @@ impl Session {
     }
 
     /// Poll next action.
-    pub fn poll(&mut self, now_us: u64) -> Option<Action> {
+    pub fn poll(&mut self, now: Timestamp) -> Option<Action> {
+        let now_us = now.as_micros();
         if self.closed && self.actions.is_empty() {
             return None;
         }
@@ -326,7 +329,7 @@ impl Session {
             self.settle_buffer();
         }
         while let Some(mut action) = self.actions.pop_front() {
-            if matches!(action, Action::WakeAt(at) if at <= now_us) {
+            if matches!(action, Action::WakeAt(at) if at <= now) {
                 continue;
             }
             self.attach_identity(&mut action);
@@ -347,14 +350,15 @@ impl Session {
         self.events.pop_front()
     }
 
-    /// Response callback; `now_us` is the host clock when the response head arrived.
+    /// Response callback; `now` is the host clock when the response head arrived.
     pub fn on_response(
         &mut self,
         conn: u32,
         status: u16,
         headers: &[(String, String)],
-        now_us: u64,
+        now: Timestamp,
     ) {
+        let now_us = now.as_micros();
         if self.closed || self.rtsp.is_some() || self.datagram.is_some() || self.rtmp.is_some() {
             return;
         }
@@ -505,7 +509,8 @@ impl Session {
     }
 
     /// Data callback.
-    pub fn on_data(&mut self, conn: u32, bytes: &[u8], now_us: u64) {
+    pub fn on_data(&mut self, conn: u32, bytes: &[u8], now: Timestamp) {
+        let now_us = now.as_micros();
         if self.closed {
             return;
         }
@@ -584,7 +589,8 @@ impl Session {
     }
 
     /// Closed callback.
-    pub fn on_closed(&mut self, conn: u32, error: Option<TransportError>, now_us: u64) {
+    pub fn on_closed(&mut self, conn: u32, error: Option<TransportError>, now: Timestamp) {
+        let now_us = now.as_nanos();
         if self.closed {
             return;
         }
@@ -721,7 +727,7 @@ impl Session {
             }
             self.actions.push_back(Action::Close { conn });
             let error = (!clean).then(|| "srt link lost".to_string());
-            self.on_closed(conn, error, now_us);
+            self.on_closed(conn, error, Timestamp::from_micros(now_us));
         }
     }
 
@@ -803,14 +809,14 @@ impl Session {
         Ok(())
     }
 
-    /// Tell the session the UTC time: at the monotonic instant `now_us` (the clock every other
+    /// Tell the session the UTC time: at the monotonic instant `now` (the clock every other
     /// call takes) the host's UTC clock read `unix_us` microseconds since 1970-01-01T00:00:00Z
     /// (POSIX time, no leap seconds). The host reads both clocks back to back, so the pair is as
     /// tight as the host can make it; the session never reads a clock itself.
     ///
     /// Callable at any time and repeatedly (at open, every ten minutes, on a system clock-change
     /// notification or after a device wakes): each call replaces the previous anchor, a call
-    /// whose `now_us` is earlier than the last one is accepted as it stands, and no value is
+    /// whose `now` is earlier than the last one is accepted as it stands, and no value is
     /// rejected (`unix_us` is a `u64`, so dates past the year 584 000 are representable).
     /// [`Session::open`] performs no I/O, so a host calls this between `open` and the first
     /// [`Session::poll`].
@@ -821,7 +827,8 @@ impl Session {
     /// for the DASH source, which needs a clock only for dynamic MPDs (availability and the live
     /// edge) and ranks this one below a measured `UTCTiming` unless
     /// [`crate::DashConfig::clock_policy`] says otherwise.
-    pub fn set_wall_clock(&mut self, now_us: u64, unix_us: u64) {
+    pub fn set_wall_clock(&mut self, now: Timestamp, unix_us: u64) {
+        let now_us = now.as_nanos();
         self.wall = Some(WallClock::new(now_us, unix_us));
         if self.closed {
             return;
@@ -842,7 +849,8 @@ impl Session {
     ///
     /// A finite TS source restarts even after [`Status::Ended`]; an HLS session that has reported
     /// `Ended` ignores the call.
-    pub fn reconnect(&mut self, now_us: u64) {
+    pub fn reconnect(&mut self, now: Timestamp) {
+        let now_us = now.as_micros();
         if self.closed {
             return;
         }
@@ -919,7 +927,8 @@ impl Session {
     }
 
     /// Playback position update.
-    pub fn on_playback_position(&mut self, now_us: u64, pts_27mhz: Option<u64>) {
+    pub fn on_playback_position(&mut self, now: Timestamp, pts_27mhz: Option<u64>) {
+        let now_us = now.as_micros();
         if self.closed {
             return;
         }
@@ -933,7 +942,7 @@ impl Session {
         self.drain_playout();
     }
 
-    /// Set rendered tracks. `now_us` is the host clock at the call, as for every other input; it
+    /// Set rendered tracks. `now` is the host clock at the call, as for every other input; it
     /// stamps the buffer controller registrations this call makes.
     ///
     /// Before the first [`BufferEvent::Start`](crate::BufferEvent::Start), a track this call drops
@@ -943,7 +952,8 @@ impl Session {
     /// host that declares `[video]` and then `[video, audio]` a few ms later never gets a `Start`
     /// judged on video alone, and a host that renders video only waits at most that long. After
     /// the first `Start` a dropped track stops counting at once.
-    pub fn set_rendered_tracks(&mut self, now_us: u64, tracks: &[TrackId]) {
+    pub fn set_rendered_tracks(&mut self, now: Timestamp, tracks: &[TrackId]) {
+        let now_us = now.as_micros();
         if self.closed {
             return;
         }
@@ -1475,7 +1485,8 @@ impl Session {
             .ts_wake
             .is_some_and(|w| w == at || (w > self.now_us && w < at));
         if !outstanding {
-            self.actions.push_back(Action::WakeAt(at));
+            self.actions
+                .push_back(Action::WakeAt(Timestamp::from_micros(at)));
             self.ts_wake = Some(at);
         }
     }
@@ -1527,10 +1538,11 @@ impl Session {
                 self.live_conn = None;
             }
             TsAction::Reconnect { after_ms } => {
-                self.actions.push_back(Action::WakeAt(
-                    self.now_us
-                        .saturating_add(after_ms.saturating_mul(MICROS_PER_MILLI)),
-                ));
+                self.actions
+                    .push_back(Action::WakeAt(Timestamp::from_micros(
+                        self.now_us
+                            .saturating_add(after_ms.saturating_mul(MICROS_PER_MILLI)),
+                    )));
             }
         }
     }
@@ -1615,7 +1627,8 @@ mod tests {
 
     #[test]
     fn alloc_conn_skips_live_ids_when_the_counter_wraps() {
-        let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
+        let mut session =
+            Session::open("http://example/live.ts", Config::default(), Timestamp::ZERO).unwrap();
         let url = Url::parse("http://example/live.ts").unwrap();
         session.next_conn = u32::MAX;
         let a = session.alloc_conn(url.clone());
@@ -1635,7 +1648,8 @@ mod tests {
         let media = transmux::TsDemux::new().unpackage(&data[..]).unwrap();
         let specs: Vec<transmux::TrackSpec> = media.tracks.into_iter().map(|t| t.spec).collect();
         assert_eq!(specs.len(), 2);
-        let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
+        let mut session =
+            Session::open("http://example/live.ts", Config::default(), Timestamp::ZERO).unwrap();
         session.source.inject(Some(Event::Tracks(specs.clone())));
         session.drain_source();
         assert!(specs.iter().all(|s| session.buffer.has_track(s.track_id)));
@@ -1675,7 +1689,8 @@ mod tests {
         };
         let low = with_id(&audio, LOW_AUDIO);
         let high = with_id(&audio, HIGH_AUDIO);
-        let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
+        let mut session =
+            Session::open("http://example/live.ts", Config::default(), Timestamp::ZERO).unwrap();
         assert_eq!(session.default_rendered_tracks(), (None, None));
         session
             .source
@@ -1742,7 +1757,7 @@ mod tests {
             record_buffer_inputs: true,
             ..Config::default()
         };
-        let mut session = Session::open("http://example/live.ts", config, 0).unwrap();
+        let mut session = Session::open("http://example/live.ts", config, Timestamp::ZERO).unwrap();
         session
             .source
             .inject(Some(Event::Tracks(vec![video.spec.clone()])));

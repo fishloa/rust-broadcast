@@ -18,7 +18,9 @@ use crate::events::{Action as HostAction, Config, ErrorKind, Event, ResumeMode, 
 use crate::playout::Source;
 use crate::redirect;
 use crate::source::fetch::conn::ConnAlloc;
+use crate::source::fetch::retry::{backoff_ms, duration_us};
 use broadcast_auth::{AuthDecision, AuthState};
+use broadcast_common::stage::Timestamp;
 
 const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
 const HTTP_UNAUTHORIZED: u16 = 401;
@@ -69,11 +71,12 @@ fn variant_info(q: &QualityInfo) -> VariantInfo {
 
 fn engine_config(config: &Config, jitter_seed: u64) -> SmoothConfig {
     let policy = config.variant_policy.clone();
+    let (backoff_steps_ms, backoff_cap_ms) = backoff_ms(&config.backoff);
     SmoothConfig::default()
         .with_max_fragment_failures(config.max_segment_failures)
         .with_max_manifest_failures(config.max_key_failures)
-        .with_backoff_ms(config.backoff_ms.clone())
-        .with_backoff_cap_ms(config.backoff_cap_ms)
+        .with_backoff_ms(backoff_steps_ms)
+        .with_backoff_cap_ms(backoff_cap_ms)
         .with_jitter_seed(jitter_seed)
         .with_video_quality(QualitySelector::new(move |qualities| {
             let variants: Vec<VariantInfo> = qualities.iter().map(variant_info).collect();
@@ -141,13 +144,14 @@ impl SmoothSource {
     }
 
     fn inactivity_us(&self) -> u64 {
-        self.config.segment_inactivity_timeout_us
+        duration_us(self.config.segment_inactivity_timeout)
     }
 
     fn arm_inactivity(&mut self, now: u64) {
-        self.actions.push_back(HostAction::WakeAt(
-            now.saturating_add(self.inactivity_us().max(1)),
-        ));
+        self.actions
+            .push_back(HostAction::WakeAt(Timestamp::from_micros(
+                now.saturating_add(self.inactivity_us().max(1)),
+            )));
     }
 
     fn start(&mut self, mut req: Req, headers: Vec<(String, String)>, now: u64) {
@@ -194,7 +198,8 @@ impl SmoothSource {
         if deadline != self.armed_wake {
             self.armed_wake = deadline;
             if let Some(t) = deadline {
-                self.actions.push_back(HostAction::WakeAt(t));
+                self.actions
+                    .push_back(HostAction::WakeAt(Timestamp::from_micros(t)));
             }
         }
     }

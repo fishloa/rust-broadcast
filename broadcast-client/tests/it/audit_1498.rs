@@ -1,5 +1,11 @@
 use broadcast_auth::{AuthResult, RequestContext, Verifier};
 use broadcast_client::{Action, Config, Credentials, Session};
+use broadcast_common::stage::Timestamp;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const TS_URL: &str = "http://cam.local:8080/stream/live.ts?ch=1&q=hd";
 const ORIGIN_FORM: &str = "/stream/live.ts?ch=1&q=hd";
@@ -7,7 +13,7 @@ const REALM: &str = "cam";
 
 fn first_request(session: &mut Session, now: u64) -> (u32, Vec<(String, String)>) {
     let mut found = None;
-    while let Some(action) = session.poll(now) {
+    while let Some(action) = session.poll(ts(now)) {
         if let Action::HttpRequest { conn, headers, .. } = action {
             found = Some((conn, headers));
         }
@@ -37,13 +43,18 @@ fn digest_field(header: &str, name: &str) -> String {
 fn digest_uri_is_the_origin_form_request_target_for_http() {
     let verifier =
         Verifier::new(Credentials::new("user", "pass"), REALM).expect("OS random source");
-    let mut session = Session::open(TS_URL, Config::default(), 0).unwrap();
+    let mut session = Session::open(TS_URL, Config::default(), ts(0)).unwrap();
     session
         .set_credentials(Credentials::new("user", "pass"))
         .unwrap();
     let (conn, _) = first_request(&mut session, 0);
     let challenge = verifier.challenge();
-    session.on_response(conn, 401, &[("WWW-Authenticate".to_string(), challenge)], 0);
+    session.on_response(
+        conn,
+        401,
+        &[("WWW-Authenticate".to_string(), challenge)],
+        ts(0),
+    );
     let (_, headers) = first_request(&mut session, 0);
     let header = authorization(&headers);
     assert!(header.starts_with("Digest "), "{header}");
@@ -61,15 +72,15 @@ const SECOND_US: u64 = 1_000_000;
 
 #[test]
 fn cookie_max_age_counts_from_the_clock_of_the_response() {
-    let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
+    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
     let (conn, _) = first_request(&mut session, 0);
     session.on_response(
         conn,
         200,
         &[("Set-Cookie".to_string(), "sid=abc; Max-Age=60".to_string())],
-        100 * SECOND_US,
+        ts(100 * SECOND_US),
     );
-    session.reconnect(130 * SECOND_US);
+    session.reconnect(ts(130 * SECOND_US));
     let (_, headers) = first_request(&mut session, 130 * SECOND_US);
     let cookie = headers
         .iter()

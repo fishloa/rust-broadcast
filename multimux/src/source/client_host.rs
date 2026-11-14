@@ -226,15 +226,16 @@ impl SessionStep {
     ) -> Result<Self, MultimuxError> {
         config.preemptive_basic = true;
         let start = Instant::now();
-        let mut session = Session::open(url, config, 0).map_err(|e| match e {
-            Error::InvalidConfig { field } => MultimuxError::ConfigInvalid {
-                field,
-                reason: format!("{}: {e}", labels.what),
-            },
-            other => MultimuxError::Connect {
-                reason: format!("{}: {other}", labels.what),
-            },
-        })?;
+        let mut session =
+            Session::open(url, config, Timestamp::from_micros(0)).map_err(|e| match e {
+                Error::InvalidConfig { field } => MultimuxError::ConfigInvalid {
+                    field,
+                    reason: format!("{}: {e}", labels.what),
+                },
+                other => MultimuxError::Connect {
+                    reason: format!("{}: {other}", labels.what),
+                },
+            })?;
         if let Some(credentials) = credentials {
             session
                 .set_credentials(credentials)
@@ -280,6 +281,11 @@ impl SessionStep {
         self.clock.mono_us()
     }
 
+    /// The host clock as the session's `now`.
+    fn now(&self) -> Timestamp {
+        Timestamp::from_micros(self.now_us())
+    }
+
     /// Takes the session's instants from `clock` (monotonic microseconds since the source opened,
     /// and the UTC clock the session's wall-clock anchor is read from).
     pub(crate) fn with_clock(mut self, clock: std::sync::Arc<dyn HostClock>) -> Self {
@@ -299,7 +305,8 @@ impl SessionStep {
     fn anchor_wall_clock(&mut self) {
         let now = self.now_us();
         let unix = self.clock.unix_us();
-        self.session.set_wall_clock(now, unix);
+        self.session
+            .set_wall_clock(Timestamp::from_micros(now), unix);
         self.next_anchor_us = now.saturating_add(self.resync_us.unwrap_or(u64::MAX));
     }
 
@@ -314,7 +321,7 @@ impl SessionStep {
     }
 
     async fn perform_actions(&mut self) -> Result<(), MultimuxError> {
-        let now = self.now_us();
+        let now = self.now();
         while let Some(action) = self.session.poll(now) {
             match action {
                 Action::HttpRequest {
@@ -361,8 +368,8 @@ impl SessionStep {
                     }
                     Err(e) => {
                         self.transport_error = Some(e.to_string());
-                        let now = self.now_us();
-                        self.session.on_closed(conn, Some(e.to_string()), now);
+                        self.session
+                            .on_closed(conn, Some(e.to_string()), self.now());
                     }
                 },
                 Action::TcpConnect {
@@ -403,7 +410,7 @@ impl SessionStep {
                     }
                 }
                 Action::WakeAt(at) => {
-                    self.wakes.insert(at);
+                    self.wakes.insert(at.as_micros());
                 }
                 other => {
                     return Err(MultimuxError::Connect {
@@ -421,8 +428,7 @@ impl SessionStep {
     fn fail_connection(&mut self, conn: u32, error: String) {
         self.transport_error = Some(error.clone());
         self.writers.remove(&conn);
-        let now = self.now_us();
-        self.session.on_closed(conn, Some(error), now);
+        self.session.on_closed(conn, Some(error), self.now());
     }
 
     fn register_socket(&mut self, conn: u32, socket: UdpSocket) {
@@ -437,7 +443,7 @@ impl SessionStep {
     }
 
     fn apply(&mut self, message: Message) -> bool {
-        let now = self.now_us();
+        let now = self.now();
         match message {
             Message::Response {
                 conn,
@@ -1007,16 +1013,20 @@ mod tests {
         )
         .expect("open");
         let conn = loop {
-            match step.session.poll(0) {
+            match step.session.poll(Timestamp::from_micros(0)) {
                 Some(Action::HttpRequest { conn, .. }) => break conn,
                 Some(_) => {}
                 None => panic!("the session issued no request"),
             }
         };
         let frames = 4 * EVENT_DRAIN_YIELD_EVERY as u32;
-        step.session.on_response(conn, 200, &[], 1);
         step.session
-            .on_data(conn, &build_ts_bytes(TrackId::new(1), 0xAB, frames), 2);
+            .on_response(conn, 200, &[], Timestamp::from_micros(1));
+        step.session.on_data(
+            conn,
+            &build_ts_bytes(TrackId::new(1), 0xAB, frames),
+            Timestamp::from_micros(2),
+        );
         let mut driver = IngestDriver::new(
             EventIngest::new(),
             media_plane::IngestConfig::new(handshake()).with_trunk(

@@ -3,8 +3,14 @@ use crate::support;
 use broadcast_client::{
     Action, BufferEvent, BufferInput, Config, Event, Hint, Session, Status, TrackId,
 };
+use broadcast_common::stage::Timestamp;
 use support::ts_shift::{PACKET, Shift, VIDEO_TIMESCALE, pes_starts, pts27, shift_pes};
 use transmux::JoinDecision;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const CHUNK: usize = 1316;
 const STEP_US: u64 = 3_200;
@@ -34,14 +40,14 @@ impl LiveHost {
     fn open(mut config: Config) -> Option<Self> {
         config.record_buffer_inputs = true;
         let (status, headers) = support::read_tf1_headers()?;
-        let mut session = Session::open(URL, config, 0).unwrap();
+        let mut session = Session::open(URL, config, ts(0)).unwrap();
         let conn = loop {
-            match session.poll(0).expect("first request") {
+            match session.poll(ts(0)).expect("first request") {
                 Action::HttpRequest { conn, .. } => break conn,
                 _ => continue,
             }
         };
-        session.on_response(conn, status, &headers, 0);
+        session.on_response(conn, status, &headers, ts(0));
         Some(Self {
             session,
             conn,
@@ -87,7 +93,7 @@ impl LiveHost {
             let t = self.next_tick;
             self.now = t;
             let p = self.position(t);
-            self.session.on_playback_position(t, p);
+            self.session.on_playback_position(ts(t), p);
             self.drain();
             self.next_tick += TICK_US;
         }
@@ -98,7 +104,7 @@ impl LiveHost {
         let mut at = from_us;
         for chunk in bytes.chunks(CHUNK) {
             self.ticks_until(at);
-            self.session.on_data(self.conn, chunk, at);
+            self.session.on_data(self.conn, chunk, ts(at));
             self.drain();
             at += STEP_US;
         }
@@ -112,15 +118,16 @@ impl LiveHost {
     fn reconnect(&mut self, now: u64) {
         let (status, headers) = tf1_headers!();
         self.ticks_until(now);
-        self.session.on_closed(self.conn, None, now);
+        self.session.on_closed(self.conn, None, ts(now));
         let mut conn = None;
-        while let Some(a) = self.session.poll(now) {
+        while let Some(a) = self.session.poll(ts(now)) {
             if let Action::HttpRequest { conn: c, .. } = a {
                 conn = Some(c);
             }
         }
         self.conn = conn.expect("a reconnect request");
-        self.session.on_response(self.conn, status, &headers, now);
+        self.session
+            .on_response(self.conn, status, &headers, ts(now));
         self.drain();
     }
 
@@ -423,7 +430,7 @@ fn finite_pass(
 ) -> Option<Vec<Event>> {
     let mut headers = support::read_tf1_headers()?.1;
     headers.push(("Content-Length".to_string(), bytes.len().to_string()));
-    session.on_response(conn, 200, &headers, now);
+    session.on_response(conn, 200, &headers, ts(now));
     let mut out = Vec::new();
     let mut at = now;
     let mut position = host_position;
@@ -433,8 +440,8 @@ fn finite_pass(
             Some((base, since)) => Some(base + (at - since) * PCR_PER_US),
             None => position,
         };
-        session.on_playback_position(at, reported);
-        session.on_data(conn, chunk, at);
+        session.on_playback_position(ts(at), reported);
+        session.on_data(conn, chunk, ts(at));
         while let Some(e) = session.next_event() {
             if let Event::Buffer(
                 BufferEvent::Start { at_27mhz } | BufferEvent::Resume { at_27mhz },
@@ -447,7 +454,7 @@ fn finite_pass(
         }
         at += STEP_US * 4;
     }
-    session.on_closed(conn, None, at);
+    session.on_closed(conn, None, ts(at));
     while let Some(e) = session.next_event() {
         out.push(e);
     }
@@ -456,7 +463,7 @@ fn finite_pass(
 
 fn request_conn(session: &mut Session, now: u64) -> u32 {
     let mut conn = None;
-    while let Some(a) = session.poll(now) {
+    while let Some(a) = session.poll(ts(now)) {
         if let Action::HttpRequest { conn: c, .. } = a {
             conn = Some(c);
         }
@@ -488,7 +495,7 @@ fn a_looped_small_finite_ts_is_not_paused_by_the_hosts_stale_position() {
 fn finite_loop(file: &[u8]) {
     let mut config = Config::default();
     config.record_buffer_inputs = true;
-    let mut session = Session::open(URL, config, 0).unwrap();
+    let mut session = Session::open(URL, config, ts(0)).unwrap();
     let conn = request_conn(&mut session, 0);
     let first = skip_none!(finite_pass(&mut session, conn, file, 0, None));
     assert!(
@@ -502,14 +509,14 @@ fn finite_loop(file: &[u8]) {
     let end_pos = first_starts[0] + FINITE_PLAY_TICKS;
     for t in 1..=40u64 {
         session.on_playback_position(
-            t * TICK_US,
+            ts(t * TICK_US),
             Some(first_starts[0] + t * TICK_US * PCR_PER_US),
         );
     }
-    session.on_playback_position(3_000_000, Some(end_pos));
+    session.on_playback_position(ts(3_000_000), Some(end_pos));
     while session.next_event().is_some() {}
 
-    session.reconnect(3_100_000);
+    session.reconnect(ts(3_100_000));
     let conn = request_conn(&mut session, 3_100_000);
     let stale = Some(end_pos);
     let second = skip_none!(finite_pass(&mut session, conn, file, 3_100_000, stale));

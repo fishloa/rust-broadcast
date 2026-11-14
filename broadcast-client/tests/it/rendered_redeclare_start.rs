@@ -11,6 +11,12 @@ use crate::support::replay::{bitrate_bps, open_live};
 use crate::support::ts_shift::{Shift, shift_pes};
 
 use broadcast_client::{BufferEvent, BufferInput, Config, Event, Session, TrackId};
+use broadcast_common::stage::Timestamp;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const TF1: &str = "http/live-channels/tf1-live.ts";
 const CHUNK: usize = 188 * 64;
@@ -95,7 +101,7 @@ fn run(bytes: &[u8], redeclare: bool, mut config: Config) -> Run {
     loop {
         let now = if chunks.peek().is_some() && next_chunk <= next_tick {
             let part = chunks.next().unwrap();
-            s.on_data(conn, part, next_chunk);
+            s.on_data(conn, part, ts(next_chunk));
             let at = next_chunk;
             burst = burst.saturating_sub(part.len());
             next_chunk += if burst > 0 {
@@ -105,7 +111,7 @@ fn run(bytes: &[u8], redeclare: bool, mut config: Config) -> Run {
             };
             at
         } else {
-            s.on_playback_position(next_tick, None);
+            s.on_playback_position(ts(next_tick), None);
             let at = next_tick;
             next_tick += TICK_US;
             at
@@ -116,7 +122,7 @@ fn run(bytes: &[u8], redeclare: bool, mut config: Config) -> Run {
                 .tracks_at
                 .is_some_and(|t| now >= t + FIRST_DECLARATION_AFTER_US)
         {
-            s.set_rendered_tracks(now, &[host.video.expect("tf-1 has video")]);
+            s.set_rendered_tracks(ts(now), &[host.video.expect("tf-1 has video")]);
             host.first_at = Some(now);
             drain(&mut s, &mut host, now, &mut out);
         }
@@ -127,7 +133,7 @@ fn run(bytes: &[u8], redeclare: bool, mut config: Config) -> Run {
                 .is_some_and(|f| now >= f + SECOND_DECLARATION_AFTER_US)
         {
             let both = [host.video.unwrap(), host.audio.expect("tf-1 has audio")];
-            s.set_rendered_tracks(now, &both);
+            s.set_rendered_tracks(ts(now), &both);
             host.second_done = true;
             drain(&mut s, &mut host, now, &mut out);
         }
@@ -248,8 +254,8 @@ fn rendered_set_rows_carry_the_session_time_of_the_call() {
     let s = &mut r.session;
     s.drain_buffer_inputs().for_each(drop);
     let t = r.start_at.expect("started") + STAMP_OFFSET_US;
-    s.set_rendered_tracks(t, &[r.video]);
-    s.set_rendered_tracks(t, &[r.video, r.audio]);
+    s.set_rendered_tracks(ts(t), &[r.video]);
+    s.set_rendered_tracks(ts(t), &[r.video, r.audio]);
     let rows: Vec<BufferInput> = s
         .drain_buffer_inputs()
         .filter(|i| {

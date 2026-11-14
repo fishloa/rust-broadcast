@@ -6,10 +6,16 @@ use std::collections::BTreeMap;
 use broadcast_client::{
     Action, BufferEvent, BufferInput, Config, Event, Hint, PauseReason, Session, Status, TrackId,
 };
+use broadcast_common::stage::Timestamp;
 use buffering_runtime::{
     BufferController, ControllerConfig, Event as RtEvent, Reason as RtReason, StallMemorySnapshot,
 };
 use transmux::{DemuxEvent, JoinDecision, LiveJoin, StreamingTsDemux, TrackSpec};
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const CHUNK: usize = 1316;
 const PACKET: usize = 188;
@@ -143,13 +149,13 @@ impl Host {
     fn open(seed: Option<StallMemorySnapshot>) -> Option<Self> {
         let mut config = Config::default();
         config.record_buffer_inputs = true;
-        let mut session = Session::open_with_memory(URL, config, 0, seed).unwrap();
+        let mut session = Session::open_with_memory(URL, config, ts(0), seed).unwrap();
         let (status, headers) = support::read_tf1_headers()?;
-        let conn = match session.poll(0).unwrap() {
+        let conn = match session.poll(ts(0)).unwrap() {
             Action::HttpRequest { conn, .. } => conn,
             other => panic!("unexpected first action {other:?}"),
         };
-        session.on_response(conn, status, &headers, 0);
+        session.on_response(conn, status, &headers, ts(0));
         Some(Self {
             session,
             conn,
@@ -175,7 +181,7 @@ impl Host {
     fn data(&mut self, bytes: &[u8], now: u64) {
         self.now = now;
         self.chunk_marks.push(self.events.len());
-        self.session.on_data(self.conn, bytes, now);
+        self.session.on_data(self.conn, bytes, ts(now));
         self.drain(now);
     }
 
@@ -183,7 +189,7 @@ impl Host {
         self.now = now;
         let p = self.clock.position(now);
         self.ticks.push((now, p));
-        self.session.on_playback_position(now, p);
+        self.session.on_playback_position(ts(now), p);
         self.drain(now);
     }
 
@@ -895,16 +901,16 @@ fn pcr_taken_once_per_chunk_from_last_clock_reference() {
 }
 
 fn reconnect(h: &mut Host, now: u64) {
-    h.session.on_closed(h.conn, None, now);
+    h.session.on_closed(h.conn, None, ts(now));
     let (status, headers) = tf1_headers!();
     let mut new_conn = None;
-    while let Some(a) = h.session.poll(now) {
+    while let Some(a) = h.session.poll(ts(now)) {
         if let Action::HttpRequest { conn, .. } = a {
             new_conn = Some(conn);
         }
     }
     h.conn = new_conn.unwrap();
-    h.session.on_response(h.conn, status, &headers, now);
+    h.session.on_response(h.conn, status, &headers, ts(now));
     h.drain(now);
 }
 
@@ -964,7 +970,7 @@ fn source_ended_and_error_hints() {
     let bytes = tf1_bytes!();
     let mut ended = skip_none!(Host::open(None));
     ended.data(&bytes[..CHUNK * 4], 1_000);
-    ended.session.on_closed(ended.conn, None, 2_000);
+    ended.session.on_closed(ended.conn, None, ts(2_000));
     assert_eq!(
         hints(ended.log())
             .into_iter()
@@ -977,7 +983,7 @@ fn source_ended_and_error_hints() {
     failed.data(&bytes[..CHUNK * 4], 1_000);
     failed
         .session
-        .on_closed(failed.conn, Some("connection reset".to_string()), 2_000);
+        .on_closed(failed.conn, Some("connection reset".to_string()), ts(2_000));
     assert_eq!(
         hints(failed.log())
             .into_iter()
@@ -988,12 +994,12 @@ fn source_ended_and_error_hints() {
 
     let mut config = Config::default();
     config.record_buffer_inputs = true;
-    let mut forbidden = Session::open(URL, config, 0).unwrap();
-    let conn = match forbidden.poll(0).unwrap() {
+    let mut forbidden = Session::open(URL, config, ts(0)).unwrap();
+    let conn = match forbidden.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
     };
-    forbidden.on_response(conn, 403, &[], 0);
+    forbidden.on_response(conn, 403, &[], ts(0));
     assert_eq!(
         hints(forbidden.buffer_input_log())
             .into_iter()
@@ -1076,7 +1082,7 @@ fn set_rendered_tracks_registers_and_unregisters_difference() {
     let base = h.log().len();
 
     h.session
-        .set_rendered_tracks(h.now, &[ids[&VIDEO], ids[&OTHER_AUDIO]]);
+        .set_rendered_tracks(ts(h.now), &[ids[&VIDEO], ids[&OTHER_AUDIO]]);
     let after = &h.log()[base..];
     assert_eq!(after.len(), 3, "{after:?}");
     assert_eq!(register_change(&after[0]), Some((false, AUDIO)));
@@ -1087,11 +1093,11 @@ fn set_rendered_tracks_registers_and_unregisters_difference() {
     );
     let base = h.log().len();
     h.session
-        .set_rendered_tracks(h.now, &[ids[&VIDEO], ids[&OTHER_AUDIO]]);
+        .set_rendered_tracks(ts(h.now), &[ids[&VIDEO], ids[&OTHER_AUDIO]]);
     assert_eq!(h.log().len(), base);
 
     h.session
-        .set_rendered_tracks(h.now, &[ids[&VIDEO], ids[&AUDIO], ids[&OTHER_AUDIO]]);
+        .set_rendered_tracks(ts(h.now), &[ids[&VIDEO], ids[&AUDIO], ids[&OTHER_AUDIO]]);
     let after = &h.log()[base..];
     assert_eq!(after.len(), 2, "{after:?}");
     assert_eq!(register_change(&after[0]), Some((true, AUDIO)));
@@ -1167,23 +1173,23 @@ fn vod_buffer_events_come_from_the_playout_gate_not_the_controller() {
     headers.push(("Content-Length".to_string(), bytes.len().to_string()));
     let mut config = Config::default();
     config.record_buffer_inputs = true;
-    let mut session = Session::open(URL, config, 0).unwrap();
-    let conn = match session.poll(0).unwrap() {
+    let mut session = Session::open(URL, config, ts(0)).unwrap();
+    let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
     };
-    session.on_response(conn, status, &headers, 0);
+    session.on_response(conn, status, &headers, ts(0));
     let mut events = Vec::new();
     for (i, chunk) in bytes.chunks(CHUNK).enumerate() {
         let now = i as u64 * STEP_US;
-        session.on_data(conn, chunk, now);
-        session.on_playback_position(now, Some(now * 27));
+        session.on_data(conn, chunk, ts(now));
+        session.on_playback_position(ts(now), Some(now * 27));
         session.hint(Hint::SourceError);
         while let Some(e) = session.next_event() {
             events.push(e);
         }
     }
-    session.on_closed(conn, None, 10_000_000);
+    session.on_closed(conn, None, ts(10_000_000));
     while let Some(e) = session.next_event() {
         events.push(e);
     }
@@ -1352,7 +1358,7 @@ fn audio_end_forgotten_when_rendered_audio_changes() {
                 if i == switch_at {
                     let ids = h.track_ids();
                     h.session
-                        .set_rendered_tracks(t, &[ids[&VIDEO], ids[&OTHER_AUDIO]]);
+                        .set_rendered_tracks(ts(t), &[ids[&VIDEO], ids[&OTHER_AUDIO]]);
                     switched_log_len = h.log().len();
                     switched_event_idx = h.events.len();
                 }
@@ -1468,7 +1474,7 @@ fn rejoin_clears_pending_ends() {
         h.data(ch, i as u64 * STEP_US);
     }
     let samples_before_close = h.samples().len();
-    h.session.on_closed(h.conn, None, 1_300 * STEP_US);
+    h.session.on_closed(h.conn, None, ts(1_300 * STEP_US));
     h.drain(1_300 * STEP_US);
     assert!(
         h.samples().len() > samples_before_close,
@@ -1477,14 +1483,14 @@ fn rejoin_clears_pending_ends() {
     h.session.rejoin();
     let (status, headers) = tf1_headers!();
     let mut conn = None;
-    while let Some(a) = h.session.poll(1_300 * STEP_US) {
+    while let Some(a) = h.session.poll(ts(1_300 * STEP_US)) {
         if let Action::HttpRequest { conn: c, .. } = a {
             conn = Some(c);
         }
     }
     h.conn = conn.unwrap();
     h.session
-        .on_response(h.conn, status, &headers, 1_300 * STEP_US);
+        .on_response(h.conn, status, &headers, ts(1_300 * STEP_US));
     h.data(&bytes[..CHUNK], 1_400 * STEP_US);
     let tail = media_reports(h.log())
         .into_iter()
@@ -1547,7 +1553,7 @@ fn run_declaring(bytes: &[u8], delay_us: Option<u64>) -> Host {
         if tracks_at.is_some_and(|at| now >= at + delay)
             && let Some(p) = pick_rendered(&h)
         {
-            h.session.set_rendered_tracks(now, &[p.video, p.audio]);
+            h.session.set_rendered_tracks(ts(now), &[p.video, p.audio]);
             h.tick(now);
             declared = true;
         }

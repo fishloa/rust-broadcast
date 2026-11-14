@@ -3,8 +3,14 @@ use crate::support;
 use std::collections::HashMap;
 
 use broadcast_client::{Action, Config, Credentials, Error, Event, Session, SourceKind, Status};
+use broadcast_common::stage::Timestamp;
 use support::hls_host::*;
 use url::Url;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const MASTER_URL: &str = "http://origin.test/m/master.m3u8";
 const LOW_PLAYLIST_URL: &str = "http://origin.test/m/low/index.m3u8";
@@ -48,9 +54,9 @@ fn reconnect_attempts(events: &[Event]) -> Vec<u64> {
 }
 
 fn respond_ok(session: &mut Session, conn: u32, body: &[u8], now: u64) {
-    session.on_response(conn, 200, &[], 0);
-    session.on_data(conn, body, now);
-    session.on_closed(conn, None, now);
+    session.on_response(conn, 200, &[], ts(0));
+    session.on_data(conn, body, ts(now));
+    session.on_closed(conn, None, Timestamp::from_micros(now));
 }
 
 fn single_http_request(actions: &[Action]) -> (u32, String) {
@@ -63,7 +69,7 @@ fn wake_times(actions: &[Action]) -> Vec<u64> {
     actions
         .iter()
         .filter_map(|a| match a {
-            Action::WakeAt(t) => Some(*t),
+            Action::WakeAt(t) => Some(t.as_micros()),
             _ => None,
         })
         .collect()
@@ -117,7 +123,7 @@ fn auto_detects_m3u8_suffix() {
         "http://origin.test/hls/index.M3U8?token=abc",
         "http://origin.test/hls/index.m3u",
     ] {
-        let mut s = Session::open(url, Config::default(), 0).expect("open");
+        let mut s = Session::open(url, Config::default(), ts(0)).expect("open");
         let first = drain_actions(&mut s, 0);
         let (conn, req_url) = single_http_request(&first);
         assert_eq!(req_url, url);
@@ -137,12 +143,12 @@ fn auto_detects_m3u8_suffix() {
         );
     }
 
-    let mut ts =
-        Session::open("http://origin.test/hls/live.ts", Config::default(), 0).expect("open");
-    let (conn, _) = single_http_request(&drain_actions(&mut ts, 0));
-    respond_ok(&mut ts, conn, &ts_playlist(), 0);
+    let mut ts_host =
+        Session::open("http://origin.test/hls/live.ts", Config::default(), ts(0)).expect("open");
+    let (conn, _) = single_http_request(&drain_actions(&mut ts_host, 0));
+    respond_ok(&mut ts_host, conn, &ts_playlist(), 0);
     assert!(
-        http_requests(&drain_actions(&mut ts, 0)).is_empty(),
+        http_requests(&drain_actions(&mut ts_host, 0)).is_empty(),
         "a .ts URL must stay TS-over-HTTP"
     );
 
@@ -151,7 +157,7 @@ fn auto_detects_m3u8_suffix() {
         new_config.kind = SourceKind::TsHttp;
         new_config
     };
-    let mut ts2 = Session::open("http://origin.test/hls/index.m3u8", forced, 0).expect("open");
+    let mut ts2 = Session::open("http://origin.test/hls/index.m3u8", forced, ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut ts2, 0));
     respond_ok(&mut ts2, conn, &ts_playlist(), 0);
     assert!(
@@ -271,7 +277,7 @@ fn media_playlist_fmp4_segments_emit_tracks_then_samples() {
 
 #[test]
 fn master_emits_variants_event_then_fetches_chosen_variant() {
-    let mut s = Session::open(MASTER_URL, hls_config(), 0).expect("open");
+    let mut s = Session::open(MASTER_URL, hls_config(), ts(0)).expect("open");
     let (conn, url) = single_http_request(&drain_actions(&mut s, 0));
     assert_eq!(url, MASTER_URL);
     respond_ok(&mut s, conn, two_variant_master_text().as_bytes(), 0);
@@ -297,7 +303,7 @@ fn master_emits_variants_event_then_fetches_chosen_variant() {
         .expect("utf8 bipbop master");
     let n_variants = real.matches("#EXT-X-STREAM-INF").count();
     let mut s2 =
-        Session::open("http://origin.test/bip/master.m3u8", hls_config(), 0).expect("open");
+        Session::open("http://origin.test/bip/master.m3u8", hls_config(), ts(0)).expect("open");
     let (c2, _) = single_http_request(&drain_actions(&mut s2, 0));
     respond_ok(&mut s2, c2, real.as_bytes(), 0);
     let evs = drain_events(&mut s2);
@@ -329,7 +335,7 @@ fn variant_policy_in_config_applied() {
         };
         new_config
     };
-    let mut s = Session::open(MASTER_URL, by_bandwidth, 0).expect("open");
+    let mut s = Session::open(MASTER_URL, by_bandwidth, ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s, 0));
     respond_ok(&mut s, conn, two_variant_master_text().as_bytes(), 0);
     let sel = drain_events(&mut s)
@@ -352,7 +358,7 @@ fn variant_policy_in_config_applied() {
         };
         new_config
     };
-    let mut s2 = Session::open(MASTER_URL, by_height, 0).expect("open");
+    let mut s2 = Session::open(MASTER_URL, by_height, ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s2, 0));
     respond_ok(&mut s2, conn, two_variant_master_text().as_bytes(), 0);
     let (_, url2) = single_http_request(&drain_actions(&mut s2, 0));
@@ -387,8 +393,9 @@ fn select_variant_switches_and_emits_discontinuity() {
         Err(Error::NoSuchVariant(9))
     ));
 
-    let mut ts = Session::open("http://origin.test/x.ts", Config::default(), 0).expect("open");
-    assert!(matches!(ts.select_variant(0), Err(Error::NotHls)));
+    let mut ts_host =
+        Session::open("http://origin.test/x.ts", Config::default(), ts(0)).expect("open");
+    assert!(matches!(ts_host.select_variant(0), Err(Error::NotHls)));
 }
 
 #[test]
@@ -434,7 +441,7 @@ fn live_blocking_reload_query_in_request_url() {
               #EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:2.0,\nseg100.m4s\n\
               #EXT-X-PART:DURATION=0.5,URI=\"p101.0.m4s\",INDEPENDENT=YES\n";
     let url = "http://origin.test/ll/live.m3u8";
-    let mut s = Session::open(url, hls_config(), 0).expect("open");
+    let mut s = Session::open(url, hls_config(), ts(0)).expect("open");
     let (conn, first) = single_http_request(&drain_actions(&mut s, 0));
     assert_eq!(first, url, "the first fetch is a plain GET");
     respond_ok(&mut s, conn, ll.as_bytes(), 0);
@@ -455,7 +462,7 @@ fn live_blocking_reload_query_in_request_url() {
 #[test]
 fn prefetch_concurrent_connections_tracked() {
     let bodies = cmaf_bodies();
-    let mut s = Session::open(CMAF_PLAYLIST_URL, hls_config(), 0).expect("open");
+    let mut s = Session::open(CMAF_PLAYLIST_URL, hls_config(), ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s, 0));
     respond_ok(&mut s, conn, &bodies[CMAF_PLAYLIST_URL], 0);
     let reqs = http_requests(&drain_actions(&mut s, 0));
@@ -470,7 +477,7 @@ fn prefetch_concurrent_connections_tracked() {
     assert_eq!(conns.len(), 4, "each prefetch has its own connection");
 
     for (c, _) in &reqs {
-        s.on_response(*c, 200, &[], 0);
+        s.on_response(*c, 200, &[], ts(0));
     }
     let bodies_by_conn: Vec<(u32, &Vec<u8>)> = reqs.iter().map(|(c, u)| (*c, &bodies[u])).collect();
     let max_len = bodies_by_conn
@@ -483,13 +490,13 @@ fn prefetch_concurrent_connections_tracked() {
     while offset < max_len {
         for (c, body) in &bodies_by_conn {
             if offset < body.len() {
-                s.on_data(*c, &body[offset..(offset + chunk).min(body.len())], 0);
+                s.on_data(*c, &body[offset..(offset + chunk).min(body.len())], ts(0));
             }
         }
         offset += chunk;
     }
     for (c, _) in reqs.iter().rev() {
-        s.on_closed(*c, None, 0);
+        s.on_closed(*c, None, Timestamp::from_micros(0));
     }
     let events = drain_events(&mut s);
     let expected = oracle_events(CMAF_PLAYLIST_URL, &bodies);
@@ -535,7 +542,7 @@ fn session_samples_equal_bare_hls_client_oracle() {
 
 #[test]
 fn backoff_2_4_8_then_10_forever() {
-    let mut s = Session::open(TS_PLAYLIST_URL, hls_config(), 0).expect("open");
+    let mut s = Session::open(TS_PLAYLIST_URL, hls_config(), ts(0)).expect("open");
     let mut now = 0u64;
     let mut deltas = Vec::new();
     let mut attempts = Vec::new();
@@ -546,7 +553,7 @@ fn backoff_2_4_8_then_10_forever() {
             .cloned()
             .expect("a playlist request");
         assert_eq!(url, TS_PLAYLIST_URL);
-        s.on_closed(conn, Some("reset".to_string()), now);
+        s.on_closed(conn, Some("reset".to_string()), ts(now));
         let after = drain_actions(&mut s, now);
         let wakes = wake_times(&after);
         assert_eq!(wakes.len(), 1, "one retry wake: {after:?}");
@@ -735,7 +742,7 @@ fn oversized_playlist_body_closes_and_fails() {
         new_config
     };
     let exact = padded_playlist(limit);
-    let mut ok = Session::open(TS_PLAYLIST_URL, config.clone(), 0).expect("open");
+    let mut ok = Session::open(TS_PLAYLIST_URL, config.clone(), ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut ok, 0));
     respond_ok(&mut ok, conn, &exact, 0);
     assert_eq!(
@@ -744,12 +751,12 @@ fn oversized_playlist_body_closes_and_fails() {
         "a body of exactly the limit is accepted"
     );
 
-    let mut s = Session::open(TS_PLAYLIST_URL, config, 0).expect("open");
+    let mut s = Session::open(TS_PLAYLIST_URL, config, ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s, 0));
-    s.on_response(conn, 200, &[], 0);
-    s.on_data(conn, &exact, 0);
+    s.on_response(conn, 200, &[], ts(0));
+    s.on_data(conn, &exact, ts(0));
     assert!(closes(&drain_actions(&mut s, 0)).is_empty());
-    s.on_data(conn, b"#", 0);
+    s.on_data(conn, b"#", ts(0));
     let after = drain_actions(&mut s, 0);
     assert_eq!(
         closes(&after),
@@ -758,7 +765,7 @@ fn oversized_playlist_body_closes_and_fails() {
     );
     assert_eq!(wake_times(&after), vec![2 * SEC]);
     assert_eq!(reconnect_attempts(&drain_events(&mut s)), vec![1]);
-    s.on_closed(conn, None, 0);
+    s.on_closed(conn, None, Timestamp::from_micros(0));
     assert!(
         drain_events(&mut s).is_empty(),
         "the aborted body is never parsed"
@@ -774,7 +781,7 @@ fn oversized_segment_body_closes_and_fails() {
         new_config.max_segment_bytes = limit;
         new_config
     };
-    let mut s = Session::open(TS_PLAYLIST_URL, config, 0).expect("open");
+    let mut s = Session::open(TS_PLAYLIST_URL, config, ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s, 0));
     respond_ok(&mut s, conn, &ts_playlist(), 0);
     let reqs = http_requests(&drain_actions(&mut s, 0));
@@ -783,20 +790,20 @@ fn oversized_segment_body_closes_and_fails() {
     assert_eq!(seg_url, TS_SEG0_URL);
     let body = ts_segment(0);
     assert!(body.len() > limit + 1);
-    s.on_response(seg_conn, 200, &[], 0);
-    s.on_data(seg_conn, &body[..limit], 0);
+    s.on_response(seg_conn, 200, &[], ts(0));
+    s.on_data(seg_conn, &body[..limit], ts(0));
     assert!(closes(&drain_actions(&mut s, 0)).is_empty());
-    s.on_data(seg_conn, &body[limit..=limit], 0);
+    s.on_data(seg_conn, &body[limit..=limit], ts(0));
     let after = drain_actions(&mut s, 0);
     assert_eq!(closes(&after), vec![seg_conn]);
     assert_eq!(reconnect_attempts(&drain_events(&mut s)), vec![1]);
-    s.on_closed(seg_conn, None, 0);
+    s.on_closed(seg_conn, None, Timestamp::from_micros(0));
     assert_eq!(count(&drain_events(&mut s), is_sample), 0);
 }
 
 #[test]
 fn request_timeout_aborts_playlist_and_segment() {
-    let mut s = Session::open(TS_PLAYLIST_URL, hls_config(), 0).expect("open");
+    let mut s = Session::open(TS_PLAYLIST_URL, hls_config(), ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s, 0));
     assert!(drain_actions(&mut s, 20 * SEC - 1).is_empty());
     let aborted = drain_actions(&mut s, 20 * SEC);
@@ -805,8 +812,8 @@ fn request_timeout_aborts_playlist_and_segment() {
     assert_eq!(wake_times(&aborted), vec![22 * SEC]);
 
     let mut config = hls_config();
-    config.segment_inactivity_timeout_us = u64::MAX;
-    let mut s2 = Session::open(TS_PLAYLIST_URL, config, 0).expect("open");
+    config.segment_inactivity_timeout = std::time::Duration::from_nanos(u64::MAX);
+    let mut s2 = Session::open(TS_PLAYLIST_URL, config, ts(0)).expect("open");
     let (c, _) = single_http_request(&drain_actions(&mut s2, 0));
     respond_ok(&mut s2, c, &ts_playlist(), 0);
     let reqs = http_requests(&drain_actions(&mut s2, 0));
@@ -977,7 +984,7 @@ fn per_request_redirect_followed_and_counted_separately() {
 
 #[test]
 fn credentials_401_on_playlist_waits_no_retry() {
-    let mut s = Session::open(TS_PLAYLIST_URL, hls_config(), 0).expect("open");
+    let mut s = Session::open(TS_PLAYLIST_URL, hls_config(), ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s, 0));
     s.on_response(
         conn,
@@ -986,7 +993,7 @@ fn credentials_401_on_playlist_waits_no_retry() {
             "WWW-Authenticate".to_string(),
             "Bearer realm=\"example\"".to_string(),
         )],
-        0,
+        ts(0),
     );
     let events = drain_events(&mut s);
     assert!(
@@ -1003,7 +1010,7 @@ fn credentials_401_on_playlist_waits_no_retry() {
     for _ in 0..100 {
         t += 10 * 60 * SEC / 100;
         assert!(
-            s.poll(t).is_none(),
+            s.poll(ts(t)).is_none(),
             "no actions while waiting for credentials"
         );
     }
@@ -1026,7 +1033,7 @@ fn credentials_401_on_playlist_waits_no_retry() {
 
 #[test]
 fn late_callbacks_after_close_ignored() {
-    let mut s = Session::open(TS_PLAYLIST_URL, hls_config(), 0).expect("open");
+    let mut s = Session::open(TS_PLAYLIST_URL, hls_config(), ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s, 0));
     respond_ok(&mut s, conn, &ts_playlist(), 0);
     let reqs = http_requests(&drain_actions(&mut s, 0));
@@ -1039,13 +1046,13 @@ fn late_callbacks_after_close_ignored() {
     expected.sort_unstable();
     assert_eq!(closed, expected);
     for (c, _) in &reqs {
-        s.on_response(*c, 200, &[], 0);
-        s.on_data(*c, &ts_segment(0), 0);
-        s.on_closed(*c, None, 0);
+        s.on_response(*c, 200, &[], ts(0));
+        s.on_data(*c, &ts_segment(0), ts(0));
+        s.on_closed(*c, None, Timestamp::from_micros(0));
     }
-    s.on_data(9_999, b"x", 0);
+    s.on_data(9_999, b"x", ts(0));
     assert!(s.next_event().is_none());
-    assert!(s.poll(1).is_none());
+    assert!(s.poll(ts(1)).is_none());
 
     let config = {
         let mut new_config = Config::default();
@@ -1053,16 +1060,16 @@ fn late_callbacks_after_close_ignored() {
         new_config.max_manifest_bytes = 100;
         new_config
     };
-    let mut o = Session::open(TS_PLAYLIST_URL, config, 0).expect("open");
+    let mut o = Session::open(TS_PLAYLIST_URL, config, ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut o, 0));
-    o.on_response(conn, 200, &[], 1);
-    o.on_data(conn, &[b'#'; 101], 0);
+    o.on_response(conn, 200, &[], ts(1));
+    o.on_data(conn, &[b'#'; 101], ts(0));
     assert_eq!(closes(&drain_actions(&mut o, 0)), vec![conn]);
     assert_eq!(reconnect_attempts(&drain_events(&mut o)), vec![1]);
-    o.on_data(conn, &ts_playlist(), 0);
-    o.on_response(conn, 200, &[], 1);
-    o.on_closed(conn, None, 0);
-    o.on_closed(conn, Some("late".to_string()), 0);
+    o.on_data(conn, &ts_playlist(), ts(0));
+    o.on_response(conn, 200, &[], ts(1));
+    o.on_closed(conn, None, Timestamp::from_micros(0));
+    o.on_closed(conn, Some("late".to_string()), Timestamp::from_micros(0));
     assert!(
         drain_events(&mut o).is_empty(),
         "late callbacks add no events"
@@ -1111,17 +1118,17 @@ fn unsupported_container_error_is_failure_not_panic() {
     }
 
     let matroska = vec![0x1A, 0x45, 0xDF, 0xA3, 0x9F, 0x42, 0x86, 0x81, 0x01];
-    let mut ts = Host::new(TS_PLAYLIST_URL, hls_config());
-    ts.ok(TS_PLAYLIST_URL, ts_playlist());
-    ts.ok(TS_SEG0_URL, matroska.clone());
-    ts.ok(TS_SEG1_URL, matroska.clone());
-    ts.run_to_end();
+    let mut ts_host = Host::new(TS_PLAYLIST_URL, hls_config());
+    ts_host.ok(TS_PLAYLIST_URL, ts_playlist());
+    ts_host.ok(TS_SEG0_URL, matroska.clone());
+    ts_host.ok(TS_SEG1_URL, matroska.clone());
+    ts_host.run_to_end();
     assert_eq!(
-        count(&ts.events, is_sample),
+        count(&ts_host.events, is_sample),
         0,
         "unsupported container yields no samples"
     );
-    assert_eq!(count(&ts.events, is_tracks), 0);
+    assert_eq!(count(&ts_host.events, is_tracks), 0);
 
     let bodies = cmaf_bodies();
     let mut fm = Host::new(CMAF_PLAYLIST_URL, hls_config());

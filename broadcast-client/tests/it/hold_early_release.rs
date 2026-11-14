@@ -2,7 +2,13 @@ use crate::support;
 use crate::support::video_run::VideoRun;
 
 use broadcast_client::{Action, Config, Event, Session, TrackId};
+use broadcast_common::stage::Timestamp;
 use support::replay::{TS_PACKET, bitrate_bps, open_live, replay_paced};
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const CHUNK: usize = 4096;
 const SETTLE_US: u64 = 500_000;
@@ -147,9 +153,9 @@ fn a_stream_that_keeps_sending_but_never_resolves_is_bounded_by_the_wall_limit()
 }
 
 fn drive(s: &mut Session, now: u64, wake: &mut Option<u64>, events: &mut Vec<Event>) {
-    while let Some(a) = s.poll(now) {
+    while let Some(a) = s.poll(ts(now)) {
         if let Action::WakeAt(t) = a {
-            *wake = Some(t);
+            *wake = Some(t.as_micros());
         }
     }
     while let Some(e) = s.next_event() {
@@ -183,7 +189,7 @@ fn the_settle_is_armed_on_the_session_clock_when_the_source_goes_quiet() {
     let mut resolved_at = 0;
     for (i, part) in bytes.chunks(chunk).enumerate().take(last_chunk + 1) {
         now += STEP_US;
-        s.on_data(c, part, now);
+        s.on_data(c, part, ts(now));
         drive(&mut s, now, &mut wake, &mut events);
         if i == last_chunk {
             resolved_at = now;
@@ -237,9 +243,9 @@ fn samples_released_by_a_wake_up_reach_the_controller_in_the_same_poll() {
     let mut released = false;
     let mut collect = |s: &mut Session, now: u64, wake: &mut Option<u64>| {
         let mut got_tracks = false;
-        while let Some(a) = s.poll(now) {
+        while let Some(a) = s.poll(ts(now)) {
             if let Action::WakeAt(t) = a {
-                *wake = Some(t);
+                *wake = Some(t.as_micros());
             }
         }
         while let Some(e) = s.next_event() {
@@ -283,7 +289,7 @@ fn samples_released_by_a_wake_up_reach_the_controller_in_the_same_poll() {
         .take(last_resolution_chunk(&bytes, chunk) + 1)
     {
         now += STEP_US;
-        s.on_data(c, part, now);
+        s.on_data(c, part, ts(now));
         assert!(
             !collect(&mut s, now, &mut wake),
             "precondition: the hold is released by a wake-up, not by data"

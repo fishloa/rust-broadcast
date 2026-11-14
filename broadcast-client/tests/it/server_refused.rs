@@ -5,7 +5,13 @@ use crate::support;
 use crate::support::dash_sim;
 
 use broadcast_client::{Action, Config, Event, MAX_SERVER_REFUSED_REASON_BYTES, Session, Status};
+use broadcast_common::stage::Timestamp;
 use dash_sim::{Answer, DashSim, Logged};
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 use support::hls_host::{
     BASE_DATE, Host, PLUS_1H, PLUS_30S, Reply, SEC, TS_PLAYLIST_URL, TS_SEG0_URL, TS_SEG1_URL,
     hls_config, ts_playlist, ts_segment,
@@ -310,8 +316,8 @@ fn dash_reports_server_refused_and_waits_the_retry_after() {
 
 #[test]
 fn ts_http_keeps_the_refused_connection_until_the_retry_when_the_host_never_closes_it() {
-    let mut s = Session::open(TS_URL, Config::default(), 0).unwrap();
-    let conn = match s.poll(0) {
+    let mut s = Session::open(TS_URL, Config::default(), ts(0)).unwrap();
+    let conn = match s.poll(ts(0)) {
         Some(Action::HttpRequest { conn, .. }) => conn,
         other => panic!("expected the first request, got {other:?}"),
     };
@@ -319,23 +325,23 @@ fn ts_http_keeps_the_refused_connection_until_the_retry_when_the_host_never_clos
         header("Retry-After", "30"),
         header("Content-Type", "text/plain"),
     ];
-    s.on_response(conn, 503, &headers, 0);
+    s.on_response(conn, 503, &headers, ts(0));
     let mut actions = Vec::new();
-    while let Some(a) = s.poll(0) {
+    while let Some(a) = s.poll(ts(0)) {
         actions.push(a);
     }
     assert!(
         !actions.iter().any(|a| matches!(a, Action::Close { .. })),
         "the body is still wanted: {actions:?}"
     );
-    s.on_data(conn, REASON.as_bytes(), SEC / 100);
+    s.on_data(conn, REASON.as_bytes(), ts(SEC / 100));
     assert!(
         refused_events(&mut s).is_empty(),
         "not announced before the connection ends"
     );
     let mut closed = false;
     let mut requested = false;
-    while let Some(a) = s.poll(30 * SEC) {
+    while let Some(a) = s.poll(ts(30 * SEC)) {
         closed |= matches!(a, Action::Close { conn: c } if c == conn);
         requested |= matches!(a, Action::HttpRequest { .. });
     }

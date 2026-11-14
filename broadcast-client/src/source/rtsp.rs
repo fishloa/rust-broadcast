@@ -20,11 +20,11 @@ use url::{Host, Url};
 
 use crate::events::{Action, ErrorKind, Event, Status};
 use crate::redirect;
-use crate::source::fetch::retry::ReconnectTimer;
+use crate::source::fetch::retry::{ReconnectTimer, backoff_ms, duration_us as micros};
 use crate::source::rtsp_sdp::{ParsedSdp, SdpError, SkippedMedia, TrackInit, parse_tracks};
 use broadcast_auth::{AuthDecision, AuthState};
 use broadcast_common::backoff::mix_seed;
-use broadcast_common::units::MICROS_PER_MILLI;
+use broadcast_common::stage::Timestamp;
 
 const SCHEME_RTSPS: &str = "rtsps";
 const RTSP_DEFAULT_PORT: u16 = 554;
@@ -33,6 +33,7 @@ const FIRST_CONN_ID: u32 = 1;
 const MAX_AUTH_REPLAYS: u32 = 2;
 const MAX_STALL_NOTICES_PER_POLL: u32 = 64;
 const US_PER_SEC: u64 = 1_000_000;
+
 const STATUS_UNAUTHORIZED: u16 = 401;
 const STATUS_FORBIDDEN: u16 = 403;
 const STATUS_NOT_FOUND: u16 = 404;
@@ -163,6 +164,7 @@ impl RtspSource {
         let mut request_url = url.clone();
         let _ = request_url.set_username("");
         let _ = request_url.set_password(None);
+        let (backoff_steps_ms, backoff_cap_ms) = backoff_ms(&cfg.backoff);
         let mut me = Self {
             original_url: request_url.clone(),
             max_redirects,
@@ -193,7 +195,7 @@ impl RtspSource {
             seen_first_sample: false,
             stalled: false,
             attempt: 0,
-            retry: ReconnectTimer::new(&cfg.backoff_ms, cfg.backoff_cap_ms, mix_seed(now_us)),
+            retry: ReconnectTimer::new(&backoff_steps_ms, backoff_cap_ms, mix_seed(now_us)),
             connected_at: now_us,
             last_byte_at: now_us,
             last_sample_at: now_us,
@@ -365,7 +367,8 @@ impl RtspSource {
             .wake_pending
             .is_some_and(|w| w == deadline || (w > now && w < deadline));
         if !outstanding {
-            self.actions.push_back(Action::WakeAt(deadline));
+            self.actions
+                .push_back(Action::WakeAt(Timestamp::from_micros(deadline)));
             self.wake_pending = Some(deadline);
         }
     }
@@ -391,24 +394,20 @@ impl RtspSource {
     }
 
     fn start_us(&self) -> u64 {
-        self.cfg.start_timeout_ms.saturating_mul(MICROS_PER_MILLI)
+        micros(self.cfg.start_timeout)
     }
 
     fn notice_us(&self) -> u64 {
-        self.cfg.stall_notice_ms.saturating_mul(MICROS_PER_MILLI)
+        micros(self.cfg.stall_notice)
     }
 
     fn reconnect_us(&self) -> u64 {
-        self.cfg.stall_reconnect_ms.saturating_mul(MICROS_PER_MILLI)
+        micros(self.cfg.stall_reconnect)
     }
 
     fn backoff_after_played(&mut self, now: u64) {
         let lasted = now.saturating_sub(self.connected_at);
-        let floor = self
-            .cfg
-            .min_reconnect_interval_ms
-            .saturating_mul(MICROS_PER_MILLI)
-            .saturating_sub(lasted);
+        let floor = micros(self.cfg.min_reconnect_interval).saturating_sub(lasted);
         self.attempt = 0;
         // The connection played, so the retry series restarts from its floor
         // (the shared timer's healthy-connection rule).

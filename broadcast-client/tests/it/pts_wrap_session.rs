@@ -2,8 +2,14 @@ use crate::support::replay::{bitrate_bps, replay_with_host};
 use crate::support::ts_shift::{PTS_WRAP, Shift, shift_pes};
 use broadcast_client::{Action, BufferEvent, Config, Event, Session};
 use broadcast_common::clock33::PCR_WRAP_27MHZ;
+use broadcast_common::stage::Timestamp;
 use broadcast_common::{Package, Unpackage};
 use transmux::{Media, TsDemux, TsMux};
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const WRAP: i64 = 1 << 33;
 
@@ -54,8 +60,8 @@ fn pts_33bit_wrap_through_session_playout() {
     let bytes = mux.package(&media).expect("mux");
     assert!(!bytes.is_empty());
 
-    let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
-    let conn = match session.poll(0).unwrap() {
+    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!("no request"),
     };
@@ -63,12 +69,12 @@ fn pts_33bit_wrap_through_session_playout() {
         conn,
         200,
         &[("Content-Length".to_string(), bytes.len().to_string())],
-        0,
+        ts(0),
     );
     for chunk in bytes.chunks(1316) {
-        session.on_data(conn, chunk, 0);
+        session.on_data(conn, chunk, ts(0));
     }
-    session.on_closed(conn, None, 1000);
+    session.on_closed(conn, None, ts(1000));
 
     // Collect events.
     let mut evs = Vec::new();

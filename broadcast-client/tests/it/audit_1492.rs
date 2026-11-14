@@ -1,7 +1,13 @@
 use crate::support;
 
 use broadcast_client::{Action, Config, Credentials, Event, Session};
+use broadcast_common::stage::Timestamp;
 use support::ts_probe::{Req, TS_URL, location, one, open, respond, set_cookies};
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const SEC: u64 = 1_000_000;
 const OTHER_ORIGIN_URL: &str = "http://other.example/x.ts";
@@ -16,7 +22,7 @@ const BASIC_CHALLENGE: &str = "Basic realm=\"r\"";
 
 fn drain(session: &mut Session, now: u64) -> Vec<Action> {
     let mut out = Vec::new();
-    while let Some(a) = session.poll(now) {
+    while let Some(a) = session.poll(ts(now)) {
         out.push(a);
     }
     out
@@ -97,7 +103,7 @@ fn a_401_from_a_redirect_target_on_another_origin_does_not_loop_with_credentials
     assert!(
         actions
             .iter()
-            .any(|a| matches!(a, Action::WakeAt(at) if *at > 0)),
+            .any(|a| matches!(a, Action::WakeAt(at) if at.as_nanos() > 0)),
         "the retry must be delayed by backoff: {actions:?}"
     );
 }
@@ -168,12 +174,12 @@ fn a_refused_text_plain_response_closes_once_its_body_is_complete() {
         let mut session = open(TS_URL, Config::default());
         let (first, at_response) = refused_with_body(&mut session, status, &text_plain(body.len()));
         assert!(closes(&at_response).is_empty(), "{status}: {at_response:?}");
-        session.on_data(first.conn, &body[..3], 1);
+        session.on_data(first.conn, &body[..3], ts(1));
         assert!(closes(&drain(&mut session, 1)).is_empty());
-        session.on_data(first.conn, &body[3..], 2);
+        session.on_data(first.conn, &body[3..], ts(2));
         let after = drain(&mut session, 2);
         assert_eq!(closes(&after), vec![first.conn], "{status}: {after:?}");
-        session.on_closed(first.conn, None, 3);
+        session.on_closed(first.conn, None, Timestamp::from_micros(3));
         assert!(
             closes(&drain(&mut session, 3)).is_empty(),
             "exactly one Close"
@@ -187,8 +193,8 @@ fn a_refused_text_plain_response_without_a_length_closes_when_the_host_ends_it()
     let headers = vec![("Content-Type".to_string(), "text/plain".to_string())];
     let (first, at_response) = refused_with_body(&mut session, 503, &headers);
     assert!(closes(&at_response).is_empty());
-    session.on_data(first.conn, b"busy", 1);
-    session.on_closed(first.conn, None, 2);
+    session.on_data(first.conn, b"busy", ts(1));
+    session.on_closed(first.conn, None, Timestamp::from_micros(2));
     assert!(
         closes(&drain(&mut session, 2)).is_empty(),
         "the host already closed it"
@@ -201,12 +207,12 @@ fn a_refused_text_plain_body_longer_than_the_cap_closes_when_the_cap_is_reached(
     let mut session = open(TS_URL, Config::default());
     let (first, at_response) = refused_with_body(&mut session, 503, &text_plain(cap * 10));
     assert!(closes(&at_response).is_empty());
-    session.on_data(first.conn, &vec![b'x'; cap - 1], 1);
+    session.on_data(first.conn, &vec![b'x'; cap - 1], ts(1));
     assert!(closes(&drain(&mut session, 1)).is_empty());
-    session.on_data(first.conn, b"x", 2);
+    session.on_data(first.conn, b"x", ts(2));
     let after = drain(&mut session, 2);
     assert_eq!(closes(&after), vec![first.conn], "{after:?}");
-    session.on_data(first.conn, &vec![b'x'; cap], 3);
+    session.on_data(first.conn, &vec![b'x'; cap], ts(3));
     assert!(
         closes(&drain(&mut session, 3)).is_empty(),
         "exactly one Close"
@@ -232,7 +238,7 @@ fn the_total_cookie_header_is_capped() {
         .collect();
     let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
     respond(&mut session, &first, 200, &set_cookies(&refs));
-    session.reconnect(SEC);
+    session.reconnect(ts(SEC));
     let req = one(&mut session, SEC);
     let cookie = req.cookie().expect("some cookies are sent");
     assert!(

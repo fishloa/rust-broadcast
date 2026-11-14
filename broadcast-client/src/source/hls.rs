@@ -19,10 +19,13 @@ use crate::source::fetch::inflight::{
     self, HeadRoute, InFlight, Outbox, PurposeKind, ResponseHead, TimeoutClass, Timeouts,
 };
 use crate::source::fetch::resume::{HeadOutcome, Stash, accept_head};
-use crate::source::fetch::retry::{Backoff, RefusedCapture, RetryGate, retry_after_us};
+use crate::source::fetch::retry::{
+    Backoff, RefusedCapture, RetryGate, backoff_ms, duration_us, retry_after_us,
+};
 use crate::source::fetch::wall::WallClock;
 use crate::source::fetch::window::{Lane, Lanes, Window};
 use broadcast_auth::AuthState;
+use broadcast_common::stage::Timestamp;
 use broadcast_common::units::MICROS_PER_MILLI;
 
 const STATUS_FORBIDDEN: u16 = 403;
@@ -132,6 +135,7 @@ impl HlsSource {
         let client = HlsClient::new(
             HlsClientConfig::new(url.as_str()).with_variant_policy(config.variant_policy.clone()),
         );
+        let (backoff_steps_ms, backoff_cap_ms) = backoff_ms(&config.backoff);
         let mut source = Self {
             client,
             body_limits: BodyLimits {
@@ -154,15 +158,15 @@ impl HlsSource {
             skipped_kind: None,
             damaged_reported: false,
             oversize_reported: BTreeSet::new(),
-            backoff: Backoff::new(&config.backoff_ms, config.backoff_cap_ms, seed),
+            backoff: Backoff::new(&backoff_steps_ms, backoff_cap_ms, seed),
             max_redirects: config.max_redirects,
             flight: InFlight::new(
                 Timeouts {
-                    manifest_us: config.request_timeout_us,
-                    segment_us: config.segment_timeout_us,
-                    aux_us: config.hls_key_timeout_us,
+                    manifest_us: duration_us(config.request_timeout),
+                    segment_us: duration_us(config.segment_timeout),
+                    aux_us: duration_us(config.hls_key_timeout),
                 },
-                config.segment_inactivity_timeout_us,
+                duration_us(config.segment_inactivity_timeout),
                 conn_alloc,
             ),
             stash: Stash::new(),
@@ -743,7 +747,8 @@ impl HlsSource {
         {
             self.retry_refetch = Some((at, url));
         }
-        self.actions.push_back(Action::WakeAt(at));
+        self.actions
+            .push_back(Action::WakeAt(Timestamp::from_micros(at)));
     }
 
     fn expire(&mut self, now: u64) {
@@ -819,7 +824,8 @@ impl HlsSource {
                 HlsAction::WaitMs(ms) => {
                     let at = now.saturating_add(ms.saturating_mul(MICROS_PER_MILLI));
                     self.gate.hold_until(at);
-                    self.actions.push_back(Action::WakeAt(at));
+                    self.actions
+                        .push_back(Action::WakeAt(Timestamp::from_micros(at)));
                 }
                 _ => {}
             }

@@ -1,8 +1,14 @@
 use crate::support;
 
 use broadcast_client::{Config, Credentials, Event, Session};
+use broadcast_common::stage::Timestamp;
 use support::hls_host::*;
 use support::ts_probe::{self, *};
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const CDN_SEG_URL: &str = "http://cdn.test/seg/index1.ts";
 const MAX_JAR: usize = 50;
@@ -373,7 +379,7 @@ fn invalid_initial_cookies_rejected_at_open() {
         };
         assert!(
             matches!(
-                Session::open(TS_URL, config, 0),
+                Session::open(TS_URL, config, ts(0)),
                 Err(broadcast_client::Error::InvalidHeader { .. })
             ),
             "{name:?}={value:?}"
@@ -603,7 +609,7 @@ fn hls_cookie_survives_session_reconnect() {
         200,
     );
     let before = h.seen.len();
-    h.session.reconnect(h.now);
+    h.session.reconnect(ts(h.now));
     h.collect();
     assert!(h.seen.len() > before);
     let reconnected = h.seen.last().expect("request after reconnect");
@@ -621,7 +627,7 @@ fn cookie_survives_reconnect() {
     let mut s = open(TS_URL, Config::default());
     let first = one(&mut s, 0);
     ok_with_cookies(&mut s, &first, &["sid=keep; Path=/"]);
-    s.on_closed(first.conn, Some("reset".to_string()), SEC);
+    s.on_closed(first.conn, Some("reset".to_string()), ts(SEC));
     let mut found = None;
     for t in 1..=MAX_POLL_SECS {
         let mut reqs = requests(&mut s, t * SEC);

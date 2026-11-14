@@ -1,9 +1,11 @@
 use alloc::collections::VecDeque;
 use alloc::string::String;
+use core::time::Duration;
 
-use crate::source::fetch::retry::ReconnectTimer;
+use crate::source::fetch::retry::{ReconnectTimer, backoff_ms};
 use crate::tshttp::config::Config;
 use crate::tshttp::events::{Action, Event, StarveKind};
+use broadcast_common::stage::Timestamp;
 use broadcast_common::units::MICROS_PER_MILLI;
 
 /// The retry jitter's seed [`TsHttpPolicy::new`] uses: a policy takes no clock, so the seed is a
@@ -23,6 +25,12 @@ const STATUS_PARTIAL_CONTENT: u16 = 206;
 const STATUS_NOT_FOUND: u16 = 404;
 const STATUS_GONE: u16 = 410;
 const STATUS_SUCCESS_CLASS: core::ops::Range<u16> = 200..300;
+
+/// A [`Duration`] as whole milliseconds, saturating at `u64::MAX`; the policy's own clock is
+/// milliseconds, so every configured span is read at that resolution.
+fn millis(d: Duration) -> u64 {
+    u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
+}
 
 #[derive(Debug, Clone, Copy)]
 enum Phase {
@@ -64,19 +72,21 @@ impl TsHttpPolicy {
     ///
     /// An inconsistent `config` is replaced by [`Config::clamped`] rather
     /// than rejected; call [`Config::validate`] first to detect it.
-    pub fn new(url: impl Into<String>, config: Config, now_ms: u64) -> Self {
-        Self::with_seed(url, config, now_ms, RETRY_SEED)
+    pub fn new(url: impl Into<String>, config: Config, now: Timestamp) -> Self {
+        Self::with_seed(url, config, now, RETRY_SEED)
     }
 
     /// Create a policy whose retry jitter is drawn from `seed`.
     ///
-    /// Every decision here is a pure function of the caller's `now_ms`, so two policies made
+    /// Every decision here is a pure function of the caller's `now`, so two policies made
     /// from one configuration replay identically unless their seeds differ: a host that runs
     /// several sessions against one origin passes each a seed mixed from its own instant, and a
     /// test that asserts an exact delay passes a fixed one.
-    pub fn with_seed(url: impl Into<String>, config: Config, now_ms: u64, seed: u64) -> Self {
+    pub fn with_seed(url: impl Into<String>, config: Config, now: Timestamp, seed: u64) -> Self {
+        let now_ms = now.as_millis();
         let config = config.clamped();
-        let retry = ReconnectTimer::new(&config.backoff_ms, config.backoff_cap_ms, seed);
+        let (steps_ms, cap_ms) = backoff_ms(&config.backoff);
+        let retry = ReconnectTimer::new(&steps_ms, cap_ms, seed);
         let mut c = Self {
             url: url.into(),
             config,
@@ -114,7 +124,8 @@ impl TsHttpPolicy {
     }
 
     /// Response headers received (T2-T4).
-    pub fn on_response(&mut self, status: u16, headers: &[(String, String)], now_ms: u64) {
+    pub fn on_response(&mut self, status: u16, headers: &[(String, String)], now: Timestamp) {
+        let now_ms = now.as_millis();
         if !matches!(self.phase, Phase::Opening { .. }) {
             return;
         }
@@ -274,7 +285,8 @@ impl TsHttpPolicy {
 
     /// A chunk of `len` body bytes arrived (T5, T14). `sampled` is true when
     /// the bytes produced at least one sample.
-    pub fn on_bytes(&mut self, len: usize, now_ms: u64, sampled: bool) {
+    pub fn on_bytes(&mut self, len: usize, now: Timestamp, sampled: bool) {
+        let now_ms = now.as_millis();
         if len == 0 || !self.accepts_bytes() {
             return;
         }
@@ -294,10 +306,10 @@ impl TsHttpPolicy {
             }
         }
         if sampled {
-            self.on_sample(now_ms);
+            self.on_sample_ms(now_ms);
         } else if !(self.starved_data_fired || (self.finite && self.finite_done)) {
             let baseline = self.last_sample_at;
-            if now_ms.saturating_sub(baseline) >= self.config.stall_notice_ms {
+            if now_ms.saturating_sub(baseline) >= millis(self.config.stall_notice) {
                 self.events.push_back(Event::Starved(StarveKind::Data));
                 self.starved_data_fired = true;
             }
@@ -306,7 +318,12 @@ impl TsHttpPolicy {
 
     /// A sample was produced (T5): Awaiting becomes Playing and the
     /// starvation episode resets.
-    pub fn on_sample(&mut self, now_ms: u64) {
+    pub fn on_sample(&mut self, now: Timestamp) {
+        let now_ms = now.as_millis();
+        self.on_sample_ms(now_ms);
+    }
+
+    fn on_sample_ms(&mut self, now_ms: u64) {
         if matches!(self.phase, Phase::Awaiting { .. }) {
             self.phase = Phase::Playing;
             self.attempt = 0;
@@ -319,7 +336,18 @@ impl TsHttpPolicy {
     }
 
     /// Body ended (T7, T8).
-    pub fn on_eof(&mut self, now_ms: u64) {
+    pub fn on_eof(&mut self, now: Timestamp) {
+        let now_ms = now.as_millis();
+        self.on_eof_inner(now_ms);
+    }
+
+    /// Connect/read failure (T4, T7, T8); handled exactly as a body end.
+    pub fn on_error(&mut self, now: Timestamp) {
+        let now_ms = now.as_millis();
+        self.on_eof_inner(now_ms);
+    }
+
+    fn on_eof_inner(&mut self, now_ms: u64) {
         if matches!(self.phase, Phase::Ended) {
             return;
         }
@@ -343,13 +371,9 @@ impl TsHttpPolicy {
         }
     }
 
-    /// Connect/read failure (T4, T7, T8); handled exactly as a body end.
-    pub fn on_error(&mut self, now_ms: u64) {
-        self.on_eof(now_ms);
-    }
-
     /// Caller-initiated reconnect (T13).
-    pub fn reconnect(&mut self, now_ms: u64) {
+    pub fn reconnect(&mut self, now: Timestamp) {
+        let now_ms = now.as_millis();
         match self.phase {
             Phase::Opening { .. } | Phase::Awaiting { .. } | Phase::Playing | Phase::Ended => {
                 self.attempt = 0;
@@ -370,18 +394,19 @@ impl TsHttpPolicy {
     }
 
     /// Advance timers (T6, T10-T12, T15).
-    pub fn poll_timeout(&mut self, now_ms: u64) {
-        self.poll_timeout_with(now_ms, |_| false);
+    pub fn poll_timeout(&mut self, now: Timestamp) {
+        self.poll_timeout_with(now, |_| false);
     }
 
     /// Advance timers, calling `flush` right before a terminal start/stall
     /// decision (T6, T12). `flush` finishes the host's demuxer, appends its
     /// events to the queue it is given and returns whether it produced a
     /// sample.
-    pub fn poll_timeout_with<F>(&mut self, now_ms: u64, mut flush: F)
+    pub fn poll_timeout_with<F>(&mut self, now: Timestamp, mut flush: F)
     where
         F: FnMut(&mut VecDeque<Event>) -> bool,
     {
+        let now_ms = now.as_millis();
         if matches!(self.phase, Phase::Ended) {
             return;
         }
@@ -393,7 +418,7 @@ impl TsHttpPolicy {
             return;
         }
         if let Phase::Opening { open_at } = self.phase {
-            if now_ms.saturating_sub(open_at) >= self.config.start_timeout_ms {
+            if now_ms.saturating_sub(open_at) >= millis(self.config.start_timeout) {
                 self.actions.push_back(Action::Abort);
                 self.fail_before_playing(now_ms);
             }
@@ -401,7 +426,7 @@ impl TsHttpPolicy {
         }
         if let Phase::Awaiting { open_at } = self.phase
             && !(self.finite && self.finite_done)
-            && now_ms.saturating_sub(open_at) >= self.config.start_timeout_ms
+            && now_ms.saturating_sub(open_at) >= millis(self.config.start_timeout)
         {
             self.flush_via(&mut flush, now_ms);
             if matches!(self.phase, Phase::Playing) {
@@ -416,7 +441,7 @@ impl TsHttpPolicy {
         // Playing stall timers (disabled once finite transfer complete)
         if matches!(self.phase, Phase::Playing) && !(self.finite && self.finite_done) {
             let idle = now_ms.saturating_sub(self.last_byte_at);
-            if idle >= self.config.stall_notice_ms {
+            if idle >= millis(self.config.stall_notice) {
                 if !self.starved_nodata_fired {
                     self.events.push_back(Event::Starved(StarveKind::NoData));
                     self.starved_nodata_fired = true;
@@ -436,7 +461,7 @@ impl TsHttpPolicy {
                         Some(n.saturating_add(steps.saturating_mul(STALL_NOTICE_REPEAT_MS)));
                 }
                 // stall_reconnect
-                if idle >= self.config.stall_reconnect_ms {
+                if idle >= millis(self.config.stall_reconnect) {
                     self.flush_via(&mut flush, now_ms);
                     self.actions.push_back(Action::Abort);
                     self.played_ended(now_ms);
@@ -445,8 +470,13 @@ impl TsHttpPolicy {
         }
     }
 
-    /// Earliest deadline for poll_timeout.
-    pub fn next_deadline(&self) -> Option<u64> {
+    /// Earliest deadline for [`Self::poll_timeout`].
+    pub fn next_deadline(&self) -> Option<Timestamp> {
+        self.next_deadline_ms().map(Timestamp::from_millis)
+    }
+
+    /// [`Self::next_deadline`] on the policy's own millisecond clock.
+    fn next_deadline_ms(&self) -> Option<u64> {
         if matches!(self.phase, Phase::Ended) {
             return None;
         }
@@ -456,15 +486,15 @@ impl TsHttpPolicy {
         match self.phase {
             Phase::Backoff { due } => Some(due),
             Phase::Awaiting { open_at } => {
-                Some(open_at.saturating_add(self.config.start_timeout_ms))
+                Some(open_at.saturating_add(millis(self.config.start_timeout)))
             }
             Phase::Playing => {
                 let notice = self
                     .last_byte_at
-                    .saturating_add(self.config.stall_notice_ms);
+                    .saturating_add(millis(self.config.stall_notice));
                 let reconnect = self
                     .last_byte_at
-                    .saturating_add(self.config.stall_reconnect_ms);
+                    .saturating_add(millis(self.config.stall_reconnect));
                 let next_notice = match self.first_notice_at {
                     Some(_) => self.next_notice_at.unwrap_or(notice),
                     None => notice,
@@ -472,7 +502,7 @@ impl TsHttpPolicy {
                 Some(next_notice.min(reconnect))
             }
             Phase::Opening { open_at } => {
-                Some(open_at.saturating_add(self.config.start_timeout_ms))
+                Some(open_at.saturating_add(millis(self.config.start_timeout)))
             }
             Phase::Ended => None,
         }
@@ -483,7 +513,7 @@ impl TsHttpPolicy {
         F: FnMut(&mut VecDeque<Event>) -> bool,
     {
         if flush(&mut self.events) {
-            self.on_sample(now_ms);
+            self.on_sample_ms(now_ms);
         }
     }
 
@@ -509,13 +539,12 @@ impl TsHttpPolicy {
 
     fn fail_before_playing(&mut self, now_ms: u64) {
         self.attempt = self.attempt.saturating_add(1);
-        let after = u64::try_from(
-            self.retry
-                .on_disconnected(now_ms.saturating_mul(MICROS_PER_MILLI))
-                .as_micros(),
-        )
-        .unwrap_or(u64::MAX)
-        .div_ceil(MICROS_PER_MILLI);
+        let wait = self
+            .retry
+            .on_disconnected_exact(now_ms.saturating_mul(MICROS_PER_MILLI));
+        let after = u64::try_from(wait.as_micros())
+            .unwrap_or(u64::MAX)
+            .div_ceil(MICROS_PER_MILLI);
         let after = after.max(self.retry_after_ms);
         self.retry_after_ms = 0;
         self.actions
@@ -532,11 +561,11 @@ impl TsHttpPolicy {
         // A connection that played and then ended is a healthy one: the
         // failure counter restarts at its floor, and the retry series is
         // rewound rather than charged for this reconnect — its whole wait is
-        // `min_reconnect_interval_ms`.
+        // `min_reconnect_interval`.
         self.attempt = 0;
         self.retry.reset();
         let lasted = now_ms.saturating_sub(self.open_at);
-        let after = self.config.min_reconnect_interval_ms.saturating_sub(lasted);
+        let after = millis(self.config.min_reconnect_interval).saturating_sub(lasted);
         self.actions
             .push_back(Action::Reconnect { after_ms: after });
         self.phase = Phase::Backoff {

@@ -3,7 +3,13 @@ use crate::support::replay::{TS_PACKET, bitrate_bps, open_live};
 use broadcast_client::{
     BufferEvent, BufferInput, Config, ErrorKind, Event, InputLog, PauseReason, Session,
 };
+use broadcast_common::stage::Timestamp;
 use buffering_runtime::Event as RtEvent;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const FIXTURE: &str = "ts/h264-aac-40s.ts";
 const CHUNK: usize = TS_PACKET * 22;
@@ -68,12 +74,12 @@ fn run(config: Config, drain: bool) -> Run {
         if chunk_due && next_chunk <= next_tick {
             now = next_chunk;
             let part = chunks.next().unwrap();
-            session.on_data(conn, part, now);
+            session.on_data(conn, part, ts(now));
             next_chunk = now + part.len() as u64 * 8 * MICROS / bps;
         } else {
             now = next_tick;
             let pos = started.then(|| clock.position(now));
-            session.on_playback_position(now, pos);
+            session.on_playback_position(ts(now), pos);
             next_tick += TICK_US;
         }
         while let Some(e) = session.next_event() {
@@ -104,7 +110,7 @@ fn run(config: Config, drain: bool) -> Run {
 }
 
 fn open_placeholder() -> Session {
-    Session::open("http://placeholder/live.ts", Config::default(), 0).unwrap()
+    Session::open("http://placeholder/live.ts", Config::default(), ts(0)).unwrap()
 }
 
 fn recording() -> Config {
@@ -230,5 +236,5 @@ fn a_full_queue_drops_counts_and_reports_once() {
 fn a_zero_cap_is_rejected() {
     let mut config = Config::default();
     config.max_recorded_buffer_inputs = 0;
-    assert!(Session::open("http://h/live.ts", config, 0).is_err());
+    assert!(Session::open("http://h/live.ts", config, ts(0)).is_err());
 }

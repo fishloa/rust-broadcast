@@ -10,6 +10,12 @@ use rustls::{ClientConfig, ServerConfig, ServerConnection, StreamOwned};
 
 use super::rtmp_host::{PeerConfig, PlayPeer, fixture_tags};
 use super::tls_pki::{Ca, client_config};
+use broadcast_common::stage::Timestamp;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const READ_TIMEOUT: Duration = Duration::from_millis(5);
 const SERVER_READ_TIMEOUT: Duration = Duration::from_millis(10);
@@ -189,7 +195,7 @@ pub struct WireHost {
 impl WireHost {
     pub fn open(url: &str, config: Config, port: u16, server_ca: Option<Ca>) -> Self {
         Self {
-            session: Session::open(url, config, 0).unwrap(),
+            session: Session::open(url, config, ts(0)).unwrap(),
             events: Vec::new(),
             connects: 0,
             offered_identity: 0,
@@ -227,7 +233,7 @@ impl WireHost {
     pub fn pump(&mut self) {
         let now = self.now_us();
         let mut actions = Vec::new();
-        while let Some(a) = self.session.poll(now) {
+        while let Some(a) = self.session.poll(ts(now)) {
             actions.push(a);
         }
         for action in actions {
@@ -247,7 +253,7 @@ impl WireHost {
                         }
                         Err(e) => {
                             self.failed_connects += 1;
-                            self.session.on_closed(conn, Some(e), self.now_us());
+                            self.session.on_closed(conn, Some(e), ts(self.now_us()));
                         }
                     }
                 }
@@ -274,7 +280,7 @@ impl WireHost {
     fn close_with_error(&mut self, conn: u32, why: &str) {
         self.conn = None;
         self.session
-            .on_closed(conn, Some(why.to_string()), self.now_us());
+            .on_closed(conn, Some(why.to_string()), ts(self.now_us()));
     }
 
     fn read_once(&mut self) {
@@ -286,11 +292,11 @@ impl WireHost {
         match wire.read(&mut buf) {
             Ok(0) => {
                 self.conn = None;
-                self.session.on_closed(conn, None, self.now_us());
+                self.session.on_closed(conn, None, ts(self.now_us()));
             }
             Ok(n) => {
                 let now = self.now_us();
-                self.session.on_data(conn, &buf[..n], now);
+                self.session.on_data(conn, &buf[..n], ts(now));
             }
             Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
             Err(e) => self.close_with_error(conn, &e.to_string()),

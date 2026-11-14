@@ -15,7 +15,8 @@ use mpeg_ts::pid::Pid;
 use crate::source::fetch::retry::{RefusedCapture, retry_after_us};
 use crate::source::ts_http_hold::{DeclaredStreams, HoldLimits, SETTLE_US, StreamKind};
 use crate::{Event, Status};
-use broadcast_common::units::{MICROS_PER_MILLI, MICROS_PER_SEC};
+use broadcast_common::stage::Timestamp;
+use broadcast_common::units::MICROS_PER_SEC;
 
 pub(crate) type Item = Option<Event>;
 
@@ -70,7 +71,7 @@ impl TsHttpSource {
     /// fixed one.
     pub(crate) fn with_seed(url: Url, config: TsConfig, now_us: u64, seed: u64) -> Self {
         Self {
-            ts: TsHttpClient::with_seed(url.as_str(), config, now_us / 1000, seed),
+            ts: TsHttpClient::with_seed(url.as_str(), config, Timestamp::from_micros(now_us), seed),
             url,
             events: VecDeque::new(),
             tracks: BTreeMap::new(),
@@ -125,10 +126,7 @@ impl TsHttpSource {
     }
 
     pub(crate) fn next_deadline_us(&self) -> Option<u64> {
-        let ts = self
-            .ts
-            .next_deadline()
-            .map(|ms| ms.saturating_mul(MICROS_PER_MILLI));
+        let ts = self.ts.next_deadline().map(|d| d.as_micros());
         let hold = self.hold.as_ref().map(|h| {
             let wall = h.started_us.saturating_add(self.hold_limits.max_wall_us);
             if self.active_resolved() {
@@ -146,7 +144,7 @@ impl TsHttpSource {
     /// Advance timers.
     pub fn poll_timeout(&mut self, now_us: u64) {
         self.now_us = now_us;
-        self.ts.poll_timeout(now_us / MICROS_PER_MILLI);
+        self.ts.poll_timeout(Timestamp::from_micros(now_us));
         self.drain_ts_events();
     }
 
@@ -297,7 +295,8 @@ impl TsHttpSource {
         self.refused = (status == 429 || status == 503)
             .then(|| RefusedCapture::new(status, retry_after, headers));
         self.ts.set_retry_after(retry_after / 1000);
-        self.ts.on_response(status, headers, now_us / 1000);
+        self.ts
+            .on_response(status, headers, Timestamp::from_micros(now_us));
         self.drain_ts_events();
     }
 
@@ -339,7 +338,7 @@ impl TsHttpSource {
             self.push(Event::Status(Status::Live));
             self.stalled = false;
         }
-        self.ts.feed(bytes, now_us / 1000);
+        self.ts.feed(bytes, Timestamp::from_micros(now_us));
         self.drain_ts_events();
     }
 
@@ -347,9 +346,9 @@ impl TsHttpSource {
     pub fn on_closed(&mut self, error: Option<String>, now_us: u64) {
         self.now_us = now_us;
         if error.is_some() {
-            self.ts.on_error(now_us / 1000);
+            self.ts.on_error(Timestamp::from_micros(now_us));
         } else {
-            self.ts.on_eof(now_us / 1000);
+            self.ts.on_eof(Timestamp::from_micros(now_us));
         }
         self.drain_ts_events();
     }
@@ -357,14 +356,14 @@ impl TsHttpSource {
     /// Error callback.
     pub fn on_error(&mut self, now_us: u64) {
         self.now_us = now_us;
-        self.ts.on_error(now_us / 1000);
+        self.ts.on_error(Timestamp::from_micros(now_us));
         self.drain_ts_events();
     }
 
     /// Reconnect.
     pub fn reconnect(&mut self, now_us: u64) {
         self.now_us = now_us;
-        self.ts.reconnect(now_us / 1000);
+        self.ts.reconnect(Timestamp::from_micros(now_us));
         while let Some(action) = self.ts.poll() {
             self.caller_actions.push_back(action);
         }

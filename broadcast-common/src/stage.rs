@@ -70,6 +70,8 @@
 
 use core::time::Duration;
 
+use crate::units::{NANOS_PER_MICRO, NANOS_PER_MILLI};
+
 /// Monotonic nanoseconds from an arbitrary epoch chosen by the driver.
 ///
 /// Nanoseconds, not milliseconds: milliseconds are too coarse for SRT pacing
@@ -92,9 +94,31 @@ impl Timestamp {
         Timestamp(nanos)
     }
 
+    /// Construct from a whole-microsecond count, saturating at `u64::MAX`
+    /// nanoseconds.
+    pub const fn from_micros(micros: u64) -> Self {
+        Timestamp(micros.saturating_mul(NANOS_PER_MICRO))
+    }
+
     /// The raw nanosecond count since the driver's chosen epoch.
     pub const fn as_nanos(self) -> u64 {
         self.0
+    }
+
+    /// Construct from a whole-millisecond count, saturating at `u64::MAX`
+    /// nanoseconds.
+    pub const fn from_millis(millis: u64) -> Self {
+        Timestamp(millis.saturating_mul(NANOS_PER_MILLI))
+    }
+
+    /// The raw nanosecond count rounded down to whole microseconds.
+    pub const fn as_micros(self) -> u64 {
+        self.0 / NANOS_PER_MICRO
+    }
+
+    /// The raw nanosecond count rounded down to whole milliseconds.
+    pub const fn as_millis(self) -> u64 {
+        self.0 / NANOS_PER_MILLI
     }
 
     /// `self - other`, saturating at zero instead of underflowing.
@@ -325,6 +349,22 @@ pub trait Stage {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_clock_conversions_round_trip_whole_units() {
+        assert_eq!(Timestamp::from_micros(1_500).as_micros(), 1_500);
+        assert_eq!(Timestamp::from_millis(1_500).as_millis(), 1_500);
+        assert_eq!(
+            Timestamp::from_millis(1_500).as_nanos(),
+            1_500 * NANOS_PER_MILLI
+        );
+        // A finer reading rounds down to the coarser unit, never up past the instant.
+        assert_eq!(Timestamp::from_nanos(1_999).as_micros(), 1);
+        assert_eq!(Timestamp::from_nanos(1_999_999).as_millis(), 1);
+        // A count that would leave `u64` nanoseconds saturates instead of wrapping.
+        assert_eq!(Timestamp::from_millis(u64::MAX).as_nanos(), u64::MAX);
+        assert_eq!(Timestamp::from_micros(u64::MAX).as_nanos(), u64::MAX);
+    }
+
     #[test]
     fn saturated_if_selects_saturated_or_default() {
         assert_eq!(

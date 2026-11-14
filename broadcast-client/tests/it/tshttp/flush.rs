@@ -1,5 +1,11 @@
 use broadcast_client::tshttp::{Action, Config, Event, TsHttpClient};
+use broadcast_common::stage::Timestamp;
 use std::collections::BTreeMap;
+
+/// `ms` on the tshttp policy's millisecond clock, as the session's `now`.
+fn ts(ms: u64) -> Timestamp {
+    Timestamp::from_millis(ms)
+}
 
 fn samples_by_track(events: &[Event]) -> BTreeMap<u32, usize> {
     let mut m = BTreeMap::new();
@@ -20,11 +26,11 @@ fn eof_flushes_held_back_samples() {
         None => return,
     };
     // before eof
-    let mut c = TsHttpClient::new("u", Config::default(), 0);
+    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
     let _ = c.poll();
-    c.on_response(200, &[], 0);
+    c.on_response(200, &[], ts(0));
     let _ = c.poll_event();
-    c.feed(&bytes, 0);
+    c.feed(&bytes, ts(0));
     let mut before_events = Vec::new();
     while let Some(e) = c.poll_event() {
         before_events.push(e);
@@ -32,7 +38,7 @@ fn eof_flushes_held_back_samples() {
     let before = samples_by_track(&before_events);
 
     // on_eof flush
-    c.on_eof(1);
+    c.on_eof(ts(1));
     let mut after_flush = Vec::new();
     while let Some(e) = c.poll_event() {
         after_flush.push(e);
@@ -74,13 +80,13 @@ fn flush_events_precede_reconnect_action() {
         Some(b) => b,
         None => return,
     };
-    let mut c = TsHttpClient::new("u", Config::default(), 0);
+    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
     let _ = c.poll();
-    c.on_response(200, &[], 0);
+    c.on_response(200, &[], ts(0));
     let _ = c.poll_event();
-    c.feed(&bytes, 0);
+    c.feed(&bytes, ts(0));
     while c.poll_event().is_some() {}
-    c.on_eof(1);
+    c.on_eof(ts(1));
     // event queue has demux events
     let mut has_demux = false;
     // peek by popping one event then push back? We'll just check poll_event returns Some(Demux) eventually
@@ -143,13 +149,13 @@ fn eof_with_only_flushed_sample_counts_as_played() {
     let n = found.expect("no prefix with 0 samples before finish and >=1 after");
     let prefix = &bytes[..n];
 
-    let mut c = TsHttpClient::new("u", Config::default(), 0);
+    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
     let _ = c.poll();
-    c.on_response(200, &[], 0);
+    c.on_response(200, &[], ts(0));
     let _ = c.poll_event();
-    c.feed(prefix, 0);
+    c.feed(prefix, ts(0));
     while c.poll_event().is_some() {}
-    c.on_eof(60_000);
+    c.on_eof(ts(60_000));
     let mut saw_zero = false;
     let mut saw_reconnecting = false;
     while let Some(e) = c.poll_event() {

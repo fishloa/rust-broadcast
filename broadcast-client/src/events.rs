@@ -3,9 +3,12 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use core::time::Duration;
 use url::Url;
 
 use broadcast_auth::Scheme as AuthScheme;
+use broadcast_common::backoff::BackoffSteps;
+use broadcast_common::stage::Timestamp;
 use broadcast_common::timeouts::Timeouts;
 
 use transmux::{DisplayInfo, JoinDecision, Sample, TrackId, TrackSpec};
@@ -121,7 +124,7 @@ pub enum Status {
     /// Ended.
     Ended,
     /// A media-class request of a segment-pull source received no response head and no body
-    /// byte for [`Config::segment_inactivity_timeout_us`]; the client closed it and will
+    /// byte for [`Config::segment_inactivity_timeout`]; the client closed it and will
     /// request it again on the retry schedule, a [`Status::Reconnecting`] follows.
     RequestStalled {
         /// How the new request will get the resource.
@@ -565,7 +568,7 @@ pub enum Action {
         /// URL to request.
         url: String,
         /// Headers to send. A request resuming a transfer closed for inactivity (see
-        /// [`Config::segment_inactivity_timeout_us`]) carries its own `Range` and `If-Range`
+        /// [`Config::segment_inactivity_timeout`]) carries its own `Range` and `If-Range`
         /// headers here and a `byte_range` of `None`; send them as given.
         headers: Vec<(String, String)>,
         /// Optional byte range as `(offset, length)`, not `(start, end)`: the host builds the
@@ -630,10 +633,10 @@ pub enum Action {
         /// Connection id.
         conn: ConnId,
     },
-    /// Call [`crate::Session::poll`] at or after the given host clock time (`now_us`); the
-    /// session drops a `WakeAt` whose time is not after the `now_us` of the poll that would
+    /// Call [`crate::Session::poll`] at or after the given host clock instant (`now`); the
+    /// session drops a `WakeAt` whose time is not after the `now` of the poll that would
     /// return it, so a past value is never delivered.
-    WakeAt(u64),
+    WakeAt(Timestamp),
 }
 
 impl core::fmt::Debug for Action {
@@ -932,18 +935,18 @@ pub const MAX_SERVER_REFUSED_REASON_BYTES: usize = 256;
 pub const DEFAULT_MAX_MANIFEST_BYTES: usize = 4 * 1024 * 1024;
 /// Default maximum accepted HLS media resource body size.
 pub const DEFAULT_MAX_SEGMENT_BYTES: usize = 64 * 1024 * 1024;
-/// Default per-request timeout for manifests (playlists), microseconds.
-pub const DEFAULT_REQUEST_TIMEOUT_US: u64 = 20_000_000;
-/// Default per-request timeout for HLS media resources, microseconds.
-pub const DEFAULT_SEGMENT_TIMEOUT_US: u64 = 60_000_000;
-/// Default inactivity timeout of a media-class request, microseconds, see
-/// [`Config::segment_inactivity_timeout_us`]. One 6 s target duration (the longest Apple
+/// Default per-request timeout for manifests (playlists).
+pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+/// Default per-request timeout for HLS media resources.
+pub const DEFAULT_SEGMENT_TIMEOUT: Duration = Duration::from_secs(60);
+/// Default inactivity timeout of a media-class request, see
+/// [`Config::segment_inactivity_timeout`]. One 6 s target duration (the longest Apple
 /// recommends) plus the first-byte wait of a just-in-time packaging origin stays under it, while
-/// it is a sixth of [`DEFAULT_SEGMENT_TIMEOUT_US`] and half of [`DEFAULT_REQUEST_TIMEOUT_US`], so
+/// it is a sixth of [`DEFAULT_SEGMENT_TIMEOUT`] and half of [`DEFAULT_REQUEST_TIMEOUT`], so
 /// a stalled transfer is recovered long before the whole-request deadline.
-pub const DEFAULT_SEGMENT_INACTIVITY_TIMEOUT_US: u64 = 10_000_000;
-/// Default per-request timeout for HLS key requests, microseconds.
-pub const DEFAULT_HLS_KEY_TIMEOUT_US: u64 = 20_000_000;
+pub const DEFAULT_SEGMENT_INACTIVITY_TIMEOUT: Duration = Duration::from_secs(10);
+/// Default per-request timeout for HLS key requests.
+pub const DEFAULT_HLS_KEY_TIMEOUT: Duration = Duration::from_secs(20);
 /// Default maximum accepted HLS key response body size.
 pub const DEFAULT_MAX_KEY_BYTES: usize = 4096;
 /// Default number of consecutive key/decrypt failures before the session gives up.
@@ -951,10 +954,14 @@ pub const DEFAULT_MAX_KEY_FAILURES: u32 = 8;
 /// Default number of consecutive failures of one HLS segment before it is given up on, see
 /// [`Config::max_segment_failures`].
 pub const DEFAULT_MAX_SEGMENT_FAILURES: u32 = 8;
-/// Default HLS retry backoff schedule, milliseconds per attempt.
-pub const DEFAULT_BACKOFF_MS: [u64; 3] = [2_000, 4_000, 8_000];
-/// Default HLS retry backoff once the schedule is exhausted, milliseconds.
-pub const DEFAULT_BACKOFF_CAP_MS: u64 = 10_000;
+/// Default HLS retry backoff schedule, per attempt.
+pub const DEFAULT_BACKOFF_STEPS: [Duration; 3] = [
+    Duration::from_secs(2),
+    Duration::from_secs(4),
+    Duration::from_secs(8),
+];
+/// Default HLS retry backoff once the schedule is exhausted.
+pub const DEFAULT_BACKOFF_CAP: Duration = Duration::from_secs(10);
 /// Default cap on simultaneously outstanding HLS segment and part requests, see
 /// [`Config::max_inflight_segments`].
 pub const DEFAULT_MAX_INFLIGHT_SEGMENTS: usize = 4;
@@ -1022,34 +1029,32 @@ pub struct Config {
     /// Segment-pull sources: maximum media resource body bytes (HLS segment or part, DASH init,
     /// index or segment); must be non-zero.
     pub max_segment_bytes: usize,
-    /// Segment-pull sources: manifest request timeout, microseconds; must be non-zero.
-    pub request_timeout_us: u64,
-    /// Segment-pull sources: media resource request timeout, microseconds; must be non-zero.
-    pub segment_timeout_us: u64,
+    /// Segment-pull sources: manifest request timeout; must be non-zero.
+    pub request_timeout: Duration,
+    /// Segment-pull sources: media resource request timeout; must be non-zero.
+    pub segment_timeout: Duration,
     /// Segment-pull sources: inactivity timeout of one media-class request (HLS segment, part,
-    /// initialization section and key; DASH init, index and segment), microseconds; must be
-    /// non-zero. A request that receives neither its response head nor a body byte for this long
-    /// is closed ([`Action::Close`]), [`Status::RequestStalled`] is emitted and the resource is
-    /// requested again on the [`Config::backoff_ms`] schedule, counted as a failure of that
-    /// resource. When the first response was a `200` (with `Accept-Ranges: bytes`) or `206` with
-    /// a strong validator, the new request is a `Range` request with `If-Range` for the missing
-    /// bytes (RFC 9110 14.2, 13.1.5) and the received prefix is kept; otherwise the whole
-    /// resource is fetched again. Manifests, playlists and `UTCTiming` requests are exempt: a
-    /// blocking playlist reload legitimately holds its response, and only
-    /// [`Config::request_timeout_us`] bounds them. The whole-request timeouts still apply.
-    pub segment_inactivity_timeout_us: u64,
-    /// Segment-pull sources: retry backoff per attempt, milliseconds; an entry of `0` is treated as `1`.
-    pub backoff_ms: Vec<u64>,
-    /// Segment-pull sources: retry backoff after `backoff_ms` is exhausted, milliseconds; `0` is treated as `1`.
-    pub backoff_cap_ms: u64,
+    /// initialization section and key; DASH init, index and segment); must be non-zero. A request
+    /// that receives neither its response head nor a body byte for this long is closed
+    /// ([`Action::Close`]), [`Status::RequestStalled`] is emitted and the resource is requested
+    /// again on the [`Config::backoff`] schedule, counted as a failure of that resource. When the
+    /// first response was a `200` (with `Accept-Ranges: bytes`) or `206` with a strong validator,
+    /// the new request is a `Range` request with `If-Range` for the missing bytes (RFC 9110 14.2,
+    /// 13.1.5) and the received prefix is kept; otherwise the whole resource is fetched again.
+    /// Manifests, playlists and `UTCTiming` requests are exempt: a blocking playlist reload
+    /// legitimately holds its response, and only [`Config::request_timeout`] bounds them. The
+    /// whole-request timeouts still apply.
+    pub segment_inactivity_timeout: Duration,
+    /// Segment-pull sources: retry backoff schedule (a per-attempt step table then a cap).
+    pub backoff: BackoffSteps,
     /// Segment-pull sources: segment and part requests kept outstanding at once, per playlist adapter. The rest
     /// stay queued and are released as responses complete, in order; playlist, key and
     /// initialization-section requests are not counted and never wait behind them. Held bodies
     /// of completed-but-undelivered segments count against the same cap, so memory is bounded
     /// by this value times [`Config::max_segment_bytes`]. `0` is treated as `1`.
     pub max_inflight_segments: usize,
-    /// HLS: key request timeout, microseconds; must be non-zero.
-    pub hls_key_timeout_us: u64,
+    /// HLS: key request timeout; must be non-zero.
+    pub hls_key_timeout: Duration,
     /// HLS: maximum key response body bytes; must be non-zero.
     pub max_key_bytes: usize,
     /// HLS and DASH: consecutive key/decrypt/init-fetch failures (no decoded samples in between) after which the
@@ -1060,7 +1065,7 @@ pub struct Config {
     /// VOD playlist (`EXT-X-ENDLIST`) ends with one fatal [`ErrorKind::SegmentFetchFailed`], a
     /// live one skips the segment with one non-fatal [`ErrorKind::SegmentFetchFailed`] followed by
     /// [`Event::Discontinuity`]. The count is per segment, grows the backoff schedule
-    /// ([`Config::backoff_ms`]) and resets only when that segment is delivered as media,
+    /// ([`Config::backoff`]) and resets only when that segment is delivered as media,
     /// never on a playlist delivery. `0` makes the first failure final; `u32::MAX` retries
     /// forever. Playlist reload failures are not counted: a playlist cannot be skipped, so they
     /// retry forever.
@@ -1193,12 +1198,12 @@ impl Config {
     /// protocol, and this is the one place that says how):
     ///
     /// - [`SourceKind::Hls`]: `read_idle` bounds each playlist, segment and key
-    ///   request ([`Config::request_timeout_us`], [`Config::segment_timeout_us`],
-    ///   [`Config::hls_key_timeout_us`]); `connect` and `handshake` are the
+    ///   request ([`Config::request_timeout`], [`Config::segment_timeout`],
+    ///   [`Config::hls_key_timeout`]); `connect` and `handshake` are the
     ///   host's.
     /// - [`SourceKind::Dash`] and [`SourceKind::Smooth`]: `read_idle` bounds each
-    ///   manifest and segment request ([`Config::request_timeout_us`],
-    ///   [`Config::segment_timeout_us`]).
+    ///   manifest and segment request ([`Config::request_timeout`],
+    ///   [`Config::segment_timeout`]).
     /// - [`SourceKind::Srt`]: exactly [`crate::srt::SrtConfig::with_timeouts`]:
     ///   `handshake` bounds the handshake (`srt.handshake_timeout_ms`) and
     ///   `read_idle` the peer-idle bound (`srt.peer_idle_timeout_ms`).
@@ -1214,9 +1219,8 @@ impl Config {
     /// have is ignored.
     #[must_use]
     pub fn with_timeouts(mut self, timeouts: Timeouts) -> Self {
-        let floor = core::time::Duration::from_millis(1);
-        let micros =
-            |d: core::time::Duration| u64::try_from(d.max(floor).as_micros()).unwrap_or(u64::MAX);
+        let floor = Duration::from_millis(1);
+        let span = |d: Duration| d.max(floor);
         let auto = matches!(self.kind, SourceKind::Auto);
         let hls = auto || matches!(self.kind, SourceKind::Hls);
         let manifest = hls || matches!(self.kind, SourceKind::Dash | SourceKind::Smooth);
@@ -1227,12 +1231,11 @@ impl Config {
                 SourceKind::Hls | SourceKind::Dash | SourceKind::Smooth | SourceKind::Srt
             );
         if manifest {
-            let read = micros(timeouts.read_idle);
-            self.request_timeout_us = read;
-            self.segment_timeout_us = read;
+            self.request_timeout = span(timeouts.read_idle);
+            self.segment_timeout = span(timeouts.read_idle);
         }
         if hls {
-            self.hls_key_timeout_us = micros(timeouts.read_idle);
+            self.hls_key_timeout = span(timeouts.read_idle);
         }
         if srt {
             self.srt = self.srt.clone().with_timeouts(timeouts);
@@ -1276,17 +1279,17 @@ impl Config {
         if self.max_key_bytes == 0 {
             return invalid("max_key_bytes");
         }
-        if self.request_timeout_us == 0 {
-            return invalid("request_timeout_us");
+        if self.request_timeout.is_zero() {
+            return invalid("request_timeout");
         }
-        if self.segment_timeout_us == 0 {
-            return invalid("segment_timeout_us");
+        if self.segment_timeout.is_zero() {
+            return invalid("segment_timeout");
         }
-        if self.segment_inactivity_timeout_us == 0 {
-            return invalid("segment_inactivity_timeout_us");
+        if self.segment_inactivity_timeout.is_zero() {
+            return invalid("segment_inactivity_timeout");
         }
-        if self.hls_key_timeout_us == 0 {
-            return invalid("hls_key_timeout_us");
+        if self.hls_key_timeout.is_zero() {
+            return invalid("hls_key_timeout");
         }
         if self.buffer.validate().is_err() {
             return invalid("buffer");
@@ -1350,13 +1353,15 @@ impl Default for Config {
             variant_policy: hls_runtime::client::VariantPolicy::default(),
             max_manifest_bytes: DEFAULT_MAX_MANIFEST_BYTES,
             max_segment_bytes: DEFAULT_MAX_SEGMENT_BYTES,
-            request_timeout_us: DEFAULT_REQUEST_TIMEOUT_US,
-            segment_timeout_us: DEFAULT_SEGMENT_TIMEOUT_US,
-            segment_inactivity_timeout_us: DEFAULT_SEGMENT_INACTIVITY_TIMEOUT_US,
-            backoff_ms: DEFAULT_BACKOFF_MS.to_vec(),
-            backoff_cap_ms: DEFAULT_BACKOFF_CAP_MS,
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            segment_timeout: DEFAULT_SEGMENT_TIMEOUT,
+            segment_inactivity_timeout: DEFAULT_SEGMENT_INACTIVITY_TIMEOUT,
+            backoff: BackoffSteps {
+                steps: DEFAULT_BACKOFF_STEPS.to_vec(),
+                cap: DEFAULT_BACKOFF_CAP,
+            },
             max_inflight_segments: DEFAULT_MAX_INFLIGHT_SEGMENTS,
-            hls_key_timeout_us: DEFAULT_HLS_KEY_TIMEOUT_US,
+            hls_key_timeout: DEFAULT_HLS_KEY_TIMEOUT,
             max_key_bytes: DEFAULT_MAX_KEY_BYTES,
             max_key_failures: DEFAULT_MAX_KEY_FAILURES,
             max_segment_failures: DEFAULT_MAX_SEGMENT_FAILURES,
@@ -1398,16 +1403,15 @@ impl core::fmt::Debug for Config {
             .field("variant_policy", &self.variant_policy)
             .field("max_manifest_bytes", &self.max_manifest_bytes)
             .field("max_segment_bytes", &self.max_segment_bytes)
-            .field("request_timeout_us", &self.request_timeout_us)
-            .field("segment_timeout_us", &self.segment_timeout_us)
+            .field("request_timeout", &self.request_timeout)
+            .field("segment_timeout", &self.segment_timeout)
             .field(
-                "segment_inactivity_timeout_us",
-                &self.segment_inactivity_timeout_us,
+                "segment_inactivity_timeout",
+                &self.segment_inactivity_timeout,
             )
-            .field("backoff_ms", &self.backoff_ms)
-            .field("backoff_cap_ms", &self.backoff_cap_ms)
+            .field("backoff", &self.backoff)
             .field("max_inflight_segments", &self.max_inflight_segments)
-            .field("hls_key_timeout_us", &self.hls_key_timeout_us)
+            .field("hls_key_timeout", &self.hls_key_timeout)
             .field("max_key_bytes", &self.max_key_bytes)
             .field("max_key_failures", &self.max_key_failures)
             .field("max_segment_failures", &self.max_segment_failures)

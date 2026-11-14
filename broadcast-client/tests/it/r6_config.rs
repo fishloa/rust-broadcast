@@ -1,9 +1,15 @@
 use broadcast_client::{Config, Error, Session, TimelineJumpConfig};
+use broadcast_common::stage::Timestamp;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const URL: &str = "http://h/live.ts";
 
 fn field_of(config: Config) -> Option<&'static str> {
-    match Session::open(URL, config, 0) {
+    match Session::open(URL, config, ts(0)) {
         Err(Error::InvalidConfig { field }) => Some(field),
         Err(other) => panic!("unexpected error {other}"),
         Ok(_) => None,
@@ -24,12 +30,18 @@ fn every_numeric_field_that_would_silently_drop_output_is_rejected_by_name() {
         ("max_manifest_bytes", |c| c.max_manifest_bytes = 0),
         ("max_segment_bytes", |c| c.max_segment_bytes = 0),
         ("max_key_bytes", |c| c.max_key_bytes = 0),
-        ("request_timeout_us", |c| c.request_timeout_us = 0),
-        ("segment_timeout_us", |c| c.segment_timeout_us = 0),
-        ("segment_inactivity_timeout_us", |c| {
-            c.segment_inactivity_timeout_us = 0;
+        ("request_timeout", |c| {
+            c.request_timeout = std::time::Duration::ZERO;
         }),
-        ("hls_key_timeout_us", |c| c.hls_key_timeout_us = 0),
+        ("segment_timeout", |c| {
+            c.segment_timeout = std::time::Duration::ZERO;
+        }),
+        ("segment_inactivity_timeout", |c| {
+            c.segment_inactivity_timeout = std::time::Duration::ZERO;
+        }),
+        ("hls_key_timeout", |c| {
+            c.hls_key_timeout = std::time::Duration::ZERO;
+        }),
         ("buffer", |c| c.buffer.track_silence_timeout_us = 0),
         ("timeline_jump.backward_us", |c| {
             c.timeline_jump = Some(TimelineJumpConfig {
@@ -60,10 +72,10 @@ fn the_smallest_valid_values_open() {
         new_config.max_manifest_bytes = 1;
         new_config.max_segment_bytes = 1;
         new_config.max_key_bytes = 1;
-        new_config.request_timeout_us = 1;
-        new_config.segment_timeout_us = 1;
-        new_config.segment_inactivity_timeout_us = 1;
-        new_config.hls_key_timeout_us = 1;
+        new_config.request_timeout = std::time::Duration::from_micros(1);
+        new_config.segment_timeout = std::time::Duration::from_micros(1);
+        new_config.segment_inactivity_timeout = std::time::Duration::from_micros(1);
+        new_config.hls_key_timeout = std::time::Duration::from_micros(1);
         new_config.timeline_jump = Some(TimelineJumpConfig {
             backward_us: 1,
             forward_slack_us: 1,
