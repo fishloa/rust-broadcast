@@ -181,6 +181,18 @@ pub enum MergeConfigError {
     },
 }
 
+impl MergeConfigError {
+    /// The label shown in `Display` (alloc-free, so the `no_std` build has
+    /// it too).
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::ZeroSources => "ByteMerge num_sources must be > 0",
+            Self::ZeroMaxQueued => "ByteMerge max_queued must be > 0",
+            Self::FailoverOutOfRange { .. } => "failover source out of range",
+        }
+    }
+}
+
 impl core::fmt::Display for MergeConfigError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -862,7 +874,7 @@ mod tests {
     fn zero_sources_is_error() {
         let err = ByteMerge::new(MergePolicy::FirstArrival, 0, 4).unwrap_err();
         assert_eq!(err, MergeConfigError::ZeroSources);
-        assert_eq!(err.to_string(), "ByteMerge num_sources must be > 0");
+        assert_eq!(err.name(), "ByteMerge num_sources must be > 0");
     }
 
     /// The typed replacement for the former `zero_max_queued_panics`: a zero
@@ -871,7 +883,7 @@ mod tests {
     fn zero_max_queued_is_error() {
         let err = ByteMerge::new(MergePolicy::FirstArrival, 2, 0).unwrap_err();
         assert_eq!(err, MergeConfigError::ZeroMaxQueued);
-        assert_eq!(err.to_string(), "ByteMerge max_queued must be > 0");
+        assert_eq!(err.name(), "ByteMerge max_queued must be > 0");
     }
 
     #[test]
