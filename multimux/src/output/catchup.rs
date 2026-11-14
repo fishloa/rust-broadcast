@@ -271,7 +271,7 @@ async fn vod_playlist(
         .map(|s| catchup::CatchupSegment {
             seq: s.seq,
             start: s.start,
-            duration_secs: s.duration_secs,
+            duration: s.duration,
             discontinuous: s.discontinuous,
             init: Some(catchup::InitRef::Archived(s.period_num)),
         })

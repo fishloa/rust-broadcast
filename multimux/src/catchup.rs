@@ -49,7 +49,7 @@ use broadcast_common::Timestamp;
 pub(crate) struct ArchivedSegment {
     pub seq: SegmentSeq,
     pub start: Timestamp,
-    pub duration_secs: f64,
+    pub duration: std::time::Duration,
     pub discontinuous: bool,
     /// Which period file (`pN.<ext>`) this segment's bytes live in.
     pub period_num: u32,
@@ -66,7 +66,7 @@ pub(crate) struct ArchivedSegment {
 pub(crate) struct CatchupSegment {
     pub seq: SegmentSeq,
     pub start: Timestamp,
-    pub duration_secs: f64,
+    pub duration: std::time::Duration,
     pub discontinuous: bool,
     /// Which init segment this segment must be decoded with (`None`: the
     /// container has none, or it is unknown).
@@ -203,7 +203,7 @@ pub(crate) fn read_period_segments(dir: &Path, period_num: u32) -> Arc<Vec<Archi
         .map(|e| ArchivedSegment {
             seq: SegmentSeq::new(e.seq),
             start: e.start,
-            duration_secs: e.duration.as_secs_f64(),
+            duration: e.duration,
             discontinuous: e.discontinuous,
             period_num,
             byte_offset: e.byte_offset,
@@ -460,7 +460,7 @@ pub(crate) fn merge_segments(
         .map(|s| CatchupSegment {
             seq: s.seq,
             start: s.start,
-            duration_secs: s.duration_secs,
+            duration: s.duration,
             discontinuous: s.discontinuous,
             init: Some(InitRef::Archived(s.period_num)),
         })
@@ -473,7 +473,7 @@ pub(crate) fn merge_segments(
         is_tail.then_some(CatchupSegment {
             seq: s.sequence_number,
             start: Timestamp::from_nanos(s.start.0),
-            duration_secs: s.duration_secs,
+            duration: std::time::Duration::from_secs_f64(s.duration_secs),
             discontinuous: s.discontinuous,
             init: Some(InitRef::Live(s.init_generation)),
         })
@@ -520,7 +520,7 @@ pub(crate) fn apply_window(
     let mut keep_from = combined.len() - 1;
     let mut distance = 0.0_f64;
     for (i, segment) in earlier.iter().enumerate().rev() {
-        distance += segment.duration_secs;
+        distance += segment.duration.as_secs_f64();
         if distance > window {
             break;
         }
@@ -572,7 +572,7 @@ pub(crate) fn render_playlist(
 ) -> std::result::Result<String, broadcast_hls::Error> {
     let target_duration = segments
         .iter()
-        .map(|s| s.duration_secs)
+        .map(|s| s.duration.as_secs_f64())
         .fold(0.0_f64, f64::max)
         .ceil()
         .clamp(f64::from(MIN_TARGET_DURATION_SECS), f64::from(u32::MAX))
@@ -589,10 +589,7 @@ pub(crate) fn render_playlist(
         .iter()
         .map(|s| broadcast_hls::MediaSegment {
             uri: format!("catchup/seg-{}.{ext}", s.seq),
-            // `duration_secs` comes from a `Duration` (issue #1140): finite
-            // and non-negative for any real segment duration.
-            duration: broadcast_hls::DecimalSeconds::new(s.duration_secs)
-                .expect("a segment duration is finite and non-negative"),
+            duration: broadcast_hls::DecimalSeconds::from_duration(s.duration),
             discontinuous: s.discontinuous,
             ..Default::default()
         })
@@ -679,7 +676,7 @@ mod tests {
             ArchivedSegment {
                 seq: SegmentSeq::new(1),
                 start: Timestamp::from_nanos(0),
-                duration_secs: 2.0,
+                duration: std::time::Duration::from_secs_f64(2.0),
                 discontinuous: false,
                 period_num: 0,
                 byte_offset: 0,
@@ -688,7 +685,7 @@ mod tests {
             ArchivedSegment {
                 seq: SegmentSeq::new(2),
                 start: Timestamp::from_nanos(2_000_000_000),
-                duration_secs: 2.0,
+                duration: std::time::Duration::from_secs_f64(2.0),
                 discontinuous: false,
                 period_num: 0,
                 byte_offset: 10,
@@ -697,7 +694,7 @@ mod tests {
             ArchivedSegment {
                 seq: SegmentSeq::new(3),
                 start: Timestamp::from_nanos(4_000_000_000),
-                duration_secs: 2.0,
+                duration: std::time::Duration::from_secs_f64(2.0),
                 discontinuous: false,
                 period_num: 0,
                 byte_offset: 20,
@@ -732,7 +729,7 @@ mod tests {
         let archived = vec![ArchivedSegment {
             seq: SegmentSeq::new(2),
             start: Timestamp::from_nanos(2_000_000_000),
-            duration_secs: 2.0,
+            duration: std::time::Duration::from_secs_f64(2.0),
             discontinuous: false,
             period_num: 0,
             byte_offset: 10,
@@ -772,21 +769,21 @@ mod tests {
             CatchupSegment {
                 seq: SegmentSeq::new(1),
                 start: Timestamp::from_nanos(0),
-                duration_secs: 10.0,
+                duration: std::time::Duration::from_secs_f64(10.0),
                 discontinuous: false,
                 init: None,
             },
             CatchupSegment {
                 seq: SegmentSeq::new(2),
                 start: Timestamp::from_nanos(10_000_000_000),
-                duration_secs: 10.0,
+                duration: std::time::Duration::from_secs_f64(10.0),
                 discontinuous: false,
                 init: None,
             },
             CatchupSegment {
                 seq: SegmentSeq::new(3),
                 start: Timestamp::from_nanos(20_000_000_000),
-                duration_secs: 10.0,
+                duration: std::time::Duration::from_secs_f64(10.0),
                 discontinuous: false,
                 init: None,
             },
@@ -812,7 +809,7 @@ mod tests {
         let seg = |seq: u32, start_s: u64, discontinuous: bool| CatchupSegment {
             seq: SegmentSeq::new(seq),
             start: Timestamp::from_micros(start_s.saturating_mul(1_000_000)),
-            duration_secs: 4.0,
+            duration: std::time::Duration::from_secs_f64(4.0),
             discontinuous,
             init: None,
         };
@@ -851,7 +848,7 @@ mod tests {
         let combined = vec![CatchupSegment {
             seq: SegmentSeq::new(1),
             start: Timestamp::from_nanos(0),
-            duration_secs: 2.0,
+            duration: std::time::Duration::from_secs_f64(2.0),
             discontinuous: false,
             init: None,
         }];
@@ -922,7 +919,8 @@ mod tests {
             let seq = i as u32 + 1;
             assert_eq!(seg.seq.value(), seq);
             assert_eq!(
-                seg.duration_secs, 3.0,
+                seg.duration,
+                std::time::Duration::from_secs(3),
                 "seq {seq} duration must be real, not a shape"
             );
             assert_eq!(
@@ -1057,14 +1055,14 @@ mod tests {
             CatchupSegment {
                 seq: SegmentSeq::new(5),
                 start: Timestamp::from_nanos(0),
-                duration_secs: 3.4,
+                duration: std::time::Duration::from_secs_f64(3.4),
                 discontinuous: false,
                 init: Some(InitRef::Live(hls_runtime::server::Generation::new(1))),
             },
             CatchupSegment {
                 seq: SegmentSeq::new(6),
                 start: Timestamp::from_nanos(3_400_000_000),
-                duration_secs: 3.4,
+                duration: std::time::Duration::from_secs_f64(3.4),
                 discontinuous: true,
                 init: Some(InitRef::Live(hls_runtime::server::Generation::new(1))),
             },
@@ -1095,7 +1093,7 @@ mod tests {
         let segments = vec![CatchupSegment {
             seq: SegmentSeq::new(1),
             start: Timestamp::from_nanos(0),
-            duration_secs: 2.0,
+            duration: std::time::Duration::from_secs_f64(2.0),
             discontinuous: false,
             init: None,
         }];
@@ -1310,12 +1308,34 @@ mod tests {
         assert!(body.contains("#EXT-X-MEDIA-SEQUENCE:0"), "body: {body}");
     }
 
+    /// Issue #2713: a segment duration now travels as the `Duration` the
+    /// archive and the live window both carry, so a sub-second duration
+    /// reaches `#EXTINF` with its fractional part intact (the old
+    /// `f64`-field + `.expect` shape converted it by hand, and a
+    /// non-finite value panicked in production).
+    #[test]
+    fn render_playlist_renders_a_fractional_duration_from_duration() {
+        let segments = [CatchupSegment {
+            seq: SegmentSeq::new(7),
+            start: Timestamp::from_nanos(0),
+            duration: std::time::Duration::from_millis(2_500),
+            discontinuous: false,
+            init: None,
+        }];
+        let body =
+            render_playlist(&segments, "m4s", None, None, false).expect("generated URIs are valid");
+        assert!(
+            body.contains("#EXTINF:2.500,"),
+            "a 2.5 s segment must render its fractional part: {body}"
+        );
+    }
+
     #[test]
     fn render_playlist_omits_playlist_type_when_passed_none() {
         let segments = [CatchupSegment {
             seq: SegmentSeq::new(5),
             start: Timestamp::from_nanos(0),
-            duration_secs: 2.0,
+            duration: std::time::Duration::from_secs_f64(2.0),
             discontinuous: false,
             init: None,
         }];
