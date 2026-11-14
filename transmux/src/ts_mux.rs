@@ -697,7 +697,7 @@ impl Package for StreamingTsMux {
             .tracks
             .iter()
             .map(|t| relative_decode_times(t, &origin))
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
         let times: Vec<&[i64]> = times.iter().map(Vec::as_slice).collect();
         let samples: Vec<&[Sample]> = media.tracks.iter().map(|t| t.samples.as_slice()).collect();
         mux_tracks_timed_with_cc(
@@ -958,7 +958,7 @@ pub(crate) fn mux_tracks(
     let times: Vec<Vec<i64>> = tracks
         .iter()
         .map(|t| relative_decode_times(t, &origin))
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
     let times: Vec<&[i64]> = times.iter().map(Vec::as_slice).collect();
     let mut cc = TsContinuity::default();
     let mut psi = PsiState::new(psi_interval_ticks);

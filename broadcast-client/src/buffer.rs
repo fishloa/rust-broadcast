@@ -5,6 +5,7 @@ use alloc::vec::Vec;
 use core::time::Duration;
 
 use broadcast_common::clock33::{PCR_TIMESCALE, pcr_signed_distance};
+use broadcast_common::stage::Timestamp;
 use broadcast_common::timescale::{Rounding, Timescale, rescale};
 use buffering_runtime::input_log::Input;
 use buffering_runtime::{
@@ -16,7 +17,7 @@ use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 use crate::events::{BufferEvent, ErrorKind, Event, Status, StreamKind};
 use crate::join::VideoJoin;
 
-const SILENCE_MARGIN_US: u64 = 500_000;
+const SILENCE_MARGIN: Duration = Duration::from_millis(500);
 
 /// A raw 27 MHz tick count as a playback position, reduced onto the clock.
 fn clock27(ticks: u64) -> Clock27 {
@@ -179,13 +180,14 @@ pub(crate) fn lowest_id_per_kind(
 
 pub(crate) fn effective_controller_config(
     mut cfg: ControllerConfig,
-    start_pending_track_wait_us: u64,
-    start_pending_track_hard_cap_us: u64,
+    start_pending_track_wait: Duration,
+    start_pending_track_hard_cap: Duration,
 ) -> ControllerConfig {
-    let floor = start_pending_track_wait_us
-        .max(start_pending_track_hard_cap_us)
-        .saturating_add(SILENCE_MARGIN_US);
-    cfg.track_silence_timeout = cfg.track_silence_timeout.max(micros_as_duration(floor));
+    let floor = start_pending_track_wait
+        .max(start_pending_track_hard_cap)
+        .checked_add(SILENCE_MARGIN)
+        .unwrap_or(Duration::MAX);
+    cfg.track_silence_timeout = cfg.track_silence_timeout.max(floor);
     cfg
 }
 
@@ -216,8 +218,8 @@ pub(crate) struct Feeder {
     pending_registered: bool,
     started: bool,
     first_media_us: Option<u64>,
-    start_pending_track_wait_us: u64,
-    start_pending_track_hard_cap_us: u64,
+    start_pending_track_wait: Duration,
+    start_pending_track_hard_cap: Duration,
     pending_events: Vec<Event>,
     cap_notice_emitted: bool,
     holding: bool,
@@ -229,8 +231,8 @@ impl Feeder {
     pub(crate) fn new(
         config: ControllerConfig,
         seed: Option<StallMemorySnapshot>,
-        start_pending_track_wait_us: u64,
-        start_pending_track_hard_cap_us: u64,
+        start_pending_track_wait: Duration,
+        start_pending_track_hard_cap: Duration,
     ) -> Self {
         Self {
             config,
@@ -259,8 +261,8 @@ impl Feeder {
             pending_registered: false,
             started: false,
             first_media_us: None,
-            start_pending_track_wait_us,
-            start_pending_track_hard_cap_us,
+            start_pending_track_wait,
+            start_pending_track_hard_cap,
             pending_events: Vec::new(),
             cap_notice_emitted: false,
             holding: false,
@@ -314,7 +316,7 @@ impl Feeder {
     }
 
     /// A stream the source knows exists (PMT-declared) has no track yet: until one appears, or
-    /// [`Config::start_pending_track_wait_us`] after the first media, or the first `Start`, the
+    /// [`Config::start_pending_track_wait`] after the first media, or the first `Start`, the
     /// controller waits for it like for any registered track that has not delivered. The
     /// placeholder is registered with the first media report, so a stream whose tracks all resolve
     /// before any media never shows it to the controller.
@@ -324,19 +326,22 @@ impl Feeder {
         self.sync_pending(now_us);
     }
 
-    fn effective_wait_us(&self) -> u64 {
+    fn effective_wait(&self) -> Duration {
         if self.audio_pending {
-            self.start_pending_track_wait_us
-                .max(self.start_pending_track_hard_cap_us)
+            self.start_pending_track_wait
+                .max(self.start_pending_track_hard_cap)
         } else {
-            self.start_pending_track_wait_us
+            self.start_pending_track_wait
         }
     }
 
     fn sync_pending(&mut self, now_us: u64) {
         self.log.now(now_us);
-        let effective = self.effective_wait_us();
-        let waited = self.first_media_us.map(|f| now_us.saturating_sub(f));
+        let effective = self.effective_wait();
+        let now = Timestamp::from_micros(now_us);
+        let waited = self
+            .first_media_us
+            .map(|f| now.saturating_sub(Timestamp::from_micros(f)));
         let want = self.expecting && !self.started && waited.is_some_and(|w| w < effective);
         if want && !self.holding {
             self.pending_events
@@ -475,7 +480,7 @@ impl Feeder {
 
     /// A track the host drops from an explicit rendered set before the first `Start` keeps
     /// holding the start (it stays registered and its ends are still reported) until that `Start`
-    /// or until [`Config::start_pending_track_wait_us`](crate::Config::start_pending_track_wait_us)
+    /// or until [`Config::start_pending_track_wait`](crate::Config::start_pending_track_wait)
     /// after the drop, whichever comes first: a host that declares `[video]` and then
     /// `[video, audio]` a few ms later must not get a `Start` judged on video alone in between,
     /// and a host that really renders video only waits at most that long.
@@ -555,11 +560,12 @@ impl Feeder {
     }
 
     fn expire_held(&mut self, now_us: u64) {
-        let wait = self.start_pending_track_wait_us;
+        let wait = self.start_pending_track_wait;
+        let now = Timestamp::from_micros(now_us);
         let expired: Vec<TrackId> = self
             .held
             .iter()
-            .filter(|(_, at)| now_us.saturating_sub(**at) >= wait)
+            .filter(|(_, at)| now.saturating_sub(Timestamp::from_micros(**at)) >= wait)
             .map(|(t, _)| *t)
             .collect();
         for t in expired {
@@ -717,8 +723,8 @@ impl Feeder {
     fn controller_config(&self) -> ControllerConfig {
         effective_controller_config(
             self.config,
-            self.start_pending_track_wait_us,
-            self.start_pending_track_hard_cap_us,
+            self.start_pending_track_wait,
+            self.start_pending_track_hard_cap,
         )
     }
 
@@ -921,7 +927,7 @@ impl Feeder {
                     stalls: s.stalls,
                     reprimes: s.reprimes,
                     discontinuities: s.discontinuities,
-                    longest_freeze_us: duration_micros(s.longest_freeze),
+                    longest_freeze: s.longest_freeze,
                 }
             })
     }
@@ -964,8 +970,8 @@ mod tests {
         Feeder::new(
             ControllerConfig::default(),
             None,
-            crate::events::DEFAULT_START_PENDING_TRACK_WAIT_US,
-            crate::events::DEFAULT_START_PENDING_TRACK_HARD_CAP_US,
+            crate::events::DEFAULT_START_PENDING_TRACK_WAIT,
+            crate::events::DEFAULT_START_PENDING_TRACK_HARD_CAP,
         )
     }
 
@@ -1060,8 +1066,8 @@ mod tests {
                 micros_as_duration(PEAK_US),
                 micros_as_duration(0),
             )),
-            crate::events::DEFAULT_START_PENDING_TRACK_WAIT_US,
-            crate::events::DEFAULT_START_PENDING_TRACK_HARD_CAP_US,
+            crate::events::DEFAULT_START_PENDING_TRACK_WAIT,
+            crate::events::DEFAULT_START_PENDING_TRACK_HARD_CAP,
         );
         f.set_recording(true, usize::MAX);
         f.on_chunk(0, CHUNK, None);
@@ -1097,8 +1103,8 @@ mod tests {
         let mut f = Feeder::new(
             ControllerConfig::default(),
             Some(first),
-            crate::events::DEFAULT_START_PENDING_TRACK_WAIT_US,
-            crate::events::DEFAULT_START_PENDING_TRACK_HARD_CAP_US,
+            crate::events::DEFAULT_START_PENDING_TRACK_WAIT,
+            crate::events::DEFAULT_START_PENDING_TRACK_HARD_CAP,
         );
         f.set_recording(true, usize::MAX);
         f.on_chunk(0, CHUNK, None);

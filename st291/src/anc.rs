@@ -34,7 +34,7 @@
 //! field layout is unchanged by this — see `anc_content`'s module doc for why.
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_common::len::{fit_u16, need_out};
 
 use broadcast_common::bits::{BitReader, BitWriter};
 
@@ -50,12 +50,6 @@ pub const ANC_STREAM_ID: u8 = 0xBD;
 /// `PES_header_data_length` — `0x05` (exactly a 5-byte PTS), Table 2.
 pub const ANC_PES_HEADER_DATA_LENGTH: u8 = 0x05;
 
-/// `PTS_DTS_flags` — `'10'` (PTS only), Table 2.
-const PTS_DTS_FLAGS_PTS_ONLY: u8 = 0b10;
-
-/// 4-bit PTS marker prefix in a PTS-only field — `'0010'`, Table 2.
-const PTS_PREFIX: u8 = 0b0010;
-
 /// `stuffing_byte` value — `0xFF` (`'1111 1111'`), §4.2.1.
 pub const STUFFING_BYTE: u8 = 0xFF;
 
@@ -67,26 +61,9 @@ const PTS_MASK: u64 = (1 << 33) - 1;
 // (2, bits 5:4, fixed `'00'`) + `PES_priority`(1, bit 3, bslbf) +
 // `data_alignment_indicator`(1, bit 2, fixed `'1'`) + `copyright`(1, bit 1,
 // bslbf) + `original_or_copy`(1, bit 0, bslbf) (S291-W4, #1116).
-/// Selects the three fixed sub-fields of byte 6: the `'10'` marker, the
-/// `PES_scrambling_control`, and `data_alignment_indicator`.
-const BYTE6_FIXED_MASK: u8 = 0b1011_0100;
-/// Expected value under [`BYTE6_FIXED_MASK`]: `'10'` + `'00'` + `'1'`.
-const BYTE6_FIXED_VALUE: u8 = 0b1000_0100;
-/// `PES_scrambling_control` field (bits 5:4).
-const BYTE6_SCRAMBLING_MASK: u8 = 0b0011_0000;
-/// `data_alignment_indicator` bit (bit 2; ST 2038 Table 2: fixed `'1'`).
+/// `data_alignment_indicator` bit value (bit 2 of byte 6; ST 2038 Table 2:
+/// fixed `'1'`).
 const BYTE6_DATA_ALIGNMENT_BIT: u8 = 0b0000_0100;
-/// `PES_priority` bit (bit 3).
-const BYTE6_PES_PRIORITY_BIT: u8 = 0b0000_1000;
-/// `copyright` bit (bit 1).
-const BYTE6_COPYRIGHT_BIT: u8 = 0b0000_0010;
-/// `original_or_copy` bit (bit 0).
-const BYTE6_ORIGINAL_OR_COPY_BIT: u8 = 0b0000_0001;
-/// Byte 7's six flag bits after `PTS_DTS_flags` (Table 2, all fixed `'0'`):
-/// `ESCR_flag`/`ES_rate_flag`/`DSM_trick_mode_flag`/
-/// `additional_copy_info_flag`/`PES_CRC_flag`/`PES_extension_flag`.
-const BYTE7_ZERO_FLAGS_MASK: u8 = 0b0011_1111;
-
 // Field widths (bits) of the per-ANC-packet **placement** (Table 2); the
 // content field widths (DID/SDID/data_count/user_data_word/checksum) live in
 // `crate::anc_content` since they are shared with the RTP transport.
@@ -105,8 +82,14 @@ const PES_OPTIONAL_HEADER_LEN: usize = 3 + 5;
 const PES_HEADER_LEN: usize = PES_PREFIX_LEN + PES_OPTIONAL_HEADER_LEN;
 
 /// One ST 291-1 ANC data packet plus its ST 2038 placement (Table 2 inner
-/// loop). The 10-bit `did`/`sdid`/`data_count`/`user_data_words`/`checksum`
-/// are stored as raw `u16` (ST 291-1 parity/checksum not validated here).
+/// loop).
+///
+/// The `DID`/`SDID`/`User_Data_Words` are the values stored on the wire
+/// (10-bit, `DID`/`SDID` including their parity bits). `Data_Count` and the
+/// `Checksum_Word` are **derived at serialize time** from those values —
+/// they are functions of them (ST 291-1:2011 §6.5/§6.7,
+/// `private/specs-verified/smpte/st291/anc_packet_291.md`), so editing a
+/// user data word can never leave a stale count or checksum on the wire.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct AncPacket {
@@ -121,43 +104,106 @@ pub struct AncPacket {
     pub did: u16,
     /// `SDID` (10-bit raw).
     pub sdid: u16,
-    /// `data_count` (10-bit raw). The loop counter uses only `& 0xFF`.
-    pub data_count: u16,
-    /// `user_data_word`s (each 10-bit raw). Length is `data_count & 0xFF`.
+    /// `user_data_word`s (each 10-bit raw). Their count is the `Data_Count`
+    /// value written for this packet.
     pub user_data_words: Vec<u16>,
-    /// `checksum_word` (10-bit raw, ST 291-1 checksum — not validated here).
-    pub checksum: u16,
 }
 
 impl AncPacket {
-    /// The `user_data_word` loop count actually used on the wire: the **low 8
-    /// bits** of `data_count` (§4.2.1), independent of the stored Vec length.
-    #[must_use]
-    pub fn udw_loop_count(&self) -> usize {
-        usize::from(self.data_count & 0xFF)
+    /// Build a packet from raw (unparitied) 8-bit payload values, filling in
+    /// every field's parity bits — the producer-side counterpart to
+    /// [`AncContent::build`], with the ST 2038 placement alongside it.
+    ///
+    /// # Errors
+    /// [`Error::FieldOverflow`] if `udw8s.len()` exceeds `u8::MAX`
+    /// (`Data_Count`'s 8-bit value field) or a placement field exceeds its
+    /// wire width.
+    pub fn build(
+        c_not_y_channel_flag: bool,
+        line_number: u16,
+        horizontal_offset: u16,
+        did8: u8,
+        sdid8: u8,
+        udw8s: &[u8],
+    ) -> Result<Self> {
+        check_field_width("line_number", u64::from(line_number), W_LINE_NUMBER)?;
+        check_field_width(
+            "horizontal_offset",
+            u64::from(horizontal_offset),
+            W_HORIZONTAL_OFFSET,
+        )?;
+        AncContent::udw_count_fields(udw8s.len())?;
+        Ok(Self {
+            c_not_y_channel_flag,
+            line_number,
+            horizontal_offset,
+            did: AncContent::with_parity(did8),
+            sdid: AncContent::with_parity(sdid8),
+            user_data_words: udw8s.iter().map(|&b| AncContent::with_parity(b)).collect(),
+        })
+    }
+
+    /// The `User_Data_Words` loop count this packet writes: its number of
+    /// user data words (`Data_Count`, §4.2.1).
+    ///
+    /// # Errors
+    /// [`Error::FieldOverflow`] if there are more than 255 words
+    /// (`Data_Count`'s 8-bit value field).
+    pub fn udw_loop_count(&self) -> Result<usize> {
+        AncContent::udw_count_fields(self.user_data_words.len())
+    }
+
+    /// The `Data_Count` word (10-bit, with parity) for this packet's fields.
+    ///
+    /// # Errors
+    /// [`Error::FieldOverflow`] if there are more than 255 user data words.
+    pub fn data_count(&self) -> Result<u16> {
+        let count = broadcast_common::len::fit_u8(self.user_data_words.len(), "Data_Count")?;
+        Ok(AncContent::with_parity(count))
+    }
+
+    /// The `Checksum_Word` (10-bit) this packet writes over its current
+    /// fields.
+    ///
+    /// # Errors
+    /// [`Error::FieldOverflow`] if there are more than 255 user data words.
+    pub fn checksum(&self) -> Result<u16> {
+        Ok(AncContent::checksum_for(
+            self.did,
+            self.sdid,
+            self.data_count()?,
+            &self.user_data_words,
+        ))
+    }
+
+    /// This packet's content as the shared [`AncContent`] with `data_count`
+    /// and `checksum` derived from its fields.
+    fn content(&self) -> Result<AncContent> {
+        let data_count = self.data_count()?;
+        Ok(AncContent {
+            did: self.did,
+            sdid: self.sdid,
+            data_count,
+            checksum: AncContent::checksum_for(
+                self.did,
+                self.sdid,
+                data_count,
+                &self.user_data_words,
+            ),
+            user_data_words: self.user_data_words.clone(),
+        })
     }
 
     /// Run every ST 291-1 check on this packet's content
     /// ([`AncContent::validate`]): parity of `DID`/`SDID`/`Data_Count`,
     /// `Data_Count` vs the stored UDW count, and the `Checksum_Word`.
     /// Parsing never validates; this is the explicit opt-in.
-    #[must_use]
-    pub fn validate(&self) -> crate::ValidationReport {
-        self.as_content().validate()
-    }
-
-    /// Borrow this packet's transport-independent content as the shared
-    /// [`AncContent`] type (see `crate::anc_content`'s module doc for why
-    /// [`AncPacket`]'s own flat field layout is kept as-is rather than
-    /// embedding it directly).
-    fn as_content(&self) -> AncContent {
-        AncContent {
-            did: self.did,
-            sdid: self.sdid,
-            data_count: self.data_count,
-            user_data_words: self.user_data_words.clone(),
-            checksum: self.checksum,
-        }
+    ///
+    /// # Errors
+    /// [`Error::FieldOverflow`] if the packet carries more than 255 user
+    /// data words (`Data_Count`'s 8-bit value field).
+    pub fn validate(&self) -> Result<crate::ValidationReport> {
+        Ok(self.content()?.validate())
     }
 
     /// Bit length of this record's payload, **excluding** the trailing `'1'`
@@ -166,7 +212,7 @@ impl AncPacket {
     fn body_bits(&self) -> usize {
         let placement =
             (W_LEADING_ZEROS + W_C_NOT_Y + W_LINE_NUMBER + W_HORIZONTAL_OFFSET) as usize;
-        placement + self.as_content().content_bit_width()
+        placement + AncContent::content_bit_width_for(self.user_data_words.len())
     }
 
     /// Serialized byte length of this record (body bits rounded up to a byte
@@ -179,9 +225,8 @@ impl AncPacket {
     /// boundary with `'1'` bits.
     ///
     /// # Errors
-    /// Returns [`Error::InconsistentUdwLength`] if `user_data_words.len()` does
-    /// not equal `data_count & 0xFF`; a mismatch would silently zero-fill missing
-    /// words, making serialize→parse non-identity.
+    /// [`Error::FieldOverflow`] if there are more than 255 user data words
+    /// (`Data_Count`'s 8-bit value field).
     fn write_into(&self, w: &mut BitWriter<'_>) -> Result<()> {
         w.write_bits(0, W_LEADING_ZEROS)?; // '000000'
         w.write_bits(u64::from(self.c_not_y_channel_flag), W_C_NOT_Y)?;
@@ -199,7 +244,7 @@ impl AncPacket {
         )?;
         // DID/SDID/data_count/user_data_words/checksum (§4.2.1) — shared with
         // the RTP transport, see `crate::anc_content`.
-        self.as_content().write_into(w)?;
+        self.content()?.write_into(w)?;
         // Pad to byte boundary with '1' bits (note: '1', not '0' — §4.2).
         while !w.is_byte_aligned() {
             w.write_bits(1, 1)?;
@@ -229,13 +274,22 @@ impl AncPacket {
         let c_not_y_channel_flag = r.read_bool()?;
         let line_number = r.read_bits(W_LINE_NUMBER)? as u16;
         let horizontal_offset = r.read_bits(W_HORIZONTAL_OFFSET)? as u16;
-        let AncContent {
-            did,
-            sdid,
-            data_count,
-            user_data_words,
-            checksum,
-        } = AncContent::read_from(r)?;
+        let content = AncContent::read_from(r)?;
+        // ST 291-1 derives both from the other fields (§6.5/§6.7): a packet
+        // whose stored `Data_Count`/`Checksum_Word` disagree with its own
+        // user data words would reserialize to different bytes.
+        if content.data_count != content.derived_data_count()? {
+            return Err(Error::DataCountMismatch {
+                stored: content.data_count,
+                derived: content.derived_data_count()?,
+            });
+        }
+        if content.checksum != content.compute_checksum() {
+            return Err(Error::ChecksumMismatch {
+                stored: content.checksum,
+                computed: content.compute_checksum(),
+            });
+        }
         // The '1' padding up to the byte boundary (§4.2) is fixed too — note
         // '1', not '0' (contrast the RFC 8331 `word_align`, which is '0').
         let pad = (8 - r.bits_read() % 8) % 8;
@@ -254,11 +308,9 @@ impl AncPacket {
             c_not_y_channel_flag,
             line_number,
             horizontal_offset,
-            did,
-            sdid,
-            data_count,
-            user_data_words,
-            checksum,
+            did: content.did,
+            sdid: content.sdid,
+            user_data_words: content.user_data_words,
         })
     }
 }
@@ -301,97 +353,108 @@ impl AncDataPacket {
         PES_OPTIONAL_HEADER_LEN + self.payload_len()
     }
 
+    /// This packet's header as the shared [`mpeg_pes::PesHeader`] (ST 2038
+    /// Table 2 pins every other field of it: `PES_scrambling_control` `'00'`,
+    /// `data_alignment_indicator` `'1'`, PTS-only, no other optional fields).
+    fn pes_header(&self) -> mpeg_pes::PesHeader<'static> {
+        let mut header = mpeg_pes::PesHeader::new();
+        header.data_alignment_indicator = true;
+        header.pts = Some(mpeg_pes::Pts(self.pts));
+        header.pes_priority = self.pes_priority;
+        header.original_or_copy = self.original_or_copy;
+        header
+    }
+
+    /// The whole PES optional header — the two flag bytes,
+    /// `PES_header_data_length` and its fields — from the shared codec.
+    fn optional_header(&self) -> Result<Vec<u8>> {
+        broadcast_common::len::fit_bits(self.pts, 33, "PTS")?;
+        let header = self.pes_header();
+        let mut buf = alloc::vec![0u8; PES_OPTIONAL_HEADER_LEN];
+        buf[0..2].copy_from_slice(&header.flag_bytes());
+        buf[2] = ANC_PES_HEADER_DATA_LENGTH;
+        header.serialize_optional_fields(&mut buf[3..])?;
+        Ok(buf)
+    }
+
+    /// Reject a header field ST 2038 Table 2 pins to one value.
+    ///
+    /// # Errors
+    /// [`Error::ReservedBits`] naming the field that differed.
+    fn check_pinned_header(h: &mpeg_pes::PesHeader<'_>) -> Result<()> {
+        if h.scrambling_control != 0 {
+            return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                field: "PES_scrambling_control",
+                expected: 0,
+                found: u64::from(h.scrambling_control),
+            }));
+        }
+        if !h.data_alignment_indicator {
+            return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                field: "data_alignment_indicator",
+                expected: u64::from(BYTE6_DATA_ALIGNMENT_BIT & 1),
+                found: 0,
+            }));
+        }
+        if h.dts.is_some()
+            || h.escr.is_some()
+            || h.es_rate.is_some()
+            || h.dsm_trick_mode.is_some()
+            || h.additional_copy_info.is_some()
+            || h.pes_crc.is_some()
+            || h.pes_extension.is_some()
+            || !h.header_stuffing.is_empty()
+        {
+            return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                field: "ST 2038 optional PES header fields beyond the PTS",
+                expected: 0,
+                found: 1,
+            }));
+        }
+        Ok(())
+    }
+
     /// Parse an ANC data PES packet from the bytes starting at its
     /// `packet_start_code_prefix`.
     ///
+    /// The fixed PES header is parsed by the shared [`mpeg_pes::PesPacket`]
+    /// codec; the fields ST 2038 Table 2 pins are then validated.
+    ///
     /// # Errors
-    /// [`Error::BufferTooShort`] / [`Error::InvalidSync`] /
-    /// [`Error::BadStreamId`] / [`Error::BadPtsDtsFlags`] /
-    /// [`Error::BadHeaderDataLength`] / [`Error::ReservedBits`] on malformed
-    /// input, or a bit-stream error walking the ANC payload.
+    /// [`Error::Pes`] for a malformed PES header, [`Error::BadStreamId`] for
+    /// a `stream_id` other than `0xBD`, [`Error::ReservedBits`] for a header
+    /// field ST 2038 pins to another value, or a bit-stream error walking the
+    /// ANC payload.
     pub fn parse(b: &[u8]) -> Result<Self> {
-        need_in(b, PES_HEADER_LEN, "ANC PES header")?;
-        if b[0..3] != PACKET_START_CODE_PREFIX {
-            return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
-                what: "packet_start_code_prefix",
-                expected: 0x000001,
-                found: (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]),
-            }));
+        let packet = mpeg_pes::PesPacket::parse(b)?;
+        if packet.stream_id.0 != ANC_STREAM_ID {
+            return Err(Error::BadStreamId(packet.stream_id.0));
         }
-        if b[3] != ANC_STREAM_ID {
-            return Err(Error::BadStreamId(b[3]));
-        }
-        let pes_packet_length = usize::from(u16::from_be_bytes([b[4], b[5]]));
-
-        // Byte 6: '10'(2) + PES_scrambling_control(2)='00' + PES_priority(1) +
-        // data_alignment_indicator(1)='1' + copyright(1) + original_or_copy(1)
-        // (ST 2038 Table 2).
-        let f1 = b[6];
-        if (f1 & BYTE6_FIXED_MASK) != BYTE6_FIXED_VALUE {
-            if (f1 >> 6) != (BYTE6_FIXED_VALUE >> 6) {
-                return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
-                    field: "PES '10' marker",
-                    expected: u64::from(BYTE6_FIXED_VALUE >> 6),
-                    found: u64::from(f1 >> 6),
-                }));
-            }
-            if (f1 & BYTE6_SCRAMBLING_MASK) != 0x00 {
-                return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
-                    field: "PES_scrambling_control",
-                    expected: 0,
-                    found: u64::from(f1 & BYTE6_SCRAMBLING_MASK),
-                }));
-            }
-            // data_alignment_indicator bit[2] must be '1'.
-            return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
-                field: "data_alignment_indicator",
-                expected: u64::from(BYTE6_DATA_ALIGNMENT_BIT),
-                found: u64::from(f1 & BYTE6_DATA_ALIGNMENT_BIT),
-            }));
-        }
-        let pes_priority = f1 & BYTE6_PES_PRIORITY_BIT != 0;
-        let copyright = f1 & BYTE6_COPYRIGHT_BIT != 0;
-        let original_or_copy = f1 & BYTE6_ORIGINAL_OR_COPY_BIT != 0;
-
-        // Byte 7: PTS_DTS_flags(2) + 6 zero flags (Table 2, all fixed '0';
-        // S291-W3/S291-W4, #1116).
-        let f2 = b[7];
-        let pts_dts_flags = (f2 >> 6) & 0x03;
-        if pts_dts_flags != PTS_DTS_FLAGS_PTS_ONLY {
-            return Err(Error::BadPtsDtsFlags(pts_dts_flags));
-        }
-        if f2 & BYTE7_ZERO_FLAGS_MASK != 0 {
-            return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
-                field: "ESCR/ES_rate/DSM_trick_mode/additional_copy_info/PES_CRC/PES_extension flags",
-                expected: 0,
-                found: u64::from(f2 & BYTE7_ZERO_FLAGS_MASK),
-            }));
-        }
-
-        // Byte 8: PES_header_data_length == 0x05.
-        if b[8] != ANC_PES_HEADER_DATA_LENGTH {
-            return Err(Error::BadHeaderDataLength(b[8]));
-        }
-
-        // Bytes 9..14: PTS field, prefix '0010', three marker bits.
-        let pts = read_pts(&b[9..14])?;
-
-        // Payload bounded by PES_packet_length.
-        let payload_start = PES_HEADER_LEN;
-        let payload_end = PES_PREFIX_LEN + pes_packet_length;
-        if payload_end < payload_start {
+        let header =
+            packet
+                .header
+                .ok_or(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                    field: "ANC PES optional header",
+                    expected: 1,
+                    found: 0,
+                }))?;
+        Self::check_pinned_header(&header)?;
+        let pts = header
+            .pts
+            .ok_or(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                field: "ANC PES PTS",
+                expected: 1,
+                found: 0,
+            }))?;
+        let payload = packet.payload;
+        let pes_packet_length = usize::from(packet.pes_packet_length);
+        let pes_length_end = PES_PREFIX_LEN.saturating_add(pes_packet_length);
+        if pes_length_end > b.len() {
             return Err(Error::PesLengthOverflow {
                 len: pes_packet_length,
                 available: b.len().saturating_sub(PES_PREFIX_LEN),
             });
         }
-        if b.len() < payload_end {
-            return Err(Error::PesLengthOverflow {
-                len: pes_packet_length,
-                available: b.len().saturating_sub(PES_PREFIX_LEN),
-            });
-        }
-        let payload = &b[payload_start..payload_end];
 
         let mut anc_packets = Vec::new();
         let mut pos = 0usize;
@@ -423,10 +486,10 @@ impl AncDataPacket {
         }
 
         Ok(Self {
-            pes_priority,
-            copyright,
-            original_or_copy,
-            pts,
+            pes_priority: header.pes_priority,
+            copyright: header.copyright,
+            original_or_copy: header.original_or_copy,
+            pts: pts.0,
             anc_packets,
             stuffing_bytes,
         })
@@ -444,9 +507,8 @@ impl AncDataPacket {
     /// # Errors
     /// [`Error::BufferTooShort`] if `buf` is too small;
     /// [`Error::PesLengthTooLarge`] if `PES_packet_length` overflows 16 bits;
-    /// [`Error::FieldOverflow`] if any field exceeds its wire width;
-    /// [`Error::InconsistentUdwLength`] if any [`AncPacket`]'s
-    /// `user_data_words.len()` does not equal `data_count & 0xFF`.
+    /// [`Error::FieldOverflow`] if any field exceeds its wire width (including
+    /// more than 255 user data words on one ANC packet).
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         need_out(buf, len)?;
@@ -457,20 +519,8 @@ impl AncDataPacket {
 
         buf[0..3].copy_from_slice(&PACKET_START_CODE_PREFIX);
         buf[3] = ANC_STREAM_ID;
-        buf[4..6].copy_from_slice(&(pes_len as u16).to_be_bytes());
-
-        // Byte 6: '10' + scrambling '00' + priority + data_alignment '1' +
-        // copyright + original_or_copy.
-        buf[6] = BYTE6_FIXED_VALUE
-            | (u8::from(self.pes_priority) * BYTE6_PES_PRIORITY_BIT)
-            | (u8::from(self.copyright) * BYTE6_COPYRIGHT_BIT)
-            | (u8::from(self.original_or_copy) * BYTE6_ORIGINAL_OR_COPY_BIT);
-        // Byte 7: PTS_DTS_flags '10', all other flags 0.
-        buf[7] = PTS_DTS_FLAGS_PTS_ONLY << 6;
-        // Byte 8: PES_header_data_length.
-        buf[8] = ANC_PES_HEADER_DATA_LENGTH;
-        // Bytes 9..14: PTS field.
-        buf[9..14].copy_from_slice(&write_pts(self.pts)?);
+        buf[4..6].copy_from_slice(&fit_u16(pes_len, "PES_packet_length")?.to_be_bytes());
+        buf[PES_PREFIX_LEN..PES_HEADER_LEN].copy_from_slice(&self.optional_header()?);
 
         // Payload: ANC records (each byte-aligned), then 0xFF stuffing.
         let mut pos = PES_HEADER_LEN;
@@ -485,35 +535,6 @@ impl AncDataPacket {
         }
         Ok(len)
     }
-}
-
-/// Decode the 5-byte ST 2038 PTS field (prefix `'0010'`, three `'1'` markers).
-fn read_pts(b: &[u8]) -> Result<u64> {
-    need_in(b, 5, "PTS field")?;
-    if (b[0] >> 4) != PTS_PREFIX {
-        return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
-            field: "PTS prefix '0010'",
-            expected: u64::from(PTS_PREFIX),
-            found: u64::from(b[0] >> 4),
-        }));
-    }
-    if b[0] & 0x01 == 0 || b[2] & 0x01 == 0 || b[4] & 0x01 == 0 {
-        return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
-            field: "PTS marker_bit",
-            expected: 1,
-            found: 0,
-        }));
-    }
-    let field: &[u8; 5] = b[..5].try_into().expect("length checked above");
-    Ok(broadcast_common::clock33::unpack_marked(field).timestamp)
-}
-
-/// Encode a 33-bit PTS into the 5-byte ST 2038 PTS field (prefix `'0010'`).
-///
-/// [`Error::FieldOverflow`] if `pts` exceeds the 33-bit field.
-fn write_pts(pts: u64) -> Result<[u8; 5]> {
-    broadcast_common::len::fit_bits(pts, 33, "PTS")?;
-    Ok(broadcast_common::clock33::pack_marked(pts, PTS_PREFIX))
 }
 
 #[cfg(test)]
@@ -534,9 +555,7 @@ mod tests {
                     horizontal_offset: 0,
                     did: 0x161,
                     sdid: 0x101,
-                    data_count: 0x102, // low 8 bits = 0x02 → 2 UDWs
                     user_data_words: vec![0x2CF, 0x101],
-                    checksum: 0x233,
                 },
                 AncPacket {
                     c_not_y_channel_flag: true,
@@ -544,28 +563,37 @@ mod tests {
                     horizontal_offset: 0x10,
                     did: 0x241,
                     sdid: 0x102,
-                    data_count: 0x103, // 3 UDWs
                     user_data_words: vec![0x111, 0x222, 0x333],
-                    checksum: 0x1AB,
                 },
             ],
             stuffing_bytes: 3,
         }
     }
 
+    /// The PTS now travels through the shared `mpeg_pes` PES codec
+    /// (#2762): every representable value survives the whole packet.
     #[test]
     fn pts_round_trip() {
         for ts in [0u64, 1, 90_000, 0x1_2345_6789, PTS_MASK] {
-            assert_eq!(read_pts(&write_pts(ts).unwrap()).unwrap(), ts, "ts={ts:#x}");
+            let mut p = sample_2packet();
+            p.pts = ts;
+            let mut out = vec![0u8; p.serialized_len()];
+            p.serialize_into(&mut out).unwrap();
+            assert_eq!(AncDataPacket::parse(&out).unwrap().pts, ts, "ts={ts:#x}");
         }
     }
 
+    /// A PTS of 2^33 and above is rejected by st291, never masked to a
+    /// different (wrapped) timestamp; [st291's own 33-bit check is
+    /// [#1116](https://github.com/fishloa/rust-broadcast/issues/1116) and it
+    /// runs ahead of the shared codec, which masks].
     #[test]
     fn oversized_pts_is_rejected_not_masked() {
-        // Before the fix, a PTS of 2^33 silently masked to 0 and returned Ok.
-        let result = write_pts(PTS_MASK + 1);
+        let mut p = sample_2packet();
+        p.pts = PTS_MASK + 1;
+        let mut out = vec![0u8; p.serialized_len()];
         assert!(matches!(
-            result,
+            p.serialize_into(&mut out),
             Err(Error::FieldOverflow(
                 broadcast_common::error::FieldOverflow { field: "PTS", .. }
             ))
@@ -574,7 +602,11 @@ mod tests {
 
     #[test]
     fn max_pts_still_serializes_and_round_trips() {
-        assert_eq!(read_pts(&write_pts(PTS_MASK).unwrap()).unwrap(), PTS_MASK);
+        let mut p = sample_2packet();
+        p.pts = PTS_MASK;
+        let mut out = vec![0u8; p.serialized_len()];
+        p.serialize_into(&mut out).unwrap();
+        assert_eq!(AncDataPacket::parse(&out).unwrap().pts, PTS_MASK);
     }
 
     #[test]
@@ -591,8 +623,9 @@ mod tests {
         // One ANC packet, 2 UDWs, no stuffing — hand-pack the bit stream.
         // Fields:
         //   '000000'(6) c_not_y=0(1) line_number=9(11) h_off=0(12)
-        //   DID=0x161(10) SDID=0x101(10) data_count=0x002(10)
-        //   UDW0=0x2CF(10) UDW1=0x101(10) checksum=0x233(10)
+        //   DID=0x161(10) SDID=0x101(10) data_count=0x102(10, the parity-coded
+        //   count of the 2 words below) UDW0=0x2CF(10) UDW1=0x101(10)
+        //   checksum=0x134(10, the §6.7 sum of the fields above)
         //   then '1' pad to byte boundary.
         let p = AncDataPacket {
             pes_priority: false,
@@ -605,17 +638,15 @@ mod tests {
                 horizontal_offset: 0,
                 did: 0x161,
                 sdid: 0x101,
-                data_count: 0x002,
                 user_data_words: vec![0x2CF, 0x101],
-                checksum: 0x233,
             }],
             stuffing_bytes: 0,
         };
 
         // Build the expected ANC record bit-stream independently.
         // bits: 000000 | 0 | 00000001001 | 000000000000 |
-        //       0101100001 | 0100000001 | 0000000010 |
-        //       1011001111 | 0100000001 | 1000110011 | pad '1'...
+        //       0101100001 | 0100000001 | 0100000010 |
+        //       1011001111 | 0100000001 | 0100110100 | pad '1'...
         let mut expect_bits: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
         let mut push = |val: u64, n: u32| {
             for i in (0..n).rev() {
@@ -628,10 +659,10 @@ mod tests {
         push(0, 12);
         push(0x161, 10);
         push(0x101, 10);
-        push(0x002, 10);
+        push(0x102, 10);
         push(0x2CF, 10);
         push(0x101, 10);
-        push(0x233, 10);
+        push(0x134, 10);
         while !expect_bits.len().is_multiple_of(8) {
             expect_bits.push(1); // '1' padding
         }
@@ -693,45 +724,38 @@ mod tests {
         d.serialize_into(&mut od).unwrap();
         assert_ne!(oa, od, "changing DID must change the wire bytes");
 
-        // checksum must be reflected in the wire bytes.
+        // A changed user data word changes the derived checksum on the wire.
         let mut e = a.clone();
-        e.anc_packets[0].checksum = 0x001; // was 0x233
+        e.anc_packets[0].user_data_words[1] = 0x111; // was 0x101
         let mut oe = vec![0u8; e.serialized_len()];
         e.serialize_into(&mut oe).unwrap();
-        assert_ne!(oa, oe, "changing checksum must change the wire bytes");
+        assert_ne!(oa, oe, "changing a UDW must change the wire bytes");
+        let reparsed = AncDataPacket::parse(&oe).unwrap();
+        assert!(reparsed.anc_packets[0].validate().unwrap().is_valid());
     }
 
-    /// Regression: serialize_into must return Err when user_data_words.len()
-    /// is shorter than data_count & 0xFF (the old code silently zero-filled,
-    /// making serialize→parse non-identity).
+    /// `Data_Count` is derived from the user data words (#2762), so a packet
+    /// can no longer declare one count and carry another. A packet whose wire
+    /// `Data_Count` disagrees with its words is rejected on parse rather than
+    /// silently rewritten.
     #[test]
-    fn serialize_rejects_inconsistent_udw_length() {
-        let p = AncDataPacket {
-            pes_priority: false,
-            copyright: false,
-            original_or_copy: false,
-            pts: 0,
-            anc_packets: vec![AncPacket {
-                c_not_y_channel_flag: false,
-                line_number: 1,
-                horizontal_offset: 0,
-                did: 0x161,
-                sdid: 0x101,
-                data_count: 0x003,            // expects 3 UDWs
-                user_data_words: vec![0x100], // only 1 — mismatch!
-                checksum: 0x001,
-            }],
-            stuffing_bytes: 0,
-        };
-        // serialized_len uses udw_loop_count() (3), so the buffer is sized for 3.
-        let mut buf = vec![0u8; p.serialized_len()];
-        assert!(
-            matches!(
-                p.serialize_into(&mut buf),
-                Err(Error::InconsistentUdwLength { have: 1, need: 3 })
-            ),
-            "expected InconsistentUdwLength {{ have: 1, need: 3 }}"
-        );
+    fn rejects_a_stored_data_count_that_contradicts_the_user_data_words() {
+        let p = sample_2packet();
+        let mut out = vec![0u8; p.serialized_len()];
+        p.serialize_into(&mut out).unwrap();
+        let mut bits = bits_of_first_record(&out);
+        // First record: placement 30 bits, then DID(10) SDID(10) Data_Count(10).
+        let data_count_at = 30 + 10 + 10;
+        bits[data_count_at..data_count_at + 10].fill(0);
+        bits[data_count_at + 8..data_count_at + 10].fill(1);
+        let corrupted = pack_bits(&bits);
+        let mut bytes = out[..PES_HEADER_LEN].to_vec();
+        bytes.extend_from_slice(&corrupted);
+        bytes.extend_from_slice(&out[PES_HEADER_LEN + corrupted.len()..]);
+        assert!(matches!(
+            AncDataPacket::parse(&bytes),
+            Err(Error::DataCountMismatch { .. })
+        ));
     }
 
     /// Parser must reject PES_scrambling_control != '00' (ST 2038 Table 2).
@@ -778,18 +802,19 @@ mod tests {
                 horizontal_offset: 100,
                 did: 0x241,
                 sdid: 0x102,
-                data_count: 0x302, // & 0xFF == 2
                 user_data_words: vec![0x123, 0x3FF],
-                checksum: 0x199,
             }],
             stuffing_bytes: 0,
         };
-        assert_eq!(p.anc_packets[0].udw_loop_count(), 2);
+        assert_eq!(p.anc_packets[0].udw_loop_count(), Ok(2));
         let mut out = vec![0u8; p.serialized_len()];
         p.serialize_into(&mut out).unwrap();
         let rp = AncDataPacket::parse(&out).unwrap();
         assert_eq!(rp, p);
-        assert_eq!(rp.anc_packets[0].data_count, 0x302); // full 10-bit preserved
+        assert_eq!(
+            rp.anc_packets[0].data_count(),
+            Ok(AncContent::with_parity(2))
+        );
         assert_eq!(rp.anc_packets[0].user_data_words.len(), 2);
     }
 
@@ -810,13 +835,8 @@ mod tests {
         let mut out = vec![0u8; sample_2packet().serialized_len()];
         sample_2packet().serialize_into(&mut out).unwrap();
         out[2] = 0x02;
-        assert!(matches!(
-            AncDataPacket::parse(&out),
-            Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
-                found: 0x000002,
-                ..
-            }))
-        ));
+        let result = AncDataPacket::parse(&out);
+        assert!(matches!(result, Err(Error::Pes(_))), "got {result:?}");
     }
 
     #[test]
@@ -843,9 +863,7 @@ mod tests {
                 horizontal_offset: 0,
                 did: 0x161,
                 sdid: 0x101,
-                data_count: 0x002,
                 user_data_words: vec![0x2CF, 0x101],
-                checksum: 0x233,
             }],
             stuffing_bytes: 0,
         };
@@ -896,9 +914,25 @@ mod tests {
     fn rejects_nonzero_byte7_flags() {
         let mut bytes = single_packet_bytes();
         bytes[7] |= 0x01; // PES_extension_flag, fixed '0'
-        assert!(matches!(
-            AncDataPacket::parse(&bytes),
-            Err(Error::ReservedBits(_))
-        ));
+        let result = AncDataPacket::parse(&bytes);
+        assert!(matches!(result, Err(Error::Pes(_))), "got {result:?}");
+    }
+
+    /// The payload bits of the first ANC record in a serialized packet, as
+    /// one bit per element.
+    fn bits_of_first_record(packet: &[u8]) -> alloc::vec::Vec<u8> {
+        packet[PES_HEADER_LEN..]
+            .iter()
+            .flat_map(|byte| (0..8).rev().map(move |bit| (byte >> bit) & 1))
+            .collect()
+    }
+
+    /// Pack bits back into bytes, MSB first.
+    fn pack_bits(bits: &[u8]) -> alloc::vec::Vec<u8> {
+        bits.chunks(8)
+            .map(|chunk| {
+                chunk.iter().fold(0u8, |byte, &bit| (byte << 1) | (bit & 1)) << (8 - chunk.len())
+            })
+            .collect()
     }
 }

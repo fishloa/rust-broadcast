@@ -3,7 +3,7 @@ use std::fs;
 
 use broadcast_common::traits::Parse;
 use scte35_splice::SpliceInfoSection;
-use timed_metadata::anchor::{format_rfc3339_ms, try_format_rfc3339_ms};
+use timed_metadata::anchor::try_format_rfc3339_ms;
 use timed_metadata::convert::scte35_to_daterange;
 use timed_metadata::daterange::DateRange;
 use timed_metadata::event::{MediaTime, TimedEvent};
@@ -31,11 +31,15 @@ fn the_fallible_form_reports_out_of_range_epochs() {
 
 #[test]
 fn the_infallible_form_clamps_instead_of_printing_a_garbage_year() {
-    assert_eq!(format_rfc3339_ms(i64::MAX), "9999-12-31T23:59:59.999Z");
-    assert_eq!(
-        format_rfc3339_ms(i64::MIN),
-        try_format_rfc3339_ms(MIN_MS).unwrap()
-    );
+    // The clamping twin is gone (issue #2724): what remains is the fallible
+    // one, so an out-of-range instant is a typed error and never a clamped
+    // string.
+    for ms in [i64::MAX, i64::MIN] {
+        assert!(
+            matches!(try_format_rfc3339_ms(ms), Err(Error::TimestampOutOfRange(v)) if v == ms),
+            "{ms}"
+        );
+    }
 }
 
 #[test]
@@ -78,19 +82,25 @@ fn the_converter_errors_instead_of_emitting_an_unrepresentable_start_date() {
 
 #[test]
 fn well_known_instants_format_as_before() {
-    assert_eq!(format_rfc3339_ms(0), "1970-01-01T00:00:00.000Z");
-    assert_eq!(format_rfc3339_ms(-1), "1969-12-31T23:59:59.999Z");
     assert_eq!(
-        format_rfc3339_ms(951_782_400_000),
+        try_format_rfc3339_ms(0).unwrap(),
+        "1970-01-01T00:00:00.000Z"
+    );
+    assert_eq!(
+        try_format_rfc3339_ms(-1).unwrap(),
+        "1969-12-31T23:59:59.999Z"
+    );
+    assert_eq!(
+        try_format_rfc3339_ms(951_782_400_000).unwrap(),
         "2000-02-29T00:00:00.000Z"
     );
     assert_eq!(
-        format_rfc3339_ms(4_107_542_400_000),
+        try_format_rfc3339_ms(4_107_542_400_000).unwrap(),
         "2100-03-01T00:00:00.000Z"
     );
     // RFC 3339 §5.8 example "1985-04-12T23:20:50.52Z".
     assert_eq!(
-        format_rfc3339_ms(482_196_050_520),
+        try_format_rfc3339_ms(482_196_050_520).unwrap(),
         "1985-04-12T23:20:50.520Z"
     );
 }

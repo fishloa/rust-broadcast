@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - BREAKING: `ByteTap::new` returns `Result<Self, TapError>` instead of panicking, and the failure is a typed `TapError::ZeroCapacity` (exposed as `media_plane::TapError`): a zero-capacity ring is reported rather than asserted, so the same call works from a configuration validator (#2733).
 
 #### Fixed
+- `epoch_ms_to_media` floors its media tick like `TimeAnchor::media_to_epoch_ms` now does instead of truncating toward zero, so a UTC instant just before a millisecond the forward direction floors onto no longer resolves to an inconsistent tick (issue #2724).
 - Cold-ledger expiry adds the retention window with `checked_add`: an entry whose expiry does not fit the host clock stays in the ledger (it is never expired) rather than expiring at a saturated instant (#2685).
 
 ## Added

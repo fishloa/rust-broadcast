@@ -4,7 +4,7 @@ use std::fs;
 use std::path::Path;
 
 use timed_metadata::DateRange;
-use timed_metadata::anchor::format_rfc3339_ms;
+use timed_metadata::anchor::try_format_rfc3339_ms;
 use timed_metadata::daterange::{Scte35Attr, Scte35Cue};
 
 fn check(name: &str, actual: &str) {
@@ -65,7 +65,10 @@ fn rfc3339_formatting_matches_golden() {
     ];
     let mut out = String::new();
     for ms in epoch_ms {
-        out.push_str(&format!("{ms}\t{}\n", format_rfc3339_ms(ms)));
+        out.push_str(&format!(
+            "{ms}\t{}\n",
+            try_format_rfc3339_ms(ms).expect("every golden instant is in range")
+        ));
     }
     check("rfc3339.txt", &out);
 }

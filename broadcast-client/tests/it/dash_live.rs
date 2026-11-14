@@ -10,6 +10,7 @@ use crate::support::dash_sim;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
+use std::time::Duration;
 
 use broadcast_client::{ClockSource, Config, DashClockPolicy, ErrorKind, Event, Status};
 use broadcast_common::stage::Timestamp;
@@ -756,9 +757,9 @@ fn a_clock_set_after_close_changes_nothing() {
 
 #[test]
 fn the_live_playout_lead_is_three_segments_at_most() {
-    let samples_before_start = |lead_us: u64| {
+    let samples_before_start = |lead: Duration| {
         let mut config = Config::default();
-        config.playout.live_start_lead_us = lead_us;
+        config.playout.live_start_lead = lead;
         let (mut sim, _) = live(with_utc(Addressing::Number), 41 * MICROS + 120_000, config);
         sim.run_for(30 * SEC);
         let at = sim
@@ -777,9 +778,9 @@ fn the_live_playout_lead_is_three_segments_at_most() {
             .count()
     };
     let (three, six, huge) = (
-        samples_before_start(3 * SEC),
-        samples_before_start(6 * SEC),
-        samples_before_start(1_000 * SEC),
+        samples_before_start(Duration::from_secs(3)),
+        samples_before_start(Duration::from_secs(6)),
+        samples_before_start(Duration::from_secs(1_000)),
     );
     assert!(three < six, "{three} {six}");
     assert_eq!(

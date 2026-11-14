@@ -775,7 +775,7 @@ fn smooth_timeline(
     origin: &TimelineOrigin,
     media_timescale: broadcast_common::timescale::Timescale,
 ) -> Result<Vec<SmoothSampleTime>> {
-    let times = relative_decode_times(track, origin);
+    let times = relative_decode_times(track, origin)?;
     let starts: Vec<u64> = times
         .iter()
         .map(|&t| SmoothPackager::to_smooth_ticks(t.max(0) as u64, media_timescale))
