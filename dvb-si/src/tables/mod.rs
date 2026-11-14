@@ -270,9 +270,9 @@ impl SectionBits {
         Self {
             section_syntax_indicator: b1 & SECTION_B1_SSI != 0,
             private_indicator: b1 & B1_PRIVATE_INDICATOR != 0,
-            reserved_b1: ReservedOnes::from_bits(b1 >> B1_RESERVED_SHIFT),
+            reserved_b1: ReservedOnes::from_bits(u64::from(b1 >> B1_RESERVED_SHIFT)),
             reserved_b5: b5.map_or(ReservedOnes::FILL, |b| {
-                ReservedOnes::from_bits(b >> B5_RESERVED_SHIFT)
+                ReservedOnes::from_bits(u64::from(b >> B5_RESERVED_SHIFT))
             }),
         }
     }
@@ -282,14 +282,14 @@ impl SectionBits {
         b1_of(
             self.section_syntax_indicator,
             self.private_indicator,
-            self.reserved_b1.get(),
+            self.reserved_b1.get() as u8,
         )
     }
 
     /// Byte 5: `reserved(2) | version_number(5) | current_next_indicator(1)`.
     pub(crate) fn b5(&self, version_number: u8, current_next_indicator: bool) -> crate::Result<u8> {
         b5_of(
-            self.reserved_b5.get(),
+            self.reserved_b5.get() as u8,
             version_number,
             current_next_indicator,
         )

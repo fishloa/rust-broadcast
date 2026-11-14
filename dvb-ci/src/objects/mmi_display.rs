@@ -375,7 +375,7 @@ impl DisplayReply {
                 display_depth: (b[pos] >> 5) & 0x07,
                 pixels_per_byte: (b[pos] >> 2) & 0x07,
                 region_overhead: b[pos + 1],
-                reserved: ReservedOnes::from_bits(b[pos]),
+                reserved: ReservedOnes::from_bits(u64::from(b[pos])),
             });
             pos += 2;
         }
@@ -438,7 +438,9 @@ impl DisplayReply {
         buf[8] = ((g.object_cache_bytes & 0x0F) << 4) | n;
         let mut pos = GFX_FIXED;
         for d in &g.depths {
-            buf[pos] = (d.display_depth << 5) | (d.pixels_per_byte << 2) | d.reserved.get();
+            buf[pos] = (d.display_depth << 5)
+                | (d.pixels_per_byte << 2)
+                | u8::try_from(d.reserved.get()).unwrap_or(u8::MAX);
             buf[pos + 1] = d.region_overhead;
             pos += 2;
         }
@@ -977,7 +979,7 @@ impl<'a> Parse<'a> for SceneEndMark {
             send_scene_done: (b & 0x20) != 0,
             // bit `[4]` reserved, scene_tag in `[3:0]`.
             scene_tag: b & 0x0F,
-            reserved: ReservedOnes::from_bits(b >> 4),
+            reserved: ReservedOnes::from_bits(u64::from(b >> 4)),
         })
     }
 }
@@ -993,7 +995,7 @@ impl Serialize for SceneEndMark {
         buf[pos] = (u8::from(self.decoder_continue_flag) << 7)
             | (u8::from(self.scene_reveal_flag) << 6)
             | (u8::from(self.send_scene_done) << 5)
-            | (self.reserved.get() << 4)
+            | ((self.reserved.get() << 4) as u8)
             | (self.scene_tag & 0x0F);
         pos += 1;
         Ok(pos)
@@ -1050,7 +1052,7 @@ impl<'a> Parse<'a> for SceneDoneMessage {
             scene_reveal_flag: (b & 0x40) != 0,
             // bits `[5:4]` reserved, scene_tag in `[3:0]`.
             scene_tag: b & 0x0F,
-            reserved: ReservedOnes::from_bits(b >> 4),
+            reserved: ReservedOnes::from_bits(u64::from(b >> 4)),
         })
     }
 }
@@ -1065,7 +1067,7 @@ impl Serialize for SceneDoneMessage {
         // decoder_continue(1) reveal(1) reserved(2) scene_tag(4).
         buf[pos] = (u8::from(self.decoder_continue_flag) << 7)
             | (u8::from(self.scene_reveal_flag) << 6)
-            | (self.reserved.get() << 4)
+            | ((self.reserved.get() << 4) as u8)
             | (self.scene_tag & 0x0F);
         pos += 1;
         Ok(pos)
@@ -1118,7 +1120,7 @@ impl<'a> Parse<'a> for SceneControl {
             decoder_continue_flag: (b & 0x80) != 0,
             scene_reveal_flag: (b & 0x40) != 0,
             scene_tag: b & 0x0F,
-            reserved: ReservedOnes::from_bits(b >> 4),
+            reserved: ReservedOnes::from_bits(u64::from(b >> 4)),
         })
     }
 }
@@ -1133,7 +1135,7 @@ impl Serialize for SceneControl {
         // decoder_continue(1) reveal(1) reserved(2) scene_tag(4).
         buf[pos] = (u8::from(self.decoder_continue_flag) << 7)
             | (u8::from(self.scene_reveal_flag) << 6)
-            | (self.reserved.get() << 4)
+            | ((self.reserved.get() << 4) as u8)
             | (self.scene_tag & 0x0F);
         pos += 1;
         Ok(pos)

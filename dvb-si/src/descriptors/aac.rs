@@ -316,7 +316,7 @@ impl<'a> Parse<'a> for AacDescriptor<'a> {
             let additional_info = &body[pos..];
             Some(AacExtension {
                 saoc_de_flag,
-                reserved_zero_future_use: ReservedZero::from_bits(flags),
+                reserved_zero_future_use: ReservedZero::from_bits(u64::from(flags)),
                 aac_type,
                 additional_info,
             })
@@ -362,7 +362,7 @@ impl Serialize for AacDescriptor<'_> {
                 flags |= FLAG_SAOC_DE;
             }
             // reserved_zero_future_use(6): preserved from parse, 0 when constructed.
-            buf[pos] = flags | ext.reserved_zero_future_use.get();
+            buf[pos] = flags | ext.reserved_zero_future_use.get() as u8;
             pos += 1;
             if let Some(t) = ext.aac_type {
                 buf[pos] = t;
@@ -510,13 +510,13 @@ mod tests {
     /// ones) re-serializes byte-identically.
     #[test]
     fn aac_reserved_preserved() {
-        for r in 0u8..=ReservedZero::<RESERVED_ZERO_BITS>::MASK {
+        for r in 0u8..=u8::try_from(ReservedZero::<RESERVED_ZERO_BITS>::MASK).unwrap_or(u8::MAX) {
             for flags in [0u8, FLAG_SAOC_DE] {
                 let bytes = [TAG, 3, 0x50, flags | r, 0xEE];
                 let d = AacDescriptor::parse(&bytes).unwrap();
                 assert_eq!(
                     d.extension.as_ref().unwrap().reserved_zero_future_use,
-                    ReservedZero::<RESERVED_ZERO_BITS>::from_bits(r)
+                    ReservedZero::<RESERVED_ZERO_BITS>::from_bits(u64::from(r))
                 );
                 let mut buf = vec![0u8; d.serialized_len()];
                 d.serialize_into(&mut buf).unwrap();
@@ -545,7 +545,7 @@ mod tests {
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         // flags byte: no flags set, reserved zeros => 0x00.
-        assert_eq!(buf[3] & ReservedZero::<RESERVED_ZERO_BITS>::MASK, 0);
+        assert_eq!(buf[3] & ReservedZero::<RESERVED_ZERO_BITS>::MASK as u8, 0);
         assert_eq!(buf[3], 0x00);
     }
 }

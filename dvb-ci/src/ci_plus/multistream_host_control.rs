@@ -172,11 +172,11 @@ impl<'a> Parse<'a> for TuneTripletReq {
             service_id: u16::from_be_bytes([body[5], body[6]]),
             delivery_system_descriptor_tag: dsd_tag,
             descriptor_tag_extension,
-            reserved: ReservedZero::from_bits(flags >> 3),
+            reserved: ReservedZero::from_bits(u64::from(flags >> 3)),
             reserved_ext: if dsd_tag == DSD_TAG_EXTENSION {
                 ReservedZero::default()
             } else {
-                ReservedZero::from_bits(body[8])
+                ReservedZero::from_bits(u64::from(body[8]))
             },
         })
     }
@@ -190,7 +190,7 @@ impl Serialize for TuneTripletReq {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let pos =
             objects::write_apdu_header(tag::TUNE_TRIPLET_REQ, TRIPLET_BODY, self.length_form, buf)?;
-        let mut flags = self.reserved.get() << 3;
+        let mut flags = (self.reserved.get() << 3) as u8;
         if self.background_tune {
             flags |= TRIPLET_BACKGROUND_BIT;
         }
@@ -208,7 +208,7 @@ impl Serialize for TuneTripletReq {
         // descriptor_tag_extension when tag==0x7F, else reserved(8).
         buf[pos + 8] = self
             .descriptor_tag_extension
-            .unwrap_or(self.reserved_ext.get());
+            .unwrap_or_else(|| u8::try_from(self.reserved_ext.get()).unwrap_or(u8::MAX));
         Ok(pos + TRIPLET_BODY)
     }
 }
@@ -270,7 +270,7 @@ impl<'a> Parse<'a> for TuneLcnReq {
             tune_quietly,
             keep_app_running,
             logical_channel_number,
-            reserved: ReservedZero::from_bits(body[0] >> 1),
+            reserved: ReservedZero::from_bits(u64::from(body[0] >> 1)),
         })
     }
 }
@@ -289,7 +289,7 @@ impl Serialize for TuneLcnReq {
             "tune_lcn_req logical_channel_number",
         )?;
         let pos = objects::write_apdu_header(tag::TUNE_LCN_REQ, LCN_BODY, self.length_form, buf)?;
-        buf[pos] = (self.reserved.get() << 1)
+        buf[pos] = ((self.reserved.get() << 1) as u8)
             | if self.background_tune {
                 LCN_BACKGROUND_BIT
             } else {
@@ -388,7 +388,7 @@ impl<'a> TuneIpReq<'a> {
             tune_quietly,
             keep_app_running,
             service_location_data: &data[..sll],
-            reserved: ReservedZero::from_bits(reserved_bits),
+            reserved: ReservedZero::from_bits(u64::from(reserved_bits)),
         })
     }
 }
@@ -411,7 +411,7 @@ impl Serialize for TuneIpReq<'_> {
         match self.mode {
             HostControlMode::MultiStream => {
                 // Only bit `[7]` is reserved; bit `[6]` is background_tune_flag.
-                byte0 |= (self.reserved.get() & 0b10) << 6;
+                byte0 |= ((self.reserved.get() & 0b10) << 6) as u8;
                 if self.background_tune {
                     byte0 |= IP_MS_BACKGROUND_BIT;
                 }
@@ -423,7 +423,7 @@ impl Serialize for TuneIpReq<'_> {
                 }
             }
             HostControlMode::BaseV3 => {
-                byte0 |= self.reserved.get() << 6;
+                byte0 |= (self.reserved.get() << 6) as u8;
                 // Table 100 has no `background_tune_flag`; silently dropping a
                 // `true` would emit bytes that parse back as `false`.
                 if self.background_tune {
@@ -550,11 +550,11 @@ impl<'a> Parse<'a> for TunerStatusReply {
                 connected,
                 delivery_system_descriptor_tag: dsd_tag,
                 descriptor_tag_extension,
-                reserved: ReservedZero::from_bits(rest[0] >> 1),
+                reserved: ReservedZero::from_bits(u64::from(rest[0] >> 1)),
                 reserved_ext: if dsd_tag == DSD_TAG_EXTENSION {
                     ReservedZero::default()
                 } else {
-                    ReservedZero::from_bits(rest[2])
+                    ReservedZero::from_bits(u64::from(rest[2]))
                 },
             });
             rest = &rest[DSD_ENTRY_LEN..];
@@ -586,11 +586,11 @@ impl Serialize for TunerStatusReply {
         buf[pos] = byte0;
         pos += 1;
         for dsd in &self.dsds {
-            buf[pos] = (dsd.reserved.get() << 1) | u8::from(dsd.connected);
+            buf[pos] = ((dsd.reserved.get() << 1) as u8) | u8::from(dsd.connected);
             buf[pos + 1] = dsd.delivery_system_descriptor_tag;
             buf[pos + 2] = dsd
                 .descriptor_tag_extension
-                .unwrap_or(dsd.reserved_ext.get());
+                .unwrap_or_else(|| u8::try_from(dsd.reserved_ext.get()).unwrap_or(u8::MAX));
             pos += DSD_ENTRY_LEN;
         }
         Ok(pos)

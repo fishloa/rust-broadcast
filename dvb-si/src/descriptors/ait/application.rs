@@ -192,7 +192,7 @@ impl<'a> Parse<'a> for ApplicationDescriptor {
         let flags_byte = body[profiles_end];
         let service_bound_flag = (flags_byte & 0x80) != 0;
         let visibility = Visibility::from_u8((flags_byte >> 5) & 0x03);
-        let reserved_future_use = ReservedOnes::from_bits(flags_byte);
+        let reserved_future_use = ReservedOnes::from_bits(u64::from(flags_byte));
         let application_priority = body[profiles_end + FLAGS_LEN];
         let labels_start = profiles_end + FLAGS_LEN + PRIORITY_LEN;
         let transport_protocol_labels = body[labels_start..].to_vec();
@@ -247,7 +247,7 @@ impl Serialize for ApplicationDescriptor {
         }
         let flags_byte = (u8::from(self.service_bound_flag) << 7)
             | (broadcast_common::len::fit_mask(self.visibility.to_u8(), 0x03, "visibility")? << 5)
-            | self.reserved_future_use.get();
+            | self.reserved_future_use.get() as u8;
         buf[pos] = flags_byte;
         buf[pos + 1] = self.application_priority;
         pos += FLAGS_LEN + PRIORITY_LEN;
@@ -367,7 +367,7 @@ mod tests {
             let d = ApplicationDescriptor::parse(&bytes).unwrap();
             assert_eq!(
                 d.reserved_future_use,
-                ReservedOnes::<RESERVED_FU_BITS>::from_bits(r)
+                ReservedOnes::<RESERVED_FU_BITS>::from_bits(u64::from(r))
             );
             let mut buf = vec![0u8; d.serialized_len()];
             d.serialize_into(&mut buf).unwrap();

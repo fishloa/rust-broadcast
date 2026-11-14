@@ -249,8 +249,8 @@ impl<'a> Parse<'a> for CommsInfoReply {
             source_ip_address,
             source_port,
             input_delivery_pid,
-            reserved_status: ReservedZero::from_bits(body[1] >> 1),
-            reserved_pid: ReservedZero::from_bits(body[p + 2] >> 5),
+            reserved_status: ReservedZero::from_bits(u64::from(body[1] >> 1)),
+            reserved_pid: ReservedZero::from_bits(u64::from(body[p + 2] >> 5)),
         })
     }
 }
@@ -268,14 +268,15 @@ impl Serialize for CommsInfoReply {
         )?;
         buf[pos] = self.lts_id;
         // reserved(7) + status(1).
-        buf[pos + 1] = (self.reserved_status.get() << 1) | u8::from(self.status);
+        buf[pos + 1] = ((self.reserved_status.get() << 1) as u8) | u8::from(self.status);
         buf[pos + 2..pos + 2 + IP_ADDR_LEN].copy_from_slice(&self.source_ip_address);
         let p = pos + 2 + IP_ADDR_LEN;
         buf[p..p + 2].copy_from_slice(&self.source_port.to_be_bytes());
         // reserved(3) + inputDeliveryPID(13). Range-checked above.
         buf[p + 2..p + 4].copy_from_slice(
-            &(((u16::from(self.reserved_pid.get())) << 13) | self.input_delivery_pid.value())
-                .to_be_bytes(),
+            &(((u16::try_from(self.reserved_pid.get()).unwrap_or(u16::MAX)) << 13)
+                | self.input_delivery_pid.value())
+            .to_be_bytes(),
         );
         Ok(pos + INFO_REPLY_BODY)
     }
@@ -469,7 +470,7 @@ impl<'a> Parse<'a> for CommsIpConfigReply {
             connection_state,
             physical_address,
             ip_config,
-            reserved: ReservedZero::from_bits(body[0]),
+            reserved: ReservedZero::from_bits(u64::from(body[0])),
         })
     }
 }
@@ -507,7 +508,8 @@ impl Serialize for CommsIpConfigReply {
             buf,
         )?;
         // connection_state(2) << 6 + reserved(6).
-        buf[pos] = (self.connection_state.to_u8() << 6) | self.reserved.get();
+        buf[pos] = (self.connection_state.to_u8() << 6)
+            | u8::try_from(self.reserved.get()).unwrap_or(u8::MAX);
         buf[pos + 1..pos + 1 + MAC_LEN].copy_from_slice(&self.physical_address);
         pos += IP_CONFIG_PREFIX;
         if let Some(c) = &self.ip_config {

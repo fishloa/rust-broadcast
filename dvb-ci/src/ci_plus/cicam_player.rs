@@ -554,7 +554,7 @@ impl<'a> Parse<'a> for PlayerCapabilitiesReply {
                 // stream_content(4) + reserved(4).
                 stream_content: (body[pos] >> 4) & STREAM_CONTENT_MASK,
                 component_type: body[pos + 1],
-                reserved: ReservedOnes::from_bits(body[pos]),
+                reserved: ReservedOnes::from_bits(u64::from(body[pos])),
             });
             pos += COMPONENT_TYPE_LEN;
         }
@@ -585,7 +585,8 @@ impl Serialize for PlayerCapabilitiesReply {
         pos += CAPABILITIES_PREFIX;
         for c in &self.component_types {
             // stream_content(4) << 4 + reserved(4).
-            buf[pos] = ((c.stream_content & STREAM_CONTENT_MASK) << 4) | c.reserved.get();
+            buf[pos] = ((c.stream_content & STREAM_CONTENT_MASK) << 4)
+                | u8::try_from(c.reserved.get()).unwrap_or(u8::MAX);
             buf[pos + 1] = c.component_type;
             pos += COMPONENT_TYPE_LEN;
         }
@@ -653,7 +654,7 @@ impl<'a> Parse<'a> for PlayerStartReq<'a> {
             output_max_bitrate,
             linear_channel,
             pmt: &body[START_REQ_PREFIX..end],
-            reserved: ReservedZero::from_bits(body[4]),
+            reserved: ReservedZero::from_bits(u64::from(body[4])),
         })
     }
 }
@@ -668,7 +669,7 @@ impl Serialize for PlayerStartReq<'_> {
         buf[pos..pos + 2].copy_from_slice(&self.input_max_bitrate.to_be_bytes());
         buf[pos + 2..pos + 4].copy_from_slice(&self.output_max_bitrate.to_be_bytes());
         // linearChannel(1) + reserved(7).
-        buf[pos + 4] = (self.reserved.get() & 0x7F)
+        buf[pos + 4] = ((self.reserved.get() & 0x7F) as u8)
             | if self.linear_channel {
                 LINEAR_CHANNEL_BIT
             } else {
@@ -821,7 +822,7 @@ impl<'a> Parse<'a> for PlayerStatusError {
             valid_lts_id: body[0] & VALID_LTS_ID_BIT != 0,
             lts_id: body[1],
             player_status: PlayStatus::from_u8(body[2]),
-            reserved: ReservedZero::from_bits(body[0] >> 1),
+            reserved: ReservedZero::from_bits(u64::from(body[0] >> 1)),
         })
     }
 }
@@ -838,7 +839,7 @@ impl Serialize for PlayerStatusError {
             buf,
         )?;
         // reserved(7) + valid_LTS_id(1).
-        buf[pos] = (self.reserved.get() << 1) | u8::from(self.valid_lts_id);
+        buf[pos] = ((self.reserved.get() << 1) as u8) | u8::from(self.valid_lts_id);
         buf[pos + 1] = self.lts_id;
         buf[pos + 2] = self.player_status.to_u8();
         Ok(pos + STATUS_ERROR_BODY)
@@ -1253,7 +1254,7 @@ impl<'a> Parse<'a> for PlayerAssetEnd {
             length_form,
             lts_id: body[0],
             beginning: body[1] & BEGINNING_BIT != 0,
-            reserved: ReservedOnes::from_bits(body[1] >> 1),
+            reserved: ReservedOnes::from_bits(u64::from(body[1] >> 1)),
         })
     }
 }
@@ -1267,7 +1268,7 @@ impl Serialize for PlayerAssetEnd {
             objects::write_apdu_header(tag::ASSET_END, ASSET_END_BODY, self.length_form, buf)?;
         buf[pos] = self.lts_id;
         // reserved(7) (0x7F per §8.8.16 unless a peer sent otherwise) + beginning(1).
-        buf[pos + 1] = (self.reserved.get() << 1) | u8::from(self.beginning);
+        buf[pos + 1] = ((self.reserved.get() << 1) as u8) | u8::from(self.beginning);
         Ok(pos + ASSET_END_BODY)
     }
 }
