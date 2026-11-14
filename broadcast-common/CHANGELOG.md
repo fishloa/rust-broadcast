@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 ### Changed
-- BREAKING: `backoff::InvalidBackoff` no longer implements `Eq`, and its growth-factor failure is the new `backoff::InvalidBackoff::GrowthFactor { factor: backoff::GrowthFactor }` (`GrowthFactor::Nan` or `GrowthFactor::Below(f64)`) instead of `GrowthBelowOne { factor: f64 }`: a NaN factor made the error unequal to its own copy, so the `Eq` claim was false. `InvalidBackoff::reason()` (a `String`-producing error API) is gone; `Display` is the message and `core::error::Error` is still implemented (#2725). Migration: match `GrowthFactor` variants rather than the raw `f64`, and render the message with `to_string()` instead of `reason()`.
+- BREAKING: `backoff::InvalidBackoff` no longer implements `Eq`, and its growth-factor failure is the new `backoff::InvalidBackoff::GrowthFactor { factor: backoff::GrowthFactor }` (`GrowthFactor::Nan` or `GrowthFactor::Below(f64)`) instead of `GrowthBelowOne { factor: f64 }`: a NaN factor made the error unequal to its own copy, so the `Eq` claim was false. `InvalidBackoff::reason()` (a `String`-producing error API) is gone; `Display` is the message and `core::error::Error` is still implemented (`GrowthFactor::name()` carries the description, the workspace's label convention for a public enum) (#2725). Migration: match `GrowthFactor` variants rather than the raw `f64`, and render the message with `to_string()` instead of `reason()`.
 
 ### Added
 - `backoff::RetrySchedule::no_delay(seed)`: the schedule no bound can refuse (a zero cap with no step table, every attempt waiting nothing), the value `from_steps(&[], Duration::ZERO, seed)` yields, named so a caller that must hold a schedule in a field it cannot build fallibly does not rebuild it by hand (#2727).

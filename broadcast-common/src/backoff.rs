@@ -159,11 +159,22 @@ pub enum GrowthFactor {
     Below(f64),
 }
 
+impl GrowthFactor {
+    /// The failure's description, as it reads after "retry growth factor".
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Nan => "is NaN",
+            Self::Below(_) => "is under 1",
+        }
+    }
+}
+
 impl fmt::Display for GrowthFactor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Nan => f.write_str("is NaN"),
-            Self::Below(factor) => write!(f, "{factor} is under 1"),
+            Self::Nan => f.write_str(self.name()),
+            Self::Below(factor) => write!(f, "{factor} {}", self.name()),
         }
     }
 }
