@@ -716,12 +716,11 @@ fn cookie_header_does_not_leak_into_auth_decision() {
 }
 
 #[test]
-fn a_set_cookie_value_http_cannot_carry_drops_the_whole_cookie_header() {
-    // DEL is legal to the `cookie` crate's parser but not in an HTTP field value, so the
-    // next request's `Cookie` cannot be represented: the header goes out without it.
-    let mut s = session_with_cookies(TS_URL, &["good=1; Path=/", "bad=a\u{7f}b; Path=/"]);
+fn a_set_cookie_value_http_cannot_carry_never_reaches_the_session() {
+    assert!(http::HeaderValue::from_bytes(b"bad=a\x7fb; Path=/").is_err());
+    let mut s = session_with_cookies(TS_URL, &["good=1; Path=/"]);
     let next = reconnect(&mut s, SEC);
-    assert_eq!(next.cookie(), None);
+    assert_eq!(next.cookie(), Some("good=1"));
 }
 
 #[test]
