@@ -505,7 +505,7 @@ async fn key_without_configured_credentials_fails_with_auth_error() {
     let origin = encrypted_origin(Resource::bytes(KEY_A.to_vec()).requiring_auth());
     let (result, samples) = ingest(&format!("{}/index.m3u8", origin.base), None).await;
     assert!(
-        matches!(result, Err(MultimuxError::Auth { .. })),
+        matches!(result, Err(MultimuxError::Auth(_))),
         "{result:?}"
     );
     assert!(samples.is_empty());
@@ -534,7 +534,7 @@ async fn key_on_other_origin_gets_no_credentials() {
     };
     let (result, _) = ingest(&format!("{}/index.m3u8", media_origin.base), Some(creds)).await;
     assert!(
-        matches!(result, Err(MultimuxError::Auth { .. })),
+        matches!(result, Err(MultimuxError::Auth(_))),
         "{result:?}"
     );
     let playlist_requests = media_origin.requests("/index.m3u8");

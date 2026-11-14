@@ -789,9 +789,7 @@ impl OutputAuthSpec {
     /// re-deriving a `Result` this method's signature (matching every other
     /// builtin scheme) doesn't carry.
     pub(crate) fn build_verifier(&self, realm: &str) -> Result<broadcast_auth::Verifier> {
-        let auth_error = |e: broadcast_auth::Error| MultimuxError::Auth {
-            reason: format!("output auth: {e}"),
-        };
+        let auth_error = |e: broadcast_auth::Error| MultimuxError::Auth(e);
         Ok(match self {
             OutputAuthSpec::Basic { username, password } => broadcast_auth::Verifier::new(
                 Credentials::Basic {
@@ -2066,7 +2064,7 @@ impl Route {
         if let Err(reason) = self.dvr.validate() {
             return Err(MultimuxError::ConfigInvalid {
                 field: "routes.dvr",
-                reason,
+                reason: reason.to_string(),
             });
         }
         Ok(())

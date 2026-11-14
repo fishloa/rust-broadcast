@@ -28,7 +28,8 @@ use tokio::time::Instant;
 use transmux::{TrackId, TrackSpec};
 
 use crate::clock::{HostClock, SystemHostClock};
-use crate::error::MultimuxError;
+use crate::error::{MultimuxError, Phase, ProtocolFailure};
+use http;
 use crate::source::driver::{IngestStep, StepOutcome, ts};
 use media_plane::ts_session::ProgramTracker;
 use transmux::stitch::Stitcher;
@@ -238,9 +239,10 @@ impl SessionStep {
         if let Some(credentials) = credentials {
             session
                 .set_credentials(credentials)
-                .map_err(|e| MultimuxError::Auth {
-                    reason: format!("{}: {e}", labels.what),
-                })?;
+                .map_err(|e| MultimuxError::Auth(broadcast_auth::Error::ChallengeParse(format!(
+                    "{labels}: {e}",
+                    labels = labels.what
+                ))))?;
         }
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
@@ -493,16 +495,23 @@ impl SessionStep {
                 Event::Status(Status::NotFound) if !self.labels.session_retries => {
                     verdict = verdict.max(Verdict::Failed(match self.labels.not_found_phase {
                         Some(phase) => MultimuxError::Protocol {
-                            phase,
-                            reason: "non-success status Not Found".into(),
+                            phase: match phase {
+                                "DESCRIBE" => Phase::Describe,
+                                "SETUP" => Phase::Setup,
+                                "PLAY" => Phase::Play,
+                                "recv" => Phase::Recv,
+                                other => Phase::Other(other),
+                            },
+                            kind: ProtocolFailure::Status(http::StatusCode::NOT_FOUND),
                         },
                         None => self.http_error(404),
                     }));
                 }
                 Event::Forbidden { status } if self.labels.session_retries => {
-                    verdict = verdict.max(Verdict::Failed(MultimuxError::Auth {
-                        reason: format!("{}: HTTP {status}", self.labels.what),
-                    }));
+                    verdict = verdict.max(Verdict::Failed(MultimuxError::Auth(broadcast_auth::Error::ChallengeParse(format!(
+                        "{}: HTTP {status}",
+                        self.labels.what
+                    )))));
                 }
                 Event::ServerRefused { status, .. } if !self.labels.session_retries => {
                     verdict = verdict.max(Verdict::Failed(self.http_error(status)));
@@ -511,17 +520,24 @@ impl SessionStep {
                     verdict = verdict.max(Verdict::Failed(self.http_error(status)));
                 }
                 Event::AuthRequired { .. } => {
-                    verdict = verdict.max(Verdict::Failed(MultimuxError::Auth {
-                        reason: format!("{}: authentication required", self.labels.what),
-                    }));
+                    verdict = verdict.max(Verdict::Failed(MultimuxError::Auth(broadcast_auth::Error::ChallengeParse(format!(
+                        "{}: authentication required",
+                        self.labels.what
+                    )))));
                 }
                 Event::Error {
                     kind: ErrorKind::RequestRefused { method, status },
                     fatal: false,
                 } => {
                     verdict = verdict.max(Verdict::Failed(MultimuxError::Protocol {
-                        phase: method,
-                        reason: format!("non-success status {status}"),
+                        phase: match method {
+                            "DESCRIBE" => Phase::Describe,
+                            "SETUP" => Phase::Setup,
+                            "PLAY" => Phase::Play,
+                            "recv" => Phase::Recv,
+                            other => Phase::Other(other),
+                        },
+                        kind: ProtocolFailure::Other(format!("non-success status {status}")),
                     }));
                 }
                 Event::Error { kind, fatal: false } if kind.ends_connection() => {
@@ -533,9 +549,11 @@ impl SessionStep {
                     if self.labels.session_retries
                         && matches!(kind.refusal_status(), Some(401 | 403)) =>
                 {
-                    verdict = verdict.max(Verdict::Failed(MultimuxError::Auth {
-                        reason: format!("{}: {}", self.labels.what, kind.name()),
-                    }));
+                    verdict = verdict.max(Verdict::Failed(MultimuxError::Auth(broadcast_auth::Error::ChallengeParse(format!(
+                        "{}: {}",
+                        self.labels.what,
+                        kind.name()
+                    )))));
                 }
                 Event::Error { kind, fatal: false }
                     if self.labels.session_retries && kind.is_permanent() =>
@@ -559,9 +577,10 @@ impl SessionStep {
 
     fn http_error(&self, status: u16) -> MultimuxError {
         if status == reqwest::StatusCode::UNAUTHORIZED.as_u16() {
-            MultimuxError::Auth {
-                reason: format!("{}: {status}", self.labels.what),
-            }
+            MultimuxError::Auth(broadcast_auth::Error::ChallengeParse(format!(
+                "{}: {status}",
+                self.labels.what
+            )))
         } else {
             MultimuxError::Connect {
                 reason: format!("{}: HTTP {status}", self.labels.what),

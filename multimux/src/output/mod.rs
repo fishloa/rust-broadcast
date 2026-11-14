@@ -273,7 +273,7 @@ impl OutputKind {
     /// built without a [`crate::registry::SchemeRegistry`]; use
     /// `crate::origin::serve_with_registry`, which resolves it via
     /// `registry.output(type_tag)` instead of calling this method.
-    pub fn build(&self) -> Arc<dyn Output> {
+    pub fn build(&self) -> crate::Result<Arc<dyn Output>> {
         self.build_with_playlist_name(hls::DEFAULT_PLAYLIST_NAME)
     }
 
@@ -285,35 +285,26 @@ impl OutputKind {
     /// # Panics
     ///
     /// Panics if `self` is [`OutputKind::Custom`] — see [`Self::build`].
-    pub fn build_with_playlist_name(&self, playlist_name: &str) -> Arc<dyn Output> {
+    pub fn build_with_playlist_name(&self, playlist_name: &str) -> crate::Result<Arc<dyn Output>> {
         match self {
-            OutputKind::LlHls => Arc::new(hls::HlsOutput::low_latency(playlist_name)),
-            OutputKind::Dash => Arc::new(dash::DashOutput),
-            OutputKind::LlDash => Arc::new(ll_dash::LlDashOutput),
-            OutputKind::Smooth => Arc::new(smooth::SmoothOutput),
-            OutputKind::TsHls => Arc::new(hls::HlsOutput::segmented(playlist_name)),
-            OutputKind::Catchup => Arc::new(catchup::CatchupOutput),
-            // Push outputs are not `Arc<dyn Output>` — they are driven by the
-            // push driver (`crate::push`) instead of mounting manifest routes.
+            OutputKind::LlHls => Ok(Arc::new(hls::HlsOutput::low_latency(playlist_name))),
+            OutputKind::Dash => Ok(Arc::new(dash::DashOutput)),
+            OutputKind::LlDash => Ok(Arc::new(ll_dash::LlDashOutput)),
+            OutputKind::Smooth => Ok(Arc::new(smooth::SmoothOutput)),
+            OutputKind::TsHls => Ok(Arc::new(hls::HlsOutput::segmented(playlist_name))),
+            OutputKind::Catchup => Ok(Arc::new(catchup::CatchupOutput)),
             OutputKind::SrtPush { .. }
             | OutputKind::RtmpPush { .. }
-            | OutputKind::RtspPush { .. } => {
-                unreachable!(
-                    "OutputKind::SrtPush/RtmpPush/RtspPush produce no Arc<dyn Output> — \
-                     push outputs are driven by crate::push::drive_push"
-                )
-            }
-            OutputKind::Custom { .. } => unreachable!(
-                "OutputKind::Custom cannot be built without a SchemeRegistry — \
-                 crate::origin::serve_with_registry resolves it via \
-                 `registry.output(type_tag)` instead of this method"
-            ),
+            | OutputKind::RtspPush { .. } => Err(crate::MultimuxError::OutputNotBuildable {
+                kind: self.name().to_string(),
+            }),
+            OutputKind::Custom { .. } => Err(crate::MultimuxError::OutputNotBuildable {
+                kind: self.name().to_string(),
+            }),
             #[cfg(feature = "whep")]
-            OutputKind::Whep { .. } => unreachable!(
-                "OutputKind::Whep produces no Arc<dyn Output> — WHEP egress is driven by \
-                 crate::output::whep::run_whep, a raw listen socket, exactly like WHIP \
-                 ingest on the source side"
-            ),
+            OutputKind::Whep { .. } => Err(crate::MultimuxError::OutputNotBuildable {
+                kind: self.name().to_string(),
+            }),
         }
     }
 }
@@ -445,14 +436,14 @@ mod tests {
             OutputKind::Smooth,
             OutputKind::Catchup,
         ] {
-            merged = merged.merge(kind.build().manifest_routes(route.clone()));
+            merged = merged.merge(kind.build().unwrap().manifest_routes(route.clone()));
         }
         // Consuming the merged router is the assertion: `merge` panics on a
         // duplicate fallback, so reaching here is the pass condition.
         let _: Router = merged;
 
         // `ts_hls` alone, the other permitted shape.
-        let _: Router = Router::new().merge(OutputKind::TsHls.build().manifest_routes(route));
+        let _: Router = Router::new().merge(OutputKind::TsHls.build().unwrap().manifest_routes(route));
     }
 
     #[test]
@@ -485,20 +476,20 @@ mod tests {
     #[test]
     fn output_kind_build_matches_kind() {
         assert!(matches!(
-            OutputKind::LlHls.build().kind(),
+            OutputKind::LlHls.build().unwrap().kind(),
             OutputKind::LlHls
         ));
-        assert!(matches!(OutputKind::Dash.build().kind(), OutputKind::Dash));
+        assert!(matches!(OutputKind::Dash.build().unwrap().kind(), OutputKind::Dash));
         assert!(matches!(
-            OutputKind::LlDash.build().kind(),
+            OutputKind::LlDash.build().unwrap().kind(),
             OutputKind::LlDash
         ));
         assert!(matches!(
-            OutputKind::TsHls.build().kind(),
+            OutputKind::TsHls.build().unwrap().kind(),
             OutputKind::TsHls
         ));
         assert!(matches!(
-            OutputKind::Catchup.build().kind(),
+            OutputKind::Catchup.build().unwrap().kind(),
             OutputKind::Catchup
         ));
     }
@@ -520,18 +511,12 @@ mod tests {
         assert_eq!(kind.name(), "webrtc");
     }
 
-    /// `#[should_panic]`: [`OutputKind::build_with_playlist_name`] cannot
-    /// build a [`OutputKind::Custom`] without a
-    /// `crate::registry::SchemeRegistry` — documented via this test so a
-    /// future refactor that silently returns a bogus `Output` instead of
-    /// panicking is caught.
     #[test]
-    #[should_panic(expected = "SchemeRegistry")]
-    fn output_kind_custom_build_panics() {
+    fn output_kind_custom_build_returns_err() {
         let kind = OutputKind::Custom {
             type_tag: "webrtc".into(),
             params: serde_json::Value::Null,
         };
-        let _ = kind.build();
+        assert!(kind.build().is_err());
     }
 }

@@ -1322,7 +1322,7 @@ fn build_output(
                 playlist_name,
             })
         }
-        builtin => Ok(builtin.build_with_playlist_name(playlist_name)),
+        builtin => builtin.build_with_playlist_name(playlist_name),
     }
 }
 

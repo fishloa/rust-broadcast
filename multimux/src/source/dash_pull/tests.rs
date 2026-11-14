@@ -922,7 +922,7 @@ async fn a_wrong_password_ends_the_attempt_with_an_auth_error() {
         .finish()
         .await;
     assert!(
-        matches!(result, Err(MultimuxError::Auth { .. })),
+        matches!(result, Err(MultimuxError::Auth(_))),
         "{result:?}"
     );
     assert!(

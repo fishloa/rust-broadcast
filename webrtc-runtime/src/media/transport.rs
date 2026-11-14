@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use broadcast_common::{Parse, Serialize};
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use rtc_dtls::config::{ClientAuthType, ConfigBuilder, HandshakeConfig, VerifyPeerCertificateFn};
 use rtc_dtls::crypto::Certificate;
 use rtc_dtls::crypto_provider::{RTCCryptoProvider, default_provider};
@@ -27,6 +27,7 @@ use sdp_types::{Attribute, Fingerprint, HashFunc, Session, TypedAttribute};
 use sha2::{Digest, Sha256};
 
 use crate::Error;
+use crate::error::MediaError;
 use crate::media::gather::StunGather;
 
 // ---------------------------------------------------------------------------
@@ -374,7 +375,7 @@ pub struct DecryptedRtpExtension {
     pub profile_id: u16,
     /// The extension data, opaque at this layer (RFC 3550 §5.3.1: "the
     /// actual format of the extension is specified by the profile").
-    pub data: Vec<u8>,
+    pub data: Bytes,
 }
 
 /// An RTP packet decrypted from an inbound SRTP packet (RFC 3711), with its
@@ -400,7 +401,7 @@ pub struct DecryptedRtp {
     /// run-09 W20 — this used to be dropped between decrypt and the caller).
     pub extension: Option<DecryptedRtpExtension>,
     /// The opaque coded media payload.
-    pub payload: Vec<u8>,
+    pub payload: Bytes,
 }
 
 /// One outbound UDP datagram [`MediaTransport::poll_transmit`] wants sent.
@@ -412,6 +413,75 @@ pub struct Datagram {
     pub bytes: Vec<u8>,
 }
 
+/// ICE connection state reported by [`MediaEvent::IceStateChanged`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum IceConnectionState {
+    /// No state was set.
+    Unspecified,
+    /// ICE agent is gathering addresses.
+    New,
+    /// ICE agent is checking candidate pairs.
+    Checking,
+    /// ICE agent has a working candidate pair.
+    Connected,
+    /// ICE agent finished checking.
+    Completed,
+    /// ICE agent never connected.
+    Failed,
+    /// ICE agent disconnected.
+    Disconnected,
+    /// ICE agent closed.
+    Closed,
+}
+
+impl IceConnectionState {
+    /// The state name.
+    pub fn name(&self) -> &'static str {
+        match self {
+            IceConnectionState::Unspecified => "Unspecified",
+            IceConnectionState::New => "New",
+            IceConnectionState::Checking => "Checking",
+            IceConnectionState::Connected => "Connected",
+            IceConnectionState::Completed => "Completed",
+            IceConnectionState::Failed => "Failed",
+            IceConnectionState::Disconnected => "Disconnected",
+            IceConnectionState::Closed => "Closed",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(IceConnectionState);
+
+/// A gathered ICE candidate's marshalled attribute body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IceCandidate(pub alloc::string::String);
+
+impl IceCandidate {
+    /// The marshalled candidate string.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for IceCandidate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<alloc::string::String> for IceCandidate {
+    fn from(s: alloc::string::String) -> Self {
+        IceCandidate(s)
+    }
+}
+
+impl From<&str> for IceCandidate {
+    fn from(s: &str) -> Self {
+        IceCandidate(s.to_string())
+    }
+}
+
 /// Events [`MediaTransport`] reports to its caller.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -421,12 +491,12 @@ pub enum MediaEvent {
     /// the ICE candidate-attribute body (RFC 8839 §5.1) *without* the
     /// leading `a=candidate:` — [`rtc_ice::candidate::Candidate::marshal`]'s
     /// own format — for the caller to fold into a Trickle-ICE fragment.
-    LocalCandidateGathered(String),
+    LocalCandidateGathered(IceCandidate),
     /// The ICE agent's connection state changed. Carries
     /// `rtc_ice::state::ConnectionState`'s own `Display` text (that type is
     /// `rtc-ice`'s, not this crate's, so it does not get its own
     /// `name()`/`impl_spec_display!` pair here).
-    IceStateChanged(String),
+    IceStateChanged(IceConnectionState),
     /// The DTLS handshake completed and the SRTP decrypt context is ready;
     /// inbound [`MediaEvent::Rtp`]/[`MediaEvent::Rtcp`] events can now be
     /// produced.
@@ -473,8 +543,8 @@ pub enum MediaEvent {
     AuthFailure {
         /// `true` for an RFC 5761 §4 RTCP packet type, `false` for RTP.
         is_rtcp: bool,
-        /// The decrypt/parse failure, for logging.
-        reason: String,
+        /// The decrypt/parse failure.
+        reason: MediaError,
     },
     /// [`MediaTransport::handle_timeout`]'s underlying ICE or DTLS timer
     /// drive returned an error (audit run-09 W20). Before this event
@@ -482,7 +552,7 @@ pub enum MediaEvent {
     /// handshake (fatal alert, retransmit exhaustion) or an ICE agent error
     /// showed up only as silence — the caller never learned anything had
     /// gone wrong.
-    TimerError(String),
+    TimerError(MediaError),
 }
 
 /// The ICE + DTLS-SRTP media transport for one peer connection.
@@ -570,7 +640,7 @@ pub struct MediaTransport {
     /// Lets an integration test drive the caller's fatal-timer-error handling
     /// without staging an internal ICE/DTLS timer failure.
     #[cfg(feature = "test-seams")]
-    pending_timer_error: Option<String>,
+    pending_timer_error: Option<MediaError>,
     /// Test-only: when set, [`Self::poll_timeout`] reports an always-overdue
     /// deadline (a stuck transport whose timer is perpetually due) while
     /// [`Self::handle_timeout`] does nothing — the state the WHEP fairness
@@ -606,26 +676,26 @@ impl MediaTransport {
     /// or ICE/DTLS setup fails.
     pub fn new(config: MediaTransportConfig, now: Instant) -> Result<Self, Error> {
         let remote_fingerprint_digest =
-            parse_fingerprint_value(&config.remote_fingerprint).map_err(Error::Media)?;
+            parse_fingerprint_value(&config.remote_fingerprint).map_err(|e| Error::Media(e.into()))?;
         if config.local_setup == SetupRole::ActPass {
-            return Err(Error::Media(
+            return Err(Error::Media(MediaError::Other(
                 "local_setup ActPass is only valid as an SDP offer's a=setup value; the \
                  answer (or this side's own choice, if answering) must resolve to Active or \
                  Passive before a MediaTransport can be built"
                     .to_string(),
-            ));
+            )));
         }
 
         // Generates a fresh self-signed certificate — WebRTC authenticates
         // peers by the SDP-signalled fingerprint (RFC 8122), not a CA chain,
         // so self-signed is the norm.
         let crypto_provider = default_provider()
-            .map_err(|e| Error::Media(format!("resolve default crypto provider: {e}")))?;
+            .map_err(|e| Error::Media(MediaError::Other(format!("resolve default crypto provider: {e}"))))?;
         let certificate = Certificate::generate_self_signed(
             vec!["localhost".to_string()],
             crypto_provider.crypto(),
         )
-        .map_err(|e| Error::Media(format!("generate self-signed certificate: {e}")))?;
+        .map_err(|e| Error::Media(MediaError::Other(format!("generate self-signed certificate: {e}"))))?;
         Self::with_certificate(
             config,
             remote_fingerprint_digest,
@@ -655,9 +725,9 @@ impl MediaTransport {
         now: Instant,
     ) -> Result<Self, Error> {
         let crypto_provider = default_provider()
-            .map_err(|e| Error::Media(format!("resolve default crypto provider: {e}")))?;
+            .map_err(|e| Error::Media(MediaError::Other(format!("resolve default crypto provider: {e}"))))?;
         let remote_fingerprint_digest =
-            parse_fingerprint_value(&config.remote_fingerprint).map_err(Error::Media)?;
+            parse_fingerprint_value(&config.remote_fingerprint).map_err(|e| Error::Media(e.into()))?;
         Self::with_certificate(
             config,
             remote_fingerprint_digest,
@@ -692,7 +762,7 @@ impl MediaTransport {
             ..Default::default()
         };
         let mut ice = IceAgent::new(now, Arc::new(agent_config), crypto_provider.clone())
-            .map_err(|e| Error::Media(format!("new ice agent: {e}")))?;
+            .map_err(|e| Error::Media(MediaError::Other(format!("new ice agent: {e}"))))?;
 
         let host_candidate = CandidateHostConfig {
             base_config: CandidateConfig {
@@ -705,9 +775,9 @@ impl MediaTransport {
             ..Default::default()
         }
         .new_candidate_host()
-        .map_err(|e| Error::Media(format!("build host candidate: {e}")))?;
+        .map_err(|e| Error::Media(MediaError::Other(format!("build host candidate: {e}"))))?;
         ice.add_local_candidate(host_candidate)
-            .map_err(|e| Error::Media(format!("add host candidate: {e}")))?;
+            .map_err(|e| Error::Media(MediaError::Other(format!("add host candidate: {e}"))))?;
 
         ice.start_connectivity_checks(
             now,
@@ -715,7 +785,7 @@ impl MediaTransport {
             config.remote_ice_ufrag.clone(),
             config.remote_ice_pwd.clone(),
         )
-        .map_err(|e| Error::Media(format!("start connectivity checks: {e}")))?;
+        .map_err(|e| Error::Media(MediaError::Other(format!("start connectivity checks: {e}"))))?;
 
         // RFC 5764 §4.1: is_client picks which handshake role rtc-dtls
         // builds this config for. `remote_addr: None` — this cut never sets
@@ -752,7 +822,7 @@ impl MediaTransport {
         let handshake_config = Arc::new(
             builder
                 .build(is_client, None)
-                .map_err(|e| Error::Media(format!("build dtls handshake config: {e}")))?,
+                .map_err(|e| Error::Media(MediaError::Other(format!("build dtls handshake config: {e}"))))?,
         );
 
         // Passive (DTLS server): the config is installed as the endpoint's
@@ -843,12 +913,12 @@ impl MediaTransport {
     pub fn add_remote_candidate(&mut self, candidate: &str) -> Result<(), Error> {
         if self.remote_candidate_count >= self.max_remote_candidates {
             let cap = self.max_remote_candidates;
-            return Err(Error::Media(format!(
+            return Err(Error::Media(MediaError::Other(format!(
                 "remote candidate count exceeds the {cap}-candidate cap (RFC 8445 §6.1.2.5)"
-            )));
+            ))));
         }
         let c = unmarshal_candidate(candidate)
-            .map_err(|e| Error::Media(format!("unmarshal remote candidate {candidate:?}: {e}")))?;
+            .map_err(|e| Error::Media(MediaError::Other(format!("unmarshal remote candidate {candidate:?}: {e}"))))?;
         // Counted here, before the `rtc-ice` call: this bounds the number of
         // candidates handed to the agent's connectivity-check machinery
         // regardless of whether the agent itself treats one as a duplicate
@@ -858,7 +928,7 @@ impl MediaTransport {
         self.known_remote_addrs.insert(c.addr());
         self.ice
             .add_remote_candidate(c)
-            .map_err(|e| Error::Media(format!("add remote candidate: {e}")))?;
+            .map_err(|e| Error::Media(MediaError::Other(format!("add remote candidate: {e}"))))?;
         Ok(())
     }
 
@@ -890,19 +960,19 @@ impl MediaTransport {
         remote_pwd: &str,
     ) -> Result<(), Error> {
         if remote_ufrag.is_empty() || remote_pwd.is_empty() {
-            return Err(Error::Media(
+            return Err(Error::Media(MediaError::Other(
                 "ice restart: remote ufrag/pwd must not be empty".to_string(),
-            ));
+            )));
         }
         self.ice
             .generate_restart_credentials(local_ufrag.to_string(), local_pwd.to_string())
-            .map_err(|e| Error::Media(format!("ice restart credentials: {e}")))?;
+            .map_err(|e| Error::Media(MediaError::Other(format!("ice restart credentials: {e}"))))?;
         self.ice
             .apply_restart(now, true)
-            .map_err(|e| Error::Media(format!("apply ice restart: {e}")))?;
+            .map_err(|e| Error::Media(MediaError::Other(format!("apply ice restart: {e}"))))?;
         self.ice
             .set_remote_credentials(remote_ufrag.to_string(), remote_pwd.to_string())
-            .map_err(|e| Error::Media(format!("ice restart remote credentials: {e}")))?;
+            .map_err(|e| Error::Media(MediaError::Other(format!("ice restart remote credentials: {e}"))))?;
         self.remote_candidate_count = 0;
         self.known_remote_addrs.clear();
         Ok(())
@@ -953,14 +1023,14 @@ impl MediaTransport {
             events.push(MediaEvent::TimerError(err));
         }
         if let Err(e) = Protocol::handle_timeout(&mut self.ice, now) {
-            events.push(MediaEvent::TimerError(format!("ice handle_timeout: {e}")));
+            events.push(MediaEvent::TimerError(MediaError::Other(format!("ice handle_timeout: {e}"))));
         }
         let peers: Vec<SocketAddr> = self.dtls.get_connections_keys().copied().collect();
         for peer in peers {
             if let Err(e) = self.dtls.handle_timeout(peer, now) {
-                events.push(MediaEvent::TimerError(format!(
+                events.push(MediaEvent::TimerError(MediaError::Other(format!(
                     "dtls handle_timeout ({peer}): {e}"
-                )));
+                ))));
             }
         }
         if let Some(gather) = &mut self.gather {
@@ -1028,7 +1098,7 @@ impl MediaTransport {
     /// stage through the public API.
     #[doc(hidden)]
     #[cfg(feature = "test-seams")]
-    pub fn force_next_timer_error(&mut self, err: impl Into<String>) {
+    pub fn force_next_timer_error(&mut self, err: impl Into<MediaError>) {
         self.pending_timer_error = Some(err.into());
     }
 
@@ -1085,7 +1155,7 @@ impl MediaTransport {
                 .handle_datagram(now, self.local_addr, data)?;
             if let Some(mapped) = srflx {
                 let candidate = self.add_server_reflexive_candidate(mapped, peer)?;
-                events.push(MediaEvent::LocalCandidateGathered(candidate));
+                events.push(MediaEvent::LocalCandidateGathered(IceCandidate(candidate)));
             }
             return Ok(());
         }
@@ -1115,7 +1185,7 @@ impl MediaTransport {
             message: BytesMut::from(data),
         };
         Protocol::handle_read(&mut self.ice, tagged)
-            .map_err(|e| Error::Media(format!("ice handle_read: {e}")))?;
+            .map_err(|e| Error::Media(MediaError::Other(format!("ice handle_read: {e}"))))?;
 
         while let Some(tagged_evt) = Protocol::poll_event(&mut self.ice) {
             let evt = tagged_evt.event;
@@ -1155,7 +1225,7 @@ impl MediaTransport {
         };
         self.dtls
             .connect(now, remote_addr, client_config, None)
-            .map_err(|e| Error::Media(format!("dtls connect (active/client role): {e}")))?;
+            .map_err(|e| Error::Media(MediaError::Other(format!("dtls connect (active/client role): {e}"))))?;
         Ok(())
     }
 
@@ -1195,7 +1265,7 @@ impl MediaTransport {
                 Ok(events) => events,
                 Err(e) => {
                     self.dtls.stop(now, peer);
-                    return Err(Error::Media(format!("dtls read: {e}")));
+                    return Err(Error::Media(MediaError::Other(format!("dtls read: {e}"))));
                 }
             };
         for ev in dtls_events {
@@ -1220,9 +1290,9 @@ impl MediaTransport {
                 // error (never silently dropped, which could stall a
                 // handshake the caller thinks is progressing).
                 _ => {
-                    return Err(Error::Media(
+                    return Err(Error::Media(MediaError::Other(
                         "unrecognised rtc-dtls endpoint event".to_string(),
-                    ));
+                    )));
                 }
             }
         }
@@ -1273,7 +1343,7 @@ impl MediaTransport {
                 // W20), not `Err`.
                 events.push(MediaEvent::AuthFailure {
                     is_rtcp,
-                    reason: current_err.to_string(),
+                    reason: MediaError::Other(current_err.to_string()),
                 });
             }
             None => {
@@ -1311,23 +1381,23 @@ impl MediaTransport {
     ///   authentication).
     fn on_dtls_handshake_complete(&mut self, peer: SocketAddr) -> Result<(), Error> {
         let state = self.dtls.get_connection_state(peer).ok_or_else(|| {
-            Error::Media("dtls handshake completed but no connection state for peer".to_string())
+            Error::Media(MediaError::Other("dtls handshake completed but no connection state for peer".to_string()))
         })?;
 
         if !peer_cert_fingerprint_ok(&state.peer_certificates, &self.remote_fingerprint_digest) {
-            return Err(Error::Media(
+            return Err(Error::Media(MediaError::Other(
                 "dtls handshake completed but the peer certificate does not match the \
                  configured remote_fingerprint: no SRTP keys installed"
                     .to_string(),
-            ));
+            )));
         }
 
         if self.srtp_write.is_some() && self.dtls_peer != Some(peer) {
-            return Err(Error::Media(format!(
+            return Err(Error::Media(MediaError::Other(format!(
                 "ignoring dtls handshake completed from {peer}: srtp keys are already installed \
                  for {:?} and are never replaced by another association",
                 self.dtls_peer
-            )));
+            ))));
         }
 
         self.dtls_peer = Some(peer);
@@ -1337,7 +1407,7 @@ impl MediaTransport {
         let salt_len = srtp_profile.salt_len();
         let material = state
             .export_keying_material(SRTP_KEYING_MATERIAL_LABEL, &[], 2 * (key_len + salt_len))
-            .map_err(|e| Error::Media(format!("export srtp keying material: {e}")))?;
+            .map_err(|e| Error::Media(MediaError::Other(format!("export srtp keying material: {e}"))))?;
 
         let material = material.as_ref();
         let client_key = &material[0..key_len];
@@ -1359,7 +1429,7 @@ impl MediaTransport {
             None,
             self.crypto_provider.crypto(),
         )
-        .map_err(|e| Error::Media(format!("build srtp decrypt context: {e}")))?;
+        .map_err(|e| Error::Media(MediaError::Other(format!("build srtp decrypt context: {e}"))))?;
         let write_ctx = SrtpContext::new(
             write_key,
             write_salt,
@@ -1368,7 +1438,7 @@ impl MediaTransport {
             None,
             self.crypto_provider.crypto(),
         )
-        .map_err(|e| Error::Media(format!("build srtp encrypt context: {e}")))?;
+        .map_err(|e| Error::Media(MediaError::Other(format!("build srtp encrypt context: {e}"))))?;
         self.srtp_read = Some(read_ctx);
         self.srtp_write = Some(write_ctx);
         Ok(())
@@ -1385,14 +1455,14 @@ impl MediaTransport {
     /// packet.
     pub fn encrypt_rtp(&mut self, packet: &rtp_packet::RtpPacket<'_>) -> Result<Vec<u8>, Error> {
         let ctx = self.srtp_write.as_mut().ok_or_else(|| {
-            Error::Media("no srtp write context yet: dtls handshake has not completed".to_string())
+            Error::Media(MediaError::Other("no srtp write context yet: dtls handshake has not completed".to_string()))
         })?;
         let plaintext = packet
             .try_to_bytes()
-            .map_err(|e| Error::Media(format!("rtp serialize: {e}")))?;
+            .map_err(|e| Error::Media(MediaError::Other(format!("rtp serialize: {e}"))))?;
         let protected = ctx
             .encrypt_rtp(&plaintext)
-            .map_err(|e| Error::Media(format!("srtp encrypt: {e}")))?;
+            .map_err(|e| Error::Media(MediaError::Other(format!("srtp encrypt: {e}"))))?;
         self.write_rtp_count += 1;
         Ok(protected.to_vec())
     }
@@ -1414,14 +1484,14 @@ impl MediaTransport {
         packet: &rtp_packet::rtcp::CompoundPacket,
     ) -> Result<Vec<u8>, Error> {
         let ctx = self.srtp_write.as_mut().ok_or_else(|| {
-            Error::Media("no srtp write context yet: dtls handshake has not completed".to_string())
+            Error::Media(MediaError::Other("no srtp write context yet: dtls handshake has not completed".to_string()))
         })?;
         let plaintext = packet
             .try_to_bytes()
-            .map_err(|e| Error::Media(format!("rtcp serialize: {e}")))?;
+            .map_err(|e| Error::Media(MediaError::Other(format!("rtcp serialize: {e}"))))?;
         let protected = ctx
             .encrypt_rtcp(&plaintext)
-            .map_err(|e| Error::Media(format!("srtcp encrypt: {e}")))?;
+            .map_err(|e| Error::Media(MediaError::Other(format!("srtcp encrypt: {e}"))))?;
         self.write_rtcp_count += 1;
         Ok(protected.to_vec())
     }
@@ -1491,16 +1561,16 @@ impl MediaTransport {
     /// drive an ICE restart or SDP renegotiation to get a new DTLS handshake.
     pub fn rekey(&mut self, now: Instant) -> Result<(), Error> {
         let Some(peer) = self.dtls_peer else {
-            return Err(Error::Media(
+            return Err(Error::Media(MediaError::Other(
                 "rekey: no dtls handshake has completed yet; nothing to rekey".to_string(),
-            ));
+            )));
         };
         if self.local_setup == SetupRole::Passive {
-            return Err(Error::Media(
+            return Err(Error::Media(MediaError::Other(
                 "rekey: this side is SetupRole::Passive, which never dials out a new DTLS \
                  session on its own; drive an ICE restart or SDP renegotiation instead"
                     .to_string(),
-            ));
+            )));
         }
 
         if let Some(old_read) = self.srtp_read.take() {
@@ -1535,12 +1605,12 @@ impl MediaTransport {
             url: Some(stun_url(stun_server)),
         }
         .new_candidate_server_reflexive()
-        .map_err(|e| Error::Media(format!("build server-reflexive candidate: {e}")))?;
+        .map_err(|e| Error::Media(MediaError::Other(format!("build server-reflexive candidate: {e}"))))?;
 
         let marshaled = candidate.marshal();
         self.ice
             .add_local_candidate(candidate)
-            .map_err(|e| Error::Media(format!("add server-reflexive candidate: {e}")))?;
+            .map_err(|e| Error::Media(MediaError::Other(format!("add server-reflexive candidate: {e}"))))?;
         Ok(marshaled)
     }
 }
@@ -1567,7 +1637,7 @@ fn decrypt_srtp(ctx: &mut SrtpContext, is_rtcp: bool, data: &[u8]) -> Result<Med
     if is_rtcp {
         let plaintext = ctx
             .decrypt_rtcp(data)
-            .map_err(|e| Error::Media(format!("srtcp decrypt: {e}")))?;
+            .map_err(|e| Error::Media(MediaError::Other(format!("srtcp decrypt: {e}"))))?;
         // Authentication already passed above. `rtp_packet::rtcp::CompoundPacket`
         // now decodes RFC 4585/3611 feedback (and RFC 5506 Reduced-Size RTCP)
         // via `RtcpPacket::Unknown`, so a parse failure from here on means the
@@ -1580,9 +1650,9 @@ fn decrypt_srtp(ctx: &mut SrtpContext, is_rtcp: bool, data: &[u8]) -> Result<Med
     } else {
         let plaintext = ctx
             .decrypt_rtp(data)
-            .map_err(|e| Error::Media(format!("srtp decrypt: {e}")))?;
+            .map_err(|e| Error::Media(MediaError::Other(format!("srtp decrypt: {e}"))))?;
         let pkt = rtp_packet::RtpPacket::parse(&plaintext)
-            .map_err(|e| Error::Media(format!("rtp parse: {e}")))?;
+            .map_err(|e| Error::Media(MediaError::Other(format!("rtp parse: {e}"))))?;
         Ok(MediaEvent::Rtp(DecryptedRtp {
             marker: pkt.marker,
             payload_type: pkt.payload_type,
@@ -1592,9 +1662,9 @@ fn decrypt_srtp(ctx: &mut SrtpContext, is_rtcp: bool, data: &[u8]) -> Result<Med
             csrc: pkt.csrc.clone(),
             extension: pkt.extension.map(|ext| DecryptedRtpExtension {
                 profile_id: ext.profile_id,
-                data: ext.data.to_vec(),
+                data: Bytes::copy_from_slice(ext.data),
             }),
-            payload: pkt.payload.to_vec(),
+            payload: Bytes::copy_from_slice(pkt.payload),
         }))
     }
 }
@@ -1602,12 +1672,23 @@ fn decrypt_srtp(ctx: &mut SrtpContext, is_rtcp: bool, data: &[u8]) -> Result<Med
 fn map_ice_event(evt: IceAgentEvent) -> Result<Option<MediaEvent>, Error> {
     match evt {
         IceAgentEvent::ConnectionStateChange(state) => {
-            Ok(Some(MediaEvent::IceStateChanged(state.to_string())))
+            let mapped = match state {
+                rtc_ice::state::ConnectionState::Unspecified => IceConnectionState::Unspecified,
+                rtc_ice::state::ConnectionState::New => IceConnectionState::New,
+                rtc_ice::state::ConnectionState::Checking => IceConnectionState::Checking,
+                rtc_ice::state::ConnectionState::Connected => IceConnectionState::Connected,
+                rtc_ice::state::ConnectionState::Completed => IceConnectionState::Completed,
+                rtc_ice::state::ConnectionState::Failed => IceConnectionState::Failed,
+                rtc_ice::state::ConnectionState::Disconnected => IceConnectionState::Disconnected,
+                rtc_ice::state::ConnectionState::Closed => IceConnectionState::Closed,
+                _ => IceConnectionState::Unspecified,
+            };
+            Ok(Some(MediaEvent::IceStateChanged(mapped)))
         }
         IceAgentEvent::SelectedCandidatePairChange(..) | IceAgentEvent::RoleChange(_) => Ok(None),
         // `Event` is `#[non_exhaustive]` in rtc-ice 0.21. An unknown event is
         // surfaced as an error, never silently dropped.
-        _ => Err(Error::Media("unrecognised rtc-ice event".to_string())),
+        _ => Err(Error::Media(MediaError::Other("unrecognised rtc-ice event".to_string()))),
     }
 }
 
@@ -1647,9 +1728,9 @@ fn to_srtp_profile(profile: SrtpProtectionProfile) -> Result<ProtectionProfile, 
         }
         SrtpProtectionProfile::Srtp_Aead_Aes_128_Gcm => Ok(ProtectionProfile::AeadAes128Gcm),
         SrtpProtectionProfile::Srtp_Aead_Aes_256_Gcm => Ok(ProtectionProfile::AeadAes256Gcm),
-        other => Err(Error::Media(format!(
+        other => Err(Error::Media(MediaError::Other(format!(
             "negotiated an unsupported SRTP protection profile: {other:?}"
-        ))),
+        )))),
     }
 }
 
@@ -1785,7 +1866,7 @@ mod tests {
             let mut cfg = test_config(SetupRole::Passive);
             cfg.remote_fingerprint = bad.to_string();
             match MediaTransport::new(cfg, Instant::now()) {
-                Err(Error::Media(_)) => {}
+                Err(Error::Media(MediaError::Other(_))) => {}
                 Err(other) => panic!("expected Error::Media for {bad:?}, got {other:?}"),
                 Ok(_) => panic!("remote_fingerprint {bad:?} must be rejected by new()"),
             }
@@ -1922,7 +2003,7 @@ mod tests {
     #[test]
     fn rejects_actpass_setup_role() {
         match MediaTransport::new(test_config(SetupRole::ActPass), Instant::now()) {
-            Err(Error::Media(_)) => {}
+            Err(Error::Media(MediaError::Other(_))) => {}
             Err(other) => panic!("expected Error::Media, got {other:?}"),
             Ok(_) => panic!("expected an error for local_setup: ActPass"),
         }
@@ -1970,7 +2051,7 @@ mod tests {
             let line = format!("1 1 udp 2130706431 127.0.0.1 {port} typ host");
             match mt.add_remote_candidate(&line) {
                 Ok(()) => accepted += 1,
-                Err(Error::Media(_)) => rejected += 1,
+                Err(Error::Media(MediaError::Other(_))) => rejected += 1,
                 Err(other) => panic!("unexpected error variant: {other:?}"),
             }
         }
@@ -2007,7 +2088,7 @@ mod tests {
             let line = format!("1 1 udp 2130706431 127.0.0.1 {port} typ host");
             match mt.add_remote_candidate(&line) {
                 Ok(()) => accepted += 1,
-                Err(Error::Media(_)) => rejected += 1,
+                Err(Error::Media(MediaError::Other(_))) => rejected += 1,
                 Err(other) => panic!("unexpected error variant: {other:?}"),
             }
         }
@@ -2216,11 +2297,11 @@ mod tests {
             padding: None,
             payload: &[0xAAu8; 8],
         };
-        assert!(matches!(mt.encrypt_rtp(&packet), Err(Error::Media(_))));
+        assert!(matches!(mt.encrypt_rtp(&packet), Err(Error::Media(MediaError::Other(_)))));
         let empty = rtp_packet::rtcp::CompoundPacket {
             packets: Vec::new(),
         };
-        assert!(matches!(mt.encrypt_rtcp(&empty), Err(Error::Media(_))));
+        assert!(matches!(mt.encrypt_rtcp(&empty), Err(Error::Media(MediaError::Other(_)))));
     }
 
     #[test]
@@ -2271,7 +2352,7 @@ mod tests {
             payload: &[0u8; 4],
         };
         match mt.encrypt_rtp(&packet) {
-            Err(Error::Media(_)) => {}
+            Err(Error::Media(MediaError::Other(_))) => {}
             Err(other) => panic!("expected Error::Media, got {other:?}"),
             Ok(_) => panic!("expected an error: no srtp write context before handshake"),
         }
@@ -2609,7 +2690,7 @@ mod tests {
     fn rekey_before_any_handshake_errors() {
         let mut mt = MediaTransport::new(test_config(SetupRole::Passive), Instant::now()).unwrap();
         match mt.rekey(Instant::now()) {
-            Err(Error::Media(_)) => {}
+            Err(Error::Media(MediaError::Other(_))) => {}
             Err(other) => panic!("expected Error::Media, got {other:?}"),
             Ok(()) => panic!("expected an error: no dtls handshake has ever completed"),
         }
@@ -2628,7 +2709,7 @@ mod tests {
         mt.read_rtp_count = 7;
 
         match mt.rekey(Instant::now()) {
-            Err(Error::Media(_)) => {}
+            Err(Error::Media(MediaError::Other(_))) => {}
             Err(other) => panic!("expected Error::Media, got {other:?}"),
             Ok(()) => panic!("expected Passive rekey to be refused"),
         }
@@ -2984,11 +3065,11 @@ mod tests {
         );
         assert!(matches!(
             pair.b.encrypt_rtp(&rtp_test_packet(1)),
-            Err(Error::Media(_))
+            Err(Error::Media(MediaError::Other(_)))
         ));
         assert!(matches!(
             pair.a.encrypt_rtp(&rtp_test_packet(1)),
-            Err(Error::Media(_))
+            Err(Error::Media(MediaError::Other(_)))
         ));
         assert!(
             !a_events
@@ -3063,7 +3144,7 @@ mod tests {
                         !matches!(e, MediaEvent::DtlsHandshakeComplete),
                         "no new handshake"
                     );
-                    b_ice |= matches!(&e, MediaEvent::IceStateChanged(s) if s == "Connected");
+                    b_ice |= matches!(&e, MediaEvent::IceStateChanged(s) if *s == IceConnectionState::Connected);
                 }
                 progressed = true;
             }
@@ -3073,7 +3154,7 @@ mod tests {
                         !matches!(e, MediaEvent::DtlsHandshakeComplete),
                         "no new handshake"
                     );
-                    a_ice |= matches!(&e, MediaEvent::IceStateChanged(s) if s == "Connected");
+                    a_ice |= matches!(&e, MediaEvent::IceStateChanged(s) if *s == IceConnectionState::Connected);
                 }
                 progressed = true;
             }
@@ -3088,12 +3169,12 @@ mod tests {
                     .a
                     .handle_timeout(now)
                     .iter()
-                    .any(|e| matches!(e, MediaEvent::IceStateChanged(s) if s == "Connected"));
+                    .any(|e| matches!(e, MediaEvent::IceStateChanged(s) if *s == IceConnectionState::Connected));
                 b_ice |= pair
                     .b
                     .handle_timeout(now)
                     .iter()
-                    .any(|e| matches!(e, MediaEvent::IceStateChanged(s) if s == "Connected"));
+                    .any(|e| matches!(e, MediaEvent::IceStateChanged(s) if *s == IceConnectionState::Connected));
             }
         }
         assert!(
@@ -3124,11 +3205,11 @@ mod tests {
         // Credentials too short for RFC 8445 §5.4 are refused, state intact.
         assert!(matches!(
             pair.a.restart_ice(now, "x", "y", b_u, b_p),
-            Err(Error::Media(_))
+            Err(Error::Media(MediaError::Other(_)))
         ));
         assert!(matches!(
             pair.a.restart_ice(now, a_u, a_p, "", b_p),
-            Err(Error::Media(_))
+            Err(Error::Media(MediaError::Other(_)))
         ));
     }
 

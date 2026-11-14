@@ -20,6 +20,7 @@ use rtc_stun::xoraddr::XorMappedAddress;
 use sansio::Protocol;
 
 use crate::Error;
+use crate::error::MediaError;
 
 /// Drives one Binding request/response exchange against `server`.
 pub(super) struct StunGather {
@@ -34,7 +35,7 @@ impl StunGather {
     pub(super) fn new(now: Instant, local: SocketAddr, server: SocketAddr) -> Result<Self, Error> {
         let mut client = ClientBuilder::new()
             .build(now, local, server, TransportProtocol::UDP)
-            .map_err(|e| Error::Media(format!("build stun client: {e}")))?;
+            .map_err(|e| Error::Media(MediaError::Other(format!("build stun client: {e}"))))?;
 
         let mut msg = Message::new();
         // RFC 8489 §5: the Transaction ID "MUST be uniformly random ... and
@@ -70,9 +71,9 @@ impl StunGather {
         // generator is a CSPRNG, and it is seeded from real entropy, not a
         // fixed or predictable value.
         msg.build(&[Box::new(TransactionId::new()), Box::new(BINDING_REQUEST)])
-            .map_err(|e| Error::Media(format!("build stun binding request: {e}")))?;
+            .map_err(|e| Error::Media(MediaError::Other(format!("build stun binding request: {e}"))))?;
         Protocol::handle_write(&mut client, TaggedMessage { now, message: msg })
-            .map_err(|e| Error::Media(format!("queue stun binding request: {e}")))?;
+            .map_err(|e| Error::Media(MediaError::Other(format!("queue stun binding request: {e}"))))?;
 
         Ok(Self {
             client,
@@ -118,7 +119,7 @@ impl StunGather {
             message: BytesMut::from(data),
         };
         Protocol::handle_read(&mut self.client, tagged)
-            .map_err(|e| Error::Media(format!("stun client handle_read: {e}")))?;
+            .map_err(|e| Error::Media(MediaError::Other(format!("stun client handle_read: {e}"))))?;
 
         // At most one event is meaningful per datagram here: this gatherer
         // runs a single transaction, so the first event settles it either
@@ -130,7 +131,7 @@ impl StunGather {
                     let mut xor_addr = XorMappedAddress::default();
                     xor_addr
                         .get_from(&msg)
-                        .map_err(|e| Error::Media(format!("read XOR-MAPPED-ADDRESS: {e}")))?;
+                        .map_err(|e| Error::Media(MediaError::Other(format!("read XOR-MAPPED-ADDRESS: {e}"))))?;
                     return Ok(Some(SocketAddr::new(xor_addr.ip, xor_addr.port)));
                 }
                 StunEvent::TransactionTimeOut

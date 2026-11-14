@@ -123,6 +123,8 @@ pub(crate) async fn run_rtsp_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::{Phase, ProtocolFailure};
+    use http;
     use crate::route::RouteConfig;
     use std::time::Duration;
     use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -390,7 +392,7 @@ mod tests {
     ///
     /// Biting test: restore the pre-fix `MultimuxError::Connect { reason:
     /// format!("…{:?}", driver.health()) }` tail and the returned error is a
-    /// `Connect`, failing the `matches!(..., MultimuxError::Auth { .. })`
+    /// `Connect`, failing the `matches!(..., MultimuxError::Auth(_))`
     /// assertion.
     #[tokio::test]
     async fn rtsp_describe_401_surfaces_as_a_typed_auth_error() {
@@ -437,7 +439,7 @@ mod tests {
         .expect("run_rtsp must not hang");
 
         assert!(
-            matches!(err, MultimuxError::Auth { .. }),
+            matches!(err, MultimuxError::Auth(_)),
             "a 401 on DESCRIBE must surface as the typed Auth error the supervisor  \
             classifies as permanent, got {err:?}"
         );
@@ -488,8 +490,9 @@ mod tests {
         assert!(
             matches!(
                 &err,
-                MultimuxError::Protocol { phase, reason }
-                    if *phase == "DESCRIBE" && reason == "non-success status Service Unavailable"
+                MultimuxError::Protocol { phase, kind }
+                    if *phase == Phase::Describe
+                        && matches!(kind, ProtocolFailure::Other(_))
             ),
             "got {err:?}"
         );
@@ -546,8 +549,9 @@ mod tests {
         assert!(
             matches!(
                 &err,
-                MultimuxError::Protocol { phase, reason }
-                    if *phase == "DESCRIBE" && reason == "non-success status Not Found"
+                MultimuxError::Protocol { phase, kind }
+                    if *phase == Phase::Describe
+                        && matches!(kind, ProtocolFailure::Status(s) if *s == http::StatusCode::NOT_FOUND)
             ),
             "a 404 on DESCRIBE must surface the exact Protocol error the supervisor  \
             classifies as permanent, got {err:?}"

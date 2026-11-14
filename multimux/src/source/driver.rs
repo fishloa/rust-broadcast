@@ -26,7 +26,7 @@ use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-use crate::error::MultimuxError;
+use crate::error::{MultimuxError, Phase, ProtocolFailure};
 use crate::route::RouteHandle;
 use crate::source::{DriverProgress, Timeouts, advance_route, release_route};
 
@@ -64,8 +64,8 @@ pub(crate) trait IngestStep<S: IngestSession>: Send {
     /// text differs overrides this.
     fn stalled(&self, read: Duration) -> MultimuxError {
         MultimuxError::Protocol {
-            phase: "recv",
-            reason: format!("no data within {read:?}"),
+            phase: Phase::Recv,
+            kind: ProtocolFailure::RecvTimeout(read),
         }
     }
 }
@@ -585,7 +585,7 @@ mod tests {
         )
         .await;
         assert!(
-            matches!(&err, MultimuxError::Protocol { phase: "recv", .. }),
+            matches!(&err, MultimuxError::Protocol { phase: Phase::Recv, .. }),
             "{err:?}"
         );
         assert_eq!(
@@ -620,7 +620,7 @@ mod tests {
         .await
         .expect("a silent peer must fail the session, not be kept alive by keepalive wakeups");
         assert!(
-            matches!(&err, MultimuxError::Protocol { phase: "recv", reason } if reason.contains("no data within")),
+            matches!(&err, MultimuxError::Protocol { phase: Phase::Recv, kind: ProtocolFailure::RecvTimeout(_) } if true),
             "{err:?}"
         );
         assert_eq!(
@@ -660,7 +660,7 @@ mod tests {
         .await
         .expect("must fail on the stall, not hang");
         assert!(
-            matches!(&err, MultimuxError::Protocol { phase: "recv", .. }),
+            matches!(&err, MultimuxError::Protocol { phase: Phase::Recv, .. }),
             "{err:?}"
         );
         assert_eq!(t0.elapsed(), Duration::from_secs(70));

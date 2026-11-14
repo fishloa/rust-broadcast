@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 ### Changed
+- BREAKING: `MultimuxError::Protocol` now carries `phase: Phase` and `kind: ProtocolFailure` (typed status/timeout/source) instead of `phase: &'static str, reason: String`; `Sdp` and `Auth` are now tuple variants `Sdp(#[source] SdpError)` and `Auth(#[source] broadcast_auth::Error)`; `OutputKind::build()`/`build_with_playlist_name()` now return `Result<Arc<dyn Output>, MultimuxError>`; `DvrConfig::validate()`, `DvrRecorder::feed_si`, `poll_and_persist`, `poll_and_persist_inits` now return `DvrError` (#2658).
+### Changed
 - `dvb-si` is built with its new `legacy-charsets` feature, so KS X 1001 / GB-2312 / Big5 EIT event names keep decoding (#2635).
 - `tower-http` 0.6 to 0.7 (timeout, limit, cors, gzip compression and decompression layers; no behaviour change); `rtsp-types` follows `rtsp-runtime` to 0.2.
 ### Fixed
