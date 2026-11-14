@@ -673,7 +673,7 @@ async fn iframe_scte35_emsg_shift() {
     // publish scte35 event at start of segment 1
     let writer = trunk.writer().expect("writer");
     let splice_bytes = test_fixtures::read("scte35/splice-insert-2002.bin");
-    let mut timeline = Timeline::new();
+    let mut timeline = Timeline::default();
     let ev = timeline.push_scte35(&splice_bytes).unwrap();
     writer.publish_event(
         ev.clone(),

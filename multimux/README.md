@@ -111,8 +111,9 @@ config.validate().unwrap();
 assert!(!config.routes.is_empty());
 assert!(matches!(config.routes[0].input, InputSpec::Rtsp { .. }));
 
-// Running it: `multimux::serve(config).await` (tokio), or
-// `multimux::serve_config_file("routes.json").await` so `POST /admin/reload` works.
+// Running it: `multimux::Server::new(multimux::ServeRequest::new(config)).serve().await`
+// (tokio), or `ServeRequest::from_json_file("routes.json")?` so
+// `POST /admin/reload` works.
 ```
 
 An open ingest listener on a public address is refused unless you opt in:
@@ -439,7 +440,7 @@ admin listener is ever bound, no admin route ever exists.
 | `GET` | `/admin/routes/{name}` | One route's status, or `404`. |
 | `POST` | `/admin/routes` | Add a route. Body: the same `Route` JSON shape a config file's `routes[]` entries use. `409 Conflict` if `name` already exists (the existing route is left untouched); `400` if the body is malformed or fails validation (the route list is left exactly as it was). |
 | `DELETE` | `/admin/routes/{name}` | Remove a route. `404` if unknown. New requests for `{name}` 404 immediately; any request already being served from it (an open LL-HLS long-poll, e.g.) completes normally against whatever had already landed — a graceful drain, not a dropped connection. Every *other* route keeps serving uninterrupted. |
-| `POST` | `/admin/reload` | Re-read the config file this process was started with (`--config <FILE>` / `serve_config_file`) and converge: routes added, removed, and changed are applied; **a route whose config is byte-for-byte unchanged is never restarted.** Returns a summary: `{ "added": [...], "removed": [...], "changed": [...], "unchanged": [...] }`. |
+| `POST` | `/admin/reload` | Re-read the config file this process was started with (`--config <FILE>` / `ServeRequest::from_json_file`) and converge: routes added, removed, and changed are applied; **a route whose config is byte-for-byte unchanged is never restarted.** Returns a summary: `{ "added": [...], "removed": [...], "changed": [...], "unchanged": [...] }`. |
 
 Every mutation is validated *before* it is applied — a malformed or
 unbuildable route never leaves the origin half-converged.
@@ -454,10 +455,9 @@ curl -X POST http://127.0.0.1:9090/admin/reload
 ```
 
 `POST /admin/reload` only works when the process knows its own config file
-path (`multimux --config routes.json`, or `origin::serve_config_file`); an
-origin started from an in-memory `Config` (`origin::serve`/
-`serve_with_registry`, no file) rejects reload with a clear error — add/
-remove/list still work normally.
+path (`multimux --config routes.json`, or `ServeRequest::from_json_file`); an
+origin started from an in-memory `Config` (`ServeRequest::new`, no file)
+rejects reload with a clear error — add/remove/list still work normally.
 
 
 ## Config shape
@@ -613,10 +613,11 @@ A third-party crate can add a new **input**, **output**, or **output-auth**
 scheme without editing multimux at all, wired purely via config JSON:
 `InputSpec::Custom { type_tag, params }`, `OutputKind::Custom { type_tag,
 params }`, and `OutputAuthSpec::Custom { type_tag, params }`, resolved at
-`serve_with_registry(config, registry)` time against a `registry::SchemeRegistry`
+`Server` time against a `registry::SchemeRegistry`
 the embedding application builds (`register_input`/`register_output`/
-`register_auth`). `origin::serve(config)` is `serve_with_registry(config,
-SchemeRegistry::new())` — the empty registry, for the built-in schemes only.
+`register_auth`) and passes with `ServeRequest::with_registry`. A request
+built by `ServeRequest::new` carries the empty registry — the built-in
+schemes only.
 See `examples/custom_scheme.rs` for a
 complete, runnable example.
 

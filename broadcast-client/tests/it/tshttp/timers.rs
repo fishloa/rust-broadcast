@@ -1,4 +1,5 @@
-use broadcast_client::tshttp::{Action, Config, Event, TsHttpClient};
+use crate::tshttp::TsHttpConfig as Config;
+use crate::tshttp::{Action, Event, TsHttpClient};
 use broadcast_common::stage::Timestamp;
 
 /// `ms` on the tshttp policy's millisecond clock, as the session's `now`.
@@ -27,7 +28,7 @@ fn drain_events(c: &mut TsHttpClient) -> Vec<Event> {
 
 #[test]
 fn start_timer_restarts_on_every_open() {
-    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
     let _ = drain_actions(&mut c);
     c.on_response(200, &[], ts(100));
     c.poll_timeout(ts(15_000));
@@ -50,7 +51,7 @@ fn start_timer_restarts_on_every_open() {
 
 #[test]
 fn stall_is_measured_from_the_last_received_byte() {
-    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
     let _ = drain_actions(&mut c);
     c.on_response(200, &[], ts(0));
     c.feed(D.as_slice(), ts(0));
@@ -78,7 +79,7 @@ fn stall_is_measured_from_the_last_received_byte() {
 
 #[test]
 fn stall_reconnect_emits_abort_then_zero_delay_reconnect() {
-    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
     let _ = drain_actions(&mut c);
     c.on_response(200, &[], ts(0));
     c.feed(D.as_slice(), ts(0));

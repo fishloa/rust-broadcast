@@ -198,7 +198,7 @@ async fn served_segment_carries_a_decodable_emsg_with_a_nonzero_pts_origin() {
     let (route, trunk) = build_real_trunk(PTS_ORIGIN, 90);
 
     let writer = trunk.writer().expect("trunk writer");
-    let mut timeline = timed_metadata::Timeline::new();
+    let mut timeline = timed_metadata::Timeline::default();
     let ev = timeline
         .push_scte35(&splice_insert())
         .expect("parse splice");

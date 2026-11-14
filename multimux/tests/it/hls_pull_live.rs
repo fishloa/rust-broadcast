@@ -1,5 +1,5 @@
 //! `hls_pull` against CMAF cut from a real fixture and served by a real
-//! loopback origin, through the full `serve_with_registry_on` route:
+//! loopback origin, through the full `ServeRequest::with_prebound_media` route:
 //!
 //! - a sliding-window live playlist must yield closed segments on the route's
 //!   LL-HLS output (round-9 F5: a segment's worth of samples arrives in one
@@ -22,7 +22,6 @@ use multimux::config::{Config, InputSpec, Route};
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
 use multimux::registry::SchemeRegistry;
-use multimux::serve_with_registry_on;
 use transmux::Repackage;
 
 use crate::support::listener;
@@ -158,11 +157,14 @@ fn route_config(bind: SocketAddr, upstream: String) -> Config {
 async fn a_sliding_window_live_playlist_closes_segments_on_the_output() {
     let (upstream, _origin) = serve_origin(Mode::Live).await;
     let (bind, listener) = bind_tcp();
-    let server = tokio::spawn(serve_with_registry_on(
-        listener,
-        route_config(bind, upstream),
-        SchemeRegistry::new(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(route_config(bind, upstream))
+                .with_registry(SchemeRegistry::new())
+                .with_prebound_media(listener),
+        )
+        .serve(),
+    );
 
     let client = reqwest::Client::new();
     let playlist = observe_extinf(&client, &format!("http://{bind}/pulled/media.m3u8")).await;
@@ -178,11 +180,14 @@ async fn a_finite_playlist_is_fetched_once_and_served() {
     let (upstream, origin) = serve_origin(Mode::Vod).await;
     let segment_count = origin.cmaf.segments.len();
     let (bind, listener) = bind_tcp();
-    let server = tokio::spawn(serve_with_registry_on(
-        listener,
-        route_config(bind, upstream),
-        SchemeRegistry::new(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(route_config(bind, upstream))
+                .with_registry(SchemeRegistry::new())
+                .with_prebound_media(listener),
+        )
+        .serve(),
+    );
 
     let client = reqwest::Client::new();
     let playlist = observe_extinf(&client, &format!("http://{bind}/pulled/media.m3u8")).await;

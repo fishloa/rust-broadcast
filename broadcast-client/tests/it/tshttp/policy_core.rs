@@ -1,4 +1,5 @@
-use broadcast_client::tshttp::{Config, Event, TsHttpClient, TsHttpPolicy};
+use crate::tshttp::TsHttpConfig as Config;
+use crate::tshttp::{Event, TsHttpClient, TsHttpPolicy};
 use broadcast_common::stage::Timestamp;
 
 /// `ms` on the tshttp policy's millisecond clock, as the session's `now`.
@@ -31,7 +32,7 @@ type Trace = Vec<String>;
 
 fn describe(
     events: &mut Vec<Event>,
-    actions: &mut Vec<broadcast_client::tshttp::Action>,
+    actions: &mut Vec<crate::tshttp::Action>,
     deadline: Option<Timestamp>,
 ) -> String {
     let ev: Vec<String> = events
@@ -43,7 +44,7 @@ fn describe(
     format!("events={ev:?} actions={ac:?} deadline={deadline:?}")
 }
 
-fn drain_client(c: &mut TsHttpClient) -> (Vec<Event>, Vec<broadcast_client::tshttp::Action>, bool) {
+fn drain_client(c: &mut TsHttpClient) -> (Vec<Event>, Vec<crate::tshttp::Action>, bool) {
     let mut events = Vec::new();
     let mut sampled = false;
     while let Some(e) = c.poll_event() {
@@ -58,7 +59,7 @@ fn drain_client(c: &mut TsHttpClient) -> (Vec<Event>, Vec<broadcast_client::tsht
 }
 
 fn run_client(script: &[Timed], payload: &[u8]) -> (Trace, Vec<bool>) {
-    let mut c = TsHttpClient::new(URL, Config::default(), ts(0));
+    let mut c = TsHttpClient::with_seed(URL, Config::default(), ts(0), ts(0).as_millis());
     let mut trace = Vec::new();
     let mut sampled_per_step = Vec::new();
     let (mut ev, mut ac, _) = drain_client(&mut c);

@@ -51,7 +51,7 @@ impl core::fmt::Display for SessionState {
 
 /// Returns `true` for the methods that do not affect session state and are
 /// therefore permitted in every state (RFC 2326 Appendix A intro).
-pub fn is_state_neutral(method: &Method) -> bool {
+pub(crate) fn is_state_neutral(method: &Method) -> bool {
     matches!(
         method,
         Method::Options
@@ -73,7 +73,7 @@ pub fn is_state_neutral(method: &Method) -> bool {
 // mirroring RFC 2326 Appendix A.1/A.2 verbatim. A new SessionState variant
 // (the enum is #[non_exhaustive]) must update BOTH; the wildcard arm returns
 // MethodNotValidInState, so an unhandled combination fails safe, not silently.
-pub fn client_next_state(current: SessionState, method: &Method) -> Result<SessionState> {
+pub(crate) fn client_next_state(current: SessionState, method: &Method) -> Result<SessionState> {
     if is_state_neutral(method) {
         return Ok(current);
     }
@@ -113,7 +113,7 @@ pub fn client_next_state(current: SessionState, method: &Method) -> Result<Sessi
 /// Returns `Err(MethodNotValidInState)` if the method is not listed for the
 /// current state; the server maps that error to a `455` response.
 /// State-neutral methods return the unchanged current state.
-pub fn server_next_state(current: SessionState, method: &Method) -> Result<SessionState> {
+pub(crate) fn server_next_state(current: SessionState, method: &Method) -> Result<SessionState> {
     if is_state_neutral(method) {
         return Ok(current);
     }

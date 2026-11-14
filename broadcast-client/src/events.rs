@@ -1025,8 +1025,8 @@ pub struct Config {
     pub kind: SourceKind,
     /// TS-over-HTTP config (also the RTSP timers). An inconsistent value (a zero timeout, an
     /// empty or zero-entry backoff, a stall reconnect not after the notice) is replaced by the
-    /// nearest valid one, see `crate::tshttp::Config::clamped`; it is not rejected.
-    pub ts_http: crate::tshttp::Config,
+    /// nearest valid one, see `crate::tshttp::TsHttpConfig::clamped`; it is not rejected.
+    pub ts_http: crate::tshttp::TsHttpConfig,
     /// Maximum redirects per open (per request for HLS). `0` follows none: a redirect response
     /// fails the connection.
     pub max_redirects: u32,
@@ -1231,7 +1231,7 @@ impl Config {
     ///   every mapping above is applied and the one the URL resolves to takes
     ///   effect.
     /// - every other kind (TS over HTTP, RTSP, UDP, RTP, RTMP): the
-    ///   stall policy ([`Config::ts_http`], see [`crate::tshttp::Config::with_timeouts`]):
+    ///   stall policy ([`Config::ts_http`], see the TS-over-HTTP configuration’s `with_timeouts`):
     ///   `connect` is the start timeout, `read_idle` the stall-reconnect
     ///   threshold.
     ///
@@ -1364,7 +1364,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             kind: SourceKind::Auto,
-            ts_http: crate::tshttp::Config::default(),
+            ts_http: crate::tshttp::TsHttpConfig::default(),
             max_redirects: 5,
             extra_headers: Vec::new(),
             initial_cookies: Vec::new(),

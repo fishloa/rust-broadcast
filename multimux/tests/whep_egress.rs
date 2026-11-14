@@ -63,7 +63,6 @@ use multimux::config::{Config, InputSpec, Route};
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
 use multimux::registry::SchemeRegistry;
-use multimux::serve_with_registry_on;
 
 #[path = "support/listener.rs"]
 mod listener;
@@ -208,11 +207,14 @@ async fn real_browser_whep_playback_decodes_real_video() {
         }]);
     config.prebound = prebound;
 
-    let server = tokio::spawn(serve_with_registry_on(
-        bind_listener,
-        config,
-        SchemeRegistry::new(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(SchemeRegistry::new())
+                .with_prebound_media(bind_listener),
+        )
+        .serve(),
+    );
 
     let whip_url = format!("http://{whip_addr}/whip");
     let whep_url = format!("http://{whep_addr}/whep");
@@ -284,7 +286,6 @@ async fn real_browser_whep_playback_decodes_real_video() {
 #[tokio::test]
 async fn admin_added_route_starts_its_whep_listener() {
     use multimux::config::{AdminSpec, OutputAuthSpec};
-    use multimux::serve_config_file_with_registry_on_admin_prebound;
 
     let (media_addr, media_listener) = bind_tcp();
     let (admin_addr, admin_listener) = bind_tcp();
@@ -331,13 +332,16 @@ async fn admin_added_route_starts_its_whep_listener() {
     )
     .expect("write config");
 
-    let server = tokio::spawn(serve_config_file_with_registry_on_admin_prebound(
-        media_listener,
-        admin_listener,
-        cfg_path,
-        instant_registry(),
-        prebound,
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::from_json_file(cfg_path)
+                .unwrap()
+                .with_registry(instant_registry())
+                .with_prebound_binds(prebound)
+                .with_prebound_listeners(media_listener, admin_listener),
+        )
+        .serve(),
+    );
 
     // Wait for the admin listener.
     {

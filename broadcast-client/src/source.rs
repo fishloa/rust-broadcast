@@ -12,5 +12,5 @@ pub(crate) mod rtsp;
 pub(crate) mod rtsp_sdp;
 pub(crate) mod smooth;
 pub(crate) mod srt;
-pub mod ts_http;
+pub(crate) mod ts_http;
 pub(crate) mod ts_http_hold;

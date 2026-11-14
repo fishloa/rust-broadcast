@@ -47,7 +47,7 @@
 //!
 //! - [`JoinPolicy::SelfContainedOnly`] — accept only IDR/IRAP points; a recovery
 //!   point or SPS+I fallback is reported as [`DropReason::NotSelfContained`].
-//!   Set it up front, or switch with [`LiveJoin::set_policy`].
+//!   Set it up front or switch later with [`LiveJoin::set_policy`].
 //! - [`LiveJoin::rejoin`] — forget the current join and wait for the next
 //!   acceptable point. Call it when the decoder reports a failure after the join
 //!   or on [`DemuxEvent::Discontinuity`](crate::DemuxEvent::Discontinuity)
@@ -260,14 +260,9 @@ impl LiveJoin {
         Some(Self::new(codec, usize::from(minus_one) + 1))
     }
 
-    /// Builder form of [`LiveJoin::set_policy`].
-    pub fn with_policy(mut self, policy: JoinPolicy) -> Self {
-        self.policy = policy;
-        self
-    }
-
-    /// Change which random-access points are accepted from the next sample on.
-    /// Does not undo a join already made; combine with [`LiveJoin::rejoin`].
+    /// Change which random-access points are accepted from the next sample on
+    /// (the one way to set it, up front or later). Does not undo a join
+    /// already made; combine with [`LiveJoin::rejoin`].
     pub fn set_policy(&mut self, policy: JoinPolicy) {
         self.policy = policy;
     }
@@ -549,7 +544,8 @@ mod tests {
         let idr = |pts| sample(au(4, &[IDR_SLICE.to_vec()]), pts);
         let p = |pts| sample(au(4, &[P_SLICE.to_vec()]), pts);
 
-        let mut j = LiveJoin::new(NalCodec::Avc, 4).with_policy(JoinPolicy::SelfContainedOnly);
+        let mut j = LiveJoin::new(NalCodec::Avc, 4);
+        j.set_policy(JoinPolicy::SelfContainedOnly);
         assert_eq!(
             j.push(&rp(1)),
             JoinDecision::Drop(DropReason::NotSelfContained)

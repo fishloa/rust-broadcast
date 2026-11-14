@@ -5,7 +5,7 @@
 //! media and admin — real `reqwest` requests), never `RouteRegistry`
 //! directly (that type is crate-private): this is the same "drive it through
 //! the real dispatch path" discipline `multimux/tests/it/dispatch_ingest.rs`
-//! established for `serve_with_registry` itself.
+//! established for `Server` itself.
 //!
 //! An `InputSpec::Custom` "instant" scheme (mirroring
 //! `examples/custom_scheme.rs`'s `DemoDialer`/`DemoSession`) stands in for a
@@ -38,9 +38,7 @@ use multimux::output::OutputKind;
 use multimux::registry::{InputCtx, InputFactory};
 use multimux::route::RouteHandle;
 use multimux::source::{DriverProgress, advance_route};
-use multimux::{
-    Backoff, SchemeRegistry, serve_config_file_with_registry_on_admin, serve_with_registry_on_admin,
-};
+use multimux::{Backoff, SchemeRegistry};
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 
 use crate::support::listener;
@@ -536,12 +534,14 @@ async fn add_route_at_runtime_serves_media_without_restart() {
         admin_addr,
         vec![unreachable_rtsp_route("seed", "seed")],
     );
-    let server = tokio::spawn(serve_with_registry_on_admin(
-        media_listener,
-        admin_listener,
-        config,
-        instant_registry(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(instant_registry())
+                .with_prebound_listeners(media_listener, admin_listener),
+        )
+        .serve(),
+    );
     wait_for_port(admin_addr).await;
 
     let client = reqwest::Client::new();
@@ -575,12 +575,14 @@ async fn delete_drains_route_without_disturbing_others() {
         admin_addr,
         vec![instant_route("cam1"), instant_route("cam2")],
     );
-    let server = tokio::spawn(serve_with_registry_on_admin(
-        media_listener,
-        admin_listener,
-        config,
-        instant_registry(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(instant_registry())
+                .with_prebound_listeners(media_listener, admin_listener),
+        )
+        .serve(),
+    );
     wait_for_port(admin_addr).await;
 
     let client = reqwest::Client::new();
@@ -666,12 +668,14 @@ async fn deleted_route_is_no_longer_reported_up() {
         admin_addr,
         vec![hold_route("o5-gone"), hold_route("o5-stays")],
     );
-    let server = tokio::spawn(serve_with_registry_on_admin(
-        media_listener,
-        admin_listener,
-        config,
-        instant_registry(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(instant_registry())
+                .with_prebound_listeners(media_listener, admin_listener),
+        )
+        .serve(),
+    );
     wait_for_port(admin_addr).await;
 
     let client = reqwest::Client::new();
@@ -711,12 +715,14 @@ async fn post_duplicate_name_is_conflict_and_original_stays_live() {
     let (media_addr, media_listener) = bind_tcp();
     let (admin_addr, admin_listener) = bind_tcp();
     let config = admin_config(media_addr, admin_addr, vec![instant_route("cam1")]);
-    let server = tokio::spawn(serve_with_registry_on_admin(
-        media_listener,
-        admin_listener,
-        config,
-        instant_registry(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(instant_registry())
+                .with_prebound_listeners(media_listener, admin_listener),
+        )
+        .serve(),
+    );
     wait_for_port(admin_addr).await;
 
     let client = reqwest::Client::new();
@@ -765,12 +771,14 @@ async fn delete_unknown_route_is_not_found() {
     let (media_addr, media_listener) = bind_tcp();
     let (admin_addr, admin_listener) = bind_tcp();
     let config = admin_config(media_addr, admin_addr, vec![instant_route("cam1")]);
-    let server = tokio::spawn(serve_with_registry_on_admin(
-        media_listener,
-        admin_listener,
-        config,
-        instant_registry(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(instant_registry())
+                .with_prebound_listeners(media_listener, admin_listener),
+        )
+        .serve(),
+    );
     wait_for_port(admin_addr).await;
 
     let client = reqwest::Client::new();
@@ -797,12 +805,14 @@ async fn malformed_route_body_is_bad_request_and_state_unchanged() {
     let (media_addr, media_listener) = bind_tcp();
     let (admin_addr, admin_listener) = bind_tcp();
     let config = admin_config(media_addr, admin_addr, vec![instant_route("cam1")]);
-    let server = tokio::spawn(serve_with_registry_on_admin(
-        media_listener,
-        admin_listener,
-        config,
-        instant_registry(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(instant_registry())
+                .with_prebound_listeners(media_listener, admin_listener),
+        )
+        .serve(),
+    );
     wait_for_port(admin_addr).await;
 
     let client = reqwest::Client::new();
@@ -867,12 +877,14 @@ async fn admin_api_unreachable_on_media_port() {
     let (media_addr, media_listener) = bind_tcp();
     let (admin_addr, admin_listener) = bind_tcp();
     let config = admin_config(media_addr, admin_addr, vec![instant_route("cam1")]);
-    let server = tokio::spawn(serve_with_registry_on_admin(
-        media_listener,
-        admin_listener,
-        config,
-        instant_registry(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(instant_registry())
+                .with_prebound_listeners(media_listener, admin_listener),
+        )
+        .serve(),
+    );
     wait_for_port(admin_addr).await;
 
     let client = reqwest::Client::new();
@@ -907,12 +919,14 @@ async fn unauthenticated_admin_request_is_unauthorized_and_no_mutation() {
     let (media_addr, media_listener) = bind_tcp();
     let (admin_addr, admin_listener) = bind_tcp();
     let config = admin_config(media_addr, admin_addr, vec![instant_route("cam1")]);
-    let server = tokio::spawn(serve_with_registry_on_admin(
-        media_listener,
-        admin_listener,
-        config,
-        instant_registry(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(instant_registry())
+                .with_prebound_listeners(media_listener, admin_listener),
+        )
+        .serve(),
+    );
     wait_for_port(admin_addr).await;
 
     let client = reqwest::Client::new();
@@ -990,12 +1004,15 @@ async fn reload_leaves_unchanged_route_running_restarts_changed_route() {
     )
     .expect("write initial config");
 
-    let server = tokio::spawn(serve_config_file_with_registry_on_admin(
-        media_listener,
-        admin_listener,
-        config_path.clone(),
-        instant_registry(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::from_json_file(config_path.clone())
+                .unwrap()
+                .with_registry(instant_registry())
+                .with_prebound_listeners(media_listener, admin_listener),
+        )
+        .serve(),
+    );
     wait_for_port(admin_addr).await;
 
     let client = reqwest::Client::new();
@@ -1147,12 +1164,15 @@ async fn a_reload_of_a_changed_route_never_answers_a_viewer_with_an_error() {
         serde_json::to_string_pretty(&initial_as_json(&with_version(1))).expect("serialize"),
     )
     .expect("write config");
-    let server = tokio::spawn(serve_config_file_with_registry_on_admin(
-        media_listener,
-        admin_listener,
-        config_path.clone(),
-        instant_registry(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::from_json_file(config_path.clone())
+                .unwrap()
+                .with_registry(instant_registry())
+                .with_prebound_listeners(media_listener, admin_listener),
+        )
+        .serve(),
+    );
     wait_for_port(admin_addr).await;
     let client = reqwest::Client::new();
     wait_until_live(&client, media_addr, "live").await;
@@ -1302,12 +1322,15 @@ async fn removing_a_route_answers_a_parked_blocking_reload_with_404() {
         serde_json::to_string_pretty(&initial_as_json(&config)).expect("serialize"),
     )
     .expect("write config");
-    let server = tokio::spawn(serve_config_file_with_registry_on_admin(
-        media_listener,
-        admin_listener,
-        config_path.clone(),
-        instant_registry(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::from_json_file(config_path.clone())
+                .unwrap()
+                .with_registry(instant_registry())
+                .with_prebound_listeners(media_listener, admin_listener),
+        )
+        .serve(),
+    );
     wait_for_port(admin_addr).await;
     let client = reqwest::Client::new();
     wait_until_live(&client, media_addr, "live").await;
@@ -1386,12 +1409,15 @@ async fn a_changed_routes_replacement_continues_numbering_with_a_discontinuity()
         serde_json::to_string_pretty(&initial_as_json(&with_version(1))).expect("serialize"),
     )
     .expect("write config");
-    let server = tokio::spawn(serve_config_file_with_registry_on_admin(
-        media_listener,
-        admin_listener,
-        config_path.clone(),
-        instant_registry(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::from_json_file(config_path.clone())
+                .unwrap()
+                .with_registry(instant_registry())
+                .with_prebound_listeners(media_listener, admin_listener),
+        )
+        .serve(),
+    );
     wait_for_port(admin_addr).await;
     let client = reqwest::Client::new();
     let url = media_playlist_url(media_addr, "live");
@@ -1676,12 +1702,15 @@ async fn observe_reload(who: &'static str, first_tag: &str, second_tag: &str) ->
         serde_json::to_string_pretty(&config(first_tag, 1)).expect("serialize"),
     )
     .expect("write config");
-    let server = tokio::spawn(serve_config_file_with_registry_on_admin(
-        media_listener,
-        admin_listener,
-        config_path.clone(),
-        instant_registry(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::from_json_file(config_path.clone())
+                .unwrap()
+                .with_registry(instant_registry())
+                .with_prebound_listeners(media_listener, admin_listener),
+        )
+        .serve(),
+    );
     let observation = tokio::time::timeout(RELOAD_DEADLINE, async {
         wait_for_port(admin_addr).await;
         let client = reqwest::Client::new();
@@ -2273,12 +2302,14 @@ async fn admin_add_rejects_a_traversal_route_name() {
         admin_addr,
         vec![unreachable_rtsp_route("seed", "seed")],
     );
-    let server = tokio::spawn(serve_with_registry_on_admin(
-        media_listener,
-        admin_listener,
-        config,
-        instant_registry(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(instant_registry())
+                .with_prebound_listeners(media_listener, admin_listener),
+        )
+        .serve(),
+    );
     wait_for_port(admin_addr).await;
     let client = reqwest::Client::new();
 
@@ -2326,12 +2357,14 @@ async fn raw_traversal_requests_never_read_outside_the_root() {
     let (media_addr, media_listener) = bind_tcp();
     let (admin_addr, admin_listener) = bind_tcp();
     let config = admin_config(media_addr, admin_addr, vec![instant_route("cam1")]);
-    let server = tokio::spawn(serve_with_registry_on_admin(
-        media_listener,
-        admin_listener,
-        config,
-        instant_registry(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(instant_registry())
+                .with_prebound_listeners(media_listener, admin_listener),
+        )
+        .serve(),
+    );
     wait_for_port(media_addr).await;
     let playlist = wait_until_live(&reqwest::Client::new(), media_addr, "cam1").await;
     assert!(playlist.contains("#EXTINF:"));
@@ -2428,12 +2461,14 @@ async fn a_router_build_panic_does_not_register_the_route() {
     config
         .prebound
         .with_tcp(whep_addr.to_string(), whep_listener);
-    let server = tokio::spawn(serve_with_registry_on_admin(
-        media_listener,
-        admin_listener,
-        config,
-        panicking_router_registry(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(panicking_router_registry())
+                .with_prebound_listeners(media_listener, admin_listener),
+        )
+        .serve(),
+    );
     wait_for_port(admin_addr).await;
     let client = reqwest::Client::new();
 
@@ -2564,12 +2599,14 @@ async fn a_failed_route_does_not_leak_its_push_or_whep_tasks() {
         }) as InputFactory,
     );
 
-    let server = tokio::spawn(serve_with_registry_on_admin(
-        media_listener,
-        admin_listener,
-        config,
-        registry,
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(registry)
+                .with_prebound_listeners(media_listener, admin_listener),
+        )
+        .serve(),
+    );
     wait_for_port(admin_addr).await;
     let client = reqwest::Client::new();
 
@@ -2651,13 +2688,16 @@ async fn a_failed_reload_rolls_back_and_leaves_no_bound_port() {
         }) as InputFactory,
     );
 
-    let server = tokio::spawn(multimux::serve_config_file_with_registry_on_admin_prebound(
-        media_listener,
-        admin_listener,
-        config_path.clone(),
-        registry,
-        prebound,
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::from_json_file(config_path.clone())
+                .unwrap()
+                .with_registry(registry)
+                .with_prebound_binds(prebound)
+                .with_prebound_listeners(media_listener, admin_listener),
+        )
+        .serve(),
+    );
     wait_for_port(admin_addr).await;
     let client = reqwest::Client::new();
     wait_until_live(&client, media_addr, "wide").await;
@@ -2770,13 +2810,16 @@ async fn reloading_a_route_drains_the_displaced_runtime() {
     )
     .expect("write config");
 
-    let server = tokio::spawn(multimux::serve_config_file_with_registry_on_admin_prebound(
-        media_listener,
-        admin_listener,
-        config_path.clone(),
-        instant_registry(),
-        prebound,
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::from_json_file(config_path.clone())
+                .unwrap()
+                .with_registry(instant_registry())
+                .with_prebound_binds(prebound)
+                .with_prebound_listeners(media_listener, admin_listener),
+        )
+        .serve(),
+    );
     wait_for_port(admin_addr).await;
     let client = reqwest::Client::new();
 
@@ -2842,12 +2885,14 @@ async fn admin_added_route_emits_pdt_by_default() {
         admin_addr,
         vec![unreachable_rtsp_route("seed", "seed")],
     );
-    let server = tokio::spawn(serve_with_registry_on_admin(
-        media_listener,
-        admin_listener,
-        config,
-        instant_registry(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(instant_registry())
+                .with_prebound_listeners(media_listener, admin_listener),
+        )
+        .serve(),
+    );
     wait_for_port(admin_addr).await;
 
     let client = reqwest::Client::new();

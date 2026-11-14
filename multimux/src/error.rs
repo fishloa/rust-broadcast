@@ -129,8 +129,8 @@ pub enum MultimuxError {
     /// `OutputKind`/`OutputAuthSpec`, issue #663 external scheme plugin
     /// registry) named a `type_tag` with no matching factory registered in
     /// the [`crate::registry::SchemeRegistry`] passed to
-    /// [`crate::origin::serve_with_registry`] (or in the empty registry
-    /// [`crate::origin::serve`] uses).
+    /// [`crate::Server`] (or in the empty registry
+    /// [`crate::Server`] uses).
     #[error("unknown {kind} scheme {tag:?} — no factory registered")]
     UnknownScheme {
         /// Which registry this was: `"input"`, `"output"`, or `"auth"`.

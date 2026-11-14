@@ -287,7 +287,7 @@ pub(crate) struct RouteRegistry {
     router_slot: arc_swap::ArcSwap<LiveRouter>,
     /// The config file this process was loaded from, if any — `None` when
     /// the embedding caller built its [`Config`] in memory (e.g.
-    /// `serve_with_registry` directly): [`Self::reload`] has nothing to
+    /// `Server` directly): [`Self::reload`] has nothing to
     /// re-read in that case and fails clearly rather than silently no-oping.
     config_path: Option<PathBuf>,
 }
@@ -412,7 +412,7 @@ impl RouteRegistry {
     }
 
     /// Builds `route`'s [`Output`]s and spawns its supervised ingest task —
-    /// the same two steps [`super::serve_with_registry`]'s own per-route
+    /// the same two steps [`super::Server`]'s own per-route
     /// loop performs, pulled out so [`Self::add_route`]/[`Self::reload`]
     /// share exactly one implementation. Does not touch [`Self::inner`] or
     /// rebuild the router — callers do that once they decide to keep the
@@ -507,7 +507,7 @@ impl RouteRegistry {
         });
 
         let mut push_handles = super::spawn_push_outputs(route, guarded.store(), &push_cancel);
-        // Audit run 7, W6: the startup path (`serve_with_registry`) spawns
+        // Audit run 7, W6: the startup path (`Server`) spawns
         // WHEP egress here too, but this admin path never did — so with the
         // admin API enabled (every startup route goes through `add_route`)
         // a route's `whep` output was silently never started. Spawn it, and
@@ -942,7 +942,7 @@ impl RouteRegistry {
     }
 
     /// Tears down every currently-registered route's supervisor task, in
-    /// orderly fashion (mirrors `serve_with_registry`'s own final loop) —
+    /// orderly fashion (mirrors `Server`'s own final loop) —
     /// called once, from [`serve_with_admin`]'s own shutdown path.
     async fn shutdown_all(&self) {
         let _guard = self.mutation_lock.lock().await;
@@ -1022,7 +1022,7 @@ impl TestHooks {
 /// Signals `runtime`'s supervisor task to stop and waits (bounded by
 /// [`super::SUPERVISOR_SHUTDOWN_GRACE`]) for it to return on its own,
 /// aborting it if it doesn't — the same bounded-drain shape
-/// `serve_with_registry`'s final loop applies to every route at process
+/// `Server`'s final loop applies to every route at process
 /// shutdown, applied here to exactly one route at a time so
 /// [`RouteRegistry::remove_route`]/[`RouteRegistry::reload`] never hold a
 /// lock across it (see this module's own "Concurrency" docs).
@@ -1314,7 +1314,7 @@ where
         Box::pin(async move {
             let (mut parts, body) = req.into_parts();
             // Mirrors what `Router::into_make_service_with_connect_info` does
-            // for the static path (`super::serve_with_registry`) — inserted
+            // for the static path (`super::Server`) — inserted
             // directly (rather than via `axum::Extension`'s `tower::Layer`,
             // whose produced service type isn't nameable outside axum itself)
             // since `ConnectInfo<T>`'s own `FromRequestParts` impl reads it from
@@ -1390,7 +1390,7 @@ const MAX_REDISPATCHES: usize = 8;
 /// every admin mutation — see [`DynamicMediaService`]) and
 /// [`crate::config::AdminSpec::bind`] (admin, a plain static [`Router`] —
 /// see [`admin_router`]), and installs the same graceful-shutdown handling
-/// [`super::serve_with_registry`] does for both, plus tearing down every
+/// [`super::Server`] does for both, plus tearing down every
 /// still-registered route's supervisor task via [`RouteRegistry::shutdown_all`].
 pub(crate) async fn serve_with_admin(
     config: Config,
