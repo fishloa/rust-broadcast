@@ -54,10 +54,10 @@ use broadcast_client::fetch::ReconnectTimer;
 use broadcast_common::backoff::{RetrySchedule, mix_seed};
 
 use crate::MultimuxError;
-use http;
 use crate::error::{Phase, ProtocolFailure};
 use crate::route::{HealthState, RouteHandle};
 use broadcast_common::units::MICROS_PER_MILLI;
+use http;
 
 /// Production default backoff: starts at 500 ms, doubles, caps at 30 s.
 const DEFAULT_BACKOFF_MIN: Duration = Duration::from_millis(500);
@@ -557,7 +557,9 @@ mod tests {
 
     #[test]
     fn is_auth_failure_true_only_for_the_auth_variant() {
-        assert!(is_auth_failure(&MultimuxError::Auth(broadcast_auth::Error::ChallengeParse("DESCRIBE: 401 Unauthorized".into()))));
+        assert!(is_auth_failure(&MultimuxError::Auth(
+            broadcast_auth::Error::ChallengeParse("DESCRIBE: 401 Unauthorized".into())
+        )));
         assert!(!is_auth_failure(&MultimuxError::Connect {
             reason: "connect refused".into()
         }));
@@ -585,7 +587,9 @@ mod tests {
             phase: Phase::Describe,
             kind: ProtocolFailure::Status(http::StatusCode::SERVICE_UNAVAILABLE),
         }));
-        assert!(!is_permanent_describe_not_found(&MultimuxError::Auth(broadcast_auth::Error::ChallengeParse("DESCRIBE: 401 Unauthorized".into()))));
+        assert!(!is_permanent_describe_not_found(&MultimuxError::Auth(
+            broadcast_auth::Error::ChallengeParse("DESCRIBE: 401 Unauthorized".into())
+        )));
     }
 
     /// An `attempt` that always fails the same way (never touching health) —
@@ -630,7 +634,11 @@ mod tests {
         ));
         let call_count = Arc::new(AtomicUsize::new(0));
         let attempt = always_fails(
-            || MultimuxError::Auth(broadcast_auth::Error::ChallengeParse("DESCRIBE: 401 Unauthorized".into())),
+            || {
+                MultimuxError::Auth(broadcast_auth::Error::ChallengeParse(
+                    "DESCRIBE: 401 Unauthorized".into(),
+                ))
+            },
             call_count.clone(),
         );
         let cancel = tokio_util::sync::CancellationToken::new();
@@ -820,7 +828,9 @@ mod tests {
             Box::pin(async move {
                 let n = cc.fetch_add(1, Ordering::SeqCst);
                 if n < fail_times {
-                    return Err(MultimuxError::Auth(broadcast_auth::Error::ChallengeParse("DESCRIBE: 401 Unauthorized".into())));
+                    return Err(MultimuxError::Auth(broadcast_auth::Error::ChallengeParse(
+                        "DESCRIBE: 401 Unauthorized".into(),
+                    )));
                 }
                 route_handle.set_health(HealthState::Live);
                 tokio::time::sleep(Duration::from_millis(20)).await;

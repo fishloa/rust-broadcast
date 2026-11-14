@@ -85,7 +85,6 @@ pub enum Error {
     Media(#[from] MediaError),
 }
 
-
 /// Typed media-transport failures (ICE, DTLS, SRTP, RTP parsing).
 #[cfg(feature = "media")]
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
@@ -107,7 +106,6 @@ pub enum MediaError {
     #[error("{0}")]
     Other(alloc::string::String),
 }
-
 
 #[cfg(feature = "media")]
 impl From<alloc::string::String> for MediaError {

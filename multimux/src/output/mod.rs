@@ -443,7 +443,8 @@ mod tests {
         let _: Router = merged;
 
         // `ts_hls` alone, the other permitted shape.
-        let _: Router = Router::new().merge(OutputKind::TsHls.build().unwrap().manifest_routes(route));
+        let _: Router =
+            Router::new().merge(OutputKind::TsHls.build().unwrap().manifest_routes(route));
     }
 
     #[test]
@@ -479,7 +480,10 @@ mod tests {
             OutputKind::LlHls.build().unwrap().kind(),
             OutputKind::LlHls
         ));
-        assert!(matches!(OutputKind::Dash.build().unwrap().kind(), OutputKind::Dash));
+        assert!(matches!(
+            OutputKind::Dash.build().unwrap().kind(),
+            OutputKind::Dash
+        ));
         assert!(matches!(
             OutputKind::LlDash.build().unwrap().kind(),
             OutputKind::LlDash

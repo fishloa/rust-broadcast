@@ -103,6 +103,7 @@ pub use demux::SocketDemux;
 #[doc(hidden)]
 pub use transport::certificate_fingerprint;
 pub use transport::{
-    Datagram, DecryptedRtp, DecryptedRtpExtension, IceCandidate, IceConnectionState, MAX_REMOTE_CANDIDATES, MediaEvent,
-    MediaTransport, MediaTransportConfig, SetupRole, parse_remote_fingerprint,
+    Datagram, DecryptedRtp, DecryptedRtpExtension, IceCandidate, IceConnectionState,
+    MAX_REMOTE_CANDIDATES, MediaEvent, MediaTransport, MediaTransportConfig, SetupRole,
+    parse_remote_fingerprint,
 };

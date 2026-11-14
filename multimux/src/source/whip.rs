@@ -722,12 +722,14 @@ fn parse_whip_offer(offer: &str) -> Result<ParsedOffer> {
     let remote_pwd = ice_attr(&session, media, "ice-pwd")
         .ok_or_else(|| MultimuxError::Sdp("whip: offer has no a=ice-pwd".into()))?
         .to_string();
-    let remote_fingerprint = parse_remote_fingerprint(offer).ok_or_else(|| MultimuxError::Sdp("whip: offer has no a=fingerprint".into()))?;
+    let remote_fingerprint = parse_remote_fingerprint(offer)
+        .ok_or_else(|| MultimuxError::Sdp("whip: offer has no a=fingerprint".into()))?;
     let mid = offer_mid(media);
     let candidates = crate::webrtc_session::candidate_lines(media);
 
-    let (payload_type, rtpmap) =
-        crate::webrtc_session::h264_payload(media).ok_or_else(|| MultimuxError::Sdp("whip: m=video has no H.264 (a=rtpmap naming H264) payload type".into()))?;
+    let (payload_type, rtpmap) = crate::webrtc_session::h264_payload(media).ok_or_else(|| {
+        MultimuxError::Sdp("whip: m=video has no H.264 (a=rtpmap naming H264) payload type".into())
+    })?;
     let clock_rate = transmux::rtpmap_clock_rate(rtpmap).unwrap_or(90_000);
 
     Ok(ParsedOffer {

@@ -71,9 +71,16 @@ impl StunGather {
         // generator is a CSPRNG, and it is seeded from real entropy, not a
         // fixed or predictable value.
         msg.build(&[Box::new(TransactionId::new()), Box::new(BINDING_REQUEST)])
-            .map_err(|e| Error::Media(MediaError::Other(format!("build stun binding request: {e}"))))?;
-        Protocol::handle_write(&mut client, TaggedMessage { now, message: msg })
-            .map_err(|e| Error::Media(MediaError::Other(format!("queue stun binding request: {e}"))))?;
+            .map_err(|e| {
+                Error::Media(MediaError::Other(format!(
+                    "build stun binding request: {e}"
+                )))
+            })?;
+        Protocol::handle_write(&mut client, TaggedMessage { now, message: msg }).map_err(|e| {
+            Error::Media(MediaError::Other(format!(
+                "queue stun binding request: {e}"
+            )))
+        })?;
 
         Ok(Self {
             client,
@@ -118,8 +125,9 @@ impl StunGather {
             },
             message: BytesMut::from(data),
         };
-        Protocol::handle_read(&mut self.client, tagged)
-            .map_err(|e| Error::Media(MediaError::Other(format!("stun client handle_read: {e}"))))?;
+        Protocol::handle_read(&mut self.client, tagged).map_err(|e| {
+            Error::Media(MediaError::Other(format!("stun client handle_read: {e}")))
+        })?;
 
         // At most one event is meaningful per datagram here: this gatherer
         // runs a single transaction, so the first event settles it either
@@ -129,9 +137,9 @@ impl StunGather {
                 StunEvent::Message(msg) => {
                     self.done = true;
                     let mut xor_addr = XorMappedAddress::default();
-                    xor_addr
-                        .get_from(&msg)
-                        .map_err(|e| Error::Media(MediaError::Other(format!("read XOR-MAPPED-ADDRESS: {e}"))))?;
+                    xor_addr.get_from(&msg).map_err(|e| {
+                        Error::Media(MediaError::Other(format!("read XOR-MAPPED-ADDRESS: {e}")))
+                    })?;
                     return Ok(Some(SocketAddr::new(xor_addr.ip, xor_addr.port)));
                 }
                 StunEvent::TransactionTimeOut

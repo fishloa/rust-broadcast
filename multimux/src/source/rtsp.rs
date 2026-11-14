@@ -124,8 +124,8 @@ pub(crate) async fn run_rtsp_with(
 mod tests {
     use super::*;
     use crate::error::{Phase, ProtocolFailure};
-    use http;
     use crate::route::RouteConfig;
+    use http;
     use std::time::Duration;
     use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 

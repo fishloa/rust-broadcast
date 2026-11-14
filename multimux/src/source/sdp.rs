@@ -22,11 +22,18 @@ const CHANNEL_STEP: u8 = 2;
 /// Builds one media section's [`TrackInit`] (channel 0; the caller assigns the real one).
 fn track_init(media_index: usize, media: &Media) -> Result<TrackInit> {
     let track_id = u32::try_from(media_index).map_or(u32::MAX, |i| i.saturating_add(1));
-    let track = sdp_track(media).ok_or_else(|| MultimuxError::Sdp(format!("media {:?} has no playable payload type", media.media).into()))?;
-    let payload_type = track.payload_type.ok_or_else(|| MultimuxError::Sdp(format!(
-            "media {:?} has no payload type in its fmt field",
-            media.media
-        ).into()))?;
+    let track = sdp_track(media).ok_or_else(|| {
+        MultimuxError::Sdp(format!("media {:?} has no playable payload type", media.media).into())
+    })?;
+    let payload_type = track.payload_type.ok_or_else(|| {
+        MultimuxError::Sdp(
+            format!(
+                "media {:?} has no payload type in its fmt field",
+                media.media
+            )
+            .into(),
+        )
+    })?;
     Ok(TrackInit {
         track_id: TrackId::new(track_id),
         kind: track.kind,
@@ -65,7 +72,8 @@ fn playable_media(session: &Session) -> Vec<(usize, TrackInit)> {
 /// Parse the DESCRIBE SDP body into per-track init, assigning interleaved
 /// channels 0,2,4,… in media order.
 pub fn parse_tracks_multimux(sdp: &[u8]) -> Result<Vec<TrackInit>> {
-    let session = Session::parse(sdp).map_err(|e| MultimuxError::Sdp(format!("parse: {e}").into()))?;
+    let session =
+        Session::parse(sdp).map_err(|e| MultimuxError::Sdp(format!("parse: {e}").into()))?;
     let playable = playable_media(&session);
     if playable.is_empty() {
         return Err(MultimuxError::Sdp("SDP has no supported media".into()));
@@ -92,15 +100,16 @@ pub(crate) fn plan_tracks(
     content_base: Option<&str>,
     sdp: &[u8],
 ) -> Result<(PlayPlan, Vec<TrackInit>)> {
-    let text = std::str::from_utf8(sdp).map_err(|e| MultimuxError::Sdp(format!("parse: {e}").into()))?;
+    let text =
+        std::str::from_utf8(sdp).map_err(|e| MultimuxError::Sdp(format!("parse: {e}").into()))?;
     struct Candidate {
         media_index: usize,
         track: TrackInit,
     }
-    let playable =
-        playable_media(
-            &Session::parse(text.as_bytes()).map_err(|e| MultimuxError::Sdp(format!("parse: {e}").into()))?,
-        );
+    let playable = playable_media(
+        &Session::parse(text.as_bytes())
+            .map_err(|e| MultimuxError::Sdp(format!("parse: {e}").into()))?,
+    );
     let playable_indices: std::collections::BTreeSet<usize> =
         playable.iter().map(|(i, _)| *i).collect();
     let candidates: Vec<Candidate> = playable
@@ -116,10 +125,15 @@ pub(crate) fn plan_tracks(
         usize::MAX,
         |media_index, _| playable_indices.contains(&media_index),
     )
-    .map_err(|e| MultimuxError::Sdp(match e {
-            rtsp_runtime::Error::InvalidSdp(reason) => format!("parse: {reason}"),
-            other => other.to_string(),
-        }.into()))?;
+    .map_err(|e| {
+        MultimuxError::Sdp(
+            match e {
+                rtsp_runtime::Error::InvalidSdp(reason) => format!("parse: {reason}"),
+                other => other.to_string(),
+            }
+            .into(),
+        )
+    })?;
     for skipped in plan.skipped() {
         tracing::warn!(
             media_index = skipped.media_index,
@@ -161,7 +175,9 @@ pub(crate) fn plan_tracks(
 /// ingest source that has no RTSP DESCRIBE to fetch its SDP from.
 pub fn load_sdp(spec: &str) -> Result<Vec<u8>> {
     match spec.strip_prefix('@') {
-        Some(path) => Ok(std::fs::read(path).map_err(|e| MultimuxError::Sdp(format!("failed to read SDP file {path:?}: {e}").into()))?),
+        Some(path) => Ok(std::fs::read(path).map_err(|e| {
+            MultimuxError::Sdp(format!("failed to read SDP file {path:?}: {e}").into())
+        })?),
         None => Ok(spec.as_bytes().to_vec()),
     }
 }

@@ -189,7 +189,6 @@ pub enum MultimuxError {
         /// The output kind's name.
         kind: String,
     },
-
 }
 
 /// Which phase of an ingest/protocol exchange failed.
@@ -216,7 +215,7 @@ impl Phase {
             Phase::Setup => "SETUP",
             Phase::Play => "PLAY",
             Phase::Recv => "recv",
-            Phase::Other(s) => *s,
+            Phase::Other(s) => s,
         }
     }
 }
@@ -260,7 +259,6 @@ impl From<&str> for SdpError {
         SdpError(s.to_string())
     }
 }
-
 
 /// multimux result alias.
 pub type Result<T> = core::result::Result<T, MultimuxError>;

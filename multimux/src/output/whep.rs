@@ -295,7 +295,8 @@ fn parse_whep_offer(offer: &str) -> Result<ParsedWhepOffer> {
     let remote_pwd = ice_attr(&session, media, "ice-pwd")
         .ok_or_else(|| MultimuxError::Sdp("whep: offer has no a=ice-pwd".into()))?
         .to_string();
-    let remote_fingerprint = parse_remote_fingerprint(offer).ok_or_else(|| MultimuxError::Sdp("whep: offer has no a=fingerprint".into()))?;
+    let remote_fingerprint = parse_remote_fingerprint(offer)
+        .ok_or_else(|| MultimuxError::Sdp("whep: offer has no a=fingerprint".into()))?;
     let mid = offer_mid(media);
     let candidates = crate::webrtc_session::candidate_lines(media);
     let setup = media
@@ -303,8 +304,9 @@ fn parse_whep_offer(offer: &str) -> Result<ParsedWhepOffer> {
         .flatten()
         .map(str::to_string);
 
-    let (payload_type, _) =
-        crate::webrtc_session::h264_payload(media).ok_or_else(|| MultimuxError::Sdp("whep: m=video has no H.264 (a=rtpmap naming H264) payload type".into()))?;
+    let (payload_type, _) = crate::webrtc_session::h264_payload(media).ok_or_else(|| {
+        MultimuxError::Sdp("whep: m=video has no H.264 (a=rtpmap naming H264) payload type".into())
+    })?;
 
     Ok(ParsedWhepOffer {
         remote_ufrag,
@@ -2577,7 +2579,9 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             "the one-time handshake completion counts"
         );
         assert!(
-            !is_liveness_event(&MediaEvent::IceStateChanged(webrtc_runtime::media::IceConnectionState::Connected)),
+            !is_liveness_event(&MediaEvent::IceStateChanged(
+                webrtc_runtime::media::IceConnectionState::Connected
+            )),
             "an ICE connection-state transition alone must not count"
         );
         assert!(

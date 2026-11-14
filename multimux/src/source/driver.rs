@@ -585,7 +585,13 @@ mod tests {
         )
         .await;
         assert!(
-            matches!(&err, MultimuxError::Protocol { phase: Phase::Recv, .. }),
+            matches!(
+                &err,
+                MultimuxError::Protocol {
+                    phase: Phase::Recv,
+                    ..
+                }
+            ),
             "{err:?}"
         );
         assert_eq!(
@@ -660,7 +666,13 @@ mod tests {
         .await
         .expect("must fail on the stall, not hang");
         assert!(
-            matches!(&err, MultimuxError::Protocol { phase: Phase::Recv, .. }),
+            matches!(
+                &err,
+                MultimuxError::Protocol {
+                    phase: Phase::Recv,
+                    ..
+                }
+            ),
             "{err:?}"
         );
         assert_eq!(t0.elapsed(), Duration::from_secs(70));

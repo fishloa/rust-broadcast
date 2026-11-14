@@ -176,14 +176,16 @@ pub(crate) fn single_video_media(
         .map(|(i, _)| i)
         .collect();
     if session.medias.len() != videos.len() || videos.len() != 1 {
-        return Err(crate::error::MultimuxError::Sdp(format!(
+        return Err(crate::error::MultimuxError::Sdp(
+            format!(
                 "{who}: this route accepts exactly one m=video section and nothing else \
                  (Opus audio has no RTP {rtp_stage} in this workspace yet); offer had {} \
                  total section(s), {} of them video",
                 session.medias.len(),
                 videos.len()
-            ).into()),
-        );
+            )
+            .into(),
+        ));
     }
     let index = videos[0];
     Ok((session, index))
