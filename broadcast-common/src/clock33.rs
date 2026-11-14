@@ -422,24 +422,20 @@ impl core::fmt::Display for Clock33 {
 /// to use it. This is the one representation of a PCR/ESCR/SCR: `mpeg-ts`'s
 /// `Pcr` and `mpeg-ps`'s `Scr` wrap it and add only their wire codecs.
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Clock27 {
     /// The 33-bit base (27 MHz ticks / 300).
-    #[cfg_attr(feature = "serde", serde(with = "clock33_serde"))]
     pub base: Clock33,
     /// The 9-bit extension (27 MHz ticks within the current base tick).
     pub ext: u16,
 }
 
-/// Serializes a [`Clock33`] as its raw tick count (the value it is a newtype
-/// over).
+/// Serializes as the 27 MHz tick count: a PCR is stored as the one number
+/// its wire fields code, so a snapshot survives the lossless `from_wire_parts`
+/// round trip.
 #[cfg(feature = "serde")]
-mod clock33_serde {
-    use super::Clock33;
-    use serde::Serializer;
-
-    pub fn serialize<S: Serializer>(c: &Clock33, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_u64(c.ticks())
+impl serde::Serialize for Clock27 {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_u64(self.ticks())
     }
 }
 

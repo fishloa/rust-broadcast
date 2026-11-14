@@ -24,8 +24,19 @@
 //! These tests load through `test_fixtures::require`: they skip loudly when
 //! the private repo is not checked out and fail when `REQUIRE_PRIVATE_FIXTURES=1`
 //! (CI) and it is missing.
+use broadcast_common::clock33::PCR_WRAP_27MHZ;
+
+/// A 27 MHz tick count as a validated clock position.
+fn clock27(ticks: u64) -> Clock27 {
+    Clock27::from_27mhz(ticks % PCR_WRAP_27MHZ).expect("a reduced count is on the clock")
+}
+
+const fn dur(us: u64) -> Duration {
+    Duration::from_micros(us)
+}
 use crate::support::*;
-use buffering_runtime::{Event, Micros, Ticks27};
+use buffering_runtime::{Clock27, Event};
+use core::time::Duration;
 
 fn trace(name: &str) -> Option<Vec<Chunk>> {
     test_fixtures::require(
@@ -156,22 +167,22 @@ fn check(g: &Golden, r: &Run) {
     );
     assert_eq!(r.min_lead_playing, Some(g.min_lead_us), "{n}: min lead");
     assert_eq!(
-        r.targets.iter().min().unwrap().0,
+        r.targets.iter().min().unwrap().as_micros() as u64,
         g.target_min,
         "{n}: target min"
     );
     assert_eq!(
-        r.targets.iter().max().unwrap().0,
+        r.targets.iter().max().unwrap().as_micros() as u64,
         g.target_max,
         "{n}: target max"
     );
     assert_eq!(
-        r.targets.last().unwrap().0,
+        r.targets.last().unwrap().as_micros() as u64,
         g.target_final,
         "{n}: target final"
     );
     assert_eq!(
-        r.targets.iter().map(|t| t.0).sum::<u64>(),
+        r.targets.iter().map(|t| t.as_micros() as u64).sum::<u64>(),
         g.target_sum,
         "{n}: target sum"
     );
@@ -193,7 +204,7 @@ fn gap_free_traces_never_pause_and_target_stays_at_the_floor() {
             let r = replay(&chunks, &Opts::new(initial));
             assert!(r.pauses().is_empty(), "{name}@{initial}: false pause");
             assert!(
-                r.targets.iter().all(|&t| t == Micros(300_000)),
+                r.targets.iter().all(|&t| t == dur(300_000)),
                 "{name}: target left the floor"
             );
             assert_eq!(r.ctl.stats().stalls, 0);
@@ -227,7 +238,11 @@ fn golden_initial_500_stalls_once_at_the_gap() {
         let r = replay(&chunks, &Opts::new(500_000));
         assert_eq!(r.start(), Some(start), "{name}");
         assert_eq!(r.pauses(), vec![(pause, Some(resume))], "{name}");
-        assert_eq!(r.targets.iter().map(|t| t.0).sum::<u64>(), sum, "{name}");
+        assert_eq!(
+            r.targets.iter().map(|t| t.as_micros() as u64).sum::<u64>(),
+            sum,
+            "{name}"
+        );
         // reason NoData: nothing arrived for the whole gap
         let reason = r.events.iter().find_map(|(_, e)| match e {
             Event::Pause { reason, .. } => Some(*reason),
@@ -237,7 +252,7 @@ fn golden_initial_500_stalls_once_at_the_gap() {
     }
 }
 
-fn positions(r: &Run) -> Vec<(Micros, &'static str, Ticks27)> {
+fn positions(r: &Run) -> Vec<(Duration, &'static str, Clock27)> {
     r.events
         .iter()
         .filter_map(|(t, e)| match *e {
@@ -268,13 +283,13 @@ fn decisions_are_invariant_under_a_constant_pcr_pts_offset() {
             let delta = base_opts.offset_ticks - o.offset_ticks;
             for (a, b) in base_pos.iter().zip(&pos) {
                 assert_eq!(
-                    (a.0, a.1),
-                    (b.0, b.1),
+                    (a.0.as_micros(), a.1),
+                    (b.0.as_micros(), b.1),
                     "{name} off {off_ms}: timeline changed"
                 );
                 assert_eq!(
                     b.2,
-                    Ticks27(shift27(a.2.0, delta)),
+                    clock27(shift27(a.2.ticks(), delta)),
                     "{name} off {off_ms}: position not shifted by exactly the offset"
                 );
             }

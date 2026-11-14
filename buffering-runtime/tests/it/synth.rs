@@ -4,14 +4,22 @@
 //! The 1x/2x/4x stall pattern is the shape of a transport that retransmits
 //! with exponential backoff (RFC 6298); the real ~1.4 s stalls have an
 //! undetermined cause, the controller must survive them from any cause.
-use crate::support::*;
 use broadcast_common::clock33::PCR_WRAP_27MHZ;
-use buffering_runtime::{
-    BufferController, ControllerConfig, Event, Hint, Micros, Reason, State, Ticks27,
-};
 
-const MIN: Micros = Micros(300_000);
-const MAX: Micros = Micros(3_000_000);
+/// A 27 MHz tick count as a validated clock position.
+fn clock27(ticks: u64) -> Clock27 {
+    Clock27::from_27mhz(ticks % PCR_WRAP_27MHZ).expect("a reduced count is on the clock")
+}
+
+const fn dur(us: u64) -> Duration {
+    Duration::from_micros(us)
+}
+use crate::support::*;
+use buffering_runtime::{BufferController, Clock27, ControllerConfig, Event, Hint, Reason, State};
+use core::time::Duration;
+
+const MIN: Duration = dur(300_000);
+const MAX: Duration = dur(3_000_000);
 
 fn opts(initial: u64) -> Opts {
     let mut o = Opts::new(initial);
@@ -44,13 +52,13 @@ fn single_stalls_of_1_2_and_4_seconds() {
         // the stall is only learned from the first post-gap chunk: resume lead is the
         // 1.25 x depth bar, clamped to the cap
         let lead = r.events.iter().find_map(|(_, e)| match e {
-            Event::Resume { lead_us, .. } => Some(*lead_us),
+            Event::Resume { lead, .. } => Some(*lead),
             _ => None,
         });
         let lead = lead.unwrap();
         assert!(
-            lead >= Micros(bar - 50_000) && lead <= Micros(bar + 80_000),
-            "gap {gap}: resume lead {lead} vs bar {bar}"
+            lead >= dur(bar - 50_000) && lead <= dur(bar + 80_000),
+            "gap {gap}: resume lead {lead:?}us vs bar {bar}"
         );
         assert!(r.targets.iter().all(|&t| (MIN..=MAX).contains(&t)));
         let over = r.count(|e| matches!(e, Event::OverMax { .. }));
@@ -89,9 +97,9 @@ fn periodic_stalls_every_minute_keep_the_memory_alive() {
     let n = r.targets.len();
     let after_first = &r.targets[n / 19..];
     assert!(
-        *after_first.iter().min().unwrap() >= Micros(1_100_000),
-        "min {}",
-        after_first.iter().min().unwrap()
+        *after_first.iter().min().unwrap() >= dur(1_100_000),
+        "min {}us",
+        after_first.iter().min().unwrap().as_micros()
     );
     assert!(r.targets.iter().all(|&t| t <= MAX));
 }
@@ -112,19 +120,19 @@ fn periodic_stalls_every_five_minutes_decay_between_and_do_not_ratchet() {
     }
     // no ratchet: the target never exceeds what one 1.43 s stall implies, and every
     // post-stall resume asks for the same ~1.25 x depth
-    assert!(r.targets.iter().max().unwrap() <= &Micros(1_800_000));
-    let leads: Vec<Micros> = r
+    assert!(r.targets.iter().max().unwrap() <= &dur(1_800_000));
+    let leads: Vec<Duration> = r
         .events
         .iter()
         .filter_map(|(_, e)| match e {
-            Event::Resume { lead_us, .. } => Some(*lead_us),
+            Event::Resume { lead, .. } => Some(*lead),
             _ => None,
         })
         .collect();
     assert!(!leads.is_empty());
     let (lo, hi) = (leads.iter().min().unwrap(), leads.iter().max().unwrap());
     assert!(
-        hi.0 - lo.0 < 150_000 && *hi < Micros(2_400_000),
+        hi.as_micros() - lo.as_micros() < 150_000 && *hi < dur(2_400_000),
         "resume leads drift: {leads:?}"
     );
     // the first gap is survived at initial 1.8 s, the later ones stall: covered, one pause each
@@ -139,7 +147,7 @@ fn one_outlier_does_not_ratchet_the_target() {
     assert_eq!(
         r.targets.iter().max(),
         Some(&MAX),
-        "a 6 s stall is capped at max_us"
+        "a 6 s stall is capped at max"
     );
     let n = r.targets.len();
     // hold 60 s + decay 60 s later it is gone (target at 200 s of 300 s)
@@ -155,8 +163,9 @@ fn ramping_jitter_raises_the_target_through_k1_and_the_margin() {
     let r = run(&s, &opts(1_800_000));
     let last = *r.targets.last().unwrap();
     assert!(
-        (Micros(600_000)..=Micros(1_200_000)).contains(&last),
-        "final target {last}"
+        (dur(600_000)..=dur(1_200_000)).contains(&last),
+        "final target {}us",
+        last.as_micros()
     );
     assert!(r.pauses().is_empty());
     assert_eq!(r.count(|e| matches!(e, Event::OverMax { .. })), 0);
@@ -178,14 +187,14 @@ fn clock_drift_of_100_ppm_over_30_minutes_does_not_creep_the_target() {
         );
         let st = r.ctl.stats();
         assert!(
-            st.est.baseline_us <= Micros(40_000),
-            "ppm {ppm}: baseline {}",
-            st.est.baseline_us
+            st.est.baseline <= dur(40_000),
+            "ppm {ppm}: baseline {}us",
+            st.est.baseline.as_micros()
         );
         assert!(
-            st.est.stall_peak_us <= Micros(40_000),
-            "ppm {ppm}: stall peak {}",
-            st.est.stall_peak_us
+            st.est.stall_peak <= dur(40_000),
+            "ppm {ppm}: stall peak {}us",
+            st.est.stall_peak.as_micros()
         );
         assert!(r.pauses().is_empty(), "ppm {ppm}");
     }
@@ -225,7 +234,7 @@ fn pcr_discontinuities_rebaseline_keep_the_memory_and_recover() {
         let st = r.ctl.stats();
         assert_eq!(st.discontinuities, 1);
         assert!(
-            st.est.stall_peak_us >= Micros(1_300_000),
+            st.est.stall_peak >= dur(1_300_000),
             "stall memory kept across the re-baseline"
         );
         assert_eq!(st.state, State::Playing);
@@ -250,14 +259,14 @@ fn catch_up_burst_does_not_inflate_the_baseline() {
     let r = run(&s, &opts(1_800_000));
     let st = r.ctl.stats();
     assert!(
-        st.est.baseline_us <= Micros(50_000),
-        "burst-aware max: baseline {}",
-        st.est.baseline_us
+        st.est.baseline <= dur(50_000),
+        "burst-aware max: baseline {}us",
+        st.est.baseline.as_micros()
     );
     assert!(
-        st.est.stall_peak_us >= Micros(1_000_000),
-        "the stall itself is remembered: {}",
-        st.est.stall_peak_us
+        st.est.stall_peak >= dur(1_000_000),
+        "the stall itself is remembered: {}us",
+        st.est.stall_peak.as_micros()
     );
 }
 
@@ -298,15 +307,16 @@ fn model_a_free_running_clock_starves_forever_model_b_obeys_and_recovers() {
     // Model A: the zenith-tv failure. Clock free-runs from the first StartPlaying and
     // ignores Pause/Resume. Its own lead (media end - clock) never recovers after the gap.
     let mut c = BufferController::new(opts(500_000).cfg, None).unwrap();
-    let mut clock: Option<(Ticks27, u64)> = None; // (position at start, start time)
+    let mut clock: Option<(Clock27, u64)> = None; // (position at start, start time)
     let mut leads_after_gap = vec![];
     let mut pauses_seen = 0;
     let mut next_tick = 0;
     for ch in &chunks {
         while next_tick <= ch.arrival_us {
-            let pos = clock
-                .map(|(p0, t0)| Ticks27((p0.0 + (next_tick - t0) * TICKS_PER_US) % PCR_WRAP_27MHZ));
-            c.on_tick(Micros(next_tick), pos);
+            let pos = clock.map(|(p0, t0)| {
+                clock27((p0.ticks() + (next_tick - t0) * TICKS_PER_US) % PCR_WRAP_27MHZ)
+            });
+            c.on_tick(dur(next_tick), pos);
             while let Some(e) = c.poll_event() {
                 match e {
                     Event::StartPlaying { media_27mhz, .. } => {
@@ -319,12 +329,12 @@ fn model_a_free_running_clock_starves_forever_model_b_obeys_and_recovers() {
             next_tick += 5_000;
         }
         let pcr = ch.pcr.unwrap();
-        c.on_chunk(Micros(ch.arrival_us), ch.bytes, Some(Ticks27(pcr)));
-        c.on_media(Micros(ch.arrival_us), Ticks27(pcr));
+        c.on_chunk(dur(ch.arrival_us), ch.bytes, Some(clock27(pcr)));
+        c.on_media(dur(ch.arrival_us), clock27(pcr));
         if let Some((p0, t0)) = clock
             && ch.arrival_us > 12 * SEC
         {
-            let pos = p0.0 + (ch.arrival_us - t0) * TICKS_PER_US;
+            let pos = p0.ticks() + (ch.arrival_us - t0) * TICKS_PER_US;
             let lead = (i128::from(pcr) - i128::from(pos % PCR_WRAP_27MHZ)) / 27;
             leads_after_gap.push(lead);
         }
@@ -340,11 +350,11 @@ fn model_a_free_running_clock_starves_forever_model_b_obeys_and_recovers() {
     let p = r.pauses();
     assert_eq!(p.len(), 1);
     let resume = r.events.iter().find_map(|(_, e)| match e {
-        Event::Resume { lead_us, .. } => Some(*lead_us),
+        Event::Resume { lead, .. } => Some(*lead),
         _ => None,
     });
     assert!(
-        resume.unwrap() >= Micros(1_850_000),
+        resume.unwrap() >= dur(1_850_000),
         "ends the gap with lead >= the resume target"
     );
     assert_eq!(r.ctl.stats().stalls, 1, "zero further Pause events");
@@ -392,11 +402,11 @@ fn two_stalls_in_one_trace_use_the_memory_of_the_first() {
     let mut s = Synth::new(60 * SEC);
     s.gaps = vec![(8 * SEC, 1_400_000), (25 * SEC, 1_400_000)];
     let r = run(&s, &opts(500_000));
-    let leads: Vec<Micros> = r
+    let leads: Vec<Duration> = r
         .events
         .iter()
         .filter_map(|(_, e)| match e {
-            Event::Resume { lead_us, .. } => Some(*lead_us),
+            Event::Resume { lead, .. } => Some(*lead),
             _ => None,
         })
         .collect();
@@ -412,21 +422,18 @@ fn non_monotonic_clocks_and_u64_extremes_never_panic() {
     let mut c = BufferController::new(ControllerConfig::default(), None).unwrap();
     for k in 0..200u64 {
         c.on_chunk(
-            Micros(1_000_000 + k * 35_000),
+            dur(1_000_000 + k * 35_000),
             1316,
-            Some(Ticks27(27_000 + k * 945_000)),
+            Some(clock27(27_000 + k * 945_000)),
         );
-        c.on_media(
-            Micros(1_000_000 + k * 35_000),
-            Ticks27(27_000 + k * 945_000),
-        );
-        c.on_tick(Micros(1_000_000 + k * 35_000), None);
+        c.on_media(dur(1_000_000 + k * 35_000), clock27(27_000 + k * 945_000));
+        c.on_tick(dur(1_000_000 + k * 35_000), None);
     }
     let before = c.stats();
     // arrival clock regresses
-    c.on_chunk(Micros(5), 1316, Some(Ticks27(1)));
-    c.on_chunk(Micros(1), 1316, Some(Ticks27(2)));
-    c.on_tick(Micros(3), Some(Ticks27(4)));
+    c.on_chunk(dur(5), 1316, Some(clock27(1)));
+    c.on_chunk(dur(1), 1316, Some(clock27(2)));
+    c.on_tick(dur(3), Some(clock27(4)));
     assert!(
         c.stats().clock_regressions >= 3,
         "{}",
@@ -435,21 +442,21 @@ fn non_monotonic_clocks_and_u64_extremes_never_panic() {
     assert_eq!(c.stats().est.samples, before.est.samples);
     // extremes everywhere
     for v in [u64::MAX, u64::MAX - 1, 0, 1 << 63] {
-        c.on_chunk(Micros(v), u32::MAX, Some(Ticks27(v)));
-        c.on_media(Micros(v), Ticks27(v));
-        c.on_tick(Micros(v), Some(Ticks27(v)));
-        c.on_hint(Micros(v), Hint::Reconnected);
-        c.on_hint(Micros(v), Hint::SyncLoss);
+        c.on_chunk(dur(v), u32::MAX, Some(clock27(v)));
+        c.on_media(dur(v), clock27(v));
+        c.on_tick(dur(v), Some(clock27(v)));
+        c.on_hint(dur(v), Hint::Reconnected);
+        c.on_hint(dur(v), Hint::SyncLoss);
         while c.poll_event().is_some() {}
-        assert!((MIN..=MAX).contains(&c.target_us()));
+        assert!((MIN..=MAX).contains(&c.target()));
         let _ = c.stats();
     }
     let mut fresh = BufferController::new(ControllerConfig::default(), None).unwrap();
-    fresh.on_chunk(Micros(u64::MAX), 0, Some(Ticks27(u64::MAX)));
-    fresh.on_media(Micros(u64::MAX), Ticks27(u64::MAX));
-    fresh.on_tick(Micros(u64::MAX), Some(Ticks27(0)));
-    fresh.on_tick(Micros(0), Some(Ticks27(u64::MAX)));
-    assert!((MIN..=MAX).contains(&fresh.target_us()));
+    fresh.on_chunk(dur(u64::MAX), 0, Some(clock27(u64::MAX)));
+    fresh.on_media(dur(u64::MAX), clock27(u64::MAX));
+    fresh.on_tick(dur(u64::MAX), Some(clock27(0)));
+    fresh.on_tick(dur(0), Some(clock27(u64::MAX)));
+    assert!((MIN..=MAX).contains(&fresh.target()));
 }
 
 #[test]
@@ -465,19 +472,19 @@ fn pcr_less_mode_estimates_from_media_end_and_matches_pcr_mode() {
     for ch in &chunks {
         let pcr = ch.pcr.unwrap();
         let end = shift27(pcr, -(777 * 27_000));
-        a.on_chunk(Micros(ch.arrival_us), ch.bytes, Some(Ticks27(pcr)));
-        a.on_media(Micros(ch.arrival_us), Ticks27(end));
-        b.on_chunk(Micros(ch.arrival_us), ch.bytes, None);
-        b.on_media(Micros(ch.arrival_us), Ticks27(end));
-        a.on_tick(Micros(ch.arrival_us), None);
-        b.on_tick(Micros(ch.arrival_us), None);
+        a.on_chunk(dur(ch.arrival_us), ch.bytes, Some(clock27(pcr)));
+        a.on_media(dur(ch.arrival_us), clock27(end));
+        b.on_chunk(dur(ch.arrival_us), ch.bytes, None);
+        b.on_media(dur(ch.arrival_us), clock27(end));
+        a.on_tick(dur(ch.arrival_us), None);
+        b.on_tick(dur(ch.arrival_us), None);
     }
     let (ea, eb) = (a.stats().est, b.stats().est);
-    assert_eq!(ea.baseline_us, eb.baseline_us);
-    assert_eq!(ea.stall_peak_us, eb.stall_peak_us);
+    assert_eq!(ea.baseline, eb.baseline);
+    assert_eq!(ea.stall_peak, eb.stall_peak);
     assert_eq!(ea.samples, eb.samples);
-    assert_eq!(a.target_us(), b.target_us());
-    assert!(ea.stall_peak_us >= Micros(1_300_000));
+    assert_eq!(a.target(), b.target());
+    assert!(ea.stall_peak >= dur(1_300_000));
 }
 
 #[test]
@@ -490,14 +497,14 @@ fn with_a_pcr_present_media_end_never_feeds_the_estimator() {
     let mut rng = Rng(3);
     for ch in &chunks {
         let pcr = ch.pcr.unwrap();
-        a.on_chunk(Micros(ch.arrival_us), ch.bytes, Some(Ticks27(pcr)));
-        a.on_media(Micros(ch.arrival_us), Ticks27(shift27(pcr, -1)));
-        b.on_chunk(Micros(ch.arrival_us), ch.bytes, Some(Ticks27(pcr)));
+        a.on_chunk(dur(ch.arrival_us), ch.bytes, Some(clock27(pcr)));
+        a.on_media(dur(ch.arrival_us), clock27(shift27(pcr, -1)));
+        b.on_chunk(dur(ch.arrival_us), ch.bytes, Some(clock27(pcr)));
         // wildly wrong media ends: only the lead may change, never the estimate
-        b.on_media(Micros(ch.arrival_us), Ticks27(rng.below(PCR_WRAP_27MHZ)));
+        b.on_media(dur(ch.arrival_us), clock27(rng.below(PCR_WRAP_27MHZ)));
     }
     assert_eq!(a.stats().est, b.stats().est);
-    assert_eq!(a.target_us(), b.target_us());
+    assert_eq!(a.target(), b.target());
 }
 
 #[test]
@@ -510,12 +517,12 @@ fn first_pcr_after_pcr_less_samples_rebaselines_the_estimator_once() {
         // the PTS domain is offset by a huge constant so a mixed feed would read a giant PDV
         let end = shift27(pcr, -5_000_000_000);
         c.on_chunk(
-            Micros(ch.arrival_us),
+            dur(ch.arrival_us),
             ch.bytes,
-            if i < 100 { None } else { Some(Ticks27(pcr)) },
+            if i < 100 { None } else { Some(clock27(pcr)) },
         );
-        c.on_media(Micros(ch.arrival_us), Ticks27(end));
+        c.on_media(dur(ch.arrival_us), clock27(end));
     }
-    assert!(c.stats().est.stall_peak_us < Micros(100_000));
+    assert!(c.stats().est.stall_peak < dur(100_000));
     assert_eq!(c.stats().discontinuities, 0);
 }

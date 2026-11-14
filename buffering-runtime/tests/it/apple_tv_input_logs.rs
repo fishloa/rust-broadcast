@@ -14,30 +14,41 @@
 //! Loaded through `test_fixtures::require` (skips loudly without the private
 //! repo; fails under `REQUIRE_PRIVATE_FIXTURES=1`).
 
+const fn dur(us: u64) -> Duration {
+    Duration::from_micros(us)
+}
+
+/// A 27 MHz tick count as a validated clock position.
+fn clock27(ticks: u64) -> Clock27 {
+    Clock27::from_27mhz(ticks % PCR_WRAP_27MHZ).expect("a reduced count is on the clock")
+}
+use core::time::Duration;
+
+use broadcast_common::clock33::PCR_WRAP_27MHZ;
 use buffering_runtime::input_log::{Input, InputLog};
-use buffering_runtime::{ControllerConfig, Event, Micros, PolicyConfig, Reason, Ticks27};
+use buffering_runtime::{Clock27, ControllerConfig, Event, PolicyConfig, Reason};
 
 const VIDEO: u32 = 1;
 const AUDIO: u32 = 2;
 
 struct Replay {
-    events: Vec<(Micros, Event)>,
-    final_target: Micros,
+    events: Vec<(Duration, Event)>,
+    final_target: Duration,
     stalls: u32,
     /// Every `(now, target)` seen via `TargetChanged`.
-    targets: Vec<(Micros, Micros)>,
+    targets: Vec<(Duration, Duration)>,
     chunks: usize,
 }
 
 impl Replay {
-    fn pauses(&self) -> Vec<(Micros, &Event)> {
+    fn pauses(&self) -> Vec<(Duration, &Event)> {
         self.events
             .iter()
             .filter(|(_, e)| matches!(e, Event::Pause { .. }))
             .map(|(t, e)| (*t, e))
             .collect()
     }
-    fn starts(&self) -> Vec<Micros> {
+    fn starts(&self) -> Vec<Duration> {
         self.events
             .iter()
             .filter(|(_, e)| matches!(e, Event::StartPlaying { .. }))
@@ -46,7 +57,7 @@ impl Replay {
     }
     /// Target in force at `now` (the `min_us` floor before any change: the
     /// controller starts at the floor, `initial_us` only sets the start fill).
-    fn target_at(&self, now: Micros) -> Micros {
+    fn target_at(&self, now: Duration) -> Duration {
         self.targets
             .iter()
             .take_while(|(t, _)| *t <= now)
@@ -55,8 +66,8 @@ impl Replay {
     }
 }
 
-const INITIAL_US: Micros = Micros(500_000);
-const FLOOR_US: Micros = Micros(300_000);
+const INITIAL_US: Duration = dur(500_000);
+const FLOOR_US: Duration = dur(300_000);
 
 fn config() -> ControllerConfig {
     config_with(|c| c)
@@ -65,8 +76,8 @@ fn config() -> ControllerConfig {
 fn config_with(f: impl FnOnce(ControllerConfig) -> ControllerConfig) -> ControllerConfig {
     let d = ControllerConfig::default();
     let mut p = PolicyConfig::DEFAULT;
-    p.initial_us = INITIAL_US;
-    f(ControllerConfig::new(d.jitter, p, d.starve_threshold_us, d.nodata_after_us).unwrap())
+    p.initial = INITIAL_US;
+    f(ControllerConfig::new(d.jitter, p, d.starve_threshold, d.nodata_after).unwrap())
 }
 
 fn replay(name: &str, cfg: ControllerConfig) -> Option<Replay> {
@@ -77,15 +88,17 @@ fn replay(name: &str, cfg: ControllerConfig) -> Option<Replay> {
 /// resume and holds where it says to pause, replacing the logged playback
 /// positions (which follow the OLD controller's decisions).
 struct Renderer {
-    clock: Ticks27,
-    since: Micros,
+    clock: Clock27,
+    since: Duration,
     running: bool,
 }
 
 impl Renderer {
-    fn pos(&self, now: Micros) -> Ticks27 {
+    fn pos(&self, now: Duration) -> Clock27 {
         if self.running {
-            Ticks27(self.clock.0 + (now.0 - self.since.0) * 27)
+            clock27(
+                (self.clock.ticks() + (now - self.since).as_micros() as u64 * 27) % PCR_WRAP_27MHZ,
+            )
         } else {
             self.clock
         }
@@ -95,8 +108,8 @@ impl Renderer {
 /// `closed`: drive ticks from a [`Renderer`] instead of the logged positions.
 fn replay_with(name: &str, cfg: ControllerConfig, pre: &[u32], closed: bool) -> Option<Replay> {
     let mut rend = Renderer {
-        clock: Ticks27::ZERO,
-        since: Micros::ZERO,
+        clock: clock27(0),
+        since: Duration::ZERO,
         running: false,
     };
     let path = test_fixtures::require(
@@ -109,7 +122,7 @@ fn replay_with(name: &str, cfg: ControllerConfig, pre: &[u32], closed: bool) -> 
     let mut c = log.controller().unwrap();
     let mut r = Replay {
         events: Vec::new(),
-        final_target: Micros::ZERO,
+        final_target: Duration::ZERO,
         stalls: 0,
         targets: Vec::new(),
         chunks: 0,
@@ -138,7 +151,7 @@ fn replay_with(name: &str, cfg: ControllerConfig, pre: &[u32], closed: bool) -> 
         }
         while let Some(e) = c.poll_event() {
             match e {
-                Event::TargetChanged { new_us, .. } => r.targets.push((now, new_us)),
+                Event::TargetChanged { new, .. } => r.targets.push((now, new)),
                 Event::StartPlaying { media_27mhz, .. } | Event::Resume { media_27mhz, .. } => {
                     rend = Renderer {
                         clock: media_27mhz,
@@ -159,7 +172,7 @@ fn replay_with(name: &str, cfg: ControllerConfig, pre: &[u32], closed: bool) -> 
         }
     }
     let s = c.stats();
-    r.final_target = s.target_us;
+    r.final_target = s.target;
     r.stalls = s.stalls;
     Some(r)
 }
@@ -180,34 +193,35 @@ fn max_audio_gap_us(name: &str, from_us: u64) -> u64 {
         if let Input::TrackMedia { now_us, track, .. } = *input
             && track == AUDIO
         {
+            let at = now_us.as_micros() as u64;
             if let Some(l) = last
-                && now_us.0 >= from_us
+                && at >= from_us
             {
-                max = max.max(now_us.0 - l);
+                max = max.max(at - l);
             }
-            last = Some(now_us.0);
+            last = Some(at);
         }
     }
     max
 }
 
-fn pause_summary(r: &Replay) -> Vec<(Micros, Option<u32>, Reason, Micros, Micros)> {
+fn pause_summary(r: &Replay) -> Vec<(Duration, Option<u32>, Reason, Duration, Duration)> {
     r.pauses()
         .into_iter()
         .map(|(t, e)| match e {
             Event::Pause {
                 reason,
-                depth_us,
-                resume_target_us,
+                depth,
+                resume_target,
                 track,
                 ..
-            } => (t, *track, *reason, *depth_us, *resume_target_us),
+            } => (t, *track, *reason, *depth, *resume_target),
             _ => unreachable!(),
         })
         .collect()
 }
 
-const MARGIN_US: Micros = Micros(100_000);
+const MARGIN_US: Duration = dur(100_000);
 
 /// rai-3 (clean 60 s Apple TV run): MP2 audio arrives in ~0.3-0.4 s bursts.
 /// Golden = what the CURRENT controller emits for the recorded inputs.
@@ -217,42 +231,43 @@ fn rai3_clean_golden() {
         return;
     };
     assert_eq!(r.chunks, 11_108);
-    assert_eq!(r.starts(), [Micros(1_337_896)]);
+    assert_eq!(r.starts(), [dur(1_337_896)]);
     assert!(r.pauses().is_empty(), "clean run must not pause");
     assert_eq!(r.stalls, 0);
-    let targets: Vec<(Micros, Micros)> = r.targets.clone();
+    let targets: Vec<(Duration, Duration)> = r.targets.clone();
     assert_eq!(
         targets,
         [
-            (Micros(1_034_306), Micros(412_000)),
-            (Micros(2_000_467), Micros(560_000)),
-            (Micros(41_599_553), Micros(547_968)),
-            (Micros(41_754_551), Micros(532_470)),
-            (Micros(41_880_402), Micros(519_889)),
-            (Micros(42_004_074), Micros(507_524)),
-            (Micros(42_104_964), Micros(497_438)),
-            (Micros(42_215_220), Micros(486_415)),
-            (Micros(42_320_108), Micros(475_929)),
-            (Micros(42_442_949), Micros(463_647)),
-            (Micros(42_556_018), Micros(452_342)),
-            (Micros(42_685_313), Micros(439_414)),
-            (Micros(42_789_532), Micros(428_994)),
-            (Micros(42_896_204), Micros(418_329)),
+            (dur(1_034_306), dur(412_000)),
+            (dur(2_000_467), dur(560_000)),
+            (dur(41_599_553), dur(547_968)),
+            (dur(41_754_551), dur(532_470)),
+            (dur(41_880_402), dur(519_889)),
+            (dur(42_004_074), dur(507_524)),
+            (dur(42_104_964), dur(497_438)),
+            (dur(42_215_220), dur(486_415)),
+            (dur(42_320_108), dur(475_929)),
+            (dur(42_442_949), dur(463_647)),
+            (dur(42_556_018), dur(452_342)),
+            (dur(42_685_313), dur(439_414)),
+            (dur(42_789_532), dur(428_994)),
+            (dur(42_896_204), dur(418_329)),
         ]
     );
     // the steady ~0.3 s audio cadence keeps refreshing the granularity floor
     // (step 312 ms + 100 ms margin), so the target no longer decays to 360 ms
-    assert_eq!(r.final_target, Micros(412_000));
+    assert_eq!(r.final_target, dur(412_000));
     // The audio really is delivered in bursts of at least 0.3 s (from the log
     // itself), and once seen the target covers it plus the margin.
     let gap = max_audio_gap_us("rai-3", 0);
     assert!(gap >= 300_000, "log audio gap {gap}");
-    let t = r.target_at(Micros(5_000_000));
+    let t = r.target_at(dur(5_000_000));
     assert!(
-        t.0 >= 300_000 + MARGIN_US.0,
-        "target {t} below granularity+margin"
+        t >= dur(300_000) + MARGIN_US,
+        "target {}us below granularity+margin",
+        t.as_micros()
     );
-    assert_eq!(t, Micros(560_000));
+    assert_eq!(t, dur(560_000));
 }
 
 /// The golden above is not vacuous, and the two target drivers are told
@@ -268,7 +283,7 @@ fn rai3_target_lift_comes_from_pdv_and_the_granularity_floor() {
         config_with(|c| {
             let mut p = c.policy;
             p.k1_q8 = 1;
-            ControllerConfig::new(c.jitter, p, c.starve_threshold_us, c.nodata_after_us)
+            ControllerConfig::new(c.jitter, p, c.starve_threshold, c.nodata_after)
                 .unwrap()
                 .with_track_granularity(gran)
         })
@@ -279,25 +294,19 @@ fn rai3_target_lift_comes_from_pdv_and_the_granularity_floor() {
         return;
     }
     let floor_only = replay("rai-3", pdv_off(true)).unwrap();
-    assert_eq!(floor_only.target_at(Micros(5_000_000)), Micros(412_000));
+    assert_eq!(floor_only.target_at(dur(5_000_000)), dur(412_000));
     assert_eq!(
         floor_only.targets.first(),
-        Some(&(Micros(1_034_306), Micros(412_000)))
+        Some(&(dur(1_034_306), dur(412_000)))
     );
     let neither = replay("rai-3", pdv_off(false)).unwrap();
-    assert_eq!(neither.target_at(Micros(5_000_000)), FLOOR_US);
+    assert_eq!(neither.target_at(dur(5_000_000)), FLOOR_US);
     assert!(neither.targets.is_empty());
     // floor off, PDV on: the 560 ms PDV lift only, no early 412 ms step
     let on = replay("rai-3", config()).unwrap();
     let off = replay("rai-3", config_with(|c| c.with_track_granularity(false))).unwrap();
-    assert_eq!(
-        off.targets.first(),
-        Some(&(Micros(2_000_467), Micros(560_000)))
-    );
-    assert_eq!(
-        on.target_at(Micros(5_000_000)),
-        off.target_at(Micros(5_000_000))
-    );
+    assert_eq!(off.targets.first(), Some(&(dur(2_000_467), dur(560_000))));
+    assert_eq!(on.target_at(dur(5_000_000)), off.target_at(dur(5_000_000)));
     assert_ne!(on.targets, off.targets);
 }
 
@@ -309,11 +318,11 @@ fn france5_clean_golden() {
         return;
     };
     assert_eq!(r.chunks, 19_909);
-    assert_eq!(r.starts(), [Micros(1_257_133)]);
+    assert_eq!(r.starts(), [dur(1_257_133)]);
     assert!(r.pauses().is_empty());
     assert_eq!(r.stalls, 0);
     assert!(r.targets.is_empty(), "targets {:?}", r.targets);
-    assert_eq!(r.final_target, Micros(300_000));
+    assert_eq!(r.final_target, dur(300_000));
     let gap = max_audio_gap_us("france-5", 5_000_000);
     assert!(gap < 300_000, "log audio gap {gap}");
 }
@@ -339,30 +348,30 @@ fn rai3_stall_golden_current_behaviour() {
     let Some(r) = replay("rai-3-stall", config()) else {
         return;
     };
-    assert_eq!(r.starts(), [Micros(528_980)]);
+    assert_eq!(r.starts(), [dur(528_980)]);
     assert_eq!(
         pause_summary(&r),
         [
             (
-                Micros(625_716),
+                dur(625_716),
                 Some(AUDIO),
                 Reason::DataArriving,
-                Micros::ZERO,
-                Micros(375_000)
+                Duration::ZERO,
+                dur(375_000)
             ),
             (
-                Micros(1_417_065),
+                dur(1_417_065),
                 Some(AUDIO),
                 Reason::DataArriving,
-                Micros(15_860),
-                Micros(515_000)
+                dur(15_860),
+                dur(515_000)
             ),
             (
-                Micros(2_072_729),
+                dur(2_072_729),
                 Some(AUDIO),
                 Reason::DataArriving,
-                Micros(9_582),
-                Micros(617_597)
+                dur(9_582),
+                dur(617_597)
             ),
         ]
     );
@@ -370,15 +379,15 @@ fn rai3_stall_golden_current_behaviour() {
     assert_eq!(
         r.targets,
         [
-            (Micros(625_716), Micros(359_765)),
-            (Micros(848_712), Micros(412_000)),
-            (Micros(1_417_065), Micros(494_078)),
-            (Micros(2_072_729), Micros(592_507))
+            (dur(625_716), dur(359_765)),
+            (dur(848_712), dur(412_000)),
+            (dur(1_417_065), dur(494_078)),
+            (dur(2_072_729), dur(592_507))
         ]
     );
-    assert_eq!(r.final_target, Micros(592_507));
+    assert_eq!(r.final_target, dur(592_507));
     // after the last pause the run is clean: no pause past 3 s
-    assert!(r.pauses().iter().all(|(t, _)| *t < Micros(3_000_000)));
+    assert!(r.pauses().iter().all(|(t, _)| *t < dur(3_000_000)));
 }
 
 /// rai-3 recorded with PER-CHUNK media reporting (zenith 9e2d027: one audio end
@@ -397,26 +406,26 @@ fn rai3_perchunk_golden() {
         return;
     };
     assert_eq!(r.chunks, 10_967);
-    assert_eq!(r.starts(), [Micros(1_361_559)]);
+    assert_eq!(r.starts(), [dur(1_361_559)]);
     assert!(r.pauses().is_empty());
     assert_eq!(r.stalls, 0);
     assert_eq!(
         r.targets,
         [
-            (Micros(1_075_848), Micros(412_000)),
-            (Micros(45_527_825), Micros(600_000)),
-            (Micros(46_030_568), Micros(680_000))
+            (dur(1_075_848), dur(412_000)),
+            (dur(45_527_825), dur(600_000)),
+            (dur(46_030_568), dur(680_000))
         ]
     );
-    assert_eq!(r.final_target, Micros(680_000));
+    assert_eq!(r.final_target, dur(680_000));
     // the floor is in force before the start
-    assert!(r.target_at(Micros(1_361_559)).0 >= 300_000 + MARGIN_US.0);
+    assert!(r.target_at(dur(1_361_559)).as_micros() >= 300_000 + MARGIN_US.as_micros());
 
     let pdv_off = |gran: bool| {
         config_with(|c| {
             let mut p = c.policy;
             p.k1_q8 = 1;
-            ControllerConfig::new(c.jitter, p, c.starve_threshold_us, c.nodata_after_us)
+            ControllerConfig::new(c.jitter, p, c.starve_threshold, c.nodata_after)
                 .unwrap()
                 .with_track_granularity(gran)
         })
@@ -424,13 +433,13 @@ fn rai3_perchunk_golden() {
     let floor_only = replay("rai-3-perchunk", pdv_off(true)).unwrap();
     assert_eq!(
         floor_only.targets.first(),
-        Some(&(Micros(1_075_848), Micros(412_000)))
+        Some(&(dur(1_075_848), dur(412_000)))
     );
-    assert_eq!(floor_only.target_at(Micros(5_000_000)), Micros(412_000));
+    assert_eq!(floor_only.target_at(dur(5_000_000)), dur(412_000));
     let neither = replay("rai-3-perchunk", pdv_off(false)).unwrap();
     // (a late PDV event at ~45 s may still move it; nothing before 40 s)
-    assert!(neither.targets.iter().all(|(t, _)| *t > Micros(40_000_000)));
-    assert_eq!(neither.target_at(Micros(5_000_000)), FLOOR_US);
+    assert!(neither.targets.iter().all(|(t, _)| *t > dur(40_000_000)));
+    assert_eq!(neither.target_at(dur(5_000_000)), FLOOR_US);
 }
 
 /// The two stall-log pauses, explained (analysis of the log, 2026-10-17).
@@ -453,35 +462,35 @@ fn rai3_stall_pauses_explained_late_registration_and_open_loop() {
     let Some(r) = replay_with("rai-3-stall", config(), &[VIDEO, AUDIO], false) else {
         return;
     };
-    assert_eq!(r.starts(), [Micros(1_147_776)]);
+    assert_eq!(r.starts(), [dur(1_147_776)]);
     let p = pause_summary(&r);
     // two open-loop pauses remain (1.25 x resume bar: the lower resume leads run
     // into the device's logged positions again at 2.073 s; was one at 1.5 x)
     assert_eq!(p.len(), 2, "{p:?}");
-    assert_eq!(p[0].0, Micros(1_417_065), "first open-loop pause");
+    assert_eq!(p[0].0, dur(1_417_065), "first open-loop pause");
     assert_eq!(
         p[1].0,
-        Micros(2_072_729),
+        dur(2_072_729),
         "second open-loop pause (1.25 x bar)"
     );
     // closed loop, tracks registered up front: no stall
     let c = replay_with("rai-3-stall", config(), &[VIDEO, AUDIO], true).unwrap();
-    assert_eq!(c.starts(), [Micros(1_147_776)]);
+    assert_eq!(c.starts(), [dur(1_147_776)]);
     assert!(c.pauses().is_empty(), "{:?}", pause_summary(&c));
     assert_eq!(c.stalls, 0);
     // closed loop with the log's own late registration: the unannounced audio
     // costs exactly the first pause (it joins behind the position the
     // video-only start already played); the second pause is gone
     let late = replay_with("rai-3-stall", config(), &[], true).unwrap();
-    assert_eq!(late.starts(), [Micros(528_980)]);
+    assert_eq!(late.starts(), [dur(528_980)]);
     assert_eq!(
         pause_summary(&late),
         [(
-            Micros(625_716),
+            dur(625_716),
             Some(AUDIO),
             Reason::DataArriving,
-            Micros::ZERO,
-            Micros(375_000)
+            Duration::ZERO,
+            dur(375_000)
         )]
     );
     assert_eq!(late.stalls, 1);
@@ -499,52 +508,48 @@ fn rai3_stall_pauses_explained_late_registration_and_open_loop() {
 #[test]
 fn start_gate_is_free_at_500ms_and_prevents_the_300ms_stall() {
     // (log, start at 300 ms fill, start at 500 ms fill, start at 1.8 s fill)
-    const CASES: [(&str, Micros, Micros, Micros); 4] = [
-        (
-            "rai-3",
-            Micros(1_231_966),
-            Micros(1_337_896),
-            Micros(2_559_618),
-        ),
+    const CASES: [(&str, Duration, Duration, Duration); 4] = [
+        ("rai-3", dur(1_231_966), dur(1_337_896), dur(2_559_618)),
         (
             "rai-3-perchunk",
-            Micros(1_217_953),
-            Micros(1_361_559),
-            Micros(2_553_123),
+            dur(1_217_953),
+            dur(1_361_559),
+            dur(2_553_123),
         ),
         (
             "rai-3-stall",
-            Micros(1_147_776),
-            Micros(1_147_776),
-            Micros(2_347_173),
+            dur(1_147_776),
+            dur(1_147_776),
+            dur(2_347_173),
         ),
-        (
-            "france-5",
-            Micros(1_174_068),
-            Micros(1_257_133),
-            Micros(2_622_974),
-        ),
+        ("france-5", dur(1_174_068), dur(1_257_133), dur(2_622_974)),
     ];
     for (name, s300, s500, s1800) in CASES {
         for (initial_us, want) in [
-            (Micros(300_000), s300),
-            (Micros(500_000), s500),
-            (Micros(1_800_000), s1800),
+            (dur(300_000), s300),
+            (dur(500_000), s500),
+            (dur(1_800_000), s1800),
         ] {
             let cfg = config_with(|mut c| {
-                c.policy.initial_us = initial_us;
+                c.policy.initial = initial_us;
                 c
             });
             let Some(r) = replay_with(name, cfg, &[VIDEO, AUDIO], true) else {
                 return;
             };
-            assert_eq!(r.starts(), [want], "{name} initial {initial_us}");
+            assert_eq!(
+                r.starts(),
+                [want],
+                "{name} initial {}us",
+                initial_us.as_micros()
+            );
             assert!(
                 r.pauses().is_empty(),
-                "{name} initial {initial_us}: {:?}",
+                "{name} initial {}us: {:?}",
+                initial_us.as_micros(),
                 pause_summary(&r)
             );
-            assert_eq!(r.stalls, 0, "{name} initial {initial_us}");
+            assert_eq!(r.stalls, 0, "{name} initial {}us", initial_us.as_micros());
         }
     }
 }

@@ -1,6 +1,10 @@
 #![no_main]
 
 use broadcast_common::timescale::Timescale;
+
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
 use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::num::NonZeroUsize;
