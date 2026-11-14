@@ -44,7 +44,7 @@ impl Stage for FuzzSession {
                     program,
                     tracks: vec![TrackSpec::new(
                         TrackId::new(u32::from(rec[3])),
-                        Timescale::from_nonzero(90_000),
+                        timescale(90_000),
                         CodecConfig::Data {
                             stream_type: 0x06,
                             descriptors: Vec::new(),

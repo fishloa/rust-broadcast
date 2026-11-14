@@ -21,6 +21,10 @@ use transmux::pipeline::CodecConfig;
 use transmux::progressive::ProgressiveMux;
 use transmux::ts_demux::TsDemux;
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 // ---------------------------------------------------------------------------
 // Minimal ISOBMFF walker (test-local; no dependency on crate box parsers so
 // the tests genuinely bite the serialized bytes).
@@ -507,7 +511,7 @@ fn faststart_false_same_samples_different_order() {
 /// `mp4/cenc-boxes/v1-mvhd.mp4`) that a few minutes of media
 /// overflows `u32::MAX` ticks — the real-world trigger for the version-1
 /// `mvhd`/`tkhd`/`mdhd` layouts.
-const HUGE_TIMESCALE: Timescale = Timescale::from_nonzero(2_000_000_000);
+const HUGE_TIMESCALE: Timescale = Timescale::const_from_nonzero(2_000_000_000);
 
 fn huge_timescale_media() -> Media {
     let mut media = demux_media();
@@ -891,7 +895,7 @@ fn duration_version_boundary_is_exact() {
         flags: 0,
         creation_time: 0,
         modification_time: 0,
-        timescale: Timescale::from_nonzero(1000),
+        timescale: timescale(1000),
         duration: u64::from(u32::MAX),
         rate: 0x0001_0000,
         volume: 0x0100,

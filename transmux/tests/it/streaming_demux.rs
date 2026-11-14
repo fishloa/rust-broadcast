@@ -23,6 +23,10 @@ use transmux::media::{Media, PcrSample, Track};
 use transmux::pipeline::{CodecConfig, TrackSpec};
 use transmux::ts_demux::{DemuxEvent, StreamingTsDemux};
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 // ── Fixture loading ─────────────────────────────────────────────────────────
 
 fn fixtures_ts_dir() -> PathBuf {
@@ -109,7 +113,7 @@ fn assemble(mut demux: StreamingTsDemux) -> Media {
             _ => {}
         }
     }
-    Media::new(tracks, Timescale::from_nonzero(90_000)).with_pcr(pcr)
+    Media::new(tracks, timescale(90_000)).with_pcr(pcr)
 }
 
 fn feed_in_chunks(data: &[u8], chunk_size: usize) -> Media {

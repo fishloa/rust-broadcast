@@ -47,7 +47,7 @@ use transmux::{
 /// 90 kHz — the MPEG-2 TS system clock (ISO/IEC 13818-1 §2.4.3.7) and the
 /// timescale `TsDemux` gives every track, so segment maths here matches the
 /// shipped demux path.
-const TS_TIMESCALE: Timescale = Timescale::from_nonzero(90_000);
+const TS_TIMESCALE: Timescale = Timescale::const_from_nonzero(90_000);
 /// 30 fps at 90 kHz.
 const FRAME_TICKS: i64 = 3_000;
 /// One second of frames at `FRAME_TICKS`.

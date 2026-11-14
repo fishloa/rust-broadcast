@@ -9,6 +9,10 @@ use broadcast_dash::utc_timing::UtcScheme;
 
 use super::corpus;
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 fn refused_event_payload(name: &str, mpd: &Mpd) -> Option<String> {
     match mpd.to_xml() {
         Ok(xml) => Some(xml),
@@ -115,7 +119,7 @@ fn a_model_with_every_field_set_round_trips() {
     pbu.url = "http://p/".to_string();
     period.base_urls = vec![pbu];
     let mut base_info = BaseInfo::default();
-    base_info.timescale = Some(Timescale::from_nonzero(1000));
+    base_info.timescale = Some(timescale(1000));
     base_info.presentation_time_offset = Some(10);
     base_info.ept_delta = Some(1);
     base_info.pd_delta = Some(2);
@@ -301,7 +305,7 @@ fn every_field_event_stream(desc: &Descriptor) -> EventStream {
     es.xlink = Some(xlink);
     es.scheme_id_uri = "urn:scte:scte35:2013:xml".to_string();
     es.value = Some("v".to_string());
-    es.timescale = Some(Timescale::from_nonzero(90_000));
+    es.timescale = Some(timescale(90_000));
     es.presentation_time_offset = Some(5);
     let mut query = UrlQueryInfo::default();
     query.use_mpd_url_query = true;
@@ -457,7 +461,7 @@ fn text_events_parse_with_their_body() {
     let es = &mpd.periods[0].event_streams[0];
     assert_eq!(
         (es.timescale, es.presentation_time_offset),
-        (Some(Timescale::from_nonzero(1000)), Some(4))
+        (Some(timescale(1000)), Some(4))
     );
     let ev = &es.events[0];
     assert_eq!(
@@ -725,7 +729,7 @@ fn an_absent_timescale_stays_absent_in_the_model_and_resolves_to_one() {
     let broadcast_dash::inherit::SegmentInfo::Template(t) = info else {
         panic!("expected a template");
     };
-    assert_eq!(t.multi.timescale, Timescale::from_nonzero(1));
+    assert_eq!(t.multi.timescale, timescale(1));
     let rewritten = String::from_utf8(mpd.to_xml().unwrap().into_bytes()).unwrap();
     assert!(!rewritten.contains("timescale="), "{rewritten}");
 }

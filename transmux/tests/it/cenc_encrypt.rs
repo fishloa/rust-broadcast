@@ -44,6 +44,10 @@ use transmux::{
 };
 use transmux::{Media, TsDemux};
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 const KID_A: [u8; 16] = [
     0xa7, 0xe6, 0x1c, 0x37, 0x3e, 0x21, 0x90, 0x33, 0xc2, 0x10, 0x91, 0xfa, 0x60, 0x7b, 0xf3, 0xb8,
 ];
@@ -544,7 +548,7 @@ fn avc_spec(track_id: u32) -> transmux::TrackSpec {
     };
     transmux::TrackSpec::new(
         TrackId::new(track_id),
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
         CodecConfig::Avc {
             config: transmux::AVCConfigurationBox::new(record),
             width: 16,
@@ -588,10 +592,7 @@ fn avc_media(valid_count: usize, with_bad_sample: bool) -> Media {
             false,
         ));
     }
-    Media::new(
-        vec![Track::new(avc_spec(1), samples)],
-        Timescale::from_nonzero(90_000),
-    )
+    Media::new(vec![Track::new(avc_spec(1), samples)], timescale(90_000))
 }
 
 /// Every sample's bytes of every track, in (track, sample) order.

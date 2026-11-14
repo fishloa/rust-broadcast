@@ -985,10 +985,19 @@ mod tests {
 
     #[test]
     fn pts_to_27mhz_clamps_instead_of_truncating() {
-        assert_eq!(pts_to_27mhz(i64::MAX, Timescale::from_nonzero(1)), u64::MAX);
-        assert_eq!(pts_to_27mhz(i64::MIN, Timescale::from_nonzero(1)), 0);
         assert_eq!(
-            pts_to_27mhz(90_000, Timescale::from_nonzero(90_000)),
+            pts_to_27mhz(i64::MAX, Timescale::try_new(1).expect("non-zero timescale")),
+            u64::MAX
+        );
+        assert_eq!(
+            pts_to_27mhz(i64::MIN, Timescale::try_new(1).expect("non-zero timescale")),
+            0
+        );
+        assert_eq!(
+            pts_to_27mhz(
+                90_000,
+                Timescale::try_new(90_000).expect("non-zero timescale")
+            ),
             27_000_000
         );
     }

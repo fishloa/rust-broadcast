@@ -35,6 +35,10 @@ use transmux::pipeline::{
 // ---- Helpers -----------------------------------------------------------------
 
 /// Find a top-level box by type and return its full bytes (header + body).
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 fn find_top_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> &'a [u8] {
     let mut offset = 0usize;
     while offset + 8 <= data.len() {
@@ -307,7 +311,7 @@ fn ts_to_cmaf_end_to_end() {
     // ---- Phase 6: Build CMAF segments ---------------------------------------
     let video_track = TrackSpec::new(
         TrackId::new(1),
-        Timescale::from_nonzero(90000),
+        timescale(90000),
         CodecConfig::Avc {
             config: config.clone(),
             width: 0,
@@ -326,8 +330,8 @@ fn ts_to_cmaf_end_to_end() {
     );
     let tracks = [video_track, audio_track];
 
-    let init_data = build_init_segment(&tracks, Timescale::from_nonzero(1000))
-        .expect("build_init_segment must succeed");
+    let init_data =
+        build_init_segment(&tracks, timescale(1000)).expect("build_init_segment must succeed");
 
     let fragment_tracks = [
         FragmentTrackData::new(TrackId::new(1), 0, &video_samples),

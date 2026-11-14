@@ -1028,6 +1028,10 @@ pub const MANIFEST_FILE_NAME: &str = "Manifest";
 
 #[cfg(test)]
 mod tests {
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
+
     use broadcast_common::timescale::Timescale;
     use std::num::NonZeroUsize;
     use std::time::Duration;
@@ -1055,7 +1059,7 @@ mod tests {
     /// The SPS's coded height.
     const SPROP_HEIGHT: u32 = 480;
     /// Video timescale: the H.264 clock.
-    const VIDEO_TIMESCALE: Timescale = Timescale::from_nonzero(90_000);
+    const VIDEO_TIMESCALE: Timescale = Timescale::const_from_nonzero(90_000);
     /// A 30 fps frame duration in `VIDEO_TIMESCALE` ticks.
     const FRAME_DUR: u32 = VIDEO_TIMESCALE.get() / 30;
     /// Frames per segment: two seconds of video.
@@ -1065,7 +1069,7 @@ mod tests {
     /// Segments published per test route.
     const SEGMENTS: u32 = 2;
     /// The AAC media timescale, in ticks per second.
-    const AUDIO_TIMESCALE: Timescale = Timescale::from_nonzero(48_000);
+    const AUDIO_TIMESCALE: Timescale = Timescale::const_from_nonzero(48_000);
     /// AAC-LC frame duration, in `AUDIO_TIMESCALE` ticks (1024 samples).
     const AAC_FRAME_DUR: u32 = 1024;
     /// Sample rate the AAC config reports.
@@ -1154,7 +1158,7 @@ mod tests {
     fn subtitle_spec(track_id: u32) -> TrackSpec {
         TrackSpec::new(
             TrackId::new(track_id),
-            Timescale::from_nonzero(1000),
+            timescale(1000),
             CodecConfig::Subtitle {
                 format: transmux::ir::SubtitleFormat::Ttml,
                 sample_entry: Some(transmux::pipeline::SubtitleSampleEntry::Ttml(

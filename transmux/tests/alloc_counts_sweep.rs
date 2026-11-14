@@ -22,6 +22,7 @@ fn bytes_allocated<R>(f: impl FnOnce() -> R) -> (R, usize) {
 }
 
 mod ps_demux_copies {
+
     use super::bytes_allocated;
     use broadcast_common::Unpackage;
     use transmux::PsDemux;
@@ -80,7 +81,6 @@ mod ts_demux_copies {
 
 mod rtp_stream_copies {
     use super::bytes_allocated;
-    use broadcast_common::timescale::Timescale;
     use broadcast_common::{Package, Unpackage};
     use transmux::TrackId;
     use transmux::pipeline::CodecConfig;
@@ -124,7 +124,7 @@ mod rtp_stream_copies {
             TrackId::new(1),
             RtpMediaKind::H264,
             video.spec.config.clone(),
-            Timescale::from_nonzero(90_000),
+            video.spec.timescale,
         )]);
         let (samples, allocated) = bytes_allocated(|| {
             let mut n = 0;
@@ -220,6 +220,10 @@ mod segmenter_cuts {
         Segmenter, TrackSpec,
     };
 
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
+
     fn spec() -> TrackSpec {
         let record = AVCDecoderConfigurationRecord {
             configuration_version: 1,
@@ -238,7 +242,7 @@ mod segmenter_cuts {
         };
         TrackSpec::new(
             TrackId::new(1),
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
             CodecConfig::Avc {
                 config: AVCConfigurationBox::new(record),
                 width: 16,
@@ -250,7 +254,7 @@ mod segmenter_cuts {
     /// Push `cuts` one-sample GOPs (each keyframe closes the previous segment) and
     /// return `(segments_ready, allocs)` over the push loop only.
     fn run(cuts: usize) -> (usize, usize) {
-        let mut seg = Segmenter::new(vec![spec()], Timescale::from_nonzero(1000), 0.5).unwrap();
+        let mut seg = Segmenter::new(vec![spec()], timescale(1000), 0.5).unwrap();
         let samples: Vec<Sample> = (0..cuts)
             .map(|i| {
                 let dts = (i as i64) * 90_000;

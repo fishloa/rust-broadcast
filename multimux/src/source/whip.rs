@@ -2005,6 +2005,10 @@ pub(crate) async fn run_whip_with_clock(
 
 #[cfg(test)]
 mod tests {
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
+
     use super::*;
     use crate::webrtc_session::Resource;
     use tokio::net::TcpStream;
@@ -2352,7 +2356,7 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
     fn parses_video_only_offer() {
         let parsed = parse_whip_offer(OFFER).expect("parse");
         assert_eq!(parsed.payload_type, 96);
-        assert_eq!(parsed.clock_rate, Timescale::from_nonzero(90_000));
+        assert_eq!(parsed.clock_rate, timescale(90_000));
         assert_eq!(parsed.remote_ufrag, "abcd");
         assert_eq!(parsed.remote_pwd, "abcdefghijklmnopqrstuvwx");
         // `parse_remote_fingerprint` returns the typed (`sdp-types`) normalised
@@ -2515,7 +2519,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             tracks: vec![WhipTrack {
                 track_id: TrackId::new(1),
                 payload_type: 96,
-                clock_rate: Timescale::from_nonzero(90_000),
+                clock_rate: timescale(90_000),
             }],
             control,
             resource,
@@ -2594,7 +2598,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             tracks: vec![WhipTrack {
                 track_id: TrackId::new(1),
                 payload_type: 96,
-                clock_rate: Timescale::from_nonzero(90_000),
+                clock_rate: timescale(90_000),
             }],
             control,
             resource,

@@ -526,6 +526,10 @@ pub trait SegmentEgress: Send {
 
 #[cfg(test)]
 mod tests {
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
+
     use super::*;
     use crate::trunk::{ArchiveOverrun, SegmentEntry, Trunk, TrunkConfig};
     use broadcast_common::timescale::Timescale;
@@ -553,7 +557,7 @@ mod tests {
     fn video_spec(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
             CodecConfig::Vp8 {
                 width: 320,
                 height: 240,

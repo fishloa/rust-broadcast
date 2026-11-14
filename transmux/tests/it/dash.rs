@@ -28,6 +28,10 @@ use transmux::ts_demux::TsDemux;
 
 use crate::xml::{Element, parse_xml};
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 fn fixtures_dir() -> PathBuf {
     test_fixtures::root()
 }
@@ -353,7 +357,7 @@ fn bandwidth_present_and_positive() {
 
 #[test]
 fn empty_media_rejected() {
-    let media = transmux::media::Media::new(vec![], Timescale::from_nonzero(90_000));
+    let media = transmux::media::Media::new(vec![], timescale(90_000));
     let mut pkg = DashPackager::default();
     assert!(
         matches!(
@@ -399,7 +403,7 @@ fn adaptation_sets_split_by_language_and_codec() {
     fra.spec.track_id = TrackId::new(3);
     fra.spec.es_info_descriptors = lang_es_info(b"fra");
 
-    let media = transmux::media::Media::new(vec![video, eng, fra], Timescale::from_nonzero(90_000));
+    let media = transmux::media::Media::new(vec![video, eng, fra], timescale(90_000));
     let mut pkg = DashPackager::default();
     let xml = pkg.package(&media).expect("MPD");
 
@@ -466,7 +470,7 @@ fn bibliographic_and_terminology_codes_share_one_adaptation_set() {
     a2.spec.track_id = TrackId::new(3);
     a2.spec.es_info_descriptors = lang_es_info(b"fra");
 
-    let media = transmux::media::Media::new(vec![video, a1, a2], Timescale::from_nonzero(90_000));
+    let media = transmux::media::Media::new(vec![video, a1, a2], timescale(90_000));
     let mut pkg = DashPackager::default();
     let xml = pkg.package(&media).expect("MPD");
 
@@ -505,7 +509,7 @@ fn adaptation_sets_merge_same_language_and_codec() {
     a2.spec.track_id = TrackId::new(3);
     a2.spec.es_info_descriptors = lang_es_info(b"eng");
 
-    let media = transmux::media::Media::new(vec![video, a1, a2], Timescale::from_nonzero(90_000));
+    let media = transmux::media::Media::new(vec![video, a1, a2], timescale(90_000));
     let mut pkg = DashPackager::default();
     let xml = pkg.package(&media).expect("MPD");
 
@@ -559,7 +563,7 @@ fn adaptation_sets_have_unique_ids_and_split_by_codec_family() {
     ac3.spec.track_id = TrackId::new(3);
     ac3.spec.es_info_descriptors = lang_es_info(b"eng");
 
-    let media = transmux::media::Media::new(vec![video, aac, ac3], Timescale::from_nonzero(90_000));
+    let media = transmux::media::Media::new(vec![video, aac, ac3], timescale(90_000));
     let mut pkg = DashPackager::default();
     let xml = pkg.package(&media).expect("MPD");
 

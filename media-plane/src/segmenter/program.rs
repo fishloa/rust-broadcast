@@ -2082,7 +2082,7 @@ mod segmenter_tests {
     pub(super) fn data_track_spec(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
-            Timescale::from_nonzero(90_000),
+            Timescale::try_new(90_000).expect("non-zero timescale"),
             CodecConfig::Data {
                 stream_type: 0x86,
                 descriptors: Vec::new(),
@@ -2247,7 +2247,10 @@ mod segmenter_tests {
         let err = Timescale::try_new(0).expect_err("a zero timescale is an error");
         assert_eq!(err.field, "timescale");
         assert_eq!(err.reason, "must be non-zero");
-        assert_eq!(rescale_to_90k(7, Timescale::from_nonzero(1)), 7 * 90_000);
+        assert_eq!(
+            rescale_to_90k(7, Timescale::try_new(1).expect("non-zero timescale")),
+            7 * 90_000
+        );
     }
 
     /// Issue #1083 W9: the production segmenter must call
@@ -2588,7 +2591,7 @@ mod segmenter_tests {
             );
         }
         let mut changed = track_spec(TrackId::new(1));
-        changed.timescale = Timescale::from_nonzero(45_000);
+        changed.timescale = Timescale::const_from_nonzero(45_000);
         writer.set_tracks(vec![changed.clone()]);
         assert_eq!(trunk.track_generation(), 2);
         let mut events = Vec::new();
@@ -2782,7 +2785,7 @@ mod segmenter_tests {
 
         // Changed spec: bump the timescale (a discontinuity trigger).
         let mut changed = track_spec(TrackId::new(1));
-        changed.timescale = Timescale::from_nonzero(45_000);
+        changed.timescale = Timescale::const_from_nonzero(45_000);
         writer.set_tracks(vec![changed.clone()]);
         segmenter.published_tracks = trunk.tracks();
         let mut events = Vec::new();
@@ -3425,7 +3428,7 @@ mod segmenter_gate_tests {
         let writer = trunk.writer().expect("writer");
         writer.set_tracks(vec![TrackSpec::new(
             TrackId::new(2),
-            Timescale::from_nonzero(48000),
+            Timescale::try_new(48000).expect("non-zero timescale"),
             CodecConfig::Vorbis {
                 codec_private: Vec::new(),
                 channels: 2,

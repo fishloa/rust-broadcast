@@ -1761,6 +1761,10 @@ pub async fn run_whep_on_probed_with_limits(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
     use crate::webrtc_session::Resource;
     use broadcast_common::timescale::Timescale;
     use tokio::io::AsyncWriteExt as _;
@@ -1861,27 +1865,18 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
 
     #[test]
     fn rescale_to_90k_is_identity_at_90k() {
-        assert_eq!(
-            rescale_to_90k(12345, Timescale::from_nonzero(VIDEO_CLOCK_RATE)),
-            12345
-        );
+        assert_eq!(rescale_to_90k(12345, timescale(VIDEO_CLOCK_RATE)), 12345);
     }
 
     #[test]
     fn rescale_to_90k_scales_a_different_timescale() {
         // 1 second at a 1000 Hz timescale -> 1 second at 90 kHz.
-        assert_eq!(
-            rescale_to_90k(1000, Timescale::from_nonzero(1000)),
-            VIDEO_CLOCK_RATE
-        );
+        assert_eq!(rescale_to_90k(1000, timescale(1000)), VIDEO_CLOCK_RATE);
     }
     #[test]
     fn rescale_to_90k_wraps_modulo_2_pow_32() {
         let ticks = u64::from(u32::MAX) + 1;
-        assert_eq!(
-            rescale_to_90k(ticks, Timescale::from_nonzero(VIDEO_CLOCK_RATE)),
-            0
-        );
+        assert_eq!(rescale_to_90k(ticks, timescale(VIDEO_CLOCK_RATE)), 0);
     }
 
     #[test]
@@ -2167,7 +2162,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
     fn test_track_spec() -> TrackSpec {
         TrackSpec::new(
             TrackId::new(1),
-            Timescale::from_nonzero(VIDEO_CLOCK_RATE),
+            timescale(VIDEO_CLOCK_RATE),
             CodecConfig::Avc {
                 config: transmux::AVCConfigurationBox::new(
                     transmux::AVCDecoderConfigurationRecord {

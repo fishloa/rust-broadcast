@@ -6,8 +6,8 @@ use timed_metadata::convert::{SegmentTiming, emsg_to_scte35, emsg_to_v0, emsg_to
 use timed_metadata::{DateRange, Error};
 
 const SCTE35_SCHEME: &str = "urn:scte:scte35:2013:bin";
-const TIMESCALE: Timescale = Timescale::from_nonzero(90_000);
-const MILLIS: Timescale = Timescale::from_nonzero(1_000);
+const TIMESCALE: Timescale = Timescale::const_from_nonzero(90_000);
+const MILLIS: Timescale = Timescale::const_from_nonzero(1_000);
 
 fn emsg(scheme: &'static str, presentation_time: PresentationTime) -> EmsgBox<'static> {
     EmsgBox {

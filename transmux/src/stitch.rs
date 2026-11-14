@@ -207,7 +207,7 @@ mod tests {
         );
         let ok = crate::init_segment::MediaHeaderBox::parse(&mdhd_v0(90_000))
             .expect("a non-zero mdhd.timescale parses");
-        assert_eq!(ok.timescale, Timescale::from_nonzero(90_000));
+        assert_eq!(ok.timescale, Timescale::const_from_nonzero(90_000));
         assert!(Timescale::new(0).is_none(), "the type has no zero value");
     }
 
