@@ -149,14 +149,15 @@ fn independent_flag_tracks_sync_first_sample() {
     let parts_spec: Vec<PartSpec> = seg1
         .iter()
         .enumerate()
-        .map(|(i, p)| PartSpec {
-            uri: format!("seg1.{i}.m4s"),
-            // The segmenter's own computed part duration (issue #1140):
-            // always finite and non-negative.
-            duration: DecimalSeconds::new(p.duration)
-                .expect("segmenter part duration is finite, >= 0"),
-            independent: p.independent,
-            ..Default::default()
+        .map(|(i, p)| {
+            PartSpec::new(
+                format!("seg1.{i}.m4s"),
+                // The segmenter's own computed part duration (issue #1140):
+                // always finite and non-negative.
+                DecimalSeconds::new(p.duration)
+                    .expect("segmenter part duration is finite, >= 0"),
+            )
+            .with_independent(p.independent)
         })
         .collect();
     let pl = MediaPlaylist {
@@ -173,12 +174,11 @@ fn independent_flag_tracks_sync_first_sample() {
         }],
         endlist: false,
         extra_tags: vec![],
-        low_latency: Some(LowLatencyConfig {
-            part_target: Some(DecimalSeconds::new(0.334).unwrap()),
-            part_hold_back: Some(DecimalSeconds::new(1.002).unwrap()),
-            preload_hint_part: None,
-            ..Default::default()
-        }),
+        low_latency: Some(
+            LowLatencyConfig::default()
+                .with_part_target(DecimalSeconds::new(0.334).unwrap())
+                .with_part_hold_back(DecimalSeconds::new(1.002).unwrap()),
+        ),
         iframes_only: false,
         open_segment: None,
         ..Default::default()
@@ -235,26 +235,16 @@ fn part_with_a_mid_part_sync_sample_is_independent() {
 #[test]
 fn playlist_low_latency_directives_present_and_opt_in() {
     let parts = vec![
-        PartSpec {
-            uri: "seg0.0.m4s".into(),
-            duration: DecimalSeconds::new(0.334).unwrap(),
-            independent: true,
-            ..Default::default()
-        },
-        PartSpec {
-            uri: "seg0.1.m4s".into(),
-            duration: DecimalSeconds::new(0.334).unwrap(),
-            independent: false,
-            ..Default::default()
-        },
+        PartSpec::new("seg0.0.m4s".into(), DecimalSeconds::new(0.334).unwrap())
+            .with_independent(true),
+        PartSpec::new("seg0.1.m4s".into(), DecimalSeconds::new(0.334).unwrap())
+            .with_independent(false),
     ];
-    let ll = LowLatencyConfig {
-        part_target: Some(DecimalSeconds::new(0.334).unwrap()),
+    let mut ll = LowLatencyConfig::default()
+        .with_part_target(DecimalSeconds::new(0.334).unwrap())
         // Deliberately too small; renderer must raise to 3 x 0.334 = 1.002.
-        part_hold_back: Some(DecimalSeconds::new(0.5).unwrap()),
-        preload_hint_part: Some("seg0.2.m4s".into()),
-        ..Default::default()
-    };
+        .with_part_hold_back(DecimalSeconds::new(0.5).unwrap());
+    ll.preload_hint_part = Some("seg0.2.m4s".into());
     let pl = MediaPlaylist {
         version: 9,
         target_duration: 1,
@@ -556,13 +546,14 @@ fn zero_anchor_timescale_does_not_render_inf_or_nan_into_playlist() {
     let parts_spec: Vec<PartSpec> = parts
         .iter()
         .enumerate()
-        .map(|(i, p)| PartSpec {
-            uri: format!("seg1.{i}.m4s"),
-            // Same reasoning as above: segmenter-computed, finite, >= 0.
-            duration: DecimalSeconds::new(p.duration)
-                .expect("segmenter part duration is finite, >= 0"),
-            independent: p.independent,
-            ..Default::default()
+        .map(|(i, p)| {
+            PartSpec::new(
+                format!("seg1.{i}.m4s"),
+                // Same reasoning as above: segmenter-computed, finite, >= 0.
+                DecimalSeconds::new(p.duration)
+                    .expect("segmenter part duration is finite, >= 0"),
+            )
+            .with_independent(p.independent)
         })
         .collect();
     let seg1_duration = segments.first().map(|s| s.duration).unwrap_or(0.0);
@@ -583,21 +574,20 @@ fn zero_anchor_timescale_does_not_render_inf_or_nan_into_playlist() {
         }],
         endlist: false,
         extra_tags: vec![],
-        low_latency: Some(LowLatencyConfig {
+        low_latency: Some(
             // `part_target_secs` divides a `u64` tick count by a
             // `.max(1)`-guarded timescale (issue #1140): always finite
             // and non-negative.
-            part_target: Some(
-                DecimalSeconds::new(seg.part_target_secs())
-                    .expect("part_target_secs is finite, >= 0"),
-            ),
-            part_hold_back: Some(
-                DecimalSeconds::new(3.0 * seg.part_target_secs())
-                    .expect("part_target_secs is finite, >= 0"),
-            ),
-            preload_hint_part: None,
-            ..Default::default()
-        }),
+            LowLatencyConfig::default()
+                .with_part_target(
+                    DecimalSeconds::new(seg.part_target_secs())
+                        .expect("part_target_secs is finite, >= 0"),
+                )
+                .with_part_hold_back(
+                    DecimalSeconds::new(3.0 * seg.part_target_secs())
+                        .expect("part_target_secs is finite, >= 0"),
+                ),
+        ),
         iframes_only: false,
         open_segment: None,
         ..Default::default()

@@ -234,6 +234,7 @@ pub struct ParseDiagnostic {
 /// LL-HLS client following one Rendition can discover how far another has
 /// progressed without polling it.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub struct RenditionReport {
     /// `URI` of the Rendition's Media Playlist, relative to the playlist
     /// carrying this tag (REQUIRED).
@@ -252,6 +253,7 @@ pub struct RenditionReport {
 /// `#EXT-X-SKIP` (RFC 8216bis §4.4.5.2) — present on a Playlist Delta Update
 /// response in place of the segments/tags before the Skip Boundary.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub struct SkipInfo {
     /// `SKIPPED-SEGMENTS` — count of Media Segments elided (REQUIRED).
     pub skipped_segments: u64,
@@ -272,6 +274,7 @@ pub struct SkipInfo {
 /// before the parent segment is complete. Parts are emitted as `#EXT-X-PART`
 /// lines immediately before the parent segment's `#EXTINF`.
 #[derive(Debug, Clone, PartialEq, Default)]
+#[non_exhaustive]
 pub struct PartSpec {
     /// The part URI (e.g. `"seg0.1.m4s"`).
     pub uri: String,
@@ -345,10 +348,74 @@ impl OpenSegment {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Media or Multivariant Playlist Tags — RFC 8216bis §4.4.2. Valid in either
-// a `MediaPlaylist` or a `MasterPlaylist` (issue #872).
-// ---------------------------------------------------------------------------
+impl PartSpec {
+    /// Build a part from its required URI and duration (the rest default to
+    /// their absent/`false` wire values).
+    #[must_use]
+    pub fn new(uri: String, duration: DecimalSeconds) -> Self {
+        Self {
+            uri,
+            duration,
+            independent: false,
+            byte_range: None,
+            gap: false,
+            extra_attrs: Vec::new(),
+        }
+    }
+
+    /// Set `INDEPENDENT`.
+    #[must_use]
+    pub fn with_independent(mut self, independent: bool) -> Self {
+        self.independent = independent;
+        self
+    }
+
+    /// Set `BYTERANGE`.
+    #[must_use]
+    pub fn with_byte_range(mut self, byte_range: ByteRange) -> Self {
+        self.byte_range = Some(byte_range);
+        self
+    }
+
+    /// Set `GAP`.
+    #[must_use]
+    pub fn with_gap(mut self, gap: bool) -> Self {
+        self.gap = gap;
+        self
+    }
+}
+
+impl SkipInfo {
+    /// Build a skip announcement from the required elided-segment count.
+    #[must_use]
+    pub fn new(skipped_segments: u64) -> Self {
+        Self {
+            skipped_segments,
+            recently_removed_daterange_ids: Vec::new(),
+            extra_attrs: Vec::new(),
+        }
+    }
+}
+
+impl RenditionReport {
+    /// Build a rendition report from its required `URI` and `LAST-MSN`.
+    #[must_use]
+    pub fn new(uri: String, last_msn: u64) -> Self {
+        Self {
+            uri,
+            last_msn,
+            last_part: None,
+            extra_attrs: Vec::new(),
+        }
+    }
+
+    /// Set `LAST-PART`.
+    #[must_use]
+    pub fn with_last_part(mut self, last_part: u64) -> Self {
+        self.last_part = Some(last_part);
+        self
+    }
+}
 
 /// `#EXT-X-START` (RFC 8216bis §4.4.2.2) — a preferred playback start point.
 /// Valid in either a [`MediaPlaylist`] or a [`MasterPlaylist`].
@@ -807,6 +874,7 @@ pub struct MediaPlaylist {
 /// directives (`#EXT-X-SERVER-CONTROL`, `#EXT-X-PART-INF`, `#EXT-X-PART`,
 /// `#EXT-X-PRELOAD-HINT`); see the module docs for each tag's spec section.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct LowLatencyConfig {
     /// Part-target duration in seconds — the `PART-TARGET` of `#EXT-X-PART-INF`
     /// (RFC 8216bis §4.4.3.7). Typically 0.2–0.5 s. `None` means no
@@ -906,6 +974,62 @@ impl LowLatencyConfig {
             self.part_hold_back
                 .map_or(floor, |phb| phb.get().max(floor)),
         ))
+    }
+
+    /// Set the part target (`PART-TARGET` of `#EXT-X-PART-INF`).
+    #[must_use]
+    pub fn with_part_target(mut self, part_target: DecimalSeconds) -> Self {
+        self.part_target = Some(part_target);
+        self
+    }
+
+    /// Set the part hold back (`PART-HOLD-BACK` of `#EXT-X-SERVER-CONTROL`).
+    #[must_use]
+    pub fn with_part_hold_back(mut self, part_hold_back: DecimalSeconds) -> Self {
+        self.part_hold_back = Some(part_hold_back);
+        self
+    }
+
+    /// Set the preload hint part URI (`URI` of `#EXT-X-PRELOAD-HINT`).
+    #[must_use]
+    pub fn with_preload_hint_part(mut self, uri: String) -> Self {
+        self.preload_hint_part = Some(uri);
+        self
+    }
+
+    /// Set the preload hint resource type (`TYPE` of `#EXT-X-PRELOAD-HINT`).
+    #[must_use]
+    pub fn with_preload_hint_type(mut self, ty: PreloadHintType) -> Self {
+        self.preload_hint_type = ty;
+        self
+    }
+
+    /// Set the `CAN-SKIP-UNTIL` skip boundary (`#EXT-X-SERVER-CONTROL`).
+    #[must_use]
+    pub fn with_can_skip_until(mut self, can_skip_until: Option<DecimalSeconds>) -> Self {
+        self.can_skip_until = can_skip_until;
+        self
+    }
+
+    /// Set `CAN-BLOCK-RELOAD` (`#EXT-X-SERVER-CONTROL`).
+    #[must_use]
+    pub fn with_can_block_reload(mut self, can_block_reload: bool) -> Self {
+        self.can_block_reload = can_block_reload;
+        self
+    }
+
+    /// Set `CAN-SKIP-DATERANGES` (`#EXT-X-SERVER-CONTROL`).
+    #[must_use]
+    pub fn with_can_skip_dateranges(mut self, can_skip_dateranges: bool) -> Self {
+        self.can_skip_dateranges = can_skip_dateranges;
+        self
+    }
+
+    /// Set `HOLD-BACK` (`#EXT-X-SERVER-CONTROL`).
+    #[must_use]
+    pub fn with_hold_back(mut self, hold_back: Option<DecimalSeconds>) -> Self {
+        self.hold_back = hold_back;
+        self
     }
 }
 

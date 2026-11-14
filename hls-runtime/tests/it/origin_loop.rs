@@ -67,16 +67,13 @@ fn abs_uri(relative: &str) -> String {
 }
 
 fn part_spec(p: &PartInfo) -> PartSpec {
-    PartSpec {
-        uri: part_uri(p),
+    PartSpec::new(
+        part_uri(p),
         // Test fixture data: every `PartInfo::duration` literal in this
         // file is a small positive constant (issue #1140).
-        duration: DecimalSeconds::new(p.duration).expect("fixture duration is finite, >= 0"),
-        independent: p.independent,
-        byte_range: None,
-        gap: false,
-        extra_attrs: vec![],
-    }
+        DecimalSeconds::new(p.duration).expect("fixture duration is finite, >= 0"),
+    )
+    .with_independent(p.independent)
 }
 
 /// Render a full LL-HLS media playlist from whatever the segmenter has
@@ -146,20 +143,21 @@ impl PlaylistBuilder<'_> {
             open_segment,
             endlist: self.endlist,
             extra_tags: vec![],
-            low_latency: Some(LowLatencyConfig {
-                // Test fixture data: `part_target_secs` is a small positive
-                // constant in every case this file builds (issue #1140).
-                part_target: Some(
-                    DecimalSeconds::new(self.part_target_secs)
-                        .expect("fixture part_target_secs is finite, >= 0"),
-                ),
-                part_hold_back: Some(
-                    DecimalSeconds::new(3.0 * self.part_target_secs)
-                        .expect("fixture part_target_secs is finite, >= 0"),
-                ),
-                preload_hint_part,
-                ..Default::default()
-            }),
+            low_latency: Some(|| {
+                let mut cfg = LowLatencyConfig::default()
+                    // Test fixture data: `part_target_secs` is a small positive
+                    // constant in every case this file builds (issue #1140).
+                    .with_part_target(
+                        DecimalSeconds::new(self.part_target_secs)
+                            .expect("fixture part_target_secs is finite, >= 0"),
+                    )
+                    .with_part_hold_back(
+                        DecimalSeconds::new(3.0 * self.part_target_secs)
+                            .expect("fixture part_target_secs is finite, >= 0"),
+                    );
+                cfg.preload_hint_part = preload_hint_part;
+                cfg
+            }()),
             iframes_only: false,
             rendition_reports: vec![],
             skip: None,
@@ -520,14 +518,11 @@ fn can_block_reload_no_yields_non_blocking_reload_with_backoff() {
             uri: "seg0.m4s".to_string(),
             duration: DecimalSeconds::new(1.0).unwrap(),
             discontinuous: false,
-            parts: vec![PartSpec {
-                uri: "seg0.0.m4s".to_string(),
-                duration: DecimalSeconds::new(1.0).unwrap(),
-                independent: true,
-                byte_range: None,
-                gap: false,
-                extra_attrs: vec![],
-            }],
+            parts: vec![PartSpec::new(
+                "seg0.0.m4s".to_string(),
+                DecimalSeconds::new(1.0).unwrap(),
+            )
+            .with_independent(true)],
             byte_range: None,
             map: Some(MapTag {
                 uri: INIT_URL.to_string(),
@@ -539,12 +534,12 @@ fn can_block_reload_no_yields_non_blocking_reload_with_backoff() {
         open_segment: None,
         endlist: false,
         extra_tags: vec![],
-        low_latency: Some(LowLatencyConfig {
-            part_target: Some(DecimalSeconds::new(0.5).unwrap()),
-            part_hold_back: Some(DecimalSeconds::new(1.5).unwrap()),
-            can_block_reload: false,
-            ..Default::default()
-        }),
+        low_latency: Some(
+            LowLatencyConfig::default()
+                .with_part_target(DecimalSeconds::new(0.5).unwrap())
+                .with_part_hold_back(DecimalSeconds::new(1.5).unwrap())
+                .with_can_block_reload(false),
+        ),
         iframes_only: false,
         rendition_reports: vec![],
         skip: None,

@@ -3261,13 +3261,14 @@ impl HlsOrigin {
         }
         by_index
             .values()
-            .map(|p| PartSpec {
-                uri: self.part_uri(track_id, p.segment_number, p.part_index, ext),
-                // `Duration::as_secs_f64`: finite and >= 0 (issue #1140).
-                duration: DecimalSeconds::new(p.duration.as_secs_f64())
-                    .expect("Duration::as_secs_f64 is finite, >= 0"),
-                independent: p.independent,
-                ..Default::default()
+            .map(|p| {
+                PartSpec::new(
+                    self.part_uri(track_id, p.segment_number, p.part_index, ext),
+                    // `Duration::as_secs_f64`: finite and >= 0 (issue #1140).
+                    DecimalSeconds::new(p.duration.as_secs_f64())
+                        .expect("Duration::as_secs_f64 is finite, >= 0"),
+                )
+                .with_independent(p.independent)
             })
             .collect()
     }
@@ -3493,14 +3494,15 @@ impl HlsOrigin {
             let mut open = OpenSegment::new(
                 open_parts
                     .iter()
-                    .map(|p| PartSpec {
-                        uri: self.part_uri(track_id, p.segment_number, p.part_index, ext),
-                        // `p.duration` is a `std::time::Duration`: always
-                        // finite and non-negative (issue #1140).
-                        duration: DecimalSeconds::new(p.duration.as_secs_f64())
-                            .expect("Duration::as_secs_f64 is finite, >= 0"),
-                        independent: p.independent,
-                        ..Default::default()
+                    .map(|p| {
+                        PartSpec::new(
+                            self.part_uri(track_id, p.segment_number, p.part_index, ext),
+                            // `p.duration` is a `std::time::Duration`: always
+                            // finite and non-negative (issue #1140).
+                            DecimalSeconds::new(p.duration.as_secs_f64())
+                                .expect("Duration::as_secs_f64 is finite, >= 0"),
+                        )
+                        .with_independent(p.independent)
                     })
                     .collect(),
             );
@@ -3602,26 +3604,23 @@ impl HlsOrigin {
             }
         }
         let low_latency = self.part_timing().map(|(part_target, part_hold_back)| {
-            LowLatencyConfig {
-                part_target: Some(part_target),
-                part_hold_back: Some(part_hold_back),
-                // RFC 8216bis §4.4.3.8: HOLD-BACK MUST be >= 3x the Target
-                // Duration; Apple's validator also requires it in LL mode.
-                hold_back: DecimalSeconds::new(f64::from(target_duration) * HOLD_BACK_MULTIPLIER)
-                    .ok(),
-                preload_hint_part: next_part_hint,
-                can_skip_until: skip_boundary.and_then(|b| DecimalSeconds::new(b).ok()),
-                can_skip_dateranges: true,
-                can_block_reload: true,
-                ..Default::default()
-            }
+            let mut cfg = LowLatencyConfig::default()
+                .with_part_target(part_target)
+                .with_part_hold_back(part_hold_back)
+                .with_can_block_reload(true)
+                .with_can_skip_dateranges(true);
+            // RFC 8216bis §4.4.3.8: HOLD-BACK MUST be >= 3x the Target
+            // Duration; Apple's validator also requires it in LL mode.
+            cfg.hold_back =
+                DecimalSeconds::new(f64::from(target_duration) * HOLD_BACK_MULTIPLIER).ok();
+            cfg.preload_hint_part = next_part_hint;
+            cfg.can_skip_until = skip_boundary.and_then(|b| DecimalSeconds::new(b).ok());
+            cfg
         });
         let skip_info = if skip_accepted {
-            Some(broadcast_hls::SkipInfo {
-                skipped_segments: omitted as u64,
-                recently_removed_daterange_ids,
-                extra_attrs: Vec::new(),
-            })
+            let mut info = broadcast_hls::SkipInfo::new(omitted as u64);
+            info.recently_removed_daterange_ids = recently_removed_daterange_ids;
+            Some(info)
         } else {
             None
         };
@@ -3640,11 +3639,11 @@ impl HlsOrigin {
                 }
                 let uri = relative_playlist_uri(&self.playlist_uri, &sibling.playlist_uri);
                 let (last_msn, last_part) = origin.current_live_edge();
-                reports.push(broadcast_hls::RenditionReport {
-                    uri,
-                    last_msn,
-                    last_part,
-                    extra_attrs: Vec::new(),
+                let report = broadcast_hls::RenditionReport::new(uri, last_msn);
+                reports.push(if let Some(lp) = last_part {
+                    report.with_last_part(lp)
+                } else {
+                    report
                 });
             }
             reports
@@ -3885,19 +3884,17 @@ impl HlsOrigin {
             .collect();
 
         let low_latency = if let Some((part_target, part_hold_back)) = self.part_timing() {
-            Some(broadcast_hls::LowLatencyConfig {
-                part_target: Some(part_target),
-                part_hold_back: Some(part_hold_back),
-                hold_back: DecimalSeconds::new(f64::from(target_duration) * HOLD_BACK_MULTIPLIER)
-                    .ok(),
-                can_skip_until: DecimalSeconds::new(
-                    f64::from(target_duration) * SKIP_BOUNDARY_MULTIPLIER,
+            let mut cfg = broadcast_hls::LowLatencyConfig::default()
+                .with_part_target(part_target)
+                .with_part_hold_back(part_hold_back)
+                .with_can_skip_until(
+                    DecimalSeconds::new(f64::from(target_duration) * SKIP_BOUNDARY_MULTIPLIER).ok(),
                 )
-                .ok(),
-                can_skip_dateranges: true,
-                can_block_reload: true,
-                ..Default::default()
-            })
+                .with_can_skip_dateranges(true)
+                .with_can_block_reload(true);
+            cfg.hold_back =
+                DecimalSeconds::new(f64::from(target_duration) * HOLD_BACK_MULTIPLIER).ok();
+            Some(cfg)
         } else {
             None
         };
@@ -3916,11 +3913,14 @@ impl HlsOrigin {
         // rendition report" (issue #1595).
         let rendition_reports = if self.part_target_ms.is_some() {
             let (last_msn, last_part) = self.current_live_edge();
-            let mut reports = vec![broadcast_hls::RenditionReport {
-                uri: media_playlist_name.to_string(),
+            let first = broadcast_hls::RenditionReport::new(
+                media_playlist_name.to_string(),
                 last_msn,
-                last_part,
-                extra_attrs: Vec::new(),
+            );
+            let mut reports = vec![if let Some(lp) = last_part {
+                first.with_last_part(lp)
+            } else {
+                first
             }];
             // Split-audio routes: report each audio sibling rendition as well
             // (RFC 8216bis §4.4.5.4), keeping the existing iframe->media
@@ -3938,11 +3938,11 @@ impl HlsOrigin {
                     &sibling.playlist_uri,
                 );
                 let (last_msn, last_part) = origin.current_live_edge();
-                reports.push(broadcast_hls::RenditionReport {
-                    uri,
-                    last_msn,
-                    last_part,
-                    extra_attrs: Vec::new(),
+                let report = broadcast_hls::RenditionReport::new(uri, last_msn);
+                reports.push(if let Some(lp) = last_part {
+                    report.with_last_part(lp)
+                } else {
+                    report
                 });
             }
             reports

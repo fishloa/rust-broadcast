@@ -857,22 +857,20 @@ mod tests {
         let mut base = base_with_segments(2, true);
         for seg in &mut base.segments {
             seg.parts = vec![
-                PartSpec {
-                    uri: format!("{}.0.m4s", seg.uri),
-                    duration: DecimalSeconds::new(3.0).unwrap(),
-                    ..Default::default()
-                },
-                PartSpec {
-                    uri: format!("{}.1.m4s", seg.uri),
-                    duration: DecimalSeconds::new(3.0).unwrap(),
-                    ..Default::default()
-                },
+                PartSpec::new(
+                    format!("{}.0.m4s", seg.uri),
+                    DecimalSeconds::new(3.0).unwrap(),
+                ),
+                PartSpec::new(
+                    format!("{}.1.m4s", seg.uri),
+                    DecimalSeconds::new(3.0).unwrap(),
+                ),
             ];
         }
-        base.low_latency = Some(LowLatencyConfig {
-            part_target: Some(DecimalSeconds::new(3.0).unwrap()),
-            ..Default::default()
-        });
+        base.low_latency = Some(
+            LowLatencyConfig::default()
+                .with_part_target(DecimalSeconds::new(3.0).unwrap()),
+        );
         let plain = base.to_m3u8().unwrap();
         let first_part = plain.find("#EXT-X-PART:").expect("the base has parts");
         let first_extinf = plain.find("#EXTINF:").unwrap();

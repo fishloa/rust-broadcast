@@ -231,6 +231,7 @@ broadcast_common::impl_spec_display!(RejectionReason, Reserved);
 #[cfg(feature = "crypto")]
 #[cfg_attr(docsrs, doc(cfg(feature = "crypto")))]
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct CryptoConfig {
     /// The pre-shared secret (§6.1.4). Must be identical on both peers, or
     /// the responder's KEK derivation recovers the wrong SEK and the RFC
@@ -300,6 +301,21 @@ impl Drop for CryptoConfig {
 
 #[cfg(feature = "crypto")]
 impl zeroize::ZeroizeOnDrop for CryptoConfig {}
+
+#[cfg(feature = "crypto")]
+impl CryptoConfig {
+    /// Build the crypto parameters for one connection's handshake (encryption
+    /// preamble §6.1). Every field is a secret or a per-connection nonce, so
+    /// there is no `Default`; the caller supplies all three.
+    #[must_use]
+    pub fn new(passphrase: Vec<u8>, salt: [u8; crate::crypto::SALT_LEN], sek: Vec<u8>) -> Self {
+        Self {
+            passphrase,
+            salt,
+            sek,
+        }
+    }
+}
 
 /// Secret key bytes — a negotiated Stream Encrypting Key.
 ///
@@ -561,6 +577,7 @@ impl Default for HandshakeConfig {
 /// each party").
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct NegotiatedParams {
     /// The negotiated base protocol version — always `5` (HSv5) for a
     /// completed handshake in this crate.
