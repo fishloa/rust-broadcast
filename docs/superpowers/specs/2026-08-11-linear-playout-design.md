@@ -85,8 +85,9 @@ work**:
   wrapping when the result leaves `u64`.
 - `transition::next_transition(schedule, now_pts)` — the next join due at or
   after `now_pts`.
-- `scte35::build_splice_insert(edge, id, requested_pts, candidates,
-  max_delta_ticks, break_duration)` — delegates splice-point conditioning to
+- `scte35::build_splice_insert(edge, id, requested_pts: Clock33, candidates:
+  &[Clock33], max_delta: Duration, break_duration: Option<Duration>)` —
+  delegates splice-point conditioning to
   `ssai_runtime::splice::condition_splice_point`, erroring if no candidate
   boundary is within tolerance. `scte35::to_section(insert)` wraps it into a
   `SpliceInfoSection`.
