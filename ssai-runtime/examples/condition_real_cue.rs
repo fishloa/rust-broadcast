@@ -15,10 +15,23 @@
 //! cargo run -p ssai-runtime --example condition_real_cue
 //! ```
 use broadcast_common::Parse;
+use broadcast_common::clock33::Clock33;
 use mp4_emsg::{EmsgBox, PresentationTime};
 use scte35_splice::SpliceInfoSection;
 use ssai_runtime::splice::condition_splice_point;
 use std::fs;
+use std::time::Duration;
+
+fn ticks(n: u64) -> Duration {
+    Duration::from_nanos(n * 1_000_000_000 / 90_000)
+}
+
+/// Reduce an absolute representation-clock instant onto the 33-bit PTS
+/// circle the caller conditions on (ISO/IEC 13818-1 §2.4.3.7).
+fn on_the_pts_circle(ticks: u64) -> Clock33 {
+    Clock33::try_new(ticks % broadcast_common::clock33::WRAP_33BIT)
+        .expect("a value reduced modulo 2^33 is on the clock")
+}
 
 fn main() {
     let path = test_fixtures::path("scte35/emsg-splice-insert.bin");
@@ -26,10 +39,10 @@ fn main() {
     let emsg = EmsgBox::parse(&emsg_bytes).expect("parse real emsg box");
     assert!(emsg.is_scte35(), "fixture must carry a SCTE-35 emsg");
 
-    let requested_pts = match emsg.presentation_time {
+    let requested_pts = on_the_pts_circle(match emsg.presentation_time {
         PresentationTime::Absolute(t) => t,
         other => panic!("fixture is expected to be a v1 (Absolute) emsg, got {other:?}"),
-    };
+    });
     println!(
         "cue presentation_time = {requested_pts} (90kHz ticks, absolute representation clock)"
     );
@@ -50,17 +63,17 @@ fn main() {
     // ground truth rather than re-deriving it, since that derivation needs a
     // working `Fmp4Demux` track and this exact fixture currently defeats
     // that (issue #952).
-    let nearest_keyframe_pts = 160_767_315_906_000u64;
+    let nearest_keyframe_pts = on_the_pts_circle(160_767_315_906_000);
     let candidates = [nearest_keyframe_pts];
 
-    let tight = condition_splice_point(requested_pts, &candidates, 3_000);
+    let tight = condition_splice_point(requested_pts, &candidates, ticks(3_000));
     println!("tolerance=3000 ticks (~33ms, one 30fps frame) -> {tight:?}");
     assert!(
         tight.is_err(),
         "a real 67ms drift must exceed a 33ms tolerance"
     );
 
-    let loose = condition_splice_point(requested_pts, &candidates, 10_000)
+    let loose = condition_splice_point(requested_pts, &candidates, ticks(10_000))
         .expect("a real 67ms drift is within a 111ms tolerance");
     println!("tolerance=10000 ticks (~111ms) -> {loose:?}");
     assert_eq!(

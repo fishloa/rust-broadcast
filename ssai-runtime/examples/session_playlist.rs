@@ -8,6 +8,7 @@
 //! cargo run -p ssai-runtime --example session_playlist
 //! ```
 use broadcast_common::Parse;
+use broadcast_common::clock33::Clock33;
 use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment};
 use mp4_emsg::{EmsgBox, PresentationTime};
 use scte35_splice::SpliceInfoSection;
@@ -17,6 +18,14 @@ use ssai_runtime::playlist::{InterstitialDateRange, render_session_playlist};
 use ssai_runtime::session::{BreakState, SessionStore};
 use ssai_runtime::splice::condition_splice_point;
 use std::fs;
+use std::time::Duration;
+
+/// Reduce an absolute representation-clock instant onto the 33-bit PTS
+/// circle the caller conditions on (ISO/IEC 13818-1 §2.4.3.7).
+fn on_the_pts_circle(ticks: u64) -> Clock33 {
+    Clock33::try_new(ticks % broadcast_common::clock33::WRAP_33BIT)
+        .expect("a value reduced modulo 2^33 is on the clock")
+}
 
 /// A toy decision provider: always the same single-asset interstitial. A
 /// real implementation would call out to a VAST/VMAP ad server here — this
@@ -67,8 +76,12 @@ fn main() {
 
     // Condition against the same independently-measured real keyframe
     // `condition_real_cue` verifies (PROVENANCE.md's "Cue-to-IDR alignment").
-    let conditioned = condition_splice_point(requested_pts, &[160_767_315_906_000u64], 10_000)
-        .expect("real cue is within a 111ms tolerance");
+    let conditioned = condition_splice_point(
+        on_the_pts_circle(requested_pts),
+        &[on_the_pts_circle(160_767_315_906_000)],
+        Duration::from_nanos(10_000 * 1_000_000_000 / 90_000),
+    )
+    .expect("real cue is within a 111ms tolerance");
     println!("conditioned splice point: {conditioned:?}");
 
     let mut sessions = SessionStore::new();
