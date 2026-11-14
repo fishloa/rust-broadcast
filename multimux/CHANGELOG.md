@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Changed
+- Follows the pull-client request-shape changes (#2655): the source host reads `Action::HttpRequest::byte_range` as a `broadcast_common::range::ByteSpan` and sends it with `ByteSpan::range_header()`.
 - BREAKING: `source::TrackInit::clock_rate` is a `Timescale`. A WHIP offer whose H.264 `a=rtpmap` carries no valid clock rate is refused instead of read as 90 kHz, and a push sample for a track with no spec is dropped instead of timed at 1 Hz (#2657).
 - BREAKING: `Config::part_target_ms: u32` is `Config::part_target: Duration`, the JSON key and unit are unchanged (`"part_target_ms": 500` still loads and is whole milliseconds), `RouteConfig::part_target_ms`/`with_part_target_ms` are `part_target: Duration`/`with_part_target(Duration)`, `RouteHandle::part_target_ms()` is `part_target() -> Duration`, and the registry's `InputCtx` carries `part_target: Duration`. A zero part target is `ConfigInvalid { field: "part_target" }` (was `part_target_ms`).
 - Follows the adapter-name breaking changes in `rtsp-runtime`, `rtmp-runtime`, `srt-runtime`, `smooth-runtime` and `broadcast-client` (#2660): the RTMP input binds with `io::RtmpServerConfig` and builds its sessions from `server::RtmpServerConfig`, the RTSP push connects with `RtspClientConfig::default().with_session(..).with_timeouts(..)`, and the SRT input/push build `io::SrtSocketConfig` explicitly instead of relying on `impl Into`.
