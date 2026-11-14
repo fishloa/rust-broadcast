@@ -588,14 +588,23 @@ mod tests {
 
     // ── LimitType ────────────────────────────────────────────────────────
 
+    /// An invalid chunk size can no longer reach a [`Message`]: the
+    /// `ChunkSize` constructor is the only way in (§5.4.1), and once built
+    /// `to_message` is total — so this asserts both halves end to end, the
+    /// rejection and then the framed bytes of a valid size.
     #[test]
-    fn chunk_size_rejects_invalid_values() {
-        assert!(ChunkSize::try_new(0).is_err());
-        assert!(ChunkSize::try_new(0x8000_0000).is_err());
-        assert_eq!(
-            ProtocolControl::SetChunkSize(ChunkSize::try_new(4096).unwrap()).to_message(),
-            ProtocolControl::SetChunkSize(ChunkSize::try_new(4096).unwrap()).to_message()
-        );
+    fn invalid_chunk_size_never_reaches_a_message() {
+        assert!(matches!(
+            ChunkSize::try_new(0),
+            Err(RtmpError::Malformed { .. })
+        ));
+        assert!(matches!(
+            ChunkSize::try_new(0x8000_0000),
+            Err(RtmpError::Malformed { .. })
+        ));
+        let msg = ProtocolControl::SetChunkSize(ChunkSize::try_new(4096).unwrap()).to_message();
+        assert_eq!(msg.message_type_id, msg_type::SET_CHUNK_SIZE);
+        assert_eq!(msg.payload, vec![0x00, 0x00, 0x10, 0x00]);
     }
 
     #[test]

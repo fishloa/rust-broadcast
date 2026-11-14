@@ -70,7 +70,6 @@ use alloc::vec;
 use alloc::vec::Vec;
 use broadcast_common::stage::Timestamp;
 use bytes::Bytes;
-use core::num::NonZeroUsize;
 use core::time::Duration;
 use thiserror::Error;
 
@@ -167,6 +166,10 @@ pub enum MergeError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MergeConfigError {
+    /// `num_sources == 0`: a merge with no source can never produce output.
+    ZeroSources,
+    /// `max_queued == 0`: a zero-length output queue rejects every message.
+    ZeroMaxQueued,
     /// A `Failover` source is outside `0..num_sources`.
     FailoverOutOfRange {
         /// The configured primary.
@@ -181,6 +184,8 @@ pub enum MergeConfigError {
 impl core::fmt::Display for MergeConfigError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::ZeroSources => f.write_str("ByteMerge num_sources must be > 0"),
+            Self::ZeroMaxQueued => f.write_str("ByteMerge max_queued must be > 0"),
             Self::FailoverOutOfRange {
                 primary,
                 secondary,
@@ -222,16 +227,23 @@ impl ByteMerge {
     ///
     /// # Errors
     ///
-    /// Returns [`MergeConfigError`] if `num_sources` is zero, `max_queued`
-    /// is zero, or (for [`MergePolicy::Failover`]) `primary`/`secondary`
-    /// are not both within `0..num_sources`.
+    /// Returns [`MergeConfigError::ZeroSources`] when `num_sources` is zero
+    /// and [`MergeConfigError::ZeroMaxQueued`] when `max_queued` is zero
+    /// (both of which the former panicking constructor asserted), and
+    /// [`MergeConfigError::FailoverOutOfRange`] when (for
+    /// [`MergePolicy::Failover`]) `primary`/`secondary` are not both within
+    /// `0..num_sources`.
     pub fn new(
         policy: MergePolicy,
-        num_sources: NonZeroUsize,
-        max_queued: NonZeroUsize,
+        num_sources: usize,
+        max_queued: usize,
     ) -> Result<Self, MergeConfigError> {
-        let num_sources = num_sources.get();
-        let max_queued = max_queued.get();
+        if num_sources == 0 {
+            return Err(MergeConfigError::ZeroSources);
+        }
+        if max_queued == 0 {
+            return Err(MergeConfigError::ZeroMaxQueued);
+        }
         let active = match &policy {
             MergePolicy::Failover {
                 primary, secondary, ..
@@ -398,12 +410,7 @@ mod tests {
     /// `feed` was called, regardless of which source each call came from.
     #[test]
     fn first_arrival_interleaves_two_sources_in_arrival_order() {
-        let mut merge = ByteMerge::new(
-            MergePolicy::FirstArrival,
-            NonZeroUsize::new(2).unwrap(),
-            NonZeroUsize::new(8).unwrap(),
-        )
-        .unwrap();
+        let mut merge = ByteMerge::new(MergePolicy::FirstArrival, 2, 8).unwrap();
         let a = SourceId(0);
         let b = SourceId(1);
 
@@ -454,8 +461,8 @@ mod tests {
                 secondary,
                 silence_timeout,
             },
-            NonZeroUsize::new(2).unwrap(),
-            NonZeroUsize::new(8).unwrap(),
+            2,
+            8,
         )
         .unwrap();
 
@@ -566,12 +573,7 @@ mod tests {
     #[test]
     fn per_source_state_and_output_queue_are_bounded_under_flood() {
         let max_queued = 4;
-        let mut merge = ByteMerge::new(
-            MergePolicy::FirstArrival,
-            NonZeroUsize::new(2).unwrap(),
-            NonZeroUsize::new(max_queued).unwrap(),
-        )
-        .unwrap();
+        let mut merge = ByteMerge::new(MergePolicy::FirstArrival, 2, max_queued).unwrap();
 
         let mut full_errors = 0usize;
         for i in 0..10_000u64 {
@@ -620,8 +622,8 @@ mod tests {
                 secondary,
                 silence_timeout: Duration::from_millis(100),
             },
-            NonZeroUsize::new(2).unwrap(),
-            NonZeroUsize::new(8).unwrap(),
+            2,
+            8,
         )
         .unwrap();
         assert_eq!(merge.next_deadline(), None, "nothing seen yet");
@@ -666,8 +668,8 @@ mod tests {
                 secondary,
                 silence_timeout: Duration::from_millis(100),
             },
-            NonZeroUsize::new(2).unwrap(),
-            NonZeroUsize::new(1).unwrap(),
+            2,
+            1,
         )
         .unwrap();
         merge
@@ -751,8 +753,8 @@ mod tests {
                 secondary: SourceId(1),
                 silence_timeout: Duration::from_millis(100),
             },
-            NonZeroUsize::new(3).unwrap(),
-            NonZeroUsize::new(8).unwrap(),
+            3,
+            8,
         )
         .unwrap()
     }
@@ -840,12 +842,7 @@ mod tests {
 
     #[test]
     fn unknown_source_is_rejected() {
-        let mut merge = ByteMerge::new(
-            MergePolicy::FirstArrival,
-            NonZeroUsize::new(2).unwrap(),
-            NonZeroUsize::new(4).unwrap(),
-        )
-        .unwrap();
+        let mut merge = ByteMerge::new(MergePolicy::FirstArrival, 2, 4).unwrap();
         let err = merge
             .feed(SourceId(5), Bytes::from_static(b"x"), Timestamp::ZERO)
             .unwrap_err();
@@ -859,6 +856,24 @@ mod tests {
         assert!(merge.is_empty());
     }
 
+    /// The typed replacement for the former `zero_sources_panics`: a zero
+    /// source count is [`MergeConfigError::ZeroSources`], not a panic.
+    #[test]
+    fn zero_sources_is_error() {
+        let err = ByteMerge::new(MergePolicy::FirstArrival, 0, 4).unwrap_err();
+        assert_eq!(err, MergeConfigError::ZeroSources);
+        assert_eq!(err.to_string(), "ByteMerge num_sources must be > 0");
+    }
+
+    /// The typed replacement for the former `zero_max_queued_panics`: a zero
+    /// output-queue bound is [`MergeConfigError::ZeroMaxQueued`], not a panic.
+    #[test]
+    fn zero_max_queued_is_error() {
+        let err = ByteMerge::new(MergePolicy::FirstArrival, 2, 0).unwrap_err();
+        assert_eq!(err, MergeConfigError::ZeroMaxQueued);
+        assert_eq!(err.to_string(), "ByteMerge max_queued must be > 0");
+    }
+
     #[test]
     fn failover_out_of_range_source_is_error() {
         let err = ByteMerge::new(
@@ -867,8 +882,8 @@ mod tests {
                 secondary: SourceId(9),
                 silence_timeout: Duration::from_millis(1),
             },
-            NonZeroUsize::new(2).unwrap(),
-            NonZeroUsize::new(4).unwrap(),
+            2,
+            4,
         )
         .unwrap_err();
         assert!(matches!(err, MergeConfigError::FailoverOutOfRange { .. }));

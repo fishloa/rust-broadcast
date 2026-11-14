@@ -1030,6 +1030,28 @@ mod tests {
         assert_eq!(client.peer_bandwidth, Some(999_999));
     }
 
+    /// The invalid-chunk-size rejection on the wire: a client configured
+    /// with a size §5.4.1 forbids fails its `connect` with the typed
+    /// `RtmpError::Malformed`, before any `SetChunkSize` message is built,
+    /// and emits nothing. The former `try_to_message` fold-panic is
+    /// unreachable now that `ChunkSize` validates at construction.
+    #[test]
+    fn client_connect_with_invalid_chunk_size_errors_before_any_message() {
+        let config = ClientConfig {
+            app: "live".to_string(),
+            stream_key: "test_key".to_string(),
+            chunk_size: 0x8000_0000,
+            ..ClientConfig::default()
+        };
+        let mut client = ClientSession::new(config);
+        let mut server = ServerSession::new(ServerConfig::default());
+        let c0_c1 = client.start();
+        let (s0_s1_s2, _) = server.handle_data(&c0_c1).unwrap();
+        let err = client.handle_data(&s0_s1_s2).unwrap_err();
+        assert!(matches!(err, RtmpError::Malformed { .. }), "{err:?}");
+        assert!(!client.is_publishing());
+    }
+
     #[test]
     fn client_connect_flow() {
         let config = ClientConfig {
