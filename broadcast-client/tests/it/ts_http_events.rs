@@ -261,7 +261,12 @@ fn starved_event_passthrough() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
     };
-    session.on_response(conn, 200, &[], ts(0));
+    session.on_response(
+        conn,
+        http::StatusCode::from_u16(200).expect("a test names a real status"),
+        &crate::support::headers(&[]),
+        ts(0),
+    );
     let mut null_packet = vec![0xFF; 188];
     null_packet[..4].copy_from_slice(&[0x47, 0x1F, 0xFF, 0x10]);
     session.on_data(conn, &null_packet, ts(10_000_000));
@@ -330,7 +335,12 @@ fn unknown_conn_callbacks_ignored() {
         other => panic!("{other:?}"),
     };
     let unknown = ConnId::new(conn.0.wrapping_add(998));
-    session.on_response(unknown, 200, &[], ts(0));
+    session.on_response(
+        unknown,
+        http::StatusCode::from_u16(200).expect("a test names a real status"),
+        &crate::support::headers(&[]),
+        ts(0),
+    );
     session.on_data(unknown, &bytes[..4096], ts(0));
     session.on_closed(unknown, None, ts(1_000));
     session.on_closed(

@@ -2,6 +2,8 @@
 
 use http::{HeaderMap, HeaderName, HeaderValue};
 
+use alloc::string::String;
+
 use crate::Credentials;
 use crate::error::Error;
 
@@ -81,4 +83,10 @@ pub(crate) fn to_header_map(headers: &[(String, String)]) -> HeaderMap {
         map.append(name, value);
     }
     map
+}
+
+/// The first `name` header as text, for the internal read sites (redirect target, `Retry-After`,
+/// the body-framing and resume headers).
+pub(crate) fn text<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers.get(name).and_then(|value| value.to_str().ok())
 }

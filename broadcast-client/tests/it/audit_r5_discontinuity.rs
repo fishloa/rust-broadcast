@@ -113,8 +113,8 @@ fn run(segs: &[Vec<u8>], disc_at: Option<usize>) -> Outcome {
             };
             s.on_response(
                 c,
-                200,
-                &[("Content-Length".into(), body.len().to_string())],
+                http::StatusCode::OK,
+                &crate::support::headers(&[("Content-Length", &body.len().to_string())]),
                 ts(now),
             );
             for chunk in body.chunks(CHUNK) {

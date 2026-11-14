@@ -4,11 +4,13 @@
 use core::hash::Hash;
 use std::collections::HashMap;
 
+use http::StatusCode;
+
 /// The consecutive failures recorded for one resource and the status of the latest one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Failure {
     pub(crate) count: u32,
-    pub(crate) status: Option<u16>,
+    pub(crate) status: Option<StatusCode>,
 }
 
 /// Whether a resource that has failed `count` times in a row is tried again.
@@ -33,7 +35,7 @@ impl<K: Copy + Eq + Hash> FailureCounter<K> {
         }
     }
 
-    pub(crate) fn record(&mut self, key: K, status: Option<u16>) -> Failure {
+    pub(crate) fn record(&mut self, key: K, status: Option<StatusCode>) -> Failure {
         let entry = self.failures.entry(key).or_insert(Failure {
             count: 0,
             status: None,
@@ -84,23 +86,27 @@ impl Attempts {
 mod tests {
     use super::*;
 
+    fn status(code: u16) -> StatusCode {
+        StatusCode::from_u16(code).unwrap()
+    }
+
     #[test]
     fn a_resource_counts_its_own_consecutive_failures() {
         let mut counter = FailureCounter::new();
-        assert_eq!(counter.record(1u32, Some(503)).count, 1);
-        assert_eq!(counter.record(1, Some(503)).count, 2);
+        assert_eq!(counter.record(1u32, Some(status(503))).count, 1);
+        assert_eq!(counter.record(1, Some(status(503))).count, 2);
         assert_eq!(
             counter.record(2, None).count,
             1,
             "another resource starts at one"
         );
-        assert_eq!(counter.record(1, Some(503)).count, 3);
+        assert_eq!(counter.record(1, Some(status(503))).count, 3);
     }
 
     #[test]
     fn the_latest_status_wins_including_none() {
         let mut counter = FailureCounter::new();
-        counter.record(1u32, Some(404));
+        counter.record(1u32, Some(status(404)));
         let latest = counter.record(1, None);
         assert_eq!(
             latest,
@@ -109,7 +115,10 @@ mod tests {
                 status: None
             }
         );
-        assert_eq!(counter.record(1, Some(500)).status, Some(500));
+        assert_eq!(
+            counter.record(1, Some(status(500))).status,
+            Some(status(500))
+        );
     }
 
     #[test]

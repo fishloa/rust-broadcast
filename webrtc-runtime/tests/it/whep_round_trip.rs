@@ -10,6 +10,15 @@ use webrtc_runtime::Error;
 use webrtc_runtime::whep::player::{self, WhepPlayer};
 use webrtc_runtime::whep::server::{self, WhepSession};
 
+/// The endpoint and session URL as the parsed values the state machines take.
+fn endpoint() -> url::Url {
+    url::Url::parse(ENDPOINT).expect("endpoint")
+}
+
+fn session_url() -> url::Url {
+    url::Url::parse(SESSION).expect("session URL")
+}
+
 const ENDPOINT: &str = "https://whep.example.com/watch";
 const SESSION: &str = "https://whep.example.com/session/xyz789";
 const SDP_OFFER: &[u8] = b"v=0\r\no=- 0 0 IN IP4 0.0.0.0\r\n";
@@ -37,14 +46,14 @@ fn patch_headers(content_type: &str, if_match: Option<&str>) -> HeaderMap {
 #[test]
 fn whep_player_direct_accept() {
     let mut player = WhepPlayer::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
-        ENDPOINT,
+        endpoint(),
     ));
     assert_eq!(*player.state(), player::State::Idle);
 
     // 1. offer() — Idle -> OfferSent
     let req = player.offer(SDP_OFFER.to_vec()).unwrap();
     assert_eq!(req.method, http::Method::POST);
-    assert_eq!(req.url, ENDPOINT);
+    assert_eq!(req.url.as_str(), ENDPOINT);
     assert_eq!(req.content_type().unwrap().to_string(), "application/sdp");
     assert_eq!(req.body, SDP_OFFER);
     assert_eq!(*player.state(), player::State::OfferSent);
@@ -66,14 +75,14 @@ fn whep_player_direct_accept() {
     assert!(matches!(
         player.state(),
         player::State::Established { session_url, etag }
-            if session_url == SESSION && etag.as_deref() == Some("e1")
+            if session_url.as_str() == SESSION && etag.as_deref() == Some("e1")
     ));
 }
 
 #[test]
 fn whep_player_counter_offer_flow() {
     let mut player = WhepPlayer::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
-        ENDPOINT,
+        endpoint(),
     ));
     let _ = player.offer(SDP_OFFER.to_vec()).unwrap();
 
@@ -96,13 +105,13 @@ fn whep_player_counter_offer_flow() {
     }
     assert!(matches!(
         player.state(),
-        player::State::CounterOffered { session_url } if session_url == SESSION
+        player::State::CounterOffered { session_url } if session_url.as_str() == SESSION
     ));
 
     // 2. answer_counter_offer() — sends PATCH with application/sdp
     let req = player.answer_counter_offer(SDP_ANSWER.to_vec()).unwrap();
     assert_eq!(req.method, http::Method::PATCH);
-    assert_eq!(req.url, SESSION);
+    assert_eq!(req.url.as_str(), SESSION);
     assert_eq!(req.content_type().unwrap().to_string(), "application/sdp");
     assert_eq!(req.body, SDP_ANSWER);
 
@@ -118,14 +127,14 @@ fn whep_player_counter_offer_flow() {
     assert!(matches!(
         player.state(),
         player::State::Established { session_url, etag }
-            if session_url == SESSION && etag.as_deref() == Some("e-after-counter")
+            if session_url.as_str() == SESSION && etag.as_deref() == Some("e-after-counter")
     ));
 }
 
 #[test]
 fn whep_player_no_publisher() {
     let mut player = WhepPlayer::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
-        ENDPOINT,
+        endpoint(),
     ));
     let _ = player.offer(SDP_OFFER.to_vec()).unwrap();
 
@@ -137,7 +146,7 @@ fn whep_player_no_publisher() {
 #[test]
 fn whep_player_trickle_ice_and_terminate() {
     let mut player = WhepPlayer::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
-        ENDPOINT,
+        endpoint(),
     ));
     let _ = player.offer(SDP_OFFER.to_vec()).unwrap();
     let _ = player
@@ -156,7 +165,7 @@ fn whep_player_trickle_ice_and_terminate() {
     // trickle_ice() — PATCH with If-Match
     let req = player.trickle_ice(ICE_FRAG.to_vec()).unwrap();
     assert_eq!(req.method, http::Method::PATCH);
-    assert_eq!(req.url, SESSION);
+    assert_eq!(req.url.as_str(), SESSION);
     assert_eq!(
         req.content_type().unwrap().to_string(),
         "application/trickle-ice-sdpfrag"
@@ -167,7 +176,7 @@ fn whep_player_trickle_ice_and_terminate() {
     // terminate() — DELETE
     let req = player.terminate().unwrap();
     assert_eq!(req.method, http::Method::DELETE);
-    assert_eq!(req.url, SESSION);
+    assert_eq!(req.url.as_str(), SESSION);
 
     // responses arrive in request order: the trickle ack first
     let event = player
@@ -186,7 +195,7 @@ fn whep_player_trickle_ice_and_terminate() {
 #[test]
 fn whep_player_ice_restart() {
     let mut player = WhepPlayer::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
-        ENDPOINT,
+        endpoint(),
     ));
     let _ = player.offer(SDP_OFFER.to_vec()).unwrap();
     let _ = player
@@ -236,7 +245,7 @@ fn whep_player_ice_restart() {
 #[test]
 fn whep_player_trickle_ack_with_200_and_etag_is_not_misread_as_ice_restart() {
     let mut player = WhepPlayer::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
-        ENDPOINT,
+        endpoint(),
     ));
     let _ = player.offer(SDP_OFFER.to_vec()).unwrap();
     let _ = player
@@ -275,7 +284,7 @@ fn whep_player_trickle_ack_with_200_and_etag_is_not_misread_as_ice_restart() {
 #[test]
 fn whep_player_terminate_ack_with_204_transitions_to_closed() {
     let mut player = WhepPlayer::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
-        ENDPOINT,
+        endpoint(),
     ));
     let _ = player.offer(SDP_OFFER.to_vec()).unwrap();
     let _ = player
@@ -302,7 +311,7 @@ fn whep_player_terminate_ack_with_204_transitions_to_closed() {
 #[test]
 fn whep_player_wrong_state_errors() {
     let mut player = WhepPlayer::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
-        ENDPOINT,
+        endpoint(),
     ));
 
     // answer_counter_offer in Idle -> error
@@ -335,7 +344,7 @@ fn whep_player_wrong_state_errors() {
 fn whep_player_bearer_auth() {
     let token = "viewer-token";
     let mut player = WhepPlayer::new(
-        webrtc_runtime::session::client::WebRtcClientConfig::new(ENDPOINT).with_credentials(
+        webrtc_runtime::session::client::WebRtcClientConfig::new(endpoint()).with_credentials(
             broadcast_auth::Credentials::Bearer {
                 token: token.into(),
             },
@@ -353,7 +362,7 @@ fn whep_player_bearer_auth() {
 #[test]
 fn whep_player_missing_location_on_201() {
     let mut player = WhepPlayer::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
-        ENDPOINT,
+        endpoint(),
     ));
     let _ = player.offer(SDP_OFFER.to_vec()).unwrap();
 
@@ -374,7 +383,7 @@ fn whep_player_missing_location_on_201() {
 #[test]
 fn whep_player_missing_location_on_406() {
     let mut player = WhepPlayer::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
-        ENDPOINT,
+        endpoint(),
     ));
     let _ = player.offer(SDP_OFFER.to_vec()).unwrap();
 
@@ -396,7 +405,7 @@ fn whep_player_missing_location_on_406() {
 
 #[test]
 fn whep_server_direct_accept() {
-    let mut session = WhepSession::new(SESSION.into());
+    let mut session = WhepSession::new(session_url());
     assert_eq!(*session.state(), server::State::AwaitingOffer);
 
     // 1. on_post() — emits SdpOffer
@@ -424,7 +433,7 @@ fn whep_server_direct_accept() {
 
 #[test]
 fn whep_server_counter_offer() {
-    let mut session = WhepSession::new(SESSION.into());
+    let mut session = WhepSession::new(session_url());
     let _ = session.on_post(SDP_OFFER.to_vec()).unwrap();
 
     // 1. counter_offer() — transitions to CounterOffered, returns 406
@@ -455,7 +464,7 @@ fn whep_server_counter_offer() {
 
 #[test]
 fn whep_server_counter_offer_with_valid_until() {
-    let mut session = WhepSession::new(SESSION.into());
+    let mut session = WhepSession::new(session_url());
     let _ = session.on_post(SDP_OFFER.to_vec()).unwrap();
 
     let resp = session.counter_offer(SERVER_OFFER.to_vec(), Some("2026-08-01T00:00:00Z".into()));
@@ -485,7 +494,7 @@ fn whep_server_no_publisher_response() {
 
 #[test]
 fn whep_server_trickle_ice() {
-    let mut session = WhepSession::new(SESSION.into());
+    let mut session = WhepSession::new(session_url());
     let _ = session.on_post(SDP_OFFER.to_vec()).unwrap();
     let _ = session.accept(SDP_ANSWER.to_vec(), "e1".into());
 
@@ -513,7 +522,7 @@ fn whep_server_trickle_ice() {
 
 #[test]
 fn whep_server_ice_restart() {
-    let mut session = WhepSession::new(SESSION.into());
+    let mut session = WhepSession::new(session_url());
     let _ = session.on_post(SDP_OFFER.to_vec()).unwrap();
     let _ = session.accept(SDP_ANSWER.to_vec(), "e1".into());
 
@@ -536,7 +545,7 @@ fn whep_server_ice_restart() {
 
 #[test]
 fn whep_server_etag_mismatch() {
-    let mut session = WhepSession::new(SESSION.into());
+    let mut session = WhepSession::new(session_url());
     let _ = session.on_post(SDP_OFFER.to_vec()).unwrap();
     let _ = session.accept(SDP_ANSWER.to_vec(), "correct".into());
 
@@ -552,7 +561,7 @@ fn whep_server_etag_mismatch() {
 
 #[test]
 fn whep_server_wrong_content_type_in_established() {
-    let mut session = WhepSession::new(SESSION.into());
+    let mut session = WhepSession::new(session_url());
     let _ = session.on_post(SDP_OFFER.to_vec()).unwrap();
     let _ = session.accept(SDP_ANSWER.to_vec(), "e".into());
 
@@ -567,7 +576,7 @@ fn whep_server_wrong_content_type_in_established() {
 // against the bare `application/sdp` constant.
 #[test]
 fn whep_server_accepts_content_type_with_a_parameter() {
-    let mut session = WhepSession::new(SESSION.into());
+    let mut session = WhepSession::new(session_url());
     let _ = session.on_post(SDP_OFFER.to_vec()).unwrap();
     let _ = session.counter_offer(SERVER_OFFER.to_vec(), None);
 
@@ -582,7 +591,7 @@ fn whep_server_accepts_content_type_with_a_parameter() {
 
 #[test]
 fn whep_server_delete_from_counter_offered() {
-    let mut session = WhepSession::new(SESSION.into());
+    let mut session = WhepSession::new(session_url());
     let _ = session.on_post(SDP_OFFER.to_vec()).unwrap();
     let _ = session.counter_offer(SERVER_OFFER.to_vec(), None);
 
@@ -594,7 +603,7 @@ fn whep_server_delete_from_counter_offered() {
 
 #[test]
 fn whep_server_wrong_state_errors() {
-    let mut session = WhepSession::new(SESSION.into());
+    let mut session = WhepSession::new(session_url());
 
     // PATCH before any offer -> error
     let err = session.on_patch(SDP_ANSWER.to_vec(), &patch_headers("application/sdp", None));

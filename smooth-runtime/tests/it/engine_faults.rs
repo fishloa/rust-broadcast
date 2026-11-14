@@ -145,7 +145,9 @@ fn a_static_fragment_that_never_succeeds_is_fatal_after_the_configured_count() {
     assert_eq!(host.count_requests(FIRST_VIDEO), 3);
     assert!(host.has(|o| matches!(
         o,
-        Output::Fatal(SmoothError::Fragment { status: Some(500) })
+        Output::Fatal(SmoothError::Fragment {
+            status: Some(http::StatusCode::INTERNAL_SERVER_ERROR),
+        })
     )));
 }
 

@@ -5,6 +5,8 @@ use alloc::collections::VecDeque;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
+use http::{HeaderMap, StatusCode};
+
 use broadcast_hls::MediaType;
 use hls_runtime::client::{MasterSelection, RenditionInfo};
 use transmux::TrackSpec;
@@ -130,8 +132,8 @@ impl HlsSession {
     pub(crate) fn on_response(
         &mut self,
         conn: ConnId,
-        status: u16,
-        headers: &[(String, String)],
+        status: StatusCode,
+        headers: &HeaderMap,
         now: u64,
         wall: Option<&WallClock>,
         auth: &mut AuthState,

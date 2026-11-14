@@ -108,11 +108,18 @@ fn answer(
     t: &mut Tally,
 ) {
     let (body, ctype) = origin.body(url);
-    let mut headers = vec![("Content-Type".to_string(), ctype.to_string())];
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        http::header::CONTENT_TYPE,
+        http::HeaderValue::from_str(ctype).expect("a test writes a content type"),
+    );
     if origin.content_length {
-        headers.push(("Content-Length".to_string(), body.len().to_string()));
+        headers.insert(
+            http::header::CONTENT_LENGTH,
+            http::HeaderValue::from_str(&body.len().to_string()).expect("a test writes a length"),
+        );
     }
-    session.on_response(conn, 200, &headers, ts(now));
+    session.on_response(conn, http::StatusCode::OK, &headers, ts(now));
     for chunk in body.chunks(CHUNK) {
         session.on_data(conn, chunk, ts(now));
     }

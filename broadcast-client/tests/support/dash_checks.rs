@@ -11,7 +11,7 @@ pub struct SegReq {
     pub rep: String,
     pub idx: i64,
     pub send_utc_us: i64,
-    pub status: Option<u16>,
+    pub status: Option<http::StatusCode>,
 }
 
 pub fn segment_requests(sim: &DashSim, geo: Geo) -> Vec<SegReq> {
@@ -40,7 +40,7 @@ pub fn early_requests(reqs: &[SegReq], geo: Geo, tolerance_us: i64) -> Vec<SegRe
 fn served(reqs: &[SegReq]) -> BTreeMap<String, Vec<i64>> {
     let mut out: BTreeMap<String, Vec<i64>> = BTreeMap::new();
     for r in reqs {
-        if r.status.is_some_and(|s| (200..300).contains(&s)) {
+        if r.status.is_some_and(|s| s.is_success()) {
             let v = out.entry(r.rep.clone()).or_default();
             if !v.contains(&r.idx) {
                 v.push(r.idx);
@@ -62,7 +62,7 @@ pub fn assert_contiguous(reqs: &[SegReq]) {
 pub fn assert_no_duplicates(reqs: &[SegReq]) {
     let mut counts: BTreeMap<(String, i64), usize> = BTreeMap::new();
     for r in reqs {
-        if r.status.is_some_and(|s| (200..300).contains(&s)) {
+        if r.status.is_some_and(|s| s.is_success()) {
             *counts.entry((r.rep.clone(), r.idx)).or_insert(0) += 1;
         }
     }

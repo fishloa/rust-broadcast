@@ -27,7 +27,7 @@ const FIRST_BACKOFF_US: u64 = 2 * SEC;
 const TIME_CAP_US: u64 = 3_600 * SEC;
 const BYTERANGE_URL: &str = "http://origin.test/hls/all.ts";
 
-type Headers = Vec<(String, String)>;
+type Headers = http::HeaderMap;
 
 #[derive(Clone, Debug)]
 struct Req {
@@ -40,24 +40,22 @@ struct Req {
 
 impl Req {
     fn header(&self, name: &str) -> Option<&str> {
-        self.headers
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case(name))
-            .map(|(_, v)| v.as_str())
+        self.headers.get(name).and_then(|v| v.to_str().ok())
     }
 }
 
 fn h(pairs: &[(&str, &str)]) -> Headers {
-    pairs
-        .iter()
-        .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
-        .collect()
+    crate::support::headers(pairs)
 }
 
 #[derive(Clone, Debug)]
 enum Serve {
     Whole(u16, Headers, Vec<u8>),
     Stall(u16, Headers, Vec<u8>),
+}
+
+fn serve_status(code: u16) -> http::StatusCode {
+    http::StatusCode::from_u16(code).expect("a test names a real status")
 }
 
 struct Drive {
@@ -97,12 +95,7 @@ impl Drive {
                     let req = Req {
                         conn,
                         url: url.to_string(),
-                        headers: headers
-                            .iter()
-                            .map(|(n, v)| {
-                                (n.as_str().to_string(), v.to_str().unwrap_or("").to_string())
-                            })
-                            .collect(),
+                        headers,
                         byte_range: byte_range.map(|s| (s.offset, s.len.get())),
                         at_us: self.now,
                     };
@@ -128,7 +121,7 @@ impl Drive {
         match serve {
             Serve::Whole(status, headers, body) => {
                 self.session
-                    .on_response(conn, status, &headers, ts(self.now));
+                    .on_response(conn, serve_status(status), &headers, ts(self.now));
                 if !body.is_empty() {
                     self.session.on_data(conn, &body, ts(self.now));
                 }
@@ -136,7 +129,7 @@ impl Drive {
             }
             Serve::Stall(status, headers, prefix) => {
                 self.session
-                    .on_response(conn, status, &headers, ts(self.now));
+                    .on_response(conn, serve_status(status), &headers, ts(self.now));
                 if !prefix.is_empty() {
                     self.session.on_data(conn, &prefix, ts(self.now));
                 }
@@ -256,9 +249,15 @@ fn range_of(value: &str) -> (u64, Option<u64>) {
 fn representation_headers(total: usize, validator: Option<&str>) -> Headers {
     let mut headers = h(&[("Accept-Ranges", "bytes")]);
     if let Some(v) = validator {
-        headers.push(("ETag".into(), v.into()));
+        headers.insert(
+            http::header::ETAG,
+            http::HeaderValue::from_str(v).expect("a test writes an ETag"),
+        );
     }
-    headers.push(("Content-Length".into(), total.to_string()));
+    headers.insert(
+        http::header::CONTENT_LENGTH,
+        http::HeaderValue::from_str(&total.to_string()).expect("a test writes a length"),
+    );
     headers
 }
 
@@ -381,7 +380,7 @@ impl Scenario {
     fn answer(&self, req: &Req, nth_target: usize) -> Serve {
         let url_is_playlist = req.url == TS_PLAYLIST_URL;
         if url_is_playlist {
-            return Serve::Whole(200, Vec::new(), self.playlist.clone());
+            return Serve::Whole(200, Headers::new(), self.playlist.clone());
         }
         let total = self.file.len();
         let (view_off, view_len) = (self.view)(req);
@@ -390,10 +389,11 @@ impl Scenario {
             match req.byte_range {
                 Some((o, l)) => {
                     let mut headers = representation_headers(body.len(), validator);
-                    headers.push((
-                        "Content-Range".into(),
-                        format!("bytes {o}-{}/{total}", o + l - 1),
-                    ));
+                    headers.insert(
+                        http::header::CONTENT_RANGE,
+                        http::HeaderValue::from_str(&format!("bytes {o}-{}/{total}", o + l - 1))
+                            .expect("a test writes a range"),
+                    );
                     Serve::Whole(206, headers, body)
                 }
                 None => Serve::Whole(200, representation_headers(body.len(), validator), body),
@@ -421,10 +421,14 @@ impl Scenario {
         let last_at = last.map_or(total - 1, |l| usize::try_from(l).unwrap());
         let slice = |etag: &str, first_at: usize, shift: usize| {
             let mut headers = representation_headers(last_at - first_at + 1, Some(etag));
-            headers.push((
-                "Content-Range".into(),
-                format!("bytes {}-{last_at}/{total}", first_at + shift),
-            ));
+            headers.insert(
+                http::header::CONTENT_RANGE,
+                http::HeaderValue::from_str(&format!(
+                    "bytes {}-{last_at}/{total}",
+                    first_at + shift
+                ))
+                .expect("a test writes a range"),
+            );
             Serve::Whole(206, headers, self.file[first_at + shift..=last_at].to_vec())
         };
         match self.origin {
@@ -446,7 +450,7 @@ impl Scenario {
                 )
             }
             Origin::WrongContentRange => slice(ETAG, first_at, 1),
-            Origin::Unsatisfiable => Serve::Whole(416, Vec::new(), Vec::new()),
+            Origin::Unsatisfiable => Serve::Whole(416, Headers::new(), Vec::new()),
             Origin::NoValidator | Origin::WeakValidator => {
                 panic!("an origin without a strong validator was sent a Range: {req:?}")
             }
@@ -515,7 +519,12 @@ fn nothing_closes_one_microsecond_before_the_timeout() {
     let (opened, _) = collect(&mut session, 0);
     let playlist_conn = opened[0].0;
     let playlist = ts_playlist();
-    session.on_response(playlist_conn, 200, &[], ts(0));
+    session.on_response(
+        playlist_conn,
+        http::StatusCode::from_u16(200).expect("a test names a real status"),
+        &crate::support::headers(&[]),
+        ts(0),
+    );
     session.on_data(playlist_conn, &playlist, ts(0));
     session.on_closed(playlist_conn, None, ts(0));
     let (segments, _) = collect(&mut session, 0);
@@ -525,7 +534,7 @@ fn nothing_closes_one_microsecond_before_the_timeout() {
         .cloned()
         .unwrap();
     let head = representation_headers(100_000, Some(ETAG));
-    session.on_response(seg_conn, 200, &head, ts(1_000));
+    session.on_response(seg_conn, serve_status(200), &head, ts(1_000));
     session.on_data(seg_conn, &[0u8; 100], ts(2_000));
     let deadline = 2_000 + INACTIVITY_US;
     assert!(!collect(&mut session, deadline - 1).1.contains(&seg_conn));
@@ -650,7 +659,10 @@ fn a_trickle_that_never_pauses_for_the_timeout_is_never_closed() {
     let mut drive = Drive::new(config());
     drive.collect();
     let playlist = drive.pending.pop().unwrap();
-    drive.deliver(playlist.conn, Serve::Whole(200, Vec::new(), ts_playlist()));
+    drive.deliver(
+        playlist.conn,
+        Serve::Whole(200, Headers::new(), ts_playlist()),
+    );
     drive.collect();
     let neighbour = drive
         .log
@@ -658,7 +670,10 @@ fn a_trickle_that_never_pauses_for_the_timeout_is_never_closed() {
         .find(|r| r.url == TS_SEG1_URL)
         .cloned()
         .unwrap();
-    drive.deliver(neighbour.conn, Serve::Whole(200, Vec::new(), ts_segment(1)));
+    drive.deliver(
+        neighbour.conn,
+        Serve::Whole(200, Headers::new(), ts_segment(1)),
+    );
     let seg = drive
         .log
         .iter()
@@ -668,7 +683,7 @@ fn a_trickle_that_never_pauses_for_the_timeout_is_never_closed() {
     let body = ts_segment(0);
     drive.session.on_response(
         seg.conn,
-        200,
+        serve_status(200),
         &representation_headers(body.len(), Some(ETAG)),
         ts(0),
     );
@@ -787,7 +802,7 @@ fn a_segment_that_stalls_every_time_exhausts_the_retry_budget() {
     let playlist = ts_playlist();
     drive.run(&mut |req| {
         if req.url == TS_PLAYLIST_URL {
-            return Serve::Whole(200, Vec::new(), playlist.clone());
+            return Serve::Whole(200, Headers::new(), playlist.clone());
         }
         if req.url == TS_SEG0_URL {
             return Serve::Stall(
@@ -796,7 +811,7 @@ fn a_segment_that_stalls_every_time_exhausts_the_retry_budget() {
                 file[..100].to_vec(),
             );
         }
-        Serve::Whole(200, Vec::new(), ts_segment(1))
+        Serve::Whole(200, Headers::new(), ts_segment(1))
     });
     assert!(drive.events.iter().any(|e| matches!(
         e,
@@ -840,7 +855,7 @@ fn a_stalled_init_section_is_closed_and_refetched_whole_when_it_never_answered()
     let mut init_requests = 0;
     drive.run(&mut |req| {
         if req.url == TS_PLAYLIST_URL {
-            return Serve::Whole(200, Vec::new(), playlist.clone());
+            return Serve::Whole(200, Headers::new(), playlist.clone());
         }
         if req.url.ends_with("init.mp4") {
             init_requests += 1;
@@ -865,7 +880,7 @@ fn a_stalled_init_section_is_closed_and_refetched_whole_when_it_never_answered()
             .unwrap()
             .parse()
             .unwrap();
-        Serve::Whole(200, Vec::new(), support::hls_host::cmaf_segment(n))
+        Serve::Whole(200, Headers::new(), support::hls_host::cmaf_segment(n))
     });
     assert_eq!(drive.stalls(), vec![ResumeMode::Range]);
     let init_reqs: Vec<&Req> = drive

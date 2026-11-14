@@ -156,14 +156,14 @@ pub enum FatalKind {
         /// The segment.
         id: ResourceId,
         /// Status of the last failure, when it was an HTTP status.
-        status: Option<u16>,
+        status: Option<http::StatusCode>,
     },
     /// An init or index failed the configured number of times in a row.
     InitFetchFailed {
         /// The resource.
         id: ResourceId,
         /// Status of the last failure, when it was an HTTP status.
-        status: Option<u16>,
+        status: Option<http::StatusCode>,
     },
     /// A progressive MP4 was served as a media segment of a fragmented
     /// presentation.

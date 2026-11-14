@@ -10,16 +10,21 @@ use webrtc_runtime::Error;
 use webrtc_runtime::whep::server::WhepSession;
 use webrtc_runtime::whip::server::{Event, WhipSession};
 
+/// The session URL as the parsed value the state machines take.
+fn session_url() -> url::Url {
+    url::Url::parse(SESSION).expect("session URL")
+}
+
 const SESSION: &str = "https://o.example/s/1";
 
 fn established_whip() -> WhipSession {
-    let mut s = WhipSession::new(SESSION.into());
+    let mut s = WhipSession::new(session_url());
     let _ = s.accept(b"a".to_vec(), "etag1".into());
     s
 }
 
 fn established_whep() -> WhepSession {
-    let mut s = WhepSession::new(SESSION.into());
+    let mut s = WhepSession::new(session_url());
     let _ = s.accept(b"a".to_vec(), "etag1".into());
     s
 }
@@ -162,14 +167,14 @@ fn a_non_utf8_if_match_is_rejected() {
 
 #[test]
 fn whep_counter_offer_answer_accepts_media_type_parameters_and_rejects_others() {
-    let mut s = WhepSession::new(SESSION.into());
+    let mut s = WhepSession::new(session_url());
     let _ = s.counter_offer(b"o".to_vec(), None);
     let ok = s.on_patch(
         b"ans".to_vec(),
         &h(header::CONTENT_TYPE, "application/sdp; charset=utf-8"),
     );
     assert!(ok.is_ok(), "{ok:?}");
-    let mut s = WhepSession::new(SESSION.into());
+    let mut s = WhepSession::new(session_url());
     let _ = s.counter_offer(b"o".to_vec(), None);
     let bad = s.on_patch(b"x".to_vec(), &h(header::CONTENT_TYPE, "text/plain"));
     assert!(matches!(
@@ -220,7 +225,7 @@ fn whep_established_patch_uses_the_same_typed_if_match() {
 
 #[test]
 fn responses_carry_typed_location_etag_and_content_type() {
-    let mut s = WhipSession::new(SESSION.into());
+    let mut s = WhipSession::new(session_url());
     let r = s.accept(b"a".to_vec(), "etag1".into());
     assert_eq!(r.status, StatusCode::CREATED);
     assert_eq!(r.headers.get(header::LOCATION).unwrap(), SESSION);
@@ -257,12 +262,13 @@ fn a_non_ascii_location_is_an_invalid_header_not_a_panic() {
     ));
 }
 
-/// A session URL or ETag that cannot be sent as a header makes `accept` answer
-/// `500` with no `Location`, and leaves the session where it was.
+/// An ETag that cannot be sent as a header makes `accept` answer `500` with no
+/// `Location`, and leaves the session where it was. A session URL is a parsed `url::Url` now, so
+/// it is always ASCII and sendable (the non-ASCII case the old `String` admitted cannot exist).
 #[test]
-fn accept_with_an_unsendable_url_or_etag_is_a_500_not_a_panic() {
-    let mut s = WhipSession::new("https://o/\u{1F600}".into());
-    let r = s.accept(b"a".to_vec(), "etag1".into());
+fn accept_with_an_unsendable_etag_is_a_500_not_a_panic() {
+    let mut s = WhipSession::new(session_url());
+    let r = s.accept(b"a".to_vec(), "bad\"etag".into());
     assert_eq!(r.status, StatusCode::INTERNAL_SERVER_ERROR);
     assert!(r.headers.get(header::LOCATION).is_none());
     assert!(matches!(
@@ -270,14 +276,10 @@ fn accept_with_an_unsendable_url_or_etag_is_a_500_not_a_panic() {
         webrtc_runtime::whip::server::State::AwaitingOffer
     ));
 
-    let mut s = WhipSession::new(SESSION.into());
-    let r = s.accept(b"a".to_vec(), "bad\"etag".into());
-    assert_eq!(r.status, StatusCode::INTERNAL_SERVER_ERROR);
-
-    let mut s = WhepSession::new("https://o/\u{1F600}".into());
+    let mut s = WhepSession::new(session_url());
     assert_eq!(
         s.accept(b"a".to_vec(), "e".into()).status,
-        StatusCode::INTERNAL_SERVER_ERROR
+        StatusCode::CREATED
     );
 }
 

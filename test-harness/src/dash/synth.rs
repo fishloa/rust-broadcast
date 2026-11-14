@@ -7,7 +7,8 @@
 use std::collections::BTreeMap;
 
 use super::world::{
-    HttpReq, HttpResp, MICROS, Method, Origin, Outcome, http_date, xs_datetime_ms, xs_datetime_s,
+    HttpReq, HttpResp, MICROS, Method, Origin, Outcome, date_header, etag, xs_datetime_ms,
+    xs_datetime_s,
 };
 use dash_runtime::client::Failure;
 
@@ -488,7 +489,7 @@ impl Synth {
                 return Outcome::Resp(HttpResp::status(s));
             }
             let mut r = HttpResp::ok(Vec::new());
-            r.date = Some(http_date(at_utc + u.date_skew_us + u.skew_us));
+            r.date = Some(date_header(at_utc + u.date_skew_us + u.skew_us));
             return Outcome::Resp(r);
         }
         let body = if req.url.ends_with("/iso") {
@@ -521,7 +522,7 @@ impl Synth {
                 r.final_url = Some(to);
             }
             if self.send_date {
-                r.date = Some(http_date(at_utc));
+                r.date = Some(date_header(at_utc));
             }
             if self.send_etag {
                 let tag = format!("\"{:x}\"", fnv(&body));
@@ -532,7 +533,7 @@ impl Synth {
                         ..HttpResp::default()
                     });
                 }
-                r.etag = Some(tag);
+                r.etag = Some(etag(&tag));
             }
             return Outcome::Resp(r);
         }

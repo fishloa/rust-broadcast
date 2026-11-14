@@ -33,7 +33,7 @@ pub enum SmoothError {
     #[error("fragment fetch failed (status {status:?})")]
     Fragment {
         /// The final HTTP status, when the failure was an HTTP one.
-        status: Option<u16>,
+        status: Option<http::StatusCode>,
     },
     /// A track could not be described or its init segment could not be built.
     #[error("track setup failed: {reason}")]

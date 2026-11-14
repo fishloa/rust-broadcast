@@ -30,9 +30,8 @@ pub enum Error {
     MessageParse {
         /// What was being parsed.
         what: MessageKind,
-        /// The underlying parse or framing error.
-        #[source]
-        source: Box<dyn std::error::Error + Send + Sync>,
+        /// What went wrong.
+        source: MessageParseError,
     },
 
     /// The RTSP message could not be serialized by the underlying codec.
@@ -166,15 +165,15 @@ pub enum Error {
     Tls {
         /// The server name that was rejected.
         server_name: String,
-        /// The underlying rustls error.
+        /// Why it is not a valid server name.
         #[source]
-        source: Box<dyn std::error::Error + Send + Sync>,
+        source: rustls::pki_types::InvalidDnsNameError,
     },
 
     /// The default `rtsps://` client TLS configuration could not be built: the crypto provider
     /// refused the safe default protocol versions (feature `tls`).
     #[error("TLS client configuration failed")]
-    TlsConfig(#[source] Box<dyn std::error::Error + Send + Sync>),
+    TlsConfig(#[source] rustls::Error),
 
     /// The server answered `454 Session Not Found` (RFC 2326 §11.3.5) to a
     /// request on our session — the session is gone (timed out, or torn down
@@ -218,6 +217,42 @@ impl core::fmt::Display for IoContext {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(self.name())
     }
+}
+
+/// A [`Error::MessageParse`] failure: the codec's own error, or a bound the framed message broke.
+#[non_exhaustive]
+#[derive(Debug, thiserror::Error)]
+pub enum MessageParseError {
+    /// The `rtsp-types` codec refused the message.
+    #[error(transparent)]
+    Codec(#[from] rtsp_types::ParseError),
+    /// A message of at least `at_least` bytes exceeds `limit`.
+    #[error("a message of at least {at_least} bytes exceeds the {limit}-byte maximum")]
+    TooLarge {
+        /// The message size named by the codec's incomplete answer.
+        at_least: usize,
+        /// The crate's maximum.
+        limit: usize,
+    },
+    /// The inbound buffer exceeded the crate's bound with no complete message in it.
+    #[error("a buffered {buffered}-byte inbound stream exceeds the {limit}-byte maximum")]
+    Buffered {
+        /// Bytes buffered without a message.
+        buffered: usize,
+        /// The crate's maximum.
+        limit: usize,
+    },
+    /// A complete message carried no header block.
+    #[error("a header block of at least {at_least} bytes carries no terminator")]
+    HeaderUnterminated {
+        /// Bytes read with no terminator.
+        at_least: usize,
+        /// The crate's maximum.
+        limit: usize,
+    },
+    /// The server read a message that is not a request.
+    #[error("expected an RTSP request")]
+    NotARequest,
 }
 
 /// What an [`Error::MessageParse`] was parsing.
@@ -279,12 +314,13 @@ mod tests {
     fn message_parse_keeps_the_codec_error() {
         let err = Error::MessageParse {
             what: MessageKind::Response,
-            source: Box::new(rtsp_types::ParseError::Error),
+            source: MessageParseError::Codec(rtsp_types::ParseError::Error),
         };
-        assert!(
+        assert!(matches!(
             err.source()
-                .is_some_and(|s| s.downcast_ref::<rtsp_types::ParseError>().is_some())
-        );
+                .and_then(|s| s.downcast_ref::<MessageParseError>()),
+            Some(MessageParseError::Codec(rtsp_types::ParseError::Error))
+        ));
     }
 
     #[test]
@@ -313,7 +349,7 @@ mod tests {
         let errors = [
             Error::MessageParse {
                 what: MessageKind::Request,
-                source: Box::new(rtsp_types::ParseError::Error),
+                source: MessageParseError::Codec(rtsp_types::ParseError::Error),
             },
             Error::MessageWrite(rtsp_types::WriteError::IoError(io())),
             Error::Io {
@@ -323,7 +359,10 @@ mod tests {
             Error::from(io()),
             Error::Tls {
                 server_name: "bad name".into(),
-                source: Box::new(io()),
+                source: <&str as TryInto<rustls::pki_types::ServerName<'static>>>::try_into(
+                    "bad name",
+                )
+                .expect_err("not a server name"),
             },
             Error::Auth(broadcast_auth::Error::ChallengeParse(
                 broadcast_auth::HttpAuthError("bad".into()),
@@ -345,12 +384,13 @@ mod tests {
     fn contexts_name_what_was_being_done() {
         let tls = Error::Tls {
             server_name: "bad name".into(),
-            source: Box::new(std::io::Error::other("x")),
+            source: <&str as TryInto<rustls::pki_types::ServerName<'static>>>::try_into("bad name")
+                .expect_err("not a server name"),
         };
         assert!(tls.to_string().contains("bad name"));
         let parse = Error::MessageParse {
             what: MessageKind::Request,
-            source: Box::new(rtsp_types::ParseError::Error),
+            source: MessageParseError::NotARequest,
         };
         assert!(parse.to_string().contains("request"));
         assert_eq!(IoContext::TlsHandshake.to_string(), "TLS handshake");

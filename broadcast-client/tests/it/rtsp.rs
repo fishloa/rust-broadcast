@@ -641,7 +641,11 @@ fn credentials_rejected_emits_auth_rejected() {
         .unwrap();
     host.drain();
     let events = host.events();
-    assert!(events.contains(&Event::AuthRejected { status: 401 }));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::AuthRejected { status } if status.as_u16() == 401))
+    );
     assert!(statuses(&events).contains(&Status::WaitingForCredentials));
     host.clear_actions();
     let sent = host.server.log.len();
@@ -671,7 +675,11 @@ fn forbidden_403_event() {
     s.describe_status = Some(403);
     let mut host = connected(Config::default(), s);
     let events = host.events();
-    assert!(events.contains(&Event::Forbidden { status: 403 }));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::Forbidden { status } if status.as_u16() == 403))
+    );
     assert_eq!(reconnecting_attempts(&events), [1]);
     assert_eq!(closes(&host), 1);
     assert_eq!(wakes(&host.actions).last(), Some(&(2 * SEC)));
