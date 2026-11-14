@@ -58,6 +58,9 @@ impl core::fmt::Debug for RtmpTarget {
 }
 
 /// An RTMP URL scheme: [`SCHEME_RTMP`] or [`SCHEME_RTMPS`].
+///
+/// Data-carrying (`Other(String)`), so like every other `Other(_)` discriminant
+/// in the workspace it has no fixed label set and no `name()`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Scheme {
