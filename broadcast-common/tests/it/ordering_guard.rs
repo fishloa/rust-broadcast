@@ -19,7 +19,8 @@
 //!   (`extension/mod.rs`), `declare_tables!` (`tables/any.rs`, by range start) and
 //!   `declare_payloads!` (`dvb-t2mi/src/payload/any.rs`): entries ascending.
 //! - named `const` blocks: `mpeg-pes/src/stream_id.rs`, `transmux` stream_type /
-//!   OTI / RTMP message-type / VVC NAL constants, `dvb-si` BIOP tags.
+//!   OTI / VVC NAL constants, `dvb-si` BIOP tags; `rtmp-runtime`'s message type
+//!   ids as `MessageTypeId` enum doc rows (they stopped being constants).
 //!
 //! **Intentionally NOT numeric** (spec-clause or wire-field order, grouped by
 //! feature): the files in `ORDER_COMMENT_REQUIRED` must each carry a one-line
@@ -267,6 +268,20 @@ fn declare_list(root: &Path, rel: &str, marker: &str) {
     strictly_ascending(&format!("{rel} {marker} list"), &vals);
 }
 
+/// The value of a doc row's leading numeric token (`` `1` — ... `` or
+/// `0xNN`), ignoring a leading backtick.
+fn lit_at_start(t: &str) -> Option<u64> {
+    // A doc row leads with its value: `0xNN ...` (dvb-si) or `` `N` — ... ``
+    // (rtmp-runtime). A wrapped line that merely starts with a number
+    // (`8.1.2; ...`) is neither.
+    if t.starts_with("0x") {
+        return leading_lit(t).map(|(v, _)| v);
+    }
+    let t = t.strip_prefix('`')?;
+    let (v, rest) = leading_lit(t)?;
+    rest.trim_start().starts_with('`').then_some(v)
+}
+
 /// `/// 0xNN` doc rows of an enum, ascending (ranges use their start).
 fn enum_doc_rows(root: &Path, rel: &str, name: &str) {
     let src = read(root, rel);
@@ -276,9 +291,7 @@ fn enum_doc_rows(root: &Path, rel: &str, name: &str) {
         .enumerate()
         .filter_map(|(i, l)| {
             let t = l.trim().strip_prefix("///")?.trim_start();
-            let t = t.trim_start_matches('`');
-            t.starts_with("0x")
-                .then(|| leading_lit(t).map(|(v, _)| (i + 1, v)))?
+            lit_at_start(t).map(|v| (i + 1, v))
         })
         .collect();
     strictly_ascending(&format!("{rel} enum {name} doc rows"), &vals);
@@ -435,12 +448,10 @@ fn named_const_blocks_ascending() {
         "const STREAM_TYPE_AVC",
         "const STREAM_TYPE_MPEGH",
     );
-    consts_ascending(
-        &r,
-        "rtmp-runtime/src/message.rs",
-        "pub const SET_CHUNK_SIZE",
-        "pub const AGGREGATE",
-    );
+    // rtmp-runtime's message type ids are a `MessageTypeId` enum (with a
+    // `name()` and a `from_u8`/`to_u8` pair), so their spec order is checked
+    // as an enum's doc rows and conversions rather than as bare constants.
+    enum_doc_rows(&r, "rtmp-runtime/src/message.rs", "MessageTypeId");
     consts_ascending(
         &r,
         "transmux/src/au.rs",
