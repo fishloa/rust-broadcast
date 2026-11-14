@@ -302,7 +302,7 @@ impl HlsSource {
         let Some(req) = self.flight.reqs.remove(&conn) else {
             return;
         };
-        auth.receive_cookies(&req.url, headers, now);
+        auth.receive_cookies(&req.url, headers, Timestamp::from_micros(now));
         let head = ResponseHead {
             conn,
             status,
@@ -873,7 +873,7 @@ impl HlsSource {
 
     fn send(&mut self, mut req: Req, auth: &mut AuthState, now: u64) {
         self.flush_refused();
-        let headers = auth.request_headers(&req.url, now);
+        let headers = auth.request_headers(&req.url, Timestamp::from_micros(now));
         req.authed = broadcast_auth::carries_credentials(&headers);
         self.flight
             .start(req, headers, METHOD_GET, now, &mut self.actions);

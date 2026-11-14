@@ -378,7 +378,8 @@ impl Session {
         let Some(req_url) = self.known_conns.get(&conn).cloned() else {
             return;
         };
-        self.auth.receive_cookies(&req_url, headers, self.now_us);
+        self.auth
+            .receive_cookies(&req_url, headers, Timestamp::from_micros(self.now_us));
         let lineage = self.conn_auth.get(&conn).copied().unwrap_or_default();
 
         if status == 301 || status == 302 || status == 303 || status == 307 || status == 308 {
@@ -396,7 +397,9 @@ impl Session {
                 }
                 self.actions.push_back(Action::Close { conn });
                 let new_conn = self.alloc_conn(target.clone());
-                let new_headers = self.auth.request_headers(&target, self.now_us);
+                let new_headers = self
+                    .auth
+                    .request_headers(&target, Timestamp::from_micros(self.now_us));
                 let authed = has_authorization(&new_headers);
                 self.conn_auth.insert(
                     new_conn,
@@ -443,7 +446,9 @@ impl Session {
                 | broadcast_auth::AuthDecision::ReplayStale => {
                     let stale_replayed = lineage.stale_replayed
                         || matches!(decision, broadcast_auth::AuthDecision::ReplayStale);
-                    let new_headers = self.auth.request_headers(&req_url, self.now_us);
+                    let new_headers = self
+                        .auth
+                        .request_headers(&req_url, Timestamp::from_micros(self.now_us));
                     let authed = has_authorization(&new_headers);
                     if !replay_allowed(lineage, authed) {
                         self.signal_connect_failure();
@@ -842,7 +847,7 @@ impl Session {
     /// Live cookies as `(name, value)` pairs, for the host to persist and pass back as
     /// `Config::initial_cookies`. The values are secrets.
     pub fn cookies(&self) -> Vec<(String, String)> {
-        self.auth.cookies(self.now_us)
+        self.auth.cookies(Timestamp::from_micros(self.now_us))
     }
 
     /// Caller-initiated reconnect.
@@ -1507,7 +1512,9 @@ impl Session {
                 self.source.flush_refused();
                 let target = self.source.url().clone();
                 let conn = self.alloc_conn(target.clone());
-                let headers = self.auth.request_headers(&target, self.now_us);
+                let headers = self
+                    .auth
+                    .request_headers(&target, Timestamp::from_micros(self.now_us));
                 let authed = has_authorization(&headers);
                 self.conn_auth.insert(
                     conn,

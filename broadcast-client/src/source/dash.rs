@@ -485,7 +485,7 @@ impl DashSource {
         let Some(req) = self.flight.reqs.remove(&conn) else {
             return;
         };
-        auth.receive_cookies(&req.url, headers, now);
+        auth.receive_cookies(&req.url, headers, Timestamp::from_micros(now));
         let head = ResponseHead {
             conn,
             status,
@@ -1013,7 +1013,7 @@ impl DashSource {
 
     fn send(&mut self, mut req: Req, auth: &mut AuthState, now: u64) {
         self.flush_refused();
-        let mut headers = auth.request_headers(&req.url, now);
+        let mut headers = auth.request_headers(&req.url, Timestamp::from_micros(now));
         if !self.utc_credentials && matches!(req.purpose, Purpose::Utc(_)) {
             headers.retain(|(name, _)| !is_credential_header(name));
         }

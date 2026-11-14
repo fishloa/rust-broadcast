@@ -301,7 +301,7 @@ impl SmoothSource {
         let Some(mut req) = self.reqs.remove(&conn) else {
             return;
         };
-        auth.receive_cookies(&req.url, headers, now);
+        auth.receive_cookies(&req.url, headers, Timestamp::from_micros(now));
         if REDIRECT_STATUSES.contains(&status) {
             self.actions.push_back(HostAction::Close { conn });
             let target =
@@ -313,7 +313,7 @@ impl SmoothSource {
                     if matches!(req.kind, ReqKind::Manifest) {
                         self.client.set_manifest_url(req.url.clone());
                     }
-                    let h = auth.request_headers(&req.url, now);
+                    let h = auth.request_headers(&req.url, Timestamp::from_micros(now));
                     self.start(req, h, now);
                 }
                 None => self.fail_request(&req, None, now),
@@ -326,13 +326,13 @@ impl SmoothSource {
             match auth.handle_unauthorized(status, headers, req.authed, req.stale_replayed) {
                 AuthDecision::Replay => {
                     req.authed = true;
-                    let h = auth.request_headers(&req.url, now);
+                    let h = auth.request_headers(&req.url, Timestamp::from_micros(now));
                     self.start(req, h, now);
                 }
                 AuthDecision::ReplayStale => {
                     req.authed = true;
                     req.stale_replayed = true;
-                    let h = auth.request_headers(&req.url, now);
+                    let h = auth.request_headers(&req.url, Timestamp::from_micros(now));
                     self.start(req, h, now);
                 }
                 AuthDecision::Wait(events) => {
@@ -417,7 +417,7 @@ impl SmoothSource {
 
     pub(crate) fn resume(&mut self, now: u64, auth: &mut AuthState) {
         for req in core::mem::take(&mut self.parked) {
-            let h = auth.request_headers(&req.url, now);
+            let h = auth.request_headers(&req.url, Timestamp::from_micros(now));
             self.start(req, h, now);
         }
         self.pump(now);
