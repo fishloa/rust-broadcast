@@ -62,7 +62,7 @@ fn statuses(events: &[Event]) -> Vec<Status> {
         .collect()
 }
 
-fn reconnecting_attempts(events: &[Event]) -> Vec<u64> {
+fn reconnecting_attempts(events: &[Event]) -> Vec<u32> {
     statuses(events)
         .into_iter()
         .filter_map(|s| match s {
@@ -755,7 +755,7 @@ fn connect_failure_backoff_2_4_8_then_10_forever() {
         let events = host.events();
         assert_eq!(
             reconnecting_attempts(&events),
-            [u64::try_from(index).expect("small") + 1]
+            [u32::try_from(index).expect("small") + 1]
         );
         let due = wakes(&host.actions).last().copied().expect("a retry wake");
         assert!(

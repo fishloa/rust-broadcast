@@ -39,7 +39,8 @@ use alloc::vec::Vec;
 
 /// Validate an HLS playlist text, appending findings for each violation.
 ///
-/// Line numbers in [`Location`] are 1-based; `pid` is always 0.
+/// Line numbers in [`Location`] are 1-based; the stream is
+/// [`StreamLocator::Unknown`](crate::StreamLocator::Unknown).
 pub fn check_hls_playlist(text: &str, report: &mut Report) {
     // Always run line-based DATERANGE checks on the original text — the
     // structured parser stores DATERANGE lines verbatim in `extra_tags`
@@ -96,7 +97,7 @@ pub fn check_hls_playlist(text: &str, report: &mut Report) {
             (_, Ok(_)) => {
                 report.push(Finding::new(
                     Severity::Error,
-                    Location::new(1, 0),
+                    Location::new(1),
                     "hls-unsupported-playlist",
                     "Playlist carries neither a Media Playlist tag (§4.4.3.1 EXT-X-TARGETDURATION, §4.4.4.1 EXTINF) nor a Multivariant Playlist tag (§4.4.6.1 EXT-X-STREAM-INF, §4.4.6.5 EXT-X-I-FRAME-STREAM-INF) — it cannot be validated as either",
                 ));
@@ -151,7 +152,7 @@ fn report_parse_error(err: &broadcast_hls::Error, kind: &str, report: &mut Repor
     };
     report.push(Finding::new(
         Severity::Error,
-        Location::new(line, 0),
+        Location::new(line),
         "hls-parse-error",
         alloc::format!("Playlist failed to parse as a valid {kind} Playlist: {err}"),
     ));
@@ -176,7 +177,7 @@ fn validate_media_playlist(pl: &broadcast_hls::MediaPlaylist, report: &mut Repor
         };
         report.push(Finding::new(
             Severity::Warning,
-            Location::new(diagnostic.line_no, 0),
+            Location::new(diagnostic.line_no),
             rule,
             message,
         ));
@@ -189,7 +190,7 @@ fn validate_media_playlist(pl: &broadcast_hls::MediaPlaylist, report: &mut Repor
     {
         report.push(Finding::new(
             Severity::Error,
-            Location::new(1, 0),
+            Location::new(1),
             "hls-preload-hint-with-endlist",
             "Playlist carries EXT-X-ENDLIST and EXT-X-PRELOAD-HINT — §4.4.5.3: a playlist with ENDLIST MUST NOT contain PRELOAD-HINT",
         ));
@@ -205,7 +206,7 @@ fn validate_media_playlist(pl: &broadcast_hls::MediaPlaylist, report: &mut Repor
         if !has_can_skip {
             report.push(Finding::new(
                 Severity::Error,
-                Location::new(1, 0),
+                Location::new(1),
                 "hls-skip-without-can-skip-until",
                 "EXT-X-SKIP present but EXT-X-SERVER-CONTROL has no CAN-SKIP-UNTIL — §4.4.3.8",
             ));
@@ -288,7 +289,7 @@ fn check_part_durations(
         };
         report.push(Finding::new(
             Severity::Error,
-            Location::new(segment_number, 0),
+            Location::new(segment_number),
             "hls-part-duration-range",
             alloc::format!(
                 "Partial segment {part_idx} of segment {segment_number} has duration {duration} \
@@ -319,7 +320,7 @@ fn check_daterange_lines(text: &str, report: &mut Report) {
         {
             report.push(Finding::new(
                 Severity::Error,
-                Location::new(i + 1, 0),
+                Location::new(i + 1),
                 "hls-malformed-daterange",
                 "Malformed #EXT-X-DATERANGE line — §4.4.5.1",
             ));
@@ -342,7 +343,7 @@ fn legacy_line_checks(text: &str, report: &mut Report) {
         _ => {
             report.push(Finding::new(
                 Severity::Error,
-                Location::new(1, 0),
+                Location::new(1),
                 "hls-missing-extm3u",
                 "First non-empty line must be exactly '#EXTM3U' — §4.4.1.1",
             ));
@@ -379,7 +380,7 @@ fn legacy_line_checks(text: &str, report: &mut Report) {
     if !extinf_line_nums.is_empty() && !has_targetduration {
         report.push(Finding::new(
             Severity::Error,
-            Location::new(1, 0),
+            Location::new(1),
             "hls-missing-targetduration",
             "Media playlist with EXTINF entries must include #EXT-X-TARGETDURATION — §4.4.3.1",
         ));
@@ -395,7 +396,7 @@ fn legacy_line_checks(text: &str, report: &mut Report) {
             if rounded > targetduration_val {
                 report.push(Finding::new(
                     Severity::Error,
-                    Location::new(extinf_line_nums[idx], 0),
+                    Location::new(extinf_line_nums[idx]),
                     "hls-extinf-exceeds-target",
                     alloc::format!(
                         "EXTINF duration {dur} (rounded to {rounded}) exceeds TARGETDURATION {targetduration_val} — §4.4.3.1",

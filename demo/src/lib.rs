@@ -1177,7 +1177,7 @@ mod tests {
                 pusi: true,
                 pid: wk::PAT,
                 scrambling: ScramblingControl::NotScrambled,
-                adaptation: AdaptationFieldControl::PayloadOnly,
+                adaptation_field_control: AdaptationFieldControl::PayloadOnly,
                 continuity_counter: ContinuityCounter::from_wire_masked((n % 16) as u8),
             }
             .serialize_into(&mut pkt)
@@ -1285,7 +1285,7 @@ mod tests {
                 pusi: true,
                 pid,
                 scrambling: ScramblingControl::NotScrambled,
-                adaptation: AdaptationFieldControl::PayloadOnly,
+                adaptation_field_control: AdaptationFieldControl::PayloadOnly,
                 continuity_counter: ContinuityCounter::try_new(0).expect("4-bit counter"),
             };
             header.serialize_into(&mut pkt).unwrap();

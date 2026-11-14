@@ -242,7 +242,7 @@ impl OwnedTsPacket {
             pusi,
             pid,
             scrambling: ScramblingControl::NotScrambled,
-            adaptation: AdaptationFieldControl::PayloadOnly,
+            adaptation_field_control: AdaptationFieldControl::PayloadOnly,
             continuity_counter: cc,
         };
         // Cannot fail: buf is 188 bytes, need 4.

@@ -59,21 +59,21 @@ impl Backoff {
     /// The unjittered step for `attempt` (1-based): `steps_ms[attempt - 1]`, or `cap_ms` once the
     /// steps are exhausted. Attempts beyond the table keep the cap.
     #[cfg(test)]
-    pub(crate) fn raw_delay_us(&self, attempt: u64) -> u64 {
+    pub(crate) fn raw_delay_us(&self, attempt: u32) -> u64 {
         // Attempt 0 is a caller that has taken no attempt yet: it takes the first step.
-        let index = u32::try_from(attempt.saturating_sub(1)).unwrap_or(u32::MAX);
+        let index = attempt.saturating_sub(1);
         duration_us(self.schedule.raw_delay_for_attempt(index))
     }
 
     /// The jittered delay for `attempt` (1-based): in `[raw_delay_us * 5/6, raw_delay_us]`, and
     /// exactly `raw_delay_us` for the first.
     #[cfg(test)]
-    pub(crate) fn jittered_delay_us(&self, attempt: u64) -> u64 {
-        let index = u32::try_from(attempt.saturating_sub(1)).unwrap_or(u32::MAX);
+    pub(crate) fn jittered_delay_us(&self, attempt: u32) -> u64 {
+        let index = attempt.saturating_sub(1);
         duration_us(self.schedule.delay_for_attempt(index))
     }
-    pub(crate) fn delay_us(&self, attempt: u64) -> u64 {
-        let index = u32::try_from(attempt.saturating_sub(1)).unwrap_or(u32::MAX);
+    pub(crate) fn delay_us(&self, attempt: u32) -> u64 {
+        let index = attempt.saturating_sub(1);
         duration_us(self.schedule.delay_for_attempt(index))
     }
 }
@@ -409,7 +409,7 @@ mod tests {
         assert_eq!(backoff.raw_delay_us(2), 4_000_000);
         assert_eq!(backoff.raw_delay_us(3), 8_000_000);
         assert_eq!(backoff.raw_delay_us(4), 10_000_000);
-        assert_eq!(backoff.raw_delay_us(u64::MAX), 10_000_000);
+        assert_eq!(backoff.raw_delay_us(u32::MAX), 10_000_000);
     }
 
     #[test]
@@ -726,6 +726,18 @@ mod tests {
         assert!(
             wait < Duration::from_secs(2),
             "a connection that stayed up past the healthy span restarts the series: {wait:?}"
+        );
+    }
+
+    #[test]
+    fn an_exhausted_attempt_series_saturates_instead_of_wrapping_to_a_fresh_series() {
+        let mut timer = ReconnectTimer::new(&[1_000], 30_000, 0x5EED);
+        timer.attempts = u32::MAX;
+        let _ = timer.on_disconnected(0);
+        assert_eq!(
+            timer.attempts(),
+            u32::MAX,
+            "a counter that wrapped to 0 would report a reconnect after a played connection"
         );
     }
 

@@ -690,7 +690,7 @@ impl HlsSource {
 
     fn fail_segment(&mut self, id: ResourceId, status: Option<u16>, now: u64) {
         let Failure { count, status } = self.seg_failures.record(id, status);
-        if verdict(u64::from(count), self.max_segment_failures) == Verdict::GiveUp {
+        if verdict(count, self.max_segment_failures) == Verdict::GiveUp {
             self.give_up_segment(id, status, now);
             return;
         }
@@ -736,7 +736,7 @@ impl HlsSource {
 
     fn schedule_retry(&mut self, now: u64, refetch: Option<String>, segment_attempt: Option<u32>) {
         let attempt = match segment_attempt {
-            Some(count) => u64::from(count),
+            Some(count) => count,
             None => self.attempt.bump(),
         };
         let wait = Duration::from_micros(self.backoff.delay_us(attempt).max(self.retry_after_us));

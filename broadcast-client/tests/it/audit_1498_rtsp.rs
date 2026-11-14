@@ -74,7 +74,7 @@ fn discontinuities(events: &[Event]) -> usize {
         .count()
 }
 
-fn reconnecting(events: &[Event]) -> Vec<u64> {
+fn reconnecting(events: &[Event]) -> Vec<u32> {
     events
         .iter()
         .filter_map(|e| match e {
