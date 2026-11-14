@@ -15,9 +15,12 @@ fn bearer_preemptive() {
         .unwrap();
     match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { headers, .. } => {
-            assert!(headers.iter().any(
-                |(k, v)| k.as_str().eq_ignore_ascii_case("authorization") && v.to_str().unwrap_or("") == "Bearer secret-token"
-            ));
+            assert!(
+                headers
+                    .iter()
+                    .any(|(k, v)| k.as_str().eq_ignore_ascii_case("authorization")
+                        && v.to_str().unwrap_or("") == "Bearer secret-token")
+            );
         }
         _ => panic!(),
     }
@@ -38,9 +41,10 @@ fn explicit_basic_is_sent_on_the_first_request_only_when_preemptive_basic_is_on(
         let Some(Action::HttpRequest { headers, .. }) = session.poll(ts(0)) else {
             panic!("a first request");
         };
-        let sent = headers
-            .iter()
-            .any(|(k, v)| k.as_str().eq_ignore_ascii_case("authorization") && v.to_str().unwrap_or("").starts_with("Basic "));
+        let sent = headers.iter().any(|(k, v)| {
+            k.as_str().eq_ignore_ascii_case("authorization")
+                && v.to_str().unwrap_or("").starts_with("Basic ")
+        });
         assert_eq!(sent, expected, "preemptive_basic = {preemptive}");
     }
 }
@@ -73,7 +77,8 @@ fn an_empty_username_in_the_url_userinfo_is_credentials() {
     assert!(
         headers
             .iter()
-            .any(|(k, v)| k.as_str().eq_ignore_ascii_case("authorization") && v.to_str().unwrap_or("") == "Basic OnB3"),
+            .any(|(k, v)| k.as_str().eq_ignore_ascii_case("authorization")
+                && v.to_str().unwrap_or("") == "Basic OnB3"),
         "{headers:?}"
     );
 }
@@ -122,9 +127,12 @@ fn basic_401_replay_then_200() {
         match a {
             Action::Close { conn } if conn == conn1 => saw_close = true,
             Action::HttpRequest { conn, headers, .. } => {
-                assert!(headers.iter().any(
-                    |(k, v)| k.as_str().eq_ignore_ascii_case("authorization") && v.to_str().unwrap_or("").starts_with("Basic ")
-                ));
+                assert!(
+                    headers
+                        .iter()
+                        .any(|(k, v)| k.as_str().eq_ignore_ascii_case("authorization")
+                            && v.to_str().unwrap_or("").starts_with("Basic "))
+                );
                 conn2 = Some(conn);
             }
             Action::WakeAt(_) => {}
@@ -200,9 +208,10 @@ fn basic_digest_preemptive_after_replay() {
     let mut saw_auth = false;
     while let Some(a) = session.poll(ts(1_000)) {
         if let Action::HttpRequest { headers, .. } = a
-            && headers
-                .iter()
-                .any(|(k, v)| k.as_str().eq_ignore_ascii_case("authorization") && v.to_str().unwrap_or("").starts_with("Basic "))
+            && headers.iter().any(|(k, v)| {
+                k.as_str().eq_ignore_ascii_case("authorization")
+                    && v.to_str().unwrap_or("").starts_with("Basic ")
+            })
         {
             saw_auth = true;
         }

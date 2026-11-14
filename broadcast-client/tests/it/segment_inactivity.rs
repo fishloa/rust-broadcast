@@ -94,8 +94,13 @@ impl Drive {
                 } => {
                     let req = Req {
                         conn,
-                        url,
-                        headers,
+                        url: url.to_string(),
+                        headers: headers
+                            .iter()
+                            .map(|(n, v)| {
+                                (n.as_str().to_string(), v.to_str().unwrap_or("").to_string())
+                            })
+                            .collect(),
                         byte_range,
                         at_us: self.now,
                     };
@@ -497,7 +502,7 @@ fn nothing_closes_one_microsecond_before_the_timeout() {
         let (mut requests, mut closes) = (Vec::new(), Vec::new());
         while let Some(action) = session.poll(ts(now)) {
             match action {
-                Action::HttpRequest { conn, url, .. } => requests.push((conn, url)),
+                Action::HttpRequest { conn, url, .. } => requests.push((conn, url.to_string())),
                 Action::Close { conn } => closes.push(conn),
                 _ => {}
             }

@@ -15,7 +15,13 @@ fn first_request(session: &mut Session, now: u64) -> (ConnId, Vec<(String, Strin
     let mut found = None;
     while let Some(action) = session.poll(ts(now)) {
         if let Action::HttpRequest { conn, headers, .. } = action {
-            found = Some((conn, headers));
+            found = Some((
+                conn,
+                headers
+                    .iter()
+                    .map(|(n, v)| (n.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
+                    .collect(),
+            ));
         }
     }
     found.expect("an HttpRequest")

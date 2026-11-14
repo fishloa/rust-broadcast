@@ -55,8 +55,11 @@ fn http_requests(actions: &[Action]) -> Vec<Req> {
             } => Some(Req {
                 now: 0,
                 conn: *conn,
-                url: url.clone(),
-                headers: headers.clone(),
+                url: url.to_string(),
+                headers: headers
+                    .iter()
+                    .map(|(n, v)| (n.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
+                    .collect(),
             }),
             _ => None,
         })

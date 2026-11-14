@@ -90,7 +90,7 @@ fn a_redirect_answered_after_a_long_wait_gets_a_fresh_deadline() {
     while let Some(a) = session.poll(ts(later)) {
         match a {
             Action::Close { conn } => closes.push(conn),
-            Action::HttpRequest { conn, url, .. } => requests.push((conn, url)),
+            Action::HttpRequest { conn, url, .. } => requests.push((conn, url.to_string())),
             _ => {}
         }
     }

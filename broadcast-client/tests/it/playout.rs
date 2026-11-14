@@ -91,7 +91,7 @@ impl Drv {
     fn pump(&mut self) {
         while let Some(a) = self.session.poll(ts(self.now)) {
             match a {
-                Action::HttpRequest { conn, url, .. } => self.pending.push((conn, url)),
+                Action::HttpRequest { conn, url, .. } => self.pending.push((conn, url.to_string())),
                 Action::Close { conn } => self.pending.retain(|p| p.0 != conn),
                 Action::WakeAt(t) if t.as_micros() > self.now => {
                     self.wakes.insert(t.as_micros());

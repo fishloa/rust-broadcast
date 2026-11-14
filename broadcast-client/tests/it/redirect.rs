@@ -24,7 +24,7 @@ fn resolve_all_3xx_codes_session() {
         let mut saw_new = false;
         while let Some(a) = session.poll(ts(0)) {
             if let Action::HttpRequest { url, .. } = a {
-                assert!(url.ends_with("/moved.ts"));
+                assert!(url.path().ends_with("/moved.ts"));
                 saw_new = true;
             }
         }
@@ -100,9 +100,12 @@ fn cross_origin_redirect_drops_authorization() {
         .unwrap();
     let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, headers, .. } => {
-            assert!(headers.iter().any(
-                |(k, v)| k.eq_ignore_ascii_case("authorization") && v == "Bearer secret-token"
-            ));
+            assert!(
+                headers
+                    .iter()
+                    .any(|(k, v)| k.as_str().eq_ignore_ascii_case("authorization")
+                        && v.to_str().unwrap_or("") == "Bearer secret-token")
+            );
             conn
         }
         _ => panic!(),
@@ -125,7 +128,7 @@ fn cross_origin_redirect_drops_authorization() {
     let nh = new_headers.expect("redirect request");
     assert!(
         !nh.iter()
-            .any(|(k, _)| k.eq_ignore_ascii_case("authorization")),
+            .any(|(k, _)| k.as_str().eq_ignore_ascii_case("authorization")),
         "cross-origin redirect must drop Authorization"
     );
 }

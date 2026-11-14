@@ -452,7 +452,9 @@ impl DashSim {
                     url.to_string(),
                     headers
                         .iter()
-                        .map(|(n, v)| (n.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
+                        .map(|(n, v)| {
+                            (n.as_str().to_string(), v.to_str().unwrap_or("").to_string())
+                        })
                         .collect(),
                     byte_range,
                 ),

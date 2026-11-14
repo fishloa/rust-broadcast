@@ -1031,11 +1031,14 @@ fn credentials_401_on_playlist_waits_no_retry() {
     let (_, url) = single_http_request(&actions);
     assert_eq!(url, TS_PLAYLIST_URL);
     match &actions[0] {
-        Action::HttpRequest { headers, .. } => assert!(
-            headers
-                .iter()
-                .any(|(k, v)| k.eq_ignore_ascii_case("authorization") && v == "Bearer tok-123")
-        ),
+        Action::HttpRequest { headers, .. } => {
+            assert!(
+                headers
+                    .iter()
+                    .any(|(k, v)| k.as_str().eq_ignore_ascii_case("authorization")
+                        && v == "Bearer tok-123")
+            )
+        }
         other => panic!("{other:?}"),
     }
 }

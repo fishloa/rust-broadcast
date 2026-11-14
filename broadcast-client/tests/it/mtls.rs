@@ -44,7 +44,7 @@ fn first_http(session: &mut Session, now: u64) -> (ConnId, String, Option<Arc<Cl
             ..
         } = action
         {
-            return (conn, url, identity);
+            return (conn, url.to_string(), identity);
         }
     }
     panic!("an HttpRequest");
@@ -231,9 +231,9 @@ fn key_material_never_appears_in_debug_output() {
     let (_, _, identity) = first_http(&mut s, 0);
     let action = Action::HttpRequest {
         conn: ConnId::new(1),
-        method: "GET".to_string(),
-        url: "https://h.example/live.ts".to_string(),
-        headers: Vec::new(),
+        method: http::Method::GET,
+        url: url::Url::parse("https://h.example/live.ts").unwrap(),
+        headers: http::HeaderMap::new(),
         byte_range: None,
         identity,
     };
@@ -280,7 +280,7 @@ fn drive(
             {
                 out.requests += 1;
                 out.offered += usize::from(identity.is_some());
-                let path = url::Url::parse(&url).unwrap().path().to_string();
+                let path = url.path().to_string();
                 match https_get(server.addr, &path, server_ca, identity.as_deref()) {
                     Ok(resp) => {
                         session.on_response(conn, resp.status, &resp.headers, ts(now));

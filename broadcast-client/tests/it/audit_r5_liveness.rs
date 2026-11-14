@@ -104,7 +104,7 @@ fn hls_live(bytes: &[u8]) -> Seen {
         loop {
             while let Some(a) = s.poll(ts(now)) {
                 if let Action::HttpRequest { conn, url, .. } = a {
-                    pending.push_back((conn, url));
+                    pending.push_back((conn, url.to_string()));
                 }
             }
             let Some((c, u)) = pending.pop_front() else {

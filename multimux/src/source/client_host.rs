@@ -739,7 +739,8 @@ fn http_request(
     headers: &http::HeaderMap,
     byte_range: Option<(u64, u64)>,
 ) -> Result<reqwest::RequestBuilder, String> {
-    let method = reqwest::Method::from_bytes(method.as_str().as_bytes()).map_err(|e| e.to_string())?;
+    let method =
+        reqwest::Method::from_bytes(method.as_str().as_bytes()).map_err(|e| e.to_string())?;
     let mut request = client.request(method, url.clone());
     for (name, value) in headers {
         request = request.header(name, value);

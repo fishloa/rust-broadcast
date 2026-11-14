@@ -417,6 +417,7 @@ fn invalid_bearer_token_never_reaches_a_header() {
     for a in &actions {
         if let Action::HttpRequest { headers, .. } = a {
             for (_, v) in headers {
+                let v = v.to_str().unwrap_or("");
                 assert!(!v.contains('\n') && !v.contains('\r'), "{v:?}");
             }
         }

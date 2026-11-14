@@ -367,9 +367,14 @@ fn play(port: u16, shape: &Shape) -> Observed {
                     ..
                 } => pending.push(Pending {
                     conn,
-                    method,
-                    url,
-                    headers,
+                    method: method.as_str().to_string(),
+                    url: url.to_string(),
+                    headers: headers
+                        .iter()
+                        .map(|(n, v)| {
+                            (n.as_str().to_string(), v.to_str().unwrap_or("").to_string())
+                        })
+                        .collect(),
                     range: byte_range,
                 }),
                 Action::WakeAt(t) => wake = Some(wake.map_or(t, |w| w.min(t))),

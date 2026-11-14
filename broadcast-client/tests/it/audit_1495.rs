@@ -76,8 +76,8 @@ fn run_vod(
         while let Some(action) = session.poll(ts(now)) {
             match action {
                 Action::HttpRequest { conn, url, .. } => {
-                    stats.requested.push(url.clone());
-                    outstanding.push_back((conn, url));
+                    stats.requested.push(url.to_string());
+                    outstanding.push_back((conn, url.to_string()));
                 }
                 Action::Close { conn } => outstanding.retain(|(c, _)| *c != conn),
                 Action::WakeAt(t) if t.as_micros() > now => {

@@ -129,8 +129,8 @@ fn run(mut origin: Origin, order: Order, mut on_tick: impl FnMut(u64, &mut Origi
         loop {
             while let Some(a) = session.poll(ts(now)) {
                 if let Action::HttpRequest { conn, url, .. } = a {
-                    t.urls.push(url.clone());
-                    pending.push_back((conn, url));
+                    t.urls.push(url.to_string());
+                    pending.push_back((conn, url.to_string()));
                 }
             }
             if pending.is_empty() {

@@ -14,7 +14,9 @@ fn first_request(url: &str, kind: SourceKind) -> Option<(String, String)> {
     config.kind = kind;
     let mut session = Session::open(url, config, ts(0)).ok()?;
     std::iter::from_fn(|| session.poll(ts(0))).find_map(|a| match a {
-        Action::HttpRequest { method, url, .. } => Some((method, url)),
+        Action::HttpRequest { method, url, .. } => {
+            Some((method.as_str().to_string(), url.to_string()))
+        }
         _ => None,
     })
 }
@@ -89,7 +91,9 @@ fn a_dash_session_asks_for_the_mpd_first_with_get_and_no_other_request() {
     let mut session = Session::open("http://h/a/manifest.mpd", Config::default(), ts(0)).unwrap();
     let requests: Vec<(String, String)> = std::iter::from_fn(|| session.poll(ts(0)))
         .filter_map(|a| match a {
-            Action::HttpRequest { method, url, .. } => Some((method, url)),
+            Action::HttpRequest { method, url, .. } => {
+                Some((method.as_str().to_string(), url.to_string()))
+            }
             _ => None,
         })
         .collect();

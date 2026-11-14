@@ -1348,10 +1348,8 @@ impl Session {
                 url,
                 identity: slot,
                 ..
-            } => {
-                if url.scheme() == SCHEME_HTTPS && (any || url.origin() == session.origin()) {
-                    *slot = Some(identity.clone());
-                }
+            } if url.scheme() == SCHEME_HTTPS && (any || url.origin() == session.origin()) => {
+                *slot = Some(identity.clone());
             }
             Action::TcpConnect {
                 host,

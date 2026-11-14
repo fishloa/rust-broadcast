@@ -391,7 +391,7 @@ fn run_ts_hls(segs: &[Vec<u8>], disc_at: Option<usize>, starve: bool) -> HeldRun
         loop {
             while let Some(a) = s.poll(ts(now)) {
                 if let Action::HttpRequest { conn, url, .. } = a {
-                    pending.push_back((conn, url));
+                    pending.push_back((conn, url.to_string()));
                 }
             }
             let Some((c, u)) = pending.pop_front() else {
