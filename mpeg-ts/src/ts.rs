@@ -122,7 +122,7 @@ broadcast_common::impl_spec_display!(ScramblingControl);
 /// 2-bit `adaptation_field_control` field — ITU-T H.222.0 (08/2023) Table 2-5.
 ///
 /// Decoders shall discard packets with value `00` (`Reserved`). Null packets use `01`
-/// (`PayloadOnly`). [`TsHeader::adaptation`] carries the value;
+/// (`PayloadOnly`). [`TsHeader::adaptation_field_control`] carries the value;
 /// [`TsHeader::has_adaptation`] / [`TsHeader::has_payload`] answer the two flag
 /// questions.
 #[non_exhaustive]
@@ -140,7 +140,7 @@ pub enum AdaptationFieldControl {
 }
 
 impl AdaptationFieldControl {
-    /// Combine the two decoded boolean flags.
+    /// Convert the two decoded boolean flags into the field's value.
     pub fn from_flags(has_adaptation: bool, has_payload: bool) -> Self {
         match (has_adaptation, has_payload) {
             (false, false) => Self::Reserved,
@@ -330,7 +330,11 @@ pub struct TsHeader {
     pub scrambling: ScramblingControl,
     /// 2-bit `adaptation_field_control` (ISO/IEC 13818-1 Table 2-5): whether
     /// the adaptation field and/or the payload follow the header.
-    pub adaptation: AdaptationFieldControl,
+    ///
+    /// The enum, not a pair of flags: the reserved `00` state is a named
+    /// variant and swapping the two flags is no longer possible.
+    #[cfg_attr(feature = "serde", serde(rename = "adaptation"))]
+    pub adaptation_field_control: AdaptationFieldControl,
     /// 4-bit `continuity_counter` (wraps 0..=15 per PID).
     pub continuity_counter: ContinuityCounter,
 }
@@ -377,7 +381,10 @@ impl TsHeader {
             pusi,
             pid,
             scrambling: ScramblingControl::from_bits(b3 >> SCRAMBLING_SHIFT),
-            adaptation: AdaptationFieldControl::from_flags(has_adaptation, has_payload),
+            adaptation_field_control: AdaptationFieldControl::from_flags(
+                has_adaptation,
+                has_payload,
+            ),
             continuity_counter: ContinuityCounter::from_wire_masked(b3),
         })
     }
@@ -402,7 +409,8 @@ impl TsHeader {
         buf[1] |= ((pid >> 8) as u8) & PID_MASK_HI;
         buf[2] = pid.to_be_bytes()[1];
         buf[3] = (self.scrambling.to_bits() << SCRAMBLING_SHIFT)
-            | ((self.adaptation.to_bits() & ADAPTATION_CONTROL_MASK) << ADAPTATION_SHIFT)
+            | ((self.adaptation_field_control.to_bits() & ADAPTATION_CONTROL_MASK)
+                << ADAPTATION_SHIFT)
             | self.continuity_counter.value();
         Ok(4)
     }
@@ -410,13 +418,13 @@ impl TsHeader {
     /// Whether an adaptation field follows the header
     /// (`adaptation_field_control` bit 1, ISO/IEC 13818-1 Table 2-5).
     pub fn has_adaptation(&self) -> bool {
-        self.adaptation.to_flags().0
+        self.adaptation_field_control.to_flags().0
     }
 
     /// Whether a payload follows the header/adaptation field
     /// (`adaptation_field_control` bit 0, ISO/IEC 13818-1 Table 2-5).
     pub fn has_payload(&self) -> bool {
-        self.adaptation.to_flags().1
+        self.adaptation_field_control.to_flags().1
     }
 }
 
@@ -1535,7 +1543,7 @@ mod tests {
                 pusi: true,
                 pid: Pid::from_const(0x0000),
                 scrambling: ScramblingControl::NotScrambled,
-                adaptation: AdaptationFieldControl::PayloadOnly,
+                adaptation_field_control: AdaptationFieldControl::PayloadOnly,
                 continuity_counter: ContinuityCounter::ZERO,
             },
             TsHeader {
@@ -1543,7 +1551,7 @@ mod tests {
                 pusi: false,
                 pid: Pid::from_const(0x1FFF),
                 scrambling: ScramblingControl::OddKey,
-                adaptation: AdaptationFieldControl::AdaptationAndPayload,
+                adaptation_field_control: AdaptationFieldControl::AdaptationAndPayload,
                 continuity_counter: ContinuityCounter::try_new(0x0F).expect("4-bit counter"),
             },
             TsHeader {
@@ -1551,7 +1559,7 @@ mod tests {
                 pusi: false,
                 pid: Pid::from_const(0x0100),
                 scrambling: ScramblingControl::EvenKey,
-                adaptation: AdaptationFieldControl::AdaptationOnly,
+                adaptation_field_control: AdaptationFieldControl::AdaptationOnly,
                 continuity_counter: ContinuityCounter::try_new(7).expect("4-bit counter"),
             },
         ];
@@ -2166,23 +2174,42 @@ mod tests {
             pusi: false,
             pid: Pid::from_const(0x0100),
             scrambling: ScramblingControl::EvenKey,
-            adaptation: AdaptationFieldControl::PayloadOnly,
+            adaptation_field_control: AdaptationFieldControl::PayloadOnly,
             continuity_counter: ContinuityCounter::ZERO,
         };
         assert_eq!(hdr.scrambling, ScramblingControl::EvenKey);
-        assert_eq!(hdr.adaptation, AdaptationFieldControl::PayloadOnly);
+        assert_eq!(
+            hdr.adaptation_field_control,
+            AdaptationFieldControl::PayloadOnly
+        );
         assert!(hdr.has_payload());
         assert!(!hdr.has_adaptation());
 
         let hdr_both = TsHeader {
-            adaptation: AdaptationFieldControl::AdaptationAndPayload,
+            adaptation_field_control: AdaptationFieldControl::AdaptationAndPayload,
             ..hdr
         };
         assert_eq!(
-            hdr_both.adaptation,
+            hdr_both.adaptation_field_control,
             AdaptationFieldControl::AdaptationAndPayload
         );
         assert!(hdr_both.has_adaptation() && hdr_both.has_payload());
+    }
+
+    #[test]
+    fn reserved_adaptation_field_control_is_preserved_through_parse_and_serialize() {
+        // `00` is already a named variant; a header carrying it round-trips
+        // instead of collapsing into a pair of false flags.
+        let bytes = [TS_SYNC_BYTE, 0x00, 0x00, 0x05];
+        let hdr = TsHeader::parse(&bytes).expect("parse");
+        assert_eq!(
+            hdr.adaptation_field_control,
+            AdaptationFieldControl::Reserved
+        );
+        assert!(!hdr.has_adaptation() && !hdr.has_payload());
+        let mut out = [0u8; 4];
+        hdr.serialize_into(&mut out).expect("serialize");
+        assert_eq!(out, bytes);
     }
 
     // ── iter_packets / extract_ts_payload helpers ──

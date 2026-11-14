@@ -248,12 +248,16 @@ impl FileReader {
             self.config.retry_interval,
             1.0,
             crate::source::seed_entropy(),
-        );
+        )
+        .ok();
         for attempt in 0..self.config.max_retries {
             match self.read_probe_demux_once().await {
                 Ok(parsed) => return Ok(parsed),
                 Err(FileReaderError::Read { .. }) => {
-                    tokio::time::sleep(schedule.delay_for_attempt(attempt)).await;
+                    let interval = schedule
+                        .as_ref()
+                        .map_or(self.config.retry_interval, |s| s.delay_for_attempt(attempt));
+                    tokio::time::sleep(interval).await;
                 }
                 Err(e) => return Err(e),
             }

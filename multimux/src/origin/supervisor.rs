@@ -51,7 +51,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use broadcast_client::fetch::ReconnectTimer;
-use broadcast_common::backoff::{RetrySchedule, mix_seed};
+use broadcast_common::backoff::{InvalidBackoff, RetrySchedule, mix_seed};
 
 use crate::MultimuxError;
 use crate::error::{Phase, ProtocolFailure};
@@ -186,31 +186,51 @@ pub struct Backoff {
 impl Backoff {
     /// A backoff starting at `min`, growing by `factor` on every
     /// [`next_delay`](Backoff::next_delay), never exceeding `max`.
-    pub fn new(min: Duration, max: Duration, factor: f64) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// [`InvalidBackoff`] exactly as [`RetrySchedule::new`] rejects the bounds.
+    pub fn new(min: Duration, max: Duration, factor: f64) -> Result<Self, InvalidBackoff> {
         Self::with_seed(min, max, factor, fresh_seed())
     }
 
     /// Exact form of [`Self::new`], for a caller that supplies the jitter seed.
-    pub fn with_seed(min: Duration, max: Duration, factor: f64, seed: u64) -> Self {
-        let series = RetrySchedule::new(min, max, factor, seed);
+    ///
+    /// # Errors
+    ///
+    /// [`InvalidBackoff`] exactly as [`RetrySchedule::new`] rejects the bounds.
+    pub fn with_seed(
+        min: Duration,
+        max: Duration,
+        factor: f64,
+        seed: u64,
+    ) -> Result<Self, InvalidBackoff> {
+        let series = RetrySchedule::new(min, max, factor, seed)?;
         let steps: Vec<u64> = (0..EXPONENTIAL_STEPS)
             .map(|attempt| millis_of(series.raw_delay_for_attempt(attempt)))
             .collect();
-        Self {
-            timer: ReconnectTimer::new(&steps, millis_of(max.max(min)), seed),
+        Ok(Self {
+            timer: ReconnectTimer::new(&steps, millis_of(max), seed),
             series,
             steps,
-            max: max.max(min),
+            max,
             now_ms: 0,
-        }
+        })
     }
 
     /// Reasonable production defaults: 500 ms min, 30 s max, factor 2.0.
-    pub fn production_default() -> Self {
-        Backoff::new(
+    ///
+    /// # Errors
+    ///
+    /// Never in practice: the defaults are a nonzero floor under a larger cap
+    /// with a factor of two, which [`RetrySchedule::new`] accepts; the `Result`
+    /// is [`Self::with_seed`]'s.
+    pub fn production_default() -> Result<Self, InvalidBackoff> {
+        Self::with_seed(
             DEFAULT_BACKOFF_MIN,
             DEFAULT_BACKOFF_MAX,
             DEFAULT_BACKOFF_FACTOR,
+            fresh_seed(),
         )
     }
 
@@ -239,7 +259,11 @@ impl Backoff {
     /// the *next* outage starts backing off from the bottom again.
     pub fn reset(&mut self) {
         let seed = fresh_seed();
-        self.series = RetrySchedule::new(self.series.min(), self.max, DEFAULT_BACKOFF_FACTOR, seed);
+        if let Ok(series) =
+            RetrySchedule::new(self.series.min(), self.max, DEFAULT_BACKOFF_FACTOR, seed)
+        {
+            self.series = series;
+        }
         self.timer = ReconnectTimer::new(&self.steps, millis_of(self.max), seed);
         self.now_ms = 0;
     }
@@ -316,13 +340,20 @@ fn record_reconnect(name: &str) {
 pub async fn supervise_driver<F, Fut>(
     mut attempt: F,
     route_handle: Arc<RouteHandle>,
-    mut backoff: Backoff,
+    backoff: Result<Backoff, InvalidBackoff>,
     name: String,
     cancel: tokio_util::sync::CancellationToken,
 ) where
     F: FnMut(Arc<RouteHandle>) -> Fut + Send + 'static,
     Fut: Future<Output = crate::Result<()>> + Send,
 {
+    let mut backoff = match backoff {
+        Ok(backoff) => backoff,
+        Err(error) => {
+            tracing::error!(%error, "retry backoff has no schedule");
+            return;
+        }
+    };
     tracing::info!("connecting");
     route_handle.set_health(HealthState::Connecting);
     record_route_up(&name, HealthState::Connecting);
@@ -459,7 +490,8 @@ mod tests {
     /// schedule. This asserts the bound and totality instead.
     #[test]
     fn delay_for_attempt_stays_in_band_and_is_total() {
-        let backoff = Backoff::new(Duration::from_millis(500), Duration::from_secs(30), 2.0);
+        let backoff =
+            Backoff::new(Duration::from_millis(500), Duration::from_secs(30), 2.0).unwrap();
         for attempt in 0..40u32 {
             let d = backoff.delay_for_attempt(attempt);
             assert!(
@@ -467,24 +499,28 @@ mod tests {
                 "attempt {attempt}: {d:?} escaped [500ms, 30s]"
             );
         }
-        // Hostile factors never panic and never exceed the cap.
-        for factor in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -2.0, 1e300] {
-            let hostile = Backoff::new(Duration::from_secs(1), Duration::from_secs(60), factor);
-            for attempt in [0u32, 1, 30, u32::MAX] {
-                assert!(hostile.delay_for_attempt(attempt) <= Duration::from_secs(60));
-            }
+        // A hostile factor is refused rather than repaired into a shorter
+        // series, and so is a minimum above the cap.
+        for factor in [f64::NAN, f64::NEG_INFINITY, -2.0, 0.5] {
+            assert!(
+                Backoff::new(Duration::from_secs(1), Duration::from_secs(60), factor).is_err(),
+                "{factor}"
+            );
         }
-        // A minimum above the cap is the floor (the schedule raises its cap
-        // to the floor), as it was before the shared schedule.
-        let inverted = Backoff::new(Duration::from_secs(90), Duration::from_secs(60), 2.0);
-        assert_eq!(inverted.delay_for_attempt(0), Duration::from_secs(90));
+        assert_eq!(
+            Backoff::new(Duration::from_secs(90), Duration::from_secs(60), 2.0).err(),
+            Some(InvalidBackoff::CapBelowFloor {
+                floor: Duration::from_secs(90),
+                cap: Duration::from_secs(60),
+            })
+        );
     }
 
     /// The underlying schedule is deterministic under a fixed seed and the
     /// cap is answered without stepping a four-billion-item iterator.
     #[test]
     fn the_underlying_schedule_is_deterministic_under_a_seed() {
-        let bl = Backoff::new(Duration::from_millis(500), Duration::from_secs(30), 2.0);
+        let bl = Backoff::new(Duration::from_millis(500), Duration::from_secs(30), 2.0).unwrap();
         assert!(bl.delay_for_attempt(u32::MAX) <= Duration::from_secs(30));
         assert!(bl.delay_for_attempt(6) <= Duration::from_secs(30));
         // The floor is honoured exactly on attempt 0.
@@ -496,7 +532,7 @@ mod tests {
     /// Tiny backoff for tests: keeps the whole suite fast regardless of how
     /// many reconnect cycles a test drives through.
     fn tiny_backoff() -> Backoff {
-        Backoff::new(Duration::from_millis(1), Duration::from_millis(20), 2.0)
+        Backoff::new(Duration::from_millis(1), Duration::from_millis(20), 2.0).unwrap()
     }
 
     /// Polls `f` every millisecond until it returns `true` or `timeout`
@@ -519,7 +555,8 @@ mod tests {
     /// the assertions are bounds, not exact values.
     #[test]
     fn backoff_grows_and_caps() {
-        let mut b = Backoff::new(Duration::from_millis(10), Duration::from_millis(100), 2.0);
+        let mut b =
+            Backoff::new(Duration::from_millis(10), Duration::from_millis(100), 2.0).unwrap();
         for i in 0..8 {
             let d = b.next_delay();
             assert!(
@@ -542,7 +579,8 @@ mod tests {
     /// `min` again.
     #[test]
     fn backoff_reset_returns_to_min() {
-        let mut b = Backoff::new(Duration::from_millis(10), Duration::from_millis(100), 2.0);
+        let mut b =
+            Backoff::new(Duration::from_millis(10), Duration::from_millis(100), 2.0).unwrap();
         let _ = b.next_delay();
         let _ = b.next_delay();
         b.reset();
@@ -650,7 +688,7 @@ mod tests {
         let handle = tokio::spawn(supervise_driver(
             attempt,
             route.clone(),
-            tiny_backoff(),
+            Ok(tiny_backoff()),
             "test-route".to_string(),
             cancel.clone(),
         ));
@@ -699,7 +737,7 @@ mod tests {
         let handle = tokio::spawn(supervise_driver(
             attempt,
             route.clone(),
-            tiny_backoff(),
+            Ok(tiny_backoff()),
             "test-route".to_string(),
             tokio_util::sync::CancellationToken::new(),
         ));
@@ -735,7 +773,7 @@ mod tests {
         let handle = tokio::spawn(supervise_driver(
             attempt,
             route.clone(),
-            tiny_backoff(),
+            Ok(tiny_backoff()),
             "test-route".to_string(),
             cancel.clone(),
         ));
@@ -791,7 +829,7 @@ mod tests {
         let handle = tokio::spawn(supervise_driver(
             attempt,
             route.clone(),
-            tiny_backoff(),
+            Ok(tiny_backoff()),
             "test-404-recovers".to_string(),
             cancel.clone(),
         ));
@@ -846,7 +884,7 @@ mod tests {
         let handle = tokio::spawn(supervise_driver(
             attempt,
             route.clone(),
-            tiny_backoff(),
+            Ok(tiny_backoff()),
             "test-route".to_string(),
             cancel.clone(),
         ));
@@ -890,7 +928,7 @@ mod tests {
         let handle = tokio::spawn(supervise_driver(
             attempt,
             route.clone(),
-            tiny_backoff(),
+            Ok(tiny_backoff()),
             "test-route".to_string(),
             cancel.clone(),
         ));
@@ -984,7 +1022,7 @@ mod tests {
         let handle = tokio::spawn(supervise_driver(
             attempt,
             route.clone(),
-            tiny_backoff(),
+            Ok(tiny_backoff()),
             "test-route".to_string(),
             cancel.clone(),
         ));
@@ -1071,13 +1109,13 @@ mod tests {
         // A backoff far larger than the shutdown-stops-it assertion window
         // below: if shutdown didn't cancel the sleep, the timeout on the
         // join would fire first and this test would fail.
-        let backoff = Backoff::new(Duration::from_secs(60), Duration::from_secs(90), 2.0);
+        let backoff = Backoff::new(Duration::from_secs(60), Duration::from_secs(90), 2.0).unwrap();
         let cancel = tokio_util::sync::CancellationToken::new();
 
         let handle = tokio::spawn(supervise_driver(
             attempt,
             route,
-            backoff,
+            Ok(backoff),
             "test-route".to_string(),
             cancel.clone(),
         ));
@@ -1116,7 +1154,8 @@ mod tests {
         let handle = tokio::spawn(supervise_driver(
             attempt,
             route,
-            Backoff::new(Duration::from_secs(1), Duration::from_secs(30), 2.0),
+            Backoff::new(Duration::from_secs(1), Duration::from_secs(30), 2.0)
+                .map_err(|_| unreachable!()),
             "test-route".to_string(),
             cancel.clone(),
         ));
@@ -1167,7 +1206,8 @@ mod tests {
         let handle = tokio::spawn(supervise_driver(
             scripted_lives(lives.clone(), starts.clone()),
             route,
-            Backoff::new(Duration::from_secs(1), Duration::from_secs(8), 2.0),
+            Backoff::new(Duration::from_secs(1), Duration::from_secs(8), 2.0)
+                .map_err(|_| unreachable!()),
             "test-route".to_string(),
             cancel.clone(),
         ));
@@ -1266,7 +1306,7 @@ mod tests {
         let handle = tokio::spawn(supervise_driver(
             attempt,
             route.clone(),
-            tiny_backoff(),
+            Ok(tiny_backoff()),
             "test-route".to_string(),
             cancel.clone(),
         ));
@@ -1314,7 +1354,8 @@ mod tests {
         let handle = tokio::spawn(supervise_driver(
             attempt,
             route.clone(),
-            Backoff::new(Duration::from_secs(1), Duration::from_secs(8), 2.0),
+            Backoff::new(Duration::from_secs(1), Duration::from_secs(8), 2.0)
+                .map_err(|_| unreachable!()),
             "test-route".to_string(),
             cancel.clone(),
         ));

@@ -210,6 +210,10 @@ pub fn sdp_track(media: &sdp_types::Media) -> Option<SdpTrack> {
 
 #[cfg(test)]
 mod tests {
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
+
     use super::*;
     use crate::rtp::RtpMediaKind;
     use sdp_types::Session;
@@ -250,7 +254,7 @@ mod tests {
         ));
         let track = sdp_track(&m).unwrap();
         assert_eq!(track.kind, RtpMediaKind::Aac);
-        assert_eq!(track.clock_rate, Timescale::from_nonzero(48_000));
+        assert_eq!(track.clock_rate, timescale(48_000));
     }
 
     #[test]

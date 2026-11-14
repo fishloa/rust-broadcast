@@ -1,6 +1,10 @@
 #![cfg(feature = "std")]
 //! HLS RESOLUTION derivation from track display geometry (Q8).
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 use broadcast_common::timescale::Timescale;
 use std::num::NonZeroUsize;
 
@@ -96,7 +100,7 @@ fn first_video_track_by_track_id_wins_resolution() {
     // Two video tracks: resolution from track 1.
     let s1 = TrackSpec::new(
         transmux::TrackId::new(1),
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
         CodecConfig::Avc {
             config: transmux::AVCConfigurationBox::new(transmux::AVCDecoderConfigurationRecord {
                 configuration_version: 1,
@@ -120,7 +124,7 @@ fn first_video_track_by_track_id_wins_resolution() {
     let s1 = s1.with_display(Some(g));
     let s2 = TrackSpec::new(
         transmux::TrackId::new(2),
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
         CodecConfig::Avc {
             config: transmux::AVCConfigurationBox::new(transmux::AVCDecoderConfigurationRecord {
                 configuration_version: 1,

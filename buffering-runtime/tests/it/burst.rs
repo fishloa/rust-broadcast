@@ -3,8 +3,12 @@
 //! 140 ms) that returns the lead to its pre-gap value. Two stalls, 20 s apart.
 //! The real traces (`tests/it/real_traces.rs`) are the old no-burst server and
 //! stay as they are; a real post-fix trace is to be added by zenith-tv.
+const fn dur(us: u64) -> Duration {
+    Duration::from_micros(us)
+}
 use crate::support::*;
-use buffering_runtime::{Event, Micros, State};
+use buffering_runtime::{Event, State};
+use core::time::Duration;
 
 const MAX: u64 = 3_000_000;
 
@@ -53,32 +57,34 @@ fn burst_with_the_default_initial_has_no_freeze_and_restores_the_lead() {
     // (d) the repeated gap 20 s later behaves identically (the burst restored the lead)
     assert!((m1 - m2).abs() <= 60_000, "gap 1 {m1} vs gap 2 {m2}");
     // the burst returns the lead to its pre-gap value
-    let lead_end = r.ctl.stats().lead_us;
+    let lead_end = r.ctl.stats().lead;
     assert!(
-        (1_700_000..=1_900_000).contains(&lead_end),
-        "lead after the bursts {lead_end}"
+        (1_700_000..=1_900_000).contains(&(lead_end.as_micros() as u64)),
+        "lead after the bursts {}us",
+        lead_end.as_micros()
     );
     // (b) the stall memory records the gap depth; the burst's near-zero PDV is not baseline
     let st = r.ctl.stats();
     assert!(
-        st.est.stall_peak_us >= Micros(1_300_000),
-        "peak {}",
-        st.est.stall_peak_us
+        st.est.stall_peak >= dur(1_300_000),
+        "peak {}us",
+        st.est.stall_peak.as_micros()
     );
     assert!(
-        st.est.baseline_us <= Micros(50_000),
-        "baseline {}",
-        st.est.baseline_us
+        st.est.baseline <= dur(50_000),
+        "baseline {}us",
+        st.est.baseline.as_micros()
     );
     // (c) the target rose once (k2 x depth), held, and did not ratchet on the repeat
     let max_t = *r.targets.iter().max().unwrap();
     assert!(
-        (Micros(1_600_000)..=Micros(1_800_000)).contains(&max_t),
-        "max target {max_t}"
+        (dur(1_600_000)..=dur(1_800_000)).contains(&max_t),
+        "max target {}us",
+        max_t.as_micros()
     );
     let n = r.targets.len();
     assert!(
-        r.targets[n * 45 / 60] >= Micros(1_600_000),
+        r.targets[n * 45 / 60] >= dur(1_600_000),
         "still held 17 s after the second gap"
     );
     assert_eq!(r.ctl.stats().stalls, 0);
@@ -96,17 +102,19 @@ fn burst_with_a_short_initial_freezes_once_for_a_bounded_time() {
             "initial {initial}: only the first gap stalls: {p:?}"
         );
         let (a, b) = (p[0].0, p[0].1.expect("resumed"));
-        let freeze = Micros(b - a);
+        let freeze = dur(b - a);
         let gap = 1_400_000u64;
         // starved from `initial` into the gap until the burst: gap - initial. After the burst the
         // lead is `gap` (the backlog) and the resume bar is 1.25 x depth: 0.25 x gap more real time.
-        let bound = Micros((gap - initial) + gap / 4 + 250_000);
+        let bound = dur(gap - initial) + dur(gap / 4 + 250_000);
         assert!(
             freeze <= bound,
-            "initial {initial}: freeze {freeze} > bound {bound}"
+            "initial {initial}: freeze {}us > bound {}us",
+            freeze.as_micros(),
+            bound.as_micros()
         );
         assert!(
-            freeze >= Micros(gap - initial),
+            freeze.as_micros() as u64 >= gap - initial,
             "cannot resume before the data is back"
         );
         // the repeat 20 s later is survived by the post-resume lead: no second pause, ever
@@ -114,18 +122,18 @@ fn burst_with_a_short_initial_freezes_once_for_a_bounded_time() {
         assert!(w[1].unwrap() > 20_000, "second gap min lead {:?}", w[1]);
         assert_eq!(r.ctl.state(), State::Playing);
         for (_, e) in &r.events {
-            if let Event::Resume { lead_us, .. } = e {
-                assert!(*lead_us <= Micros(MAX + 40_000));
+            if let Event::Resume { lead, .. } = e {
+                assert!(*lead <= dur(MAX + 40_000));
             }
         }
         let st = r.ctl.stats();
-        assert!(st.est.baseline_us <= Micros(50_000) && st.est.stall_peak_us >= Micros(1_300_000));
+        assert!(st.est.baseline <= dur(50_000) && st.est.stall_peak >= dur(1_300_000));
     }
 }
 
 /// Freeze (pause -> resume), second-gap minimum lead and resume lead of the burst
 /// scenario for a given `after_rebuffer_q8`.
-fn burst_freeze(initial: u64, after_q8: u16) -> (Micros, i64, i64) {
+fn burst_freeze(initial: u64, after_q8: u16) -> (Duration, i64, i64) {
     let mut o = opts(initial);
     o.cfg.policy.after_rebuffer_q8 = after_q8;
     let (r, w) = windows_min_lead(&burst_stream(), &o);
@@ -136,12 +144,12 @@ fn burst_freeze(initial: u64, after_q8: u16) -> (Micros, i64, i64) {
         .events
         .iter()
         .find_map(|(_, e)| match e {
-            Event::Resume { lead_us, .. } => Some(i64::try_from(lead_us.0).unwrap()),
+            Event::Resume { lead, .. } => Some(i64::try_from(lead.as_micros()).unwrap()),
             _ => None,
         })
         .unwrap();
     (
-        Micros(p[0].1.expect("resumed") - p[0].0),
+        dur(p[0].1.expect("resumed") - p[0].0),
         w[1].unwrap(),
         resume_lead,
     )
@@ -170,10 +178,10 @@ fn after_rebuffer_default_is_1_25_and_trims_the_burst_freeze() {
         );
         assert_eq!(default, new, "the default is the 1.25 run");
         assert!(
-            Micros(new.0.0 + 250_000) <= old.0,
+            new.0 + dur(250_000) <= old.0,
             "initial {initial}: 1.25 freeze {} not >= 250 ms under 1.5 freeze {}",
-            new.0,
-            old.0
+            new.0.as_micros(),
+            old.0.as_micros()
         );
         assert!(
             new.1 > 20_000,

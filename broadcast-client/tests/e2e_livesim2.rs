@@ -227,7 +227,7 @@ struct Sent {
     url: String,
     method: String,
     sent_unix_us: i64,
-    status: Option<u16>,
+    status: Option<reqwest::StatusCode>,
 }
 
 #[derive(Default)]
@@ -293,13 +293,8 @@ fn perform(
     };
     match response {
         Ok(mut resp) => {
-            record.status = Some(resp.status().as_u16());
-            let headers: Vec<(String, String)> = resp
-                .headers()
-                .iter()
-                .filter_map(|(k, v)| Some((k.as_str().to_owned(), v.to_str().ok()?.to_owned())))
-                .collect();
-            session.on_response(conn, resp.status().as_u16(), &headers, ts(mono()));
+            record.status = Some(resp.status());
+            session.on_response(conn, resp.status(), resp.headers(), ts(mono()));
             let mut buf = vec![0u8; 16 * 1024];
             loop {
                 match resp.read(&mut buf) {
@@ -441,7 +436,7 @@ fn verify(shape: &Shape, observed: &Observed) {
     for r in &observed.requests {
         let Some(status) = r.status else { continue };
         if let Some((rep, n)) = segment_key(&r.url) {
-            match status {
+            match status.as_u16() {
                 200 | 206 => delivered.entry(rep).or_default().push(n),
                 STATUS_TOO_EARLY | STATUS_NOT_FOUND if !shape.strict_availability => early += 1,
                 STATUS_TOO_EARLY | STATUS_NOT_FOUND | STATUS_GONE => {

@@ -103,7 +103,12 @@ impl Drv {
     }
 
     fn respond(&mut self, conn: ConnId, body: &[u8]) {
-        self.session.on_response(conn, 200, &[], ts(self.now));
+        self.session.on_response(
+            conn,
+            http::StatusCode::OK,
+            &crate::support::headers(&[]),
+            ts(self.now),
+        );
         for c in body.chunks(self.chunk.max(1)) {
             self.session.on_data(conn, c, ts(self.now));
         }
@@ -648,12 +653,12 @@ fn finite_session(config: Config) -> Session {
 
 fn feed_finite(session: &mut Session, chunk: usize, positions: bool) -> Vec<Event> {
     let bytes = test_fixtures::read("ts/h264-aac.ts");
-    let headers = vec![("Content-Length".to_string(), bytes.len().to_string())];
+    let headers = crate::support::headers(&[("Content-Length", &bytes.len().to_string())]);
     let conn = match session.poll(ts(0)).expect("request") {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
     };
-    session.on_response(conn, 200, &headers, ts(0));
+    session.on_response(conn, http::StatusCode::OK, &headers, ts(0));
     let mut out = Vec::new();
     for (i, c) in bytes.chunks(chunk).enumerate() {
         let now = i as u64 * 1_000;

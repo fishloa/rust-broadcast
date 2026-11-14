@@ -36,12 +36,23 @@ const FIRST_CONN_ID: u32 = 1;
 const MAX_AUTH_REPLAYS: u32 = 2;
 const MAX_STALL_NOTICES_PER_POLL: u32 = 64;
 
+use http::HeaderMap;
+
 const STATUS_UNAUTHORIZED: u16 = 401;
 const STATUS_FORBIDDEN: u16 = 403;
 const STATUS_NOT_FOUND: u16 = 404;
 const STATUS_PROXY_AUTH_REQUIRED: u16 = 407;
 const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
-const CHALLENGE_HEADER: &str = "WWW-Authenticate";
+
+fn challenge_headers<'a>(lines: impl Iterator<Item = &'a str>) -> HeaderMap {
+    let mut map = HeaderMap::new();
+    for line in lines {
+        if let Ok(value) = http::HeaderValue::from_str(line) {
+            map.append(http::header::WWW_AUTHENTICATE, value);
+        }
+    }
+    map
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Req {
@@ -73,7 +84,7 @@ enum Phase {
     Connecting,
     Awaiting(Req),
     Playing,
-    Backoff(Timestamp),
+    Backoff(Option<Timestamp>),
     WaitingAuth(Req),
     Closed,
 }
@@ -107,7 +118,7 @@ pub(crate) struct RtspSource {
     tracks_dirty: bool,
     seen_first_sample: bool,
     stalled: bool,
-    attempt: u64,
+    attempt: u32,
     /// The workspace's one reconnect timer: the backoff series and the rule
     /// that only a connection that stayed up for its healthy span restarts it
     /// (issue #2471). Reported through `attempt`, this source's own label.
@@ -175,7 +186,7 @@ impl RtspSource {
             port: url.port().unwrap_or(default_port),
             tls,
             cfg: cfg.clone(),
-            phase: Phase::Backoff(now),
+            phase: Phase::Backoff(Some(now)),
             conn: None,
             next_conn: FIRST_CONN_ID,
             connections: 0,
@@ -383,7 +394,7 @@ impl RtspSource {
     /// representable instant has none, so it never fires and has no wake here.
     fn next_deadline(&self) -> Option<Timestamp> {
         match self.phase {
-            Phase::Backoff(due) => Some(due),
+            Phase::Backoff(due) => due,
             Phase::Awaiting(_) | Phase::Playing => {
                 // A deadline that does not fit the clock can never be reached: it is no
                 // deadline, so whoever sends this phase on (the start timeout, the stall
@@ -419,11 +430,11 @@ impl RtspSource {
         self.discontinuity_pending = true;
         self.events
             .push_back(Event::Status(Status::Reconnecting { attempt: 0 }));
-        self.phase = Phase::Backoff(now.checked_add(floor).unwrap_or(Timestamp(u64::MAX)));
+        self.phase = Phase::Backoff(now.checked_add(floor));
     }
 
     fn reconnect_if_due(&mut self, now: Timestamp, auth: &AuthState) {
-        if let Phase::Backoff(due) = self.phase
+        if let Phase::Backoff(Some(due)) = self.phase
             && now >= due
         {
             self.retarget(self.original_url.clone());
@@ -597,7 +608,9 @@ impl RtspSource {
             return;
         }
         if code == STATUS_FORBIDDEN {
-            self.events.push_back(Event::Forbidden { status: code });
+            self.events.push_back(Event::Forbidden {
+                status: http::StatusCode::FORBIDDEN,
+            });
             self.fail_connection(now);
             return;
         }
@@ -678,12 +691,12 @@ impl RtspSource {
         if let Some(line) = self.client.last_challenge() {
             self.challenge = Some(line.to_string());
         }
-        let headers: Vec<(String, String)> = self
-            .challenge
-            .iter()
-            .map(|line| (CHALLENGE_HEADER.to_string(), line.clone()))
-            .collect();
-        match auth.handle_unauthorized(code, &headers, had_credentials, self.stale_replayed) {
+        let headers = challenge_headers(self.challenge.iter().map(String::as_str));
+        let Ok(status) = http::StatusCode::from_u16(code) else {
+            self.fail_connection(now);
+            return;
+        };
+        match auth.handle_unauthorized(status, &headers, had_credentials, self.stale_replayed) {
             AuthDecision::Wait(events) => {
                 self.events.extend(events.into_iter().map(Event::from));
                 self.phase = Phase::WaitingAuth(req);
@@ -705,14 +718,9 @@ impl RtspSource {
         let Phase::Awaiting(req) = self.phase else {
             return;
         };
-        let headers: Vec<(String, String)> = self
-            .client
-            .last_challenge()
-            .map(|line| (CHALLENGE_HEADER.to_string(), line.to_string()))
-            .into_iter()
-            .collect();
+        let headers = challenge_headers(self.client.last_challenge().into_iter());
         if let AuthDecision::Wait(events) =
-            auth.handle_unauthorized(STATUS_UNAUTHORIZED, &headers, true, true)
+            auth.handle_unauthorized(http::StatusCode::UNAUTHORIZED, &headers, true, true)
         {
             self.events.extend(events.into_iter().map(Event::from));
         }
@@ -1153,7 +1161,7 @@ impl RtspSource {
         }
         // The engine holds the activity instant as a `Timestamp`; answer it at the end of that
         // same reading so it cannot see the request as older than the clock it was due on.
-        match self.client.handle_timeout(Timestamp(u64::MAX)) {
+        match self.client.handle_timeout(now) {
             Ok(Some(bytes)) => {
                 if let Some(conn) = self.conn {
                     self.actions.push_back(Action::Send { conn, bytes });
@@ -1208,15 +1216,37 @@ impl RtspSource {
         self.attempt = self.attempt.saturating_add(1);
         let wait = self.retry.on_disconnected(now.as_micros());
         self.events.push_back(Event::Status(Status::Reconnecting {
-            attempt: u64::from(self.retry.attempts()),
+            attempt: self.retry.attempts(),
         }));
-        self.phase = Phase::Backoff(now.checked_add(wait).unwrap_or(Timestamp(u64::MAX)));
+        self.phase = Phase::Backoff(now.checked_add(wait));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A reconnect timer that would land past the end of the clock is no timer
+    /// at all: the source reports no deadline and never reconnects early on a
+    /// saturated instant, instead of reading the end of the clock as "due now".
+    #[test]
+    fn a_reconnect_that_does_not_fit_the_clock_never_fires() {
+        let url = Url::parse("rtsp://cam.test/live/").unwrap();
+        let mut source = RtspSource::new(&url, &TsConfig::default(), 0, Timestamp::ZERO);
+        source.take_actions();
+        source.on_connected(ConnId::new(1), Timestamp::from_micros(u64::MAX));
+        source.take_actions();
+        source.seen_first_sample = true;
+        source.after_connection_end(Timestamp::from_micros(u64::MAX));
+
+        assert_eq!(source.phase, Phase::Backoff(None));
+        assert_eq!(source.next_deadline(), None);
+        source.reconnect_if_due(
+            Timestamp::from_micros(u64::MAX),
+            &AuthState::new(url.clone(), Vec::new()),
+        );
+        assert_eq!(source.phase, Phase::Backoff(None));
+    }
 
     #[test]
     fn reconnect_never_reuses_the_live_connection_id() {

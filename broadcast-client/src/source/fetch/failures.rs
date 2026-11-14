@@ -4,11 +4,13 @@
 use core::hash::Hash;
 use std::collections::HashMap;
 
+use http::StatusCode;
+
 /// The consecutive failures recorded for one resource and the status of the latest one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Failure {
     pub(crate) count: u32,
-    pub(crate) status: Option<u16>,
+    pub(crate) status: Option<StatusCode>,
 }
 
 /// Whether a resource that has failed `count` times in a row is tried again.
@@ -33,7 +35,7 @@ impl<K: Copy + Eq + Hash> FailureCounter<K> {
         }
     }
 
-    pub(crate) fn record(&mut self, key: K, status: Option<u16>) -> Failure {
+    pub(crate) fn record(&mut self, key: K, status: Option<StatusCode>) -> Failure {
         let entry = self.failures.entry(key).or_insert(Failure {
             count: 0,
             status: None,
@@ -53,8 +55,8 @@ impl<K: Copy + Eq + Hash> FailureCounter<K> {
 }
 
 /// `count` is how many failures in a row have been recorded. `max == 0` makes the first failure final; `u32::MAX` never gives up in practice.
-pub(crate) fn verdict(count: u64, max: u32) -> Verdict {
-    if count >= u64::from(max) {
+pub(crate) fn verdict(count: u32, max: u32) -> Verdict {
+    if count >= max {
         Verdict::GiveUp
     } else {
         Verdict::Retry
@@ -63,10 +65,10 @@ pub(crate) fn verdict(count: u64, max: u32) -> Verdict {
 
 /// A saturating attempt counter for one retry loop.
 #[derive(Debug, Default)]
-pub(crate) struct Attempts(u64);
+pub(crate) struct Attempts(u32);
 
 impl Attempts {
-    pub(crate) fn bump(&mut self) -> u64 {
+    pub(crate) fn bump(&mut self) -> u32 {
         self.0 = self.0.saturating_add(1);
         self.0
     }
@@ -84,23 +86,27 @@ impl Attempts {
 mod tests {
     use super::*;
 
+    fn status(code: u16) -> StatusCode {
+        StatusCode::from_u16(code).unwrap()
+    }
+
     #[test]
     fn a_resource_counts_its_own_consecutive_failures() {
         let mut counter = FailureCounter::new();
-        assert_eq!(counter.record(1u32, Some(503)).count, 1);
-        assert_eq!(counter.record(1, Some(503)).count, 2);
+        assert_eq!(counter.record(1u32, Some(status(503))).count, 1);
+        assert_eq!(counter.record(1, Some(status(503))).count, 2);
         assert_eq!(
             counter.record(2, None).count,
             1,
             "another resource starts at one"
         );
-        assert_eq!(counter.record(1, Some(503)).count, 3);
+        assert_eq!(counter.record(1, Some(status(503))).count, 3);
     }
 
     #[test]
     fn the_latest_status_wins_including_none() {
         let mut counter = FailureCounter::new();
-        counter.record(1u32, Some(404));
+        counter.record(1u32, Some(status(404)));
         let latest = counter.record(1, None);
         assert_eq!(
             latest,
@@ -109,7 +115,10 @@ mod tests {
                 status: None
             }
         );
-        assert_eq!(counter.record(1, Some(500)).status, Some(500));
+        assert_eq!(
+            counter.record(1, Some(status(500))).status,
+            Some(status(500))
+        );
     }
 
     #[test]
@@ -185,7 +194,7 @@ mod tests {
 
     #[test]
     fn attempts_saturate() {
-        let mut attempts = Attempts(u64::MAX);
-        assert_eq!(attempts.bump(), u64::MAX);
+        let mut attempts = Attempts(u32::MAX);
+        assert_eq!(attempts.bump(), u32::MAX);
     }
 }

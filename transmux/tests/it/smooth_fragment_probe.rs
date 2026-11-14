@@ -190,7 +190,11 @@ fn discover_moof_track_id_recovers_real_fixture_track_ids() {
         "smooth/av/QualityLevels(98429)/Fragments(audio=0)",
     ] {
         let fragment = test_fixtures::read(rel);
-        assert_eq!(fragment_track_id(&fragment).unwrap(), 1, "{rel}");
+        assert_eq!(
+            fragment_track_id(&fragment).unwrap(),
+            transmux::TrackId::new(1),
+            "{rel}"
+        );
     }
 }
 

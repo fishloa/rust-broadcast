@@ -342,7 +342,7 @@ const INTERLEAVE_CHUNK_MS: u64 = 500;
 
 /// Milliseconds per second, for converting [`INTERLEAVE_CHUNK_MS`] into a
 /// movie-timescale tick budget.
-const MS_PER_SECOND: Timescale = Timescale::from_nonzero(1_000);
+const MS_PER_SECOND: Timescale = broadcast_common::timescale!(1_000);
 
 /// Lay the tracks' samples out in the `mdat` payload, interleaved in about
 /// [`INTERLEAVE_CHUNK_MS`]-sized runs.

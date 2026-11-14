@@ -21,6 +21,10 @@ use transmux::{
 
 // ── Fixture + pipeline ───────────────────────────────────────────────────────
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 fn load_ts() -> Vec<u8> {
     let path = test_fixtures::path("ts/h264-aac.ts");
     std::fs::read(path).expect("h264-aac.ts fixture must exist")
@@ -235,7 +239,7 @@ fn rolling_playlist_windows_and_advances_media_sequence() {
 fn single_video_track() -> TrackSpec {
     TrackSpec::new(
         TrackId::new(1),
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
         CodecConfig::Avc {
             config: dummy_avc_config(),
             width: 320,

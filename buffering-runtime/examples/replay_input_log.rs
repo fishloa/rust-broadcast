@@ -12,8 +12,10 @@
 //! existed uses the defaults, with `--initial-ms` replacing the cold-start target. The log is
 //! read with `std::fs` at run time.
 
+use core::time::Duration;
+
+use buffering_runtime::ControllerConfig;
 use buffering_runtime::input_log::{Input, InputLog};
-use buffering_runtime::{ControllerConfig, Micros};
 use std::fmt::Write as _;
 use std::process::ExitCode;
 
@@ -67,7 +69,7 @@ fn main() -> ExitCode {
         .and_then(|v| v.parse().ok());
     let mut fallback = ControllerConfig::default();
     if let Some(ms) = initial_ms {
-        fallback.policy.initial_us = Micros(ms * 1_000);
+        fallback.policy.initial = Duration::from_millis(ms);
     }
     let mut log = match InputLog::parse_with_config(&text, fallback) {
         Ok(l) => l,
@@ -85,7 +87,7 @@ fn main() -> ExitCode {
                 events.len()
             );
             for (now_us, e) in events {
-                println!("{:>10.3} s  {e:?}", now_us.get() as f64 / 1e6);
+                println!("{:>10.3} s  {e:?}", now_us.as_secs_f64());
             }
             ExitCode::SUCCESS
         }

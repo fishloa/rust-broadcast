@@ -82,8 +82,8 @@ fn a_redirect_answered_after_a_long_wait_gets_a_fresh_deadline() {
     let conn = conn.expect("playlist request");
     session.on_response(
         conn,
-        302,
-        &[("Location".to_string(), CDN_PLAYLIST.to_string())],
+        http::StatusCode::FOUND,
+        &support::headers(&[("Location", CDN_PLAYLIST)]),
         ts(LONG_WAIT_US),
     );
     let later = LONG_WAIT_US + 1;

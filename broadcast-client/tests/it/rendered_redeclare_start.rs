@@ -9,6 +9,7 @@
 
 use crate::support::replay::{bitrate_bps, open_live};
 use crate::support::ts_shift::{Shift, shift_pes};
+use buffering_runtime::{duration_micros, micros_as_duration};
 
 use broadcast_client::{BufferEvent, BufferInput, Config, Event, Session, TrackId};
 use broadcast_common::stage::Timestamp;
@@ -219,7 +220,7 @@ fn a_dropped_track_that_never_delivers_holds_the_start_only_for_the_pending_wait
     };
     let config = Config::default();
     let wait = config.start_pending_track_wait_us;
-    let silence = config.controller_config().track_silence_timeout_us;
+    let silence = duration_micros(config.controller_config().track_silence_timeout);
     let r = run(
         &shift_pes(&bytes, 0, -AUDIO_NEVER_90KHZ, Shift::Audio),
         false,
@@ -238,10 +239,7 @@ fn a_dropped_track_that_never_delivers_holds_the_start_only_for_the_pending_wait
         (wait..wait + 2 * TICK_US).contains(&after_drop),
         "Start {after_drop} us after the drop, want the {wait} us pending wait"
     );
-    assert!(
-        after_drop < silence.0,
-        "not the {silence} us silence timeout"
-    );
+    assert!(after_drop < silence, "not the {silence} us silence timeout");
 }
 
 #[test]
@@ -273,11 +271,11 @@ fn rendered_set_rows_carry_the_session_time_of_the_call() {
         rows,
         vec![
             BufferInput::Unregister {
-                now_us: buffering_runtime::Micros(t),
+                now_us: micros_as_duration(t),
                 track: audio
             },
             BufferInput::Register {
-                now_us: buffering_runtime::Micros(t),
+                now_us: micros_as_duration(t),
                 track: audio
             },
         ]

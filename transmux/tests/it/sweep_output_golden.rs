@@ -12,6 +12,10 @@ use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
 use transmux::{PsDemux, TsDemux, WebmDemux};
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 fn fnv1a(bytes: &[u8]) -> u64 {
     const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -86,8 +90,8 @@ fn sample_timing_debug(s: &str) -> String {
 /// it (continuity gaps on `m6-single.ts`), which is pinned by
 /// `ts_sync_loss_degraded.rs` instead.
 fn media_debug(media: &transmux::Media) -> String {
-    let s = legacy_pid_debug(&no_display_debug(&sample_timing_debug(&format!(
-        "{media:?}"
+    let s = legacy_pcr_debug(&legacy_pid_debug(&no_display_debug(&sample_timing_debug(
+        &format!("{media:?}"),
     ))));
     match s.rfind(", degraded: [") {
         Some(i) => format!("{} }}", &s[..i]),
@@ -154,6 +158,34 @@ fn legacy_pid_debug(s: &str) -> String {
             Some(end) if u16::from_str_radix(&after[..end], 16).is_ok() => {
                 out.push_str(&u16::from_str_radix(&after[..end], 16).unwrap().to_string());
                 rest = &after[end + 1..];
+            }
+            _ => {
+                out.push_str(OPEN);
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `PcrSample::pcr` was a flat `pcr_27mhz: u64` (#2652) and now carries the
+/// wire `mpeg_ts::Pcr`, which `Debug` renders as `pcr: Pcr(Clock27(<ticks>))`.
+/// Rewrite that back to `pcr_27mhz: <ticks>` so the goldens keep proving the
+/// recovered PCR timeline itself is unchanged: a different base/extension
+/// still changes the ticks and fails.
+fn legacy_pcr_debug(s: &str) -> String {
+    const OPEN: &str = "pcr: Pcr(Clock27(";
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find(OPEN) {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + OPEN.len()..];
+        match after.find("))") {
+            Some(end) if after[..end].parse::<u64>().is_ok() => {
+                out.push_str("pcr_27mhz: ");
+                out.push_str(&after[..end]);
+                rest = &after[end + 2..];
             }
             _ => {
                 out.push_str(OPEN);
@@ -321,7 +353,7 @@ fn rtp_stream_depacketiser_output_is_unchanged() {
         TrackId::new(1),
         RtpMediaKind::H264,
         config,
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
     )]);
     let mut samples = Vec::new();
     for p in &stream.packets {
@@ -399,7 +431,7 @@ fn fragment_writer_outputs_are_unchanged() {
         0xb843_b6bc_d7f7_ee94,
     );
     let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
-    let mut ll = LlSegmenter::new(specs, Timescale::from_nonzero(1000), 2.0, 5).unwrap();
+    let mut ll = LlSegmenter::new(specs, timescale(1000), 2.0, 5).unwrap();
     let chunks = ll.package(&media).unwrap();
     check(
         &mut bad,

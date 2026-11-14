@@ -1,3 +1,5 @@
+use crate::support;
+
 use broadcast_auth::{AuthResult, RequestContext, Verifier};
 use broadcast_client::{Action, Config, ConnId, Credentials, Session};
 use broadcast_common::stage::Timestamp;
@@ -58,8 +60,8 @@ fn digest_uri_is_the_origin_form_request_target_for_http() {
     let challenge = verifier.challenge();
     session.on_response(
         conn,
-        401,
-        &[("WWW-Authenticate".to_string(), challenge)],
+        http::StatusCode::UNAUTHORIZED,
+        &support::headers(&[("WWW-Authenticate", &challenge)]),
         ts(0),
     );
     let (_, headers) = first_request(&mut session, 0);
@@ -88,8 +90,8 @@ fn cookie_max_age_counts_from_the_clock_of_the_response() {
     let (conn, _) = first_request(&mut session, 0);
     session.on_response(
         conn,
-        200,
-        &[("Set-Cookie".to_string(), "sid=abc; Max-Age=60".to_string())],
+        http::StatusCode::OK,
+        &support::headers(&[("Set-Cookie", "sid=abc; Max-Age=60")]),
         ts(100 * SECOND_US),
     );
     session.reconnect(ts(130 * SECOND_US));

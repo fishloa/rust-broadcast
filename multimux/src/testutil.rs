@@ -54,6 +54,10 @@ pub(crate) enum MockAuthScheme {
     Bearer { token: String },
 }
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 impl MockAuthScheme {
     /// Builds the one [`Verifier`] this scheme's requests are gated by (see
     /// [`require_auth`] for why this is built once, not per-request).
@@ -141,7 +145,7 @@ pub(crate) fn drain(cursor: &mut media_plane::trunk::SampleCursor) -> usize {
 pub(crate) fn video_spec(track_id: transmux::TrackId) -> transmux::pipeline::TrackSpec {
     transmux::pipeline::TrackSpec::new(
         track_id,
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
         transmux::pipeline::CodecConfig::Vp8 {
             width: 1280,
             height: 720,

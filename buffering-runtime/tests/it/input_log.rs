@@ -1,15 +1,25 @@
-use buffering_runtime::input_log::{ConfigKey, Input, InputLog, InputLogError, Reason};
-use buffering_runtime::{
-    BufferController, ControllerConfig, Event, Hint, Micros, PolicyConfig, StallMemorySnapshot,
-    Ticks27,
-};
+use broadcast_common::clock33::PCR_WRAP_27MHZ;
 
-const fn us(v: u64) -> Micros {
-    Micros(v)
+/// A 27 MHz tick count as a validated clock position.
+fn clock27(ticks: u64) -> Clock27 {
+    Clock27::from_27mhz(ticks % PCR_WRAP_27MHZ).expect("a reduced count is on the clock")
 }
 
-const fn t(v: u64) -> Ticks27 {
-    Ticks27(v)
+const fn dur(us: u64) -> Duration {
+    Duration::from_micros(us)
+}
+use buffering_runtime::input_log::{ConfigKey, Input, InputLog, InputLogError, Reason};
+use buffering_runtime::{
+    BufferController, Clock27, ControllerConfig, Event, Hint, PolicyConfig, StallMemorySnapshot,
+};
+use core::time::Duration;
+
+const fn us(v: u64) -> Duration {
+    dur(v)
+}
+
+fn t(v: u64) -> Clock27 {
+    clock27(v)
 }
 
 fn every_variant() -> Vec<Input> {
@@ -129,10 +139,10 @@ fn malformed_rows_are_typed_errors_carrying_the_line() {
 fn custom_config() -> ControllerConfig {
     let mut c = ControllerConfig::default();
     let mut p = PolicyConfig::DEFAULT;
-    p.initial_us = us(500_000);
+    p.initial = us(500_000);
     c.policy = p;
     c.track_granularity = false;
-    c.track_silence_timeout_us = us(5_500_000);
+    c.track_silence_timeout = us(5_500_000);
     c
 }
 
@@ -156,36 +166,60 @@ fn a_log_round_trips_with_config_seed_and_inputs() {
     assert_eq!(again, text);
 }
 
+/// A log written before the spans lost their `_us` suffix still replays: the
+/// same field is read from its old token, so an archived log needs no edit.
+#[test]
+fn a_log_with_the_old_unit_suffixed_tokens_still_parses() {
+    let mut c = ControllerConfig::default();
+    c.policy.initial = us(1_000_000);
+    let mut text = String::new();
+    InputLog::new(c, None, Vec::new()).write(&mut text).unwrap();
+    let renamed = text
+        .replace("policy.initial,", "policy.initial_us,")
+        .replace("jitter.min_window,", "jitter.min_window_us,")
+        .replace(
+            "policy.max_step_down_per_s,",
+            "policy.max_step_down_us_per_s,",
+        );
+    assert_ne!(renamed, text);
+    let back = InputLog::parse(&renamed).unwrap();
+    assert_eq!(back.config, c);
+    assert_eq!(
+        ConfigKey::from_name_or_legacy("policy.initial_us"),
+        Some(ConfigKey::from_name("policy.initial").unwrap())
+    );
+}
+
 #[test]
 fn every_config_field_is_covered_by_a_key() {
     let mut c = ControllerConfig::default();
-    c.jitter.min_window_us += us(1);
-    c.jitter.interval_us += us(1);
-    c.jitter.outlier_us += us(1);
-    c.jitter.bucket_us += 1;
+    c.jitter.min_window += us(1);
+    c.jitter.interval += us(1);
+    c.jitter.outlier += us(1);
+    c.jitter.bucket += us(1);
     c.jitter.buckets += 1;
     c.jitter.forget_q15 += 1;
     c.jitter.quantile_permille -= 1;
-    c.jitter.hold_us += us(1);
-    c.jitter.decay_us += us(1);
+    c.jitter.hold += us(1);
+    c.jitter.decay += us(1);
     c.jitter.max_samples += 1;
-    c.jitter.discontinuity_us += us(1);
-    c.policy.min_us += us(1);
-    c.policy.initial_us += us(1);
-    c.policy.max_us -= us(1);
+    c.jitter.discontinuity += us(1);
+    c.policy.min += us(1);
+    c.policy.initial += us(1);
+    c.policy.max -= us(1);
     c.policy.k1_q8 += 1;
-    c.policy.margin_us += us(1);
+    c.policy.margin += us(1);
     c.policy.k2_q8 += 1;
     c.policy.after_rebuffer_q8 += 1;
-    c.policy.max_step_down_us_per_s += 1;
-    c.policy.reprime_floor_us += us(1);
-    c.policy.reprime_hold_us += us(1);
-    c.starve_threshold_us += us(1);
-    c.nodata_after_us += us(1);
-    c.track_silence_timeout_us += us(1);
+    c.policy.max_step_down_per_s += us(1);
+    c.policy.reprime_floor += us(1);
+    c.policy.reprime_hold += us(1);
+    c.starve_threshold += us(1);
+    c.nodata_after += us(1);
+    c.track_silence_timeout += us(1);
     c.track_granularity = !c.track_granularity;
-    c.granularity_hold_us += us(1);
-    c.granularity_decay_us += us(1);
+    c.granularity_hold += us(1);
+    c.granularity_decay += us(1);
     c.validate().unwrap();
     let mut text = String::new();
     InputLog::new(c, None, vec![]).write(&mut text).unwrap();
@@ -212,7 +246,7 @@ fn bad_header_and_bad_config_are_rejected() {
         InputLog::parse(unknown).unwrap_err().reason,
         Reason::UnknownConfigKey
     );
-    let invalid = "kind,now_us,a,b\nconfig,0,policy.min_us,0\n";
+    let invalid = "kind,now_us,a,b\nconfig,0,policy.min,0\n";
     assert!(matches!(
         InputLog::parse_with_config(invalid, ControllerConfig::default())
             .unwrap_err()

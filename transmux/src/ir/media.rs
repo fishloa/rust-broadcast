@@ -6,6 +6,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
+use mpeg_ts::ts::Pcr;
 
 use super::{DegradationRecord, InputDegradation, Track, TrackId};
 
@@ -17,8 +18,10 @@ use super::{DegradationRecord, InputDegradation, Track, TrackId};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct PcrSample {
-    /// `program_clock_reference` as a 27 MHz value (`base * 300 + extension`).
-    pub pcr_27mhz: u64,
+    /// The `program_clock_reference` field exactly as the wire carried it
+    /// (§2.4.3.5): a 33-bit base on the 90 kHz clock plus a 9-bit extension, so
+    /// an arbitrary 27 MHz integer cannot name a PCR.
+    pub pcr: Pcr,
     /// PID the PCR was carried on.
     pub pid: Pid,
     /// 0-based index of the 188-byte packet in the demuxed input.
@@ -29,13 +32,23 @@ pub struct PcrSample {
 
 impl PcrSample {
     /// Create a PCR observation with every field explicit.
-    pub fn new(pcr_27mhz: u64, pid: Pid, packet_index: u64, discontinuity: bool) -> Self {
+    pub fn new(pcr: Pcr, pid: Pid, packet_index: u64, discontinuity: bool) -> Self {
         Self {
-            pcr_27mhz,
+            pcr,
             pid,
             packet_index,
             discontinuity,
         }
+    }
+
+    /// The observation on the 27 MHz clock (`base * 300 + extension`).
+    ///
+    /// `None` for a parsed value whose 9-bit extension is off that clock
+    /// (`300..=511`, kept losslessly by [`Pcr`]); use [`Self::pcr`] for the
+    /// wire value.
+    #[must_use]
+    pub fn pcr_27mhz(&self) -> Option<u64> {
+        self.pcr.to_clock27().ok().map(|c| c.ticks())
     }
 }
 

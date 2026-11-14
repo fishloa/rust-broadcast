@@ -93,17 +93,23 @@ impl Live {
     }
 }
 
-fn status_of(failure: Failure) -> Option<u16> {
+const STATUS_NOT_FOUND: http::StatusCode = http::StatusCode::NOT_FOUND;
+const STATUS_GONE: http::StatusCode = http::StatusCode::GONE;
+const STATUS_TOO_EARLY: http::StatusCode = http::StatusCode::TOO_EARLY;
+
+pub(super) fn status_of(failure: Failure) -> Option<http::StatusCode> {
     match failure {
-        Failure::Status(s) => Some(s),
+        Failure::Status(s) => http::StatusCode::from_u16(s).ok(),
         Failure::Transport | Failure::Timeout | Failure::TooLarge => None,
     }
 }
 
 pub(super) fn failure_kind(failure: Failure) -> FailureKind {
     match failure {
-        Failure::Status(STATUS_NOT_FOUND | STATUS_GONE) => FailureKind::Missing,
-        Failure::Status(STATUS_TOO_EARLY) => FailureKind::TooEarly,
+        Failure::Status(s) if s == STATUS_NOT_FOUND.as_u16() || s == STATUS_GONE.as_u16() => {
+            FailureKind::Missing
+        }
+        Failure::Status(s) if s == STATUS_TOO_EARLY.as_u16() => FailureKind::TooEarly,
         Failure::Status(_) => FailureKind::Server,
         Failure::Transport | Failure::Timeout => FailureKind::Transport,
         Failure::TooLarge => FailureKind::Invalid,
@@ -588,11 +594,24 @@ impl DashClient {
             return;
         };
         live.mpd_exchange = Exchange::new(meta.sent_us.min(meta.received_us), meta.received_us);
-        if let Some(e) = meta.etag {
-            live.refresh.validators.etag = Some(e.to_owned());
+        if let Some(e) = meta.etag.clone() {
+            use headers::HeaderMapExt;
+            let mut map = http::HeaderMap::new();
+            map.typed_insert(e);
+            if let Some(text) = map.get(http::header::ETAG).and_then(|v| v.to_str().ok()) {
+                live.refresh.validators.etag = Some(text.to_owned());
+            }
         }
         if let Some(m) = meta.last_modified {
-            live.refresh.validators.last_modified = Some(m.to_owned());
+            use headers::HeaderMapExt;
+            let mut map = http::HeaderMap::new();
+            map.typed_insert(m);
+            if let Some(text) = map
+                .get(http::header::LAST_MODIFIED)
+                .and_then(|v| v.to_str().ok())
+            {
+                live.refresh.validators.last_modified = Some(text.to_owned());
+            }
         }
         if let Some(u) = adopted {
             live.refresh.redirect_url = Some(u.to_string());
@@ -1177,7 +1196,7 @@ impl DashClient {
     pub(super) fn give_up_live_segment(
         &mut self,
         id: ResourceId,
-        status: Option<u16>,
+        status: Option<http::StatusCode>,
     ) -> FailureClass {
         self.inflight.remove(&id);
         self.failures.remove(&id);

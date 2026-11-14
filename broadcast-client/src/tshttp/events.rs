@@ -79,7 +79,7 @@ pub enum Event {
     /// Reconnecting (T9).
     Reconnecting {
         /// Attempt number.
-        attempt: u64,
+        attempt: u32,
     },
 }
 
@@ -92,7 +92,7 @@ enum EventSerde {
     Connected,
     Finite { expected_bytes: u64 },
     Ended,
-    Reconnecting { attempt: u64 },
+    Reconnecting { attempt: u32 },
 }
 
 #[cfg(feature = "serde")]

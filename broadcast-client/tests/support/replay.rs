@@ -1,3 +1,4 @@
+use crate::support::ts_content_type;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use url::Url;
@@ -119,12 +120,7 @@ pub fn open_live(config: Config) -> (Session, ConnId) {
         }
     }
     let c = conn.expect("request");
-    s.on_response(
-        c,
-        200,
-        &[("Content-Type".to_string(), "video/MP2T".to_string())],
-        ts(0),
-    );
+    s.on_response(c, http::StatusCode::OK, &ts_content_type(), ts(0));
     (s, c)
 }
 

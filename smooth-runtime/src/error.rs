@@ -33,7 +33,7 @@ pub enum SmoothError {
     #[error("fragment fetch failed (status {status:?})")]
     Fragment {
         /// The final HTTP status, when the failure was an HTTP one.
-        status: Option<u16>,
+        status: Option<http::StatusCode>,
     },
     /// A track could not be described or its init segment could not be built.
     #[error("track setup failed: {reason}")]
@@ -41,4 +41,7 @@ pub enum SmoothError {
         /// The codec-glue error, rendered.
         reason: String,
     },
+    /// The configuration's retry schedule is not one a client can run with.
+    #[error("invalid retry backoff")]
+    InvalidBackoff(broadcast_common::backoff::InvalidBackoff),
 }

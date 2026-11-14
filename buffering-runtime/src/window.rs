@@ -1,7 +1,7 @@
 //! Sliding minimum over a trailing time window (monotonic deque).
 
-use crate::config::Micros;
 use crate::error::Error;
+use crate::time::duration_micros;
 use alloc::collections::VecDeque;
 
 /// Monotonic-deque sliding minimum of `(time, value)` samples.
@@ -12,19 +12,20 @@ use alloc::collections::VecDeque;
 #[derive(Clone, Debug)]
 pub struct MinWindow {
     dq: VecDeque<(u64, i64)>,
-    window_us: Micros,
+    window_us: u64,
     cap: usize,
     overflows: u32,
     last_t: Option<u64>,
 }
 
 impl MinWindow {
-    /// New window of `window_us` holding at most `max_samples` entries.
+    /// New window of `window` holding at most `max_samples` entries.
     ///
     /// # Errors
-    /// [`Error::ZeroLengthWindow`] when `window_us == 0`.
-    pub fn new(window_us: Micros, max_samples: u16) -> Result<Self, Error> {
-        if window_us == Micros::ZERO {
+    /// [`Error::ZeroLengthWindow`] when `window` is zero.
+    pub fn new(window: core::time::Duration, max_samples: u16) -> Result<Self, Error> {
+        let window_us = duration_micros(window);
+        if window_us == 0 {
             return Err(Error::ZeroLengthWindow);
         }
         let cap = usize::from(max_samples).max(1);
@@ -49,7 +50,7 @@ impl MinWindow {
     pub fn push(&mut self, t: u64, v: i64) -> i64 {
         let long_gap = self
             .last_t
-            .is_some_and(|p| t.saturating_sub(p) >= self.window_us.0);
+            .is_some_and(|p| t.saturating_sub(p) >= self.window_us);
         self.last_t = Some(t);
         while self.dq.back().is_some_and(|b| b.1 >= v) {
             self.dq.pop_back();
@@ -60,7 +61,7 @@ impl MinWindow {
             && self
                 .dq
                 .front()
-                .is_some_and(|f| f.0.saturating_add(self.window_us.0) <= t)
+                .is_some_and(|f| f.0.saturating_add(self.window_us) <= t)
         {
             self.dq.pop_front();
         }

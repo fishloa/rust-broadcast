@@ -25,6 +25,25 @@ fn a_transient_fragment_failure_is_retried_and_playback_completes() {
 }
 
 #[test]
+fn a_backoff_cap_beyond_the_ceiling_fails_at_construction() {
+    let cap = broadcast_common::backoff::MAX_FLOOR + std::time::Duration::from_secs(1);
+    let config =
+        SmoothClientConfig::default().with_backoff(broadcast_common::backoff::BackoffSteps {
+            steps: vec![std::time::Duration::from_millis(1_000)],
+            cap,
+        });
+    let mut host = av_host(config);
+    host.run_until(|o| o.iter().any(is_fatal));
+    assert!(host.outputs.iter().any(|o| matches!(
+        o,
+        Output::Fatal(SmoothError::InvalidBackoff(
+            broadcast_common::backoff::InvalidBackoff::FloorAboveCeiling { .. }
+        ))
+    )));
+    assert_eq!(host.count_requests(FIRST_VIDEO), 0, "no request goes out");
+}
+
+#[test]
 fn retries_wait_out_the_configured_backoff() {
     let good = fixture(&format!("av/{FIRST_VIDEO}"));
     let mut host = av_host(SmoothClientConfig::default().with_backoff(steps(&[1_000], 1_000)));
@@ -82,7 +101,8 @@ fn retries_follow_the_shared_retry_schedule() {
         &steps,
         std::time::Duration::from_millis(CAP_MS),
         mix_seed(seed),
-    );
+    )
+    .unwrap();
     let expected: Vec<u64> = (0..3)
         .map(|attempt| u64::try_from(schedule.delay_for_attempt(attempt).as_micros()).unwrap())
         .collect();
@@ -145,7 +165,9 @@ fn a_static_fragment_that_never_succeeds_is_fatal_after_the_configured_count() {
     assert_eq!(host.count_requests(FIRST_VIDEO), 3);
     assert!(host.has(|o| matches!(
         o,
-        Output::Fatal(SmoothError::Fragment { status: Some(500) })
+        Output::Fatal(SmoothError::Fragment {
+            status: Some(http::StatusCode::INTERNAL_SERVER_ERROR),
+        })
     )));
 }
 

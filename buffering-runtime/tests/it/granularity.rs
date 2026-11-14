@@ -10,25 +10,37 @@
 //! `t + 0.9 s` every 40 ms, audio end advancing in `burst_us` steps every
 //! `burst_us`. Each scenario is mutation-checked (see the comments).
 
-use broadcast_common::clock33::PCR_HZ;
+const fn dur(us: u64) -> Duration {
+    Duration::from_micros(us)
+}
 use broadcast_common::clock33::PCR_WRAP_27MHZ;
+use broadcast_common::clock33::{PCR_EXT_MODULUS, PCR_HZ};
 use buffering_runtime::{
-    BufferController, ConfigField, ControllerConfig, Error, Event, Micros, PolicyConfig, State,
-    Ticks27,
+    BufferController, Clock27, ConfigField, ControllerConfig, Error, Event, PolicyConfig, State,
 };
+use core::time::Duration;
 
 const AUDIO: u32 = 1;
 const VIDEO: u32 = 2;
 const TICKS_PER_US: u64 = PCR_HZ / 1_000_000;
-const BASE: Ticks27 = Ticks27(PCR_WRAP_27MHZ - 5 * PCR_HZ);
-const STEP_US: u64 = 10_000;
-
-fn at(offset_us: u64) -> Ticks27 {
-    Ticks27((BASE.0 + offset_us * TICKS_PER_US) % PCR_WRAP_27MHZ)
+/// A reduced 27 MHz tick count as a validated clock position.
+const fn clock27(ticks: u64) -> Clock27 {
+    match Clock27::from_parts(ticks / PCR_EXT_MODULUS, (ticks % PCR_EXT_MODULUS) as u16) {
+        Ok(c) => c,
+        Err(_) => unreachable!(),
+    }
 }
 
-const fn us(v: u64) -> Micros {
-    Micros(v)
+const BASE: Clock27 = clock27(PCR_WRAP_27MHZ - 5 * 27_000_000);
+const STEP_US: u64 = 10_000;
+
+fn at(offset_us: u64) -> Clock27 {
+    Clock27::from_27mhz((BASE.ticks() + offset_us * TICKS_PER_US) % PCR_WRAP_27MHZ)
+        .expect("a reduced count is on the clock")
+}
+
+const fn us(v: u64) -> Duration {
+    dur(v)
 }
 
 /// The rai-3 config: start at the 300 ms floor so the cadence starves it.
@@ -39,15 +51,15 @@ fn cfg() -> ControllerConfig {
 fn cfg_with(f: impl FnOnce(&mut PolicyConfig)) -> ControllerConfig {
     let d = ControllerConfig::default();
     let mut p = PolicyConfig::default();
-    p.initial_us = p.min_us;
+    p.initial = p.min;
     f(&mut p);
-    ControllerConfig::new(d.jitter, p, d.starve_threshold_us, d.nodata_after_us).unwrap()
+    ControllerConfig::new(d.jitter, p, d.starve_threshold, d.nodata_after).unwrap()
 }
 
 struct Sim {
     c: BufferController,
     t: u64,
-    clock: Ticks27,
+    clock: Clock27,
     running: bool,
     t_set: u64,
     log: Vec<(u64, Event)>,
@@ -79,9 +91,12 @@ impl Sim {
             period_us: burst_us,
         }
     }
-    fn pos(&self) -> Ticks27 {
+    fn pos(&self) -> Clock27 {
         if self.running {
-            Ticks27((self.clock.0 + (self.t - self.t_set) * TICKS_PER_US) % PCR_WRAP_27MHZ)
+            Clock27::from_27mhz(
+                (self.clock.ticks() + (self.t - self.t_set) * TICKS_PER_US) % PCR_WRAP_27MHZ,
+            )
+            .expect("a reduced count is on the clock")
         } else {
             self.clock
         }
@@ -137,8 +152,8 @@ impl Sim {
             .filter_map(|(t, e)| matches!(e, Event::Pause { .. }).then_some(*t))
             .collect()
     }
-    fn target(&self) -> Micros {
-        self.c.target_us()
+    fn target(&self) -> Duration {
+        self.c.target()
     }
 }
 
@@ -150,8 +165,12 @@ fn rai3_burst_audio_floor_prevents_every_stall() {
     let mut s = Sim::new(cfg(), 310_000);
     s.run(60_000_000);
     assert!(s.pauses().len() <= 1, "pauses {:?}", s.pauses());
-    let margin = cfg().policy.margin_us;
-    assert!(s.target().0 >= 310_000 + margin.0, "target {}", s.target());
+    let margin = cfg().policy.margin;
+    assert!(
+        s.target() >= dur(310_000) + margin,
+        "target {:?}",
+        s.target()
+    );
     let late: Vec<_> = s.pauses().into_iter().filter(|t| *t > 6_000_000).collect();
     assert!(late.is_empty(), "recurrence {late:?}");
     assert_eq!(s.c.state(), State::Playing);
@@ -168,16 +187,14 @@ fn escalation_alone_ratchets_after_one_data_arriving_stall() {
     s.run(60_000_000);
     let p = s.pauses();
     assert_eq!(p.len(), 1, "exactly one stall then none: {p:?}");
-    assert!(s.target() > us(300_000), "target {}", s.target());
+    assert!(s.target() > us(300_000), "target {:?}", s.target());
     // the Pause carried the post-charge resume bar (1.25 x the failed target)
     let resume = s.log.iter().find_map(|(_, e)| match e {
-        Event::Pause {
-            resume_target_us, ..
-        } => Some(*resume_target_us),
+        Event::Pause { resume_target, .. } => Some(*resume_target),
         _ => None,
     });
     assert_eq!(resume, Some(us(375_000)));
-    assert!(s.c.stats().est.stall_peak_us >= us(300_000));
+    assert!(s.c.stats().est.stall_peak >= us(300_000));
 }
 
 /// Repeated stalls keep ratcheting (a cadence one step cannot cover), each
@@ -185,7 +202,7 @@ fn escalation_alone_ratchets_after_one_data_arriving_stall() {
 #[test]
 fn escalation_ratchets_repeatedly_and_stays_under_the_cap() {
     let mut s = Sim::new(
-        cfg_with(|p| p.max_us = us(1_000_000)).with_track_granularity(false),
+        cfg_with(|p| p.max = us(1_000_000)).with_track_granularity(false),
         900_000,
     );
     // 900 ms of media every 920 ms: starves on every cycle until the
@@ -194,11 +211,11 @@ fn escalation_ratchets_repeatedly_and_stays_under_the_cap() {
     s.run(120_000_000);
     assert!(s.pauses().len() >= 2, "{:?}", s.pauses());
     assert!(s.target() <= us(1_000_000));
-    let targets: Vec<Micros> = s
+    let targets: Vec<Duration> = s
         .log
         .iter()
         .filter_map(|(_, e)| match e {
-            Event::TargetChanged { new_us, .. } => Some(*new_us),
+            Event::TargetChanged { new, .. } => Some(*new),
             _ => None,
         })
         .collect();
@@ -217,18 +234,18 @@ fn granularity_decays_back_after_the_bursts_stop() {
     s.run(10_000_000);
     assert!(s.target() >= us(410_000), "held during the hold");
     s.run(80_000_000); // hold 30 s + decay 30 s + slew
-    assert_eq!(s.target(), cfg().policy.min_us);
+    assert_eq!(s.target(), cfg().policy.min);
 }
 
-/// `max_us` is a hard cap whatever the cadence.
+/// `max` is a hard cap whatever the cadence.
 #[test]
 fn max_us_cap_still_wins() {
-    let mut s = Sim::new(cfg_with(|p| p.max_us = us(700_000)), 800_000);
+    let mut s = Sim::new(cfg_with(|p| p.max = us(700_000)), 800_000);
     let mut at_cap = false;
     for _ in 0..3_000 {
         s.step();
-        assert!(s.c.target_us() <= us(700_000));
-        at_cap |= s.c.target_us() == us(700_000);
+        assert!(s.c.target() <= us(700_000));
+        at_cap |= s.c.target() == us(700_000);
     }
     assert!(at_cap, "the floor should have driven the target to the cap");
     assert!(
@@ -247,8 +264,8 @@ fn steady_tracks_are_unchanged_by_the_floor() {
     off.run(40_000_000);
     assert_eq!(on.log, off.log);
     assert!(on.pauses().is_empty());
-    assert_eq!(on.c.target_us(), us(300_000));
-    assert_eq!(off.c.target_us(), us(300_000));
+    assert_eq!(on.c.target(), us(300_000));
+    assert_eq!(off.c.target(), us(300_000));
 }
 
 /// A global data gap is PDV, not granularity: the catch-up step after a
@@ -268,12 +285,12 @@ fn a_global_data_gap_is_not_delivery_granularity() {
         c.on_chunk(us(t), 1, Some(at(rel)));
         c.on_track_media(us(t), AUDIO, at(rel));
     }
-    assert_eq!(c.target_us(), us(300_000));
+    assert_eq!(c.target(), us(300_000));
     t += 1_200_000;
     rel += 1_200_000;
     c.on_chunk(us(t), 1, Some(at(rel)));
     c.on_track_media(us(t), AUDIO, at(rel));
-    assert!(c.target_us() < us(1_000_000), "target {}", c.target_us());
+    assert!(c.target() < us(1_000_000), "target {:?}", c.target());
 
     let mut c2 = BufferController::new(ControllerConfig::default(), None).unwrap();
     let mut t2 = 1_000_000u64;
@@ -286,7 +303,7 @@ fn a_global_data_gap_is_not_delivery_granularity() {
     c2.on_track_media(us(t2), AUDIO, at(1_200_000));
     // the delivery is folded in at the chunk boundary that ends it
     c2.on_chunk(us(t2), 1, Some(at(1_200_000)));
-    assert!(c2.target_us() >= us(1_300_000), "target {}", c2.target_us());
+    assert!(c2.target() >= us(1_300_000), "target {:?}", c2.target());
 }
 
 /// A forward jump far beyond the arrival interval is not granularity.
@@ -305,7 +322,7 @@ fn a_forward_jump_is_not_delivery_granularity() {
     t += 20_000;
     c.on_chunk(us(t), 1, Some(at(220_000)));
     c.on_track_media(us(t), AUDIO, at(220_000 + 2_500_000));
-    assert_eq!(c.target_us(), us(300_000));
+    assert_eq!(c.target(), us(300_000));
 }
 
 /// The config knobs validate.
@@ -313,11 +330,11 @@ fn a_forward_jump_is_not_delivery_granularity() {
 fn granularity_config_validates() {
     let base = ControllerConfig::default();
     assert!(base.track_granularity);
-    assert_eq!(base.granularity_hold_us, us(30_000_000));
-    assert_eq!(base.granularity_decay_us, us(30_000_000));
+    assert_eq!(base.granularity_hold, us(30_000_000));
+    assert_eq!(base.granularity_decay, us(30_000_000));
     assert_eq!(
-        base.with_granularity_memory_us(us(1), us(0)),
+        base.with_granularity_memory(us(1), us(0)),
         Err(Error::InvalidConfig(ConfigField::GranularityDecay))
     );
-    assert!(base.with_granularity_memory_us(us(0), us(1)).is_ok());
+    assert!(base.with_granularity_memory(us(0), us(1)).is_ok());
 }

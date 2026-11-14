@@ -37,14 +37,17 @@ lang = ["std", "dep:iso-639"]
 # Base64 codec (`base64` module), wrapping the `base64` crate.
 base64 = ["dep:base64"]
 
-# HTTP-date parsing (`http_date` module, RFC 9110 §5.6.7), for HTTP clients
-# reading `Date` and `Retry-After`.
-http-date = ["std", "dep:jiff", "dep:thiserror"]
+# HTTP-date parsing and the typed-Date instant (`http_date` module,
+# RFC 9110 §5.6.7), for HTTP clients reading `Date` and `Retry-After`.
+http-date = ["std", "dep:jiff", "dep:thiserror", "dep:headers", "dep:http"]
 # RFC 3986 reference resolution (guarded): wraps the `url` crate's `Url::join`,
 # rejecting ASCII control characters before joining (issue #2458).
 url = ["dep:url"]
 
 [dependencies]
+# Typed `Date` values (HTTP-date module's instant bridge).
+headers = { workspace = true, optional = true }
+http    = { workspace = true, optional = true }
 # Default build stays lean — consumers of broadcast_common pay for nothing they aren't
 # already paying for downstream.
 # Hex codec backing `hex::hex_encode` (SP5). `alloc` only: the crate stays no_std.

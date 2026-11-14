@@ -948,6 +948,10 @@ fn splice_tfxd_into_traf(moof: &[u8], tfxd: &TfxdBox) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
+
     use super::*;
     use broadcast_common::timescale::Timescale;
 
@@ -977,7 +981,7 @@ mod tests {
             display: None,
         };
         let samples = alloc::vec![mk(true), mk(false), mk(true), mk(false)];
-        let groups = segment_samples(&samples, Timescale::from_nonzero(1), 2);
+        let groups = segment_samples(&samples, timescale(1), 2);
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].len(), 2);
         assert_eq!(groups[1].len(), 2);
@@ -987,7 +991,7 @@ mod tests {
     fn to_smooth_ticks_scales() {
         // 1 second at media timescale 90000 → 10_000_000 smooth ticks.
         assert_eq!(
-            SmoothPackager::to_smooth_ticks(90_000, Timescale::from_nonzero(90_000)),
+            SmoothPackager::to_smooth_ticks(90_000, timescale(90_000)),
             10_000_000
         );
     }

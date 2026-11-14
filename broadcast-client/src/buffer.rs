@@ -2,13 +2,14 @@
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
+use core::time::Duration;
 
 use broadcast_common::clock33::{PCR_TIMESCALE, pcr_signed_distance};
 use broadcast_common::timescale::{Rounding, Timescale, rescale};
 use buffering_runtime::input_log::Input;
 use buffering_runtime::{
-    BufferController, ControllerConfig, Event as RtEvent, Hint, Micros, StallMemorySnapshot,
-    Ticks27,
+    BufferController, Clock27, ControllerConfig, Event as RtEvent, Hint, StallMemorySnapshot,
+    duration_between, duration_micros, micros_as_duration,
 };
 use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 
@@ -16,6 +17,11 @@ use crate::events::{BufferEvent, ErrorKind, Event, Status, StreamKind};
 use crate::join::VideoJoin;
 
 const SILENCE_MARGIN_US: u64 = 500_000;
+
+/// A raw 27 MHz tick count as a playback position, reduced onto the clock.
+fn clock27(ticks: u64) -> Clock27 {
+    Clock27::from_27mhz_wrapping(ticks)
+}
 
 /// The end of the contiguous decodable run of a video track, in presentation order. Samples arrive
 /// in decode order, so the highest PTS seen can be a whole reorder depth ahead of the pictures
@@ -83,8 +89,8 @@ impl InputLog {
     }
 
     /// The last recorded instant as the controller's clock.
-    pub(crate) fn last_now(&self) -> Micros {
-        Micros(self.last_now_us)
+    pub(crate) fn last_now(&self) -> Duration {
+        micros_as_duration(self.last_now_us)
     }
 
     pub(crate) fn record(&mut self, input: Input) -> bool {
@@ -179,7 +185,7 @@ pub(crate) fn effective_controller_config(
     let floor = start_pending_track_wait_us
         .max(start_pending_track_hard_cap_us)
         .saturating_add(SILENCE_MARGIN_US);
-    cfg.track_silence_timeout_us = cfg.track_silence_timeout_us.max(Micros(floor));
+    cfg.track_silence_timeout = cfg.track_silence_timeout.max(micros_as_duration(floor));
     cfg
 }
 
@@ -282,7 +288,7 @@ impl Feeder {
         self.finite = true;
         if let Some(c) = self.controller.take() {
             self.seed = Some(c.snapshot_memory());
-            self.seed_at_us = Some(self.log.last_now().0);
+            self.seed_at_us = Some(duration_micros(self.log.last_now()));
         }
         self.pending_registered = false;
         self.started = false;
@@ -483,7 +489,7 @@ impl Feeder {
         if self.holds_start() {
             let at = self.log.last_now();
             for t in removed {
-                self.held.entry(t).or_insert(at.0);
+                self.held.entry(t).or_insert(duration_micros(at));
             }
         } else {
             for t in removed {
@@ -718,10 +724,9 @@ impl Feeder {
         }
         let now = self.log.last_now();
         let seed = self.seed.map(|s| {
-            s.aged(Micros(
-                self.seed_at_us
-                    .map_or(0, |at| now.saturating_sub(Micros(at)).0),
-            ))
+            s.aged(micros_as_duration(self.seed_at_us.map_or(0, |at| {
+                duration_micros(duration_between(micros_as_duration(at), now))
+            })))
         });
         if let Ok(mut c) = BufferController::new(self.controller_config(), seed) {
             self.replay_seed_value = seed;
@@ -762,13 +767,13 @@ impl Feeder {
         self.first_media_us.get_or_insert(now_us);
         self.sync_pending(now_us);
         if let Some(c) = &mut self.controller {
-            c.on_track_media(Micros(now_us), t.value(), Ticks27(end));
+            c.on_track_media(micros_as_duration(now_us), t.value(), clock27(end));
             rec!(
                 self,
                 Input::TrackMedia {
-                    now_us: Micros(now_us),
+                    now_us: micros_as_duration(now_us),
                     track: t.value(),
-                    end: Ticks27(end)
+                    end: clock27(end)
                 }
             );
         }
@@ -788,13 +793,13 @@ impl Feeder {
             return;
         };
         let len = u32::try_from(bytes).unwrap_or(u32::MAX);
-        c.on_chunk(Micros(now_us), len, pcr.map(Ticks27));
+        c.on_chunk(micros_as_duration(now_us), len, pcr.map(clock27));
         rec!(
             self,
             Input::Chunk {
-                now_us: Micros(now_us),
+                now_us: micros_as_duration(now_us),
                 bytes: len,
-                pcr: pcr.map(Ticks27)
+                pcr: pcr.map(clock27)
             }
         );
         self.flush_pending(now_us);
@@ -812,11 +817,11 @@ impl Feeder {
         self.log.now(now_us);
         self.ensure_controller();
         if let Some(c) = &mut self.controller {
-            c.on_hint(Micros(now_us), h);
+            c.on_hint(micros_as_duration(now_us), h);
             rec!(
                 self,
                 Input::Hint {
-                    now_us: Micros(now_us),
+                    now_us: micros_as_duration(now_us),
                     hint: h
                 }
             );
@@ -830,12 +835,12 @@ impl Feeder {
         self.sync_pending(now_us);
         self.expire_held(now_us);
         if let Some(c) = &mut self.controller {
-            c.on_tick(Micros(now_us), pts.map(Ticks27));
+            c.on_tick(micros_as_duration(now_us), pts.map(clock27));
             rec!(
                 self,
                 Input::Tick {
-                    now_us: Micros(now_us),
-                    pts: pts.map(Ticks27)
+                    now_us: micros_as_duration(now_us),
+                    pts: pts.map(clock27)
                 }
             );
         }
@@ -849,7 +854,7 @@ impl Feeder {
                     RtEvent::StartPlaying { media_27mhz, .. } => {
                         self.started = true;
                         out.push(Event::Buffer(BufferEvent::Start {
-                            at_27mhz: media_27mhz.0,
+                            at_27mhz: media_27mhz.ticks(),
                         }));
                     }
                     RtEvent::Pause {
@@ -859,7 +864,7 @@ impl Feeder {
                         ..
                     } => {
                         out.push(Event::Buffer(BufferEvent::Pause {
-                            hold_at_27mhz: hold_at_27mhz.0,
+                            hold_at_27mhz: hold_at_27mhz.ticks(),
                             reason: match rt_reason {
                                 buffering_runtime::Reason::NoData => {
                                     crate::events::PauseReason::NoData
@@ -880,7 +885,7 @@ impl Feeder {
                     }
                     RtEvent::Resume { media_27mhz, .. } => {
                         out.push(Event::Buffer(BufferEvent::Resume {
-                            at_27mhz: media_27mhz.0,
+                            at_27mhz: media_27mhz.ticks(),
                         }));
                     }
                     _ => {}
@@ -912,7 +917,7 @@ impl Feeder {
                     stalls: s.stalls,
                     reprimes: s.reprimes,
                     discontinuities: s.discontinuities,
-                    longest_freeze_us: s.longest_freeze_us.0,
+                    longest_freeze_us: duration_micros(s.longest_freeze),
                 }
             })
     }
@@ -992,10 +997,19 @@ mod tests {
 
     #[test]
     fn pts_to_27mhz_clamps_instead_of_truncating() {
-        assert_eq!(pts_to_27mhz(i64::MAX, Timescale::from_nonzero(1)), u64::MAX);
-        assert_eq!(pts_to_27mhz(i64::MIN, Timescale::from_nonzero(1)), 0);
         assert_eq!(
-            pts_to_27mhz(90_000, Timescale::from_nonzero(90_000)),
+            pts_to_27mhz(i64::MAX, Timescale::try_new(1).expect("non-zero timescale")),
+            u64::MAX
+        );
+        assert_eq!(
+            pts_to_27mhz(i64::MIN, Timescale::try_new(1).expect("non-zero timescale")),
+            0
+        );
+        assert_eq!(
+            pts_to_27mhz(
+                90_000,
+                Timescale::try_new(90_000).expect("non-zero timescale")
+            ),
             27_000_000
         );
     }
@@ -1041,7 +1055,10 @@ mod tests {
         let st = streams();
         let mut f = Feeder::new(
             ControllerConfig::default(),
-            Some(StallMemorySnapshot::new(Micros(PEAK_US), Micros(0))),
+            Some(StallMemorySnapshot::new(
+                micros_as_duration(PEAK_US),
+                micros_as_duration(0),
+            )),
             crate::events::DEFAULT_START_PENDING_TRACK_WAIT_US,
             crate::events::DEFAULT_START_PENDING_TRACK_HARD_CAP_US,
         );
@@ -1055,8 +1072,8 @@ mod tests {
         f.on_sample(st.audio.0.track_id, &st.audio.1[0], None);
         f.on_chunk(LATER_US, CHUNK, None);
         assert_eq!(
-            f.stall_memory().peak_us,
-            Micros(PEAK_US),
+            f.stall_memory().peak,
+            micros_as_duration(PEAK_US),
             "the live controller after a finite connection lost the stall memory"
         );
         let placeholder = f
@@ -1075,7 +1092,7 @@ mod tests {
         const CHUNK: usize = 1316;
         const LATER_US: u64 = 1_000_000;
         let st = streams();
-        let first = StallMemorySnapshot::new(Micros(PEAK_US), Micros(0));
+        let first = StallMemorySnapshot::new(micros_as_duration(PEAK_US), micros_as_duration(0));
         let mut f = Feeder::new(
             ControllerConfig::default(),
             Some(first),
@@ -1096,7 +1113,10 @@ mod tests {
             Some(first),
             "the log seed stayed the first controller's after a finite connection"
         );
-        assert_eq!(f.replay_seed().map(|s| s.peak_us), Some(Micros(PEAK_US)));
+        assert_eq!(
+            f.replay_seed().map(|s| s.peak),
+            Some(micros_as_duration(PEAK_US))
+        );
     }
 
     #[test]

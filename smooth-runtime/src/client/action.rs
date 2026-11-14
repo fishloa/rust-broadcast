@@ -42,7 +42,7 @@ pub enum Action {
 pub struct FetchFailure {
     /// The HTTP status when the server answered with a non-success one; `None`
     /// for a transport error or a timeout.
-    pub status: Option<u16>,
+    pub status: Option<http::StatusCode>,
     /// The wait the server asked for with `Retry-After` (RFC 9110 §10.2.3), in
     /// microseconds; `0` when it asked for none. The retry waits at least this
     /// long, never less than the configured backoff.
@@ -52,9 +52,9 @@ pub struct FetchFailure {
 impl FetchFailure {
     /// The HTTP statuses that say a resource is not (yet) there.
     pub(crate) fn is_not_found(self) -> bool {
-        matches!(self.status, Some(NOT_FOUND | GONE))
+        matches!(
+            self.status,
+            Some(http::StatusCode::NOT_FOUND | http::StatusCode::GONE)
+        )
     }
 }
-
-pub(crate) const NOT_FOUND: u16 = 404;
-pub(crate) const GONE: u16 = 410;

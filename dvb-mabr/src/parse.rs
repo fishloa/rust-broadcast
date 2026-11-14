@@ -20,7 +20,9 @@ extern crate alloc;
 
 use alloc::string::{String, ToString};
 
-use broadcast_common::xml_chars::{LimitExceeded, TagAttribute, XmlBudget, XmlLimits};
+use broadcast_common::xml_chars::{
+    LimitExceeded, TagAttribute, XmlBudget, XmlCharError, XmlLimits,
+};
 use quick_xml::NsReader;
 use quick_xml::events::{BytesStart, Event};
 
@@ -171,11 +173,11 @@ impl<'a> Events<'a> {
     /// and attribute namespaces with the reader's resolver.
     fn start_tag(
         &self,
-        ns: core::result::Result<Option<String>, String>,
+        ns: core::result::Result<Option<String>, XmlCharError>,
         e: &BytesStart<'_>,
         empty: bool,
     ) -> Result<StartTag> {
-        let namespace = ns.map_err(|m| self.fail(&m))?;
+        let namespace = ns.map_err(|e| self.fail(&e.to_string()))?;
         let attributes = broadcast_common::xml_chars::read_attributes_checked(
             &self.reader,
             e,
@@ -191,9 +193,14 @@ impl<'a> Events<'a> {
     }
 
     /// The next event with its (owned) element-namespace resolution.
-    fn read(&mut self) -> Result<(core::result::Result<Option<String>, String>, Event<'a>)> {
-        let (ns, event) =
-            broadcast_common::xml_chars::read_event(&mut self.reader).map_err(|m| self.fail(&m))?;
+    fn read(
+        &mut self,
+    ) -> Result<(
+        core::result::Result<Option<String>, XmlCharError>,
+        Event<'a>,
+    )> {
+        let (ns, event) = broadcast_common::xml_chars::read_event(&mut self.reader)
+            .map_err(|e| self.fail(&e.to_string()))?;
         self.account(&event)?;
         Ok((ns, event))
     }
@@ -205,7 +212,7 @@ impl<'a> Events<'a> {
     /// every other event. Every path that sees content — the modelled `text`,
     /// the child walk, and the subtree skip — goes through it.
     fn char_data(&self, event: &Event<'_>) -> Result<Option<String>> {
-        broadcast_common::xml_chars::char_data(event).map_err(|m| self.fail(&m))
+        broadcast_common::xml_chars::char_data(event).map_err(|e| self.fail(&e.to_string()))
     }
 
     /// Consume the content of an already-open element up to and including its

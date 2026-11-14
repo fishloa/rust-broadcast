@@ -15,6 +15,8 @@ use alloc::collections::{BTreeMap, VecDeque};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
+use http::{HeaderMap, StatusCode};
+
 use crate::tshttp::TsHttpConfig as TsConfig;
 use crate::tshttp::TsHttpPolicy;
 use rtmp_runtime::client::{ClientEvent, ClientMode, ClientSession, RtmpClientConfig};
@@ -165,8 +167,11 @@ impl RtmpSource {
         let hello = client.start();
         self.client = Some(client);
         self.actions.push_back(Action::Send { conn, bytes: hello });
-        self.policy
-            .on_response(200, &[], Timestamp::from_micros(now_us));
+        self.policy.on_response(
+            StatusCode::OK,
+            &HeaderMap::new(),
+            Timestamp::from_micros(now_us),
+        );
         self.pump_policy(now_us);
     }
 

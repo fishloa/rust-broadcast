@@ -5,6 +5,8 @@ use alloc::collections::VecDeque;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
+use http::{HeaderMap, StatusCode};
+
 use broadcast_hls::MediaType;
 use hls_runtime::client::{MasterSelection, RenditionInfo};
 use transmux::TrackSpec;
@@ -130,8 +132,8 @@ impl HlsSession {
     pub(crate) fn on_response(
         &mut self,
         conn: ConnId,
-        status: u16,
-        headers: &[(String, String)],
+        status: StatusCode,
+        headers: &HeaderMap,
         now: u64,
         wall: Option<&WallClock>,
         auth: &mut AuthState,
@@ -304,11 +306,11 @@ impl HlsSession {
             .master
             .as_ref()
             .and_then(|m| m.variants.get(m.chosen))
-            .map(|v| v.url.clone());
+            .and_then(|v| v.uri.as_ref());
         let want_url = rendition
             .as_ref()
             .and_then(|(_, r)| r.url.clone())
-            .filter(|u| Some(u) != main_url.as_ref());
+            .filter(|u| Some(u.as_str()) != main_url.map(Url::as_str));
         if self.audio.as_ref().map(|a| &a.url) != want_url.as_ref() {
             self.stop_audio();
             if let Some(url) = want_url.as_deref().and_then(|u| Url::parse(u).ok()) {

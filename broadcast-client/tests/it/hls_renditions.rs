@@ -118,7 +118,7 @@ fn tracks_events(events: &[Event]) -> Vec<BTreeSet<u32>> {
         .collect()
 }
 
-fn reconnecting(events: &[Event]) -> Vec<u64> {
+fn reconnecting(events: &[Event]) -> Vec<u32> {
     events
         .iter()
         .filter_map(|e| match e {
@@ -277,7 +277,7 @@ fn merged_tracks_include_audio_when_main_reports_after_audio() {
     let mut h = host(&f, default_master(), hls_config());
     h.route(
         &first_video,
-        vec![Reply::Status(500), Reply::Ok(f.video.segments[0].1.clone())],
+        vec![status_only(500), Reply::Ok(f.video.segments[0].1.clone())],
     );
     h.run_to_end();
     let video_id = f.video.spec.track_id.value();
@@ -498,7 +498,12 @@ fn select_audio_rendition_switches_and_emits_audio_rendition_event() {
         ]
     );
     let before = h.events.len();
-    h.session.on_response(old_conn, 200, &[], ts(0));
+    h.session.on_response(
+        old_conn,
+        http::StatusCode::from_u16(200).expect("a test names a real status"),
+        &crate::support::headers(&[]),
+        ts(0),
+    );
     h.session
         .on_data(old_conn, &f.audio.segments[1].1, ts(h.now));
     h.session.on_closed(old_conn, None, ts(h.now));
@@ -534,7 +539,12 @@ fn select_audio_none_stops_audio_adapter_and_closes_conns() {
     let audio_before = count_audio(&h.events);
     let requests_before = h.seen.len();
     let evs_len = h.events.len();
-    h.session.on_response(audio_conn, 200, &[], ts(0));
+    h.session.on_response(
+        audio_conn,
+        http::StatusCode::from_u16(200).expect("a test names a real status"),
+        &crate::support::headers(&[]),
+        ts(0),
+    );
     h.session
         .on_data(audio_conn, &f.audio.segments[1].1, ts(h.now));
     h.session.on_closed(audio_conn, None, ts(h.now));
@@ -658,13 +668,13 @@ fn select_variant_reevaluates_audio_group() {
 fn audio_failure_does_not_stall_video() {
     let f = fixture();
     let mut h = host(&f, default_master(), hls_config());
-    h.route(AUDIO_PLAYLIST_URL, vec![Reply::Status(500)]);
+    h.route(AUDIO_PLAYLIST_URL, vec![status_only(500)]);
     h.route(
         VIDEO_PLAYLIST_URL,
         vec![
-            Reply::Status(500),
-            Reply::Status(500),
-            Reply::Status(500),
+            status_only(500),
+            status_only(500),
+            status_only(500),
             Reply::Ok(f.video.playlist.clone()),
         ],
     );
@@ -717,7 +727,7 @@ fn audio_failure_does_not_stall_video() {
 fn audio_playlist_404_does_not_emit_not_found_status() {
     let f = fixture();
     let mut h = host(&f, default_master(), hls_config());
-    h.route(AUDIO_PLAYLIST_URL, vec![Reply::Status(404)]);
+    h.route(AUDIO_PLAYLIST_URL, vec![status_only(404)]);
     h.run_until(|evs| count_video(evs) >= VIDEO_SAMPLES, SPLIT_STEPS);
     assert_eq!(count_video(&h.events), VIDEO_SAMPLES);
     assert!(
@@ -727,7 +737,7 @@ fn audio_playlist_404_does_not_emit_not_found_status() {
     assert!(!reconnecting(&h.events).is_empty());
 
     let mut main_404 = Host::new(MASTER_URL, hls_config());
-    main_404.route(MASTER_URL, vec![Reply::Status(404)]);
+    main_404.route(MASTER_URL, vec![status_only(404)]);
     main_404.run_until(|evs| statuses(evs).contains(&Status::NotFound), 100);
     assert!(statuses(&main_404.events).contains(&Status::NotFound));
 }
@@ -933,7 +943,7 @@ fn vod_ended_only_after_both_adapters_end() {
     let mut h = host(&f, default_master(), hls_config());
     h.route(
         &second_audio,
-        vec![Reply::Status(500), Reply::Ok(f.audio.segments[1].1.clone())],
+        vec![status_only(500), Reply::Ok(f.audio.segments[1].1.clone())],
     );
     h.run_until(|evs| count_video(evs) >= VIDEO_SAMPLES, SPLIT_STEPS);
     assert_eq!(count_video(&h.events), VIDEO_SAMPLES);
@@ -957,7 +967,7 @@ fn vod_ended_only_after_both_adapters_end() {
     let second_video = format!("{VIDEO_DIR}/{}", f.video.segments[1].0);
     audio_first.route(
         &second_video,
-        vec![Reply::Status(500), Reply::Ok(f.video.segments[1].1.clone())],
+        vec![status_only(500), Reply::Ok(f.video.segments[1].1.clone())],
     );
     audio_first.run_until(|evs| count_audio(evs) >= AUDIO_SAMPLES, SPLIT_STEPS);
     assert_eq!(count_audio(&audio_first.events), AUDIO_SAMPLES);
@@ -993,7 +1003,12 @@ fn late_callbacks_after_close_ignored_for_both_adapters() {
         (video_conn, &f.video.segments[0].1),
         (audio_conn, &f.audio.segments[0].1),
     ] {
-        h.session.on_response(conn, 200, &[], ts(0));
+        h.session.on_response(
+            conn,
+            http::StatusCode::from_u16(200).expect("a test names a real status"),
+            &crate::support::headers(&[]),
+            ts(0),
+        );
         h.session.on_data(conn, body, ts(h.now));
         h.session.on_closed(conn, None, ts(h.now));
     }
@@ -1028,7 +1043,7 @@ fn status_live_after_first_sample_from_either() {
     let mut h = host(&f, default_master(), hls_config());
     h.route(
         &first_video,
-        vec![Reply::Status(500), Reply::Ok(f.video.segments[0].1.clone())],
+        vec![status_only(500), Reply::Ok(f.video.segments[0].1.clone())],
     );
     h.run_to_end();
     let lives: Vec<usize> = h
@@ -1048,7 +1063,7 @@ fn status_live_after_first_sample_from_either() {
     assert!(count_video(&h.events) > 0);
 
     let mut v_first = host(&f, default_master(), hls_config());
-    v_first.route(AUDIO_PLAYLIST_URL, vec![Reply::Status(500)]);
+    v_first.route(AUDIO_PLAYLIST_URL, vec![status_only(500)]);
     v_first.run_until(|evs| count_video(evs) >= VIDEO_SAMPLES, SPLIT_STEPS);
     assert_eq!(
         v_first

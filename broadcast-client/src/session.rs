@@ -5,6 +5,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use std::collections::{HashMap, HashSet};
 
+use http::{HeaderMap, StatusCode};
 use url::Url;
 
 use crate::BufferHint as Hint;
@@ -20,6 +21,9 @@ use crate::source::adaptive::Adaptive;
 use crate::source::dash::DashSource;
 use crate::source::datagram::Datagram;
 use crate::source::fetch::conn::ConnAlloc;
+use crate::source::fetch::inflight::{
+    REDIRECT_STATUSES, STATUS_PROXY_AUTH_REQUIRED, STATUS_UNAUTHORIZED,
+};
 use crate::source::fetch::wall::WallClock;
 use crate::source::hls_session::HlsSession;
 use crate::source::rtmp::{RtmpSource, SCHEME_RTMP, SCHEME_RTMPS};
@@ -47,6 +51,8 @@ const SCHEME_SRT: &str = "srt";
 const RTSPS_DEFAULT_PORT: u16 = 322;
 const HTTPS_DEFAULT_PORT: u16 = 443;
 const FIRST_CONN_ID: u32 = 1;
+const STATUS_TOO_MANY_REQUESTS: StatusCode = StatusCode::TOO_MANY_REQUESTS;
+const STATUS_SERVICE_UNAVAILABLE: StatusCode = StatusCode::SERVICE_UNAVAILABLE;
 
 /// The fallback wake a session arms when its next deadline is due on the current poll: one tick
 /// out, so the poll that fires it re-arms the next one rather than returning nothing forever.
@@ -360,8 +366,8 @@ impl Session {
     pub fn on_response(
         &mut self,
         conn: ConnId,
-        status: u16,
-        headers: &[(String, String)],
+        status: StatusCode,
+        headers: &HeaderMap,
         now: Timestamp,
     ) {
         let now_us = now.as_micros();
@@ -388,7 +394,7 @@ impl Session {
             .receive_cookies(&req_url, headers, Timestamp::from_micros(self.now_us));
         let lineage = self.conn_auth.get(&conn).copied().unwrap_or_default();
 
-        if status == 301 || status == 302 || status == 303 || status == 307 || status == 308 {
+        if REDIRECT_STATUSES.contains(&status) {
             if let Some(target) = redirect::resolve(
                 &req_url,
                 headers,
@@ -429,7 +435,7 @@ impl Session {
             return;
         }
 
-        if status == 401 || status == 407 {
+        if status == STATUS_UNAUTHORIZED || status == STATUS_PROXY_AUTH_REQUIRED {
             if req_url.origin() != self.auth.origin().origin() {
                 self.fail_connect(conn);
                 return;
@@ -488,13 +494,13 @@ impl Session {
             return;
         }
 
-        if status == 403 {
+        if status == StatusCode::FORBIDDEN {
             self.events.push_back(Event::Forbidden { status });
             self.fail_connect(conn);
             return;
         }
 
-        if (200..300).contains(&status) {
+        if status.is_success() {
             self.redirect_count = 0;
             self.live_conn = Some(conn);
         } else {
@@ -503,12 +509,12 @@ impl Session {
             if self.live_conn == Some(conn) {
                 self.live_conn = None;
             }
-            if status != 429 && status != 503 {
+            if status != STATUS_TOO_MANY_REQUESTS && status != STATUS_SERVICE_UNAVAILABLE {
                 self.actions.push_back(Action::Close { conn });
             }
         }
         self.source.on_response(status, headers, self.now_us);
-        if status == 429 || status == 503 {
+        if status == STATUS_TOO_MANY_REQUESTS || status == STATUS_SERVICE_UNAVAILABLE {
             if self.source.refused_wants_body() {
                 self.refused_conns.insert(conn);
             } else {
@@ -676,7 +682,8 @@ impl Session {
         }
         if self.datagram.is_some() && self.known_conns.contains_key(&conn) {
             self.live_conn = Some(conn);
-            self.source.on_response(200, &[], self.now_us);
+            self.source
+                .on_response(StatusCode::OK, &HeaderMap::new(), self.now_us);
             self.drain_source();
             if let Some(d) = self.datagram.as_mut() {
                 d.on_connected(self.now_us);
@@ -1608,7 +1615,7 @@ impl Session {
 }
 
 fn has_authorization(headers: &[(String, String)]) -> bool {
-    broadcast_auth::carries_credentials(headers)
+    broadcast_auth::carries_credentials(&crate::headers::to_header_map(headers))
 }
 
 fn has_mpd_extension(url: &Url) -> bool {

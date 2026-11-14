@@ -43,7 +43,7 @@
 //!     Duration::from_secs(30),
 //!     2.0,
 //!     0x5EED,
-//! );
+//! ).expect("a cap above the floor, a factor of two");
 //! assert_eq!(schedule.delay_for_attempt(0), Duration::from_millis(500));
 //! for attempt in 1..8 {
 //!     let delay = schedule.delay_for_attempt(attempt);
@@ -85,9 +85,76 @@ const JITTER_TERMS: usize = 16;
 /// A growth factor that leaves the series at its floor.
 const NO_GROWTH: f64 = 1.0;
 
-/// The largest product [`Duration::mul_f64`] accepts (its seconds and
-/// nanoseconds are `u64`); a larger product is the cap rather than a panic.
+/// The largest growth [`term_power`] is taken past its floor; a larger one is
+/// the cap without a product.
 const MAX_SCALING_FACTOR: f64 = 1e15;
+
+/// The largest floor a schedule may be built with: the largest whole
+/// `Duration` second. A visit is computed in `f64`, which holds any whole
+/// second exactly, so a floor at or below this one keeps every visit it can
+/// reach inside `Duration`; [`Duration::MAX`]'s own nanosecond part is a hair
+/// above the largest `f64` second.
+pub const MAX_FLOOR: Duration = Duration::new(MAX_FLOOR_SECS, 0);
+
+const MAX_FLOOR_SECS: u64 = u64::MAX / NANOS_PER_SEC;
+
+const NANOS_PER_SEC: u64 = 1_000_000_000;
+
+/// Why [`RetrySchedule::new`] refused its bounds.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub enum InvalidBackoff {
+    /// The cap is under the floor: no attempt may wait longer than the cap and
+    /// the first waits exactly the floor.
+    CapBelowFloor {
+        /// The first retry's delay.
+        floor: Duration,
+        /// The requested cap.
+        cap: Duration,
+    },
+    /// The floor is above [`MAX_FLOOR`], where the series' own visits overflow
+    /// their representation.
+    FloorAboveCeiling {
+        /// The first retry's delay (or a step table's cap).
+        floor: Duration,
+        /// [`MAX_FLOOR`], the largest accepted.
+        ceiling: Duration,
+    },
+    /// The growth factor is below one or NaN, so the series would shrink or
+    /// re-roll into a shorter one.
+    GrowthBelowOne {
+        /// The requested factor.
+        factor: f64,
+    },
+}
+
+impl InvalidBackoff {
+    /// The failure's message.
+    #[must_use]
+    pub fn reason(&self) -> alloc::string::String {
+        match self {
+            Self::CapBelowFloor { floor, cap } => {
+                alloc::format!("retry cap {cap:?} is below the first retry's {floor:?}")
+            }
+            Self::FloorAboveCeiling { floor, ceiling } => {
+                alloc::format!("retry floor {floor:?} is above the largest accepted {ceiling:?}")
+            }
+            Self::GrowthBelowOne { factor } => {
+                alloc::format!("retry growth factor {factor} is under 1")
+            }
+        }
+    }
+}
+
+impl fmt::Display for InvalidBackoff {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.reason())
+    }
+}
+
+impl core::error::Error for InvalidBackoff {}
+
+impl Eq for InvalidBackoff {}
 
 /// xorshift64 shift triple (Marsaglia 2003).
 const XORSHIFT_LEFT_A: u32 = 13;
@@ -141,30 +208,54 @@ impl RetrySchedule {
     /// A schedule from `min` (the first raw delay), `max` (the cap), a growth
     /// factor and a jitter seed.
     ///
-    /// A `factor` below one is raised to one (no growth) so the series can never
-    /// shrink, and a `max` below `min` is raised to `min` so the cap is never
-    /// tighter than the floor.
-    #[must_use]
-    pub fn new(min: Duration, max: Duration, factor: f64, seed: u64) -> Self {
-        Self {
-            kind: Kind::Exponential {
-                min,
-                factor: if factor >= NO_GROWTH {
-                    factor
-                } else {
-                    NO_GROWTH
-                },
-            },
-            max: max.max(min),
+    /// # Errors
+    ///
+    /// [`InvalidBackoff::CapBelowFloor`] for a `max` under `min`,
+    /// [`InvalidBackoff::FloorAboveCeiling`] for a `min` above
+    /// [`MAX_FLOOR`], and [`InvalidBackoff::GrowthBelowOne`] for a `factor`
+    /// under one or NaN (the series could shrink, or re-roll into a shorter
+    /// one). None is repaired into a different schedule.
+    pub fn new(
+        min: Duration,
+        max: Duration,
+        factor: f64,
+        seed: u64,
+    ) -> Result<Self, InvalidBackoff> {
+        if min > MAX_FLOOR {
+            return Err(InvalidBackoff::FloorAboveCeiling {
+                floor: min,
+                ceiling: MAX_FLOOR,
+            });
+        }
+        if max < min {
+            return Err(InvalidBackoff::CapBelowFloor {
+                floor: min,
+                cap: max,
+            });
+        }
+        if factor.is_nan() || factor < NO_GROWTH {
+            return Err(InvalidBackoff::GrowthBelowOne { factor });
+        }
+        Ok(Self {
+            kind: Kind::Exponential { min, factor },
+            max,
             terms: jitter_terms(seed),
             cursor: Cell::new(FIRST_TERM + 1),
-        }
+        })
     }
 
     /// A schedule from `min`, `max` and a growth factor, seeded from
     /// `entropy` through [`mix_seed`].
-    #[must_use]
-    pub fn seeded(min: Duration, max: Duration, factor: f64, entropy: u64) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`Self::new`] rejects.
+    pub fn seeded(
+        min: Duration,
+        max: Duration,
+        factor: f64,
+        entropy: u64,
+    ) -> Result<Self, InvalidBackoff> {
         Self::new(min, max, factor, mix_seed(entropy))
     }
 
@@ -177,14 +268,28 @@ impl RetrySchedule {
     /// only happens to pass through the same numbers. The table is kept as
     /// given (a step may exceed `cap`, which bounds only the exponential
     /// series); an empty table is the cap from the first attempt.
-    #[must_use]
-    pub fn from_steps(steps: &[Duration], cap: Duration, seed: u64) -> Self {
-        Self {
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`Self::new`] rejects for the cap and ceiling; the table
+    /// itself is not bounded.
+    pub fn from_steps(
+        steps: &[Duration],
+        cap: Duration,
+        seed: u64,
+    ) -> Result<Self, InvalidBackoff> {
+        if cap > MAX_FLOOR {
+            return Err(InvalidBackoff::FloorAboveCeiling {
+                floor: cap,
+                ceiling: MAX_FLOOR,
+            });
+        }
+        Ok(Self {
             kind: Kind::Steps(steps.to_vec()),
             max: cap,
             terms: jitter_terms(seed),
             cursor: Cell::new(FIRST_TERM + 1),
-        }
+        })
     }
 
     /// The same schedule with the retry that has been cancelled starting at
@@ -204,14 +309,28 @@ impl RetrySchedule {
     /// the first, then the raw delay times the next term of the schedule's
     /// jitter sequence (wrapping at the end of the sequence), in `[raw*5/6, raw]`.
     pub fn delay_for_attempt(&self, attempt: u32) -> Duration {
-        let raw = self.raw_delay_for_attempt(attempt);
         if attempt == FIRST_RETRY {
-            return raw;
+            return self.raw_delay_for_attempt(attempt);
         }
         let cursor = self.cursor.get() % JITTER_TERMS;
         self.cursor.set((cursor + 1) % JITTER_TERMS);
+        self.jittered(attempt, cursor)
+    }
+
+    /// The delay before the `attempt + 1`-th retry for the jitter term at
+    /// `cursor`, without advancing the schedule.
+    #[must_use]
+    pub fn peek_delay_for_attempt(&self, attempt: u32) -> Duration {
+        if attempt == FIRST_RETRY {
+            return self.raw_delay_for_attempt(attempt);
+        }
+        self.jittered(attempt, self.cursor.get() % JITTER_TERMS)
+    }
+
+    fn jittered(&self, attempt: u32, cursor: usize) -> Duration {
+        let raw = self.raw_delay_for_attempt(attempt);
         let capped = attempt.min(MAX_ATTEMPT_INDEX);
-        scaled(raw, term_power(self.terms[cursor], capped))
+        scaled(raw, term_power(self.terms[cursor], capped), self.max)
     }
 
     /// The delay before the `attempt + 1`-th retry without jitter:
@@ -238,7 +357,10 @@ impl RetrySchedule {
                 if !grown.is_finite() || grown > MAX_SCALING_FACTOR {
                     return self.max;
                 }
-                min.mul_f64(grown).min(self.max)
+                // `mul_f64` panics on a product `Duration` cannot hold; one that
+                // would is the cap, which this schedule's bounds keep reachable.
+                let visit = in_bounds(*min, grown, self.max);
+                if visit >= self.max { self.max } else { visit }
             }
         }
     }
@@ -279,8 +401,11 @@ pub struct BackoffSteps {
 impl BackoffSteps {
     /// Build a [`RetrySchedule`] from these steps with the caller's own jitter
     /// `seed` (see [`RetrySchedule::from_steps`]).
-    #[must_use]
-    pub fn schedule(&self, seed: u64) -> RetrySchedule {
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`RetrySchedule::from_steps`] rejects.
+    pub fn schedule(&self, seed: u64) -> Result<RetrySchedule, InvalidBackoff> {
         RetrySchedule::from_steps(&self.steps, self.cap, seed)
     }
 }
@@ -316,17 +441,36 @@ fn term_power(base: f64, exponent: u32) -> f64 {
     power
 }
 
+/// `raw * factor`, computed only when [`Duration`] can hold the product: a
+/// product whose whole-second ceiling is at or above [`MAX_FLOOR`] is `cap`
+/// without the multiplication. A schedule's cap never exceeds [`MAX_FLOOR`], so
+/// `cap` is what the product would have been clamped to anyway.
+fn in_bounds(raw: Duration, factor: f64, cap: Duration) -> Duration {
+    let ceiling = raw.as_secs_f64() * factor;
+    if !ceiling.is_finite() || ceiling >= MAX_FLOOR_SECS as f64 {
+        cap
+    } else {
+        raw.mul_f64(factor)
+    }
+}
+
 /// `raw * factor`, kept inside `[raw * JITTER_LOW, raw]`: `mul_f64` rounds to
 /// the nearest nanosecond, so rounding alone could take a term just outside its
 /// band, and a factor outside the band (only reachable through an absurd seed
-/// sample) is the raw delay itself.
-fn scaled(raw: Duration, factor: f64) -> Duration {
+/// sample) is the raw delay itself. Band edges beyond [`MAX_FLOOR`] are the raw
+/// delay, which the schedule's floor already bounds.
+fn scaled(raw: Duration, factor: f64, cap: Duration) -> Duration {
     if !factor.is_finite() || factor >= JITTER_TOP {
         return raw;
     }
-    raw.mul_f64(factor.max(JITTER_LOW))
-        .min(raw)
-        .max(raw.mul_f64(JITTER_LOW))
+    let finite = |visit: Duration| visit <= cap;
+    let product = in_bounds(raw, factor.max(JITTER_LOW), cap);
+    let low = in_bounds(raw, JITTER_LOW, cap);
+    if finite(product) && finite(low) {
+        product.min(raw).max(low)
+    } else {
+        raw
+    }
 }
 
 /// The schedule's jitter sequence: [`JITTER_TERMS`] terms of `[5/6, 1.0)`, the
@@ -382,7 +526,7 @@ mod tests {
     }
 
     fn sequence(terms: usize) -> Vec<Duration> {
-        let s = RetrySchedule::new(ms(500), secs(30), 2.0, 0x5EED);
+        let s = RetrySchedule::new(ms(500), secs(30), 2.0, 0x5EED).unwrap();
         let mut out = Vec::with_capacity(terms);
         for attempt in 0..terms as u32 {
             out.push(s.delay_for_attempt(attempt));
@@ -392,7 +536,7 @@ mod tests {
 
     #[test]
     fn the_raw_series_doubles_from_the_floor_and_saturates_at_the_cap() {
-        let s = RetrySchedule::new(ms(500), secs(30), 2.0, 1);
+        let s = RetrySchedule::new(ms(500), secs(30), 2.0, 1).unwrap();
         assert_eq!(s.raw_delay_for_attempt(0), ms(500));
         assert_eq!(s.raw_delay_for_attempt(1), ms(1_000));
         assert_eq!(s.raw_delay_for_attempt(2), ms(2_000));
@@ -403,7 +547,7 @@ mod tests {
 
     #[test]
     fn an_attempt_past_the_walk_bound_is_the_cap_without_iterating() {
-        let s = RetrySchedule::new(secs(1), secs(30), 2.0, 1);
+        let s = RetrySchedule::new(secs(1), secs(30), 2.0, 1).unwrap();
         assert_eq!(s.raw_delay_for_attempt(u32::MAX), secs(30));
         assert_eq!(s.raw_delay_for_attempt(MAX_ATTEMPT_INDEX + 1), secs(30));
         assert!(s.delay_for_attempt(u32::MAX) <= secs(30));
@@ -416,14 +560,14 @@ mod tests {
             (ms(2_000), ms(10_000), 2.0),
             (secs(1), secs(1), 1.0),
         ] {
-            let s = RetrySchedule::new(min, cap, factor, 0xDEAD_BEEF);
+            let s = RetrySchedule::new(min, cap, factor, 0xDEAD_BEEF).unwrap();
             assert_eq!(s.delay_for_attempt(0), min);
         }
     }
 
     #[test]
     fn every_later_delay_stays_in_the_configured_band() {
-        let s = RetrySchedule::new(ms(500), secs(30), 2.0, 0xDEAD_BEEF);
+        let s = RetrySchedule::new(ms(500), secs(30), 2.0, 0xDEAD_BEEF).unwrap();
         for attempt in 0..64 {
             let raw = s.raw_delay_for_attempt(attempt);
             let d = s.delay_for_attempt(attempt);
@@ -437,7 +581,9 @@ mod tests {
 
     #[test]
     fn the_delay_stays_jittered_at_the_cap() {
-        let s = RetrySchedule::new(ms(500), secs(30), 2.0, 7).with_offset(1);
+        let s = RetrySchedule::new(ms(500), secs(30), 2.0, 7)
+            .unwrap()
+            .with_offset(1);
         let mut distinct = BTreeSet::new();
         for _ in 0..64 {
             let d = s.delay_for_attempt(20);
@@ -449,8 +595,8 @@ mod tests {
 
     #[test]
     fn the_same_seed_reproduces_the_same_sequence() {
-        let a = RetrySchedule::new(ms(500), secs(30), 2.0, 0x5EED);
-        let b = RetrySchedule::new(ms(500), secs(30), 2.0, 0x5EED);
+        let a = RetrySchedule::new(ms(500), secs(30), 2.0, 0x5EED).unwrap();
+        let b = RetrySchedule::new(ms(500), secs(30), 2.0, 0x5EED).unwrap();
         let seq = |s: &RetrySchedule| -> Vec<Duration> {
             (0..8).map(|i| s.delay_for_attempt(i)).collect()
         };
@@ -459,8 +605,8 @@ mod tests {
 
     #[test]
     fn a_different_seed_draws_differently() {
-        let a = RetrySchedule::new(secs(10), secs(30), 2.0, 1);
-        let b = RetrySchedule::new(secs(10), secs(30), 2.0, 2);
+        let a = RetrySchedule::new(secs(10), secs(30), 2.0, 1).unwrap();
+        let b = RetrySchedule::new(secs(10), secs(30), 2.0, 2).unwrap();
         let seq = |s: &RetrySchedule| -> Vec<Duration> {
             (0..8).map(|i| s.delay_for_attempt(i)).collect()
         };
@@ -469,7 +615,7 @@ mod tests {
 
     #[test]
     fn a_clone_reseeds_rather_than_replaying() {
-        let a = RetrySchedule::new(ms(500), secs(30), 2.0, 3);
+        let a = RetrySchedule::new(ms(500), secs(30), 2.0, 3).unwrap();
         let b = a.clone();
         let seq = |s: &RetrySchedule| -> Vec<Duration> {
             (0..8).map(|i| s.delay_for_attempt(i)).collect()
@@ -479,10 +625,13 @@ mod tests {
 
     #[test]
     fn an_offset_starts_the_sequence_elsewhere_in_the_same_band() {
-        let raw = RetrySchedule::new(ms(500), secs(30), 2.0, 0x5EED).raw_delay_for_attempt(1);
+        let raw = RetrySchedule::new(ms(500), secs(30), 2.0, 0x5EED)
+            .unwrap()
+            .raw_delay_for_attempt(1);
         let mut distinct = BTreeSet::new();
         for offset in 0..JITTER_TERMS {
             let d = RetrySchedule::new(ms(500), secs(30), 2.0, 0x5EED)
+                .unwrap()
                 .with_offset(offset)
                 .delay_for_attempt(1);
             assert!(d >= raw.mul_f64(JITTER_LOW) && d <= raw, "{offset}: {d:?}");
@@ -490,9 +639,11 @@ mod tests {
         }
         assert!(distinct.len() > 1, "each offset must reach its own term");
         let wrapped = RetrySchedule::new(ms(500), secs(30), 2.0, 0x5EED)
+            .unwrap()
             .with_offset(JITTER_TERMS)
             .delay_for_attempt(1);
         let first = RetrySchedule::new(ms(500), secs(30), 2.0, 0x5EED)
+            .unwrap()
             .with_offset(0)
             .delay_for_attempt(1);
         assert_eq!(wrapped, first);
@@ -500,13 +651,16 @@ mod tests {
 
     #[test]
     fn a_literal_step_table_is_taken_as_given_then_the_cap() {
-        let s = RetrySchedule::from_steps(&[ms(2_000), ms(4_000)], ms(10_000), 0x5EED);
+        let s = RetrySchedule::from_steps(&[ms(2_000), ms(4_000)], ms(10_000), 0x5EED).unwrap();
         assert_eq!(s.raw_delay_for_attempt(0), ms(2_000));
         assert_eq!(s.raw_delay_for_attempt(1), ms(4_000));
         assert_eq!(s.raw_delay_for_attempt(2), ms(10_000));
         assert_eq!(s.raw_delay_for_attempt(u32::MAX), ms(10_000));
         assert_eq!(s.delay_for_attempt(0), ms(2_000), "the first step exactly");
-        assert_eq!(RetrySchedule::from_steps(&[], ms(7), 1).min(), ms(7));
+        assert_eq!(
+            RetrySchedule::from_steps(&[], ms(7), 1).unwrap().min(),
+            ms(7)
+        );
     }
 
     #[test]
@@ -516,8 +670,8 @@ mod tests {
         for entropy in [0, 1, 2, u64::MAX, 41] {
             assert_ne!(avalanche(entropy), 0, "a xorshift state is never zero");
         }
-        let a = RetrySchedule::seeded(ms(500), secs(30), 2.0, 1);
-        let b = RetrySchedule::seeded(ms(500), secs(30), 2.0, 2);
+        let a = RetrySchedule::seeded(ms(500), secs(30), 2.0, 1).unwrap();
+        let b = RetrySchedule::seeded(ms(500), secs(30), 2.0, 2).unwrap();
         let seq = |s: &RetrySchedule| -> Vec<Duration> {
             (0..8).map(|i| s.delay_for_attempt(i)).collect()
         };
@@ -525,16 +679,9 @@ mod tests {
     }
 
     #[test]
-    fn a_factor_below_one_does_not_shrink_the_series() {
-        let s = RetrySchedule::new(ms(500), secs(30), 0.25, 1);
-        assert_eq!(s.raw_delay_for_attempt(0), ms(500));
-        assert_eq!(s.raw_delay_for_attempt(5), ms(500));
-    }
-
-    #[test]
     fn a_hostile_factor_saturates_at_the_cap_instead_of_panicking() {
-        for factor in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -2.0, 1e300] {
-            let s = RetrySchedule::new(secs(1), secs(60), factor, 1);
+        for factor in [f64::INFINITY, 1e300] {
+            let s = RetrySchedule::new(secs(1), secs(60), factor, 1).unwrap();
             for attempt in [0u32, 1, 30, u32::MAX] {
                 assert!(
                     s.delay_for_attempt(attempt) <= secs(60),
@@ -545,15 +692,66 @@ mod tests {
     }
 
     #[test]
-    fn a_cap_below_the_floor_is_raised_to_the_floor() {
-        let s = RetrySchedule::new(secs(30), secs(1), 2.0, 1);
-        assert_eq!(s.max(), secs(30));
-        assert_eq!(s.raw_delay_for_attempt(9), secs(30));
+    fn a_cap_below_the_floor_is_rejected_not_raised() {
+        assert_eq!(
+            RetrySchedule::new(secs(30), secs(1), 2.0, 1).err(),
+            Some(InvalidBackoff::CapBelowFloor {
+                floor: secs(30),
+                cap: secs(1)
+            })
+        );
+    }
+
+    #[test]
+    fn a_floor_above_the_ceiling_is_rejected() {
+        assert_eq!(
+            RetrySchedule::new(MAX_FLOOR.mul_f64(2.0), secs(30), 2.0, 1).err(),
+            Some(InvalidBackoff::FloorAboveCeiling {
+                floor: MAX_FLOOR.mul_f64(2.0),
+                ceiling: MAX_FLOOR
+            })
+        );
+        let schedule = RetrySchedule::new(MAX_FLOOR, MAX_FLOOR, 2.0, 1).unwrap();
+        assert_eq!(schedule.raw_delay_for_attempt(0), MAX_FLOOR);
+    }
+
+    #[test]
+    fn a_largest_floor_is_exactly_the_first_visit_and_the_cap_beyond_it() {
+        let schedule = RetrySchedule::new(MAX_FLOOR, MAX_FLOOR, 2.0, 1).unwrap();
+        let first = MAX_FLOOR.mul_f64(JITTER_LOW);
+        assert_eq!(schedule.raw_delay_for_attempt(0), MAX_FLOOR);
+        assert_eq!(schedule.raw_delay_for_attempt(1), MAX_FLOOR);
+        assert_eq!(schedule.raw_delay_for_attempt(40), MAX_FLOOR);
+        assert_eq!(schedule.raw_delay_for_attempt(u32::MAX), MAX_FLOOR);
+        assert_eq!(schedule.delay_for_attempt(0), MAX_FLOOR);
+        assert!(
+            schedule.delay_for_attempt(1) >= first && schedule.delay_for_attempt(1) <= MAX_FLOOR
+        );
+        assert!(schedule.delay_for_attempt(u32::MAX) >= first);
+    }
+
+    #[test]
+    fn a_factor_below_one_is_rejected_not_raised() {
+        for (floor, cap, factor) in [
+            (ms(500), secs(30), 0.25),
+            (ms(500), secs(30), 0.999),
+            (secs(30), secs(30), 0.25),
+        ] {
+            assert_eq!(
+                RetrySchedule::new(floor, cap, factor, 1).err(),
+                Some(InvalidBackoff::GrowthBelowOne { factor }),
+                "{floor:?} {cap:?} {factor}"
+            );
+        }
+        assert!(matches!(
+            RetrySchedule::new(ms(500), secs(30), f64::NAN, 1),
+            Err(InvalidBackoff::GrowthBelowOne { factor }) if factor.is_nan()
+        ));
     }
 
     #[test]
     fn a_zero_floor_is_a_zero_delay_at_every_attempt() {
-        let s = RetrySchedule::new(Duration::ZERO, secs(1), 2.0, 1);
+        let s = RetrySchedule::new(Duration::ZERO, secs(1), 2.0, 1).unwrap();
         assert_eq!(s.raw_delay_for_attempt(0), Duration::ZERO);
         assert_eq!(s.delay_for_attempt(0), Duration::ZERO);
         assert_eq!(s.delay_for_attempt(1), Duration::ZERO);
@@ -580,15 +778,15 @@ mod tests {
         // A config value clones exactly and compares by value; the runtime schedule it builds
         // carries a cursor cell and reseeds on clone, which is why it cannot be a config field.
         assert_eq!(steps.clone(), steps);
-        let schedule = steps.schedule(0x5EED);
+        let schedule = steps.schedule(0x5EED).unwrap();
         assert_eq!(schedule.min(), ms(2_000));
         assert_eq!(schedule.max(), ms(10_000));
         assert_eq!(schedule.raw_delay_for_attempt(0), ms(2_000));
         assert_eq!(schedule.raw_delay_for_attempt(1), ms(4_000));
         assert_eq!(schedule.raw_delay_for_attempt(2), ms(10_000));
         // The seed is the caller's own, so the same steps and seed replay one series.
-        let a = steps.schedule(7);
-        let b = steps.schedule(7);
+        let a = steps.schedule(7).unwrap();
+        let b = steps.schedule(7).unwrap();
         assert_eq!(a.delay_for_attempt(0), b.delay_for_attempt(0));
         assert_eq!(a.delay_for_attempt(1), b.delay_for_attempt(1));
     }
@@ -599,7 +797,7 @@ mod tests {
             steps: alloc::vec::Vec::new(),
             cap: ms(7),
         };
-        let schedule = steps.schedule(1);
+        let schedule = steps.schedule(1).unwrap();
         assert_eq!(schedule.raw_delay_for_attempt(0), ms(7));
         assert_eq!(schedule.min(), ms(7));
     }

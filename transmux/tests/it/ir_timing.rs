@@ -20,6 +20,10 @@ use transmux::media::CmafMux;
 use transmux::pipeline::{CodecConfig, DataCarriage, Sample, TrackSpec};
 use transmux::{Ec3SyncframeInfo, Error, Fmp4Demux, Media, PcrSample, Track, TsDemux};
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 // ── Fixture loading ─────────────────────────────────────────────────────────
 
 fn fixtures_dir() -> PathBuf {
@@ -663,7 +667,7 @@ fn collect_pcr_oracle(data: &[u8]) -> Vec<PcrSample> {
             continue;
         };
         out.push(PcrSample::new(
-            pcr.as_27mhz(),
+            pcr,
             pkt.header.pid,
             idx as u64,
             af.discontinuity_indicator,
@@ -682,13 +686,14 @@ const ONE_SECOND_27MHZ: i128 = 27_000_000;
 fn find_discontinuity(samples: &[PcrSample]) -> Option<(usize, usize)> {
     let mut last: HashMap<u16, (usize, u64)> = HashMap::new();
     for (i, s) in samples.iter().enumerate() {
+        let ticks = s.pcr_27mhz().expect("fixture PCR is on the 27 MHz clock");
         if let Some(&(prev_idx, prev_val)) = last.get(&s.pid.value()) {
-            let delta = s.pcr_27mhz as i128 - prev_val as i128;
+            let delta = ticks as i128 - prev_val as i128;
             if !(0..=ONE_SECOND_27MHZ).contains(&delta) {
                 return Some((prev_idx, i));
             }
         }
-        last.insert(s.pid.value(), (i, s.pcr_27mhz));
+        last.insert(s.pid.value(), (i, ticks));
     }
     None
 }
@@ -789,7 +794,7 @@ fn data_track_errors_named_by_cmaf_unlike_vp8() {
         vec![Track::new(
             TrackSpec::new(
                 TrackId::new(1),
-                Timescale::from_nonzero(90_000),
+                timescale(90_000),
                 CodecConfig::Data {
                     stream_type: 0x06,
                     descriptors: vec![],
@@ -798,13 +803,13 @@ fn data_track_errors_named_by_cmaf_unlike_vp8() {
             ),
             vec![Sample::from_raw(vec![1, 2, 3], None, None, None)],
         )],
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
     );
     let vp8_media = Media::new(
         vec![Track::new(
             TrackSpec::new(
                 TrackId::new(1),
-                Timescale::from_nonzero(90_000),
+                timescale(90_000),
                 CodecConfig::Vp8 {
                     width: 640,
                     height: 480,
@@ -812,7 +817,7 @@ fn data_track_errors_named_by_cmaf_unlike_vp8() {
             ),
             vec![Sample::from_raw(vec![1, 2, 3], None, None, None)],
         )],
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
     );
 
     // A Media of a Data track must now fail with the specific, named

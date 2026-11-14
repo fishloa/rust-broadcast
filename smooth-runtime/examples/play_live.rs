@@ -62,7 +62,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             now(now_us),
                             id,
                             FetchFailure {
-                                status: Some(404),
+                                status: Some(http::StatusCode::NOT_FOUND),
                                 ..FetchFailure::default()
                             },
                         ),

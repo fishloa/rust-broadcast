@@ -6,6 +6,7 @@ use crate::source::fetch::retry::{ReconnectTimer, backoff_ms};
 use crate::tshttp::config::Config;
 use crate::tshttp::events::{Action, Event, StarveKind};
 use broadcast_common::stage::Timestamp;
+use http::{HeaderMap, StatusCode};
 
 /// The retry jitter's seed [`TsHttpPolicy::new`] uses: a policy takes no clock, so the seed is a
 /// fixed one and two policies built from one configuration replay identically. It is chosen so
@@ -23,11 +24,6 @@ const IDENTITY_CODING: &str = "identity";
 const HEADER_CONTENT_ENCODING: &str = "content-encoding";
 const HEADER_CONTENT_LENGTH: &str = "content-length";
 const HEADER_CONTENT_RANGE: &str = "content-range";
-const STATUS_OK: u16 = 200;
-const STATUS_PARTIAL_CONTENT: u16 = 206;
-const STATUS_NOT_FOUND: u16 = 404;
-const STATUS_GONE: u16 = 410;
-const STATUS_SUCCESS_CLASS: core::ops::Range<u16> = 200..300;
 
 /// The span from `from` to `to` on the monotonic clock, never negative: a clock that went
 /// backwards reads as no time passed.
@@ -51,7 +47,7 @@ pub struct TsHttpPolicy {
     url: String,
     config: Config,
     phase: Phase,
-    attempt: u64,
+    attempt: u32,
     retry: ReconnectTimer,
     opens: u64,
     actions: VecDeque<Action>,
@@ -130,7 +126,7 @@ impl TsHttpPolicy {
     }
 
     /// Response headers received (T2-T4).
-    pub fn on_response(&mut self, status: u16, headers: &[(String, String)], now: Timestamp) {
+    pub fn on_response(&mut self, status: StatusCode, headers: &HeaderMap, now: Timestamp) {
         if !matches!(self.phase, Phase::Opening { .. }) {
             return;
         }
@@ -138,7 +134,7 @@ impl TsHttpPolicy {
             Phase::Opening { open_at } => open_at,
             _ => self.open_at,
         };
-        if STATUS_SUCCESS_CLASS.contains(&status) {
+        if status.is_success() {
             let finite = Self::detect_finite(status, headers);
             let expected = Self::expected_bytes(status, headers);
             self.finite = finite;
@@ -162,7 +158,7 @@ impl TsHttpPolicy {
             self.starved_nodata_fired = false;
             self.first_notice_at = None;
             self.next_notice_at = None;
-        } else if status == STATUS_NOT_FOUND || status == STATUS_GONE {
+        } else if status == StatusCode::NOT_FOUND || status == StatusCode::GONE {
             self.push_event(Event::NotFound);
             self.fail_before_playing(now);
         } else {
@@ -175,11 +171,11 @@ impl TsHttpPolicy {
         self.retry_after = retry_after;
     }
 
-    fn header_values<'a>(headers: &'a [(String, String)], name: &str) -> alloc::vec::Vec<&'a str> {
+    fn header_values<'a>(headers: &'a HeaderMap, name: &str) -> alloc::vec::Vec<&'a str> {
         headers
+            .get_all(name)
             .iter()
-            .filter(|(k, _)| k.eq_ignore_ascii_case(name))
-            .map(|(_, v)| v.as_str())
+            .filter_map(|v| v.to_str().ok())
             .collect()
     }
 
@@ -197,7 +193,7 @@ impl TsHttpPolicy {
         t.parse::<u64>().ok()
     }
 
-    fn is_identity_coded(headers: &[(String, String)]) -> bool {
+    fn is_identity_coded(headers: &HeaderMap) -> bool {
         Self::header_values(headers, HEADER_CONTENT_ENCODING)
             .iter()
             .flat_map(|v| v.split(','))
@@ -206,11 +202,11 @@ impl TsHttpPolicy {
             .all(|t| t.eq_ignore_ascii_case(IDENTITY_CODING))
     }
 
-    fn finite_and_expected(status: u16, headers: &[(String, String)]) -> (bool, u64) {
+    fn finite_and_expected(status: StatusCode, headers: &HeaderMap) -> (bool, u64) {
         if !Self::is_identity_coded(headers) {
             return (false, 0);
         }
-        if status == STATUS_OK {
+        if status == StatusCode::OK {
             let vals = Self::header_values(headers, HEADER_CONTENT_LENGTH);
             if vals.is_empty() {
                 return (false, 0);
@@ -226,7 +222,7 @@ impl TsHttpPolicy {
                 return (false, 0);
             }
             (true, parsed[0])
-        } else if status == STATUS_PARTIAL_CONTENT {
+        } else if status == StatusCode::PARTIAL_CONTENT {
             let vals = Self::header_values(headers, HEADER_CONTENT_RANGE);
             if vals.is_empty() {
                 return (false, 0);
@@ -248,11 +244,11 @@ impl TsHttpPolicy {
         }
     }
 
-    fn detect_finite(status: u16, headers: &[(String, String)]) -> bool {
+    fn detect_finite(status: StatusCode, headers: &HeaderMap) -> bool {
         Self::finite_and_expected(status, headers).0
     }
 
-    fn expected_bytes(status: u16, headers: &[(String, String)]) -> u64 {
+    fn expected_bytes(status: StatusCode, headers: &HeaderMap) -> u64 {
         Self::finite_and_expected(status, headers).1
     }
 

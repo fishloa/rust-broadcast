@@ -37,7 +37,7 @@ pub use diagnostics::scte35_check::Scte35Check;
 pub use diagnostics::sync_byte::SyncByteCheck;
 pub use hls_validator::check_hls_playlist;
 pub use playlist::check_playlist;
-pub use report::{Finding, Location, Report, Severity};
+pub use report::{Finding, Location, Report, Severity, StreamLocator};
 pub use watch::{ConformanceSample, PidFlag, WatchSnapshot, WatchState};
 #[cfg(feature = "metrics")]
 pub use watch_metrics::{publish as publish_metrics, render as render_metrics};

@@ -1826,6 +1826,10 @@ pub fn run_listen<L: Listener>(
 
 #[cfg(test)]
 mod tests {
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
+
     use super::*;
     use broadcast_common::Demand;
     use broadcast_common::timescale::Timescale;
@@ -1871,7 +1875,7 @@ mod tests {
     fn opaque_track(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
             CodecConfig::Data {
                 stream_type: 0x06,
                 descriptors: Vec::new(),

@@ -11,6 +11,10 @@ use transmux::media::Fmp4Demux;
 use transmux::pipeline;
 use transmux::ts_demux::TsDemux;
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 fn avc_spec(fixture: &str) -> Option<TrackSpec> {
     let data = test_fixtures::require_bytes(fixture, "display_demux")?;
     let media = TsDemux::new().demux(&data).ok()?;
@@ -41,8 +45,7 @@ fn demux_display(bytes: &[u8]) -> Option<DisplayGeometry> {
 }
 
 fn build(spec: TrackSpec) -> Vec<u8> {
-    pipeline::build_init_segment(&[spec], Timescale::from_nonzero(90000))
-        .expect("build_init_segment")
+    pipeline::build_init_segment(&[spec], timescale(90000)).expect("build_init_segment")
 }
 #[test]
 fn pasp_fills_unspecified_sar() {

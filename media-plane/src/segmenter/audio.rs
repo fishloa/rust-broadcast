@@ -427,6 +427,10 @@ impl AudioFollower {
 
 #[cfg(test)]
 mod part_target_tests {
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
+
     use super::part_target_for_frame_ms;
     use broadcast_common::timescale::Timescale;
     use std::time::Duration;
@@ -439,23 +443,23 @@ mod part_target_tests {
     #[test]
     fn rounds_up_to_whole_frames() {
         assert_eq!(
-            part_target_for_frame_ms(ms(200), 1536, Timescale::from_nonzero(48_000)),
+            part_target_for_frame_ms(ms(200), 1536, timescale(48_000)),
             Some(224)
         );
         assert_eq!(
-            part_target_for_frame_ms(ms(200), 1024, Timescale::from_nonzero(48_000)),
+            part_target_for_frame_ms(ms(200), 1024, timescale(48_000)),
             Some(214)
         );
         assert_eq!(
-            part_target_for_frame_ms(ms(200), 960, Timescale::from_nonzero(48_000)),
+            part_target_for_frame_ms(ms(200), 960, timescale(48_000)),
             Some(200)
         );
         assert_eq!(
-            part_target_for_frame_ms(ms(10), 1536, Timescale::from_nonzero(48_000)),
+            part_target_for_frame_ms(ms(10), 1536, timescale(48_000)),
             Some(32)
         );
         assert_eq!(
-            part_target_for_frame_ms(ms(200), 0, Timescale::from_nonzero(48_000)),
+            part_target_for_frame_ms(ms(200), 0, timescale(48_000)),
             None
         );
     }

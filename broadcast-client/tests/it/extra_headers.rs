@@ -59,7 +59,12 @@ fn extra_headers_sent_on_every_origin_request() {
     let mut s = ts_probe::open(TS_URL, with_headers(vec![pair("X-Trace", "t-1")]));
     let first = one(&mut s, 0);
     assert_eq!(first.header("x-trace"), Some("t-1"));
-    ts_probe::respond(&mut s, &first, 200, &[]);
+    ts_probe::respond(
+        &mut s,
+        &first,
+        http::StatusCode::from_u16(200).expect("a test names a real status"),
+        &http::HeaderMap::new(),
+    );
     let second = reconnect(&mut s, SEC);
     assert_eq!(second.header("x-trace"), Some("t-1"));
 
@@ -68,8 +73,8 @@ fn extra_headers_sent_on_every_origin_request() {
     ts_probe::respond(
         &mut redirected,
         &r1,
-        302,
-        &[location("http://example/next.ts")],
+        http::StatusCode::FOUND,
+        &location("http://example/next.ts"),
     );
     assert_eq!(one(&mut redirected, 0).header("x-trace"), Some("t-1"));
 
@@ -99,8 +104,8 @@ fn extra_headers_not_sent_cross_origin() {
     ts_probe::respond(
         &mut s,
         &first,
-        302,
-        &[location("http://other.test/live.ts")],
+        http::StatusCode::FOUND,
+        &location("http://other.test/live.ts"),
     );
     let other = one(&mut s, 0);
     assert_eq!(other.url, "http://other.test/live.ts");
@@ -208,6 +213,22 @@ fn extra_headers_order_preserved() {
     let req = one(&mut s, 0);
     let names: Vec<&str> = req.headers.iter().map(|(k, _)| k.as_str()).collect();
     assert_eq!(names, vec!["x-b", "x-a", "x-c", "cookie"]);
+}
+
+/// The same name at two spellings is two different header names once the response is a typed
+/// header map (its names are lowercased on construction), so `set-cookie` and `Set-Cookie` lines
+/// both reach the jar. The old pair list compared the spellings as written and could keep two
+/// separate entries a single well-formed map never holds.
+#[test]
+fn a_cookie_line_under_any_spelling_reaches_the_jar() {
+    let mut s = ts_probe::open(TS_URL, Config::default());
+    let first = one(&mut s, 0);
+    let headers = support::headers(&[
+        ("Set-Cookie", "up=1; Path=/"),
+        ("SET-COOKIE", "down=2; Path=/"),
+    ]);
+    ts_probe::respond(&mut s, &first, http::StatusCode::OK, &headers);
+    assert_eq!(s.cookies().len(), 2);
 }
 
 #[test]

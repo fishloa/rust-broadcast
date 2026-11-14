@@ -8,6 +8,10 @@ use mp4_emsg::{EmsgBox, EmsgVersion, PresentationTime};
 use timed_metadata::Error;
 use timed_metadata::convert::{SegmentTiming, emsg_to_v0, emsg_to_v1};
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 fn read_fixture(name: &str) -> Vec<u8> {
     test_fixtures::read(&format!("scte35/{name}"))
 }
@@ -19,7 +23,7 @@ fn v1_fixture_round_trips_through_v0_and_back_byte_identical() {
 
     // timescale 90_000, presentation_time Absolute(160_391_675_700_000),
     // event_duration 900_000, id 1_782_129_730
-    assert_eq!(v1.timescale, Timescale::from_nonzero(90_000));
+    assert_eq!(v1.timescale, timescale(90_000));
     assert_eq!(
         v1.presentation_time,
         PresentationTime::Absolute(160_391_675_700_000)
@@ -32,7 +36,7 @@ fn v1_fixture_round_trips_through_v0_and_back_byte_identical() {
     let timing = SegmentTiming {
         earliest_presentation_time: 160_391_675_700_000 - 90_000,
         presentation_time_offset: 0,
-        timescale: Timescale::from_nonzero(90_000),
+        timescale: timescale(90_000),
     };
     let v0 = emsg_to_v0(&v1, &timing).unwrap();
     assert_eq!(v0.presentation_time, PresentationTime::Delta(90_000));
@@ -63,13 +67,13 @@ fn v1_fixture_round_trips_through_v0_and_back_byte_identical() {
 fn v0_fixture_round_trips_through_v1_and_back_byte_identical() {
     let raw = read_fixture("scte35-emsg-v0.bin");
     let v0 = EmsgBox::parse(&raw).unwrap();
-    assert_eq!(v0.timescale, Timescale::from_nonzero(90_000));
+    assert_eq!(v0.timescale, timescale(90_000));
     assert_eq!(v0.presentation_time, PresentationTime::Delta(0));
 
     let timing = SegmentTiming {
         earliest_presentation_time: 500_000,
         presentation_time_offset: 0,
-        timescale: Timescale::from_nonzero(90_000),
+        timescale: timescale(90_000),
     };
 
     // v0 → v1: T = EPT + delta = 500_000 + 0 = 500_000
@@ -95,7 +99,7 @@ fn timescale_mismatch_errors() {
     let timing = SegmentTiming {
         earliest_presentation_time: 0,
         presentation_time_offset: 0,
-        timescale: Timescale::from_nonzero(48_000),
+        timescale: timescale(48_000),
     };
     assert!(matches!(
         &(emsg_to_v1(&v1, &timing)),
@@ -116,7 +120,7 @@ fn v0_with_past_start_errors() {
     let timing_ok = SegmentTiming {
         earliest_presentation_time: 500_000,
         presentation_time_offset: 0,
-        timescale: Timescale::from_nonzero(90_000),
+        timescale: timescale(90_000),
     };
     let v1 = emsg_to_v1(&v0, &timing_ok).unwrap();
     assert_eq!(v1.presentation_time, PresentationTime::Absolute(500_000));
@@ -125,7 +129,7 @@ fn v0_with_past_start_errors() {
     let timing_past = SegmentTiming {
         earliest_presentation_time: 1_000_000,
         presentation_time_offset: 0,
-        timescale: Timescale::from_nonzero(90_000),
+        timescale: timescale(90_000),
     };
     let err = emsg_to_v0(&v1, &timing_past).unwrap_err();
     assert_eq!(err, Error::EmsgPresentationTimeBeforeEpt);

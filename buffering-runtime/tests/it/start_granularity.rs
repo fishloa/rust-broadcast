@@ -10,42 +10,55 @@
 //! apart (media advances 300 ms per delivery: average real time, jittered
 //! like rai-3's 0.3-0.4 s bursts).
 
-use broadcast_common::clock33::PCR_HZ;
+const fn dur(us: u64) -> Duration {
+    Duration::from_micros(us)
+}
 use broadcast_common::clock33::PCR_WRAP_27MHZ;
-use buffering_runtime::{BufferController, ControllerConfig, Event, Micros, PolicyConfig, Ticks27};
+use broadcast_common::clock33::{PCR_EXT_MODULUS, PCR_HZ};
+use buffering_runtime::{BufferController, Clock27, ControllerConfig, Event, PolicyConfig};
+use core::time::Duration;
 
 const AUDIO: u32 = 1;
 const VIDEO: u32 = 2;
 const TICKS_PER_US: u64 = PCR_HZ / 1_000_000;
-const BASE: Ticks27 = Ticks27(PCR_WRAP_27MHZ - 5 * PCR_HZ);
-const T0: Micros = Micros(1_000_000);
-const TICK_US: Micros = Micros(10_000);
-
-fn at(offset_us: u64) -> Ticks27 {
-    Ticks27((BASE.0 + offset_us * TICKS_PER_US) % PCR_WRAP_27MHZ)
+/// A reduced 27 MHz tick count as a validated clock position.
+const fn clock27(ticks: u64) -> Clock27 {
+    match Clock27::from_parts(ticks / PCR_EXT_MODULUS, (ticks % PCR_EXT_MODULUS) as u16) {
+        Ok(c) => c,
+        Err(_) => unreachable!(),
+    }
 }
 
-const fn us(v: u64) -> Micros {
-    Micros(v)
+const BASE: Clock27 = clock27(PCR_WRAP_27MHZ - 5 * 27_000_000);
+const T0: Duration = dur(1_000_000);
+const TICK_US: Duration = dur(10_000);
+
+fn at(offset_us: u64) -> Clock27 {
+    Clock27::from_27mhz((BASE.ticks() + offset_us * TICKS_PER_US) % PCR_WRAP_27MHZ)
+        .expect("a reduced count is on the clock")
 }
 
-fn cfg(initial_us: Micros) -> ControllerConfig {
+const fn us(v: u64) -> Duration {
+    dur(v)
+}
+
+fn cfg(initial_us: Duration) -> ControllerConfig {
     let d = ControllerConfig::default();
     let mut p = PolicyConfig::default();
-    p.initial_us = initial_us;
-    ControllerConfig::new(d.jitter, p, d.starve_threshold_us, d.nodata_after_us).unwrap()
+    p.initial = initial_us;
+    ControllerConfig::new(d.jitter, p, d.starve_threshold, d.nodata_after).unwrap()
 }
 
 struct Out {
     /// First `StartPlaying`, microseconds after the first delivery.
-    start_after: Option<Micros>,
+    start_after: Option<Duration>,
     /// `Pause` instants, microseconds after the first delivery.
-    pauses: Vec<Micros>,
+    pauses: Vec<Duration>,
 }
 
 /// `audio_period` gives the interval to the n-th audio delivery (microseconds);
 /// `register` announces both tracks before the first delivery.
-fn run(initial_us: Micros, gaps: &[Micros], register: bool, secs: u64) -> Out {
+fn run(initial_us: Duration, gaps: &[Duration], register: bool, secs: u64) -> Out {
     let mut c = BufferController::new(cfg(initial_us), None).unwrap();
     if register {
         c.register_track(AUDIO);
@@ -60,25 +73,28 @@ fn run(initial_us: Micros, gaps: &[Micros], register: bool, secs: u64) -> Out {
     c.on_track_media(T0, AUDIO, at(0));
     c.on_track_media(T0, VIDEO, at(0));
     let (mut clock, mut t_set, mut running) = (at(0), T0, false);
-    let (mut audio, mut next_audio, mut gi) = (0u64, Micros(T0.0 + gaps[0].0), 0usize);
-    let mut next_chunk = us(T0.0 + 100_000);
-    let mut t = T0;
-    while t < Micros(T0.0 + secs * 1_000_000) {
-        t = Micros(t.0 + TICK_US.0);
-        if t >= next_chunk {
-            let i = (next_chunk.0 - T0.0) / 100_000;
-            c.on_chunk(next_chunk, 1000, Some(at(i * 100_000)));
-            c.on_track_media(next_chunk, VIDEO, at(i * 100_000 + 900_000));
-            next_chunk = Micros(next_chunk.0 + 100_000);
+    let mut now_us = T0.as_micros() as u64;
+    let (mut audio, mut next_audio, mut gi): (u64, u64, usize) =
+        (0, now_us + gaps[0].as_micros() as u64, 0);
+    let mut next_chunk = now_us + 100_000;
+    let t0_us = now_us;
+    while now_us < t0_us + secs * 1_000_000 {
+        now_us += TICK_US.as_micros() as u64;
+        if now_us >= next_chunk {
+            let i = (next_chunk - t0_us) / 100_000;
+            c.on_chunk(dur(next_chunk), 1000, Some(at(i * 100_000)));
+            c.on_track_media(dur(next_chunk), VIDEO, at(i * 100_000 + 900_000));
+            next_chunk += 100_000;
         }
-        if t >= next_audio {
+        if now_us >= next_audio {
             audio += 300_000;
-            c.on_track_media(next_audio, AUDIO, at(audio));
+            c.on_track_media(dur(next_audio), AUDIO, at(audio));
             gi += 1;
-            next_audio = Micros(next_audio.0 + gaps[gi % gaps.len()].0);
+            next_audio += gaps[gi % gaps.len()].as_micros() as u64;
         }
+        let t = dur(now_us);
         let pos = if running {
-            Ticks27((clock.0 + (t.0 - t_set.0) * TICKS_PER_US) % PCR_WRAP_27MHZ)
+            at((t.as_micros() - t_set.as_micros()) as u64 + clock.ticks() / TICKS_PER_US)
         } else {
             clock
         };
@@ -87,14 +103,14 @@ fn run(initial_us: Micros, gaps: &[Micros], register: bool, secs: u64) -> Out {
             match e {
                 Event::StartPlaying { media_27mhz, .. } | Event::Resume { media_27mhz, .. } => {
                     if out.start_after.is_none() {
-                        out.start_after = Some(Micros(t.0 - T0.0));
+                        out.start_after = Some(t - T0);
                     }
                     clock = media_27mhz;
                     t_set = t;
                     running = true;
                 }
                 Event::Pause { hold_at_27mhz, .. } => {
-                    out.pauses.push(Micros(t.0 - T0.0));
+                    out.pauses.push(t - T0);
                     clock = hold_at_27mhz;
                     running = false;
                 }
@@ -105,8 +121,8 @@ fn run(initial_us: Micros, gaps: &[Micros], register: bool, secs: u64) -> Out {
     out
 }
 
-const JITTERED: [Micros; 2] = [us(250_000), us(350_000)];
-const STEADY: [Micros; 1] = [us(100_000)];
+const JITTERED: [Duration; 2] = [us(250_000), us(350_000)];
+const STEADY: [Duration; 1] = [us(100_000)];
 
 /// A start fill below the audio PES step, jittered audio: the gate waits until
 /// the cadence is known and leaves with `G + margin`, so nothing stalls.
@@ -134,11 +150,17 @@ fn gate_adds_no_start_delay_at_500ms_and_above() {
             assert_eq!(
                 j.start_after,
                 Some(jittered),
-                "jittered, initial {initial_us}"
+                "jittered, initial {}us",
+                initial_us.as_micros()
             );
             assert!(j.pauses.is_empty(), "stalled at {:?}", j.pauses);
             let s = run(initial_us, &STEADY, register, 30);
-            assert_eq!(s.start_after, Some(steady), "steady, initial {initial_us}");
+            assert_eq!(
+                s.start_after,
+                Some(steady),
+                "steady, initial {}us",
+                initial_us.as_micros()
+            );
             assert!(s.pauses.is_empty(), "stalled at {:?}", s.pauses);
         }
     }
@@ -152,5 +174,5 @@ fn fine_grained_tracks_start_without_extra_wait() {
     let o = run(us(300_000), &STEADY, true, 10);
     assert!(o.pauses.is_empty());
     let s = o.start_after.unwrap();
-    assert!(s <= us(450_000), "start after {s}");
+    assert!(s <= us(450_000), "start after {}us", s.as_micros());
 }

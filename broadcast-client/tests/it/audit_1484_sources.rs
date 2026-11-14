@@ -101,9 +101,12 @@ fn rtsp_close_drops_queued_sends_and_closes_the_connection_once() {
 
 #[test]
 fn hls_stale_rechallenge_is_replayed_at_most_once_then_rejected() {
-    let challenge = vec![("WWW-Authenticate".to_string(), STALE_DIGEST.to_string())];
+    let challenge = support::headers(&[("WWW-Authenticate", STALE_DIGEST)]);
     let mut h = Host::new(TS_PLAYLIST_URL, hls_config());
-    h.route(TS_PLAYLIST_URL, vec![Reply::StatusHeaders(401, challenge)]);
+    h.route(
+        TS_PLAYLIST_URL,
+        vec![support::hls_host::status_with(401, challenge)],
+    );
     h.session
         .set_credentials(ts(0), Credentials::new("user", "pass"))
         .unwrap();
@@ -116,7 +119,7 @@ fn hls_stale_rechallenge_is_replayed_at_most_once_then_rejected() {
     assert!(
         h.events
             .iter()
-            .any(|e| matches!(e, Event::AuthRejected { status: 401 })),
+            .any(|e| matches!(e, Event::AuthRejected { status } if status.as_u16() == 401)),
         "{:?}",
         h.events
     );
@@ -170,7 +173,7 @@ fn rtsp_stale_rechallenge_is_replayed_at_most_once_then_rejected() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::AuthRejected { status: 401 })),
+            .any(|e| matches!(e, Event::AuthRejected { status } if status.as_u16() == 401)),
         "{events:?}"
     );
 }
@@ -259,7 +262,10 @@ fn nothing_is_emitted_after_a_fatal_error_in_the_same_poll() {
 fn cross_origin_key_401_reports_key_fetch_failed_once_then_fatal() {
     let mut h = Host::new(TS_PLAYLIST_URL, hls_config());
     h.ok(TS_PLAYLIST_URL, encrypted_playlist(KEY_URL_OTHER_ORIGIN));
-    h.route(KEY_URL_OTHER_ORIGIN, vec![Reply::Status(401)]);
+    h.route(
+        KEY_URL_OTHER_ORIGIN,
+        vec![support::hls_host::status_only(401)],
+    );
     h.ok(&format!("{ORIGIN}/hls/{ENCRYPTED_SEGMENT}"), vec![0u8; 188]);
     h.run_until(
         |evs| {
@@ -276,7 +282,9 @@ fn cross_origin_key_401_reports_key_fetch_failed_once_then_fatal() {
             _ => None,
         })
         .collect();
-    let expected = ErrorKind::KeyFetchFailed { status: Some(401) };
+    let expected = ErrorKind::KeyFetchFailed {
+        status: Some(support::status(401)),
+    };
     assert_eq!(
         errors.iter().filter(|(_, fatal)| !fatal).count(),
         1,
@@ -328,7 +336,7 @@ fn buffer_events(events: &[Event]) -> Vec<BufferEvent> {
         .collect()
 }
 
-fn second_connection_buffer_events(first_headers: &[(String, String)]) -> Option<Vec<BufferEvent>> {
+fn second_connection_buffer_events(first_headers: &http::HeaderMap) -> Option<Vec<BufferEvent>> {
     let bytes = support::read_tf1_bytes()?;
     let (status, live_headers) = support::read_tf1_headers()?;
     let mut session = Session::open(Url::parse(TS_URL).unwrap(), Config::default(), ts(0)).unwrap();
@@ -353,7 +361,10 @@ fn live_connection_after_a_finite_one_is_buffered_like_after_a_live_one() {
     let bytes = tf1_bytes!();
     let (_, live_headers) = tf1_headers!();
     let mut finite_headers = live_headers.clone();
-    finite_headers.push(("Content-Length".to_string(), bytes.len().to_string()));
+    finite_headers.insert(
+        http::header::CONTENT_LENGTH,
+        http::HeaderValue::from_str(&bytes.len().to_string()).expect("a test writes a length"),
+    );
 
     let expected = skip_none!(second_connection_buffer_events(&live_headers));
     assert!(
@@ -775,7 +786,12 @@ fn assert_wakes_in_the_future(actions: &[Action], now: u64) {
 fn ts_never_emits_a_wake_at_or_before_now() {
     let mut session = Session::open(Url::parse(TS_URL).unwrap(), Config::default(), ts(0)).unwrap();
     let conn = first_request(&mut session, 0);
-    session.on_response(conn, 200, &[], Timestamp::from_nanos(u64::MAX));
+    session.on_response(
+        conn,
+        support::status(200),
+        &support::headers(&[]),
+        Timestamp::from_nanos(u64::MAX),
+    );
     for now in [1_000_000u64, 2_000_000, u64::MAX] {
         session.reconnect(ts(now));
         let batch = actions(&mut session, now);
