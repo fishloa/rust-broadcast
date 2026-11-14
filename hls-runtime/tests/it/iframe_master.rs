@@ -9,7 +9,7 @@ use std::time::Duration;
 use broadcast_common::Timestamp;
 use broadcast_hls::MasterPlaylist;
 use bytes::Bytes;
-use hls_runtime::server::HlsOrigin;
+use hls_runtime::server::{HlsOrigin, HlsOriginConfig};
 use media_plane::ids::SegmentSeq;
 use media_plane::trunk::{SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
 use transmux::SegmentMeta;
@@ -38,14 +38,13 @@ fn trunk_with(cap: usize) -> (Arc<Trunk>, SegmentWriter) {
 
 fn origin_fmp4(cap: usize) -> (Arc<Trunk>, HlsOrigin, SegmentWriter) {
     let (trunk, writer) = trunk_with(cap);
-    let origin = HlsOrigin::builder(Arc::clone(&trunk))
-        .with_target_duration_secs(4.0)
-        .with_window_segments(nz(3))
-        .with_low_latency(Duration::from_millis(500))
-        .with_instance(7)
-        .with_declared_bandwidth_bps(5_000_000)
-        .build()
-        .expect("origin");
+    let origin = HlsOrigin::new(
+        HlsOriginConfig::new(Arc::clone(&trunk), 4.0, nz(3))
+            .with_low_latency(Duration::from_millis(500))
+            .with_instance(7)
+            .with_declared_bandwidth_bps(5_000_000),
+    )
+    .expect("origin");
     let init = test_fixtures::read("hls/cmaf-fmp4/init.mp4");
     origin.set_init(Bytes::from(init));
     (trunk, origin, writer)
@@ -164,13 +163,12 @@ fn iframe_master_omitted_before_first_segment() {
 #[test]
 fn iframe_master_audio_only_omitted() {
     let (trunk, writer) = trunk_with(64);
-    let origin = HlsOrigin::builder(Arc::clone(&trunk))
-        .with_target_duration_secs(4.0)
-        .with_window_segments(nz(3))
-        .with_instance(7)
-        .with_declared_bandwidth_bps(5_000_000)
-        .build()
-        .expect("origin");
+    let origin = HlsOrigin::new(
+        HlsOriginConfig::new(Arc::clone(&trunk), 4.0, nz(3))
+            .with_instance(7)
+            .with_declared_bandwidth_bps(5_000_000),
+    )
+    .expect("origin");
     origin.set_track_specs(&[]).expect("specs");
     let text = origin
         .master_playlist_with_iframes("media.m3u8", "iframe.m3u8")

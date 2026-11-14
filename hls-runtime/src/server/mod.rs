@@ -54,7 +54,7 @@ pub use engine::{
     AudioRenditionDecl, BLOCKING_RELOAD_TARGET_DURATIONS, BLOCKING_RELOAD_TIMEOUT, BlockingQuery,
     CLOSED_CAPTIONS_GROUP_ID, ClosedCaptionDecl, ClosedSegment, DEFAULT_TRACK_ID,
     HOLD_COLD_PLAYLIST_DEFAULT, HlsBody, HlsMasterError, HlsOrigin, HlsOriginBuildError,
-    HlsOriginBuilder, HlsRequest, HttpPriority, IFRAME_SEGMENT_PREFIX, RenditionSibling,
+    HlsOriginConfig, HlsRequest, HttpPriority, IFRAME_SEGMENT_PREFIX, RenditionSibling,
     SUBTITLES_GROUP_ID, SkipDirective, SubtitleRenditionDecl, master_playlist_m3u8,
     playlist_reload_timeout, validate_audio_renditions, validate_audio_renditions_relaxed,
     validate_closed_caption_overrides, validate_subtitle_renditions,

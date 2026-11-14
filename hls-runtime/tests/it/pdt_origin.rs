@@ -7,7 +7,9 @@ use std::time::Duration;
 use broadcast_common::Timestamp;
 use broadcast_hls::MediaPlaylist;
 use bytes::Bytes;
-use hls_runtime::server::{BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsOrigin, HlsRequest};
+use hls_runtime::server::{
+    BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsOrigin, HlsOriginConfig, HlsRequest,
+};
 use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
 use media_plane::ids::SegmentSeq;
 use media_plane::trunk::{PartEntry, SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
@@ -32,13 +34,12 @@ fn trunk_with() -> (Arc<Trunk>, SegmentWriter) {
 }
 
 fn origin(trunk: &Arc<Trunk>) -> HlsOrigin {
-    HlsOrigin::builder(Arc::clone(trunk))
-        .with_target_duration_secs(4.0)
-        .with_window_segments(nz(4))
-        .with_low_latency(Duration::from_millis(500))
-        .with_instance(7)
-        .build()
-        .expect("origin")
+    HlsOrigin::new(
+        HlsOriginConfig::new(Arc::clone(trunk), 4.0, nz(4))
+            .with_low_latency(Duration::from_millis(500))
+            .with_instance(7),
+    )
+    .expect("origin")
 }
 
 fn seg(writer: &SegmentWriter, seq: u32, secs: f64, discontinuous: bool) {
@@ -211,13 +212,12 @@ fn discontinuity_sequence_zero_on_iframe_playlist() {
         let w = t.segment_writer().expect("writer");
         (t, w)
     };
-    let origin = HlsOrigin::builder(Arc::clone(&trunk))
-        .with_target_duration_secs(4.0)
-        .with_window_segments(nz(4))
-        .with_low_latency(Duration::from_millis(500))
-        .with_instance(7)
-        .build()
-        .expect("origin");
+    let origin = HlsOrigin::new(
+        HlsOriginConfig::new(Arc::clone(&trunk), 4.0, nz(4))
+            .with_low_latency(Duration::from_millis(500))
+            .with_instance(7),
+    )
+    .expect("origin");
     let init = test_fixtures::read("hls/cmaf-fmp4/init.mp4");
     origin.set_init(Bytes::from(init));
     for i in 0..3u32 {

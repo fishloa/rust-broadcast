@@ -8,7 +8,9 @@ use std::time::Duration;
 use broadcast_common::{Parse, Timestamp, Unpackage};
 use broadcast_hls::MediaPlaylist;
 use bytes::Bytes;
-use hls_runtime::server::{BlockingQuery, DEFAULT_TRACK_ID, HlsOrigin, HlsRequest};
+use hls_runtime::server::{
+    BlockingQuery, DEFAULT_TRACK_ID, HlsOrigin, HlsOriginConfig, HlsRequest,
+};
 use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
 use media_plane::ids::SegmentSeq;
 use media_plane::trunk::{SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
@@ -40,13 +42,12 @@ fn trunk_with() -> (Arc<Trunk>, SegmentWriter) {
 
 fn origin_fmp4() -> (Arc<Trunk>, HlsOrigin, SegmentWriter) {
     let (trunk, writer) = trunk_with();
-    let origin = HlsOrigin::builder(Arc::clone(&trunk))
-        .with_target_duration_secs(4.0)
-        .with_window_segments(nz(4))
-        .with_low_latency(Duration::from_millis(500))
-        .with_instance(7)
-        .build()
-        .expect("origin");
+    let origin = HlsOrigin::new(
+        HlsOriginConfig::new(Arc::clone(&trunk), 4.0, nz(4))
+            .with_low_latency(Duration::from_millis(500))
+            .with_instance(7),
+    )
+    .expect("origin");
     let init = test_fixtures::read("hls/cmaf-fmp4/init.mp4");
     origin.set_init(Bytes::from(init));
     (trunk, origin, writer)
@@ -606,13 +607,12 @@ fn iframe_ts_origin_not_found() {
             .with_part_capacity(nz(64)),
     );
     let writer = trunk.segment_writer().expect("writer");
-    let origin = HlsOrigin::builder(trunk)
-        .with_target_duration_secs(4.0)
-        .with_window_segments(nz(4))
-        .with_container(Container::MpegTs)
-        .with_instance(7)
-        .build()
-        .expect("origin");
+    let origin = HlsOrigin::new(
+        HlsOriginConfig::new(trunk, 4.0, nz(4))
+            .with_container(Container::MpegTs)
+            .with_instance(7),
+    )
+    .expect("origin");
     let bytes = fixture_bytes("index0.m4s");
     writer
         .publish_segment(SegmentEntry::new(
@@ -631,13 +631,12 @@ fn iframe_ts_origin_not_found() {
 #[test]
 fn iframe_audio_only_not_found() {
     let (trunk, writer) = trunk_with();
-    let origin = HlsOrigin::builder(trunk)
-        .with_target_duration_secs(4.0)
-        .with_window_segments(nz(4))
-        .with_low_latency(Duration::from_millis(500))
-        .with_instance(7)
-        .build()
-        .expect("origin");
+    let origin = HlsOrigin::new(
+        HlsOriginConfig::new(trunk, 4.0, nz(4))
+            .with_low_latency(Duration::from_millis(500))
+            .with_instance(7),
+    )
+    .expect("origin");
     // no track specs -> no video track
     origin.set_track_specs(&[]).unwrap();
     let bytes = vec![0u8; 8];
@@ -752,12 +751,9 @@ fn a_bare_msn_iframe_reload_waits_for_a_segment_the_window_holds() {
             .expect("publish");
     };
     publish(1);
-    let origin = HlsOrigin::builder(Arc::clone(&trunk))
-        .with_target_duration_secs(4.0)
-        .with_window_segments(nz(4))
-        .with_instance(7)
-        .build()
-        .expect("origin");
+    let origin =
+        HlsOrigin::new(HlsOriginConfig::new(Arc::clone(&trunk), 4.0, nz(4)).with_instance(7))
+            .expect("origin");
     origin.set_init(Bytes::from(fixture_bytes("init.mp4")));
     let reload = |msn: u64| {
         let (now, policy) = patient();

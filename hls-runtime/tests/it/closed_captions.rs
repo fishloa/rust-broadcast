@@ -5,7 +5,7 @@
 use std::num::NonZeroUsize;
 
 use broadcast_hls::{ClosedCaptionsRef, InstreamId, MasterPlaylist, MediaType};
-use hls_runtime::server::{ClosedCaptionDecl, HlsOrigin};
+use hls_runtime::server::{ClosedCaptionDecl, HlsOrigin, HlsOriginConfig};
 use media_plane::trunk::{Trunk, TrunkConfig};
 
 fn nz(n: usize) -> NonZeroUsize {
@@ -21,15 +21,14 @@ fn origin(overrides: Vec<ClosedCaptionDecl>, none: bool) -> HlsOrigin {
             .with_event_capacity(nz(8))
             .with_part_capacity(nz(64)),
     );
-    HlsOrigin::builder(trunk)
-        .with_target_duration_secs(4.0)
-        .with_window_segments(nz(4))
-        .with_instance(7)
-        .with_declared_bandwidth_bps(5_000_000)
-        .with_closed_caption_overrides(overrides)
-        .with_closed_captions_none(none)
-        .build()
-        .expect("origin builds")
+    HlsOrigin::new(
+        HlsOriginConfig::new(trunk, 4.0, nz(4))
+            .with_instance(7)
+            .with_declared_bandwidth_bps(5_000_000)
+            .with_closed_caption_overrides(overrides)
+            .with_closed_captions_none(none),
+    )
+    .expect("origin builds")
 }
 
 fn master(origin: &HlsOrigin) -> MasterPlaylist {
