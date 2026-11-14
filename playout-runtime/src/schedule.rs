@@ -102,10 +102,10 @@ pub struct ScheduleEntry {
     /// passed to [`crate::scte35::build_splice_insert`] to emit a SCTE-35 cue,
     /// it **must** already be 90 kHz ticks: `splice_time()`/`break_duration()`
     /// are fixed 90 kHz fields (ANSI/SCTE 35 2023r1 §9.8.1/§9.8.2), and
-    /// `build_splice_insert` passes its inputs straight through with no unit
-    /// conversion or validation — a 27 MHz, millisecond, or nanosecond
-    /// channel clock produces a technically well-formed but silently
-    /// wrong-by-a-fixed-factor cue (PLAY-W1, #1126). Convert with
+    /// `build_splice_insert` takes a `broadcast_common::clock33::Clock33`,
+    /// which validates the 33-bit range but not the unit — a 27 MHz or
+    /// millisecond channel clock produces a technically well-formed but
+    /// silently wrong-by-a-fixed-factor cue (PLAY-W1, #1126). Convert with
     /// `scte35_splice::time::duration_to_ticks`/`ticks_to_duration` first if
     /// the channel clock isn't already 90 kHz.
     pub planned_start: u64,

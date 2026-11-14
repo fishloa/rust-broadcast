@@ -189,9 +189,15 @@ impl SessionStore {
 mod tests {
     use super::*;
     use crate::splice::condition_splice_point;
+    use broadcast_common::clock33::Clock33;
 
     fn splice_point() -> ConditionedSplicePoint {
-        condition_splice_point(1_000, &[1_000], 0).unwrap()
+        condition_splice_point(
+            Clock33::try_new(1_000).unwrap(),
+            &[Clock33::try_new(1_000).unwrap()],
+            core::time::Duration::ZERO,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -258,7 +264,12 @@ mod tests {
         store
             .begin_break("s1", BreakState::new(decision, splice_point()))
             .unwrap();
-        let first = condition_splice_point(2_000, &[2_000], 0).unwrap();
+        let first = condition_splice_point(
+            Clock33::try_new(2_000).unwrap(),
+            &[Clock33::try_new(2_000).unwrap()],
+            core::time::Duration::ZERO,
+        )
+        .unwrap();
         store.resume("s1", first).unwrap();
         let err = store.resume("s1", splice_point()).unwrap_err();
         assert!(matches!(err, Error::BreakAlreadyResumed(ref s) if s == "s1"));

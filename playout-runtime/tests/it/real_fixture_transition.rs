@@ -12,6 +12,7 @@
 //! it fails loudly if `build_splice_insert` stops actually conditioning
 //! (e.g. a regression that passes `requested_pts` straight through).
 
+use broadcast_common::clock33::{self, Clock33};
 use broadcast_common::{Parse, Serialize};
 use mp4_emsg::{EmsgBox, PresentationTime};
 use playout_runtime::schedule::{CodecConfigId, EntryKind, Schedule, ScheduleEntry};
@@ -20,6 +21,7 @@ use playout_runtime::transition::TransitionPlan;
 use scte35_splice::SpliceInfoSection;
 use scte35_splice::commands::AnyCommand;
 use std::fs;
+use std::time::Duration;
 
 /// The real nearest video keyframe's PTS, independently measured straight
 /// from this same capture's `moof`/`traf`/`tfdt`/`trun` boxes
@@ -33,6 +35,18 @@ const NEAREST_KEYFRAME_PTS: u64 = 160_767_315_906_000;
 /// The real, measured gap between the cue's nominal instant and that
 /// keyframe: 6000 ticks at 90 kHz = 67 ms.
 const MEASURED_GAP_TICKS: u64 = 6_000;
+
+/// Reduce an absolute representation-clock instant onto the 33-bit PTS
+/// circle `splice_time().pts_time` lives on (ISO/IEC 13818-1 §2.4.3.7); the
+/// capture's `emsg` timestamps are unrolled, the cue field is not.
+fn on_the_pts_circle(ticks: u64) -> Clock33 {
+    Clock33::try_new(ticks % clock33::WRAP_33BIT).expect("reduced modulo 2^33")
+}
+
+/// A tolerance/duration of `n` 90 kHz ticks, exactly.
+fn ticks(n: u64) -> Duration {
+    Duration::from_nanos(n * 1_000_000_000 / 90_000)
+}
 
 fn real_cue_requested_pts() -> u64 {
     let path = test_fixtures::path("scte35/emsg-splice-insert.bin");
@@ -97,10 +111,10 @@ fn transition_into_a_real_non_idr_aligned_cue_plans_a_continuous_timeline() {
     let (conditioned, insert) = build_splice_insert(
         BreakEdge::Enter,
         0x6A78_D416, // the real fixture's own splice_event_id (PROVENANCE.md).
-        requested_pts,
-        &[NEAREST_KEYFRAME_PTS],
-        10_000,
-        Some(1_800_000), // the real fixture's own 20s break_duration.
+        on_the_pts_circle(requested_pts),
+        &[on_the_pts_circle(NEAREST_KEYFRAME_PTS)],
+        ticks(10_000),
+        Some(ticks(1_800_000)), // the real fixture's own 20s break_duration.
     )
     .unwrap();
 
@@ -108,10 +122,13 @@ fn transition_into_a_real_non_idr_aligned_cue_plans_a_continuous_timeline() {
     // 67 ms off the nearest keyframe. A regression that hard-codes zero
     // drift (or silently accepts the raw request) fails this assertion.
     assert_eq!(conditioned.delta_ticks, MEASURED_GAP_TICKS);
-    assert_eq!(conditioned.snapped_pts, NEAREST_KEYFRAME_PTS);
+    assert_eq!(
+        conditioned.snapped_pts,
+        on_the_pts_circle(NEAREST_KEYFRAME_PTS)
+    );
     assert_eq!(
         insert.splice_time.unwrap().pts_time,
-        Some(NEAREST_KEYFRAME_PTS % (1u64 << 33)),
+        Some(NEAREST_KEYFRAME_PTS % clock33::WRAP_33BIT),
         "the emitted cue must carry the conditioned (snapped) instant, not the raw request"
     );
     assert_ne!(
@@ -126,9 +143,9 @@ fn transition_into_a_real_non_idr_aligned_cue_plans_a_continuous_timeline() {
     let too_tight = build_splice_insert(
         BreakEdge::Enter,
         1,
-        requested_pts,
-        &[NEAREST_KEYFRAME_PTS],
-        3_000,
+        on_the_pts_circle(requested_pts),
+        &[on_the_pts_circle(NEAREST_KEYFRAME_PTS)],
+        ticks(3_000),
         None,
     );
     assert!(
@@ -148,7 +165,7 @@ fn transition_into_a_real_non_idr_aligned_cue_plans_a_continuous_timeline() {
             assert!(reparsed_insert.out_of_network_indicator);
             assert_eq!(
                 reparsed_insert.splice_time.unwrap().pts_time,
-                Some(NEAREST_KEYFRAME_PTS % (1u64 << 33))
+                Some(NEAREST_KEYFRAME_PTS % clock33::WRAP_33BIT)
             );
             assert_eq!(reparsed_insert.break_duration.unwrap().duration, 1_800_000);
         }

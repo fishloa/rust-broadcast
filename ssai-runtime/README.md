@@ -50,15 +50,23 @@ per-session ad breaks without per-viewer media copies.
 ## Quick start
 
 ```rust
+use broadcast_common::clock33::Clock33;
 use ssai_runtime::{
     AdBreakDecision, BreakState, InterstitialDateRange, SessionStore, condition_splice_point,
 };
+use std::time::Duration;
 
 // A cue targets tick 900_000 (90 kHz); the real segment boundaries nearest it
-// are at 897_000 and 904_500. Allow up to 5_000 ticks of drift.
-let boundaries = [810_000_u64, 897_000, 904_500];
-let point = condition_splice_point(900_000, &boundaries, 5_000).unwrap();
-assert_eq!(point.snapped_pts, 897_000);
+// are at 897_000 and 904_500. Allow up to 5_000 ticks of drift (~55.6 ms).
+let clock = |ticks| Clock33::try_new(ticks).unwrap();
+let boundaries = [clock(810_000), clock(897_000), clock(904_500)];
+let point = condition_splice_point(
+    clock(900_000),
+    &boundaries,
+    Duration::from_nanos(5_000 * 1_000_000_000 / 90_000),
+)
+.unwrap();
+assert_eq!(point.snapped_pts, clock(897_000));
 assert_eq!(point.delta_ticks, 3_000);
 
 // Whatever ad-decision service the caller uses hands back one decision.
@@ -93,16 +101,17 @@ assert!(tag.contains("X-ASSET-URI=\"https://ads.example/ad-1.m3u8\""));
   `AssetSource`, `SnapMode`, `RestrictMode`, `BreakContext`.
 - **`splice`**: `condition_splice_point` aligns a cue's target against candidate
   boundaries within a tolerance and reports the real delta and direction
-  (`SnapDirection`); `condition_splice_point_wrapping` does the same on a
-  33-bit wrapping clock (`PTS_MODULUS_33`), so a cue at `2^33 - 100` snaps to a
-  boundary at `50`. Real cues are frequently not IDR-aligned (see below).
+  (`SnapDirection`). Every instant is a `Clock33` on the 33-bit PTS circle, so
+  a cue at `2^33 - 100` snaps to a boundary at `50` (150 ticks `After`), and
+  there is one conditioning algorithm rather than a linear twin that dropped
+  that break. Real cues are frequently not IDR-aligned (see below).
 - **`playlist`**: `InterstitialDateRange` renders / parses the interstitial tag;
   `render_session_playlist` clones a base `MediaPlaylist` and appends the tag to
   `extra_tags`; `SessionPlaylistBase` renders the base once and splices the tag
   line per viewer with no per-viewer segment clone. Both refuse a base without
   `EXT-X-PROGRAM-DATE-TIME`.
-- **`error`**: `Error` (`NoCandidates`, `NoAlignedBoundary`, `PtsOutOfRange`,
-  `InvalidDuration`, ...).
+- **`error`**: `Error` (`NoCandidates`, `NoAlignedBoundary`, `InvalidDuration`,
+  ...).
 
 ### Splice-point conditioning: a real, non-IDR-aligned cue
 
