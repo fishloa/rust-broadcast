@@ -18,10 +18,14 @@ use crate::join::VideoJoin;
 
 const SILENCE_MARGIN_US: u64 = 500_000;
 
-/// A raw 27 MHz tick count as a validated playback position.
+/// A raw 27 MHz tick count as a playback position: the count is reduced onto
+/// the clock first, so the checked constructor cannot fail and its error is not
+/// a case the caller could act on.
 fn clock27(ticks: u64) -> Clock27 {
-    Clock27::from_27mhz(ticks % broadcast_common::clock33::PCR_WRAP_27MHZ)
-        .expect("a reduced 27 MHz value is on the clock")
+    match Clock27::from_27mhz(ticks % broadcast_common::clock33::PCR_WRAP_27MHZ) {
+        Ok(position) => position,
+        Err(_) => core::unreachable!(),
+    }
 }
 
 /// The end of the contiguous decodable run of a video track, in presentation order. Samples arrive
@@ -776,17 +780,13 @@ impl Feeder {
         self.first_media_us.get_or_insert(now_us);
         self.sync_pending(now_us);
         if let Some(c) = &mut self.controller {
-            c.on_track_media(
-                micros_as_duration(now_us),
-                t.value(),
-                Clock27::from_27mhz(end).expect("a reduced 27 MHz value is on the clock"),
-            );
+            c.on_track_media(micros_as_duration(now_us), t.value(), clock27(end));
             rec!(
                 self,
                 Input::TrackMedia {
                     now_us: micros_as_duration(now_us),
                     track: t.value(),
-                    end: Clock27::from_27mhz(end).expect("a reduced 27 MHz value is on the clock")
+                    end: clock27(end)
                 }
             );
         }

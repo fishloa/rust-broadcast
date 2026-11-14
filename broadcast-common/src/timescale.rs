@@ -98,7 +98,7 @@ impl Timescale {
 
     /// A timescale from a value already known non-zero, with no failure path.
     ///
-    /// A literal belongs in [`timescale!`](crate::timescale), which proves it
+    /// A literal belongs in [`timescale!`](crate::timescale!), which proves it
     /// non-zero at compile time; a runtime `u32` goes through [`Self::new`] or
     /// [`Self::try_new`], which report the zero instead of panicking.
     #[must_use]

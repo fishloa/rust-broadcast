@@ -13,11 +13,18 @@ const fn plain(name: &'static str) -> Crate {
 /// non-zero constant can never take.
 const BROADCAST_CLIENT: Crate = Crate {
     name: "broadcast-client",
-    allow: &[(
-        "src/buffer.rs",
-        "None => core::unreachable!(),",
-        "Timescale::new of a non-zero constant, checked at compile time",
-    )],
+    allow: &[
+        (
+            "src/buffer.rs",
+            "None => core::unreachable!(),",
+            "Timescale::new of a non-zero constant, checked at compile time",
+        ),
+        (
+            "src/buffer.rs",
+            "Err(_) => core::unreachable!(),",
+            "Clock27::from_27mhz of a count already reduced modulo its wrap, so the range check cannot fail and there is no case for a caller to handle",
+        ),
+    ],
 };
 
 pub const TABLE: &[Crate] = &[
