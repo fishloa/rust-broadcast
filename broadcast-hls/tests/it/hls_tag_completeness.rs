@@ -199,7 +199,11 @@ fn typed_tags_populate_their_struct_field_on_parse() {
 
     // §4.4.3 Media Playlist Tags.
     assert_eq!(mp.target_duration, 6, "EXT-X-TARGETDURATION");
-    assert_eq!(mp.media_sequence, 10, "EXT-X-MEDIA-SEQUENCE");
+    assert_eq!(
+        mp.msn,
+        broadcast_hls::MediaSequence::new(10),
+        "EXT-X-MEDIA-SEQUENCE"
+    );
     assert_eq!(mp.discontinuity_sequence, 2, "EXT-X-DISCONTINUITY-SEQUENCE");
     assert_eq!(
         mp.playlist_type,

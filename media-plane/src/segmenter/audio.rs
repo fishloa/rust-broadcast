@@ -325,7 +325,7 @@ impl AudioFollower {
     fn follow(&mut self, cut: &PartCutReady) {
         let first = self.origin.is_none();
         if first {
-            self.next_seq = cut.msn;
+            self.next_seq = u32::try_from(cut.msn.value()).unwrap_or(u32::MAX);
             self.origin = Some((cut.start_dts, cut.timescale));
             self.seg.set_timeline_origin(cut.start_dts, cut.timescale);
         }

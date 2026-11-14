@@ -1389,6 +1389,10 @@ pub const TABLE: &[Crate] = &[
             "SdpParseError",
             // The typed RTSP message-parse failure `Error::MessageParse` carries (#2695).
             "MessageParseError",
+            // The `Session` id source a `ServerSession` draws from (#2698): a
+            // config choice, not a protocol token — its labels are `name()`-less
+            // by design (a seed is not a spec field).
+            "SessionIdSource",
         ],
         expected: None,
         min_enums: None,

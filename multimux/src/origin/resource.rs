@@ -702,7 +702,13 @@ mod tests {
     use transmux::ll_hls::{PartInfo, SegmentInfo};
 
     fn part(seq: u32, idx: u32) -> PartInfo {
-        PartInfo::new(vec![0x10 + idx as u8; 4], 0.5, seq, idx).with_independent(idx == 0)
+        PartInfo::new(
+            vec![0x10 + idx as u8; 4],
+            0.5,
+            seq,
+            broadcast_hls::PartIndex::new(idx),
+        )
+        .with_independent(idx == 0)
     }
 
     fn seg(seq: u32) -> SegmentInfo {
@@ -1038,7 +1044,8 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             route_for_start.add_part(
                 crate::route::SPTS_PROGRAM_ID,
-                PartInfo::new(vec![0x77; 4], 0.5, 3, 0).with_independent(true),
+                PartInfo::new(vec![0x77; 4], 0.5, 3, broadcast_hls::PartIndex::new(0))
+                    .with_independent(true),
             );
         });
 

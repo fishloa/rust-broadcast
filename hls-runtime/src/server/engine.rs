@@ -2731,7 +2731,7 @@ impl HlsOrigin {
     /// number this origin's *open* segment was shown with is skipped, since
     /// its parts were already served — and the Media Sequence Number clients
     /// see keeps increasing (RFC 8216bis §6.2.2).
-    pub fn next_media_sequence(&self) -> u64 {
+    pub fn next_media_sequence(&self) -> broadcast_hls::MediaSequence {
         self.public_msn(
             self.trunk
                 .last_closed_segment()
@@ -2768,10 +2768,12 @@ impl HlsOrigin {
     }
 
     /// The Media Sequence Number shown for origin sequence number `seq`.
-    fn public_msn(&self, seq: SegmentSeq) -> u64 {
+    fn public_msn(&self, seq: SegmentSeq) -> broadcast_hls::MediaSequence {
         // `media_sequence_offset + u32::MAX` fits a `u64` (checked in `build`).
-        self.media_sequence_offset
-            .saturating_add(u64::from(seq.value()))
+        broadcast_hls::MediaSequence::new(
+            self.media_sequence_offset
+                .saturating_add(u64::from(seq.value())),
+        )
     }
 
     /// The origin sequence number a shown Media Sequence Number refers to, or
@@ -2877,13 +2879,15 @@ impl HlsOrigin {
     /// suitable for an `#EXT-X-RENDITION-REPORT` (RFC 8216bis §4.4.5.4).
     /// Drains this origin first and queries only this origin's own `Trunk`,
     /// so callers never hold another origin's lock.
-    pub fn current_live_edge(&self) -> (u64, Option<u64>) {
+    pub fn current_live_edge(&self) -> (u64, Option<broadcast_hls::PartIndex>) {
         self.drain();
         let (seq, open_parts) = self.live_edge();
         if !open_parts.is_empty() {
             let msn = self.public_msn(seq);
-            let last_part = open_parts.last().map(|p| u64::from(p.part_index.value()));
-            return (msn, last_part);
+            let last_part = open_parts
+                .last()
+                .map(|p| broadcast_hls::PartIndex::new(p.part_index.value()));
+            return (u64::from(msn), last_part);
         }
         // Live edge is a closed segment: report its last part (if any) so
         // the sibling's partial segments are accounted for (RFC 8216bis
@@ -2895,8 +2899,10 @@ impl HlsOrigin {
             .unwrap_or(SegmentSeq::new(0));
         let msn = self.public_msn(last_closed);
         let closed_parts = self.trunk.parts_in_segment(last_closed);
-        let last_part = closed_parts.last().map(|p| u64::from(p.part_index.value()));
-        (msn, last_part)
+        let last_part = closed_parts
+            .last()
+            .map(|p| broadcast_hls::PartIndex::new(p.part_index.value()));
+        (u64::from(msn), last_part)
     }
 
     /// The fMP4 init segment bytes, if set.
@@ -3645,7 +3651,10 @@ impl HlsOrigin {
                 }
                 let uri = relative_playlist_uri(&self.playlist_uri, &sibling.playlist_uri);
                 let (last_msn, last_part) = origin.current_live_edge();
-                let report = broadcast_hls::RenditionReport::new(uri, last_msn);
+                let report = broadcast_hls::RenditionReport::new(
+                    uri,
+                    broadcast_hls::MediaSequence::new(last_msn),
+                );
                 reports.push(if let Some(lp) = last_part {
                     report.with_last_part(lp)
                 } else {
@@ -3665,7 +3674,7 @@ impl HlsOrigin {
             // below (`EXT-X-PART`/`EXT-X-PART-INF`/`EXT-X-PRELOAD-HINT`/
             // `EXT-X-SERVER-CONTROL`) carry any version requirement at all.
             target_duration,
-            media_sequence,
+            msn: media_sequence,
             discontinuity_sequence: window.discontinuity_sequence,
             always_emit_discontinuity_sequence: true,
             segments,
@@ -3701,7 +3710,7 @@ impl HlsOrigin {
             } else {
                 live_parts.len()
             };
-            if msn > in_progress.saturating_add(ABUSE_MSN_FUTURE_BOUND) {
+            if msn > in_progress.value().saturating_add(ABUSE_MSN_FUTURE_BOUND) {
                 return EgressResponse::BadRequest {
                     reason: "_HLS_msn unreasonably far beyond the live edge",
                 };
@@ -3712,9 +3721,9 @@ impl HlsOrigin {
             // against the live-edge segment's parts (none exist yet for a
             // later `_HLS_msn`).
             if let Some(part) = query.hls_part
-                && msn >= in_progress
+                && msn >= in_progress.value()
             {
-                let existing = if msn == in_progress {
+                let existing = if msn == in_progress.value() {
                     u64::try_from(edge_parts).unwrap_or(u64::MAX)
                 } else {
                     0
@@ -3730,11 +3739,11 @@ impl HlsOrigin {
             }
             let satisfied = match query.hls_part {
                 Some(part) => {
-                    in_progress > msn
-                        || (in_progress == msn
+                    in_progress.value() > msn
+                        || (in_progress.value() == msn
                             && u64::try_from(edge_parts).unwrap_or(u64::MAX) > u64::from(part))
                 }
-                None => self.window_reaches(msn),
+                None => self.window_reaches(broadcast_hls::MediaSequence::new(msn)),
             };
             if !satisfied {
                 return EgressResponse::pending(await_policy, now, now);
@@ -3756,7 +3765,7 @@ impl HlsOrigin {
         }
     }
 
-    fn window_reaches(&self, msn: u64) -> bool {
+    fn window_reaches(&self, msn: broadcast_hls::MediaSequence) -> bool {
         self.drain();
         locked(&self.window)
             .segments
@@ -3798,13 +3807,14 @@ impl HlsOrigin {
             if msn
                 > self
                     .public_msn(last_closed.saturating_next())
+                    .value()
                     .saturating_add(ABUSE_MSN_FUTURE_BOUND)
             {
                 return EgressResponse::BadRequest {
                     reason: "_HLS_msn unreasonably far beyond the live edge",
                 };
             }
-            if !self.window_reaches(msn) {
+            if !self.window_reaches(broadcast_hls::MediaSequence::new(msn)) {
                 return EgressResponse::pending(await_policy, now, now);
             }
         }
@@ -3919,8 +3929,10 @@ impl HlsOrigin {
         // rendition report" (issue #1595).
         let rendition_reports = if self.part_target.is_some() {
             let (last_msn, last_part) = self.current_live_edge();
-            let first =
-                broadcast_hls::RenditionReport::new(media_playlist_name.to_string(), last_msn);
+            let first = broadcast_hls::RenditionReport::new(
+                media_playlist_name.to_string(),
+                broadcast_hls::MediaSequence::new(last_msn),
+            );
             let mut reports = vec![if let Some(lp) = last_part {
                 first.with_last_part(lp)
             } else {
@@ -3942,7 +3954,10 @@ impl HlsOrigin {
                     &sibling.playlist_uri,
                 );
                 let (last_msn, last_part) = origin.current_live_edge();
-                let report = broadcast_hls::RenditionReport::new(uri, last_msn);
+                let report = broadcast_hls::RenditionReport::new(
+                    uri,
+                    broadcast_hls::MediaSequence::new(last_msn),
+                );
                 reports.push(if let Some(lp) = last_part {
                     report.with_last_part(lp)
                 } else {
@@ -3956,7 +3971,7 @@ impl HlsOrigin {
 
         let playlist = MediaPlaylist {
             target_duration,
-            media_sequence,
+            msn: media_sequence,
             discontinuity_sequence: window.discontinuity_sequence,
             always_emit_discontinuity_sequence: true,
             segments,

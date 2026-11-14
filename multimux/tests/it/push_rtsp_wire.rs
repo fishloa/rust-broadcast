@@ -33,7 +33,7 @@ use crate::support::shared_it::fixture_path;
 use broadcast_common::Package as _;
 use multimux::push::rtsp::RtpWireState;
 use multimux::push::{PushTransport, RtspTransport, RtspTransportConfig};
-use rtsp_runtime::ServerSession;
+use rtsp_runtime::{RtspServerConfig, ServerSession, SessionIdSource};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 /// Seconds to wait after RECORD, so its response is read before the first
@@ -152,7 +152,10 @@ fn flatten(head: &[u8]) -> String {
 /// Serves one push connection until the client closes it, returning every
 /// request with the interleaved payloads that followed it.
 async fn serve(mut sock: tokio::net::TcpStream) -> Vec<Recorded> {
-    let mut session = ServerSession::new(|| 1);
+    let mut session = ServerSession::new(
+        RtspServerConfig::default().with_session_ids(SessionIdSource::counter(1)),
+    )
+    .expect("a server session");
     let mut recorded: Vec<Recorded> = Vec::new();
     let mut buf: Vec<u8> = Vec::new();
     let mut chunk = vec![0u8; 8192];

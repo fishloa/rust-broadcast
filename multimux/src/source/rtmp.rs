@@ -125,6 +125,7 @@
 //!   preserved, only the "reads don't hang forever" property), freeing its
 //!   `max_sessions` slot for the next publisher.
 
+#[cfg(any(test, feature = "test-seams"))]
 use crate::route::RouteConfig;
 use std::collections::{BTreeSet, VecDeque};
 use std::convert::Infallible;
@@ -469,7 +470,7 @@ impl RtmpIngestSession {
     /// Read the next batch of events off the connection — the read `run_rtmp`
     /// drives per session — `test-seams` only, so a golden can step a real
     /// session one protocol read at a time.
-    #[cfg(feature = "test-seams")]
+    #[cfg(any(test, feature = "test-seams"))]
     pub async fn next_events_for_test(&mut self) -> std::io::Result<Option<Vec<ServerEvent>>> {
         match self
             .conn
@@ -484,7 +485,7 @@ impl RtmpIngestSession {
 }
 
 /// A session over an already-established connection — `test-seams` only.
-#[cfg(feature = "test-seams")]
+#[cfg(any(test, feature = "test-seams"))]
 impl RtmpIngestSession {
     /// Build the session a just-accepted connection produces.
     pub fn from_connection(conn: RtmpConnection) -> Self {
@@ -689,12 +690,14 @@ async fn advance(
 
 /// Test harness handle over a running `RtmpRoute`: the monotonic admission
 /// count and the accept-pump notify, for a bounded condition wait.
+#[cfg(any(test, feature = "test-seams"))]
 #[doc(hidden)]
 pub struct RtmpRouteShared {
     admitted_total: Arc<AtomicUsize>,
     admit_count_notify: Arc<tokio::sync::Notify>,
 }
 
+#[cfg(any(test, feature = "test-seams"))]
 impl RtmpRouteShared {
     /// The total number of sessions ever admitted (monotonic — a session
     /// reaped for an invalid early handshake is still "accepted").
@@ -730,6 +733,7 @@ impl RtmpRouteShared {
 
 /// Bind an ephemeral loopback listener, start `run_rtmp` against a re-bound
 /// listen address, and return that address + a handle + a cancel token.
+#[cfg(feature = "test-seams")]
 #[doc(hidden)]
 pub async fn serve_for_test_with_read_load() -> (
     std::net::SocketAddr,
@@ -774,6 +778,7 @@ pub async fn serve_for_test_with_read_load() -> (
     (addr, shared, token)
 }
 
+#[cfg(feature = "test-seams")]
 fn trunk_config_for_test() -> TrunkConfig {
     use std::num::NonZeroUsize;
     let nz = |n: usize| NonZeroUsize::new(n).unwrap();
@@ -785,6 +790,7 @@ fn trunk_config_for_test() -> TrunkConfig {
         .with_part_capacity(nz(8))
 }
 
+#[cfg(feature = "test-seams")]
 fn handshake_for_test() -> HandshakePolicy {
     HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX))
 }

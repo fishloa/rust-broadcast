@@ -1398,6 +1398,7 @@ impl ProgramServing {
             next_media_sequence: self
                 .ll_hls
                 .next_media_sequence()
+                .value()
                 // Keep room for the `u32` sequence range `HlsOrigin` validates (unreachable in
                 // practice: 2^64 segments).
                 .min(u64::MAX - u64::from(u32::MAX)),
@@ -1430,7 +1431,7 @@ impl ProgramServing {
             writer.publish_part(PartEntry::new(
                 info.bytes,
                 media_plane::ids::SegmentSeq::new(info.segment_seq),
-                media_plane::ids::PartIndex::new(info.part_index),
+                media_plane::ids::PartIndex::new(info.part_index.value()),
                 Duration::from_secs_f64(info.duration),
                 info.independent,
             ));
@@ -2069,7 +2070,7 @@ impl RouteHandle {
             .programs
             .read()
             .values()
-            .map(|serving| serving.ll_hls.next_media_sequence())
+            .map(|serving| serving.ll_hls.next_media_sequence().value())
             .max()
             .unwrap_or(0);
         u32::try_from(next)
@@ -2528,7 +2529,7 @@ impl RouteHandle {
     /// drives [`crate::source::hls_pull::run_hls_pull`] itself reads back what
     /// the route published, exactly as egress would.
     #[doc(hidden)]
-    #[cfg(feature = "test-seams")]
+    #[cfg(any(test, feature = "test-seams"))]
     #[must_use]
     pub fn first_trunk_for_test(&self) -> Option<Arc<Trunk>> {
         self.first_trunk()
@@ -3268,7 +3269,7 @@ mod program_registry_tests {
         route.add_segment(ProgramId(1), info(1)).expect("add");
         route.add_segment(ProgramId(1), info(2)).expect("add");
         let before = route.ll_hls(ProgramId(1)).expect("origin");
-        assert_eq!(before.next_media_sequence(), 3);
+        assert_eq!(before.next_media_sequence().value(), 3);
 
         route.release_program(ProgramId(1), &first_trunk);
         route.publish_new_program(ProgramId(1));
@@ -3276,7 +3277,7 @@ mod program_registry_tests {
         let after = route.ll_hls(ProgramId(1)).expect("replacement origin");
         // Run 1's open segment (number 3) is skipped: the first segment of the
         // replacement is shown as 4.
-        assert_eq!(after.next_media_sequence(), 5);
+        assert_eq!(after.next_media_sequence().value(), 5);
 
         let playlist = match after.resolve(
             HlsRequest::Playlist {
@@ -3318,7 +3319,8 @@ mod program_registry_tests {
         let old_next = old
             .ll_hls(ProgramId(1))
             .expect("origin")
-            .next_media_sequence();
+            .next_media_sequence()
+            .value();
         assert_eq!(old_next, 42);
 
         let successor = RouteHandle::new(
@@ -3331,7 +3333,7 @@ mod program_registry_tests {
         successor.publish_program(ProgramId(1), test_trunk());
         let origin = successor.ll_hls(ProgramId(1)).expect("origin");
         assert_eq!(origin.media_sequence_offset(), old_next);
-        assert_eq!(origin.next_media_sequence(), old_next + 1);
+        assert_eq!(origin.next_media_sequence().value(), old_next + 1);
         let (old_epoch, epoch) = (
             old.epoch(ProgramId(1)).expect("old epoch"),
             successor.epoch(ProgramId(1)).expect("epoch"),
@@ -3377,7 +3379,7 @@ mod program_registry_tests {
         route.publish_program(ProgramId(1), Arc::clone(&first));
         let origin = route.ll_hls(ProgramId(1)).expect("origin");
         // No segment yet: the next one is shown as floor + 1.
-        assert_eq!(origin.next_media_sequence(), 42);
+        assert_eq!(origin.next_media_sequence().value(), 42);
         assert_eq!(origin.media_sequence_offset(), 41);
 
         // A reconnect over a fresh Trunk keeps climbing, skipping the old
@@ -3385,7 +3387,7 @@ mod program_registry_tests {
         route.release_program(ProgramId(1), &first);
         route.publish_program(ProgramId(1), test_trunk());
         let replacement = route.ll_hls(ProgramId(1)).expect("origin");
-        assert_eq!(replacement.next_media_sequence(), 43);
+        assert_eq!(replacement.next_media_sequence().value(), 43);
     }
 
     /// The names a route's origin advertises (init, segments, parts).
@@ -3553,7 +3555,13 @@ mod program_registry_tests {
         p1.add_segment(ProgramId(1), info(2, 0x12)).expect("add");
         p1.add_part(
             ProgramId(1),
-            transmux::ll_hls::PartInfo::new(vec![0x13; 4], 0.5, 3, 0).with_independent(true),
+            transmux::ll_hls::PartInfo::new(
+                vec![0x13; 4],
+                0.5,
+                3,
+                broadcast_hls::PartIndex::new(0),
+            )
+            .with_independent(true),
         );
         let names1 = advertised_names(&p1, ProgramId(1));
         assert!(names1.iter().any(|n| n.starts_with("part-")), "{names1:?}");
@@ -3571,7 +3579,13 @@ mod program_registry_tests {
         p2.add_segment(ProgramId(1), info(2, 0x22)).expect("add");
         p2.add_part(
             ProgramId(1),
-            transmux::ll_hls::PartInfo::new(vec![0x23; 4], 0.5, 3, 0).with_independent(true),
+            transmux::ll_hls::PartInfo::new(
+                vec![0x23; 4],
+                0.5,
+                3,
+                broadcast_hls::PartIndex::new(0),
+            )
+            .with_independent(true),
         );
         let names2 = advertised_names(&p2, ProgramId(1));
         for n in &names2 {
@@ -3586,7 +3600,13 @@ mod program_registry_tests {
         p1.add_segment(ProgramId(1), info(1, 0x31)).expect("add");
         p1.add_part(
             ProgramId(1),
-            transmux::ll_hls::PartInfo::new(vec![0x32; 4], 0.5, 2, 0).with_independent(true),
+            transmux::ll_hls::PartInfo::new(
+                vec![0x32; 4],
+                0.5,
+                2,
+                broadcast_hls::PartIndex::new(0),
+            )
+            .with_independent(true),
         );
         let names3 = advertised_names(&p1, ProgramId(1));
         for n in &names3 {

@@ -5,6 +5,7 @@
 //! Spec: RFC 8216 §6.3.3 (join no closer than three Target Durations from the
 //! end of a live Playlist), §4.3.3.2 (`EXT-X-MEDIA-SEQUENCE`, an unbounded
 //! `u64` here).
+use broadcast_hls::{MediaSequence, PartIndex};
 
 use hls_runtime::client::{Action, Error, HlsClient, HlsClientConfig, Output, ResourceId};
 use url::Url;
@@ -57,7 +58,9 @@ fn has(outs: &[Output], f: impl Fn(&Output) -> bool) -> bool {
 
 fn segment_ids(msns: impl IntoIterator<Item = u64>) -> Vec<ResourceId> {
     msns.into_iter()
-        .map(|msn| ResourceId::Segment { msn })
+        .map(|msn| ResourceId::Segment {
+            msn: MediaSequence::new(msn),
+        })
         .collect()
 }
 
@@ -137,8 +140,8 @@ fn media_sequence_overflow_is_an_error_not_a_panic() {
             .on_playlist(playlist(first, 3, "2.0", false).as_bytes())
             .expect_err("media_sequence + segments overflows u64");
         assert!(
-            matches!(err, Error::MediaSequenceOverflow { media_sequence, segments: 3 }
-                if media_sequence == first),
+            matches!(err, Error::MediaSequenceOverflow { msn, segments: 3 }
+                if msn == MediaSequence::new(first)),
             "wrong error for {first}: {err:?}"
         );
     }
@@ -182,7 +185,12 @@ fn an_overlapping_media_sequence_regression_refetches_and_signals_a_discontinuit
     assert_eq!(fetched_ids(&mut client), segment_ids([100, 101, 102]));
     for msn in [100, 101, 102] {
         client
-            .on_resource(ResourceId::Segment { msn }, OPAQUE)
+            .on_resource(
+                ResourceId::Segment {
+                    msn: MediaSequence::new(msn),
+                },
+                OPAQUE,
+            )
             .unwrap();
     }
     assert!(!has(&drain_outputs(&mut client), |o| matches!(
@@ -437,20 +445,36 @@ fn a_restart_withdraws_old_fetches_and_rejects_stale_responses() {
         .unwrap();
     assert_eq!(fetched_ids(&mut client), segment_ids([1, 2]));
     let err = client
-        .on_resource(ResourceId::Segment { msn: 5000 }, OPAQUE)
+        .on_resource(
+            ResourceId::Segment {
+                msn: MediaSequence::new(5000),
+            },
+            OPAQUE,
+        )
         .unwrap_err();
     assert!(matches!(
         err,
-        Error::UnrequestedResource {
-            id: ResourceId::Segment { msn: 5000 }
-        }
+        Error::UnrequestedResource { id }
+            if id == ResourceId::Segment {
+                msn: MediaSequence::new(5000)
+            }
     ));
     // The restarted numbering still delivers and the stream still ends.
     client
-        .on_resource(ResourceId::Segment { msn: 1 }, OPAQUE)
+        .on_resource(
+            ResourceId::Segment {
+                msn: MediaSequence::new(1),
+            },
+            OPAQUE,
+        )
         .unwrap();
     client
-        .on_resource(ResourceId::Segment { msn: 2 }, OPAQUE)
+        .on_resource(
+            ResourceId::Segment {
+                msn: MediaSequence::new(2),
+            },
+            OPAQUE,
+        )
         .unwrap();
     assert!(has(&drain_outputs(&mut client), |o| matches!(
         o,
@@ -473,11 +497,27 @@ fn a_restart_refetches_the_init_segment() {
     client.on_playlist(fmp4(7).as_bytes()).unwrap();
     let mut ids = fetched_ids(&mut client);
     ids.sort();
-    assert_eq!(ids, vec![ResourceId::Init, ResourceId::Segment { msn: 7 }]);
+    assert_eq!(
+        ids,
+        vec![
+            ResourceId::Init,
+            ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(7)
+            }
+        ]
+    );
     client.on_playlist(fmp4(3).as_bytes()).unwrap();
     let mut ids = fetched_ids(&mut client);
     ids.sort();
-    assert_eq!(ids, vec![ResourceId::Init, ResourceId::Segment { msn: 3 }]);
+    assert_eq!(
+        ids,
+        vec![
+            ResourceId::Init,
+            ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(3)
+            }
+        ]
+    );
 }
 
 #[test]
@@ -492,17 +532,29 @@ fn a_second_delivery_of_the_same_id_is_rejected_and_does_not_end_the_stream_earl
     assert_eq!(fetched_ids(&mut client), segment_ids([0, 1]));
 
     client
-        .on_resource(ResourceId::Segment { msn: 0 }, OPAQUE)
+        .on_resource(
+            ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(0),
+            },
+            OPAQUE,
+        )
         .unwrap();
     let err = client
-        .on_resource(ResourceId::Segment { msn: 0 }, OPAQUE)
+        .on_resource(
+            ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(0),
+            },
+            OPAQUE,
+        )
         .expect_err("second delivery of Segment 0 must be rejected");
     assert!(
         matches!(
             err,
-            Error::DuplicateResource {
-                id: ResourceId::Segment { msn: 0 }
-            }
+            Error::DuplicateResource { id }
+                if id
+                    == ResourceId::Segment {
+                        msn: MediaSequence::new(0),
+                    }
         ),
         "wrong error: {err:?}"
     );
@@ -514,7 +566,12 @@ fn a_second_delivery_of_the_same_id_is_rejected_and_does_not_end_the_stream_earl
     );
 
     client
-        .on_resource(ResourceId::Segment { msn: 1 }, OPAQUE)
+        .on_resource(
+            ResourceId::Segment {
+                msn: MediaSequence::new(1),
+            },
+            OPAQUE,
+        )
         .unwrap();
     let outputs = drain_outputs(&mut client);
     assert!(
@@ -534,7 +591,12 @@ fn state_for_segments_that_left_the_window_is_dropped_but_in_flight_fetches_surv
         .unwrap();
     assert_eq!(fetched_ids(&mut client), segment_ids([0, 1]));
     client
-        .on_resource(ResourceId::Segment { msn: 0 }, OPAQUE)
+        .on_resource(
+            ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(0),
+            },
+            OPAQUE,
+        )
         .unwrap();
 
     // The window slides far past both.
@@ -546,21 +608,33 @@ fn state_for_segments_that_left_the_window_is_dropped_but_in_flight_fetches_surv
     // Seg 0 was delivered and left the window: its record is gone, so a late
     // duplicate is "never requested" (it used to be accepted again).
     let err = client
-        .on_resource(ResourceId::Segment { msn: 0 }, OPAQUE)
+        .on_resource(
+            ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(0),
+            },
+            OPAQUE,
+        )
         .expect_err("pruned id must not be accepted again");
     assert!(
         matches!(
             err,
-            Error::UnrequestedResource {
-                id: ResourceId::Segment { msn: 0 }
-            }
+            Error::UnrequestedResource { id }
+                if id
+                    == ResourceId::Segment {
+                        msn: MediaSequence::new(0),
+                    }
         ),
         "wrong error: {err:?}"
     );
     // Seg 1 was still in flight when it left the window: its delivery is
     // still accepted (otherwise the outstanding-fetch count never drains).
     client
-        .on_resource(ResourceId::Segment { msn: 1 }, OPAQUE)
+        .on_resource(
+            ResourceId::Segment {
+                msn: MediaSequence::new(1),
+            },
+            OPAQUE,
+        )
         .expect("an in-flight fetch must still be accepted after the window moved");
 }
 
@@ -578,12 +652,16 @@ fn long_lived_pull_forgets_old_segments() {
             client.on_resource(id, OPAQUE).unwrap();
         }
     }
-    let delivered_long_ago = ResourceId::Segment { msn: 5 };
+    let delivered_long_ago = ResourceId::Segment {
+        msn: broadcast_hls::MediaSequence::new(5),
+    };
     assert!(matches!(
         client.on_resource(delivered_long_ago, OPAQUE),
         Err(Error::UnrequestedResource { .. })
     ));
-    let recent = ResourceId::Segment { msn: 19_999 };
+    let recent = ResourceId::Segment {
+        msn: broadcast_hls::MediaSequence::new(19_999),
+    };
     assert!(matches!(
         client.on_resource(recent, OPAQUE),
         Err(Error::DuplicateResource { .. })
@@ -653,17 +731,47 @@ fn skipped_segments_advance_the_byte_range_cursor() {
     let ranges = fetched_ranges(&mut client);
     assert_eq!(
         ranges[0],
-        (ResourceId::Segment { msn: 2 }, Some(span(91932, 68056)))
+        (
+            ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(2)
+            },
+            Some(span(91932, 68056))
+        )
     );
     // The whole fetch list equals ffmpeg's explicit-offset ranges from msn 2.
     assert_eq!(
         ranges,
         vec![
-            (ResourceId::Segment { msn: 2 }, Some(span(91932, 68056))),
-            (ResourceId::Segment { msn: 3 }, Some(span(159988, 24064))),
-            (ResourceId::Segment { msn: 4 }, Some(span(184052, 44180))),
-            (ResourceId::Segment { msn: 5 }, Some(span(228232, 68056))),
-            (ResourceId::Segment { msn: 6 }, Some(span(296288, 22184))),
+            (
+                ResourceId::Segment {
+                    msn: broadcast_hls::MediaSequence::new(2)
+                },
+                Some(span(91932, 68056))
+            ),
+            (
+                ResourceId::Segment {
+                    msn: broadcast_hls::MediaSequence::new(3)
+                },
+                Some(span(159988, 24064))
+            ),
+            (
+                ResourceId::Segment {
+                    msn: broadcast_hls::MediaSequence::new(4)
+                },
+                Some(span(184052, 44180))
+            ),
+            (
+                ResourceId::Segment {
+                    msn: broadcast_hls::MediaSequence::new(5)
+                },
+                Some(span(228232, 68056))
+            ),
+            (
+                ResourceId::Segment {
+                    msn: broadcast_hls::MediaSequence::new(6)
+                },
+                Some(span(296288, 22184))
+            ),
         ]
     );
 }
@@ -777,12 +885,21 @@ fn low_latency_join_honours_part_hold_back_counting_open_parts() {
             .unwrap();
         fetched_ids(&mut client)
     };
-    let part = |part| ResourceId::Part { msn: 6, part };
+    let part = |part: u32| ResourceId::Part {
+        msn: MediaSequence::new(6),
+        part: PartIndex::new(part),
+    };
     // PART-HOLD-BACK 1.5 s, 1.0 s of open parts: the open segment is not yet
     // 1.5 s from the end, so the latest allowed start is the last closed one.
     assert_eq!(
         join("YES", 2),
-        vec![ResourceId::Segment { msn: 5 }, part(0), part(1)]
+        vec![
+            ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(5)
+            },
+            part(0),
+            part(1)
+        ]
     );
     // 1.5 s of open parts reach the hold-back: play from the open segment.
     assert_eq!(join("YES", 3), vec![part(0), part(1), part(2)]);
@@ -791,9 +908,15 @@ fn low_latency_join_honours_part_hold_back_counting_open_parts() {
     assert_eq!(
         join("NO", 2),
         vec![
-            ResourceId::Segment { msn: 3 },
-            ResourceId::Segment { msn: 4 },
-            ResourceId::Segment { msn: 5 },
+            ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(3)
+            },
+            ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(4)
+            },
+            ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(5)
+            },
             part(0),
             part(1)
         ]
@@ -837,14 +960,24 @@ fn regression_after_delivery_neither_refetches_nor_duplicates() {
     client.on_playlist(live.as_bytes()).unwrap();
     assert_eq!(fetched_ids(&mut client), segment_ids([10]));
     client
-        .on_resource(ResourceId::Segment { msn: 10 }, &ts("index0.ts"))
+        .on_resource(
+            ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(10),
+            },
+            &ts("index0.ts"),
+        )
         .unwrap();
     let _ = fetched_ids(&mut client);
 
     client.on_playlist(regressed.as_bytes()).unwrap();
     assert_eq!(fetched_ids(&mut client), segment_ids([9]));
     client
-        .on_resource(ResourceId::Segment { msn: 9 }, &ts("index1.ts"))
+        .on_resource(
+            ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(9),
+            },
+            &ts("index1.ts"),
+        )
         .unwrap();
 
     // ffprobe -count_packets: index0.ts = 50 video + 84 audio packets,
@@ -872,9 +1005,16 @@ fn a_failed_segment_under_endlist_defers_end_of_stream_until_it_is_delivered() {
     assert_eq!(fetched_ids(&mut client), segment_ids([0, 1]));
 
     client
-        .on_resource(ResourceId::Segment { msn: 0 }, OPAQUE)
+        .on_resource(
+            ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(0),
+            },
+            OPAQUE,
+        )
         .unwrap();
-    client.on_error(Some(ResourceId::Segment { msn: 1 }));
+    client.on_error(Some(ResourceId::Segment {
+        msn: broadcast_hls::MediaSequence::new(1),
+    }));
     assert!(
         !drain_outputs(&mut client)
             .iter()
@@ -887,7 +1027,12 @@ fn a_failed_segment_under_endlist_defers_end_of_stream_until_it_is_delivered() {
         .unwrap();
     assert_eq!(fetched_ids(&mut client), segment_ids([1]));
     client
-        .on_resource(ResourceId::Segment { msn: 1 }, OPAQUE)
+        .on_resource(
+            ResourceId::Segment {
+                msn: MediaSequence::new(1),
+            },
+            OPAQUE,
+        )
         .unwrap();
     let outputs = drain_outputs(&mut client);
     assert!(
@@ -930,24 +1075,42 @@ fn a_failed_part_is_retried_when_its_segment_closes_without_parts() {
     drain(&mut client);
     client.on_playlist(OPEN_WITH_TWO_PARTS.as_bytes()).unwrap();
     let first = fetches(&drain(&mut client));
-    assert!(first.contains(&ResourceId::Part { msn: 0, part: 0 }));
-    assert!(first.contains(&ResourceId::Part { msn: 0, part: 1 }));
+    assert!(first.contains(&ResourceId::Part {
+        msn: broadcast_hls::MediaSequence::new(0),
+        part: PartIndex::new(0)
+    }));
+    assert!(first.contains(&ResourceId::Part {
+        msn: broadcast_hls::MediaSequence::new(0),
+        part: PartIndex::new(1)
+    }));
     client.on_resource(ResourceId::Init, &init).unwrap();
     client
-        .on_resource(ResourceId::Part { msn: 0, part: 0 }, &fragment)
+        .on_resource(
+            ResourceId::Part {
+                msn: broadcast_hls::MediaSequence::new(0),
+                part: PartIndex::new(0),
+            },
+            &fragment,
+        )
         .unwrap();
     let samples = std::iter::from_fn(|| client.next_output())
         .filter(|o| matches!(o, Output::Samples { .. }))
         .count();
     assert!(samples > 0, "part 0 must have been delivered");
-    client.on_error(Some(ResourceId::Part { msn: 0, part: 1 }));
+    client.on_error(Some(ResourceId::Part {
+        msn: broadcast_hls::MediaSequence::new(0),
+        part: PartIndex::new(1),
+    }));
 
     client
         .on_playlist(SEGMENT_CLOSED_WITHOUT_PARTS.as_bytes())
         .unwrap();
     let second = fetches(&drain(&mut client));
     assert!(
-        second.contains(&ResourceId::Part { msn: 0, part: 1 }),
+        second.contains(&ResourceId::Part {
+            msn: broadcast_hls::MediaSequence::new(0),
+            part: PartIndex::new(1)
+        }),
         "part 1 failed and its segment closed: it must be re-requested, got {second:?}"
     );
 }
@@ -1040,7 +1203,13 @@ fn a_discontinuity_revealed_at_segment_close_is_signalled_late() {
     drain(&mut client);
     client.on_resource(ResourceId::Init, &init).unwrap();
     client
-        .on_resource(ResourceId::Part { msn: 0, part: 0 }, &fragment)
+        .on_resource(
+            ResourceId::Part {
+                msn: broadcast_hls::MediaSequence::new(0),
+                part: PartIndex::new(0),
+            },
+            &fragment,
+        )
         .unwrap();
     client
         .on_playlist(DISCONTINUOUS_SEGMENT_CLOSED.as_bytes())
@@ -1075,7 +1244,9 @@ fn a_re_requested_byterange_segment_asks_for_its_own_bytes() {
     drain(&mut client);
     client.on_playlist(BYTERANGE_VOD.as_bytes()).unwrap();
     let first = drain(&mut client);
-    let id = ResourceId::Segment { msn: 1 };
+    let id = ResourceId::Segment {
+        msn: broadcast_hls::MediaSequence::new(1),
+    };
     assert_eq!(range_of(&first, id), Some(Some(span(1000, 1000))));
 
     client.on_error(Some(id));
@@ -1106,7 +1277,12 @@ fn reloading_a_playlist_with_skipped_segments_does_not_drift_later_byte_ranges()
     let _ = client.on_playlist(grown.as_bytes());
     let actions = drain(&mut client);
     assert_eq!(
-        range_of(&actions, ResourceId::Segment { msn: 3 }),
+        range_of(
+            &actions,
+            ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(3)
+            }
+        ),
         Some(Some(span(3000, 1000)))
     );
 }

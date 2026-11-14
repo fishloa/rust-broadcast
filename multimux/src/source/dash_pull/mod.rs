@@ -34,6 +34,7 @@ use crate::clock::HostClock;
 use crate::error::{MultimuxError, Result};
 use crate::source::client_host::{EventIngest, SessionLabels, SessionStep};
 use crate::source::pull_target::{PullKind, PullRoute};
+#[cfg(any(test, feature = "test-seams"))]
 use broadcast_common::units::MICROS_PER_SEC;
 
 #[cfg(test)]
@@ -100,6 +101,7 @@ impl DashPullRoute {
 /// through `dash-runtime`'s reader (§5.3.1.2). `None` for any shape its
 /// accepted subset rejects. A lexical `Z` guard keeps offset forms and a
 /// missing zone out: the reader would convert an offset, this field is UTC.
+#[cfg(any(test, feature = "test-seams"))]
 fn parse_iso8601_utc(s: &str) -> Option<u64> {
     if !s.trim().ends_with('Z') {
         return None;
@@ -109,6 +111,7 @@ fn parse_iso8601_utc(s: &str) -> Option<u64> {
 }
 
 /// `#[doc(hidden)]` test seam over [`parse_iso8601_utc`].
+#[cfg(any(test, feature = "test-seams"))]
 #[doc(hidden)]
 pub fn parse_iso8601_utc_for_test(s: &str) -> Option<u64> {
     parse_iso8601_utc(s)

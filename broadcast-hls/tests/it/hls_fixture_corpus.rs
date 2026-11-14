@@ -77,7 +77,9 @@
 use std::fs;
 use std::path::PathBuf;
 
-use broadcast_hls::{Error, MasterPlaylist, MediaPlaylist, SignedDecimalSeconds};
+use broadcast_hls::{
+    Error, MasterPlaylist, MediaPlaylist, MediaSequence, PartIndex, SignedDecimalSeconds,
+};
 
 /// `fixtures/hls/`, resolved from this crate's own manifest dir — never a
 /// bare relative path (that depends on the caller's cwd).
@@ -502,8 +504,8 @@ fn handbuilt_fixtures_expose_the_872_tags_as_typed_data() {
         ll.rendition_reports[0].uri, "/1M/LL-HLS.m3u8",
         "RENDITION-REPORT URI must match"
     );
-    assert_eq!(ll.rendition_reports[0].last_msn, 274);
-    assert_eq!(ll.rendition_reports[0].last_part, Some(1));
+    assert_eq!(ll.rendition_reports[0].last_msn, MediaSequence::new(274));
+    assert_eq!(ll.rendition_reports[0].last_part, Some(PartIndex::new(1)));
 }
 
 // ---------------------------------------------------------------------------

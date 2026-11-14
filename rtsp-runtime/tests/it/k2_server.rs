@@ -13,7 +13,11 @@ fn answer(s: &mut ServerSession, req: &str) -> String {
 
 #[test]
 fn options_advertises_the_implemented_methods_in_public() {
-    let mut s = ServerSession::new(|| 1);
+    let mut s = ServerSession::new(
+        rtsp_runtime::RtspServerConfig::default()
+            .with_session_ids(rtsp_runtime::SessionIdSource::counter(1)),
+    )
+    .expect("a server session");
     let text = answer(&mut s, "OPTIONS rtsp://h/s RTSP/1.0\nCSeq: 1\n\n");
     let public = text
         .lines()
@@ -27,7 +31,12 @@ fn options_advertises_the_implemented_methods_in_public() {
 #[test]
 fn describe_returns_the_configured_sdp_with_its_content_type() {
     let sdp = "v=0\r\ns=x\r\n";
-    let mut s = ServerSession::new(|| 1).with_describe_sdp(sdp);
+    let mut s = ServerSession::new(
+        rtsp_runtime::RtspServerConfig::default()
+            .with_session_ids(rtsp_runtime::SessionIdSource::counter(1))
+            .with_describe_sdp(sdp),
+    )
+    .expect("a server session");
     let text = answer(
         &mut s,
         "DESCRIBE rtsp://h/s RTSP/1.0\nCSeq: 1\nAccept: application/sdp\n\n",
@@ -43,7 +52,12 @@ fn describe_returns_the_configured_sdp_with_its_content_type() {
 
 #[test]
 fn udp_setup_reply_carries_the_servers_port_pair() {
-    let mut s = ServerSession::new(|| 1).with_server_ports(6970, 6971);
+    let mut s = ServerSession::new(
+        rtsp_runtime::RtspServerConfig::default()
+            .with_session_ids(rtsp_runtime::SessionIdSource::counter(1))
+            .with_server_ports(6970, 6971),
+    )
+    .expect("a server session");
     let text = answer(
         &mut s,
         "SETUP rtsp://h/s/t RTSP/1.0\nCSeq: 1\nTransport: RTP/AVP;unicast;client_port=5000-5001\n\n",
@@ -56,7 +70,12 @@ fn udp_setup_reply_carries_the_servers_port_pair() {
 
 #[test]
 fn tcp_setup_reply_has_no_server_port() {
-    let mut s = ServerSession::new(|| 1).with_server_ports(6970, 6971);
+    let mut s = ServerSession::new(
+        rtsp_runtime::RtspServerConfig::default()
+            .with_session_ids(rtsp_runtime::SessionIdSource::counter(1))
+            .with_server_ports(6970, 6971),
+    )
+    .expect("a server session");
     let text = answer(
         &mut s,
         "SETUP rtsp://h/s/t RTSP/1.0\nCSeq: 1\nTransport: RTP/AVP/TCP;interleaved=0-1\n\n",

@@ -224,7 +224,7 @@ fn iframe_playlist_text_shape() {
     let pi = MediaPlaylist::parse(&iframe_text).expect("parse iframe");
     assert!(pi.iframes_only);
     assert_eq!(pi.target_duration, pm.target_duration);
-    assert_eq!(pi.media_sequence, pm.media_sequence);
+    assert_eq!(pi.msn, pm.msn);
     assert_eq!(pi.discontinuity_sequence, pm.discontinuity_sequence);
     for seg in &pi.segments {
         let br = seg.byte_range.as_ref().expect("byterange");
@@ -321,7 +321,10 @@ fn iframe_audio_first_leading_skipped() {
     // I-frame playlist's sequence is the media playlist's plus one.
     let media = MediaPlaylist::parse(&playlist_text(&origin)).expect("media parse");
     assert_eq!(media.segments.len(), 2);
-    assert_eq!(parsed.media_sequence, media.media_sequence + 1);
+    assert_eq!(
+        parsed.msn,
+        broadcast_hls::MediaSequence::new(media.msn.value() + 1)
+    );
 }
 
 #[test]

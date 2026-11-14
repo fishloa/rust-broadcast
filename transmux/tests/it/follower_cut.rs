@@ -155,7 +155,7 @@ fn leader_plans(video: &Track, movie_ts: Timescale) -> Vec<CutPlan> {
     assert_eq!(plans.len(), segs.len());
     for (plan, seg) in plans.iter().zip(&segs) {
         assert_eq!(plan.segment_seq, seg.segment_seq);
-        let indices: Vec<u32> = parts
+        let indices: Vec<broadcast_hls::PartIndex> = parts
             .iter()
             .filter(|p| p.segment_seq == seg.segment_seq)
             .map(|p| p.part_index)
@@ -268,7 +268,7 @@ fn check_follower(audio: &Track, movie_ts: Timescale, plans: &[CutPlan]) {
         let mut joined = Vec::new();
         for (part, (slot, exp)) in seg_parts.iter().zip(expected_parts) {
             let cut = plans[si].parts.get(slot);
-            let want_index = cut.map_or(0, |c| c.part_index);
+            let want_index = cut.map_or(broadcast_hls::PartIndex::ZERO, |c| c.part_index);
             assert_eq!(part.part_index, want_index, "part index follows the leader");
             assert_eq!(mdat_payload(&part.bytes), concat(exp), "part payloads");
             joined.extend(mdat_payload(&part.bytes));
@@ -429,9 +429,17 @@ fn frame_straddling_boundary_stays_in_segment_where_it_starts() {
 #[test]
 fn sample_starting_exactly_on_part_boundary_opens_next_part() {
     let cuts = vec![
-        PartCut::new(0, 0, Some(LEADER_SCALE)),
-        PartCut::new(1, leader_ticks(5 * 1024), Some(LEADER_SCALE)),
-        PartCut::new(2, leader_ticks(10 * 1024), Some(LEADER_SCALE)),
+        PartCut::new(broadcast_hls::PartIndex::ZERO, 0, Some(LEADER_SCALE)),
+        PartCut::new(
+            broadcast_hls::PartIndex::new(1),
+            leader_ticks(5 * 1024),
+            Some(LEADER_SCALE),
+        ),
+        PartCut::new(
+            broadcast_hls::PartIndex::new(2),
+            leader_ticks(10 * 1024),
+            Some(LEADER_SCALE),
+        ),
     ];
     let plans = [
         CutPlan::new(1, 0, LEADER_TS, cuts).expect("plan"),
@@ -443,7 +451,9 @@ fn sample_starting_exactly_on_part_boundary_opens_next_part() {
     assert_eq!(mdat_payload(&segs[0].bytes), payload_of(0..15));
     let seg1: Vec<_> = parts.iter().filter(|p| p.segment_seq == 1).collect();
     assert_eq!(
-        seg1.iter().map(|p| p.part_index).collect::<Vec<_>>(),
+        seg1.iter()
+            .map(|p| p.part_index.value())
+            .collect::<Vec<_>>(),
         vec![0, 1, 2]
     );
     assert_eq!(mdat_payload(&seg1[0].bytes), payload_of(0..5));
@@ -454,8 +464,12 @@ fn sample_starting_exactly_on_part_boundary_opens_next_part() {
 #[test]
 fn frame_straddling_part_boundary_stays_in_part_where_it_starts() {
     let cuts = vec![
-        PartCut::new(0, 0, Some(LEADER_SCALE)),
-        PartCut::new(1, leader_ticks(5 * 1024) + 1, Some(LEADER_SCALE)),
+        PartCut::new(broadcast_hls::PartIndex::new(0), 0, Some(LEADER_SCALE)),
+        PartCut::new(
+            broadcast_hls::PartIndex::new(1),
+            leader_ticks(5 * 1024) + 1,
+            Some(LEADER_SCALE),
+        ),
     ];
     let plans = [CutPlan::new(1, 0, LEADER_TS, cuts).expect("plan")];
     let (parts, _) = synthetic(frames(0..10), &plans);
@@ -566,8 +580,8 @@ fn follow_rejects_invalid_plans_with_typed_errors() {
     assert_eq!(f.follow(plan(6, 400)).unwrap_err(), expected);
 
     let backwards = vec![
-        PartCut::new(0, 90, Some(LEADER_SCALE)),
-        PartCut::new(1, 10, Some(LEADER_SCALE)),
+        PartCut::new(broadcast_hls::PartIndex::new(0), 90, Some(LEADER_SCALE)),
+        PartCut::new(broadcast_hls::PartIndex::new(1), 10, Some(LEADER_SCALE)),
     ];
     assert_eq!(
         new()
@@ -807,9 +821,20 @@ fn part_follower() -> LlHlsSegmenter {
 fn follow_part_holds_a_part_until_a_sample_reaches_the_next_boundary() {
     let mut f = part_follower();
     let track_id = audio_template().0.spec.track_id;
-    f.follow_part(1, 0, 0, LEADER_SCALE).unwrap();
-    f.follow_part(1, 1, leader_ticks(4 * 1024), LEADER_SCALE)
-        .unwrap();
+    f.follow_part(
+        broadcast_hls::MediaSequence::new(1),
+        broadcast_hls::PartIndex::new(0),
+        0,
+        LEADER_SCALE,
+    )
+    .unwrap();
+    f.follow_part(
+        broadcast_hls::MediaSequence::new(1),
+        broadcast_hls::PartIndex::new(1),
+        leader_ticks(4 * 1024),
+        LEADER_SCALE,
+    )
+    .unwrap();
     for n in 0..4 {
         f.push(track_id, frame(n)).unwrap();
     }
@@ -820,7 +845,10 @@ fn follow_part_holds_a_part_until_a_sample_reaches_the_next_boundary() {
     f.push(track_id, frame(4)).unwrap();
     let parts = f.take_ready_parts();
     assert_eq!(parts.len(), 1);
-    assert_eq!((parts[0].segment_seq, parts[0].part_index), (1, 0));
+    assert_eq!(
+        (parts[0].segment_seq, parts[0].part_index),
+        (1, broadcast_hls::PartIndex::ZERO)
+    );
     assert_eq!(mdat_payload(&parts[0].bytes), payload_of(0..4));
 }
 
@@ -828,12 +856,23 @@ fn follow_part_holds_a_part_until_a_sample_reaches_the_next_boundary() {
 fn follow_part_closes_the_previous_segment_at_the_new_boundary() {
     let mut f = part_follower();
     let track_id = audio_template().0.spec.track_id;
-    f.follow_part(1, 0, 0, LEADER_SCALE).unwrap();
+    f.follow_part(
+        broadcast_hls::MediaSequence::new(1),
+        broadcast_hls::PartIndex::new(0),
+        0,
+        LEADER_SCALE,
+    )
+    .unwrap();
     for n in 0..8 {
         f.push(track_id, frame(n)).unwrap();
     }
-    f.follow_part(2, 0, leader_ticks(6 * 1024), LEADER_SCALE)
-        .unwrap();
+    f.follow_part(
+        broadcast_hls::MediaSequence::new(2),
+        broadcast_hls::PartIndex::new(0),
+        leader_ticks(6 * 1024),
+        LEADER_SCALE,
+    )
+    .unwrap();
     let segs = f.take_ready_segments();
     assert_eq!(segs.len(), 1);
     assert_eq!(segs[0].segment_seq, 1);
@@ -850,14 +889,29 @@ fn follow_part_rejects_invalid_boundaries_with_typed_errors() {
     // A zero timescale is refused by the type, not by a runtime check here:
     // `follow_part` takes a non-zero `Timescale`.
     assert!(Timescale::new(0).is_none());
-    f.follow_part(2, 0, leader_ticks(8 * 1024), LEADER_SCALE)
-        .unwrap();
+    f.follow_part(
+        broadcast_hls::MediaSequence::new(2),
+        broadcast_hls::PartIndex::new(0),
+        leader_ticks(8 * 1024),
+        LEADER_SCALE,
+    )
+    .unwrap();
     assert!(matches!(
-        f.follow_part(1, 0, leader_ticks(16 * 1024), LEADER_SCALE),
+        f.follow_part(
+            broadcast_hls::MediaSequence::new(1),
+            broadcast_hls::PartIndex::new(0),
+            leader_ticks(16 * 1024),
+            LEADER_SCALE
+        ),
         Err(Error::InvalidInput(_))
     ));
     assert!(matches!(
-        f.follow_part(2, 1, leader_ticks(4 * 1024), LEADER_SCALE),
+        f.follow_part(
+            broadcast_hls::MediaSequence::new(2),
+            broadcast_hls::PartIndex::new(1),
+            leader_ticks(4 * 1024),
+            LEADER_SCALE
+        ),
         Err(Error::InvalidInput(_))
     ));
 }
@@ -866,9 +920,20 @@ fn follow_part_rejects_invalid_boundaries_with_typed_errors() {
 fn follow_part_buffer_overflow_is_a_typed_error() {
     let mut f = part_follower();
     let track_id = audio_template().0.spec.track_id;
-    f.follow_part(1, 0, 0, LEADER_SCALE).unwrap();
-    f.follow_part(1, 1, leader_ticks(1 << 40), LEADER_SCALE)
-        .unwrap();
+    f.follow_part(
+        broadcast_hls::MediaSequence::new(1),
+        broadcast_hls::PartIndex::new(0),
+        0,
+        LEADER_SCALE,
+    )
+    .unwrap();
+    f.follow_part(
+        broadcast_hls::MediaSequence::new(1),
+        broadcast_hls::PartIndex::new(1),
+        leader_ticks(1 << 40),
+        LEADER_SCALE,
+    )
+    .unwrap();
     let mut result = Ok(());
     for n in 0..=MAX_PENDING_SAMPLES_PER_TRACK as i64 {
         result = f.push(track_id, frame(n));

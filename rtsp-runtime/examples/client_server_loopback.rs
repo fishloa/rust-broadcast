@@ -12,8 +12,8 @@
 //! ```
 
 use rtsp_runtime::{
-    ClientEvent, ClientSession, InterleavedFrame, ServerEvent, ServerSession, Transport,
-    TransportSpec,
+    ClientEvent, ClientSession, InterleavedFrame, RtspClientConfig, RtspServerConfig, ServerEvent,
+    ServerSession, SessionIdSource, Transport, TransportSpec,
 };
 
 const URL: &str = "rtsp://127.0.0.1/stream";
@@ -55,9 +55,14 @@ fn exchange(
 }
 
 fn main() {
-    // A fixed id is fine for a demo; a real server must draw from a CSPRNG.
-    let mut server = ServerSession::new(|| 0x0123_4567_89ab_cdef);
-    let mut client = ClientSession::new();
+    // A fixed id is fine for a demo; a real server draws from the CSPRNG
+    // (`SessionIdSource::default()`).
+    let mut server = ServerSession::new(
+        RtspServerConfig::default()
+            .with_session_ids(SessionIdSource::counter(0x0123_4567_89ab_cdef)),
+    )
+    .expect("a server session");
+    let mut client = ClientSession::new(RtspClientConfig::default()).expect("a client session");
 
     let req = client.options(URL).expect("OPTIONS");
     exchange("OPTIONS", &mut client, &mut server, req);

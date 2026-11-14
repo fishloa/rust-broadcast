@@ -129,7 +129,7 @@ fn segments_delivered_out_of_order_still_use_their_own_init() {
         client
             .on_resource(
                 ResourceId::Segment {
-                    msn: (first.parts.segments.len() + i) as u64,
+                    msn: broadcast_hls::MediaSequence::new((first.parts.segments.len() + i) as u64),
                 },
                 &second.parts.segments[i],
             )
@@ -146,7 +146,12 @@ fn segments_delivered_out_of_order_still_use_their_own_init() {
     );
     for (i, seg) in first.parts.segments.iter().enumerate() {
         client
-            .on_resource(ResourceId::Segment { msn: i as u64 }, seg)
+            .on_resource(
+                ResourceId::Segment {
+                    msn: broadcast_hls::MediaSequence::new(i as u64),
+                },
+                seg,
+            )
             .unwrap();
     }
     client
@@ -262,14 +267,24 @@ fn a_map_run_with_its_own_key_decrypts_its_own_init() {
     client.on_key(key_id, &KEY).unwrap();
     for (i, seg) in first.parts.segments.iter().enumerate() {
         client
-            .on_resource(ResourceId::Segment { msn: i as u64 }, seg)
+            .on_resource(
+                ResourceId::Segment {
+                    msn: broadcast_hls::MediaSequence::new(i as u64),
+                },
+                seg,
+            )
             .unwrap();
     }
     for (i, seg) in second.parts.segments.iter().enumerate() {
         let msn = (first.parts.segments.len() + i) as u64;
         let cipher = aes128_encrypt_segment(&KEY, &IV, seg);
         client
-            .on_resource(ResourceId::Segment { msn }, &cipher)
+            .on_resource(
+                ResourceId::Segment {
+                    msn: broadcast_hls::MediaSequence::new(msn),
+                },
+                &cipher,
+            )
             .unwrap();
     }
     let mut seen = Seen::default();

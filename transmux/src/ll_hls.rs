@@ -43,6 +43,7 @@ use core::time::Duration;
 
 use broadcast_common::timescale::{Rounding, Timescale, cmp_ticks, rescale_i64};
 use broadcast_common::{Demand, Stage, Timestamp};
+use broadcast_hls::MediaSequence;
 
 use crate::error::{Error, Result};
 use crate::pipeline::build_chunk;
@@ -71,13 +72,18 @@ pub struct PartInfo {
     /// 1-based sequence number of the parent segment this part belongs to.
     pub segment_seq: u32,
     /// 0-based index of this part within its parent segment.
-    pub part_index: u32,
+    pub part_index: broadcast_hls::PartIndex,
 }
 
 impl PartInfo {
     /// Build a part record from its bytes, duration, and sequence numbers.
     #[must_use]
-    pub fn new(bytes: Vec<u8>, duration: f64, segment_seq: u32, part_index: u32) -> Self {
+    pub fn new(
+        bytes: Vec<u8>,
+        duration: f64,
+        segment_seq: u32,
+        part_index: broadcast_hls::PartIndex,
+    ) -> Self {
         Self {
             bytes,
             duration,
@@ -156,7 +162,7 @@ pub struct CutPlan {
 #[derive(Debug, Clone)]
 pub struct PartCut {
     /// Part index within the parent segment.
-    pub part_index: u32,
+    pub part_index: broadcast_hls::PartIndex,
     /// Decode time of the part's first sample in the leader's timescale.
     pub start: i64,
     /// Timescale of [`Self::start`]; `None` inherits the plan's timescale.
@@ -189,7 +195,11 @@ impl CutPlan {
 impl PartCut {
     /// A part boundary at `start` in `timescale`; `None` inherits the plan's.
     #[must_use]
-    pub fn new(part_index: u32, start: i64, timescale: Option<Timescale>) -> Self {
+    pub fn new(
+        part_index: broadcast_hls::PartIndex,
+        start: i64,
+        timescale: Option<Timescale>,
+    ) -> Self {
         Self {
             part_index,
             start,
@@ -208,9 +218,9 @@ impl PartCut {
 #[derive(Debug, Clone, Copy)]
 pub struct PartCutReady {
     /// Media sequence number of the segment this part belongs to.
-    pub msn: u32,
+    pub msn: MediaSequence,
     /// Part index within that segment.
-    pub part_index: u32,
+    pub part_index: broadcast_hls::PartIndex,
     /// Decode time of the part's first sample, in the leader's timescale.
     pub start_dts: i64,
     /// Timescale of [`Self::start_dts`].
@@ -753,8 +763,8 @@ impl LlHlsSegmenter {
     /// passed: the parameter is a non-zero [`Timescale`].
     pub fn follow_part(
         &mut self,
-        segment_seq: u32,
-        part_index: u32,
+        segment_seq: MediaSequence,
+        part_index: broadcast_hls::PartIndex,
         start: i64,
         timescale: Timescale,
     ) -> Result<()> {
@@ -778,12 +788,12 @@ impl LlHlsSegmenter {
         if self.incremental
             && let Some(open) = &self.current_plan
         {
-            if segment_seq < open.segment_seq {
+            if segment_seq.value() < u64::from(open.segment_seq) {
                 return Err(Error::InvalidInput(
                     "follow_part: segment_seq must not go backwards",
                 ));
             }
-            if segment_seq > open.segment_seq {
+            if segment_seq.value() > u64::from(open.segment_seq) {
                 self.close_incremental_segment(Some((start, timescale)))?;
             }
         }
@@ -792,9 +802,11 @@ impl LlHlsSegmenter {
             self.incremental = true;
             self.inc_next_part = 0;
             self.inc_part_count = 0;
-            self.current_segment = segment_seq;
+            self.current_segment = u32::try_from(segment_seq.value()).map_err(|_| {
+                Error::InvalidInput("follow_part: segment_seq exceeds the u32 segment range")
+            })?;
             self.current_plan = Some(CutPlan::new(
-                segment_seq,
+                self.current_segment,
                 start,
                 timescale.get(),
                 Vec::new(),
@@ -840,7 +852,7 @@ impl LlHlsSegmenter {
 
     /// The open segment's next unemitted part and the boundary that ends it,
     /// once that boundary is known.
-    fn next_inc_part(&self) -> Option<(u32, u32, (i64, Timescale))> {
+    fn next_inc_part(&self) -> Option<(u32, broadcast_hls::PartIndex, (i64, Timescale))> {
         if !self.incremental {
             return None;
         }
@@ -859,7 +871,7 @@ impl LlHlsSegmenter {
     fn emit_inc_part(
         &mut self,
         segment_seq: u32,
-        part_index: u32,
+        part_index: broadcast_hls::PartIndex,
         end: Option<(i64, Timescale)>,
     ) -> Result<bool> {
         let take_ends: Vec<usize> = self
@@ -940,7 +952,7 @@ impl LlHlsSegmenter {
             self.incremental = false;
             return Ok(());
         };
-        let starts: Vec<(u32, (i64, Timescale))> = plan
+        let starts: Vec<(broadcast_hls::PartIndex, (i64, Timescale))> = plan
             .parts
             .iter()
             .map(|p| {
@@ -1006,8 +1018,13 @@ impl LlHlsSegmenter {
         plan: &CutPlan,
         end: Option<(i64, Timescale)>,
     ) -> Result<()> {
-        let part_starts: Vec<(u32, i64, Timescale)> = if plan.parts.is_empty() {
-            vec![(0, plan.segment_start, plan.timescale)]
+        let part_starts: Vec<(broadcast_hls::PartIndex, i64, Timescale)> = if plan.parts.is_empty()
+        {
+            vec![(
+                broadcast_hls::PartIndex::ZERO,
+                plan.segment_start,
+                plan.timescale,
+            )]
         } else {
             plan.parts
                 .iter()
@@ -1524,7 +1541,7 @@ impl LlHlsSegmenter {
             t.part_start = end;
         }
 
-        let part_index = self.next_part_index;
+        let part_index = broadcast_hls::PartIndex::new(self.next_part_index);
         self.next_part_index += 1;
 
         // Re-seed the accumulator with the span still buffered on the anchor.
@@ -1559,7 +1576,7 @@ impl LlHlsSegmenter {
         }
         if self.record_part_cuts {
             self.ready_part_cuts.push_back(PartCutReady {
-                msn: self.current_segment,
+                msn: MediaSequence::new(u64::from(self.current_segment)),
                 part_index,
                 start_dts: part_start,
                 timescale: self.tracks[anchor].spec.timescale,

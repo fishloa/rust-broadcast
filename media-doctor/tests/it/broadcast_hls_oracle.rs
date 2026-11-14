@@ -19,7 +19,7 @@ fn broadcast_hls_media_playlist_validates_clean() {
     let pl = MediaPlaylist {
         version: 3,
         target_duration: 10,
-        media_sequence: 0,
+        msn: broadcast_hls::MediaSequence::ZERO,
         discontinuity_sequence: 0,
         segments: vec![
             MediaSegment {
@@ -70,7 +70,7 @@ fn broadcast_hls_playlist_invalid_target_duration_reported() {
     let pl = MediaPlaylist {
         version: 3,
         target_duration: 10,
-        media_sequence: 0,
+        msn: broadcast_hls::MediaSequence::ZERO,
         discontinuity_sequence: 0,
         segments: vec![MediaSegment {
             uri: "long.m4s".into(),

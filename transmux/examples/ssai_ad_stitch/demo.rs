@@ -462,7 +462,7 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
             .cloned()
             .fold(0.0_f64, f64::max)
             .ceil() as u32,
-        media_sequence: 0,
+        msn: broadcast_hls::MediaSequence::new(0),
         discontinuity_sequence: 0,
         segments: vec![
             MediaSegment {

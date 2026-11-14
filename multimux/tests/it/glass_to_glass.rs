@@ -394,7 +394,7 @@ async fn non_ll_origin_plays_via_full_segment_fallback_over_http() {
         let playlist = MediaPlaylist {
             version: 3,
             target_duration: 4,
-            media_sequence: 0,
+            msn: broadcast_hls::MediaSequence::new(0),
             discontinuity_sequence: 0,
             segments: vec![MediaSegment {
                 uri: "seg1.m4s".to_string(),

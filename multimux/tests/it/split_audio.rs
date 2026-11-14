@@ -12,7 +12,7 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use broadcast_common::mux::Unpackage;
-use broadcast_hls::MediaPlaylist;
+use broadcast_hls::{MediaPlaylist, MediaSequence, PartIndex};
 use hls_runtime::server::AudioRenditionDecl;
 use media_plane::ProgramId;
 use media_plane::trunk::{RetentionClass, Trunk, TrunkConfig};
@@ -440,10 +440,7 @@ async fn check_rendition(
 ) -> Vec<u32> {
     let video_ts = video_src.spec.timescale;
     let playlist = rig.playlist(uri).await;
-    assert_eq!(
-        playlist.media_sequence, video.media_sequence,
-        "{uri}: MEDIA-SEQUENCE"
-    );
+    assert_eq!(playlist.msn, video.msn, "{uri}: MEDIA-SEQUENCE");
     let video_seqs: Vec<u32> = video.segments.iter().map(|s| seq_of(&s.uri)).collect();
     let audio_seqs: Vec<u32> = playlist.segments.iter().map(|s| seq_of(&s.uri)).collect();
     assert_eq!(audio_seqs, video_seqs, "{uri}: MSN set");
@@ -951,7 +948,7 @@ async fn split_audio_track_appearing_mid_stream_starts_at_next_cut() {
     );
     let first = rig.playlist("audio/a0.m3u8").await;
     assert_eq!(first.segments.len(), video.segments.len());
-    assert_eq!(first.media_sequence, video.media_sequence);
+    assert_eq!(first.msn, video.msn);
 }
 
 #[test]
@@ -1440,13 +1437,22 @@ async fn split_audio_each_playlist_carries_rendition_reports() {
     }
 }
 
-fn served_edge(pl: &MediaPlaylist) -> (u64, Option<u64>) {
-    let closed = pl.media_sequence + pl.segments.len() as u64;
+fn served_edge(pl: &MediaPlaylist) -> (MediaSequence, Option<PartIndex>) {
+    let closed = MediaSequence::new(pl.msn.value() + pl.segments.len() as u64);
     match &pl.open_segment {
-        Some(open) if !open.parts.is_empty() => (closed, Some(open.parts.len() as u64 - 1)),
+        Some(open) if !open.parts.is_empty() => (
+            closed,
+            Some(PartIndex::new(
+                u32::try_from(open.parts.len() - 1).unwrap_or(u32::MAX),
+            )),
+        ),
         _ => {
             let last_parts = pl.segments.last().map_or(0, |s| s.parts.len());
-            (closed - 1, (last_parts > 0).then(|| last_parts as u64 - 1))
+            (
+                MediaSequence::new(closed.value() - 1),
+                (last_parts > 0)
+                    .then(|| PartIndex::new(u32::try_from(last_parts - 1).unwrap_or(u32::MAX))),
+            )
         }
     }
 }
@@ -1628,7 +1634,7 @@ fn parts_of(pl: &MediaPlaylist) -> Vec<(u64, u64)> {
     closed
         .chain(open)
         .enumerate()
-        .flat_map(|(i, n)| (0..n as u64).map(move |p| (pl.media_sequence + i as u64, p)))
+        .flat_map(|(i, n)| (0..n as u64).map(move |p| (pl.msn.value() + i as u64, p)))
         .collect()
 }
 
@@ -1718,7 +1724,7 @@ async fn split_audio_blocking_reload_returns_when_the_matching_audio_part_exists
         assert!(at < end, "video never reached part 1 of a later segment");
         let video = rig.playlist("media.m3u8").await;
         if let Some(&(msn, TARGET_PART)) = parts_of(&video).last()
-            && msn > video.media_sequence
+            && msn > video.msn.value()
         {
             break (msn, TARGET_PART);
         }
@@ -1772,7 +1778,7 @@ async fn split_audio_blocking_reload_returns_when_the_matching_audio_part_exists
 
     rig.publish_more(&sources, &window(&sources, at, end + 1.0));
     let finished = rig.playlist("media.m3u8").await;
-    let segment = &finished.segments[(target.0 - finished.media_sequence) as usize];
+    let segment = &finished.segments[(target.0 - finished.msn.value()) as usize];
     let remaining_parts_secs = (target.1 + 3) as f64 * f64::from(PART_TARGET_MS) / 1000.0;
     assert!(
         segment.duration.get() >= remaining_parts_secs,

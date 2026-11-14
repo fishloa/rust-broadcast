@@ -388,7 +388,7 @@ mod tests {
         let playlist = MediaPlaylist {
             version: 7,
             target_duration: TARGET_DURATION_SECS.ceil() as u32,
-            media_sequence: 0,
+            msn: broadcast_hls::MediaSequence::new(0),
             discontinuity_sequence: 0,
             segments: media_segments,
             open_segment: None,

@@ -18,7 +18,12 @@
 
 use rtsp_types::{Message, Method, Request, Response, StatusCode, Version, headers};
 
+use core::time::Duration;
+
+use crate::config::SessionIdSource;
 use crate::error::{Error, MessageKind, MessageParseError, Result};
+use crate::server_config::RtspServerConfig;
+use crate::session_id::SessionId;
 use crate::state::{SessionState, server_next_state};
 use crate::transport::{LowerTransport, Transport};
 
@@ -67,14 +72,13 @@ pub enum ServerEvent {
     },
 }
 
-/// The source of `Session` id values a [`ServerSession`] draws from.
-type SessionIdSource = Box<dyn FnMut() -> Result<u64> + Send + Sync>;
-
 /// A driveable RTSP server session (RFC 2326 §A.2).
 pub struct ServerSession {
     state: SessionState,
-    session_id: Option<String>,
-    session_timeout: Option<u64>,
+    session_id: Option<SessionId>,
+    /// Ids allocated so far, which a counter source advances by.
+    allocated: u64,
+    session_timeout: Option<Duration>,
     session_ids: SessionIdSource,
     negotiated_transport: Option<Transport>,
     server_header: String,
@@ -104,65 +108,29 @@ const SESSION_SCOPED_METHODS: [Method; 4] = [
 ];
 
 impl ServerSession {
-    /// Creates a fresh server session in the `Init` state.
+    /// Creates a fresh server session in the `Init` state, configured by
+    /// `config`.
     ///
-    /// `session_ids` is called once per allocated `Session` id and must return
-    /// values from a cryptographically secure random source (RFC 2326 §3.4) —
-    /// the id is the only thing tying later requests to this session. The
-    /// `tokio` adapter's `io::RtspServerConfig::default` supplies the OS RNG. The
-    /// source must be `Send + Sync`, so a session can be shared behind an `Arc`.
-    pub fn new(mut session_ids: impl FnMut() -> u64 + Send + Sync + 'static) -> Self {
-        Self::try_new(move || Ok(session_ids()))
-    }
-
-    /// [`Self::new`] for an id source that can fail (the OS random source): the failure is
-    /// returned by the request that needed the id (`SETUP`) as that error, and no session is
-    /// created.
-    pub fn try_new(session_ids: impl FnMut() -> Result<u64> + Send + Sync + 'static) -> Self {
-        ServerSession {
+    /// Every allocated `Session` id is drawn from
+    /// [`RtspServerConfig::session_ids`] at the `SETUP` that needs it.
+    ///
+    /// # Errors
+    ///
+    /// The OS random source failing to initialise is not reachable from a
+    /// config (ids are drawn lazily), so this is infallible today; the
+    /// [`Result`] leaves room for a validating config field.
+    pub fn new(config: RtspServerConfig) -> Result<Self> {
+        Ok(ServerSession {
             state: SessionState::Init,
             session_id: None,
-            session_timeout: None,
-            session_ids: Box::new(session_ids),
+            allocated: 0,
+            session_timeout: config.session_timeout,
+            session_ids: config.session_ids,
             negotiated_transport: None,
-            server_header: "rtsp-runtime".to_string(),
-            describe_sdp: None,
-            server_ports: None,
-        }
-    }
-
-    /// Sets the SDP body a `DESCRIBE` is answered with (`Content-Type:
-    /// application/sdp`). Without it `DESCRIBE` is answered with a bare `200 OK`.
-    pub fn with_describe_sdp(mut self, sdp: impl Into<Vec<u8>>) -> Self {
-        self.describe_sdp = Some(sdp.into());
-        self
-    }
-
-    /// Sets the RTP/RTCP port pair a UDP `SETUP` reply advertises as
-    /// `server_port` (RFC 2326 §12.39).
-    pub fn with_server_ports(mut self, rtp: u16, rtcp: u16) -> Self {
-        self.server_ports = Some((rtp, rtcp));
-        self
-    }
-
-    /// Sets the timeout (seconds) advertised in the `Session` header on SETUP.
-    pub fn with_session_timeout(mut self, seconds: u64) -> Self {
-        self.session_timeout = Some(seconds);
-        self
-    }
-
-    /// Replaces the id source with a counter starting at `seed`. For
-    /// deterministic tests only: the ids it yields are predictable, so it
-    /// must never be used for a server that accepts real connections.
-    #[doc(hidden)]
-    pub fn with_session_seed(mut self, seed: u64) -> Self {
-        let mut next = seed;
-        self.session_ids = Box::new(move || {
-            let id = next;
-            next = next.wrapping_add(1);
-            Ok(id)
-        });
-        self
+            server_header: config.server_header,
+            describe_sdp: config.describe_sdp,
+            server_ports: config.server_ports,
+        })
     }
 
     /// The current session state.
@@ -171,8 +139,8 @@ impl ServerSession {
     }
 
     /// The allocated session id, once a SETUP has been handled.
-    pub fn session_id(&self) -> Option<&str> {
-        self.session_id.as_deref()
+    pub fn session_id(&self) -> Option<SessionId> {
+        self.session_id
     }
 
     /// The negotiated transport, once a SETUP has been handled.
@@ -253,16 +221,15 @@ impl ServerSession {
                 chosen.server_port = self.server_ports;
             }
             let transport = Transport::single(chosen);
-            let session_id = match self.session_id.clone() {
+            let session_id = match self.session_id {
                 Some(id) => id,
                 None => self.allocate_session()?,
             };
-            self.session_id = Some(session_id.clone());
+            self.session_id = Some(session_id);
             self.negotiated_transport = Some(transport.clone());
 
-            let sid = session_id.clone();
-            let mut session_hdr = crate::session_header::SessionHeader::new(sid.clone());
-            session_hdr.timeout = self.session_timeout.map(std::time::Duration::from_secs);
+            let mut session_hdr = crate::session_header::SessionHeader::new(session_id.to_string());
+            session_hdr.timeout = self.session_timeout;
             let session_hdr = session_hdr.to_header_value()?;
             let transport_hdr = transport.to_header_value()?;
             let resp = self.build_response(StatusCode::Ok, cseq, |b| {
@@ -271,7 +238,7 @@ impl ServerSession {
             });
             self.state = next_state;
             events.push(ServerEvent::SessionSetup {
-                session_id,
+                session_id: session_id.to_string(),
                 transport,
             });
             events.push(ServerEvent::RequestAccepted {
@@ -298,7 +265,7 @@ impl ServerSession {
         }
 
         // Other methods: echo Session if we have one, send 200, transition.
-        let session_hdr = self.session_id.clone();
+        let session_hdr = self.session_id.map(|id| id.to_string());
         let resp = self.build_response(StatusCode::Ok, cseq, |mut b| {
             if let Some(sid) = &session_hdr {
                 b = b.header(headers::SESSION, sid.clone());
@@ -321,9 +288,10 @@ impl ServerSession {
         Ok((serialize(&Message::from(resp))?, events))
     }
 
-    fn allocate_session(&mut self) -> Result<String> {
-        let id = (self.session_ids)()?;
-        Ok(format!("{id:016x}"))
+    fn allocate_session(&mut self) -> Result<SessionId> {
+        let id = self.session_ids.next_id(self.allocated)?;
+        self.allocated += 1;
+        Ok(id)
     }
 
     /// RFC 2326 §12.37: a `Session` header must name this session's id; a
@@ -334,7 +302,7 @@ impl ServerSession {
                 let theirs = crate::session_header::SessionHeader::parse(value)
                     .map(|h| h.id)
                     .unwrap_or_default();
-                broadcast_auth::constant_time_eq(theirs.as_bytes(), ours.as_bytes())
+                broadcast_auth::constant_time_eq(theirs.as_bytes(), ours.to_string().as_bytes())
             }
             (Some(_), None) => false,
             (None, Some(_)) => !SESSION_SCOPED_METHODS.contains(method),
@@ -390,7 +358,12 @@ mod tests {
     fn test_session() -> ServerSession {
         use std::sync::atomic::{AtomicU64, Ordering};
         static NEXT: AtomicU64 = AtomicU64::new(0x9e37_79b9_7f4a_7c15);
-        ServerSession::new(|| NEXT.fetch_add(0x2545_f491_4f6c_dd1d, Ordering::Relaxed))
+        let seed = NEXT.fetch_add(0x2545_f491_4f6c_dd1d, Ordering::Relaxed);
+        ServerSession::new(
+            RtspServerConfig::default()
+                .with_session_ids(crate::config::SessionIdSource::counter(seed)),
+        )
+        .expect("a session")
     }
 
     fn req(bytes: &str) -> Vec<u8> {
@@ -459,18 +432,10 @@ mod tests {
         setup(&mut b, "RTP/AVP/TCP;interleaved=0-1");
         let (a, b) = (a.session_id().unwrap(), b.session_id().unwrap());
         assert_ne!(a, b, "two sessions must not share an id");
-        assert!(a.len() >= 16, "id {a} is shorter than 64 bits of hex");
-    }
-
-    #[test]
-    fn an_unavailable_random_source_fails_the_setup_with_a_typed_error_and_creates_no_session() {
-        let mut s = ServerSession::try_new(|| Err(Error::RandomSource));
-        let result = s.handle_request(&req(
-            "SETUP rtsp://h/s/track1 RTSP/1.0\nCSeq: 1\nTransport: RTP/AVP/TCP;interleaved=0-1\n\n",
-        ));
-        assert!(matches!(result, Err(Error::RandomSource)), "{result:?}");
-        assert!(s.session_id().is_none());
-        assert_eq!(s.state(), SessionState::Init);
+        assert!(
+            a.to_string().len() >= 16,
+            "id {a} is shorter than 64 bits of hex"
+        );
     }
 
     #[test]

@@ -59,9 +59,9 @@ pub fn two_variant_master_text() -> String {
         .to_string()
 }
 
-pub fn live_playlist_text(media_sequence: u64, segments: &[&str]) -> String {
+pub fn live_playlist_text(msn: u64, segments: &[&str]) -> String {
     let mut s = format!(
-        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:{media_sequence}\n"
+        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:{msn}\n"
     );
     for seg in segments {
         s.push_str(&format!("#EXTINF:2.000,\n{seg}\n"));

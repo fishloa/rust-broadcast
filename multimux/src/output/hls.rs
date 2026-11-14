@@ -583,13 +583,13 @@ mod tests {
             for (index, segment) in playlist.segments.iter().enumerate() {
                 assert_eq!(
                     segment_number(&segment.uri),
-                    playlist.media_sequence + index as u64,
+                    playlist.msn.value() + index as u64,
                     "{label}: segment {index} is not numbered MEDIA-SEQUENCE + index"
                 );
             }
         }
         assert!(
-            after.media_sequence > seen,
+            after.msn.value() > seen,
             "the Media Sequence Number must not go back to a number a client already saw"
         );
         assert!(
@@ -607,7 +607,7 @@ mod tests {
         let _third = crate::testutil::ingest_run(&route, 8).await;
         let third =
             broadcast_hls::MediaPlaylist::parse(&playlist_text(&app).await).expect("parses");
-        assert!(third.media_sequence > after.media_sequence + after.segments.len() as u64 - 1);
+        assert!(third.msn.value() > after.msn.value() + after.segments.len() as u64 - 1);
         assert!(third.segments[0].discontinuous);
         assert!(
             third.discontinuity_sequence > after.discontinuity_sequence,
@@ -617,7 +617,13 @@ mod tests {
     }
 
     fn part(seq: u32, idx: u32) -> PartInfo {
-        PartInfo::new(vec![0x10 + idx as u8; 4], 0.5, seq, idx).with_independent(idx == 0)
+        PartInfo::new(
+            vec![0x10 + idx as u8; 4],
+            0.5,
+            seq,
+            broadcast_hls::PartIndex::new(idx),
+        )
+        .with_independent(idx == 0)
     }
 
     fn seg(seq: u32) -> SegmentInfo {
@@ -1086,7 +1092,7 @@ mod ts_tests {
         // and only source either side derives its version from.
         let equivalent = broadcast_hls::MediaPlaylist {
             target_duration: 4,
-            media_sequence: 1,
+            msn: broadcast_hls::MediaSequence::new(1),
             segments: vec![
                 broadcast_hls::MediaSegment {
                     uri: "seg-1-1.ts".to_string(),

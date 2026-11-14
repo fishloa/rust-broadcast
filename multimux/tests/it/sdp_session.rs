@@ -59,11 +59,11 @@ fn transmux_rtp_medias_match_golden() {
 /// `golden/rtsp/rtsp-announce.sdp` (multimux's own test).
 #[test]
 fn multimux_rtsp_push_medias_match_golden() {
-    let sdp = multimux::push::rtsp::push_sdp_for_test().expect("build push SDP");
+    let sdp = multimux::test_seam::push_sdp_for_test().expect("build push SDP");
     let announce = fs::read_to_string(test_fixtures::path("golden/rtsp/rtsp-announce.sdp"))
         .expect("read announce golden");
     assert_eq!(sdp, announce, "push body differs from rtsp-announce.sdp");
-    let media = multimux::push::rtsp::push_media_for_test();
+    let media = multimux::test_seam::push_media_for_test();
     assert_eq!(media.len(), 1, "one m= section for the whole TS");
     assert_eq!(media[0].media, "video");
     assert_eq!(media[0].port, 0);

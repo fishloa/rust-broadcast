@@ -1,5 +1,6 @@
 //! Pre-release audit #1485, `HlsClient` findings 1, 2, 4, 5, 12, 14, 15, 16,
 //! driven purely through the public API.
+use broadcast_hls::{MediaSequence, PartIndex};
 
 use core::time::Duration;
 use hls_runtime::client::{Action, Error, HlsClient, KeyId, Output, ResourceId};
@@ -45,7 +46,9 @@ fn key_fetches(actions: &[Action]) -> Vec<(KeyId, Url)> {
 
 fn segment_ids(msns: impl IntoIterator<Item = u64>) -> Vec<ResourceId> {
     msns.into_iter()
-        .map(|msn| ResourceId::Segment { msn })
+        .map(|msn| ResourceId::Segment {
+            msn: MediaSequence::new(msn),
+        })
         .collect()
 }
 
@@ -137,7 +140,12 @@ fn consecutive_delta_reloads_keep_numbering_and_the_aes_iv_after_the_window_slid
     };
     let cipher = aes128_encrypt_segment(&KEY, &iv, &ts_segment());
     client
-        .on_resource(ResourceId::Segment { msn: 14 }, &cipher)
+        .on_resource(
+            ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(14),
+            },
+            &cipher,
+        )
         .unwrap();
     let outputs = drain_outputs(&mut client);
 
@@ -153,7 +161,12 @@ fn consecutive_delta_reloads_keep_numbering_and_the_aes_iv_after_the_window_slid
         .unwrap();
     drain(&mut baseline);
     baseline
-        .on_resource(ResourceId::Segment { msn: 14 }, &ts_segment())
+        .on_resource(
+            ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(14),
+            },
+            &ts_segment(),
+        )
         .unwrap();
     let want = drain_outputs(&mut baseline);
     assert!(
@@ -221,7 +234,10 @@ fn a_repeated_playlist_does_not_request_the_preload_hinted_part_twice() {
     drain(&mut client);
     client.on_playlist(ll_hint_playlist().as_bytes()).unwrap();
     client.on_playlist(ll_hint_playlist().as_bytes()).unwrap();
-    let hinted = ResourceId::Part { msn: 1, part: 1 };
+    let hinted = ResourceId::Part {
+        msn: broadcast_hls::MediaSequence::new(1),
+        part: PartIndex::new(1),
+    };
     let ids = resource_ids(&drain(&mut client));
     assert_eq!(ids.iter().filter(|id| **id == hinted).count(), 1, "{ids:?}");
 }
@@ -272,7 +288,12 @@ fn a_failed_init_never_ends_the_stream_cleanly_and_can_be_retried() {
     let ids = resource_ids(&drain(&mut client));
     assert!(ids.contains(&ResourceId::Init), "{ids:?}");
     client
-        .on_resource(ResourceId::Segment { msn: 0 }, EMPTY_FRAGMENT)
+        .on_resource(
+            ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(0),
+            },
+            EMPTY_FRAGMENT,
+        )
         .unwrap();
     client.on_error(Some(ResourceId::Init));
     let outputs = drain_outputs(&mut client);
@@ -455,7 +476,12 @@ fn aes_128_segments_with_a_map_declared_before_the_key_are_accepted() {
     assert_eq!(key_fetches(&actions).len(), 1, "{actions:?}");
     assert_eq!(
         resource_ids(&actions),
-        vec![ResourceId::Segment { msn: 0 }, ResourceId::Init]
+        vec![
+            ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(0)
+            },
+            ResourceId::Init
+        ]
     );
 }
 

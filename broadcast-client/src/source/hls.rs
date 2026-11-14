@@ -1131,8 +1131,14 @@ mod tests {
     #[test]
     fn a_failed_segment_that_left_the_window_drops_its_parked_prefix() {
         let (mut source, _auth, url) = source_with_auth();
-        let id = ResourceId::Part { msn: 7, part: 0 };
-        let neighbour = ResourceId::Part { msn: 8, part: 0 };
+        let id = ResourceId::Part {
+            msn: broadcast_hls::MediaSequence::new(7),
+            part: broadcast_hls::PartIndex::new(0),
+        };
+        let neighbour = ResourceId::Part {
+            msn: broadcast_hls::MediaSequence::new(8),
+            part: broadcast_hls::PartIndex::new(0),
+        };
         source.stash.put(Purpose::Resource(id), parked_prefix(&url));
         source
             .stash
@@ -1157,7 +1163,10 @@ mod tests {
     #[test]
     fn a_given_up_segment_drops_its_parked_prefix() {
         let (mut source, _auth, url) = source_with_auth();
-        let id = ResourceId::Part { msn: 7, part: 0 };
+        let id = ResourceId::Part {
+            msn: broadcast_hls::MediaSequence::new(7),
+            part: broadcast_hls::PartIndex::new(0),
+        };
         source.stash.put(Purpose::Resource(id), parked_prefix(&url));
         source.give_up_segment(id, None, 0);
         assert!(

@@ -684,16 +684,22 @@ fn next_media_sequence_continues_into_a_replacement_origin() {
             .with_instance(7),
     )
     .unwrap();
-    assert_eq!(first.next_media_sequence(), 1001);
+    assert_eq!(
+        first.next_media_sequence(),
+        broadcast_hls::MediaSequence::new(1001)
+    );
     publish_seg(&w, 1, 4, false);
     publish_seg(&w, 2, 4, false);
-    assert_eq!(first.next_media_sequence(), 1003);
+    assert_eq!(
+        first.next_media_sequence(),
+        broadcast_hls::MediaSequence::new(1003)
+    );
 
     // A reconnect: a fresh Trunk restarts at 1, the offset carries on.
     let (trunk2, w2) = trunk_with(8, 64);
     let second = HlsOrigin::new(
         HlsOriginConfig::new(Arc::clone(&trunk2), 4.0, nz(4))
-            .with_media_sequence_offset(first.next_media_sequence().saturating_sub(1))
+            .with_media_sequence_offset(first.next_media_sequence().value().saturating_sub(1))
             .with_instance(7),
     )
     .unwrap();
@@ -703,7 +709,10 @@ fn next_media_sequence_continues_into_a_replacement_origin() {
         "{}",
         playlist(&second)
     );
-    assert_eq!(second.next_media_sequence(), 1004);
+    assert_eq!(
+        second.next_media_sequence(),
+        broadcast_hls::MediaSequence::new(1004)
+    );
 }
 
 #[test]
@@ -1009,7 +1018,7 @@ fn a_replacement_origin_with_the_offset_reuses_no_segment_name() {
     let collide = origin(&trunk2, 6, false);
     let o2 = HlsOrigin::new(
         HlsOriginConfig::new(Arc::clone(&trunk2), 4.0, nz(6))
-            .with_media_sequence_offset(o1.next_media_sequence().saturating_sub(1))
+            .with_media_sequence_offset(o1.next_media_sequence().value().saturating_sub(1))
             .with_instance(7),
     )
     .unwrap();
@@ -1115,7 +1124,7 @@ fn a_replacement_origin_after_an_init_change_never_reuses_an_immutable_name() {
     // Run 2: the source reconnected with a DIFFERENT init, the numbers restart
     // at 1 over a new Trunk; the offset continues the MSN (skipping run 1's
     // open segment).
-    let (_t2, w2, o2) = fresh_origin(o1.next_media_sequence());
+    let (_t2, w2, o2) = fresh_origin(o1.next_media_sequence().value());
     o2.set_init(vec![0xB2; 8]);
     publish_seg(&w2, 1, 4, false);
     publish_part(&w2, 2, 0);
@@ -1143,7 +1152,10 @@ fn a_replacement_origin_after_an_init_change_never_reuses_an_immutable_name() {
         "run 2 reused run 1's open segment number {open_msn}: {body2}"
     );
     assert!(
-        body2.contains(&format!("#EXT-X-MEDIA-SEQUENCE:{}\n", open_msn + 1)),
+        body2.contains(&format!(
+            "#EXT-X-MEDIA-SEQUENCE:{}\n",
+            broadcast_hls::MediaSequence::new(open_msn.value() + 1)
+        )),
         "{body2}"
     );
 }

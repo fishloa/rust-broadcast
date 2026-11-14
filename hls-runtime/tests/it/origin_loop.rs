@@ -87,7 +87,7 @@ fn part_spec(p: &PartInfo) -> PartSpec {
 /// optional trailing `open_parts` (the in-progress segment, segment number
 /// `open_seq`), and an optional preload-hint part index right after those.
 struct PlaylistBuilder<'a> {
-    media_sequence: u64,
+    msn: broadcast_hls::MediaSequence,
     part_target_secs: f64,
     closed: &'a [(SegmentInfo, Vec<PartInfo>)],
     open_seq: Option<u32>,
@@ -143,7 +143,7 @@ impl PlaylistBuilder<'_> {
         MediaPlaylist {
             version: 9,
             target_duration: 1,
-            media_sequence: self.media_sequence,
+            msn: self.msn,
             discontinuity_sequence: 0,
             segments,
             open_segment,
@@ -280,7 +280,7 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
     // only via the preload hint at this point.
     let seg2_known_parts: Vec<PartInfo> = seg2_all_parts
         .iter()
-        .filter(|p| p.part_index == 0)
+        .filter(|p| p.part_index == broadcast_hls::PartIndex::ZERO)
         .cloned()
         .collect();
     assert_eq!(seg2_known_parts.len(), 1);
@@ -289,7 +289,7 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
     // with its 1 known part + a preload hint for part index 1. ---
     let closed = vec![(ready_segments[0].clone(), seg1_parts.clone())];
     let pl1 = PlaylistBuilder {
-        media_sequence: 1,
+        msn: broadcast_hls::MediaSequence::new(1),
         part_target_secs,
         closed: &closed,
         open_seq: Some(2),
@@ -353,8 +353,10 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
         let want_url = format!("http://origin/live/{}", part_uri(p));
         assert!(
             actions.iter().any(|a| matches!(a,
-                Action::FetchResource { id: ResourceId::Part { msn: 1, part }, url, .. }
-                    if *part == p.part_index as u64 && url.as_str() == want_url
+                Action::FetchResource { id: ResourceId::Part { msn, part }, url, .. }
+                    if *msn == broadcast_hls::MediaSequence::new(1)
+                        && *part == p.part_index
+                        && url.as_str() == want_url
             )),
             "must request seg1 part {}: {actions:#?}",
             p.part_index
@@ -365,9 +367,10 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
         actions.iter().any(|a| matches!(
             a,
             Action::FetchResource {
-                id: ResourceId::Part { msn: 2, part: 0 },
+                id: ResourceId::Part { msn, part },
                 ..
-            }
+            } if *msn == broadcast_hls::MediaSequence::new(2)
+                && *part == broadcast_hls::PartIndex::ZERO
         )),
         "must request seg2 part 0: {actions:#?}"
     );
@@ -376,8 +379,10 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
     // (which only requests numbered #EXT-X-PART lines) fails.
     assert!(
         actions.iter().any(|a| matches!(a,
-            Action::FetchResource { id: ResourceId::Part { msn: 2, part: 1 }, url, .. }
-                if url.as_str() == "http://origin/live/seg2.1.m4s"
+            Action::FetchResource { id: ResourceId::Part { msn, part }, url, .. }
+                if *msn == broadcast_hls::MediaSequence::new(2)
+                    && *part == broadcast_hls::PartIndex::new(1)
+                    && url.as_str() == "http://origin/live/seg2.1.m4s"
         )),
         "must prefetch the EXT-X-PRELOAD-HINT part (seg2 part 1): {actions:#?}"
     );
@@ -391,10 +396,14 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
         Action::FetchPlaylist(r) => {
             assert_eq!(r.url.as_str(), PLAYLIST_URL);
             let b = r.blocking.expect("must be a blocking reload (LL playlist)");
-            assert_eq!(b.msn, 2, "blocking reload must target seg 2");
+            assert_eq!(
+                b.msn,
+                broadcast_hls::MediaSequence::new(2),
+                "blocking reload must target seg 2"
+            );
             assert_eq!(
                 b.part,
-                Some(1),
+                Some(broadcast_hls::PartIndex::new(1)),
                 "blocking reload must target the next unseen part"
             );
         }
@@ -477,7 +486,7 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
         (seg2_closed, seg2_all_parts.clone()),
     ];
     let pl2 = PlaylistBuilder {
-        media_sequence: 1,
+        msn: broadcast_hls::MediaSequence::new(1),
         part_target_secs,
         closed: &closed2,
         open_seq: None,
@@ -520,7 +529,7 @@ fn can_block_reload_no_yields_non_blocking_reload_with_backoff() {
     let pl = MediaPlaylist {
         version: 9,
         target_duration: 2,
-        media_sequence: 0,
+        msn: broadcast_hls::MediaSequence::new(0),
         discontinuity_sequence: 0,
         segments: vec![MediaSegment {
             uri: "seg0.m4s".to_string(),
@@ -615,7 +624,7 @@ fn non_ll_playlist_plays_via_full_segment_fallback() {
     let pl = MediaPlaylist {
         version: 3,
         target_duration: 2,
-        media_sequence: 0,
+        msn: broadcast_hls::MediaSequence::new(0),
         discontinuity_sequence: 0,
         segments: vec![MediaSegment {
             uri: "seg1.m4s".to_string(),
@@ -669,8 +678,9 @@ fn non_ll_playlist_plays_via_full_segment_fallback() {
     )));
     assert!(actions.iter().any(|a| matches!(
         a,
-        Action::FetchResource { id: ResourceId::Segment { msn: 0 }, url, .. }
-            if url.as_str() == "http://origin/live/seg1.m4s"
+        Action::FetchResource { id: ResourceId::Segment { msn }, url, .. }
+            if *msn == broadcast_hls::MediaSequence::ZERO
+                && url.as_str() == "http://origin/live/seg1.m4s"
     )));
 
     for a in &actions {
@@ -682,9 +692,9 @@ fn non_ll_playlist_plays_via_full_segment_fallback() {
                 client.on_resource(ResourceId::Init, &init_bytes).unwrap();
             }
             Action::FetchResource {
-                id: id @ ResourceId::Segment { msn: 0 },
+                id: id @ ResourceId::Segment { msn },
                 ..
-            } => {
+            } if *msn == broadcast_hls::MediaSequence::ZERO => {
                 client.on_resource(*id, &seg1_info.bytes).unwrap();
             }
             _ => {}

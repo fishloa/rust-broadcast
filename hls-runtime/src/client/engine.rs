@@ -169,7 +169,7 @@ fn decrypt_segment(
 
 /// The Media Sequence Number a tracked resource belongs to, `None` for the
 /// MSN-less init segment.
-fn resource_msn(id: &ResourceId) -> Option<u64> {
+fn resource_msn(id: &ResourceId) -> Option<broadcast_hls::MediaSequence> {
     match id {
         ResourceId::Part { msn, .. } | ResourceId::Segment { msn } => Some(*msn),
         _ => None,
@@ -217,7 +217,7 @@ struct InitSlot {
 struct MapEntry {
     map: MapTag,
     encryption: Option<MediaKey>,
-    first_msn: u64,
+    first_msn: broadcast_hls::MediaSequence,
 }
 
 impl MapEntry {
@@ -256,9 +256,9 @@ struct SegmentCrypto {
 
 /// RFC 8216 §5.2: the Media Sequence Number as a big-endian 128-bit number,
 /// zero-padded on the left.
-fn media_sequence_iv(msn: u64) -> [u8; BLOCK_LEN] {
+fn media_sequence_iv(msn: broadcast_hls::MediaSequence) -> [u8; BLOCK_LEN] {
     let mut iv = [0u8; BLOCK_LEN];
-    let msn_bytes = msn.to_be_bytes();
+    let msn_bytes = msn.value().to_be_bytes();
     let start = BLOCK_LEN - msn_bytes.len();
     iv[start..].copy_from_slice(&msn_bytes);
     iv
@@ -391,7 +391,7 @@ pub struct HlsClient {
     announced_init: Option<InitId>,
     /// The init that applies to each Media Sequence Number being fetched (RFC
     /// 8216 §4.4.4.5: the map preceding the segment).
-    msn_init: BTreeMap<u64, InitId>,
+    msn_init: BTreeMap<broadcast_hls::MediaSequence, InitId>,
     /// The maps of the playlist being processed.
     playlist_maps: Vec<MapEntry>,
     /// Last fMP4 track spec set for which [`Output::Tracks`] was emitted, so a
@@ -412,7 +412,7 @@ pub struct HlsClient {
     /// Keys whose fetch is outstanding.
     keys_in_flight: BTreeSet<KeyId>,
     /// Decryption parameters of every encrypted segment requested, by MSN.
-    segment_crypto: BTreeMap<u64, SegmentCrypto>,
+    segment_crypto: BTreeMap<broadcast_hls::MediaSequence, SegmentCrypto>,
     /// Encrypted segments delivered before their key arrived (ciphertext).
     pending_keyed: Vec<(ResourceId, Vec<u8>)>,
     /// Next [`KeyId`] to hand out; never reused, so evicting a key can not
@@ -442,10 +442,10 @@ pub struct HlsClient {
     /// The init segment last synthesized from `ts_specs`; a new
     /// [`Output::Init`] goes out only when a re-synthesis differs from it.
     last_ts_init: Option<Vec<u8>>,
-    delivered_parts: BTreeSet<(u64, u64)>,
-    delivered_segments: BTreeSet<u64>,
-    discontinuous_msns: BTreeSet<u64>,
-    discontinuity_emitted: BTreeSet<u64>,
+    delivered_parts: BTreeSet<(broadcast_hls::MediaSequence, broadcast_hls::PartIndex)>,
+    delivered_segments: BTreeSet<broadcast_hls::MediaSequence>,
+    discontinuous_msns: BTreeSet<broadcast_hls::MediaSequence>,
+    discontinuity_emitted: BTreeSet<broadcast_hls::MediaSequence>,
     byte_range_cursor: BTreeMap<String, u64>,
 
     outstanding_fetches: u64,
@@ -455,7 +455,7 @@ pub struct HlsClient {
     /// `EXT-X-MEDIA-SEQUENCE` of the previous playlist: RFC 8216 §6.2.2
     /// forbids it ever decreasing, so a smaller one is an origin restart
     /// (see [`Self::restart_after_regression`]).
-    last_media_sequence: Option<u64>,
+    last_media_sequence: Option<broadcast_hls::MediaSequence>,
 }
 
 /// Choose a variant index according to the policy: the highest-bandwidth variant the policy
@@ -804,12 +804,12 @@ impl HlsClient {
         let mut first_error: Option<Error> = None;
         // An older view of the same stream must never make the client deliver
         // backwards: its segments below the previous window are skipped.
-        let mut lag_floor: Option<u64> = None;
+        let mut lag_floor: Option<broadcast_hls::MediaSequence> = None;
         if self.last_media_sequence.is_some() {
             match self.continuity(&playlist) {
                 Continuity::Restart => self.restart_after_regression()?,
                 Continuity::OlderWindow => {
-                    lag_floor = self.last_full_playlist.as_ref().map(|p| p.media_sequence);
+                    lag_floor = self.last_full_playlist.as_ref().map(|p| p.msn);
                 }
                 Continuity::Lagging | Continuity::Continues => {}
             }
@@ -817,18 +817,18 @@ impl HlsClient {
         // A lagging copy never lowers the high-water mark.
         self.last_media_sequence = Some(
             self.last_media_sequence
-                .map_or(playlist.media_sequence, |p| p.max(playlist.media_sequence)),
+                .map_or(playlist.msn, |p| p.max(playlist.msn)),
         );
-        self.forget_keys_below(playlist.media_sequence);
+        self.forget_keys_below(playlist.msn);
 
         // `EXT-X-MEDIA-SEQUENCE` is an unbounded remote `u64`: every MSN
         // derived below is `media_sequence + index` with `index <
         // segments.len()`, so proving the end fits proves them all.
         let next_msn = playlist
-            .media_sequence
+            .msn
             .checked_add(index_u64(playlist.segments.len()))
             .ok_or(Error::MediaSequenceOverflow {
-                media_sequence: playlist.media_sequence,
+                msn: playlist.msn,
                 segments: playlist.segments.len(),
             })?;
 
@@ -840,7 +840,7 @@ impl HlsClient {
         self.playlist_maps = self.map_entries(&playlist, text, next_msn);
 
         for (i, seg) in playlist.segments.iter().enumerate() {
-            let msn = playlist.media_sequence.saturating_add(index_u64(i));
+            let msn = broadcast_hls::MediaSequence::new(playlist.msn.value() + index_u64(i));
             if lag_floor.is_some_and(|floor| msn < floor) {
                 self.skip_segment(msn, seg)?;
                 continue;
@@ -897,12 +897,14 @@ impl HlsClient {
                         .as_ref()
                         .map(|o| index_u64(o.parts.len()))
                         .unwrap_or(0);
+                    let part_index =
+                        broadcast_hls::PartIndex::new(u32::try_from(part_idx).unwrap_or(u32::MAX));
                     let id = ResourceId::Part {
                         msn: next_msn,
-                        part: part_idx,
+                        part: part_index,
                     };
                     if !self.requested.contains(&id)
-                        && !self.delivered_parts.contains(&(next_msn, part_idx))
+                        && !self.delivered_parts.contains(&(next_msn, part_index))
                         && let Ok(url) = Url::parse(&url::resolve(self.base(), hint_uri))
                     {
                         let byte_range = self.resolve_hint_byte_range(url.as_str(), ll)?;
@@ -948,7 +950,9 @@ impl HlsClient {
                         .unwrap_or(0);
                     BlockingReload {
                         msn: next_msn,
-                        part: Some(part),
+                        part: Some(broadcast_hls::PartIndex::new(
+                            u32::try_from(part).unwrap_or(u32::MAX),
+                        )),
                     }
                 });
             let can_skip = playlist
@@ -995,7 +999,7 @@ impl HlsClient {
                 skip: false,
             }));
         Error::DeltaNotMergeable {
-            media_sequence: delta.media_sequence,
+            msn: delta.msn,
             skipped_segments: delta.skip.as_ref().map_or(0, |s| s.skipped_segments),
         }
     }
@@ -1089,7 +1093,12 @@ impl HlsClient {
 
     /// The `EXT-X-MAP`s of `playlist`, in playlist order, each with the key
     /// that encrypts it and the Media Sequence Number it first applies to.
-    fn map_entries(&self, playlist: &MediaPlaylist, text: &str, next_msn: u64) -> Vec<MapEntry> {
+    fn map_entries(
+        &self,
+        playlist: &MediaPlaylist,
+        text: &str,
+        next_msn: broadcast_hls::MediaSequence,
+    ) -> Vec<MapEntry> {
         let keyed = keys_at_maps(text);
         let mut entries: Vec<MapEntry> = Vec::new();
         let listed = playlist
@@ -1097,9 +1106,12 @@ impl HlsClient {
             .iter()
             .enumerate()
             .filter_map(|(i, s)| {
-                s.map
-                    .as_ref()
-                    .map(|m| (m, playlist.media_sequence.saturating_add(index_u64(i))))
+                s.map.as_ref().map(|m| {
+                    (
+                        m,
+                        broadcast_hls::MediaSequence::new(playlist.msn.value() + index_u64(i)),
+                    )
+                })
             })
             .chain(
                 playlist
@@ -1172,7 +1184,9 @@ impl HlsClient {
             .playlist_maps
             .iter()
             .find(|e| e.map == *map)
-            .map_or((None, 0), |e| (e.encryption.clone(), e.first_msn));
+            .map_or((None, broadcast_hls::MediaSequence::ZERO), |e| {
+                (e.encryption.clone(), e.first_msn)
+            });
         let byte_range = self.resolve_byte_range(url.as_str(), &map.byte_range)?;
         let crypto = match key.as_ref().and_then(|k| k.uri.as_deref().map(|u| (k, u))) {
             Some((key, uri)) => {
@@ -1233,7 +1247,7 @@ impl HlsClient {
 
     /// Bind Media Sequence Number `msn` to the init of `map`, the one that
     /// applies to it (RFC 8216bis §4.4.4.5), creating that init on first use.
-    fn bind_init(&mut self, msn: u64, map: Option<&MapTag>) -> Result<()> {
+    fn bind_init(&mut self, msn: broadcast_hls::MediaSequence, map: Option<&MapTag>) -> Result<()> {
         if let Some(map) = map {
             let id = self.init_for_map(map)?;
             self.msn_init.insert(msn, id);
@@ -1575,7 +1589,7 @@ impl HlsClient {
     /// in-flight fetch included: the per-URL maps would otherwise grow
     /// with every tokenised key URL, and a key behind a URI that returns
     /// after its segments left the window is fetched afresh.
-    fn forget_keys_below(&mut self, first_msn: u64) {
+    fn forget_keys_below(&mut self, first_msn: broadcast_hls::MediaSequence) {
         self.segment_crypto.retain(|&m, _| m >= first_msn);
         let mut live: BTreeSet<KeyId> = self.segment_crypto.values().map(|c| c.key_id).collect();
         live.extend(
@@ -1604,7 +1618,7 @@ impl HlsClient {
     /// sure its key is requested.
     fn prepare_encrypted_segment(
         &mut self,
-        msn: u64,
+        msn: broadcast_hls::MediaSequence,
         seg: &MediaSegment,
         key: &MediaKey,
         iframes_only: bool,
@@ -1744,11 +1758,10 @@ impl HlsClient {
         let Some(prev) = &self.last_full_playlist else {
             return playlist;
         };
-        if playlist.media_sequence < prev.media_sequence {
+        if playlist.msn < prev.msn {
             return playlist;
         }
-        let Ok(prefix_start) = usize::try_from(playlist.media_sequence - prev.media_sequence)
-        else {
+        let Ok(prefix_start) = usize::try_from(playlist.msn.value() - prev.msn.value()) else {
             return playlist;
         };
         // `skip.skipped_segments` (`EXT-X-SKIP`'s `SKIPPED-SEGMENTS`,
@@ -1783,7 +1796,7 @@ impl HlsClient {
 
     fn process_closed_segment(
         &mut self,
-        msn: u64,
+        msn: broadcast_hls::MediaSequence,
         seg: &MediaSegment,
         key: Option<&MediaKey>,
         iframes_only: bool,
@@ -1839,12 +1852,15 @@ impl HlsClient {
 
         let mut fully_accounted = true;
         for (i, part) in seg.parts.iter().enumerate() {
-            let i = index_u64(i);
-            if part.gap || self.delivered_parts.contains(&(msn, i)) {
+            let part_index = broadcast_hls::PartIndex::new(u32::try_from(i).unwrap_or(u32::MAX));
+            if part.gap || self.delivered_parts.contains(&(msn, part_index)) {
                 continue;
             }
             fully_accounted = false;
-            let id = ResourceId::Part { msn, part: i };
+            let id = ResourceId::Part {
+                msn,
+                part: part_index,
+            };
             if !self.requested.contains(&id) {
                 let Some(url) = self.segment_url(msn, &part.uri) else {
                     return Ok(());
@@ -1860,12 +1876,15 @@ impl HlsClient {
         Ok(())
     }
 
-    fn undelivered_parts(&self, msn: u64) -> Vec<ResourceId> {
+    fn undelivered_parts(&self, msn: broadcast_hls::MediaSequence) -> Vec<ResourceId> {
         self.resource_requests
             .range(
-                ResourceId::Part { msn, part: 0 }..=ResourceId::Part {
+                ResourceId::Part {
                     msn,
-                    part: u64::MAX,
+                    part: broadcast_hls::PartIndex::ZERO,
+                }..=ResourceId::Part {
+                    msn,
+                    part: broadcast_hls::PartIndex::MAX,
                 },
             )
             .map(|(id, _)| *id)
@@ -1876,30 +1895,37 @@ impl HlsClient {
             .collect()
     }
 
-    fn retry_undelivered_parts(&mut self, msn: u64) {
+    fn retry_undelivered_parts(&mut self, msn: broadcast_hls::MediaSequence) {
         for id in self.undelivered_parts(msn) {
             self.retry_resource(id);
         }
     }
 
-    fn has_delivered_part(&self, msn: u64) -> bool {
+    fn has_delivered_part(&self, msn: broadcast_hls::MediaSequence) -> bool {
         self.delivered_parts
-            .range((msn, 0)..=(msn, u64::MAX))
+            .range((msn, broadcast_hls::PartIndex::ZERO)..=(msn, broadcast_hls::PartIndex::MAX))
             .next()
             .is_some()
     }
 
-    fn covered_by_parts(&self, msn: u64) -> bool {
+    fn covered_by_parts(&self, msn: broadcast_hls::MediaSequence) -> bool {
         self.has_delivered_part(msn) && self.undelivered_parts(msn).is_empty()
     }
 
-    fn process_open_segment(&mut self, msn: u64, open: &OpenSegment) -> Result<()> {
+    fn process_open_segment(
+        &mut self,
+        msn: broadcast_hls::MediaSequence,
+        open: &OpenSegment,
+    ) -> Result<()> {
         for (i, part) in open.parts.iter().enumerate() {
-            let i = index_u64(i);
-            if part.gap || self.delivered_parts.contains(&(msn, i)) {
+            let part_index = broadcast_hls::PartIndex::new(u32::try_from(i).unwrap_or(u32::MAX));
+            if part.gap || self.delivered_parts.contains(&(msn, part_index)) {
                 continue;
             }
-            let id = ResourceId::Part { msn, part: i };
+            let id = ResourceId::Part {
+                msn,
+                part: part_index,
+            };
             if !self.requested.contains(&id) {
                 let Some(url) = self.segment_url(msn, &part.uri) else {
                     return Ok(());
@@ -1947,7 +1973,7 @@ impl HlsClient {
     /// keeps) resolves to, or `None` (with the report queued) when the guarded
     /// resolver refuses it: the segment stays unrequested instead of being
     /// silently renamed (issue #2458).
-    fn segment_url(&mut self, msn: u64, uri: &str) -> Option<Url> {
+    fn segment_url(&mut self, msn: broadcast_hls::MediaSequence, uri: &str) -> Option<Url> {
         match url_ref::resolve(self.base(), uri) {
             Ok(url) => Some(url),
             Err(source) => {
@@ -1962,7 +1988,7 @@ impl HlsClient {
     /// left stranded.
     fn report_unresolvable(
         &mut self,
-        msn: u64,
+        msn: broadcast_hls::MediaSequence,
         uri: &str,
         source: broadcast_common::url_ref::Error,
     ) {
@@ -2136,7 +2162,11 @@ impl HlsClient {
     /// demuxer would have to re-probe every PID from the new timeline alone
     /// and loses any PID whose parameter sets are not in it (a segment that
     /// opens mid-GOP).
-    fn begin_ts_resource(&mut self, id: ResourceId, msn: u64) -> Result<()> {
+    fn begin_ts_resource(
+        &mut self,
+        id: ResourceId,
+        msn: broadcast_hls::MediaSequence,
+    ) -> Result<()> {
         if self.discontinuous_msns.contains(&msn) && !self.discontinuity_emitted.contains(&msn) {
             self.restart_ts_demux(id)?;
             self.emit_discontinuity_if_needed(msn);
@@ -2292,7 +2322,7 @@ impl HlsClient {
 
     /// Emit [`Output::Discontinuity`] once for a discontinuous `msn`;
     /// `true` when it was emitted by this call.
-    fn emit_discontinuity_if_needed(&mut self, msn: u64) -> bool {
+    fn emit_discontinuity_if_needed(&mut self, msn: broadcast_hls::MediaSequence) -> bool {
         if self.discontinuous_msns.contains(&msn) && !self.discontinuity_emitted.contains(&msn) {
             self.pending_outputs.push_back(Output::Discontinuity);
             self.discontinuity_emitted.insert(msn);
@@ -2388,7 +2418,7 @@ impl HlsClient {
             (None, None) => 0,
         };
         for (i, seg) in segments.iter().enumerate().take(start) {
-            let msn = playlist.media_sequence.saturating_add(index_u64(i));
+            let msn = broadcast_hls::MediaSequence::new(playlist.msn.value() + index_u64(i));
             self.skip_segment(msn, seg)?;
         }
         Ok(())
@@ -2397,7 +2427,11 @@ impl HlsClient {
     /// Mark a segment skipped at join time as delivered, advancing the
     /// byte-range cursor exactly as fetching it would have (a segment with
     /// parts is addressed by its parts' ranges, a plain one by its own).
-    fn skip_segment(&mut self, msn: u64, seg: &MediaSegment) -> Result<()> {
+    fn skip_segment(
+        &mut self,
+        msn: broadcast_hls::MediaSequence,
+        seg: &MediaSegment,
+    ) -> Result<()> {
         if self.delivered_segments.contains(&msn) {
             return Ok(());
         }
@@ -2421,7 +2455,7 @@ impl HlsClient {
     /// Resources still in flight (requested, not yet fulfilled) are kept so
     /// their delivery is still accepted.
     fn prune(&mut self, playlist: &MediaPlaylist) {
-        let first = playlist.media_sequence;
+        let first = playlist.msn;
         let below = |id: &ResourceId| resource_msn(id).is_some_and(|m| m < first);
         let fulfilled = &self.fulfilled;
         self.requested
@@ -2515,16 +2549,13 @@ impl HlsClient {
     /// having fallen behind.
     fn continuity(&self, new: &MediaPlaylist) -> Continuity {
         let Some(prev) = &self.last_full_playlist else {
-            return if self
-                .last_media_sequence
-                .is_some_and(|p| new.media_sequence < p)
-            {
+            return if self.last_media_sequence.is_some_and(|p| new.msn < p) {
                 Continuity::Restart
             } else {
                 Continuity::Continues
             };
         };
-        let (p0, n0) = (prev.media_sequence, new.media_sequence);
+        let (p0, n0) = (prev.msn, new.msn);
         let regressed = n0 < self.last_media_sequence.unwrap_or(p0).max(p0);
 
         // 1. Identity at every shared number. A query that differs is a re-signing
@@ -2538,7 +2569,7 @@ impl HlsClient {
                 return Continuity::Restart;
             };
             let Some(old) = msn
-                .checked_sub(p0)
+                .checked_distance_from(p0)
                 .and_then(|d| usize::try_from(d).ok())
                 .and_then(|d| prev.segments.get(d))
             else {
@@ -2648,7 +2679,7 @@ impl HlsClient {
             return true;
         };
         (0..playlist.segments.len() as u64).all(|i| {
-            let msn = playlist.media_sequence.saturating_add(i);
+            let msn = broadcast_hls::MediaSequence::new(playlist.msn.value() + i);
             self.delivered_segments.contains(&msn)
                 || self.fulfilled.contains(&ResourceId::Segment { msn })
                 || self.covered_by_parts(msn)
@@ -2691,7 +2722,9 @@ mod tests {
     fn decrypt_segment_strips_pkcs7_padding_to_the_exact_plaintext() {
         let key = [0x5Au8; KEY_LEN];
         let iv = [0xC3u8; BLOCK_LEN];
-        let id = ResourceId::Segment { msn: 9 };
+        let id = ResourceId::Segment {
+            msn: broadcast_hls::MediaSequence::new(9),
+        };
         let crypto = SegmentCrypto {
             key_id: KeyId(0),
             iv,
@@ -2705,11 +2738,17 @@ mod tests {
 
     #[test]
     fn media_sequence_iv_is_big_endian_left_padded() {
-        let iv = media_sequence_iv(0x0102_0304_0506_0708);
+        let iv = media_sequence_iv(broadcast_hls::MediaSequence::new(0x0102_0304_0506_0708));
         assert_eq!(iv[..8], [0u8; 8]);
         assert_eq!(iv[8..], [1, 2, 3, 4, 5, 6, 7, 8]);
-        assert_eq!(media_sequence_iv(0)[..], [0u8; 16]);
-        assert_eq!(media_sequence_iv(0x1FF)[14..], [1, 0xFF]);
+        assert_eq!(
+            media_sequence_iv(broadcast_hls::MediaSequence::new(0))[..],
+            [0u8; 16]
+        );
+        assert_eq!(
+            media_sequence_iv(broadcast_hls::MediaSequence::new(0x1FF))[14..],
+            [1, 0xFF]
+        );
     }
 
     // Regression: `on_resource` documents (see `Error::UnrequestedResource`)
@@ -2720,7 +2759,9 @@ mod tests {
     #[test]
     fn on_resource_rejects_a_never_requested_id() {
         let mut client = HlsClient::new(config("http://example.com/playlist.m3u8"));
-        let id = ResourceId::Segment { msn: 0 };
+        let id = ResourceId::Segment {
+            msn: broadcast_hls::MediaSequence::new(0),
+        };
 
         let err = client
             .on_resource(id, b"some bytes")
@@ -2753,7 +2794,9 @@ mod tests {
     #[test]
     fn on_resource_accepts_a_previously_requested_id() {
         let mut client = HlsClient::new(config("http://example.com/playlist.m3u8"));
-        let id = ResourceId::Segment { msn: 0 };
+        let id = ResourceId::Segment {
+            msn: broadcast_hls::MediaSequence::new(0),
+        };
         client.request_resource(
             id,
             Url::parse("http://example.com/seg0.m4s").expect("URL"),
@@ -2909,7 +2952,7 @@ mod tests {
     fn merge_delta_does_not_panic_on_an_overflowing_skipped_segments() {
         let mut client = HlsClient::new(config("http://example.com/playlist.m3u8"));
         let prev = MediaPlaylist {
-            media_sequence: 0,
+            msn: broadcast_hls::MediaSequence::new(0),
             segments: vec![MediaSegment::default(); 2],
             ..Default::default()
         };
@@ -2919,7 +2962,7 @@ mod tests {
         client.last_full_playlist = Some(prev);
 
         let delta = MediaPlaylist {
-            media_sequence: 10, // prefix_start == 10 - 0 == 10
+            msn: broadcast_hls::MediaSequence::new(10), // prefix_start == 10 - 0 == 10
             skip: Some(broadcast_hls::SkipInfo::new(u64::MAX - 5)),
             segments: Vec::new(),
             ..Default::default()
@@ -2958,7 +3001,12 @@ mod tests {
         );
         // Deliver msn 0 (buffered: no init), leave msn 1 in flight.
         client
-            .on_resource(ResourceId::Segment { msn: 0 }, EMPTY_FRAGMENT)
+            .on_resource(
+                ResourceId::Segment {
+                    msn: broadcast_hls::MediaSequence::new(0),
+                },
+                EMPTY_FRAGMENT,
+            )
             .unwrap();
 
         client
@@ -2970,9 +3018,15 @@ mod tests {
             requested,
             vec![
                 // in flight when the window moved: kept
-                ResourceId::Segment { msn: 1 },
-                ResourceId::Segment { msn: 1000 },
-                ResourceId::Segment { msn: 1001 },
+                ResourceId::Segment {
+                    msn: broadcast_hls::MediaSequence::new(1),
+                },
+                ResourceId::Segment {
+                    msn: broadcast_hls::MediaSequence::new(1000),
+                },
+                ResourceId::Segment {
+                    msn: broadcast_hls::MediaSequence::new(1001),
+                },
             ]
         );
         assert!(client.fulfilled.is_empty(), "{:?}", client.fulfilled);
@@ -2996,7 +3050,12 @@ mod tests {
         };
         client.on_playlist(pl(5).as_bytes()).unwrap();
         client
-            .on_resource(ResourceId::Segment { msn: 5 }, EMPTY_FRAGMENT)
+            .on_resource(
+                ResourceId::Segment {
+                    msn: broadcast_hls::MediaSequence::new(5),
+                },
+                EMPTY_FRAGMENT,
+            )
             .unwrap();
         assert_eq!(
             client
@@ -3004,7 +3063,7 @@ mod tests {
                 .iter()
                 .copied()
                 .collect::<Vec<_>>(),
-            vec![5]
+            vec![broadcast_hls::MediaSequence::new(5)]
         );
         client.on_playlist(pl(9).as_bytes()).unwrap();
         assert_eq!(
@@ -3013,7 +3072,7 @@ mod tests {
                 .iter()
                 .copied()
                 .collect::<Vec<_>>(),
-            vec![9]
+            vec![broadcast_hls::MediaSequence::new(9)]
         );
         assert!(client.discontinuity_emitted.is_empty());
         assert!(client.delivered_segments.is_empty());
@@ -3042,7 +3101,12 @@ mod tests {
             .on_playlist(keyed_playlist(0, 1, "key.bin").as_bytes())
             .unwrap();
         client
-            .on_resource(ResourceId::Segment { msn: 0 }, &[0u8; 32])
+            .on_resource(
+                ResourceId::Segment {
+                    msn: broadcast_hls::MediaSequence::new(0),
+                },
+                &[0u8; 32],
+            )
             .unwrap();
         assert_eq!(client.pending_keyed.len(), 1);
         client
@@ -3067,13 +3131,25 @@ mod tests {
             .unwrap();
         let big = vec![0u8; 40 * 1024 * 1024];
         client
-            .on_resource(ResourceId::Segment { msn: 0 }, &big)
+            .on_resource(
+                ResourceId::Segment {
+                    msn: broadcast_hls::MediaSequence::new(0),
+                },
+                &big,
+            )
             .unwrap();
         let err = client
-            .on_resource(ResourceId::Segment { msn: 1 }, &big)
+            .on_resource(
+                ResourceId::Segment {
+                    msn: broadcast_hls::MediaSequence::new(1),
+                },
+                &big,
+            )
             .expect_err("the second 40 MiB segment exceeds the 64 MiB cap");
         assert!(
-            matches!(err, Error::PendingKeyedOverflow { dropped } if dropped == ResourceId::Segment { msn: 0 }),
+            matches!(err, Error::PendingKeyedOverflow { dropped } if dropped == ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(0),
+            }),
             "{err:?}"
         );
         assert!(
@@ -3087,7 +3163,9 @@ mod tests {
                 .iter()
                 .map(|(id, _)| *id)
                 .collect::<Vec<_>>(),
-            vec![ResourceId::Segment { msn: 1 }]
+            vec![ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(1),
+            }]
         );
     }
 

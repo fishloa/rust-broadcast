@@ -7,6 +7,7 @@ mod hls_tag_completeness;
 mod pdt_typed;
 mod quoted_attr_roundtrip;
 mod segment_keys;
+mod sequence_types;
 mod spec_fixture_version;
 mod supplemental_codecs;
 mod video_range;

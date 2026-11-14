@@ -159,7 +159,7 @@ async fn a_shared_concurrency_pool_is_one_across_routes() {
 #[tokio::test]
 async fn the_whip_router_uses_one_shared_pool_across_routes() {
     // The real production WHIP router, cap 1 (dialled low to observe sharing).
-    let router = multimux::source::whip::whip_router_for_test(1, 1);
+    let router = multimux::test_seam::whip_router_for_test(1, 1);
 
     // Hold the single shared permit by streaming a body that never finishes.
     let hold = tokio::spawn({

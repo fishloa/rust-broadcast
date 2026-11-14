@@ -31,7 +31,7 @@ a=rtpmap:98 VP8/90000\r\n";
 /// `GOLDEN_BLESS=<dir>` writes instead.
 #[test]
 fn whip_answer_matches_golden() {
-    let answer = multimux::source::whip::render_answer_for_test(
+    let answer = multimux::test_seam::render_answer_for_test(
         OFFER,
         "127.0.0.1:54321".parse().unwrap(),
         "localufrag",
@@ -58,7 +58,7 @@ fn whip_answer_matches_golden() {
 /// CHARACTERISATION: a media-level offer parses its media-section pair.
 #[test]
 fn a_media_level_offer_parses_its_media_section_credentials() {
-    let (ufrag, pwd) = multimux::source::whip::parse_offer_for_test(OFFER);
+    let (ufrag, pwd) = multimux::test_seam::parse_offer_for_test(OFFER);
     assert_eq!(ufrag, "abcd");
     assert_eq!(pwd, "abcdefghijklmnopqrstuvwx");
 }
@@ -77,7 +77,7 @@ fn a_session_level_offer_still_parses_its_credentials() {
         offer.push_str(line);
         offer.push_str("\r\n");
     }
-    let (ufrag, pwd) = multimux::source::whip::parse_offer_for_test(&offer);
+    let (ufrag, pwd) = multimux::test_seam::parse_offer_for_test(&offer);
     assert_eq!(ufrag, "abcd");
     assert_eq!(pwd, "abcdefghijklmnopqrstuvwx");
 }
@@ -95,7 +95,7 @@ fn a_media_section_credentials_win_over_a_stale_session_level_pair() {
         offer.push_str(line);
         offer.push_str("\r\n");
     }
-    let (ufrag, pwd) = multimux::source::whip::parse_offer_for_test(&offer);
+    let (ufrag, pwd) = multimux::test_seam::parse_offer_for_test(&offer);
     assert_eq!(ufrag, "abcd", "media-level credentials must win");
     assert_eq!(
         pwd, "abcdefghijklmnopqrstuvwx",

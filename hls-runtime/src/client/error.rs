@@ -118,10 +118,10 @@ pub enum Error {
     /// `u64` (RFC 8216 §4.3.3.2 puts no upper bound on the tag's value, so a
     /// hostile or corrupt origin can advertise one). Rejected outright
     /// rather than wrapping the derived Media Sequence Numbers.
-    #[error("media sequence {media_sequence} + {segments} segments overflows u64")]
+    #[error("media sequence {msn} + {segments} segments overflows u64")]
     MediaSequenceOverflow {
         /// The playlist's `EXT-X-MEDIA-SEQUENCE`.
-        media_sequence: u64,
+        msn: broadcast_hls::MediaSequence,
         /// The number of closed segments the playlist lists.
         segments: usize,
     },
@@ -198,11 +198,11 @@ pub enum Error {
     /// so none of its segments was processed; a full playlist has been
     /// requested instead.
     #[error(
-        "delta playlist at media sequence {media_sequence} skipping {skipped_segments} segments cannot be merged"
+        "delta playlist at media sequence {msn} skipping {skipped_segments} segments cannot be merged"
     )]
     DeltaNotMergeable {
         /// The delta's `EXT-X-MEDIA-SEQUENCE`.
-        media_sequence: u64,
+        msn: broadcast_hls::MediaSequence,
         /// Its `EXT-X-SKIP` `SKIPPED-SEGMENTS`.
         skipped_segments: u64,
     },

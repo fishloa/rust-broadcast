@@ -41,6 +41,7 @@ mod origin_hls_skip;
 mod origin_iframe;
 mod origin_llhls;
 mod origin_pdt;
+mod public_surface;
 mod push_log_redaction;
 mod push_negotiate;
 mod push_rtmp;
@@ -70,6 +71,8 @@ mod soak_whep_peers;
 mod spawn_disposition;
 mod spawn_ownership;
 mod split_audio;
+#[cfg(feature = "test-seams")]
+mod srt_url_golden;
 mod subtitle_webvtt;
 #[path = "../support/mod.rs"]
 mod support;

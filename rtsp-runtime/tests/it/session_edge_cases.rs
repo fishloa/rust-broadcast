@@ -1,8 +1,8 @@
 //! Session edge cases: Transport selection, redirects, 454, stale auth, large reads, unknown methods.
 
 use rtsp_runtime::{
-    ClientEvent, ClientSession, ServerSession, SessionHeader, SessionState, Transport,
-    TransportSpec,
+    ClientEvent, ClientSession, RtspServerConfig, ServerSession, SessionHeader, SessionIdSource,
+    SessionState, Transport, TransportSpec,
 };
 
 fn wire(s: &str) -> Vec<u8> {
@@ -12,7 +12,7 @@ fn wire(s: &str) -> Vec<u8> {
 const BASE: &str = "rtsp://h/s";
 
 fn client_in_ready() -> ClientSession {
-    let mut c = ClientSession::new();
+    let mut c = ClientSession::default();
     let t = Transport::single(TransportSpec::rtp_avp_tcp_interleaved(0, 1));
     c.setup(BASE, &t).unwrap();
     c.handle_data_strict(&wire(
@@ -25,7 +25,10 @@ fn client_in_ready() -> ClientSession {
 
 #[test]
 fn server_picks_the_first_supported_transport_spec_instead_of_answering_461() {
-    let mut s = ServerSession::new(|| 7);
+    let mut s = ServerSession::new(
+        RtspServerConfig::default().with_session_ids(SessionIdSource::counter(7)),
+    )
+    .expect("a server session");
     let req = wire(
         "SETUP rtsp://h/s/t RTSP/1.0\nCSeq: 1\nTransport: RTP/SAVP;unicast;client_port=5000-5001, RTP/AVP;unicast;client_port=5002-5003\n\n",
     );
@@ -43,7 +46,7 @@ fn session_timeout_above_u32_is_kept_not_replaced_by_the_default() {
 
 #[test]
 fn failed_setup_response_does_not_record_a_negotiated_transport() {
-    let mut c = ClientSession::new();
+    let mut c = ClientSession::default();
     let t = Transport::single(TransportSpec::rtp_avp_tcp_interleaved(0, 1));
     c.setup(BASE, &t).unwrap();
     c.handle_data_strict(&wire(
@@ -55,7 +58,7 @@ fn failed_setup_response_does_not_record_a_negotiated_transport() {
 
 #[test]
 fn setup_2xx_with_an_unmodelled_transport_profile_still_delivers_the_response() {
-    let mut c = ClientSession::new();
+    let mut c = ClientSession::default();
     let t = Transport::single(TransportSpec::rtp_avp_tcp_interleaved(0, 1));
     c.setup(BASE, &t).unwrap();
     let out = c.handle_data(&wire(
@@ -94,7 +97,7 @@ fn teardown_answered_454_leaves_the_client_in_init() {
 
 #[test]
 fn a_large_read_of_valid_interleaved_frames_is_not_a_terminal_error() {
-    let mut c = ClientSession::new();
+    let mut c = ClientSession::default();
     let frame = {
         let mut f = vec![b'$', 0, 0xFF, 0xFF];
         f.extend(std::iter::repeat_n(0u8, 0xFFFF));
@@ -110,7 +113,7 @@ fn a_large_read_of_valid_interleaved_frames_is_not_a_terminal_error() {
 
 #[test]
 fn endless_stale_401_challenges_end_in_the_401_response() {
-    let mut c = ClientSession::new().with_credentials(rtsp_runtime::Credentials::new("u", "p"));
+    let mut c = ClientSession::default().with_credentials(rtsp_runtime::Credentials::new("u", "p"));
     c.options(BASE).unwrap();
     let mut cseq = 1;
     let mut gave_up = false;
@@ -144,7 +147,10 @@ fn a_session_timeout_beyond_the_u64_digit_bound_is_a_warned_default_not_a_silent
 
 #[test]
 fn a_request_without_cseq_is_answered_400_and_the_session_continues() {
-    let mut s = ServerSession::new(|| 7);
+    let mut s = ServerSession::new(
+        RtspServerConfig::default().with_session_ids(SessionIdSource::counter(7)),
+    )
+    .expect("a server session");
     let (resp, _) = s
         .handle_request(&wire("OPTIONS rtsp://h/s RTSP/1.0\n\n"))
         .unwrap();
@@ -157,7 +163,10 @@ fn a_request_without_cseq_is_answered_400_and_the_session_continues() {
 
 #[test]
 fn an_unknown_method_is_answered_501() {
-    let mut s = ServerSession::new(|| 7);
+    let mut s = ServerSession::new(
+        RtspServerConfig::default().with_session_ids(SessionIdSource::counter(7)),
+    )
+    .expect("a server session");
     let (resp, _) = s
         .handle_request(&wire("FROBNICATE rtsp://h/s RTSP/1.0\nCSeq: 1\n\n"))
         .unwrap();

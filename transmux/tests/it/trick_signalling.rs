@@ -158,7 +158,7 @@ fn iframes_only_opt_in() {
         MediaPlaylist {
             version,
             target_duration: 5,
-            media_sequence: 0,
+            msn: broadcast_hls::MediaSequence::new(0),
             discontinuity_sequence: 0,
             segments: vec![MediaSegment {
                 uri: "iframe0.m4s".into(),

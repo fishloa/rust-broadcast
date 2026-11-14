@@ -196,7 +196,8 @@ impl PushTransport for RtspTransport {
         let _ = parsed.set_password(None);
         let clean_url = parsed.to_string();
 
-        let mut session = ClientSession::new();
+        let mut session = ClientSession::new(rtsp_runtime::RtspClientConfig::default())
+            .map_err(|e| RtspPushError::Connect(e.to_string()))?;
         let creds = config
             .credentials
             .as_ref()
@@ -216,7 +217,7 @@ impl PushTransport for RtspTransport {
         // ANNOUNCE/SETUP/RECORD and interleaved write.
         let mut client = rtsp_runtime::AsyncRtspClient::connect(
             &addr,
-            rtsp_runtime::RtspClientConfig::default()
+            rtsp_runtime::RtspClientIoConfig::default()
                 .with_session(session)
                 .with_timeouts(config.timeouts),
         )
@@ -396,9 +397,10 @@ impl RtspTransport {
     }
 }
 
-/// `#[doc(hidden)]` test seam: parse `url` and return [`control_url`], so the
+/// `test-seams` hook: parse `url` and return [`control_url`], so the
 /// URL-construction test exercises the real path. The failure is the typed one
 /// each step already returns (an invalid URL, or a cannot-be-a-base `rtsp:cam`).
+#[cfg(feature = "test-seams")]
 #[doc(hidden)]
 pub fn control_url_for_test(url: &str) -> Result<String, rtsp_runtime::Error> {
     let parsed = url::Url::parse(url).map_err(|_| rtsp_runtime::Error::InvalidUrl {
@@ -449,15 +451,17 @@ fn push_media() -> sdp_types::Media {
     media
 }
 
-/// `#[doc(hidden)]` test seam: the SDP the push announces, so the golden
-/// recorded in `rtsp-runtime`'s tests can reach the private builder.
+/// `test-seams` hook: the SDP the push announces, so the golden recorded in
+/// `rtsp-runtime`'s tests can reach the private builder.
+#[cfg(feature = "test-seams")]
 #[doc(hidden)]
 pub fn push_sdp_for_test() -> Result<String, RtspPushError> {
     build_sdp()
 }
 
-/// `#[doc(hidden)]` test seam: the media sections whose `m=` block the push
-/// announces (see [`push_sdp_for_test`]).
+/// `test-seams` hook: the media sections whose `m=` block the push announces
+/// (see [`push_sdp_for_test`]).
+#[cfg(feature = "test-seams")]
 #[doc(hidden)]
 pub fn push_media_for_test() -> Vec<sdp_types::Media> {
     vec![push_media()]
@@ -779,8 +783,8 @@ mod tests {
 
         let mut client = rtsp_runtime::AsyncRtspClient::connect(
             &addr,
-            rtsp_runtime::RtspClientConfig::default()
-                .with_session(ClientSession::new())
+            rtsp_runtime::RtspClientIoConfig::default()
+                .with_session(ClientSession::default())
                 .with_timeouts(broadcast_common::timeouts::Timeouts::default()),
         )
         .await

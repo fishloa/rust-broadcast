@@ -23,11 +23,37 @@ pub mod source;
 pub(crate) mod testutil;
 #[cfg(any(feature = "whip", feature = "whep"))]
 mod webrtc_session;
-#[cfg(all(any(feature = "whip", feature = "whep"), feature = "test-hooks"))]
+#[cfg(any(feature = "test-seams", feature = "test-hooks"))]
 #[doc(hidden)]
-pub mod webrtc_ice {
+pub mod test_seam {
+    #[cfg(feature = "test-seams")]
+    #[doc(hidden)]
+    pub use crate::source::rtmp::serve_for_test_with_read_load as serve_rtmp_for_test_with_read_load;
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub use crate::source::whip::{
+        parse_offer_for_test, render_answer_for_test, serve_for_test as serve_whip_for_test,
+        serve_for_test_with_read_load as serve_whip_for_test_with_read_load,
+        serve_for_test_with_read_load_and_max_sessions, serve_for_test_with_read_load_and_timeout,
+        serve_for_test_with_read_load_timeout_and_policy, serve_for_test_with_read_timeout,
+        whip_router_for_test,
+    };
+    #[cfg(all(any(feature = "whip", feature = "whep"), feature = "test-hooks"))]
     #[doc(hidden)]
     pub use crate::webrtc_session::restart_fragment_for_test;
+
+    #[cfg(feature = "whep")]
+    #[doc(hidden)]
+    pub use crate::output::whep;
+    #[cfg(feature = "test-seams")]
+    #[doc(hidden)]
+    pub use crate::push::rtmp::tc_url_for_test;
+    #[cfg(feature = "test-seams")]
+    #[doc(hidden)]
+    pub use crate::push::rtsp::{control_url_for_test, push_media_for_test, push_sdp_for_test};
+    #[cfg(feature = "test-seams")]
+    #[doc(hidden)]
+    pub use crate::push::srt::parse_srt_url_for_test;
 }
 
 pub use error::{MultimuxError, Result};

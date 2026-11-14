@@ -7,8 +7,8 @@
 use rtsp_runtime::client::ClientEvent;
 use rtsp_runtime::server::ServerEvent;
 use rtsp_runtime::{
-    ClientSession, InterleavedFrame, Method, ServerSession, SessionState, StatusCode, Transport,
-    TransportSpec,
+    ClientSession, InterleavedFrame, Method, RtspServerConfig, ServerSession, SessionId,
+    SessionIdSource, SessionState, StatusCode, Transport, TransportSpec,
 };
 
 /// Builds RTSP wire bytes from a `\n`-delimited string, converting to CRLF.
@@ -24,7 +24,7 @@ fn wire(s: &str) -> Vec<u8> {
 fn gate1_client_full_session_replay() {
     let base = "rtsp://video.example.com/stream";
     let track = "rtsp://video.example.com/stream/trackID=0";
-    let mut c = ClientSession::new();
+    let mut c = ClientSession::default();
 
     // OPTIONS (CSeq 1) — state-neutral.
     let out = c.options(base).unwrap();
@@ -62,7 +62,7 @@ fn gate1_client_full_session_replay() {
         .unwrap();
     assert_response(&ev, 3, Method::Setup, StatusCode::Ok);
     assert_eq!(c.state(), SessionState::Ready, "SETUP 2xx -> Ready");
-    assert_eq!(c.session_id(), Some("12345678"));
+    assert_eq!(c.session_id(), Some(SessionId::new(0x1234_5678)));
 
     // PLAY (CSeq 4) — must carry the session id captured from SETUP.
     let out = c.play(base).unwrap();
@@ -97,7 +97,7 @@ fn gate1_client_full_session_replay() {
 #[test]
 fn gate2_illegal_method_in_state_bites() {
     // play() in Init is rejected before any bytes are produced.
-    let mut c = ClientSession::new();
+    let mut c = ClientSession::default();
     assert!(
         matches!(
             c.play("rtsp://h/s"),
@@ -123,7 +123,7 @@ fn gate2_illegal_method_in_state_bites() {
     );
 
     // setup() is allowed in both Init and Ready.
-    let mut c2 = ClientSession::new();
+    let mut c2 = ClientSession::default();
     assert!(c2.setup("rtsp://h/s", &t).is_ok(), "SETUP allowed in Init");
     c2.handle_data_strict(&wire(
         "RTSP/1.0 200 OK\nCSeq: 1\nSession: 42\nTransport: RTP/AVP/TCP;interleaved=0-1\n\n",
@@ -142,7 +142,7 @@ fn gate3_digest_auth_bites() {
     use rtsp_runtime::Credentials;
 
     let uri = "rtsp://camera.example.com/live";
-    let mut c = ClientSession::new().with_credentials(Credentials::new("admin", "12345"));
+    let mut c = ClientSession::default().with_credentials(Credentials::new("admin", "12345"));
 
     // Initial DESCRIBE (CSeq 1), no Authorization.
     let out = c.describe(uri).unwrap();
@@ -201,7 +201,7 @@ fn gate3b_stale_rechallenge_refreshes_nonce() {
     use rtsp_runtime::Credentials;
 
     let uri = "rtsp://camera.example.com/live";
-    let mut c = ClientSession::new().with_credentials(Credentials::new("admin", "12345"));
+    let mut c = ClientSession::default().with_credentials(Credentials::new("admin", "12345"));
     c.describe(uri).unwrap();
 
     // First 401.
@@ -259,7 +259,7 @@ fn gate4_interleaved_framing_bites() {
 
 #[test]
 fn gate4b_client_emits_media_data_for_interleaved() {
-    let mut c = ClientSession::new();
+    let mut c = ClientSession::default();
     let f = InterleavedFrame::new(0, vec![0xDE, 0xAD, 0xBE, 0xEF]);
     let events = c.handle_data_strict(&f.to_bytes().unwrap()).unwrap();
     assert_eq!(
@@ -294,7 +294,8 @@ fn gate5_transport_round_trip_bites() {
 
 #[test]
 fn gate6_server_transitions_bite() {
-    let mut s = ServerSession::new(rand_ish_ids());
+    let mut s = ServerSession::new(RtspServerConfig::default().with_session_ids(rand_ish_ids()))
+        .expect("a server session");
 
     // SETUP -> 200 with Session + Transport, Init -> Ready.
     let (resp, events) = s
@@ -325,7 +326,9 @@ fn gate6_server_transitions_bite() {
     assert_eq!(s.state(), SessionState::Playing);
 
     // Fresh session: PLAY in Init -> 455, state unchanged.
-    let mut fresh = ServerSession::new(rand_ish_ids());
+    let mut fresh =
+        ServerSession::new(RtspServerConfig::default().with_session_ids(rand_ish_ids()))
+            .expect("a server session");
     let (resp, events) = fresh
         .handle_request(&wire("PLAY rtsp://h/s RTSP/1.0\nCSeq: 1\n\n"))
         .unwrap();
@@ -411,10 +414,10 @@ fn auth_response_value(events: &[ClientEvent]) -> String {
 }
 
 /// A per-session id source standing in for a random one in these tests.
-fn rand_ish_ids() -> impl FnMut() -> u64 + Send + 'static {
+fn rand_ish_ids() -> SessionIdSource {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0x9e37_79b9_7f4a_7c15);
-    || NEXT.fetch_add(0x2545_f491_4f6c_dd1d, Ordering::Relaxed)
+    SessionIdSource::counter(NEXT.fetch_add(0x2545_f491_4f6c_dd1d, Ordering::Relaxed))
 }
 
 // ---------------------------------------------------------------------------
@@ -427,7 +430,7 @@ fn rand_ish_ids() -> impl FnMut() -> u64 + Send + 'static {
 fn session_awaiting_play() -> ClientSession {
     let base = "rtsp://video.example.com/stream";
     let track = "rtsp://video.example.com/stream/trackID=0";
-    let mut c = ClientSession::new();
+    let mut c = ClientSession::default();
     c.describe(base).unwrap();
     c.handle_data_strict(&wire(
         "RTSP/1.0 200 OK\nCSeq: 1\nContent-Type: application/sdp\nContent-Length: 53\n\nv=0\no=- 1 1 IN IP4 192.0.2.1\nm=video 0 RTP/AVP 96\n",

@@ -1431,7 +1431,7 @@ async fn a_changed_routes_replacement_continues_numbering_with_a_discontinuity()
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     };
-    let old_last = old.media_sequence + old.segments.len() as u64 - 1;
+    let old_last = old.msn.value() + old.segments.len() as u64 - 1;
     let mpd_url = format!("http://{media_addr}/live/manifest.mpd");
     let old_mpd = client
         .get(&mpd_url)
@@ -1489,9 +1489,9 @@ async fn a_changed_routes_replacement_continues_numbering_with_a_discontinuity()
     let (new, new_text) = new;
 
     assert!(
-        new.media_sequence > old_last,
+        new.msn.value() > old_last,
         "media sequence {} does not continue past the replaced route's {old_last}",
-        new.media_sequence
+        new.msn
     );
     assert!(new.segments[0].discontinuous, "{new_text}");
     assert!(
@@ -1728,7 +1728,7 @@ async fn observe_reload(who: &'static str, first_tag: &str, second_tag: &str) ->
         let old_mpd = broadcast_dash::Mpd::parse(old_mpd_text.as_bytes()).expect("old MPD parses");
         let old_init = last_period_init(&client, media_addr, &old_mpd).await;
         let mut old_segments = Vec::new();
-        for (number, segment) in (old_playlist.media_sequence..).zip(&old_playlist.segments) {
+        for (number, segment) in (old_playlist.msn.value()..).zip(&old_playlist.segments) {
             let bytes = get_bytes(
                 &client,
                 &format!("http://{media_addr}/reload/{}", segment.uri),
@@ -1787,7 +1787,7 @@ async fn observe_reload(who: &'static str, first_tag: &str, second_tag: &str) ->
             old_mpd,
             old_mpd_text,
             old_init,
-            old_playlist.media_sequence + old_playlist.segments.len() as u64 - 1,
+            old_playlist.msn.value() + old_playlist.segments.len() as u64 - 1,
             new_mpd,
             new_mpd_text,
             new_init,
@@ -1890,7 +1890,8 @@ async fn a_reload_whose_init_changed_starts_a_new_dash_period() {
     let new_template = template(period);
     let start_number = new_template.multi.start_number.expect("startNumber");
     assert_eq!(
-        start_number, seen.new_playlist.media_sequence,
+        start_number,
+        seen.new_playlist.msn.value(),
         "startNumber is the first new segment's number: {text}"
     );
     assert!(
@@ -2123,8 +2124,8 @@ fn listed_available_numbers(mpd: &broadcast_dash::Mpd, index: usize) -> Vec<u64>
 async fn an_identical_init_reload_lists_only_served_dash_segments() {
     let seen = observe_reload("dash-identical-hole", TAG_TICKER, TAG_TICKER).await;
     let text = &seen.new_mpd_text;
-    let start_number = seen.new_playlist.media_sequence;
-    let skipped = start_number - 1;
+    let start_number = seen.new_playlist.msn;
+    let skipped = start_number.value() - 1;
     assert!(
         skipped > seen.old_last_number,
         "the replacement skips the replaced route's unfinished segment: {text}"
@@ -2192,7 +2193,7 @@ async fn an_identical_init_reload_lists_only_served_dash_segments() {
     );
     assert_eq!(
         new_template.multi.start_number,
-        Some(start_number),
+        Some(start_number.value()),
         "{text}"
     );
     let timescale = old_template.multi.base.timescale.expect("timescale");
@@ -2206,10 +2207,10 @@ async fn an_identical_init_reload_lists_only_served_dash_segments() {
         at(skipped),
         "the replaced Period ends with its last finished segment: {text}"
     );
-    assert_eq!(period.start, Some(at(start_number)), "{text}");
+    assert_eq!(period.start, Some(at(start_number.value())), "{text}");
     assert_eq!(
         new_template.multi.base.presentation_time_offset,
-        Some((start_number - first) * ticks),
+        Some((start_number.value() - first) * ticks),
         "{text}"
     );
     let mut init_and_segment = seen.new_init.clone();
@@ -2225,7 +2226,7 @@ async fn an_identical_init_reload_lists_only_served_dash_segments() {
                 .expect("dts")
         )
         .expect("non-negative"),
-        (start_number - first) * ticks,
+        (start_number.value() - first) * ticks,
         "@presentationTimeOffset is the first new segment's decode time"
     );
     assert_eq!(

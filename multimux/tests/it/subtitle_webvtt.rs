@@ -604,7 +604,7 @@ async fn subtitle_playlist_matches_video_segments() {
     for hearing_impaired in [false, true] {
         let uri = rig.subtitle_uri(hearing_impaired).await;
         let (text, subs) = rig.playlist(&uri).await;
-        assert_eq!(subs.media_sequence, video.media_sequence, "{uri}");
+        assert_eq!(subs.msn, video.msn, "{uri}");
         assert_eq!(subs.target_duration, video.target_duration, "{uri}");
         assert_eq!(subs.segments.len(), video.segments.len(), "{uri}");
         assert!(!text.contains("#EXT-X-MAP"), "no init segment:\n{text}");

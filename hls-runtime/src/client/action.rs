@@ -5,6 +5,7 @@ use alloc::string::ToString;
 use core::time::Duration;
 
 use broadcast_common::range::ByteSpan;
+use broadcast_hls::{MediaSequence, PartIndex};
 use url::Url;
 
 /// Identifies one fetchable resource: the initialisation segment, a Low-Latency
@@ -16,7 +17,7 @@ use url::Url;
 /// (for parts) the 0-based Part Index within that segment — stable identity
 /// independent of the URI, since a delta/blocking reload can re-describe the
 /// same resource with the same URI more than once.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum ResourceId {
@@ -26,15 +27,15 @@ pub enum ResourceId {
     /// Number, `part` its 0-based Part Index.
     Part {
         /// Media Sequence Number of the parent (possibly still-open) segment.
-        msn: u64,
+        msn: MediaSequence,
         /// 0-based Part Index within that segment.
-        part: u64,
+        part: PartIndex,
     },
     /// One whole media segment (RFC 8216 §4.3.3, non-LL full-segment
     /// fallback — a segment whose parts were never individually fetched).
     Segment {
         /// Media Sequence Number.
-        msn: u64,
+        msn: MediaSequence,
     },
 }
 
@@ -56,17 +57,46 @@ impl KeyId {
 /// client has consumed the playlist up to (and possibly including) a given
 /// Partial Segment and wants the server to hold the response until something
 /// newer exists.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Manual `Debug`: the sequence fields render as the numbers they are.
+#[derive(Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BlockingReload {
     /// `_HLS_msn` — Media Sequence Number of the next segment (open or not
     /// yet begun) the client wants.
-    pub msn: u64,
+    pub msn: MediaSequence,
     /// `_HLS_part` — 0-based Part Index within `msn`. `None` means a bare
     /// `_HLS_msn` request: RFC 8216bis §6.2.5.2 says this waits for `msn` to
     /// become a **closed** Media Segment, distinct from `_HLS_part=0` (which
     /// is satisfied by just the first part).
-    pub part: Option<u64>,
+    pub part: Option<PartIndex>,
+}
+
+/// Manual `Debug`: the sequence fields render as the numbers they are, as a
+/// bare `u64` field did before it was typed.
+impl core::fmt::Debug for ResourceId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            ResourceId::Init => f.write_str("Init"),
+            ResourceId::Part { msn, part } => f
+                .debug_struct("Part")
+                .field("msn", &msn.value())
+                .field("part", &part.value())
+                .finish(),
+            ResourceId::Segment { msn } => f
+                .debug_struct("Segment")
+                .field("msn", &msn.value())
+                .finish(),
+        }
+    }
+}
+
+impl core::fmt::Debug for BlockingReload {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("BlockingReload")
+            .field("msn", &self.msn.value())
+            .field("part", &self.part.map(PartIndex::value))
+            .finish()
+    }
 }
 
 /// A Media Playlist fetch: the URL and how to shape the request.

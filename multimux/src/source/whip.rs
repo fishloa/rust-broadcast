@@ -141,6 +141,12 @@ pub const DEFAULT_WHIP_MAX_SESSIONS: usize = 16;
 /// `crate::source::rtmp::ACCEPT_QUEUE_CAPACITY`'s identical reasoning.
 const ACCEPT_QUEUE_CAPACITY: usize = 32;
 
+/// The handshake budget the test harnesses start a session under when they do
+/// not exercise it: a session offered at harness start is long established
+/// before it elapses.
+#[cfg(feature = "test-hooks")]
+const NEVER_DUE_BUDGET: Duration = Duration::from_secs(600);
+
 /// Max UDP datagram this source reads in one `recv` — matches
 /// `crate::source::rtp_udp::MAX_UDP_DATAGRAM`.
 const MAX_UDP_DATAGRAM: usize = 65_536;
@@ -420,6 +426,7 @@ impl WhipRouteShared {
     /// Waits until the transport-deadline timer has fired at least `n` times
     /// (or forever if it never does — the caller bounds it). Registers the
     /// `Notified` BEFORE re-checking the counter.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub async fn wait_timer_fire(&self, n: u64) {
         loop {
             let notified = self.infra.timer_notify.notified();
@@ -491,6 +498,11 @@ pub async fn serve_for_test() -> (
 }
 
 /// [`serve_for_test`] with an explicit session read timeout.
+///
+/// # Panics
+///
+/// When the ephemeral bind or the route's own server start fails — a
+/// harness fatal, which every check is run for.
 #[doc(hidden)]
 #[cfg(feature = "test-hooks")]
 pub async fn serve_for_test_with_read_timeout(
@@ -545,7 +557,7 @@ pub async fn serve_for_test_with_read_load_and_timeout(
 ) {
     // A handshake deadline that never fires in practice: the production
     // `run_whip` default (an effectively unbounded establish budget).
-    serve_for_test_with_read_load_timeout_and_policy(read, Duration::from_secs(10_000)).await
+    serve_for_test_with_read_load_timeout_and_policy(read, NEVER_DUE_BUDGET).await
 }
 
 /// [`serve_for_test_with_read_load_and_timeout`] with an explicit handshake
@@ -580,12 +592,20 @@ pub async fn serve_for_test_with_read_load_and_max_sessions(
 ) {
     serve_read_load_inner(
         Timeouts::default().read_idle,
-        Duration::from_secs(10_000),
+        NEVER_DUE_BUDGET,
         max_sessions,
     )
     .await
 }
 
+/// The one server harness: bind an ephemeral listener, start the route's
+/// signalling server on it and drive the real [`run_whip`] under the given
+/// session read timeout, handshake deadline and session cap.
+///
+/// # Panics
+///
+/// When the ephemeral bind or the route's own server start fails — a
+/// harness fatal, which every check is run for.
 #[cfg(feature = "test-hooks")]
 async fn serve_read_load_inner(
     read: Duration,

@@ -15,8 +15,10 @@
 extern crate alloc;
 
 mod error;
+pub mod seq;
 
 pub use error::{Error, Result};
+pub use seq::{MediaSequence, PartIndex};
 
 use alloc::collections::BTreeMap;
 use alloc::collections::BTreeSet;
@@ -271,10 +273,10 @@ pub struct RenditionReport {
     pub uri: String,
     /// `LAST-MSN` — Media Sequence Number of the last segment (or partial
     /// segment, if any) currently in that Rendition (REQUIRED).
-    pub last_msn: u64,
+    pub last_msn: MediaSequence,
     /// `LAST-PART` — Part Index of the last partial segment at `last_msn`,
     /// if that Rendition has partial segments.
-    pub last_part: Option<u64>,
+    pub last_part: Option<PartIndex>,
     /// Unmodeled attributes, retained so `REQ-` prefixed names can fire
     /// RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
     pub extra_attrs: Vec<(String, AttrValue)>,
@@ -430,7 +432,7 @@ impl SkipInfo {
 impl RenditionReport {
     /// Build a rendition report from its required `URI` and `LAST-MSN`.
     #[must_use]
-    pub fn new(uri: String, last_msn: u64) -> Self {
+    pub fn new(uri: String, last_msn: MediaSequence) -> Self {
         Self {
             uri,
             last_msn,
@@ -441,7 +443,7 @@ impl RenditionReport {
 
     /// Set `LAST-PART`.
     #[must_use]
-    pub fn with_last_part(mut self, last_part: u64) -> Self {
+    pub fn with_last_part(mut self, last_part: PartIndex) -> Self {
         self.last_part = Some(last_part);
         self
     }
@@ -835,7 +837,7 @@ pub struct MediaPlaylist {
     /// `#EXT-X-TARGETDURATION` — must be >= the max rounded segment duration.
     pub target_duration: u32,
     /// `#EXT-X-MEDIA-SEQUENCE`
-    pub media_sequence: u64,
+    pub msn: MediaSequence,
     /// Defects the parser tolerated (see [`ParseDiagnostic`]): a parse artefact that is never
     /// serialised, empty for a playlist built in code.
     pub diagnostics: Vec<ParseDiagnostic>,
@@ -1729,7 +1731,7 @@ impl MediaPlaylist {
             push_start_line(&mut s, start);
         }
         s.push_str(&format!("#EXT-X-TARGETDURATION:{}\n", self.target_duration));
-        s.push_str(&format!("#EXT-X-MEDIA-SEQUENCE:{}\n", self.media_sequence));
+        s.push_str(&format!("#EXT-X-MEDIA-SEQUENCE:{}\n", self.msn));
         if self.discontinuity_sequence > 0 || self.always_emit_discontinuity_sequence {
             s.push_str(&format!(
                 "#EXT-X-DISCONTINUITY-SEQUENCE:{}\n",
@@ -2031,7 +2033,7 @@ impl MediaPlaylist {
         // gaining one (see `effective_version`/issue #871).
         let mut version: u8 = 0;
         let mut target_duration: Option<u32> = None;
-        let mut media_sequence: u64 = 0;
+        let mut msn = MediaSequence::ZERO;
         let mut discontinuity_sequence: u64 = 0;
         let mut saw_discontinuity_sequence = false;
         let mut iframes_only = false;
@@ -2109,7 +2111,12 @@ impl MediaPlaylist {
                     "EXT-X-TARGETDURATION",
                 )?);
             } else if let Some(rest) = line.strip_prefix("#EXT-X-MEDIA-SEQUENCE:") {
-                media_sequence = parse_decimal_int(rest, line_no, line, "EXT-X-MEDIA-SEQUENCE")?;
+                msn = MediaSequence::new(parse_decimal_int(
+                    rest,
+                    line_no,
+                    line,
+                    "EXT-X-MEDIA-SEQUENCE",
+                )?);
             } else if let Some(rest) = line.strip_prefix("#EXT-X-DISCONTINUITY-SEQUENCE:") {
                 discontinuity_sequence =
                     parse_decimal_int(rest, line_no, line, "EXT-X-DISCONTINUITY-SEQUENCE")?;
@@ -2274,9 +2281,19 @@ impl MediaPlaylist {
                 // report that sends clients to a long-gone segment.
                 let last_msn_str =
                     require_attr(&attrs, "LAST-MSN", line_no, line, "EXT-X-RENDITION-REPORT")?;
-                let last_msn = parse_decimal_int(&last_msn_str, line_no, line, "LAST-MSN")?;
+                let last_msn = MediaSequence::new(parse_decimal_int(
+                    &last_msn_str,
+                    line_no,
+                    line,
+                    "LAST-MSN",
+                )?);
                 let last_part = match attrs.get("LAST-PART") {
-                    Some(v) => Some(parse_decimal_int(v, line_no, line, "LAST-PART")?),
+                    Some(v) => Some(PartIndex::new(parse_decimal_int(
+                        v,
+                        line_no,
+                        line,
+                        "LAST-PART",
+                    )?)),
                     None => None,
                 };
                 let extra_attrs =
@@ -2436,7 +2453,7 @@ impl MediaPlaylist {
         Ok(MediaPlaylist {
             version,
             target_duration,
-            media_sequence,
+            msn,
             diagnostics,
             discontinuity_sequence,
             always_emit_discontinuity_sequence: saw_discontinuity_sequence,
@@ -5189,7 +5206,7 @@ mod tests {
         MediaPlaylist {
             version: 3,
             target_duration: 10,
-            media_sequence: 0,
+            msn: MediaSequence::new(0),
             discontinuity_sequence: 0,
             segments,
             endlist: true,
@@ -5206,7 +5223,7 @@ mod tests {
         let pl = MediaPlaylist {
             version: 3,
             target_duration: 10,
-            media_sequence: 0,
+            msn: MediaSequence::new(0),
             discontinuity_sequence: 0,
             segments: vec![
                 seg("seg0.m4s", 9.009),
@@ -5235,7 +5252,7 @@ mod tests {
         let pl = MediaPlaylist {
             version: 7,
             target_duration: 6,
-            media_sequence: 42,
+            msn: MediaSequence::new(42),
             discontinuity_sequence: 0,
             segments: vec![seg("seg.m4s", 6.000)],
             endlist: false,
@@ -5855,7 +5872,7 @@ mod tests {
         let pl = MediaPlaylist {
             version: 3,
             target_duration: 6,
-            media_sequence: 5,
+            msn: MediaSequence::new(5),
             discontinuity_sequence: 2,
             segments: vec![seg("s5.m4s", 6.0)],
             endlist: false,
@@ -5915,7 +5932,7 @@ mod tests {
         let pl = MediaPlaylist {
             version: 9,
             target_duration: 4,
-            media_sequence: 0,
+            msn: MediaSequence::new(0),
             discontinuity_sequence: 0,
             segments: vec![MediaSegment {
                 uri: "seg-1-4.m4s".into(),
@@ -5947,7 +5964,7 @@ mod tests {
         let pl = MediaPlaylist {
             version: 9,
             target_duration: 4,
-            media_sequence: 0,
+            msn: MediaSequence::new(0),
             discontinuity_sequence: 0,
             segments: vec![MediaSegment {
                 uri: "seg-1-4.m4s".into(),
@@ -6042,7 +6059,7 @@ mod tests {
         let pl = MediaPlaylist {
             version: 9,
             target_duration: 4,
-            media_sequence: 0,
+            msn: MediaSequence::new(0),
             discontinuity_sequence: 0,
             segments: vec![seg("seg-1-4.m4s", 4.0)],
             endlist: false,
@@ -6072,7 +6089,7 @@ mod tests {
         let pl = MediaPlaylist {
             version: 9,
             target_duration: 4,
-            media_sequence: 0,
+            msn: MediaSequence::new(0),
             discontinuity_sequence: 0,
             segments: vec![seg("seg-1-4.m4s", 4.0)],
             endlist: false,
@@ -6093,7 +6110,7 @@ mod tests {
         let pl = MediaPlaylist {
             version: 9,
             target_duration: 4,
-            media_sequence: 0,
+            msn: MediaSequence::new(0),
             discontinuity_sequence: 0,
             segments: vec![MediaSegment {
                 uri: "seg-1-4.m4s".into(),
@@ -6182,7 +6199,7 @@ mod tests {
         let pl = MediaPlaylist {
             version: 9,
             target_duration: 4,
-            media_sequence: 1,
+            msn: MediaSequence::new(1),
             discontinuity_sequence: 0,
             segments: vec![],
             open_segment: Some(
@@ -6244,7 +6261,7 @@ mod tests {
         let pl = MediaPlaylist {
             version: 9,
             target_duration: 4,
-            media_sequence: 100,
+            msn: MediaSequence::new(100),
             discontinuity_sequence: 0,
             segments: vec![MediaSegment {
                 uri: "seg-9.m4s".into(),
@@ -6297,8 +6314,8 @@ mod tests {
             iframes_only: false,
             rendition_reports: vec![RenditionReport {
                 uri: "../audio/playlist.m3u8".into(),
-                last_msn: 100,
-                last_part: Some(1),
+                last_msn: MediaSequence::new(100),
+                last_part: Some(PartIndex::new(1)),
                 extra_attrs: Vec::new(),
             }],
             skip: None,
@@ -6319,7 +6336,7 @@ mod tests {
         let pl = MediaPlaylist {
             version: 6,
             target_duration: 10,
-            media_sequence: 0,
+            msn: MediaSequence::new(0),
             discontinuity_sequence: 0,
             segments: vec![
                 MediaSegment {
@@ -6383,7 +6400,7 @@ mod tests {
         let pl = MediaPlaylist {
             version: 6,
             target_duration: 10,
-            media_sequence: 0,
+            msn: MediaSequence::new(0),
             discontinuity_sequence: 0,
             independent_segments: true,
             start: Some(StartPoint {
@@ -6697,7 +6714,7 @@ midRoll273.mp4
         let pl = MediaPlaylist::parse(text).expect("real-world LL sample must parse");
         assert_eq!(pl.version, 9);
         assert_eq!(pl.target_duration, 4);
-        assert_eq!(pl.media_sequence, 266);
+        assert_eq!(pl.msn, MediaSequence::new(266));
         // 5 closed segments: 268, 269, 270, 271, 272 + the discontinuous
         // midRoll273 = 6; midRoll274 has parts but never closes with an
         // EXTINF/URI, so it becomes the open (in-progress) segment.
@@ -6722,8 +6739,8 @@ midRoll273.mp4
         );
         assert_eq!(pl.rendition_reports.len(), 1);
         assert_eq!(pl.rendition_reports[0].uri, "/1M/LL-HLS.m3u8");
-        assert_eq!(pl.rendition_reports[0].last_msn, 274);
-        assert_eq!(pl.rendition_reports[0].last_part, Some(1));
+        assert_eq!(pl.rendition_reports[0].last_msn, MediaSequence::new(274));
+        assert_eq!(pl.rendition_reports[0].last_part, Some(PartIndex::new(1)));
     }
 
     /// Real-world-shaped sample: a Playlist Delta Update (`#EXT-X-SKIP`),
@@ -6743,7 +6760,7 @@ fileSequence1996.mp4\n\
 #EXTINF:4.00000,\n\
 fileSequence1997.mp4\n";
         let pl = MediaPlaylist::parse(text).expect("delta update sample must parse");
-        assert_eq!(pl.media_sequence, 1000);
+        assert_eq!(pl.msn, MediaSequence::new(1000));
         assert_eq!(pl.segments.len(), 2);
         assert_eq!(pl.segments[0].uri, "fileSequence1996.mp4");
         let skip = pl.skip.as_ref().expect("EXT-X-SKIP must be captured");
@@ -6831,7 +6848,7 @@ seg0.mp4\n";
         let pl = MediaPlaylist {
             version: 9,
             target_duration: 4,
-            media_sequence: 0,
+            msn: MediaSequence::new(0),
             discontinuity_sequence: 0,
             segments: vec![MediaSegment {
                 uri: "seg0.mp4".into(),
@@ -6935,7 +6952,7 @@ v300/index.m3u8\n";
         MediaPlaylist {
             version: 0,
             target_duration: 6,
-            media_sequence: 0,
+            msn: MediaSequence::new(0),
             segments: vec![seg("s0.m4s", 6.0)],
             endlist: true,
             ..Default::default()
@@ -7282,7 +7299,7 @@ v300/index.m3u8\n";
         let pl = MediaPlaylist {
             version: 0, // hls-runtime no longer supplies an explicit floor.
             target_duration: 4,
-            media_sequence: 100,
+            msn: MediaSequence::new(100),
             segments: vec![MediaSegment {
                 uri: "seg-1-100.m4s".into(),
                 duration: DecimalSeconds::new(4.0).unwrap(),
@@ -7319,7 +7336,7 @@ v300/index.m3u8\n";
         let pl = MediaPlaylist {
             version: 0,
             target_duration: 10,
-            media_sequence: 0,
+            msn: MediaSequence::new(0),
             segments: vec![
                 seg("seg0.ts", 9.009),
                 seg("seg1.ts", 9.009),
@@ -7414,7 +7431,7 @@ seg0.m4s\n";
         let pl = MediaPlaylist {
             version: 9,
             target_duration: 4,
-            media_sequence: 0,
+            msn: MediaSequence::new(0),
             segments: vec![],
             low_latency: Some(LowLatencyConfig {
                 part_target: Some(DecimalSeconds::new(0.5).unwrap()),
@@ -7475,7 +7492,7 @@ seg0.m4s\n";
         let pl = MediaPlaylist {
             version: 9,
             target_duration: 4,
-            media_sequence: 0,
+            msn: MediaSequence::new(0),
             segments: vec![MediaSegment {
                 uri: "seg0.m4s".into(),
                 duration: DecimalSeconds::new(4.0).unwrap(),
