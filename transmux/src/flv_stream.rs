@@ -813,9 +813,16 @@ mod tests {
     /// An FLV header with an explicit (possibly non-conformant) `DataOffset`,
     /// with its trailing `PreviousTagSize0` always zero.
     fn header_with_data_offset(data_offset: u32) -> Vec<u8> {
+        let extra_len = usize::try_from(data_offset)
+            .unwrap_or(0)
+            .saturating_sub(FLV_HEADER_LEN);
+        let extra = vec![0u8; extra_len];
         let mut header = rtmp_runtime::flv::FlvHeader::new(false, true);
-        header.data_offset = data_offset;
-        header.try_to_bytes().expect("header framing")
+        header.extra = &extra;
+        let mut bytes = header.try_to_bytes().expect("header framing");
+        let field = u32::try_from(data_offset).unwrap_or_default();
+        bytes[5..FLV_HEADER_LEN].copy_from_slice(&field.to_be_bytes());
+        bytes
     }
 
     /// Feed `input` then drain every event newly queued by it via

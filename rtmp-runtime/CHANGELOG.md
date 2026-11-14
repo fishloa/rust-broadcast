@@ -8,6 +8,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 - BREAKING: `RtmpClientConfig::play_buffer` is a `core::time::Duration` (was `play_buffer_ms: u32`) and the default constant is `DEFAULT_PLAY_BUFFER` (was `DEFAULT_PLAY_BUFFER_MS`); the value still goes on the wire as whole milliseconds in SetBufferLength (§6.7) (#2693).
+- BREAKING: `flv::FlvHeader` no longer stores a `data_offset` field; the `DataOffset` it writes is derived from `FLV_HEADER_LEN + extra.len()` (§E.2) and readable with `FlvHeader::data_offset()`. A header whose field disagreed with its `extra` bytes used to serialize to an offset the parser rejects, so the serializer could emit un-parseable output (#2760). Migration: read `header.data_offset()`; to write a larger offset, set `header.extra` to that many bytes.
 
 #### Added
 - `io::RtmpClientConfig { target, timeouts }` (`new(target)`, `with_timeouts`) and `io::RtmpServerConfig { session, timeouts }` (`Default`, `with_session`, `with_timeouts`): the same config shape as the RTSP and SRT adapters, so a host maps its timeout config once per role (#2660).
