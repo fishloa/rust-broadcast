@@ -159,6 +159,29 @@ pub fn validate_crc(raw: &[u8]) -> Result<()> {
 }
 
 impl<'a> Section<'a> {
+    /// The same section owning its payload, so it can outlive the input
+    /// buffer it was parsed from.
+    #[must_use]
+    pub fn into_owned(self) -> Section<'static> {
+        Section {
+            payload: alloc::boxed::Box::leak(self.payload.to_vec().into_boxed_slice()),
+            ..self
+        }
+    }
+
+    /// The section as its own bytes: header, payload and, for a long-form
+    /// section, a freshly computed CRC_32.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::FieldOverflow`] when a header field does not fit its wire
+    /// width (see [`section_length`](Self::section_length)).
+    pub fn serialize(&self) -> Result<alloc::vec::Vec<u8>> {
+        let mut buf = alloc::vec![0u8; self.serialized_len()];
+        self.serialize_into(&mut buf)?;
+        Ok(buf)
+    }
+
     /// Return the payload slice (same as the `payload` field — convenience
     /// getter for code that has a `&Section` reference).
     #[inline]

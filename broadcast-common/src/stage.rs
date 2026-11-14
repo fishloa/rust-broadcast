@@ -42,7 +42,7 @@
 //!
 //! - `dvb_conformance::ConformanceMonitor::feed(pkt, t: Duration)` — TR 101 290
 //!   timing indicators need packet arrival time.
-//! - `mpeg_ts::mux::SiMux::poll_into(now: Duration, out)` — PSI/SI re-emission
+//! - `mpeg_ts::mux::SiMux::poll_into(now: Timestamp, out)` — PSI/SI re-emission
 //!   is rate-scheduled, not event-driven.
 //! - `media_doctor::WatchState::feed_datagram(payload, clock: Duration)` —
 //!   datagram-loss/jitter watch state needs wall-clock deltas.

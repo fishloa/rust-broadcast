@@ -264,6 +264,45 @@ fn real_fixture_pcr_rewrite_keeps_every_other_byte() {
 }
 
 #[test]
+fn real_fixture_pat_pmt_schedule_round_trips_through_simux() {
+    // Every PMT and the PAT a real mux carries, scheduled by `SiMux` and
+    // reassembled, must come out byte-identical (#2763).
+    let buf = fs::read(fixture_path()).expect("read fixture");
+    let mut mux = mpeg_ts::mux::SiMux::new();
+    let mut registered = 0usize;
+    for raw_pid in [0x0000u16, 0x1000] {
+        let pid = Pid::try_new(raw_pid).expect("13-bit pid");
+        let mut reasm = SectionReassembler::default();
+        for pkt in iter_packets(&buf) {
+            if pkt.header.pid != pid {
+                continue;
+            }
+            if let Some(payload) = pkt.payload {
+                reasm.feed(payload, pkt.header.pusi);
+            }
+        }
+        if let Some(bytes) = reasm.pop_section() {
+            mux.upsert(pid, bytes.to_vec(), mpeg_ts::mux::PAT_MAX_INTERVAL)
+                .expect("fixture section is schedulable");
+            registered += 1;
+        }
+    }
+    assert!(registered > 0, "fixture must carry a PSI section");
+    let packets = mux.poll(broadcast_common::Timestamp::ZERO);
+    let mut out = Vec::new();
+    let mut reasm = SectionReassembler::default();
+    for raw in &packets {
+        let pkt = TsPacket::parse(raw).expect("generated packet parses");
+        reasm.feed(pkt.payload.expect("payload"), pkt.header.pusi);
+    }
+    while let Some(section) = reasm.pop_section() {
+        out.push(section);
+    }
+    assert!(!out.is_empty(), "scheduled sections must reassemble");
+    assert!(mux.rejected().is_empty());
+}
+
+#[test]
 fn tspacket_parse_and_serialize_roundtrip_on_fixture() {
     // TsPacket::parse then TsHeader::serialize_into: reconstructed header bytes
     // must be byte-identical to the wire. This is the Parse/Serialize symmetry
