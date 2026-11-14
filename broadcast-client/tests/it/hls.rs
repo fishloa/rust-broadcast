@@ -45,7 +45,7 @@ fn is_not_found(e: &Event) -> bool {
     matches!(e, Event::Status(Status::NotFound))
 }
 
-fn reconnect_attempts(events: &[Event]) -> Vec<u64> {
+fn reconnect_attempts(events: &[Event]) -> Vec<u32> {
     events
         .iter()
         .filter_map(|e| match e {
@@ -967,7 +967,7 @@ fn per_request_redirect_followed_and_counted_separately() {
     h.run_to_end();
     assert_eq!(
         reconnect_attempts(&h.events),
-        Vec::<u64>::new(),
+        Vec::<u32>::new(),
         "two requests with five redirects each both succeed (10 > max 5 if shared)"
     );
     assert_eq!(count(&h.events, is_ended), 1);

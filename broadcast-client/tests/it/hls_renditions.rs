@@ -118,7 +118,7 @@ fn tracks_events(events: &[Event]) -> Vec<BTreeSet<u32>> {
         .collect()
 }
 
-fn reconnecting(events: &[Event]) -> Vec<u64> {
+fn reconnecting(events: &[Event]) -> Vec<u32> {
     events
         .iter()
         .filter_map(|e| match e {
