@@ -1,4 +1,4 @@
-use broadcast_client::{Action, Config, Session};
+use broadcast_client::{Action, Config, ConnId, Session};
 use broadcast_common::stage::Timestamp;
 
 /// The harness's microsecond clock as the session's `now`.

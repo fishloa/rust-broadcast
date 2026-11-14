@@ -1,4 +1,4 @@
-use broadcast_client::{Action, Config, Event, Session, UdpMode};
+use broadcast_client::{Action, Config, ConnId, Event, Session, UdpMode};
 use broadcast_common::Serialize;
 use broadcast_common::stage::Timestamp;
 

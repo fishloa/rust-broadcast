@@ -1,4 +1,4 @@
-use broadcast_client::{Action, Config, Event, Session, SrtEntropySeed};
+use broadcast_client::{Action, Config, ConnId, Event, Session, SrtEntropySeed};
 use broadcast_common::stage::Timestamp;
 
 /// The harness's microsecond clock as the session's `now`.

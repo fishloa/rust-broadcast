@@ -2,7 +2,7 @@ use std::io::ErrorKind;
 use std::net::{ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
 
-use broadcast_client::{Action, Config, Event, Session, UdpMode};
+use broadcast_client::{Action, Config, ConnId, Event, Session, UdpMode};
 
 use super::replay::{Replay, TimedEvent};
 use broadcast_common::stage::Timestamp;
@@ -31,7 +31,7 @@ impl WireHost {
         Self {
             session: Session::open(url, config, ts(0)).unwrap(),
             socket: None,
-            conn: 0,
+            conn: ConnId::new(0),
             start: Instant::now(),
             events: Vec::new(),
             binds: 0,

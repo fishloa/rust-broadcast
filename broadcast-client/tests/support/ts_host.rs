@@ -1,4 +1,4 @@
-use broadcast_client::{Action, BufferEvent, Config, Event, Session};
+use broadcast_client::{Action, BufferEvent, Config, ConnId, Event, Session};
 use broadcast_common::stage::Timestamp;
 
 /// The harness's microsecond clock as the session's `now`.
@@ -23,7 +23,7 @@ impl Host {
         let session = Session::open("http://h/live.ts", config, ts(0)).unwrap();
         let mut host = Self {
             session,
-            conn: 0,
+            conn: ConnId::new(0),
             now: 0,
             log: Vec::new(),
             playing: None,

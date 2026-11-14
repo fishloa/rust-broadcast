@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use broadcast_client::{Action, Config, Event, Session, SourceKind, TransportError};
+use broadcast_client::{Action, Config, ConnId, Event, Session, SourceKind, TransportError};
 use broadcast_common::Unpackage;
 use broadcast_common::stage::Timestamp;
 use transmux::{FlvDemux, Media};

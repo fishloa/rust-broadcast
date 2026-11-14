@@ -1,7 +1,7 @@
 use std::cell::{Cell, RefCell};
 
 use broadcast_auth::{AuthResult, RequestContext, Verifier};
-use broadcast_client::{Action, Config, Event, Session};
+use broadcast_client::{Action, Config, ConnId, Event, Session};
 use broadcast_common::stage::Timestamp;
 use broadcast_common::{Package, Serialize, Unpackage};
 use rtsp_runtime::transport::{Transport, TransportSpec};
