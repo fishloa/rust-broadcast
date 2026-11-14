@@ -1,8 +1,10 @@
+
 //! Datagram ingest for the UDP and RTP sources: TS alignment checks, the RTP reorder buffer
 //! (RFC 3550 5.1 sequence numbers, RFC 3551 payload type 33 for MP2T) and the loss counters.
 //!
 //! Everything here is a pure function of the datagrams and the caller's `now_us`.
 
+use crate::ConnId;
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -336,7 +338,7 @@ impl Datagram {
         })
     }
 
-    pub(crate) fn bind_action(&mut self, conn: u32) -> Action {
+    pub(crate) fn bind_action(&mut self, conn: ConnId) -> Action {
         match &mut self.kind {
             Kind::Udp(i) => i.reset(),
             Kind::Sdp(s) => s.reset(),

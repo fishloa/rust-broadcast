@@ -18,7 +18,7 @@ const MAX_DATAGRAM: usize = 2048;
 pub struct WireHost {
     pub session: Session,
     socket: Option<UdpSocket>,
-    conn: u32,
+    conn: ConnId,
     start: Instant,
     pub events: Vec<TimedEvent>,
     pub binds: usize,

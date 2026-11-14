@@ -18,11 +18,11 @@ const RTP_TS_PER_PACKET: u32 = 90;
 
 pub struct UdpHost {
     pub session: Session,
-    pub conn: Option<u32>,
+    pub conn: Option<ConnId>,
     pub now: u64,
     pub events: Vec<TimedEvent>,
     pub binds: Vec<Action>,
-    pub closes: Vec<u32>,
+    pub closes: Vec<ConnId>,
     pub wake: Option<u64>,
     pub auto_connect: bool,
 }

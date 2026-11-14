@@ -22,6 +22,7 @@ use rtmp_runtime::target::RtmpTarget;
 use transmux::{DemuxEvent, StreamingFlvDemux, TrackId, TrackSpec};
 use url::{Host, Url};
 
+use crate::ConnId;
 use crate::error::{Error, TransportError};
 use crate::events::{Action, ErrorKind, Event, MAX_SERVER_REFUSED_REASON_BYTES, Status};
 use crate::source::fetch::deadline;
@@ -78,7 +79,7 @@ pub(crate) struct RtmpSource {
     policy: TsHttpPolicy,
     demux: StreamingFlvDemux,
     client: Option<ClientSession>,
-    conn: Option<u32>,
+    conn: Option<ConnId>,
     next_conn: u32,
     recorded: bool,
     tracks: BTreeMap<TrackId, TrackSpec>,
@@ -132,7 +133,7 @@ impl RtmpSource {
         core::mem::take(&mut self.events)
     }
 
-    pub(crate) fn conn(&self) -> Option<u32> {
+    pub(crate) fn conn(&self) -> Option<ConnId> {
         self.conn
     }
 
@@ -155,7 +156,7 @@ impl RtmpSource {
         self.pump_policy(now_us);
     }
 
-    pub(crate) fn on_connected(&mut self, conn: u32, now_us: u64) {
+    pub(crate) fn on_connected(&mut self, conn: ConnId, now_us: u64) {
         if self.closed || self.ended || self.conn != Some(conn) || self.client.is_some() {
             return;
         }
@@ -169,7 +170,7 @@ impl RtmpSource {
         self.pump_policy(now_us);
     }
 
-    pub(crate) fn on_data(&mut self, conn: u32, bytes: &[u8], now_us: u64) {
+    pub(crate) fn on_data(&mut self, conn: ConnId, bytes: &[u8], now_us: u64) {
         if self.closed || self.ended || self.conn != Some(conn) {
             return;
         }
@@ -218,7 +219,7 @@ impl RtmpSource {
     /// [`Event::Discontinuity`].
     pub(crate) fn on_closed(
         &mut self,
-        conn: u32,
+        conn: ConnId,
         error: Option<&TransportError>,
         now_us: u64,
     ) -> bool {
@@ -283,12 +284,12 @@ impl RtmpSource {
         config
     }
 
-    fn alloc_conn(&mut self) -> u32 {
+    fn alloc_conn(&mut self) -> ConnId {
         loop {
             let candidate = self.next_conn;
             self.next_conn = candidate.checked_add(1).unwrap_or(FIRST_CONN_ID);
-            if Some(candidate) != self.conn {
-                return candidate;
+            if Some(ConnId::new(candidate)) != self.conn {
+                return ConnId::new(candidate);
             }
         }
     }

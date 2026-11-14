@@ -10,6 +10,7 @@ use url::Url;
 use crate::ClientIdentityScope;
 use crate::Hint;
 use crate::error::{Error, TransportError};
+use crate::ConnId;
 use crate::events::{Action, Config, ErrorKind, Event, SourceKind, Status};
 use crate::headers;
 use crate::playout::{Playout, Source};
@@ -81,10 +82,10 @@ pub struct Session {
     identity: Option<alloc::sync::Arc<crate::ClientIdentity>>,
     redirect_count: u32,
     next_conn: u32,
-    live_conn: Option<u32>,
-    known_conns: HashMap<u32, Url>,
-    refused_conns: HashSet<u32>,
-    conn_auth: HashMap<u32, ConnAuth>,
+    live_conn: Option<ConnId>,
+    known_conns: HashMap<ConnId, Url>,
+    refused_conns: HashSet<ConnId>,
+    conn_auth: HashMap<ConnId, ConnAuth>,
     ts_wake: Option<Timestamp>,
     actions: VecDeque<Action>,
     events: EventQueue,
@@ -354,7 +355,7 @@ impl Session {
     /// Response callback; `now` is the host clock when the response head arrived.
     pub fn on_response(
         &mut self,
-        conn: u32,
+        conn: ConnId,
         status: u16,
         headers: &[(String, String)],
         now: Timestamp,
@@ -515,7 +516,7 @@ impl Session {
     }
 
     /// Data callback.
-    pub fn on_data(&mut self, conn: u32, bytes: &[u8], now: Timestamp) {
+    pub fn on_data(&mut self, conn: ConnId, bytes: &[u8], now: Timestamp) {
         let now_us = now.as_micros();
         if self.closed {
             return;
@@ -595,7 +596,7 @@ impl Session {
     }
 
     /// Closed callback.
-    pub fn on_closed(&mut self, conn: u32, error: Option<TransportError>, now: Timestamp) {
+    pub fn on_closed(&mut self, conn: ConnId, error: Option<TransportError>, now: Timestamp) {
         let now_us = now.as_micros();
         if self.closed {
             return;
@@ -655,7 +656,7 @@ impl Session {
     /// The host established the TCP connection requested by [`Action::TcpConnect`] (RTSP).
     ///
     /// A failed connect is reported with [`Session::on_closed`] and an error instead.
-    pub fn on_connected(&mut self, conn: u32) {
+    pub fn on_connected(&mut self, conn: ConnId) {
         if self.closed {
             return;
         }
@@ -1110,8 +1111,8 @@ impl Session {
             return;
         }
         self.closed = true;
-        let mut seen: BTreeSet<u32> = BTreeSet::new();
-        let mut order: Vec<u32> = Vec::new();
+        let mut seen: BTreeSet<ConnId> = BTreeSet::new();
+        let mut order: Vec<ConnId> = Vec::new();
         for action in self.actions.drain(..) {
             if let Action::Close { conn } = action
                 && seen.insert(conn)
@@ -1120,7 +1121,7 @@ impl Session {
             }
         }
         self.push_srt_shutdown();
-        let mut live: Vec<u32> = self.known_conns.keys().copied().collect();
+        let mut live: Vec<ConnId> = self.known_conns.keys().copied().collect();
         live.extend(self.refused_conns.iter().copied());
         if let Some(h) = self.adaptive.as_ref() {
             live.extend(h.conns());
@@ -1323,14 +1324,15 @@ impl Session {
         self.events.extend(evs);
     }
 
-    fn alloc_conn(&mut self, url: Url) -> u32 {
-        let id = loop {
+    fn alloc_conn(&mut self, url: Url) -> ConnId {
+        let raw = loop {
             let candidate = self.next_conn;
             self.next_conn = candidate.checked_add(1).unwrap_or(FIRST_CONN_ID);
-            if !self.known_conns.contains_key(&candidate) {
+            if !self.known_conns.contains_key(&ConnId::new(candidate)) {
                 break candidate;
             }
         };
+        let id = ConnId::new(raw);
         self.known_conns.insert(id, url);
         id
     }
@@ -1387,14 +1389,14 @@ impl Session {
     }
 
     fn close_refused_conns(&mut self) {
-        let mut conns: Vec<u32> = self.refused_conns.drain().collect();
+        let mut conns: Vec<ConnId> = self.refused_conns.drain().collect();
         conns.sort_unstable();
         for conn in conns {
             self.actions.push_back(Action::Close { conn });
         }
     }
 
-    fn fail_connect(&mut self, conn: u32) {
+    fn fail_connect(&mut self, conn: ConnId) {
         self.known_conns.remove(&conn);
         self.conn_auth.remove(&conn);
         if self.live_conn == Some(conn) {
@@ -1535,7 +1537,7 @@ impl Session {
                 });
             }
             TsAction::Abort => {
-                let mut conns: Vec<u32> = self.known_conns.keys().copied().collect();
+                let mut conns: Vec<ConnId> = self.known_conns.keys().copied().collect();
                 conns.sort_unstable();
                 self.push_srt_shutdown();
                 for conn in conns {
@@ -1640,13 +1642,13 @@ mod tests {
         let url = Url::parse("http://example/live.ts").unwrap();
         session.next_conn = u32::MAX;
         let a = session.alloc_conn(url.clone());
-        assert_eq!(a, u32::MAX);
+        assert_eq!(a, ConnId::new(u32::MAX));
         let b = session.alloc_conn(url.clone());
-        assert_eq!(b, FIRST_CONN_ID);
+        assert_eq!(b, ConnId::new(FIRST_CONN_ID));
         session.next_conn = u32::MAX;
         let c = session.alloc_conn(url);
         assert!(c != a && c != b, "reused live id {c}");
-        assert_ne!(c, 0);
+        assert_ne!(c, ConnId::new(0));
     }
 
     #[test]

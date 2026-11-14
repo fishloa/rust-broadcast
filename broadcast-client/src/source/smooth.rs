@@ -13,6 +13,7 @@ use smooth_runtime::{
 };
 use url::Url;
 
+use crate::ConnId;
 use crate::error::{Error, TransportError};
 use crate::events::{Action as HostAction, Config, ErrorKind, Event, ResumeMode, Status};
 use crate::playout::Source;
@@ -51,7 +52,7 @@ pub(crate) struct SmoothSource {
     config: Config,
     conn_alloc: ConnAlloc,
     client: SmoothClient,
-    reqs: HashMap<u32, Req>,
+    reqs: HashMap<ConnId, Req>,
     parked: Vec<Req>,
     actions: VecDeque<HostAction>,
     events: VecDeque<Event>,
@@ -124,7 +125,7 @@ impl SmoothSource {
         core::mem::take(&mut self.events)
     }
 
-    pub(crate) fn conns(&self) -> Vec<u32> {
+    pub(crate) fn conns(&self) -> Vec<ConnId> {
         self.reqs.keys().copied().collect()
     }
 
@@ -264,7 +265,7 @@ impl SmoothSource {
             return;
         }
         let timeout = self.inactivity_us();
-        let stalled: Vec<u32> = self
+        let stalled: Vec<ConnId> = self
             .reqs
             .iter()
             .filter(|(_, r)| {
@@ -295,7 +296,7 @@ impl SmoothSource {
 
     pub(crate) fn on_response(
         &mut self,
-        conn: u32,
+        conn: ConnId,
         status: u16,
         headers: &[(String, String)],
         now: u64,
@@ -357,7 +358,7 @@ impl SmoothSource {
         self.reqs.insert(conn, req);
     }
 
-    pub(crate) fn on_data(&mut self, conn: u32, bytes: &[u8], now: u64, _auth: &mut AuthState) {
+    pub(crate) fn on_data(&mut self, conn: ConnId, bytes: &[u8], now: u64, _auth: &mut AuthState) {
         if let Some(req) = self.reqs.get_mut(&conn) {
             req.body.extend_from_slice(bytes);
             req.last_activity_us = now;
@@ -366,7 +367,7 @@ impl SmoothSource {
 
     pub(crate) fn on_closed(
         &mut self,
-        conn: u32,
+        conn: ConnId,
         error: Option<&TransportError>,
         now: u64,
         _auth: &mut AuthState,

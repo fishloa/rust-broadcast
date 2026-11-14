@@ -11,7 +11,7 @@ const TICKS_PER_US: u64 = 27;
 
 pub struct Host {
     pub session: Session,
-    pub conn: u32,
+    pub conn: ConnId,
     pub now: u64,
     pub log: Vec<Event>,
     playing: Option<(u64, u64)>,

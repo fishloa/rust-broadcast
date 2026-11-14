@@ -10,6 +10,7 @@ use hls_runtime::client::{MasterSelection, RenditionInfo};
 use transmux::TrackSpec;
 use url::Url;
 
+use crate::ConnId;
 use crate::error::{Error, TransportError};
 use crate::events::{Action, Config, Event, Status};
 use crate::playout::Source;
@@ -110,7 +111,7 @@ impl HlsSession {
         core::mem::take(&mut self.events)
     }
 
-    pub(crate) fn conns(&self) -> Vec<u32> {
+    pub(crate) fn conns(&self) -> Vec<ConnId> {
         let mut conns = self.main.conns();
         if let Some(a) = &self.audio {
             conns.extend(a.source.conns());
@@ -128,7 +129,7 @@ impl HlsSession {
 
     pub(crate) fn on_response(
         &mut self,
-        conn: u32,
+        conn: ConnId,
         status: u16,
         headers: &[(String, String)],
         now: u64,
@@ -144,7 +145,7 @@ impl HlsSession {
         self.collect(now, auth);
     }
 
-    pub(crate) fn on_data(&mut self, conn: u32, bytes: &[u8], now: u64, auth: &mut AuthState) {
+    pub(crate) fn on_data(&mut self, conn: ConnId, bytes: &[u8], now: u64, auth: &mut AuthState) {
         match self.audio.as_mut().filter(|a| a.source.owns(conn)) {
             Some(a) => a.source.on_data(conn, bytes, now, auth),
             None => self.main.on_data(conn, bytes, now, auth),
@@ -154,7 +155,7 @@ impl HlsSession {
 
     pub(crate) fn on_closed(
         &mut self,
-        conn: u32,
+        conn: ConnId,
         error: Option<&TransportError>,
         now: u64,
         auth: &mut AuthState,

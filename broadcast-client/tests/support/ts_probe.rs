@@ -11,7 +11,7 @@ pub const TS_URL: &str = "http://example/live.ts";
 #[derive(Debug, Clone)]
 pub struct Req {
     pub now: u64,
-    pub conn: u32,
+    pub conn: ConnId,
     pub url: String,
     pub headers: Vec<(String, String)>,
 }

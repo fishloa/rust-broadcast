@@ -438,7 +438,7 @@ pub struct Host {
     pub session: Session,
     pub server: Server,
     pub now: u64,
-    pub conn: Option<u32>,
+    pub conn: Option<ConnId>,
     pub actions: Vec<Action>,
     pub history: Vec<Event>,
     pub chunking: Chunking,
