@@ -3273,7 +3273,6 @@ impl HlsOrigin {
             .map(|p| {
                 PartSpec::new(
                     self.part_uri(track_id, p.segment_number, p.part_index, ext),
-                    // `Duration::as_secs_f64`: finite and >= 0 (issue #1140).
                     DecimalSeconds::from_duration(p.duration),
                 )
                 .with_independent(p.independent)
@@ -3505,10 +3504,7 @@ impl HlsOrigin {
                     .map(|p| {
                         PartSpec::new(
                             self.part_uri(track_id, p.segment_number, p.part_index, ext),
-                            // `p.duration` is a `std::time::Duration`: always
-                            // finite and non-negative (issue #1140).
-                            DecimalSeconds::new(p.duration.as_secs_f64())
-                                .expect("Duration::as_secs_f64 is finite, >= 0"),
+                            DecimalSeconds::from_duration(p.duration),
                         )
                         .with_independent(p.independent)
                     })
