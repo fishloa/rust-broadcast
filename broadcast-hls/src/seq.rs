@@ -190,9 +190,11 @@ mod tests {
 
     #[test]
     fn the_wire_spelling_is_the_bare_decimal_number() {
-        assert_eq!(MediaSequence::new(266).to_string(), "266");
-        assert_eq!(PartIndex::new(3).to_string(), "3");
-        assert_eq!(MediaSequence::ZERO.to_string(), "0");
+        use alloc::format;
+
+        assert_eq!(format!("{}", MediaSequence::new(266)), "266");
+        assert_eq!(format!("{}", PartIndex::new(3)), "3");
+        assert_eq!(format!("{}", MediaSequence::ZERO), "0");
     }
 
     #[test]
