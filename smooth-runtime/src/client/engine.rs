@@ -94,16 +94,20 @@ impl SmoothClient {
     /// ([`SmoothClientConfig::new`]); the first [`Action`] is its fetch.
     pub fn new(config: SmoothClientConfig) -> Self {
         let backoff = &config.backoff;
-        let retry = RetrySchedule::from_steps(
-            &backoff
-                .steps
-                .iter()
-                .map(|d| (*d).max(MIN_BACKOFF))
-                .collect::<Vec<_>>(),
+        let steps = backoff
+            .steps
+            .iter()
+            .map(|d| (*d).max(MIN_BACKOFF))
+            .collect::<Vec<_>>();
+        let (retry, invalid) = match RetrySchedule::from_steps(
+            &steps,
             backoff.cap.max(MIN_BACKOFF),
             mix_seed(config.jitter_seed),
-        );
-        Self {
+        ) {
+            Ok(retry) => (retry, None),
+            Err(error) => (Self::plain_schedule(), Some(error)),
+        };
+        let mut client = Self {
             config,
             streams: Vec::new(),
             started: false,
@@ -119,7 +123,25 @@ impl SmoothClient {
             next_request: 0,
             actions: VecDeque::new(),
             outputs: VecDeque::new(),
+        };
+        if let Some(error) = invalid {
+            client.fail(SmoothError::InvalidBackoff(error));
         }
+        client
+    }
+
+    /// The schedule an invalid configuration is paired with: a valid one (the
+    /// engine still has to hold something) the client never consults, since it
+    /// fails at construction.
+    fn plain_schedule() -> RetrySchedule {
+        RetrySchedule::from_steps(&[], MIN_BACKOFF, 0)
+            .unwrap_or_else(|_| Self::no_delay_schedule(0))
+    }
+
+    /// The schedule no bound can refuse: a zero cap with no step table.
+    fn no_delay_schedule(seed: u64) -> RetrySchedule {
+        RetrySchedule::from_steps(&[], Duration::ZERO, seed)
+            .unwrap_or_else(|_| Self::no_delay_schedule(0))
     }
 
     /// Re-base relative fragment URLs on `url`, after a redirect of the manifest.
