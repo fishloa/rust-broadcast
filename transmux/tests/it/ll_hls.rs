@@ -1183,7 +1183,7 @@ fn start_time_moves_every_tfdt_and_nothing_else() {
             LlHlsSegmenter::with_part_target(vec![video_track()], timescale(1000), 1.0, 334)
                 .unwrap();
         if let Some(ns) = start_ns {
-            seg.set_start_time_ns(ns);
+            seg.set_start_time(std::time::Duration::from_nanos(ns));
         }
         for i in 0..31u8 {
             seg.push(TrackId::new(1), vsample(i % 30 == 0, i)).unwrap();

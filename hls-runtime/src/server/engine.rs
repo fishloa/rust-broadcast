@@ -92,8 +92,12 @@ use std::time::Duration;
 use transmux::{Container, TrackId};
 
 use broadcast_common::bcp47_language;
+use broadcast_common::clock33::PTS_HZ;
 use broadcast_common::timescale::Timescale;
 use broadcast_common::units::{MILLIS_PER_SEC, NANOS_PER_SEC};
+
+/// Whole nanoseconds in one [`timed_metadata::MediaTime`] tick (90 kHz).
+const NANOS_PER_PTS_TICK: u128 = (NANOS_PER_SEC / PTS_HZ) as u128;
 use broadcast_common::{Timestamp, Unpackage};
 use broadcast_hls::{
     ByteRange, ClosedCaptionsRef, DecimalSeconds, FrameRate, LowLatencyConfig, MapTag,
@@ -352,14 +356,15 @@ struct WindowSegment {
     /// carried through so [`HlsOrigin::closed_segments`] can hand it to a
     /// caller doing time-based windowing over a *different* source of
     /// segments (e.g. multimux's DVR archive, issue #900), without that
-    /// caller needing a second cursor of its own just to learn it.
-    start_ns: u64,
+    /// caller needing a second cursor of its own just to learn it, with the
+    /// timebase it was assigned on.
+    start: timed_metadata::MediaTime,
     /// Mean video frame rate of this segment in millihertz, measured when the
     /// stream's SPS carries no VUI timing; `None` when not measurable.
     video_millihertz: Option<u32>,
     /// The start the writer reported for this segment, read when it drained into the window:
     /// the trunk's boundary table is bounded by `event_capacity`, the window is not.
-    media_start: Option<timed_metadata::MediaTime>,
+    media_anchor: Option<timed_metadata::MediaTime>,
 }
 
 /// One closed segment's identity/metadata as tracked by this origin's
@@ -373,11 +378,11 @@ struct WindowSegment {
 pub struct ClosedSegment {
     /// This segment's sequence number (`_HLS_msn`-addressable).
     pub sequence_number: SegmentSeq,
-    /// `SegmentEntry::timeline_position`, in nanoseconds — the `Trunk`'s
-    /// absolute timeline, for time-based windowing across sources that
-    /// share the same `Trunk` (e.g. multimux's DVR archive, whose own
-    /// `IndexEntry::start_pts_ns` is exactly this same clock).
-    pub start_ns: u64,
+    /// `SegmentEntry::timeline_position` — the `Trunk`'s absolute timeline,
+    /// for time-based windowing across sources that share the same `Trunk`
+    /// (e.g. multimux's DVR archive, whose own `IndexEntry::start` is exactly
+    /// this same media time).
+    pub start: timed_metadata::MediaTime,
     /// Segment duration in seconds.
     pub duration_secs: f64,
     /// Whether `#EXT-X-DISCONTINUITY` precedes this segment (RFC 8216
@@ -397,13 +402,13 @@ impl ClosedSegment {
     /// module's private `Window`.
     pub fn new(
         sequence_number: SegmentSeq,
-        start_ns: u64,
+        start: timed_metadata::MediaTime,
         duration_secs: f64,
         discontinuous: bool,
     ) -> Self {
         ClosedSegment {
             sequence_number,
-            start_ns,
+            start,
             duration_secs,
             discontinuous,
             init_generation: Generation::new(1),
@@ -590,10 +595,13 @@ impl Window {
             bytes: entry.bytes,
             duration: entry.duration,
             discontinuous,
-            start_ns: entry.timeline_position.as_nanos(),
+            start: timed_metadata::MediaTime(
+                u64::try_from(u128::from(entry.timeline_position.as_nanos()) / NANOS_PER_PTS_TICK)
+                    .unwrap_or(u64::MAX),
+            ),
             iframe_len,
             video_millihertz,
-            media_start,
+            media_anchor: media_start,
         });
     }
 
@@ -1810,12 +1818,12 @@ pub struct HlsOrigin {
     /// [`HlsOriginConfig::with_program_date_time_arrival`]). `None` => no arrival
     /// source.
     arrival_clock: Option<Arc<dyn Fn() -> i64 + Send + Sync>>,
-    /// Recorded origin: `(segment timeline start_ns, wall epoch ms)`. Set
+    /// Recorded origin: `(segment timeline start, wall epoch ms)`. Set
     /// once, the first time a segment drains into the window while an arrival
     /// clock is configured; never reset for the life of the origin.
     /// Lock order: `window` -> `arrival_origin` (arrival_origin is never
     /// taken before window).
-    arrival_origin: Mutex<Option<(u64, i64)>>,
+    arrival_origin: Mutex<Option<(timed_metadata::MediaTime, i64)>>,
     /// Operator-declared peak bitrate (see
     /// [`HlsOriginConfig::with_declared_bandwidth_bps`]) — `None` means none.
     declared_bandwidth_bps: Option<u64>,
@@ -3003,7 +3011,16 @@ impl HlsOrigin {
                             let dur_ms = (dur_nanos + 500_000) / 1_000_000;
                             let dur_ms = i64::try_from(dur_ms).unwrap_or(i64::MAX);
                             let epoch_ms = now_ms.saturating_sub(dur_ms);
-                            *origin = Some((entry.timeline_position.as_nanos(), epoch_ms));
+                            *origin = Some((
+                                timed_metadata::MediaTime(
+                                    u64::try_from(
+                                        u128::from(entry.timeline_position.as_nanos())
+                                            / NANOS_PER_PTS_TICK,
+                                    )
+                                    .unwrap_or(u64::MAX),
+                                ),
+                                epoch_ms,
+                            ));
                         }
                     }
                     let seg_duration = entry.duration;
@@ -3118,26 +3135,26 @@ impl HlsOrigin {
     /// Private PDT helper shared by the media, open-segment and I-frame
     /// renderers so the three can never disagree (issue #1423 B2a, Apple
     /// 9.x/8.15). `seq` is the segment's sequence number (needed for the
-    /// explicit-anchor path); `start_ns` is the segment's position on the
-    /// trunk's continuous timeline (nanoseconds).
+    /// explicit-anchor path); `start` is the segment's position on the
+    /// trunk's continuous timeline.
     fn segment_pdt(
         &self,
         seq: SegmentSeq,
-        start_ns: u64,
-        media_start: Option<timed_metadata::MediaTime>,
+        start: timed_metadata::MediaTime,
+        window_anchor: Option<timed_metadata::MediaTime>,
     ) -> Option<broadcast_hls::ProgramDateTime> {
         // (1) Explicit trunk time anchor wins.
         if let Some(anchor) = self.trunk.time_anchor()
-            && let Some(media_start) = media_start.or_else(|| self.trunk.segment_start_time(seq))
+            && let Some(media_start) = window_anchor.or_else(|| self.trunk.segment_start_time(seq))
             && let Ok(ts) = jiff::Timestamp::from_millisecond(anchor.media_to_epoch_ms(media_start))
         {
             return Some(broadcast_hls::ProgramDateTime::from_timestamp(ts));
         }
         // (2) Arrival origin.
         let origin = *locked(&self.arrival_origin);
-        if let Some((origin_start_ns, origin_epoch_ms)) = origin {
-            let delta_ns = i128::from(start_ns) - i128::from(origin_start_ns);
-            let delta_ms = delta_ns / 1_000_000;
+        if let Some((origin_start, origin_epoch_ms)) = origin {
+            let delta_ms =
+                (i128::from(start.0) - i128::from(origin_start.0)) * 1000 / i128::from(PTS_HZ);
             let epoch_ms = i128::from(origin_epoch_ms) + delta_ms;
             let epoch_ms: i64 = epoch_ms.try_into().ok()?;
             if let Ok(ts) = jiff::Timestamp::from_millisecond(epoch_ms) {
@@ -3170,7 +3187,7 @@ impl HlsOrigin {
             .iter()
             .map(|s| ClosedSegment {
                 sequence_number: s.sequence_number,
-                start_ns: s.start_ns,
+                start: s.start,
                 duration_secs: s.duration.as_secs_f64(),
                 discontinuous: s.discontinuous,
                 init_generation: s.init_gen,
@@ -3454,7 +3471,7 @@ impl HlsOrigin {
             .zip(closed_parts)
             .map(|(s, parts)| {
                 let program_date_time =
-                    self.segment_pdt(s.sequence_number, s.start_ns, s.media_start);
+                    self.segment_pdt(s.sequence_number, s.start, s.media_anchor);
                 MediaSegment {
                     map: map_for(s.init_gen),
                     uri: self.segment_uri(track_id, s.sequence_number, ext),
@@ -3502,16 +3519,17 @@ impl HlsOrigin {
             // closed segment's start + its duration (B2a); with no closed
             // segment yet it is omitted. The explicit-anchor path is handled
             // inside `segment_pdt` via `segment_start_time(open_seq)`.
-            let open_start_ns = window.segments.back().map(|s| {
-                s.start_ns
-                    .saturating_add(u64::try_from(s.duration.as_nanos()).unwrap_or(u64::MAX))
+            let open_start = window.segments.back().map(|s| {
+                timed_metadata::MediaTime(s.start.0.saturating_add(
+                    u64::try_from(s.duration.as_nanos() / NANOS_PER_PTS_TICK).unwrap_or(u64::MAX),
+                ))
             });
-            open.program_date_time = match open_start_ns {
-                Some(sn) => self.segment_pdt(open_seq, sn, None),
+            open.program_date_time = match open_start {
+                Some(start) => self.segment_pdt(open_seq, start, None),
                 None => {
                     // No closed segment: explicit anchor only.
                     if self.trunk.time_anchor().is_some() {
-                        self.segment_pdt(open_seq, 0, None)
+                        self.segment_pdt(open_seq, timed_metadata::MediaTime(0), None)
                     } else {
                         None
                     }
@@ -3866,7 +3884,7 @@ impl HlsOrigin {
                     offset: Some(0),
                 }),
                 parts: Vec::new(),
-                program_date_time: self.segment_pdt(s.sequence_number, s.start_ns, s.media_start),
+                program_date_time: self.segment_pdt(s.sequence_number, s.start, s.media_anchor),
                 ..Default::default()
             })
             .collect();
@@ -5738,9 +5756,8 @@ mod tests {
     //     catch-up serving merges with its on-disk archive ---
 
     /// MUTATION VERIFIED: changing `Window::push`'s
-    /// `start_ns: entry.timeline_position.as_nanos()` to a constant `0`
-    /// makes this test's `assert_eq!(snapshot[1].start_ns, 4_000_000_000)`
-    /// fail (`left: 0, right: 4000000000`) — `closed_segments()` would then
+    /// `start: timed_metadata::MediaTime(..)` to `MediaTime(0)` makes this
+    /// test's `assert_eq!(snapshot[1].start, MediaTime(360_003))` fail — `closed_segments()` would then
     /// report every segment as starting at time zero, which is exactly the
     /// bug that would make a caller's time-based catch-up window (issue
     /// #900) unable to tell segments apart. Recompiled and re-run to
@@ -5774,10 +5791,10 @@ mod tests {
         let snapshot = origin.closed_segments();
         assert_eq!(snapshot.len(), 2);
         assert_eq!(snapshot[0].sequence_number, SegmentSeq::new(1));
-        assert_eq!(snapshot[0].start_ns, 0);
+        assert_eq!(snapshot[0].start, timed_metadata::MediaTime(0));
         assert!(!snapshot[0].discontinuous);
         assert_eq!(snapshot[1].sequence_number, SegmentSeq::new(2));
-        assert_eq!(snapshot[1].start_ns, 4_000_000_000);
+        assert_eq!(snapshot[1].start, timed_metadata::MediaTime(360_003));
         assert!(snapshot[1].discontinuous);
     }
 

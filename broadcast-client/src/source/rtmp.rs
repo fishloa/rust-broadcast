@@ -488,9 +488,9 @@ impl RtmpSource {
                 }
                 _ => {}
             },
-            crate::tshttp::Event::StallNotice { secs } => {
+            crate::tshttp::Event::StallNotice { stalled } => {
                 self.events
-                    .push_back(Event::Status(Status::Stalled { secs }));
+                    .push_back(Event::Status(Status::Stalled { stalled }));
                 self.stalled = true;
             }
             crate::tshttp::Event::Reconnecting { attempt } => {

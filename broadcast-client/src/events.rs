@@ -102,10 +102,10 @@ pub enum Status {
     Establishing,
     /// Live playback.
     Live,
-    /// Stalled for `secs` seconds.
+    /// Stalled for `stalled`.
     Stalled {
-        /// Stalled seconds.
-        secs: u64,
+        /// How long the stall has lasted.
+        stalled: Duration,
     },
     /// Reconnecting. `attempt` is the number of consecutive failed attempts; `0` announces the
     /// reconnect of a connection that had played (a finished stream, a stall reconnect, a close
@@ -216,8 +216,8 @@ broadcast_common::impl_spec_display!(PauseReason);
 ///
 /// Positions are in the player's sample-time domain: the presentation time stamp of a sample
 /// converted to 27 MHz ticks, so `Start.at_27mhz` and `Resume.at_27mhz` are the 27 MHz clock the
-/// player must set before it plays (its position in `Session::on_playback_position` uses the
-/// same domain). A timeline whose first kept sample has a negative time stamp (a jump whose
+/// player must set before it plays (its position in `Session::on_playback_position` is a
+/// `Clock27` on the same clock). A timeline whose first kept sample has a negative time stamp (a jump whose
 /// unrolled timestamps go below zero) cannot be expressed in `u64`: its positions are measured from
 /// that first kept sample, so `0` is that sample. Live TS-over-HTTP decides `Start` inside
 /// `Session::on_playback_position`: a host that never calls it gets no buffer event, and one that
@@ -796,8 +796,8 @@ pub enum Event {
     ServerRefused {
         /// HTTP status.
         status: StatusCode,
-        /// Server-requested wait, microseconds, if any.
-        retry_after_us: Option<u64>,
+        /// Server-requested wait, if any.
+        retry_after: Option<Duration>,
         /// Response body, only when it is `text/plain` (UTF-8 or no charset); control characters
         /// stripped, trimmed and capped.
         reason: Option<String>,
@@ -901,12 +901,12 @@ impl PartialEq for Event {
             (
                 Self::ServerRefused {
                     status: sa,
-                    retry_after_us: ra,
+                    retry_after: ra,
                     reason: rra,
                 },
                 Self::ServerRefused {
                     status: sb,
-                    retry_after_us: rb,
+                    retry_after: rb,
                     reason: rrb,
                 },
             ) => *sa == *sb && *ra == *rb && *rra == *rrb,
@@ -1321,11 +1321,11 @@ impl Config {
             return invalid("buffer");
         }
         if let Some(jump) = &self.timeline_jump {
-            if jump.backward_us == 0 {
-                return invalid("timeline_jump.backward_us");
+            if jump.backward.is_zero() {
+                return invalid("timeline_jump.backward");
             }
-            if jump.forward_slack_us == 0 {
-                return invalid("timeline_jump.forward_slack_us");
+            if jump.forward_slack.is_zero() {
+                return invalid("timeline_jump.forward_slack");
             }
         }
         self.udp.validate()?;
@@ -1356,12 +1356,12 @@ impl Config {
 
 fn dash_field(name: &str) -> &'static str {
     match name {
-        "utc_timeout_us" => "dash.utc_timeout_us",
-        "utc_wait_us" => "dash.utc_wait_us",
-        "utc_max_rtt_us" => "dash.utc_max_rtt_us",
-        "utc_resync_us" => "dash.utc_resync_us",
-        "early_retry_us" => "dash.early_retry_us",
-        "min_mpd_refresh_us" => "dash.min_mpd_refresh_us",
+        "utc_timeout" => "dash.utc_timeout",
+        "utc_wait" => "dash.utc_wait",
+        "utc_max_rtt" => "dash.utc_max_rtt",
+        "utc_resync" => "dash.utc_resync",
+        "early_retry" => "dash.early_retry",
+        "min_mpd_refresh" => "dash.min_mpd_refresh",
         _ => "dash",
     }
 }

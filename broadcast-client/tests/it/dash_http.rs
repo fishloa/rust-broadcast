@@ -588,8 +588,8 @@ fn a_utc_request_is_abandoned_at_the_utc_timeout_and_an_init_at_the_request_time
     let mut config = Config::default();
     config.request_timeout = std::time::Duration::from_secs(4);
     config.segment_timeout = std::time::Duration::from_secs(30);
-    config.dash.utc_timeout_us = 2 * SEC;
-    config.dash.utc_wait_us = 5 * SEC;
+    config.dash.utc_timeout = std::time::Duration::from_micros(2 * SEC);
+    config.dash.utc_wait = std::time::Duration::from_micros(5 * SEC);
     let mut sim = DashSim::new(
         MPD_URL,
         config,

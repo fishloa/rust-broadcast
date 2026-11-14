@@ -16,6 +16,12 @@ fn now(us: u64) -> Timestamp {
     Timestamp::from_micros(us)
 }
 
+/// Unix microseconds as a wall-clock reading.
+fn wall_unix(unix_us: u64) -> jiff::Timestamp {
+    let us = i64::try_from(unix_us).unwrap_or(i64::MAX);
+    jiff::Timestamp::from_microsecond(us).unwrap_or(jiff::Timestamp::UNIX_EPOCH)
+}
+
 const DOC: &str = "http://dash.test/live/manifest.mpd";
 const AST_UNIX_S: u64 = 1_767_225_600;
 const SECOND: u64 = 1_000_000;
@@ -67,7 +73,7 @@ impl Live {
                 .with_limits(PullLimits::default()),
         );
         let now_us = 0;
-        client.set_wall_clock(now(now_us), (AST_UNIX_S + 60) * SECOND);
+        client.set_wall_clock(now(now_us), wall_unix((AST_UNIX_S + 60) * SECOND));
         let Some(Action::FetchMpd { url, .. }) = client.poll(now(now_us)) else {
             panic!("first action is the MPD")
         };
@@ -105,7 +111,7 @@ impl Live {
 }
 
 fn plain() -> ResponseMeta<'static> {
-    ResponseMeta::at(0)
+    ResponseMeta::at(now(0))
 }
 
 #[test]
@@ -189,7 +195,7 @@ fn a_non_http_location_never_becomes_an_action() {
 #[test]
 fn a_foreign_final_url_is_not_adopted_when_pinned() {
     let mpd = live_mpd("");
-    let meta = ResponseMeta::at(0).with_final_url("http://evil.test/live/manifest.mpd");
+    let meta = ResponseMeta::at(now(0)).with_final_url("http://evil.test/live/manifest.mpd");
     let mut live = Live::start(pinned(), &mpd, &meta);
     let (seen, next) = live.actions_until_next_mpd();
     assert_eq!(next.as_deref(), Some(DOC));
@@ -207,7 +213,7 @@ fn a_foreign_final_url_on_a_refresh_is_not_adopted_when_pinned() {
     let mut live = Live::start(pinned(), &mpd, &plain());
     let (_, next) = live.actions_until_next_mpd();
     assert_eq!(next.as_deref(), Some(DOC));
-    let meta = ResponseMeta::at(live.now).with_final_url(MALICIOUS);
+    let meta = ResponseMeta::at(now(live.now)).with_final_url(MALICIOUS);
     live.refresh_with(&mpd, &meta);
     let (_, next) = live.actions_until_next_mpd();
     assert_eq!(next.as_deref(), Some(DOC));
@@ -216,7 +222,7 @@ fn a_foreign_final_url_on_a_refresh_is_not_adopted_when_pinned() {
 #[test]
 fn a_foreign_final_url_is_adopted_when_cross_origin_urls_are_on() {
     let mpd = live_mpd("");
-    let meta = ResponseMeta::at(0).with_final_url("http://cdn.other.test/live/moved.mpd");
+    let meta = ResponseMeta::at(now(0)).with_final_url("http://cdn.other.test/live/moved.mpd");
     let mut live = Live::start(DashConfig::default(), &mpd, &meta);
     let (_, next) = live.actions_until_next_mpd();
     assert_eq!(
@@ -228,7 +234,7 @@ fn a_foreign_final_url_is_adopted_when_cross_origin_urls_are_on() {
 #[test]
 fn a_same_origin_final_url_is_adopted_when_pinned() {
     let mpd = live_mpd("");
-    let meta = ResponseMeta::at(0).with_final_url("http://dash.test/live/moved.mpd");
+    let meta = ResponseMeta::at(now(0)).with_final_url("http://dash.test/live/moved.mpd");
     let mut live = Live::start(pinned(), &mpd, &meta);
     let (_, next) = live.actions_until_next_mpd();
     assert_eq!(next.as_deref(), Some("http://dash.test/live/moved.mpd"));
@@ -238,7 +244,7 @@ fn a_same_origin_final_url_is_adopted_when_pinned() {
 fn a_non_http_final_url_is_never_adopted() {
     for dash in [pinned(), DashConfig::default()] {
         let mpd = live_mpd("");
-        let meta = ResponseMeta::at(0).with_final_url("file:///etc/passwd");
+        let meta = ResponseMeta::at(now(0)).with_final_url("file:///etc/passwd");
         let mut live = Live::start(dash, &mpd, &meta);
         let (_, next) = live.actions_until_next_mpd();
         assert_eq!(next.as_deref(), Some(DOC));
@@ -256,7 +262,7 @@ fn a_foreign_final_url_of_a_static_mpd_is_not_adopted_when_pinned() {
     let Some(Action::FetchMpd { .. }) = client.poll(now(0)) else {
         panic!("mpd")
     };
-    let meta = ResponseMeta::at(0).with_final_url("http://evil.test/live/manifest.mpd");
+    let meta = ResponseMeta::at(now(0)).with_final_url("http://evil.test/live/manifest.mpd");
     client.on_mpd_with(now(0), mpd.as_bytes(), &meta).unwrap();
     let urls: Vec<String> = std::iter::from_fn(|| client.poll(now(0)))
         .map(|a| a.url().to_string())

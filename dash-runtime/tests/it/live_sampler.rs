@@ -179,7 +179,7 @@ fn an_answer_for_an_unknown_id_is_an_error_not_a_panic() {
         })
         .unwrap();
     let body = xs_datetime_ms(AST_US + 41 * MICROS).into_bytes();
-    let r = UtcResponse::new(0, 0, &body);
+    let r = UtcResponse::new(now(0), now(0), &body);
     c.on_utc_response(now(0), id, &r).unwrap();
     assert!(
         matches!(

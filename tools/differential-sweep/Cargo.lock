@@ -283,6 +283,7 @@ dependencies = [
  "headers",
  "hls-runtime",
  "http",
+ "jiff",
  "mpeg-ts",
  "rtmp-runtime",
  "rtp-packet",

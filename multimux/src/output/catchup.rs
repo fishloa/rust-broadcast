@@ -134,7 +134,7 @@ fn parse_init_filename(file: &str) -> Option<u32> {
 #[derive(Debug, Default, Deserialize)]
 pub struct CatchupPlaylistQuery {
     /// Bound the catch-up window to this many trailing seconds of
-    /// `crate::dvr::IndexEntry::start_pts_ns` — see
+    /// `crate::dvr::IndexEntry::start` — see
     /// `crate::catchup::apply_window`. Omitted or `0`: the whole archive
     /// plus the live tail.
     window_secs: Option<u64>,
@@ -186,7 +186,7 @@ async fn catchup_playlist(
                 u32::try_from(offset.checked_add(u64::from(s.sequence_number.value()))?).ok()?;
             Some(hls_runtime::server::ClosedSegment::new(
                 media_plane::ids::SegmentSeq::new(public),
-                s.start_ns,
+                s.start,
                 s.duration_secs,
                 s.discontinuous,
             ))
@@ -270,7 +270,7 @@ async fn vod_playlist(
         .iter()
         .map(|s| catchup::CatchupSegment {
             seq: s.seq,
-            start_pts_ns: s.start_pts_ns,
+            start: s.start,
             duration_secs: s.duration_secs,
             discontinuous: s.discontinuous,
             init: Some(catchup::InitRef::Archived(s.period_num)),
@@ -1591,11 +1591,11 @@ mod tests {
 
         let starts: Vec<u64> = catchup::scan_archive(&root.join("r"))
             .iter()
-            .map(|s| s.start_pts_ns)
+            .map(|s| s.start.as_nanos())
             .collect();
         assert!(
             starts.windows(2).all(|w| w[0] < w[1]),
-            "archived start_pts_ns must increase across the reconnect: {starts:?}"
+            "an archived segment start must increase across the reconnect: {starts:?}"
         );
         cleanup(&root);
     }

@@ -244,7 +244,7 @@ async fn a_peer_rejection_surfaces_its_reason() {
 async fn a_silent_peer_times_out_with_a_typed_error() {
     let silent = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let config = HandshakeConfig::default()
-        .with_retransmit_after_ticks(1)
+        .with_retransmit_after(Duration::from_millis(250))
         .with_max_retries(2);
     let err = tokio::time::timeout(
         WAIT,
@@ -557,7 +557,7 @@ async fn the_negotiated_latency_is_the_greater_of_both_sides() {
     const LONG_MS: u16 = 1_000;
     const AT_LEAST: Duration = Duration::from_millis(900);
     let short = HandshakeConfig::default(); // 120 ms
-    let long = HandshakeConfig::default().with_latency_ms(LONG_MS);
+    let long = HandshakeConfig::default().with_latency(Duration::from_millis(u64::from(LONG_MS)));
 
     // Role 1: the Caller asks for a long latency; the accepted (Listener-role)
     // socket receives.

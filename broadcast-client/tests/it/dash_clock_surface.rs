@@ -3,15 +3,25 @@
 //! `Event::ClockSynced` and the new `ErrorKind`s. Emission of `ClockSynced` and of the DASH error
 //! kinds lands with the DASH source; here only the types and the clock plumbing are exercised.
 
+use core::time::Duration;
+
 use crate::support;
 use broadcast_common::stage::Timestamp;
 use url::Url;
+
+/// The wall clock reading the host reports, `None` for a microsecond count
+/// `jiff::Timestamp` cannot name (a reading past 9999-12-31).
+fn wall(unix_us: u64) -> Option<jiff::Timestamp> {
+    let us = i64::try_from(unix_us).ok()?;
+    jiff::Timestamp::from_microsecond(us).ok()
+}
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
     Timestamp::from_micros(us)
 }
 
+use broadcast_client::fetch::{WallClock, retry_after_us};
 use broadcast_client::{
     Action, ClockSource, Config, DashClockPolicy, DashConfig, Error, ErrorKind, Event, Session,
 };
@@ -66,8 +76,10 @@ fn first_gap_secs(h: &mut Host) -> u64 {
 fn gap_with_anchor(anchors: &[(u64, u64)], reply: Reply) -> u64 {
     let mut h = hls_host_with_first_segment_reply(reply);
     for (mono, unix) in anchors {
-        h.session
-            .set_wall_clock(Timestamp::from_micros(*mono), *unix);
+        h.session.set_wall_clock(
+            Timestamp::from_micros(*mono),
+            wall(*unix).unwrap_or(jiff::Timestamp::UNIX_EPOCH),
+        );
     }
     first_gap_secs(&mut h)
 }
@@ -173,9 +185,9 @@ fn extreme_anchors_are_accepted_and_do_not_wrap() {
             "UTC at 0 is 1970",
         ),
         (
-            (0, u64::MAX),
-            FIRST_BACKOFF_SECS,
-            "UTC is the far future: the date passed",
+            (0, BASE_UNIX_US + SEC),
+            29,
+            "the response at 0 is a second before the anchor",
         ),
         ((u64::MAX, 0), MAX_RETRY_AFTER_SECS, "UTC far before 1970"),
         ((0, 0), MAX_RETRY_AFTER_SECS, "UTC is 1970"),
@@ -189,6 +201,29 @@ fn extreme_anchors_are_accepted_and_do_not_wrap() {
         let gap = gap_with_anchor(&[(mono, unix)], retry_after(503, PLUS_30S));
         assert_eq!(gap, want, "anchor ({mono}, {unix}): {why}");
     }
+}
+
+#[test]
+fn a_past_http_date_on_a_refusal_asks_for_no_server_wait() {
+    let anchor = WallClock::new(0, i128::from(BASE_UNIX_US + 100 * SEC));
+    let past = retry_after_us(
+        http::StatusCode::SERVICE_UNAVAILABLE,
+        &crate::support::headers(&[("Retry-After", PLUS_30S)]),
+        Timestamp::ZERO,
+        Some(&anchor),
+    );
+    assert_eq!(past, 0, "the date is behind the anchor");
+    let ahead = WallClock::new(0, i128::from(BASE_UNIX_US));
+    assert_eq!(
+        retry_after_us(
+            http::StatusCode::SERVICE_UNAVAILABLE,
+            &crate::support::headers(&[("Retry-After", PLUS_30S)]),
+            Timestamp::ZERO,
+            Some(&ahead)
+        ) / SEC,
+        30,
+        "the same header ahead of the anchor"
+    );
 }
 
 #[test]
@@ -212,8 +247,9 @@ fn delta_seconds_and_garbage_behave_as_before_with_an_anchor_set() {
 fn set_wall_clock_after_close_is_harmless() {
     let mut s = Session::open(Url::parse(URL).unwrap(), hls_config(), ts(0)).unwrap();
     s.close();
-    s.set_wall_clock(ts(1), 2);
-    s.set_wall_clock(Timestamp::from_nanos(u64::MAX), u64::MAX);
+    s.set_wall_clock(ts(1), wall(2).unwrap());
+    assert_eq!(wall(u64::MAX), None, "a date past 9999 has no reading");
+    s.set_wall_clock(Timestamp::from_nanos(u64::MAX), wall(2).unwrap());
     assert!(s.next_event().is_none());
 }
 
@@ -221,8 +257,8 @@ fn set_wall_clock_after_close_is_harmless() {
 fn set_wall_clock_emits_nothing_by_itself() {
     let mut s = Session::open(Url::parse(URL).unwrap(), hls_config(), ts(0)).unwrap();
     let mut control = Session::open(Url::parse(URL).unwrap(), hls_config(), ts(0)).unwrap();
-    s.set_wall_clock(ts(0), BASE_UNIX_US);
-    s.set_wall_clock(ts(0), BASE_UNIX_US);
+    s.set_wall_clock(ts(0), wall(BASE_UNIX_US).unwrap());
+    s.set_wall_clock(ts(0), wall(BASE_UNIX_US).unwrap());
     let drain = |s: &mut Session| {
         let mut actions = Vec::new();
         while let Some(a) = s.poll(ts(0)) {
@@ -247,7 +283,7 @@ fn a_ts_http_session_ignores_the_anchor_even_with_an_http_date_retry_after() {
         )
         .unwrap();
         if anchor {
-            s.set_wall_clock(ts(0), BASE_UNIX_US);
+            s.set_wall_clock(ts(0), wall(BASE_UNIX_US).unwrap());
         }
         let mut seen: Vec<Action> = Vec::new();
         let mut events = Vec::new();
@@ -291,7 +327,7 @@ fn no_source_emits_clock_synced_before_the_dash_source_exists() {
     h.ok(TS_PLAYLIST_URL, ts_playlist());
     h.ok(TS_SEG0_URL, ts_segment(0));
     h.ok(TS_SEG1_URL, ts_segment(1));
-    h.session.set_wall_clock(ts(0), BASE_UNIX_US);
+    h.session.set_wall_clock(ts(0), wall(BASE_UNIX_US).unwrap());
     h.run_to_end();
     assert!(h.events.iter().any(is_ended));
     assert!(
@@ -326,12 +362,14 @@ fn the_default_dash_config_is_the_dash_default_and_opens() {
 fn every_invalid_dash_field_is_rejected_by_its_dotted_name() {
     type Edit = fn(&mut DashConfig);
     let cases: [(&str, Edit); 6] = [
-        ("dash.utc_timeout_us", |d| d.utc_timeout_us = 0),
-        ("dash.utc_wait_us", |d| d.utc_wait_us = 0),
-        ("dash.utc_max_rtt_us", |d| d.utc_max_rtt_us = 0),
-        ("dash.utc_resync_us", |d| d.utc_resync_us = 0),
-        ("dash.early_retry_us", |d| d.early_retry_us = 0),
-        ("dash.min_mpd_refresh_us", |d| d.min_mpd_refresh_us = 0),
+        ("dash.utc_timeout", |d| d.utc_timeout = Duration::ZERO),
+        ("dash.utc_wait", |d| d.utc_wait = Duration::ZERO),
+        ("dash.utc_max_rtt", |d| d.utc_max_rtt = Duration::ZERO),
+        ("dash.utc_resync", |d| d.utc_resync = Some(Duration::ZERO)),
+        ("dash.early_retry", |d| d.early_retry = Duration::ZERO),
+        ("dash.min_mpd_refresh", |d| {
+            d.min_mpd_refresh = Duration::ZERO
+        }),
     ];
     for (name, edit) in cases {
         assert_eq!(field_of(with_dash(edit)), Some(name), "{name}");
@@ -340,17 +378,18 @@ fn every_invalid_dash_field_is_rejected_by_its_dotted_name() {
 
 #[test]
 fn nonsense_combinations_are_rejected() {
+    let four_seconds = Duration::from_micros(4 * SEC);
     let wait_shorter_than_one_request = with_dash(|d| {
-        d.utc_timeout_us = 4 * SEC;
-        d.utc_wait_us = 4 * SEC - 1;
+        d.utc_timeout = four_seconds;
+        d.utc_wait = four_seconds - Duration::from_micros(1);
     });
     assert_eq!(
         field_of(wait_shorter_than_one_request),
-        Some("dash.utc_wait_us")
+        Some("dash.utc_wait")
     );
     let equal = with_dash(|d| {
-        d.utc_timeout_us = 4 * SEC;
-        d.utc_wait_us = 4 * SEC;
+        d.utc_timeout = four_seconds;
+        d.utc_wait = four_seconds;
     });
     assert_eq!(field_of(equal), None);
 }
@@ -358,23 +397,25 @@ fn nonsense_combinations_are_rejected() {
 #[test]
 fn the_largest_values_and_the_zero_meaning_none_open() {
     let config = with_dash(|d| {
-        d.utc_timeout_us = u64::MAX;
-        d.utc_wait_us = u64::MAX;
-        d.utc_max_rtt_us = u64::MAX;
-        d.utc_resync_us = u64::MAX;
-        d.host_clock_uncertainty_us = u64::MAX;
-        d.live_delay_us = Some(u64::MAX);
-        d.availability_margin_us = u64::MAX;
-        d.early_retry_us = u64::MAX;
-        d.early_grace_us = u64::MAX;
-        d.min_mpd_refresh_us = u64::MAX;
+        d.utc_timeout = Duration::MAX;
+        d.utc_wait = Duration::MAX;
+        d.utc_max_rtt = Duration::MAX;
+        d.utc_resync = Some(Duration::MAX);
+        d.host_clock_uncertainty = Duration::MAX;
+        d.live_delay = Some(Duration::MAX);
+        d.availability_margin = Duration::MAX;
+        d.early_retry = Duration::MAX;
+        d.early_grace = Duration::MAX;
+        d.min_mpd_refresh = Duration::MAX;
     });
     assert_eq!(field_of(config), None);
+    let never_resyncs = with_dash(|d| d.utc_resync = None);
+    assert_eq!(field_of(never_resyncs), None);
     let zeros = with_dash(|d| {
-        d.host_clock_uncertainty_us = 0;
-        d.live_delay_us = Some(0);
-        d.availability_margin_us = 0;
-        d.early_grace_us = 0;
+        d.host_clock_uncertainty = Duration::ZERO;
+        d.live_delay = Some(Duration::ZERO);
+        d.availability_margin = Duration::ZERO;
+        d.early_grace = Duration::ZERO;
     });
     assert_eq!(field_of(zeros), None);
 }
@@ -395,19 +436,19 @@ fn the_policy_and_switches_never_invalidate() {
 
 #[test]
 fn an_invalid_dash_config_fails_a_session_that_does_not_play_dash() {
-    let mut config = with_dash(|d| d.early_retry_us = 0);
+    let mut config = with_dash(|d| d.early_retry = Duration::ZERO);
     config.kind = broadcast_client::SourceKind::TsHttp;
     assert!(matches!(
         Session::open(Url::parse("http://h/live.ts").unwrap(), config, ts(0)),
         Err(Error::InvalidConfig {
-            field: "dash.early_retry_us"
+            field: "dash.early_retry"
         })
     ));
 }
 
 #[test]
 fn an_earlier_invalid_field_is_reported_before_a_dash_one() {
-    let mut config = with_dash(|d| d.utc_timeout_us = 0);
+    let mut config = with_dash(|d| d.utc_timeout = Duration::ZERO);
     config.max_queued_events = 0;
     assert_eq!(field_of(config), Some("max_queued_events"));
 }

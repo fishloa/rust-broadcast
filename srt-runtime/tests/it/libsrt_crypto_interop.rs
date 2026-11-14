@@ -57,6 +57,8 @@ const SALT: [u8; SALT_LEN] = [
 const PAYLOAD_LEN: usize = 1316;
 const PACKETS: u32 = 5;
 const HANDSHAKE_DEADLINE: Duration = Duration::from_secs(15);
+/// What one receive timeout advances the caller's handshake clock by.
+const RETRANSMIT_STEP: Duration = Duration::from_millis(250);
 const RECV_DEADLINE: Duration = Duration::from_secs(15);
 /// The handshake retransmit period libsrt itself uses (and this test's read timeout).
 const POLL: Duration = Duration::from_millis(250);
@@ -74,7 +76,7 @@ fn is_timeout(e: &std::io::Error) -> bool {
 fn crypto_config(passphrase: &str) -> HandshakeConfig {
     HandshakeConfig::default()
         .with_encryption_field(EncryptionField::Aes128)
-        .with_retransmit_after_ticks(1)
+        .with_retransmit_after(Duration::from_millis(250))
         .with_max_retries(1_000)
         .with_crypto(Some(CryptoConfig::new(
             passphrase.as_bytes().to_vec(),
@@ -103,7 +105,7 @@ fn drive_caller(hs: &mut CallerHandshake, sock: &UdpSocket, peer: SocketAddr) ->
                 Err(_) => continue,
             },
             Ok(_) => continue,
-            Err(e) if is_timeout(&e) => hs.tick(),
+            Err(e) if is_timeout(&e) => hs.tick(RETRANSMIT_STEP),
             Err(e) => panic!("recv: {e}"),
         };
         for o in outputs {

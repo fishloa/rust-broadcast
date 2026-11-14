@@ -56,6 +56,8 @@ assert_eq!(out, bytes);
 Run a Caller/Listener handshake in memory (no sockets; the bytes one side emits are parsed and fed to the other):
 
 ```rust
+use core::time::Duration;
+
 use srt_runtime::HandshakeConfig;
 use srt_runtime::caller::{CallerHandshake, CallerHandshakeState};
 use srt_runtime::handshake_sm::HandshakeOutput;
@@ -71,13 +73,15 @@ fn first_send(outputs: Vec<HandshakeOutput>) -> Option<Vec<u8>> {
 
 let mut caller = CallerHandshake::new(
     0x1111_1111,
-    HandshakeConfig::default().with_latency_ms(180).with_stream_id(Some("live/camera-1".into())),
+    HandshakeConfig::default()
+        .with_latency(Duration::from_millis(180))
+        .with_stream_id(Some("live/camera-1".into())),
 );
 // A real listener derives the SYN cookie from the peer address and a secret.
 let mut listener = ListenerHandshake::new(
     0x2222_2222,
     0xC0FF_EE42,
-    HandshakeConfig::default().with_latency_ms(250),
+    HandshakeConfig::default().with_latency(Duration::from_millis(250)),
 );
 
 let mut to_listener = caller.start().unwrap();
@@ -93,7 +97,7 @@ for _ in 0..10 {
 assert_eq!(caller.state(), CallerHandshakeState::Connected);
 assert_eq!(listener.state(), ListenerHandshakeState::Connected);
 // Both sides agree on the greater of the two latencies.
-assert_eq!(caller.negotiated().unwrap().latency_ms, 250);
+assert_eq!(caller.negotiated().unwrap().latency, Duration::from_millis(250));
 ```
 
 Runnable programs: `handshake_loopback` and `arq_loss_recovery` (`cargo run -p srt-runtime --example <name>`).
