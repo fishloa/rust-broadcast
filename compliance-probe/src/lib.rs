@@ -97,6 +97,11 @@ impl Probe {
         let Some(pcr) = af.pcr else {
             return;
         };
+        // A PCR whose 9-bit extension is off the 27 MHz clock names no time;
+        // there is nothing to measure drift against (#2656).
+        let Ok(clock) = pcr.to_clock27() else {
+            return;
+        };
         if af.discontinuity_indicator {
             // The broadcaster has signalled that this PID's PCR series is
             // not continuous here (ISO/IEC 13818-1 §2.4.3.4) — measure a
@@ -104,7 +109,7 @@ impl Probe {
             // (W-CP-2).
             self.pcr.reset(ts_packet.header.pid);
         }
-        if let Some(sample) = self.pcr.observe(ts_packet.header.pid, pcr.as_27mhz(), t) {
+        if let Some(sample) = self.pcr.observe(ts_packet.header.pid, clock.ticks(), t) {
             let pid_label = alloc::format!("0x{:04X}", sample.pid);
             record_gauge!(
                 crate::metric_names::PCR_DRIFT_PPM,

@@ -290,6 +290,21 @@ impl core::fmt::Display for ClockOutOfRange {
 
 impl core::error::Error for ClockOutOfRange {}
 
+impl ClockOutOfRange {
+    /// A rejected 27 MHz base: a value at or above the 33-bit wire width.
+    ///
+    /// The constructors here never produce one (a base is either already a
+    /// [`Clock33`] or checked by [`Clock27::from_parts`]); a type that kept
+    /// wire parts unvalidated reports an over-wide base with this.
+    #[must_use]
+    pub const fn base(value: u64) -> Self {
+        Self {
+            field: "27 MHz base",
+            value,
+        }
+    }
+}
+
 /// A validated 33-bit 90 kHz clock sample (PTS, DTS, SCTE-35 `pts_time`).
 ///
 /// ISO/IEC 13818-1 §2.4.3.7 samples the 90 kHz system clock into a 33-bit
@@ -391,10 +406,13 @@ impl core::fmt::Display for Clock33 {
 /// A validated 27 MHz clock value: `base * 300 + ext` (ISO/IEC 13818-1
 /// §2.4.3.5 PCR, §2.4.3.7 ESCR, §2.5.3.4 program-stream SCR).
 ///
-/// The base is a [`Clock33`] and `ext` is `< 300`, so the value is always in
-/// `[0, PCR_WRAP_27MHZ)`. This is the one representation of a PCR/ESCR/SCR:
-/// `mpeg-ts::ts::Pcr` and `mpeg-ps::Scr` are thin wrappers that add only their
-/// own wire codec.
+/// Construction ([`from_parts`](Self::from_parts),
+/// [`from_27mhz`](Self::from_27mhz)) keeps `ext < 300`, so a value built that
+/// way is always in `[0, PCR_WRAP_27MHZ)`. A *parsed* field may carry a 9-bit
+/// extension in `300..=511` (off the clock): [`from_wire_parts`](Self::from_wire_parts)
+/// keeps it losslessly and [`to_clock27`](Self::to_clock27) is the checked way
+/// to use it. This is the one representation of a PCR/ESCR/SCR: `mpeg-ts`'s
+/// `Pcr` and `mpeg-ps`'s `Scr` wrap it and add only their wire codecs.
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Clock27 {
@@ -461,6 +479,11 @@ impl Clock27 {
     }
 
     /// The full value on the 27 MHz clock: `base * 300 + ext`.
+    ///
+    /// A constructed value is a real time reading. For a value from
+    /// [`from_wire_parts`](Self::from_wire_parts) with an extension at or above
+    /// 300 this is not a time on the clock, so callers check
+    /// [`is_valid`](Self::is_valid) or [`to_clock27`](Self::to_clock27) first.
     #[must_use]
     pub const fn ticks(self) -> u64 {
         pcr_from_parts(self.base.ticks(), self.ext)
@@ -477,6 +500,52 @@ impl Clock27 {
     #[must_use]
     pub fn signed_distance_to(self, to: Self) -> i64 {
         pcr_signed_distance(self.ticks(), to.ticks())
+    }
+
+    /// Wrap the two parts exactly as the **wire** carried them, without
+    /// validating.
+    ///
+    /// A PCR/ESCR/SCR field is 33-bit base + 9-bit extension, so real
+    /// captures do carry extensions in `300..=511` — a value off the 27 MHz
+    /// clock that this type cannot hold. Parsing must stay lossless (the
+    /// workspace's byte-exact round-trip invariant), so a parser uses this to
+    /// keep the wire bytes, and a caller that needs a real clock reading asks
+    /// [`to_clock27`](Self::to_clock27) for the checked view.
+    ///
+    /// Code that *constructs* a clock value uses [`from_parts`](Self::from_parts)
+    /// instead, which rejects those parts.
+    #[must_use]
+    pub const fn from_wire_parts(base: u64, ext: u16) -> Self {
+        Self {
+            // The 33-bit field cannot exceed the clock's range; the wire
+            // width, not validation, decides here.
+            base: Clock33(base & (WRAP_33BIT - 1)),
+            ext,
+        }
+    }
+
+    /// The checked view of these parts: `Ok` when they name a position on the
+    /// 27 MHz clock.
+    ///
+    /// # Errors
+    /// [`ClockOutOfRange`] when `ext >= 300`. The base is always a [`Clock33`],
+    /// so it cannot be out of range.
+    pub const fn to_clock27(self) -> Result<Self, ClockOutOfRange> {
+        if self.ext >= PCR_EXT_MODULUS as u16 {
+            Err(ClockOutOfRange {
+                field: "27 MHz extension",
+                value: self.ext as u64,
+            })
+        } else {
+            Ok(self)
+        }
+    }
+
+    /// Whether [`ticks`](Self::ticks) is `base * 300 + ext` (an extension
+    /// below 300) rather than a wire value off the 27 MHz clock.
+    #[must_use]
+    pub const fn is_valid(self) -> bool {
+        self.ext < PCR_EXT_MODULUS as u16
     }
 }
 
@@ -665,6 +734,28 @@ mod tests {
             }
         );
         assert!(Clock27::from_parts(WRAP_33BIT - 1, 299).is_ok());
+    }
+
+    #[test]
+    fn clock27_wire_parts_keep_off_clock_values_and_report_them() {
+        for ext in [0u16, 1, 299, 300, 408, 511] {
+            let c = Clock27::from_wire_parts(0x1_2345_6789, ext);
+            assert_eq!((c.base.ticks(), c.ext), (0x1_2345_6789, ext));
+            assert_eq!(c.is_valid(), ext < 300);
+            match c.to_clock27() {
+                Ok(checked) => {
+                    assert!(ext < 300);
+                    assert_eq!(checked, c);
+                }
+                Err(err) => {
+                    assert!(ext >= 300);
+                    assert_eq!((err.field, err.value), ("27 MHz extension", u64::from(ext)));
+                }
+            }
+        }
+        // The base is a 33-bit wire field, kept as its low 33 bits.
+        assert_eq!(Clock27::from_wire_parts(WRAP_33BIT | 5, 0).base.ticks(), 5);
+        assert_eq!(ClockOutOfRange::base(WRAP_33BIT).field, "27 MHz base");
     }
 
     #[test]

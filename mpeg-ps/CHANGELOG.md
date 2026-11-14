@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Changed
 - The `serde` feature enables `broadcast-common/serde`, so the clock value the SCR is built on serializes.
+### Added
+- `Scr::from_clock27(Clock27)` (construct from the validated clock value) and `Scr::to_clock27()` (the checked view). Parsing stays lossless: a real pack header whose 9-bit SCR extension is 300..=511 keeps the parts as read and re-serializes byte-identically, and `to_clock27` reports it as `ClockOutOfRange` rather than making the pack header unparseable (#2656).
 
 ## [0.8.0] - 2026-11-14
 ### Fixed

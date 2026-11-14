@@ -74,7 +74,10 @@ pub fn extract_pid(pkt: &[u8]) -> Pid {
 /// packet carries a PCR.
 pub fn pcr_and_disc(p: &[u8]) -> Option<(u64, bool)> {
     let af = TsPacket::parse(p).ok()?.adaptation_field()?.ok()?;
-    Some((af.pcr?.as_27mhz(), af.discontinuity_indicator))
+    Some((
+        af.pcr?.to_clock27().ok()?.ticks(),
+        af.discontinuity_indicator,
+    ))
 }
 
 /// The packet's PCR on the 27 MHz clock, if it carries one.

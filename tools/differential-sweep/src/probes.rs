@@ -701,8 +701,11 @@ pub fn mpeg_ts(fx: &Fixture, _: &Cfg) -> Option<Value> {
                 Ok(af) => {
                     if let Some(p) = af.pcr {
                         pcrs += 1;
-                        first_pcr.get_or_insert(p.as_27mhz());
-                        last_pcr = Some(p.as_27mhz());
+                        // Only a value on the 27 MHz clock can be compared.
+                        if let Ok(clock) = p.to_clock27() {
+                            first_pcr.get_or_insert(clock.ticks());
+                            last_pcr = Some(clock.ticks());
+                        }
                     }
                 }
             }

@@ -1007,7 +1007,12 @@ impl ConformanceMonitor {
         if let Some(Ok(af)) = packet.adaptation_field()
             && let Some(pcr) = af.pcr
         {
-            self.check_pcr(pid, pcr.clock(), af.discontinuity_indicator, t);
+            // A value off the 27 MHz clock (9-bit extension 300..=511) names no
+            // time on the PCR clock; as on 101 290 indicator 2.1's error path,
+            // the packet is not measured rather than folded in.
+            if let Ok(clock) = pcr.to_clock27() {
+                self.check_pcr(pid, clock, af.discontinuity_indicator, t);
+            }
         } else {
             self.check_pcr_silence(pid, t);
         }

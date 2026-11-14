@@ -18,8 +18,7 @@
 //! is the real-data check: every adaptation field in every committed `.ts`
 //! fixture must re-serialize byte-identically from its parsed form.
 
-use broadcast_common::clock33::ClockOutOfRange;
-use mpeg_ts::ts::{AdaptationField, AdaptationFieldExtension, Ltw, TS_PACKET_SIZE, TsPacket};
+use mpeg_ts::ts::{AdaptationField, AdaptationFieldExtension, Ltw, Pcr, TS_PACKET_SIZE, TsPacket};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -375,20 +374,13 @@ fn full_archive_adaptation_fields_round_trip() {
 /// * `reference/test-147/test-147.ts` pkt 8098: flags `0x87`
 ///   (discontinuity + splice countdown + private data + extension) with a
 ///   `seamless_splice` whose three `marker_bit`s are `0` on the wire.
-/// * `input/test-143.ts` pkt 451.
-///
-/// `input/test-143.ts` pkt 3994 was the third case until 27 MHz clock values
-/// became validated (`broadcast_common::clock33::Clock27`, issue #2656): its
-/// bytes carry a PCR extension of 408, which is off the 27 MHz clock
-/// (`>= 300`), so the pseudo-random scrambling-test packet is now reported as
-/// [`mpeg_ts::Error::ClockOutOfRange`] rather than decoded into a meaningless
-/// value. `real_out_of_range_pcr_extension_is_reported` pins that, and
-/// `real_tsduck_adaptation_field_extension_counts_are_pinned` counts it.
+/// * `input/test-143.ts` pkts 451 and 3994.
 #[test]
 fn real_archive_af_extension_packets_round_trip() {
     let cases = [
         ("reference/test-147/test-147.ts", 8098usize),
         ("input/test-143.ts", 451),
+        ("input/test-143.ts", 3994),
     ];
     for (file, idx) in cases {
         let Some(path) = test_fixtures::tsduck(file, "af_extension_roundtrip") else {
@@ -412,34 +404,55 @@ fn real_archive_af_extension_packets_round_trip() {
     }
 }
 
-/// `input/test-143.ts` pkt 3994 is one of the stream's pseudo-random
-/// scrambling-test packets: its PCR extension decodes to 408, which is not a
-/// position on the 27 MHz clock (the 9-bit field spans 0..=511, the clock spans
-/// 0..=299), so the packet reports `ClockOutOfRange` instead of a meaningless
-/// value (issue #2656).
+/// `input/test-143.ts` pkts 1305 and 3994 are pseudo-random scrambling-test
+/// packets whose OPCR extension decodes outside 0..=299 (the 9-bit wire field
+/// spans 0..=511, the 27 MHz clock only 0..=299). The strict clock type must
+/// not make real data unparseable (issue #2656): the packets parse,
+/// re-serialize byte-identically, and report the off-clock value through the
+/// checked `Pcr::to_clock27` accessor rather than through a parse failure.
 #[test]
-fn real_out_of_range_pcr_extension_is_reported() {
+fn real_off_clock_pcr_extension_parses_and_round_trips() {
     let Some(path) = test_fixtures::tsduck("input/test-143.ts", "af_extension_roundtrip") else {
         return;
     };
     let buf = fs::read(path).expect("read capture");
-    const IDX: usize = 3994;
-    let raw: &[u8; TS_PACKET_SIZE] = buf[IDX * TS_PACKET_SIZE..(IDX + 1) * TS_PACKET_SIZE]
-        .try_into()
-        .unwrap();
-    let err = TsPacket::parse(raw)
-        .expect("header parses")
-        .adaptation_field()
-        .expect("AF present")
-        .expect_err("PCR extension 408 is off the 27 MHz clock");
-    match err {
-        mpeg_ts::Error::ClockOutOfRange(ClockOutOfRange {
-            field: "27 MHz extension",
-            value: 408,
-            ..
-        }) => {}
-        other => panic!("expected the off-clock PCR extension, got {other:?}"),
+    // Every packet of the capture whose PCR field carries an off-clock
+    // extension, so the check is not pinned to one index.
+    let mut seen = Vec::new();
+    for idx in 0..buf.len() / TS_PACKET_SIZE {
+        let raw: &[u8; TS_PACKET_SIZE] = buf[idx * TS_PACKET_SIZE..(idx + 1) * TS_PACKET_SIZE]
+            .try_into()
+            .unwrap();
+        let Ok(packet) = TsPacket::parse(raw) else {
+            continue;
+        };
+        let Some(Ok(af)) = packet.adaptation_field() else {
+            continue;
+        };
+        let off_clock: Vec<&Pcr> = [af.pcr.as_ref(), af.opcr.as_ref()]
+            .into_iter()
+            .flatten()
+            .filter(|pcr| pcr.to_clock27().is_err())
+            .collect();
+        if off_clock.is_empty() {
+            continue;
+        }
+        for pcr in off_clock {
+            assert!(!pcr.clock().is_valid(), "the value is off the 27 MHz clock");
+            assert!(
+                pcr.extension() >= 300,
+                "an off-clock value is an extension at or above 300"
+            );
+        }
+        seen.push(idx);
+        let body = &raw[5..5 + usize::from(raw[4])];
+        assert_eq!(
+            body_of(&parse_af(raw)),
+            body,
+            "pkt {idx}: an off-clock PCR must still re-serialize byte-exactly"
+        );
     }
+    assert_eq!(seen, vec![1305, 3994], "{seen:?}");
 }
 
 /// Pinned real-data counts for the TSDuck streams that carry real adaptation-
@@ -471,12 +484,6 @@ fn real_tsduck_adaptation_field_extension_counts_are_pinned() {
     assert_eq!(r.checked, PINNED_CHECKED);
 }
 
-/// Was 3: `input/test-143.ts` pkt 3994 (off-clock PCR extension, issue #2656)
-/// is now a pinned parse error instead of a round-tripped extension.
-const PINNED_EXT_OK: usize = 2;
-/// Was 10: pkts 1199, 1305 and 1440 of `input/test-143.ts`, and pkt 9568 of
-/// `reference/test-147/test-147.ts`, now report an off-clock PCR extension
-/// (`ClockOutOfRange`, issue #2656) instead of a meaningless value.
-const PINNED_PARSE_ERRORS: usize = 13;
-/// Was 1297: those packets no longer count as checked.
-const PINNED_CHECKED: usize = 1294;
+const PINNED_EXT_OK: usize = 3;
+const PINNED_PARSE_ERRORS: usize = 10;
+const PINNED_CHECKED: usize = 1297;

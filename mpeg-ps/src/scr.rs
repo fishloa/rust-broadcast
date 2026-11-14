@@ -16,22 +16,60 @@ pub(crate) const SCR_FIELD_LEN: usize = 6;
 
 /// System Clock Reference (42-bit total: 33-bit base + 9-bit extension,
 /// in 27 MHz units).
+///
+/// Constructing is strict ([`Scr::from_clock27`] takes the validated
+/// [`broadcast_common::clock33::Clock27`]). Parsing is lossless: the 9-bit wire
+/// extension can be `300..=511`, which is off the 27 MHz clock, so a parsed
+/// value keeps the parts exactly as read and re-serializes byte-identically;
+/// [`Scr::to_clock27`] is the checked view that reports such a value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Scr {
     /// 33-bit SCR base (27 MHz ticks, integer part).
     pub base: u64,
-    /// 9-bit SCR extension (27 MHz ticks, fractional part / 300).
+    /// 9-bit SCR extension (27 MHz ticks, fractional part / 300); a parsed
+    /// value may carry `300..=511` (see [`Scr::to_clock27`]).
     pub extension: u16,
 }
 
 impl Scr {
+    /// Construct from a validated 27 MHz clock value.
+    #[must_use]
+    pub fn from_clock27(clock: broadcast_common::clock33::Clock27) -> Self {
+        Self {
+            base: clock.base.ticks(),
+            extension: clock.ext,
+        }
+    }
+
     /// The total SCR value in 27 MHz ticks.
     ///
-    /// `base * 300 + extension`.
+    /// `base * 300 + extension`. For a parsed value whose extension is at or
+    /// above 300 this is not a time on the clock; check
+    /// [`to_clock27`](Self::to_clock27) first.
     #[must_use]
     pub const fn ticks(self) -> u64 {
         broadcast_common::clock33::pcr_from_parts(self.base, self.extension)
+    }
+
+    /// The checked 27 MHz clock value.
+    ///
+    /// # Errors
+    /// [`broadcast_common::clock33::ClockOutOfRange`] when the extension is at
+    /// or above 300 (off the 27 MHz clock), as a real capture's pseudo-random
+    /// field can be. An over-wide `base` (only constructible by hand, never by
+    /// parsing) is reported the same way.
+    pub fn to_clock27(
+        self,
+    ) -> core::result::Result<
+        broadcast_common::clock33::Clock27,
+        broadcast_common::clock33::ClockOutOfRange,
+    > {
+        use broadcast_common::clock33::{Clock27, ClockOutOfRange, WRAP_33BIT};
+        if self.base >= WRAP_33BIT {
+            return Err(ClockOutOfRange::base(self.base));
+        }
+        Clock27::from_wire_parts(self.base, self.extension).to_clock27()
     }
 
     /// Value in seconds.
@@ -284,5 +322,56 @@ mod tests {
             extension: 0,
         };
         assert!((scr.seconds() - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn scr_from_clock27_round_trips_the_validated_value() {
+        let clock = broadcast_common::clock33::Clock27::from_parts(100, 50).expect("in range");
+        let scr = Scr::from_clock27(clock);
+        assert_eq!((scr.base, scr.extension), (100, 50));
+        assert_eq!(scr.to_clock27(), Ok(clock));
+    }
+
+    /// The 9-bit wire extension can encode 300..=511, which is off the 27 MHz
+    /// clock. A parsed field keeps it (lossless round trip) and the checked
+    /// accessor reports it, so a real capture's pack header still parses.
+    #[test]
+    fn scr_off_clock_wire_extension_parses_losslessly_and_reports() {
+        for extension in [300u16, 408, EXT_MASK as u16] {
+            let bytes = write_scr_field(Scr {
+                base: 42,
+                extension,
+            });
+            let scr = read_scr_field(&bytes, "SCR").expect("a wire-legal field parses");
+            assert_eq!((scr.base, scr.extension), (42, extension));
+            assert_eq!(
+                write_scr_field(scr),
+                bytes,
+                "re-serializes byte-identically"
+            );
+            let err = scr.to_clock27().unwrap_err();
+            assert_eq!(err.field, "27 MHz extension");
+            assert_eq!(err.value, u64::from(extension));
+        }
+        let off_clock = Scr {
+            base: 1,
+            extension: 299,
+        };
+        assert_eq!(
+            off_clock.to_clock27(),
+            Ok(broadcast_common::clock33::Clock27::from_parts(1, 299).expect("in range"))
+        );
+        // A base is 33 bits on the wire, so only a hand-built over-wide one is
+        // reported.
+        assert_eq!(
+            Scr {
+                base: 1 << 33,
+                extension: 0,
+            }
+            .to_clock27()
+            .unwrap_err()
+            .field,
+            "27 MHz base"
+        );
     }
 }

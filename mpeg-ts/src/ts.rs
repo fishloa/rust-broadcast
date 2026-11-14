@@ -558,9 +558,15 @@ pub(crate) const PCR_FIELD_LEN: usize = 6;
 /// Program Clock Reference (ISO/IEC 13818-1:2007 §2.4.3.5): a 33-bit base on a
 /// 90 kHz clock plus a 9-bit extension on a 27 MHz clock.
 ///
-/// The value is [`broadcast_common::clock33::Clock27`], shared with the
-/// program-stream SCR (`mpeg-ps`) and the ESCR; this type adds only the
-/// adaptation-field wire codec on top of it.
+/// Constructing is strict: [`from_parts`](Self::from_parts) / [`from_27mhz`](Self::from_27mhz)
+/// reject parts that do not name a position on the 27 MHz clock, and
+/// [`clock`](Self::clock) hands back the validated
+/// [`broadcast_common::clock33::Clock27`] shared with the ESCR and the
+/// program-stream SCR. Parsing is lossless: the wire extension is 9 bits, so a
+/// real capture can carry `300..=511`, which this type keeps exactly as written
+/// and re-serializes byte-identically; [`to_clock27`](Self::to_clock27) is the
+/// checked view that reports such a value as
+/// [`Error::ClockOutOfRange`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Pcr(broadcast_common::clock33::Clock27);
@@ -584,7 +590,17 @@ impl Pcr {
         Ok(Self(broadcast_common::clock33::Clock27::from_27mhz(ticks)?))
     }
 
-    /// The underlying validated 27 MHz value.
+    /// The validated 27 MHz value.
+    ///
+    /// # Errors
+    /// [`Error::ClockOutOfRange`] for a parsed PCR whose extension is at or
+    /// above 300 (off the 27 MHz clock).
+    pub fn to_clock27(self) -> Result<broadcast_common::clock33::Clock27> {
+        Ok(self.0.to_clock27()?)
+    }
+
+    /// The underlying value, kept exactly as the wire carried it (see the
+    /// type's docs on the lossless parse).
     #[must_use]
     pub const fn clock(self) -> broadcast_common::clock33::Clock27 {
         self.0
@@ -596,7 +612,8 @@ impl Pcr {
         self.0.base.ticks()
     }
 
-    /// 9-bit extension (27 MHz units within the current base tick).
+    /// 9-bit extension as carried: `0..=299` on the 27 MHz clock, `300..=511`
+    /// for a parsed value off it (see [`to_clock27`](Self::to_clock27)).
     #[must_use]
     pub const fn extension(self) -> u16 {
         self.0.ext
@@ -604,7 +621,9 @@ impl Pcr {
 
     /// Full PCR value on the 27 MHz clock: `base * 300 + extension`.
     ///
-    /// ISO/IEC 13818-1:2007 §2.4.3.5: PCR = `PCR_base * 300 + PCR_ext`.
+    /// ISO/IEC 13818-1:2007 §2.4.3.5: PCR = `PCR_base * 300 + PCR_ext`. For a
+    /// parsed value whose extension is at or above 300 this is not a time on
+    /// the clock; check [`to_clock27`](Self::to_clock27) first.
     #[must_use]
     pub fn as_27mhz(self) -> u64 {
         self.0.ticks()
@@ -617,7 +636,8 @@ impl Pcr {
     /// `[base[32:25]][base[24:17]][base[16:9]][base[8:1]][base[0] | 6×reserved(1) | ext[8]][ext[7:0]]`
     ///
     /// The 6 reserved bits are set to `1` as per the spec's "reserved" convention.
-    /// Exact inverse of the private `parse` function.
+    /// Exact inverse of the private `parse` function, including an off-clock
+    /// extension a parsed value kept.
     #[must_use]
     pub fn to_field_bytes(self) -> [u8; PCR_FIELD_LEN] {
         let b = self.0.base.ticks();
@@ -633,29 +653,33 @@ impl Pcr {
         ]
     }
 
-    /// Decode the 6-byte PCR/OPCR field starting at `at` within `af`.
+    /// Decode six PCR/OPCR field bytes (`buf[from..from + 6]`).
     ///
-    /// The extension is 9 bits on the wire, so a field may carry `300..=511`;
-    /// that cannot name a position on the 27 MHz clock and is rejected as
-    /// [`Error::ClockOutOfRange`].
-    pub(crate) fn parse(af: &[u8], at: usize) -> Result<Self> {
-        let b: &[u8; PCR_FIELD_LEN] = af
-            .get(at..at + PCR_FIELD_LEN)
-            .and_then(|s| s.try_into().ok())
-            .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
-                    need: at + PCR_FIELD_LEN,
-                    have: af.len(),
-                    what: "adaptation_field PCR",
-                },
-            ))?;
+    /// Lossless for every field the wire can carry: the 9-bit extension is kept
+    /// as read (`0..=511`) so the packet round-trips byte-identically, and a
+    /// value off the 27 MHz clock is reported by
+    /// [`to_clock27`](Self::to_clock27), not here.
+    pub(crate) fn parse(buf: &[u8], from: usize) -> Result<Self> {
+        let end = from + PCR_FIELD_LEN;
+        let b: &[u8; PCR_FIELD_LEN] =
+            buf.get(from..end)
+                .and_then(|s| s.try_into().ok())
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: end,
+                        have: buf.len(),
+                        what: "adaptation_field PCR",
+                    },
+                ))?;
         let base = ((b[0] as u64) << 25)
             | ((b[1] as u64) << 17)
             | ((b[2] as u64) << 9)
             | ((b[3] as u64) << 1)
-            | ((b[4] as u64) >> 7);
-        let extension = (u16::from(b[4] & 0x01) << 8) | u16::from(b[5]);
-        Self::from_parts(base, extension)
+            | (u64::from(b[4]) >> 7);
+        let extension = ((b[4] & 0x01) as u16) << 8 | u16::from(b[5]);
+        Ok(Self(broadcast_common::clock33::Clock27::from_wire_parts(
+            base, extension,
+        )))
     }
 }
 
@@ -2246,16 +2270,43 @@ mod tests {
     }
 
     /// The 9-bit wire extension can encode 300..=511, which is off the 27 MHz
-    /// clock; `Pcr::parse` reports it rather than folding it into a value.
+    /// clock. Parsing keeps it (lossless round trip) and the checked view
+    /// reports it, so a real capture still parses and re-serializes.
     #[test]
-    fn pcr_wire_extension_at_or_above_300_is_rejected() {
+    fn pcr_off_clock_wire_extension_parses_losslessly_and_reports() {
         let mut bytes = Pcr::from_parts(5, 0).expect("in range").to_field_bytes();
         bytes[4] |= 0x01; // extension bit 8
         bytes[5] = 0x2C; // extension = 0x12C = 300
+        let pcr = Pcr::parse(&bytes, 0).expect("a wire-legal field parses");
+        assert_eq!((pcr.base(), pcr.extension()), (5, 300));
+        assert_eq!(
+            pcr.to_field_bytes(),
+            bytes,
+            "re-serializes byte-identically"
+        );
+        assert!(!pcr.clock().is_valid());
         assert!(matches!(
-            Pcr::parse(&bytes, 0),
-            Err(Error::ClockOutOfRange(_))
+            pcr.to_clock27(),
+            Err(Error::ClockOutOfRange(
+                broadcast_common::clock33::ClockOutOfRange {
+                    field: "27 MHz extension",
+                    value: 300,
+                    ..
+                }
+            ))
         ));
+        // Every extension the 9-bit field can carry survives the codec.
+        for ext in 0u16..512 {
+            let mut bytes = Pcr::from_parts(0x1_2345_6789 & ((1 << 33) - 1), 0)
+                .expect("in range")
+                .to_field_bytes();
+            bytes[4] = (bytes[4] & !0x01) | ((ext >> 8) as u8 & 0x01);
+            bytes[5] = (ext & 0xFF) as u8;
+            let decoded = Pcr::parse(&bytes, 0).expect("extension is 9 bits on the wire");
+            assert_eq!(decoded.extension(), ext);
+            assert_eq!(decoded.to_field_bytes(), bytes);
+            assert_eq!(decoded.to_clock27().is_ok(), ext < 300);
+        }
     }
 
     /// Known vector from ts.rs existing test — base=10000, extension=0 produces
