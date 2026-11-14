@@ -1,6 +1,6 @@
 use crate::support;
 
-use broadcast_client::{Action, BufferEvent, Config, Event, Session};
+use broadcast_client::{Action, BufferEvent, Config, ConnId, Event, Session};
 use broadcast_common::stage::Timestamp;
 use support::replay::TS_PACKET;
 
@@ -71,7 +71,7 @@ enum Clock {
     Paced(u64),
 }
 
-fn drain(s: &mut Session, conn: &mut Option<u32>, now: u64, out: &mut Vec<Rec>) {
+fn drain(s: &mut Session, conn: &mut Option<ConnId>, now: u64, out: &mut Vec<Rec>) {
     while let Some(a) = s.poll(ts(now)) {
         if let Action::HttpRequest { conn: c, .. } = a {
             *conn = Some(c);

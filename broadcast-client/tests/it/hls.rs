@@ -3,7 +3,7 @@ use crate::support;
 use std::collections::HashMap;
 
 use broadcast_client::{
-    Action, Config, Credentials, Error, Event, Session, SourceKind, Status, TransportError,
+    Action, Config, ConnId, Credentials, Error, Event, Session, SourceKind, Status, TransportError,
 };
 use broadcast_common::stage::Timestamp;
 use support::hls_host::*;
@@ -55,13 +55,13 @@ fn reconnect_attempts(events: &[Event]) -> Vec<u64> {
         .collect()
 }
 
-fn respond_ok(session: &mut Session, conn: u32, body: &[u8], now: u64) {
+fn respond_ok(session: &mut Session, conn: ConnId, body: &[u8], now: u64) {
     session.on_response(conn, 200, &[], ts(0));
     session.on_data(conn, body, ts(now));
     session.on_closed(conn, None, ts(now));
 }
 
-fn single_http_request(actions: &[Action]) -> (u32, String) {
+fn single_http_request(actions: &[Action]) -> (ConnId, String) {
     let reqs = http_requests(actions);
     assert_eq!(reqs.len(), 1, "expected exactly one request in {actions:?}");
     reqs[0].clone()
@@ -77,7 +77,7 @@ fn wake_times(actions: &[Action]) -> Vec<u64> {
         .collect()
 }
 
-fn closes(actions: &[Action]) -> Vec<u32> {
+fn closes(actions: &[Action]) -> Vec<ConnId> {
     actions
         .iter()
         .filter_map(|a| match a {
@@ -372,7 +372,7 @@ fn select_variant_switches_and_emits_discontinuity() {
     let mut h = two_variant_host(hls_config());
     h.run_until(|evs| evs.iter().any(is_sample), 100);
     let before = h.events.len();
-    let in_flight: Vec<u32> = h.seen.iter().map(|s| s.conn).collect();
+    let in_flight: Vec<ConnId> = h.seen.iter().map(|s| s.conn).collect();
     assert!(h.hits("http://origin.test/m/high/index0.ts") == 1);
     h.session.select_variant(0).expect("select low");
     h.collect();
@@ -473,7 +473,7 @@ fn prefetch_concurrent_connections_tracked() {
         4,
         "init + 3 segments in flight at once: {reqs:?}"
     );
-    let mut conns: Vec<u32> = reqs.iter().map(|(c, _)| *c).collect();
+    let mut conns: Vec<ConnId> = reqs.iter().map(|(c, _)| *c).collect();
     conns.sort_unstable();
     conns.dedup();
     assert_eq!(conns.len(), 4, "each prefetch has its own connection");
@@ -481,7 +481,8 @@ fn prefetch_concurrent_connections_tracked() {
     for (c, _) in &reqs {
         s.on_response(*c, 200, &[], ts(0));
     }
-    let bodies_by_conn: Vec<(u32, &Vec<u8>)> = reqs.iter().map(|(c, u)| (*c, &bodies[u])).collect();
+    let bodies_by_conn: Vec<(ConnId, &Vec<u8>)> =
+        reqs.iter().map(|(c, u)| (*c, &bodies[u])).collect();
     let max_len = bodies_by_conn
         .iter()
         .map(|(_, b)| b.len())
@@ -825,7 +826,7 @@ fn request_timeout_aborts_playlist_and_segment() {
     let (c, _) = single_http_request(&drain_actions(&mut s2, 0));
     respond_ok(&mut s2, c, &ts_playlist(), 0);
     let reqs = http_requests(&drain_actions(&mut s2, 0));
-    let seg_conns: Vec<u32> = reqs.iter().map(|(c, _)| *c).collect();
+    let seg_conns: Vec<ConnId> = reqs.iter().map(|(c, _)| *c).collect();
     assert_eq!(seg_conns.len(), 2);
     for t in [20 * SEC, 59 * SEC + 999_999] {
         assert!(
@@ -1050,7 +1051,7 @@ fn late_callbacks_after_close_ignored() {
     s.close();
     let mut closed = closes(&drain_actions(&mut s, 0));
     closed.sort_unstable();
-    let mut expected: Vec<u32> = reqs.iter().map(|(c, _)| *c).collect();
+    let mut expected: Vec<ConnId> = reqs.iter().map(|(c, _)| *c).collect();
     expected.sort_unstable();
     assert_eq!(closed, expected);
     for (c, _) in &reqs {
@@ -1058,7 +1059,7 @@ fn late_callbacks_after_close_ignored() {
         s.on_data(*c, &ts_segment(0), ts(0));
         s.on_closed(*c, None, ts(0));
     }
-    s.on_data(9_999, b"x", ts(0));
+    s.on_data(ConnId::new(9_999), b"x", ts(0));
     assert!(s.next_event().is_none());
     assert!(s.poll(ts(1)).is_none());
 

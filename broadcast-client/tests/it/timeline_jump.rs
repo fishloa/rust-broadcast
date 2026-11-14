@@ -3,7 +3,8 @@ use crate::support;
 use std::path::{Path, PathBuf};
 
 use broadcast_client::{
-    Action, BufferEvent, BufferInput, Config, Event, Hint, Session, TimelineJumpConfig, TrackId,
+    Action, BufferEvent, BufferInput, Config, ConnId, Event, Hint, Session, TimelineJumpConfig,
+    TrackId,
 };
 use broadcast_common::stage::Timestamp;
 use support::hls_host::{self as hls, Reply};
@@ -83,7 +84,7 @@ impl PlayClock {
 
 struct Host {
     session: Session,
-    conn: u32,
+    conn: ConnId,
     clock: PlayClock,
     events: Vec<Event>,
     times: Vec<u64>,

@@ -1,4 +1,4 @@
-use broadcast_client::{Action, Config, Error, Event, Session, TrackId};
+use broadcast_client::{Action, Config, ConnId, Error, Event, Session, TrackId};
 use broadcast_common::stage::Timestamp;
 
 /// The harness's microsecond clock as the session's `now`.
@@ -23,7 +23,7 @@ fn without_pid(bytes: &[u8], pid: u16) -> Vec<u8> {
         .collect()
 }
 
-fn open_live(config: Config) -> (Session, u32) {
+fn open_live(config: Config) -> (Session, ConnId) {
     let mut s = Session::open("http://h/live.ts", config, ts(0)).unwrap();
     let mut conn = None;
     while let Some(a) = s.poll(ts(0)) {
@@ -59,14 +59,14 @@ fn tracks_sets(events: &[Event]) -> Vec<Vec<TrackId>> {
         .collect()
 }
 
-fn feed_chunks(s: &mut Session, c: u32, bytes: &[u8], chunks: usize) -> (u64, Vec<Event>) {
+fn feed_chunks(s: &mut Session, c: ConnId, bytes: &[u8], chunks: usize) -> (u64, Vec<Event>) {
     let (now, events, _) = feed_chunks_waking(s, c, bytes, chunks);
     (now, events)
 }
 
 fn feed_chunks_waking(
     s: &mut Session,
-    c: u32,
+    c: ConnId,
     bytes: &[u8],
     chunks: usize,
 ) -> (u64, Vec<Event>, Option<u64>) {

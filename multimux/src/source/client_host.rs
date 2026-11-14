@@ -17,7 +17,7 @@ use std::convert::Infallible;
 use std::time::Duration;
 
 use broadcast_client::{
-    Action, Config, Error, ErrorKind, Event, Session, Status, TransportError, UdpMode,
+    Action, Config, ConnId, Error, ErrorKind, Event, Session, Status, TransportError, UdpMode,
 };
 use broadcast_common::{Demand, Stage, Timestamp};
 use futures_util::StreamExt;
@@ -143,16 +143,16 @@ impl IngestSession for EventIngest {
 
 enum Message {
     Response {
-        conn: u32,
+        conn: ConnId,
         status: u16,
         headers: Vec<(String, String)>,
     },
     Data {
-        conn: u32,
+        conn: ConnId,
         bytes: Vec<u8>,
     },
     Closed {
-        conn: u32,
+        conn: ConnId,
         error: Option<String>,
     },
 }
@@ -204,9 +204,9 @@ pub(crate) struct SessionStep {
     next_anchor_us: u64,
     tx: mpsc::Sender<Message>,
     rx: mpsc::Receiver<Message>,
-    requests: BTreeMap<u32, AbortHandle>,
-    sockets: BTreeMap<u32, std::sync::Arc<UdpSocket>>,
-    writers: BTreeMap<u32, BoxedWrite>,
+    requests: BTreeMap<ConnId, AbortHandle>,
+    sockets: BTreeMap<ConnId, std::sync::Arc<UdpSocket>>,
+    writers: BTreeMap<ConnId, BoxedWrite>,
     udp: UdpHost,
     tls: TlsHost,
     wakes: std::collections::BTreeSet<u64>,
@@ -442,7 +442,7 @@ impl SessionStep {
         Ok(())
     }
 
-    fn fail_connection(&mut self, conn: u32, error: String) {
+    fn fail_connection(&mut self, conn: ConnId, error: String) {
         self.transport_error = Some(error.clone());
         self.writers.remove(&conn);
         self.session.on_closed(
@@ -454,7 +454,7 @@ impl SessionStep {
         );
     }
 
-    fn register_socket(&mut self, conn: u32, socket: UdpSocket) {
+    fn register_socket(&mut self, conn: ConnId, socket: UdpSocket) {
         let socket = std::sync::Arc::new(socket);
         let task = tokio::spawn(receive(
             std::sync::Arc::clone(&socket),
@@ -751,7 +751,7 @@ fn http_request(
     Ok(request)
 }
 
-async fn fetch(request: reqwest::RequestBuilder, conn: u32, tx: mpsc::Sender<Message>) {
+async fn fetch(request: reqwest::RequestBuilder, conn: ConnId, tx: mpsc::Sender<Message>) {
     let closed = |error: Option<String>| Message::Closed { conn, error };
     let response = match request.send().await {
         Ok(response) => response,
@@ -831,7 +831,7 @@ impl UdpHost {
     }
 }
 
-async fn receive(socket: std::sync::Arc<UdpSocket>, conn: u32, tx: mpsc::Sender<Message>) {
+async fn receive(socket: std::sync::Arc<UdpSocket>, conn: ConnId, tx: mpsc::Sender<Message>) {
     let mut buf = vec![0u8; media_plane::ts_session::MAX_TS_READ];
     loop {
         let message = match socket.recv(&mut buf).await {
@@ -888,7 +888,7 @@ async fn write_bounded(writer: &mut BoxedWrite, bytes: &[u8]) -> Result<(), Stri
     }
 }
 
-async fn read_stream(mut reader: BoxedRead, conn: u32, tx: mpsc::Sender<Message>) {
+async fn read_stream(mut reader: BoxedRead, conn: ConnId, tx: mpsc::Sender<Message>) {
     let mut buf = vec![0u8; TCP_READ_BUFFER];
     loop {
         let message = match reader.read(&mut buf).await {

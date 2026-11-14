@@ -3,8 +3,8 @@ use crate::support;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use broadcast_client::{
-    AUDIO_TRACK_ID_OFFSET, Action, BufferEvent, Config, Event, PauseReason, PlayoutConfig, Session,
-    SourceKind, TrackId,
+    AUDIO_TRACK_ID_OFFSET, Action, BufferEvent, Config, ConnId, Event, PauseReason, PlayoutConfig,
+    Session, SourceKind, TrackId,
 };
 use broadcast_common::stage::Timestamp;
 use support::hls_host::*;
@@ -66,7 +66,7 @@ struct Drv {
     session: Session,
     now: u64,
     chunk: usize,
-    pending: Vec<(u32, String)>,
+    pending: Vec<(ConnId, String)>,
     wakes: BTreeSet<u64>,
     events: Vec<Event>,
     bodies: HashMap<String, Vec<u8>>,
@@ -104,7 +104,7 @@ impl Drv {
         }
     }
 
-    fn respond(&mut self, conn: u32, body: &[u8]) {
+    fn respond(&mut self, conn: ConnId, body: &[u8]) {
         self.session.on_response(conn, 200, &[], ts(self.now));
         for c in body.chunks(self.chunk.max(1)) {
             self.session.on_data(conn, c, ts(self.now));

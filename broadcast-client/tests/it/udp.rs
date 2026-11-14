@@ -3,7 +3,8 @@ use crate::support::udp_host::{
     MP2T_PAYLOAD_TYPE, TS_PACKET, UdpHost, rtp_datagram, rtp_datagrams, ts_datagrams,
 };
 use broadcast_client::{
-    Action, Config, Error, Event, Session, SourceKind, Status, TransportError, UdpConfig, UdpMode,
+    Action, Config, ConnId, Error, Event, Session, SourceKind, Status, TransportError, UdpConfig,
+    UdpMode,
 };
 use broadcast_common::net::{MulticastInterface, MulticastJoin, UdpOptions};
 use broadcast_common::stage::Timestamp;
@@ -681,7 +682,7 @@ fn datagrams_for_an_unknown_socket_are_ignored() {
     let mut host = UdpHost::open(GROUP, Config::default());
     let conn = host.conn.unwrap();
     host.session
-        .on_data(conn + 99, &ts_datagrams(&media, 7)[0], ts(1));
+        .on_data(ConnId::new(conn.0 + 99), &ts_datagrams(&media, 7)[0], ts(1));
     assert_eq!(host.session.datagram_stats().datagrams, 0);
 }
 

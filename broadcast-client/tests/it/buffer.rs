@@ -4,8 +4,8 @@ use crate::support::video_run::VideoRun;
 use std::collections::BTreeMap;
 
 use broadcast_client::{
-    Action, BufferEvent, BufferInput, Config, Event, Hint, PauseReason, Session, Status, TrackId,
-    TransportError,
+    Action, BufferEvent, BufferInput, Config, ConnId, Event, Hint, PauseReason, Session, Status,
+    TrackId, TransportError,
 };
 use broadcast_common::stage::Timestamp;
 use buffering_runtime::{
@@ -138,7 +138,7 @@ impl PlayClock {
 
 struct Host {
     session: Session,
-    conn: u32,
+    conn: ConnId,
     clock: PlayClock,
     events: Vec<Event>,
     times: Vec<u64>,

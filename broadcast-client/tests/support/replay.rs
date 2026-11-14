@@ -22,7 +22,7 @@ pub fn bitrate_bps(bytes: &[u8]) -> u64 {
         let Ok(packet) = TsPacket::parse(p) else {
             continue;
         };
-        let Some(Ok(AdaptationField {pcr: Some(pcr), .. })) = packet.adaptation_field() else {
+        let Some(Ok(AdaptationField { pcr: Some(pcr), .. })) = packet.adaptation_field() else {
             continue;
         };
         let pid = packet.header.pid.value();
@@ -105,7 +105,7 @@ impl Replay {
     pub fn first_sample_us(&self) -> Option<u64> {
         self.events
             .iter()
-            .find(|t| matches!(t.event, Event::Sample {.. }))
+            .find(|t| matches!(t.event, Event::Sample { .. }))
             .map(|t| t.at_us)
     }
 }
@@ -114,7 +114,7 @@ pub fn open_live(config: Config) -> (Session, ConnId) {
     let mut s = Session::open("http://h/live.ts", config, ts(0)).unwrap();
     let mut conn = None;
     while let Some(a) = s.poll(ts(0)) {
-        if let Action::HttpRequest {conn: c, .. } = a {
+        if let Action::HttpRequest { conn: c, .. } = a {
             conn = Some(c);
         }
     }
@@ -198,7 +198,7 @@ pub fn replay_with_host(
                         );
                     }
                 }
-                Event::Buffer(BufferEvent::Start {at_27mhz }) => {
+                Event::Buffer(BufferEvent::Start { at_27mhz }) => {
                     stats.start_at_us.get_or_insert(now);
                     *playout = Some(Playout {
                         anchor_pos_27: *at_27mhz,
@@ -207,13 +207,13 @@ pub fn replay_with_host(
                     });
                     stats.burst_samples_at_start = seen;
                 }
-                Event::Buffer(BufferEvent::Pause {.. }) => {
+                Event::Buffer(BufferEvent::Pause { .. }) => {
                     stats.pauses += 1;
                     if let Some(p) = playout.as_mut() {
                         p.paused_at = Some(now);
                     }
                 }
-                Event::Buffer(BufferEvent::Resume {at_27mhz }) => {
+                Event::Buffer(BufferEvent::Resume { at_27mhz }) => {
                     stats.resumes += 1;
                     *playout = Some(Playout {
                         anchor_pos_27: *at_27mhz,
@@ -221,7 +221,7 @@ pub fn replay_with_host(
                         paused_at: None,
                     });
                 }
-                Event::Sample {track, sample, .. } => {
+                Event::Sample { track, sample, .. } => {
                     seen += 1;
                     if let (Some(p), Some(pts), Some((timescale, video))) = (
                         playout.as_ref(),
@@ -244,7 +244,7 @@ pub fn replay_with_host(
                 }
                 _ => {}
             }
-            events.push(TimedEvent {at_us: now, event });
+            events.push(TimedEvent { at_us: now, event });
         }
     };
 
@@ -308,5 +308,5 @@ pub fn replay_with_host(
         &mut events,
         &mut stats,
     );
-    (Replay {events }, stats)
+    (Replay { events }, stats)
 }

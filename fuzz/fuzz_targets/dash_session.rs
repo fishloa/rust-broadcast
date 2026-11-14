@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use broadcast_common::stage::Timestamp;
 use broadcast_client::{
-    Action, Config, Credentials, DashClockPolicy, Event, Session, Status, TransportError,
+    Action, Config, ConnId, Credentials, DashClockPolicy, Event, Session, Status, TransportError,
 };
 use libfuzzer_sys::fuzz_target;
 use test_fixtures::fuzz::{
@@ -58,7 +58,7 @@ struct Request {
 
 #[derive(Default)]
 struct Watch {
-    live: BTreeMap<u32, Request>,
+    live: BTreeMap<ConnId, Request>,
     fatal: bool,
     ended: bool,
     closed: bool,
@@ -158,7 +158,7 @@ impl Watch {
 
 fn deliver(
     session: &mut Session,
-    conn: u32,
+    conn: ConnId,
     now: u64,
     status: u16,
     headers: &[(String, String)],
@@ -183,7 +183,7 @@ fn header(name: &str, value: &str) -> (String, String) {
 
 fn answer(
     session: &mut Session,
-    conn: u32,
+    conn: ConnId,
     req: &Request,
     now: u64,
     mode: u8,
@@ -395,7 +395,7 @@ fuzz_target!(|data: &[u8]| {
         if watch.live.is_empty() {
             continue;
         }
-        let conns: Vec<u32> = watch.live.keys().copied().collect();
+        let conns: Vec<ConnId> = watch.live.keys().copied().collect();
         let conn = conns[usize::from(aux) % conns.len()];
         let Some(req) = watch.live.remove(&conn) else {
             continue;

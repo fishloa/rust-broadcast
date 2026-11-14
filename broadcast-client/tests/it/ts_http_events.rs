@@ -1,6 +1,8 @@
 use crate::support;
 
-use broadcast_client::{Action, Config, Event, Session, StarveKind, Status, TransportError};
+use broadcast_client::{
+    Action, Config, ConnId, Event, Session, StarveKind, Status, TransportError,
+};
 use broadcast_common::stage::Timestamp;
 use support::*;
 
@@ -267,7 +269,7 @@ fn unknown_conn_callbacks_ignored() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
     };
-    let unknown = conn.wrapping_add(998);
+    let unknown = ConnId::new(conn.0.wrapping_add(998));
     session.on_response(unknown, 200, &[], ts(0));
     session.on_data(unknown, &bytes[..4096], ts(0));
     session.on_closed(unknown, None, ts(1_000));

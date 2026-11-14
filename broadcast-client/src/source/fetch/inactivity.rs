@@ -1,4 +1,3 @@
-
 //! Per-request inactivity deadlines: a request is stalled when `limit_us` passed since its last
 //! activity (the response head or a body byte). The heap holds the deadline computed when a
 //! request was armed or last re-armed; an entry whose request has been active since is re-armed

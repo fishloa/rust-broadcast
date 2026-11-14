@@ -10,7 +10,7 @@ fn ts(us: u64) -> Timestamp {
     Timestamp::from_micros(us)
 }
 use broadcast_client::{
-    Action, ClientIdentity, ClientIdentityScope, Config, Error, Event, Session, Status,
+    Action, ClientIdentity, ClientIdentityScope, Config, ConnId, Error, Event, Session, Status,
     TransportError,
 };
 
@@ -35,7 +35,7 @@ fn with_handle(f: impl FnOnce(&mut Config)) -> Config {
     })
 }
 
-fn first_http(session: &mut Session, now: u64) -> (u32, String, Option<Arc<ClientIdentity>>) {
+fn first_http(session: &mut Session, now: u64) -> (ConnId, String, Option<Arc<ClientIdentity>>) {
     while let Some(action) = session.poll(ts(now)) {
         if let Action::HttpRequest {
             conn,
@@ -230,7 +230,7 @@ fn key_material_never_appears_in_debug_output() {
     let mut s = Session::open("https://h.example/live.ts", config.clone(), ts(0)).unwrap();
     let (_, _, identity) = first_http(&mut s, 0);
     let action = Action::HttpRequest {
-        conn: 1,
+        conn: ConnId::new(1),
         method: "GET".to_string(),
         url: "https://h.example/live.ts".to_string(),
         headers: Vec::new(),

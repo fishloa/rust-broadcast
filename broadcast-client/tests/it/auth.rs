@@ -1,5 +1,5 @@
 use broadcast_auth::Scheme as AuthScheme;
-use broadcast_client::{Action, Config, Credentials, Event, Session, Status};
+use broadcast_client::{Action, Config, ConnId, Credentials, Event, Session, Status};
 use broadcast_common::stage::Timestamp;
 
 /// The harness's microsecond clock as the session's `now`.
@@ -507,7 +507,7 @@ fn debug_does_not_contain_secret() {
     assert!(!dbg.contains("supersecret-token"));
 }
 
-fn first_request_headers(session: &mut Session, now: u64) -> (u32, Vec<(String, String)>) {
+fn first_request_headers(session: &mut Session, now: u64) -> (ConnId, Vec<(String, String)>) {
     while let Some(a) = session.poll(ts(now)) {
         if let Action::HttpRequest { conn, headers, .. } = a {
             return (conn, headers);

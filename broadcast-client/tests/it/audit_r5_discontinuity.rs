@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use broadcast_client::{Action, Config, Event, Session};
+use broadcast_client::{Action, Config, ConnId, Event, Session};
 use broadcast_common::stage::Timestamp;
 
 /// The harness's microsecond clock as the session's `now`.
@@ -83,7 +83,7 @@ fn run(segs: &[Vec<u8>], disc_at: Option<usize>) -> Outcome {
     while now <= RUN_US {
         let visible = (START_VISIBLE + (now / SEGMENT_US) as usize).min(n);
         let pl = playlist(visible, visible == n, visible.saturating_sub(WINDOW));
-        let mut pending: VecDeque<(u32, String)> = VecDeque::new();
+        let mut pending: VecDeque<(ConnId, String)> = VecDeque::new();
         loop {
             while let Some(a) = s.poll(ts(now)) {
                 if let Action::HttpRequest { conn, url, .. } = a {

@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 
 use broadcast_auth::{Credentials as AuthCredentials, Scheme as AuthScheme, Verifier};
 use broadcast_client::{
-    Action, Config, Credentials, Error, Event, Session, SourceKind, Status, TransportError,
+    Action, Config, ConnId, Credentials, Error, Event, Session, SourceKind, Status, TransportError,
 };
 use broadcast_common::stage::Timestamp;
 use rtsp_runtime::transport::{LowerTransport, Transport};
@@ -210,7 +210,7 @@ fn connect_action_has_host_port_default_ports_and_tls_flag() {
         assert_eq!(
             first,
             Action::TcpConnect {
-                conn: 1,
+                conn: ConnId::new(1),
                 host: host.to_string(),
                 port,
                 tls,
@@ -1112,7 +1112,7 @@ fn late_callbacks_after_close_ignored() {
 fn unknown_connection_callbacks_ignored() {
     let mut host = playing();
     host.events();
-    let unknown = host.conn.expect("live") + 100;
+    let unknown = ConnId::new(host.conn.expect("live").0 + 100);
     host.session.on_connected(unknown);
     host.session
         .on_data(unknown, &fixture().frames()[0], ts(host.now));

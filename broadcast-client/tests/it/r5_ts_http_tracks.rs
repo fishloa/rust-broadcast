@@ -1,4 +1,4 @@
-use broadcast_client::{Action, Config, Event, Session};
+use broadcast_client::{Action, Config, ConnId, Event, Session};
 use broadcast_common::stage::Timestamp;
 use transmux::{DemuxEvent, StreamingTsDemux, TrackId};
 
@@ -157,7 +157,7 @@ fn without_pid(bytes: &[u8], pid: u16) -> Vec<u8> {
         .collect()
 }
 
-fn open_live(now: u64) -> (Session, u32) {
+fn open_live(now: u64) -> (Session, ConnId) {
     let mut s = Session::open("http://h/live.ts", Config::default(), ts(now)).unwrap();
     let mut conn = None;
     while let Some(a) = s.poll(ts(now)) {

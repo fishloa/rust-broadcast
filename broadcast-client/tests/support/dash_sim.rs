@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use broadcast_client::{Action, Config, Event, Session, Status, TransportError, ConnId};
+use broadcast_client::{Action, Config, ConnId, Event, Session, Status, TransportError};
 use transmux::Sample;
 
 use super::dash_common::loopback;
@@ -282,7 +282,7 @@ impl Backend for StaticBackend {
 }
 
 enum Delivery {
-    Answer {conn: ConnId, answer: Answer },
+    Answer { conn: ConnId, answer: Answer },
 }
 
 struct Pending {
@@ -402,14 +402,14 @@ impl DashSim {
         }
         let mut logged = logged;
         logged.status = match &answer {
-            Answer::Full {status, .. } => Some(*status),
+            Answer::Full { status, .. } => Some(*status),
             Answer::Redirect(_) => Some(302),
-            Answer::StallWith {status, .. } => Some(*status),
+            Answer::StallWith { status, .. } => Some(*status),
             Answer::Late(inner, _)
             | Answer::Duplicate(inner)
             | Answer::Unknown(inner)
             | Answer::ClosedTwice(inner) => match inner.as_ref() {
-                Answer::Full {status, .. } => Some(*status),
+                Answer::Full { status, .. } => Some(*status),
                 _ => None,
             },
             _ => None,
@@ -428,7 +428,7 @@ impl DashSim {
             at,
             seq: self.seq,
             conn,
-            delivery: Delivery::Answer {conn, answer },
+            delivery: Delivery::Answer { conn, answer },
         });
     }
 
@@ -447,7 +447,7 @@ impl DashSim {
                     byte_range,
                     ..
                 } => self.dispatch(conn, method, url, headers, byte_range),
-                Action::Close {conn } => {
+                Action::Close { conn } => {
                     self.pending.retain(|p| p.conn != conn);
                     self.closes.push(conn);
                     self.close_log.push((conn, self.world.elapsed_us));
@@ -506,7 +506,7 @@ impl DashSim {
                     ts(now),
                 );
             }
-            Answer::Truncated {body, declared } => {
+            Answer::Truncated { body, declared } => {
                 self.session.on_response(
                     conn,
                     200,
@@ -536,7 +536,7 @@ impl DashSim {
             }
             Answer::Duplicate(inner) => {
                 let replay = match inner.as_ref() {
-                    Answer::Full {body, .. } => body[..body.len().min(1000)].to_vec(),
+                    Answer::Full { body, .. } => body[..body.len().min(1000)].to_vec(),
                     _ => Vec::new(),
                 };
                 self.respond(conn, *inner);
@@ -574,7 +574,7 @@ impl DashSim {
         self.events.iter().any(|e| {
             matches!(
                 e,
-                Event::Status(Status::Ended) | Event::Error {fatal: true, .. }
+                Event::Status(Status::Ended) | Event::Error { fatal: true, .. }
             )
         })
     }
@@ -637,7 +637,7 @@ impl DashSim {
             self.pending = rest;
             due.sort_by_key(|p| (p.at, p.seq));
             for p in due {
-                let Delivery::Answer {conn, answer } = p.delivery;
+                let Delivery::Answer { conn, answer } = p.delivery;
                 self.respond(conn, answer);
                 self.drain_events();
             }
@@ -676,7 +676,7 @@ impl DashSim {
     pub fn samples(&self) -> BTreeMap<u32, Vec<Sample>> {
         let mut out: BTreeMap<u32, Vec<Sample>> = BTreeMap::new();
         for e in &self.events {
-            if let Event::Sample {track, sample, .. } = e {
+            if let Event::Sample { track, sample, .. } = e {
                 out.entry(track.value()).or_default().push(sample.clone());
             }
         }
@@ -687,7 +687,7 @@ impl DashSim {
         self.events
             .iter()
             .filter_map(|e| match e {
-                Event::Error {kind, fatal } => Some((kind.clone(), *fatal)),
+                Event::Error { kind, fatal } => Some((kind.clone(), *fatal)),
                 _ => None,
             })
             .collect()

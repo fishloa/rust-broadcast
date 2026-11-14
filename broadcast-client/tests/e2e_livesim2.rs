@@ -15,7 +15,7 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use broadcast_client::{Action, Config, DashClockPolicy, Event, Session, TransportError};
+use broadcast_client::{Action, Config, ConnId, DashClockPolicy, Event, Session, TransportError};
 use broadcast_common::stage::Timestamp;
 
 /// The harness's microsecond clock as the session's `now`.
@@ -215,7 +215,7 @@ const SHAPES: [Shape; 6] = [
 ];
 
 struct Pending {
-    conn: u32,
+    conn: ConnId,
     method: String,
     url: String,
     headers: Vec<(String, String)>,

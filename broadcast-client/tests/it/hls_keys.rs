@@ -1,6 +1,6 @@
 use crate::support;
 
-use broadcast_client::{Action, Config, Credentials, ErrorKind, Event, Session, Status};
+use broadcast_client::{Action, Config, ConnId, Credentials, ErrorKind, Event, Session, Status};
 use broadcast_common::stage::Timestamp;
 use support::hls_host::*;
 use transmux::sample_aes::aes128_encrypt_segment;
@@ -677,7 +677,7 @@ fn fatal_error_stops_session_no_more_requests() {
     s.on_closed(pconn, None, ts(0));
     let reqs = http_requests(&drain_actions(&mut s, 0));
     let key_conn = reqs.iter().find(|(_, u)| u == KEY_URL).expect("key").0;
-    let seg_conns: Vec<u32> = reqs
+    let seg_conns: Vec<ConnId> = reqs
         .iter()
         .filter(|(_, u)| u != KEY_URL)
         .map(|(c, _)| *c)
@@ -695,7 +695,7 @@ fn fatal_error_stops_session_no_more_requests() {
         assert!(
             actions
                 .iter()
-                .any(|a| matches!(a, Action::Close {conn } if conn == c)),
+                .any(|a| matches!(a, Action::Close {conn } if *conn == *c)),
             "open connection {c} closed on fatal: {actions:?}"
         );
     }

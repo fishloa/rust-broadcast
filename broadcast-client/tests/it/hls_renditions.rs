@@ -3,7 +3,7 @@ use crate::support;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use broadcast_client::{
-    AUDIO_TRACK_ID_OFFSET, Config, Credentials, Error, Event, Session, SourceKind, Status,
+    AUDIO_TRACK_ID_OFFSET, Config, ConnId, Credentials, Error, Event, Session, SourceKind, Status,
 };
 use broadcast_common::stage::Timestamp;
 use support::hls_host::*;
@@ -1003,8 +1003,8 @@ fn conn_ids_never_collide_between_adapters() {
     h.run_until(|evs| count_audio(evs) > 0, SPLIT_STEPS);
     h.session.select_audio_rendition(Some(1)).expect("switch");
     h.run_to_end();
-    let ids: Vec<u32> = h.seen.iter().map(|s| s.conn).collect();
-    let unique: HashSet<u32> = ids.iter().copied().collect();
+    let ids: Vec<ConnId> = h.seen.iter().map(|s| s.conn).collect();
+    let unique: HashSet<ConnId> = ids.iter().copied().collect();
     assert_eq!(unique.len(), ids.len(), "every request has its own conn id");
     assert!(h.seen.iter().any(|s| s.url.starts_with(AUDIO_DIR)));
     assert!(h.seen.iter().any(|s| s.url.starts_with(AUDIO2_DIR)));

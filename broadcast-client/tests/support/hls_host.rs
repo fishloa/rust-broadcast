@@ -1,6 +1,6 @@
 use std::collections::{BTreeSet, HashMap, VecDeque};
 
-use broadcast_client::{Action, Config, Event, Session, SourceKind, TransportError, ConnId};
+use broadcast_client::{Action, Config, ConnId, Event, Session, SourceKind, TransportError};
 use broadcast_common::stage::Timestamp;
 
 /// The harness's microsecond clock as the session's `now`.
@@ -174,7 +174,7 @@ impl Host {
                     self.seen.push(seen.clone());
                     self.inflight.push_back(seen);
                 }
-                Action::Close {conn } => {
+                Action::Close { conn } => {
                     self.closes.push(conn);
                     self.inflight.retain(|s| s.conn != conn);
                     self.hung.retain(|s| s.conn != conn);
@@ -296,7 +296,7 @@ impl Host {
     pub fn samples(&self) -> usize {
         self.events
             .iter()
-            .filter(|e| matches!(e, Event::Sample {.. }))
+            .filter(|e| matches!(e, Event::Sample { .. }))
             .count()
     }
 }
@@ -325,7 +325,7 @@ pub fn http_requests(actions: &[Action]) -> Vec<(ConnId, String)> {
     actions
         .iter()
         .filter_map(|a| match a {
-            Action::HttpRequest {conn, url, .. } => Some((*conn, url.clone())),
+            Action::HttpRequest { conn, url, .. } => Some((*conn, url.clone())),
             _ => None,
         })
         .collect()
@@ -347,7 +347,7 @@ pub fn oracle_events(playlist_url: &str, bodies: &HashMap<String, Vec<u8>>) -> V
                     }
                     out.push(Event::Tracks(t));
                 }
-                Output::Samples {track_id, samples } => {
+                Output::Samples { track_id, samples } => {
                     for sample in samples {
                         let join = joins.get_mut(&track_id).map(|j| j.push(&sample));
                         out.push(Event::Sample {
@@ -375,13 +375,13 @@ pub fn oracle_events(playlist_url: &str, bodies: &HashMap<String, Vec<u8>>) -> V
             }
         }
         match client.poll() {
-            Some(a @ HlsAction::FetchPlaylist {.. }) => {
+            Some(a @ HlsAction::FetchPlaylist { .. }) => {
                 let url = a.playlist_request_url().expect("playlist url");
                 client
                     .on_playlist(bodies.get(&url).expect("oracle playlist body"))
                     .expect("oracle playlist");
             }
-            Some(HlsAction::FetchResource {id, url, .. }) => {
+            Some(HlsAction::FetchResource { id, url, .. }) => {
                 client
                     .on_resource(id, bodies.get(&url).expect("oracle resource body"))
                     .expect("oracle resource");
@@ -400,8 +400,8 @@ pub fn data_events(events: &[Event]) -> Vec<Event> {
             matches!(
                 e,
                 Event::Tracks(_)
-                    | Event::Sample {.. }
-                    | Event::DisplayChanged {.. }
+                    | Event::Sample { .. }
+                    | Event::DisplayChanged { .. }
                     | Event::Discontinuity
             )
         })

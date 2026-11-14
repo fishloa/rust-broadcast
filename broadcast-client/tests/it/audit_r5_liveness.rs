@@ -3,7 +3,7 @@
 
 use std::collections::VecDeque;
 
-use broadcast_client::{Action, Config, Event, Session, Status};
+use broadcast_client::{Action, Config, ConnId, Event, Session, Status};
 use broadcast_common::stage::Timestamp;
 
 /// The harness's microsecond clock as the session's `now`.
@@ -100,7 +100,7 @@ fn hls_live(bytes: &[u8]) -> Seen {
     let mut seen = Seen::default();
     let mut now = 0u64;
     while now <= HLS_RUN_US {
-        let mut pending: VecDeque<(u32, String)> = VecDeque::new();
+        let mut pending: VecDeque<(ConnId, String)> = VecDeque::new();
         loop {
             while let Some(a) = s.poll(ts(now)) {
                 if let Action::HttpRequest { conn, url, .. } = a {

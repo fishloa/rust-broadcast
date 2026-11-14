@@ -103,7 +103,13 @@ fn send_action_debug_does_not_dump_bytes() {
     )
     .into_bytes();
     let len = bytes.len();
-    let dbg = format!("{:?}", Action::Send { conn: ConnId::new(3), bytes });
+    let dbg = format!(
+        "{:?}",
+        Action::Send {
+            conn: ConnId::new(3),
+            bytes
+        }
+    );
     assert!(!dbg.contains(DIGEST_SECRET), "{dbg}");
     assert!(dbg.contains(&len.to_string()), "{dbg}");
     assert!(dbg.contains("Send"), "{dbg}");

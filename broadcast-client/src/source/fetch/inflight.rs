@@ -244,7 +244,11 @@ impl<P: PurposeKind + PartialEq, X> InFlight<P, X> {
         Some(req)
     }
 
-    pub(crate) fn stalled_conns(&mut self, now: u64, actions: &mut VecDeque<Action>) -> Vec<ConnId> {
+    pub(crate) fn stalled_conns(
+        &mut self,
+        now: u64,
+        actions: &mut VecDeque<Action>,
+    ) -> Vec<ConnId> {
         let expired = self.inactive(now);
         for at in expired.wakes {
             actions.push_back(Action::WakeAt(Timestamp::from_micros(at)));

@@ -80,3 +80,23 @@ impl core::fmt::Display for ConnId {
         core::fmt::Display::fmt(&self.0, f)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ConnId;
+
+    #[test]
+    fn a_connection_id_is_a_distinct_type_over_a_plain_u32() {
+        // a connection id is not interchangeable with a track id or any other u32
+        assert_eq!(ConnId::new(7).get(), 7);
+        assert_eq!(ConnId::new(7).to_string(), "7");
+        assert_eq!(ConnId::new(3), ConnId::new(3));
+        assert_ne!(ConnId::new(3), ConnId::new(4));
+        // copy, hash and ord work, so a host can key a registry by connection id
+        let a = ConnId::new(9);
+        let b = a;
+        assert_eq!(a, b);
+        assert!(ConnId::new(1) < ConnId::new(2));
+        assert_eq!(core::mem::size_of::<ConnId>(), core::mem::size_of::<u32>());
+    }
+}
