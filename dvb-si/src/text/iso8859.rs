@@ -293,8 +293,8 @@ mod tests {
             assert_eq!(theirs.len(), 256, "8859-{part}");
             let from = if whole { 0 } else { usize::from(GR_START) };
             assert_eq!(ours[from..], theirs[from..], "8859-{part}");
-            for b in 0..usize::from(GR_START) {
-                assert_eq!(u32::from(ours[b]), b as u32, "8859-{part} byte {b:#04x}");
+            for (b, &c) in ours.iter().enumerate().take(usize::from(GR_START)) {
+                assert_eq!(u32::from(c), b as u32, "8859-{part} byte {b:#04x}");
             }
         }
     }
