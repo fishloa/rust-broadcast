@@ -10,7 +10,7 @@ use scte35_splice::commands::{
 };
 use scte35_splice::descriptors::{
     AudioComponent, AudioDescriptor, AvailDescriptor, CUEI, DtmfDescriptor, SegmentationDescriptor,
-    SegmentationTypeId, SegmentationUpidType, TimeDescriptor,
+    SegmentationTypeId, SegmentationUpidType, SubSegments, TimeDescriptor,
 };
 use scte35_splice::time::{BreakDuration, SpliceTime};
 
@@ -142,7 +142,10 @@ fn section_with_full_descriptor_loop() {
             segmentation_type_id: SegmentationTypeId::ProviderPlacementOpportunityStart,
             segment_num: 1,
             segments_expected: 1,
-            sub_segments: Some((1, 4)),
+            sub_segments: Some(SubSegments {
+                sub_segment_num: 1,
+                sub_segments_expected: 4,
+            }),
             ..Default::default()
         }
         .try_to_bytes()

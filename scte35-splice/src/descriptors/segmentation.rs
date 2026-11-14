@@ -3,9 +3,16 @@
 //! The richest splice descriptor: carries a segmentation event, its
 //! restriction flags, an optional 40-bit `segmentation_duration`, a
 //! type/length-prefixed `segmentation_upid()`, the
-//! [`SegmentationTypeId`], and an
-//! optional `sub_segment_num`/`sub_segments_expected` appendix whose presence
-//! is determined by `descriptor_length` (§10.3.3.1).
+//! [`SegmentationTypeId`], and an optional `sub_segment_num` /
+//! `sub_segments_expected` appendix that §10.3.3.1 defines for the eight
+//! Table 23 `Start` types ([`SegmentationTypeId::has_sub_segments`]) and that
+//! `descriptor_length` announces on the wire.
+//!
+//! The tail after `segments_expected` is carried, never guessed away: parse
+//! reads the appendix only for a type that carries one and keeps every other
+//! byte inside `descriptor_length` in [`SegmentationDescriptor::trailing`], so
+//! an over-long descriptor re-serializes byte-exactly instead of losing a
+//! third byte to a skipped position.
 //!
 //! Component Segmentation Mode (`program_segmentation_flag == 0`) is deprecated
 //! but parsed/serialized losslessly via [`SegmentationDescriptor::components`].
@@ -96,6 +103,17 @@ pub struct SegmentationComponent {
     pub pts_offset: u64,
 }
 
+/// The optional `sub_segment_num` / `sub_segments_expected` appendix of a
+/// `segmentation_descriptor()` (§10.3.3.1, Table 20).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct SubSegments {
+    /// `sub_segment_num` (Table 23).
+    pub sub_segment_num: u8,
+    /// `sub_segments_expected` (Table 23).
+    pub sub_segments_expected: u8,
+}
+
 /// segmentation_descriptor() — §10.3.3, Table 20.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -130,9 +148,22 @@ pub struct SegmentationDescriptor<'a> {
     pub segment_num: u8,
     /// `segments_expected`.
     pub segments_expected: u8,
-    /// `(sub_segment_num, sub_segments_expected)`, present when the
-    /// `descriptor_length` includes the optional appendix (§10.3.3.1).
-    pub sub_segments: Option<(u8, u8)>,
+    /// `(sub_segment_num, sub_segments_expected)` — the optional appendix
+    /// §10.3.3.1 defines only for the eight Table 23 `Start` types
+    /// ([`SegmentationTypeId::has_sub_segments`]).
+    ///
+    /// The struct form is exact: `None` writes no appendix (for any type) and
+    /// `Some(..)` writes it and requires the type to carry it. Wire input is
+    /// looser by design — SCTE 35 says `descriptor_length` alone signals
+    /// presence — so an appendix on a type that does not carry one, or bytes
+    /// past a well-formed appendix, are carried verbatim in
+    /// [`Self::trailing`] instead of being discarded.
+    pub sub_segments: Option<SubSegments>,
+    /// Bytes after the descriptor's last defined field, inside
+    /// `descriptor_length`: bytes past the appendix (`pos + 2`), and the whole
+    /// appendix `Some(s)` would otherwise have taken. `&[]` for every
+    /// descriptor this crate builds.
+    pub trailing: &'a [u8],
 }
 
 impl Default for SegmentationDescriptor<'_> {
@@ -152,6 +183,7 @@ impl Default for SegmentationDescriptor<'_> {
             segment_num: 0,
             segments_expected: 0,
             sub_segments: None,
+            trailing: &[],
         }
     }
 }
@@ -310,14 +342,20 @@ impl<'a> Parse<'a> for SegmentationDescriptor<'a> {
         out.segments_expected = body[pos + 2];
         pos += 3;
 
-        // Optional sub_segment appendix — present iff descriptor_length left
-        // room for two more bytes (§10.3.3.1).
-        if body.len() >= pos + 2 {
-            out.sub_segments = Some((body[pos], body[pos + 1]));
-            pos += 2;
-        }
-        // Any trailing bytes within descriptor_length are tolerated but unused.
-        let _ = pos;
+        // The optional sub-segment appendix (§10.3.3.1). SCTE 35 says
+        // `descriptor_length` alone announces it, while Table 23 defines it only
+        // for the eight `Start` types; bytes the struct form cannot carry are
+        // kept in `trailing`, never dropped, so a re-serialize is byte-exact.
+        let rest = &body[pos..];
+        out.sub_segments = if out.segmentation_type_id.has_sub_segments() {
+            rest.first_chunk::<2>().map(|pair| SubSegments {
+                sub_segment_num: pair[0],
+                sub_segments_expected: pair[1],
+            })
+        } else {
+            None
+        };
+        out.trailing = &rest[if out.sub_segments.is_some() { 2 } else { 0 }..];
         Ok(out)
     }
 }
@@ -340,6 +378,7 @@ impl<'a> SegmentationDescriptor<'a> {
         if self.sub_segments.is_some() {
             len += 2;
         }
+        len += self.trailing.len();
         len
     }
 
@@ -520,11 +559,20 @@ impl Serialize for SegmentationDescriptor<'_> {
         buf[pos + 2] = self.segments_expected;
         pos += 3;
 
-        if let Some((sn, se)) = self.sub_segments {
-            buf[pos] = sn;
-            buf[pos + 1] = se;
+        if let Some(sub_segments) = self.sub_segments {
+            if !self.segmentation_type_id.has_sub_segments() {
+                return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                    field: "segmentation_descriptor.sub_segments",
+                    value: u64::from(self.segmentation_type_id.to_u8()),
+                    reason: "segmentation_type_id is not one that carries sub_segment_num and sub_segments_expected (Table 23)",
+                }));
+            }
+            buf[pos] = sub_segments.sub_segment_num;
+            buf[pos + 1] = sub_segments.sub_segments_expected;
             pos += 2;
         }
+        buf[pos..pos + self.trailing.len()].copy_from_slice(self.trailing);
+        pos += self.trailing.len();
 
         debug_assert_eq!(pos, need);
         Ok(need)
@@ -550,6 +598,119 @@ mod tests {
         let back = SegmentationDescriptor::parse(&bytes).unwrap();
         assert_eq!(*d, back);
         assert_eq!(back.try_to_bytes().unwrap(), bytes);
+    }
+
+    /// Rewrite a parsed descriptor's `descriptor_length` and CRC-free body:
+    /// returns the bytes with one extra trailing byte appended inside the
+    /// declared length, which is how a sender over-long for its shape
+    /// appears on the wire.
+    fn with_extra_trailing(bytes: &[u8]) -> alloc::vec::Vec<u8> {
+        let mut out = bytes.to_vec();
+        out[1] += 1;
+        out.push(0xAB);
+        out
+    }
+
+    /// The type-specific shapes §10.3.3.1 leaves after the fixed fields
+    /// (`sub_segments`, `trailing`) must re-serialize byte-exactly whatever
+    /// the wire carried.
+    fn tail_is_byte_exact(bytes: &[u8]) {
+        let parsed = SegmentationDescriptor::parse(bytes).expect("descriptor parses");
+        assert_eq!(
+            parsed.try_to_bytes().unwrap(),
+            bytes,
+            "byte-exact re-serialize"
+        );
+    }
+
+    fn descriptor(segmentation_type_id: SegmentationTypeId) -> Vec<u8> {
+        SegmentationDescriptor {
+            segmentation_event_id: 0x55,
+            segmentation_type_id,
+            segment_num: 1,
+            segments_expected: 1,
+            ..Default::default()
+        }
+        .try_to_bytes()
+        .unwrap()
+    }
+
+    /// Audit 19b, finding 15: the old parse took any two leftover bytes as
+    /// `sub_segments` regardless of `segmentation_type_id` and skipped a third
+    /// without keeping it. Those bytes are carried now, so every tail shape
+    /// round-trips byte-exactly.
+    #[test]
+    fn an_over_long_descriptor_keeps_every_byte() {
+        // A type that does not carry the appendix: all leftover bytes are
+        // carried, never read as a sub_segment pair.
+        for type_id in [
+            SegmentationTypeId::ProgramStart,
+            SegmentationTypeId::ProviderAdvertisementEnd,
+        ] {
+            let base = descriptor(type_id);
+            let parsed = SegmentationDescriptor::parse(&base).unwrap();
+            assert_eq!(parsed.sub_segments, None, "{type_id:?}");
+            let one = with_extra_trailing(&base);
+            assert_eq!(
+                SegmentationDescriptor::parse(&one).unwrap().trailing.len(),
+                1
+            );
+            tail_is_byte_exact(&one);
+            let two = with_extra_trailing(&one);
+            assert_eq!(
+                SegmentationDescriptor::parse(&two).unwrap().trailing.len(),
+                2
+            );
+            tail_is_byte_exact(&two);
+        }
+        // A type that carries the appendix: two leftover bytes are the pair,
+        // a third is carried.
+        let base = descriptor(SegmentationTypeId::ProviderPlacementOpportunityStart);
+        let appendix = with_extra_trailing(&with_extra_trailing(&base));
+        let parsed = SegmentationDescriptor::parse(&appendix).unwrap();
+        assert_eq!(
+            parsed.sub_segments,
+            Some(SubSegments {
+                sub_segment_num: 0xAB,
+                sub_segments_expected: 0xAB,
+            })
+        );
+        assert!(parsed.trailing.is_empty());
+        tail_is_byte_exact(&appendix);
+        let over = with_extra_trailing(&appendix);
+        let parsed = SegmentationDescriptor::parse(&over).unwrap();
+        assert_eq!(parsed.trailing, &[0xAB]);
+        tail_is_byte_exact(&over);
+    }
+
+    /// The struct form is exact: an appendix on a type that does not carry one
+    /// is rejected instead of being written for a producer to re-read as
+    /// something else (or dropped).
+    #[test]
+    fn sub_segments_on_a_type_that_does_not_carry_them_is_rejected() {
+        let d = SegmentationDescriptor {
+            segmentation_event_id: 1,
+            segmentation_type_id: SegmentationTypeId::ProgramStart,
+            segment_num: 1,
+            segments_expected: 1,
+            sub_segments: Some(SubSegments {
+                sub_segment_num: 1,
+                sub_segments_expected: 1,
+            }),
+            ..Default::default()
+        };
+        assert!(matches!(
+            d.try_to_bytes(),
+            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "segmentation_descriptor.sub_segments",
+                ..
+            }))
+        ));
+        // ...and the same type with no appendix still serializes.
+        rt(&SegmentationDescriptor {
+            sub_segments: None,
+            ..d
+        });
     }
 
     #[test]
@@ -579,7 +740,10 @@ mod tests {
             segmentation_type_id: SegmentationTypeId::ProviderPlacementOpportunityStart,
             segment_num: 1,
             segments_expected: 1,
-            sub_segments: Some((1, 2)),
+            sub_segments: Some(SubSegments {
+                sub_segment_num: 1,
+                sub_segments_expected: 2,
+            }),
             ..Default::default()
         });
     }
