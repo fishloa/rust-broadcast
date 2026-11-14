@@ -112,8 +112,9 @@ impl<'a> Parse<'a> for Replace {
         need_in(body, REPLACE_BODY, "replace")?;
         super::reject_trailing_body(body, REPLACE_BODY, "replace")?;
         let replacement_ref = body[0];
-        let replaced_pid = Pid::new((((body[1] & 0x1F) as u16) << 8) | body[2] as u16);
-        let replacement_pid = Pid::new((((body[3] & 0x1F) as u16) << 8) | body[4] as u16);
+        let replaced_pid = Pid::from_wire_masked((((body[1] & 0x1F) as u16) << 8) | body[2] as u16);
+        let replacement_pid =
+            Pid::from_wire_masked((((body[3] & 0x1F) as u16) << 8) | body[4] as u16);
         Ok(Self {
             length_form,
             replacement_ref,
@@ -269,8 +270,8 @@ mod tests {
         let r = Replace {
             length_form: crate::length::LengthForm::Minimal,
             replacement_ref: 0x07,
-            replaced_pid: Pid::new(0x0123),    // 13-bit
-            replacement_pid: Pid::new(0x01FF), // 13-bit
+            replaced_pid: Pid::from_const(0x0123),    // 13-bit
+            replacement_pid: Pid::from_const(0x01FF), // 13-bit
             replaced_reserved: Default::default(),
             replacement_reserved: Default::default(),
         };
@@ -283,7 +284,7 @@ mod tests {
         let parsed = Replace::parse(&bytes).unwrap();
         assert_eq!(parsed, r);
         let mut other = r;
-        other.replacement_pid = Pid::new(0x0001);
+        other.replacement_pid = Pid::from_const(0x0001);
         assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 

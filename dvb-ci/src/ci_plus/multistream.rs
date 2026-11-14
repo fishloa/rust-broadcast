@@ -33,7 +33,7 @@ pub mod tag {
 
 /// The reserved PID value `0x1FFF` — the Host shall ignore a request for it
 /// (§6.4.2.3, Table 4 semantics).
-pub const NULL_PID: Pid = Pid::new(0x1FFF);
+pub const NULL_PID: Pid = Pid::from_const(0x1FFF);
 
 // --- CICAM_multistream_capability (Table 3) ---
 
@@ -153,7 +153,7 @@ impl<'a> Parse<'a> for PidSelectReq {
         let mut pids = Vec::with_capacity(num_pid);
         for chunk in loop_bytes[..num_pid * PID_ENTRY_LEN].chunks_exact(PID_ENTRY_LEN) {
             let critical = chunk[0] & CRITICAL_FLAG_BIT != 0;
-            let pid = Pid::new(u16::from_be_bytes([chunk[0], chunk[1]]) & PID_MASK);
+            let pid = Pid::from_wire_masked(u16::from_be_bytes([chunk[0], chunk[1]]) & PID_MASK);
             pids.push(PidSelectRequest {
                 critical_for_descrambling: critical,
                 pid,
@@ -254,7 +254,7 @@ impl<'a> Parse<'a> for PidSelectReply {
         let mut pids = Vec::with_capacity(num_pid);
         for chunk in loop_bytes[..num_pid * PID_ENTRY_LEN].chunks_exact(PID_ENTRY_LEN) {
             let selected = chunk[0] & PID_SELECTED_FLAG_BIT != 0;
-            let pid = Pid::new(u16::from_be_bytes([chunk[0], chunk[1]]) & PID_MASK);
+            let pid = Pid::from_wire_masked(u16::from_be_bytes([chunk[0], chunk[1]]) & PID_MASK);
             pids.push(PidSelectedEntry {
                 pid_selected: selected,
                 pid,
@@ -347,12 +347,12 @@ mod tests {
                 PidSelectRequest {
                     reserved: Default::default(),
                     critical_for_descrambling: true,
-                    pid: Pid::new(0x0123),
+                    pid: Pid::from_const(0x0123),
                 },
                 PidSelectRequest {
                     reserved: Default::default(),
                     critical_for_descrambling: false,
-                    pid: Pid::new(0x1FFE),
+                    pid: Pid::from_const(0x1FFE),
                 },
             ],
         };
@@ -395,12 +395,12 @@ mod tests {
                 PidSelectedEntry {
                     reserved: Default::default(),
                     pid_selected: true,
-                    pid: Pid::new(0x0064),
+                    pid: Pid::from_const(0x0064),
                 },
                 PidSelectedEntry {
                     reserved: Default::default(),
                     pid_selected: false,
-                    pid: Pid::new(0x00C8),
+                    pid: Pid::from_const(0x00C8),
                 },
             ],
         };
@@ -471,7 +471,7 @@ mod tests {
             pids: alloc::vec![PidSelectRequest {
                 reserved: Default::default(),
                 critical_for_descrambling: false,
-                pid: Pid::new(0x1FFF),
+                pid: Pid::from_const(0x1FFF),
             }],
         };
         let bytes = req.try_to_bytes().unwrap();
@@ -488,7 +488,7 @@ mod tests {
                 .map(|_| PidSelectRequest {
                     reserved: Default::default(),
                     critical_for_descrambling: false,
-                    pid: Pid::new(0x0100),
+                    pid: Pid::from_const(0x0100),
                 })
                 .collect(),
         };

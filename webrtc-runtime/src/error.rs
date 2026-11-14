@@ -80,11 +80,43 @@ pub enum Error {
 
     /// An ICE, DTLS, or SRTP media-transport operation failed (feature
     /// `media`, see [`crate::media`]).
-    ///
-    /// Carries a formatted message rather than a `rtc-ice`/`rtc-dtls`/
-    /// `rtc-srtp` error type so the default (non-`media`) build of this
-    /// crate never has to know those dependency types exist.
     #[cfg(feature = "media")]
     #[error("media transport error: {0}")]
-    Media(alloc::string::String),
+    Media(#[from] MediaError),
+}
+
+/// Typed media-transport failures (ICE, DTLS, SRTP, RTP parsing).
+#[cfg(feature = "media")]
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MediaError {
+    /// An ICE agent operation failed.
+    #[error("ice: {0}")]
+    Ice(alloc::string::String),
+    /// A DTLS operation failed.
+    #[error("dtls: {0}")]
+    Dtls(alloc::string::String),
+    /// An SRTP encrypt/decrypt operation failed.
+    #[error("srtp: {0}")]
+    Srtp(alloc::string::String),
+    /// An inbound RTP packet could not be parsed.
+    #[error("rtp parse: {0}")]
+    RtpParse(#[from] rtp_packet::Error),
+    /// Any other media-transport failure.
+    #[error("{0}")]
+    Other(alloc::string::String),
+}
+
+#[cfg(feature = "media")]
+impl From<alloc::string::String> for MediaError {
+    fn from(s: alloc::string::String) -> Self {
+        MediaError::Other(s)
+    }
+}
+
+#[cfg(feature = "media")]
+impl From<&str> for MediaError {
+    fn from(s: &str) -> Self {
+        MediaError::Other(s.to_string())
+    }
 }

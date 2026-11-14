@@ -58,7 +58,7 @@ fn build_pat_section() -> Vec<u8> {
         true,
         0,
         0,
-        vec![PatEntry::new(1, Pid::new(0x0100))],
+        vec![PatEntry::new(1, Pid::from_const(0x0100))],
     );
     let mut buf = vec![0u8; pat.serialized_len()];
     pat.serialize_into(&mut buf).expect("PAT serialize");
@@ -242,7 +242,7 @@ fn chain_t2mi_bbframe_si_pat() {
     let pat_section = build_pat_section();
 
     // Layer 2: inner TS packet (PID 0x0000, PUSI)
-    let inner_ts = inner_ts_packet(Pid::new(0x0000), &pat_section);
+    let inner_ts = inner_ts_packet(Pid::from_const(0x0000), &pat_section);
 
     // Layer 3: NM BBFrame
     let bbframe = build_nm_bbframe(&inner_ts);
@@ -254,10 +254,10 @@ fn chain_t2mi_bbframe_si_pat() {
     // The fixture's T2-MI packet is ~211 bytes (6 header + 3 sub-hdr + 10 BBHEADER
     // + 188 data + 4 CRC) — larger than the 183-byte PUSI payload capacity of one
     // TS packet, so we emit two packets (PUSI + continuation).
-    let outer_ts_pkts = outer_ts_packets(Pid::new(0x0006), &t2mi_pkt);
+    let outer_ts_pkts = outer_ts_packets(Pid::from_const(0x0006), &t2mi_pkt);
 
     // ── Step A: T2miPump → T2miEvent ─────────────────────────────────────────
-    let mut pump = T2miPump::new(Pid::new(0x0006));
+    let mut pump = T2miPump::new(Pid::from_const(0x0006));
     let mut all_events: Vec<_> = Vec::new();
     for pkt in &outer_ts_pkts {
         all_events.extend(pump.feed_ts(pkt));
@@ -291,7 +291,7 @@ fn chain_t2mi_bbframe_si_pat() {
             assert_eq!(pat.transport_stream_id, 0x0001, "TSID");
             assert_eq!(pat.entries.len(), 1, "one program entry");
             assert_eq!(pat.entries[0].program_number, 1, "program_number");
-            assert_eq!(pat.entries[0].pid, Pid::new(0x0100), "PMT PID");
+            assert_eq!(pat.entries[0].pid, Pid::from_const(0x0100), "PMT PID");
         }
         other => panic!("expected AnyTableSection::PatSection, got {other:?}"),
     }
@@ -319,7 +319,7 @@ impl Lcg {
 /// Feed 10 000 × 188-byte seeded-LCG garbage into T2miPump::feed_ts — no panic.
 #[test]
 fn hostility_t2mi_garbage_feed_ts() {
-    let mut pump = T2miPump::new(Pid::new(0x0006));
+    let mut pump = T2miPump::new(Pid::from_const(0x0006));
     let mut lcg = Lcg::new(0xDEAD_BEEF_CAFE_BABEu64);
 
     for _ in 0..10_000u32 {
@@ -365,7 +365,7 @@ fn hostility_t2mi_garbage_feed_raw() {
 #[test]
 fn hostility_t2mi_truncation_feed_raw() {
     let pat_section = build_pat_section();
-    let inner_ts = inner_ts_packet(Pid::new(0x0000), &pat_section);
+    let inner_ts = inner_ts_packet(Pid::from_const(0x0000), &pat_section);
     let bbframe = build_nm_bbframe(&inner_ts);
     let t2mi_pkt = build_t2mi_packet(&bbframe);
 

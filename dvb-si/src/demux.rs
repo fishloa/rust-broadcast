@@ -18,7 +18,7 @@
 //! use dvb_si::tables::pat::{PatSection, PatEntry};
 //!
 //! use mpeg_ts::pid::Pid;
-//! const PMT_PID: Pid = Pid::new(0x0100);
+//! const PMT_PID: Pid = Pid::from_const(0x0100);
 //! const TS_SYNC_BYTE: u8 = 0x47;
 //! const PAYLOAD_UNIT_START_INDICATOR: u8 = 0x40;
 //! const PAT_PID_LOW_BYTE: u8 = 0x00;
@@ -666,7 +666,7 @@ mod tests {
         let pmt = pmt_section(1, 0, 0x0100);
         let pmt_evts: Vec<_> = demux.feed(&ts_packet(0x0100, &pmt)).collect();
         assert_eq!(pmt_evts.len(), 1, "PMT on the followed PID should emit");
-        assert_eq!(pmt_evts[0].pid(), Pid::new(0x0100));
+        assert_eq!(pmt_evts[0].pid(), Pid::from_const(0x0100));
         match pmt_evts[0].table_section().unwrap() {
             AnyTableSection::PmtSection(p) => assert_eq!(p.program_number, 1),
             other => panic!("expected PmtSection, got {other:?}"),
@@ -711,7 +711,7 @@ mod tests {
     /// version drops.
     #[test]
     fn follow_pat_never_drops_a_protected_pid() {
-        let mut demux = SiDemux::builder().pid(Pid::new(0x0100)).build();
+        let mut demux = SiDemux::builder().pid(Pid::from_const(0x0100)).build();
 
         let pat_v0 = pat_section(0x0001, 0, &[(1, 0x0100)]);
         demux.feed(&ts_packet(0x0000, &pat_v0)).for_each(drop);
@@ -794,7 +794,7 @@ mod tests {
                 cur,
                 sn,
                 last,
-                vec![PatEntry::new(sn as u16 + 1, Pid::new(pid))],
+                vec![PatEntry::new(sn as u16 + 1, Pid::from_wire_masked(pid))],
             );
             let mut b = vec![0u8; pat.serialized_len()];
             pat.serialize_into(&mut b).unwrap();

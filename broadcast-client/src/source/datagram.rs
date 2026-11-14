@@ -16,8 +16,9 @@ use url::{Host, Url};
 
 use crate::source::srt::{Notice, SrtCaller};
 use crate::srt::SrtConfig;
-use crate::udp::{DatagramStats, MulticastJoin, UdpConfig, UdpMode};
+use crate::udp::{DatagramStats, UdpConfig, UdpMode};
 use crate::{Action, Error};
+use broadcast_common::net::{JoinMismatch, MulticastJoin, UdpOptions};
 
 /// RFC 3551 Table 5: static payload type 33 is MP2T, the only RTP payload this source plays.
 pub(crate) const RTP_PAYLOAD_TYPE_MP2T: u8 = 33;
@@ -258,8 +259,7 @@ pub(crate) struct Datagram {
     host: String,
     port: u16,
     mode: UdpMode,
-    multicast: Option<MulticastJoin>,
-    recv_buffer_bytes: Option<u32>,
+    options: UdpOptions,
     kind: Kind,
     sends: Vec<Vec<u8>>,
     notices: Vec<Notice>,
@@ -279,42 +279,25 @@ impl Datagram {
             Some(p) if p != 0 => p,
             _ => return Err(Error::InvalidUrl("missing port".to_string())),
         };
-        let multicast = if ip.is_multicast() {
-            if let Some(source) = config.source
-                && (source.is_ipv4() != ip.is_ipv4() || source.is_multicast())
-            {
-                return Err(Error::InvalidConfig {
-                    field: "udp.source",
-                });
-            }
-            if config.interface_index.is_some() && (ip.is_ipv4() || config.interface.is_some()) {
-                return Err(Error::InvalidConfig {
-                    field: "udp.interface_index",
-                });
-            }
-            Some(MulticastJoin {
-                interface: config.interface,
-                interface_index: config.interface_index,
-                source: config.source,
-            })
-        } else {
-            if config.source.is_some() {
-                return Err(Error::InvalidConfig {
-                    field: "udp.source",
-                });
-            }
-            if config.interface.is_some() {
-                return Err(Error::InvalidConfig {
-                    field: "udp.interface",
-                });
-            }
-            if config.interface_index.is_some() {
-                return Err(Error::InvalidConfig {
-                    field: "udp.interface_index",
-                });
-            }
-            None
-        };
+        let mut options = config.options.clone();
+        if ip.is_multicast() {
+            let join = options
+                .join
+                .take()
+                .unwrap_or_else(|| MulticastJoin::new(ip));
+            options = options.with_join(join.with_group(ip));
+        } else if options.join.is_some() {
+            return Err(Error::InvalidConfig {
+                field: "udp.options.join",
+            });
+        }
+        options.validate().map_err(|error| Error::InvalidConfig {
+            field: match error {
+                JoinMismatch::Family => "udp.options.join.interface",
+                JoinMismatch::SourceFamily => "udp.options.join.source",
+                _ => "udp.options.join.group",
+            },
+        })?;
         let kind = match config.sdp.as_deref() {
             Some(sdp) if rtp => Kind::Sdp(Box::new(crate::source::rtp_sdp::SdpRtp::new(sdp)?)),
             Some(_) => return Err(Error::InvalidConfig { field: "udp.sdp" }),
@@ -324,8 +307,7 @@ impl Datagram {
             host: ip.to_string(),
             port,
             mode: UdpMode::Receive,
-            multicast,
-            recv_buffer_bytes: config.recv_buffer_bytes,
+            options,
             kind,
             sends: Vec::new(),
             notices: Vec::new(),
@@ -347,8 +329,7 @@ impl Datagram {
             host,
             port,
             mode: UdpMode::Connect,
-            multicast: None,
-            recv_buffer_bytes: None,
+            options: UdpOptions::default(),
             kind: Kind::Srt(Box::new(SrtCaller::new(config)?)),
             sends: Vec::new(),
             notices: Vec::new(),
@@ -366,8 +347,7 @@ impl Datagram {
             host: self.host.clone(),
             port: self.port,
             mode: self.mode,
-            multicast: self.multicast,
-            recv_buffer_bytes: self.recv_buffer_bytes,
+            options: self.options.clone(),
         }
     }
 

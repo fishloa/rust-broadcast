@@ -173,7 +173,8 @@ pub(crate) fn parse_reply_streams(
                 },
             ));
         }
-        let elementary_pid = Pid::new((((body[pos] & 0x1F) as u16) << 8) | body[pos + 1] as u16);
+        let elementary_pid =
+            Pid::from_wire_masked((((body[pos] & 0x1F) as u16) << 8) | body[pos + 1] as u16);
         let (ca_enable, reserved_ca_enable) = decode_enable_byte(body[pos + 2]);
         streams.push(CaPmtReplyStream {
             elementary_pid,
@@ -276,13 +277,13 @@ mod tests {
                 CaPmtReplyStream {
                     reserved_ca_enable: Default::default(),
                     reserved_pid: Default::default(),
-                    elementary_pid: Pid::new(0x0200),
+                    elementary_pid: Pid::from_const(0x0200),
                     ca_enable: Some(CaEnable::Possible),
                 },
                 CaPmtReplyStream {
                     reserved_ca_enable: Default::default(),
                     reserved_pid: Default::default(),
-                    elementary_pid: Pid::new(0x0201),
+                    elementary_pid: Pid::from_const(0x0201),
                     ca_enable: Some(CaEnable::NotPossibleNoEntitlement),
                 },
             ],
@@ -308,7 +309,7 @@ mod tests {
             streams: alloc::vec![CaPmtReplyStream {
                 reserved_ca_enable: Default::default(),
                 reserved_pid: Default::default(),
-                elementary_pid: Pid::new(0x00FF),
+                elementary_pid: Pid::from_const(0x00FF),
                 ca_enable: None,
             }],
         };

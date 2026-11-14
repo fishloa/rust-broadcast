@@ -50,10 +50,11 @@ fn france_tnt_lcn_descriptors_parse() {
         for ev in demux.feed(chunk) {
             // collector.push_section_with_pid returns Some if the set just completed.
             let pid = Some(u16::from(ev.pid()));
-            let complete = match collector.push_section_with_pid(pid.map(Pid::new), ev.bytes()) {
-                Ok(Some(set)) => set,
-                _ => continue,
-            };
+            let complete =
+                match collector.push_section_with_pid(pid.map(Pid::from_const), ev.bytes()) {
+                    Ok(Some(set)) => set,
+                    _ => continue,
+                };
 
             // Try NIT decode.  SDT/BAT also arrive here; only NIT is interesting.
             let Ok(nit) = complete.nit_with_registry(&registry) else {

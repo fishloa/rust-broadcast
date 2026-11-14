@@ -18,7 +18,7 @@ use broadcast_common::{Parse, Serialize};
 /// table_id for the Running Status Table.
 pub const TABLE_ID: u8 = 0x71;
 /// Well-known PID on which the RST is carried.
-pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0013);
+pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::from_const(0x0013);
 
 const HEADER_LEN: usize = 3;
 /// Each entry is 9 bytes: tsid(2) + onid(2) + sid(2) + evid(2) + status(1).

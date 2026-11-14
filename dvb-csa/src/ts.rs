@@ -152,13 +152,13 @@ fn ts_payload_mut(packet: &mut [u8; TS_PACKET_SIZE]) -> Result<&mut [u8], Error>
     let header = TsHeader::parse(&packet[..TsHeader::serialized_len()])
         .expect("packet[..TsHeader::serialized_len()] is always exactly 4 bytes");
 
-    if !header.has_payload {
+    if !header.has_payload() {
         return Err(Error::NoPayload);
     }
 
     let mut payload_start = TsHeader::serialized_len();
 
-    if header.has_adaptation {
+    if header.has_adaptation() {
         let af_len = packet[payload_start] as usize; // adaptation_field_length, §2.4.3.4
         payload_start += ADAPTATION_FIELD_LENGTH_SIZE + af_len;
     }

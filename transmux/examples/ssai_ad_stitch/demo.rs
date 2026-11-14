@@ -190,7 +190,7 @@ fn extract_scte35_raw(ts: &[u8], pid: u16) -> Vec<u8> {
         let Ok(pkt) = TsPacket::parse(raw) else {
             continue;
         };
-        if pkt.header.pid != Pid::new(pid) {
+        if pkt.header.pid != Pid::from_wire_masked(pid) {
             continue;
         }
         let Some(payload) = pkt.payload else {

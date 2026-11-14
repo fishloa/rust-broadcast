@@ -13,7 +13,9 @@ use dvb_si::tables::rst::RstSection;
 use dvb_si::tables::sdt::{SdtKind, SdtSection};
 use dvb_si::tables::tdt::TdtSection;
 use mpeg_ts::mux::SectionPacketiser;
-use mpeg_ts::ts::{TS_PACKET_SIZE, TsHeader};
+use mpeg_ts::ts::{
+    AdaptationFieldControl, ContinuityCounter, ScramblingControl, TS_PACKET_SIZE, TsHeader,
+};
 
 use crate::{Config, ConformanceMonitor, Indicator};
 
@@ -46,14 +48,14 @@ fn make_ts_packet(
     payload: &[u8],
 ) -> [u8; TS_PACKET_SIZE] {
     let mut pkt = [0xFFu8; TS_PACKET_SIZE];
+    let has_af = has_adaptation || !adaptation.is_empty();
     let header = TsHeader {
         tei: false,
         pusi,
-        pid: Pid::new(pid),
-        scrambling: 0,
-        has_adaptation: has_adaptation || !adaptation.is_empty(),
-        has_payload: !payload.is_empty(),
-        continuity_counter: cc & 0x0F,
+        pid: Pid::from_wire_masked(pid),
+        scrambling: ScramblingControl::NotScrambled,
+        adaptation: AdaptationFieldControl::from_flags(has_af, !payload.is_empty()),
+        continuity_counter: ContinuityCounter::from_wire_masked(cc),
     };
     header.serialize_into(&mut pkt[..4]).unwrap();
     let mut pos = 4usize;
@@ -79,27 +81,29 @@ fn make_ts_packet_with_tei(pid: u16, cc: u8) -> [u8; TS_PACKET_SIZE] {
     let header = TsHeader {
         tei: true,
         pusi: false,
-        pid: Pid::new(pid),
-        scrambling: 0,
-        has_adaptation: false,
-        has_payload: false,
-        continuity_counter: cc & 0x0F,
+        pid: Pid::from_wire_masked(pid),
+        scrambling: ScramblingControl::NotScrambled,
+        adaptation: AdaptationFieldControl::Reserved,
+        continuity_counter: ContinuityCounter::from_wire_masked(cc & 0x0F),
     };
     header.serialize_into(&mut pkt[..4]).unwrap();
     pkt
 }
 
 /// Build a TS packet with scrambling != 0.
-fn make_ts_packet_with_scrambling(pid: u16, cc: u8, scrambling: u8) -> [u8; TS_PACKET_SIZE] {
+fn make_ts_packet_with_scrambling(
+    pid: u16,
+    cc: u8,
+    scrambling: ScramblingControl,
+) -> [u8; TS_PACKET_SIZE] {
     let mut pkt = [0xFFu8; TS_PACKET_SIZE];
     let header = TsHeader {
         tei: false,
         pusi: false,
-        pid: Pid::new(pid),
+        pid: Pid::from_wire_masked(pid),
         scrambling,
-        has_adaptation: false,
-        has_payload: true,
-        continuity_counter: cc & 0x0F,
+        adaptation: AdaptationFieldControl::PayloadOnly,
+        continuity_counter: ContinuityCounter::from_wire_masked(cc),
     };
     header.serialize_into(&mut pkt[..4]).unwrap();
     pkt[4] = 0xAB; // some payload
@@ -168,7 +172,7 @@ fn build_pat_section_versioned(program_map_pids: &[(u16, u16)], version: u8) -> 
         0,
         program_map_pids
             .iter()
-            .map(|&(pn, pid)| PatEntry::new(pn, Pid::new(pid)))
+            .map(|&(pn, pid)| PatEntry::new(pn, Pid::from_wire_masked(pid)))
             .collect(),
     );
     let mut buf = vec![0u8; pat.serialized_len()];
@@ -191,14 +195,14 @@ fn build_pmt_section_versioned(
     let pmt = PmtSection::new(
         program_number,
         dvb_si::tables::SectionVersion::new(version, true, 0, 0),
-        Pid::new(pcr_pid),
+        Pid::try_new(pcr_pid).expect("pid fits the 13-bit field"),
         Default::default(),
         es_pids
             .iter()
             .map(|&pid| {
                 PmtStream::new(
                     dvb_si::tables::pmt::StreamType::Mpeg2Video,
-                    Pid::new(pid),
+                    Pid::from_wire_masked(pid),
                     Default::default(),
                 )
             })
@@ -213,11 +217,16 @@ fn build_pmt_section_versioned(
 fn packetise_section(pid: u16, section: &[u8]) -> Vec<[u8; TS_PACKET_SIZE]> {
     extern crate std;
     std::thread_local! {
-        static NEXT_CC: core::cell::RefCell<alloc::collections::BTreeMap<u16, u8>> =
+        static NEXT_CC: core::cell::RefCell<alloc::collections::BTreeMap<u16, ContinuityCounter>> =
             const { core::cell::RefCell::new(alloc::collections::BTreeMap::new()) };
     }
-    let cc = NEXT_CC.with(|m| m.borrow().get(&pid).copied().unwrap_or(0));
-    let mut pktizer = SectionPacketiser::with_continuity(Pid::new(pid), cc);
+    let cc = NEXT_CC.with(|m| {
+        m.borrow()
+            .get(&pid)
+            .copied()
+            .unwrap_or(ContinuityCounter::ZERO)
+    });
+    let mut pktizer = SectionPacketiser::with_continuity(Pid::from_wire_masked(pid), cc);
     let packets = pktizer.packetise(&[section]);
     NEXT_CC.with(|m| m.borrow_mut().insert(pid, pktizer.continuity_counter()));
     packets
@@ -1086,7 +1095,7 @@ fn cat_error_scrambled_without_cat() {
     acquire_sync(&mut monitor);
 
     // Feed a scrambled packet when no CAT has been seen.
-    let pkt = make_ts_packet_with_scrambling(0x0100, 0, 0x03);
+    let pkt = make_ts_packet_with_scrambling(0x0100, 0, ScramblingControl::OddKey);
     let events = monitor.feed(&pkt, ms(10));
     assert!(has_indicator(events, Indicator::CatError));
 }
@@ -1128,7 +1137,7 @@ fn cat_error_absent_when_cat_seen_then_scrambled() {
 
     // Now a scrambled packet arrives — because a CAT has been seen, the
     // "scrambled packet but no CAT" condition (2.6) must NOT fire.
-    let pkt = make_ts_packet_with_scrambling(0x0100, 0, 0x03);
+    let pkt = make_ts_packet_with_scrambling(0x0100, 0, ScramblingControl::OddKey);
     let events = monitor.feed(&pkt, ms(10));
     assert!(
         !has_indicator(events, Indicator::CatError),
@@ -1224,7 +1233,7 @@ fn si_repetition_sdt_trips_on_timeout() {
         .filter(|e| e.indicator == Indicator::SiRepetitionError)
         .collect();
     assert_eq!(si_events.len(), 1);
-    assert_eq!(si_events[0].pid, Some(Pid::new(PID_SDT_BAT)));
+    assert_eq!(si_events[0].pid, Some(Pid::from_const(PID_SDT_BAT)));
     assert!(si_events[0].detail.contains("SDT_actual"));
 }
 
@@ -1267,7 +1276,7 @@ fn si_repetition_tdt_trips_on_timeout() {
         .filter(|e| e.indicator == Indicator::SiRepetitionError)
         .collect();
     assert_eq!(si_events.len(), 1);
-    assert_eq!(si_events[0].pid, Some(Pid::new(PID_TDT_TOT)));
+    assert_eq!(si_events[0].pid, Some(Pid::from_const(PID_TDT_TOT)));
     assert!(si_events[0].detail.contains("TDT"));
 }
 
@@ -1310,7 +1319,7 @@ fn si_repetition_nit_trips_on_timeout() {
         .filter(|e| e.indicator == Indicator::SiRepetitionError)
         .collect();
     assert_eq!(si_events.len(), 1);
-    assert_eq!(si_events[0].pid, Some(Pid::new(PID_NIT)));
+    assert_eq!(si_events[0].pid, Some(Pid::from_const(PID_NIT)));
     assert!(si_events[0].detail.contains("NIT_actual"));
 }
 
@@ -1353,7 +1362,7 @@ fn si_repetition_eit_pf_trips_on_timeout() {
         .filter(|e| e.indicator == Indicator::SiRepetitionError)
         .collect();
     assert_eq!(si_events.len(), 1);
-    assert_eq!(si_events[0].pid, Some(Pid::new(PID_EIT)));
+    assert_eq!(si_events[0].pid, Some(Pid::from_const(PID_EIT)));
     assert!(si_events[0].detail.contains("EIT_P/F_actual"));
 }
 
@@ -1491,7 +1500,10 @@ fn unreferenced_pid_trips_after_persistence_threshold() {
     let events = monitor.feed(&pkt2, ms(600));
     let unref: Vec<_> = events
         .iter()
-        .filter(|e| e.indicator == Indicator::UnreferencedPid && e.pid == Some(Pid::new(stray_pid)))
+        .filter(|e| {
+            e.indicator == Indicator::UnreferencedPid
+                && e.pid == Some(Pid::try_new(stray_pid).expect("pid fits the 13-bit field"))
+        })
         .collect();
     assert_eq!(unref.len(), 1);
 }
@@ -1510,7 +1522,10 @@ fn unreferenced_pid_absent_within_persistence_threshold() {
     let events = monitor.feed(&pkt2, ms(200));
     let unref: Vec<_> = events
         .iter()
-        .filter(|e| e.indicator == Indicator::UnreferencedPid && e.pid == Some(Pid::new(stray_pid)))
+        .filter(|e| {
+            e.indicator == Indicator::UnreferencedPid
+                && e.pid == Some(Pid::try_new(stray_pid).expect("pid fits the 13-bit field"))
+        })
         .collect();
     assert!(unref.is_empty());
 }
@@ -1542,9 +1557,9 @@ fn unreferenced_pid_absent_for_well_known_si_pids() {
         monitor.feed(&pkt1, ms(5));
         let pkt2 = make_ts_packet(pid, 1, false, false, &[], &[]);
         let events = monitor.feed(&pkt2, secs(2));
-        let flagged = events
-            .iter()
-            .any(|e| e.indicator == Indicator::UnreferencedPid && e.pid == Some(Pid::new(pid)));
+        let flagged = events.iter().any(|e| {
+            e.indicator == Indicator::UnreferencedPid && e.pid == Some(Pid::from_wire_masked(pid))
+        });
         assert!(
             !flagged,
             "well-known SI PID 0x{pid:04X} must never be flagged Unreferenced_PID"
@@ -1763,7 +1778,10 @@ fn build_large_pat_section() -> Vec<u8> {
     // After 5 packets: 920 - 5*5 = 895 bytes > 512 → overflow.
     let mut entries = Vec::new();
     for i in 0u16..200 {
-        entries.push(PatEntry::new(i, Pid::new(0x0100 + i)));
+        entries.push(PatEntry::new(
+            i,
+            Pid::try_new(0x0100 + i).expect("pid fits the 13-bit field"),
+        ));
     }
     let pat = PatSection::new(1, 0, true, 0, 0, entries);
     let mut buf = vec![0u8; pat.serialized_len()];
@@ -2435,7 +2453,10 @@ fn pmt_removed_by_new_pat_version_stops_firing_and_becomes_unreferenced() {
 
     let stale_pmt_error: Vec<_> = events
         .iter()
-        .filter(|e| e.indicator == Indicator::PmtError2 && e.pid == Some(Pid::new(removed_pmt_pid)))
+        .filter(|e| {
+            e.indicator == Indicator::PmtError2
+                && e.pid == Some(Pid::try_new(removed_pmt_pid).expect("pid fits the 13-bit field"))
+        })
         .collect();
     assert!(
         stale_pmt_error.is_empty(),
@@ -2446,7 +2467,8 @@ fn pmt_removed_by_new_pat_version_stops_firing_and_becomes_unreferenced() {
     let unref: Vec<_> = events
         .iter()
         .filter(|e| {
-            e.indicator == Indicator::UnreferencedPid && e.pid == Some(Pid::new(removed_pmt_pid))
+            e.indicator == Indicator::UnreferencedPid
+                && e.pid == Some(Pid::try_new(removed_pmt_pid).expect("pid fits the 13-bit field"))
         })
         .collect();
     assert_eq!(
@@ -2506,7 +2528,10 @@ fn es_pid_removed_by_new_pmt_version_stops_firing_and_becomes_unreferenced() {
 
     let stale_pid_error: Vec<_> = events
         .iter()
-        .filter(|e| e.indicator == Indicator::PidError && e.pid == Some(Pid::new(dropped_es_pid)))
+        .filter(|e| {
+            e.indicator == Indicator::PidError
+                && e.pid == Some(Pid::try_new(dropped_es_pid).expect("pid fits the 13-bit field"))
+        })
         .collect();
     assert!(
         stale_pid_error.is_empty(),
@@ -2517,7 +2542,8 @@ fn es_pid_removed_by_new_pmt_version_stops_firing_and_becomes_unreferenced() {
     let unref: Vec<_> = events
         .iter()
         .filter(|e| {
-            e.indicator == Indicator::UnreferencedPid && e.pid == Some(Pid::new(dropped_es_pid))
+            e.indicator == Indicator::UnreferencedPid
+                && e.pid == Some(Pid::try_new(dropped_es_pid).expect("pid fits the 13-bit field"))
         })
         .collect();
     assert_eq!(
@@ -2743,7 +2769,7 @@ fn eit_pf_pairing_state_is_bounded() {
     let mut monitor = ConformanceMonitor::new();
     acquire_sync(&mut monitor);
     let distinct = 1_024u16 + 64;
-    let mut pz = SectionPacketiser::new(Pid::new(PID_EIT));
+    let mut pz = SectionPacketiser::new(Pid::from_const(PID_EIT));
     let mut t = 5u64;
     let mut pf_errors = 0;
     for service_id in 1..=distinct {
@@ -2838,7 +2864,7 @@ fn rig_pat_bytes(programs: &[(u16, u16)]) -> Vec<u8> {
         0,
         programs
             .iter()
-            .map(|&(n, p)| PatEntry::new(n, Pid::new(p)))
+            .map(|&(n, p)| PatEntry::new(n, Pid::try_new(p).expect("pid fits the 13-bit field")))
             .collect(),
     );
     let mut b = vec![0u8; pat.serialized_len()];
@@ -2885,7 +2911,7 @@ fn rig_send(rig: &mut Rig, pz: &mut SectionPacketiser, section: &[u8], at_ms: u6
 #[test]
 fn crc_corrupt_pat_must_not_start_tracking_a_bogus_pmt_pid() {
     let mut rig = Rig::new();
-    let mut pz = SectionPacketiser::new(Pid::new(0));
+    let mut pz = SectionPacketiser::new(Pid::from_const(0));
     rig_send(&mut rig, &mut pz, &rig_pat_bytes(&[(1, 0x100)]), 10);
     let mut bad = rig_pat_bytes(&[(1, 0x200)]);
     corrupt_crc(&mut bad);
@@ -2894,7 +2920,7 @@ fn crc_corrupt_pat_must_not_start_tracking_a_bogus_pmt_pid() {
     let bogus: Vec<_> = rig
         .events
         .iter()
-        .filter(|e| e.indicator == Indicator::PmtError2 && e.pid == Some(Pid::new(0x200)))
+        .filter(|e| e.indicator == Indicator::PmtError2 && e.pid == Some(Pid::from_const(0x200)))
         .collect();
     assert!(
         bogus.is_empty(),
@@ -2905,7 +2931,7 @@ fn crc_corrupt_pat_must_not_start_tracking_a_bogus_pmt_pid() {
 #[test]
 fn crc_corrupt_nit_actual_must_not_satisfy_si_repetition() {
     let mut rig = Rig::new();
-    let mut pz = SectionPacketiser::new(Pid::new(0x10));
+    let mut pz = SectionPacketiser::new(Pid::from_const(0x10));
     rig_send(&mut rig, &mut pz, &rig_nit_bytes(NitKind::Actual, 0), 10);
     let mut bad = rig_nit_bytes(NitKind::Actual, 0);
     corrupt_crc(&mut bad);
@@ -2924,7 +2950,7 @@ fn crc_corrupt_nit_actual_must_not_satisfy_si_repetition() {
 #[test]
 fn crc_corrupt_eit_pf_must_not_create_a_phantom_sub_table() {
     let mut rig = Rig::new();
-    let mut pz = SectionPacketiser::new(Pid::new(0x12));
+    let mut pz = SectionPacketiser::new(Pid::from_const(0x12));
     rig_send(&mut rig, &mut pz, &rig_eit_pf_bytes(0, 1), 10);
     rig_send(&mut rig, &mut pz, &rig_eit_pf_bytes(1, 1), 20);
     let mut bad = rig_eit_pf_bytes(0, 99);
@@ -2946,7 +2972,7 @@ fn crc_corrupt_eit_pf_must_not_create_a_phantom_sub_table() {
 #[test]
 fn nit_other_repetition_is_reported_again_after_the_table_recovers() {
     let mut rig = Rig::new();
-    let mut pz = SectionPacketiser::new(Pid::new(0x10));
+    let mut pz = SectionPacketiser::new(Pid::from_const(0x10));
     let s = rig_nit_bytes(NitKind::Other, 0);
     for t in [0u64, 1_000, 20_000, 21_000, 22_000, 45_000] {
         rig_send(&mut rig, &mut pz, &s, t);
@@ -2994,7 +3020,7 @@ fn pcr_step_of_100_5_ms_is_outside_the_0_to_100_ms_range() {
 fn legal_duplicate_continuation_packet_must_not_corrupt_the_section() {
     let programs: Vec<(u16, u16)> = (0..100u16).map(|i| (i + 1, 0x100 + i)).collect();
     let section = rig_pat_bytes(&programs);
-    let mut pz = SectionPacketiser::new(Pid::new(0));
+    let mut pz = SectionPacketiser::new(Pid::from_const(0));
     let pkts = pz.packetise(&[&section[..]]);
     assert_eq!(pkts.len(), 3);
     let mut rig = Rig::new();
@@ -3017,7 +3043,7 @@ fn legal_duplicate_continuation_packet_must_not_corrupt_the_section() {
 #[test]
 fn eit_following_section_vanishing_after_both_were_seen_is_detected() {
     let mut rig = Rig::new();
-    let mut pz = SectionPacketiser::new(Pid::new(0x12));
+    let mut pz = SectionPacketiser::new(Pid::from_const(0x12));
     rig_send(&mut rig, &mut pz, &rig_eit_pf_bytes(0, 1), 10);
     rig_send(&mut rig, &mut pz, &rig_eit_pf_bytes(1, 1), 20);
     let mut t = 500u64;
@@ -3039,7 +3065,7 @@ fn eit_following_section_vanishing_after_both_were_seen_is_detected() {
 #[test]
 fn indicator_counts_agree_with_the_events_raised() {
     let mut rig = Rig::new();
-    let mut pz = SectionPacketiser::new(Pid::new(0x10));
+    let mut pz = SectionPacketiser::new(Pid::from_const(0x10));
     let s = rig_nit_bytes(NitKind::Other, 0);
     for t in [0u64, 1_000, 20_000, 21_000, 22_000, 45_000] {
         rig_send(&mut rig, &mut pz, &s, t);

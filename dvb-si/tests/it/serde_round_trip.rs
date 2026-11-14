@@ -97,9 +97,9 @@ fn pat_with_multiple_entries_serializes() {
         0,
         0,
         vec![
-            PatEntry::new(0, Pid::new(0x10)),
-            PatEntry::new(1, Pid::new(0x100)),
-            PatEntry::new(2, Pid::new(0x200)),
+            PatEntry::new(0, Pid::from_const(0x10)),
+            PatEntry::new(1, Pid::from_const(0x100)),
+            PatEntry::new(2, Pid::from_const(0x200)),
         ],
     );
     let v = serde_json::to_value(&p).expect("serialize");
@@ -122,11 +122,11 @@ fn pmt_serializes_to_valid_json() {
     let pmt = PmtSection::new(
         1,
         dvb_si::tables::SectionVersion::new(0, true, 0, 0),
-        Pid::new(0x64),
+        Pid::from_const(0x64),
         DescriptorLoop::new(&[]),
         vec![PmtStream::new(
             StreamType::Mpeg2Video,
-            Pid::new(0xC8),
+            Pid::from_const(0xC8),
             DescriptorLoop::new(&[]),
         )],
     );

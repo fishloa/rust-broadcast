@@ -105,7 +105,7 @@ fn pcr_stats(ts: &[u8]) -> Vec<(u16, PcrStats)> {
         let Ok(pkt) = mpeg_ts::ts::TsPacket::parse(packet) else {
             continue;
         };
-        if !pkt.header.has_adaptation {
+        if !pkt.header.has_adaptation() {
             continue;
         }
         let Some(Ok(af)) = pkt.adaptation_field() else {
@@ -365,7 +365,11 @@ fn discontinuity_step_is_not_also_reported_as_repetition() {
             continue;
         };
         let moved = (pcr.as_27mhz() + 600 * CLOCK_27MHZ) % PCR_WRAP_27MHZ;
-        OwnedTsPacket::set_pcr(packet, Pcr::from_27mhz(moved)).unwrap();
+        OwnedTsPacket::set_pcr(
+            packet,
+            Pcr::from_27mhz(moved).expect("within the PCR range"),
+        )
+        .unwrap();
         shifted += 1;
     }
     assert!(
@@ -413,7 +417,11 @@ fn backward_pcr_step_is_a_discontinuity() {
         pkt[3] = 0x30; // adaptation + payload
         pkt[4] = 7; // adaptation_field_length: flags + 6-byte PCR
         pkt[5] = 0x10; // PCR_flag
-        pkt[6..12].copy_from_slice(&Pcr::from_27mhz(ticks).to_field_bytes());
+        pkt[6..12].copy_from_slice(
+            &Pcr::from_27mhz(ticks)
+                .expect("within the PCR range")
+                .to_field_bytes(),
+        );
         pkt
     }
 

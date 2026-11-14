@@ -42,7 +42,11 @@ fn interpolate_adopts_observations_after_the_wrap() {
     let mut input = Vec::new();
     for b in bases {
         let mut p = template;
-        OwnedTsPacket::set_pcr(&mut p, Pcr::from_27mhz(b * 300)).unwrap();
+        OwnedTsPacket::set_pcr(
+            &mut p,
+            Pcr::from_27mhz(b * 300).expect("within the PCR range"),
+        )
+        .unwrap();
         input.extend_from_slice(&p);
     }
 
@@ -56,7 +60,7 @@ fn interpolate_adopts_observations_after_the_wrap() {
     }
     fix.finish(|o| out.extend_from_slice(o));
 
-    let pid = |p: &[u8]| Pid::new((u16::from(p[1] & 0x1F) << 8) | u16::from(p[2]));
+    let pid = |p: &[u8]| Pid::from_wire_masked((u16::from(p[1] & 0x1F) << 8) | u16::from(p[2]));
     let want = pid(&template);
     let out_pcrs: Vec<u64> = out
         .chunks_exact(PKT)

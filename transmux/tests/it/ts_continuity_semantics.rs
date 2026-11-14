@@ -226,7 +226,10 @@ fn media_degraded_at_carries_the_pid_parallel_to_degraded() {
     assert_eq!(media.degraded.len(), 1);
     assert_eq!(media.degraded_at.len(), media.degraded.len());
     assert_eq!(media.degraded_at[0].kind, media.degraded[0]);
-    assert_eq!(media.degraded_at[0].provenance.pid, Some(Pid::new(0x100)));
+    assert_eq!(
+        media.degraded_at[0].provenance.pid,
+        Some(Pid::from_const(0x100))
+    );
     assert_eq!(media.degraded_at[0].provenance.packet_index, Some(1));
 }
 

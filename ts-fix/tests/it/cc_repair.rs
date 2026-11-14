@@ -25,7 +25,7 @@ fn m6_discontinuity_path() -> PathBuf {
 }
 
 fn extract_pid(pkt: &[u8]) -> Pid {
-    Pid::new((((pkt[1] & 0x1F) as u16) << 8) | (pkt[2] as u16))
+    Pid::from_wire_masked((((pkt[1] & 0x1F) as u16) << 8) | (pkt[2] as u16))
 }
 
 fn extract_cc(pkt: &[u8]) -> u8 {
@@ -264,7 +264,7 @@ fn genuine_cc_gap_is_repaired_in_stream() {
     for chunk in input.chunks_mut(188) {
         let pid = extract_pid(chunk);
         let hp = has_payload(chunk);
-        if pid == Pid::new(target_pid) && hp {
+        if pid == Pid::try_new(target_pid).expect("pid fits the 13-bit field") && hp {
             payload_count += 1;
             if payload_count == 2 {
                 let cc = extract_cc(chunk);
@@ -288,8 +288,14 @@ fn genuine_cc_gap_is_repaired_in_stream() {
     }
     engine.finish(|pkt| output.extend_from_slice(pkt));
 
-    let before = count_pid_anomalies(&input, Pid::new(target_pid));
-    let after = count_pid_anomalies(&output, Pid::new(target_pid));
+    let before = count_pid_anomalies(
+        &input,
+        Pid::try_new(target_pid).expect("pid fits the 13-bit field"),
+    );
+    let after = count_pid_anomalies(
+        &output,
+        Pid::try_new(target_pid).expect("pid fits the 13-bit field"),
+    );
     assert!(
         after < before,
         "PID {target_pid:#05x}: before={before}, after={after}; repair must reduce"

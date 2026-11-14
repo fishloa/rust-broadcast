@@ -97,21 +97,26 @@ assert_eq!(u16::from_be_bytes([section[3], section[4]]), 1); // transport_stream
 Build and edit packets without manual byte twiddling:
 
 ```rust
-use mpeg_ts::ts::{Pcr, TsPacket};
+use mpeg_ts::ts::{ContinuityCounter, Pcr, TsPacket};
 use mpeg_ts::{pid::{well_known, Pid}, OwnedTsPacket};
 
-let null = OwnedTsPacket::null_packet(3);
+let null = OwnedTsPacket::null_packet(ContinuityCounter::try_new(3).unwrap());
 assert_eq!(TsPacket::parse(&null)?.header.pid, well_known::NULL);
 
-let mut raw = OwnedTsPacket::serialize_with_payload(Pid::try_new(0x0100).unwrap(), false, 0, &[])?;
-OwnedTsPacket::set_continuity_counter(&mut raw, 7);
-assert_eq!(TsPacket::parse(&raw)?.header.continuity_counter, 7);
+let mut raw = OwnedTsPacket::serialize_with_payload(
+    Pid::try_new(0x0100).unwrap(),
+    false,
+    ContinuityCounter::ZERO,
+    &[],
+)?;
+OwnedTsPacket::set_continuity_counter(&mut raw, ContinuityCounter::try_new(7).unwrap());
+assert_eq!(TsPacket::parse(&raw)?.header.continuity_counter.value(), 7);
 
 let mut pcr_pkt = [0x47u8; 188];
 pcr_pkt[3] = 0x20; // adaptation only
 pcr_pkt[4] = 7;    // adaptation_field_length
 pcr_pkt[5] = 0x10; // PCR flag
-OwnedTsPacket::set_pcr(&mut pcr_pkt, Pcr::from_27mhz(27_000_000))?;
+OwnedTsPacket::set_pcr(&mut pcr_pkt, Pcr::from_27mhz(27_000_000)?)?;
 let parsed = TsPacket::parse(&pcr_pkt)?;
 assert_eq!(parsed.adaptation_field().unwrap()?.pcr.unwrap().as_27mhz(), 27_000_000);
 # Ok::<(), mpeg_ts::Error>(())
@@ -124,11 +129,11 @@ Runnable examples: `cargo run -p mpeg-ts --example demux`, `--example iter_packe
 
 | Module | Public API | Purpose |
 |---|---|---|
-| `ts` | `TsPacket<'a>`, `TsHeader`, `AdaptationField<'a>`, `AdaptationFieldExtension<'a>`, `Pcr`, `Ltw`, `SeamlessSplice`, `ScramblingControl`, `AdaptationFieldControl`, `SectionReassembler`, `iter_packets`, `extract_ts_payload`, `TS_PACKET_SIZE`, `TS_BYTES_PER_DATAGRAM`, `MAX_DATAGRAM_PAYLOAD` | Zero-copy packet view, bit-exact adaptation field, PCR (27 MHz) and per-PID PSI section reassembly (`SectionReassembler::feed_with_continuity` drops a legally retransmitted same-counter continuation packet, and processes it when `discontinuity_indicator` is set) |
+| `ts` | `TsPacket<'a>`, `TsHeader`, `ContinuityCounter`, `AdaptationField<'a>`, `AdaptationFieldExtension<'a>`, `Pcr`, `Ltw`, `SeamlessSplice`, `ScramblingControl`, `AdaptationFieldControl`, `SectionReassembler`, `iter_packets`, `extract_ts_payload`, `TS_PACKET_SIZE`, `TS_BYTES_PER_DATAGRAM`, `MAX_DATAGRAM_PAYLOAD` | Zero-copy packet view, bit-exact adaptation field, PCR (27 MHz) and per-PID PSI section reassembly (`SectionReassembler::feed_with_continuity` drops a legally retransmitted same-counter continuation packet, and processes it when `discontinuity_indicator` is set) |
 | `owned` | `OwnedTsPacket` | Owned 188-byte packet: build (`null_packet`, `serialize_with_payload`), mutate (`set_continuity_counter`, `set_pcr`, `payload_mut`), inspect |
-| `pid` | `Pid`, `PidOutOfRange`, `well_known::{PAT, CAT, TSDT, IPMP_CIT, NIT, SDT_BAT, EIT, RST, TDT_TOT, NETWORK_SYNC, RNT, SAT, MEASUREMENT, DIT, SIT, ATSC_PSIP, NULL}` | Typed 13-bit PID newtype |
+| `pid` | `Pid` (`try_new`, `from_wire_masked`, `from_const`), `PidOutOfRange`, `well_known::{PAT, CAT, TSDT, IPMP_CIT, NIT, SDT_BAT, EIT, RST, TDT_TOT, NETWORK_SYNC, RNT, SAT, MEASUREMENT, DIT, SIT, ATSC_PSIP, NULL}` | Typed 13-bit PID newtype |
 | `section` | `Section<'a>` | Generic section header (`table_id`, syntax indicator, length, version, section numbers, CRC validation) |
-| `mux` | `SectionPacketiser`, `SiMux` (`upsert`, `upsert_pmt`, `upsert_sdt_actual`, `upsert_tdt`, `upsert_tot`, `poll`, `poll_into`) | Sections to TS packets with continuity and stuffing; interval-scheduled SI repetition |
+| `mux` | `SectionPacketiser`, `SiMux` (`upsert`, `upsert_pmt`, `upsert_sdt_actual`, `upsert_tdt`, `upsert_tot`, `poll`, `poll_into`), `SectionInterval` | Sections to TS packets with continuity and stuffing; interval-scheduled SI repetition |
 | `resync` | `TsResync`, `PacketStride` (`Ts188`, `Rs204`), `ResyncStats`; stateless `resync`, `resync_confirmed`, `unconfirmed_candidate` | Alignment recovery from raw bytes; `feed_into` appends to a caller-owned vector. Drain `take_losses()` regularly: the post-lock loss list is unbounded and only that call empties it. `TsResync::take_tail_packets` drains the aligned packets `finish` recovered at end of input. |
 | `ts_dup` | `is_legal_duplicate_pair`, `check_duplicate`, `DuplicateVerdict` (`NotDuplicate`, `Legal`, `IllegalThirdRepeat`) | One reading of H.222.0 §2.4.3.3 legal duplicate packets, shared by `dvb-conformance`, `media-doctor` and `ts-fix` (moved here from `broadcast-common`) |
 | `pusi` | `PusiReassembler`, `DEFAULT_MAX_UNIT_SIZE` | PUSI-delimited unit accumulation for non-PSI PIDs, size-capped |

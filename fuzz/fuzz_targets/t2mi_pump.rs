@@ -4,7 +4,7 @@ use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
     // Use a fixed T2-MI PID for TS mode; also test raw mode.
-    let mut pump_ts = dvb_t2mi::pump::T2miPump::new(mpeg_ts::pid::Pid::new(0x0006));
+    let mut pump_ts = dvb_t2mi::pump::T2miPump::new(mpeg_ts::pid::Pid::from_const(0x0006));
     for chunk in data.chunks(188) {
         for _event in pump_ts.feed_ts(chunk) {}
     }

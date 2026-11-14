@@ -294,7 +294,7 @@ pub(crate) fn parse_streams<'a>(
         let reserved_pid = ReservedOnes::from_bits(body[pos + 1] >> 5);
         let reserved_es_info = ReservedOnes::from_bits(body[pos + 3] >> 4);
         let elementary_pid =
-            Pid::new((((body[pos + 1] & 0x1F) as u16) << 8) | body[pos + 2] as u16);
+            Pid::from_wire_masked((((body[pos + 1] & 0x1F) as u16) << 8) | body[pos + 2] as u16);
         let es_info_length = (((body[pos + 3] & 0x0F) as usize) << 8) | body[pos + 4] as usize;
         pos += ES_PREFIX;
         let (cmd_id, ca_descriptors) =
@@ -476,7 +476,7 @@ mod tests {
                 reserved_es_info: Default::default(),
                 reserved_pid: Default::default(),
                 stream_type: 0x02,
-                elementary_pid: Pid::new(0x0101),
+                elementary_pid: Pid::from_const(0x0101),
                 cmd_id: None,
                 ca_descriptors: &desc,
             }],
@@ -526,7 +526,7 @@ mod tests {
                     reserved_es_info: Default::default(),
                     reserved_pid: Default::default(),
                     stream_type: 0x02,
-                    elementary_pid: Pid::new(0x0200),
+                    elementary_pid: Pid::from_const(0x0200),
                     cmd_id: Some(CaPmtCmdId::OkDescrambling),
                     ca_descriptors: &es0_desc,
                 },
@@ -534,7 +534,7 @@ mod tests {
                     reserved_es_info: Default::default(),
                     reserved_pid: Default::default(),
                     stream_type: 0x03,
-                    elementary_pid: Pid::new(0x0201),
+                    elementary_pid: Pid::from_const(0x0201),
                     cmd_id: Some(CaPmtCmdId::OkDescrambling),
                     ca_descriptors: &es1_desc,
                 },
@@ -553,7 +553,7 @@ mod tests {
 
         // bite: mutate a stream's pid.
         let mut other2 = pmt.clone();
-        other2.streams[0].elementary_pid = Pid::new(0x0300);
+        other2.streams[0].elementary_pid = Pid::from_const(0x0300);
         assert_ne!(bytes, other2.try_to_bytes().unwrap());
     }
 
@@ -573,7 +573,7 @@ mod tests {
                 reserved_es_info: Default::default(),
                 reserved_pid: Default::default(),
                 stream_type: 0x1B,
-                elementary_pid: Pid::new(0x00FF),
+                elementary_pid: Pid::from_const(0x00FF),
                 cmd_id: None,
                 ca_descriptors: &[],
             }],
@@ -609,7 +609,7 @@ mod tests {
                 reserved_es_info: Default::default(),
                 reserved_pid: Default::default(),
                 stream_type: 0x02,
-                elementary_pid: Pid::new(0x1FFF), // the 13-bit maximum
+                elementary_pid: Pid::from_const(0x1FFF), // the 13-bit maximum
                 cmd_id: None,
                 ca_descriptors: &[],
             }],

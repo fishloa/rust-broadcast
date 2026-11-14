@@ -66,8 +66,8 @@ fn pat_truncated_is_err() {
         0,
         0,
         vec![
-            PatEntry::new(1, Pid::new(0x100)),
-            PatEntry::new(2, Pid::new(0x101)),
+            PatEntry::new(1, Pid::from_const(0x100)),
+            PatEntry::new(2, Pid::from_const(0x101)),
         ],
     );
     let mut buf = vec![0u8; pat.serialized_len()];

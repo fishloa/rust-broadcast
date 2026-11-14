@@ -17,7 +17,7 @@ pub mod ts_dup;
 pub use error::{Error, Result};
 pub use owned::OwnedTsPacket;
 pub use ts::{
-    AdaptationField, AdaptationFieldControl, AdaptationFieldExtension, Ltw, MAX_DATAGRAM_PAYLOAD,
-    Pcr, ScramblingControl, SeamlessSplice, TS_BYTES_PER_DATAGRAM, TS_PACKET_SIZE,
-    TS_PACKETS_PER_DATAGRAM, TS_SYNC_BYTE, TsHeader, TsPacket,
+    AdaptationField, AdaptationFieldControl, AdaptationFieldExtension, ContinuityCounter, Ltw,
+    MAX_DATAGRAM_PAYLOAD, Pcr, ScramblingControl, SeamlessSplice, TS_BYTES_PER_DATAGRAM,
+    TS_PACKET_SIZE, TS_PACKETS_PER_DATAGRAM, TS_SYNC_BYTE, TsHeader, TsPacket,
 };

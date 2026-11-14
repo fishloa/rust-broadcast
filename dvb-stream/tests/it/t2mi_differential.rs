@@ -36,7 +36,7 @@ async fn t2mi_stream_matches_sync_oracle() {
 
     // The T2-MI PID for this fixture (see dvb-t2mi/tests/it/real_capture.rs,
     // which uses the same file and PID).
-    const T2MI_PID: Pid = Pid::new(0x0040);
+    const T2MI_PID: Pid = Pid::from_const(0x0040);
 
     let oracle = t2mi_sync_oracle(&data, T2MI_PID);
     assert!(
@@ -118,7 +118,7 @@ async fn t2mi_stream_one_byte_at_a_time_matches_oracle() {
     let path = t2mi_fixture_path();
     let data = std::fs::read(test_fixtures::path(path))
         .expect("colombia-capital-t2mi.ts fixture not found");
-    const T2MI_PID: Pid = Pid::new(0x0040);
+    const T2MI_PID: Pid = Pid::from_const(0x0040);
     let oracle = t2mi_sync_oracle(&data, T2MI_PID);
     assert!(
         !oracle.is_empty(),
@@ -205,7 +205,7 @@ fn make_t2mi_ts_packet_n(pid: Pid, packet_count: u8) -> [u8; 188] {
 
 #[tokio::test]
 async fn t2mi_stream_in_memory_constructed_packet() {
-    const PID: Pid = Pid::new(0x0006);
+    const PID: Pid = Pid::from_const(0x0006);
     let pkt = make_t2mi_ts_packet(PID);
 
     let cursor = std::io::Cursor::new(pkt.to_vec());
@@ -240,7 +240,7 @@ async fn t2mi_stream_in_memory_constructed_packet() {
 
 #[tokio::test]
 async fn t2mi_stream_stats_after_completion() {
-    const PID: Pid = Pid::new(0x0006);
+    const PID: Pid = Pid::from_const(0x0006);
     let pkt = make_t2mi_ts_packet(PID);
 
     let cursor = std::io::Cursor::new(pkt.to_vec());
@@ -299,7 +299,7 @@ impl tokio::io::AsyncRead for ChunkedReader {
 /// the synchronous oracle.
 #[tokio::test]
 async fn t2mi_stream_partial_packet_split_across_two_reads_is_carried_over() {
-    const PID: Pid = Pid::new(0x0006);
+    const PID: Pid = Pid::from_const(0x0006);
     let mut data = Vec::new();
     for count in 1..=3u8 {
         data.extend_from_slice(&make_t2mi_ts_packet_n(PID, count));

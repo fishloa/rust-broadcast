@@ -114,6 +114,7 @@ http-body        = "1"
 # Typed response headers (`CacheControl`, `AccessControlAllow*`, `Vary`) in
 # `origin::add_response_headers` (W2a Task 3) instead of hand-built constants.
 headers          = { workspace = true }
+http             = "1"
 # `ArcSwap<Router>` for the admin media router (W2a Task 3) so a per-request
 # read never takes a write lock on the rebuild path.
 arc-swap         = "1"

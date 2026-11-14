@@ -10,7 +10,7 @@ use broadcast_common::{Parse, Serialize};
 /// table_id for Transport Stream Description Table.
 pub const TABLE_ID: u8 = 0x03;
 /// Well-known PID on which TSDT is carried.
-pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0002);
+pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::from_const(0x0002);
 
 /// Transport Stream Description Table.
 #[derive(Debug, Clone, PartialEq, Eq)]

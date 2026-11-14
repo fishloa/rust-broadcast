@@ -100,7 +100,7 @@ fn assemble(mut demux: StreamingTsDemux) -> Media {
                 ..
             } => pcr.push(PcrSample::new(
                 ticks,
-                provenance.pid.unwrap_or(Pid::new(0)),
+                provenance.pid.unwrap_or(Pid::from_const(0)),
                 provenance.packet_index.unwrap_or(0),
                 discontinuous,
             )),

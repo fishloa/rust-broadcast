@@ -180,7 +180,7 @@ fn two_plps_interleaved_across_a_split_up_both_recover_intact() {
     t2mi_stream.extend_from_slice(&t2mi_packet_for_plp(&bb_a2, 0));
     t2mi_stream.extend_from_slice(&t2mi_packet_for_plp(&bb_b2, 1));
 
-    let mut outer = outer_ts(Pid::new(pid), &t2mi_stream);
+    let mut outer = outer_ts(Pid::from_wire_masked(pid), &t2mi_stream);
     // Trailing null packets (PID 0x1FFF): a TS byte-stream reader needs
     // `LOCK_CONFIRMATIONS` (5) consecutive sync bytes to lock, and the
     // T2-MI data above is only three packets long.
@@ -198,7 +198,7 @@ fn two_plps_interleaved_across_a_split_up_both_recover_intact() {
         "fixtures/t2mi/two-plp-synthetic.ts out of sync (UPDATE_T2MI_FIXTURE=1 regenerates)"
     );
 
-    let mut rec = InnerTsRecovery::new(Pid::new(pid)); // no --plp filter: the buggy shared path
+    let mut rec = InnerTsRecovery::new(Pid::from_wire_masked(pid)); // no --plp filter: the buggy shared path
     let mut recovered: Vec<[u8; TS_LEN]> = Vec::new();
     for pkt in &outer {
         recovered.extend_from_slice(rec.feed(pkt));
@@ -223,7 +223,7 @@ fn two_plps_interleaved_across_a_split_up_both_recover_intact() {
 
     // A PLP-selected driver still reports every PLP it saw, but recovers
     // only the selected one's packet.
-    let mut only_b = InnerTsRecovery::new_for_plp(Pid::new(pid), 1);
+    let mut only_b = InnerTsRecovery::new_for_plp(Pid::from_wire_masked(pid), 1);
     let mut got = Vec::new();
     for pkt in &outer {
         got.extend_from_slice(only_b.feed(pkt));

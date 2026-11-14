@@ -83,7 +83,7 @@ impl Pkt<'_> {
     }
     fn pcr90(&self) -> Option<u64> {
         let af = TsPacket::parse(self.0).ok()?.adaptation_field()?.ok()?;
-        Some(af.pcr?.base)
+        Some(af.pcr?.base())
     }
     fn payload(&self) -> &[u8] {
         let start = if self.0[3] & 0x20 != 0 {

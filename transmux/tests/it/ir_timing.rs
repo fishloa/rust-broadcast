@@ -72,7 +72,7 @@ fn collect_pes(data: &[u8], target_pid: u16) -> Vec<PesAu> {
         let Ok(pkt) = TsPacket::parse(chunk) else {
             continue;
         };
-        if pkt.header.pid != Pid::new(target_pid) {
+        if pkt.header.pid != Pid::try_new(target_pid).expect("pid fits the 13-bit field") {
             continue;
         }
         let Some(payload) = pkt.payload else {
@@ -102,7 +102,7 @@ fn collect_all_pes(data: &[u8], target_pid: u16) -> Vec<PesAu> {
         let Ok(pkt) = TsPacket::parse(chunk) else {
             continue;
         };
-        if pkt.header.pid != Pid::new(target_pid) {
+        if pkt.header.pid != Pid::try_new(target_pid).expect("pid fits the 13-bit field") {
             continue;
         }
         let Some(payload) = pkt.payload else {
@@ -423,7 +423,7 @@ fn collect_pmt_es(data: &[u8], pmt_pid: u16) -> Vec<(u8, u16, Vec<u8>)> {
         let Ok(pkt) = TsPacket::parse(chunk) else {
             continue;
         };
-        if pkt.header.pid != Pid::new(pmt_pid) {
+        if pkt.header.pid != Pid::try_new(pmt_pid).expect("pid fits the 13-bit field") {
             continue;
         }
         let Some(payload) = pkt.payload else {

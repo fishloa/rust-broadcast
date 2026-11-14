@@ -1,10 +1,13 @@
-//! UDP/multicast bind for `media-doctor watch` (de-hand-roll W1-P, SP1.6):
-//! `socket2` called directly, with configurable `SO_RCVBUF`, `SO_REUSEADDR`
-//! and the multicast interface. No shared wrapper crate (spec §4 SP1.6).
+//! UDP/multicast bind for `media-doctor watch`: uses the workspace's one
+//! datagram bind, [`dvb_stream::udp::bind_udp`], over
+//! [`broadcast_common::net::UdpOptions`] (`SO_RCVBUF`, `SO_REUSEADDR`,
+//! `SO_REUSEPORT` where sharing a multicast port needs it, the multicast
+//! interface).
 
 use std::io;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 
+use broadcast_common::net::{MulticastInterface, MulticastJoin, UdpOptions};
 use socket2::SockRef;
 
 /// Sharing a multicast port on macOS/BSD needs `SO_REUSEPORT` as well as
@@ -12,100 +15,50 @@ use socket2::SockRef;
 /// sockets, which a monitor sharing a port with a receiver must not do.
 const SHARE_PORT_NEEDS_REUSE_PORT: bool = cfg!(target_vendor = "apple");
 
-/// Socket options for [`bind_udp`].
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct UdpConfig {
-    /// `SO_RCVBUF` request in bytes; `None` leaves the OS default. The kernel
-    /// may cap the request (`net.core.rmem_max` on Linux); read the result
-    /// back with [`recv_buffer_size`].
-    pub recv_buffer: Option<usize>,
-    /// `SO_REUSEADDR` (and `SO_REUSEPORT` on Apple targets, where sharing a
-    /// multicast port needs it). Default `false`, as the old bind behaved.
-    /// Note: on Windows `SO_REUSEADDR` lets another process take over the
-    /// port, so only enable it deliberately.
-    pub reuse_addr: bool,
-    /// Interface for the multicast join (`None` = OS choice).
-    pub interface: Option<MulticastInterface>,
+/// The [`UdpOptions`] a `media-doctor watch` bind asks for: `reuse_addr` sets
+/// `SO_REUSEADDR` (and `SO_REUSEPORT` on Apple targets, where sharing a
+/// multicast port needs it), `recv_buffer` is the `SO_RCVBUF` request, and
+/// `interface` is the interface the multicast group is joined on. Defaults
+/// match the plain `UdpSocket::bind` media-doctor used before these options
+/// existed. Note: on Windows `SO_REUSEADDR` lets another process take over the
+/// port, so only enable it deliberately.
+#[must_use]
+pub fn udp_options(
+    recv_buffer: Option<usize>,
+    reuse_addr: bool,
+    interface: Option<MulticastInterface>,
+) -> UdpOptions {
+    let mut options = UdpOptions::new()
+        .with_reuse_address(reuse_addr)
+        .with_reuse_port(reuse_addr && SHARE_PORT_NEEDS_REUSE_PORT);
+    if let Some(bytes) = recv_buffer {
+        options = options.with_recv_buffer_bytes(bytes);
+    }
+    if let Some(interface) = interface {
+        options = options.with_join(join_on(interface));
+    }
+    options
 }
 
-/// Which interface a multicast group is joined on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum MulticastInterface {
-    /// An IPv4 interface address, for an IPv4 group.
-    V4(Ipv4Addr),
-    /// An IPv6 interface index, for an IPv6 group.
-    V6Index(u32),
+/// The multicast join for an interface: the group itself is the bind
+/// address, which [`bind_udp`] joins.
+#[must_use]
+pub fn join_on(interface: MulticastInterface) -> MulticastJoin {
+    MulticastJoin::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED)).with_interface(interface)
 }
 
 /// Bind a UDP socket for `addr`; a multicast `addr` binds the wildcard on its
-/// port and joins the group (on [`UdpConfig::interface`] when given).
+/// port and joins the group on the interface `options` names.
 ///
 /// # Errors
 ///
-/// Any socket error, and [`io::ErrorKind::InvalidInput`] when
-/// [`UdpConfig::interface`] is of the wrong family for the multicast group.
-pub fn bind_udp(addr: SocketAddr, config: &UdpConfig) -> io::Result<UdpSocket> {
-    let (bind_ip, group) = match addr.ip() {
-        IpAddr::V4(ip) if ip.is_multicast() => {
-            (IpAddr::V4(Ipv4Addr::UNSPECIFIED), Some(IpAddr::V4(ip)))
-        }
-        IpAddr::V6(ip) if ip.is_multicast() => {
-            (IpAddr::V6(Ipv6Addr::UNSPECIFIED), Some(IpAddr::V6(ip)))
-        }
-        ip => (ip, None),
-    };
-    match (group, config.interface) {
-        (Some(IpAddr::V4(_)), Some(MulticastInterface::V6Index(_)))
-        | (Some(IpAddr::V6(_)), Some(MulticastInterface::V4(_))) => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "multicast interface kind does not match the group's address family",
-            ));
-        }
-        _ => {}
-    }
-
-    let multicast = match group {
-        Some(IpAddr::V4(ip)) => {
-            let iface = match config.interface {
-                Some(MulticastInterface::V4(i)) => i,
-                _ => Ipv4Addr::UNSPECIFIED,
-            };
-            Some(dvb_stream::udp::MulticastMembership::V4 {
-                group: ip,
-                interface: iface,
-            })
-        }
-        Some(IpAddr::V6(ip)) => {
-            let index = match config.interface {
-                Some(MulticastInterface::V6Index(i)) => i,
-                _ => 0,
-            };
-            Some(dvb_stream::udp::MulticastMembership::V6 {
-                group: ip,
-                interface: index,
-            })
-        }
-        None => None,
-    };
-
-    let mut spec = dvb_stream::udp::SocketSpec::new(SocketAddr::new(bind_ip, addr.port()))
-        .with_reuse(
-            config.reuse_addr,
-            config.reuse_addr && SHARE_PORT_NEEDS_REUSE_PORT,
-        );
-    if let Some(bytes) = config.recv_buffer {
-        spec = spec.with_recv_buffer_size(bytes);
-    }
-    if let Some(m) = multicast {
-        spec = spec.with_multicast(m);
-    }
-    let socket = dvb_stream::udp::bind_standard(spec)?;
-    // `bind_standard` returns a non-blocking socket (for tokio consumers);
-    // media-doctor uses blocking sockets with read timeouts, so restore
-    // blocking mode here.
+/// [`dvb_stream::udp::bind_udp`]'s refusals ([`io::ErrorKind::InvalidInput`]
+/// when [`UdpOptions`]'s multicast group is not a multicast address or its
+/// interface is of the other family), and any socket, bind or join error;
+/// `bind_udp` returns a non-blocking socket (for tokio consumers) and this
+/// restores blocking mode for the read-timeout ingest loop.
+pub fn bind_udp(addr: SocketAddr, options: &UdpOptions) -> io::Result<UdpSocket> {
+    let socket = dvb_stream::udp::bind_udp(addr, options)?;
     socket.set_nonblocking(false)?;
     Ok(socket.into())
 }
@@ -123,34 +76,56 @@ pub fn recv_buffer_size(socket: &UdpSocket) -> io::Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
+    use std::net::{Ipv4Addr, UdpSocket};
 
     fn loopback0() -> SocketAddr {
         "127.0.0.1:0".parse().unwrap()
     }
 
+    fn group(interface: MulticastInterface) -> UdpOptions {
+        udp_options(None, false, Some(interface))
+    }
+
     #[test]
     fn unicast_binds_the_requested_address_on_port_zero() {
-        let s = bind_udp(loopback0(), &UdpConfig::default()).unwrap();
+        let s = bind_udp(loopback0(), &UdpOptions::default()).unwrap();
         let a = s.local_addr().unwrap();
         assert_eq!(a.ip(), Ipv4Addr::LOCALHOST);
         assert_ne!(a.port(), 0, "the kernel-assigned port is reported");
     }
 
     #[test]
+    fn the_defaults_match_a_plain_bind() {
+        assert_eq!(udp_options(None, false, None), UdpOptions::default());
+        let options = udp_options(Some(1 << 20), true, None);
+        assert_eq!(options.recv_buffer_bytes, Some(1 << 20));
+        assert!(options.reuse_address);
+        assert_eq!(
+            options.reuse_port, SHARE_PORT_NEEDS_REUSE_PORT,
+            "SO_REUSEPORT only where sharing a multicast port needs it"
+        );
+        assert_eq!(options.join, None);
+        assert_eq!(
+            group(MulticastInterface::V6Index(1)).join,
+            Some(join_on(MulticastInterface::V6Index(1)))
+        );
+    }
+
+    #[test]
     fn second_bind_to_the_same_port_fails_without_reuse_addr() {
-        let first = bind_udp(loopback0(), &UdpConfig::default()).unwrap();
+        let first = bind_udp(loopback0(), &UdpOptions::default()).unwrap();
         let addr = first.local_addr().unwrap();
-        let err = bind_udp(addr, &UdpConfig::default()).unwrap_err();
+        let err = bind_udp(addr, &UdpOptions::default()).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::AddrInUse);
     }
 
     #[test]
     fn reuse_addr_allows_a_second_bind_to_the_same_port() {
-        let cfg = UdpConfig {
-            reuse_addr: true,
-            ..UdpConfig::default()
-        };
+        // The first bind carries the configured options too: on macOS a
+        // REUSEPORT holder refuses a second binder for the live lifetime
+        // unless that binder holds the option as well (#2663), which is how
+        // a shared multicast port is actually used.
+        let cfg = udp_options(None, true, None);
         let first = bind_udp(loopback0(), &cfg).unwrap();
         let addr = first.local_addr().unwrap();
         bind_udp(addr, &cfg).expect("SO_REUSEADDR must allow the second bind");
@@ -163,12 +138,9 @@ mod tests {
     #[test]
     fn recv_buffer_request_is_applied_or_capped_but_never_ignored() {
         let default =
-            recv_buffer_size(&bind_udp(loopback0(), &UdpConfig::default()).unwrap()).unwrap();
+            recv_buffer_size(&bind_udp(loopback0(), &UdpOptions::default()).unwrap()).unwrap();
         let want = 4 * 1024 * 1024;
-        let cfg = UdpConfig {
-            recv_buffer: Some(want),
-            ..UdpConfig::default()
-        };
+        let cfg = UdpOptions::new().with_recv_buffer_bytes(want);
         let got = recv_buffer_size(&bind_udp(loopback0(), &cfg).unwrap()).unwrap();
         eprintln!("SO_RCVBUF: default {default}, requested {want}, granted {got}");
         // Strictly greater: with `>=` an implementation that ignored the
@@ -183,7 +155,7 @@ mod tests {
 
     #[test]
     fn datagrams_arrive_on_the_bound_socket() {
-        let rx = bind_udp(loopback0(), &UdpConfig::default()).unwrap();
+        let rx = bind_udp(loopback0(), &UdpOptions::default()).unwrap();
         rx.set_read_timeout(Some(std::time::Duration::from_secs(5)))
             .unwrap();
         let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -195,10 +167,7 @@ mod tests {
 
     #[test]
     fn reuse_addr_allows_a_second_bind_on_the_same_multicast_port() {
-        let cfg = UdpConfig {
-            reuse_addr: true,
-            ..UdpConfig::default()
-        };
+        let cfg = udp_options(None, true, None);
         let first = bind_udp("239.255.42.42:0".parse().unwrap(), &cfg).unwrap();
         let addr = first.local_addr().unwrap();
         bind_udp(addr, &cfg).unwrap();
@@ -206,17 +175,50 @@ mod tests {
 
     #[test]
     fn interface_kind_must_match_the_group_family() {
-        let cfg = UdpConfig {
-            interface: Some(MulticastInterface::V6Index(1)),
-            ..UdpConfig::default()
-        };
-        let err = bind_udp("239.255.42.42:0".parse().unwrap(), &cfg).unwrap_err();
+        let err = bind_udp(
+            "239.255.42.42:0".parse().unwrap(),
+            &group(MulticastInterface::V6Index(1)),
+        )
+        .unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
-        let cfg = UdpConfig {
-            interface: Some(MulticastInterface::V4(Ipv4Addr::LOCALHOST)),
-            ..UdpConfig::default()
+        let err = bind_udp(
+            "[ff02::1234]:0".parse().unwrap(),
+            &group(MulticastInterface::V4(Ipv4Addr::LOCALHOST)),
+        )
+        .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    /// `--udp-interface` text goes through `MulticastInterface::parse`: an
+    /// address, an index and a name each reach the join as themselves, and a
+    /// malformed address is refused rather than becoming a name.
+    #[test]
+    fn an_interface_option_reaches_the_join_unchanged() {
+        let joined = |text: &str| {
+            udp_options(None, false, Some(MulticastInterface::parse(text).unwrap()))
+                .join
+                .unwrap()
+                .interface
         };
-        let err = bind_udp("[ff02::1234]:0".parse().unwrap(), &cfg).unwrap_err();
+        assert_eq!(
+            joined("192.168.1.10"),
+            MulticastInterface::V4(Ipv4Addr::new(192, 168, 1, 10))
+        );
+        assert_eq!(joined("3"), MulticastInterface::V6Index(3));
+        assert_eq!(joined("eth0"), MulticastInterface::Name("eth0".into()));
+        assert_eq!(
+            group(MulticastInterface::V6Index(1))
+                .join
+                .unwrap()
+                .interface,
+            MulticastInterface::V6Index(1),
+            "an IPv6 address is not an interface address"
+        );
+    }
+
+    #[test]
+    fn a_join_without_a_multicast_group_is_refused() {
+        let err = bind_udp(loopback0(), &group(MulticastInterface::Any)).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
     }
 
@@ -225,11 +227,11 @@ mod tests {
     /// oracle-test convention) rather than pass silently or flake.
     #[test]
     fn ipv4_multicast_group_is_joined_on_the_requested_interface() {
-        let cfg = UdpConfig {
-            reuse_addr: true,
-            interface: Some(MulticastInterface::V4(Ipv4Addr::LOCALHOST)),
-            ..UdpConfig::default()
-        };
+        let cfg = udp_options(
+            None,
+            true,
+            Some(MulticastInterface::V4(Ipv4Addr::LOCALHOST)),
+        );
         let rx = match bind_udp("239.255.42.42:0".parse().unwrap(), &cfg) {
             Ok(s) => s,
             Err(e) => {

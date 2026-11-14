@@ -206,7 +206,10 @@ impl<'a> Parse<'a> for ChinaCaptionServiceDescriptor {
             reserved_head: body[0] >> 5,
             services,
             reserved_pid: tail[0] >> 5,
-            caption_service_pid: Pid::new(u16::from_be_bytes([tail[0] & 0x1F, tail[1]])),
+            caption_service_pid: Pid::from_wire_masked(u16::from_be_bytes([
+                tail[0] & 0x1F,
+                tail[1],
+            ])),
         })
     }
 }
@@ -287,7 +290,7 @@ mod tests {
         assert!(s.wide_aspect_ratio);
         assert_eq!(s.char_set, ChinaCaptionCharSet::Gb18030);
         assert_eq!((s.reserved_a, s.reserved_b, s.reserved_c), (3, 1, 0xFF));
-        assert_eq!(d.caption_service_pid, Pid::new(0x0100));
+        assert_eq!(d.caption_service_pid, Pid::from_const(0x0100));
         assert_eq!((d.reserved_head, d.reserved_pid), (7, 7));
     }
 
@@ -304,7 +307,7 @@ mod tests {
         assert!(!d.services[0].wide_aspect_ratio);
         assert_eq!(d.services[1].char_set, ChinaCaptionCharSet::Gb13000_1);
         assert_eq!(d.services[1].caption_service_number, 2);
-        assert_eq!(d.caption_service_pid, Pid::new(0x1FFE));
+        assert_eq!(d.caption_service_pid, Pid::from_const(0x1FFE));
     }
 
     #[test]
@@ -333,14 +336,14 @@ mod tests {
         let bytes = [TAG, 3, 0xE0, 0xE1, 0x23];
         let d = round_trip(&bytes);
         assert!(d.services.is_empty());
-        assert_eq!(d.caption_service_pid, Pid::new(0x0123));
+        assert_eq!(d.caption_service_pid, Pid::from_const(0x0123));
     }
 
     #[test]
     fn serialize_rejects_overwide_fields() {
         let svc =
             ChinaCaptionService::new(LangCode(*b"chi"), 64, false, ChinaCaptionCharSet::Gb2312);
-        let d = ChinaCaptionServiceDescriptor::new(vec![svc], Pid::new(0x100));
+        let d = ChinaCaptionServiceDescriptor::new(vec![svc], Pid::from_const(0x100));
         assert!(matches!(
             &(d.serialize_into(&mut [0u8; 16])),
             Err(crate::error::Error::FieldOverflow(_))
@@ -351,14 +354,14 @@ mod tests {
             false,
             ChinaCaptionCharSet::Reserved(0x7F),
         );
-        let d = ChinaCaptionServiceDescriptor::new(vec![svc; 1], Pid::new(0x100));
+        let d = ChinaCaptionServiceDescriptor::new(vec![svc; 1], Pid::from_const(0x100));
         let mut bad = d.clone();
         bad.reserved_pid = 8;
         assert!(matches!(
             &(bad.serialize_into(&mut [0u8; 16])),
             Err(crate::error::Error::FieldOverflow(_))
         ));
-        let many = ChinaCaptionServiceDescriptor::new(vec![svc; 32], Pid::new(0x100));
+        let many = ChinaCaptionServiceDescriptor::new(vec![svc; 32], Pid::from_const(0x100));
         assert!(matches!(
             &(many.serialize_into(&mut [0u8; 256])),
             Err(crate::error::Error::ValueOutOfRange { .. })
@@ -386,7 +389,7 @@ mod tests {
                 true,
                 ChinaCaptionCharSet::Gb18030,
             )],
-            Pid::new(0x100),
+            Pid::from_const(0x100),
         );
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();

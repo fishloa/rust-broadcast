@@ -166,11 +166,8 @@ pub(crate) fn single_video_media(
     who: &str,
     rtp_stage: &str,
 ) -> crate::error::Result<(sdp_types::Session, usize)> {
-    let session = sdp_types::Session::parse(offer.as_bytes()).map_err(|e| {
-        crate::error::MultimuxError::Sdp {
-            reason: format!("{who}: parse offer: {e}"),
-        }
-    })?;
+    let session = sdp_types::Session::parse(offer.as_bytes())
+        .map_err(|e| crate::error::MultimuxError::Sdp(format!("{who}: parse offer: {e}").into()))?;
     let videos: Vec<usize> = session
         .medias
         .iter()
@@ -179,15 +176,16 @@ pub(crate) fn single_video_media(
         .map(|(i, _)| i)
         .collect();
     if session.medias.len() != videos.len() || videos.len() != 1 {
-        return Err(crate::error::MultimuxError::Sdp {
-            reason: format!(
+        return Err(crate::error::MultimuxError::Sdp(
+            format!(
                 "{who}: this route accepts exactly one m=video section and nothing else \
                  (Opus audio has no RTP {rtp_stage} in this workspace yet); offer had {} \
                  total section(s), {} of them video",
                 session.medias.len(),
                 videos.len()
-            ),
-        });
+            )
+            .into(),
+        ));
     }
     let index = videos[0];
     Ok((session, index))

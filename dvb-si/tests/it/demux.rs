@@ -39,7 +39,7 @@ fn scenario2_follow_pat_to_typed_pmt() {
         .feed(&ts_packet(0x0100, &pmt_section(1, 0, 0x0100)))
         .collect();
     assert_eq!(evts.len(), 1);
-    assert_eq!(evts[0].pid(), Pid::new(0x0100));
+    assert_eq!(evts[0].pid(), Pid::from_const(0x0100));
     assert!(matches!(
         evts[0].table_section().unwrap(),
         AnyTableSection::PmtSection(_)
@@ -102,7 +102,7 @@ fn tot_crc_validated_emitted_and_corrupted_dropped() {
         }
         other => panic!("expected TotSection, got {other:?}"),
     }
-    assert_eq!(events[0].pid(), Pid::new(0x0014));
+    assert_eq!(events[0].pid(), Pid::from_const(0x0014));
 
     // Corrupt the CRC → dropped, crc_failures incremented.
     let mut bad = valid;
@@ -259,7 +259,7 @@ fn a_next_pat_does_not_unwatch_a_multi_section_current_pat() {
             cur,
             sn,
             last,
-            vec![PatEntry::new(u16::from(sn) + 1, Pid::new(pid))],
+            vec![PatEntry::new(u16::from(sn) + 1, Pid::from_wire_masked(pid))],
         );
         let mut b = vec![0u8; pat.serialized_len()];
         pat.serialize_into(&mut b).unwrap();
