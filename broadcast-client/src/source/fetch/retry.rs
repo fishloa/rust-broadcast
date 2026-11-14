@@ -1,11 +1,5 @@
 //! Retry pacing: the backoff schedule, the server-requested `Retry-After`, and the gate that holds
 //! the request queue until a backoff has elapsed.
-//!
-//! ```rust
-//! use broadcast_client::fetch::retry_after_us;
-//! use http::StatusCode;
-//! assert_eq!(retry_after_us(StatusCode::SERVICE_UNAVAILABLE, &http::HeaderMap::new(), 0, None), 0);
-//! ```
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -16,6 +10,7 @@ use crate::events::MAX_SERVER_REFUSED_REASON_BYTES;
 
 use broadcast_common::backoff::{BackoffSteps, MAX_FLOOR, RetrySchedule};
 use broadcast_common::http_date::parse_http_date;
+use broadcast_common::stage::Timestamp;
 
 use super::wall::WallClock;
 use broadcast_common::units::{MICROS_PER_SEC, MILLIS_PER_SEC, NANOS_PER_MILLI};
@@ -93,7 +88,7 @@ pub(crate) fn backoff_ms(steps: &BackoffSteps) -> (Vec<u64>, u64) {
 /// wait in microseconds. Returns `0` for any other status, a missing or unparseable header, or a
 /// past HTTP-date. An HTTP-date is measured against the host wall clock when `wall` is given,
 /// otherwise against the response `Date`. The result is clamped to 60 seconds.
-pub fn retry_after_us(
+pub(crate) fn retry_after_us(
     status: StatusCode,
     headers: &HeaderMap,
     now_us: u64,
@@ -170,42 +165,41 @@ fn millis(ms: u64) -> Duration {
 /// How long a connection must stay up before the retry series restarts from its floor: a peer
 /// that accepts a connection and drops it seconds later, repeatedly, is a failing peer, so the
 /// backoff (and the attempt counter) only restarts after a connection at least this long.
-pub const HEALTHY_CONNECTION_US: u64 = 30_000_000;
+pub(crate) const HEALTHY_CONNECTION: Duration = Duration::from_secs(30);
 
 /// The reconnect timer (issue #2471: the workspace carried this rule once in multimux's origin
 /// supervisor and again in its push engine): a [`RetrySchedule`] plus the attempt counter, the
 /// instant the current connection came up, and the rule that only a connection that stayed up for
-/// [`HEALTHY_CONNECTION_US`] restarts the series.
+/// [`HEALTHY_CONNECTION`] restarts the series.
 ///
 /// The caller drives it with its own clock: [`on_connected`](Self::on_connected) and
 /// [`on_disconnected`](Self::on_disconnected) take the instant, and the latter returns the wait to
 /// arm. Nothing here reads a clock or sleeps.
 #[derive(Debug, Clone)]
-pub struct ReconnectTimer {
+pub(crate) struct ReconnectTimer {
     schedule: RetrySchedule,
     attempts: u32,
-    connected_at: Option<u64>,
+    connected_at: Option<Timestamp>,
 }
 
 impl ReconnectTimer {
-    /// A timer over a step table (millisecond steps, then the cap), jittered from `seed`.
+    /// A timer over a step table (then the cap), jittered from `seed`.
     ///
-    /// A cap above [`MAX_FLOOR`] (only reachable from a `cap_ms` near
-    /// `u64::MAX` milliseconds) is clamped to it, [`RetrySchedule`]'s own
+    /// A cap above [`MAX_FLOOR`] is clamped to it, [`RetrySchedule`]'s own
     /// ceiling.
-    pub fn new(steps_ms: &[u64], cap_ms: u64, seed: u64) -> Self {
-        let cap = millis(cap_ms).min(MAX_FLOOR);
+    pub fn new(steps: &[Duration], cap: Duration, seed: u64) -> Self {
+        let cap = cap.min(MAX_FLOOR);
         Self {
-            schedule: steps_schedule(&millis_steps(steps_ms), cap, seed),
+            schedule: steps_schedule(steps, cap, seed),
             attempts: 0,
             connected_at: None,
         }
     }
 
-    /// A connection came up at `now_us`. The attempt counter is not reset here: it restarts only
-    /// if this connection stays up for [`HEALTHY_CONNECTION_US`] and then ends.
-    pub fn on_connected(&mut self, now_us: u64) {
-        self.connected_at = Some(now_us);
+    /// A connection came up at `now`. The attempt counter is not reset here: it restarts only
+    /// if this connection stays up for [`HEALTHY_CONNECTION`] and then ends.
+    pub fn on_connected(&mut self, now: Timestamp) {
+        self.connected_at = Some(now);
     }
 
     /// Restart the series from its floor — call after a success, so the next
@@ -222,26 +216,16 @@ impl ReconnectTimer {
         self.attempts
     }
 
-    /// A connection ended (or a dial-out failed) at `now_us`: start the next wait and return its
+    /// A connection ended (or a dial-out failed) at `now`: start the next wait and return its
     /// length, so the caller can arm a timer without re-deriving it.
     ///
     /// The delay is the schedule's `[raw*5/6, raw]` band, the first retry being the raw delay
     /// itself.
-    pub fn on_disconnected(&mut self, now_us: u64) -> Duration {
-        let wait = self.on_disconnected_exact(now_us);
-        Duration::from_micros(u64::try_from(wait.as_micros()).unwrap_or(u64::MAX))
-    }
-
-    /// [`Self::on_disconnected`] keeping the schedule's full precision.
-    ///
-    /// The jittered band carries sub-microsecond precision, and a caller that rounds the wait up
-    /// on every attempt walks the series off its table (a 1000 ms step became 941 ms on its second
-    /// attempt). A caller that arms a wait in whole units asks for them itself.
-    pub fn on_disconnected_exact(&mut self, now_us: u64) -> Duration {
+    pub fn on_disconnected(&mut self, now: Timestamp) -> Duration {
         let healthy = self
             .connected_at
             .take()
-            .is_some_and(|since| now_us.saturating_sub(since) >= HEALTHY_CONNECTION_US);
+            .is_some_and(|since| now.saturating_sub(since) >= HEALTHY_CONNECTION);
         if healthy {
             self.attempts = 0;
         }
@@ -790,22 +774,28 @@ mod tests {
     }
 
     /// The instant `us` before `Instant::now()`, derived without reading any clock (this crate
-    /// holds no `std::time` import): the schedule only ever compares instants by subtraction.
-    fn us_ago(us: u64) -> u64 {
-        u64::MAX - us
+    /// An instant near the end of the clock, `us` microseconds before `u64::MAX`: the tests
+    /// need a connection that stayed up "for a while" without reading a real clock, and a
+    /// `Timestamp` subtraction is all the timer does.
+    fn ts_ago(us: u64) -> Timestamp {
+        Timestamp::from_micros(u64::MAX - us)
     }
 
     #[test]
     fn a_reconnect_timer_takes_its_steps_in_order() {
-        let mut timer = ReconnectTimer::new(&[2_000, 4_000], 10_000, 0x5EED);
-        let first = timer.on_disconnected(0);
+        let mut timer = ReconnectTimer::new(
+            &[Duration::from_secs(2), Duration::from_secs(4)],
+            Duration::from_secs(10),
+            0x5EED,
+        );
+        let first = timer.on_disconnected(Timestamp::ZERO);
         assert_eq!(first, Duration::from_secs(2), "the first step, exactly");
-        let second = timer.on_disconnected(1_000_000);
+        let second = timer.on_disconnected(Timestamp::from_micros(1_000_000));
         assert!(
             second >= Duration::from_secs(2) && second <= Duration::from_secs(4),
             "{second:?}"
         );
-        let third = timer.on_disconnected(2_000_000);
+        let third = timer.on_disconnected(Timestamp::from_micros(2_000_000));
         assert!(
             third >= Duration::from_secs(4) && third <= Duration::from_secs(10),
             "{third:?}"
@@ -814,24 +804,25 @@ mod tests {
 
     #[test]
     fn only_a_connection_that_stayed_up_for_the_healthy_span_restarts_the_series() {
-        let mut timer = ReconnectTimer::new(&[1_000], 30_000, 0x5EED);
+        let mut timer =
+            ReconnectTimer::new(&[Duration::from_secs(1)], Duration::from_secs(30), 0x5EED);
         let mut last = Duration::ZERO;
         for _ in 0..8 {
-            timer.on_connected(0);
-            last = timer.on_disconnected(us_ago(1_000));
+            timer.on_connected(Timestamp::ZERO);
+            last = timer.on_disconnected(ts_ago(1_000));
         }
         assert!(
             last >= Duration::from_millis(500),
             "a connection that drops at once keeps counting up: {last:?}"
         );
-        timer.on_connected(0);
-        let restarted = timer.on_disconnected(HEALTHY_CONNECTION_US);
+        timer.on_connected(Timestamp::ZERO);
+        let restarted = timer.on_disconnected(Timestamp::ZERO.saturating_add(HEALTHY_CONNECTION));
         assert!(
             restarted >= Duration::from_millis(500) && restarted < Duration::from_secs(2),
             "a healthy connection restarts the series at its first step: {restarted:?}"
         );
-        timer.on_connected(HEALTHY_CONNECTION_US);
-        let wait = timer.on_disconnected(us_ago(HEALTHY_CONNECTION_US));
+        timer.on_connected(Timestamp::ZERO.saturating_add(HEALTHY_CONNECTION));
+        let wait = timer.on_disconnected(ts_ago(HEALTHY_CONNECTION.as_micros() as u64));
         assert!(
             wait < Duration::from_secs(2),
             "a connection that stayed up past the healthy span restarts the series: {wait:?}"
@@ -840,9 +831,10 @@ mod tests {
 
     #[test]
     fn an_exhausted_attempt_series_saturates_instead_of_wrapping_to_a_fresh_series() {
-        let mut timer = ReconnectTimer::new(&[1_000], 30_000, 0x5EED);
+        let mut timer =
+            ReconnectTimer::new(&[Duration::from_secs(1)], Duration::from_secs(30), 0x5EED);
         timer.attempts = u32::MAX;
-        let _ = timer.on_disconnected(0);
+        let _ = timer.on_disconnected(Timestamp::ZERO);
         assert_eq!(
             timer.attempts(),
             u32::MAX,

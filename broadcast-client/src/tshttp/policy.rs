@@ -2,7 +2,7 @@ use alloc::collections::VecDeque;
 use alloc::string::String;
 use core::time::Duration;
 
-use crate::source::fetch::retry::{ReconnectTimer, backoff_ms};
+use crate::source::fetch::retry::ReconnectTimer;
 use crate::tshttp::config::Config;
 use crate::tshttp::events::{Action, Event, StarveKind};
 use broadcast_common::stage::Timestamp;
@@ -84,8 +84,7 @@ impl TsHttpPolicy {
     /// test that asserts an exact delay passes a fixed one.
     pub fn with_seed(url: impl Into<String>, config: Config, now: Timestamp, seed: u64) -> Self {
         let config = config.clamped();
-        let (steps_ms, cap_ms) = backoff_ms(&config.backoff);
-        let retry = ReconnectTimer::new(&steps_ms, cap_ms, seed);
+        let retry = ReconnectTimer::new(&config.backoff.steps, config.backoff.cap, seed);
         let mut c = Self {
             url: url.into(),
             config,
@@ -536,7 +535,7 @@ impl TsHttpPolicy {
 
     fn fail_before_playing(&mut self, now: Timestamp) {
         self.attempt = self.attempt.saturating_add(1);
-        let wait = self.retry.on_disconnected_exact(now.as_micros());
+        let wait = self.retry.on_disconnected(now);
         let after = wait.max(self.retry_after);
         self.retry_after = Duration::ZERO;
         self.events.push_back(Event::Reconnecting {

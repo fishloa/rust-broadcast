@@ -714,11 +714,10 @@ mod tests {
     }
 
     fn zero_backoff() -> crate::config::ReconnectPolicy {
-        crate::config::ReconnectPolicy {
-            initial_backoff_ms: 0,
-            max_backoff_ms: 0,
-            max_attempts: None,
-        }
+        crate::config::ReconnectPolicy::doubling(
+            std::time::Duration::ZERO,
+            std::time::Duration::ZERO,
+        )
     }
 
     #[tokio::test(start_paused = true)]

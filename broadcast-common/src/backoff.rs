@@ -421,6 +421,7 @@ impl BackoffSteps {
 /// mean "no attempt at all").
 #[derive(Clone, PartialEq, Eq, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct ReconnectPolicy {
     /// The retry schedule's step table and cap, as configuration (a
     /// [`RetrySchedule`] carries a cursor and reseeds on clone, so it is not a
@@ -447,6 +448,28 @@ impl ReconnectPolicy {
         self
     }
 
+    /// A policy whose schedule doubles on every attempt: `initial`, `initial *
+    /// 2`, `initial * 4`, … up to `max` (the last doubling step then `max` as
+    /// the cap). The common exponential-backoff shape a config exposes as two
+    /// bounds rather than a hand-written table.
+    #[must_use]
+    pub fn doubling(initial: Duration, max: Duration) -> Self {
+        let mut steps = alloc::vec::Vec::new();
+        let mut step = if initial.is_zero() {
+            Duration::from_millis(1)
+        } else {
+            initial
+        };
+        while step < max {
+            steps.push(step);
+            step = step.saturating_mul(2);
+        }
+        Self::new(BackoffSteps {
+            steps,
+            cap: max.max(initial),
+        })
+    }
+
     /// Whether an `attempt` (0-based) is the last one this policy allows.
     ///
     /// `false` for a policy that retries forever; for a bounded one, `true` once
@@ -459,8 +482,15 @@ impl ReconnectPolicy {
 
 impl Default for ReconnectPolicy {
     fn default() -> Self {
+        let second = Duration::from_secs(1);
         Self::new(BackoffSteps {
-            steps: alloc::vec![Duration::from_secs(1), Duration::from_secs(2)],
+            steps: alloc::vec![
+                second,
+                second.saturating_mul(2),
+                second.saturating_mul(4),
+                second.saturating_mul(8),
+                second.saturating_mul(16),
+            ],
             cap: Duration::from_secs(30),
         })
     }
@@ -871,7 +901,9 @@ mod tests {
             assert!(!forever.exhausted(attempt));
         }
         // A bounded policy gives up at exactly its bound, and zero is unrepresentable.
-        let bounded = forever.clone().with_max_attempts(NonZeroU32::new(3).unwrap());
+        let bounded = forever
+            .clone()
+            .with_max_attempts(NonZeroU32::new(3).unwrap());
         assert_eq!(bounded.max_attempts, Some(NonZeroU32::new(3).unwrap()));
         assert!(!bounded.exhausted(0));
         assert!(!bounded.exhausted(2));

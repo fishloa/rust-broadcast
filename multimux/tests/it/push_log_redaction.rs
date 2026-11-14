@@ -69,10 +69,8 @@ where
             .with_event_capacity(nz(1))
             .with_part_capacity(nz(1)),
     );
-    let reconnect = ReconnectPolicy::default()
-        .with_initial_backoff_ms(1)
-        .with_max_backoff_ms(1)
-        .with_max_attempts(2);
+    let reconnect = ReconnectPolicy::doubling(Duration::from_millis(1), Duration::from_millis(1))
+        .with_max_attempts(std::num::NonZeroU32::new(2).unwrap());
     let url = url.to_string();
     async move {
         tokio::time::timeout(

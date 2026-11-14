@@ -57,7 +57,6 @@ use tokio_util::sync::CancellationToken;
 use egress::FlushOutcome;
 pub use egress::PushTransportEgress;
 
-use broadcast_client::fetch::ReconnectTimer;
 use broadcast_common::Package;
 
 use crate::config::PushFormat;
@@ -277,18 +276,28 @@ pub enum ReconnectState {
 /// How long a push connection must stay up before its end counts as a
 /// healthy session: the workspace's one value, shared with every other
 /// reconnect (issue #2471).
-pub const HEALTHY_CONNECTION: Duration =
-    Duration::from_micros(broadcast_client::fetch::HEALTHY_CONNECTION_US);
+pub const HEALTHY_CONNECTION: Duration = Duration::from_secs(30);
+
+/// A zero schedule (empty steps, zero cap) an impossible schedule falls back
+/// to: the one `RetrySchedule::from_steps` never rejects (a zero cap is
+/// always under the schedule's ceiling).
+fn zero_schedule(seed: u64) -> broadcast_common::backoff::RetrySchedule {
+    broadcast_common::backoff::RetrySchedule::from_steps(&[], Duration::ZERO, seed)
+        .expect("an empty zero-cap schedule is always accepted")
+}
 
 /// The reconnect engine: [`ReconnectState`] + the attempt budget + the
-/// workspace's one reconnect timer (broadcast-client's [`ReconnectTimer`],
+/// workspace's one reconnect schedule (`broadcast_common::backoff::RetrySchedule`,
 /// issue #2471 — the same rule the origin supervisor uses).
 #[derive(Debug, Clone)]
 pub struct ReconnectEngine {
     state: ReconnectState,
     attempt: u32,
-    timer: ReconnectTimer,
+    schedule: broadcast_common::backoff::RetrySchedule,
     policy: crate::config::ReconnectPolicy,
+    /// The instant the current connection came up, for the healthy-connection
+    /// rule (a connection that dropped a moment later keeps counting up).
+    connected_at: Option<Instant>,
     /// A zero policy waits nothing at all, not one millisecond: a push that
     /// has asked for no backoff should not pay a timer wait on every retry.
     backoff_disabled: bool,
@@ -296,17 +305,26 @@ pub struct ReconnectEngine {
 
 impl ReconnectEngine {
     /// Start in [`ReconnectState::Ready`] (nothing to reconnect to yet).
+    ///
+    /// A policy whose schedule the shared
+    /// [`RetrySchedule`](broadcast_common::backoff::RetrySchedule) rejects (a cap
+    /// past its ceiling) falls back to a zero schedule — never on a validated
+    /// config, so this stays infallible rather than panicking or returning an
+    /// error the push loop has nowhere to route.
     pub fn new(policy: crate::config::ReconnectPolicy) -> Self {
+        let schedule = policy
+            .backoff
+            .schedule(crate::source::seed_entropy())
+            .unwrap_or_else(|_| zero_schedule(crate::source::seed_entropy()));
+        let backoff_disabled =
+            policy.backoff.steps.iter().all(|d| d.is_zero()) && policy.backoff.cap.is_zero();
         Self {
             state: ReconnectState::Ready,
             attempt: 0,
-            timer: ReconnectTimer::new(
-                &backoff_steps(&policy),
-                policy.max_backoff_ms,
-                crate::source::seed_entropy(),
-            ),
-            backoff_disabled: policy.initial_backoff_ms == 0 && policy.max_backoff_ms == 0,
+            schedule,
             policy,
+            connected_at: None,
+            backoff_disabled,
         }
     }
 
@@ -327,7 +345,7 @@ impl ReconnectEngine {
     }
 
     fn on_connect_at(&mut self, now: Instant) {
-        self.timer.on_connected(since_epoch(now));
+        self.connected_at = Some(now);
         self.state = ReconnectState::Ready;
     }
 
@@ -335,8 +353,7 @@ impl ReconnectEngine {
     /// increment the attempt counter, and go permanently [`Failed`](ReconnectState::Failed) once
     /// `max_attempts` is exceeded.
     ///
-    /// Backoff follows a doubling series from [`ReconnectPolicy::initial_backoff_ms`](crate::config::ReconnectPolicy::initial_backoff_ms)
-    /// (1s, 2s, 4s, …), capped at [`ReconnectPolicy::max_backoff_ms`](crate::config::ReconnectPolicy::max_backoff_ms)
+    /// Backoff follows the policy's schedule (its step table, then the cap)
     /// and jittered.
     ///
     /// A connection that had stayed up for [`HEALTHY_CONNECTION`] first
@@ -346,16 +363,21 @@ impl ReconnectEngine {
     }
 
     fn on_disconnect_at(&mut self, now: Instant) {
+        let healthy = self
+            .connected_at
+            .take()
+            .is_some_and(|since| now.saturating_duration_since(since) >= HEALTHY_CONNECTION);
         let wait = if self.backoff_disabled {
-            self.timer.reset();
             Duration::ZERO
+        } else if healthy {
+            self.attempt = 0;
+            self.schedule.delay_for_attempt(0)
         } else {
-            self.timer.on_disconnected(since_epoch(now))
+            let attempt = self.attempt;
+            self.schedule.delay_for_attempt(attempt)
         };
         self.attempt = self.attempt.saturating_add(1);
-        if let Some(max) = self.policy.max_attempts
-            && self.attempt >= max
-        {
+        if self.policy.exhausted(self.attempt) {
             self.state = ReconnectState::Failed;
             return;
         }
@@ -385,34 +407,6 @@ impl ReconnectEngine {
         &self.state
     }
 }
-
-/// The step table a push destination's backoff walks: `initial_backoff_ms`
-/// doubling to `max_backoff_ms` (the `1 s, 2 s, 4 s, …` series the policy
-/// documents), sampled into the shared timer.
-fn backoff_steps(policy: &crate::config::ReconnectPolicy) -> Vec<u64> {
-    let mut initial = policy.initial_backoff_ms;
-    let mut steps = Vec::with_capacity(EXPONENTIAL_STEPS as usize);
-    for _ in 0..EXPONENTIAL_STEPS {
-        steps.push(initial);
-        initial = initial.saturating_mul(2).min(policy.max_backoff_ms);
-    }
-    steps
-}
-
-/// How many doubling steps [`backoff_steps`] samples: past this the series has
-/// long since saturated at its cap for any sane policy.
-const EXPONENTIAL_STEPS: u32 = 16;
-
-/// `now` as whole microseconds since the process's monotonic epoch, the clock
-/// the workspace's reconnect timer counts on.
-fn since_epoch(now: Instant) -> u64 {
-    let epoch = *PROCESS_EPOCH.get_or_init(Instant::now);
-    u64::try_from(now.saturating_duration_since(epoch).as_micros()).unwrap_or(u64::MAX)
-}
-
-/// The instant the monotonic clock's millisecond-resolution epoch starts,
-/// captured once so every reconnect timer in this process shares an origin.
-static PROCESS_EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 
 /// The counters a push task keeps, for observability/health.
 #[derive(Debug, Default)]
@@ -748,12 +742,12 @@ mod tests {
     use crate::config::ReconnectPolicy;
     use media_plane::trunk::TrunkConfig;
 
-    fn policy(max_attempts: Option<u32>) -> ReconnectPolicy {
-        ReconnectPolicy {
-            initial_backoff_ms: 1_000,
-            max_backoff_ms: 30_000,
-            max_attempts,
+    fn policy(max_attempts: Option<std::num::NonZeroU32>) -> ReconnectPolicy {
+        let mut policy = ReconnectPolicy::default();
+        if let Some(max) = max_attempts {
+            policy = policy.with_max_attempts(max);
         }
+        policy
     }
 
     /// A [`PushTransport`] whose `connect` always fails immediately (no real
@@ -831,11 +825,7 @@ mod tests {
         });
 
         let cancel = CancellationToken::new();
-        let reconnect = ReconnectPolicy {
-            initial_backoff_ms: 0,
-            max_backoff_ms: 0,
-            max_attempts: None,
-        };
+        let reconnect = ReconnectPolicy::doubling(Duration::ZERO, Duration::ZERO);
         let push = tokio::spawn(drive_push::<AlwaysFailsTransport>(
             trunk,
             "push://unreachable".to_string(),
@@ -861,24 +851,35 @@ mod tests {
         let _ = tokio::time::timeout(Duration::from_secs(2), push).await;
     }
 
-    /// `backoff_for` is the doubling series from index 0 (1s, 2s, 4s, …
-    /// capped at 30s), jittered. The band holds across every attempt, and the
-    /// saturated tail stays jittered in `[cap*5/6, cap]` rather than
-    /// collapsing to the cap.
+    /// The default policy's step table doubles (1s, 2s, 4s, 8s, 16s) then caps
+    /// at 30 s. The band holds across every attempt, and the saturated tail
+    /// stays jittered in `[cap*5/6, cap]` rather than collapsing to the cap.
     #[test]
     fn backoff_doubles_each_attempt_capped_at_max() {
         let eng = ReconnectEngine::new(policy(None));
+        let schedule = eng.policy.backoff.schedule(0x5EED).unwrap();
+        let raw = |attempt: u32| {
+            eng.policy.backoff.cap.min(
+                eng.policy
+                    .backoff
+                    .steps
+                    .get(attempt as usize)
+                    .copied()
+                    .unwrap_or(eng.policy.backoff.cap),
+            )
+        };
         for attempt in 0..40u32 {
-            let d = eng.policy.backoff_for(attempt);
             assert!(
-                d >= Duration::from_millis(416) && d <= Duration::from_millis(30_000),
-                "attempt {attempt}: {d:?} escaped [0.5s*5/6, 30s]"
+                raw(attempt) >= Duration::from_secs(1) && raw(attempt) <= Duration::from_secs(30),
+                "attempt {attempt}: {:?} escaped [1s, 30s]",
+                raw(attempt)
             );
+            assert!(schedule.delay_for_attempt(attempt) <= Duration::from_secs(30));
         }
         // At the cap the delay stays jittered in [25s, 30s], never a single
         // constant (a jitter re-clamped to the cap would collapse it to 30s).
         let capped = broadcast_common::backoff::RetrySchedule::new(
-            Duration::from_millis(1_000),
+            Duration::from_secs(1),
             Duration::from_secs(30),
             2.0,
             0x5EED,
@@ -899,7 +900,7 @@ mod tests {
 
     #[test]
     fn max_attempts_triggers_failed() {
-        let mut eng = ReconnectEngine::new(policy(Some(3)));
+        let mut eng = ReconnectEngine::new(policy(std::num::NonZeroU32::new(3)));
         assert!(!eng.is_failed());
         for _ in 0..3 {
             eng.on_disconnect();
@@ -912,7 +913,7 @@ mod tests {
 
     #[test]
     fn on_connect_returns_a_failed_engine_to_ready() {
-        let mut eng = ReconnectEngine::new(policy(Some(2)));
+        let mut eng = ReconnectEngine::new(policy(std::num::NonZeroU32::new(2)));
         eng.on_disconnect();
         eng.on_disconnect();
         assert!(eng.is_failed());
@@ -945,7 +946,7 @@ mod tests {
     /// keeps climbing, which is what a broken destination must do.
     #[test]
     fn a_connection_that_drops_at_once_keeps_counting() {
-        let mut eng = ReconnectEngine::new(policy(Some(3)));
+        let mut eng = ReconnectEngine::new(policy(std::num::NonZeroU32::new(3)));
         let mut at = Instant::now();
         for expected in 1..=3u32 {
             at += Duration::from_millis(1);

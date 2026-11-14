@@ -3053,7 +3053,10 @@ mod tests {
             sessions: VecDeque::new(),
             fail_with: FakeError("connection refused"),
         };
-        let mut supervisor = DialSupervisor::new(dialer, ReconnectPolicy::default().with_max_attempts(std::num::NonZeroU32::MIN));
+        let mut supervisor = DialSupervisor::new(
+            dialer,
+            ReconnectPolicy::default().with_max_attempts(std::num::NonZeroU32::MIN),
+        );
         assert!(matches!(
             supervisor.try_dial(trunk_config(), handshake(), max_programs()),
             DialAttempt::GaveUp(_)
@@ -3068,8 +3071,10 @@ mod tests {
             sessions: VecDeque::new(),
             fail_with: FakeError("connection refused"),
         };
-        let mut supervisor =
-            DialSupervisor::new(dialer, ReconnectPolicy::default().with_max_attempts(std::num::NonZeroU32::new(3).unwrap()));
+        let mut supervisor = DialSupervisor::new(
+            dialer,
+            ReconnectPolicy::default().with_max_attempts(std::num::NonZeroU32::new(3).unwrap()),
+        );
 
         assert!(matches!(
             supervisor.try_dial(trunk_config(), handshake(), max_programs()),
@@ -3111,8 +3116,10 @@ mod tests {
             sessions: VecDeque::from(vec![good_session]),
             fail_with: FakeError("refused"),
         };
-        let mut supervisor =
-            DialSupervisor::new(dialer, ReconnectPolicy::default().with_max_attempts(std::num::NonZeroU32::new(2).unwrap()));
+        let mut supervisor = DialSupervisor::new(
+            dialer,
+            ReconnectPolicy::default().with_max_attempts(std::num::NonZeroU32::new(2).unwrap()),
+        );
 
         // First attempt succeeds immediately (the scripted dialer's one
         // queued session comes out on the very first `dial()` call).

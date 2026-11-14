@@ -553,113 +553,37 @@ impl PushFormat {
 
 broadcast_common::impl_spec_display!(PushFormat);
 
-/// Reconnect policy for push outputs.
-#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
-#[non_exhaustive]
-pub struct ReconnectPolicy {
-    #[serde(default = "ReconnectPolicy::default_initial_backoff_ms")]
-    pub initial_backoff_ms: u64,
-    #[serde(default = "ReconnectPolicy::default_max_backoff_ms")]
-    pub max_backoff_ms: u64,
-    #[serde(default)]
-    pub max_attempts: Option<u32>,
-}
+/// Reconnect policy for push outputs: the workspace's one reconnect policy
+/// (issue audit 18 — the same concept once lived here as a `_ms` struct, in
+/// media-plane under the same name, and in a `Backoff` beside this crate's
+/// supervisor).
+pub use broadcast_common::backoff::ReconnectPolicy;
 
-impl Default for ReconnectPolicy {
-    fn default() -> Self {
-        Self {
-            initial_backoff_ms: 1_000,
-            max_backoff_ms: 30_000,
-            max_attempts: None,
-        }
+/// Validate a push output's [`ReconnectPolicy`] (audit run 7, W19): a zero step
+/// reconnects with no delay — a storm against the destination. Named separate
+/// from the policy itself because it belongs to the [`Config`] validation pass,
+/// not to the shared plain config value.
+pub(crate) fn validate_push_reconnect(policy: &ReconnectPolicy) -> Result<()> {
+    if policy.backoff.steps.iter().any(|d| d.is_zero()) {
+        return Err(MultimuxError::ConfigInvalid {
+            field: "routes.outputs[].reconnect.backoff.steps",
+            reason: "must be greater than 0 (a zero backoff reconnects with no delay)".into(),
+        });
     }
-}
-
-impl ReconnectPolicy {
-    /// Set the initial backoff, in milliseconds.
-    #[must_use]
-    pub fn with_initial_backoff_ms(mut self, initial_backoff_ms: u64) -> Self {
-        self.initial_backoff_ms = initial_backoff_ms;
-        self
+    if policy.backoff.cap.is_zero() {
+        return Err(MultimuxError::ConfigInvalid {
+            field: "routes.outputs[].reconnect.backoff.cap",
+            reason: "must be greater than 0 (a zero max backoff reconnects with no delay)".into(),
+        });
     }
-
-    /// Set the maximum backoff, in milliseconds.
-    #[must_use]
-    pub fn with_max_backoff_ms(mut self, max_backoff_ms: u64) -> Self {
-        self.max_backoff_ms = max_backoff_ms;
-        self
+    const MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(86_400); // 24 h
+    if policy.backoff.cap > MAX_BACKOFF {
+        return Err(MultimuxError::ConfigInvalid {
+            field: "routes.outputs[].reconnect.backoff.cap",
+            reason: "backoff must not exceed 86_400 s (24 h)".into(),
+        });
     }
-
-    /// Set the maximum number of attempts (`None` = never give up).
-    #[must_use]
-    pub fn with_max_attempts(mut self, max_attempts: u32) -> Self {
-        self.max_attempts = Some(max_attempts);
-        self
-    }
-}
-
-/// A push output's reconnect backoff doubles on every attempt (1 s, 2 s, 4 s,
-/// … up to [`ReconnectPolicy::max_backoff_ms`]).
-pub(crate) const RECONNECT_BACKOFF_FACTOR: f64 = 2.0;
-
-impl ReconnectPolicy {
-    fn default_initial_backoff_ms() -> u64 {
-        1_000
-    }
-    fn default_max_backoff_ms() -> u64 {
-        30_000
-    }
-
-    /// The delay before attempt `attempt`: the shared schedule over this
-    /// policy's bounds.
-    ///
-    /// A policy [`Self::validate`] rejects (a cap under the floor) has no
-    /// schedule; it falls back to its cap rather than to a repaired one.
-    pub fn backoff_for(&self, attempt: u32) -> std::time::Duration {
-        let cap = std::time::Duration::from_millis(self.max_backoff_ms);
-        broadcast_common::backoff::RetrySchedule::new(
-            std::time::Duration::from_millis(self.initial_backoff_ms),
-            cap,
-            RECONNECT_BACKOFF_FACTOR,
-            crate::source::seed_entropy(),
-        )
-        .map_or(cap, |schedule| schedule.delay_for_attempt(attempt))
-    }
-
-    /// Validate the policy (audit run 7, W19): a zero backoff (either bound)
-    /// means a reconnect with no delay — a storm against the destination.
-    pub fn validate(&self) -> Result<()> {
-        if self.initial_backoff_ms == 0 {
-            return Err(MultimuxError::ConfigInvalid {
-                field: "routes.outputs[].reconnect.initial_backoff_ms",
-                reason: "must be greater than 0 (a zero initial backoff reconnects \
-                         with no delay)"
-                    .into(),
-            });
-        }
-        if self.max_backoff_ms == 0 {
-            return Err(MultimuxError::ConfigInvalid {
-                field: "routes.outputs[].reconnect.max_backoff_ms",
-                reason: "must be greater than 0 (a zero max backoff reconnects with \
-                         no delay)"
-                    .into(),
-            });
-        }
-        if self.initial_backoff_ms > self.max_backoff_ms {
-            return Err(MultimuxError::ConfigInvalid {
-                field: "routes.outputs[].reconnect.initial_backoff_ms",
-                reason: "must not exceed max_backoff_ms".into(),
-            });
-        }
-        const MAX_BACKOFF_MS: u64 = 86_400_000; // 24 h
-        if self.initial_backoff_ms > MAX_BACKOFF_MS || self.max_backoff_ms > MAX_BACKOFF_MS {
-            return Err(MultimuxError::ConfigInvalid {
-                field: "routes.outputs[].reconnect.max_backoff_ms",
-                reason: "backoff must not exceed 86_400_000 ms (24 h)".into(),
-            });
-        }
-        Ok(())
-    }
+    Ok(())
 }
 
 /// Server-side output auth (issue #663 "shared output auth"): configures one
@@ -2071,7 +1995,7 @@ impl Route {
                 _ => None,
             };
             if let Some(policy) = reconnect {
-                policy.validate()?;
+                validate_push_reconnect(policy)?;
             }
         }
         // Audit W17: an `srt_push` URL is parsed/validated at config time so a
@@ -3758,60 +3682,32 @@ mod tests {
             }
         }
 
-        // Zero initial or max backoff is rejected.
-        assert!(
-            route_with(ReconnectPolicy {
-                initial_backoff_ms: 0,
-                ..ReconnectPolicy::default()
+        // A reconnect schedule is a step table then a cap; a zero step or cap
+        // means a reconnect with no delay, a storm against the destination.
+        fn rp(steps: &[u64], cap_ms: u64) -> ReconnectPolicy {
+            ReconnectPolicy::new(broadcast_common::backoff::BackoffSteps {
+                steps: steps
+                    .iter()
+                    .map(|&ms| std::time::Duration::from_millis(ms))
+                    .collect(),
+                cap: std::time::Duration::from_millis(cap_ms),
             })
-            .validate()
-            .is_err()
-        );
-        assert!(
-            route_with(ReconnectPolicy {
-                max_backoff_ms: 0,
-                ..ReconnectPolicy::default()
-            })
-            .validate()
-            .is_err()
-        );
-        // initial > max is rejected.
-        assert!(
-            route_with(ReconnectPolicy {
-                initial_backoff_ms: 5_000,
-                max_backoff_ms: 1_000,
-                ..ReconnectPolicy::default()
-            })
-            .validate()
-            .is_err()
-        );
-        // An absurdly large backoff is rejected.
-        assert!(
-            route_with(ReconnectPolicy {
-                initial_backoff_ms: 1_000,
-                max_backoff_ms: u64::MAX,
-                ..ReconnectPolicy::default()
-            })
-            .validate()
-            .is_err()
-        );
+        }
+        assert!(route_with(rp(&[0, 1_000], 30_000)).validate().is_err());
+        assert!(route_with(rp(&[1_000], 0)).validate().is_err());
+        // A cap past 24 h is rejected.
+        assert!(route_with(rp(&[1_000], u64::MAX)).validate().is_err());
         // The same policy is validated on SrtPush and RtspPush outputs too.
         for kind in [
             OutputKind::SrtPush {
                 url: "srt://h:9000".into(),
                 format: None,
-                reconnect: Some(ReconnectPolicy {
-                    initial_backoff_ms: 0,
-                    ..ReconnectPolicy::default()
-                }),
+                reconnect: Some(rp(&[0, 1_000], 30_000)),
             },
             OutputKind::RtspPush {
                 url: "rtsp://h/live".into(),
                 format: None,
-                reconnect: Some(ReconnectPolicy {
-                    initial_backoff_ms: 0,
-                    ..ReconnectPolicy::default()
-                }),
+                reconnect: Some(rp(&[0, 1_000], 30_000)),
             },
         ] {
             let cfg = Config {
