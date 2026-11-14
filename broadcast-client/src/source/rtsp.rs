@@ -766,7 +766,7 @@ impl RtspSource {
             let position = media.media_index.saturating_add(1);
             self.events.push_back(Event::Error {
                 kind: ErrorKind::TrackDropped {
-                    track_id: u32::try_from(position).unwrap_or(u32::MAX),
+                    track_id: TrackId::new(u32::try_from(position).unwrap_or(u32::MAX)),
                     stream_type: None,
                     fourcc: None,
                 },
