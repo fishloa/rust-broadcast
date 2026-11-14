@@ -111,7 +111,7 @@ fn not_found_then_ok() {
     c.on_response(404, &[], ts(0));
     assert!(matches!(
         c.poll_event(),
-        Some(Event::NotFound { status: 404 })
+        Some(Event::NotFound)
     ));
     let _ = c.poll_event(); // reconnecting
     let _ = c.poll(); // reconnect
@@ -131,7 +131,7 @@ fn gone_410_is_not_found_event() {
     c.on_response(410, &[], ts(0));
     assert!(matches!(
         c.poll_event(),
-        Some(Event::NotFound { status: 410 })
+        Some(Event::NotFound)
     ));
 }
 

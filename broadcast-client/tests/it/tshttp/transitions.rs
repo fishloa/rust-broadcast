@@ -37,7 +37,7 @@ fn t03_opening_404_notfound_then_backoff() {
     c.on_response(404, &[], ts(10));
     assert!(matches!(
         c.poll_event(),
-        Some(Event::NotFound { status: 404 })
+        Some(Event::NotFound)
     ));
     assert!(matches!(
         c.poll_event(),

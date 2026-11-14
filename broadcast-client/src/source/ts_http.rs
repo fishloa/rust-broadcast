@@ -487,7 +487,7 @@ impl TsHttpSource {
                 self.failure_announced = true;
                 self.push(Event::Status(Status::Reconnecting { attempt }));
             }
-            crate::tshttp::Event::NotFound { status: _ } => {
+            crate::tshttp::Event::NotFound => {
                 self.release_hold();
                 self.push(Event::Status(Status::NotFound));
             }

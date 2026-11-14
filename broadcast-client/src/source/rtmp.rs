@@ -493,7 +493,7 @@ impl RtmpSource {
                 self.events
                     .push_back(Event::Status(Status::Reconnecting { attempt }));
             }
-            crate::tshttp::Event::NotFound { .. } => {
+            crate::tshttp::Event::NotFound => {
                 self.events.push_back(Event::Status(Status::NotFound));
             }
             crate::tshttp::Event::Starved(kind) => {

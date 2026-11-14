@@ -158,7 +158,7 @@ impl TsHttpPolicy {
             self.first_notice_at = None;
             self.next_notice_at = None;
         } else if status == STATUS_NOT_FOUND || status == STATUS_GONE {
-            self.events.push_back(Event::NotFound { status });
+            self.push_event(Event::NotFound);
             self.fail_before_playing(now_ms);
         } else {
             self.fail_before_playing(now_ms);

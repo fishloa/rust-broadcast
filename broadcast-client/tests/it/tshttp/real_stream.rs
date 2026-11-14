@@ -128,7 +128,7 @@ fn missing_headers_404() {
     c.on_response(status, &[], ts(0));
     assert!(matches!(
         c.poll_event(),
-        Some(Event::NotFound { status: 404 })
+        Some(Event::NotFound)
     ));
 }
 

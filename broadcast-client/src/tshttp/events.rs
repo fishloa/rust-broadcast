@@ -64,11 +64,8 @@ pub enum Event {
     },
     /// Starvation (T14, T15).
     Starved(StarveKind),
-    /// Not found response (T3).
-    NotFound {
-        /// HTTP status.
-        status: u16,
-    },
+    /// Not found response (T3): `410 Gone`, otherwise `404`.
+    NotFound,
     /// Connected (T2).
     Connected,
     /// Finite resource: expected body byte count (VOD).
@@ -90,7 +87,7 @@ pub enum Event {
 enum EventSerde {
     StallNotice { secs: u64 },
     Starved(StarveKind),
-    NotFound { status: u16 },
+    NotFound,
     Connected,
     Finite { expected_bytes: u64 },
     Ended,
@@ -110,9 +107,7 @@ impl serde::Serialize for Event {
                 EventSerde::StallNotice { secs: *secs }.serialize(serializer)
             }
             Self::Starved(k) => EventSerde::Starved(*k).serialize(serializer),
-            Self::NotFound { status } => {
-                EventSerde::NotFound { status: *status }.serialize(serializer)
-            }
+            Self::NotFound => EventSerde::NotFound.serialize(serializer),
             Self::Connected => EventSerde::Connected.serialize(serializer),
             Self::Finite { expected_bytes } => EventSerde::Finite {
                 expected_bytes: *expected_bytes,
