@@ -56,7 +56,12 @@ fn reconnect_attempts(events: &[Event]) -> Vec<u32> {
 }
 
 fn respond_ok(session: &mut Session, conn: ConnId, body: &[u8], now: u64) {
-    session.on_response(conn, 200, &[], ts(0));
+    session.on_response(
+        conn,
+        http::StatusCode::from_u16(200).expect("a test names a real status"),
+        &crate::support::headers(&[]),
+        ts(0),
+    );
     session.on_data(conn, body, ts(now));
     session.on_closed(conn, None, ts(now));
 }
@@ -503,7 +508,12 @@ fn prefetch_concurrent_connections_tracked() {
     assert_eq!(conns.len(), 4, "each prefetch has its own connection");
 
     for (c, _) in &reqs {
-        s.on_response(*c, 200, &[], ts(0));
+        s.on_response(
+            *c,
+            http::StatusCode::from_u16(200).expect("a test names a real status"),
+            &crate::support::headers(&[]),
+            ts(0),
+        );
     }
     let bodies_by_conn: Vec<(ConnId, &Vec<u8>)> =
         reqs.iter().map(|(c, u)| (*c, &bodies[u])).collect();
@@ -653,11 +663,7 @@ fn main_playlist_404_emits_not_found_and_retries() {
     let mut h = Host::new(TS_PLAYLIST_URL, hls_config());
     h.route(
         TS_PLAYLIST_URL,
-        vec![
-            Reply::Status(404),
-            Reply::Status(410),
-            Reply::Ok(ts_playlist()),
-        ],
+        vec![status_only(404), status_only(410), Reply::Ok(ts_playlist())],
     );
     h.ok(TS_SEG0_URL, ts_segment(0));
     h.ok(TS_SEG1_URL, ts_segment(1));
@@ -698,7 +704,7 @@ fn segment_404_is_resource_failure_not_not_found() {
     h.ok(TS_PLAYLIST_URL, ts_playlist());
     h.route(
         TS_SEG0_URL,
-        vec![Reply::Status(404), Reply::Ok(ts_segment(0))],
+        vec![status_only(404), Reply::Ok(ts_segment(0))],
     );
     h.ok(TS_SEG1_URL, ts_segment(1));
     h.run_to_end();
@@ -723,7 +729,7 @@ fn segment_404_is_resource_failure_not_not_found() {
 
     let mut gone = Host::new(TS_PLAYLIST_URL, hls_config());
     gone.ok(TS_PLAYLIST_URL, ts_playlist());
-    gone.route(TS_SEG0_URL, vec![Reply::Status(410)]);
+    gone.route(TS_SEG0_URL, vec![status_only(410)]);
     gone.ok(TS_SEG1_URL, ts_segment(1));
     gone.run_until(|evs| count(evs, is_reconnecting) >= 2, 100);
     assert_eq!(count(&gone.events, is_not_found), 0);
@@ -736,9 +742,9 @@ fn non_2xx_playlist_calls_on_error_and_retries() {
     h.route(
         TS_PLAYLIST_URL,
         vec![
-            Reply::Status(403),
-            Reply::Status(500),
-            Reply::Status(503),
+            status_only(403),
+            status_only(500),
+            status_only(503),
             Reply::Ok(ts_playlist()),
         ],
     );
@@ -747,7 +753,10 @@ fn non_2xx_playlist_calls_on_error_and_retries() {
     h.run_to_end();
     assert_eq!(reconnect_attempts(&h.events), vec![1, 2, 3]);
     assert_eq!(
-        count(&h.events, |e| matches!(e, Event::Forbidden { status: 403 })),
+        count(&h.events, |e| matches!(
+            e,
+            Event::Forbidden { status } if status.as_u16() == 403
+        )),
         1
     );
     let times: Vec<u64> = h
@@ -788,7 +797,12 @@ fn oversized_playlist_body_closes_and_fails() {
 
     let mut s = Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), config, ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s, 0));
-    s.on_response(conn, 200, &[], ts(0));
+    s.on_response(
+        conn,
+        http::StatusCode::from_u16(200).expect("a test names a real status"),
+        &crate::support::headers(&[]),
+        ts(0),
+    );
     s.on_data(conn, &exact, ts(0));
     assert!(closes(&drain_actions(&mut s, 0)).is_empty());
     s.on_data(conn, b"#", ts(0));
@@ -825,7 +839,12 @@ fn oversized_segment_body_closes_and_fails() {
     assert_eq!(seg_url, TS_SEG0_URL);
     let body = ts_segment(0);
     assert!(body.len() > limit + 1);
-    s.on_response(seg_conn, 200, &[], ts(0));
+    s.on_response(
+        seg_conn,
+        http::StatusCode::from_u16(200).expect("a test names a real status"),
+        &crate::support::headers(&[]),
+        ts(0),
+    );
     s.on_data(seg_conn, &body[..limit], ts(0));
     assert!(closes(&drain_actions(&mut s, 0)).is_empty());
     s.on_data(seg_conn, &body[limit..=limit], ts(0));
@@ -928,7 +947,7 @@ fn cross_origin_401_is_ordinary_failure_not_auth_prompt() {
     h.ok(TS_SEG0_URL, ts_segment(0));
     h.route(
         CDN_SEG_URL,
-        vec![Reply::Status(401), Reply::Ok(ts_segment(1))],
+        vec![status_only(401), Reply::Ok(ts_segment(1))],
     );
     h.run_to_end();
     assert_eq!(
@@ -1025,11 +1044,8 @@ fn credentials_401_on_playlist_waits_no_retry() {
     let (conn, _) = single_http_request(&drain_actions(&mut s, 0));
     s.on_response(
         conn,
-        401,
-        &[(
-            "WWW-Authenticate".to_string(),
-            "Bearer realm=\"example\"".to_string(),
-        )],
+        http::StatusCode::UNAUTHORIZED,
+        &crate::support::headers(&[("WWW-Authenticate", "Bearer realm=\"example\"")]),
         ts(0),
     );
     let events = drain_events(&mut s);
@@ -1087,7 +1103,12 @@ fn late_callbacks_after_close_ignored() {
     expected.sort_unstable();
     assert_eq!(closed, expected);
     for (c, _) in &reqs {
-        s.on_response(*c, 200, &[], ts(0));
+        s.on_response(
+            *c,
+            http::StatusCode::from_u16(200).expect("a test names a real status"),
+            &crate::support::headers(&[]),
+            ts(0),
+        );
         s.on_data(*c, &ts_segment(0), ts(0));
         s.on_closed(*c, None, ts(0));
     }
@@ -1103,12 +1124,22 @@ fn late_callbacks_after_close_ignored() {
     };
     let mut o = Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), config, ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut o, 0));
-    o.on_response(conn, 200, &[], ts(1));
+    o.on_response(
+        conn,
+        http::StatusCode::from_u16(200).expect("a test names a real status"),
+        &crate::support::headers(&[]),
+        ts(1),
+    );
     o.on_data(conn, &[b'#'; 101], ts(0));
     assert_eq!(closes(&drain_actions(&mut o, 0)), vec![conn]);
     assert_eq!(reconnect_attempts(&drain_events(&mut o)), vec![1]);
     o.on_data(conn, &ts_playlist(), ts(0));
-    o.on_response(conn, 200, &[], ts(1));
+    o.on_response(
+        conn,
+        http::StatusCode::from_u16(200).expect("a test names a real status"),
+        &crate::support::headers(&[]),
+        ts(1),
+    );
     o.on_closed(conn, None, ts(0));
     o.on_closed(
         conn,

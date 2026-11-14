@@ -430,8 +430,11 @@ fn finite_pass(
     host_position: Option<u64>,
 ) -> Option<Vec<Event>> {
     let mut headers = support::read_tf1_headers()?.1;
-    headers.push(("Content-Length".to_string(), bytes.len().to_string()));
-    session.on_response(conn, 200, &headers, ts(now));
+    headers.insert(
+        http::header::CONTENT_LENGTH,
+        http::HeaderValue::from_str(&bytes.len().to_string()).expect("a test writes a length"),
+    );
+    session.on_response(conn, http::StatusCode::OK, &headers, ts(now));
     let mut out = Vec::new();
     let mut at = now;
     let mut position = host_position;

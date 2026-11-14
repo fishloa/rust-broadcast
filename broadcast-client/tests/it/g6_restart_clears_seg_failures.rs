@@ -1,7 +1,9 @@
 use crate::support;
 
 use broadcast_client::{Config, ErrorKind, Event};
-use support::hls_host::{Host, Reply, TS_PLAYLIST_URL, TS_SEG0_URL, TS_SEG1_URL, hls_config};
+use support::hls_host::{
+    Host, Reply, TS_PLAYLIST_URL, TS_SEG0_URL, TS_SEG1_URL, hls_config, status_only,
+};
 
 const TS_SEG2_URL: &str = "http://origin.test/hls/index2.ts";
 
@@ -53,8 +55,8 @@ fn g6_restart_clears_seg_failure_count() {
     h.route(
         TS_SEG1_URL,
         vec![
-            Reply::Status(404),
-            Reply::Status(404),
+            status_only(404),
+            status_only(404),
             Reply::Ok(support::hls_host::ts_segment(1)),
         ],
     );
@@ -81,8 +83,8 @@ fn g6_restart_clears_seg_failure_count() {
     h2.route(
         TS_SEG1_URL,
         vec![
-            Reply::Status(404),
-            Reply::Status(404),
+            status_only(404),
+            status_only(404),
             Reply::Ok(support::hls_host::ts_segment(1)),
         ],
     );

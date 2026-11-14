@@ -429,7 +429,7 @@ impl SmoothClient {
         now: u64,
         si: usize,
         chunk: Chunk,
-        status: Option<u16>,
+        status: Option<http::StatusCode>,
         wait_us: u64,
     ) {
         self.streams[si].failures += 1;

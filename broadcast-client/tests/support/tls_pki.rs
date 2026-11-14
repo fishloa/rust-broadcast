@@ -245,8 +245,8 @@ pub fn identity_material(
 }
 
 pub struct Response {
-    pub status: u16,
-    pub headers: Vec<(String, String)>,
+    pub status: http::StatusCode,
+    pub headers: http::HeaderMap,
     pub body: Vec<u8>,
 }
 
@@ -301,12 +301,18 @@ pub fn https_get(
         .and_then(|l| l.split_whitespace().nth(1))
         .and_then(|s| s.parse().ok())
         .ok_or("bad status line")?;
-    let headers = lines
-        .filter_map(|l| l.split_once(':'))
-        .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
-        .collect();
+    let mut headers = http::HeaderMap::new();
+    for (k, v) in lines.filter_map(|l| l.split_once(':')) {
+        let name = http::HeaderName::from_bytes(k.trim().as_bytes())
+            .ok()
+            .ok_or("bad header name")?;
+        let value = http::HeaderValue::from_str(v.trim())
+            .ok()
+            .ok_or("bad header value")?;
+        headers.append(name, value);
+    }
     Ok(Response {
-        status,
+        status: http::StatusCode::from_u16(status).map_err(|e| e.to_string())?,
         headers,
         body: raw[split + 4..].to_vec(),
     })

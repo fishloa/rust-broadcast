@@ -36,12 +36,23 @@ const FIRST_CONN_ID: u32 = 1;
 const MAX_AUTH_REPLAYS: u32 = 2;
 const MAX_STALL_NOTICES_PER_POLL: u32 = 64;
 
+use http::HeaderMap;
+
 const STATUS_UNAUTHORIZED: u16 = 401;
 const STATUS_FORBIDDEN: u16 = 403;
 const STATUS_NOT_FOUND: u16 = 404;
 const STATUS_PROXY_AUTH_REQUIRED: u16 = 407;
 const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
-const CHALLENGE_HEADER: &str = "WWW-Authenticate";
+
+fn challenge_headers<'a>(lines: impl Iterator<Item = &'a str>) -> HeaderMap {
+    let mut map = HeaderMap::new();
+    for line in lines {
+        if let Ok(value) = http::HeaderValue::from_str(line) {
+            map.append(http::header::WWW_AUTHENTICATE, value);
+        }
+    }
+    map
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Req {
@@ -597,7 +608,9 @@ impl RtspSource {
             return;
         }
         if code == STATUS_FORBIDDEN {
-            self.events.push_back(Event::Forbidden { status: code });
+            self.events.push_back(Event::Forbidden {
+                status: http::StatusCode::FORBIDDEN,
+            });
             self.fail_connection(now);
             return;
         }
@@ -678,12 +691,12 @@ impl RtspSource {
         if let Some(line) = self.client.last_challenge() {
             self.challenge = Some(line.to_string());
         }
-        let headers: Vec<(String, String)> = self
-            .challenge
-            .iter()
-            .map(|line| (CHALLENGE_HEADER.to_string(), line.clone()))
-            .collect();
-        match auth.handle_unauthorized(code, &headers, had_credentials, self.stale_replayed) {
+        let headers = challenge_headers(self.challenge.iter().map(String::as_str));
+        let Ok(status) = http::StatusCode::from_u16(code) else {
+            self.fail_connection(now);
+            return;
+        };
+        match auth.handle_unauthorized(status, &headers, had_credentials, self.stale_replayed) {
             AuthDecision::Wait(events) => {
                 self.events.extend(events.into_iter().map(Event::from));
                 self.phase = Phase::WaitingAuth(req);
@@ -705,14 +718,9 @@ impl RtspSource {
         let Phase::Awaiting(req) = self.phase else {
             return;
         };
-        let headers: Vec<(String, String)> = self
-            .client
-            .last_challenge()
-            .map(|line| (CHALLENGE_HEADER.to_string(), line.to_string()))
-            .into_iter()
-            .collect();
+        let headers = challenge_headers(self.client.last_challenge().into_iter());
         if let AuthDecision::Wait(events) =
-            auth.handle_unauthorized(STATUS_UNAUTHORIZED, &headers, true, true)
+            auth.handle_unauthorized(http::StatusCode::UNAUTHORIZED, &headers, true, true)
         {
             self.events.extend(events.into_iter().map(Event::from));
         }

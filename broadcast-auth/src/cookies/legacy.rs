@@ -8,6 +8,8 @@ use alloc::vec::Vec;
 
 use broadcast_common::units::MICROS_PER_SEC;
 use cookie::Cookie;
+use http::HeaderMap;
+use http::header::SET_COOKIE;
 use url::{Origin, Url};
 
 const MAX_COOKIE_BYTES: usize = 4096;
@@ -16,7 +18,6 @@ const MAX_PATH_BYTES: usize = 1024;
 const MAX_HEADER_BYTES: usize = 16 * 1024;
 const SECURE_PREFIX: &str = "__secure-";
 const HOST_PREFIX: &str = "__host-";
-const SET_COOKIE: &str = "set-cookie";
 const ROOT_PATH: &str = "/";
 const PATH_SEPARATOR: char = '/';
 const HTTPS: &str = "https";
@@ -50,14 +51,14 @@ impl CookieJar {
         }
     }
 
-    pub(super) fn receive(&mut self, url: &Url, headers: &[(String, String)], now_us: u64) {
+    pub(super) fn receive(&mut self, url: &Url, headers: &HeaderMap, now_us: u64) {
         if url.origin() != self.origin {
             return;
         }
-        for (_, line) in headers
-            .iter()
-            .filter(|(k, _)| k.eq_ignore_ascii_case(SET_COOKIE))
-        {
+        for line in headers.get_all(SET_COOKIE) {
+            let Ok(line) = line.to_str() else {
+                continue;
+            };
             self.receive_line(url, line, now_us);
         }
     }

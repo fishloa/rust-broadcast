@@ -37,9 +37,6 @@ const MISSING_TAIL_MAX_US: i128 = 50_000;
 /// Consecutive failures on one BaseURL alternate before the next is used
 /// (ETSI TS 103 285 10.8.2).
 const ROTATE_AFTER_FAILURES: u32 = 2;
-const STATUS_NOT_FOUND: u16 = 404;
-const STATUS_GONE: u16 = 410;
-const STATUS_TOO_EARLY: u16 = 425;
 /// Delivered resources remembered to answer a second delivery with
 /// `DuplicateResource`; older ones are forgotten so a long live session stays
 /// bounded.
@@ -658,13 +655,7 @@ impl DashClient {
         self.mpd_inflight = false;
         self.want_mpd = false;
         let attempt = self.mpd_failed(now_us);
-        let kind = match failure {
-            Failure::Status(STATUS_NOT_FOUND | STATUS_GONE) => FailureKind::Missing,
-            Failure::Status(STATUS_TOO_EARLY) => FailureKind::TooEarly,
-            Failure::Status(_) => FailureKind::Server,
-            Failure::Transport | Failure::Timeout => FailureKind::Transport,
-            Failure::TooLarge => FailureKind::Invalid,
-        };
+        let kind = live::failure_kind(failure);
         FailureClass::Retry { attempt, kind }
     }
 
@@ -1331,7 +1322,7 @@ impl DashClient {
         now_us: u64,
         id: ResourceId,
         kind: FailureKind,
-        status: Option<u16>,
+        status: Option<http::StatusCode>,
     ) -> FailureClass {
         self.inflight.remove(&id);
         let mut rotated = false;
@@ -1645,11 +1636,10 @@ impl DashClient {
         if self.is_live_mpd() && matches!(id, ResourceId::Segment { .. }) {
             return self.live_segment_failure(now_us, id, failure);
         }
-        let status = match failure {
-            Failure::Status(s) => Some(s),
-            Failure::Transport | Failure::Timeout | Failure::TooLarge => None,
-        };
-        if matches!(status, Some(STATUS_NOT_FOUND | STATUS_GONE)) && self.is_missing_tail(id) {
+        let status = live::status_of(failure);
+        if status.is_some_and(|s| matches!(s, http::StatusCode::NOT_FOUND | http::StatusCode::GONE))
+            && self.is_missing_tail(id)
+        {
             self.inflight.remove(&id);
             self.failures.remove(&id);
             if let Some(live) = self.live.as_mut() {

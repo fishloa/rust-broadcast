@@ -66,18 +66,28 @@ fn http_requests(actions: &[Action]) -> Vec<Req> {
         .collect()
 }
 
-fn challenge(line: &str) -> Vec<(String, String)> {
-    vec![("WWW-Authenticate".to_string(), line.to_string())]
+fn challenge(line: &str) -> http::HeaderMap {
+    support::headers(&[("WWW-Authenticate", line)])
 }
 
 fn cross_origin_401_chain(session: &mut Session) -> (usize, Vec<Action>) {
     let first = one(session, 0);
-    respond(session, &first, 302, &[location(OTHER_ORIGIN_URL)]);
+    respond(
+        session,
+        &first,
+        support::status(302),
+        &location(OTHER_ORIGIN_URL),
+    );
     let mut req = one(session, 0);
     let mut sent = 1;
     let mut all = Vec::new();
     for _ in 0..LOOP_PROBE {
-        respond(session, &req, 401, &challenge(BASIC_CHALLENGE));
+        respond(
+            session,
+            &req,
+            support::status(401),
+            &challenge(BASIC_CHALLENGE),
+        );
         let actions = drain(session, 0);
         let next = http_requests(&actions);
         all.extend(actions);
@@ -128,7 +138,12 @@ fn every_non_success_final_status_closes_the_connection_once() {
     for status in [403u16, 404, 410, 429, 500, 502, 503] {
         let mut session = open(TS_URL, Config::default());
         let first = one(&mut session, 0);
-        respond(&mut session, &first, status, &[]);
+        respond(
+            &mut session,
+            &first,
+            support::status(status),
+            &support::headers(&[]),
+        );
         let actions = drain(&mut session, 0);
         assert_eq!(closes(&actions), vec![first.conn], "{status}: {actions:?}");
     }
@@ -137,26 +152,26 @@ fn every_non_success_final_status_closes_the_connection_once() {
 fn refused_with_body(
     session: &mut Session,
     status: u16,
-    headers: &[(String, String)],
+    headers: &http::HeaderMap,
 ) -> (Req, Vec<Action>) {
     let first = one(session, 0);
-    respond(session, &first, status, headers);
+    respond(session, &first, support::status(status), &headers.clone());
     let at_response = drain(session, 0);
     (first, at_response)
 }
 
-fn text_plain(len: usize) -> Vec<(String, String)> {
-    vec![
-        ("Content-Type".to_string(), "text/plain".to_string()),
-        ("Content-Length".to_string(), len.to_string()),
-    ]
+fn text_plain(len: usize) -> http::HeaderMap {
+    support::headers(&[
+        ("Content-Type", "text/plain"),
+        ("Content-Length", &len.to_string()),
+    ])
 }
 
 #[test]
 fn a_refused_response_that_needs_no_body_closes_at_the_response() {
     for status in [429u16, 503] {
         let mut session = open(TS_URL, Config::default());
-        let json = vec![("Content-Type".to_string(), "application/json".to_string())];
+        let json = support::headers(&[("Content-Type", "application/json")]);
         let (first, actions) = refused_with_body(&mut session, status, &json);
         assert_eq!(closes(&actions), vec![first.conn], "{status}: {actions:?}");
 
@@ -193,7 +208,7 @@ fn a_refused_text_plain_response_closes_once_its_body_is_complete() {
 #[test]
 fn a_refused_text_plain_response_without_a_length_closes_when_the_host_ends_it() {
     let mut session = open(TS_URL, Config::default());
-    let headers = vec![("Content-Type".to_string(), "text/plain".to_string())];
+    let headers = support::headers(&[("Content-Type", "text/plain")]);
     let (first, at_response) = refused_with_body(&mut session, 503, &headers);
     assert!(closes(&at_response).is_empty());
     session.on_data(first.conn, b"busy", ts(1));
@@ -226,7 +241,12 @@ fn a_refused_text_plain_body_longer_than_the_cap_closes_when_the_cap_is_reached(
 fn a_redirect_to_a_non_http_scheme_is_a_connect_failure_with_no_new_request() {
     let mut session = open(TS_URL, Config::default());
     let first = one(&mut session, 0);
-    respond(&mut session, &first, 302, &[location("file:///etc/passwd")]);
+    respond(
+        &mut session,
+        &first,
+        support::status(302),
+        &location("file:///etc/passwd"),
+    );
     let actions = drain(&mut session, 0);
     assert!(http_requests(&actions).is_empty(), "{actions:?}");
     assert_eq!(closes(&actions), vec![first.conn], "{actions:?}");
@@ -240,7 +260,12 @@ fn the_total_cookie_header_is_capped() {
         .map(|n| format!("c{n}={}", "a".repeat(COOKIE_VALUE_BYTES)))
         .collect();
     let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
-    respond(&mut session, &first, 200, &set_cookies(&refs));
+    respond(
+        &mut session,
+        &first,
+        support::status(200),
+        &set_cookies(&refs),
+    );
     session.reconnect(ts(SEC));
     let req = one(&mut session, SEC);
     let cookie = req.cookie().expect("some cookies are sent");
@@ -292,7 +317,12 @@ fn userinfo_in_an_http_url_becomes_credentials_and_leaves_the_request_url() {
     let first = one(&mut session, 0);
     assert_eq!(first.url, TS_URL);
     assert!(first.header("authorization").is_none());
-    respond(&mut session, &first, 401, &challenge(BASIC_CHALLENGE));
+    respond(
+        &mut session,
+        &first,
+        support::status(401),
+        &challenge(BASIC_CHALLENGE),
+    );
     let replay = one(&mut session, 0);
     assert_eq!(replay.url, TS_URL);
     assert_eq!(replay.header("authorization"), Some(BASIC_USER_PASS));
@@ -305,7 +335,12 @@ fn explicit_credentials_win_over_url_userinfo() {
         .set_credentials(Credentials::new("other", "pw"))
         .expect("credentials");
     let first = one(&mut session, 0);
-    respond(&mut session, &first, 401, &challenge(BASIC_CHALLENGE));
+    respond(
+        &mut session,
+        &first,
+        support::status(401),
+        &challenge(BASIC_CHALLENGE),
+    );
     let replay = one(&mut session, 0);
     assert_eq!(replay.header("authorization"), Some(BASIC_OTHER_PW));
 }

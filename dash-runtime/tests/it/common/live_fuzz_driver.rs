@@ -5,8 +5,9 @@ use dash_runtime::client::{
     ResponseMeta, UtcResponse,
 };
 use test_fixtures::fuzz::{
-    DEFAULT_PUBLISH_US, DashWorld, GRACE_US, HTTP_DATES, MAX_INPUT, PIN_ORIGIN, PREFER_HOST,
-    RESYNC_US, STEPS_US, USE_ATO, flip_byte, pick_mpd, take_arbitrary, truncate_tail, utc_body,
+    DEFAULT_PUBLISH_US, DashWorld, GRACE_US, MAX_INPUT, PIN_ORIGIN, PREFER_HOST, RESYNC_US,
+    STEPS_US, USE_ATO, flip_byte, http_date, http_etag, pick_mpd, take_arbitrary, truncate_tail,
+    utc_body,
 };
 
 #[path = "fuzz_pull.rs"]
@@ -189,10 +190,12 @@ pub fn run(data: &[u8], load: &dyn Fn(&str) -> Vec<u8>) -> bool {
         match action {
             Action::FetchMpd { .. } => {
                 let reply = answer(Some(mpd.clone()), mode, aux, &mut tail_data, Some(alt));
-                let date = HTTP_DATES[usize::from(aux) % HTTP_DATES.len()];
                 let mut meta = ResponseMeta::new(sent, received);
-                if aux.is_multiple_of(3) {
-                    meta = meta.with_date(date).with_etag("\"x\"");
+                if aux.is_multiple_of(3)
+                    && let (Some(date), Some(etag)) =
+                        (http_date(usize::from(aux)), http_etag("\"x\""))
+                {
+                    meta = meta.with_date(date).with_etag(etag);
                 }
                 if aux.is_multiple_of(11) {
                     meta = meta.with_final_url("http://example/dash/moved.mpd");
@@ -237,9 +240,10 @@ pub fn run(data: &[u8], load: &dyn Fn(&str) -> Vec<u8>) -> bool {
                     _ => {
                         let body = utc_body(mode, aux, received, publish, &mut tail_data);
                         let mut resp = UtcResponse::new(sent, received, &body);
-                        if aux.is_multiple_of(2) {
-                            resp =
-                                resp.with_date(HTTP_DATES[usize::from(aux / 2) % HTTP_DATES.len()]);
+                        if aux.is_multiple_of(2)
+                            && let Some(date) = http_date(usize::from(aux / 2))
+                        {
+                            resp = resp.with_date(date);
                         }
                         let _ = client.on_utc_response(
                             broadcast_common::stage::Timestamp::from_micros(received),

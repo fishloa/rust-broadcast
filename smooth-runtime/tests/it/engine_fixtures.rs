@@ -101,7 +101,9 @@ fn av_low_ends_fatally_when_the_fourth_chunk_has_no_fragment() {
     host.run_until(|o| o.iter().any(is_fatal));
     assert!(host.has(|o| matches!(
         o,
-        Output::Fatal(SmoothError::Fragment { status: Some(404) })
+        Output::Fatal(SmoothError::Fragment {
+            status: Some(http::StatusCode::NOT_FOUND),
+        })
     )));
     assert_eq!(
         host.samples().len(),

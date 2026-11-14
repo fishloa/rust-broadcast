@@ -47,8 +47,8 @@ fn closes(actions: &[Action]) -> Vec<ConnId> {
         .collect()
 }
 
-fn challenge(line: &str) -> Vec<(String, String)> {
-    vec![("WWW-Authenticate".to_string(), line.to_string())]
+fn challenge(line: &str) -> http::HeaderMap {
+    support::headers(&[("WWW-Authenticate", line)])
 }
 
 #[test]
@@ -80,7 +80,12 @@ fn action_debug_hides_basic_authorization_after_challenge() {
     session
         .set_credentials(Credentials::new("user", "pass"))
         .ok();
-    respond(&mut session, &first, 401, &challenge("Basic realm=\"r\""));
+    respond(
+        &mut session,
+        &first,
+        support::status(401),
+        &challenge("Basic realm=\"r\""),
+    );
     let replay = requests(&mut session, 0);
     let authed = replay
         .iter()
@@ -128,8 +133,8 @@ fn redirect_over_the_limit_closes_the_connection_once() {
     respond(
         &mut session,
         &first,
-        302,
-        &[location("http://example/elsewhere.ts")],
+        support::status(302),
+        &location("http://example/elsewhere.ts"),
     );
     let actions = drain(&mut session, 0);
     assert_eq!(closes(&actions), vec![first.conn], "{actions:?}");
@@ -152,7 +157,12 @@ fn reconnect_before_any_response_closes_old_conn_and_late_200_is_ignored() {
     assert_ne!(new_conn, old.conn);
     events(&mut session);
 
-    session.on_response(old.conn, 200, &[], ts(0));
+    session.on_response(
+        old.conn,
+        support::status(200),
+        &support::headers(&[]),
+        ts(0),
+    );
     session.on_data(old.conn, &[0x47; 188], ts(SEC));
     let late = events(&mut session);
     assert!(
@@ -162,7 +172,12 @@ fn reconnect_before_any_response_closes_old_conn_and_late_200_is_ignored() {
         "a response for a closed connection took over: {late:?}"
     );
 
-    session.on_response(new_conn, 200, &[], ts(0));
+    session.on_response(
+        new_conn,
+        support::status(200),
+        &support::headers(&[]),
+        ts(0),
+    );
     let live = events(&mut session);
     assert_eq!(
         live.iter()
@@ -180,8 +195,8 @@ fn close_drops_queued_requests_and_closes_each_conn_once() {
     respond(
         &mut session,
         &first,
-        302,
-        &[location("http://example/moved.ts")],
+        support::status(302),
+        &location("http://example/moved.ts"),
     );
     session.close();
     let actions = drain(&mut session, 0);
@@ -213,14 +228,19 @@ fn stale_rechallenge_is_replayed_at_most_once_then_rejected() {
     for _ in 0..20 {
         let Some(req) = pending.pop() else { break };
         sent += 1;
-        respond(&mut session, &req, 401, &challenge(STALE_DIGEST));
+        respond(
+            &mut session,
+            &req,
+            support::status(401),
+            &challenge(STALE_DIGEST),
+        );
         pending = requests(&mut session, 0);
         seen.extend(events(&mut session));
     }
     assert!(sent <= 3, "unbounded stale replay: {sent} requests");
     assert!(
         seen.iter()
-            .any(|e| matches!(e, Event::AuthRejected { status: 401 })),
+            .any(|e| matches!(e, Event::AuthRejected { status } if status.as_u16() == 401)),
         "{seen:?}"
     );
     assert!(
@@ -270,7 +290,12 @@ fn wake_only_host_sees_start_timeout() {
             _ => None,
         })
         .expect("first request");
-    session.on_response(first_conn, 200, &[], ts(SEC));
+    session.on_response(
+        first_conn,
+        support::status(200),
+        &support::headers(&[]),
+        ts(SEC),
+    );
     tracked_wakes(&mut session, 0, &mut wakes);
     let (actions, evs) = wake_only_run(&mut session, &mut wakes, 4);
     assert!(closes(&actions).contains(&first_conn), "{actions:?}");
@@ -330,12 +355,22 @@ fn wake_only_host_sees_stall_notice_and_stall_reconnect() {
 fn failed_first_open_then_success_is_not_a_discontinuity() {
     let mut session = open(TS_URL, Config::default());
     let first = one(&mut session, 0);
-    respond(&mut session, &first, 503, &[]);
+    respond(
+        &mut session,
+        &first,
+        support::status(503),
+        &support::headers(&[]),
+    );
     drain(&mut session, 0);
     let retry_at = 3 * SEC;
     let second = one(&mut session, retry_at);
     events(&mut session);
-    respond(&mut session, &second, 200, &[]);
+    respond(
+        &mut session,
+        &second,
+        support::status(200),
+        &support::headers(&[]),
+    );
     let evs = events(&mut session);
     assert!(
         evs.iter()
@@ -352,11 +387,21 @@ fn failed_first_open_then_success_is_not_a_discontinuity() {
 fn reconnect_after_a_connected_stream_is_a_discontinuity() {
     let mut session = open(TS_URL, Config::default());
     let first = one(&mut session, 0);
-    respond(&mut session, &first, 200, &[]);
+    respond(
+        &mut session,
+        &first,
+        support::status(200),
+        &support::headers(&[]),
+    );
     events(&mut session);
     session.reconnect(ts(SEC));
     let second = one(&mut session, SEC);
-    respond(&mut session, &second, 200, &[]);
+    respond(
+        &mut session,
+        &second,
+        support::status(200),
+        &support::headers(&[]),
+    );
     let evs = events(&mut session);
     assert!(
         evs.iter().any(|e| matches!(e, Event::Discontinuity)),
@@ -371,12 +416,17 @@ fn reconnect_reopens_the_original_url_not_the_redirect_target() {
     respond(
         &mut session,
         &first,
-        302,
-        &[location("http://cdn.example/signed/live.ts?sig=1")],
+        support::status(302),
+        &location("http://cdn.example/signed/live.ts?sig=1"),
     );
     let redirected = one(&mut session, 0);
     assert_eq!(redirected.url, "http://cdn.example/signed/live.ts?sig=1");
-    respond(&mut session, &redirected, 200, &[]);
+    respond(
+        &mut session,
+        &redirected,
+        support::status(200),
+        &support::headers(&[]),
+    );
     session.reconnect(ts(SEC));
     let again = one(&mut session, SEC);
     assert_eq!(again.url, TS_URL);
@@ -392,14 +442,14 @@ fn authenticated_replay_after_redirect_targets_the_redirected_url() {
     respond(
         &mut session,
         &first,
-        302,
-        &[location("http://example/other/live.ts")],
+        support::status(302),
+        &location("http://example/other/live.ts"),
     );
     let redirected = one(&mut session, 0);
     respond(
         &mut session,
         &redirected,
-        401,
+        support::status(401),
         &challenge("Basic realm=\"r\""),
     );
     let replay = requests(&mut session, 0);
@@ -466,7 +516,12 @@ fn cookie_name_with_control_character_is_rejected_at_open() {
 fn jar_after(url: &str, lines: &[&str]) -> Vec<(String, String)> {
     let mut session = open(url, Config::default());
     let first = one(&mut session, 0);
-    respond(&mut session, &first, 200, &set_cookies(lines));
+    respond(
+        &mut session,
+        &first,
+        support::status(200),
+        &set_cookies(lines),
+    );
     session.cookies()
 }
 
@@ -526,7 +581,12 @@ fn reconnect_backoff_that_overflows_microseconds_saturates() {
     };
     let mut session = open(TS_URL, config);
     let first = one(&mut session, 0);
-    respond(&mut session, &first, 503, &[]);
+    respond(
+        &mut session,
+        &first,
+        support::status(503),
+        &support::headers(&[]),
+    );
     let actions = drain(&mut session, SEC);
     let wake = actions
         .iter()
@@ -543,7 +603,12 @@ fn reconnect_backoff_that_overflows_microseconds_saturates() {
 fn credential_wait_freezes_timers_and_resume_restarts_the_start_timer() {
     let mut session = open(TS_URL, Config::default());
     let first = one(&mut session, 0);
-    respond(&mut session, &first, 401, &challenge("Bearer realm=\"r\""));
+    respond(
+        &mut session,
+        &first,
+        support::status(401),
+        &challenge("Bearer realm=\"r\""),
+    );
     drain(&mut session, 0);
     events(&mut session);
     let late = 100 * SEC;
@@ -560,7 +625,7 @@ fn credential_wait_freezes_timers_and_resume_restarts_the_start_timer() {
             _ => None,
         })
         .expect("request after credentials");
-    session.on_response(conn, 200, &[], ts(SEC));
+    session.on_response(conn, support::status(200), &support::headers(&[]), ts(SEC));
     tracked_wakes(&mut session, late, &mut wakes);
     assert!(wakes.iter().all(|t| *t > late));
     let early = late + 14 * SEC;

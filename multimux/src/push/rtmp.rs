@@ -11,7 +11,7 @@
 //! (`transmux::flv_frame_payloads`) dispatched through `send_video`/`send_audio`
 //! — see `transmux::flv` for the tag-body layout this reuses.
 
-use crate::push::{PushTransport, SendMediaError};
+use crate::push::{MuxError, PushTransport, SendMediaError};
 use rtmp_runtime::target::RtmpTarget;
 use tokio::net::TcpStream;
 use transmux::CodecConfig;
@@ -290,14 +290,10 @@ impl PushTransport for RtmpTransport {
         // the batch without triggering a reconnect, because reconnecting
         // cannot fix a codec mismatch.
         if flv_tracks.is_empty() {
-            return Err(SendMediaError::Mux(format!(
-                "no RTMP-carriable track: FLV carries only AVC video and AAC audio,                  but all {} track(s) in this program are other codecs",
-                media.tracks.len()
-            )));
+            return Err(SendMediaError::Mux(MuxError::NoCarriableTrack));
         }
         let filtered = Media::new(flv_tracks, media.movie_timescale);
-        let payloads = transmux::flv_frame_payloads(&filtered)
-            .map_err(|e| SendMediaError::Mux(e.to_string()))?;
+        let payloads = transmux::flv_frame_payloads(&filtered).map_err(MuxError::Flv)?;
 
         let Some(client) = self.client.as_mut() else {
             return Err(SendMediaError::Transport(Box::new(RtmpPushError::Connect(

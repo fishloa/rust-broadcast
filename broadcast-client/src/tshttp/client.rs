@@ -6,6 +6,7 @@ use crate::tshttp::config::Config;
 use crate::tshttp::events::{Action, Event};
 use crate::tshttp::policy::TsHttpPolicy;
 use broadcast_common::stage::Timestamp;
+use http::{HeaderMap, StatusCode};
 
 /// TS-over-HTTP pull session client (DESIGN.md): [`TsHttpPolicy`] plus a
 /// [`StreamingTsDemux`] fed the body bytes.
@@ -74,7 +75,7 @@ impl TsHttpClient {
     }
 
     /// Response headers received (T2-T4).
-    pub fn on_response(&mut self, status: u16, headers: &[(String, String)], now: Timestamp) {
+    pub fn on_response(&mut self, status: StatusCode, headers: &HeaderMap, now: Timestamp) {
         self.policy.on_response(status, headers, now);
     }
 

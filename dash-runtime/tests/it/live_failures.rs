@@ -155,7 +155,7 @@ fn a_hole_in_the_window_is_retried_then_skipped_with_a_discontinuity_and_playbac
         sim.count(|o| matches!(
             o,
             Output::SegmentLost {
-                status: Some(404),
+                status: Some(http::StatusCode::NOT_FOUND),
                 ..
             }
         )),

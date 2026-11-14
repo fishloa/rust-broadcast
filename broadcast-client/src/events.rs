@@ -4,6 +4,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use core::time::Duration;
+use http::StatusCode;
 use url::Url;
 
 use broadcast_auth::Scheme as AuthScheme;
@@ -295,7 +296,7 @@ pub enum ErrorKind {
     /// `Forbidden` instead.
     KeyFetchFailed {
         /// The HTTP status, `None` for a transport error, timeout or oversized body.
-        status: Option<u16>,
+        status: Option<StatusCode>,
     },
     /// A Media Initialization Section (`EXT-X-MAP`) fetch failed with a non-authentication
     /// status, a transport error, a timeout, or an oversized body. The fetch is
@@ -304,7 +305,7 @@ pub enum ErrorKind {
     /// counts too (it is also reported as [`Event::Forbidden`]).
     InitFetchFailed {
         /// The HTTP status, `None` for a transport error, timeout or oversized body.
-        status: Option<u16>,
+        status: Option<StatusCode>,
     },
     /// A Media Initialization Section (`EXT-X-MAP`) arrived with a success status but holds no
     /// complete `moov` box. Retried and counted exactly like [`ErrorKind::InitFetchFailed`]:
@@ -322,7 +323,7 @@ pub enum ErrorKind {
     SegmentFetchFailed {
         /// The HTTP status of the last failure, `None` for a transport error, timeout, oversized
         /// body or a `2xx` body that is not media.
-        status: Option<u16>,
+        status: Option<StatusCode>,
     },
     /// The key response was not a valid 16-byte AES-128 key.
     BadKey,
@@ -493,7 +494,12 @@ impl ErrorKind {
     /// The HTTP status behind a failed key, initialization-section or segment request, when the
     /// server sent one.
     #[must_use]
-    pub fn refusal_status(&self) -> Option<u16> {
+    pub fn refusal_status(&self) -> Option<StatusCode> {
+        self.fetch_status()
+    }
+
+    /// Every HTTP status this error kind can carry, whichever fetch it ended.
+    pub(crate) fn fetch_status(&self) -> Option<StatusCode> {
         match self {
             Self::KeyFetchFailed { status }
             | Self::InitFetchFailed { status }
@@ -778,18 +784,18 @@ pub enum Event {
     /// Auth rejected.
     AuthRejected {
         /// HTTP status.
-        status: u16,
+        status: StatusCode,
     },
     /// Forbidden.
     Forbidden {
         /// HTTP status.
-        status: u16,
+        status: StatusCode,
     },
     /// The server refused a request (typically `429`/`503`): the session is retrying with the
     /// server-requested delay. Emitted once per refused attempt alongside [`Status::Reconnecting`].
     ServerRefused {
         /// HTTP status.
-        status: u16,
+        status: StatusCode,
         /// Server-requested wait, microseconds, if any.
         retry_after_us: Option<u64>,
         /// Response body, only when it is `text/plain` (UTF-8 or no charset); control characters

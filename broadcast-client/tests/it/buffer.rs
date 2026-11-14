@@ -1025,7 +1025,12 @@ fn source_ended_and_error_hints() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
     };
-    forbidden.on_response(conn, 403, &[], ts(0));
+    forbidden.on_response(
+        conn,
+        http::StatusCode::FORBIDDEN,
+        &http::HeaderMap::new(),
+        ts(0),
+    );
     assert_eq!(
         hints(forbidden.buffer_input_log())
             .into_iter()
@@ -1198,7 +1203,10 @@ fn register_change(input: &BufferInput) -> Option<(bool, u32)> {
 fn vod_buffer_events_come_from_the_playout_gate_not_the_controller() {
     let bytes = tf1_bytes!();
     let (status, mut headers) = tf1_headers!();
-    headers.push(("Content-Length".to_string(), bytes.len().to_string()));
+    headers.insert(
+        http::header::CONTENT_LENGTH,
+        http::HeaderValue::from_str(&bytes.len().to_string()).expect("a test writes a length"),
+    );
     let mut config = Config::default();
     config.record_buffer_inputs = true;
     let mut session = Session::open(Url::parse(URL).unwrap(), config, ts(0)).unwrap();

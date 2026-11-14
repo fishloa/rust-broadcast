@@ -103,6 +103,7 @@ use transmux::TrackId;
 use broadcast_auth::Verifier;
 use broadcast_common::Parse;
 use broadcast_common::Serialize;
+use broadcast_common::stage::Timestamp;
 use media_plane::trunk::{SampleCursorItem, Trunk};
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::mpsc;
@@ -704,7 +705,7 @@ async fn whep_post_inner(
             setup_role,
             parsed.remote_fingerprint.clone(),
         ),
-        Instant::now(),
+        Timestamp::ZERO,
     )
     .map_err(|e| MultimuxError::Connect {
         reason: format!("whep: build media transport: {e}"),
@@ -733,7 +734,9 @@ async fn whep_post_inner(
     // The `Location` is this session's own resource, so `PATCH`/`DELETE`
     // address exactly this session.
     let resource_id = crate::webrtc_session::new_resource_id();
-    let mut machine = WhepSession::new(format!("/whep/session/{resource_id}"));
+    // The machine takes a parsed URL; a resource path is relative, so it is placed on this host's
+    // own origin (the `Location` it renders is what a peer resolves against the request).
+    let mut machine = WhepSession::new(crate::webrtc_session::resource_url("whep", &resource_id));
     let _ = machine.on_post(Vec::new());
     let response = machine.accept(answer.into_bytes(), crate::secure_random::token(16));
     if response.status != axum::http::StatusCode::CREATED {
@@ -1404,7 +1407,7 @@ async fn run_whep_session_with_silence_timeout(
     let mut last_inbound = Instant::now();
     // N5: the transport's timer fire is floored from ITS own previous fire
     // (so a stuck, always-overdue deadline cannot re-arm every iteration).
-    let mut last_timer_fire = Instant::now();
+    let mut last_timer_fire = media.stamp_of(Instant::now());
     // Registered before every drain of `cursor`, so a sample published after
     // the drain wakes the next `select!`.
     let mut sample_wake = trunk.data_listener();
@@ -1421,7 +1424,7 @@ async fn run_whep_session_with_silence_timeout(
             tracing::info!("whep: session ended by DELETE");
             break;
         }
-        let applied = crate::webrtc_session::apply_ice_ops(&mut media, ctl.ops, Instant::now());
+        let applied = crate::webrtc_session::apply_ice_ops(&mut media, ctl.ops, Timestamp::ZERO);
         ice.candidates
             .fetch_add(applied.candidates, Ordering::Relaxed);
         ice.restarts.fetch_add(applied.restarts, Ordering::Relaxed);
@@ -1431,12 +1434,20 @@ async fn run_whep_session_with_silence_timeout(
         // The transport's own next ICE/DTLS deadline (defect 1, WHEP): drive
         // it directly instead of only on the fixed poll tick so retransmits
         // fire at the transport's scheduled instant.
-        let poll_deadline = media.poll_timeout();
+        // The transport's own clock: the next deadline is re-localised before it is awaited and
+        // every instant handed back to the transport is `Timestamp::ZERO` on its epoch.
+        let poll_deadline = media.poll_timeout().map(|at| {
+            Instant::now()
+                + media
+                    .stamp_of(at)
+                    .saturating_sub(media.stamp_of(Instant::now()))
+        });
+        let transport_now = media.stamp_of(Instant::now());
         tokio::select! {
             received = inbound.recv() => match received {
                 Some(Inbound { peer, bytes }) => {
                     peer_addr = Some(peer);
-                    match media.handle_datagram(Instant::now(), peer, &bytes) {
+                    match media.handle_datagram(transport_now, peer, &bytes) {
                         Ok(events) => {
                             if events.iter().any(is_liveness_event) {
                                 last_inbound = Instant::now();
@@ -1480,9 +1491,9 @@ async fn run_whep_session_with_silence_timeout(
             // floor the sleep from the previous fire so a stuck deadline cannot
             // spin `handle_timeout` core-to-core or starve the silence tick,
             // and end the session on a fatal TimerError.
-            () = crate::webrtc_session::sleep_until_timer(poll_deadline, Some(last_timer_fire)) => {
-                last_timer_fire = Instant::now();
-                let events = media.handle_timeout(Instant::now());
+            () = crate::webrtc_session::sleep_until_timer(&media, poll_deadline, Some(last_timer_fire)) => {
+                last_timer_fire = media.stamp_of(Instant::now());
+                let events = media.handle_timeout(transport_now);
                 while let Some(Datagram { peer, bytes }) = media.poll_transmit() {
                     let _ = socket.send_to(&bytes, peer).await;
                 }
@@ -2201,7 +2212,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
                 SetupRole::Passive,
                 OFFER_FINGERPRINT.into(),
             ),
-            Instant::now(),
+            Timestamp::ZERO,
         )
         .unwrap();
         let control = SessionControl::new();
@@ -2218,7 +2229,9 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             resource: ResourceTable::new().insert(
                 "test".to_string(),
                 Resource {
-                    machine: parking_lot::Mutex::new(WhepSession::new("/whep/session/test".into())),
+                    machine: parking_lot::Mutex::new(WhepSession::new(
+                        crate::webrtc_session::resource_url("whep", "test"),
+                    )),
                     control,
                     remote_ufrag: parking_lot::Mutex::new("abcd".to_string()),
                     local_candidates: Vec::new(),
@@ -2528,7 +2541,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
                 SetupRole::Passive,
                 OFFER_FINGERPRINT.into(),
             ),
-            Instant::now(),
+            Timestamp::ZERO,
         )
         .unwrap();
         let from: SocketAddr = "127.0.0.1:9".parse().unwrap();
@@ -2536,14 +2549,18 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
 
         assert!(
             matches!(
-                media.handle_datagram(Instant::now(), from, &stun_binding_request(username, false)),
+                media.handle_datagram(
+                    Timestamp::ZERO,
+                    from,
+                    &stun_binding_request(username, false)
+                ),
                 Err(webrtc_runtime::error::Error::Media(..))
             ),
             "a Binding Request missing MESSAGE-INTEGRITY entirely must be Err"
         );
         assert!(
             matches!(
-                media.handle_datagram(Instant::now(), from, &stun_binding_request(username, true)),
+                media.handle_datagram(Timestamp::ZERO, from, &stun_binding_request(username, true)),
                 Err(webrtc_runtime::error::Error::Media(..))
             ),
             "a Binding Request with a wrong MESSAGE-INTEGRITY must be Err"

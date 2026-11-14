@@ -93,14 +93,14 @@ impl Backend for Stall {
                 let first: u64 = range[6..].split('-').next().unwrap().parse().unwrap();
                 let total = body.len() as u64;
                 Answer::Full {
-                    status: 206,
-                    headers: vec![
+                    status: http::StatusCode::PARTIAL_CONTENT,
+                    headers: crate::support::headers(&[
                         (
-                            "Content-Range".into(),
-                            format!("bytes {}-{}/{total}", first + 1, total - 1),
+                            "Content-Range",
+                            &format!("bytes {}-{}/{total}", first + 1, total - 1),
                         ),
-                        ("ETag".into(), SIM_ETAG.into()),
-                    ],
+                        ("ETag", SIM_ETAG),
+                    ]),
                     body: body[usize::try_from(first + 1).unwrap()..].to_vec(),
                 }
             }
@@ -192,7 +192,7 @@ fn a_silent_segment_closes_at_exactly_the_inactivity_timeout_and_resumes_with_a_
     assert!(range.starts_with("bytes="), "{range}");
     assert_eq!(header(second, "if-range"), Some(SIM_ETAG));
     assert_eq!(second.byte_range, None);
-    assert_eq!(second.status, Some(206));
+    assert_eq!(second.status, Some(http::StatusCode::PARTIAL_CONTENT));
     assert_eq!(header(first, "range"), None);
 
     assert_eq!(stall_modes(&got), vec![ResumeMode::Range]);
@@ -292,7 +292,7 @@ fn a_ranged_media_request_resumes_inside_its_own_range() {
         Some(format!("bytes={}-{}", offset + sent, offset + len - 1).as_str())
     );
     assert_eq!(resumes[0].byte_range, None);
-    assert_eq!(resumes[0].status, Some(206));
+    assert_eq!(resumes[0].status, Some(http::StatusCode::PARTIAL_CONTENT));
 }
 
 #[test]

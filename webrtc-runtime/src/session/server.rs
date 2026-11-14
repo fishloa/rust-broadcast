@@ -61,7 +61,7 @@ pub enum Event {
 /// Sans-IO server state machine for a single session, generic over the
 /// direction [`Profile`]; use the [`WhipSession`] and [`WhepSession`] aliases.
 pub struct Session<P: Profile> {
-    session_url: String,
+    session_url: url::Url,
     state: State,
     profile: PhantomData<P>,
 }
@@ -83,7 +83,7 @@ impl<P: Profile> core::fmt::Debug for Session<P> {
 
 impl<P: Profile> Session<P> {
     /// Create a new server session that will answer at `session_url`.
-    pub fn new(session_url: String) -> Self {
+    pub fn new(session_url: url::Url) -> Self {
         Self {
             session_url,
             state: State::AwaitingOffer,
@@ -97,7 +97,7 @@ impl<P: Profile> Session<P> {
     }
 
     /// The resource URL this session answers at.
-    pub fn session_url(&self) -> &str {
+    pub fn session_url(&self) -> &url::Url {
         &self.session_url
     }
 
@@ -124,7 +124,7 @@ impl<P: Profile> Session<P> {
         }
         let built = HttpResponse::new(StatusCode::CREATED)
             .with_content_type(content_type::SDP)
-            .and_then(|r| r.with_location(&self.session_url))
+            .and_then(|r| r.with_location(self.session_url.as_str()))
             .and_then(|r| r.with_etag(&etag));
         match built {
             Ok(resp) => {
@@ -254,7 +254,7 @@ impl Session<Whep> {
             None => content_type::SDP.into(),
         };
         let built = HttpResponse::new(StatusCode::NOT_ACCEPTABLE)
-            .with_location(&self.session_url)
+            .with_location(self.session_url.as_str())
             .and_then(|r| r.with_content_type(&ct));
         match built {
             Ok(resp) => {

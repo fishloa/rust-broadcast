@@ -8,8 +8,8 @@ use broadcast_client::{Config, ErrorKind, Event};
 use support::fmp4_split::{group, split};
 
 use support::hls_host::{
-    Host, Reply, SEC, TS_PLAYLIST_URL, TS_SEG0_URL, TS_SEG1_URL, hls_config, is_ended, ts_playlist,
-    ts_segment,
+    Host, Reply, SEC, TS_PLAYLIST_URL, TS_SEG0_URL, TS_SEG1_URL, hls_config, is_ended, status_only,
+    status_with, ts_playlist, ts_segment,
 };
 
 const FMP4_BASE: &str = "http://origin.test/v";
@@ -268,9 +268,9 @@ fn played_past_the_gap(e: &[Event]) -> bool {
 
 #[test]
 fn live_permanent_segment_failure_is_skipped_with_one_error_then_a_discontinuity() {
-    let cases: Vec<(&str, Reply, Option<u16>)> = vec![
-        ("404", Reply::Status(404), Some(404)),
-        ("503", Reply::Status(503), Some(503)),
+    let cases: Vec<(&str, Reply, Option<http::StatusCode>)> = vec![
+        ("404", status_only(404), Some(support::status(404))),
+        ("503", status_only(503), Some(support::status(503))),
         ("transport", Reply::TransportError, None),
         ("garbage", Reply::Ok(random_bytes()), None),
     ];
@@ -322,7 +322,7 @@ fn live_permanent_segment_failure_is_skipped_with_one_error_then_a_discontinuity
 
 #[test]
 fn live_failing_segment_walks_the_whole_schedule_across_playlist_reloads() {
-    let mut h = live_host(vec![Reply::Status(404)], hls_config());
+    let mut h = live_host(vec![status_only(404)], hls_config());
     h.run_until(played_past_the_gap, STEPS);
     assert!(h.hits(TS_PLAYLIST_URL) > 2, "the playlist kept reloading");
     assert!(
@@ -342,12 +342,14 @@ fn with_cap(cap: u32) -> Config {
 
 #[test]
 fn vod_failing_segment_walks_the_schedule_without_reloading_the_playlist() {
-    let mut h = ts_vod(vec![Reply::Status(500)], hls_config());
+    let mut h = ts_vod(vec![status_only(500)], hls_config());
     h.run_until(stop_on_end_or_fatal, STEPS);
     let t = tally(&h);
     assert_eq!(
         t.fatals,
-        vec![ErrorKind::SegmentFetchFailed { status: Some(500) }]
+        vec![ErrorKind::SegmentFetchFailed {
+            status: Some(support::status(500))
+        }]
     );
     assert!(
         walks_the_default_schedule(&gaps_secs(&h, TS_SEG0_URL)),
@@ -368,15 +370,15 @@ fn the_failure_count_is_per_segment_and_resets_only_on_a_delivery() {
     h.route(
         TS_SEG0_URL,
         vec![
-            Reply::Status(500),
-            Reply::Status(500),
-            Reply::Status(500),
+            status_only(500),
+            status_only(500),
+            status_only(500),
             Reply::Ok(ts_segment(0)),
         ],
     );
     h.route(
         TS_SEG1_URL,
-        vec![Reply::Status(500), Reply::Ok(ts_segment(1))],
+        vec![status_only(500), Reply::Ok(ts_segment(1))],
     );
     h.run_until(stop_on_end_or_fatal, STEPS);
     let t = tally(&h);
@@ -401,17 +403,19 @@ fn the_failure_count_is_per_segment_and_resets_only_on_a_delivery() {
 #[test]
 fn the_cap_is_configurable_zero_is_first_failure_and_max_retries_on() {
     for (cap, requests) in [(0u32, 1usize), (1, 1), (3, 3)] {
-        let mut h = ts_vod(vec![Reply::Status(500)], with_cap(cap));
+        let mut h = ts_vod(vec![status_only(500)], with_cap(cap));
         h.run_until(stop_on_end_or_fatal, STEPS);
         let t = tally(&h);
         assert_eq!(
             t.fatals,
-            vec![ErrorKind::SegmentFetchFailed { status: Some(500) }],
+            vec![ErrorKind::SegmentFetchFailed {
+                status: Some(support::status(500))
+            }],
             "cap {cap}"
         );
         assert_eq!(h.hits(TS_SEG0_URL), requests, "cap {cap}");
     }
-    let mut h = ts_vod(vec![Reply::Status(500)], with_cap(u32::MAX));
+    let mut h = ts_vod(vec![status_only(500)], with_cap(u32::MAX));
     h.run_until(|_| false, 400);
     let t = tally(&h);
     assert!(t.fatals.is_empty() && !t.ended, "{t:?}");
@@ -420,19 +424,21 @@ fn the_cap_is_configurable_zero_is_first_failure_and_max_retries_on() {
 
 #[test]
 fn live_with_the_cap_at_zero_skips_on_the_first_failure() {
-    let mut h = live_host(vec![Reply::Status(404)], with_cap(0));
+    let mut h = live_host(vec![status_only(404)], with_cap(0));
     h.run_until(played_past_the_gap, STEPS);
     let t = tally(&h);
     assert_eq!(
         t.non_fatals,
-        vec![ErrorKind::SegmentFetchFailed { status: Some(404) }]
+        vec![ErrorKind::SegmentFetchFailed {
+            status: Some(support::status(404))
+        }]
     );
     assert_eq!(h.hits(LIVE_BAD_URL), 1);
 }
 
 #[test]
 fn live_skipped_segment_is_never_requested_again() {
-    let mut h = live_host(vec![Reply::Status(404)], hls_config());
+    let mut h = live_host(vec![status_only(404)], hls_config());
     h.run_until(played_past_the_gap, STEPS);
     h.run_until(|_| false, 200);
     let t = tally(&h);
@@ -459,7 +465,7 @@ const INIT_TIMEOUT_SECS: u64 = 20;
 const SEGMENT_TIMEOUT_SECS: u64 = 60;
 
 fn after(status: u16, value: &str) -> Reply {
-    Reply::StatusHeaders(status, vec![(RETRY_AFTER.to_string(), value.to_string())])
+    status_with(status, support::headers(&[(RETRY_AFTER, value)]))
 }
 
 fn first_gap(h: &Host, url: &str) -> u64 {
@@ -638,14 +644,14 @@ fn a_delivery_clears_the_segments_failure_count_for_a_reused_media_sequence_numb
     h.route(
         &format!("{LIVE_BASE}/a1.ts"),
         vec![
-            Reply::Status(500),
-            Reply::Status(500),
-            Reply::Status(500),
+            status_only(500),
+            status_only(500),
+            status_only(500),
             Reply::Ok(ts_segment(1)),
         ],
     );
     let b1 = format!("{LIVE_BASE}/b1.ts");
-    h.route(&b1, vec![Reply::Status(500), Reply::Ok(ts_segment(1))]);
+    h.route(&b1, vec![status_only(500), Reply::Ok(ts_segment(1))]);
     h.run_until(|_| false, 600);
     let gaps = gaps_secs(&h, &format!("{LIVE_BASE}/a1.ts"));
     assert!(
@@ -668,16 +674,16 @@ fn a_delivery_clears_the_segments_failure_count_for_a_reused_media_sequence_numb
     );
 }
 
-fn segment_faults() -> Vec<(&'static str, Reply, Option<u16>)> {
+fn segment_faults() -> Vec<(&'static str, Reply, Option<http::StatusCode>)> {
     let whole = ts_segment(0);
     let half = whole[..whole.len() / 2].to_vec();
-    let short_headers = vec![("Content-Length".to_string(), whole.len().to_string())];
+    let short_headers = support::headers(&[("Content-Length", &whole.len().to_string())]);
     vec![
-        ("500", Reply::Status(500), Some(500)),
-        ("503", Reply::Status(503), Some(503)),
-        ("429", after(429, "3"), Some(429)),
-        ("404", Reply::Status(404), Some(404)),
-        ("403", Reply::Status(403), Some(403)),
+        ("500", status_only(500), Some(support::status(500))),
+        ("503", status_only(503), Some(support::status(503))),
+        ("429", after(429, "3"), Some(support::status(429))),
+        ("404", status_only(404), Some(support::status(404))),
+        ("403", status_only(403), Some(support::status(403))),
         ("transport", Reply::TransportError, None),
         ("reset mid body", Reply::ResetMid(half.clone()), None),
         ("short body", Reply::OkHeaders(half, short_headers), None),

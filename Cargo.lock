@@ -405,6 +405,7 @@ dependencies = [
  "headers",
  "hex",
  "hmac 0.13.0",
+ "http",
  "http-auth",
  "lru",
  "md-5 0.11.0",
@@ -464,7 +465,9 @@ dependencies = [
  "base64 0.23.1",
  "criterion",
  "erased-serde",
+ "headers",
  "hex",
+ "http",
  "iso-639",
  "jiff",
  "quick-xml",
@@ -1062,6 +1065,7 @@ dependencies = [
  "broadcast-common",
  "broadcast-dash",
  "container-probe",
+ "headers",
  "http",
  "jiff",
  "media-plane",
@@ -3966,6 +3970,7 @@ dependencies = [
  "broadcast-common",
  "broadcast-smooth",
  "bytes",
+ "http",
  "media-plane",
  "quick-xml",
  "test-fixtures",
@@ -4162,7 +4167,9 @@ version = "0.1.0"
 name = "test-fixtures"
 version = "0.1.0"
 dependencies = [
+ "headers",
  "hex",
+ "http",
  "serde_json",
  "tokio",
  "wait-timeout",
@@ -4174,6 +4181,8 @@ version = "0.1.0"
 dependencies = [
  "broadcast-common",
  "dash-runtime",
+ "headers",
+ "http",
  "jiff",
  "rtmp-runtime",
  "test-fixtures",

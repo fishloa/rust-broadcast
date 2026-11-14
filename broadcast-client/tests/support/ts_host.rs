@@ -1,3 +1,4 @@
+use crate::support::ts_content_type;
 use broadcast_client::{Action, BufferEvent, Config, ConnId, Event, Session};
 use broadcast_common::stage::Timestamp;
 use url::Url;
@@ -41,8 +42,8 @@ impl Host {
                 self.conn = conn;
                 self.session.on_response(
                     conn,
-                    200,
-                    &[("Content-Type".to_string(), "video/MP2T".to_string())],
+                    http::StatusCode::OK,
+                    &ts_content_type(),
                     ts(self.now),
                 );
             }

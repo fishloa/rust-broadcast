@@ -2,8 +2,9 @@
 //! either through the same callbacks.
 
 use alloc::collections::VecDeque;
-use alloc::string::String;
 use alloc::vec::Vec;
+
+use http::{HeaderMap, StatusCode};
 
 use crate::ConnId;
 use crate::error::{Error, TransportError};
@@ -65,8 +66,8 @@ impl Adaptive {
     pub(crate) fn on_response(
         &mut self,
         conn: ConnId,
-        status: u16,
-        headers: &[(String, String)],
+        status: StatusCode,
+        headers: &HeaderMap,
         now: u64,
         wall: Option<&WallClock>,
         auth: &mut AuthState,
