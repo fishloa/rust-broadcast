@@ -39,6 +39,7 @@ use transmux::{
 // ---------------------------------------------------------------------------
 
 use crate::xml::parse_xml;
+use std::time::Duration;
 
 fn fixtures_dir() -> PathBuf {
     test_fixtures::root()
@@ -492,10 +493,15 @@ fn static_mpd_needs_no_publish_time() {
 #[test]
 fn ll_dash_without_publish_time_is_rejected() {
     let media = demux_media();
-    let err = transmux::ll_dash::LlDashPackager::new(2.0, 0.5, 3000, "2024-01-01T00:00:00Z")
-        .expect("packager")
-        .package(&media)
-        .unwrap_err();
+    let err = transmux::ll_dash::LlDashPackager::new(
+        2.0,
+        0.5,
+        Duration::from_secs(3),
+        "2024-01-01T00:00:00Z",
+    )
+    .expect("packager")
+    .package(&media)
+    .unwrap_err();
     assert!(
         matches!(
             err,
@@ -511,8 +517,13 @@ fn ll_dash_without_publish_time_is_rejected() {
 #[test]
 fn ll_dash_with_publish_time_carries_it() {
     let media = demux_media();
-    let mut pkg = transmux::ll_dash::LlDashPackager::new(2.0, 0.5, 3000, "2024-01-01T00:00:00Z")
-        .expect("packager");
+    let mut pkg = transmux::ll_dash::LlDashPackager::new(
+        2.0,
+        0.5,
+        Duration::from_secs(3),
+        "2024-01-01T00:00:00Z",
+    )
+    .expect("packager");
     pkg.base.publish_time = Some("2024-01-01T00:05:00Z".to_string());
     let xml = pkg.package(&media).expect("LL-DASH MPD");
     assert_eq!(

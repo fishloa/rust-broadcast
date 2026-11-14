@@ -1,6 +1,8 @@
 //! The clock ladder and `UTCTiming` sampling through the `World` simulation
 //! (DESIGN 3.3, 3.4 and the case list of 3.6).
 
+use core::time::Duration;
+
 use crate::common;
 
 use common::checks::*;
@@ -125,7 +127,10 @@ fn a_utc_timeout_falls_to_the_next_element_then_to_the_host_clock() {
     assert!(utc[0].url.ends_with("/first"));
     assert!(utc[1].url.ends_with("/second"));
     let gap = utc[1].send_mono_us - utc[0].send_mono_us;
-    assert_eq!(gap, quick().utc_timeout_us);
+    assert_eq!(
+        gap,
+        u64::try_from(quick().utc_timeout.as_micros()).unwrap_or(u64::MAX)
+    );
 
     let mut synth = with_utc(Addressing::Number);
     synth.utc.mode = UtcMode::Hang;
@@ -135,15 +140,18 @@ fn a_utc_timeout_falls_to_the_next_element_then_to_the_host_clock() {
     assert_eq!(first_source(&sim), Some(ClockSource::Host));
     let first_segment = sim.requests(Kind::Segment)[0];
     let first_mpd = sim.requests(Kind::Mpd)[0];
-    assert!(first_segment.send_mono_us - first_mpd.send_mono_us >= quick().utc_timeout_us);
+    assert!(
+        first_segment.send_mono_us - first_mpd.send_mono_us
+            >= u64::try_from(quick().utc_timeout.as_micros()).unwrap_or(u64::MAX)
+    );
 }
 
 #[test]
 fn a_utc_round_trip_over_the_limit_is_discarded_and_retried_once() {
     let mut dash = quick();
-    dash.utc_max_rtt_us = MICROS as u64;
-    dash.utc_timeout_us = 4 * MICROS as u64;
-    dash.utc_wait_us = 12 * MICROS as u64;
+    dash.utc_max_rtt = Duration::from_micros(MICROS as u64);
+    dash.utc_timeout = Duration::from_micros(4 * MICROS as u64);
+    dash.utc_wait = Duration::from_micros(12 * MICROS as u64);
     let (mut sim, geo) = sim_with(with_utc(Addressing::Number), START, dash);
     sim.rtt_utc_us = Some(2 * MICROS as u64);
     sim.give_host_clock();
@@ -214,7 +222,7 @@ fn soak() -> bool {
 fn drift_with_resync_never_requests_early(ppm: i64) {
     let minutes: u64 = if soak() { 360 } else { 90 };
     let mut dash = quick();
-    dash.utc_resync_us = 600 * MICROS as u64;
+    dash.utc_resync = Some(Duration::from_micros(600 * MICROS as u64));
     let mut synth = with_utc(Addressing::Number);
     synth.tsb_us = Some(60 * MICROS);
     let (mut sim, geo) = sim_with(synth, START, dash);
@@ -247,7 +255,7 @@ fn hours_at_minus_100_ppm_with_resync_never_requests_early() {
 #[test]
 fn early_answers_trigger_a_rate_limited_clock_resync_even_without_periodic_resync() {
     let mut dash = quick();
-    dash.utc_resync_us = u64::MAX;
+    dash.utc_resync = None;
     let (mut sim, geo) = sim_with(with_utc(Addressing::Number), START, dash);
     sim.world.host_drift_ppm = 100;
     let hours: u64 = if soak() { 3 } else { 1 };
@@ -267,7 +275,7 @@ fn early_answers_trigger_a_rate_limited_clock_resync_even_without_periodic_resyn
 #[test]
 fn a_utc_server_clock_step_at_a_resync_is_adopted_without_gap_or_duplicate() {
     let mut dash = quick();
-    dash.utc_resync_us = 20 * MICROS as u64;
+    dash.utc_resync = Some(Duration::from_micros(20 * MICROS as u64));
     let (mut sim, geo, synth) = sim_shared(with_utc(Addressing::Number), START, dash);
     sim.run_for(30 * MICROS as u64);
     synth.borrow_mut().utc.skew_us = 30 * MICROS;
@@ -350,7 +358,7 @@ fn inits_are_fetched_while_the_utc_sample_is_taken_and_segments_wait_for_it() {
 fn prefer_host_keeps_the_host_clock_through_a_forced_resync() {
     let mut dash = quick();
     dash.clock_policy = DashClockPolicy::PreferHost;
-    dash.early_grace_us = 500_000;
+    dash.early_grace = Duration::from_micros(500_000);
     let (mut sim, _geo) = sim_with(with_utc(Addressing::Number), START, dash);
     sim.give_host_clock();
     sim.fault = Some(Box::new(|req, kind, _| {
@@ -366,7 +374,7 @@ fn prefer_host_keeps_the_host_clock_through_a_forced_resync() {
 #[test]
 fn an_early_answer_the_clock_disagrees_with_asks_for_a_resync() {
     let mut dash = quick();
-    dash.utc_resync_us = u64::MAX;
+    dash.utc_resync = None;
     let mut synth = with_utc(Addressing::Number);
     synth.early_status = 425;
     synth.utc.skew_us = 3 * MICROS;

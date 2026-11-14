@@ -201,7 +201,7 @@ pub(crate) struct SessionStep {
     labels: SessionLabels,
     start: Instant,
     clock: std::sync::Arc<dyn HostClock>,
-    resync_us: Option<u64>,
+    resync: Option<Duration>,
     next_anchor_us: u64,
     tx: mpsc::Sender<Message>,
     rx: mpsc::Receiver<Message>,
@@ -267,7 +267,7 @@ impl SessionStep {
             labels,
             start,
             clock: std::sync::Arc::new(SystemHostClock::new()),
-            resync_us: None,
+            resync: None,
             next_anchor_us: 0,
             tx,
             rx,
@@ -305,20 +305,33 @@ impl SessionStep {
         self
     }
 
-    /// Re-reads the UTC clock into the session every `resync_us` microseconds, so the session's
-    /// wall-clock anchor follows the host clock's own corrections.
-    pub(crate) fn with_clock_resync(mut self, resync_us: u64) -> Self {
-        self.resync_us = Some(resync_us);
-        self.next_anchor_us = self.now_us().saturating_add(resync_us);
+    /// Re-reads the UTC clock into the session every `resync`, so the session's wall-clock anchor
+    /// follows the host clock's own corrections.
+    pub(crate) fn with_clock_resync(mut self, resync: Option<Duration>) -> Self {
+        self.resync = resync;
+        self.next_anchor_us = match resync {
+            Some(span) => Timestamp::from_micros(self.now_us())
+                .checked_add(span)
+                .map_or(u64::MAX, Timestamp::as_micros),
+            None => u64::MAX,
+        };
         self
     }
 
     fn anchor_wall_clock(&mut self) {
         let now = self.now_us();
         let unix = self.clock.unix_us();
-        self.session
-            .set_wall_clock(Timestamp::from_micros(now), unix);
-        self.next_anchor_us = now.saturating_add(self.resync_us.unwrap_or(u64::MAX));
+        if let Ok(read) = jiff::Timestamp::from_microsecond(i64::try_from(unix).unwrap_or(i64::MAX))
+        {
+            self.session
+                .set_wall_clock(Timestamp::from_micros(now), read);
+        }
+        self.next_anchor_us = match self.resync {
+            Some(span) => Timestamp::from_micros(now)
+                .checked_add(span)
+                .map_or(u64::MAX, Timestamp::as_micros),
+            None => u64::MAX,
+        };
     }
 
     pub(crate) fn with_udp(mut self, udp: UdpHost) -> Self {
@@ -687,7 +700,7 @@ impl IngestStep<EventIngest> for SessionStep {
         driver: &mut IngestDriver<EventIngest>,
         window: Duration,
     ) -> StepOutcome {
-        if self.resync_us.is_some() && self.now_us() >= self.next_anchor_us {
+        if self.resync.is_some() && self.now_us() >= self.next_anchor_us {
             self.anchor_wall_clock();
         }
         if let Err(e) = self.perform_actions().await {

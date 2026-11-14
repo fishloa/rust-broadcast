@@ -60,8 +60,8 @@ pub enum Event {
     Demux(Box<DemuxEvent>),
     /// Stall notice (T11).
     StallNotice {
-        /// Stalled seconds.
-        secs: u64,
+        /// How long the stall has lasted.
+        stalled: Duration,
     },
     /// Starvation (T14, T15).
     Starved(StarveKind),
@@ -86,7 +86,7 @@ pub enum Event {
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize)]
 enum EventSerde {
-    StallNotice { secs: u64 },
+    StallNotice { stalled: Duration },
     Starved(StarveKind),
     NotFound,
     Connected,
@@ -104,8 +104,8 @@ impl serde::Serialize for Event {
     {
         match self {
             Self::Demux(_) => serializer.serialize_unit_variant("Event", 0, "Demux"),
-            Self::StallNotice { secs } => {
-                EventSerde::StallNotice { secs: *secs }.serialize(serializer)
+            Self::StallNotice { stalled } => {
+                EventSerde::StallNotice { stalled: *stalled }.serialize(serializer)
             }
             Self::Starved(k) => EventSerde::Starved(*k).serialize(serializer),
             Self::NotFound => EventSerde::NotFound.serialize(serializer),

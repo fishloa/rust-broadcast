@@ -120,6 +120,11 @@ fn saturates_a_deadline(line: &str) -> bool {
     }
     line.match_indices(SATURATING_ADD).any(|(i, _)| {
         let after = &line[i + SATURATING_ADD.len()..];
+        // `saturating_add_nanos` exists only on `Timestamp`, so any call is a
+        // saturating clock deadline whatever the receiver is named.
+        if after.starts_with(NANOS_SUFFIX) {
+            return true;
+        }
         let Some(opening) = after.find('(') else {
             return false;
         };
@@ -127,12 +132,9 @@ fn saturates_a_deadline(line: &str) -> bool {
             return false;
         }
         let arg = argument(&after[opening + 1..]).trim();
-        // A clock-typed receiver or operand, a `Duration`/tick span operand, or the
-        // nanosecond form is a deadline: a plain counter adds only counts.
-        reads_as_clock(line)
-            || reads_as_clock(arg)
-            || carries_a_span(arg)
-            || (after.starts_with(NANOS_SUFFIX) && arg.contains("nanos"))
+        // A clock-typed receiver or operand, or a `Duration`/tick span operand, is a
+        // deadline: a plain counter adds only counts.
+        reads_as_clock(line) || reads_as_clock(arg) || carries_a_span(arg)
     })
 }
 
@@ -207,18 +209,18 @@ fn scanner_catches_deadline_shapes_and_skips_test_code_and_plain_counters() {
         "let at = t.saturating_add(Duration::from_millis(50));",
         "let at = now.saturating_add(TS_WAKE_TICK);",
         "let over = duration.saturating_duration_since(open_at);",
+        ".map(|due| due.max(now.saturating_add_nanos(1)));",
     ]
     .into_iter()
     .filter(|src| saturates_a_deadline(&code_line(src)))
     .collect();
-    assert_eq!(hits.len(), 4, "{hits:?}");
+    assert_eq!(hits.len(), 5, "{hits:?}");
     for line in [
         "self.dropped = self.dropped.saturating_add(1);",
         "self.attempts = self.attempts.saturating_add(1);",
         "let micros = span.saturating_add(other_span);",
         "// now.saturating_add(span)",
         "#[cfg(test)]\nmod tests {\n    fn f(now: Timestamp) { let _ = now.saturating_add(span); }\n}",
-        "now.saturating_add_nanos(1);",
     ] {
         assert!(!saturates_a_deadline(&code_line(line)), "{line}");
     }

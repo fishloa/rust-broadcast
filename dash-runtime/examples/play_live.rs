@@ -158,8 +158,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .with_limits(PullLimits::default()),
     );
     let host_unix = |elapsed: u64| {
-        u64::try_from(true_start + i64::try_from(elapsed).unwrap_or(0) + args.skew_ms * 1_000)
-            .unwrap_or(0)
+        let unix = true_start + i64::try_from(elapsed).unwrap_or(0) + args.skew_ms * 1_000;
+        jiff::Timestamp::from_microsecond(unix).unwrap_or(jiff::Timestamp::UNIX_EPOCH)
     };
     client.set_wall_clock(now(0), host_unix(0));
 
@@ -177,8 +177,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             match output {
                 Output::ClockSynced {
                     source,
-                    uncertainty_us,
-                } => println!("clock: {source}, +-{uncertainty_us} us"),
+                    uncertainty,
+                } => println!("clock: {source}, +-{uncertainty:?}"),
                 Output::PeriodChanged { id, .. } => {
                     println!("period {}", id.as_deref().unwrap_or("-"));
                 }
@@ -193,7 +193,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         let due = pending.front().map(|p| p.0);
-        let wake = client.next_wake();
+        let wake = client.next_wake().map(|w| w.as_micros());
         let next = [due, wake].into_iter().flatten().min().unwrap_or(end);
         if next >= end && due.is_none() {
             break;

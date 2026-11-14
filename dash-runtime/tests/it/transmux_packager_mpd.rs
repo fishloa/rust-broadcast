@@ -169,8 +169,13 @@ fn packager_output_truncations_all_error() {
 
 #[test]
 fn ll_utc_timing_escapes_scheme_and_value() {
-    let mut pkg = transmux::ll_dash::LlDashPackager::new(2.0, 0.5, 3000, "2024-01-01T00:00:00Z")
-        .expect("packager");
+    let mut pkg = transmux::ll_dash::LlDashPackager::new(
+        2.0,
+        0.5,
+        std::time::Duration::from_secs(3),
+        "2024-01-01T00:00:00Z",
+    )
+    .expect("packager");
     pkg.base.publish_time = Some("2024-01-01T00:00:00Z".to_string());
     let mut pkg = pkg.with_utc_timing("urn:x:a&b", "https://t.example/x?a=1&b=2");
     let xml = pkg.package(&media()).expect("LL MPD");

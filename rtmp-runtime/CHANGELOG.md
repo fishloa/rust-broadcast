@@ -6,6 +6,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- BREAKING: `RtmpClientConfig::play_buffer` is a `core::time::Duration` (was `play_buffer_ms: u32`) and the default constant is `DEFAULT_PLAY_BUFFER` (was `DEFAULT_PLAY_BUFFER_MS`); the value still goes on the wire as whole milliseconds in SetBufferLength (§6.7) (#2693).
+
 #### Added
 - `io::RtmpClientConfig { target, timeouts }` (`new(target)`, `with_timeouts`) and `io::RtmpServerConfig { session, timeouts }` (`Default`, `with_session`, `with_timeouts`): the same config shape as the RTSP and SRT adapters, so a host maps its timeout config once per role (#2660).
 

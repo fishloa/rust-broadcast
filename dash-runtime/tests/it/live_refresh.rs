@@ -1,6 +1,8 @@
 //! MPD refresh, update rules, Reset, dynamic-to-static and Period changes of
 //! the live client through the `World` simulation (DESIGN 5.2, 5.5).
 
+use core::time::Duration;
+
 use crate::common;
 
 use broadcast_common::stage::Timestamp;
@@ -366,7 +368,7 @@ fn a_304_nobody_asked_for_is_an_error() {
         .with_dash(DashConfig::default())
         .with_limits(dash_runtime::client::PullLimits::default()),
     );
-    let meta = dash_runtime::client::ResponseMeta::at(0);
+    let meta = dash_runtime::client::ResponseMeta::at(now(0));
     assert!(matches!(
         c.on_mpd_unchanged(now(0), &meta),
         Err(dash_runtime::client::Error::MpdNotAwaited)
@@ -376,7 +378,7 @@ fn a_304_nobody_asked_for_is_an_error() {
 #[test]
 fn a_utc_step_found_by_a_resync_forces_an_mpd_refresh() {
     let mut dash = DashConfig::default();
-    dash.utc_resync_us = 20 * MICROS as u64;
+    dash.utc_resync = Some(Duration::from_micros(20 * MICROS as u64));
     let mut synth = with_utc(Addressing::Number);
     synth.mup_us = Some(30 * MICROS);
     let (mut sim, _geo, handle) = sim_shared(synth, START, dash);

@@ -2,6 +2,8 @@
 //! TRUE time, a host clock with skew, a synthesised origin recycling real
 //! fMP4 segments (see `common/world.rs`).
 
+use core::time::Duration;
+
 use crate::common;
 
 use common::checks::*;
@@ -221,7 +223,7 @@ fn a_representation_switch_mid_stream_continues_at_the_next_segment_without_gap(
 #[test]
 fn the_availability_margin_delays_every_request_past_availability() {
     let mut dash = DashConfig::default();
-    dash.availability_margin_us = 300_000;
+    dash.availability_margin = Duration::from_micros(300_000);
     let (mut sim, geo) = sim_with(with_utc(Addressing::Number), 41 * MICROS + 120_000, dash);
     let reqs = run_checked(&mut sim, geo, 30);
     let steady: Vec<_> = reqs

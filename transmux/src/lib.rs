@@ -448,7 +448,7 @@ pub use smooth::{
     resolve_codec, to_smooth_ticks,
 };
 pub use timeline::{
-    DEFAULT_JUMP_BACKWARD_US, DEFAULT_JUMP_FORWARD_SLACK_US, JumpDetector, TimelineJumpConfig,
+    DEFAULT_JUMP_BACKWARD, DEFAULT_JUMP_FORWARD_SLACK, JumpDetector, TimelineJumpConfig,
 };
 // Note: `broadcast_smooth::StreamType` (the Smooth `StreamIndex@Type`) is not
 // re-exported at the crate root — it would collide with `mp4esds::StreamType`
@@ -487,7 +487,7 @@ pub use ts_demux::{
 pub use ts_hls::{
     StreamingTsHlsSegmenter, TsHlsOutput, TsHlsPackager, TsSegment, UpdateTrackOutcome,
 };
-pub use ts_mux::{DEFAULT_PSI_INTERVAL_MS, StreamingTsMux, TsContinuity, TsMux};
+pub use ts_mux::{DEFAULT_PSI_INTERVAL, StreamingTsMux, TsContinuity, TsMux};
 pub use validate::{
     ConformanceIssue, Severity, validate_cmaf_track, validate_init_segment, validate_media_segment,
 };

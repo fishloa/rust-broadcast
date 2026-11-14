@@ -505,7 +505,7 @@ fn a_latency_below_the_default_is_accepted_and_the_stream_plays() {
     let ts = small();
     let mut sim = SrtSim::open_with_peers(
         URL,
-        cfg(|c| c.srt.latency_ms = 20),
+        cfg(|c| c.srt.latency = Duration::from_millis(20)),
         vec![SrtPeer::new(Cipher::Clear, None, 20)],
     );
     sim.connect();

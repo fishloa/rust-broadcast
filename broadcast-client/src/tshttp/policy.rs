@@ -432,15 +432,11 @@ impl TsHttpPolicy {
                     self.first_notice_at = Some(now);
                     self.notice_step = STALL_NOTICE_REPEAT;
                     self.next_notice_at = now.checked_add(STALL_NOTICE_REPEAT);
-                    self.events.push_back(Event::StallNotice {
-                        secs: idle.as_secs(),
-                    });
+                    self.events.push_back(Event::StallNotice { stalled: idle });
                 } else if let Some(n) = self.next_notice_at
                     && now >= n
                 {
-                    self.events.push_back(Event::StallNotice {
-                        secs: idle.as_secs(),
-                    });
+                    self.events.push_back(Event::StallNotice { stalled: idle });
                     self.notice_step = self.notice_step.saturating_mul(NOTICE_STEP_GROWTH);
                     // A next notice past the end of the clock never fires, so none is armed.
                     self.next_notice_at = n.checked_add(self.notice_step);

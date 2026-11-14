@@ -109,7 +109,7 @@ fn per_sample_feed_is_one_stream_equal_to_the_whole_media_mux() {
 #[test]
 fn psi_once_only_when_interval_is_none() {
     let m = media("../fixtures/ts/h264-aac.ts");
-    let (out, _) = run(&mut StreamingTsMux::with_psi_interval_ms(None), &m);
+    let (out, _) = run(&mut StreamingTsMux::with_psi_interval(None), &m);
     let pats = out.chunks_exact(PKT).filter(|p| pid(p) == PAT_PID).count();
     assert_eq!(pats, 1);
 }

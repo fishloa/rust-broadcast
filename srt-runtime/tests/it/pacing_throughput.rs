@@ -87,8 +87,7 @@ const LATENCY: Duration = Duration::from_millis(1_000);
 async fn sustained_volume_clears_twice_the_pre_fix_pacing_ceiling() {
     tokio::time::timeout(TEST_TIMEOUT, async {
         let listener_addr = "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap();
-        let config =
-            HandshakeConfig::default().with_latency_ms(u16::try_from(LATENCY.as_millis()).unwrap());
+        let config = HandshakeConfig::default().with_latency(LATENCY);
         let mut listener = SrtListener::bind(listener_addr, SrtSocketConfig::new(config.clone()))
             .await
             .expect("listener bind");

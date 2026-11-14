@@ -9,6 +9,8 @@
 //! each side's `peer_socket_id` matches the other's `own_socket_id` — not
 //! just that each one runs without erroring in isolation.
 
+use core::time::Duration;
+
 use srt_runtime::HandshakeConfig;
 use srt_runtime::caller::{CallerHandshake, CallerHandshakeState};
 use srt_runtime::handshake_sm::{HandshakeOutput, RejectionReason};
@@ -74,10 +76,10 @@ fn caller_and_listener_converge_on_connected_with_matching_params() {
     };
 
     let caller_config = HandshakeConfig::default()
-        .with_latency_ms(180)
+        .with_latency(Duration::from_millis(180))
         .with_stream_id(Some(stream_id.clone()))
         .with_group(Some(group));
-    let listener_config = HandshakeConfig::default().with_latency_ms(250);
+    let listener_config = HandshakeConfig::default().with_latency(Duration::from_millis(250));
 
     let mut caller = CallerHandshake::new(CALLER_SOCKET_ID, caller_config);
     let mut listener = ListenerHandshake::new(LISTENER_SOCKET_ID, SYN_COOKIE, listener_config);
@@ -102,9 +104,9 @@ fn caller_and_listener_converge_on_connected_with_matching_params() {
 
     // §4.3.1.2: the greater-of-both-parties latency rule lands on the same
     // number regardless of which side computes it.
-    assert_eq!(caller_params.latency_ms, 250);
-    assert_eq!(listener_params.latency_ms, 250);
-    assert_eq!(caller_params.latency_ms, listener_params.latency_ms);
+    assert_eq!(caller_params.latency, Duration::from_millis(250));
+    assert_eq!(listener_params.latency, Duration::from_millis(250));
+    assert_eq!(caller_params.latency, listener_params.latency);
 
     // Stream ID and Group Membership (Caller-advertised) are seen identically
     // by both sides.

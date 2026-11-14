@@ -12,6 +12,7 @@ use broadcast_client::events::{
 };
 use broadcast_client::{Action, BufferEvent, Config, ConnId, ErrorKind, Event, Session};
 use broadcast_common::cenc::CencScheme;
+use broadcast_common::clock33::Clock27;
 use broadcast_common::stage::Timestamp;
 use support::fmp4_split::{group, split};
 use support::hls_host::{Host, Reply, hls_config, is_ended};
@@ -428,7 +429,9 @@ fn run_ts_hls(segs: &[Vec<u8>], disc_at: Option<usize>, starve: bool) -> HeldRun
             }
             s.on_closed(c, None, ts(now));
         }
-        let pos = position.map(|(base, since)| base + (now - since) * TICKS_PER_US);
+        let pos = position.and_then(|(base, since)| {
+            Clock27::from_27mhz(base + (now - since) * TICKS_PER_US).ok()
+        });
         s.on_playback_position(ts(now), pos);
         while let Some(e) = s.next_event() {
             match &e {

@@ -39,6 +39,7 @@ zeroize            = { version = "1", default-features = false, features = ["all
 url                = "2"
 http               = "1"
 headers            = { workspace = true }
+jiff               = { version = "0.2", default-features = false, features = ["std"] }
 thiserror          = "2"
 serde              = { version = "1", default-features = false, optional = true, features = ["derive", "alloc", "std"] }
 

@@ -85,13 +85,13 @@ pub(crate) fn backoff_ms(steps: &BackoffSteps) -> (Vec<u64>, u64) {
 }
 
 /// Parse a `Retry-After` header for a `429`/`503` response (RFC 9110 §10.2.3), returning the
-/// wait in microseconds. Returns `0` for any other status, a missing or unparseable header, or a
-/// past HTTP-date. An HTTP-date is measured against the host wall clock when `wall` is given,
+/// wait in microseconds. Returns `0` for any other status or a missing or unparseable header; a
+/// past HTTP-date waits nothing (`0`), and the result is clamped to `0..=60 s`. An HTTP-date is measured against the host wall clock when `wall` is given,
 /// otherwise against the response `Date`. The result is clamped to 60 seconds.
 pub(crate) fn retry_after_us(
     status: StatusCode,
     headers: &HeaderMap,
-    now_us: u64,
+    now: Timestamp,
     wall: Option<&WallClock>,
 ) -> u64 {
     if status != StatusCode::TOO_MANY_REQUESTS && status != StatusCode::SERVICE_UNAVAILABLE {
@@ -108,7 +108,7 @@ pub(crate) fn retry_after_us(
             return 0;
         };
         let now_unix = match wall {
-            Some(wall) => Some(wall.unix_at(now_us)),
+            Some(wall) => Some(wall.utc_at(now.as_micros())),
             None => crate::headers::text(headers, HEADER_DATE)
                 .and_then(|date| parse_http_date(date).ok())
                 .map(i128::from),
@@ -334,7 +334,8 @@ impl RefusedCapture {
     pub(crate) fn into_event(self) -> Event {
         Event::ServerRefused {
             status: self.status,
-            retry_after_us: (self.retry_after_us > 0).then_some(self.retry_after_us),
+            retry_after: (self.retry_after_us > 0)
+                .then(|| Duration::from_micros(self.retry_after_us)),
             reason: sanitize_refused_reason(self.content_type.as_deref(), &self.body),
         }
     }
@@ -448,12 +449,16 @@ mod tests {
     }
 
     const NOW: u64 = 7_000_000;
+
+    fn at(us: u64) -> Timestamp {
+        Timestamp::from_micros(us)
+    }
     const SIXTY_S: u64 = 60_000_000;
     const RESPONSE_DATE: &str = "Mon, 26 Oct 2026 08:39:04 GMT";
     const RESPONSE_UNIX_US: u64 = 1_793_003_944 * 1_000_000;
 
     fn retry(status: StatusCode, headers: &HeaderMap) -> u64 {
-        retry_after_us(status, headers, NOW, None)
+        retry_after_us(status, headers, at(NOW), None)
     }
 
     fn date_pair(retry_after: &str, date: &str) -> HeaderMap {
@@ -634,7 +639,7 @@ mod tests {
             retry_after_us(
                 StatusCode::from_u16(503).unwrap(),
                 &h,
-                NOW,
+                at(NOW),
                 Some(&anchored())
             ),
             30_000_000,
@@ -648,16 +653,52 @@ mod tests {
             retry_after_us(
                 StatusCode::from_u16(503).unwrap(),
                 &lying_date,
-                NOW,
+                at(NOW),
                 Some(&anchored())
             ),
             30_000_000,
             "the anchor wins over a skewed server Date"
         );
         assert_eq!(
-            retry_after_us(StatusCode::from_u16(503).unwrap(), &lying_date, NOW, None),
+            retry_after_us(
+                StatusCode::from_u16(503).unwrap(),
+                &lying_date,
+                at(NOW),
+                None
+            ),
             SIXTY_S,
             "the same headers without an anchor count from the skewed Date"
+        );
+    }
+
+    #[test]
+    fn a_far_future_anchor_is_not_a_past_date() {
+        let h = date_pair("Mon, 26 Oct 2026 08:39:34 GMT", RESPONSE_DATE);
+        let anchor = WallClock::new(0, i128::from(u64::MAX));
+        assert_eq!(
+            anchor.unix_at(0),
+            i128::from(u64::MAX),
+            "the crate's own mapping"
+        );
+        assert_eq!(
+            retry_after_us(StatusCode::from_u16(503).unwrap(), &h, at(0), Some(&anchor)),
+            0,
+            "a URL past 584 557 AD is a past date, never a 584 557-year wait"
+        );
+    }
+
+    #[test]
+    fn a_seconds_long_wait_keeps_its_milliseconds() {
+        let h = header("Retry-After", "4");
+        assert_eq!(
+            retry_after_us(
+                StatusCode::from_u16(503).unwrap(),
+                &h,
+                at(NOW),
+                Some(&anchored())
+            ),
+            4_000_000,
+            "a server wait is a whole span, not whole seconds"
         );
     }
 
@@ -669,7 +710,7 @@ mod tests {
             retry_after_us(
                 StatusCode::from_u16(503).unwrap(),
                 &h,
-                NOW + 10_000_000,
+                at(NOW + 10_000_000),
                 Some(&wall)
             ),
             20_000_000
@@ -678,7 +719,7 @@ mod tests {
             retry_after_us(
                 StatusCode::from_u16(503).unwrap(),
                 &h,
-                NOW + 30_000_000,
+                at(NOW + 30_000_000),
                 Some(&wall)
             ),
             0
@@ -687,7 +728,7 @@ mod tests {
             retry_after_us(
                 StatusCode::from_u16(503).unwrap(),
                 &h,
-                NOW + 31_000_000,
+                at(NOW + 31_000_000),
                 Some(&wall)
             ),
             0
@@ -696,7 +737,7 @@ mod tests {
             retry_after_us(
                 StatusCode::from_u16(503).unwrap(),
                 &h,
-                NOW - 5_000_000,
+                at(NOW - 5_000_000),
                 Some(&wall)
             ),
             35_000_000,
@@ -712,14 +753,19 @@ mod tests {
             retry_after_us(
                 StatusCode::from_u16(503).unwrap(),
                 &h,
-                u64::MAX,
+                at(u64::MAX),
                 Some(&max_unix)
             ),
             0
         );
         let zero_unix = WallClock::new(u64::MAX, 0);
         assert_eq!(
-            retry_after_us(StatusCode::from_u16(503).unwrap(), &h, 0, Some(&zero_unix)),
+            retry_after_us(
+                StatusCode::from_u16(503).unwrap(),
+                &h,
+                Timestamp::ZERO,
+                Some(&zero_unix)
+            ),
             SIXTY_S,
             "a response far before the anchor clamps"
         );
@@ -728,7 +774,7 @@ mod tests {
             retry_after_us(
                 StatusCode::from_u16(503).unwrap(),
                 &h,
-                u64::MAX,
+                at(u64::MAX),
                 Some(&late)
             ),
             0
@@ -858,7 +904,7 @@ mod tests {
             retry_after_us(
                 StatusCode::from_u16(503).unwrap(),
                 &h,
-                NOW,
+                at(NOW),
                 Some(&anchored())
             ),
             5_000_000

@@ -98,8 +98,11 @@ pub fn clock_sources(sim: &Sim) -> Vec<(dash_runtime::timing::clock::ClockSource
         .filter_map(|o| match o {
             Output::ClockSynced {
                 source,
-                uncertainty_us,
-            } => Some((*source, *uncertainty_us)),
+                uncertainty,
+            } => Some((
+                *source,
+                u64::try_from(uncertainty.as_micros()).unwrap_or(u64::MAX),
+            )),
             _ => None,
         })
         .collect()

@@ -1115,13 +1115,13 @@ impl RtspSource {
         match self.next_notice_at {
             None => {
                 self.next_notice_at = now.checked_add(Duration::from_secs(1));
-                self.push_stalled(idle.as_secs());
+                self.push_stalled(idle);
             }
             Some(mut next) => {
                 let mut emitted = 0u32;
                 while now >= next && emitted < MAX_STALL_NOTICES_PER_POLL {
                     let elapsed = next.saturating_sub(self.last_byte_at);
-                    self.push_stalled(elapsed.as_secs());
+                    self.push_stalled(elapsed);
                     // At the end of the clock there is no later notice: stop here.
                     let Some(later) = next.checked_add(Duration::from_secs(1)) else {
                         break;
@@ -1145,9 +1145,9 @@ impl RtspSource {
         false
     }
 
-    fn push_stalled(&mut self, secs: u64) {
+    fn push_stalled(&mut self, stalled: Duration) {
         self.events
-            .push_back(Event::Status(Status::Stalled { secs }));
+            .push_back(Event::Status(Status::Stalled { stalled }));
         self.stalled = true;
     }
 
@@ -1179,12 +1179,14 @@ impl RtspSource {
     /// Re-reads the engine's keepalive deadline after a request exchange. The
     /// engine re-arms on the request it builds, so the new deadline is always
     /// ahead of `now`; `max(now + 1)` keeps a coarse clock from waking in a
-    /// loop.
+    /// loop. A `now` at the end of the clock has no next instant, so the wake
+    /// never fires (`checked_add`), never a saturated one due forever.
     fn arm_keepalive_wake(&mut self, now: Timestamp) {
+        let next = now.checked_add(Duration::from_nanos(1));
         self.keepalive_wake = self
             .client
             .poll_timeout()
-            .map(|due| due.max(now.saturating_add_nanos(1)));
+            .map(|due| next.map_or(due, |next| due.max(next)));
     }
 
     fn note_written(&mut self, now: Timestamp) {

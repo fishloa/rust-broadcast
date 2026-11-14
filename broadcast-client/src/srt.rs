@@ -10,9 +10,9 @@ use zeroize::Zeroize;
 /// Length of the entropy seed in bytes.
 pub const ENTROPY_SEED_LEN: usize = 32;
 
-/// Default [`SrtCallerConfig::latency_ms`] (120 ms, libsrt's default), which suits a LAN or a
+/// Default [`SrtCallerConfig::latency`] (120 ms, libsrt's default), which suits a LAN or a
 /// well-provisioned WAN. The negotiated value is the larger of this and the peer's.
-pub const DEFAULT_LATENCY_MS: u16 = 120;
+pub const DEFAULT_LATENCY: Duration = Duration::from_millis(120);
 /// Default [`SrtCallerConfig::timeouts`]' handshake bound: libsrt's 3 s connect
 /// timeout.
 pub const DEFAULT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(3);
@@ -130,9 +130,10 @@ impl core::fmt::Debug for SrtEntropySeed {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SrtCallerConfig {
-    /// TSBPD latency this side asks for in milliseconds (the connection uses the larger of this
-    /// and the peer's); any value is accepted, a smaller one trades loss recovery for delay.
-    pub latency_ms: u16,
+    /// TSBPD latency this side asks for, sent as whole milliseconds on the wire (the connection
+    /// uses the larger of this and the peer's); any value is accepted, a smaller one trades loss
+    /// recovery for delay.
+    pub latency: Duration,
     /// Stream id sent in the handshake (an access-control string such as `#!::r=name,m=request`).
     pub stream_id: Option<String>,
     /// Passphrase encryption; `None` is a clear connection.
@@ -150,7 +151,7 @@ pub struct SrtCallerConfig {
 impl Default for SrtCallerConfig {
     fn default() -> Self {
         Self {
-            latency_ms: DEFAULT_LATENCY_MS,
+            latency: DEFAULT_LATENCY,
             stream_id: None,
             encryption: None,
             entropy_seed: None,

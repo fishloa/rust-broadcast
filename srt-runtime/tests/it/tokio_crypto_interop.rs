@@ -291,8 +291,10 @@ async fn tokio_key_refresh_keeps_delivering() {
             refresh_period: 50,
             pre_announcement_period: 5,
         };
-        let loaded_host_config =
-            || (crypto_config(PASSPHRASE, 16)).with_latency_ms(LOADED_HOST_LATENCY_MS);
+        let loaded_host_config = || {
+            (crypto_config(PASSPHRASE, 16))
+                .with_latency(Duration::from_millis(u64::from(LOADED_HOST_LATENCY_MS)))
+        };
         let io = IoConfig::default().with_km_refresh_thresholds(thresholds);
         let mut listener = SrtListener::bind(
             "127.0.0.1:0",

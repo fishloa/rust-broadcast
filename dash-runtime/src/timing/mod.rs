@@ -4,6 +4,8 @@
 //! readers live in [`broadcast_dash::xs_datetime`] and
 //! [`broadcast_dash::utc_timing`] and are re-exported here.
 
+use core::time::Duration;
+
 use thiserror::Error;
 
 pub mod availability;
@@ -23,12 +25,12 @@ pub enum TimingError {
     #[error("response timestamp precedes the request timestamp")]
     ExchangeReversed,
     /// The round trip is too long to trust.
-    #[error("round trip of {rtt_us} us exceeds the {max_us} us limit")]
+    #[error("round trip of {rtt:?} exceeds the {max:?} limit")]
     RttTooLarge {
         /// Measured round trip.
-        rtt_us: u64,
+        rtt: Duration,
         /// Limit.
-        max_us: u64,
+        max: Duration,
     },
     /// A UTC response body above the cap.
     #[error("UTC response body exceeds {max} bytes")]

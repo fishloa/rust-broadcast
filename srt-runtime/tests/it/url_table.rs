@@ -2,6 +2,8 @@
 //! every one it refuses, pinned in one place, so the parser that moved here
 //! from `multimux`'s SRT push reproduces the accepted set exactly.
 
+use core::time::Duration;
+
 use srt_runtime::url::{DEFAULT_PORT, MAX_LATENCY_MS, SrtMode, SrtUrl, UrlRejection};
 
 #[test]
@@ -10,7 +12,7 @@ fn a_bare_host_takes_the_default_port() {
     assert_eq!(url.host, "example.com");
     assert_eq!(url.port, DEFAULT_PORT);
     assert_eq!(url.stream_id, None);
-    assert_eq!(url.latency_ms, None);
+    assert_eq!(url.latency, None);
     assert_eq!(url.mode, SrtMode::Caller);
     assert_eq!(url.passphrase, None);
 }
@@ -65,7 +67,7 @@ fn a_streamid_keeps_its_whole_value_encoded_or_not() {
 fn the_latency_range_is_the_drafts() {
     for ms in [0u16, 200, MAX_LATENCY_MS] {
         let url = SrtUrl::parse(&format!("srt://h?latency={ms}")).expect("in range");
-        assert_eq!(url.latency_ms, Some(ms));
+        assert_eq!(url.latency, Some(Duration::from_millis(u64::from(ms))));
     }
     let over = MAX_LATENCY_MS + 1;
     assert_eq!(

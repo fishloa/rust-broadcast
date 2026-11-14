@@ -3,34 +3,34 @@
 //! `docs/dash-runtime/DESIGN.md` 6.4 (fields and defaults), 3.2-3.4 (clock
 //! ladder), 5.2 (refresh floor), 5.4 (early-request cadence), D9 (LL-DASH) and
 //! 10.2 R3 (cross-origin restriction). Pure data: nothing here reads a clock.
-//! Every duration is in microseconds. A value of `u64::MAX` is accepted
-//! wherever zero is not: consumers combine these with saturating arithmetic,
-//! so `MAX` reads as "never" or "unbounded" rather than overflowing.
+//! Every span is a [`Duration`]; a deadline built from one is `None` (never
+//! fires) past the end of the clock rather than clamped to it.
+
+use core::time::Duration;
 
 use broadcast_common::impl_spec_display;
-use broadcast_common::units::{MICROS_PER_MILLI, MICROS_PER_SEC};
 use thiserror::Error;
 
 /// Default time one `UTCTiming` request may take.
-pub const DEFAULT_UTC_TIMEOUT_US: u64 = 2 * MICROS_PER_SEC;
+pub const DEFAULT_UTC_TIMEOUT: Duration = Duration::from_secs(2);
 /// Default total wait for a `UTCTiming` sample before the clock ladder falls
 /// through to the next source.
-pub const DEFAULT_UTC_WAIT_US: u64 = 5 * MICROS_PER_SEC;
+pub const DEFAULT_UTC_WAIT: Duration = Duration::from_secs(5);
 /// Default longest round trip a `UTCTiming` sample may have and still be used.
-pub const DEFAULT_UTC_MAX_RTT_US: u64 = 2 * MICROS_PER_SEC;
+pub const DEFAULT_UTC_MAX_RTT: Duration = Duration::from_secs(2);
 /// Default age after which a same-source clock anchor is replaced.
-pub const DEFAULT_UTC_RESYNC_US: u64 = 600 * MICROS_PER_SEC;
+pub const DEFAULT_UTC_RESYNC: Duration = Duration::from_secs(600);
 /// Default error bar reported for a host-supplied clock.
-pub const DEFAULT_HOST_CLOCK_UNCERTAINTY_US: u64 = 500 * MICROS_PER_MILLI;
+pub const DEFAULT_HOST_CLOCK_UNCERTAINTY: Duration = Duration::from_millis(500);
 /// Default margin added to a segment's availability start before requesting it.
-pub const DEFAULT_AVAILABILITY_MARGIN_US: u64 = 0;
+pub const DEFAULT_AVAILABILITY_MARGIN: Duration = Duration::ZERO;
 /// Default first retry delay for a segment requested before it exists.
-pub const DEFAULT_EARLY_RETRY_US: u64 = 250 * MICROS_PER_MILLI;
+pub const DEFAULT_EARLY_RETRY: Duration = Duration::from_millis(250);
 /// Default window after a segment's availability start in which a 404, 410 or
 /// 425 still means "too early" rather than "missing".
-pub const DEFAULT_EARLY_GRACE_US: u64 = MICROS_PER_SEC;
+pub const DEFAULT_EARLY_GRACE: Duration = Duration::from_secs(1);
 /// Default floor under the MPD refresh interval.
-pub const DEFAULT_MIN_MPD_REFRESH_US: u64 = MICROS_PER_SEC;
+pub const DEFAULT_MIN_MPD_REFRESH: Duration = Duration::from_secs(1);
 
 /// Which clock source the ladder tries first for a dynamic MPD.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -72,40 +72,38 @@ pub struct DashConfigError {
 pub struct DashConfig {
     /// Clock ladder order, see [`DashClockPolicy`].
     pub clock_policy: DashClockPolicy,
-    /// Time one `UTCTiming` request may take, microseconds; must be non-zero.
-    pub utc_timeout_us: u64,
-    /// Total wait for a `UTCTiming` sample before the ladder falls through,
-    /// microseconds; must be non-zero and not shorter than
-    /// [`DashConfig::utc_timeout_us`] (a wait that ends before one request can
-    /// time out would never let the first request finish).
-    pub utc_wait_us: u64,
-    /// Longest round trip a `UTCTiming` sample may have, microseconds; a
-    /// slower exchange is discarded. Must be non-zero.
-    pub utc_max_rtt_us: u64,
+    /// Time one `UTCTiming` request may take; must be non-zero.
+    pub utc_timeout: Duration,
+    /// Total wait for a `UTCTiming` sample before the ladder falls through;
+    /// must be non-zero and not shorter than [`DashConfig::utc_timeout`] (a
+    /// wait that ends before one request can time out would never let the
+    /// first request finish).
+    pub utc_wait: Duration,
+    /// Longest round trip a `UTCTiming` sample may have; a slower exchange is
+    /// discarded. Must be non-zero.
+    pub utc_max_rtt: Duration,
     /// Age after which a same-source clock anchor is replaced by any new
-    /// sample of that source, microseconds; must be non-zero. `u64::MAX`
-    /// never re-syncs on age.
-    pub utc_resync_us: u64,
-    /// Error bar reported with a clock taken from the host, microseconds.
-    /// `0` claims an exact host clock.
-    pub host_clock_uncertainty_us: u64,
+    /// sample of that source; must be non-zero. `None` never re-syncs on age.
+    pub utc_resync: Option<Duration>,
+    /// Error bar reported with a clock taken from the host. `ZERO` claims an
+    /// exact host clock.
+    pub host_clock_uncertainty: Duration,
     /// Override of the presentation delay a live join keeps behind the live
-    /// edge, microseconds. `None` derives it from the MPD. `Some(0)` joins at
-    /// the edge.
-    pub live_delay_us: Option<u64>,
-    /// Added to a segment's availability start before it is requested,
-    /// microseconds. `0` requests at the availability start.
-    pub availability_margin_us: u64,
-    /// First retry delay for a segment requested before it exists,
-    /// microseconds; must be non-zero. The delay doubles up to one second.
-    pub early_retry_us: u64,
+    /// edge. `None` derives it from the MPD. `Some(ZERO)` joins at the edge.
+    pub live_delay: Option<Duration>,
+    /// Added to a segment's availability start before it is requested.
+    /// `ZERO` requests at the availability start.
+    pub availability_margin: Duration,
+    /// First retry delay for a segment requested before it exists; must be
+    /// non-zero. The delay doubles up to one second.
+    pub early_retry: Duration,
     /// Window after a segment's availability start in which a 404, 410 or
-    /// 425 still means "too early", microseconds. `0` treats every such
-    /// response after the start as a missing segment.
-    pub early_grace_us: u64,
-    /// Floor under the MPD refresh interval, microseconds; must be non-zero
-    /// so `minimumUpdatePeriod="PT0S"` cannot become a request storm.
-    pub min_mpd_refresh_us: u64,
+    /// 425 still means "too early". `ZERO` treats every such response after
+    /// the start as a missing segment.
+    pub early_grace: Duration,
+    /// Floor under the MPD refresh interval; must be non-zero so
+    /// `minimumUpdatePeriod="PT0S"` cannot become a request storm.
+    pub min_mpd_refresh: Duration,
     /// Request low-latency segments at `availabilityTimeOffset` earlier than
     /// their complete-segment time. Delivery stays whole-segment.
     pub use_availability_time_offset: bool,
@@ -118,16 +116,16 @@ impl Default for DashConfig {
     fn default() -> Self {
         Self {
             clock_policy: DashClockPolicy::Auto,
-            utc_timeout_us: DEFAULT_UTC_TIMEOUT_US,
-            utc_wait_us: DEFAULT_UTC_WAIT_US,
-            utc_max_rtt_us: DEFAULT_UTC_MAX_RTT_US,
-            utc_resync_us: DEFAULT_UTC_RESYNC_US,
-            host_clock_uncertainty_us: DEFAULT_HOST_CLOCK_UNCERTAINTY_US,
-            live_delay_us: None,
-            availability_margin_us: DEFAULT_AVAILABILITY_MARGIN_US,
-            early_retry_us: DEFAULT_EARLY_RETRY_US,
-            early_grace_us: DEFAULT_EARLY_GRACE_US,
-            min_mpd_refresh_us: DEFAULT_MIN_MPD_REFRESH_US,
+            utc_timeout: DEFAULT_UTC_TIMEOUT,
+            utc_wait: DEFAULT_UTC_WAIT,
+            utc_max_rtt: DEFAULT_UTC_MAX_RTT,
+            utc_resync: Some(DEFAULT_UTC_RESYNC),
+            host_clock_uncertainty: DEFAULT_HOST_CLOCK_UNCERTAINTY,
+            live_delay: None,
+            availability_margin: DEFAULT_AVAILABILITY_MARGIN,
+            early_retry: DEFAULT_EARLY_RETRY,
+            early_grace: DEFAULT_EARLY_GRACE,
+            min_mpd_refresh: DEFAULT_MIN_MPD_REFRESH,
             use_availability_time_offset: false,
             cross_origin_urls: true,
         }
@@ -141,23 +139,23 @@ impl DashConfig {
     /// [`DashConfigError`] naming the first field a client cannot run with.
     pub fn validate(&self) -> Result<(), DashConfigError> {
         let invalid = |field| Err(DashConfigError { field });
-        if self.utc_timeout_us == 0 {
-            return invalid("utc_timeout_us");
+        if self.utc_timeout.is_zero() {
+            return invalid("utc_timeout");
         }
-        if self.utc_wait_us < self.utc_timeout_us {
-            return invalid("utc_wait_us");
+        if self.utc_wait < self.utc_timeout {
+            return invalid("utc_wait");
         }
-        if self.utc_max_rtt_us == 0 {
-            return invalid("utc_max_rtt_us");
+        if self.utc_max_rtt.is_zero() {
+            return invalid("utc_max_rtt");
         }
-        if self.utc_resync_us == 0 {
-            return invalid("utc_resync_us");
+        if self.utc_resync.is_some_and(|d| d.is_zero()) {
+            return invalid("utc_resync");
         }
-        if self.early_retry_us == 0 {
-            return invalid("early_retry_us");
+        if self.early_retry.is_zero() {
+            return invalid("early_retry");
         }
-        if self.min_mpd_refresh_us == 0 {
-            return invalid("min_mpd_refresh_us");
+        if self.min_mpd_refresh.is_zero() {
+            return invalid("min_mpd_refresh");
         }
         Ok(())
     }
