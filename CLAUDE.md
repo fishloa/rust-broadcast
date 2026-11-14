@@ -221,6 +221,10 @@ standard.
 - Every field in a section's syntax appears in the parsed struct (spec fidelity).
 - Fixture tests (`dvb-si/tests/`) validate against real broadcast captures; round-trip and serde round-trip tests are required for new types.
 
+### API conventions
+
+Every public API follows [`docs/API-CONVENTIONS.md`](docs/API-CONVENTIONS.md) (time types, typed ids, config shape, typed errors, surface rules). Read it before adding or changing a public API; a change that settles a new convention updates it in the same PR.
+
 ### Error conventions
 
 Structured `thiserror` errors with context: `BufferTooShort { need, have, what }`, `InvalidDescriptor { tag, reason }`, etc. Parsers validate the tag byte and length before slicing; serializers check `OutputBufferTooSmall` first. Reserved-bit policy varies by crate and is documented at the crate root (e.g. dvb-t2mi rejects non-zero RFU bits except individual addressing).
