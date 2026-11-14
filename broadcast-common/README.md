@@ -44,7 +44,7 @@ the specification each primitive follows.
 | `std` | yes | Links `std`: `std::error::Error` glue, `Timestamp::from_instant`, and `jiff/std` when `jiff` is on. Off gives `#![no_std]` + `alloc`. |
 | `jiff` | no | `jiff::Timestamp` conversions in `time` (`decode_mjd_bcd_utc`/`encode_mjd_bcd_utc`, `decode_seconds_since_2000_utc`/`encode_seconds_since_2000_utc`); no_std compatible. Without it the plain `MjdBcdDateTime`, MJD and duration helpers stay available. |
 | `serde` | no | `serde::Serialize` on the shared spec types (currently `cenc::CencScheme`). |
-| `xml` | no | `xml` (the bounded quick-xml tree reader: depth, attribute, size limits; DOCTYPE refused) and `xml_chars` (XML 1.0 character data, `XmlLimits`/`XmlBudget`, `XmlWriter`). Implies `std`. |
+| `xml` | no | `xml` (the bounded quick-xml tree reader: depth, attribute, size limits; DOCTYPE refused) and `xml_chars` (XML 1.0 character data with the typed `XmlCharError`, `XmlLimits`/`XmlBudget`, `XmlWriter`). Implies `std`. |
 | `lang` | no | `lang`: ISO 639 -> BCP 47 canonicalisation (`bcp47_language`, also at the crate root) and `language_matches`. Implies `std`. |
 | `base64` | no | `base64`: `base64_encode`, `base64_decode_strict`, `base64_decode_lenient` (RFC 4648). `no_std` + `alloc`. |
 | `http-date` | no | `http_date`: `parse_http_date` (RFC 9110 §5.6.7) for `Date` and `Retry-After`. Implies `std`. |

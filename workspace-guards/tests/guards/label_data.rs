@@ -145,8 +145,9 @@ pub const TABLE: &[Crate] = &[
         name: "broadcast-common",
         scope: Scope::Crate,
         matcher: Matcher::Strict,
-        // `BitError`, `KlvError` and `XmlError`: structured errors with a
-        // message-bearing or descriptive variant set, not spec labels.
+        // `BitError`, `KlvError`, `XmlError` and `XmlCharError`: structured
+        // errors with a message-bearing or descriptive variant set, not spec
+        // labels.
         // `BerLength`: a serialization-form choice (`Minimal` vs a preserved
         // on-wire `Fixed` width), not a wire field. `Frame`: the XML reader's
         // own traversal stack, not a label. `MulticastInterface` and
@@ -156,6 +157,7 @@ pub const TABLE: &[Crate] = &[
             "BitError",
             "KlvError",
             "XmlError",
+            "XmlCharError",
             "BerLength",
             "Frame",
             "HttpDateError",
@@ -852,8 +854,9 @@ pub const TABLE: &[Crate] = &[
         matcher: Matcher::Loose,
         // Enums that are not spec/field labels (errors, dispatch wrappers, CLI args).
         skip: &[
-            "CheckArgs", // clap argument struct
-            "Cli",       // clap CLI dispatch enum
+            "CheckArgs",     // clap argument struct
+            "Cli",           // clap CLI dispatch enum
+            "StreamLocator", // where a finding was raised (PID, track or none), rendered as the bare number a report prints, not a spec label
         ],
         expected: None,
         min_enums: None,

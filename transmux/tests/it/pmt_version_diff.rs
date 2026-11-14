@@ -154,7 +154,7 @@ fn ts_packet(pid: Pid, pusi: bool, cc: u8, payload: &[u8]) -> [u8; TS_PACKET_SIZ
         pusi,
         pid,
         scrambling: ScramblingControl::NotScrambled,
-        adaptation: AdaptationFieldControl::PayloadOnly,
+        adaptation_field_control: AdaptationFieldControl::PayloadOnly,
         continuity_counter: ContinuityCounter::from_wire_masked(cc),
     };
     header
