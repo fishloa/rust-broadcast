@@ -20,12 +20,10 @@ pub struct Timeline {
 }
 
 impl Timeline {
-    /// New session with no anchor.
-    pub fn new() -> Self {
-        Self::default()
-    }
-    /// New session with a wall-clock anchor.
-    pub fn with_anchor(anchor: TimeAnchor) -> Self {
+    /// New session with a wall-clock anchor (the one constructor; start from
+    /// [`Timeline::default`] for a session that is anchored later with
+    /// [`Timeline::set_anchor`]).
+    pub fn new(anchor: TimeAnchor) -> Self {
         Timeline {
             anchor: Some(anchor),
             unroller: PtsUnroller::seeded(anchor.pts_90k),
@@ -127,15 +125,15 @@ mod tests {
 
     #[test]
     fn push_scte35_returns_event() {
-        let mut tl = Timeline::new();
+        let mut tl = Timeline::default();
         let ev = tl.push_scte35(&splice_2002()).unwrap();
         assert_eq!(ev.id, Some(2002));
     }
 
     #[test]
     fn to_daterange_without_anchor_errors() {
-        let tl = Timeline::new();
-        let ev = Timeline::new().push_scte35(&splice_2002()).unwrap();
+        let tl = Timeline::default();
+        let ev = Timeline::default().push_scte35(&splice_2002()).unwrap();
         assert!(matches!(
             tl.to_daterange(&ev),
             Err(crate::Error::MissingAnchor)
@@ -152,7 +150,7 @@ mod tests {
             pts_90k: 0,
             utc_epoch_ms: 1_800_000_000_000,
         };
-        let mut tl = Timeline::new();
+        let mut tl = Timeline::default();
         let ev = tl.push_scte35(&splice_2002()).unwrap();
         assert!(matches!(
             tl.to_daterange(&ev),
@@ -161,17 +159,14 @@ mod tests {
 
         tl.set_anchor(first);
         let anchored = tl.to_daterange(&ev).unwrap();
-        let expected = Timeline::with_anchor(first).to_daterange(&ev).unwrap();
+        let expected = Timeline::new(first).to_daterange(&ev).unwrap();
         assert_eq!(anchored.start_date, expected.start_date);
 
         tl.set_anchor(second);
         let replaced = tl.to_daterange(&ev).unwrap();
         assert_eq!(
             replaced.start_date,
-            Timeline::with_anchor(second)
-                .to_daterange(&ev)
-                .unwrap()
-                .start_date
+            Timeline::new(second).to_daterange(&ev).unwrap().start_date
         );
         assert_ne!(replaced.start_date, anchored.start_date);
     }

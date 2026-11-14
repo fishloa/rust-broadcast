@@ -22,7 +22,7 @@ fn main() {
         pts_90k: 0,
         utc_epoch_ms: 1_705_320_000_000,
     };
-    let mut timeline = Timeline::with_anchor(anchor);
+    let mut timeline = Timeline::new(anchor);
     let event = timeline.push_scte35(&raw).expect("valid splice");
 
     // Build emsg config: 90 kHz timescale, segment-relative delta 0, 24 s duration.

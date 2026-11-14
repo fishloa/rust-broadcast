@@ -5326,7 +5326,7 @@ mod tests {
                 .with_part_capacity(nz(8)),
         );
         let writer = trunk.writer().unwrap();
-        let mut timeline = timed_metadata::Timeline::new();
+        let mut timeline = timed_metadata::Timeline::default();
 
         // Event 1: a PTS 10 ticks before the 33-bit wrap point.
         let before_wrap = splice_insert_bytes(1, PTS_WRAP - 10);

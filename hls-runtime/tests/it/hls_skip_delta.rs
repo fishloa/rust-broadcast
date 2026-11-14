@@ -233,7 +233,7 @@ fn skip_yes_keeps_dateranges_v2_drops_them() {
             utc_epoch_ms: 1_000_000_000_000,
         });
         // two dateranges: one in a skipped segment (seg 1), one inside.
-        let mut timeline = timed_metadata::Timeline::new();
+        let mut timeline = timed_metadata::Timeline::default();
         let ev = timeline.push_scte35(&splice_bytes).unwrap();
         let tw = trunk.writer().expect("writer");
         writer.note_segment_start(media_plane::ids::SegmentSeq::new(1), MediaTime(0));

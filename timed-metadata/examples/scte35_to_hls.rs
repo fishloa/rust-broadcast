@@ -23,7 +23,7 @@ fn main() {
         utc_epoch_ms,
     };
 
-    let mut timeline = Timeline::with_anchor(anchor);
+    let mut timeline = Timeline::new(anchor);
 
     // Parse the SCTE-35 section and unroll PTS wrap.
     let event = timeline.push_scte35(&raw).expect("valid splice");

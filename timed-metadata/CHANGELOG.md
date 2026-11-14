@@ -4,6 +4,7 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 ### Changed
+- BREAKING: `Timeline::with_anchor(anchor)` is `Timeline::new(anchor)`: a constructor is not named like a builder setter, and the no-argument `Timeline::new()` is gone, so `new` is the one constructor and `set_anchor` the one later change. Migration: `Timeline::with_anchor(a)` becomes `Timeline::new(a)`, and `Timeline::new()` becomes `Timeline::default()` (#2665).
 - BREAKING: `convert::EmsgConfig::timescale` and `convert::SegmentTiming::timescale` are `Timescale` (was `u32`), and `Error::EmsgTimescaleMismatch` carries `Timescale`s, following `mp4_emsg::EmsgBox::timescale` (#2657).
 
 ## [0.10.0] - 2026-11-14
