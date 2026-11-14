@@ -187,7 +187,7 @@ async fn catchup_playlist(
             Some(hls_runtime::server::ClosedSegment::new(
                 media_plane::ids::SegmentSeq::new(public),
                 s.start,
-                s.duration_secs,
+                s.duration,
                 s.discontinuous,
             ))
         })

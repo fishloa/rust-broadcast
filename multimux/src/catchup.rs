@@ -473,7 +473,7 @@ pub(crate) fn merge_segments(
         is_tail.then_some(CatchupSegment {
             seq: s.sequence_number,
             start: Timestamp::from_nanos(s.start.0),
-            duration: std::time::Duration::from_secs_f64(s.duration_secs),
+            duration: s.duration,
             discontinuous: s.discontinuous,
             init: Some(InitRef::Live(s.init_generation)),
         })
@@ -648,7 +648,7 @@ mod tests {
         ClosedSegment::new(
             SegmentSeq::new(seq),
             timed_metadata::MediaTime(start_ns),
-            duration_secs,
+            std::time::Duration::from_secs_f64(duration_secs),
             discontinuous,
         )
     }
