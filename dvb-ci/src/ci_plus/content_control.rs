@@ -113,7 +113,7 @@ impl Serialize for CcPinReply {
             None => {
                 buf[pos] = (self.reserved.get() << 1) as u8;
                 // else branch: reserved(8).
-                buf[pos + 1] = u8::try_from(self.reserved_lts.get()).unwrap_or(u8::MAX);
+                buf[pos + 1] = self.reserved_lts.get() as u8;
             }
         }
         buf[pos + 2] = self.pincode_status;

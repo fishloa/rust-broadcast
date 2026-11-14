@@ -438,9 +438,7 @@ impl DisplayReply {
         buf[8] = ((g.object_cache_bytes & 0x0F) << 4) | n;
         let mut pos = GFX_FIXED;
         for d in &g.depths {
-            buf[pos] = (d.display_depth << 5)
-                | (d.pixels_per_byte << 2)
-                | u8::try_from(d.reserved.get()).unwrap_or(u8::MAX);
+            buf[pos] = (d.display_depth << 5) | (d.pixels_per_byte << 2) | d.reserved.get() as u8;
             buf[pos + 1] = d.region_overhead;
             pos += 2;
         }

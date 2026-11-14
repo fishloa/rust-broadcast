@@ -239,7 +239,7 @@ impl Serialize for CaPmtReply {
 pub(crate) fn encode_enable_byte(enable: Option<CaEnable>, reserved: ReservedOnes<7>) -> u8 {
     match enable {
         Some(e) => 0x80 | (e.to_u8() & 0x7F),
-        None => u8::try_from(reserved.get()).unwrap_or(u8::MAX),
+        None => reserved.get() as u8,
     }
 }
 

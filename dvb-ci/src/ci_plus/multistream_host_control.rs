@@ -208,7 +208,7 @@ impl Serialize for TuneTripletReq {
         // descriptor_tag_extension when tag==0x7F, else reserved(8).
         buf[pos + 8] = self
             .descriptor_tag_extension
-            .unwrap_or_else(|| u8::try_from(self.reserved_ext.get()).unwrap_or(u8::MAX));
+            .unwrap_or_else(|| self.reserved_ext.get() as u8);
         Ok(pos + TRIPLET_BODY)
     }
 }
@@ -590,7 +590,7 @@ impl Serialize for TunerStatusReply {
             buf[pos + 1] = dsd.delivery_system_descriptor_tag;
             buf[pos + 2] = dsd
                 .descriptor_tag_extension
-                .unwrap_or_else(|| u8::try_from(dsd.reserved_ext.get()).unwrap_or(u8::MAX));
+                .unwrap_or_else(|| dsd.reserved_ext.get() as u8);
             pos += DSD_ENTRY_LEN;
         }
         Ok(pos)

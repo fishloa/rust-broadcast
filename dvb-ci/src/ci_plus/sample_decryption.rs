@@ -364,10 +364,7 @@ impl<'a> SamplePayload<'a> {
                 for track in tracks {
                     // reserved(3) + track_PID(13). Range-checked by
                     // validate(), so no mask is needed to fit the field.
-                    w.u16(
-                        (u16::try_from(track.reserved.get()).unwrap_or(u16::MAX) << 13)
-                            | track.track_pid.value(),
-                    );
+                    w.u16(((track.reserved.get() << 13) as u16) | track.track_pid.value());
                     w.u8(track.records.len() as u8);
                     for rec in &track.records {
                         rec.write_into(w);

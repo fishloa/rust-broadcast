@@ -274,9 +274,8 @@ impl Serialize for CommsInfoReply {
         buf[p..p + 2].copy_from_slice(&self.source_port.to_be_bytes());
         // reserved(3) + inputDeliveryPID(13). Range-checked above.
         buf[p + 2..p + 4].copy_from_slice(
-            &(((u16::try_from(self.reserved_pid.get()).unwrap_or(u16::MAX)) << 13)
-                | self.input_delivery_pid.value())
-            .to_be_bytes(),
+            &(((self.reserved_pid.get() << 13) as u16) | self.input_delivery_pid.value())
+                .to_be_bytes(),
         );
         Ok(pos + INFO_REPLY_BODY)
     }
@@ -508,8 +507,7 @@ impl Serialize for CommsIpConfigReply {
             buf,
         )?;
         // connection_state(2) << 6 + reserved(6).
-        buf[pos] = (self.connection_state.to_u8() << 6)
-            | u8::try_from(self.reserved.get()).unwrap_or(u8::MAX);
+        buf[pos] = (self.connection_state.to_u8() << 6) | self.reserved.get() as u8;
         buf[pos + 1..pos + 1 + MAC_LEN].copy_from_slice(&self.physical_address);
         pos += IP_CONFIG_PREFIX;
         if let Some(c) = &self.ip_config {

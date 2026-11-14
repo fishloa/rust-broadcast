@@ -1128,7 +1128,7 @@ fn input_kind_name(input: &crate::config::InputSpec) -> &'static str {
 
 /// `POST /admin/reload`'s response body — which route names were added,
 /// removed, changed (same name, different config — restarted), or left
-/// completely alone. Build it with [`ReloadSummary::new`].
+/// completely alone. The server builds it; a consumer only reads it.
 #[derive(Debug, serde::Serialize)]
 #[non_exhaustive]
 pub struct ReloadSummary {

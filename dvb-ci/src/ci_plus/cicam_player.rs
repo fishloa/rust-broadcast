@@ -585,8 +585,7 @@ impl Serialize for PlayerCapabilitiesReply {
         pos += CAPABILITIES_PREFIX;
         for c in &self.component_types {
             // stream_content(4) << 4 + reserved(4).
-            buf[pos] = ((c.stream_content & STREAM_CONTENT_MASK) << 4)
-                | u8::try_from(c.reserved.get()).unwrap_or(u8::MAX);
+            buf[pos] = ((c.stream_content & STREAM_CONTENT_MASK) << 4) | c.reserved.get() as u8;
             buf[pos + 1] = c.component_type;
             pos += COMPONENT_TYPE_LEN;
         }
