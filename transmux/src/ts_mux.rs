@@ -313,11 +313,7 @@ const STUFFING_BYTE: u8 = 0xFF;
 /// Media timescale of a Transport Stream / PES clock (90 kHz).
 /// The 90 kHz MPEG-2 Systems clock, both as a `Timescale` and as the `u64`
 /// scaling factor the rate arithmetic below uses.
-const TS_CLOCK: broadcast_common::timescale::Timescale =
-    match broadcast_common::timescale::Timescale::new(90_000) {
-        Some(t) => t,
-        None => unreachable!(),
-    };
+const TS_CLOCK: Timescale = broadcast_common::timescale!(90_000);
 const TS_CLOCK_HZ: u64 = 90_000;
 
 /// A PAT/PMT repetition interval in 90 kHz clock ticks, rounded down; a span

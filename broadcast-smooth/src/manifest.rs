@@ -960,7 +960,7 @@ fn parse_timescale(element: &Elem<Ns>, name: &'static str) -> Result<Option<Time
     raw.trim()
         .parse::<u32>()
         .ok()
-        .and_then(Timescale::new)
+        .and_then(|value| Timescale::try_new(value).ok())
         .map(Some)
         .ok_or_else(|| SmoothParseError::InvalidAttributeValue {
             element: name,
