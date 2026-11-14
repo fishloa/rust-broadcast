@@ -35,8 +35,10 @@ impl Policy {
         stall_peak_us: Micros,
         granularity_us: Micros,
     ) -> Micros {
-        let a = mul_q(baseline_us, self.cfg.k1_q8, Q8_SHIFT).saturating_add(self.cfg.margin_us);
-        let b = mul_q(stall_peak_us, self.cfg.k2_q8, Q8_SHIFT);
+        let a = Micros(
+            mul_q(baseline_us.0, self.cfg.k1_q8, Q8_SHIFT).saturating_add(self.cfg.margin_us.0),
+        );
+        let b = Micros(mul_q(stall_peak_us.0, self.cfg.k2_q8, Q8_SHIFT));
         let c = self.granularity_need_us(granularity_us);
         a.max(b).max(c)
     }
@@ -45,15 +47,15 @@ impl Policy {
     /// `max(k1 * baseline + margin, k2 * stall_peak)`.
     #[must_use]
     pub fn need_us(&self, baseline_us: Micros, stall_peak_us: Micros) -> Micros {
-        self.need_with_granularity_us(baseline_us, stall_peak_us, 0)
+        self.need_with_granularity_us(baseline_us, stall_peak_us, Micros::ZERO)
     }
 
     /// The delivery-granularity floor: `granularity + margin`, 0 when there is
     /// no granularity to cover.
     #[must_use]
     pub fn granularity_need_us(&self, granularity_us: Micros) -> Micros {
-        if granularity_us == 0 {
-            0
+        if granularity_us == Micros::ZERO {
+            Micros::ZERO
         } else {
             granularity_us.saturating_add(self.cfg.margin_us)
         }
@@ -73,7 +75,7 @@ impl Policy {
         let fall =
             u128::from(self.cfg.max_step_down_us_per_s) * u128::from(dt) / u128::from(US_PER_S);
         let fall = u64::try_from(fall).unwrap_or(u64::MAX);
-        self.target = raw.max(self.target.saturating_sub(fall));
+        self.target = raw.max(self.target.saturating_sub(Micros(fall)));
         self.last_t = Some(now_us);
         self.target
     }
@@ -104,10 +106,11 @@ impl Policy {
     /// Post-stall resume threshold: `clamp(max(target, after_rebuffer * stall_peak))`.
     #[must_use]
     pub fn resume_us(&self, stall_peak_us: Micros) -> Micros {
-        self.clamp(
-            self.target
-                .max(mul_q(stall_peak_us, self.cfg.after_rebuffer_q8, Q8_SHIFT)),
-        )
+        self.clamp(self.target.max(Micros(mul_q(
+            stall_peak_us.0,
+            self.cfg.after_rebuffer_q8,
+            Q8_SHIFT,
+        ))))
     }
 
     /// The configured cap.

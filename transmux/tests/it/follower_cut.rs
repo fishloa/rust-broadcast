@@ -10,6 +10,7 @@
 #![cfg(feature = "std")]
 
 use broadcast_common::Unpackage;
+use broadcast_common::timescale::Timescale;
 use transmux::ll_hls::{CutPlan, LlHlsSegmenter, PartCut, PartInfo, SegmentInfo};
 use transmux::media::{Media, Track};
 use transmux::segmenter::MAX_PENDING_SAMPLES_PER_TRACK;
@@ -18,6 +19,7 @@ use transmux::{
 };
 
 const LEADER_TS: u32 = 90_000;
+const LEADER_SCALE: Timescale = Timescale::from_nonzero(LEADER_TS);
 const AAC_FRAME_TICKS: i64 = 1024;
 const AAC_RATE: u32 = 48_000;
 const LEADER_TICKS_PER_8_FOLLOWER_TICKS: i64 = 15;
@@ -80,8 +82,13 @@ fn concat(samples: &[&Sample]) -> Vec<u8> {
     samples.iter().flat_map(|s| s.data.to_vec()).collect()
 }
 
-fn opens_next(dts: i64, track_ts: u32, start: i64, start_ts: u32) -> bool {
-    i128::from(dts) * i128::from(start_ts) >= i128::from(start) * i128::from(track_ts)
+fn opens_next(
+    dts: i64,
+    track_ts: u32,
+    start: i64,
+    start_ts: broadcast_common::timescale::Timescale,
+) -> bool {
+    i128::from(dts) * i128::from(start_ts.get()) >= i128::from(start) * i128::from(track_ts)
 }
 
 /// Index of the plan whose segment the sample starts in: the count of later
@@ -99,11 +106,7 @@ fn part_slot_of(dts: i64, track_ts: u32, plan: &CutPlan) -> usize {
         .unwrap_or_default()
         .iter()
         .take_while(|p| {
-            let ts = if p.timescale == 0 {
-                plan.timescale
-            } else {
-                p.timescale
-            };
+            let ts = p.timescale.unwrap_or(plan.timescale);
             opens_next(dts, track_ts, p.start, ts)
         })
         .count()
@@ -111,7 +114,7 @@ fn part_slot_of(dts: i64, track_ts: u32, plan: &CutPlan) -> usize {
 
 fn run_follower(
     audio: &Track,
-    movie_ts: u32,
+    movie_ts: Timescale,
     plans: &[CutPlan],
 ) -> (Vec<u8>, Vec<PartInfo>, Vec<SegmentInfo>) {
     let mut f = LlHlsSegmenter::with_part_target(
@@ -133,7 +136,7 @@ fn run_follower(
     (init, f.take_ready_parts(), f.take_ready_segments())
 }
 
-fn leader_plans(video: &Track, movie_ts: u32) -> Vec<CutPlan> {
+fn leader_plans(video: &Track, movie_ts: Timescale) -> Vec<CutPlan> {
     let mut l = LlHlsSegmenter::with_part_target(
         vec![video.spec.clone()],
         movie_ts,
@@ -173,13 +176,13 @@ fn demux(name: &str) -> Media {
 }
 
 /// Full alignment contract of one follower against one leader.
-fn check_follower(audio: &Track, movie_ts: u32, plans: &[CutPlan]) {
+fn check_follower(audio: &Track, movie_ts: Timescale, plans: &[CutPlan]) {
     assert!(
         plans.len() >= 2,
         "fixture must yield several leader segments"
     );
     let (init, parts, segs) = run_follower(audio, movie_ts, plans);
-    let ts = audio.spec.timescale;
+    let ts = audio.spec.timescale.get();
 
     assert_eq!(trak_count(&init), 1, "follower init carries only its trak");
     assert_no_errors("follower init", &validate_init_segment(&init));
@@ -190,7 +193,7 @@ fn check_follower(audio: &Track, movie_ts: u32, plans: &[CutPlan]) {
         .map(|p| vec![Vec::new(); p.parts.len().max(1)])
         .collect();
     for s in &audio.samples {
-        let d = s.dts.unwrap();
+        let d = s.timing.map(|t| t.dts).unwrap();
         let si = segment_of(d, ts, plans);
         expected_segment[si].push(s);
         expected_part[si][part_slot_of(d, ts, &plans[si])].push(s);
@@ -226,7 +229,7 @@ fn check_follower(audio: &Track, movie_ts: u32, plans: &[CutPlan]) {
             &validate_media_segment(&seg.bytes),
         );
         if si > 0 {
-            let first = expected[0].dts.unwrap();
+            let first = expected[0].timing.map(|t| t.dts).unwrap();
             assert!(
                 opens_next(first, ts, plans[si].segment_start, plans[si].timescale),
                 "first sample of segment {} starts at or after the leader start",
@@ -234,7 +237,7 @@ fn check_follower(audio: &Track, movie_ts: u32, plans: &[CutPlan]) {
             );
         }
         if let Some(next) = plans.get(si + 1) {
-            let last = expected.last().unwrap().dts.unwrap();
+            let last = expected.last().unwrap().timing.map(|t| t.dts).unwrap();
             assert!(
                 !opens_next(last, ts, next.segment_start, next.timescale),
                 "last sample of segment {} starts before the next leader start",
@@ -292,7 +295,7 @@ fn check_fixture(name: &str) {
     let plans = leader_plans(video, ir.movie_timescale);
     assert_eq!(
         plans[0].segment_start,
-        video.samples[0].dts.unwrap(),
+        video.samples[0].timing.map(|t| t.dts).unwrap(),
         "leader cuts are absolute decode times"
     );
     for pair in plans.windows(2) {
@@ -301,7 +304,7 @@ fn check_fixture(name: &str) {
             video
                 .samples
                 .iter()
-                .any(|s| s.dts == Some(boundary) && s.flags.is_sync),
+                .any(|s| s.timing.map(|t| t.dts) == Some(boundary) && s.flags.is_sync),
             "segment {} starts on a video sync sample",
             pair[1].segment_seq
         );
@@ -339,7 +342,7 @@ fn france2_each_eac3_track_aligns_with_leader() {
     check_fixture("ts/france2.ts");
 }
 
-fn audio_template() -> (Track, u32) {
+fn audio_template() -> (Track, Timescale) {
     let ir = demux("ts/h264-aac.ts");
     let movie_ts = ir.movie_timescale;
     let mut track = ir
@@ -347,7 +350,7 @@ fn audio_template() -> (Track, u32) {
         .into_iter()
         .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
         .unwrap();
-    track.spec.timescale = AAC_RATE;
+    track.spec.timescale = Timescale::from_nonzero(AAC_RATE);
     (track, movie_ts)
 }
 
@@ -384,6 +387,7 @@ fn plan(seq: u32, start_follower_ticks: i64) -> CutPlan {
         LEADER_TS,
         Vec::new(),
     )
+    .expect("plan")
 }
 
 #[test]
@@ -406,9 +410,9 @@ fn frame_straddling_boundary_stays_in_segment_where_it_starts() {
     let b2 = leader_ticks(10 * 1024) + 1;
     let b3 = leader_ticks(20 * 1024) - 1;
     let plans = [
-        CutPlan::new(1, 0, LEADER_TS, Vec::new()),
-        CutPlan::new(2, b2, LEADER_TS, Vec::new()),
-        CutPlan::new(3, b3, LEADER_TS, Vec::new()),
+        CutPlan::new(1, 0, LEADER_TS, Vec::new()).expect("plan"),
+        CutPlan::new(2, b2, LEADER_TS, Vec::new()).expect("plan"),
+        CutPlan::new(3, b3, LEADER_TS, Vec::new()).expect("plan"),
     ];
     let (_, segs) = synthetic(frames(0..30), &plans);
     assert_eq!(segs.len(), 3);
@@ -420,11 +424,14 @@ fn frame_straddling_boundary_stays_in_segment_where_it_starts() {
 #[test]
 fn sample_starting_exactly_on_part_boundary_opens_next_part() {
     let cuts = vec![
-        PartCut::new(0, 0, LEADER_TS),
-        PartCut::new(1, leader_ticks(5 * 1024), LEADER_TS),
-        PartCut::new(2, leader_ticks(10 * 1024), LEADER_TS),
+        PartCut::new(0, 0, Some(LEADER_SCALE)),
+        PartCut::new(1, leader_ticks(5 * 1024), Some(LEADER_SCALE)),
+        PartCut::new(2, leader_ticks(10 * 1024), Some(LEADER_SCALE)),
     ];
-    let plans = [CutPlan::new(1, 0, LEADER_TS, cuts), plan(2, 15 * 1024)];
+    let plans = [
+        CutPlan::new(1, 0, LEADER_TS, cuts).expect("plan"),
+        plan(2, 15 * 1024),
+    ];
     let (parts, segs) = synthetic(frames(0..20), &plans);
     assert_eq!(segs.len(), 2);
     assert_eq!(segs[0].part_count, 3);
@@ -442,10 +449,10 @@ fn sample_starting_exactly_on_part_boundary_opens_next_part() {
 #[test]
 fn frame_straddling_part_boundary_stays_in_part_where_it_starts() {
     let cuts = vec![
-        PartCut::new(0, 0, LEADER_TS),
-        PartCut::new(1, leader_ticks(5 * 1024) + 1, LEADER_TS),
+        PartCut::new(0, 0, Some(LEADER_SCALE)),
+        PartCut::new(1, leader_ticks(5 * 1024) + 1, Some(LEADER_SCALE)),
     ];
-    let plans = [CutPlan::new(1, 0, LEADER_TS, cuts)];
+    let plans = [CutPlan::new(1, 0, LEADER_TS, cuts).expect("plan")];
     let (parts, _) = synthetic(frames(0..10), &plans);
     assert_eq!(parts.len(), 2);
     assert_eq!(mdat_payload(&parts[0].bytes), payload_of(0..6));
@@ -538,9 +545,11 @@ fn follow_rejects_invalid_plans_with_typed_errors() {
         .unwrap()
     };
 
+    // A zero plan timescale is refused by the constructor, with a typed
+    // error, not flattened to 1 Hz.
     assert_eq!(
-        new().follow(CutPlan::new(1, 0, 0, Vec::new())).unwrap_err(),
-        Error::InvalidInput("follow: plan timescale must be > 0")
+        CutPlan::new(1, 0, 0, Vec::new()).unwrap_err(),
+        Error::InvalidInput("cut plan timescale must be > 0")
     );
 
     let mut f = new();
@@ -552,12 +561,12 @@ fn follow_rejects_invalid_plans_with_typed_errors() {
     assert_eq!(f.follow(plan(6, 400)).unwrap_err(), expected);
 
     let backwards = vec![
-        PartCut::new(0, 90, LEADER_TS),
-        PartCut::new(1, 10, LEADER_TS),
+        PartCut::new(0, 90, Some(LEADER_SCALE)),
+        PartCut::new(1, 10, Some(LEADER_SCALE)),
     ];
     assert_eq!(
         new()
-            .follow(CutPlan::new(1, 0, LEADER_TS, backwards))
+            .follow(CutPlan::new(1, 0, LEADER_TS, backwards).expect("plan"))
             .unwrap_err(),
         Error::InvalidInput("follow: part starts must be non-decreasing")
     );
@@ -640,7 +649,7 @@ fn follower_with_origin(origin_frame: i64) -> LlHlsSegmenter {
         PART_TARGET_MS,
     )
     .unwrap();
-    f.set_timeline_origin(leader_ticks(origin_frame * AAC_FRAME_TICKS), LEADER_TS);
+    f.set_timeline_origin(leader_ticks(origin_frame * AAC_FRAME_TICKS), LEADER_SCALE);
     f
 }
 
@@ -722,9 +731,9 @@ fn incremental_part_cuts_match_whole_segment() {
     let mut incremental_parts: Vec<PartInfo> = Vec::new();
     for cut in &part_cuts {
         while let Some(sample) = audio.samples.get(next_sample)
-            && sample
-                .dts
-                .is_some_and(|d| !opens_next(d, audio.spec.timescale, cut.start_dts, cut.timescale))
+            && sample.timing.map(|t| t.dts).is_some_and(|d| {
+                !opens_next(d, audio.spec.timescale.get(), cut.start_dts, cut.timescale)
+            })
         {
             incremental
                 .push(audio.spec.track_id, sample.clone())
@@ -793,8 +802,8 @@ fn part_follower() -> LlHlsSegmenter {
 fn follow_part_holds_a_part_until_a_sample_reaches_the_next_boundary() {
     let mut f = part_follower();
     let track_id = audio_template().0.spec.track_id;
-    f.follow_part(1, 0, 0, LEADER_TS).unwrap();
-    f.follow_part(1, 1, leader_ticks(4 * 1024), LEADER_TS)
+    f.follow_part(1, 0, 0, LEADER_SCALE).unwrap();
+    f.follow_part(1, 1, leader_ticks(4 * 1024), LEADER_SCALE)
         .unwrap();
     for n in 0..4 {
         f.push(track_id, frame(n)).unwrap();
@@ -814,11 +823,11 @@ fn follow_part_holds_a_part_until_a_sample_reaches_the_next_boundary() {
 fn follow_part_closes_the_previous_segment_at_the_new_boundary() {
     let mut f = part_follower();
     let track_id = audio_template().0.spec.track_id;
-    f.follow_part(1, 0, 0, LEADER_TS).unwrap();
+    f.follow_part(1, 0, 0, LEADER_SCALE).unwrap();
     for n in 0..8 {
         f.push(track_id, frame(n)).unwrap();
     }
-    f.follow_part(2, 0, leader_ticks(6 * 1024), LEADER_TS)
+    f.follow_part(2, 0, leader_ticks(6 * 1024), LEADER_SCALE)
         .unwrap();
     let segs = f.take_ready_segments();
     assert_eq!(segs.len(), 1);
@@ -833,18 +842,17 @@ fn follow_part_closes_the_previous_segment_at_the_new_boundary() {
 #[test]
 fn follow_part_rejects_invalid_boundaries_with_typed_errors() {
     let mut f = part_follower();
-    assert!(matches!(
-        f.follow_part(1, 0, 0, 0),
-        Err(Error::InvalidInput(_))
-    ));
-    f.follow_part(2, 0, leader_ticks(8 * 1024), LEADER_TS)
+    // A zero timescale is refused by the type, not by a runtime check here:
+    // `follow_part` takes a non-zero `Timescale`.
+    assert!(Timescale::new(0).is_none());
+    f.follow_part(2, 0, leader_ticks(8 * 1024), LEADER_SCALE)
         .unwrap();
     assert!(matches!(
-        f.follow_part(1, 0, leader_ticks(16 * 1024), LEADER_TS),
+        f.follow_part(1, 0, leader_ticks(16 * 1024), LEADER_SCALE),
         Err(Error::InvalidInput(_))
     ));
     assert!(matches!(
-        f.follow_part(2, 1, leader_ticks(4 * 1024), LEADER_TS),
+        f.follow_part(2, 1, leader_ticks(4 * 1024), LEADER_SCALE),
         Err(Error::InvalidInput(_))
     ));
 }
@@ -853,8 +861,8 @@ fn follow_part_rejects_invalid_boundaries_with_typed_errors() {
 fn follow_part_buffer_overflow_is_a_typed_error() {
     let mut f = part_follower();
     let track_id = audio_template().0.spec.track_id;
-    f.follow_part(1, 0, 0, LEADER_TS).unwrap();
-    f.follow_part(1, 1, leader_ticks(1 << 40), LEADER_TS)
+    f.follow_part(1, 0, 0, LEADER_SCALE).unwrap();
+    f.follow_part(1, 1, leader_ticks(1 << 40), LEADER_SCALE)
         .unwrap();
     let mut result = Ok(());
     for n in 0..=MAX_PENDING_SAMPLES_PER_TRACK as i64 {

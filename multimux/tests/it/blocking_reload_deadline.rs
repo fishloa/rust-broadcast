@@ -39,7 +39,7 @@ impl Feeder {
             RouteHandle::new(
                 RouteConfig::default()
                     .with_target_duration_secs(TARGET_DURATION_SECS)
-                    .with_part_target_ms(PART_TARGET_MS)
+                    .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                     .with_window_segments(8),
             )
             .with_declared_bandwidth_bps(5_000_000),
@@ -47,7 +47,7 @@ impl Feeder {
         let config = avc_config_from_sprop(SPROP).expect("valid sprop");
         let spec = TrackSpec::new(
             TrackId::new(1),
-            transmux::VIDEO_CLOCK_RATE,
+            transmux::VIDEO_CLOCK_TIMESCALE,
             CodecConfig::Avc {
                 config,
                 width: 0,
@@ -56,7 +56,7 @@ impl Feeder {
         );
         let seg = LlHlsSegmenter::with_part_target(
             vec![spec],
-            transmux::VIDEO_CLOCK_RATE,
+            transmux::VIDEO_CLOCK_TIMESCALE,
             TARGET_DURATION_SECS,
             PART_TARGET_MS,
         )

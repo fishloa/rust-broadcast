@@ -1,4 +1,5 @@
 pub const PACKET: usize = 188;
+
 pub const SYNC_BYTE: u8 = 0x47;
 pub const PTS_WRAP: i64 = 1 << 33;
 #[cfg(feature = "test-seams")]

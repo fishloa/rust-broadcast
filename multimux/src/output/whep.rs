@@ -112,6 +112,7 @@ use transmux::ir::Track;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::{
     DEFAULT_AUDIO_PT, DEFAULT_MTU, DEFAULT_VIDEO_PT, RtpPacket, RtpPacketiser, VIDEO_CLOCK_RATE,
+    VIDEO_CLOCK_TIMESCALE,
 };
 
 use webrtc_runtime::media::{
@@ -1010,7 +1011,7 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
 fn whep_avc_track_spec() -> TrackSpec {
     TrackSpec::new(
         TrackId::new(1),
-        VIDEO_CLOCK_RATE,
+        VIDEO_CLOCK_TIMESCALE,
         CodecConfig::Avc {
             config: transmux::AVCConfigurationBox::new(transmux::AVCDecoderConfigurationRecord {
                 configuration_version: 1,
@@ -1056,8 +1057,8 @@ fn trunk_with_avc_track() -> Arc<Trunk> {
 /// long-running session's large absolute tick count.
 /// RTP timestamps are modulo 2^32 (RFC 3550 §5.1), so the rescaled
 /// value wraps into the 32-bit range before it is placed in the header.
-fn rescale_to_90k(ticks: u64, from_timescale: u32) -> u32 {
-    transmux::rtp::rescale_ts(ticks, from_timescale, VIDEO_CLOCK_RATE)
+fn rescale_to_90k(ticks: u64, from_timescale: broadcast_common::timescale::Timescale) -> u32 {
+    transmux::rtp::rescale_ts(ticks, from_timescale, VIDEO_CLOCK_TIMESCALE)
 }
 
 /// Overwrites an RTP packet's `sequence number` and `timestamp` fields on
@@ -1246,7 +1247,7 @@ async fn send_sample(
     session: &SessionMedia<'_>,
     sample: &Sample,
 ) {
-    let Some(dts) = sample.dts else {
+    let Some(dts) = sample.timing.map(|t| t.dts) else {
         return;
     };
     let timestamp = rescale_to_90k(dts.max(0) as u64, session.spec.timescale);
@@ -1762,6 +1763,7 @@ pub async fn run_whep_on_probed_with_limits(
 mod tests {
     use super::*;
     use crate::webrtc_session::Resource;
+    use broadcast_common::timescale::Timescale;
     use tokio::io::AsyncWriteExt as _;
     use tokio::net::TcpStream;
 
@@ -1860,18 +1862,27 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
 
     #[test]
     fn rescale_to_90k_is_identity_at_90k() {
-        assert_eq!(rescale_to_90k(12345, VIDEO_CLOCK_RATE), 12345);
+        assert_eq!(
+            rescale_to_90k(12345, Timescale::from_nonzero(VIDEO_CLOCK_RATE)),
+            12345
+        );
     }
 
     #[test]
     fn rescale_to_90k_scales_a_different_timescale() {
         // 1 second at a 1000 Hz timescale -> 1 second at 90 kHz.
-        assert_eq!(rescale_to_90k(1000, 1000), VIDEO_CLOCK_RATE);
+        assert_eq!(
+            rescale_to_90k(1000, Timescale::from_nonzero(1000)),
+            VIDEO_CLOCK_RATE
+        );
     }
     #[test]
     fn rescale_to_90k_wraps_modulo_2_pow_32() {
         let ticks = u64::from(u32::MAX) + 1;
-        assert_eq!(rescale_to_90k(ticks, VIDEO_CLOCK_RATE), 0);
+        assert_eq!(
+            rescale_to_90k(ticks, Timescale::from_nonzero(VIDEO_CLOCK_RATE)),
+            0
+        );
     }
 
     #[test]
@@ -2157,7 +2168,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
     fn test_track_spec() -> TrackSpec {
         TrackSpec::new(
             TrackId::new(1),
-            VIDEO_CLOCK_RATE,
+            Timescale::from_nonzero(VIDEO_CLOCK_RATE),
             CodecConfig::Avc {
                 config: transmux::AVCConfigurationBox::new(
                     transmux::AVCDecoderConfigurationRecord {

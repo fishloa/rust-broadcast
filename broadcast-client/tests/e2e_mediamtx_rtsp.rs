@@ -14,6 +14,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 use test_fixtures::process::free_tcp_port;
 
+use broadcast_common::stage::Timestamp;
+
+/// The test's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 use broadcast_client::{Action, AvSync, BufferEvent, Config, Event, Session, Status};
 use broadcast_common::Unpackage;
 use transmux::{CodecConfig, TsDemux};
@@ -497,13 +503,13 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
         std::collections::BTreeMap::new();
     let mut config = Config::default();
     config.record_buffer_inputs = true;
-    let mut session = Session::open(&url, config, 0).expect("open");
+    let mut session = Session::open(&url, config, ts(0)).expect("open");
     let mut stream: Option<(u32, TcpStream)> = None;
     let mut events = Vec::new();
     let mut buf = vec![0u8; READ_CHUNK];
     while started.elapsed() < RUN {
         let now = micros(started);
-        while let Some(action) = session.poll(now) {
+        while let Some(action) = session.poll(ts(now)) {
             match action {
                 Action::TcpConnect {
                     conn, host, port, ..
@@ -514,7 +520,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
                         stream = Some((conn, s));
                         session.on_connected(conn);
                     }
-                    Err(_) => session.on_closed(conn, None, now),
+                    Err(_) => session.on_closed(conn, None, ts(now)),
                 },
                 Action::Send { conn, bytes } => {
                     if let Some((c, s)) = stream.as_mut()
@@ -534,11 +540,11 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
                 Ok(0) => {
                     let conn = *conn;
                     stream = None;
-                    session.on_closed(conn, None, micros(started));
+                    session.on_closed(conn, None, ts(micros(started)));
                 }
                 Ok(n) => {
                     wire.feed(&buf[..n], micros(started));
-                    session.on_data(*conn, &buf[..n], micros(started));
+                    session.on_data(*conn, &buf[..n], ts(micros(started)));
                 }
                 Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
                 Err(e) => panic!("read: {e}"),
@@ -547,7 +553,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
             thread::sleep(READ_TIMEOUT);
         }
         let now = micros(started);
-        session.on_playback_position(now, None);
+        session.on_playback_position(ts(now), None);
         while let Some(e) = session.next_event() {
             match &e {
                 Event::Status(crate::Status::Live) if first_live_us.is_none() => {
@@ -559,7 +565,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
                             s.track_id.value(),
                             u8::try_from(index).expect("track index") * CHANNELS_PER_TRACK,
                         );
-                        track_timescale.insert(s.track_id.value(), s.timescale);
+                        track_timescale.insert(s.track_id.value(), s.timescale.get());
                         let is_video = matches!(s.config, transmux::CodecConfig::Avc { .. });
                         track_is_video.insert(s.track_id.value(), is_video);
                     }
@@ -569,23 +575,23 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
                     let tid = track.value();
                     let is_video = track_is_video.get(&tid).copied().unwrap_or(false);
                     let now = micros(started);
-                    if !is_video && sample.pts.is_some() {
+                    if !is_video && sample.timing.map(|t| t.pts).is_some() {
                         audio_count += 1;
                     }
                     if is_video {
                         if first_video_sample_us.is_none() {
                             first_video_sample_us = Some(now);
-                            first_video_sample_pts = sample.pts;
+                            first_video_sample_pts = sample.timing.map(|t| t.pts);
                         }
                         if sample.flags.is_sync && first_video_keyframe_us.is_none() {
                             first_video_keyframe_us = Some(now);
-                            first_video_keyframe_pts = sample.pts;
+                            first_video_keyframe_pts = sample.timing.map(|t| t.pts);
                         }
                     } else if first_audio_sample_us.is_none() {
                         first_audio_sample_us = Some(now);
-                        first_audio_sample_pts = sample.pts;
+                        first_audio_sample_pts = sample.timing.map(|t| t.pts);
                     }
-                    if let Some(pts) = sample.pts {
+                    if let Some(pts) = sample.timing.map(|t| t.pts) {
                         let ts = track_timescale.get(&tid).copied().unwrap_or(1).max(1);
                         let seconds = pts as f64 / f64::from(ts);
                         first_sample_pts.entry(tid).or_insert(pts);
@@ -596,7 +602,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
                         }
                         let slot = max_pts_seconds.entry(is_video).or_insert(seconds);
                         *slot = slot.max(seconds);
-                        let dur = i64::from(sample.duration.unwrap_or(0));
+                        let dur = i64::from(sample.timing.map(|t| t.duration).unwrap_or(0));
                         let end27 = (i128::from(pts + dur) * i128::from(27_000_000i64)
                             / i128::from(ts)) as u64;
                         last_media_end_27.insert(tid, end27);
@@ -652,7 +658,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
     let zero_indices: Vec<usize> = samples
         .iter()
         .enumerate()
-        .filter(|(_, (_, s))| s.duration.unwrap_or(0) == 0)
+        .filter(|(_, (_, s))| s.timing.map(|t| t.duration).unwrap_or(0) == 0)
         .map(|(i, _)| i)
         .collect();
     if !zero_indices.is_empty() {
@@ -670,9 +676,9 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
                     format!(
                         "prev track={} pts={} dts={} dur={:?}",
                         ptr,
-                        ps.pts.unwrap_or(0),
-                        ps.dts.unwrap_or(0),
-                        ps.duration
+                        ps.timing.map(|t| t.pts).unwrap_or(0),
+                        ps.timing.map(|t| t.dts).unwrap_or(0),
+                        ps.timing.map(|t| t.duration)
                     )
                 })
                 .unwrap_or_else(|| "prev=none".to_string());
@@ -682,9 +688,9 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
                     format!(
                         "next track={} pts={} dts={} dur={:?}",
                         ntr,
-                        ns.pts.unwrap_or(0),
-                        ns.dts.unwrap_or(0),
-                        ns.duration
+                        ns.timing.map(|t| t.pts).unwrap_or(0),
+                        ns.timing.map(|t| t.dts).unwrap_or(0),
+                        ns.timing.map(|t| t.duration)
                     )
                 })
                 .unwrap_or_else(|| "next=none".to_string());
@@ -692,9 +698,9 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
                 "  idx={} track={} pts={} dts={} dur={:?} | {} | {}",
                 i,
                 tr,
-                s.pts.unwrap_or(0),
-                s.dts.unwrap_or(0),
-                s.duration,
+                s.timing.map(|t| t.pts).unwrap_or(0),
+                s.timing.map(|t| t.dts).unwrap_or(0),
+                s.timing.map(|t| t.duration),
                 prev,
                 next
             );
@@ -928,9 +934,10 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
 #[cfg(feature = "test-seams")]
 fn print_lead_series(label: &str, session: &Session) {
     use broadcast_client::BufferInput;
+    use buffering_runtime::Ticks27;
     use std::collections::BTreeMap;
-    let mut end: BTreeMap<u32, u64> = BTreeMap::new();
-    let mut origin: Option<u64> = None;
+    let mut end: BTreeMap<u32, Ticks27> = BTreeMap::new();
+    let mut origin: Option<Ticks27> = None;
     let mut next_print = 0u64;
     for input in session.buffer_input_log() {
         match input {
@@ -945,20 +952,20 @@ fn print_lead_series(label: &str, session: &Session) {
             } => {
                 origin = origin.or(Some(*e));
                 end.insert(*track, *e);
-                if *now_us >= next_print {
-                    next_print = now_us + 250_000;
-                    let o = origin.unwrap_or(0);
+                if now_us.0 >= next_print {
+                    next_print = now_us.0 + 250_000;
+                    let o = origin.map_or(0, |o| o.0);
                     let per: Vec<String> = end
                         .iter()
-                        .map(|(t, e)| format!("t{t}_end={}ms", (*e as i128 - o as i128) / 27_000))
+                        .map(|(t, e)| format!("t{t}_end={}ms", (e.0 as i128 - o as i128) / 27_000))
                         .collect();
                     let lead = end
                         .values()
                         .min()
-                        .map_or(0, |m| (*m as i128 - o as i128) / 27_000);
+                        .map_or(0, |m| (m.0 as i128 - o as i128) / 27_000);
                     eprintln!(
                         "LEAD[{label}] at={}ms {} min_lead={}ms",
-                        now_us / 1000,
+                        now_us.0 / 1000,
                         per.join(" "),
                         lead
                     );

@@ -2,6 +2,7 @@
 //! `pasp` and `colr nclx` are applied to `TrackSpec::display`.
 
 use broadcast_common::Unpackage;
+use broadcast_common::timescale::Timescale;
 use transmux::TrackSpec;
 use transmux::ir::{
     AspectRatioIdc, CodecConfig, ColourDescription, DisplayGeometry, VideoFormat, VideoSignalType,
@@ -40,7 +41,8 @@ fn demux_display(bytes: &[u8]) -> Option<DisplayGeometry> {
 }
 
 fn build(spec: TrackSpec) -> Vec<u8> {
-    pipeline::build_init_segment(&[spec], 90000).expect("build_init_segment")
+    pipeline::build_init_segment(&[spec], Timescale::from_nonzero(90000))
+        .expect("build_init_segment")
 }
 #[test]
 fn pasp_fills_unspecified_sar() {

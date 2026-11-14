@@ -69,8 +69,10 @@ use alloc::vec::Vec;
 use broadcast_common::error::InvalidValue;
 use mpeg_ts::pid::Pid;
 
+#[cfg(test)]
+use broadcast_common::crc32_mpeg2;
 use broadcast_common::timescale::{Rounding, rescale_u64};
-use broadcast_common::{Package, crc32_mpeg2};
+use broadcast_common::{Package, Serialize};
 use mpeg_pes::{Pts as PesPts, StreamId};
 use mpeg_ts::mux::SectionPacketiser;
 use mpeg_ts::ts::{
@@ -96,15 +98,13 @@ const ES_PID_BASE: Pid = Pid::from_const(0x0100);
 /// `program_number` assigned to the single program.
 const PROGRAM_NUMBER: u16 = 1;
 /// `table_id` of a PAT section (§2.4.4.4, Table 2-31).
+#[cfg(test)]
 const TABLE_ID_PAT: u8 = 0x00;
 /// `table_id` of a PMT section (§2.4.4.9, Table 2-31).
+#[cfg(test)]
 const TABLE_ID_PMT: u8 = 0x02;
-/// Trailing `CRC_32` length on every long-form PSI section (§2.4.4.1).
-const CRC32_LEN: usize = 4;
-/// `section_syntax_indicator`(1)=1 | private(1)=0 | reserved(2)=11 → 0xB0,
-/// combined into the high byte of the 2-byte flags/`section_length` field.
-const SECTION_SYNTAX_FLAGS_HI: u8 = 0xB0;
 /// Mask for the low 4 bits of the 12-bit `section_length` high byte.
+#[cfg(test)]
 const SECTION_LENGTH_HI_MASK: u8 = 0x0F;
 /// Maximum `section_length` this crate accepts (§2.4.4.9): the 12-bit wire
 /// field can encode up to 4095, but §2.4.4.4 additionally bounds every
@@ -113,23 +113,8 @@ const SECTION_LENGTH_HI_MASK: u8 = 0x0F;
 /// rejected rather than emitting an out-of-spec section or, past 4095,
 /// silently wrapping the length field.
 const MAX_SECTION_LENGTH: usize = 0x3FD;
-/// `version_number`(5)=0 | `current_next_indicator`(1)=1, with the two leading
-/// reserved bits set to 1 (`11` per the spec reserved convention) → 0xC1.
-const VERSION_CURRENT_NEXT: u8 = 0xC1;
 /// `version_number` is a 5-bit field (§2.4.4.9), so it increments modulo 32.
 const SECTION_VERSION_MODULUS: u8 = 32;
-/// The two reserved bits (`11`) and `current_next_indicator`(1)=1 around the
-/// 5-bit `version_number`, which sits at bits `[5:1]`.
-const VERSION_FIELD_FIXED_BITS: u8 = 0xC1;
-/// Bit position of `version_number` within the version/cni byte.
-const VERSION_FIELD_SHIFT: u32 = 1;
-/// Reserved 3-bit prefix (all 1s) on the 13-bit `network_PID` / `program_map_PID`
-/// / `PCR_PID` / `elementary_PID` fields (§2.4.4.4 / §2.4.4.9).
-const PID_RESERVED_HI: u8 = 0xE0;
-/// Reserved 4-bit prefix (all 1s) on the 12-bit `program_info_length` /
-/// `ES_info_length` fields (§2.4.4.9) — combined into their high byte.
-const INFO_RESERVED_HI: u8 = 0xF0;
-
 // ── stream_type → codec (ISO/IEC 13818-1 Table 2-34 + ETSI TS 101 154) ──────
 
 /// MPEG-2 video (ITU-T H.262 / ISO/IEC 13818-2) — ISO/IEC 13818-1 Table 2-34
@@ -325,6 +310,13 @@ const PCR_FIELD_LEN: usize = 6;
 const STUFFING_BYTE: u8 = 0xFF;
 
 /// Media timescale of a Transport Stream / PES clock (90 kHz).
+/// The 90 kHz MPEG-2 Systems clock, both as a `Timescale` and as the `u64`
+/// scaling factor the rate arithmetic below uses.
+const TS_CLOCK: broadcast_common::timescale::Timescale =
+    match broadcast_common::timescale::Timescale::new(90_000) {
+        Some(t) => t,
+        None => unreachable!(),
+    };
 const TS_CLOCK_HZ: u64 = 90_000;
 /// 33-bit PTS/DTS modulus (90 kHz clock, §2.4.3.7) — alias of
 /// [`broadcast_common::clock33::WRAP_33BIT`], the shared owner.
@@ -614,7 +606,7 @@ impl Package for TsMux {
 /// [`package`](Package::package) calls instead:
 ///
 /// - **Continuity counters** (ISO/IEC 13818-1 §2.4.3.3) continue on every PID.
-/// - **One time origin**: the earliest first-sample [`Sample::dts`] in the first
+/// - **One time origin**: the earliest first-sample `Sample::timing` (`.dts`) in the first
 ///   call that carries one; every later sample is stamped from its own absolute
 ///   `dts`/`pts` shifted by that same origin, so successive calls continue one
 ///   monotonic timeline and inter-track offsets survive. A sample decoding
@@ -681,7 +673,7 @@ impl Package for StreamingTsMux {
         let has_dts = media
             .tracks
             .iter()
-            .any(|t| t.samples.iter().any(|s| s.dts.is_some()));
+            .any(|t| t.samples.iter().any(|s| s.timing.map(|t| t.dts).is_some()));
         if !has_dts && self.origin.is_none() {
             // Nothing to anchor the timeline on yet; emit nothing rather than
             // fixing a bogus origin of 0.
@@ -942,7 +934,7 @@ fn hevc_parameter_sets(
 /// PAT (PID `0x0000`) + PMT, then the DTS-interleaved PES packets for the
 /// per-track `samples` (`samples[i]` is the sample slice for `tracks[i]`).
 ///
-/// Each sample is stamped from its own absolute [`Sample::dts`]/[`Sample::pts`],
+/// Each sample is stamped from its own absolute `Sample::timing` (`.dts`)/`Sample::timing` (`.pts`),
 /// shifted by one origin common to every track (the earliest first-sample
 /// DTS), so inter-track offsets and gaps survive (issue #1020). `TsMux` calls
 /// it once over the whole input.
@@ -998,7 +990,7 @@ pub(crate) fn mux_tracks_at_continuing(
             ss.iter()
                 .map(|s| {
                     let now = t;
-                    t = t.saturating_add(i64::from(s.duration.unwrap_or(0)));
+                    t = t.saturating_add(i64::from(s.timing.map(|t| t.duration).unwrap_or(0)));
                     now
                 })
                 .collect()
@@ -1184,7 +1176,7 @@ fn mux_tracks_timed_with_cc(
     let mut pcr_stamps: Vec<u64> = Vec::new();
     for (plan, &track_idx) in plans.iter().zip(&planned_idx) {
         let track = &tracks[track_idx];
-        let ts_scale = track.spec.timescale.max(1) as u64;
+        let ts_scale = track.spec.timescale;
         // Interleave keys only ever grow within one track, so the global sort
         // never reorders a track's own packets (issue #576).
         let mut last_key: u64 = 0;
@@ -1429,13 +1421,13 @@ fn write_pcr_only_packet(
 
 /// Rescale `ticks` from a track's `timescale` to the 90 kHz TS clock, rounding to
 /// nearest, and reduce modulo the 33-bit timestamp field.
-fn rescale(ticks: u64, timescale: u64) -> u64 {
+fn rescale(ticks: u64, timescale: broadcast_common::timescale::Timescale) -> u64 {
     rescale_for_ordering(ticks, timescale) % TS_TIMESTAMP_MOD
 }
 
 /// Rescale a possibly-negative tick count (used for `pts = dts + composition`),
 /// clamping negatives to 0, then reduce modulo the 33-bit field.
-fn rescale_signed(ticks: i64, timescale: u64) -> u64 {
+fn rescale_signed(ticks: i64, timescale: broadcast_common::timescale::Timescale) -> u64 {
     if ticks <= 0 {
         return 0;
     }
@@ -1453,8 +1445,8 @@ fn rescale_signed(ticks: i64, timescale: u64) -> u64 {
 /// cumulative decode time would cross the 33-bit wrap point (issue #576: an
 /// opaque `CodecConfig::Data` track's recovered durations are untrusted
 /// input that can otherwise do exactly that).
-fn rescale_for_ordering(ticks: u64, timescale: u64) -> u64 {
-    rescale_u64(ticks, timescale, TS_CLOCK_HZ, Rounding::Nearest)
+fn rescale_for_ordering(ticks: u64, timescale: broadcast_common::timescale::Timescale) -> u64 {
+    rescale_u64(ticks, timescale, TS_CLOCK, Rounding::Nearest)
 }
 
 /// Build the elementary-stream PES payload for one sample:
@@ -1643,18 +1635,19 @@ fn first_hevc_nal_type(annexb: &[u8]) -> Option<u8> {
 /// Build a PAT section (one program → `pmt_pid`) with its trailing CRC_32.
 /// ISO/IEC 13818-1 §2.4.4.4.
 fn build_pat_section(pmt_pid: Pid) -> Result<Vec<u8>> {
-    // table_body: transport_stream_id(2) + version/cni(1) + section_number(1) +
-    // last_section_number(1) + one program-loop entry (program_number(2) +
-    // reserved/program_map_PID(2)).
-    let mut body = Vec::new();
-    body.extend_from_slice(&1u16.to_be_bytes()); // transport_stream_id = 1
-    body.push(VERSION_CURRENT_NEXT);
-    body.push(0); // section_number
-    body.push(0); // last_section_number
-    body.extend_from_slice(&PROGRAM_NUMBER.to_be_bytes());
-    body.push(PID_RESERVED_HI | ((pmt_pid.value() >> 8) as u8 & !PID_RESERVED_HI));
-    body.push((pmt_pid.value() & 0xFF) as u8);
-    finish_section(TABLE_ID_PAT, body)
+    let pat = dvb_si::tables::pat::PatSection::new(
+        1, // transport_stream_id
+        0, // version_number
+        true,
+        0, // section_number
+        0, // last_section_number
+        alloc::vec![dvb_si::tables::pat::PatEntry::new(PROGRAM_NUMBER, pmt_pid)],
+    );
+    let len = pat.serialized_len();
+    let mut buf = alloc::vec![0u8; len];
+    pat.serialize_into(&mut buf)
+        .map_err(|_| Error::InvalidInput("dvb-si PAT serialize"))?;
+    Ok(buf)
 }
 
 /// Build a PMT section listing every planned elementary stream, with its
@@ -1668,60 +1661,36 @@ fn build_pat_section(pmt_pid: Pid) -> Result<Vec<u8>> {
 /// re-mux. `program_info` stays empty (no program-level descriptors are
 /// modelled).
 fn build_pmt_section(pcr_pid: Pid, plans: &[EsPlan], version: u8) -> Result<Vec<u8>> {
-    let mut body = Vec::new();
-    // table_id_extension = program_number, then version/cni + section numbers.
-    body.extend_from_slice(&PROGRAM_NUMBER.to_be_bytes());
-    body.push(VERSION_FIELD_FIXED_BITS | (version << VERSION_FIELD_SHIFT));
-    body.push(0); // section_number
-    body.push(0); // last_section_number
-    // reserved(3) + PCR_PID(13).
-    body.push(PID_RESERVED_HI | ((pcr_pid.value() >> 8) as u8 & !PID_RESERVED_HI));
-    body.push((pcr_pid.value() & 0xFF) as u8);
-    // reserved(4) + program_info_length(12) = 0 (no program descriptors).
-    body.push(INFO_RESERVED_HI);
-    body.push(0);
-    // Elementary-stream loop: stream_type(1) + reserved/elementary_PID(2) +
-    // reserved/ES_info_length(2) + descriptor()×ES_info_length.
+    let mut streams = Vec::with_capacity(plans.len());
     for p in plans {
-        body.push(p.kind.stream_type());
-        body.push(PID_RESERVED_HI | ((p.pid.value() >> 8) as u8 & !PID_RESERVED_HI));
-        body.push((p.pid.value() & 0xFF) as u8);
-        let es_info_length = p.descriptors.len().min(MAX_ES_INFO_LENGTH);
-        body.push(INFO_RESERVED_HI | ((es_info_length >> 8) as u8 & !INFO_RESERVED_HI));
-        body.push((es_info_length & 0xFF) as u8);
-        body.extend_from_slice(&p.descriptors[..es_info_length]);
+        let es_len = p.descriptors.len().min(MAX_ES_INFO_LENGTH);
+        let es_info = dvb_si::descriptors::any::DescriptorLoop::from(&p.descriptors[..es_len]);
+        streams.push(dvb_si::tables::pmt::PmtStream::new(
+            dvb_si::tables::pmt::StreamType::from_u8(p.kind.stream_type()),
+            p.pid,
+            es_info,
+        ));
     }
-    finish_section(TABLE_ID_PMT, body)
-}
-
-/// Prepend the long-form section header (`table_id` + `section_length`) to a
-/// table body and append the trailing CRC_32, yielding a complete PSI section.
-/// ISO/IEC 13818-1 §2.4.4.1.
-///
-/// # Errors
-///
-/// Returns [`Error::BufferCapExceeded`] if `body.len() + CRC32_LEN` exceeds
-/// [`MAX_SECTION_LENGTH`] — checked before narrowing, so a PMT this large
-/// never silently wraps the 12-bit `section_length` field (past 4095) or
-/// emits an out-of-spec section (1022..=4095, §2.4.4.4).
-fn finish_section(table_id: u8, body: Vec<u8>) -> Result<Vec<u8>> {
-    // section_length counts everything after the 3-byte prefix, i.e. the body
-    // (which already includes table_id_extension etc.) plus the 4-byte CRC.
-    let section_length = body.len() + CRC32_LEN;
-    if section_length > MAX_SECTION_LENGTH {
+    let program_info = dvb_si::descriptors::any::DescriptorLoop::from(&[][..]);
+    let pmt = dvb_si::tables::pmt::PmtSection::new(
+        PROGRAM_NUMBER,
+        dvb_si::tables::SectionVersion::new(version, true, 0, 0),
+        pcr_pid,
+        program_info,
+        streams,
+    );
+    // Preserve the §2.4.4.4 1021-byte section_length cap check (issue #1129).
+    if pmt.serialized_len().saturating_sub(3) > MAX_SECTION_LENGTH {
         return Err(Error::BufferCapExceeded {
             what: "PSI section_length",
             cap: MAX_SECTION_LENGTH,
         });
     }
-    let mut section = Vec::with_capacity(3 + section_length);
-    section.push(table_id);
-    section.push(SECTION_SYNTAX_FLAGS_HI | ((section_length >> 8) as u8 & SECTION_LENGTH_HI_MASK));
-    section.push((section_length & 0xFF) as u8);
-    section.extend_from_slice(&body);
-    let crc = crc32_mpeg2::compute(&section);
-    section.extend_from_slice(&crc.to_be_bytes());
-    Ok(section)
+    let len = pmt.serialized_len();
+    let mut buf = alloc::vec![0u8; len];
+    pmt.serialize_into(&mut buf)
+        .map_err(|_| Error::InvalidInput("dvb-si PMT serialize"))?;
+    Ok(buf)
 }
 
 /// Packetise one complete PSI section into 188-byte TS packets on `pid`.

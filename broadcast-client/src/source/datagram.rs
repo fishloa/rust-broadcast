@@ -7,8 +7,10 @@ use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::net::IpAddr;
+use core::time::Duration;
 
 use broadcast_common::Parse;
+use broadcast_common::stage::Timestamp;
 use mpeg_ts::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE};
 use rtp_packet::{RtpPacket, SeqValidity, SeqVerdict};
 
@@ -34,7 +36,7 @@ pub(crate) fn is_aligned_ts(payload: &[u8]) -> bool {
 }
 
 struct Held {
-    arrived_us: u64,
+    arrived: Timestamp,
     payload: Vec<u8>,
 }
 
@@ -100,7 +102,8 @@ impl Ingest {
     pub(crate) fn poll(&mut self, now_us: u64) -> Released {
         let mut out = Vec::new();
         while let Some((&ext, oldest)) = self.held.first_key_value() {
-            if now_us.saturating_sub(oldest.arrived_us) < self.wait_us {
+            let waited = Timestamp::from_micros(now_us).saturating_sub(oldest.arrived);
+            if waited.as_micros() < u128::from(self.wait_us) {
                 break;
             }
             self.skip_to(ext);
@@ -109,12 +112,9 @@ impl Ingest {
         self.finish(out)
     }
 
-    pub(crate) fn next_deadline_us(&self) -> Option<u64> {
-        self.held
-            .values()
-            .map(|h| h.arrived_us)
-            .min()
-            .map(|t| t.saturating_add(self.wait_us))
+    pub(crate) fn next_deadline(&self) -> Option<Timestamp> {
+        let oldest = self.held.values().map(|h| h.arrived).min()?;
+        oldest.checked_add(Duration::from_micros(self.wait_us))
     }
 
     fn finish(&mut self, payloads: Vec<Vec<u8>>) -> Released {
@@ -196,7 +196,7 @@ impl Ingest {
         self.held.insert(
             ext,
             Held {
-                arrived_us: now_us,
+                arrived: Timestamp::from_micros(now_us),
                 payload: packet.payload.to_vec(),
             },
         );
@@ -417,11 +417,11 @@ impl Datagram {
         }
     }
 
-    pub(crate) fn next_deadline_us(&self, now_us: u64) -> Option<u64> {
+    pub(crate) fn next_deadline(&self, now_us: u64) -> Option<Timestamp> {
         match &self.kind {
-            Kind::Udp(i) => i.next_deadline_us(),
+            Kind::Udp(i) => i.next_deadline(),
             Kind::Sdp(_) => None,
-            Kind::Srt(s) => s.next_deadline_us(now_us),
+            Kind::Srt(s) => s.next_deadline(now_us),
         }
     }
 

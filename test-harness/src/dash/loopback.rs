@@ -6,6 +6,7 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use broadcast_common::Unpackage;
+use broadcast_common::stage::Timestamp;
 use dash_runtime::client::{
     Action, DashClient, DashConfig, Error, Failure, FailureClass, FatalKind, Output, PullLimits,
     ResourceId,
@@ -281,7 +282,7 @@ pub fn drive(url: &str, cfg: PullLimits, origin: &mut Origin, opts: &mut Drive) 
         if let Some(h) = opts.hook.as_mut() {
             h(&mut client, step);
         }
-        while let Some(a) = client.poll(now) {
+        while let Some(a) = client.poll(Timestamp::from_micros(now)) {
             pending.push_back(a);
         }
         let segs = pending
@@ -344,6 +345,7 @@ fn deliver(
     now: u64,
     opts: &Drive,
 ) {
+    let now = Timestamp::from_micros(now);
     let Some(id) = action.id() else {
         match answer {
             Ok(r) if failure_of(&r).is_none() => {
@@ -427,9 +429,9 @@ pub struct Sig {
 pub fn sig(s: &Sample) -> Sig {
     Sig {
         data: s.data.to_vec(),
-        pts: s.pts,
-        dts: s.dts,
-        duration: s.duration,
+        pts: s.timing.map(|t| t.pts),
+        dts: s.timing.map(|t| t.dts),
+        duration: s.timing.map(|t| t.duration),
         flags: format!("{:?}", s.flags),
     }
 }

@@ -59,16 +59,16 @@ buffering-runtime = "0.3"
 ```
 
 ```rust
-use buffering_runtime::{BufferController, ControllerConfig, Event, pts90k_to_27mhz};
+use buffering_runtime::{BufferController, ControllerConfig, Event, Micros, Ticks27, pts90k_to_27mhz};
 
 let mut c = BufferController::new(ControllerConfig::default(), None).unwrap();
-let mut now = 0u64; // microseconds, your monotonic clock
-let mut pcr = 1_000_000u64; // 27 MHz, from the TS
+let mut now = Micros::ZERO; // microseconds, your monotonic clock
+let mut pcr = Ticks27(1_000_000); // 27 MHz, from the TS
 let mut pts = 90_000u64; // 90 kHz, from the demuxed video
 let mut started = false;
 while !started {
-    now += 35_000;
-    pcr += 35_000 * 27;
+    now = Micros(now.0 + 35_000);
+    pcr = Ticks27(pcr.0 + 35_000 * 27);
     pts += 35 * 90;
     c.on_chunk(now, 1316, Some(pcr));
     c.on_media(now, pts90k_to_27mhz(pts));
@@ -92,6 +92,8 @@ assert!(c.target_us() <= ControllerConfig::default().policy.max_us);
 - **`StartPlaying` and `Resume` are both "go".** After a `Hint::PcrDiscontinuity` (also `SyncLoss`/`Reconnected`) while playing, the controller emits `Pause` then `Resume`, never a new `StartPlaying` (that fires once until `reset`). So `Resume` can be the first "go" after a re-baseline; handle the two identically.
 - `unregister_track(track)` drops a replaced or dead track from the per-track minimum so it cannot hold back the lead (unknown track: no-op; no tracks left: no effective end until one delivers).
 - `StallMemorySnapshot` is `#[non_exhaustive]`: build it from FFI/other crates with the `const fn StallMemorySnapshot::new(peak_us, age_us)` (`Default` and the public fields stay).
+- Times are newtypes, not aliases: `Micros` for every "now"/interval/target and `Ticks27` for every media position (27 MHz), so `on_chunk(now, bytes, pcr)` and `on_media(now, media_end)` cannot be given each other's argument. Each is `#[repr(transparent)]` over `u64` (plain-data, C-ABI friendly), with `.0`/`get()`/`new()` to read and build.
+- Persist the stall memory as `peak_us`/`age_us` microseconds: the JSON from `serde` keeps the field names and is a bare number per field.
 - Send `Hint::SourceEnded`/`SourceError` when a connection drops and `Hint::Reconnected` **before** feeding the first chunk of the new one (re-baselines, keeps the stall memory, resumes at the target, not the post-stall threshold).
 - Persist `snapshot_memory()` for the app session; on the next zap call `StallMemorySnapshot::aged(elapsed_us)` and pass it as the seed.
 - C ABI: `ABI_VERSION`, `Hint::code`/`from_code`, `State::code`, `Reason::code`, `Event::to_record` (a `#[repr(C)]` `EventRecord`, 40 bytes since ABI version 2, field table in the rustdoc), `ControllerConfig::default()`; see section 7 of the design.

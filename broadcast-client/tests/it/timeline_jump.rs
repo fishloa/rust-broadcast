@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use broadcast_client::{
     Action, BufferEvent, BufferInput, Config, Event, Hint, Session, TimelineJumpConfig, TrackId,
 };
+use broadcast_common::stage::Timestamp;
 use support::hls_host::{self as hls, Reply};
 use support::rtsp_host::{
     self, BASE_URL, MediaFixture, Server, channel_of, interleaved, quiet_config,
@@ -15,6 +16,11 @@ use support::ts_shift::{
 };
 use transmux::JoinDecision;
 use transmux::rtp::RtpMediaKind;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const CHUNK: usize = 1316;
 const STEP_US: u64 = 3_200;
@@ -95,12 +101,12 @@ impl Host {
 
     fn open_with(mut config: Config, (status, headers): (u16, Vec<(String, String)>)) -> Self {
         config.record_buffer_inputs = true;
-        let mut session = Session::open(URL, config, 0).unwrap();
-        let conn = match session.poll(0).unwrap() {
+        let mut session = Session::open(URL, config, ts(0)).unwrap();
+        let conn = match session.poll(ts(0)).unwrap() {
             Action::HttpRequest { conn, .. } => conn,
             other => panic!("{other:?}"),
         };
-        session.on_response(conn, status, &headers, 0);
+        session.on_response(conn, status, &headers, ts(0));
         Self {
             session,
             conn,
@@ -122,7 +128,7 @@ impl Host {
     }
 
     fn data(&mut self, bytes: &[u8], now: u64) {
-        self.session.on_data(self.conn, bytes, now);
+        self.session.on_data(self.conn, bytes, ts(now));
         self.drain(now);
     }
 
@@ -130,7 +136,7 @@ impl Host {
         while self.next_tick <= now {
             let t = self.next_tick;
             let p = self.clock.position(t);
-            self.session.on_playback_position(t, p);
+            self.session.on_playback_position(ts(t), p);
             self.drain(t);
             self.next_tick += TICK_US;
         }
@@ -173,7 +179,7 @@ impl Host {
             if let Event::Tracks(specs) = e {
                 for s in specs {
                     out.retain(|(t, _)| *t != s.track_id);
-                    out.push((s.track_id, s.timescale));
+                    out.push((s.track_id, s.timescale.get()));
                 }
             }
         }
@@ -200,7 +206,7 @@ impl Host {
                 } if *t == track => Some(Rec {
                     idx: i,
                     now: self.times[i],
-                    pts: sample.pts.unwrap(),
+                    pts: sample.timing.map(|t| t.pts).unwrap(),
                     join: *join,
                 }),
                 _ => None,
@@ -425,7 +431,7 @@ fn detection_happens_before_the_sample_is_emitted() {
             join,
         } => {
             assert_eq!(*track, vid);
-            assert_eq!(sample.pts, Some(first_new.pts));
+            assert_eq!(sample.timing.map(|t| t.pts), Some(first_new.pts));
             assert!(
                 matches!(join, Some(JoinDecision::Drop(_))),
                 "judged by the fresh join state: {join:?}"
@@ -480,7 +486,7 @@ fn controller_inputs_after_jump_include_pcr_discontinuity_hint_and_fresh_join_or
     let first_report_after = log[hints[0]..]
         .iter()
         .find_map(|l| match l {
-            BufferInput::TrackMedia { track, end, .. } if *track == vid.value() => Some(*end),
+            BufferInput::TrackMedia { track, end, .. } if *track == vid.value() => Some(end.0),
             _ => None,
         })
         .expect("a video media report on the new timeline");
@@ -496,7 +502,7 @@ fn controller_inputs_after_jump_include_pcr_discontinuity_hint_and_fresh_join_or
     let reports_after: Vec<u64> = log[hints[0]..]
         .iter()
         .filter_map(|l| match l {
-            BufferInput::TrackMedia { track, end, .. } if *track == vid.value() => Some(*end),
+            BufferInput::TrackMedia { track, end, .. } if *track == vid.value() => Some(end.0),
             _ => None,
         })
         .collect();
@@ -537,18 +543,20 @@ fn config_custom_thresholds_applied() {
     let bytes = test_fixtures::read(SMALL);
     let tight = {
         let mut new_config = Config::default();
-        new_config.timeline_jump = Some(TimelineJumpConfig {
-            backward_us: 500_000,
-            forward_slack_us: 1_000_000,
-        });
+        new_config.timeline_jump = Some(
+            TimelineJumpConfig::default()
+                .with_backward_us(500_000)
+                .with_forward_slack_us(1_000_000),
+        );
         new_config
     };
     let loose = {
         let mut new_config = Config::default();
-        new_config.timeline_jump = Some(TimelineJumpConfig {
-            backward_us: 2_000_000,
-            forward_slack_us: 20_000_000,
-        });
+        new_config.timeline_jump = Some(
+            TimelineJumpConfig::default()
+                .with_backward_us(2_000_000)
+                .with_forward_slack_us(20_000_000),
+        );
         new_config
     };
     let back = |_: &Boundary| -(SEC_US - BACKWARD_MARGIN_US);
@@ -611,7 +619,7 @@ fn same_capture_fed_twice_after_3s_pause_emits_discontinuity_before_first_new_sa
         } => {
             assert_eq!(*track, vid);
             assert_eq!(
-                sample.pts,
+                sample.timing.map(|t| t.pts),
                 Some(first_pts),
                 "first sample of the second pass"
             );
@@ -791,7 +799,7 @@ fn audio_only_stream_jump_detected() {
     match &h.events[d + 1] {
         Event::Sample { track, sample, .. } => {
             assert_eq!(*track, a);
-            assert!(sample.pts.unwrap() - samples[0].pts > 29 * AUDIO_ONLY_RATE);
+            assert!(sample.timing.map(|t| t.pts).unwrap() - samples[0].pts > 29 * AUDIO_ONLY_RATE);
         }
         other => panic!("{other:?}"),
     }
@@ -856,7 +864,7 @@ fn unflagged_jumps(h: &Host) -> Vec<(TrackId, i64, i64)> {
                 let rec = Rec {
                     idx: i,
                     now: h.times[i],
-                    pts: sample.pts.unwrap(),
+                    pts: sample.timing.map(|t| t.pts).unwrap(),
                     join: *join,
                 };
                 let is_video = join.is_some();
@@ -948,15 +956,15 @@ fn detector_state_resets_on_reconnect_and_rejoin() {
     let mut h = Host::open_plain(Config::default());
     h.feed(&bytes, &realtime(n)[..half]);
     let first = h.events.len();
-    h.session.on_closed(h.conn, None, 1_000_000);
+    h.session.on_closed(h.conn, None, ts(1_000_000));
     let mut conn = None;
-    while let Some(a) = h.session.poll(1_000_000) {
+    while let Some(a) = h.session.poll(ts(1_000_000)) {
         if let Action::HttpRequest { conn: c, .. } = a {
             conn = Some(c);
         }
     }
     h.conn = conn.expect("reconnect request");
-    h.session.on_response(h.conn, 200, &[], 1_000_000);
+    h.session.on_response(h.conn, 200, &[], ts(1_000_000));
     h.drain(1_000_000);
     for (i, c) in bytes.chunks(CHUNK).enumerate() {
         h.data(c, 2_000_000 + i as u64 * STEP_US);
@@ -1171,7 +1179,7 @@ impl Trace {
                 } if *t == track => Some(Rec {
                     idx: i,
                     now: self.times[i],
-                    pts: sample.pts.unwrap(),
+                    pts: sample.timing.map(|t| t.pts).unwrap(),
                     join: *join,
                 }),
                 _ => None,
@@ -1185,7 +1193,7 @@ impl Trace {
             if let Event::Tracks(specs) = e {
                 for s in specs {
                     out.retain(|(t, _)| *t != s.track_id);
-                    out.push((s.track_id, s.timescale));
+                    out.push((s.track_id, s.timescale.get()));
                 }
             }
         }
@@ -1222,7 +1230,7 @@ fn play_rtsp_rendering(
     let mut host = rtsp_host::Host::new(BASE_URL, config, Server::new(&fix.sdp));
     host.connect();
     if let Some(r) = rendered {
-        host.session.set_rendered_tracks(host.now, r);
+        host.session.set_rendered_tracks(ts(host.now), r);
     }
     let mut trace = Trace {
         events: Vec::new(),
@@ -1308,7 +1316,7 @@ fn rtsp_jump_detected() {
     match &jumped.events[d[0] + 1] {
         Event::Sample { track, sample, .. } => {
             assert_eq!(*track, vid);
-            assert_eq!(sample.pts, Some(got[RTSP_VIDEO_AU].pts));
+            assert_eq!(sample.timing.map(|t| t.pts), Some(got[RTSP_VIDEO_AU].pts));
         }
         other => panic!("{other:?}"),
     }
@@ -1321,13 +1329,13 @@ fn media_with(extra_video: usize, extra_audio: usize) -> MediaFixture {
     let video = media
         .tracks
         .iter()
-        .find(|t| t.spec.timescale == RTSP_VIDEO_TIMESCALE)
+        .find(|t| t.spec.timescale.get() == RTSP_VIDEO_TIMESCALE)
         .unwrap()
         .clone();
     let audio = media
         .tracks
         .iter()
-        .find(|t| t.spec.timescale != RTSP_VIDEO_TIMESCALE)
+        .find(|t| t.spec.timescale.get() != RTSP_VIDEO_TIMESCALE)
         .unwrap()
         .clone();
     let mut next_id = 10;
@@ -1424,7 +1432,7 @@ fn multiple_video_tracks_tracked_independently() {
     match &t.events[d[0] + 1] {
         Event::Sample { track, sample, .. } => {
             assert_eq!(*track, ids[1]);
-            assert_eq!(sample.pts, Some(b[RTSP_VIDEO_AU].pts));
+            assert_eq!(sample.timing.map(|t| t.pts), Some(b[RTSP_VIDEO_AU].pts));
         }
         other => panic!("{other:?}"),
     }
@@ -1459,7 +1467,7 @@ fn video_ids(events: &[Event]) -> Vec<TrackId> {
     for e in events {
         if let Event::Tracks(specs) = e {
             for sp in specs {
-                if sp.timescale == VIDEO_TIMESCALE && !out.contains(&sp.track_id) {
+                if sp.timescale.get() == VIDEO_TIMESCALE && !out.contains(&sp.track_id) {
                     out.push(sp.track_id);
                 }
             }
@@ -1476,7 +1484,9 @@ fn video_pts_of(ids: &[TrackId], events: &[Event]) -> Vec<i64> {
     events
         .iter()
         .filter_map(|e| match e {
-            Event::Sample { track, sample, .. } if ids.contains(track) => sample.pts,
+            Event::Sample { track, sample, .. } if ids.contains(track) => {
+                sample.timing.map(|t| t.pts)
+            }
             _ => None,
         })
         .collect()
@@ -1643,7 +1653,7 @@ fn audio_only_media(audio_tracks: usize) -> MediaFixture {
     let audio = media
         .tracks
         .iter()
-        .find(|t| t.spec.timescale != RTSP_VIDEO_TIMESCALE)
+        .find(|t| t.spec.timescale.get() != RTSP_VIDEO_TIMESCALE)
         .unwrap()
         .clone();
     media.tracks.clear();

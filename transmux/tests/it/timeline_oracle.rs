@@ -309,7 +309,7 @@ fn elst_per_trak(file: &[u8]) -> Vec<Vec<(u64, i64)>> {
 
 /// Movie-timescale ticks for `s` seconds of `media`.
 fn movie_ticks(media: &Media, s: f64) -> u64 {
-    (s * media.movie_timescale as f64).round() as u64
+    (s * f64::from(media.movie_timescale.get())).round() as u64
 }
 
 /// First audio packet PTS at or after `pts` (ffprobe: 222 packets of 1920
@@ -377,7 +377,8 @@ fn first_presentation(file: &[u8], media: &Media) -> (f64, f64) {
             .find(|t| t.spec.track_id == TrackId::new(id))
             .unwrap()
             .spec
-            .timescale as f64
+            .timescale
+            .get() as f64
     };
     let moof = child(file, b"moof").expect("moof");
     let mut v = None;

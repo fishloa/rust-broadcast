@@ -769,8 +769,8 @@ fn chunk_timeline(
         };
         // A sample without a `dts` starts at 0; a negative one (only a
         // rebased B-frame lead-in) has no earlier position to report.
-        let timescale = track.spec.timescale.max(1);
-        let decode_time = first.dts.unwrap_or(0).max(0);
+        let timescale = track.spec.timescale;
+        let decode_time = first.timing.map(|t| t.dts).unwrap_or(0).max(0);
         let absolute = u64::try_from(decode_time).unwrap_or(u64::MAX);
         let start = chunks
             .last()
@@ -1028,6 +1028,7 @@ pub const MANIFEST_FILE_NAME: &str = "Manifest";
 
 #[cfg(test)]
 mod tests {
+    use broadcast_common::timescale::Timescale;
     use std::num::NonZeroUsize;
     use std::time::Duration;
 
@@ -1054,9 +1055,9 @@ mod tests {
     /// The SPS's coded height.
     const SPROP_HEIGHT: u32 = 480;
     /// Video timescale: the H.264 clock.
-    const VIDEO_TIMESCALE: u32 = 90_000;
+    const VIDEO_TIMESCALE: Timescale = Timescale::from_nonzero(90_000);
     /// A 30 fps frame duration in `VIDEO_TIMESCALE` ticks.
-    const FRAME_DUR: u32 = VIDEO_TIMESCALE / 30;
+    const FRAME_DUR: u32 = VIDEO_TIMESCALE.get() / 30;
     /// Frames per segment: two seconds of video.
     const FRAMES_PER_SEGMENT: u32 = 60;
     /// Repeat requests the cache tests make over one window.
@@ -1064,7 +1065,7 @@ mod tests {
     /// Segments published per test route.
     const SEGMENTS: u32 = 2;
     /// The AAC media timescale, in ticks per second.
-    const AUDIO_TIMESCALE: u32 = 48_000;
+    const AUDIO_TIMESCALE: Timescale = Timescale::from_nonzero(48_000);
     /// AAC-LC frame duration, in `AUDIO_TIMESCALE` ticks (1024 samples).
     const AAC_FRAME_DUR: u32 = 1024;
     /// Sample rate the AAC config reports.
@@ -1153,7 +1154,7 @@ mod tests {
     fn subtitle_spec(track_id: u32) -> TrackSpec {
         TrackSpec::new(
             TrackId::new(track_id),
-            1000,
+            Timescale::from_nonzero(1000),
             CodecConfig::Subtitle {
                 format: transmux::ir::SubtitleFormat::Ttml,
                 sample_entry: Some(transmux::pipeline::SubtitleSampleEntry::Ttml(
@@ -1211,9 +1212,13 @@ mod tests {
     /// segments of video and/or audio, and one subtitle sample per video frame.
     fn publish(specs: Vec<TrackSpec>) -> Route {
         let trunk = big_trunk();
-        let mut segmenter =
-            LlHlsSegmenter::with_part_target(specs.clone(), transmux::VIDEO_CLOCK_RATE, 2.0, 500)
-                .expect("segmenter builds");
+        let mut segmenter = LlHlsSegmenter::with_part_target(
+            specs.clone(),
+            transmux::VIDEO_CLOCK_TIMESCALE,
+            2.0,
+            500,
+        )
+        .expect("segmenter builds");
         let truncated = trunk.writer().expect("fresh trunk");
         truncated.set_tracks(specs.clone());
         let writer = trunk.segment_writer().expect("fresh trunk");
@@ -1337,13 +1342,16 @@ mod tests {
             Arc::new(Vec::new),
             Arc::new(Vec::new),
         ));
-        let policy = AwaitPolicy::new(Timestamp::from_nanos(10));
+        // The policy's deadline is at the tenth microsecond: an origin asked at microsecond
+        // zero still has time to wait, the one asked at the deadline has given up. A nanosecond
+        // reading would truncate both instants onto microsecond zero.
+        let policy = AwaitPolicy::new(Timestamp::from_micros(10));
         assert!(matches!(
-            origin.manifest(Timestamp::from_nanos(0), policy),
+            origin.manifest(Timestamp::from_micros(0), policy),
             EgressResponse::Await { .. }
         ));
         assert!(matches!(
-            origin.manifest(Timestamp::from_nanos(10), policy),
+            origin.manifest(Timestamp::from_micros(10), policy),
             EgressResponse::NotFound
         ));
     }
@@ -1755,7 +1763,7 @@ mod tests {
         let route = publish(vec![video_spec(), audio_spec(2)]);
         let manifest = manifest(&route);
         assert!(manifest.is_live);
-        assert_eq!(manifest.timescale, transmux::SMOOTH_TIMESCALE);
+        assert_eq!(manifest.timescale.as_u64(), transmux::SMOOTH_TIMESCALE);
         let kinds: Vec<StreamType> = manifest.streams.iter().map(|s| s.stream_type).collect();
         assert_eq!(kinds, vec![StreamType::Video, StreamType::Audio]);
         for stream in &manifest.streams {

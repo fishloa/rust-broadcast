@@ -14,6 +14,7 @@
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use core::time::Duration;
 
 use crate::tshttp::{Config as TsConfig, TsHttpPolicy};
 use rtmp_runtime::client::{ClientEvent, ClientMode, ClientSession, RtmpClientConfig};
@@ -21,9 +22,10 @@ use rtmp_runtime::target::RtmpTarget;
 use transmux::{DemuxEvent, StreamingFlvDemux, TrackId, TrackSpec};
 use url::{Host, Url};
 
-use crate::error::Error;
+use crate::error::{Error, TransportError};
 use crate::events::{Action, ErrorKind, Event, MAX_SERVER_REFUSED_REASON_BYTES, Status};
-use broadcast_common::units::MICROS_PER_MILLI;
+use crate::source::fetch::deadline;
+use broadcast_common::stage::Timestamp;
 
 pub(crate) const SCHEME_RTMP: &str = "rtmp";
 pub(crate) const SCHEME_RTMPS: &str = "rtmps";
@@ -96,7 +98,7 @@ pub(crate) struct RtmpSource {
 impl RtmpSource {
     pub(crate) fn new(url: &Url, cfg: &TsConfig, now_us: u64) -> Result<Self, Error> {
         let target = parse_target(url)?;
-        let policy = TsHttpPolicy::new(url.as_str(), cfg.clone(), now_us / MICROS_PER_MILLI);
+        let policy = TsHttpPolicy::new(url.as_str(), cfg.clone(), Timestamp::from_micros(now_us));
         let mut source = Self {
             target,
             policy,
@@ -141,7 +143,7 @@ impl RtmpSource {
         self.now_us = now_us;
         let demux = &mut self.demux;
         self.policy
-            .poll_timeout_with(now_us / MICROS_PER_MILLI, |events| {
+            .poll_timeout_with(Timestamp::from_micros(now_us), |events| {
                 demux.finish();
                 let mut sampled = false;
                 while let Some(ev) = demux.poll_event() {
@@ -162,7 +164,8 @@ impl RtmpSource {
         let hello = client.start();
         self.client = Some(client);
         self.actions.push_back(Action::Send { conn, bytes: hello });
-        self.policy.on_response(200, &[], now_us / MICROS_PER_MILLI);
+        self.policy
+            .on_response(200, &[], Timestamp::from_micros(now_us));
         self.pump_policy(now_us);
     }
 
@@ -207,13 +210,18 @@ impl RtmpSource {
             }
         }
         self.policy
-            .on_bytes(bytes.len(), now_us / MICROS_PER_MILLI, sampled);
+            .on_bytes(bytes.len(), Timestamp::from_micros(now_us), sampled);
         self.pump_policy(now_us);
     }
 
     /// Whether the live connection ended and the next connection's media will be preceded by
     /// [`Event::Discontinuity`].
-    pub(crate) fn on_closed(&mut self, conn: u32, error: Option<&str>, now_us: u64) -> bool {
+    pub(crate) fn on_closed(
+        &mut self,
+        conn: u32,
+        error: Option<&TransportError>,
+        now_us: u64,
+    ) -> bool {
         if self.closed || self.ended || self.conn != Some(conn) {
             return false;
         }
@@ -222,9 +230,9 @@ impl RtmpSource {
         self.client = None;
         self.flush_demux(now_us);
         if error.is_some() {
-            self.policy.on_error(now_us / MICROS_PER_MILLI);
+            self.policy.on_error(Timestamp::from_micros(now_us));
         } else {
-            self.policy.on_eof(now_us / MICROS_PER_MILLI);
+            self.policy.on_eof(Timestamp::from_micros(now_us));
         }
         self.pump_policy(now_us);
         self.connection_count > 0
@@ -237,7 +245,7 @@ impl RtmpSource {
         self.now_us = now_us;
         self.ended = false;
         self.flush_demux(now_us);
-        self.policy.reconnect(now_us / MICROS_PER_MILLI);
+        self.policy.reconnect(Timestamp::from_micros(now_us));
         self.pump_policy(now_us);
     }
 
@@ -253,18 +261,15 @@ impl RtmpSource {
         if self.closed || self.ended {
             return;
         }
-        let Some(deadline) = self
-            .policy
-            .next_deadline()
-            .map(|ms| ms.saturating_mul(MICROS_PER_MILLI))
-        else {
+        let Some(deadline) = self.policy.next_deadline().map(|d| d.as_micros()) else {
             return;
         };
         let outstanding = self
             .wake_pending
             .is_some_and(|w| w == deadline || (w > now_us && w < deadline));
         if !outstanding {
-            self.actions.push_back(Action::WakeAt(deadline));
+            self.actions
+                .push_back(Action::WakeAt(Timestamp::from_micros(deadline)));
             self.wake_pending = Some(deadline);
         }
     }
@@ -298,7 +303,7 @@ impl RtmpSource {
     fn flush_demux(&mut self, now_us: u64) {
         self.demux.finish();
         if self.drain_demux() {
-            self.policy.on_sample(now_us / MICROS_PER_MILLI);
+            self.policy.on_sample(Timestamp::from_micros(now_us));
         }
     }
 
@@ -316,9 +321,9 @@ impl RtmpSource {
         self.drop_connection();
         self.flush_demux(now_us);
         if error {
-            self.policy.on_error(now_us / MICROS_PER_MILLI);
+            self.policy.on_error(Timestamp::from_micros(now_us));
         } else {
-            self.policy.on_eof(now_us / MICROS_PER_MILLI);
+            self.policy.on_eof(Timestamp::from_micros(now_us));
         }
         self.pump_policy(now_us);
     }
@@ -404,9 +409,13 @@ impl RtmpSource {
                     self.events
                         .push_back(Event::Status(Status::Reconnecting { attempt: 0 }));
                 }
-                self.actions.push_back(Action::WakeAt(
-                    now_us.saturating_add(after_ms.saturating_mul(MICROS_PER_MILLI)),
-                ));
+                // A deadline past the end of the clock can never be reached: no wake for it.
+                if let Some(at) = deadline(
+                    Timestamp::from_micros(now_us),
+                    Duration::from_millis(after_ms),
+                ) {
+                    self.actions.push_back(Action::WakeAt(at));
+                }
             }
         }
     }

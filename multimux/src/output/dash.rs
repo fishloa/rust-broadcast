@@ -234,10 +234,7 @@ pub(crate) fn select_representable_track(specs: &[TrackSpec]) -> Option<TrackSpe
 /// DSM-CC, SCTE-35) fails this — the exact case issue #776 exists to skip
 /// over rather than reject the whole route for.
 fn track_is_representable(spec: &TrackSpec) -> bool {
-    let media = Media::new(
-        vec![Track::new(spec.clone(), Vec::new())],
-        spec.timescale.max(1),
-    );
+    let media = Media::new(vec![Track::new(spec.clone(), Vec::new())], spec.timescale);
     DashPackager::default().package(&media).is_ok()
 }
 
@@ -553,9 +550,10 @@ fn set_presentation_time_offset(
                 .map(|r| &mut r.segment),
         );
         for template in templates.filter_map(|layer| layer.template.as_mut()) {
-            let timescale = template.multi.base.timescale.unwrap_or(1);
+            let timescale = template.multi.base.effective_timescale();
             let nanos_per_sec = u128::from(broadcast_common::units::NANOS_PER_SEC);
-            let ticks = (u128::from(media_start_ns) * u128::from(timescale) + nanos_per_sec / 2)
+            let ticks = (u128::from(media_start_ns) * u128::from(timescale.get())
+                + nanos_per_sec / 2)
                 / nanos_per_sec;
             let ticks = u64::try_from(ticks).ok()?;
             template.multi.base.presentation_time_offset = (ticks > 0).then_some(ticks);
@@ -584,7 +582,7 @@ fn render_period_document(
     // model") regardless of which track this route's own PMT numbered it.
     let mut spec = select_representable_track(specs)?;
     spec.track_id = DEFAULT_TRACK_ID;
-    let timescale = spec.timescale.max(1);
+    let timescale = spec.timescale;
 
     // `@startNumber` is the number of the first segment this program EVER
     // published ([`FIRST_SEGMENT_NUMBER`]), fixed for its life -- never the
@@ -599,7 +597,7 @@ fn render_period_document(
     // window's own first-segment duration changes as it slides, which would
     // change the client's whole number<->time mapping).
     let nominal_ticks =
-        ((route.target_duration_secs() * f64::from(timescale)).round() as u64).max(1);
+        ((route.target_duration_secs() * f64::from(timescale.get())).round() as u64).max(1);
     let segments = if has_segments || flavour == DashFlavour::LowLatency {
         vec![TrackSegments {
             track_id: DEFAULT_TRACK_ID,
@@ -641,7 +639,7 @@ fn render_period_document(
         minimum_update_period: Some(xs_duration_secs_checked(
             "minimum_update_period",
             if flavour == DashFlavour::LowLatency {
-                (route.part_target_ms().max(1) as f64) / 1000.0
+                route.part_target().as_secs_f64().max(0.001)
             } else {
                 target_duration_secs
             },
@@ -667,7 +665,8 @@ fn render_period_document(
 
     let xml = packager.package(&media).ok()?;
     if flavour == DashFlavour::LowLatency {
-        let part_target_ms = route.part_target_ms().max(1);
+        let part_target_ms =
+            u32::try_from(route.part_target().as_millis().max(1)).unwrap_or(u32::MAX);
         let chunk_duration_secs = f64::from(part_target_ms) / 1000.0;
         let latency_target_ms = u32::try_from(u64::from(part_target_ms) * 3).unwrap_or(u32::MAX);
         let ato = (target_duration_secs - chunk_duration_secs).max(0.0);
@@ -815,6 +814,7 @@ mod tests {
     use super::*;
     use crate::route::RouteConfig;
     use crate::testutil::video_spec;
+    use broadcast_common::timescale::Timescale;
     use transmux::CodecConfig;
 
     const CONCURRENT_MANIFESTS: usize = 64;
@@ -826,7 +826,7 @@ mod tests {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
         let app = crate::testutil::app_with(&route, Arc::new(DashOutput));
@@ -938,7 +938,7 @@ mod tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(2),
         );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -974,7 +974,7 @@ mod tests {
     fn teletext_spec(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
-            90_000,
+            Timescale::from_nonzero(90_000),
             CodecConfig::Data {
                 stream_type: 0x06,
                 descriptors: Vec::new(),
@@ -1001,7 +1001,7 @@ mod tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         );
         route.publish_new_program(program);
@@ -1026,7 +1026,7 @@ mod tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         );
         route.publish_new_program(program);
@@ -1064,7 +1064,7 @@ mod tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(2),
         );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -1111,7 +1111,7 @@ mod tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(15),
         );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -1168,7 +1168,7 @@ mod tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(0.1)
-                .with_part_target_ms(30)
+                .with_part_target(Duration::from_millis(30))
                 .with_window_segments(3),
         );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -1236,7 +1236,7 @@ mod tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(15),
         );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -1295,7 +1295,7 @@ mod tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(900),
         );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -1461,7 +1461,7 @@ mod tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         assert!(
@@ -1478,7 +1478,7 @@ mod tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -1500,7 +1500,7 @@ mod tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -1528,7 +1528,7 @@ mod tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(2),
         );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -1582,7 +1582,7 @@ mod tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(2.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         let created = route.created_at();
@@ -1618,7 +1618,7 @@ mod tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(2.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -1657,7 +1657,7 @@ mod tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -1681,7 +1681,7 @@ mod tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -1710,7 +1710,7 @@ mod tests {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -1723,7 +1723,7 @@ mod tests {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -1751,7 +1751,7 @@ mod tests {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         let resp = manifest(State(route)).await;
@@ -1770,7 +1770,7 @@ mod tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -1821,7 +1821,7 @@ mod tests {
                     duration: period.duration,
                     start_number: template.multi.start_number.expect("startNumber"),
                     presentation_time_offset: template.multi.base.presentation_time_offset,
-                    timescale: template.multi.base.timescale.expect("timescale"),
+                    timescale: template.multi.base.timescale.expect("timescale").as_u64(),
                     template_duration: template.multi.duration.unwrap_or_default(),
                 }
             })
@@ -1839,7 +1839,7 @@ mod tests {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(3),
         )
     }

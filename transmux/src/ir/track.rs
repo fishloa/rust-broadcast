@@ -18,7 +18,7 @@ pub struct TrackSpec {
     /// Track ID (1-based, unique within the movie).
     pub track_id: TrackId,
     /// Media timescale (ticks per second, e.g. 90000 for video).
-    pub timescale: u32,
+    pub timescale: broadcast_common::timescale::Timescale,
     /// Codec configuration + dimensions.
     pub config: CodecConfig,
     /// Source elementary-stream PID for TS-demuxed tracks; `None` for non-TS
@@ -83,7 +83,11 @@ impl core::fmt::Debug for TrackSpec {
 impl TrackSpec {
     /// A track spec with no TS provenance (`source_pid = None`, no ES_info
     /// descriptors) — the common case for every non-TS demuxer/transform.
-    pub fn new(track_id: TrackId, timescale: u32, config: CodecConfig) -> Self {
+    pub fn new(
+        track_id: TrackId,
+        timescale: impl Into<broadcast_common::timescale::Timescale>,
+        config: CodecConfig,
+    ) -> Self {
         let display = DisplayGeometry::from_codec_config(&config);
         let hdr = match &config {
             CodecConfig::Hevc { config, .. } => HdrStaticMetadata::from_hevc_record(&config.config),
@@ -91,7 +95,7 @@ impl TrackSpec {
         };
         Self {
             track_id,
-            timescale,
+            timescale: timescale.into(),
             config,
             source_pid: None,
             es_info_descriptors: Vec::new(),
@@ -156,9 +160,9 @@ pub struct Track {
     /// Absolute decode time of the track's **first** sample, in this track's
     /// media timescale ([`TrackSpec::timescale`]) ticks.
     ///
-    /// Since media plane step 2c, [`Sample::dts`]/[`Sample::pts`] are
+    /// Since media plane step 2c, `Sample::timing` (`.dts`)/`Sample::timing` (`.pts`) are
     /// themselves absolute (in the same timescale), so this field is
-    /// redundant with (and must be kept equal to) `samples.first().dts` for a
+    /// redundant with (and must be kept equal to) `samples.first().timing.map(|t| t.dts)` for a
     /// timed track — it survives as the anchor consumers reach for without
     /// touching the sample slice (e.g. building the fragment `tfdt`
     /// `baseMediaDecodeTime`, ISO/IEC 14496-12:2026 §8.8.12), and as the
@@ -217,8 +221,8 @@ impl Track {
         self.spec.track_id
     }
 
-    /// Media timescale (ticks per second).
-    pub fn timescale(&self) -> u32 {
+    /// Media timescale (ticks per second); non-zero by construction.
+    pub fn timescale(&self) -> broadcast_common::timescale::Timescale {
         self.spec.timescale
     }
 

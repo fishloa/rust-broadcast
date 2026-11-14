@@ -193,7 +193,7 @@ async fn real_browser_whip_publish_produces_llhls_segments() {
     let mut config = Config::default()
         .with_bind(bind_addr.to_string())
         .with_target_duration_secs(0.5)
-        .with_part_target_ms(100)
+        .with_part_target(Duration::from_millis(100))
         .with_window_segments(8)
         .with_routes(vec![Route {
             name: "cam".to_string(),
@@ -278,7 +278,7 @@ async fn real_browser_whip_publish_after_the_connect_budget_still_produces_segme
     let mut config = Config::default()
         .with_bind(bind_addr.to_string())
         .with_target_duration_secs(0.5)
-        .with_part_target_ms(100)
+        .with_part_target(Duration::from_millis(100))
         .with_window_segments(8)
         .with_ingest_connect_timeout_secs(3.0)
         .with_routes(vec![Route {

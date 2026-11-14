@@ -183,8 +183,8 @@ impl TsbpdScheduler {
     /// * `initial_seq` — the first expected sequence number (the peer's ISN).
     /// * `tsbpd_time_base` — `TsbpdTimeBase` in microseconds (signed), seeded
     ///   per rule 12 (`T_NOW - HSREQ_TIMESTAMP`).
-    /// * `tsbpd_delay_ms` — `TsbpdDelay` in milliseconds (rule 10). A value
-    ///   below the minimum 120 ms is silently raised to 120 ms.
+    /// * `tsbpd_delay` — `TsbpdDelay` (rule 10). A value below the minimum
+    ///   120 ms is silently raised to 120 ms.
     /// * `drift_us` — initial `Drift` correction in microseconds, signed
     ///   (rule 9); supply `0` when no drift estimate is available.
     /// * `tlpktdrop_enabled` — whether too-late packet drop is enabled
@@ -195,12 +195,14 @@ impl TsbpdScheduler {
     pub fn new(
         initial_seq: u32,
         tsbpd_time_base: i64,
-        tsbpd_delay_ms: u64,
+        tsbpd_delay: Duration,
         drift_us: i64,
         tlpktdrop_enabled: bool,
         tlpktdrop_threshold_us: Option<u64>,
     ) -> Self {
-        let tsbpd_delay_ms = tsbpd_delay_ms.max(TSBPD_DELAY_MIN_MS);
+        let tsbpd_delay_ms = u64::try_from(tsbpd_delay.as_millis())
+            .unwrap_or(u64::MAX)
+            .max(TSBPD_DELAY_MIN_MS);
         let tlpktdrop_threshold_us = tlpktdrop_threshold_us.unwrap_or_else(|| {
             // Recommended threshold: `1.25 × SRT_latency` (rule 19).
             // TsbpdDelay is in ms, convert to µs. Use integer arithmetic:
@@ -633,12 +635,19 @@ mod tests {
 
     /// Helper: default scheduler for tests.
     fn sched() -> TsbpdScheduler {
-        TsbpdScheduler::new(ISN, TIME_BASE_I64, DELAY_MS, 0, true, None)
+        TsbpdScheduler::new(
+            ISN,
+            TIME_BASE_I64,
+            Duration::from_millis(DELAY_MS),
+            0,
+            true,
+            None,
+        )
     }
 
     #[test]
     fn next_release_after_is_the_earliest_future_play_time() {
-        let mut s = TsbpdScheduler::new(0, 0, DELAY_MS, 0, true, None);
+        let mut s = TsbpdScheduler::new(0, 0, Duration::from_millis(DELAY_MS), 0, true, None);
         assert_eq!(
             s.next_release_after(Duration::ZERO),
             None,
@@ -660,7 +669,7 @@ mod tests {
 
     #[test]
     fn a_stuck_gap_without_tlpktdrop_produces_no_busy_wakeup() {
-        let mut s = TsbpdScheduler::new(0, 0, DELAY_MS, 0, false, None);
+        let mut s = TsbpdScheduler::new(0, 0, Duration::from_millis(DELAY_MS), 0, false, None);
         let _ = s.feed_data(2, 0, Duration::ZERO); // 0 and 1 missing, drop disabled
         let late = Duration::from_millis(DELAY_MS * 10);
         let _ = s.tick(late);
@@ -756,7 +765,14 @@ mod tests {
         // 21); a buffered packet that itself goes past its too-late threshold
         // — here packet 2, starved of ticks between the two clock jumps — is
         // dropped instead.
-        let mut s = TsbpdScheduler::new(0, TIME_BASE_I64, DELAY_MS, 0, true, None);
+        let mut s = TsbpdScheduler::new(
+            0,
+            TIME_BASE_I64,
+            Duration::from_millis(DELAY_MS),
+            0,
+            true,
+            None,
+        );
 
         // Feed packets 1 and 2 well before their play times — they buffer.
         s.feed_data(1, 10_000, Duration::ZERO);
@@ -814,7 +830,14 @@ mod tests {
         // *past* relative to `near_wrap`'s (the pre-fix bug: every packet
         // after a real wrap computed a play time the receiver's clock had
         // already passed, so Too-Late-Packet-Drop discarded it forever).
-        let mut s = TsbpdScheduler::new(0, TIME_BASE_I64, DELAY_MS, 0, false, None);
+        let mut s = TsbpdScheduler::new(
+            0,
+            TIME_BASE_I64,
+            Duration::from_millis(DELAY_MS),
+            0,
+            false,
+            None,
+        );
         // A timestamp near the 32-bit max value.
         let near_wrap: u32 = 0xFFFF_FF00u32;
         // The same clock, 756 us later, having wrapped past 0
@@ -854,7 +877,14 @@ mod tests {
         // does) through more than two full wraps, and confirm the unwrapped
         // absolute value strictly increases by exactly one step every time
         // — never resetting or going backward at either wrap boundary.
-        let mut s = TsbpdScheduler::new(0, TIME_BASE_I64, DELAY_MS, 0, false, None);
+        let mut s = TsbpdScheduler::new(
+            0,
+            TIME_BASE_I64,
+            Duration::from_millis(DELAY_MS),
+            0,
+            false,
+            None,
+        );
         const STEP: u32 = 1_000_000; // 1 second in microseconds
         let iterations = (u64::from(u32::MAX) / u64::from(STEP)) * 2 + 10; // > 2 wraps
 
@@ -878,7 +908,14 @@ mod tests {
         // An out-of-order/retransmitted packet earlier than the current
         // reference must still unwrap correctly against it, and must not
         // itself move the reference backward.
-        let mut s = TsbpdScheduler::new(0, TIME_BASE_I64, DELAY_MS, 0, false, None);
+        let mut s = TsbpdScheduler::new(
+            0,
+            TIME_BASE_I64,
+            Duration::from_millis(DELAY_MS),
+            0,
+            false,
+            None,
+        );
         let a = s.unwrap_timestamp(10_000);
         let b = s.unwrap_timestamp(20_000); // reference advances to here
         let reordered = s.unwrap_timestamp(15_000); // arrives late, between a and b
@@ -893,7 +930,7 @@ mod tests {
 
     #[test]
     fn a_reordered_pre_wrap_packet_keeps_its_play_time_before_the_first_post_wrap_one() {
-        let mut s = TsbpdScheduler::new(0, 0, DELAY_MS, 0, false, None);
+        let mut s = TsbpdScheduler::new(0, 0, Duration::from_millis(DELAY_MS), 0, false, None);
         let _ = s.feed_data(1, 5, Duration::ZERO);
         let _ = s.feed_data(0, u32::MAX - 15, Duration::ZERO);
         assert_eq!(
@@ -906,7 +943,7 @@ mod tests {
     #[test]
     fn minimum_delay_floor_applied() {
         // A delay below 120 ms should be silently raised.
-        let s = TsbpdScheduler::new(0, TIME_BASE_I64, 10, 0, false, None);
+        let s = TsbpdScheduler::new(0, TIME_BASE_I64, Duration::from_millis(10), 0, false, None);
         let ts = 0u32;
         // The computed PktTsbpdTime should use 120 ms, not 10 ms.
         let expected = TIME_BASE + u64::from(ts) + TSBPD_DELAY_MIN_MS * 1000;
@@ -915,7 +952,14 @@ mod tests {
 
     #[test]
     fn tlpktdrop_disabled_never_drops() {
-        let mut s = TsbpdScheduler::new(0, TIME_BASE_I64, DELAY_MS, 0, false, None);
+        let mut s = TsbpdScheduler::new(
+            0,
+            TIME_BASE_I64,
+            Duration::from_millis(DELAY_MS),
+            0,
+            false,
+            None,
+        );
         // Feed a packet very late but with tlpktdrop disabled.
         let ts = 0u32;
         let very_late_now =
@@ -933,7 +977,14 @@ mod tests {
         // With too-late drop enabled the gap is instead skipped at the
         // successor's play time (§4.6 / rule 21); see
         // `gap_skip_delivers_successor_at_its_play_time`.
-        let mut s = TsbpdScheduler::new(0, TIME_BASE_I64, DELAY_MS, 0, false, None);
+        let mut s = TsbpdScheduler::new(
+            0,
+            TIME_BASE_I64,
+            Duration::from_millis(DELAY_MS),
+            0,
+            false,
+            None,
+        );
         // Feed packets 1 and 2 but not 0.
         s.feed_data(
             1,
@@ -1019,7 +1070,14 @@ mod tests {
     /// average here: `20 µs * (0 + 1 + ... + 999) / 1000` = 9990 µs.
     #[test]
     fn a_fast_sender_clock_is_corrected_after_one_window() {
-        let mut s = TsbpdScheduler::new(0, TIME_BASE_I64, DELAY_MS, 0, false, None);
+        let mut s = TsbpdScheduler::new(
+            0,
+            TIME_BASE_I64,
+            Duration::from_millis(DELAY_MS),
+            0,
+            false,
+            None,
+        );
         feed_skewed_window(&mut s, 0, DRIFT_SAMPLE_COUNT, 20);
         assert_eq!(s.drift_us(), 5_000, "drift saturates at DRIFT_MAX_US");
         assert_eq!(
@@ -1037,7 +1095,14 @@ mod tests {
     /// The same, for a slow clock: negative drift, negative base correction.
     #[test]
     fn a_slow_sender_clock_is_corrected_after_one_window() {
-        let mut s = TsbpdScheduler::new(0, TIME_BASE_I64, DELAY_MS, 0, false, None);
+        let mut s = TsbpdScheduler::new(
+            0,
+            TIME_BASE_I64,
+            Duration::from_millis(DELAY_MS),
+            0,
+            false,
+            None,
+        );
         feed_skewed_window(&mut s, 0, DRIFT_SAMPLE_COUNT, -20);
         assert_eq!(s.drift_us(), -5_000);
         assert_eq!(s.time_base_us(), TIME_BASE_I64 - 4_990);
@@ -1047,7 +1112,14 @@ mod tests {
     /// and nothing happens before the window is full.
     #[test]
     fn a_small_drift_is_applied_as_drift_only_and_only_at_the_window_boundary() {
-        let mut s = TsbpdScheduler::new(0, TIME_BASE_I64, DELAY_MS, 0, false, None);
+        let mut s = TsbpdScheduler::new(
+            0,
+            TIME_BASE_I64,
+            Duration::from_millis(DELAY_MS),
+            0,
+            false,
+            None,
+        );
         feed_skewed_window(&mut s, 0, DRIFT_SAMPLE_COUNT - 1, 2);
         assert_eq!(s.drift_us(), 0, "999 samples is not a window yet");
         assert_eq!(s.time_base_us(), TIME_BASE_I64);
@@ -1072,7 +1144,14 @@ mod tests {
     /// reasons that say nothing about the clocks.
     #[test]
     fn only_fresh_in_sequence_packets_are_drift_samples() {
-        let mut s = TsbpdScheduler::new(0, TIME_BASE_I64, DELAY_MS, 0, false, None);
+        let mut s = TsbpdScheduler::new(
+            0,
+            TIME_BASE_I64,
+            Duration::from_millis(DELAY_MS),
+            0,
+            false,
+            None,
+        );
         let t = Duration::from_micros(u64::try_from(TIME_BASE_I64).unwrap());
         s.feed_data(0, 0, t);
         assert_eq!(s.drift_sample_count, 1, "the first packet is a sample");
@@ -1093,7 +1172,14 @@ mod tests {
     /// than wrapping.
     #[test]
     fn a_negative_time_base_is_supported() {
-        let s = TsbpdScheduler::new(0, -3_000_000, DELAY_MS, 0, false, None);
+        let s = TsbpdScheduler::new(
+            0,
+            -3_000_000,
+            Duration::from_millis(DELAY_MS),
+            0,
+            false,
+            None,
+        );
         assert_eq!(s.pkt_tsbpd_time(3_000_000), DELAY_MS * 1000);
         assert_eq!(
             s.pkt_tsbpd_time(0),
@@ -1112,7 +1198,7 @@ mod tests {
     fn a_stream_crossing_the_timestamp_wrap_is_delivered_not_dropped() {
         const PACKETS: u32 = 100;
         const START: u64 = 0xFFFF_F000; // 4096 µs before the wrap
-        let mut s = TsbpdScheduler::new(0, 0, DELAY_MS, 0, true, None);
+        let mut s = TsbpdScheduler::new(0, 0, Duration::from_millis(DELAY_MS), 0, true, None);
         let mut dropped = Vec::new();
         let mut last_now = 0;
         for i in 0..PACKETS {

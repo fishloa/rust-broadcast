@@ -11,6 +11,7 @@
 //! The `RepresentationBase` attributes (5.3.7.2) of a Representation fall back
 //! to its AdaptationSet's.
 
+use broadcast_common::timescale::Timescale;
 use thiserror::Error;
 
 use super::model::{
@@ -19,7 +20,7 @@ use super::model::{
 };
 
 /// `@timescale` default (5.3.9.2.2).
-pub const DEFAULT_TIMESCALE: u64 = 1;
+pub const DEFAULT_TIMESCALE: Timescale = Timescale::from_nonzero(1);
 /// `@startNumber` default (5.3.9.5.3).
 pub const DEFAULT_START_NUMBER: u64 = 1;
 /// `@presentationTimeOffset` default (5.3.9.2.2).
@@ -48,7 +49,7 @@ pub struct ResolvedMulti {
     /// Merged Table 16 fields (raw, defaults not applied).
     pub base: BaseInfo,
     /// `@timescale`, default 1.
-    pub timescale: u64,
+    pub timescale: Timescale,
     /// `@presentationTimeOffset`, default 0.
     pub presentation_time_offset: u64,
     /// `@duration`.
@@ -182,7 +183,7 @@ fn finish_multi(m: MultiInfo) -> Result<ResolvedMulti, InheritError> {
         return Err(InheritError::DurationAndTimeline);
     }
     Ok(ResolvedMulti {
-        timescale: m.base.timescale.unwrap_or(DEFAULT_TIMESCALE),
+        timescale: m.base.effective_timescale(),
         presentation_time_offset: m
             .base
             .presentation_time_offset

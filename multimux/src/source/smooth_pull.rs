@@ -160,7 +160,8 @@ mod tests {
     use transmux::pipeline::{CodecConfig, TrackSpec};
     use transmux::{Fmp4Demux, TrackId, track_spec_from_quality_level};
 
-    const SYNTHETIC_MOVIE_TIMESCALE: u32 = transmux::VIDEO_CLOCK_RATE;
+    const SYNTHETIC_MOVIE_TIMESCALE: broadcast_common::timescale::Timescale =
+        transmux::VIDEO_CLOCK_TIMESCALE;
     use transmux::{Media, SmoothOutput, SmoothPackager, TsDemux};
 
     fn nz(n: usize) -> NonZeroUsize {
@@ -355,7 +356,7 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         let config = TrunkConfig::default()
@@ -422,8 +423,13 @@ mod tests {
             .find(|s| s.stream_type == stream_type)
             .expect("StreamIndex");
         let quality = &si.qualities[0];
-        let local_spec =
-            track_spec_from_quality_level(track_id, timescale, stream_type, quality).expect("spec");
+        let local_spec = track_spec_from_quality_level(
+            track_id,
+            broadcast_common::timescale::Timescale::try_new(timescale).expect("timescale"),
+            stream_type,
+            quality,
+        )
+        .expect("spec");
         let init = build_init_segment(std::slice::from_ref(&local_spec), SYNTHETIC_MOVIE_TIMESCALE)
             .expect("init");
 
@@ -534,7 +540,7 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         // HANG GUARD (issue #826): backstop around `run_smooth_pull`.
@@ -575,7 +581,7 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         let result = tokio::time::timeout(
@@ -636,7 +642,7 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         // DISCRIMINATOR (issue #826): must prove the operation returns
@@ -688,7 +694,7 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         // HANG GUARD (issue #826): backstop around `run_smooth_pull` for

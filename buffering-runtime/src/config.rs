@@ -11,10 +11,126 @@ use crate::error::{ConfigField, Error};
 use broadcast_common::clock33::PCR_HZ;
 
 /// Microseconds (arrival clock, intervals, targets).
-pub type Micros = u64;
+///
+/// A newtype, not an alias: `on_chunk(arrival, bytes, pcr)` and
+/// `on_media(now, media_end)` take two time arguments on different clocks,
+/// and an alias let the compiler accept them swapped.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+#[repr(transparent)]
+pub struct Micros(pub u64);
+
+impl Micros {
+    /// Zero microseconds.
+    pub const ZERO: Self = Self(0);
+
+    /// Build from a plain count of microseconds.
+    #[must_use]
+    pub const fn new(us: u64) -> Self {
+        Self(us)
+    }
+
+    /// The plain count of microseconds.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+impl Micros {
+    /// `self - other`, saturating at zero.
+    #[must_use]
+    pub const fn saturating_sub(self, other: Self) -> Self {
+        Self(self.0.saturating_sub(other.0))
+    }
+
+    /// `self + other`, saturating at [`u64::MAX`].
+    #[must_use]
+    pub const fn saturating_add(self, other: Self) -> Self {
+        Self(self.0.saturating_add(other.0))
+    }
+}
+
+impl core::ops::AddAssign for Micros {
+    fn add_assign(&mut self, other: Self) {
+        *self = self.saturating_add(other);
+    }
+}
+
+impl core::ops::SubAssign for Micros {
+    fn sub_assign(&mut self, other: Self) {
+        *self = Self(self.0 - other.0);
+    }
+}
+
+impl core::fmt::Display for Micros {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl core::str::FromStr for Micros {
+    type Err = core::num::ParseIntError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.parse().map(Self)
+    }
+}
+
+impl From<u64> for Micros {
+    fn from(us: u64) -> Self {
+        Self(us)
+    }
+}
+
 /// 27 MHz ticks (media positions: PCR domain for the estimator, PTS x 300 for
 /// the playback/lead domain).
-pub type Ticks27 = u64;
+///
+/// A newtype, not an alias: it keeps a tick count from being passed where a
+/// [`Micros`] belongs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+#[repr(transparent)]
+pub struct Ticks27(pub u64);
+
+impl Ticks27 {
+    /// Zero ticks.
+    pub const ZERO: Self = Self(0);
+
+    /// Build from a plain count of 27 MHz ticks.
+    #[must_use]
+    pub const fn new(ticks: u64) -> Self {
+        Self(ticks)
+    }
+
+    /// The plain count of 27 MHz ticks.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+impl core::fmt::Display for Ticks27 {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl core::str::FromStr for Ticks27 {
+    type Err = core::num::ParseIntError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.parse().map(Self)
+    }
+}
+
+impl From<u64> for Ticks27 {
+    fn from(ticks: u64) -> Self {
+        Self(ticks)
+    }
+}
 
 /// Microseconds per second.
 pub const US_PER_S: u64 = 1_000_000;
@@ -71,17 +187,17 @@ pub struct JitterConfig {
 impl JitterConfig {
     /// The documented defaults.
     pub const DEFAULT: Self = Self {
-        min_window_us: 2_000_000,
-        interval_us: 500_000,
-        outlier_us: 500_000,
+        min_window_us: Micros(2_000_000),
+        interval_us: Micros(500_000),
+        outlier_us: Micros(500_000),
         bucket_us: 10_000,
         buckets: 400,
         forget_q15: 32113,
         quantile_permille: 990,
-        hold_us: 60_000_000,
-        decay_us: 60_000_000,
+        hold_us: Micros(60_000_000),
+        decay_us: Micros(60_000_000),
         max_samples: 4096,
-        discontinuity_us: 1_000_000,
+        discontinuity_us: Micros(1_000_000),
     };
 
     /// Check every field.
@@ -89,13 +205,13 @@ impl JitterConfig {
     /// # Errors
     /// [`Error::ZeroLengthWindow`] or [`Error::InvalidConfig`] naming the field.
     pub fn validate(&self) -> Result<(), Error> {
-        if self.min_window_us == 0 {
+        if self.min_window_us == Micros::ZERO {
             return Err(Error::ZeroLengthWindow);
         }
-        if self.interval_us == 0 {
+        if self.interval_us == Micros::ZERO {
             return Err(Error::InvalidConfig(ConfigField::Interval));
         }
-        if self.min_window_us < self.interval_us.saturating_mul(2) {
+        if self.min_window_us.0 < self.interval_us.0.saturating_mul(2) {
             return Err(Error::InvalidConfig(ConfigField::MinWindow));
         }
         if self.bucket_us == 0 || self.buckets == 0 {
@@ -107,16 +223,16 @@ impl JitterConfig {
         if self.quantile_permille == 0 || u64::from(self.quantile_permille) > PERMILLE {
             return Err(Error::InvalidConfig(ConfigField::Quantile));
         }
-        if self.outlier_us == 0 {
+        if self.outlier_us == Micros::ZERO {
             return Err(Error::InvalidConfig(ConfigField::Outlier));
         }
-        if self.decay_us == 0 {
+        if self.decay_us == Micros::ZERO {
             return Err(Error::InvalidConfig(ConfigField::Decay));
         }
         if self.max_samples < MIN_SAMPLES_CAP {
             return Err(Error::InvalidConfig(ConfigField::Capacity));
         }
-        if self.discontinuity_us == 0 {
+        if self.discontinuity_us == Micros::ZERO {
             return Err(Error::InvalidConfig(ConfigField::Discontinuity));
         }
         Ok(())
@@ -169,16 +285,16 @@ pub struct PolicyConfig {
 impl PolicyConfig {
     /// The documented defaults.
     pub const DEFAULT: Self = Self {
-        min_us: 300_000,
-        initial_us: 1_800_000,
-        max_us: 3_000_000,
+        min_us: Micros(300_000),
+        initial_us: Micros(1_800_000),
+        max_us: Micros(3_000_000),
         k1_q8: 512,
-        margin_us: 100_000,
+        margin_us: Micros(100_000),
         k2_q8: 307,
         after_rebuffer_q8: 320,
         max_step_down_us_per_s: 100_000,
-        reprime_floor_us: 0,
-        reprime_hold_us: 2_000_000,
+        reprime_floor_us: Micros::ZERO,
+        reprime_hold_us: Micros(2_000_000),
     };
 
     /// Check every field.
@@ -186,7 +302,10 @@ impl PolicyConfig {
     /// # Errors
     /// [`Error::InvalidConfig`] naming the field.
     pub fn validate(&self) -> Result<(), Error> {
-        if self.min_us == 0 || self.min_us > self.initial_us || self.initial_us > self.max_us {
+        if self.min_us == Micros::ZERO
+            || self.min_us > self.initial_us
+            || self.initial_us > self.max_us
+        {
             return Err(Error::InvalidConfig(ConfigField::Order));
         }
         if self.k1_q8 == 0 || self.k2_q8 == 0 || self.after_rebuffer_q8 == 0 {
@@ -238,13 +357,13 @@ pub struct ControllerConfig {
 }
 
 /// Default of [`ControllerConfig::track_silence_timeout_us`].
-pub const DEFAULT_TRACK_SILENCE_TIMEOUT_US: Micros = 3_000_000;
+pub const DEFAULT_TRACK_SILENCE_TIMEOUT_US: Micros = Micros(3_000_000);
 /// Default of [`ControllerConfig::track_granularity`].
 pub const DEFAULT_TRACK_GRANULARITY: bool = true;
 /// Default of [`ControllerConfig::granularity_hold_us`].
-pub const DEFAULT_GRANULARITY_HOLD_US: Micros = 30_000_000;
+pub const DEFAULT_GRANULARITY_HOLD_US: Micros = Micros(30_000_000);
 /// Default of [`ControllerConfig::granularity_decay_us`].
-pub const DEFAULT_GRANULARITY_DECAY_US: Micros = 30_000_000;
+pub const DEFAULT_GRANULARITY_DECAY_US: Micros = Micros(30_000_000);
 
 #[cfg(feature = "serde")]
 fn default_track_silence_timeout_us() -> Micros {
@@ -268,8 +387,8 @@ impl ControllerConfig {
     pub const DEFAULT: Self = Self {
         jitter: JitterConfig::DEFAULT,
         policy: PolicyConfig::DEFAULT,
-        starve_threshold_us: 20_000,
-        nodata_after_us: 200_000,
+        starve_threshold_us: Micros(20_000),
+        nodata_after_us: Micros(200_000),
         track_silence_timeout_us: DEFAULT_TRACK_SILENCE_TIMEOUT_US,
         track_granularity: DEFAULT_TRACK_GRANULARITY,
         granularity_hold_us: DEFAULT_GRANULARITY_HOLD_US,
@@ -342,16 +461,16 @@ impl ControllerConfig {
     pub fn validate(&self) -> Result<(), Error> {
         self.jitter.validate()?;
         self.policy.validate()?;
-        if self.policy.max_us > self.jitter.range_us() {
+        if self.policy.max_us.get() > self.jitter.range_us() {
             return Err(Error::InvalidConfig(ConfigField::Bucket));
         }
-        if self.starve_threshold_us >= self.policy.min_us || self.nodata_after_us == 0 {
+        if self.starve_threshold_us >= self.policy.min_us || self.nodata_after_us == Micros::ZERO {
             return Err(Error::InvalidConfig(ConfigField::Threshold));
         }
-        if self.track_silence_timeout_us == 0 {
+        if self.track_silence_timeout_us == Micros::ZERO {
             return Err(Error::InvalidConfig(ConfigField::TrackSilence));
         }
-        if self.granularity_decay_us == 0 {
+        if self.granularity_decay_us == Micros::ZERO {
             return Err(Error::InvalidConfig(ConfigField::GranularityDecay));
         }
         Ok(())
@@ -361,5 +480,40 @@ impl ControllerConfig {
 impl Default for ControllerConfig {
     fn default() -> Self {
         Self::DEFAULT
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Micros, Ticks27};
+    use alloc::string::ToString;
+
+    #[test]
+    fn the_clock_units_are_distinct_newtypes_over_plain_data() {
+        // plain data: one u64, same layout as the C ABI mirror
+        assert_eq!(core::mem::size_of::<Micros>(), core::mem::size_of::<u64>());
+        assert_eq!(core::mem::size_of::<Ticks27>(), core::mem::size_of::<u64>());
+        // the input-log text format round-trips through Display/FromStr
+        assert_eq!(Micros(1_800_000).to_string(), "1800000");
+        assert_eq!("1800000".parse::<Micros>(), Ok(Micros(1_800_000)));
+        assert_eq!("27".parse::<Ticks27>(), Ok(Ticks27(27)));
+        assert!("x".parse::<Micros>().is_err());
+        // spans clamp, a position does not have span arithmetic
+        assert_eq!(Micros(5).saturating_sub(Micros(9)), Micros::ZERO);
+        assert_eq!(Micros(u64::MAX).saturating_add(Micros(1)), Micros(u64::MAX));
+        assert_eq!(Micros(3).get(), 3);
+        assert_eq!(Ticks27::from(7u64).get(), 7);
+        assert!(Micros(1) < Micros(2) && Ticks27(1) < Ticks27(2));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn the_clock_units_serialize_as_bare_numbers() {
+        let j = serde_json::to_string(&Micros(1_800_000)).expect("serialize");
+        assert_eq!(j, "1800000");
+        let back: Micros = serde_json::from_str(&j).expect("deserialize");
+        assert_eq!(back, Micros(1_800_000));
+        let j = serde_json::to_string(&Ticks27(300)).expect("serialize");
+        assert_eq!(j, "300");
     }
 }

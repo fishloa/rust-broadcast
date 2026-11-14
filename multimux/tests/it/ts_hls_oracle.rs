@@ -59,7 +59,7 @@ fn base_config(bind: std::net::SocketAddr, input: InputSpec) -> Config {
     Config::default()
         .with_bind(bind.to_string())
         .with_target_duration_secs(0.5)
-        .with_part_target_ms(100)
+        .with_part_target(Duration::from_millis(100))
         .with_window_segments(8)
         .with_routes(vec![Route {
             name: "cam".to_string(),

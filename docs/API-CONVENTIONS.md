@@ -7,6 +7,7 @@ Binding for every public API in the workspace. New code follows them; a lane tha
 - Wall-clock instant: `jiff::Timestamp`. No chrono.
 - Monotonic "now" in sans-IO engines: `broadcast_common::stage::Timestamp`, passed by the caller; engines never read a clock.
 - Spans and timeouts: `std::time::Duration`; all timeouts through `broadcast_common::timeouts::Timeouts`. No `*_ms`/`*_us` integers in public signatures or config.
+- Deadlines are `Timestamp::checked_add(Duration)`; `None` means the timer never fires; never `saturating_add` a deadline (`saturating_*` only clamps a "now" reading).
 - Media time: a timestamp travels with its timescale; zero timescale is an error. 33-bit PTS/DTS and 27 MHz PCR arithmetic only via `broadcast_common::clock33`.
 
 ## Types

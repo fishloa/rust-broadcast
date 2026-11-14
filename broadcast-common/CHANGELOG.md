@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Added
+- `timescale::Timescale`: `Display`, a transparent `Debug` (the bare number), `serde::Serialize` (transparent, `serde` feature), `Timescale::NANOS`, and `clock33::PTS_TIMESCALE` / `clock33::PCR_TIMESCALE` (the 90 kHz and 27 MHz clocks as `Timescale`s) (#2657).
 - `clock33::Clock33` and `clock33::Clock27` with `clock33::ClockOutOfRange`: the workspace's validated clock values. `Clock33` is a 33-bit 90 kHz sample (PTS/DTS/SCTE-35 `pts_time`) that cannot hold a value at or above 2^33; `Clock27` is a 27 MHz `base * 300 + ext` (PCR, ESCR, program-stream SCR) whose base is a `Clock33` and whose extension is below 300, with `from_parts`/`from_27mhz` (validating), `ticks`, `seconds` and `signed_distance_to`. `mpeg-ts`'s `Pcr` and `mpeg-ps`'s `Scr` are these values rather than unchecked copies. Constructing is strict, parsing is lossless: `Clock27::from_wire_parts(base, ext)` keeps the two parts a wire field carried (a 9-bit PCR/ESCR/SCR extension may be 300..=511, off the clock), `to_clock27()` is the checked view that reports such a value as `ClockOutOfRange`, `is_valid()` answers the question directly, and `ClockOutOfRange::base(value)` reports an over-wide base for a type that kept wire parts (#2656).
 - `net` module: `UdpOptions` (the one UDP bind/join option set: `recv_buffer_bytes`, `reuse_address`, `reuse_port`, `multicast`), `MulticastJoin` (`group` + `interface` + optional source-specific `source`) and `MulticastInterface` (`Any` / `V4(Ipv4Addr)` / `V6Index(u32)` / `Name(String)`, `parse`/`as_str`), plus `UdpOptions::validate` and `JoinMismatch`. Plain `core::net` data, `no_std`, so a sans-IO engine can carry it in an action (#2663).
 ### Changed
@@ -27,6 +28,25 @@
 - `hex::hex_encode_upper`: upper-case hex rendering (#2463).
 - `xml` module (`xml` feature): `read_tree`, the bounded namespace-aware quick-xml reader that builds a small `xml::Elem` tree under a caller-supplied `xml::Namespace`, moved from `dash-runtime` so the Smooth Streaming manifest reader (#2356) can share it. It refuses DOCTYPE declarations and every entity they would declare, validates text against the XML 1.0 `Char` production, and enforces `XmlLimits` through `XmlBudget`; `xml::XmlError` reports the four ways it stops, and every bound stays the one `xml_chars::XmlLimit` names (#2355).
 - `klv` and `ber` modules: the SMPTE ST 336 KLV triplet (`KlvItem<'a>` with a 16-byte `UniversalLabel` key), `walk_klv_items`/`collect_klv_items`, and the BER length codec (`decode_ber_length`, `encode_ber_length`, `ber_length_size`, `BerLength` which keeps the on-wire length width so a parsed item re-serializes byte-identically), with `KlvError`. Moved from st377-1 so st377-1 (MXF) and transmux (MISB KLV) share one implementation (#2341).
+
+### Changed
+- BREAKING: `stage::Timestamp` stores microseconds, not nanoseconds: `Timestamp(pub u64)` is a raw
+  microsecond count, `from_micros`/`as_micros` are the lossless pair, `from_nanos` truncates to the
+  microsecond it is in, `from_millis` multiplies by 1 000, `as_nanos`/`as_millis` scale out, and
+  `saturating_add`/`saturating_add_nanos` round a span up to the microsecond its end falls in (so a
+  100 ms timeout added to microsecond `t` is the first instant at which `now - t >= 100 ms` holds);
+  `saturating_sub` and `from_instant` are exact to the microsecond. A host's monotonic "now" and the
+  wall clock read beside it never need sub-microsecond resolution (media clocks are
+  `clock33::Clock33`/`Clock27`, which are untouched); and it is what `media-plane`, `smooth-runtime`
+  and every sans-IO engine already count in, so one clock reaches the whole workspace without a
+  lossy conversion at each boundary.
+
+### Added
+- `backoff::BackoffSteps` (`steps: Vec<Duration>`, `cap: Duration`) and `BackoffSteps::schedule(seed)`: the plain, `Clone`-faithful retry-configuration shape (the `serde` derive is behind the `serde` feature), where `RetrySchedule` is runtime state holding a jitter cursor and cannot be a config field. The three config structs that carried `(backoff_ms: Vec<u64>, backoff_cap_ms: u64)` now hold one of these.
+- `stage::Timestamp::from_micros`, `from_millis`, `as_micros` and `as_millis`: the lossless conversions between the one host clock and the units a host may already have.
+
+### Removed
+- BREAKING: `RetrySchedule::seeded(min, max, factor, entropy)`, a second constructor differing from `new` only in that it applied `mix_seed`; write `RetrySchedule::new(min, max, factor, mix_seed(entropy))`.
 
 ### Fixed
 - `ber::encode_ber_length` / `encode_ber_length_as` write their length byte through `len::fit_u8` instead of `u8::try_from(..).unwrap_or(u8::MAX)`, so an over-range value is reported as a `KlvError` rather than silently clamped into the wire (unreachable today: the short-form range is checked first). The `truncation` workspace guard now covers `broadcast-common`, including that clamp idiom.

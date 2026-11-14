@@ -38,7 +38,8 @@ const PACED_BOUND_TARGETS: u32 = 5;
 const FRAME_SLACK_SECS: f64 = 0.2;
 const LATE_SLACK_SECS: f64 = 6.0;
 const MIN_SEGMENTS: usize = 2;
-const MOVIE_TIMESCALE: u32 = 90_000;
+const MOVIE_TIMESCALE: broadcast_common::timescale::Timescale =
+    broadcast_common::timescale::Timescale::from_nonzero(90_000);
 const FRANCE2_FIRST_NON_IDR_SYNC: usize = 20;
 const FRANCE2_LOOP_REPS: usize = 4;
 const GULLI_LOOP_REPS: usize = 3;
@@ -122,7 +123,7 @@ fn start(route: Route) -> Server {
     let cfg = Config::default()
         .with_bind(media.to_string())
         .with_target_duration_secs(TARGET_SECS)
-        .with_part_target_ms(200)
+        .with_part_target(Duration::from_millis(200))
         .with_window_segments(64)
         .with_routes(vec![route])
         .with_admin(AdminSpec::new(
@@ -440,17 +441,19 @@ fn looped_ts(rel: &str, tag: &str, skip: usize, reps: usize) -> PathBuf {
         .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
         .expect("AVC");
     let body = &track.samples[skip..];
-    let first = body[0].dts.expect("dts");
+    let first = body[0].timing.map(|t| t.dts).expect("dts");
     let last = body.last().expect("sample");
-    let span = last.dts.expect("dts") + i64::from(last.duration.expect("duration")) - first;
+    let span = last.timing.map(|t| t.dts).expect("dts")
+        + i64::from(last.timing.map(|t| t.duration).expect("duration"))
+        - first;
     let mut stream = Vec::new();
     for k in 0..reps as i64 {
         for s in body {
             stream.push(Sample::new(
                 s.data.to_vec(),
-                s.dts.map(|d| d + span * k),
-                s.pts.map(|p| p + span * k),
-                s.duration,
+                s.timing.map(|t| t.dts).map(|d| d + span * k),
+                s.timing.map(|t| t.pts).map(|p| p + span * k),
+                s.timing.map(|t| t.duration),
                 s.flags.is_sync,
             ));
         }

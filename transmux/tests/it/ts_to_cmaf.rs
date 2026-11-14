@@ -12,6 +12,7 @@
 //! 4. Sample round-trip: first video sample re-parsed from mdat matches
 //!    annexb_to_length_prefixed(first_video_au).
 
+use broadcast_common::timescale::Timescale;
 use std::vec::Vec;
 use transmux::TrackId;
 
@@ -306,7 +307,7 @@ fn ts_to_cmaf_end_to_end() {
     // ---- Phase 6: Build CMAF segments ---------------------------------------
     let video_track = TrackSpec::new(
         TrackId::new(1),
-        90000,
+        Timescale::from_nonzero(90000),
         CodecConfig::Avc {
             config: config.clone(),
             width: 0,
@@ -315,7 +316,7 @@ fn ts_to_cmaf_end_to_end() {
     );
     let audio_track = TrackSpec::new(
         TrackId::new(2),
-        audio_sample_rate,
+        Timescale::try_new(audio_sample_rate).unwrap(),
         CodecConfig::Aac {
             esds: esds.clone(),
             channel_count: audio_channel_count,
@@ -325,7 +326,8 @@ fn ts_to_cmaf_end_to_end() {
     );
     let tracks = [video_track, audio_track];
 
-    let init_data = build_init_segment(&tracks, 1000).expect("build_init_segment must succeed");
+    let init_data = build_init_segment(&tracks, Timescale::from_nonzero(1000))
+        .expect("build_init_segment must succeed");
 
     let fragment_tracks = [
         FragmentTrackData::new(TrackId::new(1), 0, &video_samples),

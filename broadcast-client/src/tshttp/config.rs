@@ -1,4 +1,7 @@
 use alloc::vec;
+use core::time::Duration;
+
+use broadcast_common::backoff::BackoffSteps;
 use broadcast_common::timeouts::Timeouts;
 
 /// Session configuration (defaults per DESIGN.md).
@@ -11,30 +14,28 @@ use broadcast_common::timeouts::Timeouts;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub struct Config {
-    /// Start timeout in milliseconds, measured from `Open` (T6, T20).
-    pub start_timeout_ms: u64,
-    /// Stall notice threshold in milliseconds (T11, T14, T15).
-    pub stall_notice_ms: u64,
-    /// Stall reconnect threshold in milliseconds (T12); must exceed
-    /// `stall_notice_ms`.
-    pub stall_reconnect_ms: u64,
-    /// Backoff schedule in milliseconds (T9); must not be empty.
-    pub backoff_ms: alloc::vec::Vec<u64>,
-    /// Backoff cap in milliseconds (T9).
-    pub backoff_cap_ms: u64,
+    /// Start timeout, measured from `Open` (T6, T20).
+    pub start_timeout: Duration,
+    /// Stall notice threshold (T11, T14, T15).
+    pub stall_notice: Duration,
+    /// Stall reconnect threshold (T12); must exceed
+    /// `stall_notice`.
+    pub stall_reconnect: Duration,
+    /// Backoff schedule (T9); the step table must not be empty.
+    pub backoff: BackoffSteps,
     /// Minimum spacing between two consecutive `Open`s after a connection
     /// that played and then ended (T8); a floor only when that connection
     /// lasted less than this interval, so a long-lived stream still
     /// reconnects with no delay.
-    pub min_reconnect_interval_ms: u64,
+    pub min_reconnect_interval: Duration,
 }
 
-/// Smallest start timeout [`Config::with_timeouts`] produces, in milliseconds.
-const MIN_START_TIMEOUT_MS: u64 = 1;
-/// Smallest stall-reconnect threshold [`Config::with_timeouts`] produces, in
-/// milliseconds; the notice threshold is half of it, so the two stay ordered.
-const MIN_STALL_RECONNECT_MS: u64 = 2;
-const STALL_NOTICE_DIVISOR: u64 = 2;
+/// Smallest start timeout [`Config::with_timeouts`] produces.
+const MIN_START_TIMEOUT: Duration = Duration::from_millis(1);
+/// Smallest stall-reconnect threshold [`Config::with_timeouts`] produces; the
+/// notice threshold is half of it, so the two stay ordered.
+const MIN_STALL_RECONNECT: Duration = Duration::from_millis(2);
+const STALL_NOTICE_DIVISOR: u32 = 2;
 
 impl Config {
     /// Take the start timeout from `timeouts.connect` (the whole first-byte
@@ -44,53 +45,45 @@ impl Config {
     /// fields are left as they are.
     #[must_use]
     pub fn with_timeouts(mut self, timeouts: Timeouts) -> Self {
-        let millis = |d: core::time::Duration| u64::try_from(d.as_millis()).unwrap_or(u64::MAX);
-        let reconnect = millis(timeouts.read_idle).max(MIN_STALL_RECONNECT_MS);
-        self.start_timeout_ms = millis(timeouts.connect).max(MIN_START_TIMEOUT_MS);
-        self.stall_notice_ms = reconnect / STALL_NOTICE_DIVISOR;
-        self.stall_reconnect_ms = reconnect;
+        let reconnect = timeouts.read_idle.max(MIN_STALL_RECONNECT);
+        self.start_timeout = timeouts.connect.max(MIN_START_TIMEOUT);
+        self.stall_notice = reconnect / STALL_NOTICE_DIVISOR;
+        self.stall_reconnect = reconnect;
         self
     }
 
     /// Set the start timeout (`T6`, `T20`).
     #[must_use]
-    pub fn with_start_timeout_ms(mut self, start_timeout_ms: u64) -> Self {
-        self.start_timeout_ms = start_timeout_ms;
+    pub fn with_start_timeout(mut self, start_timeout: Duration) -> Self {
+        self.start_timeout = start_timeout;
         self
     }
 
     /// Set the stall notice threshold (`T11`, `T14`, `T15`).
     #[must_use]
-    pub fn with_stall_notice_ms(mut self, stall_notice_ms: u64) -> Self {
-        self.stall_notice_ms = stall_notice_ms;
+    pub fn with_stall_notice(mut self, stall_notice: Duration) -> Self {
+        self.stall_notice = stall_notice;
         self
     }
 
     /// Set the stall reconnect threshold (`T12`).
     #[must_use]
-    pub fn with_stall_reconnect_ms(mut self, stall_reconnect_ms: u64) -> Self {
-        self.stall_reconnect_ms = stall_reconnect_ms;
+    pub fn with_stall_reconnect(mut self, stall_reconnect: Duration) -> Self {
+        self.stall_reconnect = stall_reconnect;
         self
     }
 
     /// Set the backoff schedule (`T9`).
     #[must_use]
-    pub fn with_backoff_ms(mut self, backoff_ms: alloc::vec::Vec<u64>) -> Self {
-        self.backoff_ms = backoff_ms;
-        self
-    }
-
-    /// Set the backoff cap (`T9`).
-    #[must_use]
-    pub fn with_backoff_cap_ms(mut self, backoff_cap_ms: u64) -> Self {
-        self.backoff_cap_ms = backoff_cap_ms;
+    pub fn with_backoff(mut self, backoff: BackoffSteps) -> Self {
+        self.backoff = backoff;
         self
     }
 
     /// Set the minimum reconnect interval (`T8`).
     #[must_use]
-    pub fn with_min_reconnect_interval_ms(mut self, min_reconnect_interval_ms: u64) -> Self {
-        self.min_reconnect_interval_ms = min_reconnect_interval_ms;
+    pub fn with_min_reconnect_interval(mut self, min_reconnect_interval: Duration) -> Self {
+        self.min_reconnect_interval = min_reconnect_interval;
         self
     }
 }
@@ -98,12 +91,18 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            start_timeout_ms: 15_000,
-            stall_notice_ms: 5_000,
-            stall_reconnect_ms: 30_000,
-            backoff_ms: vec![2_000, 4_000, 8_000],
-            backoff_cap_ms: 10_000,
-            min_reconnect_interval_ms: 1_000,
+            start_timeout: Duration::from_millis(15_000),
+            stall_notice: Duration::from_millis(5_000),
+            stall_reconnect: Duration::from_millis(30_000),
+            backoff: BackoffSteps {
+                steps: vec![
+                    Duration::from_millis(2_000),
+                    Duration::from_millis(4_000),
+                    Duration::from_millis(8_000),
+                ],
+                cap: Duration::from_millis(10_000),
+            },
+            min_reconnect_interval: Duration::from_millis(1_000),
         }
     }
 }
@@ -113,17 +112,17 @@ impl Default for Config {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum ConfigError {
-    /// `start_timeout_ms` is zero.
+    /// `start_timeout` is zero.
     ZeroStartTimeout,
-    /// `stall_notice_ms` is zero.
+    /// `stall_notice` is zero.
     ZeroStallNotice,
-    /// `stall_reconnect_ms` is zero.
+    /// `stall_reconnect` is zero.
     ZeroStallReconnect,
-    /// `stall_reconnect_ms` is not greater than `stall_notice_ms`.
+    /// `stall_reconnect` is not greater than `stall_notice`.
     StallReconnectNotAfterNotice,
-    /// `backoff_ms` is empty.
+    /// `backoff.steps` is empty.
     EmptyBackoff,
-    /// A `backoff_ms` entry is zero.
+    /// A `backoff.steps` entry is zero.
     ZeroBackoffEntry,
 }
 
@@ -132,14 +131,14 @@ impl ConfigError {
     #[must_use]
     pub fn name(&self) -> &'static str {
         match self {
-            Self::ZeroStartTimeout => "start_timeout_ms is zero",
-            Self::ZeroStallNotice => "stall_notice_ms is zero",
-            Self::ZeroStallReconnect => "stall_reconnect_ms is zero",
+            Self::ZeroStartTimeout => "start_timeout is zero",
+            Self::ZeroStallNotice => "stall_notice is zero",
+            Self::ZeroStallReconnect => "stall_reconnect is zero",
             Self::StallReconnectNotAfterNotice => {
-                "stall_reconnect_ms is not greater than stall_notice_ms"
+                "stall_reconnect is not greater than stall_notice"
             }
-            Self::EmptyBackoff => "backoff_ms is empty",
-            Self::ZeroBackoffEntry => "backoff_ms has a zero entry",
+            Self::EmptyBackoff => "backoff.steps is empty",
+            Self::ZeroBackoffEntry => "backoff.steps has a zero entry",
         }
     }
 }
@@ -155,45 +154,45 @@ impl Config {
     /// # Errors
     /// The first violated rule, in field order.
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if self.start_timeout_ms == 0 {
+        if self.start_timeout.is_zero() {
             return Err(ConfigError::ZeroStartTimeout);
         }
-        if self.stall_notice_ms == 0 {
+        if self.stall_notice.is_zero() {
             return Err(ConfigError::ZeroStallNotice);
         }
-        if self.stall_reconnect_ms == 0 {
+        if self.stall_reconnect.is_zero() {
             return Err(ConfigError::ZeroStallReconnect);
         }
-        if self.stall_reconnect_ms <= self.stall_notice_ms {
+        if self.stall_reconnect <= self.stall_notice {
             return Err(ConfigError::StallReconnectNotAfterNotice);
         }
-        if self.backoff_ms.is_empty() {
+        if self.backoff.steps.is_empty() {
             return Err(ConfigError::EmptyBackoff);
         }
-        if self.backoff_ms.contains(&0) {
+        if self.backoff.steps.contains(&Duration::ZERO) {
             return Err(ConfigError::ZeroBackoffEntry);
         }
         Ok(())
     }
 
     /// The nearest configuration that passes [`Config::validate`]: zero
-    /// timeouts become 1 ms, a `stall_reconnect_ms` not after the notice is
-    /// moved to one millisecond after it, an empty `backoff_ms` becomes the
-    /// single entry `backoff_cap_ms` (at least 1 ms), a zero `backoff_ms`
+    /// timeouts become 1 ms, a `stall_reconnect` not after the notice is
+    /// moved to one millisecond after it, an empty `backoff.steps` becomes the
+    /// single entry `backoff.cap` (at least 1 ms), a zero `backoff.steps`
     /// entry becomes 1 ms. A valid configuration is returned unchanged.
     #[must_use]
     pub fn clamped(&self) -> Self {
         let mut c = self.clone();
-        c.start_timeout_ms = c.start_timeout_ms.max(1);
-        c.stall_notice_ms = c.stall_notice_ms.max(1);
-        c.stall_reconnect_ms = c
-            .stall_reconnect_ms
-            .max(c.stall_notice_ms.saturating_add(1));
-        if c.backoff_ms.is_empty() {
-            c.backoff_ms = vec![c.backoff_cap_ms.max(1)];
+        c.start_timeout = c.start_timeout.max(MIN_START_TIMEOUT);
+        c.stall_notice = c.stall_notice.max(MIN_START_TIMEOUT);
+        c.stall_reconnect = c
+            .stall_reconnect
+            .max(c.stall_notice.saturating_add(MIN_START_TIMEOUT));
+        if c.backoff.steps.is_empty() {
+            c.backoff.steps = vec![c.backoff.cap.max(MIN_START_TIMEOUT)];
         }
-        for entry in &mut c.backoff_ms {
-            *entry = (*entry).max(1);
+        for entry in &mut c.backoff.steps {
+            *entry = (*entry).max(MIN_START_TIMEOUT);
         }
         c
     }

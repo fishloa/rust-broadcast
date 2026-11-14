@@ -16,6 +16,7 @@
 //! changes the recovered alignment rather than being inert.
 #![cfg(feature = "std")]
 
+use broadcast_common::timescale::Timescale;
 use transmux::TrackId;
 use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use transmux::pipeline::{CodecConfig, Sample};
@@ -172,7 +173,7 @@ fn marker_wall_seconds(
 ) -> f64 {
     let cumulative: u64 = samples[..marker_index]
         .iter()
-        .map(|s| u64::from(s.duration.unwrap_or(0)))
+        .map(|s| u64::from(s.timing.map(|t| t.duration).unwrap_or(0)))
         .sum();
     (start_decode_time + cumulative) as f64 / f64::from(clock_rate)
 }
@@ -183,13 +184,13 @@ fn tracks() -> Vec<RtpStreamTrack> {
             TrackId::new(VIDEO_TRACK),
             RtpMediaKind::H264,
             dummy_avc(),
-            VIDEO_CLOCK,
+            Timescale::from_nonzero(VIDEO_CLOCK),
         ),
         RtpStreamTrack::new(
             TrackId::new(AUDIO_TRACK),
             RtpMediaKind::Aac,
             dummy_aac(),
-            AUDIO_CLOCK,
+            Timescale::from_nonzero(AUDIO_CLOCK),
         ),
     ]
 }

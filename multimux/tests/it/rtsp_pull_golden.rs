@@ -161,7 +161,7 @@ async fn rtsp_pull_golden() {
         let route_handle = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         let config = TrunkConfig::default()
@@ -198,11 +198,13 @@ async fn rtsp_pull_golden() {
                 (h ^ u64::from(*b)).wrapping_mul(FNV_PRIME)
             });
             let dts = sample
-                .dts
+                .timing
+                .map(|t| t.dts)
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "none".to_string());
             let pts = sample
-                .pts
+                .timing
+                .map(|t| t.pts)
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "none".to_string());
             rendered.push_str(&format!(

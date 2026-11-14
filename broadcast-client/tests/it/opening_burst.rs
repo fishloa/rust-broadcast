@@ -7,6 +7,13 @@ use crate::support;
 use crate::support::replay::open_live;
 use crate::support::ts_shift::{PACKET, Shift, packet_has_pcr, packet_pid, shift_pes};
 use crate::support::video_run::VideoRun;
+use broadcast_common::stage::Timestamp;
+use buffering_runtime::Micros;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const PAT_PID: u16 = 0x00;
 const TF1_PMT_PID: u16 = 0x64;
@@ -440,7 +447,7 @@ impl Renderer {
 
 fn run(plan: &Plan, row: Row, starve_us: u64) -> Outcome {
     let mut cfg = Config::default();
-    cfg.buffer.policy.initial_us = FILL_US;
+    cfg.buffer.policy.initial_us = Micros(FILL_US);
     let (mut s, conn) = open_live(cfg);
     let mut out = Outcome::default();
     let mut kinds: BTreeMap<u32, (u32, bool, bool)> = BTreeMap::new();
@@ -468,14 +475,14 @@ fn run(plan: &Plan, row: Row, starve_us: u64) -> Outcome {
         if declare_at == Some(now) {
             declare_at = None;
             let ids: Vec<TrackId> = rendered.iter().map(|t| TrackId::new(*t)).collect();
-            s.set_rendered_tracks(now, &ids);
+            s.set_rendered_tracks(ts(now), &ids);
         } else if now == chunk_at {
             let (_, bytes) = deliveries.next().unwrap();
-            s.on_data(conn, bytes, now);
-            s.on_playback_position(now, r.position(now));
+            s.on_data(conn, bytes, ts(now));
+            s.on_playback_position(ts(now), r.position(now));
         } else if now == next_tick {
             next_tick += TIMER_US;
-            s.on_playback_position(now, r.position(now));
+            s.on_playback_position(ts(now), r.position(now));
         } else {
             wake = None;
         }
@@ -487,7 +494,7 @@ fn run(plan: &Plan, row: Row, starve_us: u64) -> Outcome {
                         kinds.insert(
                             t.track_id.value(),
                             (
-                                t.timescale,
+                                t.timescale.get(),
                                 t.config.is_video(),
                                 t.config.audio_sample_rate().is_some(),
                             ),
@@ -515,14 +522,14 @@ fn run(plan: &Plan, row: Row, starve_us: u64) -> Outcome {
                 }
                 Event::Sample { track, sample, .. } => {
                     if let (Some(pts), Some((ts, is_video, _))) =
-                        (sample.pts, kinds.get(&track.value()))
+                        (sample.timing.map(|t| t.pts), kinds.get(&track.value()))
                     {
-                        let dur = i64::from(sample.duration.unwrap_or(0));
+                        let dur = i64::from(sample.timing.map(|t| t.duration).unwrap_or(0));
                         let end = if *is_video {
                             i128::from(
                                 runs.entry(track.value())
                                     .or_insert_with(VideoRun::new)
-                                    .push(pts, sample.dts.unwrap_or(pts), dur),
+                                    .push(pts, sample.timing.map(|t| t.dts).unwrap_or(pts), dur),
                             )
                         } else {
                             i128::from(pts) + i128::from(dur)
@@ -586,11 +593,11 @@ fn lead_us(end: Option<&u64>, pos: u64) -> i64 {
 }
 
 fn drain(s: &mut Session, now: u64, wake: &mut Option<u64>) {
-    while let Some(a) = s.poll(now) {
+    while let Some(a) = s.poll(ts(now)) {
         if let Action::WakeAt(t) = a
-            && t > now
+            && t.as_micros() > now
         {
-            *wake = Some(wake.map_or(t, |w| w.min(t)));
+            *wake = Some(wake.map_or(t.as_micros(), |w| w.min(t.as_micros())));
         }
     }
 }
@@ -771,7 +778,7 @@ fn matrix(rows: &[Row]) -> Vec<(Row, Plan, Outcome)> {
         let at = schedule(&raw);
         at[at.len() - 1]
     };
-    let starve = Config::default().buffer.starve_threshold_us;
+    let starve = Config::default().buffer.starve_threshold_us.0;
     let mut cache: BTreeMap<(usize, String), Stream> = BTreeMap::new();
     let mut results = Vec::new();
     for row in rows {

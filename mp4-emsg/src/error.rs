@@ -41,6 +41,9 @@ pub enum Error {
         /// Why it is invalid.
         reason: &'static str,
     },
+    /// A field held a value the spec does not allow (a zero `timescale`).
+    #[error(transparent)]
+    InvalidValue(#[from] broadcast_common::error::InvalidValue),
     /// A value did not fit the wire field it is written to.
     #[error(transparent)]
     FieldOverflow(#[from] broadcast_common::error::FieldOverflow),

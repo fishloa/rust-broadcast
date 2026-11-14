@@ -34,6 +34,7 @@
 
 #![cfg(feature = "cenc")]
 
+use broadcast_common::timescale::Timescale;
 use transmux::TrackId;
 
 use broadcast_common::{Encrypt, Unpackage};
@@ -540,7 +541,7 @@ fn avc_spec(track_id: u32) -> transmux::TrackSpec {
     };
     transmux::TrackSpec::new(
         TrackId::new(track_id),
-        90_000,
+        Timescale::from_nonzero(90_000),
         CodecConfig::Avc {
             config: transmux::AVCConfigurationBox::new(record),
             width: 16,
@@ -584,7 +585,10 @@ fn avc_media(valid_count: usize, with_bad_sample: bool) -> Media {
             false,
         ));
     }
-    Media::new(vec![Track::new(avc_spec(1), samples)], 90_000)
+    Media::new(
+        vec![Track::new(avc_spec(1), samples)],
+        Timescale::from_nonzero(90_000),
+    )
 }
 
 /// Every sample's bytes of every track, in (track, sample) order.

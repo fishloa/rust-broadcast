@@ -11,6 +11,7 @@
 //! `fixtures/ts/`) in this checkout — `transmux/tests/it/ir_timing.rs`
 //! already reads it from that path.
 
+use broadcast_common::timescale::Timescale;
 use mpeg_ts::pid::Pid;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -86,7 +87,7 @@ fn assemble(mut demux: StreamingTsDemux) -> Media {
                     // invariant), so derive it here instead, matching
                     // `TsDemux::demux`'s own oracle derivation.
                     if track.samples.is_empty()
-                        && let Some(dts) = sample.dts
+                        && let Some(dts) = sample.timing.map(|t| t.dts)
                     {
                         track.start_decode_time = dts as u64;
                     }
@@ -108,7 +109,7 @@ fn assemble(mut demux: StreamingTsDemux) -> Media {
             _ => {}
         }
     }
-    Media::new(tracks, 90_000).with_pcr(pcr)
+    Media::new(tracks, Timescale::from_nonzero(90_000)).with_pcr(pcr)
 }
 
 fn feed_in_chunks(data: &[u8], chunk_size: usize) -> Media {

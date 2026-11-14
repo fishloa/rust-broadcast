@@ -9,6 +9,7 @@
 use transmux::TrackId;
 
 use broadcast_common::Unpackage;
+use broadcast_common::timescale::Timescale;
 use transmux::{PsDemux, TsDemux, WebmDemux};
 
 fn fnv1a(bytes: &[u8]) -> u64 {
@@ -19,13 +20,75 @@ fn fnv1a(bytes: &[u8]) -> u64 {
         .fold(OFFSET, |h, &b| (h ^ u64::from(b)).wrapping_mul(PRIME))
 }
 
+/// `Sample` formerly carried three flat optional timestamp fields (`dts`,
+/// `pts`, `duration`, each `Option<i64>`/`Option<u32>`); #2657 folds them
+/// into one `timing: Option<SampleTiming { dts, pts, duration }>` (the inner
+/// values are then bare, not `Option`). The goldens were captured against the
+/// flat form. Render the flat shape again so every hash still proves the
+/// demux output itself is unchanged: the values are identical, only the
+/// wrapper shape differs.
+fn sample_timing_debug(s: &str) -> String {
+    const FIELD: &str = ", timing: ";
+    let mut out = String::with_capacity(s.len() + s.len() / 8);
+    let mut rest = s;
+    while let Some(i) = rest.find(FIELD) {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + FIELD.len()..];
+        if let Some(brace) = after.strip_prefix("Some(SampleTiming { ") {
+            // The three fields are fixed and in this order: dts, pts, duration.
+            let Some(dts_i) = brace.find("dts: ") else {
+                out.push_str(FIELD);
+                rest = after;
+                continue;
+            };
+            let body = &brace[dts_i + 5..];
+            let Some(pts_i) = body.find(", pts: ") else {
+                out.push_str(FIELD);
+                rest = after;
+                continue;
+            };
+            let dts = &body[..pts_i];
+            let dur_body = &body[pts_i + 7..];
+            let Some(dur_i) = dur_body.find(", duration: ") else {
+                out.push_str(FIELD);
+                rest = after;
+                continue;
+            };
+            let pts = &dur_body[..dur_i];
+            let after_dur = &dur_body[dur_i + 12..];
+            let Some(close_i) = after_dur.find(" })") else {
+                out.push_str(FIELD);
+                rest = after;
+                continue;
+            };
+            let duration = &after_dur[..close_i];
+            out.push_str(&format!(
+                ", dts: Some({dts}), pts: Some({pts}), duration: Some({duration})"
+            ));
+            // `close_i` points at the ` })` closing `SampleTiming { .. }` and
+            // the `Some(..)` wrapper; skip all three characters.
+            rest = &after_dur[close_i + 3..];
+        } else if let Some(none) = after.strip_prefix("None") {
+            out.push_str(", dts: None, pts: None, duration: None");
+            rest = none;
+        } else {
+            out.push_str(FIELD);
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// `Debug` of a `Media` minus the trailing `degraded` field added by #1144,
 /// so the goldens captured before that field keep proving the demux output
 /// itself is unchanged. `degraded` is the last field; the TS demux now fills
 /// it (continuity gaps on `m6-single.ts`), which is pinned by
 /// `ts_sync_loss_degraded.rs` instead.
 fn media_debug(media: &transmux::Media) -> String {
-    let s = legacy_pid_debug(&no_display_debug(&format!("{media:?}")));
+    let s = legacy_pid_debug(&no_display_debug(&sample_timing_debug(&format!(
+        "{media:?}"
+    ))));
     match s.rfind(", degraded: [") {
         Some(i) => format!("{} }}", &s[..i]),
         None => s,
@@ -258,7 +321,7 @@ fn rtp_stream_depacketiser_output_is_unchanged() {
         TrackId::new(1),
         RtpMediaKind::H264,
         config,
-        90_000,
+        Timescale::from_nonzero(90_000),
     )]);
     let mut samples = Vec::new();
     for p in &stream.packets {
@@ -269,7 +332,7 @@ fn rtp_stream_depacketiser_output_is_unchanged() {
     check(
         &mut bad,
         "rtp-stream",
-        fnv1a(no_display_debug(&format!("{samples:?}")).as_bytes()),
+        fnv1a(no_display_debug(&sample_timing_debug(&format!("{samples:?}"))).as_bytes()),
         0x24e2_66a5_5d4e_7510,
     );
     assert!(bad.is_empty(), "output changed: {bad:?}");
@@ -336,7 +399,7 @@ fn fragment_writer_outputs_are_unchanged() {
         0xb843_b6bc_d7f7_ee94,
     );
     let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
-    let mut ll = LlSegmenter::new(specs, 1000, 2.0, 5).unwrap();
+    let mut ll = LlSegmenter::new(specs, Timescale::from_nonzero(1000), 2.0, 5).unwrap();
     let chunks = ll.package(&media).unwrap();
     check(
         &mut bad,

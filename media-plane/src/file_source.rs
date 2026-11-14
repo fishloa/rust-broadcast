@@ -13,6 +13,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Demand, Stage, Timestamp, Unpackage};
 use container_probe::{Format, IsobmffLayout, Probe};
 use thiserror::Error;
@@ -246,13 +247,17 @@ impl ParsedFile {
         let mut ranges: Vec<PassRange> = Vec::new();
 
         for (ti, track) in self.tracks.iter().enumerate() {
-            let timescale = track.spec.timescale.max(1) as f64;
+            let timescale = track.spec.timescale.get() as f64;
             // Both the pass span and the frame period must reflect the
             // track's **presentation** timeline, not decode order — a track
             // with B-frames reorders, so the decode-order "last" sample is
             // not the presentation max and a loop offset based on it would
             // step backwards across the loop point.
-            let mut pres_pts: Vec<i64> = track.samples.iter().filter_map(|s| s.pts).collect();
+            let mut pres_pts: Vec<i64> = track
+                .samples
+                .iter()
+                .filter_map(|s| s.timing.map(|t| t.pts))
+                .collect();
             // A track with no timed samples cannot be paced/looped; give it a
             // zero span/frame so `advance_offsets`' zip stays aligned with the
             // track table, but it contributes no `order` entries.
@@ -288,7 +293,12 @@ impl ParsedFile {
                 frame = track
                     .samples
                     .iter()
-                    .filter_map(|s| s.duration.map(i64::from).filter(|&d| d > 0))
+                    .filter_map(|s| {
+                        s.timing
+                            .map(|t| t.duration)
+                            .map(i64::from)
+                            .filter(|&d| d > 0)
+                    })
                     .next()
                     .unwrap_or(1);
             }
@@ -308,8 +318,8 @@ impl ParsedFile {
                 .samples
                 .iter()
                 .filter_map(|s| {
-                    let pts = s.pts?;
-                    let dts = s.dts.or(s.pts)?;
+                    let pts = s.timing.map(|t| t.pts)?;
+                    let dts = s.timing.map(|t| t.dts).or(s.timing.map(|t| t.pts))?;
                     Some((dts as f64 / timescale, pts as f64 / timescale, s.clone()))
                 })
                 .collect();
@@ -608,7 +618,7 @@ where
 /// 90 kHz clock (a 27 MHz system clock divided by 300), per ISO/IEC 13818-1 —
 /// every TS demuxer's track timescales are multiples of it. A named constant
 /// (not a bare `90_000`) so the value's source is cited where it is used.
-const MPEG_TS_MOVIE_TIMESCALE: u32 = 90_000;
+const MPEG_TS_MOVIE_TIMESCALE: Timescale = transmux::VIDEO_CLOCK_TIMESCALE;
 
 /// Convert a non-negative seconds value into a wall-clock [`Duration`] without
 /// panicking — `Duration::from_secs_f64` panics on a non-finite, negative, or
@@ -793,11 +803,17 @@ impl FileIngestSession {
         for item in &self.order {
             let mut sample = item.sample.clone();
             let off = self.offsets[item.track_ref];
-            if let Some(p) = sample.pts {
-                sample.pts = Some(p.checked_add(off).ok_or(FileReaderError::OffsetOverflow)?);
-            }
-            if let Some(d) = sample.dts {
-                sample.dts = Some(d.checked_add(off).ok_or(FileReaderError::OffsetOverflow)?);
+            if let Some(t) = sample.timing.as_mut() {
+                if let Some(p) = t.pts.checked_add(off) {
+                    t.pts = p;
+                } else {
+                    return Err(FileReaderError::OffsetOverflow);
+                }
+                if let Some(d) = t.dts.checked_add(off) {
+                    t.dts = d;
+                } else {
+                    return Err(FileReaderError::OffsetOverflow);
+                }
             }
             let within_pass = (item.due_seconds - self.file_start_secs).max(0.0);
             self.queue
@@ -924,7 +940,8 @@ mod tests {
             if let SessionEvent::Sample {
                 track_id, sample, ..
             } = ev
-                && let Some(d) = sample.dts
+                && let Some(t) = sample.timing
+                && let d = t.dts
             {
                 dts.push((track_id, d));
             }
@@ -1035,7 +1052,7 @@ mod tests {
 
     /// A minimal AVC [`TrackSpec`] at the given timescale — `build_playout`
     /// reads only `timescale`/`track_id`, so the codec config body is inert.
-    fn avc_spec(track_id: TrackId, timescale: u32) -> TrackSpec {
+    fn avc_spec(track_id: TrackId, timescale: Timescale) -> TrackSpec {
         TrackSpec::new(
             track_id,
             timescale,
@@ -1069,7 +1086,10 @@ mod tests {
             .map(|&p| Sample::new(vec![0], Some(p), Some(p), Some(10), true))
             .collect();
         ParsedFile {
-            tracks: vec![Track::new(avc_spec(TrackId::new(1), 90_000), samples)],
+            tracks: vec![Track::new(
+                avc_spec(TrackId::new(1), Timescale::from_nonzero(90_000)),
+                samples,
+            )],
         }
     }
 
@@ -1100,7 +1120,10 @@ mod tests {
     fn zero_duration_falls_back_to_unit_frame() {
         let samples = vec![Sample::new(vec![0], Some(0), Some(0), Some(0), true)];
         let parsed = ParsedFile {
-            tracks: vec![Track::new(avc_spec(TrackId::new(1), 90_000), samples)],
+            tracks: vec![Track::new(
+                avc_spec(TrackId::new(1), Timescale::from_nonzero(90_000)),
+                samples,
+            )],
         };
         let (_, _, ranges) = parsed.build_playout();
         assert_eq!(
@@ -1135,7 +1158,10 @@ mod tests {
     fn no_playable_samples_fails_session() {
         let samples = vec![Sample::new(vec![0], None, None, None, false)];
         let parsed = ParsedFile {
-            tracks: vec![Track::new(avc_spec(TrackId::new(1), 90_000), samples)],
+            tracks: vec![Track::new(
+                avc_spec(TrackId::new(1), Timescale::from_nonzero(90_000)),
+                samples,
+            )],
         };
         let err = FileIngestSession::new(parsed, ProgramId(0), true, false);
         assert!(
@@ -1185,8 +1211,13 @@ mod tests {
             session.queue.clear();
             for i in 0..burst {
                 let mut sample = template.1.clone();
-                sample.dts = Some(i64::try_from(i).unwrap());
-                sample.pts = sample.dts;
+                let dts = i64::try_from(i).unwrap();
+                if let Some(t) = sample.timing.as_mut() {
+                    t.dts = dts;
+                    t.pts = dts;
+                } else {
+                    sample.timing = Some(transmux::ir::SampleTiming::new(dts, dts, 0));
+                }
                 session.queue.push_back((template.0, sample, 0.0));
             }
             session.pass_wall_start =

@@ -32,7 +32,7 @@
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
-use broadcast_common::timescale::{Rounding, rescale_i64, to_micros};
+use broadcast_common::timescale::{Rounding, Timescale, rescale_i64, to_micros};
 
 use crate::TrackId;
 use crate::pipeline::Sample;
@@ -93,7 +93,7 @@ pub enum AlignOut {
 }
 
 struct Lane {
-    timescale: u32,
+    timescale: Timescale,
     first_pts: Option<i64>,
     delta: i64,
     target: Option<i64>,
@@ -115,7 +115,7 @@ pub struct TrackAligner {
     sender_reports_refused: bool,
 }
 
-fn rescale(ticks: i64, from: u32, to: u32) -> i64 {
+fn rescale(ticks: i64, from: Timescale, to: Timescale) -> i64 {
     rescale_i64(ticks, from, to, Rounding::Nearest)
 }
 
@@ -124,7 +124,7 @@ fn wrapped_gap(rtptime: u32, reference: i64) -> i64 {
     i64::from(i32::from_ne_bytes(rtptime.wrapping_sub(low).to_ne_bytes()))
 }
 
-fn ticks_to_us(ticks: i64, timescale: u32) -> i128 {
+fn ticks_to_us(ticks: i64, timescale: Timescale) -> i128 {
     to_micros(i128::from(ticks), timescale, Rounding::TowardZero)
 }
 
@@ -132,7 +132,7 @@ impl TrackAligner {
     /// `tracks` is `(track id, is the video track, RTP clock rate)`; fewer than two tracks
     /// pass every sample through untouched.
     #[must_use]
-    pub fn new(tracks: &[(TrackId, bool, u32)]) -> Self {
+    pub fn new(tracks: &[(TrackId, bool, Timescale)]) -> Self {
         let lanes = tracks
             .iter()
             .map(|&(id, _, timescale)| {
@@ -199,7 +199,7 @@ impl TrackAligner {
         track: TrackId,
         sample: Sample,
     ) -> Vec<AlignOut> {
-        let (true, Some(pts)) = (self.active, sample.pts) else {
+        let (true, Some(pts)) = (self.active, sample.timing.map(|t| t.pts)) else {
             return alloc::vec![AlignOut::Sample(track, sample)];
         };
         let mut out = Vec::new();
@@ -343,7 +343,10 @@ impl TrackAligner {
         };
         let mut discontinuity = false;
         if track != anchor {
-            let anchor_scale = self.lanes.get(&anchor).map_or(1, |l| l.timescale);
+            let Some(anchor_scale) = self.lanes.get(&anchor).map(|l| l.timescale) else {
+                out.push(AlignOut::Sample(track, sample));
+                return;
+            };
             let Some(lane) = self.lanes.get_mut(&track) else {
                 out.push(AlignOut::Sample(track, sample));
                 return;
@@ -364,12 +367,15 @@ impl TrackAligner {
                 } else if diff > 0 {
                     lane.delta = target;
                 } else {
-                    let step = i64::from(sample.duration.unwrap_or(0)) / SLEW_DIVISOR;
+                    let step =
+                        i64::from(sample.timing.map(|t| t.duration).unwrap_or(0)) / SLEW_DIVISOR;
                     lane.delta = lane.delta.saturating_add(diff.max(-step));
                 }
             }
-            sample.pts = sample.pts.map(|p| p.saturating_add(lane.delta));
-            sample.dts = sample.dts.map(|d| d.saturating_add(lane.delta));
+            if let Some(t) = sample.timing.as_mut() {
+                t.pts = t.pts.saturating_add(lane.delta);
+                t.dts = t.dts.saturating_add(lane.delta);
+            }
         }
         let state = self.current_state(anchor);
         if discontinuity {
@@ -495,12 +501,12 @@ mod tests {
             let track = |id, rate| RtpStreamTrack::new(id, RtpMediaKind::H264, dummy_avc(), rate);
             Self {
                 depa: RtpStreamDepacketiser::new(alloc::vec![
-                    track(VIDEO, VIDEO_RATE),
-                    track(OTHER, other_rate)
+                    track(VIDEO, Timescale::from_nonzero(VIDEO_RATE)),
+                    track(OTHER, Timescale::try_new(other_rate).expect("rate"))
                 ]),
                 aligner: TrackAligner::new(&[
-                    (VIDEO, true, VIDEO_RATE),
-                    (OTHER, false, other_rate),
+                    (VIDEO, true, Timescale::from_nonzero(VIDEO_RATE)),
+                    (OTHER, false, Timescale::try_new(other_rate).expect("rate")),
                 ]),
                 other_rate,
                 other_base,
@@ -553,8 +559,8 @@ mod tests {
                     self.other_rate
                 };
                 let us = to_micros(
-                    i128::from(sample.pts.expect("pts")),
-                    rate,
+                    i128::from(sample.timing.map(|t| t.pts).expect("pts")),
+                    Timescale::try_new(rate).expect("rate"),
                     Rounding::TowardZero,
                 );
                 if id == VIDEO {

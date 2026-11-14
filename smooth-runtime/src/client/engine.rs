@@ -13,6 +13,8 @@ use transmux::{TrackId, TrackSpec, track_spec_from_quality_level};
 use url::Url;
 
 use broadcast_common::backoff::{RetrySchedule, mix_seed};
+use broadcast_common::stage::Timestamp;
+use broadcast_common::timescale::Timescale;
 use broadcast_common::url_ref;
 
 use super::action::{Action, FetchFailure, RequestId, StreamId};
@@ -23,12 +25,22 @@ use crate::error::SmoothError;
 use broadcast_common::units::MICROS_PER_SEC;
 
 /// The shortest retry delay: a zero step must never become a burst of retries at one instant.
-const MIN_BACKOFF_MS: u64 = 1;
+const MIN_BACKOFF: Duration = Duration::from_millis(1);
 const REFRESH_DIVISOR: u64 = 2;
 const FIRST_TRACK_ID: u32 = 1;
 const FOURCC_AVC: [&str; 2] = ["H264", "AVC1"];
 const FOURCC_HEVC: [&str; 3] = ["H265", "HEVC", "HVC1"];
 const FOURCC_HEVC_ALT: &str = "HEV1";
+
+/// A wait as whole microseconds, saturating instead of wrapping.
+fn micros(d: Duration) -> u64 {
+    u64::try_from(d.as_micros()).unwrap_or(u64::MAX)
+}
+
+/// The caller's [`Timestamp`] on this engine's microsecond clock.
+fn micros_now(now: Timestamp) -> u64 {
+    now.as_micros()
+}
 
 fn codec_family(four_cc: &str) -> String {
     let upper = four_cc.to_ascii_uppercase();
@@ -41,18 +53,15 @@ fn codec_family(four_cc: &str) -> String {
     }
 }
 
-fn timescale_of(manifest: &SmoothManifest, index: &StreamIndex) -> Option<u32> {
-    u32::try_from(index.timescale.unwrap_or(manifest.timescale))
-        .ok()
-        .filter(|&t| t != 0)
+fn timescale_of(manifest: &SmoothManifest, index: &StreamIndex) -> Timescale {
+    index.timescale.unwrap_or(manifest.timescale)
 }
 
 fn primary_video(manifest: &SmoothManifest) -> Option<&StreamIndex> {
-    manifest.streams.iter().find(|s| {
-        s.stream_type == StreamType::Video
-            && !s.qualities.is_empty()
-            && timescale_of(manifest, s).is_some()
-    })
+    manifest
+        .streams
+        .iter()
+        .find(|s| s.stream_type == StreamType::Video && !s.qualities.is_empty())
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -84,13 +93,14 @@ impl SmoothClient {
     /// A client for the manifest [`SmoothClientConfig::manifest_url`] names
     /// ([`SmoothClientConfig::new`]); the first [`Action`] is its fetch.
     pub fn new(config: SmoothClientConfig) -> Self {
+        let backoff = &config.backoff;
         let retry = RetrySchedule::from_steps(
-            &config
-                .backoff_ms
+            &backoff
+                .steps
                 .iter()
-                .map(|ms| Duration::from_millis((*ms).max(MIN_BACKOFF_MS)))
+                .map(|d| (*d).max(MIN_BACKOFF))
                 .collect::<Vec<_>>(),
-            Duration::from_millis(config.backoff_cap_ms.max(MIN_BACKOFF_MS)),
+            backoff.cap.max(MIN_BACKOFF),
             mix_seed(config.jitter_seed),
         );
         Self {
@@ -194,7 +204,8 @@ impl SmoothClient {
     }
 
     /// The next fetch the host should perform, if any.
-    pub fn poll(&mut self, now: u64) -> Option<Action> {
+    pub fn poll(&mut self, now: Timestamp) -> Option<Action> {
+        let now = micros_now(now);
         if !self.fatal && !self.ended {
             self.fire_timers(now);
             self.schedule();
@@ -209,7 +220,8 @@ impl SmoothClient {
     }
 
     /// A manifest body arrived for request `id`.
-    pub fn on_manifest(&mut self, now: u64, id: RequestId, bytes: &[u8]) {
+    pub fn on_manifest(&mut self, now: Timestamp, id: RequestId, bytes: &[u8]) {
+        let now = micros_now(now);
         if !self.take_manifest(id) {
             return;
         }
@@ -227,7 +239,8 @@ impl SmoothClient {
     }
 
     /// A fragment body arrived for request `id`.
-    pub fn on_fragment(&mut self, now: u64, id: RequestId, bytes: &[u8]) {
+    pub fn on_fragment(&mut self, now: Timestamp, id: RequestId, bytes: &[u8]) {
+        let now = micros_now(now);
         let Some((si, chunk)) = self.take_fragment(id) else {
             return;
         };
@@ -259,7 +272,8 @@ impl SmoothClient {
     }
 
     /// The fetch for request `id` produced no usable body.
-    pub fn on_failure(&mut self, now: u64, id: RequestId, failure: FetchFailure) {
+    pub fn on_failure(&mut self, now: Timestamp, id: RequestId, failure: FetchFailure) {
+        let now = micros_now(now);
         if self.take_manifest(id) {
             if failure.is_not_found() {
                 self.outputs.push_back(Output::ManifestNotFound);
@@ -451,9 +465,7 @@ impl SmoothClient {
             let Some(quality) = index.qualities.get(pick).cloned() else {
                 continue;
             };
-            let Some(timescale) = timescale_of(manifest, index) else {
-                continue;
-            };
+            let timescale = timescale_of(manifest, index);
             let chunks = match index.enumerate_chunks() {
                 Ok(chunks) => chunks,
                 Err(e) => {
@@ -481,17 +493,14 @@ impl SmoothClient {
             .qualities
             .iter()
             .map(|q| {
-                let codecs = timescale
-                    .and_then(|ts| {
-                        track_spec_from_quality_level(
-                            TrackId::new(FIRST_TRACK_ID),
-                            ts,
-                            index.stream_type,
-                            q,
-                        )
-                        .ok()
-                    })
-                    .and_then(|spec| rfc6381_track_codec_string(&spec).ok());
+                let codecs = track_spec_from_quality_level(
+                    TrackId::new(FIRST_TRACK_ID),
+                    timescale,
+                    index.stream_type,
+                    q,
+                )
+                .ok()
+                .and_then(|spec| rfc6381_track_codec_string(&spec).ok());
                 QualityInfo {
                     bitrate: q.bitrate,
                     resolution: q.width.zip(q.height),
@@ -693,9 +702,12 @@ impl SmoothClient {
                 .last()
                 .map(|c| (c.1, s.timescale))
         });
-        let half = last.map_or(self.config.refresh_max_us, |(d, ts)| {
-            d.saturating_mul(MICROS_PER_SEC) / u64::from(ts).max(1) / REFRESH_DIVISOR
+        let half = last.map_or(micros(self.config.refresh_max), |(d, ts)| {
+            d.saturating_mul(MICROS_PER_SEC) / ts.as_u64() / REFRESH_DIVISOR
         });
-        half.clamp(self.config.refresh_min_us, self.config.refresh_max_us)
+        half.clamp(
+            micros(self.config.refresh_min),
+            micros(self.config.refresh_max),
+        )
     }
 }

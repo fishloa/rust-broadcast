@@ -12,8 +12,14 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use broadcast_common::stage::Timestamp;
 use smooth_runtime::{Action, FetchFailure, Output, SmoothClient, SmoothClientConfig};
 use url::Url;
+
+/// The example's microsecond clock as the client's `now`.
+fn now(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const DEFAULT_DIR: &str = "../fixtures/smooth/av";
 const ORIGIN: &str = "http://origin.test/";
@@ -41,9 +47,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let mut client = SmoothClient::new(config);
     let mut samples: BTreeMap<u32, usize> = BTreeMap::new();
-    let mut now = 0u64;
+    let mut now_us = 0u64;
     loop {
-        while let Some(action) = client.poll(now) {
+        while let Some(action) = client.poll(now(now_us)) {
             let (id, url, is_manifest) = match action {
                 Action::FetchManifest { id, url } => (id, url, true),
                 Action::FetchFragment { id, url, .. } => (id, url, false),
@@ -55,10 +61,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .replace("%28", "(")
                 .replace("%29", ")");
             match std::fs::read(dir.join(relative)) {
-                Ok(body) if is_manifest => client.on_manifest(now, id, &body),
-                Ok(body) => client.on_fragment(now, id, &body),
+                Ok(body) if is_manifest => client.on_manifest(now(now_us), id, &body),
+                Ok(body) => client.on_fragment(now(now_us), id, &body),
                 Err(_) => client.on_failure(
-                    now,
+                    now(now_us),
                     id,
                     FetchFailure {
                         status: Some(404),
@@ -71,7 +77,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             match output {
                 Output::Tracks(tracks) => {
                     for t in &tracks {
-                        println!("track {} timescale {}", t.track_id.value(), t.timescale);
+                        println!(
+                            "track {} timescale {}",
+                            t.track_id.value(),
+                            t.timescale.get()
+                        );
                     }
                 }
                 Output::Sample { track, .. } => *samples.entry(track.value()).or_default() += 1,
@@ -83,7 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             break;
         }
         match client.next_deadline() {
-            Some(t) => now = now.max(t),
+            Some(t) => now_us = now_us.max(t),
             None => break,
         }
     }

@@ -301,14 +301,14 @@ fn run_scenario(
                         let video = matches!(s.config, CodecConfig::Avc { .. });
                         is_video.insert(s.track_id, video);
                         if video {
-                            out.video_timescale = f64::from(s.timescale);
+                            out.video_timescale = f64::from(s.timescale.get());
                         } else {
-                            out.audio_timescale = f64::from(s.timescale);
+                            out.audio_timescale = f64::from(s.timescale.get());
                         }
                     }
                 }
                 Event::Sample { track, sample, .. } => {
-                    let pts = sample.pts.expect("pts") as f64;
+                    let pts = sample.timing.map(|t| t.pts).expect("pts") as f64;
                     let scale = if is_video[track] {
                         out.video_timescale
                     } else {

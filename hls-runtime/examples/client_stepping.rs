@@ -49,7 +49,7 @@ fn canned_playlist() -> String {
     let origin = HlsOrigin::builder(std::sync::Arc::clone(&trunk))
         .with_target_duration_secs(1.0)
         .with_window_segments(nz(4))
-        .with_low_latency(500)
+        .with_low_latency(Duration::from_millis(500))
         .build()
         .expect("both required fields set");
     origin.set_init(vec![0xAA; 32]);
@@ -152,7 +152,7 @@ fn main() {
             } => {
                 println!("action: FetchPlaylist {{ url: {url:?}, blocking: None }}");
             }
-            Action::WaitMs(ms) => println!("action: WaitMs({ms})"),
+            Action::Wait(wait) => println!("action: Wait({wait:?})"),
             // `Action` is `#[non_exhaustive]` — a future variant is simply
             // not printed by this demo, not a compile break.
             _ => {}

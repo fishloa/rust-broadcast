@@ -4,6 +4,7 @@
 //! The test demuxes real TS fixtures, parses the syncframe BSI, builds the
 //! config box, and asserts byte-exact match with ffmpeg's output.
 
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize};
 use transmux::TrackId;
 
@@ -173,7 +174,7 @@ fn ac3_init_segment_sample_entry() {
 
     let tracks = vec![TrackSpec::new(
         TrackId::new(1),
-        sample_rate,
+        Timescale::try_new(sample_rate).unwrap(),
         CodecConfig::Ac3 {
             config: dac3,
             channel_count: 1,
@@ -182,7 +183,7 @@ fn ac3_init_segment_sample_entry() {
         },
     )];
 
-    let init = build_init_segment(&tracks, 1000).unwrap();
+    let init = build_init_segment(&tracks, Timescale::from_nonzero(1000)).unwrap();
 
     let dac3_body = find_child_box_body(&init, b"dac3").unwrap();
     assert_eq!(dac3_body, &DAC3_ORACLE[..], "dac3 in init segment mismatch");
@@ -195,7 +196,7 @@ fn ec3_init_segment_sample_entry() {
 
     let tracks = vec![TrackSpec::new(
         TrackId::new(1),
-        sample_rate,
+        Timescale::try_new(sample_rate).unwrap(),
         CodecConfig::Eac3 {
             config: dec3,
             channel_count: 1,
@@ -204,7 +205,7 @@ fn ec3_init_segment_sample_entry() {
         },
     )];
 
-    let init = build_init_segment(&tracks, 1000).unwrap();
+    let init = build_init_segment(&tracks, Timescale::from_nonzero(1000)).unwrap();
 
     let dec3_body = find_child_box_body(&init, b"dec3").unwrap();
     assert_eq!(dec3_body, &DEC3_ORACLE[..], "dec3 in init segment mismatch");

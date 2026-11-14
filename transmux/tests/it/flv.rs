@@ -12,6 +12,7 @@
 //! 5. Cross-hub: FLV.as_slice() → IR → CmafMux carries avc1/avcC + mp4a and matching NALs.
 
 use broadcast_common::error::BufferTooShort;
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use bytes::Bytes;
 use test_fixtures::ffprobe;
@@ -209,7 +210,7 @@ fn check_timing(samples: &[transmux::Sample], ora: &[&ffprobe::PacketRow], kind:
         );
         // Advance by the forward-delta duration (exact for all but the last).
         if i + 1 < samples.len() {
-            dts += s.duration.unwrap_or(0) as i64;
+            dts += s.timing.map(|t| t.duration).unwrap_or(0) as i64;
         }
     }
 }
@@ -443,7 +444,10 @@ fn streaming_payloads_are_flv_shaped_not_ts_shaped() {
     // `flv_frame_payloads`'s dts-based ms rescale is the identity — the
     // first video payload's `timestamp_ms` must equal that sample's own
     // absolute `dts` exactly (bites on any accidental batch-relative reset).
-    let first_sample_dts = media.tracks[0].samples[0].dts.expect("video dts");
+    let first_sample_dts = media.tracks[0].samples[0]
+        .timing
+        .map(|t| t.dts)
+        .expect("video dts");
     assert_eq!(
         video_frames[0].timestamp_ms as i64, first_sample_dts,
         "first video payload ms timestamp == sample absolute dts"
@@ -471,7 +475,7 @@ fn alloc_body(len: usize) -> Vec<u8> {
 /// composition offset was truncated into SI24.
 #[test]
 fn package_rescales_non_ms_timescales() {
-    const VIDEO_TIMESCALE: u32 = 90_000;
+    const VIDEO_TIMESCALE: Timescale = Timescale::from_nonzero(90_000);
     const FRAME_TICKS: u32 = 3_000; // 30 fps at 90 kHz
 
     // One AVC `avc1` from the real fixture, so the muxer has a valid config.
@@ -575,7 +579,7 @@ fn package_rejects_oversized_composition_time() {
     let track = transmux::Track::new(
         transmux::TrackSpec::new(
             TrackId::new(1),
-            1000,
+            Timescale::from_nonzero(1000),
             CodecConfig::Avc {
                 config,
                 width: 320,
@@ -584,7 +588,7 @@ fn package_rejects_oversized_composition_time() {
         ),
         vec![sample],
     );
-    let media = transmux::Media::new(vec![track], 1000);
+    let media = transmux::Media::new(vec![track], Timescale::from_nonzero(1000));
 
     let mut mux = FlvMux::new();
     let err = mux
@@ -620,7 +624,7 @@ fn frame_payloads_reject_out_of_range_timestamps() {
         let track = transmux::Track::new(
             transmux::TrackSpec::new(
                 TrackId::new(1),
-                1000,
+                Timescale::from_nonzero(1000),
                 CodecConfig::Avc {
                     config: config.clone(),
                     width: 320,
@@ -629,7 +633,7 @@ fn frame_payloads_reject_out_of_range_timestamps() {
             ),
             vec![sample],
         );
-        transmux::Media::new(vec![track], 1000)
+        transmux::Media::new(vec![track], Timescale::from_nonzero(1000))
     };
     // Sanity: in-range input is accepted (so the Errs below are the guards).
     assert!(transmux::flv_frame_payloads(&media_with(0, 0)).is_ok());
@@ -1025,50 +1029,6 @@ fn tag_missing_only_its_previous_tag_size_is_accepted() {
 /// placeholder), silently flattening the whole file onto one instant. It is now
 /// an error. `RtpDepacketiser` has produced timescale-0 tracks, so this is
 /// reachable, not hypothetical.
-#[test]
-fn zero_timescale_is_rejected_not_flattened_to_zero() {
-    let mut demux = FlvDemux::new();
-    let source = demux.unpackage(FLV.as_slice()).expect("demux av.flv");
-    let CodecConfig::Avc { config, .. } = source.tracks[0].config() else {
-        panic!("fixture track 0 must be AVC");
-    };
-    let config = config.clone();
-
-    let samples: Vec<transmux::Sample> = (0..3u32)
-        .map(|i| {
-            transmux::Sample::new(alloc_body(4), Some(i as i64), Some(i as i64), Some(1), true)
-        })
-        .collect();
-    let track = transmux::Track::new(
-        transmux::TrackSpec::new(
-            TrackId::new(1),
-            0, // no timescale at all
-            CodecConfig::Avc {
-                config,
-                width: 320,
-                height: 240,
-            },
-        ),
-        samples,
-    );
-    let media = transmux::Media::new(vec![track], 0);
-
-    let mut mux = FlvMux::new();
-    let err = mux
-        .package(&media)
-        .expect_err("a zero timescale must be rejected");
-    // Bites: before the fix this returned `Ok` with every tag timestamped 0.
-    assert!(
-        matches!(
-            err,
-            FlvError::Codec(transmux::Error::InvalidInput(
-                "FLV mux requires a non-zero track timescale"
-            ))
-        ),
-        "expected a timescale error, got {err:?}"
-    );
-}
-
 /// `on_metadata_body` is the only `onMetaData` body the workspace writes: the
 /// script tag `FlvMux` emits for this fixture, and the one a live RTMP push
 /// frames, differ only by the `duration` the file knows and a live stream
@@ -1113,9 +1073,9 @@ fn script_duration_seconds(media: &transmux::Media) -> f64 {
         let ticks: u64 = track
             .samples
             .iter()
-            .map(|s| s.duration.unwrap_or(0) as u64)
+            .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
             .sum();
-        let secs = ticks as f64 / f64::from(track.spec.timescale);
+        let secs = ticks as f64 / f64::from(track.spec.timescale.get());
         if secs > max {
             max = secs;
         }

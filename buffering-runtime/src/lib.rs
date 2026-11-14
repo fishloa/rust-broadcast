@@ -38,5 +38,5 @@ pub const ABI_VERSION: u32 = 2;
 /// `PCR_WRAP_27MHZ`).
 #[must_use]
 pub fn pts90k_to_27mhz(pts: u64) -> Ticks27 {
-    (pts % WRAP_33BIT) * PCR_EXT_MODULUS
+    Ticks27((pts % WRAP_33BIT) * PCR_EXT_MODULUS)
 }

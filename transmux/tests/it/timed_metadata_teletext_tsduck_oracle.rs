@@ -57,7 +57,8 @@ fn decode_via_this_crate(ts_bytes: &[u8]) -> Vec<timed_metadata::webvtt::Cue> {
     let mut last_pts = 0u64;
     for sample in &track.samples {
         let pts = sample
-            .pts
+            .timing
+            .map(|t| t.pts)
             .expect("every demuxed Teletext PES sample carries a PTS")
             .max(0) as u64;
         last_pts = pts;

@@ -1,5 +1,11 @@
 use crate::support::hls_host::{self, Host};
 use broadcast_client::{Config, ErrorKind, Event, Session, SourceKind, Status};
+use broadcast_common::stage::Timestamp;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 fn manifest_url() -> &'static str {
     "http://origin.test/Manifest"
@@ -78,13 +84,13 @@ fn smooth_manifest_url_is_selected_case_insensitively() {
     ] {
         let mut c = Config::default();
         c.kind = SourceKind::Auto;
-        let s = Session::open(url, c, 0).unwrap();
+        let s = Session::open(url, c, ts(0)).unwrap();
         let _ = s;
     }
     // ensure smooth source selected: first request path equals url
     let mut c = Config::default();
     c.kind = SourceKind::Auto;
-    let mut s = Session::open("http://h/x/Manifest", c, 0).unwrap();
+    let mut s = Session::open("http://h/x/Manifest", c, ts(0)).unwrap();
     assert!(matches!(
         s.select_variant(0),
         Err(broadcast_client::Error::NoSuchVariant(_))
@@ -95,7 +101,7 @@ fn smooth_manifest_url_is_selected_case_insensitively() {
 fn smooth_manifest_format_query_is_not_smooth() {
     let mut c = Config::default();
     c.kind = SourceKind::Auto;
-    let mut s = Session::open("http://h/x/Manifest?format=mpd-time-csf", c, 0).unwrap();
+    let mut s = Session::open("http://h/x/Manifest?format=mpd-time-csf", c, ts(0)).unwrap();
     assert!(matches!(
         s.select_variant(0),
         Err(broadcast_client::Error::NotHls)
@@ -334,7 +340,7 @@ fn smooth_samples_are_placed_at_tfxd_time() {
     let has_late = h
         .events
         .iter()
-        .any(|e| matches!(e, Event::Sample { sample, .. } if sample.dts == Some(10_000_000)));
+        .any(|e| matches!(e, Event::Sample { sample, .. } if sample.timing.map(|t| t.dts) == Some(10_000_000)));
     assert!(has_late, "expected a sample at tfxd time 10000000");
 }
 
@@ -496,7 +502,7 @@ fn smooth_manifest_redirect_and_basic_auth_are_followed() {
         "http://origin.test/moved/QualityLevels(64528)/Fragments(video=0)",
         body("smooth/av/QualityLevels(64528)/Fragments(video=0)"),
     );
-    let mut session = Session::open("http://origin.test/Manifest", cfg, 0).unwrap();
+    let mut session = Session::open("http://origin.test/Manifest", cfg, ts(0)).unwrap();
     session.set_credentials(Credentials::new("u", "p")).unwrap();
     // drive manually using host? Host owns session, but we created session separately. Use host instead.
     let mut h2 = Host::new("http://origin.test/Manifest", smooth_config());
@@ -549,7 +555,7 @@ fn smooth_manifest_redirect_and_basic_auth_are_followed() {
 #[test]
 fn smooth_fragment_inactivity_reports_request_stalled() {
     let mut cfg = smooth_config();
-    cfg.segment_inactivity_timeout_us = 1000;
+    cfg.segment_inactivity_timeout = std::time::Duration::from_millis(1);
     let mut h = Host::new(manifest_url(), cfg);
     h.ok(manifest_url(), body("smooth/av/Manifest"));
     route_fragments(&mut h);
@@ -676,9 +682,9 @@ fn sample_trace(fixture: &str) -> String {
             Event::Sample { track, sample, .. } => out.push_str(&format!(
                 "sample track={} dts={:?} pts={:?} dur={:?} sync={} len={} fnv={:016x}\n",
                 track.value(),
-                sample.dts,
-                sample.pts,
-                sample.duration,
+                sample.timing.map(|t| t.dts),
+                sample.timing.map(|t| t.pts),
+                sample.timing.map(|t| t.duration),
                 sample.flags.is_sync,
                 sample.data.len(),
                 fnv1a(&sample.data),

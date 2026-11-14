@@ -24,6 +24,8 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
+use core::time::Duration;
+
 use broadcast_common::hex::hex_encode;
 
 /// A CENC protection scheme (`schm.scheme_type`) — ISO/IEC 23001-7 §4.
@@ -3271,6 +3273,27 @@ impl DecimalSeconds {
         self.0
     }
 
+    /// `duration` as seconds, infallibly: a `Duration` is always finite and
+    /// non-negative, so there is no invalid value to reject.
+    ///
+    /// A duration whose seconds do not fit an `f64` saturates there, which
+    /// keeps the value finite (an `f64`'s infinity is not a valid decimal
+    /// seconds attribute).
+    #[must_use]
+    pub fn from_duration(duration: Duration) -> Self {
+        let secs = duration.as_secs_f64();
+        Self(if secs.is_finite() { secs } else { f64::MAX })
+    }
+
+    /// `scale` times `duration` as seconds, infallibly: a non-negative
+    /// multiplier of a valid value is valid, and the product saturates at
+    /// `f64::MAX` instead of overflowing to infinity.
+    #[must_use]
+    pub fn from_duration_scaled(duration: Duration, scale: f64) -> Self {
+        let secs = duration.as_secs_f64() * scale;
+        Self(if secs.is_finite() { secs } else { f64::MAX })
+    }
+
     /// Construct without re-validating — only for a value already known
     /// valid (this module's own strict-grammar parse, or a literal/`ZERO`).
     fn new_unchecked(value: f64) -> Self {
@@ -5059,6 +5082,37 @@ mod tests {
 
     use super::*;
     use alloc::vec;
+
+    /// A `Duration` is always a valid decimal-seconds value, so the
+    /// duration constructors need no validation and never panic.
+    #[test]
+    fn a_duration_is_always_valid_decimal_seconds() {
+        assert_eq!(
+            DecimalSeconds::from_duration(Duration::from_millis(500)).get(),
+            0.5
+        );
+        assert_eq!(
+            DecimalSeconds::from_duration(Duration::ZERO),
+            DecimalSeconds::ZERO
+        );
+        assert_eq!(
+            DecimalSeconds::from_duration(Duration::from_secs(4)).get(),
+            4.0
+        );
+        assert_eq!(
+            DecimalSeconds::from_duration_scaled(Duration::from_millis(500), 3.0).get(),
+            1.5
+        );
+        assert_eq!(
+            DecimalSeconds::from_duration_scaled(Duration::ZERO, 3.0),
+            DecimalSeconds::ZERO
+        );
+        // a product that would overflow saturates at a finite value rather than
+        // becoming an infinity no renderer may emit
+        let huge = DecimalSeconds::from_duration_scaled(Duration::MAX, f64::MAX);
+        assert!(huge.get().is_finite());
+        assert!(DecimalSeconds::new(huge.get()).is_ok());
+    }
 
     fn seg(uri: &str, duration: f64) -> MediaSegment {
         MediaSegment {

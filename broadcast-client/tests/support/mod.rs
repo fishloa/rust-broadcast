@@ -23,6 +23,12 @@ pub mod video_run;
 pub mod wire_host;
 
 use broadcast_client::{Action, Event, Session};
+use broadcast_common::stage::Timestamp;
+
+/// The harnesses' own microsecond clock as a [`Timestamp`] for the session's `now` boundary.
+pub fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 pub fn read_tf1_headers() -> Option<(u16, Vec<(String, String)>)> {
     let path = test_fixtures::require("http/live-channels/tf1.headers.txt", "support")?;
@@ -86,17 +92,17 @@ pub fn feed_chunks(
 ) -> Vec<Event> {
     let mut conn = None;
     // initial request
-    while let Some(action) = session.poll(now_us) {
+    while let Some(action) = session.poll(ts(now_us)) {
         match action {
             Action::HttpRequest { conn: c, .. } => {
                 conn = Some(c);
-                session.on_response(c, status, resp_headers, now_us);
+                session.on_response(c, status, resp_headers, ts(now_us));
             }
             Action::Close { conn: c } => {
-                session.on_closed(c, None, now_us);
+                session.on_closed(c, None, ts(now_us));
             }
             Action::WakeAt(t) => {
-                if t <= now_us {
+                if t.as_micros() <= now_us {
                     // loop
                 } else {
                     break;
@@ -107,7 +113,7 @@ pub fn feed_chunks(
     }
     let c = conn.unwrap();
     for chunk in bytes.chunks(chunk_size.max(1)) {
-        session.on_data(c, chunk, now_us);
+        session.on_data(c, chunk, ts(now_us));
     }
     // collect
     let mut out = Vec::new();

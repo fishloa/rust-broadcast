@@ -85,14 +85,16 @@ impl Truth {
         let mut truth = Self::default();
         for track in &media.tracks {
             let video = matches!(track.spec.config, CodecConfig::Avc { .. });
-            let scale = f64::from(track.spec.timescale);
+            let scale = f64::from(track.spec.timescale.get());
             let list = if video {
                 &mut truth.video
             } else {
                 &mut truth.audio
             };
             for s in &track.samples {
-                let Some(pts) = s.pts else { continue };
+                let Some(pts) = s.timing.map(|t| t.pts) else {
+                    continue;
+                };
                 let key = if video {
                     video_key(&s.data)
                 } else {

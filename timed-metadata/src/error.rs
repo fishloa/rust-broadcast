@@ -1,5 +1,6 @@
 //! Crate error type.
 use alloc::string::String;
+use broadcast_common::timescale::Timescale;
 
 /// Errors produced by conversions and the [`crate::Timeline`] session.
 #[derive(Debug, thiserror::Error, Clone, PartialEq)]
@@ -29,7 +30,7 @@ pub enum Error {
     MissingEventId,
     /// emsg ↔ SegmentTiming `timescale` mismatch.
     #[error("emsg timescale ({emsg}) does not match SegmentTiming timescale ({timing})")]
-    EmsgTimescaleMismatch { emsg: u32, timing: u32 },
+    EmsgTimescaleMismatch { emsg: Timescale, timing: Timescale },
     /// v0 emsg cannot carry an event starting before the segment EPT.
     #[error("presentation time precedes earliest presentation time; cannot express as v0 delta")]
     EmsgPresentationTimeBeforeEpt,

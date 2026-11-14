@@ -363,7 +363,7 @@ pub fn limit_budget_test_app(ordinary: usize, queue: Duration) -> Router {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(4.0)
-            .with_part_target_ms(500)
+            .with_part_target(Duration::from_millis(500))
             .with_window_segments(4),
     ));
     store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -1565,7 +1565,7 @@ async fn serve_with_registry_impl(
 
     let mut streams: HashMap<String, StreamRoute> = HashMap::new();
     let target_duration_secs = config.target_duration_secs;
-    let part_target_ms = config.part_target_ms;
+    let part_target = config.part_target;
     let cancel = tokio_util::sync::CancellationToken::new();
     let mut supervisor_handles: Vec<(String, tokio::task::JoinHandle<()>)> = Vec::new();
 
@@ -1587,7 +1587,7 @@ async fn serve_with_registry_impl(
         let archive_floor = admin::archive_floor_of(route).await;
         let route_config = RouteConfig::default()
             .with_target_duration_secs(target_duration_secs)
-            .with_part_target_ms(part_target_ms)
+            .with_part_target(part_target)
             .with_window_segments(config.window_segments)
             .with_container(route_container(route))
             .with_ts_cut_policy(route.ts_hls_cut.into())
@@ -2267,7 +2267,7 @@ fn spawn_ingest(
                 params: params.clone(),
                 store: ctx.store,
                 target_duration_secs: config.target_duration_secs,
-                part_target_ms: config.part_target_ms,
+                part_target: config.part_target,
                 cancel: ctx.cancel,
             })?
         }
@@ -2427,6 +2427,7 @@ mod tests {
     use crate::route::HealthState;
     use crate::route::RouteHandle;
     use crate::testutil::body_string;
+    use broadcast_common::timescale::Timescale;
     use tower::ServiceExt;
 
     fn make_state() -> Arc<AppState> {
@@ -2434,7 +2435,7 @@ mod tests {
             RouteHandle::new(
                 RouteConfig::default()
                     .with_target_duration_secs(4.0)
-                    .with_part_target_ms(500)
+                    .with_part_target(Duration::from_millis(500))
                     .with_window_segments(4),
             )
             .with_declared_bandwidth_bps(5_000_000),
@@ -2507,7 +2508,7 @@ mod tests {
             RouteHandle::new(
                 RouteConfig::default()
                     .with_target_duration_secs(4.0)
-                    .with_part_target_ms(500)
+                    .with_part_target(Duration::from_millis(500))
                     .with_window_segments(4),
             )
             .with_declared_bandwidth_bps(5_000_000),
@@ -2651,7 +2652,7 @@ mod tests {
             RouteHandle::new(
                 RouteConfig::default()
                     .with_target_duration_secs(4.0)
-                    .with_part_target_ms(500)
+                    .with_part_target(Duration::from_millis(500))
                     .with_window_segments(4),
             )
             .with_declared_bandwidth_bps(5_000_000),
@@ -2684,7 +2685,7 @@ mod tests {
             RouteHandle::new(
                 RouteConfig::default()
                     .with_target_duration_secs(4.0)
-                    .with_part_target_ms(500)
+                    .with_part_target(Duration::from_millis(500))
                     .with_window_segments(4),
             )
             .with_declared_bandwidth_bps(5_000_000),
@@ -2734,7 +2735,7 @@ mod tests {
             RouteHandle::new(
                 RouteConfig::default()
                     .with_target_duration_secs(4.0)
-                    .with_part_target_ms(500)
+                    .with_part_target(Duration::from_millis(500))
                     .with_window_segments(4),
             )
             .with_declared_bandwidth_bps(5_000_000),
@@ -2847,7 +2848,7 @@ mod tests {
         let store = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -2856,7 +2857,7 @@ mod tests {
             crate::route::SPTS_PROGRAM_ID,
             vec![transmux::TrackSpec::new(
                 TrackId::new(9),
-                90_000,
+                Timescale::from_nonzero(90_000),
                 transmux::CodecConfig::Vp8 {
                     width: 640,
                     height: 480,
@@ -2963,7 +2964,7 @@ mod tests {
         let store = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -2971,7 +2972,7 @@ mod tests {
             crate::route::SPTS_PROGRAM_ID,
             vec![transmux::TrackSpec::new(
                 TrackId::new(1),
-                90_000,
+                Timescale::from_nonzero(90_000),
                 transmux::CodecConfig::Vp8 {
                     width: 640,
                     height: 480,
@@ -3013,7 +3014,7 @@ mod tests {
         let store = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -3022,7 +3023,7 @@ mod tests {
             crate::route::SPTS_PROGRAM_ID,
             vec![transmux::TrackSpec::new(
                 TrackId::new(9),
-                90_000,
+                Timescale::from_nonzero(90_000),
                 transmux::CodecConfig::Vp8 {
                     width: 640,
                     height: 480,
@@ -3159,7 +3160,7 @@ mod tests {
         let store = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -3168,7 +3169,7 @@ mod tests {
             crate::route::SPTS_PROGRAM_ID,
             vec![transmux::TrackSpec::new(
                 TrackId::new(1),
-                90_000,
+                Timescale::from_nonzero(90_000),
                 transmux::CodecConfig::Vp8 {
                     width: 640,
                     height: 480,
@@ -3231,7 +3232,7 @@ mod tests {
         let store = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -3240,7 +3241,7 @@ mod tests {
             crate::route::SPTS_PROGRAM_ID,
             vec![transmux::TrackSpec::new(
                 TrackId::new(1),
-                90_000,
+                Timescale::from_nonzero(90_000),
                 transmux::CodecConfig::Vp8 {
                     width: 640,
                     height: 480,
@@ -3416,7 +3417,7 @@ mod tests {
         let store = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -3487,7 +3488,7 @@ mod tests {
         let store = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(Duration::from_millis(500))
                 .with_window_segments(8),
         ));
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -3590,7 +3591,7 @@ mod tests {
         let store = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(500)
+                .with_part_target(Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -3701,7 +3702,7 @@ mod tests {
             RouteHandle::new(
                 RouteConfig::default()
                     .with_target_duration_secs(4.0)
-                    .with_part_target_ms(500)
+                    .with_part_target(Duration::from_millis(500))
                     .with_window_segments(4),
             )
             .with_declared_bandwidth_bps(5_000_000),
@@ -4483,7 +4484,7 @@ mod tests {
         let store = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         let cancel = tokio_util::sync::CancellationToken::new();
@@ -4493,7 +4494,7 @@ mod tests {
             params: serde_json::json!({"marker": "ok"}),
             store: store.clone(),
             target_duration_secs: 4.0,
-            part_target_ms: 500,
+            part_target: Duration::from_millis(500),
             cancel,
         })
         .expect("factory must succeed");
@@ -4565,7 +4566,7 @@ mod tests {
         let store = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         let cancel = tokio_util::sync::CancellationToken::new();
@@ -4823,7 +4824,7 @@ mod tests {
             let store = Arc::new(RouteHandle::new(
                 RouteConfig::default()
                     .with_target_duration_secs(config.target_duration_secs)
-                    .with_part_target_ms(config.part_target_ms)
+                    .with_part_target(config.part_target)
                     .with_window_segments(config.window_segments),
             ));
 
@@ -5006,7 +5007,7 @@ mod tests {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         let cancel = tokio_util::sync::CancellationToken::new();
@@ -5074,7 +5075,7 @@ mod tests {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -5098,7 +5099,7 @@ mod tests {
         let empty = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         let cancel = tokio_util::sync::CancellationToken::new();

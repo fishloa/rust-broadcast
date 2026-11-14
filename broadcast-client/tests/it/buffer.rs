@@ -5,11 +5,19 @@ use std::collections::BTreeMap;
 
 use broadcast_client::{
     Action, BufferEvent, BufferInput, Config, Event, Hint, PauseReason, Session, Status, TrackId,
+    TransportError,
 };
+use broadcast_common::stage::Timestamp;
 use buffering_runtime::{
-    BufferController, ControllerConfig, Event as RtEvent, Reason as RtReason, StallMemorySnapshot,
+    BufferController, ControllerConfig, Event as RtEvent, Micros, Reason as RtReason,
+    StallMemorySnapshot, Ticks27,
 };
 use transmux::{DemuxEvent, JoinDecision, LiveJoin, StreamingTsDemux, TrackSpec};
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const CHUNK: usize = 1316;
 const PACKET: usize = 188;
@@ -143,13 +151,13 @@ impl Host {
     fn open(seed: Option<StallMemorySnapshot>) -> Option<Self> {
         let mut config = Config::default();
         config.record_buffer_inputs = true;
-        let mut session = Session::open_with_memory(URL, config, 0, seed).unwrap();
+        let mut session = Session::open_with_memory(URL, config, ts(0), seed).unwrap();
         let (status, headers) = support::read_tf1_headers()?;
-        let conn = match session.poll(0).unwrap() {
+        let conn = match session.poll(ts(0)).unwrap() {
             Action::HttpRequest { conn, .. } => conn,
             other => panic!("unexpected first action {other:?}"),
         };
-        session.on_response(conn, status, &headers, 0);
+        session.on_response(conn, status, &headers, ts(0));
         Some(Self {
             session,
             conn,
@@ -175,7 +183,7 @@ impl Host {
     fn data(&mut self, bytes: &[u8], now: u64) {
         self.now = now;
         self.chunk_marks.push(self.events.len());
-        self.session.on_data(self.conn, bytes, now);
+        self.session.on_data(self.conn, bytes, ts(now));
         self.drain(now);
     }
 
@@ -183,7 +191,7 @@ impl Host {
         self.now = now;
         let p = self.clock.position(now);
         self.ticks.push((now, p));
-        self.session.on_playback_position(now, p);
+        self.session.on_playback_position(ts(now), p);
         self.drain(now);
     }
 
@@ -231,7 +239,7 @@ impl Host {
         for e in &self.events {
             if let Event::Tracks(specs) = e {
                 for s in specs {
-                    m.insert(s.track_id.value(), s.timescale);
+                    m.insert(s.track_id.value(), s.timescale.get());
                 }
             }
         }
@@ -264,7 +272,7 @@ fn media_reports(log: &[BufferInput]) -> Vec<(usize, u32, u64)> {
     for l in log {
         match l {
             BufferInput::Chunk { .. } => chunk += 1,
-            BufferInput::TrackMedia { track, end, .. } => out.push((chunk - 1, *track, *end)),
+            BufferInput::TrackMedia { track, end, .. } => out.push((chunk - 1, *track, end.0)),
             _ => {}
         }
     }
@@ -304,7 +312,7 @@ fn first_join_point(h: &Host) -> (usize, i64) {
         .iter()
         .find_map(|(i, t, s, j)| {
             (t.value() == VIDEO && matches!(j, Some(JoinDecision::JoinPoint(_))))
-                .then(|| (*i, s.pts.unwrap()))
+                .then(|| (*i, s.timing.map(|t| t.pts).unwrap()))
         })
         .unwrap()
 }
@@ -313,7 +321,7 @@ fn join_points(h: &Host) -> Vec<i64> {
     h.samples()
         .iter()
         .filter(|(_, t, _, j)| t.value() == VIDEO && matches!(j, Some(JoinDecision::JoinPoint(_))))
-        .map(|(_, _, s, _)| s.pts.unwrap())
+        .map(|(_, _, s, _)| s.timing.map(|t| t.pts).unwrap())
         .collect()
 }
 
@@ -412,7 +420,7 @@ impl Oracle {
         while let Some(ev) = self.ctl.poll_event() {
             let mapped = match ev {
                 RtEvent::StartPlaying { media_27mhz, .. } => BufferEvent::Start {
-                    at_27mhz: media_27mhz,
+                    at_27mhz: media_27mhz.0,
                 },
                 RtEvent::Pause {
                     hold_at_27mhz,
@@ -420,7 +428,7 @@ impl Oracle {
                     track,
                     ..
                 } => BufferEvent::Pause {
-                    hold_at_27mhz,
+                    hold_at_27mhz: hold_at_27mhz.0,
                     reason: match rt_reason {
                         RtReason::NoData => broadcast_client::events::PauseReason::NoData,
                         RtReason::DataArriving => {
@@ -435,7 +443,7 @@ impl Oracle {
                     starving_track: track,
                 },
                 RtEvent::Resume { media_27mhz, .. } => BufferEvent::Resume {
-                    at_27mhz: media_27mhz,
+                    at_27mhz: media_27mhz.0,
                 },
                 _ => continue,
             };
@@ -453,27 +461,31 @@ impl Oracle {
     ) {
         self.announce();
         let ts = self.specs[&track_id].timescale;
-        let dur = i64::from(sample.duration.unwrap_or(0));
-        let pts = sample.pts.unwrap();
+        let dur = i64::from(sample.timing.map(|t| t.duration).unwrap_or(0));
+        let pts = sample.timing.map(|t| t.pts).unwrap();
         let decision = self.joins.get_mut(&track_id).map(|j| j.push(&sample));
         if Some(track_id) == self.video {
             match decision {
                 Some(JoinDecision::JoinPoint(_)) if !self.joined => {
                     self.joined = true;
-                    self.join_27 = pts27(pts, ts);
+                    self.join_27 = pts27(pts, ts.get());
                     self.video_run = VideoRun::new();
-                    let end = self.video_run.push(pts, sample.dts.unwrap_or(pts), dur);
-                    *zero = Some((track_id, pts27(pts, ts)));
-                    ends.insert(track_id, pts27(end, ts));
+                    let end =
+                        self.video_run
+                            .push(pts, sample.timing.map(|t| t.dts).unwrap_or(pts), dur);
+                    *zero = Some((track_id, pts27(pts, ts.get())));
+                    ends.insert(track_id, pts27(end, ts.get()));
                 }
                 Some(JoinDecision::Keep) if self.joined => {
-                    let end = self.video_run.push(pts, sample.dts.unwrap_or(pts), dur);
-                    ends.insert(track_id, pts27(end, ts));
+                    let end =
+                        self.video_run
+                            .push(pts, sample.timing.map(|t| t.dts).unwrap_or(pts), dur);
+                    ends.insert(track_id, pts27(end, ts.get()));
                 }
                 _ => {}
             }
         } else if Some(track_id) == self.audio && self.joined {
-            self.audio_max_end = self.audio_max_end.max(pts27(pts + dur, ts));
+            self.audio_max_end = self.audio_max_end.max(pts27(pts + dur, ts.get()));
             if self.audio_max_end > self.join_27 {
                 ends.insert(track_id, self.audio_max_end);
             }
@@ -515,26 +527,29 @@ impl Oracle {
                 self.on_sample(track_id, sample, &mut zero, &mut ends);
             }
         }
-        self.ctl.on_chunk(now, bytes.len() as u32, pcr);
+        self.ctl
+            .on_chunk(Micros(now), bytes.len() as u32, pcr.map(Ticks27));
         self.inputs.push(BufferInput::Chunk {
-            now_us: now,
+            now_us: Micros(now),
             bytes: bytes.len() as u32,
-            pcr,
+            pcr: pcr.map(Ticks27),
         });
         if let Some((t, end)) = zero {
-            self.ctl.on_track_media(now, t.value(), end);
+            self.ctl
+                .on_track_media(Micros(now), t.value(), Ticks27(end));
             self.inputs.push(BufferInput::TrackMedia {
-                now_us: now,
+                now_us: Micros(now),
                 track: t.value(),
-                end,
+                end: Ticks27(end),
             });
         }
         for (t, end) in ends {
-            self.ctl.on_track_media(now, t.value(), end);
+            self.ctl
+                .on_track_media(Micros(now), t.value(), Ticks27(end));
             self.inputs.push(BufferInput::TrackMedia {
-                now_us: now,
+                now_us: Micros(now),
                 track: t.value(),
-                end,
+                end: Ticks27(end),
             });
         }
         self.drain_events(now);
@@ -545,10 +560,10 @@ impl Oracle {
             return;
         }
         let p = self.clock.position(now);
-        self.ctl.on_tick(now, p);
+        self.ctl.on_tick(Micros(now), p.map(Ticks27));
         self.inputs.push(BufferInput::Tick {
-            now_us: now,
-            pts: p,
+            now_us: Micros(now),
+            pts: p.map(Ticks27),
         });
         self.drain_events(now);
     }
@@ -824,7 +839,7 @@ fn video_before_join_point_not_reported() {
     let min_dropped_end = video
         .iter()
         .filter(|(_, _, _, j)| matches!(j, Some(JoinDecision::Drop(_))))
-        .map(|(_, _, s, _)| pts27(s.pts.unwrap(), ts))
+        .map(|(_, _, s, _)| pts27(s.timing.map(|t| t.pts).unwrap(), ts))
         .min()
         .unwrap();
     let reports = media_reports(h.log());
@@ -864,7 +879,7 @@ fn fed_pcrs(bytes: &[u8], chunk: usize) -> Vec<Option<u64>> {
     h.log()
         .iter()
         .filter_map(|l| match l {
-            BufferInput::Chunk { pcr, .. } => Some(*pcr),
+            BufferInput::Chunk { pcr, .. } => Some(pcr.map(|p| p.0)),
             _ => None,
         })
         .collect()
@@ -895,16 +910,16 @@ fn pcr_taken_once_per_chunk_from_last_clock_reference() {
 }
 
 fn reconnect(h: &mut Host, now: u64) {
-    h.session.on_closed(h.conn, None, now);
+    h.session.on_closed(h.conn, None, ts(now));
     let (status, headers) = tf1_headers!();
     let mut new_conn = None;
-    while let Some(a) = h.session.poll(now) {
+    while let Some(a) = h.session.poll(ts(now)) {
         if let Action::HttpRequest { conn, .. } = a {
             new_conn = Some(conn);
         }
     }
     h.conn = new_conn.unwrap();
-    h.session.on_response(h.conn, status, &headers, now);
+    h.session.on_response(h.conn, status, &headers, ts(now));
     h.drain(now);
 }
 
@@ -928,7 +943,7 @@ fn reconnect_sends_reconnected_hint_before_first_chunk_and_keeps_memory() {
             .any(|(_, hint)| *hint == Hint::Reconnected)
     );
     let before = h.session.stall_memory();
-    assert_ne!(before.peak_us, 0);
+    assert_ne!(before.peak_us, Micros(0));
     let now = arrivals[split - 1] + 1_000;
     reconnect(&mut h, now);
 
@@ -964,7 +979,7 @@ fn source_ended_and_error_hints() {
     let bytes = tf1_bytes!();
     let mut ended = skip_none!(Host::open(None));
     ended.data(&bytes[..CHUNK * 4], 1_000);
-    ended.session.on_closed(ended.conn, None, 2_000);
+    ended.session.on_closed(ended.conn, None, ts(2_000));
     assert_eq!(
         hints(ended.log())
             .into_iter()
@@ -975,9 +990,13 @@ fn source_ended_and_error_hints() {
 
     let mut failed = skip_none!(Host::open(None));
     failed.data(&bytes[..CHUNK * 4], 1_000);
-    failed
-        .session
-        .on_closed(failed.conn, Some("connection reset".to_string()), 2_000);
+    failed.session.on_closed(
+        failed.conn,
+        Some(TransportError::Other {
+            reason: "connection reset".to_string(),
+        }),
+        ts(2_000),
+    );
     assert_eq!(
         hints(failed.log())
             .into_iter()
@@ -988,12 +1007,12 @@ fn source_ended_and_error_hints() {
 
     let mut config = Config::default();
     config.record_buffer_inputs = true;
-    let mut forbidden = Session::open(URL, config, 0).unwrap();
-    let conn = match forbidden.poll(0).unwrap() {
+    let mut forbidden = Session::open(URL, config, ts(0)).unwrap();
+    let conn = match forbidden.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
     };
-    forbidden.on_response(conn, 403, &[], 0);
+    forbidden.on_response(conn, 403, &[], ts(0));
     assert_eq!(
         hints(forbidden.buffer_input_log())
             .into_iter()
@@ -1045,7 +1064,7 @@ fn demux_discontinuity_sends_pcr_discontinuity_and_rejoins() {
         .iter()
         .enumerate()
         .filter_map(|(i, l)| match l {
-            BufferInput::TrackMedia { track, end, .. } if *track == VIDEO => Some((i, *end)),
+            BufferInput::TrackMedia { track, end, .. } if *track == VIDEO => Some((i, end.0)),
             _ => None,
         })
         .collect();
@@ -1056,7 +1075,7 @@ fn demux_discontinuity_sends_pcr_discontinuity_and_rejoins() {
         .iter()
         .filter(|(_, t, s, j)| {
             t.value() == VIDEO
-                && s.pts.is_some_and(|p| p > joins[0])
+                && s.timing.map(|t| t.pts).is_some_and(|p| p > joins[0])
                 && matches!(j, Some(JoinDecision::Drop(_)))
         })
         .count();
@@ -1076,27 +1095,27 @@ fn set_rendered_tracks_registers_and_unregisters_difference() {
     let base = h.log().len();
 
     h.session
-        .set_rendered_tracks(h.now, &[ids[&VIDEO], ids[&OTHER_AUDIO]]);
+        .set_rendered_tracks(ts(h.now), &[ids[&VIDEO], ids[&OTHER_AUDIO]]);
     let after = &h.log()[base..];
     assert_eq!(after.len(), 3, "{after:?}");
     assert_eq!(register_change(&after[0]), Some((false, AUDIO)));
     assert_eq!(register_change(&after[1]), Some((true, OTHER_AUDIO)));
     assert!(
-        matches!(after[2], BufferInput::TrackMedia { track, .. } if track == OTHER_AUDIO),
+        matches!(after[2], BufferInput::TrackMedia {track, .. } if track == OTHER_AUDIO),
         "{after:?}"
     );
     let base = h.log().len();
     h.session
-        .set_rendered_tracks(h.now, &[ids[&VIDEO], ids[&OTHER_AUDIO]]);
+        .set_rendered_tracks(ts(h.now), &[ids[&VIDEO], ids[&OTHER_AUDIO]]);
     assert_eq!(h.log().len(), base);
 
     h.session
-        .set_rendered_tracks(h.now, &[ids[&VIDEO], ids[&AUDIO], ids[&OTHER_AUDIO]]);
+        .set_rendered_tracks(ts(h.now), &[ids[&VIDEO], ids[&AUDIO], ids[&OTHER_AUDIO]]);
     let after = &h.log()[base..];
     assert_eq!(after.len(), 2, "{after:?}");
     assert_eq!(register_change(&after[0]), Some((true, AUDIO)));
     assert!(
-        matches!(after[1], BufferInput::TrackMedia { track, .. } if track == AUDIO),
+        matches!(after[1], BufferInput::TrackMedia {track, .. } if track == AUDIO),
         "{after:?}"
     );
 }
@@ -1114,7 +1133,7 @@ fn playback_position_none_until_started_then_some() {
         .log()
         .iter()
         .filter_map(|l| match l {
-            BufferInput::Tick { now_us, pts } => Some((*now_us, *pts)),
+            BufferInput::Tick { now_us, pts } => Some((now_us.0, pts.map(|p| p.0))),
             _ => None,
         })
         .collect();
@@ -1140,7 +1159,7 @@ fn stall_memory_roundtrip_seeds_next_session() {
     let bytes = tf1_bytes!();
     let first = run_gap(&bytes);
     let memory = first.session.stall_memory();
-    assert_ne!(memory.peak_us, 0);
+    assert_ne!(memory.peak_us, Micros(0));
 
     let mut seeded = skip_none!(Host::open(Some(memory)));
     assert_eq!(seeded.session.stall_memory().peak_us, memory.peak_us);
@@ -1149,7 +1168,7 @@ fn stall_memory_roundtrip_seeds_next_session() {
 
     let mut fresh = skip_none!(Host::open(None));
     fresh.data(&bytes[..CHUNK], 0);
-    assert_eq!(fresh.session.stall_memory().peak_us, 0);
+    assert_eq!(fresh.session.stall_memory().peak_us, Micros(0));
 }
 
 fn register_change(input: &BufferInput) -> Option<(bool, u32)> {
@@ -1167,23 +1186,23 @@ fn vod_buffer_events_come_from_the_playout_gate_not_the_controller() {
     headers.push(("Content-Length".to_string(), bytes.len().to_string()));
     let mut config = Config::default();
     config.record_buffer_inputs = true;
-    let mut session = Session::open(URL, config, 0).unwrap();
-    let conn = match session.poll(0).unwrap() {
+    let mut session = Session::open(URL, config, ts(0)).unwrap();
+    let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
     };
-    session.on_response(conn, status, &headers, 0);
+    session.on_response(conn, status, &headers, ts(0));
     let mut events = Vec::new();
     for (i, chunk) in bytes.chunks(CHUNK).enumerate() {
         let now = i as u64 * STEP_US;
-        session.on_data(conn, chunk, now);
-        session.on_playback_position(now, Some(now * 27));
+        session.on_data(conn, chunk, ts(now));
+        session.on_playback_position(ts(now), Some(now * 27));
         session.hint(Hint::SourceError);
         while let Some(e) = session.next_event() {
             events.push(e);
         }
     }
-    session.on_closed(conn, None, 10_000_000);
+    session.on_closed(conn, None, ts(10_000_000));
     while let Some(e) = session.next_event() {
         events.push(e);
     }
@@ -1245,16 +1264,18 @@ fn video_expectations(h: &Host) -> Vec<ChunkVideo> {
         if t.value() != VIDEO {
             continue;
         }
-        let pts = s.pts.unwrap();
-        let dur = i64::from(s.duration.unwrap());
+        let pts = s.timing.map(|t| t.pts).unwrap();
+        let dur = i64::from(s.timing.map(|t| t.duration).unwrap());
         let c = h.chunk_of_event(i);
         let end = match j {
             Some(JoinDecision::JoinPoint(_)) if run.is_none() => {
                 run.insert(VideoRun::new())
-                    .push(pts, s.dts.unwrap_or(pts), dur)
+                    .push(pts, s.timing.map(|t| t.dts).unwrap_or(pts), dur)
             }
             Some(JoinDecision::Keep) if run.is_some() => {
-                run.as_mut().unwrap().push(pts, s.dts.unwrap_or(pts), dur)
+                run.as_mut()
+                    .unwrap()
+                    .push(pts, s.timing.map(|t| t.dts).unwrap_or(pts), dur)
             }
             _ => continue,
         };
@@ -1311,7 +1332,11 @@ fn audio_end_only_after_join_pts() {
         .filter(|(i, t, s, _)| {
             *i > join_idx
                 && t.value() == AUDIO
-                && pts27(s.pts.unwrap() + i64::from(s.duration.unwrap()), ts_audio) <= join_27
+                && pts27(
+                    s.timing.map(|t| t.pts).unwrap()
+                        + i64::from(s.timing.map(|t| t.duration).unwrap()),
+                    ts_audio,
+                ) <= join_27
         })
         .count();
     assert!(
@@ -1329,7 +1354,12 @@ fn audio_end_only_after_join_pts() {
         .samples()
         .iter()
         .filter(|(i, t, _, _)| *i > join_idx && t.value() == AUDIO)
-        .map(|(_, _, s, _)| pts27(s.pts.unwrap() + i64::from(s.duration.unwrap()), ts_audio))
+        .map(|(_, _, s, _)| {
+            pts27(
+                s.timing.map(|t| t.pts).unwrap() + i64::from(s.timing.map(|t| t.duration).unwrap()),
+                ts_audio,
+            )
+        })
         .find(|&e| e > join_27)
         .unwrap();
     assert!(audio_reports[0] >= expected_first);
@@ -1352,7 +1382,7 @@ fn audio_end_forgotten_when_rendered_audio_changes() {
                 if i == switch_at {
                     let ids = h.track_ids();
                     h.session
-                        .set_rendered_tracks(t, &[ids[&VIDEO], ids[&OTHER_AUDIO]]);
+                        .set_rendered_tracks(ts(t), &[ids[&VIDEO], ids[&OTHER_AUDIO]]);
                     switched_log_len = h.log().len();
                     switched_event_idx = h.events.len();
                 }
@@ -1385,11 +1415,14 @@ fn audio_end_forgotten_when_rendered_audio_changes() {
         if i < switched_event_idx || t.value() != OTHER_AUDIO {
             continue;
         }
-        max_end = max_end.max(pts27(s.pts.unwrap() + i64::from(s.duration.unwrap()), ts));
+        max_end = max_end.max(pts27(
+            s.timing.map(|t| t.pts).unwrap() + i64::from(s.timing.map(|t| t.duration).unwrap()),
+            ts,
+        ));
         expected.insert(h.chunk_of_event(i), max_end);
     }
     for (c, end) in reports {
-        assert_eq!(expected[&c], end, "chunk {c}");
+        assert_eq!(expected[&c], end.0, "chunk {c}");
     }
 }
 
@@ -1455,7 +1488,7 @@ fn rejoin_rearms_join_without_pcr_discontinuity_hint_or_controller_reset() {
         .count();
     assert_eq!(starts, 1, "controller must not be reset");
     assert!(h.samples().iter().any(|(_, t, s, j)| t.value() == VIDEO
-        && s.pts.is_some_and(|p| p > joins[0])
+        && s.timing.map(|t| t.pts).is_some_and(|p| p > joins[0])
         && matches!(j, Some(JoinDecision::Drop(_)))));
 }
 
@@ -1468,7 +1501,7 @@ fn rejoin_clears_pending_ends() {
         h.data(ch, i as u64 * STEP_US);
     }
     let samples_before_close = h.samples().len();
-    h.session.on_closed(h.conn, None, 1_300 * STEP_US);
+    h.session.on_closed(h.conn, None, ts(1_300 * STEP_US));
     h.drain(1_300 * STEP_US);
     assert!(
         h.samples().len() > samples_before_close,
@@ -1477,14 +1510,14 @@ fn rejoin_clears_pending_ends() {
     h.session.rejoin();
     let (status, headers) = tf1_headers!();
     let mut conn = None;
-    while let Some(a) = h.session.poll(1_300 * STEP_US) {
+    while let Some(a) = h.session.poll(ts(1_300 * STEP_US)) {
         if let Action::HttpRequest { conn: c, .. } = a {
             conn = Some(c);
         }
     }
     h.conn = conn.unwrap();
     h.session
-        .on_response(h.conn, status, &headers, 1_300 * STEP_US);
+        .on_response(h.conn, status, &headers, ts(1_300 * STEP_US));
     h.data(&bytes[..CHUNK], 1_400 * STEP_US);
     let tail = media_reports(h.log())
         .into_iter()
@@ -1547,7 +1580,7 @@ fn run_declaring(bytes: &[u8], delay_us: Option<u64>) -> Host {
         if tracks_at.is_some_and(|at| now >= at + delay)
             && let Some(p) = pick_rendered(&h)
         {
-            h.session.set_rendered_tracks(now, &[p.video, p.audio]);
+            h.session.set_rendered_tracks(ts(now), &[p.video, p.audio]);
             h.tick(now);
             declared = true;
         }

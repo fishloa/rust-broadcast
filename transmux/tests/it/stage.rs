@@ -44,6 +44,7 @@
 //!    covers `LlHlsSegmenter` too (previously zero `Stage` coverage at all).
 
 use crate::hub_fixtures::dummy_esds;
+use broadcast_common::timescale::Timescale;
 use std::path::PathBuf;
 use transmux::TrackId;
 
@@ -145,15 +146,18 @@ fn assert_samples_match(got: &[Sample], oracle: &[Sample], what: &str) {
     );
     for (i, (g, o)) in got.iter().zip(oracle.iter()).enumerate() {
         assert_eq!(
-            g.dts, o.dts,
+            g.timing.map(|t| t.dts),
+            o.timing.map(|t| t.dts),
             "{what}: sample {i} dts must match the batch oracle"
         );
         assert_eq!(
-            g.pts, o.pts,
+            g.timing.map(|t| t.pts),
+            o.timing.map(|t| t.pts),
             "{what}: sample {i} pts must match the batch oracle"
         );
         assert_eq!(
-            g.duration, o.duration,
+            g.timing.map(|t| t.duration),
+            o.timing.map(|t| t.duration),
             "{what}: sample {i} duration must match the batch oracle"
         );
         assert_eq!(
@@ -392,7 +396,7 @@ fn progressive_demux_stage_feed_rejects_input_past_its_byte_cap() {
 fn audio_track_spec() -> TrackSpec {
     TrackSpec::new(
         TrackId::new(1),
-        48_000,
+        Timescale::from_nonzero(48_000),
         CodecConfig::Aac {
             esds: dummy_esds(),
             channel_count: 2,
@@ -430,7 +434,8 @@ fn generic_drive_helper_also_spans_segmenter_stages() {
     let samples = audio_samples(50);
 
     // --- Segmenter: inherent API (oracle) vs Stage-driven -------------------
-    let mut oracle_seg = Segmenter::new(vec![track.clone()], 1000, 0.1).unwrap();
+    let mut oracle_seg =
+        Segmenter::new(vec![track.clone()], Timescale::from_nonzero(1000), 0.1).unwrap();
     let mut oracle_seg_out: Vec<(Vec<u8>, SegmentMeta)> = Vec::new();
     for (track_id, sample) in samples.clone() {
         oracle_seg
@@ -445,7 +450,8 @@ fn generic_drive_helper_also_spans_segmenter_stages() {
         "fixture must actually exercise at least one segment cut"
     );
 
-    let mut stage_seg = Segmenter::new(vec![track.clone()], 1000, 0.1).unwrap();
+    let mut stage_seg =
+        Segmenter::new(vec![track.clone()], Timescale::from_nonzero(1000), 0.1).unwrap();
     let stage_seg_out = drive(&mut stage_seg, samples.clone());
     assert_eq!(
         stage_seg_out, oracle_seg_out,
@@ -453,7 +459,8 @@ fn generic_drive_helper_also_spans_segmenter_stages() {
     );
 
     // --- LlSegmenter: inherent API (oracle) vs Stage-driven ------------------
-    let mut oracle_ll = LlSegmenter::new(vec![track.clone()], 1000, 0.1, 4).unwrap();
+    let mut oracle_ll =
+        LlSegmenter::new(vec![track.clone()], Timescale::from_nonzero(1000), 0.1, 4).unwrap();
     let mut oracle_ll_out: Vec<transmux::Chunk> = Vec::new();
     for (track_id, sample) in samples.clone() {
         oracle_ll
@@ -468,7 +475,8 @@ fn generic_drive_helper_also_spans_segmenter_stages() {
         "fixture must actually exercise at least one chunk emission"
     );
 
-    let mut stage_ll = LlSegmenter::new(vec![track.clone()], 1000, 0.1, 4).unwrap();
+    let mut stage_ll =
+        LlSegmenter::new(vec![track.clone()], Timescale::from_nonzero(1000), 0.1, 4).unwrap();
     let stage_ll_out = drive(&mut stage_ll, samples.clone());
     assert_eq!(
         stage_ll_out.len(),
@@ -488,8 +496,13 @@ fn generic_drive_helper_also_spans_segmenter_stages() {
     // Previously zero `Stage` coverage of any kind for this type; this also
     // exercises `Stage::Out = LlHlsStageOutput`, the enum carrying both the
     // part and segment channels through one `poll()`.
-    let mut oracle_hls =
-        LlHlsSegmenter::with_part_target(vec![track.clone()], 1000, 0.1, 30).unwrap();
+    let mut oracle_hls = LlHlsSegmenter::with_part_target(
+        vec![track.clone()],
+        Timescale::from_nonzero(1000),
+        0.1,
+        30,
+    )
+    .unwrap();
     let mut oracle_hls_parts: Vec<PartInfo> = Vec::new();
     let mut oracle_hls_segments: Vec<SegmentInfo> = Vec::new();
     for (track_id, sample) in samples.clone() {
@@ -511,7 +524,9 @@ fn generic_drive_helper_also_spans_segmenter_stages() {
         "fixture must actually exercise at least one segment emission"
     );
 
-    let mut stage_hls = LlHlsSegmenter::with_part_target(vec![track], 1000, 0.1, 30).unwrap();
+    let mut stage_hls =
+        LlHlsSegmenter::with_part_target(vec![track], Timescale::from_nonzero(1000), 0.1, 30)
+            .unwrap();
     let stage_hls_out = drive(&mut stage_hls, samples);
     let stage_hls_parts: Vec<&PartInfo> = stage_hls_out
         .iter()
@@ -623,7 +638,8 @@ fn segmenter_mixed_api_delivers_each_output_exactly_once() {
     let samples = audio_samples(50);
 
     // Oracle: a fresh instance driven purely through the inherent API.
-    let mut oracle = Segmenter::new(vec![track.clone()], 1000, 0.1).unwrap();
+    let mut oracle =
+        Segmenter::new(vec![track.clone()], Timescale::from_nonzero(1000), 0.1).unwrap();
     let mut oracle_out: Vec<(Vec<u8>, SegmentMeta)> = Vec::new();
     for (track_id, sample) in samples.clone() {
         oracle.push(TrackId::new(track_id.value()), sample).unwrap();
@@ -642,7 +658,7 @@ fn segmenter_mixed_api_delivers_each_output_exactly_once() {
     // the rest to the inherent `take_ready_with_meta`; feed the remainder
     // through the inherent `push`/`take_ready_with_meta`; finish via
     // `Stage::finish` + a final `poll`/inherent sweep.
-    let mut mixed = Segmenter::new(vec![track], 1000, 0.1).unwrap();
+    let mut mixed = Segmenter::new(vec![track], Timescale::from_nonzero(1000), 0.1).unwrap();
     let mut mixed_out: Vec<(Vec<u8>, SegmentMeta)> = Vec::new();
     let mut samples = samples.into_iter();
     let batch = 30;
@@ -688,7 +704,8 @@ fn ll_segmenter_mixed_api_delivers_each_output_exactly_once() {
     let track = audio_track_spec();
     let samples = audio_samples(50);
 
-    let mut oracle = LlSegmenter::new(vec![track.clone()], 1000, 0.1, 4).unwrap();
+    let mut oracle =
+        LlSegmenter::new(vec![track.clone()], Timescale::from_nonzero(1000), 0.1, 4).unwrap();
     let mut oracle_out: Vec<transmux::Chunk> = Vec::new();
     for (track_id, sample) in samples.clone() {
         oracle.push(TrackId::new(track_id.value()), sample).unwrap();
@@ -702,7 +719,7 @@ fn ll_segmenter_mixed_api_delivers_each_output_exactly_once() {
          than Stage::poll's partial drain can cover"
     );
 
-    let mut mixed = LlSegmenter::new(vec![track], 1000, 0.1, 4).unwrap();
+    let mut mixed = LlSegmenter::new(vec![track], Timescale::from_nonzero(1000), 0.1, 4).unwrap();
     let mut mixed_out: Vec<transmux::Chunk> = Vec::new();
     let mut samples = samples.into_iter();
     let batch = 30;
@@ -753,7 +770,13 @@ fn ll_hls_segmenter_mixed_api_delivers_each_output_exactly_once() {
     let track = audio_track_spec();
     let samples = audio_samples(50);
 
-    let mut oracle = LlHlsSegmenter::with_part_target(vec![track.clone()], 1000, 0.1, 30).unwrap();
+    let mut oracle = LlHlsSegmenter::with_part_target(
+        vec![track.clone()],
+        Timescale::from_nonzero(1000),
+        0.1,
+        30,
+    )
+    .unwrap();
     let mut oracle_parts: Vec<PartInfo> = Vec::new();
     let mut oracle_segments: Vec<SegmentInfo> = Vec::new();
     for (track_id, sample) in samples.clone() {
@@ -779,7 +802,9 @@ fn ll_hls_segmenter_mixed_api_delivers_each_output_exactly_once() {
     // tests above, but splitting `Stage::poll`'s output across both channels
     // by variant, and using `take_ready_parts`/`take_ready_segments` for the
     // inherent catch-up.
-    let mut mixed = LlHlsSegmenter::with_part_target(vec![track], 1000, 0.1, 30).unwrap();
+    let mut mixed =
+        LlHlsSegmenter::with_part_target(vec![track], Timescale::from_nonzero(1000), 0.1, 30)
+            .unwrap();
     let mut mixed_parts: Vec<PartInfo> = Vec::new();
     let mut mixed_segments: Vec<SegmentInfo> = Vec::new();
     let mut samples = samples.into_iter();

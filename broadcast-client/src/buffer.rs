@@ -4,10 +4,11 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 
 use broadcast_common::clock33::pcr_signed_distance;
-use broadcast_common::timescale::{Rounding, rescale};
+use broadcast_common::timescale::{Rounding, Timescale, rescale};
 use buffering_runtime::input_log::Input;
 use buffering_runtime::{
-    BufferController, ControllerConfig, Event as RtEvent, Hint, StallMemorySnapshot,
+    BufferController, ControllerConfig, Event as RtEvent, Hint, Micros, StallMemorySnapshot,
+    Ticks27,
 };
 use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 
@@ -81,8 +82,9 @@ impl InputLog {
         self.last_now_us
     }
 
-    pub(crate) fn last_now(&self) -> u64 {
-        self.last_now_us
+    /// The last recorded instant as the controller's clock.
+    pub(crate) fn last_now(&self) -> Micros {
+        Micros(self.last_now_us)
     }
 
     pub(crate) fn record(&mut self, input: Input) -> bool {
@@ -122,20 +124,23 @@ macro_rules! rec {
     };
 }
 
-const TICKS_PER_SEC_27MHZ: u64 = 27_000_000;
+const TICKS_PER_SEC_27MHZ: u32 = 27_000_000;
+
+/// [`TICKS_PER_SEC_27MHZ`] as a [`Timescale`].
+const CLOCK_27MHZ: Timescale = match Timescale::new(TICKS_PER_SEC_27MHZ) {
+    Some(t) => t,
+    None => core::unreachable!(),
+};
 
 /// Controller key of the placeholder for a declared stream that has not resolved yet; a real
 /// `TrackId` never takes it.
 const PENDING_TRACK_KEY: u32 = u32::MAX;
 
-pub(crate) fn raw_27mhz(pts: i64, timescale: u32) -> i128 {
-    if timescale == 0 {
-        return 0;
-    }
+pub(crate) fn raw_27mhz(pts: i64, timescale: Timescale) -> i128 {
     rescale(
         i128::from(pts),
         timescale,
-        TICKS_PER_SEC_27MHZ,
+        CLOCK_27MHZ,
         Rounding::TowardZero,
     )
 }
@@ -144,13 +149,13 @@ pub(crate) fn negative_origin(raw: i128) -> i128 {
     raw.min(0)
 }
 
-pub(crate) fn pts_to_27mhz_from(pts: i64, timescale: u32, origin: i128) -> u64 {
+pub(crate) fn pts_to_27mhz_from(pts: i64, timescale: Timescale, origin: i128) -> u64 {
     let v = raw_27mhz(pts, timescale).saturating_sub(origin);
     u64::try_from(v).unwrap_or(if v < 0 { 0 } else { u64::MAX })
 }
 
 #[cfg(test)]
-pub(crate) fn pts_to_27mhz(pts: i64, timescale: u32) -> u64 {
+pub(crate) fn pts_to_27mhz(pts: i64, timescale: Timescale) -> u64 {
     pts_to_27mhz_from(pts, timescale, 0)
 }
 
@@ -182,7 +187,7 @@ pub(crate) fn effective_controller_config(
     let floor = start_pending_track_wait_us
         .max(start_pending_track_hard_cap_us)
         .saturating_add(SILENCE_MARGIN_US);
-    cfg.track_silence_timeout_us = cfg.track_silence_timeout_us.max(floor);
+    cfg.track_silence_timeout_us = cfg.track_silence_timeout_us.max(Micros(floor));
     cfg
 }
 
@@ -199,9 +204,9 @@ pub(crate) struct Feeder {
     live_joins: BTreeMap<TrackId, VideoJoin>,
     track_specs: BTreeMap<TrackId, TrackSpec>,
     pending_ends: BTreeMap<TrackId, u64>,
-    pending_zero: BTreeMap<TrackId, (i64, u32)>,
+    pending_zero: BTreeMap<TrackId, (i64, Timescale)>,
     video_joined: BTreeSet<TrackId>,
-    video_join_at: BTreeMap<TrackId, (i64, u32)>,
+    video_join_at: BTreeMap<TrackId, (i64, Timescale)>,
     video_reorder: BTreeMap<TrackId, ReorderEnd>,
     video_end: BTreeMap<TrackId, i64>,
     audio_max_end: BTreeMap<TrackId, i64>,
@@ -285,7 +290,7 @@ impl Feeder {
         self.finite = true;
         if let Some(c) = self.controller.take() {
             self.seed = Some(c.snapshot_memory());
-            self.seed_at_us = Some(self.log.last_now());
+            self.seed_at_us = Some(self.log.last_now().0);
         }
         self.pending_registered = false;
         self.started = false;
@@ -486,7 +491,7 @@ impl Feeder {
         if self.holds_start() {
             let at = self.log.last_now();
             for t in removed {
-                self.held.entry(t).or_insert(at);
+                self.held.entry(t).or_insert(at.0);
             }
         } else {
             for t in removed {
@@ -575,17 +580,17 @@ impl Feeder {
         }
     }
 
-    fn conv(&self, pts: i64, timescale: u32) -> u64 {
+    fn conv(&self, pts: i64, timescale: Timescale) -> u64 {
         pts_to_27mhz_from(pts, timescale, self.origin.unwrap_or(0))
     }
 
-    fn arm_origin(&mut self, pts: i64, timescale: u32) {
+    fn arm_origin(&mut self, pts: i64, timescale: Timescale) {
         if self.origin.is_none() {
             self.origin = Some(negative_origin(raw_27mhz(pts, timescale)));
         }
     }
 
-    fn timescale_of(&self, t: TrackId) -> Option<u32> {
+    fn timescale_of(&self, t: TrackId) -> Option<Timescale> {
         self.track_specs.get(&t).map(|s| s.timescale)
     }
 
@@ -642,8 +647,10 @@ impl Feeder {
         let Some(timescale) = self.timescale_of(track) else {
             return;
         };
-        let Some(pts) = sample.pts else { return };
-        let dur = i64::from(sample.duration.unwrap_or(0));
+        let Some(pts) = sample.timing.map(|t| t.pts) else {
+            return;
+        };
+        let dur = i64::from(sample.timing.map(|t| t.duration).unwrap_or(0));
         let rendered = self.rendered.contains(&track);
         self.first_seen.entry(track).or_insert(pts);
 
@@ -652,7 +659,8 @@ impl Feeder {
                 Some(JoinDecision::JoinPoint(_)) if !self.video_joined.contains(&track) => {
                     self.video_joined.insert(track);
                     self.video_join_at.insert(track, (pts, timescale));
-                    let run = ReorderEnd::new(pts, sample.dts.unwrap_or(pts), dur);
+                    let run =
+                        ReorderEnd::new(pts, sample.timing.map(|t| t.dts).unwrap_or(pts), dur);
                     self.video_end.insert(track, run.end);
                     self.video_reorder.insert(track, run);
                     if rendered {
@@ -665,7 +673,7 @@ impl Feeder {
                         .video_reorder
                         .entry(track)
                         .or_insert_with(|| ReorderEnd::new(pts, pts, 0));
-                    let end = run.push(pts, sample.dts.unwrap_or(pts), dur);
+                    let end = run.push(pts, sample.timing.map(|t| t.dts).unwrap_or(pts), dur);
                     self.video_end.insert(track, end);
                     if rendered {
                         self.queue_video_end(track);
@@ -717,9 +725,12 @@ impl Feeder {
             return;
         }
         let now = self.log.last_now();
-        let seed = self
-            .seed
-            .map(|s| s.aged(self.seed_at_us.map_or(0, |at| now.saturating_sub(at))));
+        let seed = self.seed.map(|s| {
+            s.aged(Micros(
+                self.seed_at_us
+                    .map_or(0, |at| now.saturating_sub(Micros(at)).0),
+            ))
+        });
         if let Ok(mut c) = BufferController::new(self.controller_config(), seed) {
             self.replay_seed_value = seed;
             self.seed = None;
@@ -759,13 +770,13 @@ impl Feeder {
         self.first_media_us.get_or_insert(now_us);
         self.sync_pending(now_us);
         if let Some(c) = &mut self.controller {
-            c.on_track_media(now_us, t.value(), end);
+            c.on_track_media(Micros(now_us), t.value(), Ticks27(end));
             rec!(
                 self,
                 Input::TrackMedia {
-                    now_us,
+                    now_us: Micros(now_us),
                     track: t.value(),
-                    end
+                    end: Ticks27(end)
                 }
             );
         }
@@ -785,13 +796,13 @@ impl Feeder {
             return;
         };
         let len = u32::try_from(bytes).unwrap_or(u32::MAX);
-        c.on_chunk(now_us, len, pcr);
+        c.on_chunk(Micros(now_us), len, pcr.map(Ticks27));
         rec!(
             self,
             Input::Chunk {
-                now_us,
+                now_us: Micros(now_us),
                 bytes: len,
-                pcr
+                pcr: pcr.map(Ticks27)
             }
         );
         self.flush_pending(now_us);
@@ -809,8 +820,14 @@ impl Feeder {
         self.log.now(now_us);
         self.ensure_controller();
         if let Some(c) = &mut self.controller {
-            c.on_hint(now_us, h);
-            rec!(self, Input::Hint { now_us, hint: h });
+            c.on_hint(Micros(now_us), h);
+            rec!(
+                self,
+                Input::Hint {
+                    now_us: Micros(now_us),
+                    hint: h
+                }
+            );
         }
     }
 
@@ -821,8 +838,14 @@ impl Feeder {
         self.sync_pending(now_us);
         self.expire_held(now_us);
         if let Some(c) = &mut self.controller {
-            c.on_tick(now_us, pts);
-            rec!(self, Input::Tick { now_us, pts });
+            c.on_tick(Micros(now_us), pts.map(Ticks27));
+            rec!(
+                self,
+                Input::Tick {
+                    now_us: Micros(now_us),
+                    pts: pts.map(Ticks27)
+                }
+            );
         }
     }
 
@@ -834,7 +857,7 @@ impl Feeder {
                     RtEvent::StartPlaying { media_27mhz, .. } => {
                         self.started = true;
                         out.push(Event::Buffer(BufferEvent::Start {
-                            at_27mhz: media_27mhz,
+                            at_27mhz: media_27mhz.0,
                         }));
                     }
                     RtEvent::Pause {
@@ -844,7 +867,7 @@ impl Feeder {
                         ..
                     } => {
                         out.push(Event::Buffer(BufferEvent::Pause {
-                            hold_at_27mhz,
+                            hold_at_27mhz: hold_at_27mhz.0,
                             reason: match rt_reason {
                                 buffering_runtime::Reason::NoData => {
                                     crate::events::PauseReason::NoData
@@ -865,7 +888,7 @@ impl Feeder {
                     }
                     RtEvent::Resume { media_27mhz, .. } => {
                         out.push(Event::Buffer(BufferEvent::Resume {
-                            at_27mhz: media_27mhz,
+                            at_27mhz: media_27mhz.0,
                         }));
                     }
                     _ => {}
@@ -897,7 +920,7 @@ impl Feeder {
                     stalls: s.stalls,
                     reprimes: s.reprimes,
                     discontinuities: s.discontinuities,
-                    longest_freeze_us: s.longest_freeze_us,
+                    longest_freeze_us: s.longest_freeze_us.0,
                 }
             })
     }
@@ -946,18 +969,28 @@ mod tests {
 
     fn far(sample: &Sample) -> Sample {
         let mut s = sample.clone();
-        s.pts = Some(i64::MAX);
-        s.dts = Some(i64::MAX);
-        s.duration = Some(FAR_PTS_DURATION);
+        if let Some(t) = s.timing.as_mut() {
+            t.pts = i64::MAX;
+            t.dts = i64::MAX;
+            t.duration = FAR_PTS_DURATION;
+        } else {
+            s.timing = Some(transmux::ir::SampleTiming::new(
+                i64::MAX,
+                i64::MAX,
+                FAR_PTS_DURATION,
+            ));
+        }
         s
     }
 
     #[test]
     fn pts_to_27mhz_clamps_instead_of_truncating() {
-        assert_eq!(pts_to_27mhz(i64::MAX, 1), u64::MAX);
-        assert_eq!(pts_to_27mhz(i64::MIN, 1), 0);
-        assert_eq!(pts_to_27mhz(90_000, 90_000), 27_000_000);
-        assert_eq!(pts_to_27mhz(1, 0), 0);
+        assert_eq!(pts_to_27mhz(i64::MAX, Timescale::from_nonzero(1)), u64::MAX);
+        assert_eq!(pts_to_27mhz(i64::MIN, Timescale::from_nonzero(1)), 0);
+        assert_eq!(
+            pts_to_27mhz(90_000, Timescale::from_nonzero(90_000)),
+            27_000_000
+        );
     }
 
     #[test]
@@ -1001,7 +1034,7 @@ mod tests {
         let st = streams();
         let mut f = Feeder::new(
             ControllerConfig::default(),
-            Some(StallMemorySnapshot::new(PEAK_US, 0)),
+            Some(StallMemorySnapshot::new(Micros(PEAK_US), Micros(0))),
             crate::events::DEFAULT_START_PENDING_TRACK_WAIT_US,
             crate::events::DEFAULT_START_PENDING_TRACK_HARD_CAP_US,
         );
@@ -1016,7 +1049,7 @@ mod tests {
         f.on_chunk(LATER_US, CHUNK, None);
         assert_eq!(
             f.stall_memory().peak_us,
-            PEAK_US,
+            Micros(PEAK_US),
             "the live controller after a finite connection lost the stall memory"
         );
         let placeholder = f
@@ -1035,7 +1068,7 @@ mod tests {
         const CHUNK: usize = 1316;
         const LATER_US: u64 = 1_000_000;
         let st = streams();
-        let first = StallMemorySnapshot::new(PEAK_US, 0);
+        let first = StallMemorySnapshot::new(Micros(PEAK_US), Micros(0));
         let mut f = Feeder::new(
             ControllerConfig::default(),
             Some(first),
@@ -1056,7 +1089,7 @@ mod tests {
             Some(first),
             "the log seed stayed the first controller's after a finite connection"
         );
-        assert_eq!(f.replay_seed().map(|s| s.peak_us), Some(PEAK_US));
+        assert_eq!(f.replay_seed().map(|s| s.peak_us), Some(Micros(PEAK_US)));
     }
 
     #[test]
@@ -1069,9 +1102,16 @@ mod tests {
         let vid = st.video.0.track_id;
         let at = |f: &mut Feeder, pts_slot: i64, dts_slot: i64, join: JoinDecision| {
             let mut s = st.video.1[0].clone();
-            s.pts = Some(BASE + pts_slot * FRAME);
-            s.dts = Some(BASE + dts_slot * FRAME);
-            s.duration = Some(u32::try_from(FRAME).unwrap());
+            let pts = BASE + pts_slot * FRAME;
+            let dts = BASE + dts_slot * FRAME;
+            let dur = u32::try_from(FRAME).unwrap();
+            if let Some(t) = s.timing.as_mut() {
+                t.pts = pts;
+                t.dts = dts;
+                t.duration = dur;
+            } else {
+                s.timing = Some(transmux::ir::SampleTiming::new(dts, pts, dur));
+            }
             f.on_sample(vid, &s, Some(join));
             f.video_end.get(&vid).copied().map(|e| (e - BASE) / FRAME)
         };
@@ -1116,7 +1156,11 @@ mod tests {
             }
         }
         let mut late_audio = st.audio.1[0].clone();
-        late_audio.pts = Some(1 << 40);
+        if let Some(t) = late_audio.timing.as_mut() {
+            t.pts = 1 << 40;
+        } else {
+            late_audio.timing = Some(transmux::ir::SampleTiming::new(1 << 40, 1 << 40, 0));
+        }
         f.on_sample(aid, &late_audio, None);
         assert!(f.rendered.contains(&vid) && f.video_joined.contains(&vid));
         assert!(f.pending_zero.contains_key(&vid) && f.pending_ends.contains_key(&aid));
@@ -1143,7 +1187,7 @@ mod tests {
     const AUDIO_B_ID: u32 = 3;
     const SLICES_PER_SEC: i64 = 10;
     const TICK_STEP_US: u64 = 50_000;
-    const STARVE_MARGIN_27MHZ: u64 = TICKS_PER_SEC_27MHZ;
+    const STARVE_MARGIN_27MHZ: u64 = TICKS_PER_SEC_27MHZ as u64;
 
     struct Rig {
         f: Feeder,
@@ -1225,7 +1269,7 @@ mod tests {
         fn position(&self) -> Option<u64> {
             match (self.playing, self.held) {
                 (Some((base, since)), _) => {
-                    Some(base + (self.now - since) * (TICKS_PER_SEC_27MHZ / 1_000_000))
+                    Some(base + (self.now - since) * u64::from(TICKS_PER_SEC_27MHZ / 1_000_000))
                 }
                 (None, held) => held,
             }
@@ -1242,7 +1286,7 @@ mod tests {
             self.next_slice += 1;
             for id in self.emitting.clone() {
                 let spec = &self.specs[&id];
-                let ts = i64::from(spec.timescale);
+                let ts = i64::from(spec.timescale.get());
                 let dur = u32::try_from(ts / SLICES_PER_SEC).unwrap();
                 let pts = ts + k * i64::from(dur);
                 let track = TrackId::new(id);
@@ -1255,9 +1299,13 @@ mod tests {
                 } else {
                     self.audio.clone()
                 };
-                s.pts = Some(pts);
-                s.dts = Some(pts);
-                s.duration = Some(dur);
+                if let Some(t) = s.timing.as_mut() {
+                    t.pts = pts;
+                    t.dts = pts;
+                    t.duration = dur;
+                } else {
+                    s.timing = Some(transmux::ir::SampleTiming::new(pts, pts, dur));
+                }
                 let join = if id == VIDEO_ID && k == 0 {
                     self.f.join_sample(track, &s)
                 } else if id == VIDEO_ID {
@@ -1298,7 +1346,7 @@ mod tests {
 
         fn emitted_end_27mhz(&self) -> u64 {
             let secs = 1 + self.next_slice / SLICES_PER_SEC;
-            u64::try_from(secs).unwrap() * TICKS_PER_SEC_27MHZ
+            u64::try_from(secs).unwrap() * u64::from(TICKS_PER_SEC_27MHZ)
         }
 
         fn pauses_after(&self, t: u64) -> Vec<(u64, BufferEvent)> {

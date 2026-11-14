@@ -7,6 +7,7 @@ use crate::support::srt_peer::{Cipher, SrtPeer};
 use crate::support::srt_sim::{SrtSim, config_with_seed};
 use broadcast_client::{Config, ErrorKind, Event, Status};
 use srt_runtime::RejectionReason;
+
 use srt_runtime::packet::{
     ControlPacket, EncryptionField, HandshakeExtensionFlags, HandshakeExtensions, HandshakePacket,
     HandshakeType, SrtPacket,

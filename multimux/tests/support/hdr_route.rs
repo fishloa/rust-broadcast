@@ -49,7 +49,11 @@ pub fn load(fixture: &str) -> Vec<Source> {
                 .samples
                 .into_iter()
                 .map(|mut s| {
-                    s.dts = s.dts.or(s.pts);
+                    if let Some(t) = s.timing.as_mut()
+                        && t.dts == 0
+                    {
+                        t.dts = t.pts;
+                    }
                     s
                 })
                 .collect(),
@@ -100,7 +104,7 @@ pub fn route_app_with_profiles(
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(WINDOW_SEGMENTS),
         )
         .with_declared_bandwidth_bps(Some(DECLARED_BPS))
@@ -120,9 +124,9 @@ pub fn route_app_with_profiles(
         if !src.spec.config.is_muxable_in_bmff() {
             continue;
         }
-        let scale = f64::from(src.spec.timescale);
+        let scale = f64::from(src.spec.timescale.get());
         for (si, s) in src.samples.iter().enumerate() {
-            order.push((s.dts.unwrap_or(0) as f64 / scale, ti, si));
+            order.push((s.timing.map(|t| t.dts).unwrap_or(0) as f64 / scale, ti, si));
         }
     }
     order.sort_by(|a, b| a.0.total_cmp(&b.0));

@@ -6,6 +6,7 @@ use crate::support::origin::{body_bytes, body_string, get};
 use crate::support::segmenter_feed::{
     PART_TARGET_MS, TARGET_DURATION_SECS, feed_via_segmenter, video_batches_n, video_track_spec,
 };
+use broadcast_common::timescale::Timescale;
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -34,14 +35,14 @@ async fn iframe_master_variant_gating() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
         .with_declared_bandwidth_bps(5_000_000),
     );
     let seg = LlHlsSegmenter::with_part_target(
         vec![video_track_spec()],
-        transmux::VIDEO_CLOCK_RATE,
+        transmux::VIDEO_CLOCK_TIMESCALE,
         TARGET_DURATION_SECS,
         PART_TARGET_MS,
     )
@@ -71,7 +72,7 @@ async fn iframe_master_variant_gating() {
     let store2 = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(TARGET_DURATION_SECS)
-            .with_part_target_ms(PART_TARGET_MS)
+            .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(8),
     ));
     feed_via_segmenter(&store2, vec![video_track_spec()], video_batches());
@@ -101,7 +102,7 @@ async fn iframe_master_variant_gating() {
     use transmux::rtp_sdp::aac_config_from_asc_hex;
     let audio_spec = TrackSpec::new(
         TrackId::new(1),
-        48000,
+        Timescale::from_nonzero(48000),
         aac_config_from_asc_hex("1210").expect("aac"),
     );
     let mut audio_batches = Vec::new();
@@ -119,7 +120,7 @@ async fn iframe_master_variant_gating() {
     let audio_store = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(TARGET_DURATION_SECS)
-            .with_part_target_ms(PART_TARGET_MS)
+            .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(8),
     ));
     feed_via_segmenter(&audio_store, vec![audio_spec], audio_batches);
@@ -147,7 +148,7 @@ async fn iframe_playlist_byterange_matches_independent_calc() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
         .with_declared_bandwidth_bps(5_000_000),
@@ -232,7 +233,7 @@ async fn iframe_range_requests() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
         .with_declared_bandwidth_bps(5_000_000),
@@ -308,7 +309,7 @@ async fn iframe_part_query_rejected() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
         .with_declared_bandwidth_bps(5_000_000),
@@ -340,7 +341,7 @@ async fn iframe_msn_with_part_query_served() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
         .with_declared_bandwidth_bps(5_000_000),
@@ -374,7 +375,7 @@ async fn blocking_reload_timeout_is_503() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
         .with_declared_bandwidth_bps(5_000_000),
@@ -423,7 +424,7 @@ async fn ts_hls_no_iframe() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
         .with_declared_bandwidth_bps(5_000_000),
@@ -470,7 +471,7 @@ async fn iframe_validator_clean() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
         .with_declared_bandwidth_bps(5_000_000),
@@ -479,7 +480,7 @@ async fn iframe_validator_clean() {
     store.publish_new_program(program);
     let mut seg = LlHlsSegmenter::with_part_target(
         vec![video_track_spec()],
-        transmux::VIDEO_CLOCK_RATE,
+        transmux::VIDEO_CLOCK_TIMESCALE,
         TARGET_DURATION_SECS,
         PART_TARGET_MS,
     )
@@ -622,7 +623,7 @@ async fn iframe_scte35_emsg_shift() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
         .with_declared_bandwidth_bps(5_000_000),
@@ -643,7 +644,7 @@ async fn iframe_scte35_emsg_shift() {
     // build segmenter init
     let mut seg = LlHlsSegmenter::with_part_target(
         vec![video_track_spec()],
-        transmux::VIDEO_CLOCK_RATE,
+        transmux::VIDEO_CLOCK_TIMESCALE,
         TARGET_DURATION_SECS,
         PART_TARGET_MS,
     )
@@ -785,7 +786,7 @@ async fn iframe_rendition_report_uses_configured_playlist_name() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
         .with_declared_bandwidth_bps(5_000_000),

@@ -4,6 +4,7 @@
 //! origin's media playlist. Content-type of served segments is decided in
 //! `multimux`, not here, so there is no `text/vtt` test in this crate.
 
+use broadcast_common::timescale::Timescale;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
@@ -60,7 +61,7 @@ fn avc_spec() -> TrackSpec {
     });
     TrackSpec::new(
         TrackId::new(1),
-        90_000,
+        Timescale::from_nonzero(90_000),
         CodecConfig::Avc {
             config,
             width: 320,
@@ -328,7 +329,7 @@ fn low_latency_webvtt_origin_renders_parts_and_blocks_on_media_sequence() {
         .with_container(Container::WebVtt)
         .with_target_duration_secs(TARGET_SECS)
         .with_window_segments(nz(4))
-        .with_low_latency(500)
+        .with_low_latency(Duration::from_millis(500))
         .with_instance(9)
         .build()
         .expect("builds");
@@ -366,7 +367,7 @@ fn webvtt_part_resource_is_served_and_awaited() {
         .with_container(Container::WebVtt)
         .with_target_duration_secs(TARGET_SECS)
         .with_window_segments(nz(4))
-        .with_low_latency(500)
+        .with_low_latency(Duration::from_millis(500))
         .with_instance(9)
         .with_hold_cold_playlist(false)
         .build()
@@ -403,7 +404,7 @@ fn ll_origin(container: Container, trunk: &Arc<Trunk>) -> HlsOrigin {
         .with_container(container)
         .with_target_duration_secs(TARGET_SECS)
         .with_window_segments(nz(8))
-        .with_low_latency(500)
+        .with_low_latency(Duration::from_millis(500))
         .with_instance(9)
         .build()
         .expect("builds");

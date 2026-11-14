@@ -89,14 +89,14 @@ async fn soak_blocking_reload_viewers_and_sample_consumers() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
         .with_declared_bandwidth_bps(5_000_000),
     );
     let spec = TrackSpec::new(
         TrackId::new(1),
-        transmux::VIDEO_CLOCK_RATE,
+        transmux::VIDEO_CLOCK_TIMESCALE,
         CodecConfig::Avc {
             config: avc_config_from_sprop(SPROP).expect("valid sprop"),
             width: 0,
@@ -105,7 +105,7 @@ async fn soak_blocking_reload_viewers_and_sample_consumers() {
     );
     let mut segmenter = LlHlsSegmenter::with_part_target(
         vec![spec],
-        transmux::VIDEO_CLOCK_RATE,
+        transmux::VIDEO_CLOCK_TIMESCALE,
         TARGET_DURATION_SECS,
         PART_TARGET_MS,
     )
@@ -149,7 +149,7 @@ async fn soak_blocking_reload_viewers_and_sample_consumers() {
                     continue;
                 };
                 if let SampleCursorItem::Timed { sample, .. } = item
-                    && let Some(at) = sample.pts
+                    && let Some(at) = sample.timing.map(|t| t.pts)
                 {
                     latencies.push(stamp(base).saturating_sub(at as u64));
                 }

@@ -1,6 +1,12 @@
 use crate::support;
 
+use broadcast_common::stage::Timestamp;
 use support::hls_host::{Host, Reply, TS_PLAYLIST_URL, hls_config, ts_playlist, ts_segment};
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const CDN_PLAYLIST: &str = "http://cdn.test/live/index.m3u8";
 const CDN_SEG0: &str = "http://cdn.test/live/index0.ts";
@@ -64,9 +70,9 @@ const LONG_WAIT_US: u64 = 40_000_000;
 #[test]
 fn a_redirect_answered_after_a_long_wait_gets_a_fresh_deadline() {
     use broadcast_client::{Action, Config, Event, Session};
-    let mut session = Session::open(TS_PLAYLIST_URL, hls_config(), 0).unwrap();
+    let mut session = Session::open(TS_PLAYLIST_URL, hls_config(), ts(0)).unwrap();
     let mut conn = None;
-    while let Some(a) = session.poll(0) {
+    while let Some(a) = session.poll(ts(0)) {
         if let Action::HttpRequest { conn: c, .. } = a {
             conn = Some(c);
         }
@@ -76,12 +82,12 @@ fn a_redirect_answered_after_a_long_wait_gets_a_fresh_deadline() {
         conn,
         302,
         &[("Location".to_string(), CDN_PLAYLIST.to_string())],
-        LONG_WAIT_US,
+        ts(LONG_WAIT_US),
     );
     let later = LONG_WAIT_US + 1;
     let mut closes = Vec::new();
     let mut requests = Vec::new();
-    while let Some(a) = session.poll(later) {
+    while let Some(a) = session.poll(ts(later)) {
         match a {
             Action::Close { conn } => closes.push(conn),
             Action::HttpRequest { conn, url, .. } => requests.push((conn, url)),

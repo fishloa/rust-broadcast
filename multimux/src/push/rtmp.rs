@@ -206,7 +206,7 @@ impl PushTransport for RtmpTransport {
                 .into_iter()
                 .map(|spec| Track::new(spec, Vec::new()))
                 .collect(),
-            0,
+            transmux::VIDEO_CLOCK_TIMESCALE,
         );
         let meta_bytes = {
             let client = self

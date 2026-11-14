@@ -1,7 +1,7 @@
 #![cfg(feature = "serde")]
 //! The persisted types round-trip through serde; data types serialize.
 
-use buffering_runtime::{ControllerConfig, Event, Reason, StallMemorySnapshot};
+use buffering_runtime::{ControllerConfig, Event, Micros, Reason, StallMemorySnapshot, Ticks27};
 
 #[test]
 fn config_and_snapshot_round_trip() {
@@ -9,7 +9,7 @@ fn config_and_snapshot_round_trip() {
     let j = serde_json::to_string(&c).unwrap();
     let back: ControllerConfig = serde_json::from_str(&j).unwrap();
     assert_eq!(c, back);
-    let s = StallMemorySnapshot::new(1_447_000, 12_345);
+    let s = StallMemorySnapshot::new(Micros(1_447_000), Micros(12_345));
     let back: StallMemorySnapshot =
         serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
     assert_eq!(s, back);
@@ -19,10 +19,10 @@ fn config_and_snapshot_round_trip() {
 #[test]
 fn events_serialize() {
     let e = Event::Pause {
-        hold_at_27mhz: 9,
+        hold_at_27mhz: Ticks27(9),
         reason: Reason::NoData,
-        depth_us: 1,
-        resume_target_us: 2,
+        depth_us: Micros(1),
+        resume_target_us: Micros(2),
         track: None,
     };
     let j = serde_json::to_string(&e).unwrap();

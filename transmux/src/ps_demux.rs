@@ -60,6 +60,7 @@ use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use broadcast_common::Unpackage;
+use broadcast_common::timescale::Timescale;
 use mpeg_ps::program_stream::scan_packs;
 
 use crate::ac3::{AC3_SAMPLES_PER_SYNCFRAME, Ac3SyncframeInfo};
@@ -179,7 +180,7 @@ const H264_NAL_TYPE_MASK: u8 = 0x1F;
 // ── Timestamps / timescale ───────────────────────────────────────────────────
 
 /// Video media timescale (90 kHz — the PS/PES timestamp clock).
-const VIDEO_TIMESCALE: u32 = 90_000;
+const VIDEO_TIMESCALE: Timescale = Timescale::from_nonzero(crate::rtp::VIDEO_CLOCK_RATE);
 /// Audio sample size in bits carried in the sample entry (PCM-equivalent; 16).
 const AUDIO_SAMPLE_SIZE_BITS: u16 = 16;
 /// Fallback per-frame duration (90 kHz ticks) when only one stamped frame exists.
@@ -887,7 +888,7 @@ fn build_h264_track(es: &ElementaryStream, track_id: TrackId) -> MaybeTrack {
         .collect();
 
     // Anchor = the first decode-ordered sample's absolute DTS, kept in
-    // lockstep with `samples[0].dts` per the crate-wide IR invariant.
+    // lockstep with `samples[0].timing.map(|t| t.dts)` per the crate-wide IR invariant.
     let anchor = order.first().map(|&i| dts[i].max(0) as u64).unwrap_or(0);
     Ok(Some(Track::new_at(
         TrackSpec::new(
@@ -1000,7 +1001,7 @@ fn build_mpeg2_track(es: &ElementaryStream, track_id: TrackId) -> Option<Track> 
 }
 
 /// Clamp an unwrapped 33-bit-derived `i128` timestamp into the `i64` range
-/// [`Sample::dts`]/[`Sample::pts`] carry (mirrors `ts_demux`'s own
+/// `Sample::timing` (`.dts`)/`Sample::timing` (`.pts`) carry (mirrors `ts_demux`'s own
 /// `to_ticks`): `i128` is used internally purely for wrap-arithmetic
 /// headroom, and every real value is a small multiple of the 33-bit range
 /// that fits `i64` with centuries of 90 kHz headroom — so this never clamps
@@ -1108,6 +1109,7 @@ fn split_ac3_frames(data: &[u8]) -> Vec<(usize, usize)> {
 fn build_ac3_track(es: &ElementaryStream, track_id: TrackId) -> Option<Track> {
     let info = Ac3SyncframeInfo::from_es(&es.es_bytes).ok()?;
     let sample_rate = info.sample_rate;
+    let timescale = Timescale::try_new(sample_rate).ok()?;
     let channel_count = info.channel_count() as u16;
     let config = info.into_dac3();
 
@@ -1134,7 +1136,7 @@ fn build_ac3_track(es: &ElementaryStream, track_id: TrackId) -> Option<Track> {
     // per-sample `duration` (previously left at `0`, which made the AC-3
     // timeline uninterpretable).
     let rescale_90k = |t90: u64| -> i64 {
-        ((t90 as u128 * sample_rate as u128) / VIDEO_TIMESCALE as u128) as i64
+        ((t90 as u128 * sample_rate as u128) / u128::from(VIDEO_TIMESCALE.get())) as i64
     };
     let stamped = assign_stamps(&frames, &es.stamps);
     let mut samples: Vec<Sample> = Vec::with_capacity(frames.len());
@@ -1152,10 +1154,10 @@ fn build_ac3_track(es: &ElementaryStream, track_id: TrackId) -> Option<Track> {
         let dts = match (stamp90, next_dts) {
             (Some(t90), Some(running)) => {
                 let expected_wire90 = anchor_wire90
-                    + (ticks_since_anchor as i128 * VIDEO_TIMESCALE as i128)
+                    + (ticks_since_anchor as i128 * i128::from(VIDEO_TIMESCALE))
                         / sample_rate.max(1) as i128;
                 let drift = (t90 as i128 - expected_wire90).abs();
-                if drift > crate::ts_demux::audio_discontinuity_threshold_90k(sample_rate) {
+                if drift > crate::ts_demux::audio_discontinuity_threshold_90k(timescale) {
                     // A genuine gap: re-anchor from the wire stamp.
                     anchor_wire90 = t90 as i128;
                     ticks_since_anchor = 0;
@@ -1194,16 +1196,16 @@ fn build_ac3_track(es: &ElementaryStream, track_id: TrackId) -> Option<Track> {
     }
 
     // Anchor = the first sample's absolute DTS when known (lockstep with
-    // `samples[0].dts`), else 0.
+    // `samples[0].timing.map(|t| t.dts)`), else 0.
     let anchor = samples
         .first()
-        .and_then(|s| s.dts)
+        .and_then(|s| s.timing.map(|t| t.dts))
         .map(|d| d.max(0) as u64)
         .unwrap_or(0);
     Some(Track::new_at(
         TrackSpec::new(
             track_id,
-            sample_rate,
+            timescale,
             CodecConfig::Ac3 {
                 config,
                 channel_count,

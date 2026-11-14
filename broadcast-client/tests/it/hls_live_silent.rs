@@ -1,6 +1,12 @@
 use std::collections::VecDeque;
 
 use broadcast_client::{Action, Config, Event, Session, Status};
+use broadcast_common::stage::Timestamp;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const INDEX: &str = "http://h/index.m3u8";
 const FIXTURE: &str = "http/live-channels/tf1-live.ts";
@@ -98,23 +104,23 @@ fn answer(session: &mut Session, origin: &Origin, conn: u32, url: &str, now: u64
     if origin.content_length {
         headers.push(("Content-Length".to_string(), body.len().to_string()));
     }
-    session.on_response(conn, 200, &headers, now);
+    session.on_response(conn, 200, &headers, ts(now));
     for chunk in body.chunks(CHUNK) {
-        session.on_data(conn, chunk, now);
+        session.on_data(conn, chunk, ts(now));
     }
-    session.on_closed(conn, None, now);
+    session.on_closed(conn, None, ts(now));
     t.drain(session);
 }
 
 fn run(mut origin: Origin, order: Order, mut on_tick: impl FnMut(u64, &mut Origin)) -> Tally {
-    let mut session = Session::open(INDEX, Config::default(), 0).unwrap();
+    let mut session = Session::open(INDEX, Config::default(), ts(0)).unwrap();
     let mut t = Tally::default();
     let mut now = 0;
     while now <= END_US {
         on_tick(now, &mut origin);
         let mut pending: VecDeque<(u32, String)> = VecDeque::new();
         loop {
-            while let Some(a) = session.poll(now) {
+            while let Some(a) = session.poll(ts(now)) {
                 if let Action::HttpRequest { conn, url, .. } = a {
                     t.urls.push(url.clone());
                     pending.push_back((conn, url));

@@ -16,6 +16,7 @@
 //! - a non-LL playlist (no PART tags at all) still plays via the full-segment
 //!   fallback path.
 
+use broadcast_common::timescale::Timescale;
 use broadcast_hls::{
     DecimalSeconds, LowLatencyConfig, MapTag, MediaPlaylist, MediaSegment, OpenSegment, PartSpec,
 };
@@ -33,7 +34,7 @@ const VID_DUR: u32 = 3000; // 90 kHz / 30 fps
 fn video_track() -> TrackSpec {
     TrackSpec::new(
         TrackId::new(1),
-        90_000,
+        Timescale::from_nonzero(90_000),
         CodecConfig::Avc {
             config: dummy_avc_config(),
             width: 320,
@@ -214,7 +215,13 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
     // --- Build the origin: one closed segment (3 parts) + an open second
     // segment with 1 known part and a preload hint for its next (not-yet-
     // available) part. ---
-    let mut seg = LlHlsSegmenter::with_part_target(vec![video_track()], 1000, 1.0, 334).unwrap();
+    let mut seg = LlHlsSegmenter::with_part_target(
+        vec![video_track()],
+        Timescale::from_nonzero(1000),
+        1.0,
+        334,
+    )
+    .unwrap();
     let mut fed_samples: Vec<Sample> = Vec::new();
     for i in 0..30u8 {
         let s = vsample(i == 0, i);
@@ -450,7 +457,10 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
     );
     for (got, want) in got_samples.iter().zip(fed_samples.iter()) {
         assert_eq!(got.data, want.data, "sample bytes must match exactly");
-        assert_eq!(got.duration, want.duration);
+        assert_eq!(
+            got.timing.map(|t| t.duration),
+            want.timing.map(|t| t.duration)
+        );
         assert_eq!(got.flags.is_sync, want.flags.is_sync);
     }
 
@@ -504,7 +514,7 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
 
 /// An origin that carries LL-HLS tags (`PART-INF`/`PART`) but explicitly
 /// declines blocking reload (`CAN-BLOCK-RELOAD=NO`) must get a plain,
-/// non-blocking reload + a `WaitMs` backoff hint — not a blocking
+/// non-blocking reload + a `Wait` backoff hint — not a blocking
 /// `_HLS_msn`/`_HLS_part` request. A client that infers blocking support
 /// from `low_latency.is_some()` alone (the pre-fix behaviour) fails this.
 #[test]
@@ -567,8 +577,8 @@ fn can_block_reload_no_yields_non_blocking_reload_with_backoff() {
         _ => unreachable!(),
     }
     assert!(
-        actions.iter().any(|a| matches!(a, Action::WaitMs(_))),
-        "a non-blocking reload must be paced with a WaitMs backoff hint: {actions:#?}"
+        actions.iter().any(|a| matches!(a, Action::Wait(_))),
+        "a non-blocking reload must be paced with a Wait backoff hint: {actions:#?}"
     );
 }
 
@@ -578,8 +588,13 @@ fn can_block_reload_no_yields_non_blocking_reload_with_backoff() {
 
 #[test]
 fn non_ll_playlist_plays_via_full_segment_fallback() {
-    let mut seg =
-        LlHlsSegmenter::with_part_target(vec![video_track()], 1000, 1.0, 100_000).unwrap();
+    let mut seg = LlHlsSegmenter::with_part_target(
+        vec![video_track()],
+        Timescale::from_nonzero(1000),
+        1.0,
+        100_000,
+    )
+    .unwrap();
     let mut fed_samples: Vec<Sample> = Vec::new();
     for i in 0..30u8 {
         let s = vsample(i == 0, i);

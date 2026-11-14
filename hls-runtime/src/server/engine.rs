@@ -86,12 +86,13 @@
 use media_plane::ids::{Generation, PartIndex, SegmentSeq};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::num::NonZeroUsize;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 use std::time::Duration;
 use transmux::{Container, TrackId};
 
 use broadcast_common::bcp47_language;
+use broadcast_common::timescale::Timescale;
 use broadcast_common::units::{MILLIS_PER_SEC, NANOS_PER_SEC};
 use broadcast_common::{Timestamp, Unpackage};
 use broadcast_hls::{
@@ -340,7 +341,7 @@ struct WindowSegment {
     /// [`InitStore`]).
     init_gen: Generation,
     bytes: Bytes,
-    duration_secs: f64,
+    duration: Duration,
     discontinuous: bool,
     /// Byte length of the leading I-frame slice of this segment's first
     /// video sample, when the segment is usable in an I-frame playlist;
@@ -543,8 +544,9 @@ impl Window {
             discontinuous = true;
         }
 
-        let duration_secs = entry.duration.as_secs_f64();
-        self.max_segment_duration_secs = self.max_segment_duration_secs.max(duration_secs);
+        self.max_segment_duration_secs = self
+            .max_segment_duration_secs
+            .max(entry.duration.as_secs_f64());
         if let Some(bps) = segment_bandwidth_bps(entry.bytes.len(), entry.duration) {
             self.peak_bandwidth_bps = self.peak_bandwidth_bps.max(bps);
         }
@@ -586,7 +588,7 @@ impl Window {
             sequence_number: entry.sequence_number,
             init_gen,
             bytes: entry.bytes,
-            duration_secs,
+            duration: entry.duration,
             discontinuous,
             start_ns: entry.timeline_position.as_nanos(),
             iframe_len,
@@ -813,13 +815,13 @@ fn first_moof(segment: &[u8]) -> Option<(usize, transmux::movie_fragment::MovieF
 
 /// Mean video frame rate of one segment in millihertz, rounded to three
 /// decimal places (RFC 8216bis section 4.4.6.2): `samples * timescale / ticks`.
-fn segment_frame_rate_millihertz(samples: u64, ticks: u64, timescale: u32) -> Option<u32> {
-    if samples < MIN_SAMPLES_FOR_RATE || ticks == 0 || timescale == 0 {
+fn segment_frame_rate_millihertz(samples: u64, ticks: u64, timescale: Timescale) -> Option<u32> {
+    if samples < MIN_SAMPLES_FOR_RATE || ticks == 0 {
         return None;
     }
     let ticks = u128::from(ticks);
     let millihertz =
-        (u128::from(samples) * u128::from(timescale) * MILLIHERTZ_PER_HZ + ticks / 2) / ticks;
+        (u128::from(samples) * u128::from(timescale.get()) * MILLIHERTZ_PER_HZ + ticks / 2) / ticks;
     u32::try_from(millihertz)
         .ok()
         .filter(|mh| *mh <= MAX_PLAUSIBLE_FRAME_RATE_MILLIHERTZ)
@@ -827,7 +829,7 @@ fn segment_frame_rate_millihertz(samples: u64, ticks: u64, timescale: u32) -> Op
 
 /// Mean video frame rate of an fMP4 `segment` from its `trun` durations, or
 /// `None` when the segment cannot be parsed or holds no video samples.
-fn fmp4_video_rate(segment: &[u8], video_track_id: TrackId, timescale: u32) -> Option<u32> {
+fn fmp4_video_rate(segment: &[u8], video_track_id: TrackId, timescale: Timescale) -> Option<u32> {
     let (moof_off, moof) = first_moof(segment)?;
     let mdats = transmux::frag_offsets::mdat_ranges(segment);
     let samples =
@@ -849,7 +851,7 @@ fn ts_video_rate(segment: &[u8]) -> Option<u32> {
     let ticks: u64 = track
         .samples
         .iter()
-        .filter_map(|sample| sample.duration)
+        .filter_map(|sample| sample.timing.map(|t| t.duration))
         .map(u64::from)
         .sum();
     segment_frame_rate_millihertz(
@@ -1036,10 +1038,12 @@ pub enum HlsOriginBuildError {
     /// 8216bis §4.4.3.1).
     #[error("HlsOrigin::builder(...).with_target_duration_secs(...) must be finite and positive")]
     InvalidTargetDuration,
-    /// [`HlsOriginBuilder::with_low_latency`] was given a part target of `0` ms:
+    /// [`HlsOriginBuilder::with_low_latency`] was given a part target of `0`:
     /// `#EXT-X-PART-INF`'s `PART-TARGET` must be a positive duration (RFC
     /// 8216bis §4.4.3.7), and the Advance Part Limit divides by it.
-    #[error("HlsOrigin::builder(...).with_low_latency(0): the part target must be positive")]
+    #[error(
+        "HlsOrigin::builder(...).with_low_latency(Duration::ZERO): the part target must be positive"
+    )]
     ZeroPartTarget,
     /// [`HlsOriginBuilder::with_media_sequence_offset`] is so large that
     /// `offset + u32::MAX` (the largest origin sequence number) would not fit
@@ -1454,7 +1458,7 @@ pub struct HlsOriginBuilder {
     target_duration_secs: Option<f64>,
     window_segments: Option<NonZeroUsize>,
     container: Container,
-    part_target_ms: Option<u32>,
+    part_target: Option<Duration>,
     media_sequence_offset: u64,
     discontinuity_sequence: u64,
     instance: Option<u64>,
@@ -1478,7 +1482,7 @@ impl HlsOriginBuilder {
             target_duration_secs: None,
             window_segments: None,
             container: Container::default(),
-            part_target_ms: None,
+            part_target: None,
             media_sequence_offset: 0,
             discontinuity_sequence: 0,
             instance: None,
@@ -1540,14 +1544,14 @@ impl HlsOriginBuilder {
         self
     }
 
-    /// Opt into LL-HLS: `part_target_ms` becomes `#EXT-X-PART-INF`'s
-    /// `PART-TARGET` (milliseconds). **Omit this call entirely for classic
+    /// Opt into LL-HLS: `part_target` becomes `#EXT-X-PART-INF`'s
+    /// `PART-TARGET` (whole milliseconds are rendered). **Omit this call entirely for classic
     /// HLS** — no `#EXT-X-PART`/`#EXT-X-PART-INF`/`#EXT-X-SERVER-CONTROL`/
     /// `#EXT-X-PRELOAD-HINT` tags are then rendered, regardless of
     /// [`Self::with_container`]. This is what the old constructor's mandatory
-    /// `part_target_ms` positional could not express.
-    pub fn with_low_latency(mut self, part_target_ms: u32) -> Self {
-        self.part_target_ms = Some(part_target_ms);
+    /// `part_target` positional could not express.
+    pub fn with_low_latency(mut self, part_target: Duration) -> Self {
+        self.part_target = Some(part_target);
         self
     }
 
@@ -1724,7 +1728,7 @@ impl HlsOriginBuilder {
         let window_segments = self
             .window_segments
             .ok_or(HlsOriginBuildError::MissingWindowSegments)?;
-        if self.part_target_ms == Some(0) {
+        if self.part_target.is_some_and(|p| p.is_zero()) {
             return Err(HlsOriginBuildError::ZeroPartTarget);
         }
         if self
@@ -1785,8 +1789,8 @@ impl HlsOriginBuilder {
             video_track_id: Mutex::new(None),
             target_duration_secs,
             container: self.container,
-            part_target_ms: self.part_target_ms,
-            part_target_override_ms: AtomicU32::new(0),
+            part_target: self.part_target,
+            part_target_override_ns: AtomicU64::new(0),
             media_sequence_offset: self.media_sequence_offset,
             instance: self.instance.unwrap_or_else(next_instance_token),
             arrival_clock: self.arrival_clock,
@@ -1903,14 +1907,14 @@ pub struct HlsOrigin {
     video_track_id: Mutex<Option<TrackId>>,
     target_duration_secs: f64,
     container: Container,
-    /// `Some(part_target_ms)` enables LL-HLS; `None` renders classic HLS —
+    /// `Some(part_target)` enables LL-HLS; `None` renders classic HLS —
     /// no `#EXT-X-PART`/`#EXT-X-PART-INF`/`#EXT-X-SERVER-CONTROL`/
     /// `#EXT-X-PRELOAD-HINT` at all, orthogonal to [`Self::container`] (issue
     /// #873).
-    part_target_ms: Option<u32>,
-    /// Raises this origin's own `PART-TARGET` above `part_target_ms` (`0` =
-    /// no override); see [`Self::set_part_target_ms`].
-    part_target_override_ms: AtomicU32,
+    part_target: Option<Duration>,
+    /// Raises this origin's own `PART-TARGET` above `part_target` (zero = no
+    /// override); see [`Self::set_part_target`].
+    part_target_override_ns: AtomicU64,
     /// Added to every shown Media Sequence Number (see
     /// [`HlsOriginBuilder::with_media_sequence_offset`]); validated at build so
     /// `offset + u32::MAX` fits a `u64`.
@@ -2790,12 +2794,17 @@ impl HlsOrigin {
     /// when that is under one second, else three. Zero when this origin is
     /// not low-latency.
     fn advance_part_limit(&self) -> u64 {
-        match self.effective_part_target_ms() {
-            None | Some(0) => 0,
-            Some(ms) if u64::from(ms) < MILLIS_PER_SEC => {
-                (ADVANCE_PART_LIMIT_NUMERATOR * MILLIS_PER_SEC).div_ceil(u64::from(ms))
-            }
-            Some(_) => ADVANCE_PART_LIMIT_NUMERATOR,
+        let Some(part_target) = self.effective_part_target() else {
+            return 0;
+        };
+        if part_target.is_zero() {
+            return 0;
+        }
+        let ms = part_target.as_millis() as u64;
+        if ms < MILLIS_PER_SEC {
+            (ADVANCE_PART_LIMIT_NUMERATOR * MILLIS_PER_SEC).div_ceil(ms.max(1))
+        } else {
+            ADVANCE_PART_LIMIT_NUMERATOR
         }
     }
 
@@ -2829,40 +2838,40 @@ impl HlsOrigin {
     /// the part target needs a Part Target Duration of a whole number of
     /// frames, because RFC 8216bis §4.4.4.9 requires every Partial Segment to
     /// be no longer than it. Has no effect on a classic-HLS origin.
-    pub fn set_part_target_ms(&self, ms: u32) {
-        self.part_target_override_ms.store(ms, Ordering::Relaxed);
+    pub fn set_part_target(&self, part_target: Duration) {
+        let ns = u64::try_from(part_target.as_nanos()).unwrap_or(u64::MAX);
+        self.part_target_override_ns.store(ns, Ordering::Relaxed);
         self.bump_epoch();
     }
 
-    fn effective_part_target_ms(&self) -> Option<u32> {
-        self.part_target_ms
-            .map(|base| base.max(self.part_target_override_ms.load(Ordering::Relaxed)))
+    fn effective_part_target(&self) -> Option<Duration> {
+        let override_ns = self.part_target_override_ns.load(Ordering::Relaxed);
+        self.part_target
+            .map(|base| base.max(Duration::from_nanos(override_ns)))
     }
 
     /// The largest Part Target Duration across this origin and its sibling
     /// renditions: the `PART-HOLD-BACK` every playlist carries is three
     /// times it (RFC 8216bis §4.4.3.8, §6.2.4).
-    fn max_part_target_ms(&self) -> Option<u32> {
-        let own = self.effective_part_target_ms()?;
+    fn max_part_target(&self) -> Option<Duration> {
+        let own = self.effective_part_target()?;
         let siblings = locked(&self.rendition_siblings).clone();
         Some(
             siblings
                 .iter()
                 .filter_map(|s| s.origin.upgrade())
-                .filter_map(|o| o.effective_part_target_ms())
-                .fold(own, u32::max),
+                .filter_map(|o| o.effective_part_target())
+                .fold(own, Duration::max),
         )
     }
 
     fn part_timing(&self) -> Option<(DecimalSeconds, DecimalSeconds)> {
-        let part_target = self.effective_part_target_ms()?;
-        let hold_basis = self.max_part_target_ms().unwrap_or(part_target);
-        let part_target = DecimalSeconds::new(f64::from(part_target) / 1000.0)
-            .expect("u32 / 1000.0 is finite, >= 0");
-        let part_hold_back =
-            DecimalSeconds::new(f64::from(hold_basis) / 1000.0 * PART_HOLD_BACK_MULTIPLIER)
-                .expect("finite, >= 0 times a positive constant is finite, >= 0");
-        Some((part_target, part_hold_back))
+        let part_target = self.effective_part_target()?;
+        let hold_basis = self.max_part_target().unwrap_or(part_target);
+        Some((
+            DecimalSeconds::from_duration(part_target),
+            DecimalSeconds::from_duration_scaled(hold_basis, PART_HOLD_BACK_MULTIPLIER),
+        ))
     }
 
     /// Replace the sibling renditions whose live edge this origin reports.
@@ -3177,7 +3186,7 @@ impl HlsOrigin {
             .map(|s| ClosedSegment {
                 sequence_number: s.sequence_number,
                 start_ns: s.start_ns,
-                duration_secs: s.duration_secs,
+                duration_secs: s.duration.as_secs_f64(),
                 discontinuous: s.discontinuous,
                 init_generation: s.init_gen,
             })
@@ -3265,8 +3274,7 @@ impl HlsOrigin {
                 PartSpec::new(
                     self.part_uri(track_id, p.segment_number, p.part_index, ext),
                     // `Duration::as_secs_f64`: finite and >= 0 (issue #1140).
-                    DecimalSeconds::new(p.duration.as_secs_f64())
-                        .expect("Duration::as_secs_f64 is finite, >= 0"),
+                    DecimalSeconds::from_duration(p.duration),
                 )
                 .with_independent(p.independent)
             })
@@ -3364,7 +3372,7 @@ impl HlsOrigin {
         // trailing-`#EXT-X-PART`-only representation is itself an LL-HLS
         // directive, so it is gated on low latency being enabled, not merely
         // on the Trunk happening to have live parts.
-        let low_latency_enabled = self.part_target_ms.is_some();
+        let low_latency_enabled = self.part_target.is_some();
         let has_open_parts = low_latency_enabled && !open_parts.is_empty();
         let ext = self.container.segment_extension();
 
@@ -3402,7 +3410,11 @@ impl HlsOrigin {
         // (from their start to the end of the last segment) exceeds the Skip
         // Boundary; never skip every segment in the window.
         let omitted = if skip_accepted {
-            let durations: Vec<f64> = window.segments.iter().map(|s| s.duration_secs).collect();
+            let durations: Vec<f64> = window
+                .segments
+                .iter()
+                .map(|s| s.duration.as_secs_f64())
+                .collect();
             let total: f64 = durations.iter().sum();
             let mut prefix = 0.0_f64;
             let mut count = 0usize;
@@ -3437,7 +3449,7 @@ impl HlsOrigin {
             } else {
                 Vec::new()
             });
-            behind_secs += s.duration_secs;
+            behind_secs += s.duration.as_secs_f64();
         }
         closed_parts.reverse();
         let any_closed_parts = closed_parts.iter().any(|parts| !parts.is_empty());
@@ -3462,11 +3474,7 @@ impl HlsOrigin {
                 MediaSegment {
                     map: map_for(s.init_gen),
                     uri: self.segment_uri(track_id, s.sequence_number, ext),
-                    // `duration_secs` is always `Duration::as_secs_f64()`
-                    // (issue #1140): a `std::time::Duration` can never be
-                    // negative or non-finite.
-                    duration: DecimalSeconds::new(s.duration_secs)
-                        .expect("Duration::as_secs_f64 is finite, >= 0"),
+                    duration: DecimalSeconds::from_duration(s.duration),
                     discontinuous: s.discontinuous,
                     parts,
                     program_date_time,
@@ -3514,9 +3522,8 @@ impl HlsOrigin {
             // segment yet it is omitted. The explicit-anchor path is handled
             // inside `segment_pdt` via `segment_start_time(open_seq)`.
             let open_start_ns = window.segments.back().map(|s| {
-                s.start_ns.saturating_add(
-                    u64::try_from((s.duration_secs * 1_000_000_000.0).round() as i64).unwrap_or(0),
-                )
+                s.start_ns
+                    .saturating_add(u64::try_from(s.duration.as_nanos()).unwrap_or(u64::MAX))
             });
             open.program_date_time = match open_start_ns {
                 Some(sn) => self.segment_pdt(open_seq, sn, None),
@@ -3627,7 +3634,7 @@ impl HlsOrigin {
         // #EXT-X-RENDITION-REPORT for sibling renditions (RFC 8216bis
         // §4.4.5.4): one per OTHER rendition, snapshotted under each
         // sibling's own lock at render time.
-        let rendition_reports = if self.part_target_ms.is_some() {
+        let rendition_reports = if self.part_target.is_some() {
             let siblings = locked(&self.rendition_siblings).clone();
             let mut reports = Vec::with_capacity(siblings.len());
             for sibling in siblings {
@@ -3871,7 +3878,7 @@ impl HlsOrigin {
                     s.sequence_number,
                     self.container.segment_extension(),
                 ),
-                duration: DecimalSeconds::new(s.duration_secs).unwrap_or_default(),
+                duration: DecimalSeconds::from_duration(s.duration),
                 discontinuous: s.discontinuous,
                 byte_range: Some(ByteRange {
                     length: *len,
@@ -3911,7 +3918,7 @@ impl HlsOrigin {
         // The reverse, a media playlist reporting this I-frame playlist, is
         // only a SHOULD, and Apple's validator rejects it as "Unknown
         // rendition report" (issue #1595).
-        let rendition_reports = if self.part_target_ms.is_some() {
+        let rendition_reports = if self.part_target.is_some() {
             let (last_msn, last_part) = self.current_live_edge();
             let first = broadcast_hls::RenditionReport::new(
                 media_playlist_name.to_string(),
@@ -4003,7 +4010,7 @@ impl HlsOrigin {
                 };
             }
             // A classic (non-LL) origin has no parts at all.
-            if self.part_target_ms.is_none() {
+            if self.part_target.is_none() {
                 return EgressResponse::NotFound;
             }
             // The requested part's segment has already closed (whether or
@@ -4170,25 +4177,29 @@ pub fn playlist_reload_timeout(origin: &HlsOrigin) -> Duration {
 
 #[cfg(test)]
 mod tests {
+    use broadcast_common::timescale::Timescale;
+
+    const T90K: Timescale = Timescale::from_nonzero(90_000);
+
     #[test]
     fn a_segment_with_fewer_than_two_samples_has_no_measurable_frame_rate() {
-        assert_eq!(super::segment_frame_rate_millihertz(1, 6000, 90_000), None);
+        assert_eq!(super::segment_frame_rate_millihertz(1, 6000, T90K), None);
         assert_eq!(
-            super::segment_frame_rate_millihertz(2, 6000, 90_000),
+            super::segment_frame_rate_millihertz(2, 6000, T90K),
             Some(30_000)
         );
-        assert_eq!(super::segment_frame_rate_millihertz(2, 0, 90_000), None);
+        assert_eq!(super::segment_frame_rate_millihertz(2, 0, T90K), None);
     }
 
     #[test]
     fn a_segment_with_broken_timing_does_not_yield_an_implausible_frame_rate() {
-        assert_eq!(super::segment_frame_rate_millihertz(2, 1, 90_000), None);
+        assert_eq!(super::segment_frame_rate_millihertz(2, 1, T90K), None);
         assert_eq!(
-            super::segment_frame_rate_millihertz(300, 90_000, 90_000),
+            super::segment_frame_rate_millihertz(300, 90_000, T90K),
             Some(300_000)
         );
         assert_eq!(
-            super::segment_frame_rate_millihertz(301, 90_000, 90_000),
+            super::segment_frame_rate_millihertz(301, 90_000, T90K),
             None
         );
     }
@@ -4219,7 +4230,7 @@ mod tests {
         let origin = HlsOrigin::builder(Arc::clone(&trunk))
             .with_target_duration_secs(4.0)
             .with_window_segments(nz(4))
-            .with_low_latency(500)
+            .with_low_latency(Duration::from_millis(500))
             .with_instance(7)
             .build()
             .expect("both required fields set");
@@ -4330,7 +4341,7 @@ mod tests {
         let origin = HlsOrigin::builder(Arc::clone(&trunk))
             .with_target_duration_secs(4.0)
             .with_window_segments(nz(4))
-            .with_low_latency(500)
+            .with_low_latency(Duration::from_millis(500))
             .with_instance(7)
             .with_hold_cold_playlist(hold)
             .build()
@@ -4456,7 +4467,7 @@ mod tests {
         let origin = HlsOrigin::builder(Arc::clone(&trunk))
             .with_target_duration_secs(4.0)
             .with_window_segments(nz(4))
-            .with_low_latency(500)
+            .with_low_latency(Duration::from_millis(500))
             .with_instance(7)
             .with_hold_cold_playlist(true)
             .build()
@@ -4898,14 +4909,14 @@ mod tests {
     #[test]
     fn awaiting_part_is_bounded_by_await_policy_deadline() {
         let (_trunk, origin, _writer) = make_origin();
-        let deadline = Timestamp::from_nanos(1_000_000_000);
+        let deadline = Timestamp::from_millis(1_000);
         let policy = AwaitPolicy::new(deadline);
 
         let still_waiting = origin.resolve(
             HlsRequest::Resource {
                 name: "part-1-7-1.0.m4s".to_string(),
             },
-            Timestamp::from_nanos(999_999_999),
+            Timestamp::from_millis(999),
             policy,
         );
         assert!(matches!(still_waiting, EgressResponse::Await { .. }));
@@ -5295,7 +5306,7 @@ mod tests {
             .with_window_segments(nz(4))
             .with_container(container);
         if let Some(ms) = low_latency_ms {
-            builder = builder.with_low_latency(ms);
+            builder = builder.with_low_latency(Duration::from_millis(u64::from(ms)));
         }
         let origin = builder
             .with_instance(7)

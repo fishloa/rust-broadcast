@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use broadcast_common::timescale::Timescale;
 use broadcast_dash::Mpd;
 use broadcast_dash::error::{MpdError, Unsupported};
 use broadcast_dash::limits::Limits;
@@ -114,7 +115,7 @@ fn a_model_with_every_field_set_round_trips() {
     pbu.url = "http://p/".to_string();
     period.base_urls = vec![pbu];
     let mut base_info = BaseInfo::default();
-    base_info.timescale = Some(1000);
+    base_info.timescale = Some(Timescale::from_nonzero(1000));
     base_info.presentation_time_offset = Some(10);
     base_info.ept_delta = Some(1);
     base_info.pd_delta = Some(2);
@@ -300,7 +301,7 @@ fn every_field_event_stream(desc: &Descriptor) -> EventStream {
     es.xlink = Some(xlink);
     es.scheme_id_uri = "urn:scte:scte35:2013:xml".to_string();
     es.value = Some("v".to_string());
-    es.timescale = Some(90_000);
+    es.timescale = Some(Timescale::from_nonzero(90_000));
     es.presentation_time_offset = Some(5);
     let mut query = UrlQueryInfo::default();
     query.use_mpd_url_query = true;
@@ -456,7 +457,7 @@ fn text_events_parse_with_their_body() {
     let es = &mpd.periods[0].event_streams[0];
     assert_eq!(
         (es.timescale, es.presentation_time_offset),
-        (Some(1000), Some(4))
+        (Some(Timescale::from_nonzero(1000)), Some(4))
     );
     let ev = &es.events[0];
     assert_eq!(
@@ -668,4 +669,63 @@ fn an_event_stream_request_param_survives_a_write() {
         "{written}"
     );
     assert_eq!(Mpd::parse(written.as_bytes()).unwrap(), mpd);
+}
+
+const TIMESCALE_MPD_HEAD: &str = r#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" minBufferTime="PT1S" mediaPresentationDuration="PT1S"><Period id="0">"#;
+const TIMESCALE_MPD_TAIL: &str = "</Period></MPD>";
+
+fn mpd_with_template(attrs: &str) -> Vec<u8> {
+    format!(
+        "{TIMESCALE_MPD_HEAD}<AdaptationSet mimeType=\"video/mp4\"><SegmentTemplate duration=\"2\" media=\"m$Number$.m4s\" {attrs}/><Representation id=\"r\" bandwidth=\"1\"/></AdaptationSet>{TIMESCALE_MPD_TAIL}"
+    )
+    .into_bytes()
+}
+
+#[test]
+fn a_present_zero_timescale_is_a_typed_error_on_every_element_that_carries_it() {
+    let template = Mpd::parse(&mpd_with_template("timescale=\"0\"")).unwrap_err();
+    assert!(
+        matches!(
+            &template,
+            MpdError::Invalid {
+                what: "timescale",
+                ..
+            }
+        ),
+        "{template:?}"
+    );
+    let event_stream = format!(
+        "{TIMESCALE_MPD_HEAD}<EventStream schemeIdUri=\"urn:e\" timescale=\"0\"/>{TIMESCALE_MPD_TAIL}"
+    );
+    let event = Mpd::parse(event_stream.as_bytes()).unwrap_err();
+    assert!(
+        matches!(
+            &event,
+            MpdError::Invalid {
+                what: "timescale",
+                ..
+            }
+        ),
+        "{event:?}"
+    );
+}
+
+#[test]
+fn an_absent_timescale_stays_absent_in_the_model_and_resolves_to_one() {
+    let xml = mpd_with_template("");
+    let mpd = Mpd::parse(&xml).unwrap();
+    let period = &mpd.periods[0];
+    let set = &period.adaptation_sets[0];
+    let rep = &set.representations[0];
+    assert_eq!(
+        set.segment.template.as_ref().unwrap().multi.base.timescale,
+        None
+    );
+    let info = broadcast_dash::inherit::resolve_segment_info(period, set, rep).unwrap();
+    let broadcast_dash::inherit::SegmentInfo::Template(t) = info else {
+        panic!("expected a template");
+    };
+    assert_eq!(t.multi.timescale, Timescale::from_nonzero(1));
+    let rewritten = String::from_utf8(mpd.to_xml().unwrap().into_bytes()).unwrap();
+    assert!(!rewritten.contains("timescale="), "{rewritten}");
 }

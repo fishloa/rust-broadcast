@@ -3,7 +3,10 @@ use crate::support;
 use std::sync::OnceLock;
 
 use broadcast_auth::{Credentials as AuthCredentials, Scheme as AuthScheme, Verifier};
-use broadcast_client::{Action, Config, Credentials, Error, Event, Session, SourceKind, Status};
+use broadcast_client::{
+    Action, Config, Credentials, Error, Event, Session, SourceKind, Status, TransportError,
+};
+use broadcast_common::stage::Timestamp;
 use rtsp_runtime::transport::{LowerTransport, Transport};
 use sdp_types::{Media, MediaType, Origin, TransportProto};
 use support::rtsp_host::{
@@ -12,6 +15,11 @@ use support::rtsp_host::{
     sender_report_frame, session_id, wakes,
 };
 use url::Url;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const USER: &str = "admin";
 const PASSWORD: &str = "s3cret";
@@ -135,16 +143,16 @@ fn finish_stream_after(host: &mut Host, lasted_us: u64) -> Vec<Event> {
     host.deliver_all(&frames);
     host.advance(lasted_us);
     let conn = host.conn.expect("live connection");
-    host.session.on_closed(conn, None, host.now);
+    host.session.on_closed(conn, None, ts(host.now));
     host.events()
 }
 
 #[test]
 fn auto_detects_rtsp_and_rtsps_schemes() {
     for url in ["rtsp://cam.test/live/", "rtsps://cam.test/live/"] {
-        let mut session = Session::open(url, Config::default(), 0).expect("open");
+        let mut session = Session::open(url, Config::default(), ts(0)).expect("open");
         assert!(
-            matches!(session.poll(0), Some(Action::TcpConnect { .. })),
+            matches!(session.poll(ts(0)), Some(Action::TcpConnect { .. })),
             "{url} must start with a TCP connect under Auto"
         );
         let mut explicit = Session::open(
@@ -154,13 +162,17 @@ fn auto_detects_rtsp_and_rtsps_schemes() {
                 new_config.kind = SourceKind::Rtsp;
                 new_config
             },
-            0,
+            ts(0),
         )
         .expect("open explicit");
-        assert!(matches!(explicit.poll(0), Some(Action::TcpConnect { .. })));
+        assert!(matches!(
+            explicit.poll(ts(0)),
+            Some(Action::TcpConnect { .. })
+        ));
     }
-    let mut http = Session::open("http://cam.test/live.ts", Config::default(), 0).expect("open");
-    assert!(matches!(http.poll(0), Some(Action::HttpRequest { .. })));
+    let mut http =
+        Session::open("http://cam.test/live.ts", Config::default(), ts(0)).expect("open");
+    assert!(matches!(http.poll(ts(0)), Some(Action::HttpRequest { .. })));
     assert_eq!(SourceKind::Rtsp.to_string(), "rtsp");
     for (url, kind) in [
         ("rtsp://cam.test/x", SourceKind::TsHttp),
@@ -174,7 +186,7 @@ fn auto_detects_rtsp_and_rtsps_schemes() {
         };
         assert!(
             matches!(
-                Session::open(url, config, 0),
+                Session::open(url, config, ts(0)),
                 Err(Error::UnsupportedScheme(_))
             ),
             "{url} with {kind} must be rejected"
@@ -193,8 +205,8 @@ fn connect_action_has_host_port_default_ports_and_tls_flag() {
         ("rtsps://[::1]:1322/x", "::1", 1322, true),
     ];
     for (url, host, port, tls) in cases {
-        let mut session = Session::open(url, Config::default(), 0).expect("open");
-        let first = session.poll(0).expect("connect action");
+        let mut session = Session::open(url, Config::default(), ts(0)).expect("open");
+        let first = session.poll(ts(0)).expect("connect action");
         assert_eq!(
             first,
             Action::TcpConnect {
@@ -208,7 +220,7 @@ fn connect_action_has_host_port_default_ports_and_tls_flag() {
         );
     }
     assert!(matches!(
-        Session::open("rtsp:///nohost", Config::default(), 0),
+        Session::open("rtsp:///nohost", Config::default(), ts(0)),
         Err(Error::InvalidUrl(_))
     ));
 }
@@ -305,7 +317,7 @@ fn tracks_precede_first_sample_and_samples_equal_oracle() {
             track.samples.len(),
             "track {id}: every original sample is recovered"
         );
-        let origin = track.samples[0].pts.expect("fixture pts");
+        let origin = track.samples[0].timing.map(|t| t.pts).expect("fixture pts");
         for (n, (recovered, original)) in mine.iter().zip(&track.samples).enumerate() {
             assert_eq!(
                 &recovered.data[..],
@@ -313,8 +325,8 @@ fn tracks_precede_first_sample_and_samples_equal_oracle() {
                 "track {id} sample {n}: payload bytes"
             );
             assert_eq!(
-                recovered.pts,
-                original.pts.map(|p| p - origin),
+                recovered.timing.map(|t| t.pts),
+                original.timing.map(|t| t.pts).map(|p| p - origin),
                 "track {id} sample {n}: pts"
             );
             assert_eq!(
@@ -355,8 +367,8 @@ fn media_only(events: &[Event]) -> Vec<Event> {
         .cloned()
         .map(|mut e| {
             if let Event::Sample { sample, join, .. } = &mut e {
-                sample.pts = None;
-                sample.dts = None;
+                sample.timing = None;
+                sample.timing = None;
                 *join = None;
             }
             e
@@ -398,7 +410,7 @@ fn rtcp_sender_report_forwarded_without_error() {
     }
     host.deliver_all(&frames);
     let conn = host.conn.expect("live");
-    host.session.on_closed(conn, None, host.now);
+    host.session.on_closed(conn, None, ts(host.now));
     let events = host.events();
     assert!(
         media_only(&events) == media_only(&baseline),
@@ -490,13 +502,13 @@ fn close_sends_teardown_then_close_conn_once() {
         2,
         "TEARDOWN then Close, nothing else: {order:?}"
     );
-    assert!(matches!(order[0], Action::Send { conn: c, .. } if *c == conn));
+    assert!(matches!(order[0], Action::Send {conn: c, .. } if *c == conn));
     assert_eq!(order[1], &Action::Close { conn });
     let teardown = host.server.log.last().expect("teardown reached the server");
     assert_eq!(teardown.method, TEARDOWN);
     assert_eq!(teardown.header("session"), Some(session_id()));
     host.session.close();
-    assert!(host.session.poll(host.now + SEC).is_none());
+    assert!(host.session.poll(ts(host.now + SEC)).is_none());
     assert!(host.session.next_event().is_none());
 }
 
@@ -507,7 +519,7 @@ fn auth_basic_challenge_flow() {
     let origin = Url::parse(BASE_URL).expect("url");
     assert!(events.iter().any(|e| matches!(
         e,
-        Event::AuthRequired { scheme: AuthScheme::Basic, realm: Some(r), origin: o, resource_metadata: None }
+        Event::AuthRequired {scheme: AuthScheme::Basic, realm: Some(r), origin: o, resource_metadata: None }
             if r == REALM && *o == origin
     )));
     assert!(statuses(&events).contains(&Status::WaitingForCredentials));
@@ -562,7 +574,7 @@ fn auth_digest_challenge_flow() {
     let events = host.events();
     assert!(events.iter().any(|e| matches!(
         e,
-        Event::AuthRequired { scheme: AuthScheme::Digest, realm: Some(r), .. } if r == REALM
+        Event::AuthRequired {scheme: AuthScheme::Digest, realm: Some(r), .. } if r == REALM
     )));
     host.session
         .set_credentials(user_credentials(PASSWORD))
@@ -722,8 +734,13 @@ fn connect_failure_backoff_2_4_8_then_10_forever() {
         let conn = host.conn.expect("connect requested");
         let failed_at = host.now;
         host.clear_actions();
-        host.session
-            .on_closed(conn, Some("refused".to_string()), failed_at);
+        host.session.on_closed(
+            conn,
+            Some(TransportError::Other {
+                reason: "refused".to_string(),
+            }),
+            ts(failed_at),
+        );
         host.drain();
         let events = host.events();
         assert_eq!(
@@ -881,8 +898,13 @@ fn reconnect_resets_attempt_counter_after_playing() {
     host.drain();
     for backoff in [2, 4] {
         let conn = host.conn.expect("connect");
-        host.session
-            .on_closed(conn, Some("refused".to_string()), host.now);
+        host.session.on_closed(
+            conn,
+            Some(TransportError::Other {
+                reason: "refused".to_string(),
+            }),
+            ts(host.now),
+        );
         host.advance_to(host.now + backoff * SEC);
     }
     host.connect();
@@ -891,13 +913,18 @@ fn reconnect_resets_attempt_counter_after_playing() {
     assert!(!samples_of(&host.events()).is_empty());
     host.advance(MIN_RECONNECT);
     let conn = host.conn.expect("live");
-    host.session.on_closed(conn, None, host.now);
+    host.session.on_closed(conn, None, ts(host.now));
     host.drain();
     host.clear_actions();
     let failed_at = host.now;
     let conn = host.conn.expect("reconnect requested at once");
-    host.session
-        .on_closed(conn, Some("reset".to_string()), failed_at);
+    host.session.on_closed(
+        conn,
+        Some(TransportError::Other {
+            reason: "reset".to_string(),
+        }),
+        ts(failed_at),
+    );
     host.drain();
     assert_eq!(reconnecting_attempts(&host.events()).last(), Some(&1));
     assert_eq!(wakes(&host.actions).last(), Some(&(failed_at + 2 * SEC)));
@@ -1012,7 +1039,7 @@ fn rtp_packet_loss_does_not_stop_stream() {
     }
     host.deliver_all(&frames);
     let conn = host.conn.expect("live");
-    host.session.on_closed(conn, None, host.now);
+    host.session.on_closed(conn, None, ts(host.now));
     let events = host.events();
     assert!(
         host.session.rtp_loss_count() > 0,
@@ -1063,15 +1090,20 @@ fn late_callbacks_after_close_ignored() {
     let seen = host.actions.len();
     host.session.on_connected(conn);
     for frame in fixture().frames().iter().take(SOME_FRAMES) {
-        host.session.on_data(conn, frame, host.now);
+        host.session.on_data(conn, frame, ts(host.now));
     }
-    host.session
-        .on_closed(conn, Some("late".to_string()), host.now);
+    host.session.on_closed(
+        conn,
+        Some(TransportError::Other {
+            reason: "late".to_string(),
+        }),
+        ts(host.now),
+    );
     host.session
         .set_credentials(user_credentials(PASSWORD))
         .unwrap();
-    host.session.reconnect(host.now);
-    assert!(host.session.poll(host.now + 100 * SEC).is_none());
+    host.session.reconnect(ts(host.now));
+    assert!(host.session.poll(ts(host.now + 100 * SEC)).is_none());
     assert!(host.session.next_event().is_none());
     assert_eq!(host.actions.len(), seen);
 }
@@ -1083,9 +1115,14 @@ fn unknown_connection_callbacks_ignored() {
     let unknown = host.conn.expect("live") + 100;
     host.session.on_connected(unknown);
     host.session
-        .on_data(unknown, &fixture().frames()[0], host.now);
-    host.session
-        .on_closed(unknown, Some("x".to_string()), host.now);
+        .on_data(unknown, &fixture().frames()[0], ts(host.now));
+    host.session.on_closed(
+        unknown,
+        Some(TransportError::Other {
+            reason: "x".to_string(),
+        }),
+        ts(host.now),
+    );
     host.drain();
     assert!(host.events().is_empty());
     assert_eq!(closes(&host), 0);
@@ -1165,7 +1202,12 @@ fn a_closed_connection_is_hinted_to_the_buffer() {
 
     for (error, want) in [
         (None, Hint::SourceEnded),
-        (Some("reset".to_string()), Hint::SourceError),
+        (
+            Some(TransportError::Other {
+                reason: "reset".to_string(),
+            }),
+            Hint::SourceError,
+        ),
     ] {
         let mut config = Config::default();
         config.record_buffer_inputs = true;
@@ -1173,12 +1215,12 @@ fn a_closed_connection_is_hinted_to_the_buffer() {
         host.deliver_all(&fixture().frames());
         let conn = host.conn.expect("live connection");
         let _ = host.session.drain_buffer_inputs();
-        host.session.on_closed(conn, error, host.now);
+        host.session.on_closed(conn, error, ts(host.now));
         let inputs: Vec<BufferInput> = host.session.drain_buffer_inputs().collect();
         assert!(
             inputs
                 .iter()
-                .any(|i| matches!(i, BufferInput::Hint { hint, .. } if *hint == want)),
+                .any(|i| matches!(i, BufferInput::Hint {hint, .. } if *hint == want)),
             "close sent no {want:?} hint: {inputs:?}"
         );
     }
@@ -1197,12 +1239,12 @@ fn a_protocol_error_inside_on_data_is_hinted_to_the_buffer() {
     let conn = host.conn.expect("live connection");
     let _ = host.session.drain_buffer_inputs();
     host.session
-        .on_data(conn, b"\xff\xff\xff\xff\r\n\r\n", host.now);
+        .on_data(conn, b"\xff\xff\xff\xff\r\n\r\n", ts(host.now));
     let inputs: Vec<BufferInput> = host.session.drain_buffer_inputs().collect();
     assert!(
         inputs
             .iter()
-            .any(|i| matches!(i, BufferInput::Hint { hint, .. } if *hint == Hint::SourceError)),
+            .any(|i| matches!(i, BufferInput::Hint {hint, .. } if *hint == Hint::SourceError)),
         "protocol error sent no SourceError hint: {inputs:?}"
     );
 }

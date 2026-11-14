@@ -750,7 +750,7 @@ pub async fn serve_for_test_with_read_load() -> (
     let route_handle = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(1.0)
-            .with_part_target_ms(500)
+            .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(8),
     ));
     // `run_rtmp`'s task owns the route (and its `OnceCell<Arc<RtmpInfra>>`),
@@ -916,6 +916,7 @@ pub(crate) async fn run_rtmp_with_clock(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use broadcast_common::timescale::Timescale;
     use media_plane::ts_session::test_support::{handshake, trunk_config};
     use rtmp_runtime::server::ServerSession;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -1035,7 +1036,7 @@ mod tests {
         let route_handle = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
         let route_handle_for_task = Arc::clone(&route_handle);
@@ -1103,7 +1104,7 @@ mod tests {
             .expect("valid sprop");
         TrackSpec::new(
             track_id,
-            1_000,
+            Timescale::from_nonzero(1_000),
             CodecConfig::Avc {
                 config: avc,
                 width,
@@ -1242,7 +1243,7 @@ mod tests {
         let route_handle = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
         let route_handle_for_task = Arc::clone(&route_handle);
@@ -1356,7 +1357,7 @@ mod tests {
         let route_handle = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
         let route_handle_for_task = Arc::clone(&route_handle);
@@ -1489,7 +1490,7 @@ mod tests {
         let route_handle = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
         let route_handle_for_task = Arc::clone(&route_handle);
@@ -1581,7 +1582,7 @@ mod tests {
         let route_handle = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
         let route_handle_for_task = Arc::clone(&route_handle);

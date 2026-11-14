@@ -53,8 +53,9 @@ const ADMIN_TOKEN: &str = "admin-test-token";
 // --- The "instant" synthetic Custom input scheme ---
 
 const SPROP: &str = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
-const VIDEO_TIMESCALE: u32 = 90_000;
-const FRAME_DUR: u32 = VIDEO_TIMESCALE / 30;
+const VIDEO_TIMESCALE: broadcast_common::timescale::Timescale =
+    broadcast_common::timescale::Timescale::from_nonzero(90_000);
+const FRAME_DUR: u32 = VIDEO_TIMESCALE.get() / 30;
 /// ~0.8 s @ 30 fps — comfortably enough for several `target_duration_secs =
 /// 0.2` closed segments once fed through the real segmenter.
 const FRAME_COUNT: u32 = 24;
@@ -457,7 +458,7 @@ fn admin_config(media_bind: SocketAddr, admin_bind: SocketAddr, routes: Vec<Rout
     Config::default()
         .with_bind(media_bind.to_string())
         .with_target_duration_secs(0.2)
-        .with_part_target_ms(50)
+        .with_part_target(Duration::from_millis(50))
         .with_window_segments(8)
         .with_routes(routes)
         .with_admin(AdminSpec::new(
@@ -1593,7 +1594,7 @@ fn available_numbers(
 ) -> Vec<u64> {
     const NANOS: u128 = 1_000_000_000;
     let template = template(period);
-    let timescale = u128::from(template.multi.base.timescale.expect("timescale"));
+    let timescale = u128::from(template.multi.base.timescale.expect("timescale").get());
     let ticks = u128::from(template.multi.duration.expect("@duration"));
     let first = template.multi.start_number.expect("startNumber");
     let start_ns = period.start.expect("Period@start").as_nanos();
@@ -1874,7 +1875,7 @@ async fn a_reload_whose_init_changed_starts_a_new_dash_period() {
     let start = period.start.expect("Period@start");
     assert_eq!(
         u128::from(ticks) * 1_000_000_000,
-        start.as_nanos() * u128::from(timescale),
+        start.as_nanos() * u128::from(timescale.get()),
         "Period@start is the first new segment's MPD start on the replaced numbering: {text}"
     );
     let replaced_end = replaced.start.expect("start") + replaced.duration.expect("closed");
@@ -1890,7 +1891,10 @@ async fn a_reload_whose_init_changed_starts_a_new_dash_period() {
     let media =
         broadcast_common::Unpackage::unpackage(&mut transmux::Fmp4Demux::new(), &init_and_segment)
             .expect("the first new segment demuxes with the new init");
-    let decode_time = media.tracks[0].samples[0].dts.expect("dts");
+    let decode_time = media.tracks[0].samples[0]
+        .timing
+        .map(|t| t.dts)
+        .expect("dts");
     assert_eq!(
         u64::try_from(decode_time).expect("non-negative"),
         ticks,
@@ -2046,7 +2050,7 @@ fn listed_available_numbers(mpd: &broadcast_dash::Mpd, index: usize) -> Vec<u64>
     const NANOS: u128 = 1_000_000_000;
     let period = &mpd.periods[index];
     let template = template(period);
-    let timescale = u128::from(template.multi.base.timescale.expect("timescale"));
+    let timescale = u128::from(template.multi.base.timescale.expect("timescale").get());
     let ticks = u128::from(template.multi.duration.expect("@duration"));
     let first = template.multi.start_number.expect("startNumber");
     let start_ns = period.start.expect("Period@start").as_nanos();
@@ -2165,8 +2169,9 @@ async fn an_identical_init_reload_lists_only_served_dash_segments() {
     let timescale = old_template.multi.base.timescale.expect("timescale");
     let ticks = old_template.multi.duration.expect("@duration");
     let first = old_template.multi.start_number.expect("startNumber");
-    let at =
-        |number: u64| Duration::from_nanos((number - first) * ticks * 1_000_000_000 / timescale);
+    let at = |number: u64| {
+        Duration::from_nanos((number - first) * ticks * 1_000_000_000 / timescale.as_u64())
+    };
     assert_eq!(
         replaced.start.expect("start") + replaced.duration.expect("early terminated"),
         at(skipped),
@@ -2184,7 +2189,13 @@ async fn an_identical_init_reload_lists_only_served_dash_segments() {
         broadcast_common::Unpackage::unpackage(&mut transmux::Fmp4Demux::new(), &init_and_segment)
             .expect("the first new segment demuxes with the new init");
     assert_eq!(
-        u64::try_from(media.tracks[0].samples[0].dts.expect("dts")).expect("non-negative"),
+        u64::try_from(
+            media.tracks[0].samples[0]
+                .timing
+                .map(|t| t.dts)
+                .expect("dts")
+        )
+        .expect("non-negative"),
         (start_number - first) * ticks,
         "@presentationTimeOffset is the first new segment's decode time"
     );
@@ -2239,7 +2250,7 @@ fn initial_as_json(config: &Config) -> serde_json::Value {
     serde_json::json!({
         "bind": config.bind,
         "target_duration_secs": config.target_duration_secs,
-        "part_target_ms": config.part_target_ms,
+        "part_target_ms": u32::try_from(config.part_target.as_millis()).unwrap_or(u32::MAX),
         "window_segments": config.window_segments,
         "routes": routes,
         "admin": admin,

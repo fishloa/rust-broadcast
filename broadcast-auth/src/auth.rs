@@ -3,6 +3,7 @@
 extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
+use broadcast_common::stage::Timestamp;
 
 use url::Url;
 
@@ -103,8 +104,8 @@ pub struct CookieWatch {
 
 impl CookieWatch {
     /// The cookies this watch sees, as `(name, value)`.
-    pub fn cookies(&self, now_us: u64) -> Vec<(String, String)> {
-        self.jar.export(now_us)
+    pub fn cookies(&self, now: Timestamp) -> Vec<(String, String)> {
+        self.jar.export(now.as_micros())
     }
 }
 
@@ -173,13 +174,13 @@ impl AuthState {
     }
 
     /// Store the `Set-Cookie` lines of a response; ignored unless the response is from the origin.
-    pub fn receive_cookies(&mut self, url: &Url, headers: &[(String, String)], now_us: u64) {
-        self.jar.receive(url, headers, now_us);
+    pub fn receive_cookies(&mut self, url: &Url, headers: &[(String, String)], now: Timestamp) {
+        self.jar.receive(url, headers, now.as_micros());
     }
 
     /// Live cookies as `(name, value)` for persistence.
-    pub fn cookies(&self, now_us: u64) -> Vec<(String, String)> {
-        self.jar.export(now_us)
+    pub fn cookies(&self, now: Timestamp) -> Vec<(String, String)> {
+        self.jar.export(now.as_micros())
     }
 
     /// Origin.
@@ -240,7 +241,8 @@ impl AuthState {
     }
 
     /// Request headers for a URL.
-    pub fn request_headers(&mut self, url: &Url, now_us: u64) -> Vec<(String, String)> {
+    pub fn request_headers(&mut self, url: &Url, now: Timestamp) -> Vec<(String, String)> {
+        let now_us = now.as_micros();
         let same_origin = url.origin() == self.origin.origin();
         let mut headers: Vec<(String, String)> = if same_origin {
             self.extra_headers
@@ -399,10 +401,10 @@ mod tests {
         let mut auth = AuthState::new(origin.clone(), vec![]);
         auth.set_credentials(Credentials::bearer("secret-token"));
         let same = Url::parse("http://example/other.ts").unwrap();
-        let h = auth.request_headers(&same, 0);
+        let h = auth.request_headers(&same, Timestamp::from_micros(0));
         assert!(h.iter().any(|(k, v)| k.eq_ignore_ascii_case("authorization") && v == "Bearer secret-token"));
         let other = Url::parse("http://other.example/live.ts").unwrap();
-        let h2 = auth.request_headers(&other, 0);
+        let h2 = auth.request_headers(&other, Timestamp::from_micros(0));
         assert!(
             !h2.iter()
                 .any(|(k, _)| k.eq_ignore_ascii_case("authorization"))
@@ -422,14 +424,20 @@ mod tests {
                 .find(|(k, _)| k.eq_ignore_ascii_case("authorization"))
                 .map(|(_, v)| v)
         };
-        assert_eq!(authorization(auth.request_headers(&origin, 0)), None);
+        assert_eq!(
+            authorization(auth.request_headers(&origin, Timestamp::from_micros(0))),
+            None
+        );
         auth.preauthorize_basic();
         assert_eq!(
-            authorization(auth.request_headers(&origin, 0)).as_deref(),
+            authorization(auth.request_headers(&origin, Timestamp::from_micros(0))).as_deref(),
             Some("Basic dXNlcjpwYXNz")
         );
         let other = Url::parse("http://other.example/live.ts").unwrap();
-        assert_eq!(authorization(auth.request_headers(&other, 0)), None);
+        assert_eq!(
+            authorization(auth.request_headers(&other, Timestamp::from_micros(0))),
+            None
+        );
     }
 
     #[test]
@@ -444,7 +452,7 @@ mod tests {
         let mut copy = auth.clone();
         assert_eq!(copy.credentials(), auth.credentials());
         assert!(
-            copy.request_headers(&origin, 0)
+            copy.request_headers(&origin, Timestamp::from_micros(0))
                 .iter()
                 .all(|(k, _)| !k.eq_ignore_ascii_case("authorization"))
         );
@@ -476,7 +484,7 @@ mod tests {
         );
         auth.seed_cookies(&[("sid".to_string(), "real".to_string())]);
         auth.set_credentials(Credentials::bearer("tok"));
-        let headers = auth.request_headers(&origin, 0);
+        let headers = auth.request_headers(&origin, Timestamp::from_micros(0));
         let named = |n: &str| -> Vec<&str> {
             headers
                 .iter()
@@ -494,7 +502,7 @@ mod tests {
         );
         assert!(
             no_creds
-                .request_headers(&origin, 0)
+                .request_headers(&origin, Timestamp::from_micros(0))
                 .iter()
                 .all(|(k, _)| !k.eq_ignore_ascii_case("authorization"))
         );

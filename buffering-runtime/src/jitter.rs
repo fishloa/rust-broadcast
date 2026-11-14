@@ -114,7 +114,7 @@ impl DeliveryJitter {
                 cfg.forget_q15,
                 cfg.quantile_permille,
             ),
-            hold: MaxHold::new(cfg.hold_us, cfg.decay_us),
+            hold: MaxHold::new(cfg.hold_us.0, cfg.decay_us.0),
             cfg,
             origin: None,
             prev_raw: None,
@@ -141,19 +141,19 @@ impl DeliveryJitter {
         media_27mhz: Ticks27,
         _bytes: u32,
     ) -> SampleOutcome {
-        if self.last_arrival.is_some_and(|l| arrival_us < l) {
+        if self.last_arrival.is_some_and(|l| arrival_us.0 < l) {
             return SampleOutcome::NonMonotonicArrival;
         }
-        if self.prev_raw == Some(media_27mhz) {
+        if self.prev_raw == Some(media_27mhz.0) {
             return SampleOutcome::Duplicate;
         }
-        self.hold.anchor(arrival_us);
+        self.hold.anchor(arrival_us.0);
         let mut outcome = SampleOutcome::Accepted;
         if let (Some(prev), Some(last)) = (self.prev_raw, self.last_arrival) {
             let media_delta =
-                i128::from(pcr_signed_distance(prev, media_27mhz)) / i128::from(TICKS_PER_US);
-            let arrival_delta = i128::from(arrival_us - last);
-            let disc = i128::from(self.cfg.discontinuity_us);
+                i128::from(pcr_signed_distance(prev, media_27mhz.0)) / i128::from(TICKS_PER_US);
+            let arrival_delta = i128::from(arrival_us.0 - last);
+            let disc = i128::from(self.cfg.discontinuity_us.0);
             if media_delta < -disc || media_delta - arrival_delta > disc {
                 self.reset_baseline();
                 outcome = SampleOutcome::Discontinuity;
@@ -161,19 +161,19 @@ impl DeliveryJitter {
         }
         match self.prev_raw {
             Some(prev) => {
-                self.unrolled_ticks += i128::from(pcr_signed_distance(prev, media_27mhz));
+                self.unrolled_ticks += i128::from(pcr_signed_distance(prev, media_27mhz.0));
             }
             None => self.unrolled_ticks = 0,
         }
         let media_us = self.unrolled_ticks.div_euclid(i128::from(TICKS_PER_US));
         let origin = *self.origin.get_or_insert(Origin {
-            arrival_us,
+            arrival_us: arrival_us.0,
             media_us,
         });
-        self.prev_raw = Some(media_27mhz);
-        self.last_arrival = Some(arrival_us);
+        self.prev_raw = Some(media_27mhz.0);
+        self.last_arrival = Some(arrival_us.0);
 
-        let rel_arrival = arrival_us - origin.arrival_us;
+        let rel_arrival = arrival_us.0 - origin.arrival_us;
         let d = sat_i64(i128::from(rel_arrival) - (media_us - origin.media_us));
         let dmin = self.window.push(rel_arrival, d);
         let pdv = u64::try_from(i128::from(d) - i128::from(dmin)).unwrap_or(0);
@@ -187,8 +187,8 @@ impl DeliveryJitter {
         }
         self.prev_d = Some(d);
 
-        self.hold.observe(arrival_us, pdv);
-        self.fold_interval(arrival_us, pdv);
+        self.hold.observe(arrival_us.0, pdv);
+        self.fold_interval(arrival_us.0, pdv);
         self.pdv_last = pdv;
         self.samples = self.samples.saturating_add(1);
         outcome
@@ -197,9 +197,9 @@ impl DeliveryJitter {
     fn fold_interval(&mut self, arrival_us: u64, pdv: u64) {
         match self.istart {
             None => self.istart = Some(arrival_us),
-            Some(start) if arrival_us >= start.saturating_add(self.cfg.interval_us) => {
+            Some(start) if arrival_us >= start.saturating_add(self.cfg.interval_us.0) => {
                 if let Some(m) = self.imax.take() {
-                    if m > self.cfg.outlier_us {
+                    if m > self.cfg.outlier_us.0 {
                         // a stall interval: max-hold only; its aftermath is not baseline either
                         self.recovering = true;
                     } else if self.recovering {
@@ -211,9 +211,9 @@ impl DeliveryJitter {
                         self.base = self.hist.quantile_us();
                     }
                 }
-                let whole = (arrival_us - start) / self.cfg.interval_us;
+                let whole = (arrival_us - start) / self.cfg.interval_us.0;
                 self.istart =
-                    Some(start.saturating_add(whole.saturating_mul(self.cfg.interval_us)));
+                    Some(start.saturating_add(whole.saturating_mul(self.cfg.interval_us.0)));
             }
             Some(_) => {}
         }
@@ -224,10 +224,10 @@ impl DeliveryJitter {
     #[must_use]
     pub fn estimate(&self) -> JitterEstimate {
         JitterEstimate {
-            pdv_last_us: self.pdv_last,
-            baseline_us: self.base,
-            stall_peak_us: self.stall_peak_at(self.last_arrival.unwrap_or(0)),
-            rfc3550_jitter_us: u64::try_from(self.j16 >> J_SHIFT).unwrap_or(0),
+            pdv_last_us: Micros(self.pdv_last),
+            baseline_us: Micros(self.base),
+            stall_peak_us: self.stall_peak_at(Micros(self.last_arrival.unwrap_or(0))),
+            rfc3550_jitter_us: Micros(u64::try_from(self.j16 >> J_SHIFT).unwrap_or(0)),
             samples: self.samples,
         }
     }
@@ -235,13 +235,13 @@ impl DeliveryJitter {
     /// Histogram baseline (ordinary-jitter upper tail).
     #[must_use]
     pub fn baseline_us(&self) -> Micros {
-        self.base
+        Micros(self.base)
     }
 
     /// Decayed stall-memory value at `now_us`.
     #[must_use]
     pub fn stall_peak_at(&self, now_us: Micros) -> Micros {
-        self.hold.value(now_us)
+        Micros(self.hold.value(now_us.0))
     }
 
     /// A starvation with data still arriving proves the buffer was too small
@@ -249,12 +249,12 @@ impl DeliveryJitter {
     /// the stall memory, so a repeat ratchets the target even when the PDV is
     /// low.
     pub(crate) fn note_starvation(&mut self, now_us: Micros, depth_us: Micros) {
-        self.hold.observe(now_us, depth_us);
+        self.hold.observe(now_us.0, depth_us.0);
     }
 
     /// Anchor a restored snapshot at the clock reading `now_us`.
     pub(crate) fn anchor(&mut self, now_us: Micros) {
-        self.hold.anchor(now_us);
+        self.hold.anchor(now_us.0);
     }
 
     /// Entries dropped by the minimum-window cap.
@@ -295,7 +295,7 @@ impl DeliveryJitter {
     /// Snapshot aged to an explicit clock reading.
     #[must_use]
     pub(crate) fn snapshot_at(&self, now_us: Micros) -> StallMemorySnapshot {
-        self.hold.snapshot(now_us)
+        self.hold.snapshot(now_us.0)
     }
 
     /// Install a stall memory (see [`StallMemorySnapshot`] for aging).

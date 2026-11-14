@@ -1,6 +1,12 @@
 //! A segment-address error after the initial plan drops the track with its
 //! typed cause instead of stalling.
 
+use broadcast_common::stage::Timestamp;
+
+/// The test's microsecond clock as the client's `now`.
+fn now(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 use dash_runtime::client::{
     Action, DashClient, DashConfig, DropCause, FatalKind, Output, PullLimits, ResponseMeta,
 };
@@ -17,8 +23,9 @@ fn a_segment_address_error_after_the_initial_plan_drops_the_track() {
  timeShiftBufferDepth="PT30S">
  <Period id="0" start="PT0S">
   <AdaptationSet mimeType="video/mp4" contentType="video">
-   <SegmentTemplate timescale="17179869184" duration="34359738368"
-    initialization="init.mp4" media="seg-$Number$.m4s"/>
+   <SegmentTemplate timescale="90000" initialization="init.mp4" media="seg-$Number$.m4s">
+    <SegmentTimeline><S t="100" d="10"/><S t="0" d="10"/></SegmentTimeline>
+   </SegmentTemplate>
    <Representation id="V" bandwidth="1000" codecs="avc1.4d400d" width="320" height="240"/>
   </AdaptationSet>
  </Period>
@@ -30,18 +37,18 @@ fn a_segment_address_error_after_the_initial_plan_drops_the_track() {
             .with_limits(PullLimits::default()),
     );
     let now_unix_us: u64 = 1_767_225_600 * 1_000_000;
-    client.set_wall_clock(0, now_unix_us);
-    let Some(Action::FetchMpd { url, .. }) = client.poll(0) else {
+    client.set_wall_clock(now(0), now_unix_us);
+    let Some(Action::FetchMpd { url, .. }) = client.poll(now(0)) else {
         panic!("first action is the MPD")
     };
     assert_eq!(url, DOC);
     let meta = ResponseMeta::at(0);
-    client.on_mpd_with(0, mpd.as_bytes(), &meta).unwrap();
+    client.on_mpd_with(now(0), mpd.as_bytes(), &meta).unwrap();
 
     let mut dropped = false;
     let mut fatal = false;
     for _ in 0..20 {
-        while let Some(_a) = client.poll(0) {}
+        while let Some(_a) = client.poll(now(0)) {}
         while let Some(o) = client.next_output() {
             eprintln!("OUT: {:?}", o);
             match o {
@@ -77,8 +84,9 @@ fn an_init_lookup_plan_error_drops_the_track() {
  timeShiftBufferDepth="PT30S">
  <Period id="0" start="PT0S">
   <AdaptationSet mimeType="video/mp4" contentType="video">
-   <SegmentTemplate timescale="17179869184" duration="34359738368"
-    initialization="init.mp4" media="seg-$Number$.m4s"/>
+   <SegmentTemplate timescale="90000" initialization="init.mp4" media="seg-$Number$.m4s">
+    <SegmentTimeline><S t="100" d="10"/><S t="0" d="10"/></SegmentTimeline>
+   </SegmentTemplate>
    <Representation id="V" bandwidth="1000" codecs="avc1.4d400d" width="320" height="240"/>
   </AdaptationSet>
  </Period>
@@ -90,18 +98,18 @@ fn an_init_lookup_plan_error_drops_the_track() {
             .with_limits(PullLimits::default()),
     );
     let now_unix_us: u64 = 1_767_225_600 * 1_000_000;
-    client.set_wall_clock(0, now_unix_us);
-    let Some(Action::FetchMpd { url, .. }) = client.poll(0) else {
+    client.set_wall_clock(now(0), now_unix_us);
+    let Some(Action::FetchMpd { url, .. }) = client.poll(now(0)) else {
         panic!("first action is the MPD")
     };
     assert_eq!(url, DOC);
     let meta = ResponseMeta::at(0);
-    client.on_mpd_with(0, mpd.as_bytes(), &meta).unwrap();
+    client.on_mpd_with(now(0), mpd.as_bytes(), &meta).unwrap();
 
     let mut dropped = false;
     let mut fatal = false;
     for _ in 0..20 {
-        while let Some(_a) = client.poll(0) {}
+        while let Some(_a) = client.poll(now(0)) {}
         while let Some(o) = client.next_output() {
             match o {
                 Output::TrackDropped {

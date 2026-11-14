@@ -1,5 +1,6 @@
 //! Dummy codec configs and track specs shared by the transmux segmenter tests.
 
+use broadcast_common::timescale::Timescale;
 use transmux::pipeline::{CodecConfig, TrackSpec};
 use transmux::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, DecoderConfigDescriptor,
@@ -42,7 +43,7 @@ pub fn dummy_esds() -> EsdsBox {
 pub fn video_track() -> TrackSpec {
     TrackSpec::new(
         TrackId::new(1),
-        90_000,
+        Timescale::from_nonzero(90_000),
         CodecConfig::Avc {
             config: dummy_avc_config(),
             width: 320,
@@ -54,7 +55,7 @@ pub fn video_track() -> TrackSpec {
 pub fn audio_track() -> TrackSpec {
     TrackSpec::new(
         TrackId::new(2),
-        48_000,
+        Timescale::from_nonzero(48_000),
         CodecConfig::Aac {
             esds: dummy_esds(),
             channel_count: 2,

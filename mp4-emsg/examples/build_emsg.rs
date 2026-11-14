@@ -6,6 +6,7 @@
 /// ```sh
 /// cargo run -p mp4-emsg --example build_emsg
 /// ```
+use broadcast_common::timescale::Timescale;
 use mp4_emsg::{EmsgBox, PresentationTime};
 
 fn dump(label: &str, b: &EmsgBox) {
@@ -30,7 +31,7 @@ fn main() {
         flags: mp4_emsg::EMSG_FLAGS,
         scheme_id_uri: "urn:scte:scte35:2013:bin",
         value: "",
-        timescale: 90_000,
+        timescale: Timescale::from_nonzero(90_000),
         presentation_time: PresentationTime::Delta(0),
         event_duration: 0xFFFF_FFFF,
         id: 1,
@@ -45,7 +46,7 @@ fn main() {
         flags: mp4_emsg::EMSG_FLAGS,
         scheme_id_uri: "https://aomedia.org/emsg/ID3",
         value: "0",
-        timescale: 1000,
+        timescale: Timescale::from_nonzero(1000),
         presentation_time: PresentationTime::Absolute(123_456_789),
         event_duration: 0,
         id: 42,

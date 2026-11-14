@@ -15,7 +15,7 @@ fn make_state() -> Arc<AppState> {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         )
         .with_hold_cold_playlist(false)

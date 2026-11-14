@@ -1,8 +1,14 @@
 use crate::support;
 
 use broadcast_client::{BufferEvent, Config, Event};
+use broadcast_common::stage::Timestamp;
 use support::rtsp_host::{BASE_URL, Host, MediaFixture, Server, channel_of, interleaved};
 use transmux::rtp::RtpMediaKind;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const FRAME_STEP_US: u64 = 10_000;
 const IDLE_STEPS: usize = 400;
@@ -58,14 +64,14 @@ fn start_time(fixture: &MediaFixture, video_offset: u32, audio_offset: u32) -> O
     for frame in frames(fixture, video_offset, audio_offset) {
         host.now += FRAME_STEP_US;
         let conn = host.conn.expect("conn");
-        host.session.on_data(conn, &frame, host.now);
-        host.session.on_playback_position(host.now, None);
+        host.session.on_data(conn, &frame, ts(host.now));
+        host.session.on_playback_position(ts(host.now), None);
         host.drain();
         note(&mut host);
     }
     for _ in 0..IDLE_STEPS {
         host.now += FRAME_STEP_US;
-        host.session.on_playback_position(host.now, None);
+        host.session.on_playback_position(ts(host.now), None);
         host.drain();
         note(&mut host);
     }

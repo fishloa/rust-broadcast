@@ -58,7 +58,7 @@ fn presentation() -> Presentation {
             let chunk = &t.samples[w[0]..w[1]];
             let offset: u64 = t.samples[..w[0]]
                 .iter()
-                .map(|x| u64::from(x.duration.unwrap_or(0)))
+                .map(|x| u64::from(x.timing.map(|t| t.duration).unwrap_or(0)))
                 .sum();
             let ftd = FragmentTrackData::new(t.spec.track_id, t.start_decode_time + offset, chunk);
             segs.push(build_media_segment(u32::try_from(s + 1).unwrap(), &[ftd]).expect("seg"));
@@ -70,7 +70,7 @@ fn presentation() -> Presentation {
                 for c in sub.windows(2) {
                     let off: u64 = t.samples[..w[0] + c[0]]
                         .iter()
-                        .map(|x| u64::from(x.duration.unwrap_or(0)))
+                        .map(|x| u64::from(x.timing.map(|t| t.duration).unwrap_or(0)))
                         .sum();
                     let ftd = FragmentTrackData::new(
                         t.spec.track_id,
@@ -102,7 +102,7 @@ fn config_with(
     let mut cfg = Config::default()
         .with_bind(bind.to_string())
         .with_target_duration_secs(0.5)
-        .with_part_target_ms(100)
+        .with_part_target(Duration::from_millis(100))
         .with_window_segments(8)
         .with_hold_cold_playlist(false)
         .with_routes(vec![Route {

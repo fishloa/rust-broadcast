@@ -33,7 +33,9 @@ use transmux::JumpDetector;
 use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 
 use crate::tshttp::Action as TsAction;
+use broadcast_common::stage::Timestamp;
 use broadcast_common::units::MICROS_PER_MILLI;
+use core::time::Duration;
 
 const SCHEME_HTTP: &str = "http";
 const SCHEME_HTTPS: &str = "https";
@@ -83,7 +85,7 @@ pub struct Session {
     known_conns: HashMap<u32, Url>,
     refused_conns: HashSet<u32>,
     conn_auth: HashMap<u32, ConnAuth>,
-    ts_wake: Option<u64>,
+    ts_wake: Option<Timestamp>,
     actions: VecDeque<Action>,
     events: EventQueue,
     buffer: crate::buffer::Feeder,
@@ -98,8 +100,8 @@ pub struct Session {
 
 impl Session {
     /// Open a session.
-    pub fn open(url: &str, config: Config, now_us: u64) -> Result<Self, Error> {
-        Self::open_with_memory(url, config, now_us, None)
+    pub fn open(url: &str, config: Config, now: Timestamp) -> Result<Self, Error> {
+        Self::open_with_memory(url, config, now, None)
     }
 
     /// The seed every retry jitter in this session is drawn from.
@@ -115,9 +117,10 @@ impl Session {
     pub fn open_with_memory(
         url: &str,
         config: Config,
-        now_us: u64,
+        now: Timestamp,
         seed: Option<buffering_runtime::StallMemorySnapshot>,
     ) -> Result<Self, Error> {
+        let now_us = now.as_micros();
         let parsed = Url::parse(url).map_err(|e| Error::InvalidUrl(e.to_string()))?;
         let userinfo = broadcast_auth::credentials_from_url(&parsed)
             .map_err(|e| Error::InvalidUrl(e.to_string()))?;
@@ -245,11 +248,11 @@ impl Session {
                 &parsed,
                 &config.ts_http.clamped(),
                 config.max_redirects,
-                now_us,
+                now,
             ))
         });
         if let Some(r) = rtsp.as_mut() {
-            r.on_credentials(now_us, &auth);
+            r.on_credentials(now, &auth);
         }
         if use_hls || use_dash || use_smooth {
             playout.engage(Source::Live {
@@ -297,14 +300,15 @@ impl Session {
     }
 
     /// Poll next action.
-    pub fn poll(&mut self, now_us: u64) -> Option<Action> {
+    pub fn poll(&mut self, now: Timestamp) -> Option<Action> {
+        let now_us = now.as_micros();
         if self.closed && self.actions.is_empty() {
             return None;
         }
         if !self.closed {
             self.now_us = now_us;
             if let Some(r) = self.rtsp.as_mut() {
-                r.poll(now_us, &self.auth);
+                r.poll(now, &self.auth);
                 self.flush_rtsp();
             } else if let Some(r) = self.rtmp.as_mut() {
                 r.poll(now_us);
@@ -326,7 +330,7 @@ impl Session {
             self.settle_buffer();
         }
         while let Some(mut action) = self.actions.pop_front() {
-            if matches!(action, Action::WakeAt(at) if at <= now_us) {
+            if matches!(action, Action::WakeAt(at) if at <= now) {
                 continue;
             }
             self.attach_identity(&mut action);
@@ -347,14 +351,15 @@ impl Session {
         self.events.pop_front()
     }
 
-    /// Response callback; `now_us` is the host clock when the response head arrived.
+    /// Response callback; `now` is the host clock when the response head arrived.
     pub fn on_response(
         &mut self,
         conn: u32,
         status: u16,
         headers: &[(String, String)],
-        now_us: u64,
+        now: Timestamp,
     ) {
+        let now_us = now.as_micros();
         if self.closed || self.rtsp.is_some() || self.datagram.is_some() || self.rtmp.is_some() {
             return;
         }
@@ -374,7 +379,8 @@ impl Session {
         let Some(req_url) = self.known_conns.get(&conn).cloned() else {
             return;
         };
-        self.auth.receive_cookies(&req_url, headers, self.now_us);
+        self.auth
+            .receive_cookies(&req_url, headers, Timestamp::from_micros(self.now_us));
         let lineage = self.conn_auth.get(&conn).copied().unwrap_or_default();
 
         if status == 301 || status == 302 || status == 303 || status == 307 || status == 308 {
@@ -392,7 +398,9 @@ impl Session {
                 }
                 self.actions.push_back(Action::Close { conn });
                 let new_conn = self.alloc_conn(target.clone());
-                let new_headers = self.auth.request_headers(&target, self.now_us);
+                let new_headers = self
+                    .auth
+                    .request_headers(&target, Timestamp::from_micros(self.now_us));
                 let authed = has_authorization(&new_headers);
                 self.conn_auth.insert(
                     new_conn,
@@ -439,7 +447,9 @@ impl Session {
                 | broadcast_auth::AuthDecision::ReplayStale => {
                     let stale_replayed = lineage.stale_replayed
                         || matches!(decision, broadcast_auth::AuthDecision::ReplayStale);
-                    let new_headers = self.auth.request_headers(&req_url, self.now_us);
+                    let new_headers = self
+                        .auth
+                        .request_headers(&req_url, Timestamp::from_micros(self.now_us));
                     let authed = has_authorization(&new_headers);
                     if !replay_allowed(lineage, authed) {
                         self.signal_connect_failure();
@@ -505,14 +515,15 @@ impl Session {
     }
 
     /// Data callback.
-    pub fn on_data(&mut self, conn: u32, bytes: &[u8], now_us: u64) {
+    pub fn on_data(&mut self, conn: u32, bytes: &[u8], now: Timestamp) {
+        let now_us = now.as_micros();
         if self.closed {
             return;
         }
         if let Some(r) = self.rtsp.as_mut() {
             self.now_us = now_us;
             self.payload_bytes = self.payload_bytes.saturating_add(bytes.len() as u64);
-            let lost = r.on_data(conn, bytes, now_us, &mut self.auth);
+            let lost = r.on_data(conn, bytes, now, &mut self.auth);
             self.flush_rtsp();
             if !bytes.is_empty() {
                 self.buffer.on_chunk(now_us, bytes.len(), None);
@@ -584,7 +595,8 @@ impl Session {
     }
 
     /// Closed callback.
-    pub fn on_closed(&mut self, conn: u32, error: Option<TransportError>, now_us: u64) {
+    pub fn on_closed(&mut self, conn: u32, error: Option<TransportError>, now: Timestamp) {
+        let now_us = now.as_micros();
         if self.closed {
             return;
         }
@@ -595,7 +607,7 @@ impl Session {
         };
         if let Some(r) = self.rtsp.as_mut() {
             self.now_us = now_us;
-            let ended = r.on_closed(conn, now_us);
+            let ended = r.on_closed(conn, now);
             self.flush_rtsp();
             self.settle_buffer();
             if ended {
@@ -605,7 +617,7 @@ impl Session {
         }
         if let Some(r) = self.rtmp.as_mut() {
             self.now_us = now_us;
-            let ended = r.on_closed(conn, error.as_deref(), now_us);
+            let ended = r.on_closed(conn, error.as_ref(), now_us);
             self.flush_rtmp();
             self.settle_buffer();
             if ended {
@@ -615,7 +627,7 @@ impl Session {
         }
         if let Some(h) = self.adaptive.as_mut() {
             self.now_us = now_us;
-            h.on_closed(conn, error.as_deref(), now_us, &mut self.auth);
+            h.on_closed(conn, error.as_ref(), now_us, &mut self.auth);
             self.flush_adaptive();
             return;
         }
@@ -635,7 +647,7 @@ impl Session {
         }
         self.now_us = now_us;
         self.buffer.hint(now_us, hint);
-        self.source.on_closed(error, now_us);
+        self.source.on_closed(error.as_ref(), now_us);
         self.drain_source();
         self.settle_buffer();
     }
@@ -648,7 +660,7 @@ impl Session {
             return;
         }
         if let Some(r) = self.rtsp.as_mut() {
-            r.on_connected(conn, self.now_us);
+            r.on_connected(conn, Timestamp::from_micros(self.now_us));
             self.flush_rtsp();
             return;
         }
@@ -720,8 +732,10 @@ impl Session {
                 self.events.push_back(Event::Error { kind, fatal: false });
             }
             self.actions.push_back(Action::Close { conn });
-            let error = (!clean).then(|| "srt link lost".to_string());
-            self.on_closed(conn, error, now_us);
+            let error = (!clean).then(|| TransportError::Other {
+                reason: "srt link lost".to_string(),
+            });
+            self.on_closed(conn, error, Timestamp::from_micros(now_us));
         }
     }
 
@@ -787,7 +801,7 @@ impl Session {
             self.auth.preauthorize_basic();
         }
         if let Some(r) = self.rtsp.as_mut() {
-            r.on_credentials(self.now_us, &self.auth);
+            r.on_credentials(Timestamp::from_micros(self.now_us), &self.auth);
             self.flush_rtsp();
             return Ok(());
         }
@@ -803,14 +817,14 @@ impl Session {
         Ok(())
     }
 
-    /// Tell the session the UTC time: at the monotonic instant `now_us` (the clock every other
+    /// Tell the session the UTC time: at the monotonic instant `now` (the clock every other
     /// call takes) the host's UTC clock read `unix_us` microseconds since 1970-01-01T00:00:00Z
     /// (POSIX time, no leap seconds). The host reads both clocks back to back, so the pair is as
     /// tight as the host can make it; the session never reads a clock itself.
     ///
     /// Callable at any time and repeatedly (at open, every ten minutes, on a system clock-change
     /// notification or after a device wakes): each call replaces the previous anchor, a call
-    /// whose `now_us` is earlier than the last one is accepted as it stands, and no value is
+    /// whose `now` is earlier than the last one is accepted as it stands, and no value is
     /// rejected (`unix_us` is a `u64`, so dates past the year 584 000 are representable).
     /// [`Session::open`] performs no I/O, so a host calls this between `open` and the first
     /// [`Session::poll`].
@@ -821,7 +835,8 @@ impl Session {
     /// for the DASH source, which needs a clock only for dynamic MPDs (availability and the live
     /// edge) and ranks this one below a measured `UTCTiming` unless
     /// [`crate::DashConfig::clock_policy`] says otherwise.
-    pub fn set_wall_clock(&mut self, now_us: u64, unix_us: u64) {
+    pub fn set_wall_clock(&mut self, now: Timestamp, unix_us: u64) {
+        let now_us = now.as_micros();
         self.wall = Some(WallClock::new(now_us, unix_us));
         if self.closed {
             return;
@@ -835,20 +850,21 @@ impl Session {
     /// Live cookies as `(name, value)` pairs, for the host to persist and pass back as
     /// `Config::initial_cookies`. The values are secrets.
     pub fn cookies(&self) -> Vec<(String, String)> {
-        self.auth.cookies(self.now_us)
+        self.auth.cookies(Timestamp::from_micros(self.now_us))
     }
 
     /// Caller-initiated reconnect.
     ///
     /// A finite TS source restarts even after [`Status::Ended`]; an HLS session that has reported
     /// `Ended` ignores the call.
-    pub fn reconnect(&mut self, now_us: u64) {
+    pub fn reconnect(&mut self, now: Timestamp) {
+        let now_us = now.as_micros();
         if self.closed {
             return;
         }
         self.now_us = now_us;
         if let Some(r) = self.rtsp.as_mut() {
-            r.reconnect(now_us);
+            r.reconnect(now);
             self.flush_rtsp();
             self.settle_buffer();
             return;
@@ -919,7 +935,8 @@ impl Session {
     }
 
     /// Playback position update.
-    pub fn on_playback_position(&mut self, now_us: u64, pts_27mhz: Option<u64>) {
+    pub fn on_playback_position(&mut self, now: Timestamp, pts_27mhz: Option<u64>) {
+        let now_us = now.as_micros();
         if self.closed {
             return;
         }
@@ -933,7 +950,7 @@ impl Session {
         self.drain_playout();
     }
 
-    /// Set rendered tracks. `now_us` is the host clock at the call, as for every other input; it
+    /// Set rendered tracks. `now` is the host clock at the call, as for every other input; it
     /// stamps the buffer controller registrations this call makes.
     ///
     /// Before the first [`BufferEvent::Start`](crate::BufferEvent::Start), a track this call drops
@@ -943,7 +960,8 @@ impl Session {
     /// host that declares `[video]` and then `[video, audio]` a few ms later never gets a `Start`
     /// judged on video alone, and a host that renders video only waits at most that long. After
     /// the first `Start` a dropped track stops counting at once.
-    pub fn set_rendered_tracks(&mut self, now_us: u64, tracks: &[TrackId]) {
+    pub fn set_rendered_tracks(&mut self, now: Timestamp, tracks: &[TrackId]) {
+        let now_us = now.as_micros();
         if self.closed {
             return;
         }
@@ -1136,7 +1154,7 @@ impl Session {
 
     fn flush_rtsp(&mut self) {
         if let Some(r) = self.rtsp.as_mut() {
-            r.sync_wake(self.now_us);
+            r.sync_wake(Timestamp::from_micros(self.now_us));
             self.actions.extend(r.take_actions());
             let events = r.take_events();
             for e in events {
@@ -1456,24 +1474,23 @@ impl Session {
         let datagram = self
             .datagram
             .as_ref()
-            .and_then(|d| d.next_deadline_us(self.now_us));
+            .and_then(|d| d.next_deadline(self.now_us));
         let Some(deadline) = self
             .source
-            .next_deadline_us()
+            .next_deadline()
             .into_iter()
             .chain(datagram)
             .min()
         else {
             return;
         };
-        let at = if deadline > self.now_us {
+        let now = Timestamp::from_micros(self.now_us);
+        let at = if deadline > now {
             deadline
         } else {
-            self.now_us.saturating_add(TS_WAKE_TICK_US)
+            now.saturating_add(Duration::from_micros(TS_WAKE_TICK_US))
         };
-        let outstanding = self
-            .ts_wake
-            .is_some_and(|w| w == at || (w > self.now_us && w < at));
+        let outstanding = self.ts_wake.is_some_and(|w| w == at || (w > now && w < at));
         if !outstanding {
             self.actions.push_back(Action::WakeAt(at));
             self.ts_wake = Some(at);
@@ -1496,7 +1513,9 @@ impl Session {
                 self.source.flush_refused();
                 let target = self.source.url().clone();
                 let conn = self.alloc_conn(target.clone());
-                let headers = self.auth.request_headers(&target, self.now_us);
+                let headers = self
+                    .auth
+                    .request_headers(&target, Timestamp::from_micros(self.now_us));
                 let authed = has_authorization(&headers);
                 self.conn_auth.insert(
                     conn,
@@ -1527,10 +1546,11 @@ impl Session {
                 self.live_conn = None;
             }
             TsAction::Reconnect { after_ms } => {
-                self.actions.push_back(Action::WakeAt(
-                    self.now_us
-                        .saturating_add(after_ms.saturating_mul(MICROS_PER_MILLI)),
-                ));
+                self.actions
+                    .push_back(Action::WakeAt(Timestamp::from_micros(
+                        self.now_us
+                            .saturating_add(after_ms.saturating_mul(MICROS_PER_MILLI)),
+                    )));
             }
         }
     }
@@ -1615,7 +1635,8 @@ mod tests {
 
     #[test]
     fn alloc_conn_skips_live_ids_when_the_counter_wraps() {
-        let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
+        let mut session =
+            Session::open("http://example/live.ts", Config::default(), Timestamp::ZERO).unwrap();
         let url = Url::parse("http://example/live.ts").unwrap();
         session.next_conn = u32::MAX;
         let a = session.alloc_conn(url.clone());
@@ -1635,7 +1656,8 @@ mod tests {
         let media = transmux::TsDemux::new().unpackage(&data[..]).unwrap();
         let specs: Vec<transmux::TrackSpec> = media.tracks.into_iter().map(|t| t.spec).collect();
         assert_eq!(specs.len(), 2);
-        let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
+        let mut session =
+            Session::open("http://example/live.ts", Config::default(), Timestamp::ZERO).unwrap();
         session.source.inject(Some(Event::Tracks(specs.clone())));
         session.drain_source();
         assert!(specs.iter().all(|s| session.buffer.has_track(s.track_id)));
@@ -1675,7 +1697,8 @@ mod tests {
         };
         let low = with_id(&audio, LOW_AUDIO);
         let high = with_id(&audio, HIGH_AUDIO);
-        let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
+        let mut session =
+            Session::open("http://example/live.ts", Config::default(), Timestamp::ZERO).unwrap();
         assert_eq!(session.default_rendered_tracks(), (None, None));
         session
             .source
@@ -1730,8 +1753,12 @@ mod tests {
         let id = video.spec.track_id;
         let at = |i: usize, pts: i64| {
             let mut s = video.samples[i].clone();
-            s.pts = Some(pts);
-            s.dts = Some(pts);
+            if let Some(t) = s.timing.as_mut() {
+                t.pts = pts;
+                t.dts = pts;
+            } else {
+                s.timing = Some(transmux::ir::SampleTiming::new(pts, pts, 0));
+            }
             Event::Sample {
                 track: id,
                 sample: s,
@@ -1742,7 +1769,7 @@ mod tests {
             record_buffer_inputs: true,
             ..Config::default()
         };
-        let mut session = Session::open("http://example/live.ts", config, 0).unwrap();
+        let mut session = Session::open("http://example/live.ts", config, Timestamp::ZERO).unwrap();
         session
             .source
             .inject(Some(Event::Tracks(vec![video.spec.clone()])));

@@ -79,8 +79,8 @@ use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use broadcast_common::clock33::PTS_HZ;
-use broadcast_common::timescale::{Rounding, rescale_u64};
+use broadcast_common::clock33::PTS_TIMESCALE;
+use broadcast_common::timescale::{Rounding, Timescale, rescale_u64};
 use transmux::TrackId;
 
 use crate::ingress::ProgramId;
@@ -101,7 +101,6 @@ use crate::segmenter::audio::AudioFollower;
 
 use crate::segmenter::audio::{LEADER_DURATION_HISTORY, LeaderDurations, leader_tracks};
 use crate::segmenter::subtitle::{LeaderPart, SubtitleFollower};
-use broadcast_common::units::NANOS_PER_SEC;
 use broadcast_hls::InstreamId;
 
 /// Configuration for one [`ProgramSegmenter`], replaceable on route reload:
@@ -114,7 +113,7 @@ pub struct SegmenterConfig {
     pub ts_cut_policy: transmux::SegmentCutPolicy,
     pub ts_idr_fallback: TsHlsIdrFallback,
     pub target_duration_secs: f64,
-    pub part_target_ms: u32,
+    pub part_target: Duration,
     pub window_segments_cap: std::num::NonZeroUsize,
     pub route_name: String,
     pub audio_rendition_sources: Vec<transmux::audio_profile::AudioTrackSelector>,
@@ -130,7 +129,7 @@ impl Default for SegmenterConfig {
             ts_cut_policy: transmux::SegmentCutPolicy::default(),
             ts_idr_fallback: TsHlsIdrFallback::default(),
             target_duration_secs: 1.0,
-            part_target_ms: 250,
+            part_target: Duration::from_millis(250),
             window_segments_cap: std::num::NonZeroUsize::MIN.saturating_add(7),
             route_name: "unknown".to_string(),
             audio_rendition_sources: Vec::new(),
@@ -158,8 +157,8 @@ impl SegmenterConfig {
         self.target_duration_secs = v;
         self
     }
-    pub fn with_part_target_ms(mut self, v: u32) -> Self {
-        self.part_target_ms = v;
+    pub fn with_part_target(mut self, v: Duration) -> Self {
+        self.part_target = v;
         self
     }
     pub fn with_window_segments_cap(mut self, v: std::num::NonZeroUsize) -> Self {
@@ -233,7 +232,7 @@ pub enum SegmenterEvent {
         init: Vec<u8>,
         first_segment: SegmentSeq,
     },
-    PartTargetMs(u32),
+    PartTarget(Duration),
     ClosedCaptions {
         detected: Vec<InstreamId>,
         languages: Vec<(InstreamId, String)>,
@@ -305,7 +304,7 @@ pub trait SiblingTrunks {
         trunk: &crate::trunk::Trunk,
         mapped: &[(usize, transmux::pipeline::TrackSpec)],
         target_duration_secs: f64,
-        part_target_ms: u32,
+        part_target: Duration,
     ) -> Vec<crate::segmenter::audio::AudioFollower>;
     fn build_subtitle_followers(
         &self,
@@ -320,7 +319,7 @@ impl SiblingTrunks for () {
         _trunk: &crate::trunk::Trunk,
         _mapped: &[(usize, transmux::pipeline::TrackSpec)],
         _target_duration_secs: f64,
-        _part_target_ms: u32,
+        _part_target: Duration,
     ) -> Vec<crate::segmenter::audio::AudioFollower> {
         Vec::new()
     }
@@ -413,9 +412,9 @@ impl AnySegmenter {
     /// for fMP4, `StreamingTsHlsSegmenter::finish` for classic TS (same job,
     /// different name: see that method's own doc for why it is not named
     /// `flush` there).
-    fn part_target_ms(&self) -> Option<u32> {
+    fn part_target(&self) -> Option<Duration> {
         match self {
-            AnySegmenter::Fmp4(seg) => Some(seg.part_target_ms()),
+            AnySegmenter::Fmp4(seg) => Some(Duration::from_millis(u64::from(seg.part_target_ms()))),
             AnySegmenter::Ts(_) => None,
         }
     }
@@ -602,7 +601,7 @@ pub struct ProgramSegmenter {
     /// `audio_profiles` HE-AAC override moves it to the output rate): the
     /// `(trunk, declared)` timescales its samples are re-expressed between
     /// on their way into the segmenter.
-    pub(crate) timescale_moves: HashMap<TrackId, (u32, u32)>,
+    pub(crate) timescale_moves: HashMap<TrackId, (Timescale, Timescale)>,
     pub(crate) segment_writer: SegmentWriter,
     pub(crate) seg: AnySegmenter,
     /// The next segment published opens a replacement run, so it carries
@@ -709,7 +708,7 @@ pub struct ProgramSegmenter {
     /// empty `captions_seen` then means the route declares no captions.
     pub(crate) captions_scan_complete: bool,
     /// The leader's `PART-TARGET` last handed to the route's origin.
-    pub(crate) part_target_published: Option<u32>,
+    pub(crate) part_target_published: Option<Duration>,
 }
 
 /// Most sample payload bytes the IDR-fallback hold keeps (32 MiB). Past it the
@@ -818,14 +817,20 @@ fn gate_opens_on(
     }
 }
 
+/// A part target as whole milliseconds (the LL-HLS segmenter's own unit).
+fn part_target_millis(part_target: Duration) -> u32 {
+    u32::try_from(part_target.as_millis()).unwrap_or(u32::MAX)
+}
+
 impl ProgramSegmenter {
     /// Start this run's media timeline where `route_handle` says `program`'s
     /// serving begins it (a no-op for the first run on a route): call once,
     /// right after [`Self::try_new`] and the program's publication, before
     /// the first [`Self::pump`].
-    pub fn continue_after_reconnect(&mut self, media_start_ns: u64) {
-        if media_start_ns != 0 {
-            self.continue_media_timeline(media_start_ns);
+    pub fn continue_after_reconnect(&mut self, media_start: Duration) {
+        if !media_start.is_zero() {
+            let start_ns = u64::try_from(media_start.as_nanos()).unwrap_or(u64::MAX);
+            self.continue_media_timeline(start_ns);
         }
     }
 
@@ -870,7 +875,7 @@ impl ProgramSegmenter {
         siblings: &dyn SiblingTrunks,
     ) -> (Option<Self>, Vec<SegmenterEvent>) {
         let target_duration_secs = config.target_duration_secs;
-        let part_target_ms = config.part_target_ms;
+        let part_target = config.part_target;
         let (cursor, track_generation, published_tracks) =
             trunk.subscribe_from_backlog_with_tracks();
         let tracks = config.apply_declared_audio_profiles(published_tracks.to_vec());
@@ -905,9 +910,9 @@ impl ProgramSegmenter {
                 }
                 match LlHlsSegmenter::with_part_target_at(
                     muxable,
-                    transmux::VIDEO_CLOCK_RATE,
+                    transmux::VIDEO_CLOCK_TIMESCALE,
                     target_duration_secs,
-                    part_target_ms,
+                    part_target_millis(part_target),
                     next_seq.value(),
                     next_seq.value(),
                 ) {
@@ -967,7 +972,7 @@ impl ProgramSegmenter {
             }
         };
         let followers =
-            siblings.build_audio_followers(trunk, &mapped, target_duration_secs, part_target_ms);
+            siblings.build_audio_followers(trunk, &mapped, target_duration_secs, part_target);
         let subtitle_followers = if matches!(config.container, Container::Fmp4) {
             siblings.build_subtitle_followers(trunk, &tracks)
         } else {
@@ -1184,7 +1189,7 @@ impl ProgramSegmenter {
                     }
                     continue;
                 }
-                self.observe_captions(track_id, &sample.data, sample.dts);
+                self.observe_captions(track_id, &sample.data, sample.timing.map(|t| t.dts));
                 // Start-gate (Apple authoring 7.4 MUST: segments start on a
                 // sync/IDR picture, issue #1425): for a program whose track set
                 // contains a video track, drop every timed sample until the
@@ -1235,14 +1240,20 @@ impl ProgramSegmenter {
                         self.start_gate_dropped += 1;
                         if is_video_sample {
                             self.start_gate_video_dropped += 1;
+                            // A track this program knows about always has a
+                            // non-zero `Timescale`; a track it does not know
+                            // has no clock at all, so there is nothing to
+                            // account to the IDR wait. The sample is still
+                            // gated away below, exactly as before.
                             let timescale = tracks
                                 .iter()
                                 .find(|t| t.track_id == track_id)
-                                .map_or(0, |t| t.timescale);
-                            let waiting = self.idr_wait_applies();
-                            let tripped =
-                                waiting && self.idr_wait.observe_dropped(&sample, timescale);
-                            if waiting && self.config.ts_idr_fallback.falls_back() {
+                                .map(|t| t.timescale);
+                            let tripped = self.idr_wait_applies()
+                                && timescale.is_some_and(|timescale| {
+                                    self.idr_wait.observe_dropped(&sample, timescale)
+                                });
+                            if self.idr_wait_applies() && self.config.ts_idr_fallback.falls_back() {
                                 self.hold_for_fallback(is_video_sample, track_id, sample);
                             }
                             if tripped {
@@ -1326,12 +1337,12 @@ impl ProgramSegmenter {
     }
 
     fn publish_part_target(&mut self, _program: ProgramId, events: &mut Vec<SegmenterEvent>) {
-        let Some(ms) = self.seg.part_target_ms() else {
+        let Some(part_target) = self.seg.part_target() else {
             return;
         };
-        if self.part_target_published != Some(ms) {
-            events.push(SegmenterEvent::PartTargetMs(ms));
-            self.part_target_published = Some(ms);
+        if self.part_target_published != Some(part_target) {
+            events.push(SegmenterEvent::PartTarget(part_target));
+            self.part_target_published = Some(part_target);
         }
     }
 
@@ -1362,7 +1373,7 @@ impl ProgramSegmenter {
             return;
         };
         let started = *self.caption_scan_started.entry(track_id).or_insert(dts);
-        let window_ticks = i64::from(timescale) * CAPTION_SCAN_WINDOW_SECS;
+        let window_ticks = i64::from(timescale.get()) * CAPTION_SCAN_WINDOW_SECS;
         if dts.saturating_sub(started) >= window_ticks {
             self.captions_scan_complete = true;
             self.captions_unreported = true;
@@ -1388,13 +1399,13 @@ impl ProgramSegmenter {
         // boundary. This is what makes `note_segment_start` (below)
         // report the source clock the SCTE-35 events are on, not the
         // segmenter's own restart-from-zero timeline.
-        if let Some(pts) = sample.pts
+        if let Some(pts) = sample.timing.map(|t| t.pts)
             && let Some(timescale) = self
                 .published_tracks
                 .iter()
                 .find(|t| t.track_id == track_id)
                 .map(|t| t.timescale)
-            && timescale > 0
+            && timescale.get() > 0
         {
             let now_us =
                 u64::try_from(self.ingest_origin.elapsed().as_micros()).unwrap_or(u64::MAX);
@@ -1610,9 +1621,9 @@ impl ProgramSegmenter {
 
                     match LlHlsSegmenter::with_part_target_at(
                         muxable,
-                        transmux::VIDEO_CLOCK_RATE,
+                        transmux::VIDEO_CLOCK_TIMESCALE,
                         self.config.target_duration_secs,
-                        self.config.part_target_ms,
+                        part_target_millis(self.config.part_target),
                         next_seq,
                         current_seg,
                     ) {
@@ -1630,7 +1641,7 @@ impl ProgramSegmenter {
                                 trunk,
                                 &mapped,
                                 self.config.target_duration_secs,
-                                self.config.part_target_ms,
+                                self.config.part_target,
                             );
                             self.subtitle_followers.clear();
                             self.subtitle_followers =
@@ -1904,7 +1915,7 @@ impl ProgramSegmenter {
         // offset — no per-segment rounding accumulation (issue #1083, E).
         if let Some(anchor) = self.anchor {
             let delta_ns = self.next_timeline_ns.saturating_sub(anchor.timeline_ns);
-            let delta_90k = rescale_u64(delta_ns, NANOS_PER_SEC, PTS_HZ, Rounding::Floor);
+            let delta_90k = rescale_u64(delta_ns, Timescale::NANOS, PTS_TIMESCALE, Rounding::Floor);
             let start_90k = anchor.source_90k.saturating_add(delta_90k);
             self.segment_writer
                 .note_segment_start(segment.segment_seq, timed_metadata::MediaTime(start_90k));
@@ -1989,7 +2000,7 @@ impl ProgramSegmenter {
 }
 
 fn in_declared_timescale(
-    moves: &HashMap<TrackId, (u32, u32)>,
+    moves: &HashMap<TrackId, (Timescale, Timescale)>,
     track_id: TrackId,
     sample: Sample,
 ) -> Sample {
@@ -2002,7 +2013,7 @@ fn in_declared_timescale(
 fn timescale_moves(
     published: &[TrackSpec],
     declared: &[TrackSpec],
-) -> HashMap<TrackId, (u32, u32)> {
+) -> HashMap<TrackId, (Timescale, Timescale)> {
     declared
         .iter()
         .filter_map(|d| {
@@ -2010,7 +2021,7 @@ fn timescale_moves(
                 .iter()
                 .find(|t| t.track_id == d.track_id)?
                 .timescale;
-            (from != d.timescale && from > 0).then_some((d.track_id, (from, d.timescale)))
+            (from != d.timescale && from.get() > 0).then_some((d.track_id, (from, d.timescale)))
         })
         .collect()
 }
@@ -2018,14 +2029,14 @@ fn timescale_moves(
 /// Rescale a timestamp in `timescale` ticks to the trunk event ring's fixed
 /// 90 kHz clock (issue #1083, W9). Rounds down, saturating — a value that
 /// overflows `u64` is clamped, never wrapped.
-fn rescale_to_90k(pts: i64, timescale: u32) -> u64 {
+fn rescale_to_90k(pts: i64, timescale: broadcast_common::timescale::Timescale) -> u64 {
     // A negative PTS (a pre-roll/PTS-base offset a demuxer may produce) is
     // clamped to 0: the event ring has no representation for a time before
     // zero, and a segment starting there simply begins the timeline.
     rescale_u64(
         u64::try_from(pts).unwrap_or(0),
         timescale,
-        PTS_HZ,
+        PTS_TIMESCALE,
         Rounding::Floor,
     )
 }
@@ -2071,7 +2082,7 @@ mod segmenter_tests {
     pub(super) fn data_track_spec(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
-            90_000,
+            Timescale::from_nonzero(90_000),
             CodecConfig::Data {
                 stream_type: 0x86,
                 descriptors: Vec::new(),
@@ -2218,19 +2229,25 @@ mod segmenter_tests {
         SegmenterConfig::default()
             .with_container(Container::Fmp4)
             .with_target_duration_secs(1.0)
-            .with_part_target_ms(250)
+            .with_part_target(Duration::from_millis(250))
     }
 
     pub(super) fn ts_config() -> SegmenterConfig {
         SegmenterConfig::default()
             .with_container(Container::MpegTs)
             .with_target_duration_secs(1.0)
-            .with_part_target_ms(250)
+            .with_part_target(Duration::from_millis(250))
     }
 
+    /// A zero timescale is an error where it is read, never a silent 1 Hz:
+    /// the typed boundary refuses it (`Timescale::try_new(0)`), and
+    /// `rescale_to_90k` only ever sees a non-zero `Timescale`.
     #[test]
-    pub(super) fn a_zero_timescale_rescales_without_dividing_by_zero() {
-        assert_eq!(rescale_to_90k(7, 0), 7 * 90_000);
+    pub(super) fn a_zero_timescale_is_a_typed_error_not_a_silent_one() {
+        let err = Timescale::try_new(0).expect_err("a zero timescale is an error");
+        assert_eq!(err.field, "timescale");
+        assert_eq!(err.reason, "must be non-zero");
+        assert_eq!(rescale_to_90k(7, Timescale::from_nonzero(1)), 7 * 90_000);
     }
 
     /// Issue #1083 W9: the production segmenter must call
@@ -2571,7 +2588,7 @@ mod segmenter_tests {
             );
         }
         let mut changed = track_spec(TrackId::new(1));
-        changed.timescale = 45_000;
+        changed.timescale = Timescale::from_nonzero(45_000);
         writer.set_tracks(vec![changed.clone()]);
         assert_eq!(trunk.track_generation(), 2);
         let mut events = Vec::new();
@@ -2582,7 +2599,7 @@ mod segmenter_tests {
                 .any(|e| matches!(e, SegmenterEvent::TrackSpecs(_))),
             "the in-band marker must announce the new specs: {events:?}"
         );
-        assert_eq!(segmenter.published_tracks[0].timescale, 45_000);
+        assert_eq!(segmenter.published_tracks[0].timescale.get(), 45_000);
     }
 
     /// Item 5 (unit): a discontinuity recorded while a segment is in progress
@@ -2765,7 +2782,7 @@ mod segmenter_tests {
 
         // Changed spec: bump the timescale (a discontinuity trigger).
         let mut changed = track_spec(TrackId::new(1));
-        changed.timescale = 45_000;
+        changed.timescale = Timescale::from_nonzero(45_000);
         writer.set_tracks(vec![changed.clone()]);
         segmenter.published_tracks = trunk.tracks();
         let mut events = Vec::new();
@@ -3206,8 +3223,12 @@ mod segmenter_tests {
             for i in first..first + count {
                 let pts = pts_at(i);
                 let mut sample = sample_at(i, i.is_multiple_of(GOP));
-                sample.pts = Some(pts);
-                sample.dts = Some(pts);
+                if let Some(t) = sample.timing.as_mut() {
+                    t.pts = pts;
+                    t.dts = pts;
+                } else {
+                    sample.timing = Some(transmux::ir::SampleTiming::new(pts, pts, 0));
+                }
                 self.writer
                     .publish(TrackId::new(1), RetentionClass::Timed, sample);
                 let mut events = Vec::new();
@@ -3327,8 +3348,13 @@ mod segmenter_gate_tests {
         let offset = 10 * i64::from(transmux::VIDEO_CLOCK_RATE);
         let at = |i: u32, is_sync: bool| {
             let mut s = sample_at(i, is_sync);
-            s.pts = Some(offset + i64::from(i) * i64::from(FRAME_DUR));
-            s.dts = s.pts;
+            let pts = offset + i64::from(i) * i64::from(FRAME_DUR);
+            if let Some(t) = s.timing.as_mut() {
+                t.pts = pts;
+                t.dts = pts;
+            } else {
+                s.timing = Some(transmux::ir::SampleTiming::new(pts, pts, 0));
+            }
             s
         };
         for i in 0..100u32 {
@@ -3399,7 +3425,7 @@ mod segmenter_gate_tests {
         let writer = trunk.writer().expect("writer");
         writer.set_tracks(vec![TrackSpec::new(
             TrackId::new(2),
-            48000,
+            Timescale::from_nonzero(48000),
             CodecConfig::Vorbis {
                 codec_private: Vec::new(),
                 channels: 2,

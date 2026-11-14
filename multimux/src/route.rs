@@ -804,7 +804,7 @@ pub(crate) struct ProgramServing {
 #[derive(Clone, Copy)]
 struct SiblingParams {
     target_duration_secs: f64,
-    part_target_ms: u32,
+    part_target: Duration,
     window_segments: NonZeroUsize,
     media_sequence_offset: u64,
     discontinuity_sequence: u64,
@@ -937,7 +937,7 @@ impl ProgramServing {
         previous: Option<&ProgramContinuation>,
     ) -> Result<Arc<Self>, hls_runtime::server::HlsOriginBuildError> {
         let target_duration_secs = route.target_duration_secs;
-        let part_target_ms = route.part_target_ms;
+        let part_target = route.part_target;
         let window_segments = route.window_segments_cap;
         let container = route.container;
         let dvr_config = route.dvr_config.clone();
@@ -963,7 +963,7 @@ impl ProgramServing {
             }));
         }
         if container == Container::Fmp4 {
-            builder = builder.with_low_latency(part_target_ms);
+            builder = builder.with_low_latency(part_target);
         }
         if let Some(declared) = declared_bandwidth_bps {
             builder = builder.with_declared_bandwidth_bps(declared);
@@ -999,7 +999,7 @@ impl ProgramServing {
                     jiff::Timestamp::now().as_millisecond()
                 }));
             }
-            ab = ab.with_low_latency(part_target_ms);
+            ab = ab.with_low_latency(part_target);
             ab = ab.with_playlist_uri(decl.uri.clone());
             let origin = Arc::new(ab.build()?);
             sibling_origins.push(Arc::clone(&origin));
@@ -1092,7 +1092,7 @@ impl ProgramServing {
             subtitle_servings: Mutex::new(Vec::new()),
             sibling_params: SiblingParams {
                 target_duration_secs,
-                part_target_ms,
+                part_target,
                 window_segments,
                 media_sequence_offset,
                 discontinuity_sequence: epoch.discontinuity_sequence,
@@ -1229,7 +1229,7 @@ impl ProgramServing {
                 .with_media_sequence_offset(params.media_sequence_offset)
                 .with_discontinuity_sequence(params.discontinuity_sequence)
                 .with_hold_cold_playlist(params.hold_cold_playlist)
-                .with_low_latency(params.part_target_ms)
+                .with_low_latency(params.part_target)
                 .with_playlist_uri(decl.uri.clone());
             if params.program_date_time == crate::config::ProgramDateTimeSource::Arrival {
                 builder = builder.with_program_date_time_arrival(Arc::new(|| {
@@ -1649,7 +1649,7 @@ impl ProgramServing {
 #[non_exhaustive]
 pub struct RouteConfig {
     pub target_duration_secs: f64,
-    pub part_target_ms: u32,
+    pub part_target: Duration,
     /// Advertised-window depth: the segment log's capacity, the playlist
     /// window's article, and the segment capacity of every program/trunk
     /// this route builds — one number, one source of truth. Clamped up to
@@ -1675,7 +1675,7 @@ impl Default for RouteConfig {
     fn default() -> Self {
         RouteConfig {
             target_duration_secs: 1.0,
-            part_target_ms: 250,
+            part_target: Duration::from_millis(250),
             window_segments: DEFAULT_WINDOW_SEGMENTS,
             container: Container::default(),
             ts_cut_policy: transmux::SegmentCutPolicy::default(),
@@ -1701,8 +1701,8 @@ impl RouteConfig {
     }
 
     #[must_use]
-    pub fn with_part_target_ms(mut self, v: u32) -> Self {
-        self.part_target_ms = v;
+    pub fn with_part_target(mut self, v: Duration) -> Self {
+        self.part_target = v;
         self
     }
 
@@ -1814,7 +1814,7 @@ pub struct RouteHandle {
     retired: tokio_util::sync::CancellationToken,
     health: Mutex<HealthState>,
     target_duration_secs: f64,
-    part_target_ms: u32,
+    part_target: Duration,
     /// Stored so [`Self::publish_program`]/[`Self::publish_new_program`] can
     /// build every program's [`ProgramServing`]/`Trunk` with the same
     /// advertised-window depth [`Self::new`] was given.
@@ -1946,7 +1946,7 @@ impl RouteHandle {
             NonZeroUsize::new(config.window_segments).unwrap_or(NonZeroUsize::MIN);
         let RouteConfig {
             target_duration_secs,
-            part_target_ms,
+            part_target,
             container,
             ts_cut_policy,
             ts_idr_fallback,
@@ -1967,7 +1967,7 @@ impl RouteHandle {
             retired: tokio_util::sync::CancellationToken::new(),
             health: Mutex::new(HealthState::Connecting),
             target_duration_secs,
-            part_target_ms,
+            part_target,
             window_segments_cap: window_segments,
             container,
             ts_cut_policy,
@@ -2706,10 +2706,10 @@ impl RouteHandle {
         }
     }
 
-    pub(crate) fn set_part_target_ms(&self, program: ProgramId, ms: u32) -> bool {
+    pub(crate) fn set_part_target_ms(&self, program: ProgramId, part_target: Duration) -> bool {
         match self.serving(program) {
             Some(serving) => {
-                serving.ll_hls.set_part_target_ms(ms);
+                serving.ll_hls.set_part_target(part_target);
                 true
             }
             None => false,
@@ -2905,10 +2905,10 @@ impl RouteHandle {
         self.target_duration_secs
     }
 
-    /// Configured LL-HLS part target, milliseconds — route-wide, see
+    /// Configured LL-HLS part target — route-wide, see
     /// [`Self::target_duration_secs`].
-    pub fn part_target_ms(&self) -> u32 {
-        self.part_target_ms
+    pub fn part_target(&self) -> Duration {
+        self.part_target
     }
 
     /// The wall-clock instant `program`'s presentation began (its first
@@ -3051,7 +3051,7 @@ mod program_registry_tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         let trunk = test_trunk();
@@ -3082,7 +3082,7 @@ mod program_registry_tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         let result = route.resolve_program(ProgramId(1));
@@ -3106,7 +3106,7 @@ mod program_registry_tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         route.publish_program(ProgramId(1), test_trunk());
@@ -3133,7 +3133,7 @@ mod program_registry_tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         let trunk_a = test_trunk();
@@ -3166,7 +3166,7 @@ mod program_registry_tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         let trunk_a = test_trunk();
@@ -3194,7 +3194,7 @@ mod program_registry_tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(f64::NAN)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         let trunk = test_trunk();
@@ -3223,7 +3223,7 @@ mod program_registry_tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         let trunk_a = test_trunk();
@@ -3258,7 +3258,7 @@ mod program_registry_tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         let first_trunk = route.publish_new_program(ProgramId(1));
@@ -3306,7 +3306,7 @@ mod program_registry_tests {
         let old = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         )
         .with_archive_floor(41);
@@ -3321,7 +3321,7 @@ mod program_registry_tests {
         let successor = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         successor.continue_from(&old);
@@ -3343,7 +3343,7 @@ mod program_registry_tests {
         let unrelated = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         unrelated.publish_program(ProgramId(1), test_trunk());
@@ -3366,7 +3366,7 @@ mod program_registry_tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         )
         .with_archive_floor(41);
@@ -3429,7 +3429,7 @@ mod program_registry_tests {
             RouteHandle::new(
                 RouteConfig::default()
                     .with_target_duration_secs(4.0)
-                    .with_part_target_ms(500)
+                    .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(8),
             )
         };
@@ -3495,7 +3495,7 @@ mod program_registry_tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         );
         route.publish_new_program(ProgramId(1));
@@ -3541,7 +3541,7 @@ mod program_registry_tests {
         let p1 = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         let t1 = p1.publish_new_program(ProgramId(1));
@@ -3559,7 +3559,7 @@ mod program_registry_tests {
         let p2 = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         p2.publish_new_program(ProgramId(1));
@@ -3604,7 +3604,7 @@ mod program_registry_tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         let trunk_a = test_trunk();
@@ -3660,7 +3660,7 @@ mod program_registry_tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         );
         let program_a = ProgramId(1);
@@ -3744,7 +3744,7 @@ mod program_registry_tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         assert!(matches!(
@@ -3760,7 +3760,7 @@ mod program_registry_tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         assert_eq!(route.name(), DEFAULT_ROUTE_NAME);
@@ -3776,7 +3776,7 @@ mod program_registry_tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         let err = route
@@ -3821,7 +3821,7 @@ mod program_registry_tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(250)
+                .with_part_target(std::time::Duration::from_millis(250))
                 .with_window_segments(8),
         )
         .with_name("panicking-dvr")
@@ -3899,7 +3899,7 @@ mod program_registry_tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(250)
+                .with_part_target(std::time::Duration::from_millis(250))
                 .with_window_segments(8),
         )
         .with_name("init-roll")
@@ -3940,7 +3940,7 @@ mod program_registry_tests {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(250)
+                .with_part_target(std::time::Duration::from_millis(250))
                 .with_window_segments(4),
         ));
         let high = test_trunk();

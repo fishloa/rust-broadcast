@@ -40,7 +40,7 @@ use alloc::collections::VecDeque;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use broadcast_common::timescale::{Rounding, cmp_ticks, rescale_i64};
+use broadcast_common::timescale::{Rounding, Timescale, cmp_ticks, rescale_i64};
 use broadcast_common::{Demand, Stage, Timestamp};
 
 use crate::error::{Error, Result};
@@ -143,9 +143,9 @@ pub struct CutPlan {
     pub segment_seq: u32,
     /// Decode time of the segment's first sample in the leader's timescale.
     pub segment_start: i64,
-    /// Timescale of [`Self::segment_start`] and of any [`PartCut`] whose own
-    /// timescale is zero.
-    pub timescale: u32,
+    /// Timescale of [`Self::segment_start`] and of any [`PartCut`] that leaves
+    /// its own timescale unset.
+    pub timescale: Timescale,
     /// Part boundaries within this segment. Empty means "one part for the whole
     /// segment".
     pub parts: Vec<PartCut>,
@@ -158,25 +158,37 @@ pub struct PartCut {
     pub part_index: u32,
     /// Decode time of the part's first sample in the leader's timescale.
     pub start: i64,
-    /// Timescale of [`Self::start`] (zero inherits the plan's timescale).
-    pub timescale: u32,
+    /// Timescale of [`Self::start`]; `None` inherits the plan's timescale.
+    pub timescale: Option<Timescale>,
 }
 
 impl CutPlan {
     /// A plan for the leader segment `segment_seq` starting at `segment_start`.
-    pub fn new(segment_seq: u32, segment_start: i64, timescale: u32, parts: Vec<PartCut>) -> Self {
-        Self {
+    ///
+    /// # Errors
+    /// [`Error::InvalidInput`] when `timescale` is zero: a leader time is
+    /// unreadable without one, and flattening it to `1` Hz would silently cut
+    /// everywhere.
+    pub fn new(
+        segment_seq: u32,
+        segment_start: i64,
+        timescale: u32,
+        parts: Vec<PartCut>,
+    ) -> Result<Self> {
+        Ok(Self {
             segment_seq,
             segment_start,
-            timescale,
+            timescale: Timescale::try_new(timescale)
+                .map_err(|_| Error::InvalidInput("cut plan timescale must be > 0"))?,
             parts,
-        }
+        })
     }
 }
 
 impl PartCut {
-    /// A part boundary at `start` (in `timescale`; zero inherits the plan's).
-    pub fn new(part_index: u32, start: i64, timescale: u32) -> Self {
+    /// A part boundary at `start` in `timescale`; `None` inherits the plan's.
+    #[must_use]
+    pub fn new(part_index: u32, start: i64, timescale: Option<Timescale>) -> Self {
         Self {
             part_index,
             start,
@@ -184,12 +196,8 @@ impl PartCut {
         }
     }
 
-    fn effective_timescale(&self, plan_timescale: u32) -> u32 {
-        if self.timescale == 0 {
-            plan_timescale
-        } else {
-            self.timescale
-        }
+    fn effective_timescale(&self, plan_timescale: Timescale) -> Timescale {
+        self.timescale.unwrap_or(plan_timescale)
     }
 }
 
@@ -205,7 +213,7 @@ pub struct PartCutReady {
     /// Decode time of the part's first sample, in the leader's timescale.
     pub start_dts: i64,
     /// Timescale of [`Self::start_dts`].
-    pub timescale: u32,
+    pub timescale: Timescale,
 }
 
 /// Per-track accumulation state for the segment currently being built.
@@ -276,7 +284,7 @@ struct TrackState {
 /// #         bit_depth_chroma_minus8: None,
 /// #         sps_ext: vec![],
 /// #     };
-/// #     TrackSpec::new(transmux::TrackId::new(1), 90_000, CodecConfig::Avc {
+/// #     TrackSpec::new(transmux::TrackId::new(1), broadcast_common::timescale::Timescale::from_nonzero(90_000), CodecConfig::Avc {
 /// #         config: AVCConfigurationBox::new(record),
 /// #         width: 16,
 /// #         height: 16,
@@ -289,7 +297,7 @@ struct TrackState {
 /// #     Sample::new(vec![0u8; 4], Some(dts), Some(dts), Some(1000), sync)
 /// # }
 /// // 1 s target segments, ~334 ms parts.
-/// let mut seg = LlHlsSegmenter::with_part_target(vec![spec()], 1000, 1.0, 334).unwrap();
+/// let mut seg = LlHlsSegmenter::with_part_target(vec![spec()], broadcast_common::timescale::Timescale::from_nonzero(1000), 1.0, 334).unwrap();
 /// let init = seg.init_segment().unwrap();      // ftyp + moov
 /// assert_eq!(&init[4..8], b"ftyp");
 /// seg.push(transmux::TrackId::new(1), au(true)).unwrap();              // keyframe
@@ -301,7 +309,7 @@ struct TrackState {
 /// ```
 pub struct LlHlsSegmenter {
     tracks: Vec<TrackState>,
-    movie_timescale: u32,
+    movie_timescale: Timescale,
     /// Index into `tracks` of the segmentation anchor (keyframe cut boundary).
     anchor: usize,
     /// Target segment duration in the *anchor track's* media timescale.
@@ -341,7 +349,7 @@ pub struct LlHlsSegmenter {
     ready: VecDeque<LlHlsStageOutput>,
     /// Follower mode: cut only at externally supplied boundaries.
     external_cuts: bool,
-    timeline_origin: Option<(i64, u32)>,
+    timeline_origin: Option<(i64, Timescale)>,
     /// Decode-clock start set by [`LlHlsSegmenter::set_start_time_ns`]; a
     /// follower adds it to the origin-relative `tfdt` it anchors.
     start_time_ns: u64,
@@ -388,10 +396,11 @@ impl LlHlsSegmenter {
     /// or no track is anchor-capable (every track is section-carried).
     pub fn with_part_target(
         tracks: Vec<TrackSpec>,
-        movie_timescale: u32,
+        movie_timescale: impl Into<Timescale>,
         target_duration_secs: f64,
         part_target_ms: u32,
     ) -> Result<Self> {
+        let movie_timescale = movie_timescale.into();
         if tracks.is_empty() {
             return Err(Error::InvalidInput(
                 "ll-hls segmenter needs at least one track",
@@ -430,11 +439,11 @@ impl LlHlsSegmenter {
         // `INDEPENDENT=YES` on parts that actually start mid-GOP.
         let anchor = choose_anchor(tracks.iter().map(|t| &t.config))?;
 
-        let anchor_timescale = tracks[anchor].timescale as f64;
+        let anchor_timescale = tracks[anchor].timescale.get() as f64;
         let target_ticks = ((target_duration_secs * anchor_timescale) as u64).max(1);
         // part_target_ms / 1000 * timescale, integer-safe.
         let part_target_ticks =
-            ((part_target_ms as u64 * tracks[anchor].timescale as u64) / 1000).max(1);
+            ((part_target_ms as u64 * tracks[anchor].timescale.get() as u64) / 1000).max(1);
 
         let tracks = tracks
             .into_iter()
@@ -486,13 +495,11 @@ impl LlHlsSegmenter {
     /// The part-target duration in seconds — the `#EXT-X-PART-INF:PART-TARGET`
     /// value a caller should advertise (see [`broadcast_hls::LowLatencyConfig`]).
     pub fn part_target_secs(&self) -> f64 {
-        // `timescale` is a wire `u32` (`mdhd.timescale`, ISO/IEC
-        // 14496-12:2026 §8.4.2) — `.max(1)` guards the same zero-timescale
-        // case `ts_hls.rs` guards at every analogous division (e.g.
-        // `ts_hls.rs:225`), so a malformed zero timescale can't turn this
-        // into `inf`/`NaN` rendered straight into `#EXT-X-PART-INF` (audit
-        // finding #5).
-        self.part_target_ticks as f64 / self.tracks[self.anchor].spec.timescale.max(1) as f64
+        // The anchor's timescale is a `Timescale` (`mdhd.timescale` refused
+        // when it parses as zero, ISO/IEC 14496-12:2026 §8.4.2), so this
+        // division can neither divide by zero nor render `inf`/`NaN` into
+        // `#EXT-X-PART-INF` (audit finding #5 is unreachable by type).
+        self.part_target_ticks as f64 / f64::from(self.tracks[self.anchor].spec.timescale.get())
     }
 
     /// The part target in whole milliseconds, the value to advertise as
@@ -530,7 +537,7 @@ impl LlHlsSegmenter {
     #[doc(hidden)]
     pub fn with_part_target_at(
         tracks: Vec<TrackSpec>,
-        movie_timescale: u32,
+        movie_timescale: impl Into<Timescale>,
         target_duration_secs: f64,
         part_target_ms: u32,
         next_seq: u32,
@@ -588,7 +595,7 @@ impl LlHlsSegmenter {
             .ok_or(Error::InvalidInput("push: unknown track_id"))?;
 
         if self.external_cuts {
-            if sample.dts.is_none() {
+            if sample.timing.map(|t| t.dts).is_none() {
                 return Err(Error::InvalidInput(
                     "follower segmenter push: sample has no dts",
                 ));
@@ -672,21 +679,15 @@ impl LlHlsSegmenter {
     /// samples around it are unaffected.
     ///
     /// # Errors
-    /// [`Error::InvalidInput`] if a timescale is zero, `plan` does not advance
-    /// the previous plan's sequence number and start, its part starts are not
-    /// non-decreasing, or this segmenter already cut on its own before the
-    /// first `follow` call.
+    /// [`Error::InvalidInput`] if `plan` does not advance the previous plan's
+    /// sequence number and start, its part starts are not non-decreasing, or
+    /// this segmenter already cut on its own before the first `follow` call.
+    /// (A zero timescale cannot reach here: [`CutPlan::new`] refuses it.)
     pub fn follow(&mut self, plan: CutPlan) -> Result<()> {
         if self.incremental {
             self.close_incremental_segment(Some((plan.segment_start, plan.timescale)))?;
         }
-        if plan.timescale == 0 {
-            return Err(Error::InvalidInput("follow: plan timescale must be > 0"));
-        }
-        if self.tracks.iter().any(|t| t.spec.timescale == 0) {
-            return Err(Error::InvalidInput("follow: track timescale must be > 0"));
-        }
-        let mut previous_part: Option<(i64, u32)> = None;
+        let mut previous_part: Option<(i64, Timescale)> = None;
         for p in &plan.parts {
             let ts = p.effective_timescale(plan.timescale);
             if let Some((start, prev_ts)) = previous_part
@@ -745,24 +746,17 @@ impl LlHlsSegmenter {
     /// is closed by [`flush`](Self::flush).
     ///
     /// # Errors
-    /// [`Error::InvalidInput`] if a timescale is zero, `segment_seq` or the part
-    /// starts go backwards, this segmenter already cut on its own, or it is
-    /// following whole-segment plans through [`follow`](Self::follow).
+    /// [`Error::InvalidInput`] if `segment_seq` or the part starts go backwards,
+    /// this segmenter already cut on its own, or it is following whole-segment
+    /// plans through [`follow`](Self::follow). A zero timescale cannot be
+    /// passed: the parameter is a non-zero [`Timescale`].
     pub fn follow_part(
         &mut self,
         segment_seq: u32,
         part_index: u32,
         start: i64,
-        timescale: u32,
+        timescale: Timescale,
     ) -> Result<()> {
-        if timescale == 0 {
-            return Err(Error::InvalidInput("follow_part: timescale must be > 0"));
-        }
-        if self.tracks.iter().any(|t| t.spec.timescale == 0) {
-            return Err(Error::InvalidInput(
-                "follow_part: track timescale must be > 0",
-            ));
-        }
         if !self.incremental {
             let cut_on_own = !self.ready.is_empty()
                 || self
@@ -798,7 +792,12 @@ impl LlHlsSegmenter {
             self.inc_next_part = 0;
             self.inc_part_count = 0;
             self.current_segment = segment_seq;
-            self.current_plan = Some(CutPlan::new(segment_seq, start, timescale, Vec::new()));
+            self.current_plan = Some(CutPlan::new(
+                segment_seq,
+                start,
+                timescale.get(),
+                Vec::new(),
+            )?);
         }
         let plan = self
             .current_plan
@@ -817,7 +816,8 @@ impl LlHlsSegmenter {
                 "follow_part: part starts must be non-decreasing",
             ));
         }
-        plan.parts.push(PartCut::new(part_index, start, timescale));
+        plan.parts
+            .push(PartCut::new(part_index, start, Some(timescale)));
         self.try_emit_inc_parts()
     }
 
@@ -839,7 +839,7 @@ impl LlHlsSegmenter {
 
     /// The open segment's next unemitted part and the boundary that ends it,
     /// once that boundary is known.
-    fn next_inc_part(&self) -> Option<(u32, u32, (i64, u32))> {
+    fn next_inc_part(&self) -> Option<(u32, u32, (i64, Timescale))> {
         if !self.incremental {
             return None;
         }
@@ -859,7 +859,7 @@ impl LlHlsSegmenter {
         &mut self,
         segment_seq: u32,
         part_index: u32,
-        end: Option<(i64, u32)>,
+        end: Option<(i64, Timescale)>,
     ) -> Result<bool> {
         let take_ends: Vec<usize> = self
             .tracks
@@ -934,12 +934,12 @@ impl LlHlsSegmenter {
     /// Close the open incremental segment: emit its remaining parts (bounded
     /// by `end`, the next segment's start, when known) and then the whole
     /// segment over every sample starting before `end`.
-    fn close_incremental_segment(&mut self, end: Option<(i64, u32)>) -> Result<()> {
+    fn close_incremental_segment(&mut self, end: Option<(i64, Timescale)>) -> Result<()> {
         let Some(plan) = self.current_plan.take() else {
             self.incremental = false;
             return Ok(());
         };
-        let starts: Vec<(u32, (i64, u32))> = plan
+        let starts: Vec<(u32, (i64, Timescale))> = plan
             .parts
             .iter()
             .map(|p| {
@@ -1000,8 +1000,12 @@ impl LlHlsSegmenter {
     /// Emit the segment described by `plan`: every buffered sample starting
     /// before `end` (all of them when `end` is `None`), split into parts at
     /// the plan's part starts.
-    fn cut_follower_segment(&mut self, plan: &CutPlan, end: Option<(i64, u32)>) -> Result<()> {
-        let part_starts: Vec<(u32, i64, u32)> = if plan.parts.is_empty() {
+    fn cut_follower_segment(
+        &mut self,
+        plan: &CutPlan,
+        end: Option<(i64, Timescale)>,
+    ) -> Result<()> {
+        let part_starts: Vec<(u32, i64, Timescale)> = if plan.parts.is_empty() {
             vec![(0, plan.segment_start, plan.timescale)]
         } else {
             plan.parts
@@ -1015,7 +1019,7 @@ impl LlHlsSegmenter {
         // first part also takes samples before its own start.
         let mut bounds: Vec<Vec<usize>> = Vec::with_capacity(self.tracks.len());
         for t in &self.tracks {
-            let before = |limit: Option<(i64, u32)>, upto: usize| match limit {
+            let before = |limit: Option<(i64, Timescale)>, upto: usize| match limit {
                 Some((value, ts)) => {
                     let threshold = rescale_i64(value, ts, t.spec.timescale, Rounding::Ceil);
                     t.pending[..upto].partition_point(|s| follower_dts(s) < threshold)
@@ -1105,10 +1109,11 @@ impl LlHlsSegmenter {
             t.origin_applied = true;
             t.gap_pending = false;
             let first = follower_dts(&t.pending[0]);
-            let offset = i128::from(first) * i128::from(origin_ts)
-                - i128::from(origin) * i128::from(t.spec.timescale);
-            let ticks = offset / i128::from(origin_ts)
-                + i128::from(self.start_time_ns) * i128::from(t.spec.timescale) / 1_000_000_000;
+            let offset = i128::from(first) * i128::from(origin_ts.get())
+                - i128::from(origin) * i128::from(t.spec.timescale.get());
+            let ticks = offset / i128::from(origin_ts.get())
+                + i128::from(self.start_time_ns) * i128::from(t.spec.timescale.get())
+                    / 1_000_000_000;
             t.seg_base_decode = u64::try_from(ticks).unwrap_or(0);
             t.part_base_decode = t.seg_base_decode;
         }
@@ -1191,7 +1196,7 @@ impl LlHlsSegmenter {
         }
         self.start_time_ns = start_ns;
         for t in &mut self.tracks {
-            let ticks = u128::from(start_ns) * u128::from(t.spec.timescale) / 1_000_000_000;
+            let ticks = u128::from(start_ns) * u128::from(t.spec.timescale.get()) / 1_000_000_000;
             t.seg_base_decode = u64::try_from(ticks).unwrap_or(u64::MAX);
             t.part_base_decode = t.seg_base_decode;
         }
@@ -1202,13 +1207,11 @@ impl LlHlsSegmenter {
     /// The first segment each track emits in follower mode starts its
     /// `tfdt` at that track's first sample's decode time minus the origin
     /// (the leader's first segment start, rescaled into the track's
-    /// timescale, floored at zero; a zero `origin_timescale` is ignored), rather than at zero. Later segments
+    /// timescale, floored at zero), rather than at zero. Later segments
     /// continue contiguously from there. A no-op for a segmenter that is not
     /// following, and never consulted by a leader.
-    pub fn set_timeline_origin(&mut self, origin_dts: i64, origin_timescale: u32) {
-        if origin_timescale != 0 {
-            self.timeline_origin = Some((origin_dts, origin_timescale));
-        }
+    pub fn set_timeline_origin(&mut self, origin_dts: i64, origin_timescale: Timescale) {
+        self.timeline_origin = Some((origin_dts, origin_timescale));
     }
 
     /// Remove and return the [`CutPlan`] of every segment finished since the
@@ -1276,7 +1279,7 @@ impl LlHlsSegmenter {
             let t = &self.tracks[self.anchor];
             t.pending
                 .first()
-                .and_then(|s| s.dts)
+                .and_then(|s| s.timing.map(|t| t.dts))
                 .unwrap_or_else(|| ticks_to_i64(t.seg_base_decode))
         };
         // Any samples buffered since the last part become the segment's final
@@ -1304,7 +1307,7 @@ impl LlHlsSegmenter {
 
         // See `part_target_secs` above for why `.max(1)` guards this division.
         let seg_duration =
-            self.anchor_seg_dur as f64 / self.tracks[self.anchor].spec.timescale.max(1) as f64;
+            self.anchor_seg_dur as f64 / self.tracks[self.anchor].spec.timescale.get() as f64;
         self.ready.push_back(LlHlsStageOutput::Segment(SegmentInfo {
             bytes: seg_bytes,
             duration: seg_duration,
@@ -1316,9 +1319,9 @@ impl LlHlsSegmenter {
             self.ready_cuts.push_back(CutPlan::new(
                 self.current_segment,
                 segment_start,
-                self.tracks[self.anchor].spec.timescale,
+                self.tracks[self.anchor].spec.timescale.get(),
                 cuts,
-            ));
+            )?);
         }
 
         for t in &mut self.tracks {
@@ -1360,7 +1363,7 @@ impl LlHlsSegmenter {
         if (frames - 1) * hi >= frames * lo {
             return;
         }
-        let timescale = u64::from(self.tracks[self.anchor].spec.timescale.max(1));
+        let timescale = u64::from(self.tracks[self.anchor].spec.timescale.get());
         let ms = (frames * hi * MILLIS_PER_SEC).div_ceil(timescale);
         let Ok(ms) = u32::try_from(ms) else {
             return;
@@ -1398,7 +1401,7 @@ impl LlHlsSegmenter {
             let t = &self.tracks[anchor];
             t.pending
                 .get(t.part_start)
-                .and_then(|s| s.dts)
+                .and_then(|s| s.timing.map(|t| t.dts))
                 .unwrap_or_else(|| ticks_to_i64(t.part_base_decode))
         };
 
@@ -1407,7 +1410,7 @@ impl LlHlsSegmenter {
         // (`anchor_part_dur`). A regular part must not exceed the part target
         // (RFC 8216bis §4.4.4.9), so the drain stops at the first sample that
         // would cross it; the final part of a segment drains everything.
-        let anchor_scale = self.tracks[anchor].spec.timescale.max(1) as u64;
+        let anchor_scale = self.tracks[anchor].spec.timescale.get() as u64;
         let part_span = if final_part {
             u64::MAX
         } else {
@@ -1426,7 +1429,7 @@ impl LlHlsSegmenter {
                 if final_part {
                     return t.pending.len();
                 }
-                let track_scale = t.spec.timescale.max(1) as u64;
+                let track_scale = t.spec.timescale.get() as u64;
                 let track_span = if part_span == u64::MAX {
                     u64::MAX
                 } else {
@@ -1477,7 +1480,7 @@ impl LlHlsSegmenter {
         if anchor_span_ticks == 0 {
             return Ok(());
         }
-        let part_secs = anchor_span_ticks as f64 / self.tracks[anchor].spec.timescale.max(1) as f64;
+        let part_secs = anchor_span_ticks as f64 / self.tracks[anchor].spec.timescale.get() as f64;
 
         let seq = self.next_seq;
         let part_bytes = {
@@ -1540,7 +1543,7 @@ impl LlHlsSegmenter {
             self.current_cuts.push(PartCut::new(
                 part_index,
                 part_start,
-                self.tracks[anchor].spec.timescale,
+                Some(self.tracks[anchor].spec.timescale),
             ));
         }
         if self.record_part_cuts {
@@ -1736,7 +1739,7 @@ fn ticks_to_i64(ticks: u64) -> i64 {
 
 /// Decode time a follower segmenter cuts on; `push` rejects samples without one.
 fn follower_dts(sample: &Sample) -> i64 {
-    sample.dts.unwrap_or(i64::MIN)
+    sample.timing.map(|t| t.dts).unwrap_or(i64::MIN)
 }
 
 /// Duration in seconds of `track.pending[from..to]`.
@@ -1744,9 +1747,9 @@ fn span_secs(track: &TrackState, from: usize, to: usize) -> f64 {
     let mut clock = MediaClock::resumed_at(
         from.checked_sub(1)
             .and_then(|i| track.pending.get(i))
-            .and_then(|s| s.dts)
+            .and_then(|s| s.timing.map(|t| t.dts))
             .or(track.seg_clock.last_dts()),
     );
     let ticks: u64 = track.pending[from..to].iter().map(|s| clock.tick(s)).sum();
-    ticks as f64 / f64::from(track.spec.timescale.max(1))
+    ticks as f64 / f64::from(track.spec.timescale.get())
 }

@@ -6,10 +6,16 @@ use broadcast_client::{
     AUDIO_TRACK_ID_OFFSET, Action, BufferEvent, Config, Event, PauseReason, PlayoutConfig, Session,
     SourceKind, TrackId,
 };
+use broadcast_common::stage::Timestamp;
 use support::hls_host::*;
 use support::renditions::{self, AUDIO_DIR, AUDIO_PLAYLIST_URL, MASTER_URL};
 use transmux::JoinDecision;
 use transmux::ts_hls::StreamingTsHlsSegmenter;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const TICKS_PER_SEC: u64 = 27_000_000;
 const TICKS_PER_MS: u64 = 27_000;
@@ -65,7 +71,7 @@ struct Drv {
 
 impl Drv {
     fn new(url: &str, config: Config, bodies: HashMap<String, Vec<u8>>) -> Self {
-        let session = Session::open(url, config, 0).expect("open");
+        let session = Session::open(url, config, ts(0)).expect("open");
         let mut d = Self {
             session,
             now: 0,
@@ -80,12 +86,12 @@ impl Drv {
     }
 
     fn pump(&mut self) {
-        while let Some(a) = self.session.poll(self.now) {
+        while let Some(a) = self.session.poll(ts(self.now)) {
             match a {
                 Action::HttpRequest { conn, url, .. } => self.pending.push((conn, url)),
                 Action::Close { conn } => self.pending.retain(|p| p.0 != conn),
-                Action::WakeAt(t) if t > self.now => {
-                    self.wakes.insert(t);
+                Action::WakeAt(t) if t.as_micros() > self.now => {
+                    self.wakes.insert(t.as_micros());
                 }
                 _ => {}
             }
@@ -96,11 +102,11 @@ impl Drv {
     }
 
     fn respond(&mut self, conn: u32, body: &[u8]) {
-        self.session.on_response(conn, 200, &[], self.now);
+        self.session.on_response(conn, 200, &[], ts(self.now));
         for c in body.chunks(self.chunk.max(1)) {
-            self.session.on_data(conn, c, self.now);
+            self.session.on_data(conn, c, ts(self.now));
         }
-        self.session.on_closed(conn, None, self.now);
+        self.session.on_closed(conn, None, ts(self.now));
         self.pump();
     }
 
@@ -178,7 +184,7 @@ impl Drv {
     }
 
     fn pos(&mut self, pts: Option<u64>) {
-        self.session.on_playback_position(self.now, pts);
+        self.session.on_playback_position(ts(self.now), pts);
         self.pump();
     }
 }
@@ -247,7 +253,7 @@ fn lead_points_from(nb_events: &[Event], rendered: &[u32], from: usize) -> Vec<P
                 for s in specs {
                     kind.insert(
                         s.track_id,
-                        (s.config.audio_sample_rate().is_none(), s.timescale),
+                        (s.config.audio_sample_rate().is_none(), s.timescale.get()),
                     );
                 }
             }
@@ -260,8 +266,8 @@ fn lead_points_from(nb_events: &[Event], rendered: &[u32], from: usize) -> Vec<P
                     continue;
                 }
                 let (is_video, ts) = kind[track];
-                let pts = sample.pts.unwrap();
-                let dur = i64::from(sample.duration.unwrap_or(0));
+                let pts = sample.timing.map(|t| t.pts).unwrap();
+                let dur = i64::from(sample.timing.map(|t| t.duration).unwrap_or(0));
                 first.entry(*track).or_insert_with(|| to27(pts, ts));
                 let m = max_pts.entry(*track).or_insert(pts);
                 *m = (*m).max(pts);
@@ -335,7 +341,7 @@ fn first_video_pts_after(nb_events: &[Event], from: usize) -> u64 {
             && track.value() == VIDEO
             && !matches!(join, Some(JoinDecision::Drop(_)))
         {
-            return to27(sample.pts.unwrap(), ts[track]);
+            return to27(sample.timing.map(|t| t.pts).unwrap(), ts[track].get());
         }
     }
     panic!("no video sample after {from}");
@@ -486,18 +492,37 @@ fn long_stream() -> HashMap<String, Vec<u8>> {
             _ => {}
         }
     }
-    let scale = |t: TrackId| i64::from(specs.iter().find(|s| s.track_id == t).unwrap().timescale);
+    let scale = |t: TrackId| {
+        i64::from(
+            specs
+                .iter()
+                .find(|s| s.track_id == t)
+                .unwrap()
+                .timescale
+                .get(),
+        )
+    };
     let mut all = Vec::new();
     for k in 0..LONG_REPEATS {
         for (t, s) in &samples {
             let mut s = s.clone();
             let off = k * SPAN_SECS * scale(*t);
-            s.dts = s.dts.map(|d| d + off);
-            s.pts = s.pts.map(|p| p + off);
+            if let Some(d) = s.timing.map(|t| t.dts).map(|d| d + off)
+                && let Some(t) = s.timing.as_mut()
+            {
+                t.dts = d;
+            }
+            if let Some(p) = s.timing.map(|t| t.pts).map(|p| p + off)
+                && let Some(t) = s.timing.as_mut()
+            {
+                t.pts = p;
+            }
             all.push((*t, s));
         }
     }
-    all.sort_by_key(|(t, s)| i128::from(s.dts.unwrap()) * 90_000 / i128::from(scale(*t)));
+    all.sort_by_key(|(t, s)| {
+        i128::from(s.timing.map(|t| t.dts).unwrap()) * 90_000 / i128::from(scale(*t))
+    });
     let mut seg = StreamingTsHlsSegmenter::new(specs, LONG_TARGET_SECS, LONG_WINDOW).unwrap();
     for (t, s) in all {
         seg.push(t, s).unwrap();
@@ -617,29 +642,29 @@ fn hls_live_pause_and_resume_cycle_with_delivery_gap() {
 }
 
 fn finite_session(config: Config) -> Session {
-    Session::open(FINITE_URL, config, 0).unwrap()
+    Session::open(FINITE_URL, config, ts(0)).unwrap()
 }
 
 fn feed_finite(session: &mut Session, chunk: usize, positions: bool) -> Vec<Event> {
     let bytes = test_fixtures::read("ts/h264-aac.ts");
     let headers = vec![("Content-Length".to_string(), bytes.len().to_string())];
-    let conn = match session.poll(0).expect("request") {
+    let conn = match session.poll(ts(0)).expect("request") {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
     };
-    session.on_response(conn, 200, &headers, 0);
+    session.on_response(conn, 200, &headers, ts(0));
     let mut out = Vec::new();
     for (i, c) in bytes.chunks(chunk).enumerate() {
         let now = i as u64 * 1_000;
-        session.on_data(conn, c, now);
+        session.on_data(conn, c, ts(now));
         if positions {
-            session.on_playback_position(now, None);
+            session.on_playback_position(ts(now), None);
         }
         while let Some(e) = session.next_event() {
             out.push(e);
         }
     }
-    session.on_closed(conn, None, 10 * SEC);
+    session.on_closed(conn, None, ts(10 * SEC));
     while let Some(e) = session.next_event() {
         out.push(e);
     }
@@ -676,17 +701,17 @@ fn live_ts_http_still_uses_buffering_runtime() {
     let (status, headers) = tf1_headers!();
     let mut config = Config::default();
     config.record_buffer_inputs = true;
-    let mut s = Session::open("http://example/live.ts", config, 0).unwrap();
-    let conn = match s.poll(0).unwrap() {
+    let mut s = Session::open("http://example/live.ts", config, ts(0)).unwrap();
+    let conn = match s.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
     };
-    s.on_response(conn, status, &headers, 0);
+    s.on_response(conn, status, &headers, ts(0));
     let mut events = Vec::new();
     for (i, c) in bytes.chunks(1316).take(2_500).enumerate() {
         let now = i as u64 * 3_200;
-        s.on_data(conn, c, now);
-        s.on_playback_position(now, None);
+        s.on_data(conn, c, ts(now));
+        s.on_playback_position(ts(now), None);
         while let Some(e) = s.next_event() {
             events.push(e);
         }
@@ -740,7 +765,7 @@ fn renditions_drv(playout: PlayoutConfig) -> Renditions {
     let (bodies, video_end_url, audio_urls, audio_track) = rendition_bodies();
     let mut d = Drv::new(MASTER_URL, cfg(playout), bodies);
     d.session
-        .set_rendered_tracks(d.now, &[tid(VIDEO), tid(audio_track)]);
+        .set_rendered_tracks(ts(d.now), &[tid(VIDEO), tid(audio_track)]);
     Renditions {
         d,
         video_end_url,
@@ -877,7 +902,7 @@ fn start_at_is_origin_pts_27mhz() {
 #[test]
 fn set_rendered_tracks_audio_only_uses_audio_origin() {
     let mut d = Drv::new(TS_PLAYLIST_URL, cfg(PlayoutConfig::default()), ts_bodies());
-    d.session.set_rendered_tracks(d.now, &[tid(AUDIO)]);
+    d.session.set_rendered_tracks(ts(d.now), &[tid(AUDIO)]);
     d.serve_all_except(&[]);
     let list = nb(&d.events);
     let points = lead_points(&list, &[AUDIO]);
@@ -1076,7 +1101,7 @@ fn gate_events_deterministic_across_chunking() {
 fn no_events_before_first_sample() {
     let mut d = Drv::new(TS_PLAYLIST_URL, cfg(PlayoutConfig::default()), ts_bodies());
     d.session
-        .set_rendered_tracks(d.now, &[tid(VIDEO), tid(AUDIO)]);
+        .set_rendered_tracks(ts(d.now), &[tid(VIDEO), tid(AUDIO)]);
     d.serve(TS_PLAYLIST_URL);
     d.pos(Some(0));
     d.pos(None);
@@ -1140,7 +1165,7 @@ fn playout_audio_rendition_switch_does_not_pin_stale_audio_obs() {
     let audio_track = f.audio_stream_track_id.value() + AUDIO_TRACK_ID_OFFSET;
     let mut r = Drv::new(MASTER_URL, cfg(PlayoutConfig::default()), bodies);
     r.session
-        .set_rendered_tracks(r.now, &[tid(VIDEO), tid(audio_track)]);
+        .set_rendered_tracks(ts(r.now), &[tid(VIDEO), tid(audio_track)]);
 
     // Serve everything except the new rendition's segments.
     let withheld_refs: Vec<&str> = withheld.iter().map(String::as_str).collect();

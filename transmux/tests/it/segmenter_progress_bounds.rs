@@ -30,6 +30,7 @@
 use crate::hub_fixtures::{dummy_avc_config, dummy_esds};
 use transmux::TrackId;
 
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Stage, Unpackage};
 use transmux::ll_dash::LlSegmenter;
 use transmux::ll_hls::LlHlsSegmenter;
@@ -46,7 +47,7 @@ use transmux::{
 /// 90 kHz — the MPEG-2 TS system clock (ISO/IEC 13818-1 §2.4.3.7) and the
 /// timescale `TsDemux` gives every track, so segment maths here matches the
 /// shipped demux path.
-const TS_TIMESCALE: u32 = 90_000;
+const TS_TIMESCALE: Timescale = Timescale::from_nonzero(90_000);
 /// 30 fps at 90 kHz.
 const FRAME_TICKS: i64 = 3_000;
 /// One second of frames at `FRAME_TICKS`.
@@ -177,7 +178,7 @@ fn tfdts(segment: &[u8]) -> Vec<(TrackId, u64)> {
 // ── C1: a `duration` of Some(0) on the anchor must still cut segments ───────
 //
 // Pre-fix, every one of the four assertions below saw ZERO segments: the
-// accumulator was `+= sample.duration.unwrap_or(0)`, so it never reached the
+// accumulator was `+= sample.timing.map(|t| t.duration).unwrap_or(0)`, so it never reached the
 // target and no cut ever fired, while `pending` grew for the whole stream.
 //
 // With `MediaClock`, the anchor advances on the dts delta instead. The first
@@ -580,7 +581,7 @@ fn section_sample_lands_in_the_same_segment_batch_and_streaming() {
     const CUE: [u8; 6] = [0xFC, 0x30, 0x11, 0xDE, 0xAD, 0xBE];
     /// The cue's absolute decode time: 4 s into a stream cut at 1 s, so it
     /// belongs in segment 4, as far from segment 0 as this stream allows.
-    const CUE_DTS: i64 = 4 * TS_TIMESCALE as i64;
+    const CUE_DTS: i64 = 4 * TS_TIMESCALE.get() as i64;
 
     let video: Vec<Sample> = (0..(6 * FRAMES_PER_SEC))
         .map(|i| au(i as i64 * FRAME_TICKS, i % FRAMES_PER_SEC == 0))
@@ -615,7 +616,7 @@ fn section_sample_lands_in_the_same_segment_batch_and_streaming() {
     // cut attributed to the push that produced it, and `streamed` in cut order
     // (which is what `section_segment_index` reads a segment *index* out of).
     for s in &video {
-        if !pushed_cue && s.dts.unwrap_or(0) >= CUE_DTS {
+        if !pushed_cue && s.timing.map(|t| t.dts).unwrap_or(0) >= CUE_DTS {
             seg.push(TrackId::new(SCTE_ID), section.clone())
                 .expect("push cue");
             streamed.extend(seg.take_ready().into_iter().map(|c| c.bytes));

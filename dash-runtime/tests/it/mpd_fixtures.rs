@@ -1,6 +1,7 @@
 //! Every committed DASH MPD parses, and the parse is pinned against values read
 //! out of the real files.
 
+use broadcast_common::timescale::Timescale;
 use std::path::{Path, PathBuf};
 
 use dash_runtime::mpd::{Mpd, PresentationType};
@@ -138,5 +139,5 @@ fn a_representation_inherits_the_adaptation_sets_timeline() {
             .len(),
         3
     );
-    assert_eq!(info.multi.timescale, 90_000);
+    assert_eq!(info.multi.timescale, Timescale::from_nonzero(90_000));
 }

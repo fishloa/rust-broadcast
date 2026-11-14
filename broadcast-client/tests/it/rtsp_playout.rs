@@ -1,9 +1,15 @@
 use crate::support;
 
 use broadcast_client::{BufferEvent, Config, Event};
+use broadcast_common::stage::Timestamp;
 use broadcast_common::{Serialize, Unpackage};
 use support::rtsp_host::{BASE_URL, Host, MediaFixture, Server};
 use transmux::{CodecConfig, TrackSpec, TsDemux};
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const FRAME_STEP_US: u64 = 10_000;
 const IDLE_STEPS: usize = 200;
@@ -105,14 +111,14 @@ fn play(sdp: &str, frames: &[Vec<u8>]) -> Run {
     for frame in frames {
         host.now += FRAME_STEP_US;
         let conn = host.conn.expect("conn");
-        host.session.on_data(conn, frame, host.now);
-        host.session.on_playback_position(host.now, None);
+        host.session.on_data(conn, frame, ts(host.now));
+        host.session.on_playback_position(ts(host.now), None);
         host.drain();
         collect(&mut host);
     }
     for _ in 0..IDLE_STEPS {
         host.now += FRAME_STEP_US;
-        host.session.on_playback_position(host.now, None);
+        host.session.on_playback_position(ts(host.now), None);
         host.drain();
         collect(&mut host);
     }
@@ -175,7 +181,7 @@ fn rtsp_samples_carry_positive_durations_once_a_frame_period_is_known() {
     assert!(!samples.is_empty(), "no samples");
     let zero = samples
         .iter()
-        .filter(|s| s.duration.unwrap_or(0) == 0)
+        .filter(|s| s.timing.map(|t| t.duration).unwrap_or(0) == 0)
         .count();
     assert_eq!(
         zero,

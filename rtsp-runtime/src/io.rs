@@ -30,6 +30,7 @@ use futures_util::{FutureExt, SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::PlaySession;
+use broadcast_common::stage::Timestamp;
 use broadcast_common::timeouts::Timeouts;
 use tokio::net::TcpStream;
 use tokio_util::codec::Framed;
@@ -250,7 +251,10 @@ where
 
     async fn write(&mut self, bytes: Vec<u8>) -> Result<()> {
         bounded(self.timeouts.write, "write", self.framed.send(bytes)).await?;
-        self.framed.codec_mut().session.mark_activity(now_us());
+        self.framed
+            .codec_mut()
+            .session
+            .mark_activity(Timestamp::from_micros(now_us()));
         Ok(())
     }
 
@@ -488,7 +492,12 @@ where
     /// call it directly from a pusher loop that sends media by any other path
     /// (e.g. a separate RTCP/`send` split), or when the media flow is idle.
     pub async fn poll_keepalive(&mut self) -> Result<()> {
-        if let Some(req) = self.framed.codec_mut().session.handle_timeout(now_us())? {
+        if let Some(req) = self
+            .framed
+            .codec_mut()
+            .session
+            .handle_timeout(Timestamp::from_micros(now_us()))?
+        {
             self.write(req).await?;
         }
         Ok(())
@@ -645,7 +654,7 @@ where
                 .codec()
                 .session
                 .poll_timeout()
-                .map(deadline_instant);
+                .map(|due| deadline_instant(due.as_micros()));
             let woke = {
                 let next = self.next_event();
                 tokio::pin!(next);
@@ -673,7 +682,12 @@ where
                     Some(_) => {} // control responses are applied by the session; not surfaced here
                 },
                 Woke::Keepalive => {
-                    if let Some(req) = self.framed.codec_mut().session.handle_timeout(now_us())? {
+                    if let Some(req) = self
+                        .framed
+                        .codec_mut()
+                        .session
+                        .handle_timeout(Timestamp::from_micros(now_us()))?
+                    {
                         self.write(req).await?;
                     }
                 }

@@ -3,6 +3,12 @@ use crate::support;
 use std::collections::{BTreeSet, HashMap, VecDeque};
 
 use broadcast_client::{Action, Config, Credentials, Event, Session, Status};
+use broadcast_common::stage::Timestamp;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 use support::hls_host::{
     Host, ORIGIN, Reply, SEC, TS_PLAYLIST_URL, TS_SEG0_URL, TS_SEG1_URL, drain_actions,
     drain_events, hls_config, http_requests, is_ended, live_playlist_text, master_text,
@@ -67,15 +73,15 @@ fn run_vod(
     let mut hits: HashMap<String, usize> = HashMap::new();
     let body = null_packet();
     loop {
-        while let Some(action) = session.poll(now) {
+        while let Some(action) = session.poll(ts(now)) {
             match action {
                 Action::HttpRequest { conn, url, .. } => {
                     stats.requested.push(url.clone());
                     outstanding.push_back((conn, url));
                 }
                 Action::Close { conn } => outstanding.retain(|(c, _)| *c != conn),
-                Action::WakeAt(t) if t > now => {
-                    wakes.insert(t);
+                Action::WakeAt(t) if t.as_micros() > now => {
+                    wakes.insert(t.as_micros());
                 }
                 _ => {}
             }
@@ -101,20 +107,20 @@ fn run_vod(
         stats.steps += 1;
         if let Some((conn, url)) = outstanding.pop_front() {
             if url == playlist_url {
-                session.on_response(conn, 200, &[], now);
-                session.on_data(conn, playlist, now);
-                session.on_closed(conn, None, now);
+                session.on_response(conn, 200, &[], ts(now));
+                session.on_data(conn, playlist, ts(now));
+                session.on_closed(conn, None, ts(now));
                 continue;
             }
             let nth = hits.entry(url.clone()).or_insert(0);
             let code = segment_status(&url, *nth);
             *nth += 1;
-            session.on_response(conn, code, &[], now);
+            session.on_response(conn, code, &[], ts(now));
             if code == 200 {
                 stats.succeeded.push(url);
-                session.on_data(conn, &body, now);
+                session.on_data(conn, &body, ts(now));
             }
-            session.on_closed(conn, None, now);
+            session.on_closed(conn, None, ts(now));
         } else if let Some(t) = wakes.range((now + 1)..).next().copied() {
             wakes.remove(&t);
             now = t;
@@ -126,7 +132,7 @@ fn run_vod(
 }
 
 fn vod_session(config: Config) -> Session {
-    Session::open(VOD_PLAYLIST_URL, config, 0).expect("open")
+    Session::open(VOD_PLAYLIST_URL, config, ts(0)).expect("open")
 }
 
 #[test]
@@ -303,8 +309,8 @@ fn live_playlist_reloads_are_not_starved_by_a_full_segment_window() {
 fn zero_backoff_entries_and_cap_are_floored_at_one_millisecond() {
     let config = {
         let mut new_config = hls_config();
-        new_config.backoff_ms = vec![0];
-        new_config.backoff_cap_ms = 0;
+        new_config.backoff.steps = vec![std::time::Duration::ZERO];
+        new_config.backoff.cap = std::time::Duration::ZERO;
         new_config
     };
     let mut h = Host::new(TS_PLAYLIST_URL, config);
@@ -345,7 +351,7 @@ fn hls_vod_mutators_after_ended_are_no_ops() {
     h.session
         .select_variant(0)
         .expect("known variant is accepted");
-    h.session.reconnect(now);
+    h.session.reconnect(ts(now));
     h.session.select_audio_rendition(None).ok();
     let actions = drain_actions(&mut h.session, now);
     assert!(actions.is_empty(), "{actions:?}");
@@ -375,7 +381,7 @@ fn live_hls_reconnect_and_select_variant_still_restart_the_playlist() {
     drain_events(&mut h.session);
     let hits = h.hits(live);
 
-    h.session.reconnect(h.now);
+    h.session.reconnect(ts(h.now));
     let reconnect = http_requests(&drain_actions(&mut h.session, h.now));
     assert!(
         reconnect.iter().any(|(_, u)| u.starts_with(live)),
@@ -396,22 +402,22 @@ fn finite_ts_reconnect_after_ended_still_restarts() {
     let (status, base_headers) = tf1_headers!();
     let mut headers = base_headers;
     headers.push(("Content-Length".to_string(), bytes.len().to_string()));
-    let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
-    let conn = match session.poll(0).unwrap() {
+    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
     };
-    session.on_response(conn, status, &headers, 0);
+    session.on_response(conn, status, &headers, ts(0));
     for chunk in bytes.chunks(1316) {
-        session.on_data(conn, chunk, 0);
+        session.on_data(conn, chunk, ts(0));
     }
-    session.on_closed(conn, None, 1000);
+    session.on_closed(conn, None, ts(1000));
     let ended = drain_events(&mut session)
         .iter()
         .filter(|e| matches!(e, Event::Status(Status::Ended)))
         .count();
     assert_eq!(ended, 1);
-    session.reconnect(2000);
+    session.reconnect(ts(2000));
     let reopened = http_requests(&drain_actions(&mut session, 2000));
     assert_eq!(reopened.len(), 1, "{reopened:?}");
 }
@@ -547,7 +553,7 @@ const RUNAWAY_PROBE: usize = 200;
 
 fn bounded_drain(session: &mut Session, now: u64) -> Vec<Action> {
     let mut out = Vec::new();
-    while let Some(action) = session.poll(now) {
+    while let Some(action) = session.poll(ts(now)) {
         out.push(action);
         assert!(
             out.len() < RUNAWAY_PROBE,
@@ -574,6 +580,6 @@ fn a_request_issued_at_the_end_of_time_is_not_expired_by_the_next_poll() {
         tail.iter().all(|a| matches!(a, Action::Close { .. })),
         "{tail:?}"
     );
-    assert!(session.poll(u64::MAX).is_none());
-    assert!(session.poll(0).is_none());
+    assert!(session.poll(Timestamp::from_nanos(u64::MAX)).is_none());
+    assert!(session.poll(ts(0)).is_none());
 }

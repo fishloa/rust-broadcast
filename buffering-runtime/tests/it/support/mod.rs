@@ -7,11 +7,22 @@
 //! is the PCR minus a constant `offset_ticks` (the traces carry PCR only).
 
 use broadcast_common::clock33::PCR_WRAP_27MHZ;
-use buffering_runtime::{BufferController, ControllerConfig, Event, Hint, State};
+use buffering_runtime::{BufferController, ControllerConfig, Event, Hint, Micros, State, Ticks27};
 use std::path::Path;
 
 pub const TICKS_PER_US: u64 = 27;
 pub const SEC: u64 = 1_000_000;
+
+/// A plain microsecond count as the controller's clock.
+pub trait HostUs {
+    fn us(self) -> Micros;
+}
+
+impl HostUs for u64 {
+    fn us(self) -> Micros {
+        Micros(self)
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct Chunk {
@@ -67,7 +78,7 @@ pub struct Opts {
 impl Opts {
     pub fn new(initial_us: u64) -> Self {
         let mut cfg = ControllerConfig::default();
-        cfg.policy.initial_us = initial_us;
+        cfg.policy.initial_us = initial_us.us();
         Self {
             cfg,
             tick_us: 5_000,
@@ -80,10 +91,10 @@ impl Opts {
 }
 
 pub struct Run {
-    pub events: Vec<(u64, Event)>,
+    pub events: Vec<(Micros, Event)>,
     pub ctl: BufferController,
     /// `target_us()` after every PCR chunk.
-    pub targets: Vec<u64>,
+    pub targets: Vec<Micros>,
     /// Smallest `lead_us` reported by a tick while Playing.
     pub min_lead_playing: Option<i64>,
 }
@@ -91,7 +102,7 @@ pub struct Run {
 impl Run {
     pub fn start(&self) -> Option<u64> {
         self.events.iter().find_map(|(t, e)| match e {
-            Event::StartPlaying { .. } => Some(*t),
+            Event::StartPlaying { .. } => Some(t.0),
             _ => None,
         })
     }
@@ -99,10 +110,10 @@ impl Run {
         let mut out: Vec<(u64, Option<u64>)> = Vec::new();
         for (t, e) in &self.events {
             match e {
-                Event::Pause { .. } => out.push((*t, None)),
+                Event::Pause { .. } => out.push((t.0, None)),
                 Event::Resume { .. } => {
                     if let Some(l) = out.last_mut() {
-                        l.1 = Some(*t);
+                        l.1 = Some(t.0);
                     }
                 }
                 _ => {}
@@ -133,13 +144,13 @@ impl Renderer {
     fn apply(&mut self, e: &Event, now: u64) {
         match *e {
             Event::StartPlaying { media_27mhz, .. } | Event::Resume { media_27mhz, .. } => {
-                self.clock = media_27mhz;
+                self.clock = media_27mhz.0;
                 self.t_set = now;
                 self.running = true;
                 self.set = true;
             }
             Event::Pause { hold_at_27mhz, .. } => {
-                self.clock = hold_at_27mhz;
+                self.clock = hold_at_27mhz.0;
                 self.t_set = now;
                 self.running = false;
                 self.set = true;
@@ -149,10 +160,10 @@ impl Renderer {
     }
 }
 
-fn drain(c: &mut BufferController, r: &mut Renderer, now: u64, log: &mut Vec<(u64, Event)>) {
+fn drain(c: &mut BufferController, r: &mut Renderer, now: u64, log: &mut Vec<(Micros, Event)>) {
     while let Some(e) = c.poll_event() {
         r.apply(&e, now);
-        log.push((now, e));
+        log.push((Micros(now), e));
     }
 }
 
@@ -162,8 +173,8 @@ pub struct Session {
     pub c: BufferController,
     r: Renderer,
     o: Opts,
-    pub log: Vec<(u64, Event)>,
-    pub targets: Vec<u64>,
+    pub log: Vec<(Micros, Event)>,
+    pub targets: Vec<Micros>,
     pub min_lead: Option<i64>,
     next_tick: u64,
     last_arrival: u64,
@@ -195,7 +206,7 @@ impl Session {
             .r
             .set
             .then(|| shift27(self.r.pos(now), self.o.clock_err_ticks));
-        self.c.on_tick(now, reported);
+        self.c.on_tick(now.us(), reported.map(Ticks27));
         drain(&mut self.c, &mut self.r, now, &mut self.log);
         if self.c.state() == State::Playing {
             let l = self.c.stats().lead_us;
@@ -207,20 +218,21 @@ impl Session {
     pub fn feed(&mut self, ch: &Chunk) {
         let a = ch.arrival_us;
         if self.seen && a - self.last_arrival >= self.o.reconnect_gap_us && self.o.send_hints {
-            self.c.on_hint(self.last_arrival, Hint::SourceEnded);
+            self.c.on_hint(self.last_arrival.us(), Hint::SourceEnded);
             drain(&mut self.c, &mut self.r, self.last_arrival, &mut self.log);
-            self.c.on_hint(a, Hint::Reconnected);
+            self.c.on_hint(a.us(), Hint::Reconnected);
             drain(&mut self.c, &mut self.r, a, &mut self.log);
         }
         while self.next_tick <= a {
             self.tick(self.next_tick);
             self.next_tick += self.o.tick_us;
         }
-        self.c.on_chunk(a, ch.bytes, ch.pcr);
+        self.c.on_chunk(a.us(), ch.bytes, ch.pcr.map(Ticks27));
         drain(&mut self.c, &mut self.r, a, &mut self.log);
         if let Some(pcr) = ch.pcr {
             self.targets.push(self.c.target_us());
-            self.c.on_media(a, shift27(pcr, -self.o.offset_ticks));
+            self.c
+                .on_media(a.us(), Ticks27(shift27(pcr, -self.o.offset_ticks)));
         }
         self.tick(a);
         self.last_arrival = a;

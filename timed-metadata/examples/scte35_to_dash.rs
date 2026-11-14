@@ -9,6 +9,7 @@
 //! cargo run -p timed-metadata --example scte35_to_dash
 //! ```
 
+use broadcast_common::timescale::Timescale;
 use mp4_emsg::PresentationTime;
 use timed_metadata::{TimeAnchor, Timeline, convert::EmsgConfig};
 
@@ -26,7 +27,7 @@ fn main() {
 
     // Build emsg config: 90 kHz timescale, segment-relative delta 0, 24 s duration.
     let cfg = EmsgConfig::new(
-        90_000,
+        Timescale::from_nonzero(90_000),
         PresentationTime::Delta(0),
         2_160_000,              // 24s * 90000
         "34".to_string(),       // segmentation_type_id for Provider Ad Start

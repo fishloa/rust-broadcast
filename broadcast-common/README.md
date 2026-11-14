@@ -124,7 +124,7 @@ Runnable examples: `cargo run -p broadcast-common --example crc_and_bcd` and
 | `seq` | `SeqSpace` (`add`, `diff`, `lt`/`leq`/`gt`/`geq`, `in_closed_range`), `MAX_SEQ_BITS` |
 | `cenc` | `CencScheme` (`from_four_cc`, `name`), `SCHEME_CENC`, `SCHEME_CBCS` |
 | `mux` | `Unpackage`, `Package` (batch container demux/mux), `Decrypt`, `Encrypt` (in-place sample protection); inverse pairs, generic over `Input`/`Output`/`Media`/`Config`/`Keys`/`Error` |
-| `stage` | `Stage` (`feed`/`poll`/`finish`, `next_deadline`/`on_deadline`, `demand`), `Timestamp` (monotonic nanoseconds, saturating arithmetic), `Demand` |
+| `stage` | `Stage` (`feed`/`poll`/`finish`, `next_deadline`/`on_deadline`, `demand`), `Timestamp` (monotonic microseconds, saturating arithmetic), `Demand` |
 | `backoff` | `RetrySchedule` (`new`, `seeded`, `from_steps`, `with_offset`, `delay_for_attempt`, `raw_delay_for_attempt`): the one capped retry/reconnect schedule; pure policy, no clock |
 | `ber` | `decode_ber_length`, `encode_ber_length`, `encode_ber_length_as`, `ber_length_size`, `ber_length_size_for` (X.690 definite-form lengths) |
 | `klv` | `KlvItem` (`parse_prefix`), `walk_klv_items`, `collect_klv_items`, `UniversalLabel`, `BerLength`, `KlvError` (SMPTE ST 336 triplets) |

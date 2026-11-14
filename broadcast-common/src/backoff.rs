@@ -259,6 +259,32 @@ impl RetrySchedule {
     }
 }
 
+/// A retry step table carried as configuration, not as runtime state.
+///
+/// [`RetrySchedule`] holds a `Cell` cursor and reseeds on [`Clone`], so it is
+/// not a faithful config value; `BackoffSteps` is the plain, `Clone`-faithful
+/// pair every config struct holds. It answers nothing on its own — call
+/// [`BackoffSteps::schedule`] to turn it into a [`RetrySchedule`] for a given
+/// jitter seed.
+#[derive(Clone, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct BackoffSteps {
+    /// Per-attempt delays; the first entry is the first retry's delay. An empty
+    /// table is the cap from the first attempt.
+    pub steps: alloc::vec::Vec<Duration>,
+    /// The delay every attempt past the table takes.
+    pub cap: Duration,
+}
+
+impl BackoffSteps {
+    /// Build a [`RetrySchedule`] from these steps with the caller's own jitter
+    /// `seed` (see [`RetrySchedule::from_steps`]).
+    #[must_use]
+    pub fn schedule(&self, seed: u64) -> RetrySchedule {
+        RetrySchedule::from_steps(&self.steps, self.cap, seed)
+    }
+}
+
 impl Clone for RetrySchedule {
     /// A clone with a *fresh* seed, never a duplicate jitter sequence.
     fn clone(&self) -> Self {
@@ -543,5 +569,38 @@ mod tests {
         let seq = sequence(8);
         assert_eq!(seq[0], ms(500));
         assert!(seq.iter().all(|d| *d <= secs(30)));
+    }
+
+    #[test]
+    fn backoff_steps_is_a_faithful_config_value() {
+        let steps = BackoffSteps {
+            steps: alloc::vec![ms(2_000), ms(4_000)],
+            cap: ms(10_000),
+        };
+        // A config value clones exactly and compares by value; the runtime schedule it builds
+        // carries a cursor cell and reseeds on clone, which is why it cannot be a config field.
+        assert_eq!(steps.clone(), steps);
+        let schedule = steps.schedule(0x5EED);
+        assert_eq!(schedule.min(), ms(2_000));
+        assert_eq!(schedule.max(), ms(10_000));
+        assert_eq!(schedule.raw_delay_for_attempt(0), ms(2_000));
+        assert_eq!(schedule.raw_delay_for_attempt(1), ms(4_000));
+        assert_eq!(schedule.raw_delay_for_attempt(2), ms(10_000));
+        // The seed is the caller's own, so the same steps and seed replay one series.
+        let a = steps.schedule(7);
+        let b = steps.schedule(7);
+        assert_eq!(a.delay_for_attempt(0), b.delay_for_attempt(0));
+        assert_eq!(a.delay_for_attempt(1), b.delay_for_attempt(1));
+    }
+
+    #[test]
+    fn an_empty_backoff_steps_table_is_the_cap_from_the_first_attempt() {
+        let steps = BackoffSteps {
+            steps: alloc::vec::Vec::new(),
+            cap: ms(7),
+        };
+        let schedule = steps.schedule(1);
+        assert_eq!(schedule.raw_delay_for_attempt(0), ms(7));
+        assert_eq!(schedule.min(), ms(7));
     }
 }

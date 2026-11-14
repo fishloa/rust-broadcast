@@ -8,9 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Changed
 - BREAKING: `EncryptConfig`, `TimelineJumpConfig`, `ll_hls::PartInfo` and `ll_hls::SegmentInfo` are now `#[non_exhaustive]`; build them with `EncryptConfig::new(scheme, kid, subsample)` + `with_*`, `TimelineJumpConfig::default()` + `with_*`, and `PartInfo::new(bytes, duration, segment_seq, part_index)`/`SegmentInfo::new(bytes, duration, segment_seq)` + `with_*` instead of struct literals (#2664).
+- BREAKING: every timescale is a `Timescale` end to end; none is a raw integer a consumer decides the meaning of zero for. `SegmentIndexBox::timescale`, `rtp::RtpStreamTrack::{clock_rate, new}`, `SdpTrack::clock_rate`, `TrackAligner::new` (its `(TrackId, bool, Timescale)` tuples, no longer reading a zero rate as 1 Hz), `DemuxEvent::ClockReference::clock_hz` and `clock_reference`, `IR_TIMESCALE`, `track_spec_from_quality_level`, `dash::TrickModeRepr::timescale` and `LlHlsSegmenter::with_part_target_at` take or hold `Timescale`; a zero `sidx.timescale` is `Error::InvalidValue`, and `CencDecryptor::demux` refuses a zero or missing `mvhd`/`mdhd` timescale (typed error) instead of falling back to 1000 Hz / the movie timescale. Added `VIDEO_CLOCK_TIMESCALE` and `SMOOTH_DEFAULT_TIMESCALE`. Migration: `90_000` -> `Timescale::from_nonzero(90_000)`; a runtime `u32` -> `Timescale::try_new(v)?` (#2657).
 - The RTMP spokes match `rtmp_runtime::message::MessageTypeId` instead of the `msg_type` byte constants for the message types they dispatch on (`SetChunkSize`, `Audio`, `Video`, `DataAmf0`); no public transmux type changes (#2666).
 
 #### Changed
+- PSI parsing/building in `ts_demux`/`ts_mux` now uses `dvb_si::tables::pat::PatSection` and `dvb_si::tables::pmt::PmtSection` instead of hand-rolled copies; behaviour and goldens unchanged (#2667).
+
+- BREAKING: `Sample` timing is now a single optional `SampleTiming { dts, pts, duration }` (`Sample.timing`) instead of separate `dts`/`pts`/`duration` fields; `TrackSpec.timescale` and `Track.timescale()` are now `broadcast_common::timescale::Timescale` (non-zero) instead of `u32`. Call sites that read `sample.dts`/`sample.pts`/`sample.duration` must go through `sample.timing.map(|t| t.dts)` etc., and timescale values through `.get()` (#2657).
+
 - BREAKING: uses `rtsp_runtime`'s typed `InterleavedFrame` payload (`Bytes`) and `ChunkSize` newtype (#2659).
 
 ## Removed

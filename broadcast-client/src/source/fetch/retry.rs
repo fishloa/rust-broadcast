@@ -13,7 +13,7 @@ use core::time::Duration;
 use crate::Event;
 use crate::events::MAX_SERVER_REFUSED_REASON_BYTES;
 
-use broadcast_common::backoff::RetrySchedule;
+use broadcast_common::backoff::{BackoffSteps, RetrySchedule};
 use broadcast_common::http_date::parse_http_date;
 
 use super::wall::WallClock;
@@ -79,6 +79,15 @@ impl Backoff {
     }
 }
 
+/// The `(steps_ms, cap_ms)` pair a [`BackoffSteps`] carries, for the constructors that still take
+/// millisecond tables: each entry is its whole-millisecond part, saturating at `u64::MAX`. The
+/// millisecond table is the wire precision the config replaced, so a sub-millisecond step is
+/// dropped here (and the constructors floor the survivors to at least one millisecond).
+pub(crate) fn backoff_ms(steps: &BackoffSteps) -> (Vec<u64>, u64) {
+    let ms = |d: Duration| u64::try_from(d.as_millis()).unwrap_or(u64::MAX);
+    (steps.steps.iter().map(|d| ms(*d)).collect(), ms(steps.cap))
+}
+
 /// Parse a `Retry-After` header for a `429`/`503` response (RFC 9110 §10.2.3), returning the
 /// wait in microseconds. Returns `0` for any other status, a missing or unparseable header, or a
 /// past HTTP-date. An HTTP-date is measured against the host wall clock when `wall` is given,
@@ -124,9 +133,8 @@ fn header_value<'h>(headers: &'h [(String, String)], name: &str) -> Option<&'h s
         .map(|(_, v)| v.as_str())
 }
 
-/// A wait in whole microseconds, rounded up so a jittered sub-microsecond delay still schedules
-/// a wake rather than collapsing to "now", saturating instead of wrapping.
-fn duration_us(wait: Duration) -> u64 {
+/// A wait in whole microseconds, saturating instead of wrapping.
+pub(crate) fn duration_us(wait: Duration) -> u64 {
     u64::try_from(wait.as_micros()).unwrap_or(u64::MAX)
 }
 
@@ -203,6 +211,16 @@ impl ReconnectTimer {
     /// The delay is the schedule's `[raw*5/6, raw]` band, the first retry being the raw delay
     /// itself.
     pub fn on_disconnected(&mut self, now_us: u64) -> Duration {
+        let wait = self.on_disconnected_exact(now_us);
+        Duration::from_micros(u64::try_from(wait.as_micros()).unwrap_or(u64::MAX))
+    }
+
+    /// [`Self::on_disconnected`] keeping the schedule's full precision.
+    ///
+    /// The jittered band carries sub-microsecond precision, and a caller that rounds the wait up
+    /// on every attempt walks the series off its table (a 1000 ms step became 941 ms on its second
+    /// attempt). A caller that arms a wait in whole units asks for them itself.
+    pub fn on_disconnected_exact(&mut self, now_us: u64) -> Duration {
         let healthy = self
             .connected_at
             .take()
@@ -218,7 +236,7 @@ impl ReconnectTimer {
 
 /// Holds the request queue until an instant: the latest hold wins, and the gate lifts itself the
 /// first time it is asked at or after that instant. A session's wake-up *pacing* floor (an HLS
-/// `WaitMs`, a retry's own wait) is a different rule from the retry series and stays separate.
+/// `Wait`, a retry's own wait) is a different rule from the retry series and stays separate.
 #[derive(Debug, Default)]
 pub(crate) struct RetryGate {
     until: Option<u64>,

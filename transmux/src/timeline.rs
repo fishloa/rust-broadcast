@@ -8,7 +8,7 @@ use crate::JoinDecision;
 use crate::Sample;
 use crate::TrackId;
 use crate::TrackSpec;
-use broadcast_common::timescale::{Rounding, to_micros};
+use broadcast_common::timescale::{Rounding, Timescale, to_micros};
 
 /// Default backward step that marks a new timeline, microseconds.
 pub const DEFAULT_JUMP_BACKWARD_US: u64 = 1_000_000;
@@ -68,7 +68,7 @@ enum Role {
 #[derive(Debug, Clone, Copy)]
 struct TrackInfo {
     role: Role,
-    timescale: u32,
+    timescale: Timescale,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -150,14 +150,13 @@ impl JumpDetector {
     }
 
     pub fn begin_epoch(&mut self, jumped: TrackId, sample: &Sample) {
-        let (Some(cfg), Some(pts), Some(info)) =
-            (self.config, sample.pts, self.tracks.get(&jumped).copied())
-        else {
+        let (Some(cfg), Some(pts), Some(info)) = (
+            self.config,
+            sample.timing.map(|t| t.pts),
+            self.tracks.get(&jumped).copied(),
+        ) else {
             return;
         };
-        if info.timescale == 0 {
-            return;
-        }
         let stale: BTreeSet<TrackId> = self
             .delivered
             .iter()
@@ -179,12 +178,10 @@ impl JumpDetector {
         if !epoch.stale.contains(&track) {
             return true;
         }
-        let (Some(pts), Some(info)) = (sample.pts, self.tracks.get(&track)) else {
+        let (Some(pts), Some(info)) = (sample.timing.map(|t| t.pts), self.tracks.get(&track))
+        else {
             return true;
         };
-        if info.timescale == 0 {
-            return true;
-        }
         let offset = Self::to_us(pts, info.timescale) - epoch.reference_us;
         if offset.abs() <= epoch.window_us {
             epoch.stale.remove(&track);
@@ -223,10 +220,10 @@ impl JumpDetector {
             Role::Audio => !self.has_video() && self.first_rendered_audio() == Some(track),
             Role::Other => false,
         };
-        (eligible && info.timescale != 0).then_some(info)
+        eligible.then_some(info)
     }
 
-    fn to_us(pts: i64, timescale: u32) -> i128 {
+    fn to_us(pts: i64, timescale: Timescale) -> i128 {
         to_micros(i128::from(pts), timescale, Rounding::TowardZero)
     }
 
@@ -237,7 +234,7 @@ impl JumpDetector {
         join: Option<JoinDecision>,
         now_us: u64,
     ) -> bool {
-        let (Some(cfg), Some(pts)) = (self.config, sample.pts) else {
+        let (Some(cfg), Some(pts)) = (self.config, sample.timing.map(|t| t.pts)) else {
             return false;
         };
         let Some(info) = self.watched(track, join) else {
@@ -259,7 +256,9 @@ impl JumpDetector {
         now_us: u64,
     ) {
         self.delivered.insert(track);
-        let Some(pts) = sample.pts else { return };
+        let Some(pts) = sample.timing.map(|t| t.pts) else {
+            return;
+        };
         let Some(info) = self.watched(track, join) else {
             return;
         };
@@ -317,7 +316,9 @@ mod tests {
 
     fn at(f: &Fixture, pts: i64) -> Sample {
         let mut s = f.sample.clone();
-        s.pts = Some(pts);
+        if let Some(t) = s.timing.as_mut() {
+            t.pts = pts;
+        }
         s
     }
 
@@ -404,7 +405,7 @@ mod tests {
     fn audio_is_watched_only_without_video() {
         let f = fixture();
         let audio = f.audio.track_id;
-        let rate = i64::from(f.audio.timescale);
+        let rate = i64::from(f.audio.timescale.get());
         let mut with_video = detector(&f, TimelineJumpConfig::default());
         with_video.record(audio, &at(&f, 0), None, T0);
         assert!(!with_video.is_jump(audio, &at(&f, 100 * rate), None, T0));

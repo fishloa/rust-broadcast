@@ -5,10 +5,12 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use container_probe::segment;
+use core::time::Duration;
 use mpeg_ts::ts::TS_SYNC_BYTE;
 use transmux::TrackId;
 
 use broadcast_common::Unpackage;
+use broadcast_common::timescale::Timescale;
 use broadcast_common::url_ref;
 use broadcast_hls::{
     ByteRange, EncryptionMethod, MapTag, MasterPlaylist, MediaKey, MediaPlaylist, MediaSegment,
@@ -21,13 +23,14 @@ use super::action::{Action, BlockingReload, KeyId, ResourceId};
 use super::error::{Error, Result};
 use super::output::{MasterSelection, Output, RenditionInfo, VariantInfo, VariantPolicy};
 use super::url;
+use broadcast_common::stage::Timestamp;
 use broadcast_common::units::MILLIS_PER_SEC;
 
 /// Movie timescale of the init segment synthesized for classic TS-segment
 /// HLS: the 90 kHz MPEG-2 system clock the PES PTS/DTS are expressed in
 /// (ISO/IEC 13818-1 §2.4.3.7), the same clock `transmux`'s TS demuxer stamps
 /// its samples with.
-const TS_MOVIE_TIMESCALE: u32 = 90_000;
+const TS_MOVIE_TIMESCALE: Timescale = transmux::VIDEO_CLOCK_TIMESCALE;
 
 /// How many Target Durations before the end of a live Playlist the first
 /// segment the client plays must start at the latest (RFC 8216 §6.3.3: "the
@@ -69,8 +72,10 @@ fn index_u64(i: usize) -> u64 {
 /// Half the Target Duration, the non-blocking reload cadence (RFC 8216
 /// §4.3.3.1: no more often than once per Target Duration), clamped because
 /// the Target Duration is untrusted.
-fn reload_wait_ms(target_duration: u32) -> u64 {
-    (u64::from(target_duration.max(1)).saturating_mul(MILLIS_PER_SEC) / 2).min(MAX_RELOAD_WAIT_MS)
+fn reload_wait(target_duration: u32) -> Duration {
+    let ms = (u64::from(target_duration.max(1)).saturating_mul(MILLIS_PER_SEC) / 2)
+        .min(MAX_RELOAD_WAIT_MS);
+    Duration::from_millis(ms)
 }
 
 /// Every `EXT-X-MAP` line of `text` with the identity-`KEYFORMAT` key in effect
@@ -308,7 +313,7 @@ fn program_date_time_ms(seg: &MediaSegment) -> Option<i64> {
 ///   advertising `CAN-BLOCK-RELOAD=NO`), every reload is a Blocking
 ///   Playlist Reload (RFC 8216bis §6.2.5.2) naming the next not-yet-seen
 ///   Partial Segment's `_HLS_msn`/`_HLS_part`. Otherwise reloads are plain GETs
-///   paced by an [`Action::WaitMs`] hint derived from `#EXT-X-TARGETDURATION`.
+///   paced by an [`Action::Wait`] hint derived from `#EXT-X-TARGETDURATION`.
 ///   `EXT-X-SKIP`/`CAN-SKIP-UNTIL` Playlist Delta Updates (RFC 8216bis §4.4.5.2)
 ///   are requested once a full-playlist baseline exists, and merged back into
 ///   a full view before further processing — see `merge_delta` internally.
@@ -364,12 +369,11 @@ pub struct HlsClient {
     master: Option<MasterSelection>,
 
     pending_actions: VecDeque<Action>,
-    /// The caller-clock instant at which the `WaitMs` now at the front of
+    /// The caller-clock instant at which the `Wait` now at the front of
     /// `pending_actions` was first observed by [`Self::poll_timeout`]; the
     /// wait's absolute deadline is `anchor + wait`. Cleared whenever an action
     /// is drained, so a later wait is anchored afresh.
-    #[cfg(feature = "std")]
-    wait_anchor: Option<std::time::Instant>,
+    wait_anchor: Option<Timestamp>,
     pending_outputs: VecDeque<Output>,
     /// Playlist references the guarded resolver refused (issue #2458), reported
     /// through [`Self::next_error`] in the order the playlist named them.
@@ -570,7 +574,6 @@ impl HlsClient {
             master: None,
             pending_actions,
             pending_errors: VecDeque::new(),
-            #[cfg(feature = "std")]
             wait_anchor: None,
             pending_outputs: VecDeque::new(),
             inits: BTreeMap::new(),
@@ -672,28 +675,25 @@ impl HlsClient {
 
     /// Drain the next IO [`Action`] the caller must perform, if any.
     pub fn poll(&mut self) -> Option<Action> {
-        #[cfg(feature = "std")]
-        {
-            self.wait_anchor = None;
-        }
+        self.wait_anchor = None;
         self.pending_actions.pop_front()
     }
 
-    /// The `WaitMs` hint at the front of the action queue, as a `Duration`;
+    /// The `Wait` hint at the front of the action queue, as a `Duration`;
     /// `None` when the next queued action is a fetch (or nothing is queued). A
     /// wait is queued BEHIND the fetches `on_playlist` queued with it, so it is
     /// reported only once those have been drained with [`Self::poll`].
     /// Peeking never consumes it, and the core never reads a clock.
     pub fn next_wait(&self) -> Option<core::time::Duration> {
         match self.pending_actions.front() {
-            Some(Action::WaitMs(ms)) => Some(core::time::Duration::from_millis(*ms)),
+            Some(Action::Wait(wait)) => Some(*wait),
             _ => None,
         }
     }
 
-    /// The absolute deadline of the queued `WaitMs`, for callers that schedule
-    /// on `std::time::Instant`: `None` unless a wait is at the front of the
-    /// queue (see [`Self::next_wait`]).
+    /// The absolute deadline of the queued `Wait`, on the caller's own clock
+    /// (a [`Timestamp`], the same one every fetch callback takes): `None`
+    /// unless a wait is at the front of the queue (see [`Self::next_wait`]).
     ///
     /// The deadline is anchored the first time this is called for a given wait
     /// (`now` + the wait) and every later call returns that SAME instant, until
@@ -701,11 +701,10 @@ impl HlsClient {
     /// wake-ups therefore never re-arms the timer. The core has no clock of its
     /// own, so "when the wait was scheduled" is the caller's `now` at the first
     /// query: query as soon as the wait reaches the front.
-    #[cfg(feature = "std")]
-    pub fn poll_timeout(&mut self, now: std::time::Instant) -> Option<std::time::Instant> {
+    pub fn poll_timeout(&mut self, now: Timestamp) -> Option<Timestamp> {
         let wait = self.next_wait()?;
         let anchor = *self.wait_anchor.get_or_insert(now);
-        Some(anchor + wait)
+        Some(anchor.saturating_add(wait))
     }
 
     /// Drain the next [`Output`] event, if any.
@@ -960,7 +959,7 @@ impl HlsClient {
             });
             if blocking.is_none() {
                 self.pending_actions
-                    .push_back(Action::WaitMs(reload_wait_ms(playlist.target_duration)));
+                    .push_back(Action::Wait(reload_wait(playlist.target_duration)));
             }
         }
 
@@ -980,7 +979,7 @@ impl HlsClient {
     fn request_full_playlist(&mut self, delta: &MediaPlaylist) -> Error {
         if self.full_reload_requested {
             self.pending_actions
-                .push_back(Action::WaitMs(reload_wait_ms(delta.target_duration)));
+                .push_back(Action::Wait(reload_wait(delta.target_duration)));
         }
         self.full_reload_requested = true;
         self.pending_actions.push_back(Action::FetchPlaylist {
@@ -3089,7 +3088,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "std")]
     fn next_wait_reports_the_queued_wait_hint_without_consuming_it() {
         use core::time::Duration;
         let mut c = HlsClient::new(HlsClientConfig::new("http://h/p.m3u8"));
@@ -3101,7 +3099,7 @@ mod tests {
         .unwrap();
         while c.next_wait().is_none() {
             c.poll()
-                .expect("a WaitMs must be queued after a non-blocking live playlist");
+                .expect("a Wait must be queued after a non-blocking live playlist");
         }
         assert_eq!(
             c.next_wait(),
@@ -3115,19 +3113,21 @@ mod tests {
         );
         // The deadline is ABSOLUTE: re-queries at later `now`s (unrelated
         // wake-ups) return the same instant instead of re-arming the wait.
-        let t0 = std::time::Instant::now();
+        let t0 = Timestamp::ZERO;
         let first = c.poll_timeout(t0).expect("a wait is at the front");
-        assert_eq!(first, t0 + Duration::from_millis(1000));
+        assert_eq!(first, Timestamp::from_millis(1000));
         for later in [250u64, 600, 999, 5000] {
             assert_eq!(
-                c.poll_timeout(t0 + Duration::from_millis(later)),
+                c.poll_timeout(Timestamp::from_millis(later)),
                 Some(first),
                 "re-query at +{later} ms must not slide the deadline"
             );
         }
         // Draining the wait supersedes it: the next wait is anchored afresh.
-        assert!(matches!(c.poll(), Some(Action::WaitMs(1000))));
-        assert_eq!(c.poll_timeout(t0 + Duration::from_secs(9)), None);
+        assert!(
+            matches!(c.poll(), Some(Action::Wait(wait)) if wait == Duration::from_millis(1000))
+        );
+        assert_eq!(c.poll_timeout(Timestamp::from_millis(9_000)), None);
     }
 
     /// What the client reads from `EXT-X-PROGRAM-DATE-TIME`: the production parser, in Unix

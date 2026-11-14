@@ -4,6 +4,12 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use broadcast_client::{Action, Config, Event, Session};
+use broadcast_common::stage::Timestamp;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const TS_PACKET: usize = 188;
 const SEGMENTS: usize = 7;
@@ -71,7 +77,7 @@ fn run(segs: &[Vec<u8>], disc_at: Option<usize>) -> Outcome {
         }
         pl
     };
-    let mut s = Session::open("http://h/p/index.m3u8", Config::default(), 0).unwrap();
+    let mut s = Session::open("http://h/p/index.m3u8", Config::default(), ts(0)).unwrap();
     let mut out = Outcome::default();
     let mut now = 0u64;
     while now <= RUN_US {
@@ -79,7 +85,7 @@ fn run(segs: &[Vec<u8>], disc_at: Option<usize>) -> Outcome {
         let pl = playlist(visible, visible == n, visible.saturating_sub(WINDOW));
         let mut pending: VecDeque<(u32, String)> = VecDeque::new();
         loop {
-            while let Some(a) = s.poll(now) {
+            while let Some(a) = s.poll(ts(now)) {
                 if let Action::HttpRequest { conn, url, .. } = a {
                     pending.push_back((conn, url));
                 }
@@ -103,12 +109,12 @@ fn run(segs: &[Vec<u8>], disc_at: Option<usize>) -> Outcome {
                 c,
                 200,
                 &[("Content-Length".into(), body.len().to_string())],
-                now,
+                ts(now),
             );
             for chunk in body.chunks(CHUNK) {
-                s.on_data(c, chunk, now);
+                s.on_data(c, chunk, ts(now));
             }
-            s.on_closed(c, None, now);
+            s.on_closed(c, None, ts(now));
             drain(&mut s, &mut out);
         }
         drain(&mut s, &mut out);

@@ -4,6 +4,12 @@ use std::sync::OnceLock;
 
 use broadcast_auth::{Credentials as AuthCredentials, Verifier};
 use broadcast_client::{Action, Config, Credentials, Event, Status};
+use broadcast_common::stage::Timestamp;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 use support::rtsp_host::{
     BASE_URL, DESCRIBE, Host, MediaFixture, SEC, Server, connects, quiet_config, samples_of,
 };
@@ -300,7 +306,7 @@ fn the_discontinuity_follows_a_connection_that_played_and_precedes_the_first_new
     host.connect();
     host.deliver_all(&fixture().frames()[..SOME_FRAMES]);
     host.events();
-    host.session.reconnect(host.now + MIN_RECONNECT);
+    host.session.reconnect(ts(host.now + MIN_RECONNECT));
     host.advance_to(host.now + MIN_RECONNECT);
     finish_connect(&mut host);
     host.deliver_all(&fixture().frames()[..SOME_FRAMES]);
@@ -332,7 +338,7 @@ fn a_played_connection_that_ends_reports_reconnecting_attempt_zero_then_live() {
     host.deliver_all(&fixture().frames()[..SOME_FRAMES]);
     host.events();
     let conn = host.conn.expect("live connection");
-    host.session.on_closed(conn, None, host.now);
+    host.session.on_closed(conn, None, ts(host.now));
     host.drain();
     host.advance_to(host.now + MIN_RECONNECT);
     finish_connect(&mut host);

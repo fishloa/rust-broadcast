@@ -62,6 +62,7 @@ use crate::TrackId;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Demand, Stage, Timestamp};
 
 use crate::error::{Error, Result};
@@ -133,7 +134,7 @@ struct TrackState {
 /// #         bit_depth_chroma_minus8: None,
 /// #         sps_ext: vec![],
 /// #     };
-/// #     TrackSpec::new(transmux::TrackId::new(1), 90_000, CodecConfig::Avc {
+/// #     TrackSpec::new(transmux::TrackId::new(1), broadcast_common::timescale::Timescale::from_nonzero(90_000), CodecConfig::Avc {
 /// #         config: AVCConfigurationBox::new(record),
 /// #         width: 16,
 /// #         height: 16,
@@ -146,7 +147,7 @@ struct TrackState {
 /// #     Sample::new(vec![0u8; 4], Some(dts), Some(dts), Some(1000), sync)
 /// # }
 /// // 2 s target segments, one video frame per chunk (per-frame LL).
-/// let mut seg = LlSegmenter::new(vec![spec()], 1000, 2.0, 1).unwrap();
+/// let mut seg = LlSegmenter::new(vec![spec()], broadcast_common::timescale::Timescale::from_nonzero(1000), 2.0, 1).unwrap();
 /// let init = seg.init_segment().unwrap();       // ftyp + moov
 /// assert_eq!(&init[4..8], b"ftyp");
 /// seg.push(transmux::TrackId::new(1), au(true)).unwrap();               // keyframe
@@ -158,7 +159,7 @@ struct TrackState {
 /// ```
 pub struct LlSegmenter {
     tracks: Vec<TrackState>,
-    movie_timescale: u32,
+    movie_timescale: broadcast_common::timescale::Timescale,
     /// Index into `tracks` of the segmentation anchor (keyframe cut boundary).
     anchor: usize,
     /// Target segment duration in the *anchor track's* media timescale.
@@ -202,10 +203,11 @@ impl LlSegmenter {
     /// or no track is anchor-capable (every track is section-carried).
     pub fn new(
         tracks: Vec<TrackSpec>,
-        movie_timescale: u32,
+        movie_timescale: impl Into<broadcast_common::timescale::Timescale>,
         target_duration_secs: f64,
         chunk_samples: usize,
     ) -> Result<Self> {
+        let movie_timescale = movie_timescale.into();
         if tracks.is_empty() {
             return Err(Error::InvalidInput("ll segmenter needs at least one track"));
         }
@@ -241,7 +243,7 @@ impl LlSegmenter {
         // the *audio* track and its segments did not begin on an IRAP.
         let anchor = choose_anchor(tracks.iter().map(|t| &t.config))?;
 
-        let anchor_timescale = tracks[anchor].timescale as f64;
+        let anchor_timescale = tracks[anchor].timescale.get() as f64;
         let target_ticks = ((target_duration_secs * anchor_timescale) as u64).max(1);
 
         let tracks = tracks
@@ -375,7 +377,7 @@ impl LlSegmenter {
         // first `chunk_samples` of the anchor's pending samples. Every track then
         // drains its own samples that fall inside that span, so audio rides each
         // chunk instead of only the segment's final one (audit r05-W27).
-        let anchor_scale = self.tracks[anchor].spec.timescale.max(1) as u64;
+        let anchor_scale = self.tracks[anchor].spec.timescale.get() as u64;
         let anchor_take = if final_chunk {
             self.tracks[anchor].pending.len()
         } else {
@@ -408,7 +410,7 @@ impl LlSegmenter {
                 if i == anchor {
                     return anchor_take;
                 }
-                let track_scale = t.spec.timescale.max(1) as u64;
+                let track_scale = t.spec.timescale.get() as u64;
                 let track_span = chunk_span.saturating_mul(track_scale) / anchor_scale;
                 take_span(t, track_span)
             })
@@ -556,7 +558,7 @@ impl Package for LlSegmenter {
         // accumulated from sample durations.
         struct Cursor<'a> {
             track_id: TrackId,
-            timescale: u64,
+            timescale: Timescale,
             samples: &'a [Sample],
             idx: usize,
             dts_ticks: u64,
@@ -571,7 +573,7 @@ impl Package for LlSegmenter {
             .iter()
             .map(|t| Cursor {
                 track_id: t.spec.track_id,
-                timescale: (t.spec.timescale as u64).max(1),
+                timescale: t.spec.timescale,
                 samples: &t.samples,
                 idx: 0,
                 dts_ticks: 0,
@@ -593,9 +595,9 @@ impl Package for LlSegmenter {
                 best = Some(match best {
                     None => i,
                     Some(b) => {
-                        // c.dts (sec) < best.dts (sec)  ⇔  c.ticks*best.ts < best.ticks*c.ts
-                        let lhs = c.dts_ticks as u128 * cursors[b].timescale as u128;
-                        let rhs = cursors[b].dts_ticks as u128 * c.timescale as u128;
+                        // c.timing.map(|t| t.dts) (sec) < best.dts (sec)  ⇔  c.ticks*best.ts < best.ticks*c.ts
+                        let lhs = c.dts_ticks as u128 * u128::from(cursors[b].timescale.get());
+                        let rhs = cursors[b].dts_ticks as u128 * u128::from(c.timescale.get());
                         if lhs < rhs || (lhs == rhs && !c.is_anchor && cursors[b].is_anchor) {
                             i
                         } else {

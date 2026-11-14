@@ -113,7 +113,7 @@ fn base_config(bind: SocketAddr, input: InputSpec) -> Config {
     Config::default()
         .with_bind(bind.to_string())
         .with_target_duration_secs(0.5)
-        .with_part_target_ms(100)
+        .with_part_target(Duration::from_millis(100))
         .with_window_segments(8)
         .with_routes(vec![Route {
             name: "cam".to_string(),
@@ -421,6 +421,7 @@ async fn rtmp_dispatch_serves_real_media_end_to_end() {
 
 mod custom_dispatch_driver_backed {
     use super::*;
+    use broadcast_common::timescale::Timescale;
     use std::collections::VecDeque;
     use std::convert::Infallible;
     use std::num::NonZeroUsize;
@@ -716,7 +717,7 @@ mod custom_dispatch_driver_backed {
                     self.announced = true;
                     let track_1 = TrackSpec::new(
                         TrackId::new(1),
-                        90_000,
+                        Timescale::from_nonzero(90_000),
                         CodecConfig::Avc {
                             config: transmux::avc_config_from_sprop(
                                 "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==",
@@ -728,7 +729,7 @@ mod custom_dispatch_driver_backed {
                     );
                     let track_7 = TrackSpec::new(
                         TrackId::new(7),
-                        90_000,
+                        Timescale::from_nonzero(90_000),
                         CodecConfig::Avc {
                             config: transmux::avc_config_from_sprop(
                                 "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==",

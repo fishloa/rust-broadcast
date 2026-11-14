@@ -195,15 +195,15 @@ impl MediaClock {
     /// as the baseline for the next call. See the type docs for the
     /// duration-then-dts-delta rule.
     pub fn tick(&mut self, sample: &Sample) -> u64 {
-        let increment = match sample.duration {
+        let increment = match sample.timing.map(|t| t.duration) {
             Some(duration) if duration > 0 => u64::from(duration),
-            _ => match (self.last_dts, sample.dts) {
+            _ => match (self.last_dts, sample.timing.map(|t| t.dts)) {
                 (Some(previous), Some(now)) => now.saturating_sub(previous).max(0) as u64,
                 _ => 0,
             },
         };
-        if sample.dts.is_some() {
-            self.last_dts = sample.dts;
+        if sample.timing.map(|t| t.dts).is_some() {
+            self.last_dts = sample.timing.map(|t| t.dts);
         }
         increment
     }
@@ -312,7 +312,7 @@ struct TrackState {
 /// #         bit_depth_chroma_minus8: None,
 /// #         sps_ext: vec![],
 /// #     };
-/// #     TrackSpec::new(transmux::TrackId::new(1), 90_000, CodecConfig::Avc {
+/// #     TrackSpec::new(transmux::TrackId::new(1), broadcast_common::timescale::Timescale::from_nonzero(90_000), CodecConfig::Avc {
 /// #         config: AVCConfigurationBox::new(record),
 /// #         width: 16,
 /// #         height: 16,
@@ -324,7 +324,7 @@ struct TrackState {
 /// #     let dts = NEXT_DTS.fetch_add(1000, Ordering::Relaxed);
 /// #     Sample::new(vec![0u8; 4], Some(dts), Some(dts), Some(1000), sync)
 /// # }
-/// let mut seg = Segmenter::new(vec![spec()], 1000, 2.0).unwrap();
+/// let mut seg = Segmenter::new(vec![spec()], broadcast_common::timescale::Timescale::from_nonzero(1000), 2.0).unwrap();
 /// let init = seg.init_segment().unwrap();      // ftyp + moov
 /// assert_eq!(&init[4..8], b"ftyp");
 /// seg.push(transmux::TrackId::new(1), au(true)).unwrap();              // keyframe
@@ -335,7 +335,7 @@ struct TrackState {
 /// ```
 pub struct Segmenter {
     tracks: Vec<TrackState>,
-    movie_timescale: u32,
+    movie_timescale: broadcast_common::timescale::Timescale,
     /// Index into `tracks` of the segmentation anchor (keyframe cut boundary).
     anchor: usize,
     /// Target segment duration in the *anchor track's* media timescale.
@@ -374,9 +374,10 @@ impl Segmenter {
     /// ever advance — see [`choose_anchor`]).
     pub fn new(
         tracks: Vec<TrackSpec>,
-        movie_timescale: u32,
+        movie_timescale: impl Into<broadcast_common::timescale::Timescale>,
         target_duration_secs: f64,
     ) -> Result<Self> {
+        let movie_timescale: broadcast_common::timescale::Timescale = movie_timescale.into();
         if tracks.is_empty() {
             return Err(Error::InvalidInput("segmenter needs at least one track"));
         }
@@ -408,7 +409,7 @@ impl Segmenter {
         // boundary at all and is refused here rather than stalling later.
         let anchor = choose_anchor(tracks.iter().map(|t| &t.config))?;
 
-        let anchor_timescale = tracks[anchor].timescale as f64;
+        let anchor_timescale = tracks[anchor].timescale.get() as f64;
         let target_ticks = (target_duration_secs * anchor_timescale) as u64;
         let target_ticks = target_ticks.max(1); // never a zero-length target
 

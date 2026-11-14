@@ -77,7 +77,7 @@ fn print_track_summary(media: &Media) {
     println!(
         "IR: {} track(s), movie timescale {} ticks/s",
         media.tracks.len(),
-        media.movie_timescale
+        media.movie_timescale.get()
     );
     for track in &media.tracks {
         println!(
@@ -85,7 +85,7 @@ fn print_track_summary(media: &Media) {
             track.track_id(),
             describe(track.config()),
             track.samples.len(),
-            track.timescale(),
+            track.timescale().get(),
         );
     }
 }

@@ -1,7 +1,13 @@
 use crate::support::udp_host::UdpHost;
 use broadcast_client::{Config, Error, Event, Session, SourceKind};
 use broadcast_common::Serialize;
+use broadcast_common::stage::Timestamp;
 use rtp_packet::RtpPacket;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const URL: &str = "rtp://127.0.0.1:5004";
 const SPROP: &str = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
@@ -67,7 +73,7 @@ fn the_sdp_tracks_are_announced_when_the_socket_is_bound_before_any_packet() {
         .collect();
     assert_eq!(tracks.len(), 1);
     assert_eq!(tracks[0].len(), 1);
-    assert_eq!(tracks[0][0].timescale, CLOCK_HZ);
+    assert_eq!(tracks[0][0].timescale.get(), CLOCK_HZ);
     assert_eq!(host.session.payload_bytes(), 0);
 }
 
@@ -119,11 +125,11 @@ fn a_reconnect_flushes_the_access_units_still_held() {
 
 #[test]
 fn an_sdp_needs_an_rtp_url_and_a_playable_media_section() {
-    let open = |url: &str, sdp: &str| Session::open(url, config(Some(sdp.to_string())), 0);
+    let open = |url: &str, sdp: &str| Session::open(url, config(Some(sdp.to_string())), ts(0));
     let mut udp = config(Some(sdp()));
     udp.kind = SourceKind::Udp;
     assert!(matches!(
-        Session::open("udp://127.0.0.1:5004", udp, 0),
+        Session::open("udp://127.0.0.1:5004", udp, ts(0)),
         Err(Error::InvalidConfig { field: "udp.sdp" })
     ));
     assert!(matches!(

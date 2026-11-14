@@ -84,8 +84,9 @@ use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 /// real, not a fabricated placeholder.
 const SPROP: &str = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
 /// 90 kHz video timescale — 1/30 s per access unit at 30 fps.
-const VIDEO_TIMESCALE: u32 = 90_000;
-const FRAME_DUR: u32 = VIDEO_TIMESCALE / 30;
+const VIDEO_TIMESCALE: broadcast_common::timescale::Timescale =
+    broadcast_common::timescale::Timescale::from_nonzero(90_000);
+const FRAME_DUR: u32 = VIDEO_TIMESCALE.get() / 30;
 /// Enough synthetic frames (2 s @ 30 fps) that a real scheme's samples would
 /// already have landed in the `Trunk`.
 const FRAME_COUNT: u32 = 60;
@@ -321,7 +322,7 @@ async fn main() {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(1.0)
-            .with_part_target_ms(500)
+            .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(8),
     ));
     let cancel = tokio_util::sync::CancellationToken::new();
@@ -331,7 +332,7 @@ async fn main() {
         params: serde_json::Value::Null,
         store: store.clone(),
         target_duration_secs: 1.0,
-        part_target_ms: 500,
+        part_target: std::time::Duration::from_millis(500),
         cancel,
     })
     .expect("factory must succeed");

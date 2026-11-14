@@ -170,7 +170,7 @@ fn pair() -> (Livesim2Pair, i64, i64) {
         for (set, name) in [(0usize, "A48"), (1usize, "V300")] {
             let planned =
                 plan_representation(&mpd, RepRef::at(0, set, 0), &PlanOptions::default()).unwrap();
-            let scale = planned.plan.timescale() as i64;
+            let scale = i64::from(planned.plan.timescale().get());
             for s in planned.plan.iter() {
                 let end = s.time_ticks as i64 + s.duration_ticks as i64;
                 avail.insert(

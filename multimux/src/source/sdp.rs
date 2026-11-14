@@ -185,6 +185,7 @@ pub fn load_sdp(spec: &str) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use broadcast_common::timescale::Timescale;
     use transmux::rtp::RtpMediaKind;
 
     // Minimal H.264 SDP (one video media) with a real sprop-parameter-sets
@@ -204,7 +205,7 @@ a=control:streamid=0\r\n";
         assert_eq!(tracks.len(), 1);
         let t = &tracks[0];
         assert!(matches!(t.kind, RtpMediaKind::H264));
-        assert_eq!(t.clock_rate, 90_000);
+        assert_eq!(t.clock_rate, Timescale::from_nonzero(90_000));
         assert_eq!(t.channel, 0, "first media gets RTP channel 0");
         assert_eq!(t.control.as_deref(), Some("streamid=0"));
         assert_eq!(t.track_id, TrackId::new(1));

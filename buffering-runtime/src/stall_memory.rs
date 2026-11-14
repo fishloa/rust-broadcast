@@ -36,7 +36,7 @@ impl StallMemorySnapshot {
     pub const fn aged(self, elapsed_us: Micros) -> Self {
         Self {
             peak_us: self.peak_us,
-            age_us: self.age_us.saturating_add(elapsed_us),
+            age_us: Micros(self.age_us.0.saturating_add(elapsed_us.0)),
         }
     }
 }
@@ -105,16 +105,16 @@ impl MaxHold {
 
     pub(crate) fn snapshot(&self, now: u64) -> StallMemorySnapshot {
         match (self.at, self.pending_age) {
-            (Some(at), _) => StallMemorySnapshot::new(self.peak, age_at(now, at)),
-            (None, Some(age)) => StallMemorySnapshot::new(self.peak, age),
+            (Some(at), _) => StallMemorySnapshot::new(Micros(self.peak), Micros(age_at(now, at))),
+            (None, Some(age)) => StallMemorySnapshot::new(Micros(self.peak), Micros(age)),
             (None, None) => StallMemorySnapshot::default(),
         }
     }
 
     pub(crate) fn restore(&mut self, s: StallMemorySnapshot) {
-        self.peak = s.peak_us;
+        self.peak = s.peak_us.0;
         self.at = None;
-        self.pending_age = Some(s.age_us);
+        self.pending_age = Some(s.age_us.0);
     }
 
     pub(crate) fn clear(&mut self) {

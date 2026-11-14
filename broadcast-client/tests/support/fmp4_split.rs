@@ -1,4 +1,5 @@
 const BOX_HEADER: usize = 8;
+
 const LARGESIZE_HEADER: usize = 16;
 const SIZE_IS_LARGE: u32 = 1;
 const SIZE_TO_EOF: u32 = 0;

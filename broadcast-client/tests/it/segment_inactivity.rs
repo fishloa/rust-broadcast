@@ -8,6 +8,12 @@ use crate::support;
 use std::collections::BTreeSet;
 
 use broadcast_client::{Action, Config, ErrorKind, Event, ResumeMode, Session, Status};
+use broadcast_common::stage::Timestamp;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 use support::hls_host::{
     Host, MS, SEC, TS_PLAYLIST_URL, TS_SEG0_URL, TS_SEG1_URL, hls_config, ts_playlist, ts_segment,
 };
@@ -66,7 +72,7 @@ struct Drive {
 impl Drive {
     fn new(config: Config) -> Self {
         Self {
-            session: Session::open(TS_PLAYLIST_URL, config, 0).expect("open"),
+            session: Session::open(TS_PLAYLIST_URL, config, ts(0)).expect("open"),
             now: 0,
             pending: Vec::new(),
             wakes: BTreeSet::new(),
@@ -77,7 +83,7 @@ impl Drive {
     }
 
     fn collect(&mut self) {
-        while let Some(action) = self.session.poll(self.now) {
+        while let Some(action) = self.session.poll(ts(self.now)) {
             match action {
                 Action::HttpRequest {
                     conn,
@@ -100,8 +106,8 @@ impl Drive {
                     self.closes.push((conn, self.now));
                     self.pending.retain(|r| r.conn != conn);
                 }
-                Action::WakeAt(t) if t > self.now => {
-                    self.wakes.insert(t);
+                Action::WakeAt(t) if t.as_micros() > self.now => {
+                    self.wakes.insert(t.as_micros());
                 }
                 _ => {}
             }
@@ -114,16 +120,18 @@ impl Drive {
     fn deliver(&mut self, conn: u32, serve: Serve) {
         match serve {
             Serve::Whole(status, headers, body) => {
-                self.session.on_response(conn, status, &headers, self.now);
+                self.session
+                    .on_response(conn, status, &headers, ts(self.now));
                 if !body.is_empty() {
-                    self.session.on_data(conn, &body, self.now);
+                    self.session.on_data(conn, &body, ts(self.now));
                 }
-                self.session.on_closed(conn, None, self.now);
+                self.session.on_closed(conn, None, ts(self.now));
             }
             Serve::Stall(status, headers, prefix) => {
-                self.session.on_response(conn, status, &headers, self.now);
+                self.session
+                    .on_response(conn, status, &headers, ts(self.now));
                 if !prefix.is_empty() {
-                    self.session.on_data(conn, &prefix, self.now);
+                    self.session.on_data(conn, &prefix, ts(self.now));
                 }
             }
         }
@@ -205,7 +213,7 @@ fn samples_of(events: &[Event]) -> Vec<Fingerprint> {
                 });
                 Some((
                     track.value(),
-                    format!("{:?}", sample.dts),
+                    format!("{:?}", sample.timing.map(|t| t.dts)),
                     sample.data.len(),
                     digest,
                 ))
@@ -217,7 +225,7 @@ fn samples_of(events: &[Event]) -> Vec<Fingerprint> {
 
 fn config() -> Config {
     let mut config = hls_config();
-    config.segment_inactivity_timeout_us = INACTIVITY_US;
+    config.segment_inactivity_timeout = std::time::Duration::from_micros(INACTIVITY_US);
     config
 }
 
@@ -487,7 +495,7 @@ fn a_silent_segment_closes_at_exactly_the_inactivity_timeout_and_resumes_after_t
 fn nothing_closes_one_microsecond_before_the_timeout() {
     fn collect(session: &mut Session, now: u64) -> (Vec<(u32, String)>, Vec<u32>) {
         let (mut requests, mut closes) = (Vec::new(), Vec::new());
-        while let Some(action) = session.poll(now) {
+        while let Some(action) = session.poll(ts(now)) {
             match action {
                 Action::HttpRequest { conn, url, .. } => requests.push((conn, url)),
                 Action::Close { conn } => closes.push(conn),
@@ -496,13 +504,13 @@ fn nothing_closes_one_microsecond_before_the_timeout() {
         }
         (requests, closes)
     }
-    let mut session = Session::open(TS_PLAYLIST_URL, config(), 0).unwrap();
+    let mut session = Session::open(TS_PLAYLIST_URL, config(), ts(0)).unwrap();
     let (opened, _) = collect(&mut session, 0);
     let playlist_conn = opened[0].0;
     let playlist = ts_playlist();
-    session.on_response(playlist_conn, 200, &[], 0);
-    session.on_data(playlist_conn, &playlist, 0);
-    session.on_closed(playlist_conn, None, 0);
+    session.on_response(playlist_conn, 200, &[], ts(0));
+    session.on_data(playlist_conn, &playlist, ts(0));
+    session.on_closed(playlist_conn, None, ts(0));
     let (segments, _) = collect(&mut session, 0);
     let (seg_conn, _) = segments
         .iter()
@@ -510,8 +518,8 @@ fn nothing_closes_one_microsecond_before_the_timeout() {
         .cloned()
         .unwrap();
     let head = representation_headers(100_000, Some(ETAG));
-    session.on_response(seg_conn, 200, &head, 1_000);
-    session.on_data(seg_conn, &[0u8; 100], 2_000);
+    session.on_response(seg_conn, 200, &head, ts(1_000));
+    session.on_data(seg_conn, &[0u8; 100], ts(2_000));
     let deadline = 2_000 + INACTIVITY_US;
     assert!(!collect(&mut session, deadline - 1).1.contains(&seg_conn));
     assert!(collect(&mut session, deadline).1.contains(&seg_conn));
@@ -655,7 +663,7 @@ fn a_trickle_that_never_pauses_for_the_timeout_is_never_closed() {
         seg.conn,
         200,
         &representation_headers(body.len(), Some(ETAG)),
-        0,
+        ts(0),
     );
     let chunks = 12;
     let step = body.len().div_ceil(chunks);
@@ -668,9 +676,9 @@ fn a_trickle_that_never_pauses_for_the_timeout_is_never_closed() {
             "closed while bytes kept arriving, at {} s",
             drive.now / SEC
         );
-        drive.session.on_data(seg.conn, piece, drive.now);
+        drive.session.on_data(seg.conn, piece, ts(drive.now));
     }
-    drive.session.on_closed(seg.conn, None, drive.now);
+    drive.session.on_closed(seg.conn, None, ts(drive.now));
     drive.collect();
     assert!(drive.stalls().is_empty());
     assert!(drive.closed_at(seg.conn).is_none());
@@ -797,12 +805,12 @@ fn a_segment_that_stalls_every_time_exhausts_the_retry_budget() {
 #[test]
 fn a_playlist_is_exempt_and_only_the_request_timeout_bounds_it() {
     let mut config = config();
-    config.request_timeout_us = 20 * SEC;
-    let mut session = Session::open(TS_PLAYLIST_URL, config, 0).unwrap();
+    config.request_timeout = std::time::Duration::from_secs(20);
+    let mut session = Session::open(TS_PLAYLIST_URL, config, ts(0)).unwrap();
     let mut conn = None;
     let mut closed = false;
     for now in [0, INACTIVITY_US, 2 * INACTIVITY_US, 20 * SEC - 1, 20 * SEC] {
-        while let Some(action) = session.poll(now) {
+        while let Some(action) = session.poll(ts(now)) {
             match action {
                 Action::HttpRequest { conn: c, .. } => conn = Some(c),
                 Action::Close { conn: c } => {

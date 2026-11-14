@@ -67,7 +67,7 @@ struct Cli {
     target_duration: f64,
 
     /// LL-HLS part target, in milliseconds.
-    #[arg(long, value_name = "MS", default_value_t = Config::default().part_target_ms)]
+    #[arg(long, value_name = "MS", default_value_t = u32::try_from(Config::default().part_target.as_millis()).unwrap_or(u32::MAX))]
     part_ms: u32,
 
     /// Rolling window depth: full segments retained in RAM.
@@ -170,12 +170,12 @@ fn build_config(cli: Cli) -> Result<Config> {
         .name
         .expect("clap requires --name whenever --rtsp is given");
 
-    let config = Config {
-        bind: cli.bind,
-        target_duration_secs: cli.target_duration,
-        part_target_ms: cli.part_ms,
-        window_segments: cli.window,
-        routes: vec![Route {
+    let config = Config::default()
+        .with_bind(cli.bind)
+        .with_target_duration_secs(cli.target_duration)
+        .with_part_target(std::time::Duration::from_millis(u64::from(cli.part_ms)))
+        .with_window_segments(cli.window)
+        .with_routes(vec![Route {
             name,
             input: InputSpec::Rtsp {
                 url: rtsp_url,
@@ -191,9 +191,7 @@ fn build_config(cli: Cli) -> Result<Config> {
             closed_caption_overrides: Vec::new(),
             audio_profiles: Vec::new(),
             subtitles: true,
-        }],
-        ..Config::default()
-    };
+        }]);
     config.validate()?;
     Ok(config)
 }

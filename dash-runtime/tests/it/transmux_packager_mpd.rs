@@ -68,7 +68,7 @@ fn number_addressing_round_trip() {
             .find(|r| r.id == id)
             .expect("representation");
         assert!(rep.bandwidth > 0, "bandwidth must round-trip as positive");
-        assert!(st.multi.timescale > 0, "timescale must round-trip");
+        assert!(st.multi.timescale.get() > 0, "timescale must round-trip");
         assert_eq!(st.multi.start_number, pkg.start_number);
         assert!(
             st.multi.duration.is_some(),

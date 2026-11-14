@@ -4,11 +4,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use broadcast_client::{Action, Config, Event, Session, Status};
+use broadcast_client::{Action, Config, Event, Session, Status, TransportError};
 use transmux::Sample;
 
 use super::dash_common::loopback;
 use super::dash_common::world::{self, HttpReq, Method, Outcome, World};
+use super::ts;
 
 pub type Headers = Vec<(String, String)>;
 
@@ -317,7 +318,7 @@ pub struct DashSim {
 
 impl DashSim {
     pub fn new(url: &str, config: Config, world: World, backend: Box<dyn Backend>) -> Self {
-        let session = Session::open(url, config, world.mono()).expect("open");
+        let session = Session::open(url, config, ts(world.mono())).expect("open");
         Self::with_session(session, world, backend)
     }
 
@@ -357,7 +358,7 @@ impl DashSim {
     pub fn give_host_clock(&mut self) {
         let mono = self.world.mono();
         let unix = self.world.host_unix();
-        self.session.set_wall_clock(mono, unix);
+        self.session.set_wall_clock(ts(mono), unix);
         self.host_clock_calls.push((mono, unix));
     }
 
@@ -434,7 +435,7 @@ impl DashSim {
     pub fn poll_all(&mut self) {
         loop {
             let now = self.world.mono();
-            let Some(a) = self.session.poll(now) else {
+            let Some(a) = self.session.poll(ts(now)) else {
                 break;
             };
             match a {
@@ -451,8 +452,8 @@ impl DashSim {
                     self.closes.push(conn);
                     self.close_log.push((conn, self.world.elapsed_us));
                 }
-                Action::WakeAt(t) if t > now => {
-                    self.wakes.insert(t);
+                Action::WakeAt(t) if t.as_micros() > now => {
+                    self.wakes.insert(t.as_micros());
                 }
                 _ => {}
             }
@@ -475,40 +476,52 @@ impl DashSim {
                 {
                     headers.push(("Content-Length".into(), body.len().to_string()));
                 }
-                self.session.on_response(conn, status, &headers, now);
+                self.session.on_response(conn, status, &headers, ts(now));
                 for c in body.chunks(chunk) {
-                    self.session.on_data(conn, c, now);
+                    self.session.on_data(conn, c, ts(now));
                 }
-                self.session.on_closed(conn, None, now);
+                self.session.on_closed(conn, None, ts(now));
             }
             Answer::Redirect(loc) => {
                 self.session
-                    .on_response(conn, 302, &[("Location".into(), loc)], now);
+                    .on_response(conn, 302, &[("Location".into(), loc)], ts(now));
             }
-            Answer::TransportError => self.session.on_closed(conn, Some("reset".into()), now),
+            Answer::TransportError => self.session.on_closed(
+                conn,
+                Some(TransportError::Other {
+                    reason: "reset".to_string(),
+                }),
+                ts(now),
+            ),
             Answer::ResetMid(body) => {
-                self.session.on_response(conn, 200, &[], now);
+                self.session.on_response(conn, 200, &[], ts(now));
                 for c in body.chunks(chunk) {
-                    self.session.on_data(conn, c, now);
+                    self.session.on_data(conn, c, ts(now));
                 }
-                self.session.on_closed(conn, Some("reset".into()), now);
+                self.session.on_closed(
+                    conn,
+                    Some(TransportError::Other {
+                        reason: "reset".to_string(),
+                    }),
+                    ts(now),
+                );
             }
             Answer::Truncated { body, declared } => {
                 self.session.on_response(
                     conn,
                     200,
                     &[("Content-Length".into(), declared.to_string())],
-                    now,
+                    ts(now),
                 );
                 for c in body.chunks(chunk) {
-                    self.session.on_data(conn, c, now);
+                    self.session.on_data(conn, c, ts(now));
                 }
-                self.session.on_closed(conn, None, now);
+                self.session.on_closed(conn, None, ts(now));
             }
             Answer::Stall(body) => {
-                self.session.on_response(conn, 200, &[], now);
+                self.session.on_response(conn, 200, &[], ts(now));
                 for c in body.chunks(chunk) {
-                    self.session.on_data(conn, c, now);
+                    self.session.on_data(conn, c, ts(now));
                 }
             }
             Answer::StallWith {
@@ -516,9 +529,9 @@ impl DashSim {
                 headers,
                 body,
             } => {
-                self.session.on_response(conn, status, &headers, now);
+                self.session.on_response(conn, status, &headers, ts(now));
                 for c in body.chunks(chunk) {
-                    self.session.on_data(conn, c, now);
+                    self.session.on_data(conn, c, ts(now));
                 }
             }
             Answer::Duplicate(inner) => {
@@ -527,21 +540,27 @@ impl DashSim {
                     _ => Vec::new(),
                 };
                 self.respond(conn, *inner);
-                self.session.on_response(conn, 200, &[], now);
-                self.session.on_data(conn, &replay, now);
-                self.session.on_closed(conn, None, now);
+                self.session.on_response(conn, 200, &[], ts(now));
+                self.session.on_data(conn, &replay, ts(now));
+                self.session.on_closed(conn, None, ts(now));
             }
             Answer::Unknown(inner) => {
                 const STRANGER: u32 = 9_999;
-                self.session.on_response(STRANGER, 200, &[], now);
-                self.session.on_data(STRANGER, b"xx", now);
-                self.session.on_closed(STRANGER, None, now);
+                self.session.on_response(STRANGER, 200, &[], ts(now));
+                self.session.on_data(STRANGER, b"xx", ts(now));
+                self.session.on_closed(STRANGER, None, ts(now));
                 self.respond(conn, *inner);
             }
             Answer::ClosedTwice(inner) => {
                 self.respond(conn, *inner);
-                self.session.on_closed(conn, None, now);
-                self.session.on_closed(conn, Some("x".into()), now);
+                self.session.on_closed(conn, None, ts(now));
+                self.session.on_closed(
+                    conn,
+                    Some(TransportError::Other {
+                        reason: "x".to_string(),
+                    }),
+                    ts(now),
+                );
             }
             Answer::Hang | Answer::Late(..) => {}
         }

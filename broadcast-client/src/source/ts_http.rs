@@ -5,9 +5,10 @@ use alloc::vec::Vec;
 
 use url::Url;
 
+use crate::error::TransportError;
 use crate::tshttp::{Config as TsConfig, TsHttpClient};
-use broadcast_common::clock33::PCR_HZ;
-use broadcast_common::timescale::{Rounding, rescale_u64};
+use broadcast_common::clock33::PCR_TIMESCALE;
+use broadcast_common::timescale::{Rounding, Timescale, rescale_u64};
 use transmux::{DemuxEvent, TrackId, TrackSpec};
 
 use mpeg_ts::pid::Pid;
@@ -15,22 +16,24 @@ use mpeg_ts::pid::Pid;
 use crate::source::fetch::retry::{RefusedCapture, retry_after_us};
 use crate::source::ts_http_hold::{DeclaredStreams, HoldLimits, SETTLE_US, StreamKind};
 use crate::{Event, Status};
-use broadcast_common::units::{MICROS_PER_MILLI, MICROS_PER_SEC};
+use broadcast_common::stage::Timestamp;
+use broadcast_common::units::MICROS_PER_SEC;
+use core::time::Duration;
 
 pub(crate) type Item = Option<Event>;
 
 struct HoldState {
-    started_us: u64,
+    started: Timestamp,
     bytes: usize,
     quiet_bytes: usize,
     first_pts: BTreeMap<TrackId, i64>,
     span_us: u64,
-    settle_from_us: u64,
+    settle_from: Timestamp,
     settle_base_span_us: u64,
 }
 
-fn to_27mhz(ticks: u64, clock_hz: u32) -> u64 {
-    rescale_u64(ticks, clock_hz, PCR_HZ, Rounding::TowardZero)
+fn to_27mhz(ticks: u64, clock_hz: Timescale) -> u64 {
+    rescale_u64(ticks, clock_hz, PCR_TIMESCALE, Rounding::TowardZero)
 }
 
 /// Adapter around the TS-over-HTTP client.
@@ -70,7 +73,7 @@ impl TsHttpSource {
     /// fixed one.
     pub(crate) fn with_seed(url: Url, config: TsConfig, now_us: u64, seed: u64) -> Self {
         Self {
-            ts: TsHttpClient::with_seed(url.as_str(), config, now_us / 1000, seed),
+            ts: TsHttpClient::with_seed(url.as_str(), config, Timestamp::from_micros(now_us), seed),
             url,
             events: VecDeque::new(),
             tracks: BTreeMap::new(),
@@ -124,17 +127,21 @@ impl TsHttpSource {
         self.events.push_back(item);
     }
 
-    pub(crate) fn next_deadline_us(&self) -> Option<u64> {
-        let ts = self
-            .ts
-            .next_deadline()
-            .map(|ms| ms.saturating_mul(MICROS_PER_MILLI));
-        let hold = self.hold.as_ref().map(|h| {
-            let wall = h.started_us.saturating_add(self.hold_limits.max_wall_us);
-            if self.active_resolved() {
-                wall.min(h.settle_from_us.saturating_add(SETTLE_US))
-            } else {
-                wall
+    pub(crate) fn next_deadline(&self) -> Option<Timestamp> {
+        let ts = self.ts.next_deadline();
+        let hold = self.hold.as_ref().and_then(|h| {
+            let wall = h
+                .started
+                .checked_add(Duration::from_micros(self.hold_limits.max_wall_us));
+            if !self.active_resolved() {
+                return wall;
+            }
+            match (
+                wall,
+                h.settle_from.checked_add(Duration::from_micros(SETTLE_US)),
+            ) {
+                (Some(wall), Some(settle)) => Some(wall.min(settle)),
+                (one, other) => one.or(other),
             }
         });
         match (ts, hold) {
@@ -146,7 +153,7 @@ impl TsHttpSource {
     /// Advance timers.
     pub fn poll_timeout(&mut self, now_us: u64) {
         self.now_us = now_us;
-        self.ts.poll_timeout(now_us / MICROS_PER_MILLI);
+        self.ts.poll_timeout(Timestamp::from_micros(now_us));
         self.drain_ts_events();
     }
 
@@ -215,7 +222,7 @@ impl TsHttpSource {
             && let Some(h) = self.hold.as_mut()
         {
             h.quiet_bytes = 0;
-            h.settle_from_us = self.now_us;
+            h.settle_from = Timestamp::from_micros(self.now_us);
             h.settle_base_span_us = h.span_us;
         }
     }
@@ -243,12 +250,12 @@ impl TsHttpSource {
             .is_some_and(|d| !d.all_resolved(&self.resolved))
         {
             self.hold = Some(HoldState {
-                started_us: self.now_us,
+                started: Timestamp::from_micros(self.now_us),
                 bytes: 0,
                 quiet_bytes: 0,
                 first_pts: BTreeMap::new(),
                 span_us: 0,
-                settle_from_us: self.now_us,
+                settle_from: Timestamp::from_micros(self.now_us),
                 settle_base_span_us: 0,
             });
         }
@@ -258,13 +265,21 @@ impl TsHttpSource {
         let Some(h) = self.hold.as_ref() else {
             return;
         };
-        let settled = self.now_us.saturating_sub(h.settle_from_us) >= SETTLE_US
+        let settled = Timestamp::from_micros(self.now_us)
+            .saturating_sub(h.settle_from)
+            .as_micros()
+            >= u128::from(SETTLE_US)
             || h.span_us.saturating_sub(h.settle_base_span_us) >= SETTLE_US;
         let due = self.hold_limits.reached(
             h.bytes,
             h.quiet_bytes,
             h.span_us,
-            self.now_us.saturating_sub(h.started_us),
+            u64::try_from(
+                Timestamp::from_micros(self.now_us)
+                    .saturating_sub(h.started)
+                    .as_micros(),
+            )
+            .unwrap_or(u64::MAX),
         ) || self
             .declared
             .as_ref()
@@ -279,7 +294,7 @@ impl TsHttpSource {
         let (Some(pts), Some(spec)) = (pts, self.tracks.get(&track)) else {
             return;
         };
-        let timescale = i128::from(spec.timescale.max(1));
+        let timescale = i128::from(spec.timescale.get());
         let Some(h) = self.hold.as_mut() else {
             return;
         };
@@ -297,7 +312,8 @@ impl TsHttpSource {
         self.refused = (status == 429 || status == 503)
             .then(|| RefusedCapture::new(status, retry_after, headers));
         self.ts.set_retry_after(retry_after / 1000);
-        self.ts.on_response(status, headers, now_us / 1000);
+        self.ts
+            .on_response(status, headers, Timestamp::from_micros(now_us));
         self.drain_ts_events();
     }
 
@@ -339,17 +355,18 @@ impl TsHttpSource {
             self.push(Event::Status(Status::Live));
             self.stalled = false;
         }
-        self.ts.feed(bytes, now_us / 1000);
+        self.ts.feed(bytes, Timestamp::from_micros(now_us));
         self.drain_ts_events();
     }
 
-    /// Closed callback at transport level.
-    pub fn on_closed(&mut self, error: Option<String>, now_us: u64) {
+    /// Closed callback at transport level. The set of errors is the session's;
+    /// this source only needs to know whether the connection ended cleanly.
+    pub fn on_closed(&mut self, error: Option<&TransportError>, now_us: u64) {
         self.now_us = now_us;
         if error.is_some() {
-            self.ts.on_error(now_us / 1000);
+            self.ts.on_error(Timestamp::from_micros(now_us));
         } else {
-            self.ts.on_eof(now_us / 1000);
+            self.ts.on_eof(Timestamp::from_micros(now_us));
         }
         self.drain_ts_events();
     }
@@ -357,14 +374,14 @@ impl TsHttpSource {
     /// Error callback.
     pub fn on_error(&mut self, now_us: u64) {
         self.now_us = now_us;
-        self.ts.on_error(now_us / 1000);
+        self.ts.on_error(Timestamp::from_micros(now_us));
         self.drain_ts_events();
     }
 
     /// Reconnect.
     pub fn reconnect(&mut self, now_us: u64) {
         self.now_us = now_us;
-        self.ts.reconnect(now_us / 1000);
+        self.ts.reconnect(Timestamp::from_micros(now_us));
         while let Some(action) = self.ts.poll() {
             self.caller_actions.push_back(action);
         }
@@ -428,7 +445,7 @@ impl TsHttpSource {
                 DemuxEvent::Sample {
                     track_id, sample, ..
                 } => {
-                    let pts = sample.pts;
+                    let pts = sample.timing.map(|t| t.pts);
                     if !self.conn_seen_first_sample {
                         self.start_hold_if_unresolved();
                         self.conn_seen_first_sample = true;

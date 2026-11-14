@@ -54,7 +54,7 @@ use rtmp_runtime::flv::FlvHeader;
 use rtmp_runtime::flv::FlvTag as RtmpFlvTag;
 use rtmp_runtime::flv::TagType;
 
-use broadcast_common::timescale::{Rounding, rescale_i64};
+use broadcast_common::timescale::{Rounding, Timescale, rescale_i64};
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 
 use crate::aac_asc::AudioSpecificConfig;
@@ -171,7 +171,7 @@ pub(crate) mod aac_packet_type {
 /// so sample durations / composition offsets round-trip losslessly.
 ///
 /// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
-pub(crate) const FLV_TIMESCALE: u32 = 1000;
+pub(crate) const FLV_TIMESCALE: Timescale = Timescale::from_nonzero(1000);
 
 /// Smallest `CompositionTime` representable as the signed 24-bit field
 /// `SI24` of an `AVCVIDEOPACKET` (§E.4.3.2).
@@ -782,9 +782,11 @@ impl<'a> Unpackage for FlvDemux<'a> {
                             let duration = delta_duration(&mut last_video_dts, dts);
                             video_samples.push(Sample {
                                 data: data.into(),
-                                dts: Some(dts_abs),
-                                pts: Some(pts_abs),
-                                duration: Some(duration),
+                                timing: crate::ir::SampleTiming::from_options(
+                                    Some(dts_abs),
+                                    Some(pts_abs),
+                                    Some(duration),
+                                ),
                                 flags: crate::ir::SampleFlags::new(
                                     frame_type == FRAME_TYPE_KEYFRAME,
                                 ),
@@ -832,9 +834,11 @@ impl<'a> Unpackage for FlvDemux<'a> {
                             let dts_abs = dts as i64;
                             audio_samples.push(Sample {
                                 data: data.to_vec().into(),
-                                dts: Some(dts_abs),
-                                pts: Some(dts_abs),
-                                duration: Some(duration),
+                                timing: crate::ir::SampleTiming::from_options(
+                                    Some(dts_abs),
+                                    Some(dts_abs),
+                                    Some(duration),
+                                ),
                                 flags: crate::ir::SampleFlags::SYNC,
                                 provenance: None,
                                 display: None,
@@ -940,21 +944,26 @@ fn backfill_last_duration(samples: &mut [Sample]) {
     // `duration[i]` currently holds dts[i]-dts[i-1] (0 for i==0). Rebuild as the
     // forward delta dts[i+1]-dts[i] by shifting left by one.
     for i in 0..n.saturating_sub(1) {
-        samples[i].duration = samples[i + 1].duration;
+        let dur = samples[i + 1].timing.map(|t| t.duration);
+        if let (Some(a), Some(d)) = (samples[i].timing.as_mut(), dur) {
+            a.duration = d;
+        }
     }
     if n >= 2 {
-        // Last sample: reuse the previous forward delta as a best estimate.
-        samples[n - 1].duration = samples[n - 2].duration;
+        let dur = samples[n - 2].timing.map(|t| t.duration);
+        if let (Some(a), Some(d)) = (samples[n - 1].timing.as_mut(), dur) {
+            a.duration = d;
+        }
     }
 }
 
 /// The AVC track's `Track::start_decode_time` anchor: the first video
 /// sample's absolute dts (media plane step 2c) — kept in lockstep with
-/// `samples[0].dts` per the crate-wide invariant.
+/// `samples[0].timing.map(|t| t.dts)` per the crate-wide invariant.
 fn anchor_of(samples: &[Sample]) -> u64 {
     samples
         .first()
-        .and_then(|s| s.dts)
+        .and_then(|s| s.timing.map(|t| t.dts))
         .map(|d| d.max(0) as u64)
         .unwrap_or(0)
 }
@@ -1187,15 +1196,10 @@ fn audio_frame_body(sound_type: u8, data: &[u8]) -> Vec<u8> {
 /// already-ms-normalised file, matching [`FlvDemux`]'s output), the
 /// streaming builders below feed a live push driver that calls them once per
 /// drained batch, never once for the whole stream — "start of this batch" is
-/// not "start of the stream". They use each [`Sample::dts`]/`pts` directly
+/// not "start of the stream". They use each `Sample::timing` (`.dts`)/`pts` directly
 /// (absolute, in the track's own [`crate::pipeline::TrackSpec::timescale`],
 /// per the media-plane architecture) and rescale here instead.
-fn ticks_to_ms(ticks: i64, timescale: u32) -> Result<i64> {
-    if timescale == 0 {
-        return Err(Error::InvalidInput(
-            "FLV mux requires a non-zero track timescale",
-        ));
-    }
+fn ticks_to_ms(ticks: i64, timescale: Timescale) -> Result<i64> {
     Ok(rescale_i64(
         ticks,
         timescale,
@@ -1206,17 +1210,8 @@ fn ticks_to_ms(ticks: i64, timescale: u32) -> Result<i64> {
 
 /// [`ticks_to_ms`] for a value that must land in an FLV `Timestamp` (the UI24
 /// low field plus the UI8 extended high byte, i.e. a 32-bit millisecond clock,
-/// §E.4.1): a value outside `u32` is an error, never a silent wrap, and a
-/// `timescale` of `0` is an error too — [`ticks_to_ms`] returns `0` for it as a
-/// placeholder, which here would silently stamp *every* tag at millisecond 0.
-/// (A track really can arrive that way: the IR does not forbid it, and
-/// `RtpDepacketiser` has produced exactly that — see audit r04-W30.)
-fn ms_from_ticks(ticks: i64, timescale: u32) -> core::result::Result<u32, FlvError> {
-    if timescale == 0 {
-        return Err(FlvError::Codec(Error::InvalidInput(
-            "FLV mux requires a non-zero track timescale",
-        )));
-    }
+/// §E.4.1): a value outside `u32` is an error, never a silent wrap.
+fn ms_from_ticks(ticks: i64, timescale: Timescale) -> core::result::Result<u32, FlvError> {
     let ms = ticks_to_ms(ticks, timescale)?;
     if ms < 0 || ms > u32::MAX as i64 {
         return Err(FlvError::Codec(Error::InvalidInput(
@@ -1229,7 +1224,7 @@ fn ms_from_ticks(ticks: i64, timescale: u32) -> core::result::Result<u32, FlvErr
 /// [`ticks_to_ms`] for the RTMP/FLV payload path: a negative value (a DTS
 /// before the clock origin) clamps to 0 as before, but a value past the 32-bit
 /// millisecond clock is an error rather than a silent `as u32` wrap (#1129).
-fn clamped_ms(ticks: i64, timescale: u32) -> core::result::Result<u32, FlvError> {
+fn clamped_ms(ticks: i64, timescale: Timescale) -> core::result::Result<u32, FlvError> {
     u32::try_from(ticks_to_ms(ticks, timescale)?.max(0)).map_err(|_| {
         FlvError::Codec(Error::InvalidInput(
             "FLV tag timestamp does not fit the 32-bit millisecond clock",
@@ -1241,7 +1236,7 @@ fn clamped_ms(ticks: i64, timescale: u32) -> core::result::Result<u32, FlvError>
 /// 24-bit value in FLV's millisecond clock. `offset` is in `timescale` ticks,
 /// so it is rescaled first; a value that does not fit SI24 is an error rather
 /// than the silent truncation the raw write used to perform.
-fn composition_time_ms(offset: i64, timescale: u32) -> core::result::Result<i32, FlvError> {
+fn composition_time_ms(offset: i64, timescale: Timescale) -> core::result::Result<i32, FlvError> {
     let ms = ticks_to_ms(offset, timescale)?;
     if ms < SI24_MIN as i64 || ms > SI24_MAX as i64 {
         return Err(FlvError::Codec(Error::InvalidInput(
@@ -1335,7 +1330,7 @@ pub fn flv_sequence_header_payloads(
 /// Build the per-frame `VIDEODATA`/`AUDIODATA` payload bodies for `media`'s
 /// samples (issue #934), interleaved by absolute timestamp across tracks —
 /// same tag-body layout [`FlvMux::package`] writes into each `OutTag`, without
-/// file/tag framing. Each sample's [`Sample::dts`](crate::pipeline::Sample::dts)
+/// file/tag framing. Each sample's `Sample::timing` (`.dts`)(crate::pipeline::Sample::dts)
 /// (absolute, in its track's own timescale) is rescaled to FLV's millisecond
 /// clock (this crate's internal `ticks_to_ms` helper) — safe to call once per
 /// drained batch from a live push driver, unlike `package`'s zero-based
@@ -1351,7 +1346,9 @@ pub fn flv_frame_payloads(media: &Media) -> core::result::Result<Vec<FlvPayload>
     if let Some(vt) = video {
         let timescale = vt.spec.timescale;
         for s in &vt.samples {
-            let Some(dts) = s.dts else { continue };
+            let Some(dts) = s.timing.map(|t| t.dts) else {
+                continue;
+            };
             let ts_ms = clamped_ms(dts, timescale)?;
             let comp_ms = composition_time_ms(s.composition_offset() as i64, timescale)?;
             let body = video_frame_body(s.flags.is_sync, comp_ms, &s.data);
@@ -1371,7 +1368,9 @@ pub fn flv_frame_payloads(media: &Media) -> core::result::Result<Vec<FlvPayload>
         let timescale = at.spec.timescale;
         let sound_type = audio_sound_type(at);
         for s in &at.samples {
-            let Some(dts) = s.dts else { continue };
+            let Some(dts) = s.timing.map(|t| t.dts) else {
+                continue;
+            };
             let ts_ms = clamped_ms(dts, timescale)?;
             let body = audio_frame_body(sound_type, &s.data);
             items.push((
@@ -1475,7 +1474,7 @@ impl Package for FlvMux {
                     },
                 ));
                 seq += 1;
-                ticks = ticks.saturating_add(s.duration.unwrap_or(0) as i64);
+                ticks = ticks.saturating_add(s.timing.map(|t| t.duration).unwrap_or(0) as i64);
             }
         }
         if let Some(at) = audio {
@@ -1494,7 +1493,7 @@ impl Package for FlvMux {
                     },
                 ));
                 seq += 1;
-                ticks = ticks.saturating_add(s.duration.unwrap_or(0) as i64);
+                ticks = ticks.saturating_add(s.timing.map(|t| t.duration).unwrap_or(0) as i64);
             }
         }
         // Stable sort by DTS, tie-broken by original emission order.
@@ -1532,14 +1531,9 @@ fn media_duration_seconds(media: &Media) -> f64 {
         let ticks: u64 = t
             .samples
             .iter()
-            .map(|s| s.duration.unwrap_or(0) as u64)
+            .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
             .sum();
-        let ts = if t.spec.timescale == 0 {
-            FLV_TIMESCALE
-        } else {
-            t.spec.timescale
-        } as f64;
-        let secs = ticks as f64 / ts;
+        let secs = ticks as f64 / f64::from(t.spec.timescale.get());
         if secs > max {
             max = secs;
         }
@@ -1783,21 +1777,22 @@ mod tests {
         );
     }
 
+    /// A zero track timescale never reaches these helpers (it is a
+    /// `Timescale`, non-zero by construction), so the boundary that reads a
+    /// wire `mdhd.timescale` is where a real zero is refused, with a typed
+    /// error naming the field.
     #[test]
     fn a_zero_track_timescale_is_a_typed_error() {
-        // Audit #2462: `ticks_to_ms` returned 0 for timescale 0 while
-        // `ms_from_ticks` (its FLV `Timestamp` sibling) already errored.
-        let e = ticks_to_ms(90_000, 0).expect_err("zero timescale must error");
-        assert!(matches!(
-            e,
-            Error::InvalidInput("FLV mux requires a non-zero track timescale")
-        ));
-        assert!(matches!(
-            ms_from_ticks(90_000, 0),
-            Err(FlvError::Codec(Error::InvalidInput(
-                "FLV mux requires a non-zero track timescale"
-            )))
-        ));
-        assert_eq!(ticks_to_ms(90_000, 90_000), Ok(1000));
+        let err = Timescale::try_new(0).expect_err("a zero mdhd.timescale is an error");
+        assert_eq!(err.field, "timescale");
+        assert_eq!(err.reason, "must be non-zero");
+        assert_eq!(
+            ticks_to_ms(90_000, Timescale::try_new(90_000).expect("non-zero")),
+            Ok(1000)
+        );
+        assert_eq!(
+            ms_from_ticks(90_000, Timescale::try_new(90_000).expect("non-zero")),
+            Ok(1000)
+        );
     }
 }

@@ -1,6 +1,7 @@
 #![cfg(feature = "std")]
 //! I-frame master playlist advertising (P2b).
 
+use broadcast_common::timescale::Timescale;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
@@ -40,7 +41,7 @@ fn origin_fmp4(cap: usize) -> (Arc<Trunk>, HlsOrigin, SegmentWriter) {
     let origin = HlsOrigin::builder(Arc::clone(&trunk))
         .with_target_duration_secs(4.0)
         .with_window_segments(nz(3))
-        .with_low_latency(500)
+        .with_low_latency(Duration::from_millis(500))
         .with_instance(7)
         .with_declared_bandwidth_bps(5_000_000)
         .build()
@@ -340,7 +341,7 @@ fn hdr_spec(transfer_code: u8) -> TrackSpec {
     });
     let spec = TrackSpec::new(
         TrackId::new(1),
-        90_000,
+        Timescale::from_nonzero(90_000),
         CodecConfig::Avc {
             config,
             width: 320,

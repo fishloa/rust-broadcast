@@ -11,6 +11,7 @@
 //!
 //! Skips cleanly when `mp4dump` is not on `PATH`.
 
+use broadcast_common::timescale::Timescale;
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -31,8 +32,8 @@ use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 
 const TARGET_DURATION_SECS: f64 = 1.0;
 const TRACK_ID: u32 = 1;
-const TIMESCALE: u32 = 90_000;
-const FRAME_DUR: u32 = TIMESCALE / 30;
+const TIMESCALE: Timescale = Timescale::from_nonzero(90_000);
+const FRAME_DUR: u32 = TIMESCALE.get() / 30;
 const SYNC_INTERVAL: u32 = 15;
 
 fn splice_insert() -> Vec<u8> {
@@ -108,7 +109,7 @@ fn build_real_trunk(pts_origin: i64, frames: u32) -> (Arc<RouteHandle>, Arc<Trun
     let route = RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(TARGET_DURATION_SECS)
-            .with_part_target_ms(200)
+            .with_part_target(std::time::Duration::from_millis(200))
             .with_window_segments(8),
     );
     // Publish the program into a route's serving state FIRST, so its
@@ -283,7 +284,8 @@ async fn served_segment_carries_a_decodable_emsg_with_a_nonzero_pts_origin() {
         "presentation_time must be exactly the anchored media time"
     );
     assert_eq!(
-        box0.timescale, 90_000,
+        box0.timescale,
+        Timescale::from_nonzero(90_000),
         "the emsg timescale must be the trunk's 90 kHz clock"
     );
 }

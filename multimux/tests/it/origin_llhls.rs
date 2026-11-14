@@ -61,7 +61,7 @@ async fn end_to_end_pipeline_serves_valid_llhls() {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(TARGET_DURATION_SECS)
-            .with_part_target_ms(PART_TARGET_MS)
+            .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(8),
     ));
     let specs = vec![video_track_spec()];
@@ -170,7 +170,7 @@ async fn blocking_reload_resolves_when_part_arrives() {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(4.0)
-            .with_part_target_ms(500)
+            .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(8),
     ));
     let program = media_plane::ProgramId(0);

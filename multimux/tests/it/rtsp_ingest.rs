@@ -175,7 +175,7 @@ fn start_pull(url: String, auth: Option<Credentials>) -> Pull {
     let route_handle = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(4.0)
-            .with_part_target_ms(500)
+            .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(4),
     ));
     let config = TrunkConfig::default()
@@ -331,7 +331,8 @@ async fn run() {
     // video-only conformant fixture can't distinguish the two. `rtpmap_clock_rate`
     // parsing is bitten separately in transmux's `rtp_sdp` unit tests.
     assert_eq!(
-        tracks[0].timescale, 90_000,
+        tracks[0].timescale.get(),
+        90_000,
         "RTP clock rate becomes the IR timescale"
     );
     match &tracks[0].config {

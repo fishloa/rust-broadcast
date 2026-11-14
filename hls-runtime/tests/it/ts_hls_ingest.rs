@@ -76,7 +76,7 @@ fn drive_to_end(client: &mut HlsClient) -> Vec<Output> {
                     .on_resource(id, &bytes)
                     .unwrap_or_else(|e| panic!("demux fixture resource {name}: {e}"));
             }
-            Some(Action::WaitMs(_)) => {}
+            Some(Action::Wait(_)) => {}
             Some(other) => panic!("unexpected action for this VOD fixture: {other:?}"),
             None => break,
         }
@@ -293,7 +293,11 @@ fn avc_track_dts(media: &transmux::Media) -> (u32, Vec<i64>) {
         track
             .samples
             .iter()
-            .map(|s| s.dts.expect("TS video sample carries a DTS"))
+            .map(|s| {
+                s.timing
+                    .map(|t| t.dts)
+                    .expect("TS video sample carries a DTS")
+            })
             .collect(),
     )
 }
@@ -313,7 +317,13 @@ fn timing_of(media: &transmux::Media, pick: impl Fn(&CodecConfig) -> bool) -> (u
         track
             .samples
             .iter()
-            .map(|s| (s.dts, s.pts, s.duration))
+            .map(|s| {
+                (
+                    s.timing.map(|t| t.dts),
+                    s.timing.map(|t| t.pts),
+                    s.timing.map(|t| t.duration),
+                )
+            })
             .collect(),
     )
 }
@@ -336,7 +346,7 @@ fn drive_in_memory(playlist: &str, segments: &[(&str, Vec<u8>)]) -> Vec<Output> 
                     .1;
                 client.on_resource(id, bytes).expect("segment demuxes");
             }
-            Some(Action::WaitMs(_)) => {}
+            Some(Action::Wait(_)) => {}
             Some(other) => panic!("unexpected action {other:?}"),
             None => break,
         }
@@ -413,7 +423,13 @@ fn pts_wrap_between_segments_is_unrolled_across_the_boundary() {
                 _ => None,
             })
             .flatten()
-            .map(|s| (s.dts, s.pts, s.duration))
+            .map(|s| {
+                (
+                    s.timing.map(|t| t.dts),
+                    s.timing.map(|t| t.pts),
+                    s.timing.map(|t| t.duration),
+                )
+            })
             .collect()
     };
 

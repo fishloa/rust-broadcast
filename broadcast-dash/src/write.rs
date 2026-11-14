@@ -336,7 +336,7 @@ fn write_event_stream(w: &mut Writer<Vec<u8>>, es: &EventStream) -> Result<(), M
         e.push_attribute(("value", v.as_str()));
     }
     if let Some(v) = es.timescale {
-        e.push_attribute(("timescale", v.to_string().as_str()));
+        e.push_attribute(("timescale", v.get().to_string().as_str()));
     }
     if let Some(v) = es.presentation_time_offset {
         e.push_attribute(("presentationTimeOffset", v.to_string().as_str()));
@@ -658,7 +658,7 @@ fn write_base_info(
     info: &BaseInfo,
 ) -> Result<(), MpdError> {
     if let Some(v) = info.timescale {
-        e.push_attribute(("timescale", v.to_string().as_str()));
+        e.push_attribute(("timescale", v.get().to_string().as_str()));
     }
     if let Some(v) = info.presentation_time_offset {
         e.push_attribute(("presentationTimeOffset", v.to_string().as_str()));

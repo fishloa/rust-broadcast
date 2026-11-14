@@ -73,7 +73,7 @@ fn read_mpd(xml: &str) -> Edge {
     };
     Edge {
         start_number: info.multi.start_number,
-        seg_secs: t.multi.duration.expect("@duration") as f64 / info.multi.timescale as f64,
+        seg_secs: t.multi.duration.expect("@duration") as f64 / info.multi.timescale.get() as f64,
         tsbd_secs: mpd
             .time_shift_buffer_depth
             .expect("timeShiftBufferDepth")
@@ -108,14 +108,14 @@ async fn slide(output: Arc<dyn Output>, manifest_path: &str) {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(TARGET_SECS)
-            .with_part_target_ms(PART_MS)
+            .with_part_target(std::time::Duration::from_millis(u64::from(PART_MS)))
             .with_window_segments(WINDOW),
     ));
     let program = media_plane::ProgramId(0);
     store.publish_new_program(program);
     let mut seg = LlHlsSegmenter::with_part_target(
         specs.clone(),
-        transmux::VIDEO_CLOCK_RATE,
+        transmux::VIDEO_CLOCK_TIMESCALE,
         TARGET_SECS,
         PART_MS,
     )

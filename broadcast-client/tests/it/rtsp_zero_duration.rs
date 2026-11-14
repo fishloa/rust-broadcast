@@ -3,6 +3,13 @@ use crate::support;
 use broadcast_client::{Config, Event};
 use support::rtsp_host::{BASE_URL, Host, MediaFixture, Server};
 
+use broadcast_common::stage::Timestamp;
+
+/// The test's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
+
 const FRAME_STEP_US: u64 = 10_000;
 const IDLE_STEPS: usize = 200;
 const JOIN_OFFSETS: usize = 60;
@@ -23,8 +30,8 @@ fn collect(host: &mut Host, samples: &mut Vec<(u32, i64, u32)>) {
         if let Event::Sample { track, sample, .. } = e {
             samples.push((
                 track.value(),
-                sample.pts.unwrap_or(0),
-                sample.duration.unwrap_or(0),
+                sample.timing.map(|t| t.pts).unwrap_or(0),
+                sample.timing.map(|t| t.duration).unwrap_or(0),
             ));
         }
     }
@@ -39,21 +46,21 @@ fn play(skip_frames: usize, reconnect_after: Option<usize>) -> Played {
     let frames: Vec<_> = fixture.frames().into_iter().skip(skip_frames).collect();
     for (i, frame) in frames.iter().enumerate() {
         if reconnect_after == Some(i) {
-            host.session.reconnect(host.now);
+            host.session.reconnect(ts(host.now));
             host.drain();
             collect(&mut host, &mut samples);
             break;
         }
         host.now += FRAME_STEP_US;
         host.deliver(frame);
-        host.session.on_playback_position(host.now, None);
+        host.session.on_playback_position(ts(host.now), None);
         host.drain();
         collect(&mut host, &mut samples);
     }
     if reconnect_after.is_none() {
         for _ in 0..IDLE_STEPS {
             host.now += FRAME_STEP_US;
-            host.session.on_playback_position(host.now, None);
+            host.session.on_playback_position(ts(host.now), None);
             host.drain();
             collect(&mut host, &mut samples);
         }

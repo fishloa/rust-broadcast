@@ -7,10 +7,16 @@ use crate::support::dash_sim;
 use crate::support::fmp4_split;
 
 use broadcast_client::{BufferEvent, Config, ErrorKind, Event, Status};
+use broadcast_common::stage::Timestamp;
 use dash_common::loopback::Origin;
 use dash_common::synth::{Addressing, MPD_URL, Synth};
 use dash_common::world::{MICROS, World};
 use dash_sim::{Answer, DashSim, Logged, SEC, StaticBackend, WorldBackend};
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const HOST: &str = "http://dash.test";
 const MANIFEST: &str = "manifest.mpd";
@@ -372,8 +378,10 @@ fn a_vod_segment_that_keeps_failing_is_fatal_after_the_configured_count_with_bac
 fn a_live_segment_that_keeps_failing_is_skipped_with_one_error_and_a_discontinuity() {
     let mut config = Config::default();
     config.max_segment_failures = 2;
-    config.backoff_ms = vec![100];
-    config.backoff_cap_ms = 100;
+    config.backoff = broadcast_common::backoff::BackoffSteps {
+        steps: vec![std::time::Duration::from_millis(100)],
+        cap: std::time::Duration::from_millis(100),
+    };
     let synth =
         Synth::new(AST_US, Addressing::Number).with_utc("http-xsdate", "http://utc.test/xsdate");
     let geo = synth.geo();
@@ -512,8 +520,10 @@ fn an_oversize_mpd_is_reported_once_and_retried_forever_with_backoff() {
 fn errors_are_reported_again_after_a_success_resets_them() {
     let mut config = Config::default();
     config.max_segment_failures = 2;
-    config.backoff_ms = vec![50];
-    config.backoff_cap_ms = 50;
+    config.backoff = broadcast_common::backoff::BackoffSteps {
+        steps: vec![std::time::Duration::from_millis(50)],
+        cap: std::time::Duration::from_millis(50),
+    };
     let synth =
         Synth::new(AST_US, Addressing::Number).with_utc("http-xsdate", "http://utc.test/xsdate");
     let mut sim = DashSim::new(
@@ -604,7 +614,7 @@ fn a_closed_session_ignores_everything_and_a_dash_session_reports_ended_once() {
         1
     );
     let mut sim = sim;
-    sim.session.reconnect(sim.world.mono());
+    sim.session.reconnect(ts(sim.world.mono()));
     let after = sim.log.len();
     sim.run_for(30 * SEC);
     assert_eq!(
@@ -613,7 +623,7 @@ fn a_closed_session_ignores_everything_and_a_dash_session_reports_ended_once() {
         "an ended presentation ignores reconnect"
     );
     sim.session.close();
-    assert!(sim.session.poll(0).is_none());
+    assert!(sim.session.poll(ts(0)).is_none());
 }
 
 #[test]
@@ -826,7 +836,7 @@ fn a_feature_is_reported_once_per_session_even_across_a_reconnect() {
     while !sim.events.iter().any(|e| matches!(e, Event::Sample { .. })) {
         sim.run_for(10_000);
     }
-    sim.session.reconnect(sim.world.mono());
+    sim.session.reconnect(ts(sim.world.mono()));
     let sim = finished(sim);
     assert!(sim.ended());
     let n = kinds(&sim)

@@ -230,13 +230,12 @@ use alloc::collections::btree_map::Entry;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use broadcast_common::error::{BufferTooShort, InvalidValue};
-use broadcast_common::len::need_in;
+use broadcast_common::timescale::Timescale;
 use core::marker::PhantomData;
 use mpeg_ts::pid::Pid;
 
 use broadcast_common::timescale::{Rounding, rescale};
-use broadcast_common::{Demand, Serialize, Stage, Timestamp, Unpackage};
+use broadcast_common::{Demand, Parse, Serialize, Stage, Timestamp, Unpackage};
 use mpeg_pes::{PesAssembler, PesPacket};
 use mpeg_ts::resync::TsResync;
 use mpeg_ts::ts::{
@@ -274,8 +273,10 @@ use crate::pipeline::{CodecConfig, DataCarriage, Provenance, Sample, SampleFlags
 /// PID carrying the Program Association Table (§2.4.4.4).
 const PAT_PID: Pid = Pid::from_const(0x0000);
 /// `table_id` of a PAT section (§2.4.4.4, Table 2-31).
+#[cfg(test)]
 pub(crate) const TABLE_ID_PAT: u8 = 0x00;
 /// `table_id` of a PMT section (§2.4.4.9, Table 2-31).
+#[cfg(test)]
 pub(crate) const TABLE_ID_PMT: u8 = 0x02;
 /// Long-form section header length before the table body: `table_id`(1) +
 /// flags/`section_length`(2) + `table_id_extension`(2) + version/cni(1) +
@@ -283,8 +284,6 @@ pub(crate) const TABLE_ID_PMT: u8 = 0x02;
 const SECTION_HEADER_LEN: usize = 8;
 /// Mask for the 5-bit `version_number` within a long-form section's byte 5
 /// (§2.4.4.1: `reserved`(2) + `version_number`(5) + `current_next_indicator`(1)),
-/// after shifting right by 1 to drop the `current_next_indicator` bit.
-const VERSION_NUMBER_MASK: u8 = 0x1F;
 /// Bit for `current_next_indicator` within a long-form section's byte 5
 /// (§2.4.4.1) — `1` means the table is applicable now, `0` means it is a
 /// not-yet-applicable "next" table (parsed, never acted on).
@@ -300,13 +299,8 @@ const SECTION_SYNTAX_INDICATOR_BIT: u8 = 0x80;
 /// Mask for the 12-bit `section_length` high nibble (byte 1 of a section).
 const SECTION_LENGTH_HI_MASK: u8 = 0x0F;
 /// Mask for the 13-bit PID low byte's high 5 bits.
+#[cfg(test)]
 const PID_HI_MASK: u8 = 0x1F;
-/// Bytes per PAT program-loop entry: `program_number`(2) + reserved/PID(2).
-const PAT_ENTRY_LEN: usize = 4;
-/// Mask for the 12-bit `program_info_length` / `ES_info_length` high nibble.
-const INFO_LENGTH_HI_MASK: u8 = 0x0F;
-/// A PAT entry with `program_number == 0` gives the network PID, not a PMT PID.
-const NETWORK_PROGRAM_NUMBER: u16 = 0x0000;
 /// The null packet PID — always stuffing, never meaningful payload
 /// (ISO/IEC 13818-1 §2.4.3.2 Table 2-3) — excluded from the
 /// `unattributed`-payload replay buffer.
@@ -510,7 +504,7 @@ const MPEGH_SAMPLE_RATE_UNSPECIFIED: u32 = 0;
 /// (issue #1171).
 const MPEGH_CONFIG_LEN_MAX: usize = u16::MAX as usize;
 /// Video media timescale (90 kHz — the TS/PES timestamp clock).
-const VIDEO_TIMESCALE: u32 = 90_000;
+const VIDEO_TIMESCALE: Timescale = Timescale::from_nonzero(crate::rtp::VIDEO_CLOCK_RATE);
 /// Samples per AAC access unit (ISO/IEC 14496-3 — one frame = 1024 samples).
 const AAC_SAMPLES_PER_FRAME: u32 = 1024;
 
@@ -541,7 +535,7 @@ const TS_WRAP_MASK: u64 = TS_WRAP - 1;
 /// access unit that followed (r04-W48/W50 review). No real frame rate is below
 /// 1 fps, so a second is a generous ceiling that still excludes every gap,
 /// splice and clock jump this is meant to reject.
-const MAX_FRAME_PERIOD_TICKS: u64 = VIDEO_TIMESCALE as u64;
+const MAX_FRAME_PERIOD_TICKS: u64 = VIDEO_TIMESCALE.as_u64();
 
 /// How many recent inter-access-unit steps
 /// [`StreamState::recent_steps`] keeps for the median estimate. Five is the
@@ -686,7 +680,7 @@ fn unwrap_ts(prev_unwrapped: i128, prev_raw: u64, raw: u64) -> i128 {
 /// AAC samples), which is exactly the quantity every downstream consumer
 /// (RTP packetisation, segmentation, `tfdt`) reads. For a 90 kHz track (video,
 /// opaque `Data`) this is the identity.
-fn rescale_to_track(anchor_90k: i128, timescale: u32) -> i64 {
+fn rescale_to_track(anchor_90k: i128, timescale: broadcast_common::timescale::Timescale) -> i64 {
     to_ticks(rescale(
         anchor_90k,
         VIDEO_TIMESCALE,
@@ -1176,146 +1170,6 @@ fn adts_frame_payload<'a>(
     Some(out.into())
 }
 
-/// Parse a PAT section, returning every `(program_number, program_map_PID)`
-/// pair it lists (network entries — `program_number == 0` — are skipped).
-/// ISO/IEC 13818-1 §2.4.4.4. The `program_number` is kept (not just the PID)
-/// so a PMT section can be cross-checked against the program it was learned
-/// under (issue #774).
-fn parse_pat(section: &[u8]) -> Result<Vec<(u16, Pid)>> {
-    if section.first().copied() != Some(TABLE_ID_PAT) {
-        return Ok(Vec::new());
-    }
-    let body = section_body(section, "PAT")?;
-    let mut programs = Vec::new();
-    let mut off = 0usize;
-    while off + PAT_ENTRY_LEN <= body.len() {
-        let program_number = u16::from_be_bytes([body[off], body[off + 1]]);
-        let pid = Pid::from_wire_masked(
-            (((body[off + 2] & PID_HI_MASK) as u16) << 8) | body[off + 3] as u16,
-        );
-        if program_number != NETWORK_PROGRAM_NUMBER {
-            programs.push((program_number, pid));
-        }
-        off += PAT_ENTRY_LEN;
-    }
-    Ok(programs)
-}
-
-/// A PMT section's header fields beyond `table_id` (ISO/IEC 13818-1 §2.4.4.9 /
-/// Table 2-33), read directly from `section[]` (the whole section including
-/// its 8-byte header) — the version-diffing prerequisite for issue #774.
-struct PmtSectionHeader {
-    /// `table_id_extension`, which for a PMT is `program_number` (`section[3..5]`).
-    program_number: u16,
-    /// `version_number` (`section[5]`, bits `[5:1]`).
-    version: u8,
-    /// `current_next_indicator` (`section[5]`, bit 0). `false` means this
-    /// table is not yet applicable — parsed, never diffed/acted on.
-    current_next: bool,
-    /// `section_number` (`section[6]`).
-    section_number: u8,
-    /// `last_section_number` (`section[7]`). A PMT is always single-section,
-    /// so a genuine PMT always has `section_number == last_section_number == 0`.
-    last_section_number: u8,
-    /// `PCR_PID` (`section[8..10]`, 13 bits — §2.4.4.9 Table 2-33): the PID
-    /// whose adaptation fields carry this program's `PCR`, and therefore the
-    /// PID on which a system time-base discontinuity is signalled
-    /// (§2.4.3.5). `0x1FFF` means "no PCR for this program".
-    pcr_pid: Pid,
-}
-
-/// Parse a PMT section's header fields (§2.4.4.9) — everything needed to
-/// decide whether a newly-reassembled section should be *applied*
-/// (`current_next_indicator == 1` and `version_number` differs from the last
-/// **applied** version), before paying for the ES-loop walk in [`parse_pmt`].
-fn parse_pmt_section_header(section: &[u8]) -> Result<PmtSectionHeader> {
-    if section.first().copied() != Some(TABLE_ID_PMT) {
-        return Err(Error::InvalidValue(InvalidValue {
-            field: "table_id",
-            value: section.first().copied().unwrap_or(0) as u64,
-            reason: "not a PMT section",
-        }));
-    }
-    need_in(section, SECTION_HEADER_LEN, "PMT section header")?;
-    Ok(PmtSectionHeader {
-        program_number: u16::from_be_bytes([section[3], section[4]]),
-        version: (section[5] >> 1) & VERSION_NUMBER_MASK,
-        current_next: section[5] & CURRENT_NEXT_INDICATOR_BIT != 0,
-        section_number: section[6],
-        last_section_number: section[7],
-        // PCR_PID sits at the start of the section body, which is
-        // `section[8..]` (the 8-byte header ends at index 8): reserved(3) +
-        // PCR_PID(13).
-        pcr_pid: Pid::from_wire_masked(
-            (((section[8] & PID_HI_MASK) as u16) << 8) | section[9] as u16,
-        ),
-    })
-}
-
-/// Parse a PMT section, returning `(elementary_PID, codec, ES_info
-/// descriptors)` for every elementary stream listed (issue #576: every
-/// PMT-listed ES becomes a track — typed when the `stream_type` maps to a
-/// decoded codec, else opaque [`Codec::Data`]). ISO/IEC 13818-1 §2.4.4.9.
-/// `descriptors` is the raw ES_info descriptor-loop bytes for that stream
-/// (empty when `ES_info_length` is 0); consumers that don't need it (every
-/// codec but [`Codec::Data`]) simply ignore it.
-fn parse_pmt(section: &[u8]) -> Result<Vec<(Pid, Codec, Vec<u8>)>> {
-    if section.first().copied() != Some(TABLE_ID_PMT) {
-        return Ok(Vec::new());
-    }
-    let body = section_body(section, "PMT")?;
-    // PMT body prefix: reserved(3)+PCR_PID(13) = 2 bytes, then
-    // reserved(4)+program_info_length(12) = 2 bytes, then the descriptor loop.
-    need_in(body, 4, "PMT program-info prefix")?;
-    let program_info_length = (((body[2] & INFO_LENGTH_HI_MASK) as usize) << 8) | body[3] as usize;
-    let mut off = 4 + program_info_length;
-    let mut out = Vec::new();
-    // Each ES entry: stream_type(1) + reserved(3)/elementary_PID(13) [2] +
-    // reserved(4)/ES_info_length(12) [2] + descriptor()×ES_info_length.
-    while off + 5 <= body.len() {
-        let stream_type = body[off];
-        let es_pid = Pid::from_wire_masked(
-            (((body[off + 1] & PID_HI_MASK) as u16) << 8) | body[off + 2] as u16,
-        );
-        let es_info_length =
-            (((body[off + 3] & INFO_LENGTH_HI_MASK) as usize) << 8) | body[off + 4] as usize;
-        let desc_start = off + 5;
-        let desc_end = (desc_start + es_info_length).min(body.len());
-        let descriptors = body[desc_start..desc_end].to_vec();
-        let codec =
-            Codec::from_stream_type(stream_type).refine_with_descriptors(stream_type, &descriptors);
-        out.push((es_pid, codec, descriptors));
-        off += 5 + es_info_length;
-    }
-    Ok(out)
-}
-
-/// Slice a long-form PSI section's table body: the bytes between the 8-byte
-/// section header and the trailing 4-byte CRC_32 (ISO/IEC 13818-1 §2.4.4.1),
-/// bounded by the declared `section_length`.
-fn section_body<'a>(section: &'a [u8], what: &'static str) -> Result<&'a [u8]> {
-    if section.len() < SECTION_HEADER_LEN + CRC32_LEN {
-        return Err(Error::BufferTooShort(BufferTooShort {
-            need: SECTION_HEADER_LEN + CRC32_LEN,
-            have: section.len(),
-            what,
-        }));
-    }
-    // section_length counts the bytes AFTER the 3-byte header, i.e. through CRC.
-    let section_length =
-        (((section[1] & SECTION_LENGTH_HI_MASK) as usize) << 8) | section[2] as usize;
-    let total = 3 + section_length;
-    let end = total.min(section.len());
-    if end < SECTION_HEADER_LEN + CRC32_LEN {
-        return Err(Error::BufferTooShort(BufferTooShort {
-            need: SECTION_HEADER_LEN + CRC32_LEN,
-            have: end,
-            what,
-        }));
-    }
-    Ok(&section[SECTION_HEADER_LEN..end - CRC32_LEN])
-}
-
 /// Validate a long-form PSI section's trailing `CRC_32` (ISO/IEC 13818-1
 /// §2.4.4.1) — the gate every PAT/PMT section must clear *before* anything
 /// acts on it.
@@ -1569,9 +1423,10 @@ const AUDIO_REANCHOR_THRESHOLD_MS: i128 = 20;
 /// the identical 90 kHz-PES-stamp-vs-sample_rate-track-clock re-anchoring
 /// problem (found via the FIX C invariant test, media plane step-2 fix
 /// wave 1).
-pub(crate) fn audio_discontinuity_threshold_90k(sample_rate: u32) -> i128 {
-    let one_sample_period = (VIDEO_TIMESCALE as u128).div_ceil(sample_rate.max(1) as u128) as i128;
-    let ms_bound = (VIDEO_TIMESCALE as i128 * AUDIO_REANCHOR_THRESHOLD_MS) / 1000;
+pub(crate) fn audio_discontinuity_threshold_90k(sample_rate: Timescale) -> i128 {
+    let one_sample_period =
+        u128::from(VIDEO_TIMESCALE.get()).div_ceil(u128::from(sample_rate.get())) as i128;
+    let ms_bound = (i128::from(VIDEO_TIMESCALE) * AUDIO_REANCHOR_THRESHOLD_MS) / 1000;
     ms_bound.max(one_sample_period * 2)
 }
 
@@ -1625,7 +1480,7 @@ struct PaffPairing {
 const MAX_FIELD_PAIR_DTS_TICKS: i128 = MAX_FRAME_PERIOD_TICKS as i128;
 
 /// Clamp an unwrapped 33-bit-derived `i128` timestamp into the `i64` range
-/// [`Sample::dts`]/[`Sample::pts`] carry. `i128` is only used internally for
+/// `Sample::timing` (`.dts`)/`Sample::timing` (`.pts`) carry. `i128` is only used internally for
 /// wrap arithmetic headroom; every real value here is a small non-negative
 /// multiple of the 33-bit range and fits `i64` with room to spare for
 /// centuries of continuous 90 kHz runtime, so this never actually clamps in
@@ -1659,7 +1514,7 @@ enum LiveKind {
     },
     /// AAC/AC-3/E-AC-3/MPEG audio: zero-lookahead, intrinsic-duration frames.
     Audio {
-        sample_rate: u32,
+        sample_rate: Timescale,
         kind: AudioKind,
         /// Frame-exact dts/pts accumulator (issue B5, media plane step-2 fix
         /// wave 1) — see [`AudioAnchor`].
@@ -1695,7 +1550,7 @@ struct LiveTrack {
     config: CodecConfig,
     /// This track's media timescale, for the same [`DemuxEvent::TrackUpdated`]
     /// reconstruction.
-    timescale: u32,
+    timescale: broadcast_common::timescale::Timescale,
     /// The AVC/HEVC parameter sets this track has seen, tracked as each appears
     /// so a re-probe can tell a real change from a repeat and is not blind to a
     /// parameter set that arrived in an earlier access unit (r04-W51).
@@ -1818,7 +1673,7 @@ enum TrackState {
 /// per-PID `StreamState` stays small.
 struct ParkedTrack {
     config: CodecConfig,
-    timescale: u32,
+    timescale: broadcast_common::timescale::Timescale,
     kind: LiveKind,
     backlog: Vec<BufferedAu>,
 }
@@ -2288,9 +2143,7 @@ fn advance_one_behind(
             track_id,
             sample: Sample {
                 data: prev.data.into(),
-                dts: Some(dts),
-                pts: Some(pts),
-                duration: Some(duration),
+                timing: crate::ir::SampleTiming::from_options(Some(dts), Some(pts), Some(duration)),
                 flags: SampleFlags::new(prev.is_sync),
                 provenance: Some(ts_provenance(dts, pts)),
                 display: prev.display,
@@ -2362,9 +2215,11 @@ fn flush_one_behind(
             track_id,
             sample: Sample {
                 data: p.data.into(),
-                dts: Some(dts),
-                pts: Some(pts),
-                duration: Some(last_duration),
+                timing: crate::ir::SampleTiming::from_options(
+                    Some(dts),
+                    Some(pts),
+                    Some(last_duration),
+                ),
                 flags: SampleFlags::new(p.is_sync),
                 provenance: Some(ts_provenance(dts, pts)),
                 display: p.display,
@@ -2597,7 +2452,7 @@ fn clear_audio_carry(stream: &mut StreamState, events: &mut VecDeque<DemuxEvent>
 /// samples, exactly as before.
 fn emit_audio_au(
     kind: &AudioKind,
-    sample_rate: u32,
+    sample_rate: Timescale,
     anchor: &mut AudioAnchor,
     au_data: &[u8],
     pts_uw: i128,
@@ -2655,8 +2510,8 @@ fn emit_audio_au(
         None => true,
         Some(seed) => {
             let expected_dts_uw = seed.anchor_dts_uw
-                + ((seed.ticks_since_anchor + lead_ticks) as i128 * VIDEO_TIMESCALE as i128)
-                    / sample_rate.max(1) as i128;
+                + ((seed.ticks_since_anchor + lead_ticks) as i128 * i128::from(VIDEO_TIMESCALE))
+                    / i128::from(sample_rate);
             (dts_uw - expected_dts_uw).abs() > audio_discontinuity_threshold_90k(sample_rate)
         }
     };
@@ -3066,7 +2921,7 @@ fn reprobe_if_config_changed(
     stream: &mut StreamState,
     live: &mut LiveTrack,
     data: &[u8],
-) -> Option<(CodecConfig, u32)> {
+) -> Option<(CodecConfig, Timescale)> {
     let changed = match stream.codec {
         Codec::H264 | Codec::Hevc => {
             observe_parameter_sets(stream.codec, data, &mut live.parameter_sets)
@@ -3394,7 +3249,7 @@ fn finalize_probe(
     descriptors: &[u8],
     probe: &mut ConfigProbe,
     latest: &[u8],
-) -> Option<(CodecConfig, u32, LiveKind)> {
+) -> Option<(CodecConfig, Timescale, LiveKind)> {
     // One pass over the newest access unit — the thing the r04-W47 bound is
     // about. Counted here so the H.264/HEVC arms, whose NAL walk has no
     // byte-by-byte sync scanner to count, are covered too.
@@ -3676,6 +3531,7 @@ fn finalize_probe(
             // sync.
             let (_, first) = find_mpeg_audio_sync(latest)?;
             let sample_rate = first.sample_rate;
+            let timescale = Timescale::try_new(sample_rate).ok()?;
             let channel_count = first.channels;
             let samples_per_frame = first.samples_per_frame;
             let oti = if *is_mpeg2 {
@@ -3709,9 +3565,9 @@ fn finalize_probe(
                     sample_rate,
                     sample_size: AUDIO_SAMPLE_SIZE_BITS,
                 },
-                sample_rate,
+                timescale,
                 LiveKind::Audio {
-                    sample_rate,
+                    sample_rate: timescale,
                     kind: AudioKind::MpegAudio { samples_per_frame },
                     anchor: AudioAnchor::default(),
                 },
@@ -3760,7 +3616,11 @@ fn finalize_probe(
                     .unwrap_or(config),
                 None => config,
             };
-            let timescale = config.audio_sample_rate().unwrap_or(sample_rate);
+            let core_rate = Timescale::try_new(sample_rate).ok()?;
+            let timescale = match config.audio_sample_rate() {
+                Some(rate) => Timescale::try_new(rate).ok()?,
+                None => core_rate,
+            };
             Some((
                 config,
                 timescale,
@@ -3768,7 +3628,7 @@ fn finalize_probe(
                     sample_rate: timescale,
                     kind: AudioKind::Aac,
                     anchor: AudioAnchor {
-                        duration_scale: timescale / sample_rate.max(1),
+                        duration_scale: timescale.get() / core_rate.get(),
                         ..AudioAnchor::default()
                     },
                 },
@@ -3778,6 +3638,7 @@ fn finalize_probe(
             let start = first_sync_offset::<Ac3Sync>(latest)?;
             let info = Ac3SyncframeInfo::from_es(&latest[start..]).ok()?;
             let sample_rate = info.sample_rate;
+            let timescale = Timescale::try_new(sample_rate).ok()?;
             let channel_count = info.channel_count() as u16;
             let config = info.into_dac3();
             Some((
@@ -3787,9 +3648,9 @@ fn finalize_probe(
                     sample_rate,
                     sample_size: AUDIO_SAMPLE_SIZE_BITS,
                 },
-                sample_rate,
+                timescale,
                 LiveKind::Audio {
-                    sample_rate,
+                    sample_rate: timescale,
                     kind: AudioKind::Ac3,
                     anchor: AudioAnchor::default(),
                 },
@@ -3799,6 +3660,7 @@ fn finalize_probe(
         ConfigProbe::Dts => {
             let info = DtsCoreFrameInfo::from_es(latest).ok()?;
             let sample_rate = info.sample_rate;
+            let timescale = Timescale::try_new(sample_rate).ok()?;
             let channel_count = info.channels as u16;
             let config = info.into_ddts();
             Some((
@@ -3809,9 +3671,9 @@ fn finalize_probe(
                     sample_rate,
                     sample_size: AUDIO_SAMPLE_SIZE_BITS,
                 },
-                sample_rate,
+                timescale,
                 LiveKind::Audio {
-                    sample_rate,
+                    sample_rate: timescale,
                     kind: AudioKind::Dts,
                     anchor: AudioAnchor::default(),
                 },
@@ -4385,7 +4247,10 @@ enum Eac3Accept {
 /// verified frames carry (`Ec3SyncframeInfo::first_crc_verified_bsmod`: a frame
 /// without `infomdate` carries none, which says nothing about the stream).
 /// [`Eac3Accept`] says how much of that the first access unit must show.
-fn eac3_probe_result(latest: &[u8], accept: Eac3Accept) -> Option<(CodecConfig, u32, LiveKind)> {
+fn eac3_probe_result(
+    latest: &[u8],
+    accept: Eac3Accept,
+) -> Option<(CodecConfig, Timescale, LiveKind)> {
     let verified = matches!(accept, Eac3Accept::ChainVerified | Eac3Accept::BrokenChain);
     let start = first_eac3_independent_offset(latest, verified)?;
     let mut frames: alloc::vec::Vec<Ec3SyncframeInfo> = match accept {
@@ -4412,6 +4277,7 @@ fn eac3_probe_result(latest: &[u8], accept: Eac3Accept) -> Option<(CodecConfig, 
     }
     let info = *frames.first()?;
     let sample_rate = info.sample_rate;
+    let timescale = Timescale::try_new(sample_rate).ok()?;
     let channel_count = info.channel_count() as u16;
     let config = Ec3SpecificBox::from_syncframes(&frames).ok()?;
     Some((
@@ -4421,9 +4287,9 @@ fn eac3_probe_result(latest: &[u8], accept: Eac3Accept) -> Option<(CodecConfig, 
             sample_rate,
             sample_size: AUDIO_SAMPLE_SIZE_BITS,
         },
-        sample_rate,
+        timescale,
         LiveKind::Audio {
-            sample_rate,
+            sample_rate: timescale,
             kind: AudioKind::Eac3,
             anchor: AudioAnchor::default(),
         },
@@ -4677,7 +4543,7 @@ pub use crate::ir::{
 /// `program_clock_reference`'s native clock rate (ISO/IEC 13818-1 §2.4.3.5) —
 /// the `clock_hz` [`DemuxEvent::ClockReference`] carries for every PCR this
 /// demuxer emits.
-const PCR_CLOCK_HZ: u32 = broadcast_common::clock33::PCR_HZ as u32;
+const PCR_CLOCK_HZ: Timescale = broadcast_common::clock33::PCR_TIMESCALE;
 
 /// Per-PID continuity-counter state for [`StreamingTsDemux`] (issue #778).
 ///
@@ -5288,9 +5154,11 @@ impl StreamingTsDemux {
                 if !section_current_next(&section) {
                     continue;
                 }
-                if let Ok(programs) = parse_pat(&section) {
-                    for (program_number, pmt_pid) in programs {
-                        self.learn_pmt_pid(pmt_pid, program_number);
+                if let Ok(pat) = dvb_si::tables::pat::PatSection::parse(&section) {
+                    for entry in pat.entries {
+                        if entry.program_number != dvb_si::tables::pat::PROGRAM_NUMBER_NIT {
+                            self.learn_pmt_pid(entry.pid, entry.program_number);
+                        }
                     }
                 }
             }
@@ -5314,26 +5182,26 @@ impl StreamingTsDemux {
                 if !psi_section_crc_ok(section) {
                     continue;
                 }
-                let Ok(header) = parse_pmt_section_header(section) else {
+                let Ok(pmt) = dvb_si::tables::pmt::PmtSection::parse(section) else {
                     continue;
                 };
-                if header.program_number != program_number {
+                if pmt.program_number != program_number {
                     // Defensive cross-check (issue #774): a PMT PID's
                     // program_number must match the PAT entry it was learned
                     // under. A mismatch is stream corruption or a PAT/PMT
                     // race — never act on it.
                     continue;
                 }
-                if header.section_number != 0 || header.last_section_number != 0 {
+                if pmt.section_number != 0 || pmt.last_section_number != 0 {
                     // A PMT is always single-section (§2.4.4.9) — a
                     // multi-section claim is malformed, ignore it.
                     continue;
                 }
-                if !header.current_next {
+                if !pmt.current_next_indicator {
                     // A "next" table: parsed, never applied.
                     continue;
                 }
-                if pmt_state.last_applied_version == Some(header.version) {
+                if pmt_state.last_applied_version == Some(pmt.version_number) {
                     // Carousel repeat (identical applied version) — dropped
                     // before the diff, never re-processed.
                     continue;
@@ -5341,15 +5209,20 @@ impl StreamingTsDemux {
                 // The version is consumed only by a body that parses: a
                 // CRC-valid but unparseable section must not suppress the
                 // intact repeat of the same version.
-                if let Ok(es_list) = parse_pmt(section) {
-                    pmt_state.last_applied_version = Some(header.version);
-                    // Record the PCR_PID the program just declared: it is the
-                    // PID on which a system time-base discontinuity for this
-                    // program is signalled (§2.4.3.5), and the key for scoping
-                    // a rebase to this program's streams (r04-W50 review).
-                    pmt_state.pcr_pid = Some(header.pcr_pid);
-                    to_apply = Some(es_list);
+                let mut es_list: Vec<(Pid, Codec, Vec<u8>)> = Vec::new();
+                for stream in &pmt.streams {
+                    let descriptors = stream.es_info.raw().to_vec();
+                    let codec = Codec::from_stream_type(stream.stream_type.to_u8())
+                        .refine_with_descriptors(stream.stream_type.to_u8(), &descriptors);
+                    es_list.push((stream.elementary_pid, codec, descriptors));
                 }
+                pmt_state.last_applied_version = Some(pmt.version_number);
+                // Record the PCR_PID the program just declared: it is the
+                // PID on which a system time-base discontinuity for this
+                // program is signalled (§2.4.3.5), and the key for scoping
+                // a rebase to this program's streams (r04-W50 review).
+                pmt_state.pcr_pid = Some(pmt.pcr_pid);
+                to_apply = Some(es_list);
             }
             if let Some(es_list) = to_apply {
                 let old_applied_es = pmt_state.applied_es.clone();
@@ -6087,7 +5960,7 @@ impl StreamingTsDemux {
                     // event (issue #774 reshape dropped it along with
                     // `samples`/`encryption` when `TrackAdded` became
                     // `TrackSpec`-only) — every consumer that builds a `Track`
-                    // derives it from `samples[0].dts` instead (media plane
+                    // derives it from `samples[0].timing.map(|t| t.dts)` instead (media plane
                     // step 2c invariant: the two are always equal), so no
                     // anchor value needs computing here at all.
                     let hdr10plus = matches!(config, CodecConfig::Hevc { .. })
@@ -6792,7 +6665,7 @@ impl<'a> TsDemux<'a> {
                     // invariant, unconditionally true for every track
                     // kind), so derive it here instead.
                     if track.samples.is_empty()
-                        && let Some(dts) = sample.dts
+                        && let Some(dts) = sample.timing.map(|t| t.dts)
                     {
                         track.start_decode_time = dts as u64;
                     }
@@ -6994,7 +6867,7 @@ pub(crate) mod tests {
                 height: 0,
             },
         );
-        let frame_dur = VIDEO_TIMESCALE / 30;
+        let frame_dur = VIDEO_TIMESCALE.get() / 30;
         let samples: Vec<Sample> = (0..3u32)
             .map(|i| {
                 let nal = [0x65u8, 0xAA, i as u8];
@@ -7109,7 +6982,7 @@ pub(crate) mod tests {
         // Comfortably more than MAX_PROBE_BACKLOG_BYTES per track (~4.9 MiB).
         const SAMPLE_BYTES: usize = 4096;
         const SAMPLE_COUNT: u32 = 1200;
-        let frame_dur = VIDEO_TIMESCALE / 30;
+        let frame_dur = VIDEO_TIMESCALE.get() / 30;
 
         // PID A (rank 0, ES_PID_BASE = 0x0100 in `ts_mux.rs`): H.264, never
         // carries SPS/PPS — every sample is deliberately non-sync, so
@@ -7245,7 +7118,7 @@ pub(crate) mod tests {
         use broadcast_common::Package;
 
         const PID_A: Pid = Pid::from_const(0x0100);
-        let frame_dur = VIDEO_TIMESCALE / 30;
+        let frame_dur = VIDEO_TIMESCALE.get() / 30;
         let avc = avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==").unwrap();
         let video_spec = TrackSpec::new(
             TrackId::new(1),
@@ -7648,7 +7521,7 @@ pub(crate) mod tests {
         use crate::rtp_sdp::avc_config_from_sprop;
         use broadcast_common::Package;
 
-        let frame_dur = VIDEO_TIMESCALE / 30;
+        let frame_dur = VIDEO_TIMESCALE.get() / 30;
         let avc = avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==").unwrap();
         let video_samples: Vec<Sample> = (0..video_aus)
             .map(|i| {
@@ -9061,7 +8934,7 @@ pub(crate) mod tests {
         for event in &events {
             if let DemuxEvent::Sample { track_id, sample } = event
                 && let Some(pid) = ids.get(track_id)
-                && let Some(dts) = sample.dts
+                && let Some(dts) = sample.timing.map(|t| t.dts)
             {
                 samples_by_pid
                     .entry(Pid::try_new((*pid).value()).expect("pid fits the 13-bit field"))
@@ -9199,7 +9072,7 @@ pub(crate) mod tests {
         for event in &events {
             if let DemuxEvent::Sample { track_id, sample } = event
                 && let Some(pid) = ids.get(track_id)
-                && let Some(dts) = sample.dts
+                && let Some(dts) = sample.timing.map(|t| t.dts)
             {
                 by_pid.entry(*pid).or_default().push(dts);
             }
@@ -9327,7 +9200,7 @@ pub(crate) mod tests {
         demux.finish();
         let got: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => sample.dts,
+                DemuxEvent::Sample { sample, .. } => sample.timing.map(|t| t.dts),
                 _ => None,
             })
             .collect();
@@ -9430,7 +9303,7 @@ pub(crate) mod tests {
         demux.finish();
         let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => sample.dts,
+                DemuxEvent::Sample { sample, .. } => sample.timing.map(|t| t.dts),
                 _ => None,
             })
             .collect();
@@ -9582,7 +9455,7 @@ pub(crate) mod tests {
         demux.finish();
         let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => sample.dts,
+                DemuxEvent::Sample { sample, .. } => sample.timing.map(|t| t.dts),
                 _ => None,
             })
             .collect();
@@ -9674,7 +9547,7 @@ pub(crate) mod tests {
         demux.finish();
         let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => sample.dts,
+                DemuxEvent::Sample { sample, .. } => sample.timing.map(|t| t.dts),
                 _ => None,
             })
             .collect();
@@ -10621,7 +10494,7 @@ pub(crate) mod tests {
         );
         let dts: Vec<i64> = samples
             .iter()
-            .map(|s| s.dts.expect("stamped dts"))
+            .map(|s| s.timing.map(|t| t.dts).expect("stamped dts"))
             .collect();
         assert!(
             dts.len() >= FRAMES,
@@ -10735,7 +10608,7 @@ pub(crate) mod tests {
         demux.finish();
         let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => sample.dts,
+                DemuxEvent::Sample { sample, .. } => sample.timing.map(|t| t.dts),
                 _ => None,
             })
             .collect();
@@ -10957,7 +10830,7 @@ pub(crate) mod tests {
         use crate::rtp_sdp::avc_config_from_sprop;
         use broadcast_common::Package;
 
-        let frame_dur = VIDEO_TIMESCALE / 25;
+        let frame_dur = VIDEO_TIMESCALE.get() / 25;
         let avc = avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==").unwrap();
         let spec = TrackSpec::new(
             TrackId::new(1),
@@ -11238,7 +11111,8 @@ pub(crate) mod tests {
             .find(|t| matches!(t.config(), CodecConfig::Avc { .. }))
             .expect("h264-aac.ts has an AVC track");
         let source_dts0 = video.samples[0]
-            .dts
+            .timing
+            .map(|t| t.dts)
             .expect("the fixture's AVC track is stamped");
         let mut headers = 0usize;
         for (i, sample) in video.samples.iter().enumerate() {
@@ -11296,7 +11170,10 @@ pub(crate) mod tests {
         // The dts series must advance by exactly one frame period per access
         // unit. The pre-fix behaviour gave every unstamped access unit the
         // previous one's dts, so the series alternated 0 / 3600 steps.
-        let dts: Vec<i64> = samples.iter().map(|s| s.dts.expect("video dts")).collect();
+        let dts: Vec<i64> = samples
+            .iter()
+            .map(|s| s.timing.map(|t| t.dts).expect("video dts"))
+            .collect();
         let steps: Vec<i64> = dts.windows(2).map(|w| w[1] - w[0]).collect();
         assert!(
             steps.iter().all(|&d| d == FRAME_PERIOD),
@@ -11305,9 +11182,12 @@ pub(crate) mod tests {
         assert!(
             samples
                 .iter()
-                .all(|s| s.duration == Some(FRAME_PERIOD as u32)),
+                .all(|s| s.timing.map(|t| t.duration) == Some(FRAME_PERIOD as u32)),
             "no zero-duration sample may survive interpolation; durations: {:?}",
-            samples.iter().map(|s| s.duration).collect::<Vec<_>>()
+            samples
+                .iter()
+                .map(|s| s.timing.map(|t| t.duration))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -11356,7 +11236,7 @@ pub(crate) mod tests {
     fn constant_increment_44100_aac_emits_no_timeline_reanchor() {
         /// What a muxer that rounds `1024 * 90000 / 44100` to an integer emits.
         const PES_INCREMENT_TICKS: i128 = 2090;
-        const SAMPLE_RATE: u32 = 44_100;
+        const SAMPLE_RATE: Timescale = Timescale::from_nonzero(44_100);
         /// ~11.6 s of audio. Accumulated drift here is ~102 ticks: far past
         /// the old 3-tick threshold (which would have fired ~34 times), far
         /// short of the 1800-tick (20 ms) bound the fix derives.
@@ -11410,7 +11290,7 @@ pub(crate) mod tests {
     #[test]
     fn a_real_timeline_gap_emits_exactly_one_reanchor() {
         const PES_INCREMENT_TICKS: i128 = 2090;
-        const SAMPLE_RATE: u32 = 44_100;
+        const SAMPLE_RATE: Timescale = Timescale::from_nonzero(44_100);
         const FRAMES_BEFORE: i128 = 50;
         const FRAMES_AFTER: i128 = 50;
         /// Two seconds of 90 kHz — orders of magnitude past any muxer drift.
@@ -11612,7 +11492,7 @@ pub(crate) mod tests {
 
             emit_audio_au(
                 &AudioKind::Aac,
-                44_100,
+                Timescale::from_nonzero(44_100),
                 &mut anchor,
                 &au,
                 dts_uw as u64 as i128,
@@ -11665,7 +11545,7 @@ pub(crate) mod tests {
         let mut anchor = AudioAnchor::default();
         emit_audio_au(
             &AudioKind::Aac,
-            44_100,
+            Timescale::from_nonzero(44_100),
             &mut anchor,
             &au,
             0,
@@ -11677,7 +11557,9 @@ pub(crate) mod tests {
         let emitted: Vec<(Vec<u8>, Option<u32>)> = events
             .iter()
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => Some((sample.data.to_vec(), sample.duration)),
+                DemuxEvent::Sample { sample, .. } => {
+                    Some((sample.data.to_vec(), sample.timing.map(|t| t.duration)))
+                }
                 _ => None,
             })
             .collect();
@@ -11748,7 +11630,7 @@ pub(crate) mod tests {
         let mut anchor = AudioAnchor::default();
         emit_audio_au(
             &AudioKind::Aac,
-            44_100,
+            Timescale::from_nonzero(44_100),
             &mut anchor,
             au,
             0,
@@ -11759,7 +11641,9 @@ pub(crate) mod tests {
         events
             .iter()
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => Some((sample.data.to_vec(), sample.duration)),
+                DemuxEvent::Sample { sample, .. } => {
+                    Some((sample.data.to_vec(), sample.timing.map(|t| t.duration)))
+                }
                 _ => None,
             })
             .collect()
@@ -13061,9 +12945,9 @@ pub(crate) mod tests {
                 match e {
                     DemuxEvent::Sample { sample, .. } => samples.push((
                         sample.data.to_vec(),
-                        sample.dts,
-                        sample.pts,
-                        sample.duration,
+                        sample.timing.map(|t| t.dts),
+                        sample.timing.map(|t| t.pts),
+                        sample.timing.map(|t| t.duration),
                     )),
                     DemuxEvent::Discontinuity { .. } => disc += 1,
                     _ => {}
@@ -13131,7 +13015,14 @@ pub(crate) mod tests {
         let batch: Vec<_> = media.tracks[0]
             .samples
             .iter()
-            .map(|s| (s.data.to_vec(), s.dts, s.pts, s.duration))
+            .map(|s| {
+                (
+                    s.data.to_vec(),
+                    s.timing.map(|t| t.dts),
+                    s.timing.map(|t| t.pts),
+                    s.timing.map(|t| t.duration),
+                )
+            })
             .collect();
         assert_eq!(batch, whole, "{label}: batch == streaming");
 

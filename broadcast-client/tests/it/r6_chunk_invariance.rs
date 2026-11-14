@@ -1,7 +1,13 @@
 use crate::support;
 
 use broadcast_client::{Action, BufferEvent, Config, Event, Session};
+use broadcast_common::stage::Timestamp;
 use support::replay::TS_PACKET;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const SOAK_FIXED_CHUNKS: &[usize] = &[
     TS_PACKET,
@@ -66,14 +72,14 @@ enum Clock {
 }
 
 fn drain(s: &mut Session, conn: &mut Option<u32>, now: u64, out: &mut Vec<Rec>) {
-    while let Some(a) = s.poll(now) {
+    while let Some(a) = s.poll(ts(now)) {
         if let Action::HttpRequest { conn: c, .. } = a {
             *conn = Some(c);
             s.on_response(
                 c,
                 200,
                 &[("Content-Type".to_string(), "video/MP2T".to_string())],
-                now,
+                ts(now),
             );
         }
     }
@@ -86,8 +92,8 @@ fn drain(s: &mut Session, conn: &mut Option<u32>, now: u64, out: &mut Vec<Rec>) 
                 join,
             } => Rec::Sample {
                 track: track.value(),
-                pts: sample.pts,
-                dts: sample.dts,
+                pts: sample.timing.map(|t| t.pts),
+                dts: sample.timing.map(|t| t.dts),
                 join: format!("{join:?}"),
                 len: sample.data.len(),
             },
@@ -104,7 +110,7 @@ fn drain(s: &mut Session, conn: &mut Option<u32>, now: u64, out: &mut Vec<Rec>) 
 }
 
 fn run(bytes: &[u8], sizes: &mut dyn FnMut() -> usize, clock: &Clock) -> Vec<Rec> {
-    let mut s = Session::open("http://h/live.ts", Config::default(), 0).unwrap();
+    let mut s = Session::open("http://h/live.ts", Config::default(), ts(0)).unwrap();
     let mut conn = None;
     let mut out = Vec::new();
     let mut now = 0u64;
@@ -115,11 +121,11 @@ fn run(bytes: &[u8], sizes: &mut dyn FnMut() -> usize, clock: &Clock) -> Vec<Rec
         if let Clock::Paced(bps) = clock {
             now += (n as u64 * 8 * MICROS / bps).max(1);
         }
-        s.on_data(conn.unwrap(), &bytes[p..p + n], now);
+        s.on_data(conn.unwrap(), &bytes[p..p + n], ts(now));
         p += n;
         drain(&mut s, &mut conn, now, &mut out);
     }
-    s.on_closed(conn.unwrap(), None, now);
+    s.on_closed(conn.unwrap(), None, ts(now));
     drain(&mut s, &mut conn, now, &mut out);
     out
 }

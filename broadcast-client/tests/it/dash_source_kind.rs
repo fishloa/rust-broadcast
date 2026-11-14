@@ -2,12 +2,18 @@
 //! case-insensitive), and what the other kinds do with the same URL.
 
 use broadcast_client::{Action, Config, Error, Session, SourceKind};
+use broadcast_common::stage::Timestamp;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 fn first_request(url: &str, kind: SourceKind) -> Option<(String, String)> {
     let mut config = Config::default();
     config.kind = kind;
-    let mut session = Session::open(url, config, 0).ok()?;
-    std::iter::from_fn(|| session.poll(0)).find_map(|a| match a {
+    let mut session = Session::open(url, config, ts(0)).ok()?;
+    std::iter::from_fn(|| session.poll(ts(0))).find_map(|a| match a {
         Action::HttpRequest { method, url, .. } => Some((method, url)),
         _ => None,
     })
@@ -16,7 +22,7 @@ fn first_request(url: &str, kind: SourceKind) -> Option<(String, String)> {
 fn is_adaptive(url: &str, kind: SourceKind) -> bool {
     let mut config = Config::default();
     config.kind = kind;
-    let mut session = Session::open(url, config, 0).unwrap();
+    let mut session = Session::open(url, config, ts(0)).unwrap();
     !matches!(session.select_variant(0), Err(Error::NotHls))
 }
 
@@ -64,12 +70,12 @@ fn dash_is_http_only() {
     let mut config = Config::default();
     config.kind = SourceKind::Dash;
     assert!(matches!(
-        Session::open("rtsp://h/stream", config, 0),
+        Session::open("rtsp://h/stream", config, ts(0)),
         Err(Error::UnsupportedScheme(_))
     ));
     let mut config = Config::default();
     config.kind = SourceKind::Auto;
-    assert!(Session::open("rtsp://h/stream.mpd", config, 0).is_ok());
+    assert!(Session::open("rtsp://h/stream.mpd", config, ts(0)).is_ok());
 }
 
 #[test]
@@ -80,8 +86,8 @@ fn the_kind_has_a_stable_label() {
 
 #[test]
 fn a_dash_session_asks_for_the_mpd_first_with_get_and_no_other_request() {
-    let mut session = Session::open("http://h/a/manifest.mpd", Config::default(), 0).unwrap();
-    let requests: Vec<(String, String)> = std::iter::from_fn(|| session.poll(0))
+    let mut session = Session::open("http://h/a/manifest.mpd", Config::default(), ts(0)).unwrap();
+    let requests: Vec<(String, String)> = std::iter::from_fn(|| session.poll(ts(0)))
         .filter_map(|a| match a {
             Action::HttpRequest { method, url, .. } => Some((method, url)),
             _ => None,

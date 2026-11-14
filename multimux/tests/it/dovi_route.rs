@@ -246,7 +246,7 @@ fn has_b_frame_reordering(fixture: &str) -> bool {
     load(fixture)
         .iter()
         .flat_map(|s| s.samples.iter())
-        .any(|s| s.pts != s.dts)
+        .any(|s| s.timing.map(|t| t.pts) != s.timing.map(|t| t.dts))
 }
 
 #[tokio::test]

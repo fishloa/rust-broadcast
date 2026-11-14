@@ -67,7 +67,7 @@ impl Diagnostic for FpsCadenceCheck {
 ///
 /// See [`total_duration_of`] for the arithmetic.
 fn total_sample_duration(track: &transmux::Track) -> u64 {
-    total_duration_of(track.samples.iter().map(|s| s.duration))
+    total_duration_of(track.samples.iter().map(|s| s.timing.map(|t| t.duration)))
 }
 
 /// Sum a sequence of optional per-sample durations.
@@ -128,11 +128,10 @@ fn check_media(media: &Media, report: &mut Report) {
             continue;
         }
         let mean_duration = total_duration as f64 / track.samples.len() as f64;
-        let timescale = track.timescale();
-        if timescale == 0 {
-            continue;
-        }
-        let measured_fps = timescale as f64 / mean_duration;
+        // A `Timescale` is non-zero by construction, so there is no
+        // zero-timescale track to skip.
+        let timescale = track.timescale().get();
+        let measured_fps = f64::from(timescale) / mean_duration;
 
         let relative_diff =
             (measured_fps - declared_fps as f64).abs() / declared_fps.max(1.0) as f64;
@@ -156,6 +155,7 @@ fn check_media(media: &Media, report: &mut Report) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use broadcast_common::timescale::Timescale;
 
     /// The sample-duration sum must widen from `u32` and saturate rather than
     /// wrap.
@@ -195,7 +195,7 @@ mod tests {
     /// panic — regression guard for the `None`/empty-track paths.
     #[test]
     fn empty_media_no_findings() {
-        let media = Media::new(alloc::vec::Vec::new(), 90_000);
+        let media = Media::new(alloc::vec::Vec::new(), Timescale::from_nonzero(90_000));
         let mut report = Report::new();
         check_media(&media, &mut report);
         assert!(report.is_empty());

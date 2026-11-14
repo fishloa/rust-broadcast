@@ -133,7 +133,7 @@ fn fixture_path(rel: &str) -> PathBuf {
 fn cumulative(samples: &[Sample], upto: usize) -> u64 {
     samples[..upto]
         .iter()
-        .map(|s| s.duration.unwrap_or(0) as u64)
+        .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
         .sum()
 }
 
@@ -141,7 +141,7 @@ fn cumulative(samples: &[Sample], upto: usize) -> u64 {
 fn range_duration(samples: &[Sample], lo: usize, hi: usize) -> u64 {
     samples[lo..hi]
         .iter()
-        .map(|s| s.duration.unwrap_or(0) as u64)
+        .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
         .sum()
 }
 
@@ -155,7 +155,7 @@ fn index_at_offset(samples: &[Sample], offset_ticks: u64) -> usize {
         if acc >= offset_ticks {
             return i;
         }
-        acc += s.duration.unwrap_or(0) as u64;
+        acc += s.timing.map(|t| t.duration).unwrap_or(0) as u64;
     }
     samples.len()
 }
@@ -253,17 +253,17 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
     let splice_dts = video.start_decode_time + cumulative(&video.samples, splice_sample_index);
 
     let content_split_ticks = cumulative(&video.samples, content_split);
-    let content_split_secs = content_split_ticks as f64 / video.spec.timescale as f64;
+    let content_split_secs = content_split_ticks as f64 / video.spec.timescale.get() as f64;
     let audio_content_split = index_at_offset(
         &audio.samples,
-        (content_split_secs * audio.spec.timescale as f64).round() as u64,
+        (content_split_secs * audio.spec.timescale.get() as f64).round() as u64,
     );
 
     let base_video_samples = video.samples[..content_split].to_vec();
     let ad_video_samples = video.samples[content_split..].to_vec();
     let ad_duration_ticks_90k = ad_video_samples
         .iter()
-        .map(|s| s.duration.unwrap_or(0) as u64)
+        .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
         .sum::<u64>();
     let base_audio_samples = audio.samples[..audio_content_split].to_vec();
     let ad_audio_samples = audio.samples[audio_content_split..].to_vec();
@@ -343,8 +343,8 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
     // ticks. For this capture the two happen to coincide (TS video is always
     // carried on the 90 kHz PES clock), so this is a no-op multiply here —
     // written generically so it holds for a base with a different timescale.
-    let at_ticks =
-        (at_pts_90k as u128 * video.spec.timescale as u128 / timed_metadata::PTS_HZ as u128) as u64;
+    let at_ticks = (at_pts_90k as u128 * video.spec.timescale.get() as u128
+        / timed_metadata::PTS_HZ as u128) as u64;
 
     // ------------------------------------------------------------------
     // 5. The actual splice.
@@ -451,7 +451,7 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
         .iter()
         .map(|&(lo, hi)| {
             range_duration(&spliced_video.samples, lo, hi) as f64
-                / spliced_video.spec.timescale as f64
+                / spliced_video.spec.timescale.get() as f64
         })
         .collect();
 

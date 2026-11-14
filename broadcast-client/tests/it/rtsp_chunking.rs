@@ -3,6 +3,13 @@ use crate::support;
 use broadcast_client::{Config, Event};
 use support::rtsp_host::{BASE_URL, Chunking, Host, MediaFixture, Server};
 
+use broadcast_common::stage::Timestamp;
+
+/// The test's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
+
 const FRAME_STEP_US: u64 = 10_000;
 const IDLE_STEPS: usize = 200;
 
@@ -28,7 +35,7 @@ fn play_with(
         host.now += FRAME_STEP_US;
         host.deliver(frame);
         if poll_every_frame {
-            host.session.on_playback_position(host.now, None);
+            host.session.on_playback_position(ts(host.now), None);
         }
         host.drain();
         collect(&mut host);
@@ -36,7 +43,7 @@ fn play_with(
     for _ in 0..IDLE_STEPS {
         host.now += FRAME_STEP_US;
         if idle_poll_every {
-            host.session.on_playback_position(host.now, None);
+            host.session.on_playback_position(ts(host.now), None);
         }
         host.drain();
         collect(&mut host);
@@ -49,9 +56,9 @@ fn play_with(
         if let Event::Sample { track, sample, .. } = e {
             out.push((
                 track.value(),
-                sample.pts.unwrap_or(0),
-                sample.dts.unwrap_or(0),
-                sample.duration.unwrap_or(0),
+                sample.timing.map(|t| t.pts).unwrap_or(0),
+                sample.timing.map(|t| t.dts).unwrap_or(0),
+                sample.timing.map(|t| t.duration).unwrap_or(0),
             ));
         }
     }

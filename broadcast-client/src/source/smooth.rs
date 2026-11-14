@@ -13,12 +13,15 @@ use smooth_runtime::{
 };
 use url::Url;
 
-use crate::error::Error;
+use crate::error::{Error, TransportError};
 use crate::events::{Action as HostAction, Config, ErrorKind, Event, ResumeMode, Status};
 use crate::playout::Source;
 use crate::redirect;
 use crate::source::fetch::conn::ConnAlloc;
+use crate::source::fetch::deadline;
+use crate::source::fetch::retry::duration_us;
 use broadcast_auth::{AuthDecision, AuthState};
+use broadcast_common::stage::Timestamp;
 
 const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
 const HTTP_UNAUTHORIZED: u16 = 401;
@@ -70,8 +73,7 @@ fn engine_config(url: &Url, config: &Config, jitter_seed: u64) -> SmoothClientCo
     SmoothClientConfig::new(url.as_str())
         .with_max_fragment_failures(config.max_segment_failures)
         .with_max_manifest_failures(config.max_key_failures)
-        .with_backoff_ms(config.backoff_ms.clone())
-        .with_backoff_cap_ms(config.backoff_cap_ms)
+        .with_backoff(config.backoff.clone())
         .with_jitter_seed(jitter_seed)
         .with_video_quality(QualitySelector::new(move |qualities| {
             let variants: Vec<VariantInfo> = qualities.iter().map(variant_info).collect();
@@ -139,13 +141,17 @@ impl SmoothSource {
     }
 
     fn inactivity_us(&self) -> u64 {
-        self.config.segment_inactivity_timeout_us
+        duration_us(self.config.segment_inactivity_timeout)
     }
 
     fn arm_inactivity(&mut self, now: u64) {
-        self.actions.push_back(HostAction::WakeAt(
-            now.saturating_add(self.inactivity_us().max(1)),
-        ));
+        // A deadline past the end of the clock can never be reached: no wake for it.
+        if let Some(at) = deadline(
+            Timestamp::from_micros(now),
+            self.config.segment_inactivity_timeout,
+        ) {
+            self.actions.push_back(HostAction::WakeAt(at));
+        }
     }
 
     fn start(&mut self, mut req: Req, headers: Vec<(String, String)>, now: u64) {
@@ -165,7 +171,7 @@ impl SmoothSource {
     }
 
     fn pump(&mut self, now: u64) {
-        while let Some(action) = self.client.poll(now) {
+        while let Some(action) = self.client.poll(Timestamp::from_micros(now)) {
             let (kind, id, url) = match action {
                 Action::FetchManifest { id, url } => (ReqKind::Manifest, id, url),
                 Action::FetchFragment { id, url, .. } => (ReqKind::Fragment, id, url),
@@ -192,7 +198,8 @@ impl SmoothSource {
         if deadline != self.armed_wake {
             self.armed_wake = deadline;
             if let Some(t) = deadline {
-                self.actions.push_back(HostAction::WakeAt(t));
+                self.actions
+                    .push_back(HostAction::WakeAt(Timestamp::from_micros(t)));
             }
         }
     }
@@ -240,7 +247,7 @@ impl SmoothSource {
 
     fn fail_request(&mut self, req: &Req, status: Option<u16>, now: u64) {
         self.client.on_failure(
-            now,
+            Timestamp::from_micros(now),
             req.id,
             FetchFailure {
                 status,
@@ -274,7 +281,11 @@ impl SmoothSource {
                 self.events.push_back(Event::Status(Status::RequestStalled {
                     resume: ResumeMode::Full,
                 }));
-                self.client.on_failure(now, req.id, FetchFailure::default());
+                self.client.on_failure(
+                    Timestamp::from_micros(now),
+                    req.id,
+                    FetchFailure::default(),
+                );
             }
         }
         self.pump(now);
@@ -292,7 +303,7 @@ impl SmoothSource {
         let Some(mut req) = self.reqs.remove(&conn) else {
             return;
         };
-        auth.receive_cookies(&req.url, headers, now);
+        auth.receive_cookies(&req.url, headers, Timestamp::from_micros(now));
         if REDIRECT_STATUSES.contains(&status) {
             self.actions.push_back(HostAction::Close { conn });
             let target =
@@ -304,7 +315,7 @@ impl SmoothSource {
                     if matches!(req.kind, ReqKind::Manifest) {
                         self.client.set_manifest_url(req.url.clone());
                     }
-                    let h = auth.request_headers(&req.url, now);
+                    let h = auth.request_headers(&req.url, Timestamp::from_micros(now));
                     self.start(req, h, now);
                 }
                 None => self.fail_request(&req, None, now),
@@ -317,13 +328,13 @@ impl SmoothSource {
             match auth.handle_unauthorized(status, headers, req.authed, req.stale_replayed) {
                 AuthDecision::Replay => {
                     req.authed = true;
-                    let h = auth.request_headers(&req.url, now);
+                    let h = auth.request_headers(&req.url, Timestamp::from_micros(now));
                     self.start(req, h, now);
                 }
                 AuthDecision::ReplayStale => {
                     req.authed = true;
                     req.stale_replayed = true;
-                    let h = auth.request_headers(&req.url, now);
+                    let h = auth.request_headers(&req.url, Timestamp::from_micros(now));
                     self.start(req, h, now);
                 }
                 AuthDecision::Wait(events) => {
@@ -354,7 +365,7 @@ impl SmoothSource {
     pub(crate) fn on_closed(
         &mut self,
         conn: u32,
-        error: Option<&str>,
+        error: Option<&TransportError>,
         now: u64,
         _auth: &mut AuthState,
     ) {
@@ -367,8 +378,14 @@ impl SmoothSource {
             return self.fail_request(&req, http_status, now);
         }
         match req.kind {
-            ReqKind::Manifest => self.client.on_manifest(now, req.id, &req.body),
-            ReqKind::Fragment => self.client.on_fragment(now, req.id, &req.body),
+            ReqKind::Manifest => {
+                self.client
+                    .on_manifest(Timestamp::from_micros(now), req.id, &req.body)
+            }
+            ReqKind::Fragment => {
+                self.client
+                    .on_fragment(Timestamp::from_micros(now), req.id, &req.body)
+            }
         }
         self.pump(now);
     }
@@ -402,7 +419,7 @@ impl SmoothSource {
 
     pub(crate) fn resume(&mut self, now: u64, auth: &mut AuthState) {
         for req in core::mem::take(&mut self.parked) {
-            let h = auth.request_headers(&req.url, now);
+            let h = auth.request_headers(&req.url, Timestamp::from_micros(now));
             self.start(req, h, now);
         }
         self.pump(now);

@@ -10,6 +10,7 @@
 //! strongest bite: round-tripping the real writer's output.
 #![cfg(feature = "std")]
 
+use broadcast_common::timescale::Timescale;
 use std::path::PathBuf;
 
 use broadcast_common::{Package, Parse, Unpackage};
@@ -238,9 +239,9 @@ fn fragment_c_timeline() {
         let media_ticks: u64 = track
             .samples
             .iter()
-            .map(|s| s.duration.unwrap_or(0) as u64)
+            .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
             .sum();
-        let ts = track.spec.timescale.max(1) as u64;
+        let ts = track.spec.timescale.get() as u64;
         let expected = (media_ticks * 10_000_000 + ts / 2) / ts;
         // The fragments tile the track's timeline from its (rounded) absolute
         // start, so the sum may differ from the rounded total by one tick.
@@ -375,7 +376,7 @@ fn lossless_round_trip_video() {
     // the manifest `TimeScale` (10 MHz), so the fragments' `trun` values are
     // read in that timescale (issue #1022).
     let mut spec = vid.spec.clone();
-    spec.timescale = 10_000_000;
+    spec.timescale = Timescale::from_nonzero(10_000_000);
     let specs = vec![spec];
     let mut file = build_init_segment(&specs, media.movie_timescale).expect("init segment");
 
@@ -405,11 +406,16 @@ fn lossless_round_trip_video() {
             a.data, b.data,
             "coded NAL payload byte-identical at sample {i}"
         );
-        let ts = u64::from(vid.spec.timescale);
+        let ts = u64::from(vid.spec.timescale.get());
         let in_10mhz = a
-            .duration
+            .timing
+            .map(|t| t.duration)
             .map(|d| ((u64::from(d) * 10_000_000 + ts / 2) / ts) as u32);
-        assert_eq!(in_10mhz, b.duration, "duration preserved at sample {i}");
+        assert_eq!(
+            in_10mhz,
+            b.timing.map(|t| t.duration),
+            "duration preserved at sample {i}"
+        );
         assert_eq!(
             a.flags.is_sync, b.flags.is_sync,
             "sync flag preserved at sample {i}"
@@ -537,7 +543,7 @@ fn parsed_manifest_codec_glue_builds_working_init_segment() {
 
 #[test]
 fn empty_media_rejected() {
-    let media = Media::new(vec![], 90_000);
+    let media = Media::new(vec![], Timescale::from_nonzero(90_000));
     let mut pkg = SmoothPackager::default();
     assert!(
         matches!(

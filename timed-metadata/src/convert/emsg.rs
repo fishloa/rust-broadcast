@@ -10,6 +10,7 @@
 //! document was needed after all.
 use crate::error::{Error, Result};
 use alloc::{string::String, vec::Vec};
+use broadcast_common::timescale::Timescale;
 use mp4_emsg::{EmsgBox, PresentationTime};
 
 /// The SCTE-35 binary carriage scheme for inband DASH `emsg`
@@ -21,7 +22,7 @@ pub const SCTE35_SCHEME: &str = "urn:scte:scte35:2013:bin";
 #[non_exhaustive]
 pub struct EmsgConfig {
     /// `timescale` (ticks/second) for the emsg time fields.
-    pub timescale: u32,
+    pub timescale: Timescale,
     /// `presentation_time_delta` (v0) or `presentation_time` (v1).
     pub presentation: PresentationTime,
     /// `event_duration` in `timescale` units (0 if unknown).
@@ -36,7 +37,7 @@ impl EmsgConfig {
     /// Build the emsg parameters from their required values.
     #[must_use]
     pub fn new(
-        timescale: u32,
+        timescale: Timescale,
         presentation: PresentationTime,
         event_duration: u32,
         value: String,
@@ -91,7 +92,7 @@ mod tests {
     fn scte35_to_emsg_embeds_splice_verbatim_then_round_trips() {
         let splice = splice_2002();
         let cfg = EmsgConfig {
-            timescale: 90_000,
+            timescale: Timescale::from_nonzero(90_000),
             presentation: PresentationTime::Delta(0),
             event_duration: 2_160_000,
             value: "1".to_string(),

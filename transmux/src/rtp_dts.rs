@@ -144,7 +144,7 @@ impl DtsDeriver {
         out: &mut Vec<Sample>,
         exceeded: &mut Vec<DepthExceeded>,
     ) {
-        if sample.pts.is_none() {
+        if sample.timing.map(|t| t.pts).is_none() {
             out.push(sample);
             return;
         }
@@ -190,10 +190,10 @@ impl DtsDeriver {
         let probe = core::mem::take(&mut self.held);
         let mut lag = 0usize;
         for (i, s) in probe.iter().enumerate() {
-            let pts = s.pts.unwrap_or_default();
+            let pts = s.timing.map(|t| t.pts).unwrap_or_default();
             let ahead = probe[..i]
                 .iter()
-                .filter(|e| e.pts.unwrap_or_default() > pts)
+                .filter(|e| e.timing.map(|t| t.pts).unwrap_or_default() > pts)
                 .count();
             lag = lag.max(ahead);
         }
@@ -211,7 +211,7 @@ impl DtsDeriver {
         exceeded: &mut Vec<DepthExceeded>,
     ) {
         let depth = self.depth.unwrap_or(0);
-        let pts = sample.pts.unwrap_or_default();
+        let pts = sample.timing.map(|t| t.pts).unwrap_or_default();
         let at = self.window.partition_point(|&p| p < pts);
         self.window.insert(at, pts);
         if !self.anchored {
@@ -244,7 +244,11 @@ impl DtsDeriver {
             dts
         };
         self.last_dts = Some(dts);
-        sample.dts = Some(dts);
+        if let Some(t) = sample.timing.as_mut() {
+            t.dts = dts;
+        } else {
+            sample.timing = Some(crate::ir::SampleTiming::new(dts, dts, 0));
+        }
         out.push(sample);
     }
 
@@ -263,7 +267,7 @@ impl DtsDeriver {
             .or_else(|| {
                 self.held
                     .iter()
-                    .find_map(|s| s.duration.map(i64::from))
+                    .find_map(|s| s.timing.map(|t| t.duration).map(i64::from))
                     .filter(|&d| d > 0)
             })
             .unwrap_or(1);
@@ -279,7 +283,11 @@ impl DtsDeriver {
                 origin
             };
             self.last_dts = Some(dts);
-            s.dts = Some(dts);
+            if let Some(t) = s.timing.as_mut() {
+                t.dts = dts;
+            } else {
+                s.timing = Some(crate::ir::SampleTiming::new(dts, dts, 0));
+            }
             out.push(s);
         }
         self.anchored = true;
@@ -324,15 +332,26 @@ mod tests {
     }
 
     fn dts_of(out: &[Sample]) -> Vec<i64> {
-        out.iter().map(|s| s.dts.unwrap()).collect()
+        out.iter()
+            .map(|s| s.timing.map(|t| t.dts).unwrap())
+            .collect()
     }
 
     fn assert_invariants(out: &[Sample]) {
         for w in out.windows(2) {
-            assert!(w[0].dts < w[1].dts, "dts not strictly increasing");
+            assert!(
+                w[0].timing.map(|t| t.dts) < w[1].timing.map(|t| t.dts),
+                "dts not strictly increasing"
+            );
         }
         for s in out {
-            assert!(s.dts <= s.pts, "dts {:?} > pts {:?}", s.dts, s.pts);
+            assert!(
+                s.timing.map(|t| t.dts).unwrap_or_default()
+                    <= s.timing.map(|t| t.pts).unwrap_or_default(),
+                "dts {:?} > pts {:?}",
+                s.timing.map(|t| t.dts),
+                s.timing.map(|t| t.pts)
+            );
         }
     }
 
@@ -344,8 +363,16 @@ mod tests {
         assert_eq!(out.len(), wire.len());
         assert_invariants(&out);
         for (k, s) in out.iter().enumerate() {
-            assert_eq!(s.dts, Some((k as i64 - 2) * D), "frame {k}");
-            assert_eq!(s.pts, Some(wire[k]), "pts untouched, order untouched");
+            assert_eq!(
+                s.timing.map(|t| t.dts),
+                Some((k as i64 - 2) * D),
+                "frame {k}"
+            );
+            assert_eq!(
+                s.timing.map(|t| t.pts),
+                Some(wire[k]),
+                "pts untouched, order untouched"
+            );
         }
     }
 
@@ -354,7 +381,10 @@ mod tests {
         let wire: Vec<i64> = (0..10).map(|k| k * D).collect();
         let (out, _) = run(Some(0), &wire, false);
         assert_eq!(out.len(), wire.len());
-        assert!(out.iter().all(|s| s.dts == s.pts));
+        assert!(
+            out.iter()
+                .all(|s| s.timing.map(|t| t.dts) == s.timing.map(|t| t.pts))
+        );
     }
 
     #[test]
@@ -393,7 +423,10 @@ mod tests {
             let pending = i + 1 - out.len();
             assert!(pending < 8, "held {pending} after {} feeds", i + 1);
         }
-        assert!(out.iter().all(|s| s.dts == s.pts));
+        assert!(
+            out.iter()
+                .all(|s| s.timing.map(|t| t.dts) == s.timing.map(|t| t.pts))
+        );
     }
 
     #[test]
@@ -415,10 +448,15 @@ mod tests {
         let (out, exceeded) = run(Some(1), &wire, true);
         assert!(!exceeded.is_empty());
         for w in out.windows(2) {
-            assert!(w[0].dts < w[1].dts);
+            assert!(w[0].timing.map(|t| t.dts) < w[1].timing.map(|t| t.dts));
         }
         let tail = &out[out.len() - 10..];
-        assert!(tail.iter().all(|s| s.dts <= s.pts), "recovers after growth");
+        assert!(
+            tail.iter()
+                .all(|s| s.timing.map(|t| t.dts).unwrap_or_default()
+                    <= s.timing.map(|t| t.pts).unwrap_or_default()),
+            "recovers after growth"
+        );
     }
 
     #[test]
@@ -446,7 +484,7 @@ mod tests {
         }
         assert!(exceeded.is_empty());
         assert_invariants(&out);
-        assert_eq!(out[0].dts, Some(1_000_000 - 2 * D));
+        assert_eq!(out[0].timing.map(|t| t.dts), Some(1_000_000 - 2 * D));
     }
 
     #[test]

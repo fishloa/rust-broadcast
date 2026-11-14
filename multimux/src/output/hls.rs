@@ -523,7 +523,7 @@ mod tests {
         let route = std::sync::Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
         let app = crate::testutil::app_with(&route, std::sync::Arc::new(HlsOutput::default()));
@@ -550,7 +550,7 @@ mod tests {
         let route = std::sync::Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
         let app = crate::testutil::app_with(&route, std::sync::Arc::new(HlsOutput::default()));
@@ -636,7 +636,7 @@ mod tests {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -910,7 +910,7 @@ mod tests {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         let resp = media_playlist(State(state(route)), Query(BlockingReloadQuery::default())).await;
@@ -966,7 +966,7 @@ mod ts_tests {
             RouteHandle::new(
                 RouteConfig::default()
                     .with_target_duration_secs(4.0)
-                    .with_part_target_ms(500)
+                    .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(4),
             )
             .with_container(Container::MpegTs),
@@ -1204,7 +1204,7 @@ mod ts_tests {
             RouteHandle::new(
                 RouteConfig::default()
                     .with_target_duration_secs(4.0)
-                    .with_part_target_ms(500)
+                    .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(4),
             )
             .with_container(Container::MpegTs),

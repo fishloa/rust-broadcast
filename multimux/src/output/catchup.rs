@@ -616,7 +616,7 @@ mod tests {
                 RouteHandle::new(
                     RouteConfig::default()
                         .with_target_duration_secs(1.0)
-                        .with_part_target_ms(250)
+                        .with_part_target(std::time::Duration::from_millis(250))
                         .with_window_segments(64),
                 )
                 .with_name("w3")
@@ -729,13 +729,13 @@ mod tests {
         let busy = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(250)
+                .with_part_target(std::time::Duration::from_millis(250))
                 .with_window_segments(8),
         ));
         let idle = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(250)
+                .with_part_target(std::time::Duration::from_millis(250))
                 .with_window_segments(8),
         ));
         let _held = scan_permit_wait_all(&busy).await;
@@ -769,7 +769,7 @@ mod tests {
             RouteHandle::new(
                 RouteConfig::default()
                     .with_target_duration_secs(1.0)
-                    .with_part_target_ms(250)
+                    .with_part_target(std::time::Duration::from_millis(250))
                     .with_window_segments(8),
             )
             .with_name("semp")
@@ -844,7 +844,7 @@ mod tests {
             RouteHandle::new(
                 RouteConfig::default()
                     .with_target_duration_secs(4.0)
-                    .with_part_target_ms(500)
+                    .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(8),
             )
             .with_name("straddle")
@@ -916,7 +916,7 @@ mod tests {
             RouteHandle::new(
                 RouteConfig::default()
                     .with_target_duration_secs(4.0)
-                    .with_part_target_ms(500)
+                    .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(8),
             )
             .with_name("no-dvr"),
@@ -934,7 +934,7 @@ mod tests {
             RouteHandle::new(
                 RouteConfig::default()
                     .with_target_duration_secs(4.0)
-                    .with_part_target_ms(500)
+                    .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(8),
             )
             .with_name("windowed")
@@ -992,7 +992,7 @@ mod tests {
             RouteHandle::new(
                 RouteConfig::default()
                     .with_target_duration_secs(4.0)
-                    .with_part_target_ms(500)
+                    .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(8),
             )
             .with_name("event")
@@ -1024,7 +1024,7 @@ mod tests {
             RouteHandle::new(
                 RouteConfig::default()
                     .with_target_duration_secs(4.0)
-                    .with_part_target_ms(500)
+                    .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(8),
             )
             .with_name("retained")
@@ -1054,7 +1054,7 @@ mod tests {
             RouteHandle::new(
                 RouteConfig::default()
                     .with_target_duration_secs(4.0)
-                    .with_part_target_ms(500)
+                    .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(8),
             )
             .with_name("vod")
@@ -1096,7 +1096,7 @@ mod tests {
             RouteHandle::new(
                 RouteConfig::default()
                     .with_target_duration_secs(4.0)
-                    .with_part_target_ms(500)
+                    .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(8),
             )
             .with_name("vod-missing")
@@ -1114,7 +1114,7 @@ mod tests {
             RouteHandle::new(
                 RouteConfig::default()
                     .with_target_duration_secs(4.0)
-                    .with_part_target_ms(500)
+                    .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(8),
             )
             .with_name("bad-name"),
@@ -1137,7 +1137,7 @@ mod tests {
             RouteHandle::new(
                 RouteConfig::default()
                     .with_target_duration_secs(1.0)
-                    .with_part_target_ms(250)
+                    .with_part_target(std::time::Duration::from_millis(250))
                     .with_window_segments(8),
             )
             .with_name("c5")
@@ -1250,7 +1250,7 @@ mod tests {
             RouteHandle::new(
                 RouteConfig::default()
                     .with_target_duration_secs(1.0)
-                    .with_part_target_ms(250)
+                    .with_part_target(std::time::Duration::from_millis(250))
                     .with_window_segments(8),
             )
             .with_name("c5-live")
@@ -1399,7 +1399,7 @@ mod tests {
             RouteHandle::new(
                 RouteConfig::default()
                     .with_target_duration_secs(1.0)
-                    .with_part_target_ms(250)
+                    .with_part_target(std::time::Duration::from_millis(250))
                     .with_window_segments(8),
             )
             .with_name("valid")
@@ -1485,7 +1485,7 @@ mod tests {
             RouteHandle::new(
                 RouteConfig::default()
                     .with_target_duration_secs(2.0)
-                    .with_part_target_ms(500)
+                    .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(8),
             )
             .with_name("r")
@@ -1522,7 +1522,7 @@ mod tests {
             RouteHandle::new(
                 RouteConfig::default()
                     .with_target_duration_secs(2.0)
-                    .with_part_target_ms(500)
+                    .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(8),
             )
             .with_name("r")
@@ -1565,7 +1565,7 @@ mod tests {
             RouteHandle::new(
                 RouteConfig::default()
                     .with_target_duration_secs(2.0)
-                    .with_part_target_ms(500)
+                    .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(8),
             )
             .with_name("r")
