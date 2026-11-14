@@ -18,7 +18,7 @@ pub enum Error {
         /// `planned_start` of the entry that was rejected.
         next: u64,
     },
-    /// Splice-point conditioning ([`ssai_runtime::splice::condition_splice_point_wrapping`],
+    /// Splice-point conditioning ([`ssai_runtime::splice::condition_splice_point`],
     /// via [`crate::scte35::build_splice_insert`]) found no candidate
     /// boundary within the caller's tolerance, or was given no candidates at
     /// all.
@@ -26,10 +26,10 @@ pub enum Error {
     SpliceConditioning(#[from] ssai_runtime::Error),
     /// A `break_duration` of 2^33 ticks or more does not fit the 33-bit
     /// `break_duration()` field (ANSI/SCTE 35 §9.8.2).
-    #[error("break duration {ticks} ticks does not fit the 33-bit break_duration field")]
+    #[error("break duration {nanos} ns does not fit the 33-bit break_duration field")]
     BreakDurationTooLong {
-        /// The rejected duration, in 90 kHz ticks.
-        ticks: u64,
+        /// The rejected duration, in nanoseconds.
+        nanos: u64,
     },
 }
 
