@@ -14,6 +14,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- `AncPacket` can no longer be serialized with a stale `Data_Count` or `Checksum_Word` (#2762): ST 291-1:2011 §6.5/§6.7 derive both from `DID`/`SDID`/`User_Data_Words`, so they are now computed on serialize instead of written from a stored field. Editing a user data word used to write bytes whose declared count/checksum contradicted the words themselves; the round-trip test `hand_computed_wire_bytes` still pins the canonical bytes (derived `Data_Count` `0x102`, checksum `0x134`).
+- The ANC PES header is parsed and written by `mpeg-pes`'s `PesPacket` (`Error::Pes` wraps its errors) instead of a second copy of the PES timestamp/BER coding (#2762); ST 2038 Table 2's pinned fields (`stream_id` `0xBD`, `PES_scrambling_control` `'00'`, `data_alignment_indicator` `'1'`, PTS-only, `PES_header_data_length` `0x05`) are still enforced on top. The `.expect("length checked above")` in the hand-rolled PTS reader is gone with it.
+
+### Breaking
+- `AncPacket` no longer has `data_count` or `checksum` fields; `data_count()`, `checksum()` and `udw_loop_count()` are fallible methods (`Error::FieldOverflow` past 255 user data words), and `build(c_not_y_channel_flag, line_number, horizontal_offset, did8, sdid8, udw8s)` builds a packet with parity filled in (#2762).
+- `AncPacket::validate` returns `Result<ValidationReport>` so its derived-field check can report a length overflow.
+- Parsing rejects a packet whose stored `Data_Count` or `Checksum_Word` disagrees with its fields (new `Error::DataCountMismatch`; existing `Error::ChecksumMismatch`) instead of silently rewriting them on serialization.
+- `Error::Pes(mpeg_pes::Error)` replaces the PES-header error variants `BadPtsDtsFlags` and `BadHeaderDataLength`; a malformed PES header (bad start code, bad `PES_header_data_length`, an inconsistent `PES_packet_length`) is now `Error::Pes(..)`. `Error::BadStreamId`, `Error::ReservedBits` and `Error::PesLengthOverflow` (the truncated-payload check) stay.
+
+### Dependencies
+- New dependency on the workspace sibling `mpeg-pes` (the PES header codec, #2762). No published version requires a caret-epoch change.
 
 ## [0.7.0] - 2026-11-14
 ### Changed

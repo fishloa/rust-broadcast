@@ -22,13 +22,7 @@ fn main() {
                 horizontal_offset: 0,
                 s: false,
                 stream_num: 0,
-                content: AncContent {
-                    did: 0x161,
-                    sdid: 0x101,
-                    data_count: 0x002, // low 8 bits => 2 user_data_words
-                    user_data_words: vec![0x2CF, 0x101],
-                    checksum: 0x233,
-                },
+                content: AncContent::build(0x61, 0x01, &[0xCF, 0x01]).unwrap(),
             },
             RtpAncPacket {
                 c: true,
@@ -36,13 +30,7 @@ fn main() {
                 horizontal_offset: 0x10,
                 s: false,
                 stream_num: 0,
-                content: AncContent {
-                    did: 0x241,
-                    sdid: 0x102,
-                    data_count: 0x003, // 3 user_data_words
-                    user_data_words: vec![0x111, 0x222, 0x333],
-                    checksum: 0x1AB,
-                },
+                content: AncContent::build(0x41, 0x02, &[0x11, 0x22, 0x33]).unwrap(),
             },
         ],
     };
@@ -80,7 +68,7 @@ fn main() {
             pkt.content.sdid,
             pkt.content.data_count,
             pkt.content.udw_loop_count(),
-            pkt.content.checksum,
+            pkt.content.compute_checksum(),
         );
     }
     print!("wire bytes:");

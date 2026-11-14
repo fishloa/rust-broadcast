@@ -44,7 +44,7 @@ struct Held {
 pub(crate) struct Ingest {
     rtp: bool,
     window: usize,
-    wait_us: u64,
+    wait: Duration,
     ssrc: Option<u32>,
     next_seq: u16,
     next_ext: u64,
@@ -65,7 +65,7 @@ impl Ingest {
         Self {
             rtp,
             window: config.reorder_packets,
-            wait_us: config.reorder_wait_us,
+            wait: config.reorder_wait,
             ssrc: None,
             next_seq: 0,
             next_ext: 0,
@@ -104,7 +104,7 @@ impl Ingest {
         let mut out = Vec::new();
         while let Some((&ext, oldest)) = self.held.first_key_value() {
             let waited = Timestamp::from_micros(now_us).saturating_sub(oldest.arrived);
-            if waited.as_micros() < u128::from(self.wait_us) {
+            if waited < self.wait {
                 break;
             }
             self.skip_to(ext);
@@ -115,7 +115,7 @@ impl Ingest {
 
     pub(crate) fn next_deadline(&self) -> Option<Timestamp> {
         let oldest = self.held.values().map(|h| h.arrived).min()?;
-        oldest.checked_add(Duration::from_micros(self.wait_us))
+        oldest.checked_add(self.wait)
     }
 
     fn finish(&mut self, payloads: Vec<Vec<u8>>) -> Released {

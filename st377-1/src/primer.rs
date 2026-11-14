@@ -5,7 +5,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_common::len::{fit_u32, need_in, need_out};
 
 use broadcast_common::{Parse, Serialize};
 
@@ -164,18 +164,30 @@ impl PrimerPack {
         // #1108/MX-W4: each local tag (and, by construction, the UL it
         // resolves to) must be unique within the Primer — `resolve_ul`/
         // `resolve_tag`'s linear scan silently returns the first match on a
-        // duplicate otherwise. O(n^2) is fine: a Primer's entry count is
-        // bounded by the local tags actually used in this Partition's
-        // Header Metadata (KB-scale, per the crate's own doc comments).
-        for i in 0..entries.len() {
-            for j in (i + 1)..entries.len() {
-                if entries[i].0 == entries[j].0 {
-                    return Err(Error::DuplicatePrimerTag(entries[i].0));
-                }
-                if entries[i].1 == entries[j].1 {
-                    return Err(Error::DuplicatePrimerUl(entries[i].0, entries[j].0));
-                }
-            }
+        // duplicate otherwise. A nested scan is O(n^2) over an
+        // attacker-chosen entry count (a ~1.2 MB Primer of 65 535 distinct
+        // tags is ~2e9 comparisons), so each dimension is sorted instead.
+        let mut by_tag: Vec<u16> = entries.iter().map(|(tag, _)| *tag).collect();
+        by_tag.sort_unstable();
+        if let Some(tag) = by_tag.windows(2).find(|w| w[0] == w[1]).map(|w| w[0]) {
+            return Err(Error::DuplicatePrimerTag(tag));
+        }
+        let mut by_ul: Vec<UlBytes> = entries.iter().map(|(_, uid)| *uid).collect();
+        by_ul.sort_unstable();
+        if let Some(w) = by_ul.windows(2).find(|w| w[0] == w[1]) {
+            let dup_ul = w[0];
+            let (first, second) = entries
+                .iter()
+                .filter(|(_, uid)| *uid == dup_ul)
+                .map(|(tag, _)| *tag)
+                .fold((None, None), |(first, second), tag| match first {
+                    None => (Some(tag), None),
+                    Some(_) => (first, second.or(Some(tag))),
+                });
+            return Err(Error::DuplicatePrimerUl(
+                first.unwrap_or_default(),
+                second.unwrap_or_default(),
+            ));
         }
         Ok((
             PrimerPack {
@@ -220,7 +232,9 @@ impl Serialize for PrimerPack {
         let value_len = 8 + self.entries.len() * 18;
         let len_size = encode_ber_length_as(value_len as u64, self.len_size, &mut buf[16..])?;
         let mut pos = 16 + len_size;
-        buf[pos..pos + 4].copy_from_slice(&(self.entries.len() as u32).to_be_bytes());
+        buf[pos..pos + 4].copy_from_slice(
+            &fit_u32(self.entries.len(), "Primer Pack entry count")?.to_be_bytes(),
+        );
         pos += 4;
         buf[pos..pos + 4].copy_from_slice(&LOCAL_TAG_ENTRY_LEN.to_be_bytes());
         pos += 4;
@@ -332,5 +346,41 @@ mod tests {
             PrimerPack::parse(&buf),
             Err(Error::DuplicatePrimerUl(0x3B02, 0x3B05))
         ));
+    }
+
+    /// The duplicate scan is sorted, not a nested O(n^2) loop (#2758): the
+    /// largest legal Primer (every one of the 65 536 local tags present, a
+    /// duplicate last) is rejected in linear-ish time where the nested scan
+    /// needed ~2e9 comparisons.
+    #[test]
+    fn a_full_primer_with_a_trailing_duplicate_is_rejected() {
+        let distinct = usize::from(u16::MAX) + 1;
+        let mut entries: Vec<(u16, UlBytes)> = (0..distinct)
+            .map(|tag| {
+                let tag = u16::try_from(tag).unwrap();
+                let mut uid = [0u8; 16];
+                uid[0..2].copy_from_slice(&tag.to_be_bytes());
+                (tag, uid)
+            })
+            .collect();
+        let pack = PrimerPack {
+            entries: entries.clone(),
+            ..Default::default()
+        };
+        let mut buf = alloc::vec![0u8; pack.serialized_len()];
+        pack.serialize_into(&mut buf).unwrap();
+        assert_eq!(PrimerPack::parse(&buf).unwrap().entries.len(), distinct);
+
+        entries.push(entries[distinct - 1]);
+        let pack = PrimerPack {
+            entries,
+            ..Default::default()
+        };
+        let mut buf = alloc::vec![0u8; pack.serialized_len()];
+        pack.serialize_into(&mut buf).unwrap();
+        assert_eq!(
+            PrimerPack::parse(&buf),
+            Err(Error::DuplicatePrimerTag(u16::MAX))
+        );
     }
 }
