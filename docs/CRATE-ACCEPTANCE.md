@@ -37,6 +37,10 @@ One rule for every wire crate; the authoritative statement is the `broadcast-com
 - **`#[non_exhaustive]`** on every public enum/struct that may gain variants/fields.
 - **Decode-completeness**: every coded spec field that maps to a name has a typed accessor — clients never re-implement a spec lookup table.
 
+### API conventions
+
+The public API follows [`API-CONVENTIONS.md`](API-CONVENTIONS.md); a deviation needs a written reason in the PR.
+
 ## 2. Spec grounding & sourcing discipline
 - **Module docs cite the spec** (name, section, tag/box/table id). Where it's a parser, transcribe the cited syntax into `private/specs-verified/<family>/<crate>/` in the private companion repo (**verbatim spec text lives ONLY there**; the public `<crate>/docs/` keeps data (`*.toml` registries), free-licence text (IETF/W3C), own-words notes and a `README.md` pointer to the private path). **How to cite:** code and docs cite the private path directly (`private/specs/<file>` for PDFs and texts, `private/specs-verified/<family>/<owner>/<file>.md` for transcriptions) plus clause/table; there is no map. Never paste standards text into a public file to make a citation resolve.
 - **No implementation without a verified primary source.** Never encode a value/layout from memory or "well-known facts". If no source: mark GAP, don't fabricate.
