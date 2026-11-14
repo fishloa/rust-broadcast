@@ -683,7 +683,7 @@ fn unwrap_ts(prev_unwrapped: i128, prev_raw: u64, raw: u64) -> i128 {
 fn rescale_to_track(anchor_90k: i128, timescale: broadcast_common::timescale::Timescale) -> i64 {
     to_ticks(rescale(
         anchor_90k,
-        VIDEO_TIMESCALE.into(),
+        VIDEO_TIMESCALE,
         timescale,
         Rounding::Floor,
     ))
@@ -3198,7 +3198,7 @@ fn harvest_damaged_au(
                     stream.damaged_promotion = true;
                     TrackState::Parked(Box::new(ParkedTrack {
                         config,
-                        timescale: timescale.into(),
+                        timescale,
                         kind,
                         backlog,
                     }))
@@ -3843,7 +3843,7 @@ fn advance_track(
             };
             if let Some((config, timescale)) = new_config {
                 live.config = config;
-                live.timescale = broadcast_common::timescale::Timescale::from(timescale);
+                live.timescale = timescale;
                 let updated = TrackSpec::new(live.track_id, live.timescale, live.config.clone())
                     .with_source(pid, stream.descriptors.clone())
                     .with_hdr10plus(live.hdr10plus);
@@ -4016,7 +4016,7 @@ fn advance_track(
             match resolved {
                 Some((config, timescale, kind)) => TrackState::Parked(Box::new(ParkedTrack {
                     config,
-                    timescale: timescale.into(),
+                    timescale,
                     kind,
                     backlog,
                 })),
@@ -6411,7 +6411,7 @@ impl StreamingTsDemux {
             stream.track = Some(match resolved {
                 Some((config, timescale, kind)) => TrackState::Parked(Box::new(ParkedTrack {
                     config,
-                    timescale: timescale.into(),
+                    timescale,
                     kind,
                     backlog,
                 })),

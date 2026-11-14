@@ -145,7 +145,7 @@ pub fn signed_distance(from: u64, to: u64) -> i64 {
 /// 33-bit PCR/ESCR/SCR *base* (ISO/IEC 13818-1 §2.4.3.5 / §2.4.3.7).
 pub const PTS_HZ: u64 = PTS_TIMESCALE.as_u64();
 
-/// [`PTS_HZ`] as a [`Timescale`].
+/// [`PTS_HZ`] as a [`Timescale`](crate::timescale::Timescale).
 pub const PTS_TIMESCALE: crate::timescale::Timescale =
     crate::timescale::Timescale::from_nonzero(90_000);
 
@@ -153,7 +153,7 @@ pub const PTS_TIMESCALE: crate::timescale::Timescale =
 /// extension`), ESCR and SCR value (ISO/IEC 13818-1 §2.4.2.1 / §2.4.3.5).
 pub const PCR_HZ: u64 = PCR_TIMESCALE.as_u64();
 
-/// [`PCR_HZ`] as a [`Timescale`].
+/// [`PCR_HZ`] as a [`Timescale`](crate::timescale::Timescale).
 pub const PCR_TIMESCALE: crate::timescale::Timescale =
     crate::timescale::Timescale::from_nonzero(27_000_000);
 
