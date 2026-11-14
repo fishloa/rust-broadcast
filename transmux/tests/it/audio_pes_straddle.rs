@@ -410,12 +410,12 @@ fn real_capture_eac3_recovers_straddling_syncframes() {
         }
     }
     counts.sort_unstable();
-    // Was [1, 4, 5] before the carry (#1160), then [3, 6, 7]. The 7 -> 8 is one
-    // more real frame (bsid 16, contiguous with the previous frame's timestamp):
-    // a `0B 77` pair inside the payload whose byte 5 reads as bsid <= 8 used to
-    // be parsed as an E-AC-3 header with a garbage length and swallow it; such a
-    // pair is now an AC-3-shaped candidate and is rejected by its CRC.
-    assert_eq!(counts, [3, 6, 8]);
+    // Was [1, 4, 5] before the carry (#1160), then [3, 6, 7], then [3, 6, 8].
+    // Since #2746 a unit whose declared `PES_packet_length` runs past the
+    // captured bytes (this capture joins mid-PES) is a truncated packet the
+    // parser reports, so only the whole frames inside each surviving unit are
+    // recovered: [1, 3, 3].
+    assert_eq!(counts, [1, 3, 3]);
 }
 
 /// Drop the first PES of `pid` (from its first start packet up to, but not

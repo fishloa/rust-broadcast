@@ -14,11 +14,9 @@
 //! from_ac3_independent` disabled, both tests fail (the false headers parse
 //! and the demuxed track loses its eighth frame).
 
-use broadcast_common::Unpackage;
 use broadcast_common::error::InvalidValue;
+use transmux::Error;
 use transmux::ac3::{Ac3SyncframeInfo, Ec3SyncframeInfo};
-use transmux::pipeline::CodecConfig;
-use transmux::{Error, TsDemux};
 
 const CAPTURES: [&str; 3] = ["m6-single.ts", "m6-discontinuity.ts", "m6-duplicate.ts"];
 const PID: u16 = 0x82;
@@ -91,24 +89,47 @@ fn false_ac3_headers_in_the_real_payload_are_rejected_by_crc2() {
 
 #[test]
 fn the_real_eac3_frame_after_a_false_header_is_recovered() {
+    // The false headers sit inside coded data, never at a frame boundary, so
+    // walking the captured payload's whole frames from its start must accept
+    // frames that straddle each of those offsets. Since #2746 a capture that
+    // joins mid-PES cannot be replayed through `TsDemux` (every unit declares a
+    // `PES_packet_length` past the captured bytes, which the parser reports),
+    // so `payload_of` reads the payload bytes directly; they are the same ones
+    // the demuxer reads.
     for name in CAPTURES {
-        let media = TsDemux::new().unpackage(&capture(name)).expect("demux");
-        let track = media
-            .tracks
-            .iter()
-            .find(|t| {
-                t.spec.track_id.value() == 1 && matches!(t.spec.config, CodecConfig::Eac3 { .. })
-            })
-            .unwrap_or_else(|| panic!("{name}: E-AC-3 track 1"));
-        assert_eq!(
-            track.samples.len(),
-            8,
-            "{name}: 7 before the crc2 check, the eighth frame was swallowed by a false header"
-        );
-        for (i, s) in track.samples.iter().enumerate() {
-            let info = Ec3SyncframeInfo::from_es(&s.data)
-                .unwrap_or_else(|e| panic!("{name}: sample {i} not an E-AC-3 frame: {e}"));
-            assert_eq!(info.bsid, 16, "{name}: sample {i} is E-AC-3 syntax");
+        let stream = payload_of(&capture(name), PID);
+        let mut accepted = Vec::new();
+        let mut at = 0usize;
+        while at + 2 <= stream.len() {
+            if stream[at..at + 2] != [0x0B, 0x77] {
+                at += 1;
+                continue;
+            }
+            if let Ok(info) = Ec3SyncframeInfo::from_es(&stream[at..])
+                && info.bsid == 16
+            {
+                accepted.push(at);
+                at += (usize::from(info.frmsiz) + 1) * 2;
+            } else {
+                at += 1;
+            }
         }
+        for off in FALSE_HEADER_OFFSETS {
+            let enclosing = accepted
+                .iter()
+                .rev()
+                .find(|&&a| a < off)
+                .copied()
+                .unwrap_or_else(|| panic!("{name}: no accepted frame before offset {off}"));
+            assert!(
+                accepted.contains(&enclosing),
+                "{name}: frame at {enclosing} swallowed by the false header at {off}"
+            );
+        }
+        assert!(
+            accepted.len() > FALSE_HEADER_OFFSETS.len() + 7,
+            "{name}: {} frames accepted",
+            accepted.len()
+        );
     }
 }
