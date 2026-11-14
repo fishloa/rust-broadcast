@@ -162,6 +162,7 @@ pub enum Error {
     /// The server name for an `rtsps://` connection is not a valid TLS server
     /// name (feature `tls`).
     #[error("TLS error: invalid server name {server_name:?}")]
+    #[cfg(feature = "tls")]
     Tls {
         /// The server name that was rejected.
         server_name: String,
@@ -173,6 +174,7 @@ pub enum Error {
     /// The default `rtsps://` client TLS configuration could not be built: the crypto provider
     /// refused the safe default protocol versions (feature `tls`).
     #[error("TLS client configuration failed")]
+    #[cfg(feature = "tls")]
     TlsConfig(#[source] rustls::Error),
 
     /// The server answered `454 Session Not Found` (RFC 2326 §11.3.5) to a
@@ -343,10 +345,17 @@ mod tests {
         out
     }
 
+    /// The invalid server name a `tls` test needs: `rustls` refuses it.
+    #[cfg(feature = "tls")]
+    fn invalid_server_name(source: &'static str) -> rustls::pki_types::InvalidDnsNameError {
+        <&str as TryInto<rustls::pki_types::ServerName<'static>>>::try_into(source)
+            .expect_err("not a server name")
+    }
+
     #[test]
     fn no_message_in_a_source_chain_repeats_an_inner_one() {
         let io = || std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe gone");
-        let errors = [
+        let head = [
             Error::MessageParse {
                 what: MessageKind::Request,
                 source: MessageParseError::Codec(rtsp_types::ParseError::Error),
@@ -357,17 +366,18 @@ mod tests {
                 source: io(),
             },
             Error::from(io()),
-            Error::Tls {
-                server_name: "bad name".into(),
-                source: <&str as TryInto<rustls::pki_types::ServerName<'static>>>::try_into(
-                    "bad name",
-                )
-                .expect_err("not a server name"),
-            },
             Error::Auth(broadcast_auth::Error::ChallengeParse(
                 broadcast_auth::HttpAuthError("bad".into()),
             )),
         ];
+        let tail = [
+            #[cfg(feature = "tls")]
+            Error::Tls {
+                server_name: "bad name".into(),
+                source: invalid_server_name("bad name"),
+            },
+        ];
+        let errors: Vec<Error> = head.into_iter().chain(tail).collect();
         for err in &errors {
             let msgs = chain(err);
             let (own, inner) = msgs.split_first().unwrap();
@@ -380,14 +390,18 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "tls")]
     #[test]
-    fn contexts_name_what_was_being_done() {
+    fn the_tls_error_names_the_server_name() {
         let tls = Error::Tls {
             server_name: "bad name".into(),
-            source: <&str as TryInto<rustls::pki_types::ServerName<'static>>>::try_into("bad name")
-                .expect_err("not a server name"),
+            source: invalid_server_name("bad name"),
         };
         assert!(tls.to_string().contains("bad name"));
+    }
+
+    #[test]
+    fn contexts_name_what_was_being_done() {
         let parse = Error::MessageParse {
             what: MessageKind::Request,
             source: MessageParseError::NotARequest,
