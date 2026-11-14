@@ -59,7 +59,7 @@ fn track_stsd_entry(moov: &MovieBox, track_idx: usize) -> SampleEntryVariant {
     stsd.entries[0].clone()
 }
 
-fn track_timescale(moov: &MovieBox, track_idx: usize) -> u32 {
+fn track_timescale(moov: &MovieBox, track_idx: usize) -> Timescale {
     moov.tracks[track_idx]
         .mdia
         .as_ref()
@@ -68,7 +68,6 @@ fn track_timescale(moov: &MovieBox, track_idx: usize) -> u32 {
         .as_ref()
         .unwrap()
         .timescale
-        .get()
 }
 
 /// Build the two [`TrackSpec`]s from the fixture's real avcC + esds.

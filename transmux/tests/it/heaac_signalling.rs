@@ -9,6 +9,7 @@
 //! (ISO/IEC 14496-3 §1.6.2). The DVB descriptor path builds its PMT only
 //! through `dvb-si`'s serializer and the TS muxer.
 
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use dvb_si::descriptors::aac::{AacDescriptor, AacExtension};
 use transmux::{
@@ -16,7 +17,7 @@ use transmux::{
     SamplingFrequencyIndex, TrackSpec, TsDemux, TsMux, build_init_segment, rfc6381_codec_string,
 };
 
-const MOVIE_TIMESCALE: u32 = 1000;
+const MOVIE_TIMESCALE: Timescale = Timescale::from_nonzero(1000);
 const CORE_HZ: u32 = 22_050;
 const OUTPUT_HZ: u32 = 44_100;
 const AAC_FRAME_SAMPLES: u32 = 1024;

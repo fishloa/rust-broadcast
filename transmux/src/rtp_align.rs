@@ -501,12 +501,12 @@ mod tests {
             let track = |id, rate| RtpStreamTrack::new(id, RtpMediaKind::H264, dummy_avc(), rate);
             Self {
                 depa: RtpStreamDepacketiser::new(alloc::vec![
-                    track(VIDEO, VIDEO_RATE),
-                    track(OTHER, other_rate)
+                    track(VIDEO, Timescale::from_nonzero(VIDEO_RATE)),
+                    track(OTHER, Timescale::try_new(other_rate).expect("rate"))
                 ]),
                 aligner: TrackAligner::new(&[
-                    (VIDEO, true, VIDEO_RATE),
-                    (OTHER, false, other_rate),
+                    (VIDEO, true, Timescale::from_nonzero(VIDEO_RATE)),
+                    (OTHER, false, Timescale::try_new(other_rate).expect("rate")),
                 ]),
                 other_rate,
                 other_base,
@@ -560,7 +560,7 @@ mod tests {
                 };
                 let us = to_micros(
                     i128::from(sample.timing.map(|t| t.pts).expect("pts")),
-                    rate.into(),
+                    Timescale::try_new(rate).expect("rate"),
                     Rounding::TowardZero,
                 );
                 if id == VIDEO {

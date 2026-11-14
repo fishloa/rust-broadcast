@@ -1864,7 +1864,10 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
 
     #[test]
     fn rescale_to_90k_is_identity_at_90k() {
-        assert_eq!(rescale_to_90k(12345, VIDEO_CLOCK_RATE.into()), 12345);
+        assert_eq!(
+            rescale_to_90k(12345, Timescale::from_nonzero(VIDEO_CLOCK_RATE)),
+            12345
+        );
     }
 
     #[test]
@@ -1878,7 +1881,10 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
     #[test]
     fn rescale_to_90k_wraps_modulo_2_pow_32() {
         let ticks = u64::from(u32::MAX) + 1;
-        assert_eq!(rescale_to_90k(ticks, VIDEO_CLOCK_RATE.into()), 0);
+        assert_eq!(
+            rescale_to_90k(ticks, Timescale::from_nonzero(VIDEO_CLOCK_RATE)),
+            0
+        );
     }
 
     #[test]
@@ -2164,7 +2170,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
     fn test_track_spec() -> TrackSpec {
         TrackSpec::new(
             TrackId::new(1),
-            VIDEO_CLOCK_RATE,
+            Timescale::from_nonzero(VIDEO_CLOCK_RATE),
             CodecConfig::Avc {
                 config: transmux::AVCConfigurationBox::new(
                     transmux::AVCDecoderConfigurationRecord {

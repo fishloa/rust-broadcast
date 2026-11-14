@@ -403,7 +403,7 @@ fn real_fixture_remux_is_lossless_and_parseable() {
     );
     let atrack = TrackSpec::new(
         TrackId::new(2),
-        audio_rate,
+        Timescale::try_new(audio_rate).unwrap(),
         CodecConfig::Aac {
             esds,
             channel_count: adts.channel_configuration as u16,

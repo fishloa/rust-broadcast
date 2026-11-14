@@ -5,8 +5,9 @@ use transmux::ll_hls::LlHlsSegmenter;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 
 pub const SPROP: &str = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
-pub const VIDEO_TIMESCALE: u32 = 90_000;
-pub const FRAME_DUR: u32 = VIDEO_TIMESCALE / 30;
+pub const VIDEO_TIMESCALE: broadcast_common::timescale::Timescale =
+    broadcast_common::timescale::Timescale::from_nonzero(90_000);
+pub const FRAME_DUR: u32 = VIDEO_TIMESCALE.get() / 30;
 pub const TARGET_DURATION_SECS: f64 = 1.0;
 pub const PART_TARGET_MS: u32 = 500;
 
@@ -53,7 +54,7 @@ pub fn feed_open_segment(
 
     let mut seg = LlHlsSegmenter::with_part_target(
         specs,
-        transmux::VIDEO_CLOCK_RATE,
+        transmux::VIDEO_CLOCK_TIMESCALE,
         TARGET_DURATION_SECS,
         PART_TARGET_MS,
     )

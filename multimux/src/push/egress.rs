@@ -115,9 +115,12 @@ pub struct PushTransportEgress<T: PushTransport> {
     /// audio does not run ahead of video). Never set when the selection has no
     /// video track.
     awaiting_sync: bool,
+    /// Samples offered for a track outside the negotiated selection, dropped
+    /// by [`PushEgress::send`].
+    unselected_samples: u64,
 }
 
-/// How a [`PushTransportEgress::flush_transmit_bounded`] ended.
+///How a [`PushTransportEgress::flush_transmit_bounded`] ended.
 #[derive(Debug)]
 pub(crate) enum FlushOutcome {
     /// Everything queued was written.
@@ -144,7 +147,14 @@ impl<T: PushTransport> PushTransportEgress<T> {
             unsatisfiable_reason,
             outbound: VecDeque::new(),
             awaiting_sync: false,
+            unselected_samples: 0,
         }
+    }
+
+    /// How many samples [`PushEgress::send`] dropped because their track is
+    /// not in the negotiated selection.
+    pub fn unselected_samples(&self) -> u64 {
+        self.unselected_samples
     }
 
     /// The [`TrackSpec`]s currently selected (the last `Accepted` outcome) —
@@ -291,12 +301,17 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
             // exactly like `crate::push::drive_push`'s own `_ => {}` arm.
             _ => return Ok(()),
         };
-        let Some(carried_video) = self
+        let Some((carried_video, timescale)) = self
             .specs
             .iter()
             .find(|s| s.track_id == track_id)
-            .map(|s| s.config.is_video())
+            .map(|s| (s.config.is_video(), s.timescale))
         else {
+            self.unselected_samples = self.unselected_samples.saturating_add(1);
+            tracing::warn!(
+                track = track_id.value(),
+                "push egress dropped a sample for a track outside the negotiated selection"
+            );
             return Ok(());
         };
         if self.awaiting_sync {
@@ -311,14 +326,6 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
         // PMT and the PCR PID from the track set, so a one-track `Media` per
         // sample would map every track onto the first ES PID and flip the
         // PMT frame to frame (#1024).
-        let Some(timescale) = self
-            .specs
-            .iter()
-            .find(|s| s.track_id == track_id)
-            .map(|s| s.timescale)
-        else {
-            return Ok(());
-        };
         let tracks = self
             .specs
             .iter()
@@ -576,6 +583,7 @@ mod tests {
             PushEgress::poll_transmit(&mut egress).is_none(),
             "an unselected track's sample must never reach the transport"
         );
+        assert_eq!(egress.unselected_samples(), 1, "the drop is counted");
     }
 
     /// The real bite: `send` for a selected track queues a real encoded

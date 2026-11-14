@@ -37,7 +37,7 @@ use transmux::{
     snap_to_preceding_sync, splice_insert,
 };
 
-const TIMESCALE: u32 = 90_000;
+const TIMESCALE: Timescale = Timescale::from_nonzero(90_000);
 
 fn avc_spec(track_id: u32) -> TrackSpec {
     let record = AVCDecoderConfigurationRecord {
@@ -161,7 +161,7 @@ fn data_track_at(
     Track::new_at(
         TrackSpec::new(
             TrackId::new(track_id),
-            timescale,
+            Timescale::try_new(timescale).unwrap(),
             CodecConfig::Data {
                 stream_type: 0x86,
                 descriptors: Vec::new(),
@@ -207,7 +207,7 @@ fn data_track(
     Track::new(
         TrackSpec::new(
             TrackId::new(track_id),
-            timescale,
+            Timescale::try_new(timescale).unwrap(),
             CodecConfig::Data {
                 stream_type: 0x86, // SCTE-35 (ISO/IEC 13818-1 Table 2-34) — arbitrary; only used as a non-video codec-kind stand-in here
                 descriptors: Vec::new(),
@@ -622,7 +622,7 @@ fn concat_and_snap_honour_a_genuine_tfdt_gap() {
 #[test]
 fn concat_rebases_unrelated_timelines_onto_the_join() {
     // a: a "programme" 10 hours into its own broadcast day (90 kHz ticks).
-    let ten_hours_ticks: u64 = 10 * 3600 * u64::from(TIMESCALE);
+    let ten_hours_ticks: u64 = 10 * 3600 * TIMESCALE.as_u64();
     let a = media_of(video_track(1, 0xA0, 5, 3000, 5), ten_hours_ticks);
     // b: an independently-demuxed asset anchored at 0 — its own file's
     // clock, unrelated to `a`'s.
@@ -1449,11 +1449,19 @@ fn nonvideo_cut_uses_the_absolute_instant_not_the_track_relative_offset() {
     // Audio (Data stand-in): the same timescale, but its first sample sits
     // 90000 ticks after the video's start (a 1 s late join), and it runs long
     // enough that a track-relative cut would land far away.
-    let audio = data_track_at(9, TIMESCALE, b'A', 4000, 1000, 90_000, DataCarriage::Pes);
+    let audio = data_track_at(
+        9,
+        TIMESCALE.get(),
+        b'A',
+        4000,
+        1000,
+        90_000,
+        DataCarriage::Pes,
+    );
 
     let base = Media::new(vec![video, audio], TIMESCALE);
     let ad_video = video_track_at(7, b'W', 2, 1000, 1, 0);
-    let ad_audio = data_track_at(9, TIMESCALE, b'B', 2, 1000, 0, DataCarriage::Pes);
+    let ad_audio = data_track_at(9, TIMESCALE.get(), b'B', 2, 1000, 0, DataCarriage::Pes);
     let ad = Media::new(vec![ad_video, ad_audio], TIMESCALE);
 
     // Request a splice well past the audio's first sample, so a

@@ -174,7 +174,7 @@ fn ac3_init_segment_sample_entry() {
 
     let tracks = vec![TrackSpec::new(
         TrackId::new(1),
-        sample_rate,
+        Timescale::try_new(sample_rate).unwrap(),
         CodecConfig::Ac3 {
             config: dac3,
             channel_count: 1,
@@ -196,7 +196,7 @@ fn ec3_init_segment_sample_entry() {
 
     let tracks = vec![TrackSpec::new(
         TrackId::new(1),
-        sample_rate,
+        Timescale::try_new(sample_rate).unwrap(),
         CodecConfig::Eac3 {
             config: dec3,
             channel_count: 1,

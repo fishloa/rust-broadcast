@@ -150,7 +150,7 @@ fn neither_box_display_unchanged() {
         .expect("avc");
     let orig = track.spec.display.clone();
     let spec = track.spec.clone();
-    let ts = spec.timescale.get();
+    let ts = spec.timescale;
     let bytes = pipeline::build_init_segment(&[spec], ts).expect("build");
     let got = demux_display(&bytes).expect("display");
     assert_eq!(Some(got), orig);
@@ -178,7 +178,7 @@ fn display_none_with_pasp_creates_display() {
     let (w, h) = dims(&spec);
     let g = DisplayGeometry::new(w, h, Some(AspectRatioIdc::from_wire(255, Some((64, 45)))));
     spec = spec.with_display(Some(g));
-    let ts = spec.timescale.get();
+    let ts = spec.timescale;
     let bytes = pipeline::build_init_segment(&[spec], ts).expect("build");
     let got = demux_display(&bytes).expect("display");
     assert_eq!(got.coded_width, w);

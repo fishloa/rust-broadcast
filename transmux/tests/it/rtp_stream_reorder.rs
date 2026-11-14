@@ -2,6 +2,7 @@
 //! `fixtures/ts/h264-aac.ts`, packetised in decode order with RTP timestamps
 //! equal to the presentation time (RFC 6184 §5.1).
 
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Unpackage};
 use transmux::pipeline::CodecConfig;
 use transmux::{
@@ -38,7 +39,7 @@ fn video_durations(skip_aus: usize) -> (Vec<(i64, u32)>, Vec<i64>) {
         id,
         RtpMediaKind::H264,
         track.spec.config.clone(),
-        VIDEO_CLOCK_RATE,
+        Timescale::from_nonzero(VIDEO_CLOCK_RATE),
     )]);
     let mut samples = Vec::new();
     let mut au_index = 0usize;

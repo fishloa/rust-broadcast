@@ -507,7 +507,7 @@ fn faststart_false_same_samples_different_order() {
 /// `mp4/cenc-boxes/v1-mvhd.mp4`) that a few minutes of media
 /// overflows `u32::MAX` ticks — the real-world trigger for the version-1
 /// `mvhd`/`tkhd`/`mdhd` layouts.
-const HUGE_TIMESCALE: u32 = 2_000_000_000;
+const HUGE_TIMESCALE: Timescale = Timescale::from_nonzero(2_000_000_000);
 
 fn huge_timescale_media() -> Media {
     let mut media = demux_media();
@@ -520,7 +520,7 @@ fn huge_timescale_media() -> Media {
     for track in &mut media.tracks {
         let old_ts = u64::from(track.spec.timescale);
         let scale = u64::from(HUGE_TIMESCALE) / old_ts;
-        track.spec.timescale = HUGE_TIMESCALE.into();
+        track.spec.timescale = HUGE_TIMESCALE;
         track.start_decode_time = track.start_decode_time.saturating_mul(scale);
         for s in &mut track.samples {
             if let Some(t) = s.timing.as_mut() {
@@ -530,7 +530,7 @@ fn huge_timescale_media() -> Media {
             }
         }
     }
-    media.movie_timescale = HUGE_TIMESCALE.into();
+    media.movie_timescale = HUGE_TIMESCALE;
     media
 }
 

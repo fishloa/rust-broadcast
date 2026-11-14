@@ -451,14 +451,14 @@ fn parsed_manifest_codec_glue_builds_working_init_segment() {
 
     let video_spec = track_spec_from_quality_level(
         vid.spec.track_id,
-        vid.spec.timescale.get(),
+        vid.spec.timescale,
         StreamType::Video,
         &video_si.qualities[0],
     )
     .expect("synthesize video TrackSpec from CodecPrivateData");
     let audio_spec = track_spec_from_quality_level(
         aud.spec.track_id,
-        aud.spec.timescale.get(),
+        aud.spec.timescale,
         StreamType::Audio,
         &audio_si.qualities[0],
     )

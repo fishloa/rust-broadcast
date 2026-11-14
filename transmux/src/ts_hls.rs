@@ -1683,7 +1683,7 @@ mod tests {
     fn aac_track(track_id: TrackId, timescale: u32) -> TrackSpec {
         TrackSpec::new(
             track_id,
-            timescale,
+            broadcast_common::timescale::Timescale::try_new(timescale).expect("timescale"),
             CodecConfig::Aac {
                 esds: dummy_esds(),
                 channel_count: 2,

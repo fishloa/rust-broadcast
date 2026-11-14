@@ -867,7 +867,7 @@ mod tests {
         let mut cursor = trunk.subscribe();
         let mut seg = LlHlsSegmenter::with_part_target(
             vec![track_spec(TrackId::new(1))],
-            transmux::VIDEO_CLOCK_RATE,
+            transmux::VIDEO_CLOCK_TIMESCALE,
             1.0,
             250,
         )

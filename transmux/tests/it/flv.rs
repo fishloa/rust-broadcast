@@ -475,7 +475,7 @@ fn alloc_body(len: usize) -> Vec<u8> {
 /// composition offset was truncated into SI24.
 #[test]
 fn package_rescales_non_ms_timescales() {
-    const VIDEO_TIMESCALE: u32 = 90_000;
+    const VIDEO_TIMESCALE: Timescale = Timescale::from_nonzero(90_000);
     const FRAME_TICKS: u32 = 3_000; // 30 fps at 90 kHz
 
     // One AVC `avc1` from the real fixture, so the muxer has a valid config.

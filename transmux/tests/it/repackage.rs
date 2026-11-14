@@ -562,7 +562,11 @@ fn trim_window_follows_real_dts_not_duration_sum() {
 /// timescales come from untrusted `mdhd` boxes. The old interleave folded every
 /// track onto that LCM (`a / gcd * b`), which panics in debug and wraps in
 /// release; comparing cross-multiplied in `u128` is exact for any pair.
-const BIG_TIMESCALES: [u32; 3] = [4_294_967_291, 4_294_967_279, 4_294_967_231];
+const BIG_TIMESCALES: [Timescale; 3] = [
+    Timescale::from_nonzero(4_294_967_291),
+    Timescale::from_nonzero(4_294_967_279),
+    Timescale::from_nonzero(4_294_967_231),
+];
 
 /// Every `track_id` a `trun` sample belongs to, in output order — the interleave
 /// read back from the muxed bytes.
@@ -594,15 +598,21 @@ fn sample_track_order(segments: &[Vec<u8>]) -> Vec<TrackId> {
 /// Build one track of `count` 1-second samples at `timescale`.
 fn one_second_track(
     track_id: u32,
-    timescale: u32,
+    timescale: Timescale,
     config: CodecConfig,
     tag: u8,
     count: u32,
 ) -> Track {
     let samples = (0..count)
         .map(|i| {
-            let dts = i as i64 * timescale as i64;
-            Sample::new(vec![tag; 8], Some(dts), Some(dts), Some(timescale), true)
+            let dts = i as i64 * timescale.get() as i64;
+            Sample::new(
+                vec![tag; 8],
+                Some(dts),
+                Some(dts),
+                Some(timescale.get()),
+                true,
+            )
         })
         .collect();
     Track::new(

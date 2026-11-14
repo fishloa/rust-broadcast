@@ -226,7 +226,7 @@ async fn pdt_validator_clean() {
     store.publish_new_program(program);
     let mut seg = LlHlsSegmenter::with_part_target(
         vec![video_track_spec()],
-        transmux::VIDEO_CLOCK_RATE,
+        transmux::VIDEO_CLOCK_TIMESCALE,
         TARGET_DURATION_SECS,
         PART_TARGET_MS,
     )

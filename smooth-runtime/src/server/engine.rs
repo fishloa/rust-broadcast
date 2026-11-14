@@ -1055,9 +1055,9 @@ mod tests {
     /// The SPS's coded height.
     const SPROP_HEIGHT: u32 = 480;
     /// Video timescale: the H.264 clock.
-    const VIDEO_TIMESCALE: u32 = 90_000;
+    const VIDEO_TIMESCALE: Timescale = Timescale::from_nonzero(90_000);
     /// A 30 fps frame duration in `VIDEO_TIMESCALE` ticks.
-    const FRAME_DUR: u32 = VIDEO_TIMESCALE / 30;
+    const FRAME_DUR: u32 = VIDEO_TIMESCALE.get() / 30;
     /// Frames per segment: two seconds of video.
     const FRAMES_PER_SEGMENT: u32 = 60;
     /// Repeat requests the cache tests make over one window.
@@ -1065,7 +1065,7 @@ mod tests {
     /// Segments published per test route.
     const SEGMENTS: u32 = 2;
     /// The AAC media timescale, in ticks per second.
-    const AUDIO_TIMESCALE: u32 = 48_000;
+    const AUDIO_TIMESCALE: Timescale = Timescale::from_nonzero(48_000);
     /// AAC-LC frame duration, in `AUDIO_TIMESCALE` ticks (1024 samples).
     const AAC_FRAME_DUR: u32 = 1024;
     /// Sample rate the AAC config reports.
@@ -1212,9 +1212,13 @@ mod tests {
     /// segments of video and/or audio, and one subtitle sample per video frame.
     fn publish(specs: Vec<TrackSpec>) -> Route {
         let trunk = big_trunk();
-        let mut segmenter =
-            LlHlsSegmenter::with_part_target(specs.clone(), transmux::VIDEO_CLOCK_RATE, 2.0, 500)
-                .expect("segmenter builds");
+        let mut segmenter = LlHlsSegmenter::with_part_target(
+            specs.clone(),
+            transmux::VIDEO_CLOCK_TIMESCALE,
+            2.0,
+            500,
+        )
+        .expect("segmenter builds");
         let truncated = trunk.writer().expect("fresh trunk");
         truncated.set_tracks(specs.clone());
         let writer = trunk.segment_writer().expect("fresh trunk");
@@ -1756,7 +1760,7 @@ mod tests {
         let route = publish(vec![video_spec(), audio_spec(2)]);
         let manifest = manifest(&route);
         assert!(manifest.is_live);
-        assert_eq!(manifest.timescale, transmux::SMOOTH_TIMESCALE);
+        assert_eq!(manifest.timescale.as_u64(), transmux::SMOOTH_TIMESCALE);
         let kinds: Vec<StreamType> = manifest.streams.iter().map(|s| s.stream_type).collect();
         assert_eq!(kinds, vec![StreamType::Video, StreamType::Audio]);
         for stream in &manifest.streams {

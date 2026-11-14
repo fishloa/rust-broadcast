@@ -385,7 +385,7 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
     // 6. Build the DASH `emsg` for the ad-in point via `timed-metadata`.
     // ------------------------------------------------------------------
     let emsg_cfg = EmsgConfig {
-        timescale: spliced_video.spec.timescale.get(),
+        timescale: spliced_video.spec.timescale,
         presentation: PresentationTime::Absolute(at_ticks),
         event_duration: ad_duration_ticks_90k as u32,
         value: EMSG_VALUE_PROVIDER_AD_START.to_string(),

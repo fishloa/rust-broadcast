@@ -6867,7 +6867,7 @@ pub(crate) mod tests {
                 height: 0,
             },
         );
-        let frame_dur = VIDEO_TIMESCALE / 30;
+        let frame_dur = VIDEO_TIMESCALE.get() / 30;
         let samples: Vec<Sample> = (0..3u32)
             .map(|i| {
                 let nal = [0x65u8, 0xAA, i as u8];
@@ -6982,7 +6982,7 @@ pub(crate) mod tests {
         // Comfortably more than MAX_PROBE_BACKLOG_BYTES per track (~4.9 MiB).
         const SAMPLE_BYTES: usize = 4096;
         const SAMPLE_COUNT: u32 = 1200;
-        let frame_dur = VIDEO_TIMESCALE / 30;
+        let frame_dur = VIDEO_TIMESCALE.get() / 30;
 
         // PID A (rank 0, ES_PID_BASE = 0x0100 in `ts_mux.rs`): H.264, never
         // carries SPS/PPS — every sample is deliberately non-sync, so
@@ -7118,7 +7118,7 @@ pub(crate) mod tests {
         use broadcast_common::Package;
 
         const PID_A: Pid = Pid::from_const(0x0100);
-        let frame_dur = VIDEO_TIMESCALE / 30;
+        let frame_dur = VIDEO_TIMESCALE.get() / 30;
         let avc = avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==").unwrap();
         let video_spec = TrackSpec::new(
             TrackId::new(1),
@@ -7521,7 +7521,7 @@ pub(crate) mod tests {
         use crate::rtp_sdp::avc_config_from_sprop;
         use broadcast_common::Package;
 
-        let frame_dur = VIDEO_TIMESCALE / 30;
+        let frame_dur = VIDEO_TIMESCALE.get() / 30;
         let avc = avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==").unwrap();
         let video_samples: Vec<Sample> = (0..video_aus)
             .map(|i| {
@@ -10830,7 +10830,7 @@ pub(crate) mod tests {
         use crate::rtp_sdp::avc_config_from_sprop;
         use broadcast_common::Package;
 
-        let frame_dur = VIDEO_TIMESCALE / 25;
+        let frame_dur = VIDEO_TIMESCALE.get() / 25;
         let avc = avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==").unwrap();
         let spec = TrackSpec::new(
             TrackId::new(1),
@@ -11236,7 +11236,7 @@ pub(crate) mod tests {
     fn constant_increment_44100_aac_emits_no_timeline_reanchor() {
         /// What a muxer that rounds `1024 * 90000 / 44100` to an integer emits.
         const PES_INCREMENT_TICKS: i128 = 2090;
-        const SAMPLE_RATE: u32 = 44_100;
+        const SAMPLE_RATE: Timescale = Timescale::from_nonzero(44_100);
         /// ~11.6 s of audio. Accumulated drift here is ~102 ticks: far past
         /// the old 3-tick threshold (which would have fired ~34 times), far
         /// short of the 1800-tick (20 ms) bound the fix derives.
@@ -11290,7 +11290,7 @@ pub(crate) mod tests {
     #[test]
     fn a_real_timeline_gap_emits_exactly_one_reanchor() {
         const PES_INCREMENT_TICKS: i128 = 2090;
-        const SAMPLE_RATE: u32 = 44_100;
+        const SAMPLE_RATE: Timescale = Timescale::from_nonzero(44_100);
         const FRAMES_BEFORE: i128 = 50;
         const FRAMES_AFTER: i128 = 50;
         /// Two seconds of 90 kHz — orders of magnitude past any muxer drift.

@@ -1745,7 +1745,11 @@ mod tests {
         }
     }
 
-    fn single_track(kind: RtpMediaKind, config: CodecConfig, clock: u32) -> RtpStreamDepacketiser {
+    fn single_track(
+        kind: RtpMediaKind,
+        config: CodecConfig,
+        clock: Timescale,
+    ) -> RtpStreamDepacketiser {
         RtpStreamDepacketiser::new(alloc::vec![RtpStreamTrack::new(
             TrackId::new(1),
             kind,
@@ -1770,7 +1774,11 @@ mod tests {
     #[test]
     fn flush_after_first_h264_au_uses_sps_vui_frame_period() {
         let id = TrackId::new(1);
-        let mut d = single_track(RtpMediaKind::H264, avc_with_sps(SPS_25FPS_FIXED), 90_000);
+        let mut d = single_track(
+            RtpMediaKind::H264,
+            avc_with_sps(SPS_25FPS_FIXED),
+            Timescale::from_nonzero(90_000),
+        );
         assert!(
             d.push(id, &vpkt(1, 1000, true, &[0x65, 0xAA]))
                 .unwrap()
@@ -1784,7 +1792,11 @@ mod tests {
     #[test]
     fn set_track_config_refreshes_the_declared_duration() {
         let id = TrackId::new(1);
-        let mut d = single_track(RtpMediaKind::H264, avc_with_sps(SPS_NO_TIMING), 90_000);
+        let mut d = single_track(
+            RtpMediaKind::H264,
+            avc_with_sps(SPS_NO_TIMING),
+            Timescale::from_nonzero(90_000),
+        );
         d.set_track_config(id, avc_with_sps(SPS_25FPS_FIXED));
         assert!(
             d.push(id, &vpkt(1, 1000, true, &[0x65, 0xAA]))
@@ -1800,7 +1812,11 @@ mod tests {
     #[test]
     fn flush_without_any_known_duration_holds_instead_of_inventing_one() {
         let id = TrackId::new(1);
-        let mut d = single_track(RtpMediaKind::H264, avc_with_sps(SPS_NO_TIMING), 90_000);
+        let mut d = single_track(
+            RtpMediaKind::H264,
+            avc_with_sps(SPS_NO_TIMING),
+            Timescale::from_nonzero(90_000),
+        );
         assert!(
             d.push(id, &vpkt(1, 1000, true, &[0x65, 0xAA]))
                 .unwrap()
@@ -1817,7 +1833,7 @@ mod tests {
         let id = TrackId::new(1);
         for (asc, expected) in [(ASC_LC_48K_STEREO_1024, 1024), (ASC_LC_48K_STEREO_960, 960)] {
             let cfg = crate::rtp_sdp::aac_config_from_asc_bytes(asc.to_vec()).unwrap();
-            let mut d = single_track(RtpMediaKind::Aac, cfg, 48_000);
+            let mut d = single_track(RtpMediaKind::Aac, cfg, Timescale::from_nonzero(48_000));
             assert!(
                 d.push(id, &aac_packet(1, 5000, &[&[1, 2]]))
                     .unwrap()
@@ -1834,7 +1850,7 @@ mod tests {
         let id = TrackId::new(1);
         let cfg =
             crate::rtp_sdp::aac_config_from_asc_bytes(ASC_LC_48K_STEREO_1024.to_vec()).unwrap();
-        let mut d = single_track(RtpMediaKind::Aac, cfg, 48_000);
+        let mut d = single_track(RtpMediaKind::Aac, cfg, Timescale::from_nonzero(48_000));
         let aus: [&[u8]; 4] = [&[1], &[2], &[3], &[4]];
         assert!(d.push(id, &aac_packet(1, 10_000, &aus)).unwrap().is_empty());
         assert!(
@@ -1861,7 +1877,11 @@ mod tests {
     #[test]
     fn aggregated_group_with_delta_below_au_count_and_no_known_duration_is_not_emitted() {
         let id = TrackId::new(1);
-        let mut d = single_track(RtpMediaKind::Aac, dummy_avc(), 48_000);
+        let mut d = single_track(
+            RtpMediaKind::Aac,
+            dummy_avc(),
+            Timescale::from_nonzero(48_000),
+        );
         let aus: [&[u8]; 4] = [&[1], &[2], &[3], &[4]];
         assert!(d.push(id, &aac_packet(1, 10_000, &aus)).unwrap().is_empty());
         assert!(
@@ -2166,7 +2186,11 @@ mod tests {
         depth: usize,
     ) -> (usize, Vec<(u64, u32)>) {
         let id = TrackId::new(1);
-        let mut d = single_track(RtpMediaKind::H264, avc_with_sps(SPS_25FPS_FIXED), 90_000);
+        let mut d = single_track(
+            RtpMediaKind::H264,
+            avc_with_sps(SPS_25FPS_FIXED),
+            Timescale::from_nonzero(90_000),
+        );
         declare_reorder_depth(&mut d, depth);
         let mut emitted = Vec::new();
         let mut max_hold = 0;

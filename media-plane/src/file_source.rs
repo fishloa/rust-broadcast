@@ -1052,7 +1052,7 @@ mod tests {
 
     /// A minimal AVC [`TrackSpec`] at the given timescale — `build_playout`
     /// reads only `timescale`/`track_id`, so the codec config body is inert.
-    fn avc_spec(track_id: TrackId, timescale: u32) -> TrackSpec {
+    fn avc_spec(track_id: TrackId, timescale: Timescale) -> TrackSpec {
         TrackSpec::new(
             track_id,
             timescale,
@@ -1086,7 +1086,10 @@ mod tests {
             .map(|&p| Sample::new(vec![0], Some(p), Some(p), Some(10), true))
             .collect();
         ParsedFile {
-            tracks: vec![Track::new(avc_spec(TrackId::new(1), 90_000), samples)],
+            tracks: vec![Track::new(
+                avc_spec(TrackId::new(1), Timescale::from_nonzero(90_000)),
+                samples,
+            )],
         }
     }
 
@@ -1117,7 +1120,10 @@ mod tests {
     fn zero_duration_falls_back_to_unit_frame() {
         let samples = vec![Sample::new(vec![0], Some(0), Some(0), Some(0), true)];
         let parsed = ParsedFile {
-            tracks: vec![Track::new(avc_spec(TrackId::new(1), 90_000), samples)],
+            tracks: vec![Track::new(
+                avc_spec(TrackId::new(1), Timescale::from_nonzero(90_000)),
+                samples,
+            )],
         };
         let (_, _, ranges) = parsed.build_playout();
         assert_eq!(
@@ -1152,7 +1158,10 @@ mod tests {
     fn no_playable_samples_fails_session() {
         let samples = vec![Sample::new(vec![0], None, None, None, false)];
         let parsed = ParsedFile {
-            tracks: vec![Track::new(avc_spec(TrackId::new(1), 90_000), samples)],
+            tracks: vec![Track::new(
+                avc_spec(TrackId::new(1), Timescale::from_nonzero(90_000)),
+                samples,
+            )],
         };
         let err = FileIngestSession::new(parsed, ProgramId(0), true, false);
         assert!(

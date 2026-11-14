@@ -315,7 +315,7 @@ mod tests {
     fn video_track_spec() -> TrackSpec {
         TrackSpec::new(
             TRACK_ID,
-            VIDEO_TIMESCALE,
+            broadcast_common::timescale::Timescale::from_nonzero(VIDEO_TIMESCALE),
             CodecConfig::Avc {
                 config: dummy_avc_config(),
                 width: 320,
@@ -336,7 +336,7 @@ mod tests {
     fn build_cmaf_fixture() -> (String, Vec<u8>, Vec<Vec<u8>>) {
         let mut seg = LlHlsSegmenter::with_part_target(
             vec![video_track_spec()],
-            transmux::VIDEO_CLOCK_RATE,
+            transmux::VIDEO_CLOCK_TIMESCALE,
             TARGET_DURATION_SECS,
             250,
         )

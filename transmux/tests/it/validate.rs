@@ -62,7 +62,7 @@ fn track_stsd_entry(moov: &MovieBox, track_idx: usize) -> SampleEntryVariant {
         .clone()
 }
 
-fn track_timescale(moov: &MovieBox, track_idx: usize) -> u32 {
+fn track_timescale(moov: &MovieBox, track_idx: usize) -> Timescale {
     moov.tracks[track_idx]
         .mdia
         .as_ref()
@@ -71,7 +71,6 @@ fn track_timescale(moov: &MovieBox, track_idx: usize) -> u32 {
         .as_ref()
         .unwrap()
         .timescale
-        .get()
 }
 
 /// Build a single-video-track spec from the fixture's real avcC.

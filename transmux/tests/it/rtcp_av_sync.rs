@@ -16,6 +16,7 @@
 //! changes the recovered alignment rather than being inert.
 #![cfg(feature = "std")]
 
+use broadcast_common::timescale::Timescale;
 use transmux::TrackId;
 use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use transmux::pipeline::{CodecConfig, Sample};
@@ -183,13 +184,13 @@ fn tracks() -> Vec<RtpStreamTrack> {
             TrackId::new(VIDEO_TRACK),
             RtpMediaKind::H264,
             dummy_avc(),
-            VIDEO_CLOCK,
+            Timescale::from_nonzero(VIDEO_CLOCK),
         ),
         RtpStreamTrack::new(
             TrackId::new(AUDIO_TRACK),
             RtpMediaKind::Aac,
             dummy_aac(),
-            AUDIO_CLOCK,
+            Timescale::from_nonzero(AUDIO_CLOCK),
         ),
     ]
 }

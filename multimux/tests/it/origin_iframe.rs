@@ -42,7 +42,7 @@ async fn iframe_master_variant_gating() {
     );
     let seg = LlHlsSegmenter::with_part_target(
         vec![video_track_spec()],
-        transmux::VIDEO_CLOCK_RATE,
+        transmux::VIDEO_CLOCK_TIMESCALE,
         TARGET_DURATION_SECS,
         PART_TARGET_MS,
     )
@@ -480,7 +480,7 @@ async fn iframe_validator_clean() {
     store.publish_new_program(program);
     let mut seg = LlHlsSegmenter::with_part_target(
         vec![video_track_spec()],
-        transmux::VIDEO_CLOCK_RATE,
+        transmux::VIDEO_CLOCK_TIMESCALE,
         TARGET_DURATION_SECS,
         PART_TARGET_MS,
     )
@@ -644,7 +644,7 @@ async fn iframe_scte35_emsg_shift() {
     // build segmenter init
     let mut seg = LlHlsSegmenter::with_part_target(
         vec![video_track_spec()],
-        transmux::VIDEO_CLOCK_RATE,
+        transmux::VIDEO_CLOCK_TIMESCALE,
         TARGET_DURATION_SECS,
         PART_TARGET_MS,
     )

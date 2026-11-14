@@ -67,7 +67,7 @@ fn mux_one(rate: u32) -> Vec<u8> {
     let track = transmux::Track::new(
         TrackSpec::new(
             TrackId::new(1),
-            rate,
+            Timescale::try_new(rate).unwrap(),
             CodecConfig::Flac {
                 config: real_flac_config(),
                 channel_count: 1,
@@ -106,7 +106,7 @@ fn retargeted_flac_source(name: &str, rate: u32) -> transmux::Media {
         .expect("demux the ffmpeg-made FLAC fixture");
     assert_eq!(media.tracks.len(), 1, "one audio track in {name}");
     assert_eq!(media.skipped.len(), 0, "nothing skipped in {name}");
-    media.tracks[0].spec.timescale = rate.into();
+    media.tracks[0].spec.timescale = Timescale::try_new(rate).unwrap();
     match &mut media.tracks[0].spec.config {
         CodecConfig::Flac { sample_rate, .. } => *sample_rate = rate,
         _ => panic!("expected FLAC in {name}"),

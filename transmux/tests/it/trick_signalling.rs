@@ -407,7 +407,7 @@ fn ir_trick_track_wired_to_signalling() {
         bandwidth: 200_000,
         width: Some(src_w),
         height: Some(src_h),
-        timescale: video.spec.timescale.get(),
+        timescale: video.spec.timescale,
         total_duration: trick_track
             .samples
             .iter()

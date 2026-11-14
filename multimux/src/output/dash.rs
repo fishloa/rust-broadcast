@@ -1824,7 +1824,7 @@ mod tests {
                     duration: period.duration,
                     start_number: template.multi.start_number.expect("startNumber"),
                     presentation_time_offset: template.multi.base.presentation_time_offset,
-                    timescale: template.multi.base.timescale.expect("timescale"),
+                    timescale: template.multi.base.timescale.expect("timescale").as_u64(),
                     template_duration: template.multi.duration.unwrap_or_default(),
                 }
             })

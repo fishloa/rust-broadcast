@@ -469,7 +469,7 @@ mod tests {
         Track::new(
             TrackSpec::new(
                 TrackId::new(1),
-                timescale,
+                Timescale::try_new(timescale).expect("timescale"),
                 CodecConfig::Aac {
                     esds: crate::mp4esds::EsdsBox::new(crate::mp4esds::ESDescriptor::new(
                         1,

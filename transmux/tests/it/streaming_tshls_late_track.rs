@@ -72,6 +72,7 @@ fn add_track_registers_audio_after_video_only_segments_were_already_cut() {
 
     let video_track_id = video_spec.track_id;
     let audio_track_id = audio_spec.track_id;
+    let video_timescale = video_spec.timescale;
     let video_scale = video_spec.timescale.get() as u64;
     let audio_scale = audio_spec.timescale.get() as u64;
 
@@ -108,7 +109,7 @@ fn add_track_registers_audio_after_video_only_segments_were_already_cut() {
     seg.add_track(audio_spec).expect("add_track: audio");
 
     // Duplicate track_id must be rejected.
-    let dup = transmux::pipeline::TrackSpec::new(video_track_id, video_scale as u32, {
+    let dup = transmux::pipeline::TrackSpec::new(video_track_id, video_timescale, {
         // Reuse the already-registered video codec config via the IR clone.
         let re_demux = demux(&load_ts());
         re_demux.tracks[video_pos].spec.config.clone()

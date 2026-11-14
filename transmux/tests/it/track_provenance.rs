@@ -329,7 +329,7 @@ fn fmp4_round_trip_has_no_ts_provenance() {
         "sanity: TS-demuxed video track carries its source PID"
     );
 
-    let video_only = Media::new(vec![video_track.clone()], video_track.spec.timescale.get());
+    let video_only = Media::new(vec![video_track.clone()], video_track.spec.timescale);
     let mut mux = CmafMux::new(1);
     let fmp4 = mux
         .package(&video_only)

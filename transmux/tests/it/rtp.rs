@@ -8,6 +8,7 @@
 use crate::sdp_session;
 #[cfg(feature = "std")]
 use broadcast_common::base64::base64_decode_lenient as base64_decode;
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Serialize, Unpackage};
 #[cfg(feature = "std")]
 use transmux::RtpOutput;
@@ -809,7 +810,7 @@ fn streaming_depacketiser_reports_reordered_timestamps() {
         TrackId::new(1),
         RtpMediaKind::H264,
         config,
-        VIDEO_CLOCK_RATE,
+        Timescale::from_nonzero(VIDEO_CLOCK_RATE),
     )]);
     let mut samples = Vec::new();
     for pkt in &packets {

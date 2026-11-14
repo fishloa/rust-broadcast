@@ -4498,7 +4498,7 @@ mod tests {
             flags: 0,
             creation_time: 0,
             modification_time: 0,
-            timescale: Timescale::from(1000u32),
+            timescale: Timescale::from_nonzero(1000),
             duration: 2000,
             rate: 0x00010000,
             volume: 0x0100,
@@ -4520,7 +4520,7 @@ mod tests {
         let m = sample_mvhd_v0();
         let orig = m.try_to_bytes().unwrap();
         let mut m2 = m.clone();
-        m2.timescale = Timescale::from(30000u32);
+        m2.timescale = Timescale::from_nonzero(30000);
         let mutated = m2.try_to_bytes().unwrap();
         assert_ne!(orig, mutated);
         // Verify the right field changed
@@ -4843,7 +4843,7 @@ mod tests {
                 flags: 0,
                 creation_time: 1,
                 modification_time: 2,
-                timescale: Timescale::from(90_000u32),
+                timescale: Timescale::from_nonzero(90_000),
                 duration: 180_000,
                 language: 0x55C4,
             },

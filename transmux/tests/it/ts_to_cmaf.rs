@@ -316,7 +316,7 @@ fn ts_to_cmaf_end_to_end() {
     );
     let audio_track = TrackSpec::new(
         TrackId::new(2),
-        audio_sample_rate,
+        Timescale::try_new(audio_sample_rate).unwrap(),
         CodecConfig::Aac {
             esds: esds.clone(),
             channel_count: audio_channel_count,

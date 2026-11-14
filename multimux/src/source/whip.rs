@@ -2394,6 +2394,16 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
     }
 
     #[test]
+    fn rejects_offer_whose_h264_rtpmap_has_a_zero_clock_rate() {
+        let offer = OFFER.replace("H264/90000", "H264/0");
+        assert_ne!(offer, OFFER);
+        assert!(matches!(
+            parse_whip_offer(&offer),
+            Err(crate::error::MultimuxError::Sdp(_))
+        ));
+    }
+
+    #[test]
     fn rejects_offer_with_no_video() {
         let offer = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n\
 m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxxxxxxxx\r\n";

@@ -213,6 +213,7 @@ mod muxer_buffering {
 
 mod segmenter_cuts {
     use super::measure;
+    use broadcast_common::timescale::Timescale;
     use transmux::TrackId;
     use transmux::{
         AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps, CodecConfig, Sample,

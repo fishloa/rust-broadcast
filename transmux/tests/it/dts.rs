@@ -262,7 +262,7 @@ fn dtsc_init_segment_ddts_round_trip() {
 
     let tracks = vec![TrackSpec::new(
         TrackId::new(1),
-        sample_rate,
+        Timescale::try_new(sample_rate).unwrap(),
         CodecConfig::Dts {
             config: ddts.clone(),
             codec_fourcc: DTSC_FOURCC,
@@ -305,7 +305,7 @@ fn stsd_round_trip_dts_entry() {
 
     let tracks = vec![TrackSpec::new(
         TrackId::new(1),
-        sample_rate,
+        Timescale::try_new(sample_rate).unwrap(),
         CodecConfig::Dts {
             config: ddts.clone(),
             codec_fourcc: DTSC_FOURCC,
