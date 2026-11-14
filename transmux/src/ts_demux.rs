@@ -230,13 +230,11 @@ use alloc::collections::btree_map::Entry;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use broadcast_common::error::{BufferTooShort, InvalidValue};
-use broadcast_common::len::need_in;
 use core::marker::PhantomData;
 use mpeg_ts::pid::Pid;
 
 use broadcast_common::timescale::{Rounding, rescale};
-use broadcast_common::{Demand, Serialize, Stage, Timestamp, Unpackage};
+use broadcast_common::{Demand, Parse, Serialize, Stage, Timestamp, Unpackage};
 use mpeg_pes::{PesAssembler, PesPacket};
 use mpeg_ts::resync::TsResync;
 use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
@@ -272,8 +270,10 @@ use crate::pipeline::{CodecConfig, DataCarriage, Provenance, Sample, SampleFlags
 /// PID carrying the Program Association Table (§2.4.4.4).
 const PAT_PID: Pid = Pid::new(0x0000);
 /// `table_id` of a PAT section (§2.4.4.4, Table 2-31).
+#[cfg(test)]
 pub(crate) const TABLE_ID_PAT: u8 = 0x00;
 /// `table_id` of a PMT section (§2.4.4.9, Table 2-31).
+#[cfg(test)]
 pub(crate) const TABLE_ID_PMT: u8 = 0x02;
 /// Long-form section header length before the table body: `table_id`(1) +
 /// flags/`section_length`(2) + `table_id_extension`(2) + version/cni(1) +
@@ -281,8 +281,6 @@ pub(crate) const TABLE_ID_PMT: u8 = 0x02;
 const SECTION_HEADER_LEN: usize = 8;
 /// Mask for the 5-bit `version_number` within a long-form section's byte 5
 /// (§2.4.4.1: `reserved`(2) + `version_number`(5) + `current_next_indicator`(1)),
-/// after shifting right by 1 to drop the `current_next_indicator` bit.
-const VERSION_NUMBER_MASK: u8 = 0x1F;
 /// Bit for `current_next_indicator` within a long-form section's byte 5
 /// (§2.4.4.1) — `1` means the table is applicable now, `0` means it is a
 /// not-yet-applicable "next" table (parsed, never acted on).
@@ -298,13 +296,8 @@ const SECTION_SYNTAX_INDICATOR_BIT: u8 = 0x80;
 /// Mask for the 12-bit `section_length` high nibble (byte 1 of a section).
 const SECTION_LENGTH_HI_MASK: u8 = 0x0F;
 /// Mask for the 13-bit PID low byte's high 5 bits.
+#[cfg(test)]
 const PID_HI_MASK: u8 = 0x1F;
-/// Bytes per PAT program-loop entry: `program_number`(2) + reserved/PID(2).
-const PAT_ENTRY_LEN: usize = 4;
-/// Mask for the 12-bit `program_info_length` / `ES_info_length` high nibble.
-const INFO_LENGTH_HI_MASK: u8 = 0x0F;
-/// A PAT entry with `program_number == 0` gives the network PID, not a PMT PID.
-const NETWORK_PROGRAM_NUMBER: u16 = 0x0000;
 /// The null packet PID — always stuffing, never meaningful payload
 /// (ISO/IEC 13818-1 §2.4.3.2 Table 2-3) — excluded from the
 /// `unattributed`-payload replay buffer.
@@ -1172,140 +1165,6 @@ fn adts_frame_payload<'a>(
         prev = end;
     }
     Some(out.into())
-}
-
-/// Parse a PAT section, returning every `(program_number, program_map_PID)`
-/// pair it lists (network entries — `program_number == 0` — are skipped).
-/// ISO/IEC 13818-1 §2.4.4.4. The `program_number` is kept (not just the PID)
-/// so a PMT section can be cross-checked against the program it was learned
-/// under (issue #774).
-fn parse_pat(section: &[u8]) -> Result<Vec<(u16, Pid)>> {
-    if section.first().copied() != Some(TABLE_ID_PAT) {
-        return Ok(Vec::new());
-    }
-    let body = section_body(section, "PAT")?;
-    let mut programs = Vec::new();
-    let mut off = 0usize;
-    while off + PAT_ENTRY_LEN <= body.len() {
-        let program_number = u16::from_be_bytes([body[off], body[off + 1]]);
-        let pid = Pid::new((((body[off + 2] & PID_HI_MASK) as u16) << 8) | body[off + 3] as u16);
-        if program_number != NETWORK_PROGRAM_NUMBER {
-            programs.push((program_number, pid));
-        }
-        off += PAT_ENTRY_LEN;
-    }
-    Ok(programs)
-}
-
-/// A PMT section's header fields beyond `table_id` (ISO/IEC 13818-1 §2.4.4.9 /
-/// Table 2-33), read directly from `section[]` (the whole section including
-/// its 8-byte header) — the version-diffing prerequisite for issue #774.
-struct PmtSectionHeader {
-    /// `table_id_extension`, which for a PMT is `program_number` (`section[3..5]`).
-    program_number: u16,
-    /// `version_number` (`section[5]`, bits `[5:1]`).
-    version: u8,
-    /// `current_next_indicator` (`section[5]`, bit 0). `false` means this
-    /// table is not yet applicable — parsed, never diffed/acted on.
-    current_next: bool,
-    /// `section_number` (`section[6]`).
-    section_number: u8,
-    /// `last_section_number` (`section[7]`). A PMT is always single-section,
-    /// so a genuine PMT always has `section_number == last_section_number == 0`.
-    last_section_number: u8,
-    /// `PCR_PID` (`section[8..10]`, 13 bits — §2.4.4.9 Table 2-33): the PID
-    /// whose adaptation fields carry this program's `PCR`, and therefore the
-    /// PID on which a system time-base discontinuity is signalled
-    /// (§2.4.3.5). `0x1FFF` means "no PCR for this program".
-    pcr_pid: Pid,
-}
-
-/// Parse a PMT section's header fields (§2.4.4.9) — everything needed to
-/// decide whether a newly-reassembled section should be *applied*
-/// (`current_next_indicator == 1` and `version_number` differs from the last
-/// **applied** version), before paying for the ES-loop walk in [`parse_pmt`].
-fn parse_pmt_section_header(section: &[u8]) -> Result<PmtSectionHeader> {
-    if section.first().copied() != Some(TABLE_ID_PMT) {
-        return Err(Error::InvalidValue(InvalidValue {
-            field: "table_id",
-            value: section.first().copied().unwrap_or(0) as u64,
-            reason: "not a PMT section",
-        }));
-    }
-    need_in(section, SECTION_HEADER_LEN, "PMT section header")?;
-    Ok(PmtSectionHeader {
-        program_number: u16::from_be_bytes([section[3], section[4]]),
-        version: (section[5] >> 1) & VERSION_NUMBER_MASK,
-        current_next: section[5] & CURRENT_NEXT_INDICATOR_BIT != 0,
-        section_number: section[6],
-        last_section_number: section[7],
-        // PCR_PID sits at the start of the section body, which is
-        // `section[8..]` (the 8-byte header ends at index 8): reserved(3) +
-        // PCR_PID(13).
-        pcr_pid: Pid::new((((section[8] & PID_HI_MASK) as u16) << 8) | section[9] as u16),
-    })
-}
-
-/// Parse a PMT section, returning `(elementary_PID, codec, ES_info
-/// descriptors)` for every elementary stream listed (issue #576: every
-/// PMT-listed ES becomes a track — typed when the `stream_type` maps to a
-/// decoded codec, else opaque [`Codec::Data`]). ISO/IEC 13818-1 §2.4.4.9.
-/// `descriptors` is the raw ES_info descriptor-loop bytes for that stream
-/// (empty when `ES_info_length` is 0); consumers that don't need it (every
-/// codec but [`Codec::Data`]) simply ignore it.
-fn parse_pmt(section: &[u8]) -> Result<Vec<(Pid, Codec, Vec<u8>)>> {
-    if section.first().copied() != Some(TABLE_ID_PMT) {
-        return Ok(Vec::new());
-    }
-    let body = section_body(section, "PMT")?;
-    // PMT body prefix: reserved(3)+PCR_PID(13) = 2 bytes, then
-    // reserved(4)+program_info_length(12) = 2 bytes, then the descriptor loop.
-    need_in(body, 4, "PMT program-info prefix")?;
-    let program_info_length = (((body[2] & INFO_LENGTH_HI_MASK) as usize) << 8) | body[3] as usize;
-    let mut off = 4 + program_info_length;
-    let mut out = Vec::new();
-    // Each ES entry: stream_type(1) + reserved(3)/elementary_PID(13) [2] +
-    // reserved(4)/ES_info_length(12) [2] + descriptor()×ES_info_length.
-    while off + 5 <= body.len() {
-        let stream_type = body[off];
-        let es_pid = Pid::new((((body[off + 1] & PID_HI_MASK) as u16) << 8) | body[off + 2] as u16);
-        let es_info_length =
-            (((body[off + 3] & INFO_LENGTH_HI_MASK) as usize) << 8) | body[off + 4] as usize;
-        let desc_start = off + 5;
-        let desc_end = (desc_start + es_info_length).min(body.len());
-        let descriptors = body[desc_start..desc_end].to_vec();
-        let codec =
-            Codec::from_stream_type(stream_type).refine_with_descriptors(stream_type, &descriptors);
-        out.push((es_pid, codec, descriptors));
-        off += 5 + es_info_length;
-    }
-    Ok(out)
-}
-
-/// Slice a long-form PSI section's table body: the bytes between the 8-byte
-/// section header and the trailing 4-byte CRC_32 (ISO/IEC 13818-1 §2.4.4.1),
-/// bounded by the declared `section_length`.
-fn section_body<'a>(section: &'a [u8], what: &'static str) -> Result<&'a [u8]> {
-    if section.len() < SECTION_HEADER_LEN + CRC32_LEN {
-        return Err(Error::BufferTooShort(BufferTooShort {
-            need: SECTION_HEADER_LEN + CRC32_LEN,
-            have: section.len(),
-            what,
-        }));
-    }
-    // section_length counts the bytes AFTER the 3-byte header, i.e. through CRC.
-    let section_length =
-        (((section[1] & SECTION_LENGTH_HI_MASK) as usize) << 8) | section[2] as usize;
-    let total = 3 + section_length;
-    let end = total.min(section.len());
-    if end < SECTION_HEADER_LEN + CRC32_LEN {
-        return Err(Error::BufferTooShort(BufferTooShort {
-            need: SECTION_HEADER_LEN + CRC32_LEN,
-            have: end,
-            what,
-        }));
-    }
-    Ok(&section[SECTION_HEADER_LEN..end - CRC32_LEN])
 }
 
 /// Validate a long-form PSI section's trailing `CRC_32` (ISO/IEC 13818-1
@@ -5280,9 +5139,11 @@ impl StreamingTsDemux {
                 if !section_current_next(&section) {
                     continue;
                 }
-                if let Ok(programs) = parse_pat(&section) {
-                    for (program_number, pmt_pid) in programs {
-                        self.learn_pmt_pid(pmt_pid, program_number);
+                if let Ok(pat) = dvb_si::tables::pat::PatSection::parse(&section) {
+                    for entry in pat.entries {
+                        if entry.program_number != dvb_si::tables::pat::PROGRAM_NUMBER_NIT {
+                            self.learn_pmt_pid(entry.pid, entry.program_number);
+                        }
                     }
                 }
             }
@@ -5306,26 +5167,26 @@ impl StreamingTsDemux {
                 if !psi_section_crc_ok(section) {
                     continue;
                 }
-                let Ok(header) = parse_pmt_section_header(section) else {
+                let Ok(pmt) = dvb_si::tables::pmt::PmtSection::parse(section) else {
                     continue;
                 };
-                if header.program_number != program_number {
+                if pmt.program_number != program_number {
                     // Defensive cross-check (issue #774): a PMT PID's
                     // program_number must match the PAT entry it was learned
                     // under. A mismatch is stream corruption or a PAT/PMT
                     // race — never act on it.
                     continue;
                 }
-                if header.section_number != 0 || header.last_section_number != 0 {
+                if pmt.section_number != 0 || pmt.last_section_number != 0 {
                     // A PMT is always single-section (§2.4.4.9) — a
                     // multi-section claim is malformed, ignore it.
                     continue;
                 }
-                if !header.current_next {
+                if !pmt.current_next_indicator {
                     // A "next" table: parsed, never applied.
                     continue;
                 }
-                if pmt_state.last_applied_version == Some(header.version) {
+                if pmt_state.last_applied_version == Some(pmt.version_number) {
                     // Carousel repeat (identical applied version) — dropped
                     // before the diff, never re-processed.
                     continue;
@@ -5333,15 +5194,20 @@ impl StreamingTsDemux {
                 // The version is consumed only by a body that parses: a
                 // CRC-valid but unparseable section must not suppress the
                 // intact repeat of the same version.
-                if let Ok(es_list) = parse_pmt(section) {
-                    pmt_state.last_applied_version = Some(header.version);
-                    // Record the PCR_PID the program just declared: it is the
-                    // PID on which a system time-base discontinuity for this
-                    // program is signalled (§2.4.3.5), and the key for scoping
-                    // a rebase to this program's streams (r04-W50 review).
-                    pmt_state.pcr_pid = Some(header.pcr_pid);
-                    to_apply = Some(es_list);
+                let mut es_list: Vec<(Pid, Codec, Vec<u8>)> = Vec::new();
+                for stream in &pmt.streams {
+                    let descriptors = stream.es_info.raw().to_vec();
+                    let codec = Codec::from_stream_type(stream.stream_type.to_u8())
+                        .refine_with_descriptors(stream.stream_type.to_u8(), &descriptors);
+                    es_list.push((stream.elementary_pid, codec, descriptors));
                 }
+                pmt_state.last_applied_version = Some(pmt.version_number);
+                // Record the PCR_PID the program just declared: it is the
+                // PID on which a system time-base discontinuity for this
+                // program is signalled (§2.4.3.5), and the key for scoping
+                // a rebase to this program's streams (r04-W50 review).
+                pmt_state.pcr_pid = Some(pmt.pcr_pid);
+                to_apply = Some(es_list);
             }
             if let Some(es_list) = to_apply {
                 let old_applied_es = pmt_state.applied_es.clone();
