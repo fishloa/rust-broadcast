@@ -15,7 +15,7 @@
 //! no scheduler" — so [`TransitionPlan`] is the primary thing this crate's
 //! tests hold to timeline-correctness, not the schedule bookkeeping.
 
-use crate::schedule::{Schedule, ScheduleEntry};
+use crate::schedule::{Playhead, Schedule, ScheduleEntry};
 
 /// The computed plan for joining `from` into `to` at [`Self::at_pts`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,14 +116,13 @@ pub struct PlannedTransition<'a> {
     pub plan: TransitionPlan,
 }
 
-/// Find and plan the next transition due at or after `now_pts`.
+/// Find and plan the next transition due at or after `now`.
 ///
-/// Returns `None` if `now_pts` precedes every entry, or if the entry active
-/// at `now_pts` is the schedule's last entry (nothing scheduled to follow it
-/// yet).
+/// Returns `None` if `now` precedes every entry, or if the entry active at
+/// `now` is the schedule's last entry (nothing scheduled to follow it yet).
 #[must_use]
-pub fn next_transition(schedule: &Schedule, now_pts: u64) -> Option<PlannedTransition<'_>> {
-    let idx = schedule.active_index_at(now_pts)?;
+pub fn next_transition(schedule: &Schedule, now: Playhead) -> Option<PlannedTransition<'_>> {
+    let idx = schedule.active_index_at(now.ticks)?;
     let entries = schedule.entries();
     let to = entries.get(idx + 1)?;
     let from = &entries[idx];
@@ -137,7 +136,8 @@ pub fn next_transition(schedule: &Schedule, now_pts: u64) -> Option<PlannedTrans
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schedule::{CodecConfigId, EntryKind, ScheduleEntry};
+    use crate::schedule::{CodecConfigId, EntryKind, Playhead, ScheduleEntry};
+    use broadcast_common::timescale::Timescale;
 
     fn entry(
         id: &str,
@@ -233,19 +233,43 @@ mod tests {
             .push(entry("prog-2", EntryKind::Programme, 2_000, 0, 1))
             .unwrap();
 
-        let t = next_transition(&sched, 500).unwrap();
+        let at = Playhead::new(500, Timescale::MICROS);
+        let t = next_transition(&sched, at).unwrap();
         assert_eq!(t.from.id, "prog-1");
         assert_eq!(t.to.id, "ad-1");
         assert!(t.plan.discontinuity);
 
-        let t = next_transition(&sched, 1_500).unwrap();
+        let t = next_transition(&sched, Playhead::new(1_500, Timescale::MICROS)).unwrap();
         assert_eq!(t.from.id, "ad-1");
         assert_eq!(t.to.id, "prog-2");
 
         // No entry follows the last one yet.
-        assert!(next_transition(&sched, 2_500).is_none());
+        assert!(next_transition(&sched, Playhead::new(2_500, Timescale::MICROS)).is_none());
         // pts 0 IS prog-1's start, so the next transition is still found.
-        assert!(next_transition(&sched, 0).is_some());
+        assert!(next_transition(&sched, Playhead::new(0, Timescale::MICROS)).is_some());
+    }
+
+    #[test]
+    fn a_playhead_on_another_timescale_names_another_instant() {
+        let mut sched = Schedule::default();
+        sched
+            .push(entry("prog-1", EntryKind::Programme, 0, 0, 1))
+            .unwrap();
+        sched
+            .push(entry("ad-1", EntryKind::Ad, 90_000, 0, 2))
+            .unwrap();
+        let clock = match Timescale::new(90_000) {
+            Some(clock) => clock,
+            None => return,
+        };
+        let name = |t: &PlannedTransition<'_>| t.from.id.clone();
+        let before = next_transition(&sched, Playhead::new(500, Timescale::MICROS));
+        let after = next_transition(&sched, Playhead::new(4_500, clock));
+        assert_eq!(
+            before.as_ref().map(name),
+            after.as_ref().map(name),
+            "0.5 s and 4 500 ticks at 90 kHz are the same instant"
+        );
     }
 
     /// PLAY-W2: a raw 33-bit source PTS that wrapped mid-entry must land on

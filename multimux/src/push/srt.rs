@@ -125,8 +125,8 @@ impl PushTransport for SrtTransport {
         if let Some(stream_id) = srt_url.stream_id {
             srt_config.stream_id = Some(stream_id);
         }
-        if let Some(latency_ms) = srt_url.latency_ms {
-            srt_config.latency_ms = latency_ms;
+        if let Some(latency) = srt_url.latency {
+            srt_config.latency = latency;
         }
         let socket = SrtSocket::connect(addr, SrtSocketConfig::new(srt_config)).await?;
         Ok(Self {
@@ -208,7 +208,7 @@ mod tests {
             "the dial address is host:port only"
         );
         assert_eq!(url.stream_id.as_deref(), Some("live/cam"));
-        assert_eq!(url.latency_ms, Some(120));
+        assert_eq!(url.latency, Some(Duration::from_millis(120)));
 
         // Scheme-less `host:port` is accepted, and a bare host takes the
         // default port.
@@ -216,7 +216,7 @@ mod tests {
         assert_eq!(addr, "example.com:9000");
         let (addr, url) = parse_srt_url("example.com").unwrap();
         assert_eq!(addr, "example.com:9000");
-        assert_eq!(url.latency_ms, None);
+        assert_eq!(url.latency, None);
 
         // Haivision `#!::r=…` streamid keeps the whole value (a live stream
         // key is a credential, so only the shape is asserted here).

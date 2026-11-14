@@ -2,6 +2,7 @@
 
 use url::Url;
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use broadcast_common::stage::Timestamp;
 use broadcast_client::{
@@ -343,9 +344,10 @@ fuzz_target!(|data: &[u8]| {
     }
     config.dash.cross_origin_urls = head[3] & PIN_ORIGIN == 0;
     config.dash.use_availability_time_offset = head[3] & USE_ATO != 0;
-    config.dash.utc_resync_us = RESYNC_US[usize::from(head[4] & 3)];
-    config.dash.early_grace_us = GRACE_US[usize::from((head[4] >> 2) % 3)];
-    config.dash.min_mpd_refresh_us = REFRESH_US[usize::from((head[4] >> 4) & 3)];
+    config.dash.utc_resync = (RESYNC_US[usize::from(head[4] & 3)] != u64::MAX)
+        .then(|| Duration::from_micros(RESYNC_US[usize::from(head[4] & 3)]));
+    config.dash.early_grace = Duration::from_micros(GRACE_US[usize::from((head[4] >> 2) % 3)]);
+    config.dash.min_mpd_refresh = Duration::from_micros(REFRESH_US[usize::from((head[4] >> 4) & 3)]);
 
     let mpd = pick_mpd(&world.mpds, head[0], head[1], head[2], &mut rest);
     let publish = dash_runtime::mpd::Mpd::parse(&mpd)
@@ -363,7 +365,11 @@ fuzz_target!(|data: &[u8]| {
         let unix = publish
             .saturating_add(i64::try_from(now).unwrap_or(0))
             .saturating_add(skew);
-        session.set_wall_clock(Timestamp::from_micros(now), u64::try_from(unix.max(0)).unwrap_or(0));
+        let read = i64::try_from(unix.max(0)).unwrap_or(i64::MAX);
+        session.set_wall_clock(
+            Timestamp::from_micros(now),
+            jiff::Timestamp::from_microsecond(read).unwrap_or(jiff::Timestamp::UNIX_EPOCH),
+        );
     };
     match head[5] % 4 {
         1 => give_clock(&mut session, 0, 0),

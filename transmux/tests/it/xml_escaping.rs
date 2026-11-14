@@ -8,6 +8,7 @@ use quick_xml::Reader;
 use quick_xml::XmlVersion;
 use quick_xml::escape::resolve_predefined_entity;
 use quick_xml::events::Event;
+use std::time::Duration;
 use transmux::ll_dash::UTCTIMING_HTTP_HEAD_2014;
 use transmux::playready_wrmheader;
 use transmux::ts_demux::TsDemux;
@@ -74,8 +75,8 @@ fn text_of(xml: &str, element: &str) -> String {
 #[test]
 fn ll_dash_utc_timing_escapes_scheme_and_value() {
     let media = demux_media();
-    let mut pkg =
-        crate::ll_packager::ll_packager(2.0, 0.5, 3000).with_utc_timing(SPECIALS, SPECIALS);
+    let mut pkg = crate::ll_packager::ll_packager(2.0, 0.5, Duration::from_secs(3))
+        .with_utc_timing(SPECIALS, SPECIALS);
     let xml = pkg.package(&media).expect("LL MPD");
 
     assert!(
@@ -93,7 +94,7 @@ fn ll_dash_utc_timing_escapes_scheme_and_value() {
         Some(SPECIALS)
     );
     // The registered scheme still round-trips untouched.
-    let mut pkg = crate::ll_packager::ll_packager(2.0, 0.5, 3000)
+    let mut pkg = crate::ll_packager::ll_packager(2.0, 0.5, Duration::from_secs(3))
         .with_utc_timing(UTCTIMING_HTTP_HEAD_2014, "https://t.example/x?a=1&b=2");
     let xml = pkg.package(&media).expect("LL MPD");
     assert_eq!(
@@ -107,7 +108,7 @@ fn ll_dash_rewrite_preserves_base_mpd_attribute_escaping() {
     // The LL rewrite re-reads the base MPD: an escaped `profiles` must come out
     // exactly as the base writer produced it (no double escaping).
     let media = demux_media();
-    let mut pkg = crate::ll_packager::ll_packager(2.0, 0.5, 3000);
+    let mut pkg = crate::ll_packager::ll_packager(2.0, 0.5, Duration::from_secs(3));
     pkg.base.profiles = SPECIALS.to_string();
     let xml = pkg.package(&media).expect("LL MPD");
     assert!(

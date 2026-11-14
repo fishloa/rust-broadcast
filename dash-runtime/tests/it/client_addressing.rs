@@ -7,6 +7,12 @@ use broadcast_common::stage::Timestamp;
 fn now(us: u64) -> Timestamp {
     Timestamp::from_micros(us)
 }
+
+/// Unix microseconds as a wall-clock reading.
+fn wall_unix(unix_us: u64) -> jiff::Timestamp {
+    let us = i64::try_from(unix_us).unwrap_or(i64::MAX);
+    jiff::Timestamp::from_microsecond(us).unwrap_or(jiff::Timestamp::UNIX_EPOCH)
+}
 use dash_runtime::client::{
     Action, DashClient, DashConfig, DropCause, FatalKind, Output, PullLimits, ResponseMeta,
 };
@@ -37,13 +43,12 @@ fn a_segment_address_error_after_the_initial_plan_drops_the_track() {
             .with_dash(DashConfig::default())
             .with_limits(PullLimits::default()),
     );
-    let now_unix_us: u64 = 1_767_225_600 * 1_000_000;
-    client.set_wall_clock(now(0), now_unix_us);
+    client.set_wall_clock(now(0), wall_unix(1_767_225_600 * 1_000_000));
     let Some(Action::FetchMpd { url, .. }) = client.poll(now(0)) else {
         panic!("first action is the MPD")
     };
     assert_eq!(url.as_str(), DOC);
-    let meta = ResponseMeta::at(0);
+    let meta = ResponseMeta::at(now(0));
     client.on_mpd_with(now(0), mpd.as_bytes(), &meta).unwrap();
 
     let mut dropped = false;
@@ -98,13 +103,12 @@ fn an_init_lookup_plan_error_drops_the_track() {
             .with_dash(DashConfig::default())
             .with_limits(PullLimits::default()),
     );
-    let now_unix_us: u64 = 1_767_225_600 * 1_000_000;
-    client.set_wall_clock(now(0), now_unix_us);
+    client.set_wall_clock(now(0), wall_unix(1_767_225_600 * 1_000_000));
     let Some(Action::FetchMpd { url, .. }) = client.poll(now(0)) else {
         panic!("first action is the MPD")
     };
     assert_eq!(url.as_str(), DOC);
-    let meta = ResponseMeta::at(0);
+    let meta = ResponseMeta::at(now(0));
     client.on_mpd_with(now(0), mpd.as_bytes(), &meta).unwrap();
 
     let mut dropped = false;

@@ -1,6 +1,8 @@
 //! Early, expired and missing live segments, and the failure cadence
 //! (DESIGN 5.4, 23009-1 A.7, RFC 8470) through the `World` simulation.
 
+use core::time::Duration;
+
 use crate::common;
 
 use common::checks::*;
@@ -109,7 +111,7 @@ fn a_segment_that_stays_425_past_its_window_is_expired_not_retried_forever() {
 #[test]
 fn a_404_inside_the_grace_window_is_early_and_after_it_is_missing() {
     let mut dash = DashConfig::default();
-    dash.early_grace_us = 1_000_000;
+    dash.early_grace = Duration::from_micros(1_000_000);
     let (mut sim, geo) = sim_with(with_utc(Addressing::Number), START, dash);
     sim.fault = Some(segment_fault("V", 24, 24, 404));
     sim.run_for(60 * MICROS as u64);
@@ -142,7 +144,7 @@ fn a_404_inside_the_grace_window_is_early_and_after_it_is_missing() {
 #[test]
 fn a_hole_in_the_window_is_retried_then_skipped_with_a_discontinuity_and_playback_continues() {
     let mut dash = DashConfig::default();
-    dash.early_grace_us = 500_000;
+    dash.early_grace = Duration::from_micros(500_000);
     let (mut sim, geo) = sim_with(with_utc(Addressing::Number), START, dash);
     sim.fault = Some(segment_fault("V", 23, 23, 404));
     sim.run_for(80 * MICROS as u64);
@@ -179,8 +181,8 @@ fn a_hole_in_the_window_is_retried_then_skipped_with_a_discontinuity_and_playbac
 #[test]
 fn the_first_missing_segment_forces_a_clock_resync_and_an_mpd_refresh() {
     let mut dash = DashConfig::default();
-    dash.early_grace_us = 500_000;
-    dash.utc_resync_us = u64::MAX;
+    dash.early_grace = Duration::from_micros(500_000);
+    dash.utc_resync = None;
     let mut synth = with_utc(Addressing::Number);
     synth.mup_us = Some(30 * MICROS);
     let (mut sim, _geo) = sim_with(synth, START, dash);
@@ -342,7 +344,7 @@ fn garbage_and_truncated_segment_bodies_are_counted_not_delivered() {
 #[test]
 fn l4_early_bookkeeping_does_not_leak_after_give_ups() {
     let mut dash = DashConfig::default();
-    dash.early_grace_us = 500_000;
+    dash.early_grace = Duration::from_micros(500_000);
     let (mut sim, _geo) = sim_with(with_utc(Addressing::Number), START, dash);
     sim.fault = Some(segment_fault("V", 23, 23, 404));
     sim.run_for(80 * MICROS as u64);

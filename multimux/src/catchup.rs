@@ -20,7 +20,7 @@
 //!
 //! The archive and the live `Trunk` are different sources of the same
 //! numbering scheme: `crate::dvr::DvrRecorder` persists each segment under
-//! the exact `sequence_number`/`start_pts_ns` the live `Trunk` assigned it
+//! the exact `sequence_number`/`start` the live `Trunk` assigned it
 //! (see `crate::dvr::IndexEntry`'s own doc). [`merge_segments`] is the one
 //! place that fact is exploited: it concatenates the archive's segments
 //! with only the live segments *not yet* archived (strictly greater than
@@ -40,7 +40,7 @@ use hls_runtime::server::ClosedSegment;
 use media_plane::ids::SegmentSeq;
 
 use crate::dvr::{DvrConfig, IndexEntry};
-use broadcast_common::units::NANOS_PER_SEC;
+use broadcast_common::Timestamp;
 
 /// One archived segment, with enough metadata to render it into a
 /// playlist ([`CatchupSegment`]) and locate its exact bytes on disk
@@ -48,7 +48,7 @@ use broadcast_common::units::NANOS_PER_SEC;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct ArchivedSegment {
     pub seq: SegmentSeq,
-    pub start_pts_ns: u64,
+    pub start: Timestamp,
     pub duration_secs: f64,
     pub discontinuous: bool,
     /// Which period file (`pN.<ext>`) this segment's bytes live in.
@@ -65,7 +65,7 @@ pub(crate) struct ArchivedSegment {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct CatchupSegment {
     pub seq: SegmentSeq,
-    pub start_pts_ns: u64,
+    pub start: Timestamp,
     pub duration_secs: f64,
     pub discontinuous: bool,
     /// Which init segment this segment must be decoded with (`None`: the
@@ -202,8 +202,8 @@ pub(crate) fn read_period_segments(dir: &Path, period_num: u32) -> Arc<Vec<Archi
         .into_iter()
         .map(|e| ArchivedSegment {
             seq: SegmentSeq::new(e.seq),
-            start_pts_ns: e.start_pts_ns,
-            duration_secs: e.duration_ns as f64 / (NANOS_PER_SEC as f64),
+            start: e.start,
+            duration_secs: e.duration.as_secs_f64(),
             discontinuous: e.discontinuous,
             period_num,
             byte_offset: e.byte_offset,
@@ -459,7 +459,7 @@ pub(crate) fn merge_segments(
         .iter()
         .map(|s| CatchupSegment {
             seq: s.seq,
-            start_pts_ns: s.start_pts_ns,
+            start: s.start,
             duration_secs: s.duration_secs,
             discontinuous: s.discontinuous,
             init: Some(InitRef::Archived(s.period_num)),
@@ -472,7 +472,7 @@ pub(crate) fn merge_segments(
         };
         is_tail.then_some(CatchupSegment {
             seq: s.sequence_number,
-            start_pts_ns: s.start_ns,
+            start: Timestamp::from_nanos(s.start.0),
             duration_secs: s.duration_secs,
             discontinuous: s.discontinuous,
             init: Some(InitRef::Live(s.init_generation)),
@@ -498,8 +498,8 @@ pub(crate) fn merge_segments(
 /// shape).
 ///
 /// The window is measured by **walking back from the live edge summing
-/// segment durations**, not by `start_pts_ns` arithmetic (audit r07-C5,
-/// #1083): `start_pts_ns` is per-`Trunk` and restarts near 0 after every
+/// segment durations**, not by `start` arithmetic (audit r07-C5,
+/// #1083): a segment's start is per-`Trunk` and restarts near 0 after every
 /// reconnect or process restart, so a pts floor taken from the edge's tiny
 /// value used to select the *whole* previous run's archive. A segment is kept
 /// while the media between its start and the last segment's start (the sum of
@@ -589,11 +589,10 @@ pub(crate) fn render_playlist(
         .iter()
         .map(|s| broadcast_hls::MediaSegment {
             uri: format!("catchup/seg-{}.{ext}", s.seq),
-            // `duration_secs` is always `duration_ns as f64 / NANOS_PER_SEC`
-            // (issue #1140): finite and non-negative for any real
-            // segment duration.
+            // `duration_secs` comes from a `Duration` (issue #1140): finite
+            // and non-negative for any real segment duration.
             duration: broadcast_hls::DecimalSeconds::new(s.duration_secs)
-                .expect("duration_ns / NANOS_PER_SEC is finite, >= 0"),
+                .expect("a segment duration is finite and non-negative"),
             discontinuous: s.discontinuous,
             ..Default::default()
         })
@@ -649,7 +648,12 @@ mod tests {
     }
 
     fn closed(seq: u32, start_ns: u64, duration_secs: f64, discontinuous: bool) -> ClosedSegment {
-        ClosedSegment::new(SegmentSeq::new(seq), start_ns, duration_secs, discontinuous)
+        ClosedSegment::new(
+            SegmentSeq::new(seq),
+            timed_metadata::MediaTime(start_ns),
+            duration_secs,
+            discontinuous,
+        )
     }
 
     // --- merge_segments: the straddle fix itself ---
@@ -674,7 +678,7 @@ mod tests {
         let archived = vec![
             ArchivedSegment {
                 seq: SegmentSeq::new(1),
-                start_pts_ns: 0,
+                start: Timestamp::from_nanos(0),
                 duration_secs: 2.0,
                 discontinuous: false,
                 period_num: 0,
@@ -683,7 +687,7 @@ mod tests {
             },
             ArchivedSegment {
                 seq: SegmentSeq::new(2),
-                start_pts_ns: 2_000_000_000,
+                start: Timestamp::from_nanos(2_000_000_000),
                 duration_secs: 2.0,
                 discontinuous: false,
                 period_num: 0,
@@ -692,7 +696,7 @@ mod tests {
             },
             ArchivedSegment {
                 seq: SegmentSeq::new(3),
-                start_pts_ns: 4_000_000_000,
+                start: Timestamp::from_nanos(4_000_000_000),
                 duration_secs: 2.0,
                 discontinuous: false,
                 period_num: 0,
@@ -727,7 +731,7 @@ mod tests {
     fn merge_segments_marks_a_gap_between_archive_and_live_tail() {
         let archived = vec![ArchivedSegment {
             seq: SegmentSeq::new(2),
-            start_pts_ns: 2_000_000_000,
+            start: Timestamp::from_nanos(2_000_000_000),
             duration_secs: 2.0,
             discontinuous: false,
             period_num: 0,
@@ -767,21 +771,21 @@ mod tests {
         let combined = vec![
             CatchupSegment {
                 seq: SegmentSeq::new(1),
-                start_pts_ns: 0,
+                start: Timestamp::from_nanos(0),
                 duration_secs: 10.0,
                 discontinuous: false,
                 init: None,
             },
             CatchupSegment {
                 seq: SegmentSeq::new(2),
-                start_pts_ns: 10_000_000_000,
+                start: Timestamp::from_nanos(10_000_000_000),
                 duration_secs: 10.0,
                 discontinuous: false,
                 init: None,
             },
             CatchupSegment {
                 seq: SegmentSeq::new(3),
-                start_pts_ns: 20_000_000_000,
+                start: Timestamp::from_nanos(20_000_000_000),
                 duration_secs: 10.0,
                 discontinuous: false,
                 init: None,
@@ -799,7 +803,7 @@ mod tests {
         );
     }
 
-    /// Audit r07-C5 (#1083): two runs, the second's `start_pts_ns` restarting
+    /// Audit r07-C5 (#1083): two runs, the second's segment start restarting
     /// near 0 (a new `Trunk`). The old pts arithmetic took the edge's tiny
     /// start as the floor's anchor, floored at 0 and returned the whole first
     /// run; walking back by durations returns exactly the trailing window.
@@ -807,7 +811,7 @@ mod tests {
     fn apply_window_is_correct_across_a_reconnect_whose_pts_restarted() {
         let seg = |seq: u32, start_s: u64, discontinuous: bool| CatchupSegment {
             seq: SegmentSeq::new(seq),
-            start_pts_ns: start_s * NANOS_PER_SEC,
+            start: Timestamp::from_micros(start_s.saturating_mul(1_000_000)),
             duration_secs: 4.0,
             discontinuous,
             init: None,
@@ -846,7 +850,7 @@ mod tests {
     fn apply_window_none_or_zero_returns_everything() {
         let combined = vec![CatchupSegment {
             seq: SegmentSeq::new(1),
-            start_pts_ns: 0,
+            start: Timestamp::from_nanos(0),
             duration_secs: 2.0,
             discontinuous: false,
             init: None,
@@ -1052,14 +1056,14 @@ mod tests {
         let segments = vec![
             CatchupSegment {
                 seq: SegmentSeq::new(5),
-                start_pts_ns: 0,
+                start: Timestamp::from_nanos(0),
                 duration_secs: 3.4,
                 discontinuous: false,
                 init: Some(InitRef::Live(hls_runtime::server::Generation::new(1))),
             },
             CatchupSegment {
                 seq: SegmentSeq::new(6),
-                start_pts_ns: 3_400_000_000,
+                start: Timestamp::from_nanos(3_400_000_000),
                 duration_secs: 3.4,
                 discontinuous: true,
                 init: Some(InitRef::Live(hls_runtime::server::Generation::new(1))),
@@ -1090,7 +1094,7 @@ mod tests {
     fn render_playlist_vod_finished_emits_endlist_and_vod_type() {
         let segments = vec![CatchupSegment {
             seq: SegmentSeq::new(1),
-            start_pts_ns: 0,
+            start: Timestamp::from_nanos(0),
             duration_secs: 2.0,
             discontinuous: false,
             init: None,
@@ -1128,10 +1132,10 @@ mod tests {
 
         let one = serde_json::to_vec(&vec![IndexEntry {
             seq: 7,
-            start_pts_ns: 0,
+            start: Timestamp::from_nanos(0),
             byte_offset: 0,
             byte_len: 4,
-            duration_ns: 1_000_000_000,
+            duration: Duration::from_nanos(1_000_000_000),
             discontinuous: false,
         }])
         .unwrap();
@@ -1148,18 +1152,18 @@ mod tests {
         let two = serde_json::to_vec(&vec![
             IndexEntry {
                 seq: 7,
-                start_pts_ns: 0,
+                start: Timestamp::from_nanos(0),
                 byte_offset: 0,
                 byte_len: 4,
-                duration_ns: 1_000_000_000,
+                duration: Duration::from_nanos(1_000_000_000),
                 discontinuous: false,
             },
             IndexEntry {
                 seq: 8,
-                start_pts_ns: 1_000_000_000,
+                start: Timestamp::from_nanos(1_000_000_000),
                 byte_offset: 4,
                 byte_len: 4,
-                duration_ns: 1_000_000_000,
+                duration: Duration::from_nanos(1_000_000_000),
                 discontinuous: false,
             },
         ])
@@ -1193,10 +1197,10 @@ mod tests {
         let entry = |seq: u32| {
             serde_json::to_vec(&vec![IndexEntry {
                 seq,
-                start_pts_ns: 0,
+                start: Timestamp::from_nanos(0),
                 byte_offset: 0,
                 byte_len: 4,
-                duration_ns: 1_000_000_000,
+                duration: Duration::from_nanos(1_000_000_000),
                 discontinuous: false,
             }])
             .unwrap()
@@ -1269,10 +1273,10 @@ mod tests {
             &idx,
             serde_json::to_vec(&vec![IndexEntry {
                 seq: 42,
-                start_pts_ns: 0,
+                start: Timestamp::from_nanos(0),
                 byte_offset: 0,
                 byte_len: 4,
-                duration_ns: 1_000_000_000,
+                duration: Duration::from_nanos(1_000_000_000),
                 discontinuous: false,
             }])
             .unwrap(),
@@ -1310,7 +1314,7 @@ mod tests {
     fn render_playlist_omits_playlist_type_when_passed_none() {
         let segments = [CatchupSegment {
             seq: SegmentSeq::new(5),
-            start_pts_ns: 0,
+            start: Timestamp::from_nanos(0),
             duration_secs: 2.0,
             discontinuous: false,
             init: None,

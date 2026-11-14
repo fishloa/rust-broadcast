@@ -7,7 +7,7 @@
 //! refreshes live MPDs (conditionally), joins near the live edge, gates each request on the
 //! segment's availability, retries and classifies failures and selects the tracks. The host
 //! performs its HTTP requests and anchors the session's wall clock to the host clock (re-read
-//! every `utc_resync_us`); the sample timeline is stitched across Period boundaries
+//! every `DashConfig::utc_resync`); the sample timeline is stitched across Period boundaries
 //! (`EventIngest::stitching`) because a `Trunk` feeds segmenters that expect time to move
 //! forward.
 //!
@@ -167,7 +167,7 @@ pub(crate) async fn run_with_clock(
 ) -> Result<()> {
     let timeouts = route.target.timeouts;
     let config = session_config(route);
-    let resync_us = config.dash.utc_resync_us;
+    let resync = config.dash.utc_resync;
     let step = SessionStep::open(
         &route.target.url,
         config,
@@ -176,7 +176,7 @@ pub(crate) async fn run_with_clock(
         Arc::clone(route_handle),
         false,
     )?;
-    let mut step = step.with_clock(clock).with_clock_resync(resync_us);
+    let mut step = step.with_clock(clock).with_clock_resync(resync);
     let driver = IngestDriver::new(
         EventIngest::new().stitching(),
         media_plane::IngestConfig::new(handshake).with_trunk(trunk_config),

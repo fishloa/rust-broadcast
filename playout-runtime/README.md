@@ -54,8 +54,9 @@ orchestrator that owns the clock and the media.
 ## Quick start
 
 ```rust
+use broadcast_common::timescale::Timescale;
 use playout_runtime::{
-    BreakEdge, CodecConfigId, EntryKind, Schedule, ScheduleEntry, build_splice_insert,
+    BreakEdge, CodecConfigId, EntryKind, Playhead, Schedule, ScheduleEntry, build_splice_insert,
     next_transition,
 };
 
@@ -83,7 +84,7 @@ schedule
 
 // The join: when, how to rebase the incoming clock, and whether to signal a
 // discontinuity.
-let t = next_transition(&schedule, 0).unwrap();
+let t = next_transition(&schedule, Playhead::new(0, Timescale::MICROS)).unwrap();
 assert_eq!(t.plan.at_pts, 54_000_000);
 assert!(t.plan.discontinuity);
 assert_eq!(t.plan.rebase(5_000), Some(54_000_000));
@@ -108,7 +109,7 @@ assert!(insert.out_of_network_indicator);
 - **`schedule`**: `Schedule` (`new`, `push`, `entries`, `len`, `is_empty`,
   `active_at`) of `ScheduleEntry` (`id`, `EntryKind` programme / ad / slate,
   `planned_start`, `source_start_pts`, `CodecConfigId`).
-- **`transition`**: `next_transition(&Schedule, now_pts)` returns a
+- **`transition`**: `next_transition(&Schedule, now: Playhead)` returns a
   `PlannedTransition` (`from`, `to`, `plan`); `TransitionPlan::plan(from, to)`
   computes `at_pts`, `pts_rebase_offset` (`i128`, never clamped) and
   `discontinuity`; `TransitionPlan::rebase` maps a source PTS onto the channel

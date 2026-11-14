@@ -23,6 +23,7 @@
 
 use alloc::vec;
 use alloc::vec::Vec;
+use core::time::Duration;
 
 use crate::error::{Error, Result};
 use crate::handshake_sm::{
@@ -183,13 +184,13 @@ impl ListenerHandshake {
         self.feed(&packet)
     }
 
-    /// Advances retransmit timing by one caller-defined tick, mirroring
-    /// [`crate::caller::CallerHandshake::tick`].
-    pub fn tick(&mut self) -> Vec<HandshakeOutput> {
+    /// Advances retransmit timing by `elapsed` of the caller's own clock,
+    /// mirroring [`crate::caller::CallerHandshake::tick`].
+    pub fn tick(&mut self, elapsed: Duration) -> Vec<HandshakeOutput> {
         if self.state != ListenerHandshakeState::AwaitingConclusion {
             return Vec::new();
         }
-        let step = self.retransmit.tick(&self.config);
+        let step = self.retransmit.tick(elapsed, &self.config);
         if matches!(step, RetransmitStep::TimedOut) {
             self.state = ListenerHandshakeState::TimedOut;
         }
@@ -303,7 +304,7 @@ impl ListenerHandshake {
             flags: crate::packet::HandshakeExtensionMessageFlags(
                 self.config.flags.0 & peer_msg.srt_flags.0,
             ),
-            latency_ms: handshake_sm::negotiate_latency_ms(self.config.latency_ms, &peer_msg),
+            latency: handshake_sm::negotiate_latency(self.config.latency, &peer_msg),
             own_socket_id: self.own_socket_id,
             peer_socket_id: self.peer_socket_id,
             mtu: self.config.mtu.min(hp.mtu),
@@ -322,8 +323,8 @@ impl ListenerHandshake {
         let hs_msg = HsExtMessage {
             srt_version: self.config.srt_version,
             srt_flags: self.config.flags,
-            receiver_tsbpd_delay_ms: self.config.latency_ms,
-            sender_tsbpd_delay_ms: self.config.latency_ms,
+            receiver_tsbpd_delay_ms: handshake_sm::wire_latency_ms(self.config.latency),
+            sender_tsbpd_delay_ms: handshake_sm::wire_latency_ms(self.config.latency),
         };
         // §4.3.1.2: the Listener's CONCLUSION response carries the HSv5
         // extensions "without the cookie" — no Stream ID is echoed back

@@ -40,6 +40,7 @@ use crate::ts_demux::TsDemux;
 use crate::ts_hls::TsHlsPackager;
 use crate::ts_mux::TsMux;
 use crate::webm_demux::WebmDemux;
+use std::time::Duration;
 
 // ---------------------------------------------------------------------------
 // Container detection is delegated to `container-probe` (issue #960, audit
@@ -57,7 +58,7 @@ use crate::webm_demux::WebmDemux;
 
 /// Default LL-DASH target latency in milliseconds (`Latency@target`), used when
 /// `--ll` selects the DASH low-latency profile.
-const LL_DASH_LATENCY_TARGET_MS: u32 = 3000;
+const LL_DASH_LATENCY_TARGET: Duration = Duration::from_secs(3);
 /// `#EXT-X-VERSION` for the CMAF-HLS playlist: 7 is the floor for the
 /// `#EXT-X-MAP` tag on an fMP4 playlist (RFC 8216 §7).
 const HLS_CMAF_VERSION: u8 = 7;
@@ -1169,7 +1170,7 @@ fn package(media: &Media, opts: &Opts) -> CliResult<Output> {
                 let mut pkg = crate::ll_dash::LlDashPackager::new(
                     seg,
                     seg / 2.0,
-                    LL_DASH_LATENCY_TARGET_MS,
+                    LL_DASH_LATENCY_TARGET,
                     availability_start_time_now(),
                 )?;
                 pkg.base.dynamic = false;

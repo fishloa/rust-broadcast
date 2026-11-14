@@ -225,7 +225,7 @@ pub struct StateSize {
 /// for the next fetch, perform it, feed the result to the matching `on_*`
 /// call (or [`DashClient::on_failure`]), and drain
 /// [`DashClient::next_output`]. The core never opens a socket and never
-/// reads a clock; the `now_us` arguments are the caller's monotonic clock.
+/// reads a clock; the `now` arguments are the caller's monotonic clock.
 /// A static presentation ignores it; a dynamic one maps it to UTC through an
 /// anchor (a `UTCTiming` sample the client takes through its own requests,
 /// [`DashClient::set_wall_clock`], or the MPD response `Date`) and uses that
@@ -562,8 +562,7 @@ impl DashClient {
     /// # Errors
     /// As [`DashClient::on_mpd_with`].
     pub fn on_mpd(&mut self, now: Timestamp, bytes: &[u8]) -> Result<()> {
-        let now_us = now.as_micros();
-        self.on_mpd_with(now, bytes, &ResponseMeta::at(now_us))
+        self.on_mpd_with(now, bytes, &ResponseMeta::at(now))
     }
 
     /// Feed the MPD body with what the caller measured and read: the first
@@ -580,7 +579,6 @@ impl DashClient {
         bytes: &[u8],
         meta: &ResponseMeta<'_>,
     ) -> Result<()> {
-        let now_us = now.as_micros();
         self.ensure_live()?;
         if !self.mpd_inflight {
             return Err(Error::MpdNotAwaited);
@@ -589,12 +587,12 @@ impl DashClient {
         let mpd = match Mpd::parse_with(bytes, &self.cfg.limits) {
             Ok(m) => m,
             Err(e) => {
-                self.mpd_failed(now_us);
+                self.mpd_failed(now);
                 return Err(Error::Mpd(e));
             }
         };
         if self.mpd.is_some() {
-            self.refresh_mpd(now_us, mpd, bytes, meta);
+            self.refresh_mpd(now, mpd, bytes, meta);
             return Ok(());
         }
         if mpd.kind == PresentationType::List {
@@ -635,7 +633,7 @@ impl DashClient {
             self.notice_once(Notice::LowLatencyIgnored);
         }
         if dynamic {
-            self.start_live(now_us, bytes, meta);
+            self.start_live(now, bytes, meta);
         } else {
             if let Some(u) = meta.final_url.and_then(|f| self.accept_final_url(f)) {
                 self.doc_url = Some(u);
@@ -651,10 +649,9 @@ impl DashClient {
     /// [`DashClient::retry_mpd`]. The returned class carries the count of
     /// consecutive MPD failures.
     pub fn on_mpd_failure(&mut self, now: Timestamp, failure: Failure) -> FailureClass {
-        let now_us = now.as_micros();
         self.mpd_inflight = false;
         self.want_mpd = false;
-        let attempt = self.mpd_failed(now_us);
+        let attempt = self.mpd_failed(now);
         let kind = live::failure_kind(failure);
         FailureClass::Retry { attempt, kind }
     }
@@ -677,26 +674,25 @@ impl DashClient {
     /// returns `None`, then wait for a response or for
     /// [`DashClient::next_wake`], whichever is first.
     pub fn poll(&mut self, now: Timestamp) -> Option<Action> {
-        let now_us = now.as_micros();
         if self.stopped() {
             return None;
         }
-        self.tick(now_us);
+        self.tick(now);
         if self.stopped() {
             return None;
         }
-        if let Some(a) = self.mpd_action(now_us) {
+        if let Some(a) = self.mpd_action(now) {
             return Some(a);
         }
         if self.phase != Phase::Running {
             return None;
         }
-        if let Some(a) = self.utc_action(now_us) {
+        if let Some(a) = self.utc_action(now) {
             return Some(a);
         }
         loop {
             if self.queue.is_empty() {
-                self.fill_queue(now_us);
+                self.fill_queue(now);
                 if self.queue.is_empty() {
                     self.drain();
                 }
@@ -715,7 +711,7 @@ impl DashClient {
         self.outstanding < self.cfg.window()
     }
 
-    fn fill_queue(&mut self, now_us: u64) {
+    fn fill_queue(&mut self, now: Timestamp) {
         self.reset_wake();
         loop {
             let Some(pi) = (self.issue < self.periods.len()).then_some(self.issue) else {
@@ -725,7 +721,7 @@ impl DashClient {
                 return;
             }
             let exhausted = self.periods[pi].lanes.iter().all(Lane::exhausted);
-            if self.periods[pi].issue_done || (exhausted && !self.period_open(pi, now_us)) {
+            if self.periods[pi].issue_done || (exhausted && !self.period_open(pi, now)) {
                 self.periods[pi].issue_done = true;
                 let next = self.periods[pi].index + 1;
                 if self.can_activate(next) {
@@ -736,16 +732,16 @@ impl DashClient {
                 return;
             }
             if exhausted {
-                self.note_exhausted(now_us);
+                self.note_exhausted(now);
                 return;
             }
             if !self.window_open() {
                 return;
             }
-            let utc = self.utc_now(now_us);
+            let utc = self.utc_now(now);
             let mut pick: Option<(usize, i128)> = None;
             for li in 0..self.periods[pi].lanes.len() {
-                match self.lane_candidate(pi, li, utc, now_us) {
+                match self.lane_candidate(pi, li, utc, now) {
                     Candidate::Ready(start_us) => {
                         if pick.is_none_or(|(_, best)| start_us < best) {
                             pick = Some((li, start_us));
@@ -758,7 +754,7 @@ impl DashClient {
                         if self.stopped() {
                             return;
                         }
-                        match self.lane_candidate(pi, li, utc, now_us) {
+                        match self.lane_candidate(pi, li, utc, now) {
                             Candidate::Ready(start_us) => pick = Some((li, start_us)),
                             Candidate::Wait(at_utc_us) => self.note_wake(at_utc_us),
                             Candidate::Idle | Candidate::Unaddressable(_) => {}
@@ -783,10 +779,10 @@ impl DashClient {
         pi: usize,
         li: usize,
         utc: Option<i128>,
-        now_us: u64,
+        now: Timestamp,
     ) -> Candidate {
         match utc {
-            Some(utc) if self.is_live_mpd() => self.live_lane_candidate(pi, li, utc, now_us),
+            Some(utc) if self.is_live_mpd() => self.live_lane_candidate(pi, li, utc, now),
             _ => {
                 let lane = &self.periods[pi].lanes[li];
                 let Some(rep) = lane.current() else {
@@ -1319,7 +1315,7 @@ impl DashClient {
 
     fn count_failure(
         &mut self,
-        now_us: u64,
+        now: Timestamp,
         id: ResourceId,
         kind: FailureKind,
         status: Option<http::StatusCode>,
@@ -1379,7 +1375,7 @@ impl DashClient {
             }
         }
         if rotated {
-            self.after_rotation(now_us);
+            self.after_rotation(now);
         }
         self.parked.insert(id);
         FailureClass::Retry {
@@ -1388,8 +1384,8 @@ impl DashClient {
         }
     }
 
-    fn reject(&mut self, now_us: u64, id: ResourceId, reason: Rejection) -> Error {
-        let class = self.count_failure(now_us, id, FailureKind::Invalid, None);
+    fn reject(&mut self, now: Timestamp, id: ResourceId, reason: Rejection) -> Error {
+        let class = self.count_failure(now, id, FailureKind::Invalid, None);
         Error::Rejected { id, reason, class }
     }
 
@@ -1408,21 +1404,20 @@ impl DashClient {
     /// demuxer then refused; [`Error::UnrequestedResource`],
     /// [`Error::DuplicateResource`], [`Error::Stopped`].
     pub fn on_init(&mut self, now: Timestamp, id: ResourceId, bytes: &[u8]) -> Result<()> {
-        let now_us = now.as_micros();
         self.ensure_live()?;
         let ResourceId::Init { rep } = id else {
             return Err(Error::UnrequestedResource { id });
         };
         self.requested(id)?;
         if let Some(r) = self.body_rejection(id, bytes) {
-            return Err(self.reject(now_us, id, r));
+            return Err(self.reject(now, id, r));
         }
         if !segment::progressive_movie(bytes) {
-            return Err(self.reject(now_us, id, Rejection::InitUndecodable));
+            return Err(self.reject(now, id, Rejection::InitUndecodable));
         }
         let info = match demux::init_info(bytes) {
             Ok(i) => i,
-            Err(_) => return Err(self.reject(now_us, id, Rejection::DemuxFailed)),
+            Err(_) => return Err(self.reject(now, id, Rejection::DemuxFailed)),
         };
         let key = self
             .rep(rep)
@@ -1446,12 +1441,12 @@ impl DashClient {
         }
         self.clear_success(id);
         self.reqs.remove(&id);
-        let held = self.demux_held(now_us, &key);
+        let held = self.demux_held(now, &key);
         self.drain();
         held
     }
 
-    fn demux_held(&mut self, now_us: u64, key: &InitKey) -> Result<()> {
+    fn demux_held(&mut self, now: Timestamp, key: &InitKey) -> Result<()> {
         let Some(init) = self.inits.get(key).and_then(|e| e.bytes.clone()) else {
             return Ok(());
         };
@@ -1484,7 +1479,7 @@ impl DashClient {
                         Err(_) => {
                             if let Some(id) = id {
                                 self.inflight.insert(id);
-                                let e = self.reject(now_us, id, Rejection::DemuxFailed);
+                                let e = self.reject(now, id, Rejection::DemuxFailed);
                                 first_error.get_or_insert(e);
                             }
                         }
@@ -1503,18 +1498,17 @@ impl DashClient {
     /// # Errors
     /// As [`DashClient::on_init`].
     pub fn on_index(&mut self, now: Timestamp, id: ResourceId, bytes: &[u8]) -> Result<()> {
-        let now_us = now.as_micros();
         self.ensure_live()?;
         let ResourceId::Index { rep } = id else {
             return Err(Error::UnrequestedResource { id });
         };
         self.requested(id)?;
         if let Some(r) = self.body_rejection(id, bytes) {
-            return Err(self.reject(now_us, id, r));
+            return Err(self.reject(now, id, r));
         }
         let sidx = match base_index::parse_index(bytes) {
             Ok(s) => s,
-            Err(_) => return Err(self.reject(now_us, id, Rejection::BadIndex)),
+            Err(_) => return Err(self.reject(now, id, Rejection::BadIndex)),
         };
         let (at, range) = {
             let r = self.rep(rep).ok_or(Error::UnrequestedResource { id })?;
@@ -1526,7 +1520,7 @@ impl DashClient {
         };
         let anchor = match base_index::anchor_after(&range) {
             Ok(a) => a,
-            Err(_) => return Err(self.reject(now_us, id, Rejection::BadIndex)),
+            Err(_) => return Err(self.reject(now, id, Rejection::BadIndex)),
         };
         let planned = {
             let mpd = self.mpd.as_ref().expect("mpd present");
@@ -1559,14 +1553,13 @@ impl DashClient {
     /// As [`DashClient::on_init`]; a progressive MP4 additionally ends the
     /// presentation.
     pub fn on_segment(&mut self, now: Timestamp, id: ResourceId, bytes: &[u8]) -> Result<()> {
-        let now_us = now.as_micros();
         self.ensure_live()?;
         let ResourceId::Segment { rep, .. } = id else {
             return Err(Error::UnrequestedResource { id });
         };
         self.requested(id)?;
         if let Some(r) = self.body_rejection(id, bytes) {
-            return Err(self.reject(now_us, id, r));
+            return Err(self.reject(now, id, r));
         }
         if segment::progressive_movie(bytes) {
             self.inflight.remove(&id);
@@ -1578,7 +1571,7 @@ impl DashClient {
             });
         }
         if !segment::media_fragment(bytes) {
-            return Err(self.reject(now_us, id, Rejection::NotMedia));
+            return Err(self.reject(now, id, Rejection::NotMedia));
         }
         let key = self
             .rep(rep)
@@ -1589,7 +1582,7 @@ impl DashClient {
         let state = match init {
             Some(init) => match demux::demux_segment(&init, bytes) {
                 Ok(staged) => SlotState::Staged(staged),
-                Err(_) => return Err(self.reject(now_us, id, Rejection::DemuxFailed)),
+                Err(_) => return Err(self.reject(now, id, Rejection::DemuxFailed)),
             },
             None => SlotState::Held(bytes.to_vec()),
         };
@@ -1628,13 +1621,12 @@ impl DashClient {
         id: ResourceId,
         failure: Failure,
     ) -> Result<FailureClass> {
-        let now_us = now.as_micros();
         self.ensure_live()?;
         if !self.inflight.contains(&id) {
             return Err(Error::UnrequestedResource { id });
         }
         if self.is_live_mpd() && matches!(id, ResourceId::Segment { .. }) {
-            return self.live_segment_failure(now_us, id, failure);
+            return self.live_segment_failure(now, id, failure);
         }
         let status = live::status_of(failure);
         if status.is_some_and(|s| matches!(s, http::StatusCode::NOT_FOUND | http::StatusCode::GONE))
@@ -1652,7 +1644,7 @@ impl DashClient {
             self.drain();
             return Ok(FailureClass::EndTail);
         }
-        Ok(self.count_failure(now_us, id, live::failure_kind(failure), status))
+        Ok(self.count_failure(now, id, live::failure_kind(failure), status))
     }
 
     fn is_missing_tail(&self, id: ResourceId) -> bool {

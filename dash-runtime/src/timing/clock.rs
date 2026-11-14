@@ -4,7 +4,10 @@
 //! `docs/dash-runtime/DESIGN.md` 3.2/3.3. Pure: the clock never reads a time
 //! source, it only maps instants it is given.
 
+use core::time::Duration;
+
 use broadcast_common::impl_spec_display;
+use broadcast_common::stage::Timestamp;
 use broadcast_common::time::MonoUtc;
 
 use super::utc_timing::UtcSample;
@@ -34,12 +37,12 @@ impl ClockSource {
 }
 impl_spec_display!(ClockSource);
 
-/// One anchor: at monotonic `mono_us` UTC was `utc_us`.
+/// One anchor: at monotonic `mono` UTC was `utc_us`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Anchor {
-    /// Monotonic microseconds.
-    pub mono_us: u64,
+    /// Monotonic instant.
+    pub mono: Timestamp,
     /// Unix microseconds.
     pub utc_us: i64,
     /// Where it came from.
@@ -53,27 +56,29 @@ impl Anchor {
     #[must_use]
     pub fn from_sample(sample: UtcSample, source: ClockSource) -> Self {
         Self {
-            mono_us: sample.mono_us,
+            mono: Timestamp::from_micros(sample.mono_us),
             utc_us: sample.utc_us,
             source,
             uncertainty_us: sample.uncertainty_us,
         }
     }
 
-    /// UTC at `now_us`, saturating at the `i64` range.
+    /// UTC at `now`, saturating at the `i64` range.
     #[must_use]
-    pub fn utc_at(&self, now_us: u64) -> i64 {
-        let m = MonoUtc::new(self.mono_us, i128::from(self.utc_us));
-        saturate(m.utc_at(now_us))
+    pub fn utc_at(&self, now: Timestamp) -> i64 {
+        let m = MonoUtc::new(self.mono.as_micros(), i128::from(self.utc_us));
+        saturate(m.utc_at(now.as_micros()))
     }
 
     /// The monotonic instant at which UTC reaches `utc_us`, saturating at
     /// `0..=u64::MAX`.
     #[must_use]
-    pub fn mono_for_utc(&self, utc_us: i64) -> u64 {
-        let m = MonoUtc::new(self.mono_us, i128::from(self.utc_us));
+    pub fn mono_for_utc(&self, utc_us: i64) -> Option<Timestamp> {
+        let m = MonoUtc::new(self.mono.as_micros(), i128::from(self.utc_us));
         let mono = m.mono_for_utc(i128::from(utc_us));
-        u64::try_from(mono.clamp(0, i128::from(u64::MAX))).unwrap_or(u64::MAX)
+        u64::try_from(mono.clamp(0, i128::from(u64::MAX)))
+            .ok()
+            .map(Timestamp::from_micros)
     }
 }
 
@@ -153,7 +158,7 @@ pub enum OfferOutcome {
 #[non_exhaustive]
 pub struct OfferPolicy {
     /// An anchor older than this is replaced by any same-source sample.
-    pub resync_us: u64,
+    pub resync: Duration,
     /// Let a less trusted source replace a more trusted one (the better one
     /// has failed for the configured wait).
     pub allow_downgrade: bool,
@@ -162,9 +167,19 @@ pub struct OfferPolicy {
 impl OfferPolicy {
     /// A policy.
     #[must_use]
-    pub fn new(resync_us: u64, allow_downgrade: bool) -> Self {
+    pub fn new(resync: Duration, allow_downgrade: bool) -> Self {
         Self {
-            resync_us,
+            resync,
+            allow_downgrade,
+        }
+    }
+
+    /// A policy whose anchor never goes stale: a same-source sample replaces
+    /// it only on a clock step or to refine its error bar.
+    #[must_use]
+    pub fn new_or_never(resync: Option<Duration>, allow_downgrade: bool) -> Self {
+        Self {
+            resync: resync.unwrap_or(Duration::MAX),
             allow_downgrade,
         }
     }
@@ -189,16 +204,16 @@ impl UtcClock {
         self.anchor.as_ref()
     }
 
-    /// UTC at `now_us`, or `None` before the first anchor.
+    /// UTC at `now`, or `None` before the first anchor.
     #[must_use]
-    pub fn utc_at(&self, now_us: u64) -> Option<i64> {
-        self.anchor.map(|a| a.utc_at(now_us))
+    pub fn utc_at(&self, now: Timestamp) -> Option<i64> {
+        self.anchor.map(|a| a.utc_at(now))
     }
 
     /// The monotonic instant at which UTC reaches `utc_us`.
     #[must_use]
-    pub fn mono_for_utc(&self, utc_us: i64) -> Option<u64> {
-        self.anchor.map(|a| a.mono_for_utc(utc_us))
+    pub fn mono_for_utc(&self, utc_us: i64) -> Option<Timestamp> {
+        self.anchor.and_then(|a| a.mono_for_utc(utc_us))
     }
 
     /// Offer a measurement; the anchor changes per the replacement rule.
@@ -208,12 +223,12 @@ impl UtcClock {
     /// with the prediction by more than the two error bars together is a clock
     /// step and is adopted immediately; otherwise it replaces the anchor when
     /// it is at least as precise or the anchor is older than
-    /// `policy.resync_us`.
+    /// `policy.resync`.
     pub fn offer(
         &mut self,
         sample: UtcSample,
         source: ClockSource,
-        now_us: u64,
+        now: Timestamp,
         policy: OfferPolicy,
     ) -> OfferOutcome {
         let new = Anchor::from_sample(sample, source);
@@ -230,12 +245,12 @@ impl UtcClock {
                 return OfferOutcome::Rejected(RejectReason::LowerTrust);
             }
         } else {
-            let predicted = i128::from(old.utc_at(new.mono_us));
+            let predicted = i128::from(old.utc_at(new.mono));
             let diff = (i128::from(new.utc_us) - predicted).unsigned_abs();
             let bars = u128::from(old.uncertainty_us) + u128::from(new.uncertainty_us);
             if diff > bars {
                 AdoptReason::Step
-            } else if now_us.saturating_sub(old.mono_us) >= policy.resync_us {
+            } else if now.saturating_sub(old.mono) >= policy.resync {
                 AdoptReason::Stale
             } else if new.uncertainty_us <= old.uncertainty_us {
                 AdoptReason::Refined

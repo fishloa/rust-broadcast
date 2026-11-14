@@ -1,4 +1,7 @@
 use std::collections::VecDeque;
+use std::time::Duration;
+
+use broadcast_common::stage::Timestamp;
 
 use dash_runtime::client::{
     Action, DashClient, DashClockPolicy, DashConfig, Error, Failure, FailureClass, Output,
@@ -88,8 +91,9 @@ pub fn run(data: &[u8], load: &dyn Fn(&str) -> Vec<u8>) -> bool {
     }
     dash.cross_origin_urls = head[0] & PIN_ORIGIN == 0;
     dash.use_availability_time_offset = head[0] & USE_ATO != 0;
-    dash.utc_resync_us = RESYNC_US[usize::from(head[4] & 3)];
-    dash.early_grace_us = GRACE_US[usize::from((head[4] >> 2) % 3)];
+    dash.utc_resync = (RESYNC_US[usize::from(head[4] & 3)] != u64::MAX)
+        .then(|| Duration::from_micros(RESYNC_US[usize::from(head[4] & 3)]));
+    dash.early_grace = Duration::from_micros(GRACE_US[usize::from((head[4] >> 2) % 3)]);
     let window = limits.max_inflight_segments;
 
     let mpd = pick_mpd(&world.mpds, head[1], head[2], head[3], &mut rest);
@@ -119,9 +123,10 @@ pub fn run(data: &[u8], load: &dyn Fn(&str) -> Vec<u8>) -> bool {
         let unix = publish
             .saturating_add(i64::try_from(now_us).unwrap_or(0))
             .saturating_add(skew);
+        let read = unix.max(0);
         client.set_wall_clock(
-            broadcast_common::stage::Timestamp::from_micros(now_us),
-            u64::try_from(unix.max(0)).unwrap_or(0),
+            Timestamp::from_micros(now_us),
+            jiff::Timestamp::from_microsecond(read).unwrap_or(jiff::Timestamp::UNIX_EPOCH),
         );
     };
     match host_mode {
@@ -163,7 +168,7 @@ pub fn run(data: &[u8], load: &dyn Fn(&str) -> Vec<u8>) -> bool {
         let step = STEPS_US[usize::from(jump) % STEPS_US.len()];
         let previous = now_us;
         now_us = if jump.is_multiple_of(7) {
-            wake.map_or(now_us, |w| w.max(now_us))
+            wake.map_or(now_us, |w| w.as_micros().max(now_us))
         } else {
             now_us.saturating_add(step)
         };
@@ -186,6 +191,8 @@ pub fn run(data: &[u8], load: &dyn Fn(&str) -> Vec<u8>) -> bool {
             break;
         };
         let received = now_us.max(sent);
+        let sent = Timestamp::from_micros(sent);
+        let received = Timestamp::from_micros(received);
         let alt = world.mpds[usize::from(aux) % world.mpds.len()].as_slice();
         match action {
             Action::FetchMpd { .. } => {
@@ -202,28 +209,16 @@ pub fn run(data: &[u8], load: &dyn Fn(&str) -> Vec<u8>) -> bool {
                 }
                 match reply {
                     Answer::Body(b) => {
-                        if let Err(Error::Mpd(_)) = client.on_mpd_with(
-                            broadcast_common::stage::Timestamp::from_micros(received),
-                            &b,
-                            &meta,
-                        ) {
-                            client.retry_mpd(broadcast_common::stage::Timestamp::from_micros(
-                                received,
-                            ));
+                        if let Err(Error::Mpd(_)) = client.on_mpd_with(received, &b, &meta) {
+                            client.retry_mpd(received);
                         }
                     }
                     Answer::NotModified => {
-                        let _ = client.on_mpd_unchanged(
-                            broadcast_common::stage::Timestamp::from_micros(received),
-                            &meta,
-                        );
+                        let _ = client.on_mpd_unchanged(received, &meta);
                     }
                     Answer::Fail(f) => {
-                        client.on_mpd_failure(
-                            broadcast_common::stage::Timestamp::from_micros(received),
-                            f,
-                        );
-                        client.retry_mpd(broadcast_common::stage::Timestamp::from_micros(received));
+                        client.on_mpd_failure(received, f);
+                        client.retry_mpd(received);
                     }
                 }
             }
@@ -231,25 +226,18 @@ pub fn run(data: &[u8], load: &dyn Fn(&str) -> Vec<u8>) -> bool {
                 let reply = answer(None, mode, aux, &mut tail_data, None);
                 match reply {
                     Answer::Fail(f) => {
-                        let _ = client.on_utc_failure(
-                            broadcast_common::stage::Timestamp::from_micros(received),
-                            id,
-                            f,
-                        );
+                        let _ = client.on_utc_failure(received, id, f);
                     }
                     _ => {
-                        let body = utc_body(mode, aux, received, publish, &mut tail_data);
+                        let body =
+                            utc_body(mode, aux, received.as_micros(), publish, &mut tail_data);
                         let mut resp = UtcResponse::new(sent, received, &body);
                         if aux.is_multiple_of(2)
                             && let Some(date) = http_date(usize::from(aux / 2))
                         {
                             resp = resp.with_date(date);
                         }
-                        let _ = client.on_utc_response(
-                            broadcast_common::stage::Timestamp::from_micros(received),
-                            id,
-                            &resp,
-                        );
+                        let _ = client.on_utc_response(received, id, &resp);
                     }
                 }
             }
@@ -261,15 +249,8 @@ pub fn run(data: &[u8], load: &dyn Fn(&str) -> Vec<u8>) -> bool {
                 );
                 match answer(real, mode, aux, &mut tail_data, None) {
                     Answer::Fail(f) => {
-                        if let Ok(FailureClass::Retry { .. }) = client.on_failure(
-                            broadcast_common::stage::Timestamp::from_micros(received),
-                            id,
-                            f,
-                        ) {
-                            client.retry(
-                                broadcast_common::stage::Timestamp::from_micros(received),
-                                id,
-                            );
+                        if let Ok(FailureClass::Retry { .. }) = client.on_failure(received, id, f) {
+                            client.retry(received, id);
                         }
                     }
                     Answer::Body(b) => deliver_resource(&mut client, received, id, &b),

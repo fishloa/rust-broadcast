@@ -109,7 +109,7 @@ fn timeline(arrivals: &[u64], tail_us: u64) -> Vec<Step> {
 enum ClockState {
     Idle,
     Playing { base: u64, since: u64 },
-    Held(u64),
+    Held(Clock27),
 }
 
 struct PlayClock(ClockState);
@@ -127,17 +127,20 @@ impl PlayClock {
                     since: now,
                 }
             }
-            BufferEvent::Pause { hold_at_27mhz, .. } => ClockState::Held(*hold_at_27mhz),
+            BufferEvent::Pause { hold_at_27mhz, .. } => match Clock27::from_27mhz(*hold_at_27mhz) {
+                Ok(hold) => ClockState::Held(hold),
+                Err(_) => ClockState::Idle,
+            },
             _ => self.0,
         };
     }
 
-    fn position(&self, now: u64) -> Option<u64> {
+    fn position(&self, now: u64) -> Option<Clock27> {
         match self.0 {
             ClockState::Idle => None,
             ClockState::Held(p) => Some(p),
             ClockState::Playing { base, since } => {
-                Some(base + now.saturating_sub(since) * (PCR_HZ / 1_000_000))
+                Clock27::from_27mhz(base + now.saturating_sub(since) * (PCR_HZ / 1_000_000)).ok()
             }
         }
     }
@@ -198,7 +201,7 @@ impl Host {
     fn tick(&mut self, now: u64) {
         self.now = now;
         let p = self.clock.position(now);
-        self.ticks.push((now, p));
+        self.ticks.push((now, p.map(Clock27::ticks)));
         self.session.on_playback_position(ts(now), p);
         self.drain(now);
     }
@@ -573,10 +576,10 @@ impl Oracle {
             return;
         }
         let p = self.clock.position(now);
-        self.ctl.on_tick(micros_as_duration(now), p.map(clock27));
+        self.ctl.on_tick(micros_as_duration(now), p);
         self.inputs.push(BufferInput::Tick {
             now_us: micros_as_duration(now),
-            pts: p.map(clock27),
+            pts: p,
         });
         self.drain_events(now);
     }
@@ -1219,7 +1222,7 @@ fn vod_buffer_events_come_from_the_playout_gate_not_the_controller() {
     for (i, chunk) in bytes.chunks(CHUNK).enumerate() {
         let now = i as u64 * STEP_US;
         session.on_data(conn, chunk, ts(now));
-        session.on_playback_position(ts(now), Some(now * 27));
+        session.on_playback_position(ts(now), Clock27::from_27mhz(now * 27).ok());
         session.hint(BufferHint::SourceError);
         while let Some(e) = session.next_event() {
             events.push(e);

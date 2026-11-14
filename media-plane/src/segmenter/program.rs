@@ -394,10 +394,10 @@ pub(crate) enum AnySegmenter {
 }
 
 impl AnySegmenter {
-    fn set_start_time_ns(&mut self, start_ns: u64) {
+    fn set_start_time(&mut self, start: Duration) {
         match self {
-            AnySegmenter::Fmp4(seg) => seg.set_start_time_ns(start_ns),
-            AnySegmenter::Ts(seg) => seg.set_start_time_ns(start_ns),
+            AnySegmenter::Fmp4(seg) => seg.set_start_time(start),
+            AnySegmenter::Ts(seg) => seg.set_start_time(start),
         }
     }
 
@@ -828,26 +828,30 @@ impl ProgramSegmenter {
     /// right after [`Self::try_new`] and the program's publication, before
     /// the first [`Self::pump`].
     pub fn continue_after_reconnect(&mut self, media_start: Duration) {
-        if !media_start.is_zero() {
-            let start_ns = u64::try_from(media_start.as_nanos()).unwrap_or(u64::MAX);
-            self.continue_media_timeline(start_ns);
-        }
+        self.continue_media_timeline(media_start);
     }
 
-    /// Start this run's media timeline at `start_ns` instead of zero: the
+    /// Start this run's media timeline at `start` instead of zero: the
     /// leader's and every follower's decode clock and the segment timeline.
-    pub(crate) fn continue_media_timeline(&mut self, start_ns: u64) {
-        if start_ns == 0 {
+    pub(crate) fn continue_media_timeline(&mut self, start: Duration) {
+        self.continue_media_timeline_ns(u64::try_from(start.as_nanos()).unwrap_or(u64::MAX));
+    }
+
+    /// [`Self::continue_media_timeline`] in the nanosecond unit a wire field
+    /// may carry.
+    pub(crate) fn continue_media_timeline_ns(&mut self, start_ns: u64) {
+        let start = Duration::from_nanos(start_ns);
+        if start.is_zero() {
             return;
         }
-        self.seg.set_start_time_ns(start_ns);
+        self.seg.set_start_time(start);
         self.next_timeline_ns = start_ns;
         self.mark_next_discontinuous = true;
         for follower in &mut self.followers {
-            follower.set_start_time_ns(start_ns);
+            follower.set_start_time(start);
         }
         for follower in &mut self.subtitle_followers {
-            follower.set_start_time_ns(start_ns);
+            follower.set_start_time(start);
         }
     }
 

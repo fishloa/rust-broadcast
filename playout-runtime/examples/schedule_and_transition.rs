@@ -5,11 +5,17 @@
 //! cargo run -p playout-runtime --example schedule_and_transition
 //! ```
 
-use playout_runtime::schedule::{CodecConfigId, EntryKind, Schedule, ScheduleEntry};
+use broadcast_common::timescale::Timescale;
+use playout_runtime::schedule::{CodecConfigId, EntryKind, Playhead, Schedule, ScheduleEntry};
 use playout_runtime::transition::next_transition;
 
-/// One second of a 90 kHz channel clock — the unit SCTE-35 cues use, and the
-/// natural choice for a schedule that ultimately emits them.
+/// The channel clock: 90 kHz, the unit SCTE-35 cues use, and the natural
+/// choice for a schedule that ultimately emits them.
+const CLOCK: Timescale = match Timescale::new(90_000) {
+    Some(t) => t,
+    None => unreachable!(),
+};
+/// One second on the channel clock.
 const TICKS_PER_SECOND: u64 = 90_000;
 
 fn main() {
@@ -53,7 +59,7 @@ fn main() {
     // Walk the playhead across every transition the schedule contains.
     let mut now_pts = 0u64;
     loop {
-        let Some(t) = next_transition(&schedule, now_pts) else {
+        let Some(t) = next_transition(&schedule, Playhead::new(now_pts, CLOCK)) else {
             println!("no more transitions after pts={now_pts}");
             break;
         };

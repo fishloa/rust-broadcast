@@ -54,7 +54,7 @@ fn an_srt_query_keeps_the_address_and_streamid_separate() {
         .expect("a caller URL with a percent-encoded streamid");
     assert_eq!(addr, "[::1]:9000");
     assert_eq!(parsed.stream_id.as_deref(), Some("live/cam"));
-    assert_eq!(parsed.latency_ms, Some(120));
+    assert_eq!(parsed.latency, Some(std::time::Duration::from_millis(120)));
 }
 
 /// A cannot-be-a-base RTSP push URL (`rtsp:cam` — no `//host`) parses but names

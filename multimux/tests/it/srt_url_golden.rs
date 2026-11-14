@@ -47,7 +47,8 @@ fn srt_push_url_table_matches_the_recorded_golden() {
         let outcome = match multimux::test_seam::parse_srt_url_for_test(case) {
             Ok((addr, parsed)) => format!(
                 "ok addr={addr} stream_id={:?} latency_ms={:?}",
-                parsed.stream_id, parsed.latency_ms
+                parsed.stream_id,
+                parsed.latency.map(|l| l.as_millis())
             ),
             Err(e) => format!("err {e}"),
         };

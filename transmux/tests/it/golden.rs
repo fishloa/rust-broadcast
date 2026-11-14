@@ -12,11 +12,13 @@ use std::path::{Path, PathBuf};
 
 use broadcast_common::{Package, Unpackage};
 use broadcast_smooth::SmoothManifest;
+use std::time::Duration;
 use transmux::dash::{
     Addressing, ContentProtectionSystem, DVB_DASH_PROFILE_PREFIX, DVB_HDR_DMI_SCHEME,
     DVB_HDR_DMI_ST2094_40, DashPackager, HDR_METADATA_SCHEME, HDR_METADATA_SMPTE2094_40,
     InbandEventStream, TrackSegments, TrickModeAdaptationSet, TrickModeRepr,
 };
+
 use transmux::ll_dash::UTCTIMING_HTTP_HEAD_2014;
 use transmux::pipeline::{CodecConfig, SubtitleFormat, SubtitleSampleEntry};
 use transmux::ts_demux::TsDemux;
@@ -382,11 +384,12 @@ fn dash_mpd_cbcs_coverage_matches_golden() {
 #[test]
 fn ll_dash_mpd_variants_match_golden() {
     let media = media();
-    let plain = crate::ll_packager::ll_packager(2.0, 0.5, 3000);
-    let rate = crate::ll_packager::ll_packager(4.0, 1.0, 5000).with_playback_rate(0.96, 1.04);
-    let utc = crate::ll_packager::ll_packager(2.0, 0.5, 3000)
+    let plain = crate::ll_packager::ll_packager(2.0, 0.5, Duration::from_secs(3));
+    let rate = crate::ll_packager::ll_packager(4.0, 1.0, Duration::from_secs(5))
+        .with_playback_rate(0.96, 1.04);
+    let utc = crate::ll_packager::ll_packager(2.0, 0.5, Duration::from_secs(3))
         .with_utc_timing(UTCTIMING_HTTP_HEAD_2014, "https://time.example/x?a=1&b=2");
-    let mut timeline = crate::ll_packager::ll_packager(2.0, 0.5, 3000);
+    let mut timeline = crate::ll_packager::ll_packager(2.0, 0.5, Duration::from_secs(3));
     timeline.base.addressing = Addressing::Timeline;
     timeline.base.segments = timeline_segments(&media);
     for (name, mut pkg) in [

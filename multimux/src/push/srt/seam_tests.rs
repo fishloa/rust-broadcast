@@ -9,7 +9,7 @@ fn the_typed_seam_reports_the_dial_address_and_the_query_overrides() {
     assert_eq!(addr, "[::1]:9001");
     assert_eq!(parsed.host, "[::1]");
     assert_eq!(parsed.port, 9001);
-    assert_eq!(parsed.latency_ms, Some(120));
+    assert_eq!(parsed.latency, Some(std::time::Duration::from_millis(120)));
     assert_eq!(parsed.stream_id, None);
 }
 

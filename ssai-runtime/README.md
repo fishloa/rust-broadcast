@@ -86,7 +86,7 @@ assert!(tag.contains("X-ASSET-URI=\"https://ads.example/ad-1.m3u8\""));
   resumed at): `begin_break`, `resume`, `get`, `end`, `len`. It is bounded by
   `DEFAULT_MAX_SESSIONS` (65536) by default, changeable with
   `with_max_sessions` (`Error::SessionStoreFull` at the bound), and idle
-  sessions are evicted with `expire_idle(ttl_us)` after `advance(now_us)`
+  sessions are evicted with `expire_idle(ttl)` after `advance(now)`
   feeds the store a clock.
 - **`decision`**: `AdDecisionProvider`, the one extension point for "which ad
   to play" (no I/O); `AdBreakDecision` (`single_asset` / `asset_list`),
