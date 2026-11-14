@@ -518,7 +518,7 @@ fn secure_cookie_from_an_http_origin_is_rejected() {
 }
 
 #[test]
-fn reconnect_backoff_that_overflows_microseconds_saturates() {
+fn reconnect_backoff_past_the_end_of_the_clock_is_no_wake_rather_than_a_saturated_one() {
     let mut config = Config::default();
     config.ts_http.backoff = broadcast_common::backoff::BackoffSteps {
         steps: vec![std::time::Duration::from_micros(u64::MAX)],
@@ -528,15 +528,10 @@ fn reconnect_backoff_that_overflows_microseconds_saturates() {
     let first = one(&mut session, 0);
     respond(&mut session, &first, 503, &[]);
     let actions = drain(&mut session, SEC);
-    let wake = actions
-        .iter()
-        .filter_map(|a| match a {
-            Action::WakeAt(t) => Some(t),
-            _ => None,
-        })
-        .max()
-        .expect("a wake for the backoff");
-    assert!(wake.as_nanos() >= u64::MAX / 2, "{wake:?}");
+    assert!(
+        !actions.iter().any(|a| matches!(a, Action::WakeAt(_))),
+        "a deadline that does not fit the clock never fires, so it is never armed: {actions:?}"
+    );
 }
 
 #[test]

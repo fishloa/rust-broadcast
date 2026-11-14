@@ -1,4 +1,5 @@
 use alloc::string::String;
+use core::time::Duration;
 
 use transmux::{DemuxEvent, StreamingTsDemux};
 
@@ -78,10 +79,10 @@ impl TsHttpClient {
         self.policy.on_response(status, headers, now);
     }
 
-    /// Server-requested retry delay (from a `Retry-After` header) in milliseconds, to be applied
-    /// to the next failed response. Call before [`Self::on_response`].
-    pub fn set_retry_after(&mut self, retry_after_ms: u64) {
-        self.policy.set_retry_after(retry_after_ms);
+    /// Server-requested retry delay (from a `Retry-After` header), to be applied to the next failed
+    /// response. Call before [`Self::on_response`].
+    pub fn set_retry_after(&mut self, retry_after: Duration) {
+        self.policy.set_retry_after(retry_after);
     }
 
     /// Feed body bytes (T5, T14).
@@ -130,6 +131,13 @@ impl TsHttpClient {
             drain_demux(demux, |ev| events.push_back(ev))
         });
         self.sync_demux();
+    }
+
+    /// Whether an action from [`Self::poll`] is to be acted on now: all of them are, except a
+    /// reopen whose backoff would end past the end of the host clock, which the host must not act
+    /// on at `now` (it never comes due).
+    pub fn action_ready(&self, now: Timestamp) -> bool {
+        self.policy.reconnect_ready(now)
     }
 
     /// Earliest deadline for [`Self::poll_timeout`].

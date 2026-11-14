@@ -1,6 +1,7 @@
 use crate::tshttp::TsHttpConfig as Config;
 use crate::tshttp::{Action, TsHttpClient, TsHttpPolicy};
 use broadcast_common::stage::Timestamp;
+use std::time::Duration;
 
 /// `ms` on the tshttp policy's millisecond clock, as the session's `now`.
 fn ts(ms: u64) -> Timestamp {
@@ -20,8 +21,8 @@ fn backoff_2_4_8_then_10_forever() {
         c.on_error(ts(0));
         // drain reconnect
         while let Some(a) = c.poll() {
-            if let Action::Reconnect { after_ms } = a {
-                got.push(after_ms);
+            if let Action::Reconnect { after } = a {
+                got.push(after);
             }
         }
         // advance backoff
@@ -64,7 +65,9 @@ fn played_then_ended_resets_attempt_counter() {
     // reconnect 0 (drain queued actions)
     let mut saw_zero = false;
     while let Some(a) = c.poll() {
-        if a == (Action::Reconnect { after_ms: 0 }) {
+        if a == (Action::Reconnect {
+            after: Duration::ZERO,
+        }) {
             saw_zero = true;
         }
     }
@@ -75,14 +78,14 @@ fn played_then_ended_resets_attempt_counter() {
     // next failure => the first step again: exactly 2000 ms, unjittered,
     // which is what a restarted series shows.
     c.on_error(ts(0));
-    let after_ms = loop {
+    let after = loop {
         match c.poll() {
-            Some(Action::Reconnect { after_ms }) => break after_ms,
+            Some(Action::Reconnect { after }) => break after,
             Some(_) => continue,
             None => panic!("no reconnect was queued"),
         }
     };
-    assert_eq!(after_ms, 2000);
+    assert_eq!(after, Duration::from_millis(2000));
 }
 
 #[test]
@@ -96,7 +99,9 @@ fn server_closes_every_60s_no_stall_notice() {
             std::sync::LazyLock::new(|| test_fixtures::read("ts/h264-aac.ts"));
         c.feed(D.as_slice(), ts(i * 60000 + 1));
         c.on_eof(ts(i * 60000 + 60000));
-        assert_eq!(c.poll(), Some(Action::Reconnect { after_ms: 0 }));
+        assert_eq!(c.poll(), Some(Action::Reconnect {
+            after: Duration::ZERO,
+        }));
         let dl = c.next_deadline().unwrap();
         c.poll_timeout(dl);
         let _ = c.poll();
@@ -194,7 +199,9 @@ fn caller_reconnect_in_every_connected_state() {
         }
         c.reconnect(ts(5));
         assert_eq!(c.poll(), Some(Action::Abort));
-        assert_eq!(c.poll(), Some(Action::Reconnect { after_ms: 0 }));
+        assert_eq!(c.poll(), Some(Action::Reconnect {
+            after: Duration::ZERO,
+        }));
     }
 }
 

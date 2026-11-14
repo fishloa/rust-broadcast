@@ -3,6 +3,8 @@ mod blocking_publish;
 mod clock33;
 mod clock33_data;
 mod common;
+mod deadlines;
+mod deadlines_data;
 mod fixtures_one_home;
 mod handroll_data;
 mod handroll_dehandroll;

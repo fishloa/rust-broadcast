@@ -14,7 +14,6 @@
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use core::time::Duration;
 
 use crate::tshttp::TsHttpConfig as TsConfig;
 use crate::tshttp::TsHttpPolicy;
@@ -404,7 +403,7 @@ impl RtmpSource {
                 });
             }
             crate::tshttp::Action::Abort => self.drop_connection(),
-            crate::tshttp::Action::Reconnect { after_ms } => {
+            crate::tshttp::Action::Reconnect { after } => {
                 if self.failure_announced {
                     self.failure_announced = false;
                 } else {
@@ -412,10 +411,7 @@ impl RtmpSource {
                         .push_back(Event::Status(Status::Reconnecting { attempt: 0 }));
                 }
                 // A deadline past the end of the clock can never be reached: no wake for it.
-                if let Some(at) = deadline(
-                    Timestamp::from_micros(now_us),
-                    Duration::from_millis(after_ms),
-                ) {
+                if let Some(at) = deadline(Timestamp::from_micros(now_us), after) {
                     self.actions.push_back(Action::WakeAt(at));
                 }
             }

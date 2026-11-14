@@ -463,7 +463,11 @@ impl<S: SegmentSink> RetentionDriver<S> {
     /// `locate` calls).
     fn expire_cold(&mut self, now: Timestamp) {
         while let Some(front) = self.cold.front() {
-            if front.handed_off_at.saturating_add(self.cold_window) <= now {
+            let expired = front
+                .handed_off_at
+                .checked_add(self.cold_window)
+                .is_some_and(|until| until <= now);
+            if expired {
                 self.cold.pop_front();
             } else {
                 break;

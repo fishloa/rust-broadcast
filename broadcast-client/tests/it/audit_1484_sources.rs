@@ -602,6 +602,29 @@ fn ts_time_jump_does_not_flood_stall_notices() {
 }
 
 #[test]
+fn ts_reconnect_past_the_end_of_the_clock_emits_no_wake() {
+    let mut session =
+        Session::open(Url::parse(TS_URL).unwrap(), Config::default(), ts(0)).expect("open");
+    let req = crate::support::ts_probe::one(&mut session, 0);
+    session.on_response(req.conn, 503, &[], ts(u64::MAX - 1));
+    while session.next_event().is_some() {}
+    let at = u64::MAX / 2;
+    let wakes: Vec<Timestamp> = actions(&mut session, at)
+        .into_iter()
+        .filter_map(|a| match a {
+            Action::WakeAt(t) => Some(t),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        wakes
+            .iter()
+            .all(|w| *w < Timestamp::from_micros(u64::MAX / 2)),
+        "the backoff deadline saturates to the last instant, which reads as due now forever: {wakes:?}"
+    );
+}
+
+#[test]
 fn ts_time_jump_to_the_end_of_time_terminates() {
     let bytes = tf1_bytes!();
     let (status, headers) = tf1_headers!();

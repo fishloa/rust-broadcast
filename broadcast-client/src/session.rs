@@ -35,7 +35,6 @@ use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 
 use crate::tshttp::Action as TsAction;
 use broadcast_common::stage::Timestamp;
-use broadcast_common::units::MICROS_PER_MILLI;
 use core::time::Duration;
 
 const SCHEME_HTTP: &str = "http";
@@ -47,7 +46,7 @@ const SCHEME_RTP: &str = "rtp";
 const SCHEME_SRT: &str = "srt";
 const RTSPS_DEFAULT_PORT: u16 = 322;
 const HTTPS_DEFAULT_PORT: u16 = 443;
-const TS_WAKE_TICK_US: u64 = 1_000_000;
+const TS_WAKE_TICK: Duration = Duration::from_secs(1);
 const FIRST_CONN_ID: u32 = 1;
 
 const MAX_UNAUTHENTICATED_REPLAYS: u32 = 2;
@@ -1457,7 +1456,7 @@ impl Session {
         for e in evs {
             self.events.push_back(e);
         }
-        while let Some(ta) = self.source.poll_action() {
+        while let Some(ta) = self.source.poll_action(self.now_us) {
             self.map_source_action(ta);
         }
         self.sync_expected();
@@ -1482,16 +1481,33 @@ impl Session {
             return;
         };
         let now = Timestamp::from_micros(self.now_us);
-        let at = if deadline > now {
-            deadline
-        } else {
-            now.saturating_add(Duration::from_micros(TS_WAKE_TICK_US))
-        };
-        let outstanding = self.ts_wake.is_some_and(|w| w == at || (w > now && w < at));
-        if !outstanding {
-            self.actions.push_back(Action::WakeAt(at));
-            self.ts_wake = Some(at);
+        if deadline <= now {
+            self.arm_ts_wake(now.checked_add(TS_WAKE_TICK));
+            return;
         }
+        self.arm_ts_wake(Some(deadline));
+    }
+
+    /// Emit [`Action::WakeAt`] for `at` unless a wake this poll already holds fires no later, and
+    /// remember it. `None` is a wake the host clock cannot reach: it is never emitted.
+    fn arm_ts_wake(&mut self, at: Option<Timestamp>) {
+        let now = Timestamp::from_micros(self.now_us);
+        let outstanding = self.ts_wake == at
+            || at.is_some_and(|at| self.ts_wake.is_some_and(|w| w > now && w < at));
+        if outstanding {
+            return;
+        }
+        if let Some(at) = at {
+            self.actions.push_back(Action::WakeAt(at));
+        }
+        self.ts_wake = at;
+    }
+
+    /// Wait `after` before reopening a TS source: the policy's own backoff, measured from the
+    /// last instant the host gave the session.
+    fn schedule_reconnect(&mut self, after: Duration) {
+        let at = Timestamp::from_micros(self.now_us).checked_add(after);
+        self.arm_ts_wake(at);
     }
 
     fn map_source_action(&mut self, a: TsAction) {
@@ -1542,13 +1558,7 @@ impl Session {
                 self.conn_auth.clear();
                 self.live_conn = None;
             }
-            TsAction::Reconnect { after_ms } => {
-                self.actions
-                    .push_back(Action::WakeAt(Timestamp::from_micros(
-                        self.now_us
-                            .saturating_add(after_ms.saturating_mul(MICROS_PER_MILLI)),
-                    )));
-            }
+            TsAction::Reconnect { after } => self.schedule_reconnect(after),
         }
     }
 

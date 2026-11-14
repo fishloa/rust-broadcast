@@ -152,11 +152,25 @@ impl TsHttpSource {
     }
 
     /// Poll next tshttp action.
-    pub fn poll_action(&mut self) -> Option<crate::tshttp::Action> {
-        if let Some(action) = self.caller_actions.pop_front() {
-            return Some(action);
+    pub fn poll_action(&mut self, now_us: u64) -> Option<crate::tshttp::Action> {
+        loop {
+            if let Some(action) = self.caller_actions.pop_front() {
+                return Some(action);
+            }
+            let action = self.ts.poll()?;
+            if matches!(action, crate::tshttp::Action::Reconnect { .. })
+                && !self.ts.action_ready(Timestamp::from_micros(now_us))
+            {
+                continue;
+            }
+            return self.announce_reconnect(action);
         }
-        let action = self.ts.poll()?;
+    }
+
+    fn announce_reconnect(
+        &mut self,
+        action: crate::tshttp::Action,
+    ) -> Option<crate::tshttp::Action> {
         if matches!(action, crate::tshttp::Action::Reconnect { .. }) {
             if self.failure_announced {
                 self.failure_announced = false;
@@ -296,7 +310,7 @@ impl TsHttpSource {
         let retry_after = retry_after_us(status, headers, now_us, None);
         self.refused = (status == 429 || status == 503)
             .then(|| RefusedCapture::new(status, retry_after, headers));
-        self.ts.set_retry_after(retry_after / 1000);
+        self.ts.set_retry_after(Duration::from_micros(retry_after));
         self.ts
             .on_response(status, headers, Timestamp::from_micros(now_us));
         self.drain_ts_events();
