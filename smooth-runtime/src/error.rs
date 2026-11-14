@@ -41,4 +41,7 @@ pub enum SmoothError {
         /// The codec-glue error, rendered.
         reason: String,
     },
+    /// The configuration's retry schedule is not one a client can run with.
+    #[error("invalid retry backoff")]
+    InvalidBackoff(broadcast_common::backoff::InvalidBackoff),
 }

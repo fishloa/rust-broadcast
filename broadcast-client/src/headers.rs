@@ -68,17 +68,22 @@ pub(crate) fn validate_cookies(cookies: &[(String, String)]) -> Result<(), Error
 
 /// `name: value` pairs as an ordered header map for [`crate::events::Action::HttpRequest`].
 ///
-/// Every name/value here was validated by [`validate`] when the caller supplied it, and auth-built
-/// values are known-valid, so an unparsable pair is a bug; the map still drops nothing and keeps
-/// the pair ordering for hosts that care (Set-Cookie ordering among them is not, but Cookie is).
+/// Header values built from the peer's own `Set-Cookie` lines reach this point unvalidated, so a
+/// pair `http` cannot represent is dropped rather than panicked on, and the rest of the request is
+/// sent. The surviving pairs keep their ordering (`Cookie` among them).
 pub(crate) fn to_header_map(headers: &[(String, String)]) -> HeaderMap {
     let mut map = HeaderMap::with_capacity(headers.len());
     for (name, value) in headers {
-        let name = HeaderName::from_bytes(name.as_bytes())
-            .expect("header names are validated before reaching the wire");
-        let value = HeaderValue::from_str(value)
-            .expect("header values are validated before reaching the wire");
-        map.append(name, value);
+        let parsed = HeaderValue::from_str(value)
+            .map_err(drop)
+            .and_then(|value| {
+                HeaderName::from_bytes(name.as_bytes())
+                    .map(|name| (name, value))
+                    .map_err(drop)
+            });
+        if let Ok((name, value)) = parsed {
+            map.append(name, value);
+        }
     }
     map
 }
