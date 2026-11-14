@@ -71,6 +71,7 @@ fn material_package_round_trip() {
         modified_date: ts(),
         tracks: vec![[0x30; 16], [0x31; 16]],
         dark: Vec::new(),
+        tracks_batch: None,
     };
     assert_round_trip(&mp);
 }
@@ -86,6 +87,7 @@ fn source_package_round_trip() {
         tracks: vec![[0x60; 16]],
         descriptor: [0x70; 16],
         dark: Vec::new(),
+        tracks_batch: None,
     };
     assert_round_trip(&sp);
 }
@@ -165,6 +167,7 @@ fn sequence_round_trip() {
         duration: Some(250),
         structural_components: vec![[0x08; 16], [0x09; 16]],
         dark: Vec::new(),
+        structural_components_batch: None,
     };
     assert_round_trip(&seq);
 }
@@ -177,6 +180,7 @@ fn sequence_no_duration_round_trip() {
         duration: None,
         structural_components: vec![[0x08; 16]],
         dark: Vec::new(),
+        structural_components_batch: None,
     };
     assert_round_trip(&seq);
 }
@@ -327,6 +331,7 @@ fn full_op1a_structure_builds_and_round_trips() {
         modified_date: ts(),
         tracks: vec![tt_uid],
         dark: Vec::new(),
+        tracks_batch: None,
     };
     assert_round_trip(&mp);
 
@@ -343,6 +348,7 @@ fn full_op1a_structure_builds_and_round_trips() {
         tracks: vec![tt_uid],
         descriptor: desc_uid,
         dark: Vec::new(),
+        tracks_batch: None,
     };
     assert_round_trip(&sp);
 
@@ -375,6 +381,7 @@ fn full_op1a_structure_builds_and_round_trips() {
         duration: Some(250),
         structural_components: vec![sc_uid, tc_uid],
         dark: Vec::new(),
+        structural_components_batch: None,
     };
     assert_round_trip(&seq);
 
@@ -417,6 +424,8 @@ fn full_op1a_structure_builds_and_round_trips() {
         packages: vec![mp_uid_ref, sp_uid_ref],
         essence_container_data: Some(vec![ecd_uid]),
         dark: Vec::new(),
+        packages_batch: None,
+        essence_container_data_batch: None,
     };
     assert_round_trip(&cs);
 
@@ -469,6 +478,9 @@ fn full_op1a_structure_builds_and_round_trips() {
         essence_containers: vec![ec_label],
         dm_schemes: Vec::new(),
         dark: Vec::new(),
+        identifications_batch: None,
+        essence_containers_batch: None,
+        dm_schemes_batch: None,
     };
     assert_round_trip(&preface);
 
@@ -493,6 +505,7 @@ fn full_op1a_structure_builds_and_round_trips() {
         operational_pattern: op_pattern,
         essence_containers: vec![ec_label],
         len_size: BerLength::Minimal,
+        essence_containers_batch: None,
     };
     assert_round_trip(&header_pp);
 
@@ -513,6 +526,7 @@ fn full_op1a_structure_builds_and_round_trips() {
         operational_pattern: op_pattern,
         essence_containers: vec![ec_label],
         len_size: BerLength::Minimal,
+        essence_containers_batch: None,
     };
     assert_round_trip(&footer_pp);
 

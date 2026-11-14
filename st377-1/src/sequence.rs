@@ -14,11 +14,12 @@ use broadcast_common::Parse;
 
 use crate::error::{Error, Result};
 use crate::local_set::{LocalSet, StructuralSetKind};
+use crate::sets::batch_bytes;
 use crate::sets::{
     InterchangeObjectFields, LocalSetOwnedItem, collect_dark, get_optional_fixed,
     get_required_fixed, get_required_raw,
 };
-use crate::types::{StrongRef, UlBytes, parse_uid_batch, serialize_uid_batch_owned};
+use crate::types::{StrongRef, UidBatch, UlBytes};
 
 // ── Structural Component base tags (B.8) ────────────────────────────────
 
@@ -48,7 +49,7 @@ const KNOWN_TAGS: [u16; 6] = [
 /// `0x01`/`0x0F`): the single child of every Track, holding an ordered
 /// list of Structural Components (Source Clips, Timecode Components,
 /// Fillers, etc.) that compose the track's content.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Sequence {
     /// Interchange Object (A.1) base properties.
     pub interchange: InterchangeObjectFields,
@@ -60,9 +61,32 @@ pub struct Sequence {
     /// Structural Components (`0x1001`, Req) — ordered strong references
     /// to child components.
     pub structural_components: Vec<StrongRef>,
+    /// The StructuralComponents Batch exactly as parsed (`None` for a
+    /// freshly built value), so its header reproduces byte-for-byte on
+    /// serialize.
+    pub structural_components_batch: Option<UidBatch>,
     /// Unrecognized properties preserved for round-trip fidelity.
     pub dark: Vec<(u16, Vec<u8>)>,
 }
+
+impl PartialEq for Sequence {
+    fn eq(&self, other: &Self) -> bool {
+        self.interchange == other.interchange
+            && self.data_definition == other.data_definition
+            && self.duration == other.duration
+            && self.structural_components == other.structural_components
+            && match (
+                &self.structural_components_batch,
+                &other.structural_components_batch,
+            ) {
+                (Some(a), Some(b)) => a.header() == b.header(),
+                _ => true,
+            }
+            && self.dark == other.dark
+    }
+}
+
+impl Eq for Sequence {}
 
 impl<'a> Parse<'a> for Sequence {
     type Error = Error;
@@ -80,12 +104,13 @@ impl<'a> Parse<'a> for Sequence {
             get_required_fixed::<16>(items, TAG_DATA_DEFINITION, "Data Definition", "Sequence")?;
         let duration =
             get_optional_fixed::<8>(items, TAG_DURATION, "Duration")?.map(i64::from_be_bytes);
-        let structural_components = parse_uid_batch(get_required_raw(
+        let structural_components_batch = UidBatch::parse(get_required_raw(
             items,
             TAG_STRUCTURAL_COMPONENTS,
             "Structural Components",
             "Sequence",
         )?)?;
+        let structural_components = structural_components_batch.items().to_vec();
         let dark = collect_dark(items, &KNOWN_TAGS);
 
         Ok(Sequence {
@@ -93,6 +118,7 @@ impl<'a> Parse<'a> for Sequence {
             data_definition,
             duration,
             structural_components,
+            structural_components_batch: Some(structural_components_batch),
             dark,
         })
     }
@@ -111,7 +137,10 @@ impl Sequence {
         }
         out.push(LocalSetOwnedItem::owned(
             TAG_STRUCTURAL_COMPONENTS,
-            serialize_uid_batch_owned(&self.structural_components),
+            batch_bytes(
+                self.structural_components_batch.as_ref(),
+                &self.structural_components,
+            ),
         ));
         out
     }
@@ -140,6 +169,7 @@ mod tests {
             data_definition: PICTURE_DD,
             duration: Some(250),
             structural_components: alloc::vec![[0x02; 16], [0x03; 16]],
+            structural_components_batch: None,
             dark: Vec::new(),
         }
     }

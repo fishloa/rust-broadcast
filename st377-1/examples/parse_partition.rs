@@ -29,6 +29,7 @@ fn main() {
             0x01, 0x00,
         ],
         essence_containers: vec![[0x11; 16]],
+        essence_containers_batch: None,
         len_size: BerLength::Minimal,
     };
 
