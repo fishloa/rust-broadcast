@@ -367,12 +367,8 @@ impl TrackAligner {
                 } else if diff > 0 {
                     lane.delta = target;
                 } else {
-                    // The slew step is a fraction of one sample's interval:
-                    // `lane.delta` is advanced by the destination margin, so
-                    // the backward slew may use that margin itself, divided
-                    // by the same divisor.
-                    let step = diff.unsigned_abs() as i64 / SLEW_DIVISOR;
-                    let step = i64::try_from(step).unwrap_or(i64::MAX);
+                    let step = i64::from(sample.timing.and_then(|t| t.duration()).unwrap_or(0))
+                        / SLEW_DIVISOR;
                     lane.delta = lane.delta.saturating_add(diff.max(-step));
                 }
             }

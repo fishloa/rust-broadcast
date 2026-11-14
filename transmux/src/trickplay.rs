@@ -148,9 +148,12 @@ pub fn derive_iframe_track(src: &Track) -> Result<Track> {
         let timing = src_sample
             .timing
             .map(|timing| match (timing.dts(), timing.pts()) {
-                (Some(dts), Some(pts)) => crate::ir::SampleTiming::timed(dts, pts),
+                (Some(dts), Some(pts)) => {
+                    crate::ir::SampleTiming::timed_with_duration(dts, pts, folded_duration)
+                }
                 _ => crate::ir::SampleTiming::DurationOnly {
-                    duration: folded_duration,
+                    duration: core::num::NonZeroU32::new(folded_duration)
+                        .unwrap_or_else(|| core::num::NonZeroU32::new(1).expect("one is non-zero")),
                 },
             });
         derived.push(Sample {

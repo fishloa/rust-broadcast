@@ -40,21 +40,28 @@ fn pts_33bit_wrap_through_session_playout() {
     for (i, s) in video_track.samples.iter_mut().enumerate() {
         let pts = (WRAP - 10000) + i as i64 * frame_dur;
         if let Some(t) = s.timing.as_mut() {
-            t.shift(pts - t.dts().unwrap_or(pts));
+            *t = t.with_composition(pts, pts).with_duration(frame_dur as u32);
         } else {
-            s.timing = Some(transmux::ir::SampleTiming::timed(pts, pts));
+            s.timing = Some(transmux::ir::SampleTiming::timed_with_duration(
+                pts,
+                pts,
+                frame_dur as u32,
+            ));
         }
-        let _ = frame_dur;
     }
-    video_track.start_decode_time = video_track.samples[0].timing.and_then(|t| t.dts()).unwrap() as u64;
+    video_track.start_decode_time =
+        video_track.samples[0].timing.and_then(|t| t.dts()).unwrap() as u64;
 
     let video_track_id = video_track.spec.track_id;
     let mut tracks = vec![video_track];
     if let Some(mut a) = audio_track {
         a.samples.truncate(1);
         if let Some(s) = a.samples.first_mut() {
-            s.timing = Some(transmux::ir::SampleTiming::timed(0, 0));
-            let _ = 1024;
+            if let Some(t) = s.timing.as_mut() {
+                *t = t.with_composition(0, 0).with_duration(1024);
+            } else {
+                s.timing = Some(transmux::ir::SampleTiming::timed_with_duration(0, 0, 1024));
+            }
         }
         tracks.push(a);
     }

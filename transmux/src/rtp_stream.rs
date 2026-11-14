@@ -1349,7 +1349,13 @@ impl RtpStreamDepacketiser {
             for (index, p) in st.pending.drain(..).enumerate() {
                 let offset = u64::from(duration) * index as u64;
                 let ts = to_ticks(p.unwrapped_ts.saturating_add(offset));
-                out.push(Sample::new(p.data, Some(ts), Some(ts), None, p.is_sync));
+                out.push(Sample::new(
+                    p.data,
+                    Some(ts),
+                    Some(ts),
+                    Some(duration),
+                    p.is_sync,
+                ));
             }
         }
     }
@@ -1420,7 +1426,13 @@ impl RtpStreamDepacketiser {
                     st.seen_pts.pop_first();
                 }
             }
-            out.push(Sample::new(p.data, Some(ts), Some(ts), None, p.is_sync));
+            out.push(Sample::new(
+                p.data,
+                Some(ts),
+                Some(ts),
+                Some(duration),
+                p.is_sync,
+            ));
         }
         if st.pending.len() > MAX_REORDER_WINDOW {
             let excess = st.pending.len() - MAX_REORDER_WINDOW;
@@ -1571,7 +1583,13 @@ impl RtpStreamDepacketiser {
                             let duration = u32::try_from(duration).unwrap_or(u32::MAX);
                             st.last_duration = duration;
                             let ts = to_ticks(p.unwrapped_ts.saturating_add(offset));
-                            out.push(Sample::new(p.data, Some(ts), Some(ts), None, p.is_sync));
+                            out.push(Sample::new(
+                                p.data,
+                                Some(ts),
+                                Some(ts),
+                                Some(duration),
+                                p.is_sync,
+                            ));
                         }
                     }
                     _ => {
@@ -1582,7 +1600,13 @@ impl RtpStreamDepacketiser {
                             for (index, p) in group.into_iter().enumerate() {
                                 let offset = u64::from(each) * index as u64;
                                 let ts = to_ticks(p.unwrapped_ts.saturating_add(offset));
-                                out.push(Sample::new(p.data, Some(ts), Some(ts), None, p.is_sync));
+                                out.push(Sample::new(
+                                    p.data,
+                                    Some(ts),
+                                    Some(ts),
+                                    Some(each),
+                                    p.is_sync,
+                                ));
                             }
                         }
                     }
@@ -1762,8 +1786,7 @@ mod tests {
         );
         let out = d.flush(id).unwrap();
         assert_eq!(out.len(), 1);
-        // A flush carries no next decode time, so it states no span.
-        assert_eq!(out[0].timing.and_then(|t| t.pts()), Some(-6_200));
+        assert_eq!(out[0].timing.and_then(|t| t.duration()), Some(90_000 / 25));
     }
 
     #[test]
@@ -1780,7 +1803,10 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-        assert_eq!(d.flush(id).unwrap()[0].timing.and_then(|t| t.pts()), Some(-6_200));
+        assert_eq!(
+            d.flush(id).unwrap()[0].timing.and_then(|t| t.duration()),
+            Some(3600)
+        );
     }
 
     #[test]
@@ -1799,7 +1825,7 @@ mod tests {
         assert!(d.flush(id).unwrap().is_empty());
         let out = d.push(id, &vpkt(2, 4000, true, &[0x41, 0xBB])).unwrap();
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].timing.and_then(|t| t.pts()), Some(1000));
+        assert_eq!(out[0].timing.and_then(|t| t.duration()), Some(3000));
     }
 
     #[test]
@@ -1815,8 +1841,7 @@ mod tests {
             );
             let out = d.flush(id).unwrap();
             assert_eq!(out.len(), 1);
-            let _ = expected;
-            assert_eq!(out[0].timing.and_then(|t| t.pts()), Some(5000));
+            assert_eq!(out[0].timing.and_then(|t| t.duration()), Some(expected));
         }
     }
 
@@ -1837,16 +1862,19 @@ mod tests {
         let got: Vec<_> = out
             .iter()
             .map(|s| {
-                s.timing.and_then(|t| t.pts())
+                (
+                    s.timing.and_then(|t| t.pts()),
+                    s.timing.and_then(|t| t.duration()),
+                )
             })
             .collect();
         assert_eq!(
             got,
             alloc::vec![
-                Some(10_000),
-                Some(11_024),
-                Some(12_048),
-                Some(13_072),
+                (Some(10_000), Some(1024)),
+                (Some(11_024), Some(1024)),
+                (Some(12_048), Some(1024)),
+                (Some(13_072), Some(1024)),
             ]
         );
     }
@@ -1906,16 +1934,19 @@ mod tests {
         let got: Vec<_> = out
             .iter()
             .map(|s| {
-                s.timing.and_then(|t| t.pts())
+                (
+                    s.timing.and_then(|t| t.pts()),
+                    s.timing.and_then(|t| t.duration()),
+                )
             })
             .collect();
         assert_eq!(
             got,
             alloc::vec![
-                Some(10_000),
-                Some(11_024),
-                Some(12_048),
-                Some(13_072),
+                (Some(10_000), Some(1024)),
+                (Some(11_024), Some(1024)),
+                (Some(12_048), Some(1024)),
+                (Some(13_072), Some(1024)),
             ]
         );
     }
@@ -1948,23 +1979,21 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-        // AU1 arrives → AU0 emitted, its decode time the AU0 timestamp; the
-        // span to AU1 is the next sample's own dts, not a stored duration.
+        // AU1 arrives → AU0 emitted with duration 3000, is_sync=true.
         let s0 = d.push(TrackId::new(1), &vpkt(2, 4000, true, &non)).unwrap();
         assert_eq!(s0.len(), 1);
-        assert_eq!(s0[0].timing.and_then(|t| t.dts()), Some(1000));
-        assert_eq!(s0[0].timing.and_then(|t| t.duration()), None);
+        assert_eq!(s0[0].timing.and_then(|t| t.duration()), Some(3000));
         assert!(s0[0].flags.is_sync);
-        assert_eq!(s0[0].composition_offset().expect("offset"), Some(0));
-        // AU2 arrives → AU1 emitted, is_sync=false.
+        assert_eq!(s0[0].composition_offset().expect("offset").unwrap_or(0), 0);
+        // AU2 arrives → AU1 emitted, duration 3000, is_sync=false.
         let s1 = d.push(TrackId::new(1), &vpkt(3, 7000, true, &non)).unwrap();
         assert_eq!(s1.len(), 1);
-        assert_eq!(s1[0].timing.and_then(|t| t.dts()), Some(4000));
+        assert_eq!(s1[0].timing.and_then(|t| t.duration()), Some(3000));
         assert!(!s1[0].flags.is_sync);
-        // flush → AU2 emitted.
+        // flush → AU2 emitted with the last-known duration (3000).
         let s2 = d.flush(TrackId::new(1)).unwrap();
         assert_eq!(s2.len(), 1);
-        assert_eq!(s2[0].timing.and_then(|t| t.dts()), Some(7000));
+        assert_eq!(s2[0].timing.and_then(|t| t.duration()), Some(3000));
     }
 
     /// [`Stage::feed`]/[`Stage::poll`]/[`Stage::finish`] on a single-track
@@ -2148,7 +2177,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(s.len(), 1);
-        assert_eq!(s[0].timing.and_then(|t| t.pts()), Some(4000));
+        assert_eq!(s[0].timing.and_then(|t| t.duration()), Some(3000));
         assert!(s[0].flags.is_sync);
         assert!(
             d.poll_loss_event().is_none(),
@@ -2174,7 +2203,7 @@ mod tests {
     fn max_hold_in_aus(
         presentation_order_of_wire: &[u32],
         depth: usize,
-    ) -> (usize, Vec<(u64, Option<i64>)>) {
+    ) -> (usize, Vec<(u64, u32)>) {
         let id = TrackId::new(1);
         let mut d = single_track(
             RtpMediaKind::H264,
@@ -2188,8 +2217,10 @@ mod tests {
             let nal: &[u8] = if n == 0 { &[0x65, 0xAA] } else { &[0x41, 0xBB] };
             let ts = 1000 + frame * 3600;
             for s in d.push(id, &vpkt(n as u16, ts, true, nal)).unwrap() {
-                let pts = s.timing.and_then(|t| t.pts()).unwrap();
-                emitted.push((pts as u64, Some(pts)));
+                emitted.push((
+                    s.timing.and_then(|t| t.pts()).unwrap() as u64,
+                    s.timing.and_then(|t| t.duration()).unwrap(),
+                ));
             }
             max_hold = max_hold.max(n + 1 - emitted.len());
         }
@@ -2203,12 +2234,7 @@ mod tests {
         let one_b: Vec<u32> = [0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13].to_vec();
         let (hold, emitted) = max_hold_in_aus(&one_b, 1);
         assert!(hold <= 3 + 1, "one B frame held {hold} AUs");
-        assert!(
-            emitted
-                .windows(2)
-                .skip(3)
-                .all(|w| w[1].1.unwrap() - w[0].1.unwrap() == 3600)
-        );
+        assert!(emitted.iter().skip(3).all(|&(_, dur)| dur == 3600));
 
         let two_b: Vec<u32> = [
             0, 3, 1, 2, 6, 4, 5, 9, 7, 8, 12, 10, 11, 15, 13, 14, 18, 16, 17,
@@ -2216,12 +2242,7 @@ mod tests {
         .to_vec();
         let (hold, emitted) = max_hold_in_aus(&two_b, 2);
         assert!(hold <= 4 + 2, "two B frames held {hold} AUs");
-        assert!(
-            emitted
-                .windows(2)
-                .skip(4)
-                .all(|w| w[1].1.unwrap() - w[0].1.unwrap() == 3600)
-        );
+        assert!(emitted.iter().skip(4).all(|&(_, dur)| dur == 3600));
 
         let none: Vec<u32> = (0..12).collect();
         assert_eq!(max_hold_in_aus(&none, 0).0, 1);

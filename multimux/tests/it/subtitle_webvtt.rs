@@ -228,14 +228,10 @@ impl Driver {
             self.next += 1;
             let track = &self.rig.media.tracks[ti];
             let mut sample = track.samples[si].clone();
-            if let Some(pts) = sample.timing.and_then(|t| t.pts())
-
-                && let Some(t) = sample.timing.as_mut()
-
+            if let Some(t) = sample.timing.as_mut()
                 && t.dts() == Some(0)
             {
-
-            t.shift(pts);
+                t.shift(t.pts().unwrap_or(0));
             }
             self.writer
                 .publish(track.spec.track_id, RetentionClass::Timed, sample);
@@ -710,7 +706,11 @@ fn first_video_sync_dts(media: &transmux::Media) -> i64 {
         .samples
         .iter()
         .find(|s| s.flags.is_sync)
-        .and_then(|s| s.timing.and_then(|t| t.dts()).or(s.timing.and_then(|t| t.pts())))
+        .and_then(|s| {
+            s.timing
+                .and_then(|t| t.dts())
+                .or(s.timing.and_then(|t| t.pts()))
+        })
         .expect("video sync sample")
 }
 

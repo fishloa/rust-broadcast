@@ -942,20 +942,22 @@ fn build_media(
 
         let n = payloads.len();
         for i in 0..n {
-            // A block times the start of its first frame (RFC 9559 §12); the
-            // frames inside a laced block are laid out from there, so the
-            // step to the next frame is the sample's span. WebM has no
-            // absolute clock to report — its block timestamp is a zero point
-            // of its own, not a decode instant — so a sample carries that
-            // span and no `dts`.
-            let step = if i + 1 < n {
+            // A delta between two IR timestamps cannot exceed the `u32` sample
+            // duration field, but convert checked rather than with `as` so an
+            // absurd span is an error instead of a wrapped duration.
+            let delta = if i + 1 < n {
                 pts[i + 1] - pts[i]
             } else if n >= 2 {
                 pts[i] - pts[i - 1]
             } else {
                 i64::try_from(nominal).unwrap_or(i64::MAX)
             };
-            let duration = u32::try_from(step.max(0)).unwrap_or(u32::MAX);
+            let duration = u32::try_from(delta.max(0))
+                .map_err(|_| Error::InvalidInput("webm: sample duration does not fit the IR"))?;
+            // Absolute dts/pts (media plane step 2c): WebM carries only a
+            // presentation time per block (RFC 9559 §12) with no separate
+            // decode-time field, so dts == pts (WebM's VP8/VP9/Opus/Vorbis
+            // scope here has no B-frame reordering to express).
             // The block's NAL prefixes carry whatever length size the
             // `CodecPrivate` `avcC`/`hvcC` declared (§5.3.3); rewrite them to
             // the crate's 4-byte form so keyframe detection and the TS/RTP
@@ -965,12 +967,25 @@ fn build_media(
                 Some(size) => normalise_nal_length_size(&data, size)?,
                 None => data,
             };
-            samples.push(Sample::from_duration(data, duration, sync[i]));
+            samples.push(Sample {
+                data: data.into(),
+                timing: Some(crate::ir::SampleTiming::timed_with_duration(
+                    pts[i], pts[i], duration,
+                )),
+                flags: crate::ir::SampleFlags::new(sync[i]),
+                provenance: None,
+                display: None,
+            });
         }
 
-        out_tracks.push(Track::new(
+        // Anchor at the first block's absolute pts, kept in lockstep with
+        // `samples[0].timing.map(|t| t.dts)` (media plane step 2c) — WebM does carry a real
+        // absolute clock, unlike the demuxers with no anchor at all.
+        let anchor = pts.first().map(|&p| p.max(0) as u64).unwrap_or(0);
+        out_tracks.push(Track::new_at(
             TrackSpec::new(track_id, IR_TIMESCALE, config),
             samples,
+            anchor,
         ));
         track_id = track_id.next();
     }
@@ -1819,7 +1834,7 @@ mod tests {
         // Two NALs, each with a 2-byte length prefix, in *one* access unit.
         let sample = Sample {
             data: alloc::vec![0x00, 0x05, 0x65, 0x88, 0x84, 0x00, 0x21, 0x00, 0x01, 0x41].into(),
-            timing: Some(crate::ir::SampleTiming::timed(0, 0)),
+            timing: Some(crate::ir::SampleTiming::timed_with_duration(0, 0, 1000)),
             flags: SampleFlags::new(true),
             provenance: None,
             display: None,
@@ -1926,7 +1941,7 @@ mod tests {
         };
         let sample = Sample {
             data: alloc::vec![0x00, 0x04, 0x26, 0x01, 0xAF, 0x09].into(),
-            timing: Some(crate::ir::SampleTiming::timed(0, 0)),
+            timing: Some(crate::ir::SampleTiming::timed_with_duration(0, 0, 1000)),
             flags: SampleFlags::new(true),
             provenance: None,
             display: None,

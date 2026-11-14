@@ -200,14 +200,11 @@ fn build_with(
     for (n, (_, ti, si)) in order.into_iter().enumerate() {
         let track = &media.tracks[ti];
         let mut sample = track.samples[si].clone();
-        if let Some(pts) = sample.timing.and_then(|t| t.pts())
-
-            && let Some(t) = sample.timing.as_mut()
-
+        let pts = sample.timing.and_then(|t| t.pts());
+        if let Some(t) = sample.timing.as_mut()
             && t.dts() == Some(0)
         {
-
-        t.shift(pts);
+            t.shift(pts.unwrap_or(0));
         }
         writer.publish(track.spec.track_id, RetentionClass::Timed, sample);
         if n % PUMP_EVERY == 0 {

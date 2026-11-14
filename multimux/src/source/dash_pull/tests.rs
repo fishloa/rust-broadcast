@@ -756,7 +756,8 @@ async fn every_period_plays_and_the_timeline_continues_across_the_boundary() {
         );
     }
     assert!(
-        p2v[0].timing.and_then(|t| t.dts()).unwrap() < p1v.last().unwrap().timing.and_then(|t| t.dts()).unwrap(),
+        p2v[0].timing.and_then(|t| t.dts()).unwrap()
+            < p1v.last().unwrap().timing.and_then(|t| t.dts()).unwrap(),
         "the source's second Period restarts its clock, so the stitch is what makes it monotonic"
     );
 }

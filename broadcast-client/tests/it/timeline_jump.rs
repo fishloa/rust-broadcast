@@ -801,7 +801,10 @@ fn audio_only_stream_jump_detected() {
     match &h.events[d + 1] {
         Event::Sample { track, sample, .. } => {
             assert_eq!(*track, a);
-            assert!(sample.timing.and_then(|t| t.pts()).unwrap() - samples[0].pts > 29 * AUDIO_ONLY_RATE);
+            assert!(
+                sample.timing.and_then(|t| t.pts()).unwrap() - samples[0].pts
+                    > 29 * AUDIO_ONLY_RATE
+            );
         }
         other => panic!("{other:?}"),
     }
@@ -1318,7 +1321,10 @@ fn rtsp_jump_detected() {
     match &jumped.events[d[0] + 1] {
         Event::Sample { track, sample, .. } => {
             assert_eq!(*track, vid);
-            assert_eq!(sample.timing.and_then(|t| t.pts()), Some(got[RTSP_VIDEO_AU].pts));
+            assert_eq!(
+                sample.timing.and_then(|t| t.pts()),
+                Some(got[RTSP_VIDEO_AU].pts)
+            );
         }
         other => panic!("{other:?}"),
     }
@@ -1434,7 +1440,10 @@ fn multiple_video_tracks_tracked_independently() {
     match &t.events[d[0] + 1] {
         Event::Sample { track, sample, .. } => {
             assert_eq!(*track, ids[1]);
-            assert_eq!(sample.timing.and_then(|t| t.pts()), Some(b[RTSP_VIDEO_AU].pts));
+            assert_eq!(
+                sample.timing.and_then(|t| t.pts()),
+                Some(b[RTSP_VIDEO_AU].pts)
+            );
         }
         other => panic!("{other:?}"),
     }

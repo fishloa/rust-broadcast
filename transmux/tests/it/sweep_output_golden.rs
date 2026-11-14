@@ -34,7 +34,7 @@ fn sample_timing_debug(s: &str) -> String {
     while let Some(i) = rest.find(FIELD) {
         out.push_str(&rest[..i]);
         let after = &rest[i + FIELD.len()..];
-        if let Some(brace) = after.strip_prefix("Some(SampleTiming { ") {
+        if let Some(brace) = after.strip_prefix("Some(Timed { ") {
             // The three fields are fixed and in this order: dts, pts, duration.
             let Some(dts_i) = brace.find("dts: ") else {
                 out.push_str(FIELD);
@@ -62,12 +62,40 @@ fn sample_timing_debug(s: &str) -> String {
                 continue;
             };
             let duration = &after_dur[..close_i];
+            // The old flat form stored a zero duration (the "no span" sentinel)
+            // as `duration: Some(0)`; the enum now states `None` for it. Map
+            // back so the goldens captured against the flat shape keep proving
+            // the demux/mux output itself is unchanged.
+            let duration = if duration == "None" {
+                "Some(0)"
+            } else {
+                duration
+            };
             out.push_str(&format!(
-                ", dts: Some({dts}), pts: Some({pts}), duration: Some({duration})"
+                ", dts: Some({dts}), pts: Some({pts}), duration: {duration}"
             ));
-            // `close_i` points at the ` })` closing `SampleTiming { .. }` and
+            // `close_i` points at the ` })` closing `Timed { .. }` and
             // the `Some(..)` wrapper; skip all three characters.
             rest = &after_dur[close_i + 3..];
+        } else if let Some(brace) = after.strip_prefix("Some(DurationOnly { ") {
+            // A duration-only sample has no timestamps: render the flat shape
+            // the goldens captured before the enum split.
+            let Some(dur_i) = brace.find("duration: ") else {
+                out.push_str(FIELD);
+                rest = after;
+                continue;
+            };
+            let body = &brace[dur_i + 10..];
+            let Some(close_i) = body.find(" })") else {
+                out.push_str(FIELD);
+                rest = after;
+                continue;
+            };
+            let duration = &body[..close_i];
+            out.push_str(&format!(
+                ", dts: None, pts: None, duration: Some({duration})"
+            ));
+            rest = &body[close_i + 3..];
         } else if let Some(none) = after.strip_prefix("None") {
             out.push_str(", dts: None, pts: None, duration: None");
             rest = none;

@@ -20,6 +20,7 @@ use crate::TrackId;
 use alloc::sync::Arc;
 use broadcast_common::timescale::{Rounding, rescale_i64};
 use bytes::Bytes;
+use core::num::NonZeroU32;
 
 use super::DisplayInfo;
 
@@ -89,7 +90,9 @@ impl Provenance {
 /// Such a sample knows how long it lasts and nothing about when it starts, so
 /// it says exactly that instead of borrowing a `0` timestamp. `None` on
 /// [`Sample::timing`] is reserved for a section-carried track
-/// (SCTE-35/DSM-CC/private sections), which carries neither.
+/// (SCTE-35/DSM-CC/private sections), which carries neither. A timed sample
+/// carries its own positive span where the source stated one, and `None`
+/// where it did not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SampleTiming {
@@ -99,31 +102,53 @@ pub enum SampleTiming {
         dts: i64,
         /// Absolute presentation timestamp.
         pts: i64,
+        /// The sample's span, when the source stated one or the demuxer
+        /// derived one as before; a positive tick count.
+        duration: Option<NonZeroU32>,
     },
     /// A sample whose span is known and whose timestamps are not.
     DurationOnly {
         /// The sample's duration, in media-timescale ticks; a positive count.
-        duration: u32,
+        duration: NonZeroU32,
     },
 }
 
 impl SampleTiming {
-    /// Absolute decode/presentation timestamps.
+    /// Absolute decode/presentation timestamps, with no span stated.
     #[must_use]
     pub const fn timed(dts: i64, pts: i64) -> Self {
-        Self::Timed { dts, pts }
+        Self::Timed {
+            dts,
+            pts,
+            duration: None,
+        }
+    }
+
+    /// Absolute decode/presentation timestamps with an explicit span; a
+    /// `duration` of zero stores `None` (no span stated), exactly as the old
+    /// `from_options` treated a zero duration.
+    #[must_use]
+    pub const fn timed_with_duration(dts: i64, pts: i64, duration: u32) -> Self {
+        Self::Timed {
+            dts,
+            pts,
+            duration: match NonZeroU32::new(duration) {
+                Some(duration) => Some(duration),
+                None => None,
+            },
+        }
     }
 
     /// A sample that knows its duration and not its timestamps. `duration`
     /// must be positive: a zero-tick span is not a duration a writer can
     /// declare, so it is reported as [`crate::Error::InvalidInput`].
     pub fn duration_only(duration: u32) -> crate::error::Result<Self> {
-        if duration == 0 {
-            return Err(crate::Error::InvalidInput(
+        match NonZeroU32::new(duration) {
+            Some(duration) => Ok(Self::DurationOnly { duration }),
+            None => Err(crate::Error::InvalidInput(
                 "SampleTiming::duration_only: a duration is a positive tick count",
-            ));
+            )),
         }
-        Ok(Self::DurationOnly { duration })
     }
 
     /// The absolute decode timestamp, when the sample has one.
@@ -148,8 +173,11 @@ impl SampleTiming {
     #[must_use]
     pub const fn duration(&self) -> Option<u32> {
         match self {
-            Self::Timed { .. } => None,
-            Self::DurationOnly { duration } => Some(*duration),
+            Self::Timed { duration, .. } => match duration {
+                Some(duration) => Some(duration.get()),
+                None => None,
+            },
+            Self::DurationOnly { duration } => Some(duration.get()),
         }
     }
 
@@ -158,41 +186,44 @@ impl SampleTiming {
     /// [`SampleTiming::DurationOnly`] sample has none to move and is returned
     /// as it is.
     pub fn shift(&mut self, delta: i64) {
-        if let Self::Timed { dts, pts } = self {
+        if let Self::Timed { dts, pts, .. } = self {
             *dts = dts.saturating_add(delta);
             *pts = pts.saturating_add(delta);
         }
     }
 
     /// This (timed) timing with its timestamps set to `dts`/`pts`, its span
-    /// left to whichever source states it next: the shape a decode-timestamp
-    /// deriver writes back, its presentation time untouched.
+    /// kept: the shape a decode-timestamp deriver writes back, its
+    /// presentation time untouched.
     #[must_use]
     pub const fn with_composition(self, dts: i64, pts: i64) -> Self {
         match self {
-            Self::Timed { .. } => Self::Timed { dts, pts },
+            Self::Timed { duration, .. } => Self::Timed { dts, pts, duration },
             Self::DurationOnly { duration } => Self::DurationOnly { duration },
         }
     }
 
-    /// This timing with its span set to `duration`; a timed sample has no
-    /// span to keep, so the result states only the span.
+    /// This timing with its span set to `duration`; a timed sample keeps its
+    /// timestamps and takes the span, a duration-only one takes the span.
     #[must_use]
-    pub const fn with_duration(self, duration: u32) -> Self {
-        match self {
-            Self::Timed { .. } => Self::DurationOnly { duration },
-            Self::DurationOnly { .. } => Self::DurationOnly { duration },
-        }
-    }
-
-    /// A sample with `dts`/`pts` and the duration `duration`, when the
-    /// caller has one to declare.
-    #[must_use]
-    pub const fn measured(dts: i64, pts: i64, duration: Option<u32>) -> Self {
-        match duration {
-            Some(duration) if duration == 0 => Self::timed(dts, pts),
-            Some(duration) => Self::DurationOnly { duration },
-            None => Self::timed(dts, pts),
+    pub fn with_duration(self, duration: u32) -> Self {
+        match NonZeroU32::new(duration) {
+            Some(duration) => match self {
+                Self::Timed { dts, pts, .. } => Self::Timed {
+                    dts,
+                    pts,
+                    duration: Some(duration),
+                },
+                Self::DurationOnly { .. } => Self::DurationOnly { duration },
+            },
+            None => match self {
+                Self::Timed { dts, pts, .. } => Self::Timed {
+                    dts,
+                    pts,
+                    duration: None,
+                },
+                Self::DurationOnly { duration } => Self::DurationOnly { duration },
+            },
         }
     }
 }
@@ -248,12 +279,16 @@ impl Sample {
             return self;
         }
         let timing = self.timing.map(|timing| match timing {
-            SampleTiming::Timed { dts, pts } => SampleTiming::timed(
-                rescale_i64(dts, from, to, Rounding::Floor),
-                rescale_i64(pts, from, to, Rounding::Floor),
-            ),
+            SampleTiming::Timed { dts, pts, duration } => SampleTiming::Timed {
+                dts: rescale_i64(dts, from, to, Rounding::Floor),
+                pts: rescale_i64(pts, from, to, Rounding::Floor),
+                duration: duration.map(|duration| {
+                    NonZeroU32::new(rescale_ticks(duration.get(), from, to)).unwrap_or(duration)
+                }),
+            },
             SampleTiming::DurationOnly { duration } => SampleTiming::DurationOnly {
-                duration: rescale_ticks(duration, from, to),
+                duration: NonZeroU32::new(rescale_ticks(duration.get(), from, to))
+                    .unwrap_or(duration),
             },
         });
         Self { timing, ..self }
@@ -324,11 +359,16 @@ impl Sample {
     }
 
     /// A sample that declares only its span (no timestamps at all): the
-    /// reader measured how long it lasts and has no instant to give it.
+    /// reader measured how long it lasts and has no instant to give it. A
+    /// `duration` of zero is stored as one tick, the smallest span a
+    /// `DurationOnly` sample can legitimately carry.
     pub fn from_duration(data: impl Into<Bytes>, duration: u32, is_sync: bool) -> Self {
         Self {
             data: data.into(),
-            timing: Some(SampleTiming::DurationOnly { duration }),
+            timing: Some(SampleTiming::DurationOnly {
+                duration: NonZeroU32::new(duration)
+                    .unwrap_or_else(|| NonZeroU32::new(1).expect("one is non-zero")),
+            }),
             flags: SampleFlags::new(is_sync),
             provenance: None,
             display: None,
@@ -381,15 +421,23 @@ impl Sample {
 }
 
 /// The timing a sample's three optional wire values describe: both
-/// timestamps for a `Timed` sample, a positive span alone for a
-/// `DurationOnly` one, and `None` when the sample carries neither.
+/// timestamps (with the stated span kept) for a `Timed` sample, a positive
+/// span alone for a `DurationOnly` one, and `None` when the sample carries
+/// neither.
 fn timing_of(dts: Option<i64>, pts: Option<i64>, duration: Option<u32>) -> Option<SampleTiming> {
-    let timed = match (dts, pts) {
-        (Some(dts), pts) => Some(SampleTiming::timed(dts, pts.unwrap_or(dts))),
-        (None, Some(pts)) => Some(SampleTiming::timed(pts, pts)),
-        (None, None) => None,
-    };
-    timed.or_else(|| duration.and_then(|duration| SampleTiming::duration_only(duration).ok()))
+    match (dts, pts) {
+        (Some(dts), pts) => Some(SampleTiming::Timed {
+            dts,
+            pts: pts.unwrap_or(dts),
+            duration: duration.and_then(NonZeroU32::new),
+        }),
+        (None, Some(pts)) => Some(SampleTiming::Timed {
+            dts: pts,
+            pts,
+            duration: duration.and_then(NonZeroU32::new),
+        }),
+        (None, None) => duration.and_then(|duration| SampleTiming::duration_only(duration).ok()),
+    }
 }
 
 /// `ticks` rescaled from `from` to `to`, floored at one tick: a nonzero span

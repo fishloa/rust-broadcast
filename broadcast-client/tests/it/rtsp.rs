@@ -327,7 +327,10 @@ fn tracks_precede_first_sample_and_samples_equal_oracle() {
             track.samples.len(),
             "track {id}: every original sample is recovered"
         );
-        let origin = track.samples[0].timing.and_then(|t| t.pts()).expect("fixture pts");
+        let origin = track.samples[0]
+            .timing
+            .and_then(|t| t.pts())
+            .expect("fixture pts");
         for (n, (recovered, original)) in mine.iter().zip(&track.samples).enumerate() {
             assert_eq!(
                 &recovered.data[..],

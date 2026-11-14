@@ -278,7 +278,8 @@ fn the_rtp_composition_offsets_match_the_transport_stream_of_the_same_encode() {
         .samples
         .iter()
         .map(|s| {
-            (s.timing.and_then(|t| t.pts()).unwrap() - s.timing.and_then(|t| t.dts()).unwrap()) / FRAME_TICKS
+            (s.timing.and_then(|t| t.pts()).unwrap() - s.timing.and_then(|t| t.dts()).unwrap())
+                / FRAME_TICKS
         })
         .collect();
     let rtp = play(&cap.sdp, &cap.packets);
@@ -293,7 +294,9 @@ fn the_rtp_composition_offsets_match_the_transport_stream_of_the_same_encode() {
     let ts_steps: Vec<i64> = video
         .samples
         .windows(2)
-        .map(|w| w[1].timing.and_then(|t| t.dts()).unwrap() - w[0].timing.and_then(|t| t.dts()).unwrap())
+        .map(|w| {
+            w[1].timing.and_then(|t| t.dts()).unwrap() - w[0].timing.and_then(|t| t.dts()).unwrap()
+        })
         .collect();
     assert!(ts_steps.iter().all(|&s| s == FRAME_TICKS));
 }

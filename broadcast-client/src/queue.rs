@@ -279,7 +279,8 @@ mod tests {
     fn sample_event(n: i64, join: Option<JoinDecision>) -> Event {
         let mut sample = base_sample();
         if let Some(t) = sample.timing.as_mut() {
-            t.shift(n - t.dts().unwrap_or(n));
+            let dts = t.dts().unwrap_or(n);
+            *t = t.with_composition(dts, n);
         } else {
             sample.timing = Some(transmux::ir::SampleTiming::timed(n, n));
         }
@@ -421,7 +422,8 @@ mod tests {
     fn sized_sample_event(n: i64, len: usize) -> Event {
         let mut sample = base_sample();
         if let Some(t) = sample.timing.as_mut() {
-            t.shift(n - t.dts().unwrap_or(n));
+            let dts = t.dts().unwrap_or(n);
+            *t = t.with_composition(dts, n);
         } else {
             sample.timing = Some(transmux::ir::SampleTiming::timed(n, n));
         }

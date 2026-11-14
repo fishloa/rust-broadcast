@@ -825,33 +825,18 @@ pub(crate) fn build_chunk(
 
     let mut traf_boxes = Vec::with_capacity(tracks.len());
     for ft in tracks {
-        // A run's samples are one decode grid: each sample's own `dts` when it
-        // has one, else the running end of the samples before it (the
-        // fragment's decode base plus every span already emitted), so a
-        // declared span (a duration-only sample's) is what keeps the grid
-        // moving forward for a sample that carries no decode time.
-        let mut next_dts = i64::try_from(ft.base_media_decode_time)
-            .map_err(|_| Error::InvalidInput("fragment decode base does not fit i64"))?;
-        let mut runs: Vec<MediaRunSample> = Vec::with_capacity(ft.samples.len());
-        for s in ft.samples {
-            let dts = s.timing.map(|t| t.dts().unwrap_or(next_dts));
-            let step = dts.and_then(|dts| {
-                ft.samples
-                    .iter()
-                    .filter_map(|o| o.timing.and_then(|t| t.dts()))
-                    .filter(|&next| next > dts)
-                    .min()
-                    .and_then(|next| u32::try_from(next - dts).ok())
-            });
-            let duration = step.or(s.timing.and_then(|t| t.duration()));
-            runs.push(MediaRunSample {
-                duration,
-                size: s.data.len(),
-                is_sync: s.flags.is_sync,
-                composition_offset: s.composition_offset()?.unwrap_or(0),
-            });
-            next_dts = dts.unwrap_or(next_dts) + i64::from(duration.unwrap_or(0));
-        }
+        let runs = ft
+            .samples
+            .iter()
+            .map(|s| {
+                Ok(MediaRunSample {
+                    duration: s.timing.and_then(|t| t.duration()).unwrap_or(0),
+                    size: s.data.len(),
+                    is_sync: s.flags.is_sync,
+                    composition_offset: s.composition_offset()?.unwrap_or(0),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
         let (tfhd, trun) = media_fragment_run(ft.track_id, runs.into_iter())?;
         let tfdt = TrackFragmentBaseMediaDecodeTimeBox::new_v1(ft.base_media_decode_time);
         traf_boxes.push(TrackFragmentBox::new(tfhd, Some(tfdt), vec![trun]));

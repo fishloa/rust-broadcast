@@ -2497,8 +2497,7 @@ mod segmenter_tests {
                     entry.sequence_number
                 );
                 assert!(
-                    transmux::starts_with_box_type(&entry.bytes[4..], transmux::segments::STYP)
-                        || transmux::starts_with_moof(&entry.bytes[4..]),
+                    matches!(&entry.bytes[4..8], STYP_BYTES | MOOF_BYTES),
                     "segment {} does not start with an fMP4 box: {:02x?}",
                     entry.sequence_number,
                     &entry.bytes[..8]
@@ -2513,6 +2512,8 @@ mod segmenter_tests {
     }
 
     pub(super) const TS_SYNC_BYTE: u8 = 0x47;
+    pub(super) const STYP_BYTES: &[u8] = b"styp";
+    pub(super) const MOOF_BYTES: &[u8] = b"moof";
 
     /// The effective track set a refused change leaves behind: the segmenter
     /// keeps producing fMP4 and its published set does not grow.

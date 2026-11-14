@@ -61,7 +61,6 @@ use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer};
 use crate::mpegh::{MHAC_FOURCC, MHADecoderConfigurationRecord};
 use crate::opus::OpusSpecificBox;
 use crate::pipeline::{build_init_segment, build_media_segment};
-use crate::segments::MOOF;
 use crate::visual_ext::{CleanApertureBox, ColourInformationBox, PixelAspectRatioBox};
 use alloc::sync::Arc;
 
@@ -223,7 +222,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
                 Err(e) => return Err(e),
             };
             let ty = bx.header.box_type.0;
-            if ty == MOOF {
+            if &ty == b"moof" {
                 match MovieFragmentBox::parse_body_budgeted(bx.body, &mut zero_width_budget) {
                     Ok(mut moof) => {
                         apply_trex_defaults(&mut moof, trex_defaults);
@@ -396,7 +395,9 @@ fn absorb_traf(
             let pts = crate::frag_offsets::add_offset(dts, r.composition_offset)?;
             samples.push(Sample {
                 data: file[r.start..r.end].to_vec().into(),
-                timing: Some(crate::ir::SampleTiming::timed(dts, pts)),
+                timing: Some(crate::ir::SampleTiming::timed_with_duration(
+                    dts, pts, r.duration,
+                )),
                 flags: crate::ir::SampleFlags::new(is_sync),
                 // fMP4 sources carry no per-sample source-container
                 // timestamps distinct from the fragment's own tfdt/trun
@@ -556,13 +557,13 @@ pub(crate) fn relative_decode_times(track: &Track, origin: &TimelineOrigin) -> V
 
 /// Presentation span of `tracks` in seconds: from the earliest sample
 /// presentation time to the latest presentation end, over one common origin.
-pub(crate) fn presentation_span_secs(tracks: &[&Track]) -> f64 {
+pub(crate) fn presentation_span_secs(tracks: &[&Track]) -> Result<f64> {
     let origin = TimelineOrigin::of(tracks.iter().copied());
     let mut span: Option<(f64, f64)> = None;
     for t in tracks {
         let ts = f64::from(t.spec.timescale.get());
         for (s, dts) in t.samples.iter().zip(relative_decode_times(t, &origin)) {
-            let pts = (dts + i64::from(s.timing.and_then(|t| t.pts()).unwrap_or(dts))) as f64 / ts;
+            let pts = (dts + i64::from(s.composition_offset()?.unwrap_or(0))) as f64 / ts;
             let end = pts + f64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)) / ts;
             span = Some(match span {
                 None => (pts, end),
@@ -570,7 +571,7 @@ pub(crate) fn presentation_span_secs(tracks: &[&Track]) -> f64 {
             });
         }
     }
-    span.map_or(0.0, |(lo, hi)| (hi - lo).max(0.0))
+    Ok(span.map_or(0.0, |(lo, hi)| (hi - lo).max(0.0)))
 }
 
 /// `secs` rounded up to whole seconds, without the std-only `f64::ceil`.
@@ -625,17 +626,20 @@ impl Package for HlsPackager {
             return Err(Error::InvalidInput("cannot package a Media with no tracks"));
         }
         // A section-carried track (SCTE-35 `stream_type` 0x86, DSM-CC, private
-        // sections) has no timing at all (its samples carry neither a decode
-        // time nor a span, deliberately) — see the per-track skip below for
-        // why it is omitted from the playlist. Such a track is also
-        // frequently not BMFF-muxable at all (an opaque `CodecConfig::Data`
-        // track), so it must be excluded here too: only tracks that will
-        // actually become a `#EXTINF` segment below feed the shared init
-        // segment's track list.
+        // sections) has no timestamps at all (`Sample::duration` is `None` for
+        // every sample, deliberately) — see the per-track skip below for why
+        // it is omitted from the playlist. Such a track is also frequently
+        // not BMFF-muxable at all (an opaque `CodecConfig::Data` track), so it
+        // must be excluded here too: only tracks that will actually become a
+        // `#EXTINF` segment below feed the shared init segment's track list.
         let kept: Vec<&Track> = media
             .tracks
             .iter()
-            .filter(|t| t.samples.iter().any(|s| s.timing.is_some()))
+            .filter(|t| {
+                t.samples
+                    .iter()
+                    .any(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0) != 0)
+            })
             .collect();
 
         // Every segment this packager names (`{prefix}{track_id}.m4s`) is
@@ -674,7 +678,7 @@ impl Package for HlsPackager {
         // One segment for the one multi-track CMAF artifact: RFC 8216 §3 plays
         // a media playlist's segments one after another, so a per-track entry
         // would repeat the content once per track.
-        let duration = presentation_span_secs(&kept);
+        let duration = presentation_span_secs(&kept)?;
         // EXTINF rounded to the nearest integer must not exceed the target
         // duration (RFC 8216 §4.3.3.1); the ceiling always satisfies that.
         let target_secs = ceil_secs(duration);
@@ -1662,7 +1666,7 @@ mod tests {
                         vec![0u8; 4],
                         Some(i64::from(i) * i64::from(FRAME_DUR)),
                         Some(i64::from(i) * i64::from(FRAME_DUR)),
-                        None,
+                        Some(FRAME_DUR),
                         true,
                     )
                 })
@@ -1754,7 +1758,7 @@ mod tests {
         // One access unit, two NALs, each with a 2-byte length prefix.
         let sample = Sample {
             data: vec![0x00, 0x05, 0x65, 0x88, 0x84, 0x00, 0x21, 0x00, 0x01, 0x41].into(),
-            timing: Some(crate::ir::SampleTiming::timed(0, 0)),
+            timing: Some(crate::ir::SampleTiming::timed_with_duration(0, 0, 1000)),
             flags: SampleFlags::new(true),
             provenance: None,
             display: None,

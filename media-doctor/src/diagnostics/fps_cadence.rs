@@ -67,7 +67,12 @@ impl Diagnostic for FpsCadenceCheck {
 ///
 /// See [`total_duration_of`] for the arithmetic.
 fn total_sample_duration(track: &transmux::Track) -> u64 {
-    total_duration_of(track.samples.iter().map(|s| s.timing.and_then(|t| t.duration())))
+    total_duration_of(
+        track
+            .samples
+            .iter()
+            .map(|s| s.timing.and_then(|t| t.duration())),
+    )
 }
 
 /// Sum a sequence of optional per-sample durations.

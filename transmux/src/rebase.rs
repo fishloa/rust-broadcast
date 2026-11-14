@@ -119,10 +119,12 @@ mod tests {
     use alloc::vec;
     use broadcast_common::timescale::Timescale;
 
-    fn sample(dts: i64) -> Sample {
+    fn sample(dts: i64, duration: u32) -> Sample {
         Sample {
             data: vec![0u8; 4].into(),
-            timing: Some(crate::ir::SampleTiming::timed(dts, dts)),
+            timing: Some(crate::ir::SampleTiming::timed_with_duration(
+                dts, dts, duration,
+            )),
             flags: SampleFlags::SYNC,
             provenance: None,
             display: None,
@@ -135,7 +137,7 @@ mod tests {
         let mut dts = start;
         let mut samples = alloc::vec::Vec::with_capacity(durs.len());
         for &d in durs {
-            samples.push(sample(dts));
+            samples.push(sample(dts, d));
             dts += d as i64;
         }
         Track::new_at(spec(), samples, start as u64)

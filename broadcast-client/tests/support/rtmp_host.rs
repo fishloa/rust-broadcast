@@ -247,9 +247,18 @@ pub fn assert_samples_equal_direct_with(samples: &[(u32, transmux::Sample)], hel
         );
         for (a, b) in got.iter().zip(track.samples.iter()) {
             assert_eq!(a.data, b.data);
-            assert_eq!(a.timing.and_then(|t| t.dts()), b.timing.and_then(|t| t.dts()));
-            assert_eq!(a.timing.and_then(|t| t.pts()), b.timing.and_then(|t| t.pts()));
-            assert_eq!(a.timing.and_then(|t| t.duration()), b.timing.and_then(|t| t.duration()));
+            assert_eq!(
+                a.timing.and_then(|t| t.dts()),
+                b.timing.and_then(|t| t.dts())
+            );
+            assert_eq!(
+                a.timing.and_then(|t| t.pts()),
+                b.timing.and_then(|t| t.pts())
+            );
+            assert_eq!(
+                a.timing.and_then(|t| t.duration()),
+                b.timing.and_then(|t| t.duration())
+            );
         }
     }
 }

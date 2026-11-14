@@ -977,7 +977,9 @@ fn absorb_protected_fragment(
         let is_sync = r.flags & SAMPLE_FLAG_IS_NON_SYNC == 0;
         out.push(Sample {
             data: file.slice(r.start..r.end),
-            timing: Some(crate::ir::SampleTiming::timed(dts, pts)),
+            timing: Some(crate::ir::SampleTiming::timed_with_duration(
+                dts, pts, r.duration,
+            )),
             flags: crate::ir::SampleFlags::new(is_sync),
             provenance: None,
             display: None,

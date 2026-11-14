@@ -1716,6 +1716,9 @@ pub const TABLE: &[Crate] = &[
             // lossy — the typed variant *is* the label.
             "CodecConfig",
             "DemuxEvent",
+            // `ir::SampleTiming` (#2688): a data-carrying ADT (`Timed { dts, pts,
+            // duration }` / `DurationOnly { duration }`), not a spec-token label.
+            "SampleTiming",
             // `rtp_stream::RtpLossEvent` (issue #779): a data-carrying ADT, same
             // shape as `DemuxEvent` above — each variant wraps distinct structured
             // fields (track/ssrc/sequence numbers), not a flat spec-defined code.

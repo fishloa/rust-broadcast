@@ -137,7 +137,11 @@ pub(crate) fn demux_fragment(
         .into_iter()
         .filter(|t| t.spec.track_id == local_track_id)
     {
-        let Some(first_dts) = track.samples.first().and_then(|s| s.timing.and_then(|t| t.dts())) else {
+        let Some(first_dts) = track
+            .samples
+            .first()
+            .and_then(|s| s.timing.and_then(|t| t.dts()))
+        else {
             continue;
         };
         let offset = desired
@@ -146,13 +150,9 @@ pub(crate) fn demux_fragment(
         for mut sample in track.samples {
             if let Some(t) = sample.timing.as_mut() {
                 let dts = t.dts();
-                let pts = t.pts();
-                if let Some(dts) = shift(dts, offset)? {
-                    t.shift(dts);
-                }
-                if let Some(pts) = shift(pts, offset)? {
-                    t.shift(pts);
-                }
+                let current = dts.unwrap_or(0);
+                let shifted = shift(dts, offset)?.unwrap_or(current);
+                t.shift(shifted - current);
             }
             out.push(sample);
         }

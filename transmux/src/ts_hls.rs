@@ -1598,7 +1598,10 @@ mod tests {
             data: vec![0u8; 4].into(),
             // Boundary selection is duration-driven; absolute time is not
             // what this helper exercises.
-            timing: Some(crate::ir::SampleTiming::DurationOnly { duration: dur }),
+            timing: Some(crate::ir::SampleTiming::DurationOnly {
+                duration: core::num::NonZeroU32::new(dur)
+                    .unwrap_or_else(|| core::num::NonZeroU32::new(1).unwrap()),
+            }),
             flags: crate::ir::SampleFlags::new(sync),
             provenance: None,
             display: None,

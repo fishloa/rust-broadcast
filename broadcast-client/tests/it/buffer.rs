@@ -472,16 +472,20 @@ impl Oracle {
                     self.joined = true;
                     self.join_27 = pts27(pts, ts.get());
                     self.video_run = VideoRun::new();
-                    let end =
-                        self.video_run
-                            .push(pts, sample.timing.and_then(|t| t.dts()).unwrap_or(pts), dur);
+                    let end = self.video_run.push(
+                        pts,
+                        sample.timing.and_then(|t| t.dts()).unwrap_or(pts),
+                        dur,
+                    );
                     *zero = Some((track_id, pts27(pts, ts.get())));
                     ends.insert(track_id, pts27(end, ts.get()));
                 }
                 Some(JoinDecision::Keep) if self.joined => {
-                    let end =
-                        self.video_run
-                            .push(pts, sample.timing.and_then(|t| t.dts()).unwrap_or(pts), dur);
+                    let end = self.video_run.push(
+                        pts,
+                        sample.timing.and_then(|t| t.dts()).unwrap_or(pts),
+                        dur,
+                    );
                     ends.insert(track_id, pts27(end, ts.get()));
                 }
                 _ => {}
@@ -1269,18 +1273,18 @@ fn video_expectations(h: &Host) -> Vec<ChunkVideo> {
         let pts = s.timing.and_then(|t| t.pts()).unwrap();
         let dur = i64::from(s.timing.and_then(|t| t.duration()).unwrap());
         let c = h.chunk_of_event(i);
-        let end = match j {
-            Some(JoinDecision::JoinPoint(_)) if run.is_none() => {
-                run.insert(VideoRun::new())
-                    .push(pts, s.timing.and_then(|t| t.dts()).unwrap_or(pts), dur)
-            }
-            Some(JoinDecision::Keep) if run.is_some() => {
-                run.as_mut()
-                    .unwrap()
-                    .push(pts, s.timing.and_then(|t| t.dts()).unwrap_or(pts), dur)
-            }
-            _ => continue,
-        };
+        let end =
+            match j {
+                Some(JoinDecision::JoinPoint(_)) if run.is_none() => run
+                    .insert(VideoRun::new())
+                    .push(pts, s.timing.and_then(|t| t.dts()).unwrap_or(pts), dur),
+                Some(JoinDecision::Keep) if run.is_some() => run.as_mut().unwrap().push(
+                    pts,
+                    s.timing.and_then(|t| t.dts()).unwrap_or(pts),
+                    dur,
+                ),
+                _ => continue,
+            };
         per_chunk[c].expected_end = Some(pts27(end, ts));
         per_chunk[c].last_decoded_end = Some(pts27(pts + dur, ts));
     }
@@ -1358,7 +1362,8 @@ fn audio_end_only_after_join_pts() {
         .filter(|(i, t, _, _)| *i > join_idx && t.value() == AUDIO)
         .map(|(_, _, s, _)| {
             pts27(
-                s.timing.and_then(|t| t.pts()).unwrap() + i64::from(s.timing.and_then(|t| t.duration()).unwrap()),
+                s.timing.and_then(|t| t.pts()).unwrap()
+                    + i64::from(s.timing.and_then(|t| t.duration()).unwrap()),
                 ts_audio,
             )
         })
@@ -1418,7 +1423,8 @@ fn audio_end_forgotten_when_rendered_audio_changes() {
             continue;
         }
         max_end = max_end.max(pts27(
-            s.timing.and_then(|t| t.pts()).unwrap() + i64::from(s.timing.and_then(|t| t.duration()).unwrap()),
+            s.timing.and_then(|t| t.pts()).unwrap()
+                + i64::from(s.timing.and_then(|t| t.duration()).unwrap()),
             ts,
         ));
         expected.insert(h.chunk_of_event(i), max_end);

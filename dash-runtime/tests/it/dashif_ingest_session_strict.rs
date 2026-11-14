@@ -245,7 +245,10 @@ fn duplicate_emits_nothing_and_regression_still_emits() {
         let SessionEvent::Sample { sample, .. } = e else {
             panic!("expected Sample, got {e:?}");
         };
-        assert_eq!(sample.timing.and_then(|t| t.dts()), w.timing.and_then(|t| t.dts()));
+        assert_eq!(
+            sample.timing.and_then(|t| t.dts()),
+            w.timing.and_then(|t| t.dts())
+        );
         assert_eq!(sample.data, w.data);
     }
 }

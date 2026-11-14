@@ -94,14 +94,10 @@ impl Rig {
                     .samples
                     .into_iter()
                     .map(|mut s| {
-                        if let Some(pts) = s.timing.and_then(|t| t.pts())
-
-                            && let Some(t) = s.timing.as_mut()
-
+                        if let Some(t) = s.timing.as_mut()
                             && t.dts() == Some(0)
                         {
-
-                        t.shift(pts);
+                            t.shift(t.pts().unwrap_or(0));
                         }
                         s
                     })

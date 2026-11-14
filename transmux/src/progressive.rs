@@ -492,7 +492,7 @@ impl Package for ProgressiveMux {
             find_top_box(&init, b"moov").ok_or(Error::UnexpectedBox { expected: "moov" })?;
         let mut moov = MovieBox::parse(moov_bytes)?;
         moov.mvex = None; // not a fragmented movie
-        let timings = track_timings(media, movie_timescale);
+        let timings = track_timings(media, movie_timescale)?;
         apply_track_timings(&mut moov, &timings);
 
         // The mdat payload layout: each track is cut into ~0.5 s chunks and
@@ -701,7 +701,7 @@ struct TrackTiming {
 /// an `elst` (ISO/IEC 14496-12:2026 §8.6.6) delays a track that starts after
 /// the earliest one by an empty edit and skips its composition lead-in, so the
 /// inter-track offsets of the IR survive into the file.
-fn track_timings(media: &Media, movie_timescale: Timescale) -> Vec<TrackTiming> {
+fn track_timings(media: &Media, movie_timescale: Timescale) -> Result<Vec<TrackTiming>> {
     let origin = TimelineOrigin::of(&media.tracks);
     let to_movie = |ticks: i64, ts: Timescale| {
         rescale(i128::from(ticks), ts, movie_timescale, Rounding::Floor)
@@ -715,10 +715,12 @@ fn track_timings(media: &Media, movie_timescale: Timescale) -> Vec<TrackTiming> 
     let spans: Vec<Span> = media
         .tracks
         .iter()
-        .map(|t| {
+        .map(|t| -> Result<Span> {
             let times = relative_decode_times(t, &origin);
             let pres = t.samples.iter().zip(&times).fold(None, |acc, (s, &d)| {
-                let p = d.saturating_add(i64::from(s.timing.and_then(|t| t.pts()).unwrap_or(d)));
+                let p = d.saturating_add(i64::from(
+                    s.composition_offset().ok().flatten().unwrap_or(0),
+                ));
                 let e =
                     p.saturating_add(i64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)));
                 Some(match acc {
@@ -726,9 +728,9 @@ fn track_timings(media: &Media, movie_timescale: Timescale) -> Vec<TrackTiming> 
                     Some((lo, hi)) => (p.min(lo), e.max(hi)),
                 })
             });
-            Span { times, pres }
+            Ok(Span { times, pres })
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
     let movie_start = media
         .tracks
         .iter()
@@ -737,7 +739,7 @@ fn track_timings(media: &Media, movie_timescale: Timescale) -> Vec<TrackTiming> 
         .min()
         .unwrap_or(0);
 
-    media
+    let result = media
         .tracks
         .iter()
         .zip(spans)
@@ -801,7 +803,8 @@ fn track_timings(media: &Media, movie_timescale: Timescale) -> Vec<TrackTiming> 
                 )),
             }
         })
-        .collect()
+        .collect::<Vec<_>>();
+    Ok(result)
 }
 
 /// Set the `mvhd` and per-track `tkhd`/`mdhd` durations and `edts` from the

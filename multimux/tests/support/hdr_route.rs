@@ -52,8 +52,7 @@ pub fn load(fixture: &str) -> Vec<Source> {
                     if let Some(t) = s.timing.as_mut()
                         && t.dts() == Some(0)
                     {
-                        let pts = t.pts().unwrap_or(0);
-                        t.shift(pts);
+                        t.shift(t.pts().unwrap_or(0));
                     }
                     s
                 })
@@ -127,7 +126,11 @@ pub fn route_app_with_profiles(
         }
         let scale = f64::from(src.spec.timescale.get());
         for (si, s) in src.samples.iter().enumerate() {
-            order.push((s.timing.and_then(|t| t.dts()).unwrap_or(0) as f64 / scale, ti, si));
+            order.push((
+                s.timing.and_then(|t| t.dts()).unwrap_or(0) as f64 / scale,
+                ti,
+                si,
+            ));
         }
     }
     order.sort_by(|a, b| a.0.total_cmp(&b.0));

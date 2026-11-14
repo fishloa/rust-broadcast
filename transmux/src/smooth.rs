@@ -847,7 +847,7 @@ fn build_smooth_fragment(
     let (tfhd, trun) = media_fragment_run(
         track_id,
         samples.iter().zip(times).map(|(s, t)| MediaRunSample {
-            duration: Some(t.duration),
+            duration: t.duration,
             size: s.data.len(),
             is_sync: s.flags.is_sync,
             composition_offset: t.composition_offset,
@@ -971,7 +971,9 @@ mod tests {
         let mk = |sync: bool| Sample {
             data: alloc::vec![0u8; 4].into(),
             // Grouping is duration-driven; absolute time is irrelevant here.
-            timing: Some(crate::ir::SampleTiming::DurationOnly { duration: 1 }),
+            timing: Some(crate::ir::SampleTiming::DurationOnly {
+                duration: core::num::NonZeroU32::new(1).unwrap(),
+            }),
             flags: crate::ir::SampleFlags::new(sync),
             provenance: None,
             display: None,

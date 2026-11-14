@@ -342,7 +342,10 @@ fn first_video_pts_after(nb_events: &[Event], from: usize) -> u64 {
             && track.value() == VIDEO
             && !matches!(join, Some(JoinDecision::Drop(_)))
         {
-            return to27(sample.timing.and_then(|t| t.pts()).unwrap(), ts[track].get());
+            return to27(
+                sample.timing.and_then(|t| t.pts()).unwrap(),
+                ts[track].get(),
+            );
         }
     }
     panic!("no video sample after {from}");

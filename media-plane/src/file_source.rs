@@ -319,7 +319,10 @@ impl ParsedFile {
                 .iter()
                 .filter_map(|s| {
                     let pts = s.timing.and_then(|t| t.pts())?;
-                    let dts = s.timing.and_then(|t| t.dts()).or(s.timing.and_then(|t| t.pts()))?;
+                    let dts = s
+                        .timing
+                        .and_then(|t| t.dts())
+                        .or(s.timing.and_then(|t| t.pts()))?;
                     Some((dts as f64 / timescale, pts as f64 / timescale, s.clone()))
                 })
                 .collect();
@@ -804,10 +807,11 @@ impl FileIngestSession {
             let mut sample = item.sample.clone();
             let off = self.offsets[item.track_ref];
             if let Some(t) = sample.timing.as_mut() {
-                if let Some(pts) = t.pts() {
-                    let moved = pts.checked_add(off).ok_or(FileReaderError::OffsetOverflow)?;
-                    t.shift(moved);
-                }
+                let current = t.pts().unwrap_or(0);
+                let shifted = current
+                    .checked_add(off)
+                    .ok_or(FileReaderError::OffsetOverflow)?;
+                t.shift(shifted - current);
             }
             let within_pass = (item.due_seconds - self.file_start_secs).max(0.0);
             self.queue
