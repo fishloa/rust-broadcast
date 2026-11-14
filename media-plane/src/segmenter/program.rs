@@ -2591,7 +2591,7 @@ mod segmenter_tests {
             );
         }
         let mut changed = track_spec(TrackId::new(1));
-        changed.timescale = Timescale::const_from_nonzero(45_000);
+        changed.timescale = broadcast_common::timescale!(45_000);
         writer.set_tracks(vec![changed.clone()]);
         assert_eq!(trunk.track_generation(), 2);
         let mut events = Vec::new();
@@ -2785,7 +2785,7 @@ mod segmenter_tests {
 
         // Changed spec: bump the timescale (a discontinuity trigger).
         let mut changed = track_spec(TrackId::new(1));
-        changed.timescale = Timescale::const_from_nonzero(45_000);
+        changed.timescale = broadcast_common::timescale!(45_000);
         writer.set_tracks(vec![changed.clone()]);
         segmenter.published_tracks = trunk.tracks();
         let mut events = Vec::new();

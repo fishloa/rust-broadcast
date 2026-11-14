@@ -380,7 +380,7 @@ fn lossless_round_trip_video() {
     // the manifest `TimeScale` (10 MHz), so the fragments' `trun` values are
     // read in that timescale (issue #1022).
     let mut spec = vid.spec.clone();
-    spec.timescale = Timescale::const_from_nonzero(10_000_000);
+    spec.timescale = broadcast_common::timescale!(10_000_000);
     let specs = vec![spec];
     let mut file = build_init_segment(&specs, media.movie_timescale).expect("init segment");
 

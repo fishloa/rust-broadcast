@@ -36,7 +36,7 @@ use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 
 const TARGET_DURATION_SECS: f64 = 1.0;
 const TRACK_ID: u32 = 1;
-const TIMESCALE: Timescale = Timescale::const_from_nonzero(90_000);
+const TIMESCALE: Timescale = broadcast_common::timescale!(90_000);
 const FRAME_DUR: u32 = TIMESCALE.get() / 30;
 const SYNC_INTERVAL: u32 = 15;
 

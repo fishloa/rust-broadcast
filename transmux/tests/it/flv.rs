@@ -475,7 +475,7 @@ fn alloc_body(len: usize) -> Vec<u8> {
 /// composition offset was truncated into SI24.
 #[test]
 fn package_rescales_non_ms_timescales() {
-    const VIDEO_TIMESCALE: Timescale = Timescale::const_from_nonzero(90_000);
+    const VIDEO_TIMESCALE: Timescale = broadcast_common::timescale!(90_000);
     const FRAME_TICKS: u32 = 3_000; // 30 fps at 90 kHz
 
     // One AVC `avc1` from the real fixture, so the muxer has a valid config.
@@ -579,7 +579,7 @@ fn package_rejects_oversized_composition_time() {
     let track = transmux::Track::new(
         transmux::TrackSpec::new(
             TrackId::new(1),
-            Timescale::const_from_nonzero(1000),
+            broadcast_common::timescale!(1000),
             CodecConfig::Avc {
                 config,
                 width: 320,
@@ -588,7 +588,7 @@ fn package_rejects_oversized_composition_time() {
         ),
         vec![sample],
     );
-    let media = transmux::Media::new(vec![track], Timescale::const_from_nonzero(1000));
+    let media = transmux::Media::new(vec![track], broadcast_common::timescale!(1000));
 
     let mut mux = FlvMux::new();
     let err = mux
@@ -624,7 +624,7 @@ fn frame_payloads_reject_out_of_range_timestamps() {
         let track = transmux::Track::new(
             transmux::TrackSpec::new(
                 TrackId::new(1),
-                Timescale::const_from_nonzero(1000),
+                broadcast_common::timescale!(1000),
                 CodecConfig::Avc {
                     config: config.clone(),
                     width: 320,
@@ -633,7 +633,7 @@ fn frame_payloads_reject_out_of_range_timestamps() {
             ),
             vec![sample],
         );
-        transmux::Media::new(vec![track], Timescale::const_from_nonzero(1000))
+        transmux::Media::new(vec![track], broadcast_common::timescale!(1000))
     };
     // Sanity: in-range input is accepted (so the Errs below are the guards).
     assert!(transmux::flv_frame_payloads(&media_with(0, 0)).is_ok());

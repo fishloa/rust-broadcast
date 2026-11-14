@@ -146,16 +146,14 @@ pub fn signed_distance(from: u64, to: u64) -> i64 {
 pub const PTS_HZ: u64 = PTS_TIMESCALE.as_u64();
 
 /// [`PTS_HZ`] as a [`Timescale`](crate::timescale::Timescale).
-pub const PTS_TIMESCALE: crate::timescale::Timescale =
-    crate::timescale::Timescale::const_from_nonzero(90_000);
+pub const PTS_TIMESCALE: crate::timescale::Timescale = crate::timescale!(90_000);
 
 /// The 27 MHz system-clock rate: the unit of a full `PCR` (`base * 300 +
 /// extension`), ESCR and SCR value (ISO/IEC 13818-1 §2.4.2.1 / §2.4.3.5).
 pub const PCR_HZ: u64 = PCR_TIMESCALE.as_u64();
 
 /// [`PCR_HZ`] as a [`Timescale`](crate::timescale::Timescale).
-pub const PCR_TIMESCALE: crate::timescale::Timescale =
-    crate::timescale::Timescale::const_from_nonzero(27_000_000);
+pub const PCR_TIMESCALE: crate::timescale::Timescale = crate::timescale!(27_000_000);
 
 /// `base * 300 + extension`: how many 27 MHz ticks one 90 kHz base tick spans
 /// (`PCR_HZ / PTS_HZ`), and the modulus of the 9-bit `extension`.

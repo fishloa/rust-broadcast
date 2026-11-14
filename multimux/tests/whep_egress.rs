@@ -434,7 +434,7 @@ mod instant {
 
     pub const SPROP: &str = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
     const VIDEO_TIMESCALE: broadcast_common::timescale::Timescale =
-        broadcast_common::timescale::Timescale::const_from_nonzero(90_000);
+        broadcast_common::timescale!(90_000);
     const FRAME_DUR: u32 = VIDEO_TIMESCALE.get() / 30;
     const FRAME_COUNT: u32 = 24;
 

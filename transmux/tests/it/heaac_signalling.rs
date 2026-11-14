@@ -17,7 +17,7 @@ use transmux::{
     SamplingFrequencyIndex, TrackSpec, TsDemux, TsMux, build_init_segment, rfc6381_codec_string,
 };
 
-const MOVIE_TIMESCALE: Timescale = Timescale::const_from_nonzero(1000);
+const MOVIE_TIMESCALE: Timescale = broadcast_common::timescale!(1000);
 const CORE_HZ: u32 = 22_050;
 const OUTPUT_HZ: u32 = 44_100;
 const AAC_FRAME_SAMPLES: u32 = 1024;

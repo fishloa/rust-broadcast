@@ -1000,8 +1000,7 @@ fn config_smooth_deserializes_and_validates() {
 /// An AAC-LC `AudioSpecificConfig` for 48 kHz stereo.
 const ASC_48K_STEREO: [u8; 2] = [0x11, 0x90];
 /// The AAC media timescale.
-const AAC_TIMESCALE: broadcast_common::timescale::Timescale =
-    broadcast_common::timescale::Timescale::const_from_nonzero(48_000);
+const AAC_TIMESCALE: broadcast_common::timescale::Timescale = broadcast_common::timescale!(48_000);
 /// An AAC-LC frame duration, in [`AAC_TIMESCALE`] ticks.
 const AAC_FRAME_DUR: u32 = 1024;
 /// The channel count the AAC config reports.

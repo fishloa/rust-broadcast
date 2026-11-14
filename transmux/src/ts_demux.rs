@@ -504,7 +504,7 @@ const MPEGH_SAMPLE_RATE_UNSPECIFIED: u32 = 0;
 /// (issue #1171).
 const MPEGH_CONFIG_LEN_MAX: usize = u16::MAX as usize;
 /// Video media timescale (90 kHz — the TS/PES timestamp clock).
-const VIDEO_TIMESCALE: Timescale = Timescale::const_from_nonzero(crate::rtp::VIDEO_CLOCK_RATE);
+const VIDEO_TIMESCALE: Timescale = broadcast_common::timescale!(crate::rtp::VIDEO_CLOCK_RATE);
 /// Samples per AAC access unit (ISO/IEC 14496-3 — one frame = 1024 samples).
 const AAC_SAMPLES_PER_FRAME: u32 = 1024;
 
@@ -11266,7 +11266,7 @@ pub(crate) mod tests {
     fn constant_increment_44100_aac_emits_no_timeline_reanchor() {
         /// What a muxer that rounds `1024 * 90000 / 44100` to an integer emits.
         const PES_INCREMENT_TICKS: i128 = 2090;
-        const SAMPLE_RATE: Timescale = Timescale::const_from_nonzero(44_100);
+        const SAMPLE_RATE: Timescale = broadcast_common::timescale!(44_100);
         /// ~11.6 s of audio. Accumulated drift here is ~102 ticks: far past
         /// the old 3-tick threshold (which would have fired ~34 times), far
         /// short of the 1800-tick (20 ms) bound the fix derives.
@@ -11320,7 +11320,7 @@ pub(crate) mod tests {
     #[test]
     fn a_real_timeline_gap_emits_exactly_one_reanchor() {
         const PES_INCREMENT_TICKS: i128 = 2090;
-        const SAMPLE_RATE: Timescale = Timescale::const_from_nonzero(44_100);
+        const SAMPLE_RATE: Timescale = broadcast_common::timescale!(44_100);
         const FRAMES_BEFORE: i128 = 50;
         const FRAMES_AFTER: i128 = 50;
         /// Two seconds of 90 kHz — orders of magnitude past any muxer drift.

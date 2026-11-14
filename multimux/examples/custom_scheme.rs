@@ -85,7 +85,7 @@ use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 const SPROP: &str = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
 /// 90 kHz video timescale — 1/30 s per access unit at 30 fps.
 const VIDEO_TIMESCALE: broadcast_common::timescale::Timescale =
-    broadcast_common::timescale::Timescale::const_from_nonzero(90_000);
+    broadcast_common::timescale!(90_000);
 const FRAME_DUR: u32 = VIDEO_TIMESCALE.get() / 30;
 /// Enough synthetic frames (2 s @ 30 fps) that a real scheme's samples would
 /// already have landed in the `Trunk`.

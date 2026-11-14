@@ -45,6 +45,38 @@ impl Rounding {
 
 crate::impl_spec_display!(Rounding);
 
+/// A media timescale from a literal (or a named constant) the compiler can
+/// prove non-zero.
+///
+/// The whole check happens at compile time: the `match` sits in an inline
+/// `const` block, so `timescale!(0)` is a compile error even inside a `fn` and
+/// there is no runtime path that could reach the `panic!`.
+///
+/// ```compile_fail
+/// // A zero timescale cannot be named, not even inside a function.
+/// fn price() -> broadcast_common::timescale::Timescale {
+///     broadcast_common::timescale!(0)
+/// }
+/// ```
+///
+/// ```
+/// let t = broadcast_common::timescale!(90_000);
+/// assert_eq!(t.get(), 90_000);
+/// let micros = ::broadcast_common::timescale!(::broadcast_common::timescale::MICROS_PER_SECOND);
+/// assert_eq!(micros, ::broadcast_common::timescale::Timescale::MICROS);
+/// ```
+#[macro_export]
+macro_rules! timescale {
+    ($value:expr) => {
+        const {
+            match ::core::num::NonZeroU32::new($value) {
+                ::core::option::Option::Some(nz) => $crate::timescale::Timescale::from_nonzero(nz),
+                ::core::option::Option::None => panic!("a timescale is never zero"),
+            }
+        }
+    };
+}
+
 /// A media timescale (ticks per second), guaranteed non-zero.
 ///
 /// The wire can carry a zero timescale (a parsed `mdhd`/`TimeScale` field, an
@@ -55,31 +87,23 @@ crate::impl_spec_display!(Rounding);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
-pub struct Timescale(pub core::num::NonZeroU32);
+pub struct Timescale(core::num::NonZeroU32);
 
 impl Timescale {
     /// Ticks per second of the microsecond timescale.
-    pub const MICROS: Self = Timescale::const_from_nonzero(MICROS_PER_SECOND);
+    pub const MICROS: Self = crate::timescale!(MICROS_PER_SECOND);
 
     /// Ticks per second of the nanosecond timescale.
-    pub const NANOS: Self = Timescale::const_from_nonzero(1_000_000_000);
+    pub const NANOS: Self = crate::timescale!(1_000_000_000);
 
-    /// A timescale for a value the compiler can prove non-zero: a named
-    /// `const`, or a literal in a `const` item (where `?` is unavailable). A
-    /// `0` is a compile error. Every runtime value goes through [`Self::new`]
-    /// or [`Self::try_new`] instead.
+    /// A timescale from a value already known non-zero, with no failure path.
     ///
-    /// ```compile_fail
-    /// // A zero timescale cannot be named, not even as a literal.
-    /// const _: broadcast_common::timescale::Timescale =
-    ///     broadcast_common::timescale::Timescale::const_from_nonzero(0);
-    /// ```
+    /// A literal belongs in [`timescale!`](crate::timescale), which proves it
+    /// non-zero at compile time; a runtime `u32` goes through [`Self::new`] or
+    /// [`Self::try_new`], which report the zero instead of panicking.
     #[must_use]
-    pub const fn const_from_nonzero(value: u32) -> Self {
-        match core::num::NonZeroU32::new(value) {
-            Some(nz) => Self(nz),
-            None => unreachable!(),
-        }
+    pub const fn from_nonzero(value: core::num::NonZeroU32) -> Self {
+        Self(value)
     }
 
     /// Construct from a raw value, returning `None` for zero.
@@ -246,9 +270,9 @@ mod tests {
     use super::*;
     use alloc::string::ToString;
 
-    const T1: Timescale = Timescale::const_from_nonzero(1);
-    const T48K: Timescale = Timescale::const_from_nonzero(48_000);
-    const T90K: Timescale = Timescale::const_from_nonzero(90_000);
+    const T1: Timescale = crate::timescale!(1);
+    const T48K: Timescale = crate::timescale!(48_000);
+    const T90K: Timescale = crate::timescale!(90_000);
 
     fn ts(value: u32) -> Timescale {
         Timescale::try_new(value).expect("a non-zero timescale")
@@ -291,6 +315,16 @@ mod tests {
         assert!(Timescale::try_new(0).is_err());
         assert!(Timescale::try_from(0u32).is_err());
         assert_eq!(Timescale::new(0), None);
+    }
+
+    /// The literal macro builds the value it names, in a `const` item and in an
+    /// ordinary expression alike (the compile-time proof is what lets it).
+    #[test]
+    fn the_literal_macro_names_the_timescale_it_is_given() {
+        const T: Timescale = crate::timescale!(90_000);
+        assert_eq!(T.get(), 90_000);
+        assert_eq!(crate::timescale!(1).get(), 1);
+        assert_eq!(Timescale::from_nonzero(core::num::NonZeroU32::MIN).get(), 1);
     }
 
     /// A zero timescale cannot reach the arithmetic: the type has no zero

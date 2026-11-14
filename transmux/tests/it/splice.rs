@@ -41,7 +41,7 @@ fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
 }
 
-const TIMESCALE: Timescale = Timescale::const_from_nonzero(90_000);
+const TIMESCALE: Timescale = broadcast_common::timescale!(90_000);
 
 fn avc_spec(track_id: u32) -> TrackSpec {
     let record = AVCDecoderConfigurationRecord {

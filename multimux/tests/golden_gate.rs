@@ -234,7 +234,7 @@ async fn drive_pull(playlist_url: &str, enough: usize, probe: &Probe) -> ClientR
 const TARGET_DURATION_SECS: f64 = 1.0;
 /// The movie timescale the origin's segmenter and the rebuilt init share.
 const MOVIE_TIMESCALE: broadcast_common::timescale::Timescale =
-    broadcast_common::timescale::Timescale::const_from_nonzero(90_000);
+    broadcast_common::timescale!(90_000);
 const PART_TARGET_MS: u32 = 120;
 const WINDOW_SEGMENTS: usize = 8;
 

@@ -207,11 +207,11 @@ const fn ebml_lace_delta_bias(vint_len: usize) -> i64 {
 /// Default `TimestampScale` when the `Info` element omits it (RFC 9559 §27): 1 ms.
 const DEFAULT_TIMESTAMP_SCALE_NS: u64 = 1_000_000;
 /// The IR timescale (ticks per second) this demuxer emits: milliseconds.
-pub const IR_TIMESCALE: Timescale = Timescale::const_from_nonzero(1000);
+pub const IR_TIMESCALE: Timescale = broadcast_common::timescale!(1000);
 /// Nanoseconds per second (TimestampScale → IR-tick conversion).
 const NS_PER_SECOND: u64 = 1_000_000_000;
 /// Nanoseconds as a [`Timescale`] (a `DefaultDuration` is a count of ns).
-const NS_TIMESCALE: Timescale = Timescale::const_from_nonzero(1_000_000_000);
+const NS_TIMESCALE: Timescale = broadcast_common::timescale!(1_000_000_000);
 /// OpusHead identification-header magic (RFC 7845 §5.1).
 const OPUS_HEAD_MAGIC: &[u8; 8] = b"OpusHead";
 /// Minimum OpusHead length: magic(8) + version(1) + channels(1) + pre-skip(2) +

@@ -320,7 +320,7 @@ pub const SMOOTH_TIMESCALE: u64 = SMOOTH_DEFAULT_TIMESCALE.as_u64();
 
 /// The Smooth default manifest time scale as a [`Timescale`]: the value an
 /// absent `SmoothStreamingMedia@TimeScale` resolves to.
-pub const SMOOTH_DEFAULT_TIMESCALE: Timescale = Timescale::const_from_nonzero(10_000_000);
+pub const SMOOTH_DEFAULT_TIMESCALE: Timescale = broadcast_common::timescale!(10_000_000);
 
 /// `SmoothStreamingMedia@MajorVersion` a constructed manifest carries (2).
 pub const DEFAULT_MAJOR_VERSION: u32 = 2;

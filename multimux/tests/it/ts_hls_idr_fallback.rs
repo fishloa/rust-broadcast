@@ -38,7 +38,7 @@ const FRAME_SLACK_SECS: f64 = 0.2;
 const LATE_SLACK_SECS: f64 = 6.0;
 const MIN_SEGMENTS: usize = 2;
 const MOVIE_TIMESCALE: broadcast_common::timescale::Timescale =
-    broadcast_common::timescale::Timescale::const_from_nonzero(90_000);
+    broadcast_common::timescale!(90_000);
 const FRANCE2_FIRST_NON_IDR_SYNC: usize = 20;
 const FRANCE2_LOOP_REPS: usize = 4;
 const GULLI_LOOP_REPS: usize = 3;

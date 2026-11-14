@@ -4524,7 +4524,7 @@ mod tests {
         let m = sample_mvhd_v0();
         let orig = m.try_to_bytes().unwrap();
         let mut m2 = m.clone();
-        m2.timescale = Timescale::const_from_nonzero(30000);
+        m2.timescale = broadcast_common::timescale!(30000);
         let mutated = m2.try_to_bytes().unwrap();
         assert_ne!(orig, mutated);
         // Verify the right field changed

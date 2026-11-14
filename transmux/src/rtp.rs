@@ -108,7 +108,7 @@ const DYNAMIC_PT_MAX: u8 = 127;
 /// Default video RTP clock rate (RFC 6184 — H.264 is carried at 90 kHz).
 pub const VIDEO_CLOCK_RATE: u32 = 90_000;
 /// [`VIDEO_CLOCK_RATE`] as a [`Timescale`], for the IR timescale of a 90 kHz track.
-pub const VIDEO_CLOCK_TIMESCALE: Timescale = Timescale::const_from_nonzero(VIDEO_CLOCK_RATE);
+pub const VIDEO_CLOCK_TIMESCALE: Timescale = broadcast_common::timescale!(VIDEO_CLOCK_RATE);
 /// Default audio RTP clock rate used by [`RtpInputStream::new`] when the
 /// caller does not supply the stream's own (RFC 3551 §4.5 lists 48000 as a
 /// registered audio clock rate; the negotiated rate belongs in the SDP's

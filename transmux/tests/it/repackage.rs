@@ -567,9 +567,9 @@ fn trim_window_follows_real_dts_not_duration_sum() {
 /// track onto that LCM (`a / gcd * b`), which panics in debug and wraps in
 /// release; comparing cross-multiplied in `u128` is exact for any pair.
 const BIG_TIMESCALES: [Timescale; 3] = [
-    Timescale::const_from_nonzero(4_294_967_291),
-    Timescale::const_from_nonzero(4_294_967_279),
-    Timescale::const_from_nonzero(4_294_967_231),
+    broadcast_common::timescale!(4_294_967_291),
+    broadcast_common::timescale!(4_294_967_279),
+    broadcast_common::timescale!(4_294_967_231),
 ];
 
 /// Every `track_id` a `trun` sample belongs to, in output order — the interleave
