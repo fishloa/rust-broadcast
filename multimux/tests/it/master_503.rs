@@ -47,12 +47,7 @@ fn llhls_route_with_segment() -> Arc<RouteHandle> {
     route
         .add_segment(
             media_plane::ProgramId(0),
-            transmux::ll_hls::SegmentInfo {
-                bytes: vec![0x21; 8],
-                duration: 4.0,
-                segment_seq: 1,
-                part_count: 0,
-            },
+            transmux::ll_hls::SegmentInfo::new(vec![0x21; 8], 4.0, 1),
         )
         .expect("add_segment");
     route
@@ -230,12 +225,7 @@ async fn master_ratchets_bandwidth_over_http() {
     route
         .add_segment(
             media_plane::ProgramId(0),
-            transmux::ll_hls::SegmentInfo {
-                bytes: vec![0x21; 8],
-                duration: 4.0,
-                segment_seq: 1,
-                part_count: 0,
-            },
+            transmux::ll_hls::SegmentInfo::new(vec![0x21; 8], 4.0, 1),
         )
         .expect("add_segment");
     let resp = app
@@ -261,12 +251,7 @@ async fn master_ratchets_bandwidth_over_http() {
     route
         .add_segment(
             media_plane::ProgramId(0),
-            transmux::ll_hls::SegmentInfo {
-                bytes: vec![0x21; 1_500_000],
-                duration: 1.0,
-                segment_seq: 2,
-                part_count: 0,
-            },
+            transmux::ll_hls::SegmentInfo::new(vec![0x21; 1_500_000], 1.0, 2),
         )
         .expect("add_segment");
     let resp = app
@@ -292,12 +277,7 @@ async fn master_ratchets_bandwidth_over_http() {
     route
         .add_segment(
             media_plane::ProgramId(0),
-            transmux::ll_hls::SegmentInfo {
-                bytes: vec![0x21; 10],
-                duration: 3.0,
-                segment_seq: 3,
-                part_count: 0,
-            },
+            transmux::ll_hls::SegmentInfo::new(vec![0x21; 10], 3.0, 3),
         )
         .expect("add_segment");
     let resp = app

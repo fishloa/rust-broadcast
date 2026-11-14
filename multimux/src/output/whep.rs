@@ -116,8 +116,7 @@ use transmux::{
 };
 
 use webrtc_runtime::media::{
-    Datagram, MAX_REMOTE_CANDIDATES, MediaEvent, MediaTransport, MediaTransportConfig, SetupRole,
-    parse_remote_fingerprint,
+    Datagram, MediaEvent, MediaTransport, MediaTransportConfig, SetupRole, parse_remote_fingerprint,
 };
 use webrtc_runtime::sdp::{
     AnswerCodec, AnswerTransport, CodecAttribute, CodecAttributeName, Direction,
@@ -373,6 +372,7 @@ fn build_whep_answer(
 /// ordering without the random cert/candidate values.
 /// Parameters shared by the WHEP answer renderer and its test hook.
 #[derive(Clone, Copy)]
+#[non_exhaustive]
 pub struct WhepAnswerParams<'a> {
     /// Local socket address rendered into the candidate/transport lines.
     pub local_addr: SocketAddr,
@@ -695,18 +695,15 @@ async fn whep_post_inner(
     let local_ice_ufrag = crate::secure_random::token(8);
     let local_ice_pwd = crate::secure_random::token(24);
     let mut media = MediaTransport::new(
-        MediaTransportConfig {
+        MediaTransportConfig::new(
             local_addr,
-            local_ice_ufrag: local_ice_ufrag.clone(),
-            local_ice_pwd: local_ice_pwd.clone(),
-            remote_ice_ufrag: parsed.remote_ufrag.clone(),
-            remote_ice_pwd: parsed.remote_pwd.clone(),
-            remote_fingerprint: parsed.remote_fingerprint.clone(),
-            is_controlling: false,
-            local_setup: setup_role,
-            stun_server: None,
-            max_remote_candidates: MAX_REMOTE_CANDIDATES,
-        },
+            local_ice_ufrag.clone(),
+            local_ice_pwd.clone(),
+            parsed.remote_ufrag.clone(),
+            parsed.remote_pwd.clone(),
+            setup_role,
+            parsed.remote_fingerprint.clone(),
+        ),
         Instant::now(),
     )
     .map_err(|e| MultimuxError::Connect {
@@ -2200,18 +2197,15 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
         let ufrag = crate::secure_random::token(8);
         let (attachment, inbound) = shared.attach(&ufrag).unwrap();
         let media = MediaTransport::new(
-            MediaTransportConfig {
-                local_addr: shared.local_addr(),
-                local_ice_ufrag: ufrag,
-                local_ice_pwd: crate::secure_random::token(24),
-                remote_ice_ufrag: crate::secure_random::token(8),
-                remote_ice_pwd: crate::secure_random::token(24),
-                is_controlling: false,
-                local_setup: SetupRole::Passive,
-                stun_server: None,
-                max_remote_candidates: MAX_REMOTE_CANDIDATES,
-                remote_fingerprint: OFFER_FINGERPRINT.into(),
-            },
+            MediaTransportConfig::new(
+                shared.local_addr(),
+                ufrag,
+                crate::secure_random::token(24),
+                crate::secure_random::token(8),
+                crate::secure_random::token(24),
+                SetupRole::Passive,
+                OFFER_FINGERPRINT.into(),
+            ),
             Instant::now(),
         )
         .unwrap();
@@ -2530,18 +2524,15 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
     #[test]
     fn stun_integrity_failures_surface_as_err_not_ok() {
         let mut media = MediaTransport::new(
-            MediaTransportConfig {
-                local_addr: "127.0.0.1:0".parse().unwrap(),
-                local_ice_ufrag: "localuf01".into(),
-                local_ice_pwd: "local-ice-password-000000".into(),
-                remote_ice_ufrag: "remoteuf01".into(),
-                remote_ice_pwd: "remote-ice-password-00000".into(),
-                is_controlling: false,
-                local_setup: SetupRole::Passive,
-                stun_server: None,
-                max_remote_candidates: MAX_REMOTE_CANDIDATES,
-                remote_fingerprint: OFFER_FINGERPRINT.into(),
-            },
+            MediaTransportConfig::new(
+                "127.0.0.1:0".parse().unwrap(),
+                "localuf01".into(),
+                "local-ice-password-000000".into(),
+                "remoteuf01".into(),
+                "remote-ice-password-00000".into(),
+                SetupRole::Passive,
+                OFFER_FINGERPRINT.into(),
+            ),
             Instant::now(),
         )
         .unwrap();

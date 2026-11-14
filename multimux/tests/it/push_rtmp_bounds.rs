@@ -19,11 +19,9 @@ const MSG_COMMAND_AMF0: rtmp_runtime::message::MessageTypeId =
 
 /// The write bound is the `write` field of the config's `timeouts`.
 fn config_with_write_bound() -> RtmpTransportConfig {
-    RtmpTransportConfig {
-        timeouts: broadcast_common::timeouts::Timeouts::default()
-            .with_write(Duration::from_millis(300)),
-        ..Default::default()
-    }
+    RtmpTransportConfig::default().with_timeouts(
+        broadcast_common::timeouts::Timeouts::default().with_write(Duration::from_millis(300)),
+    )
 }
 
 /// What the scripted peer does once the client's `publish` was accepted.
@@ -103,10 +101,7 @@ async fn control_the_captured_tc_url_is_readable_for_an_ipv4_target() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let peer = spawn_peer(listener, AfterPublish::DrainToEof);
-    let cfg = RtmpTransportConfig {
-        stream_key: "key".into(),
-        ..Default::default()
-    };
+    let cfg = RtmpTransportConfig::default().with_stream_key("key".into());
     let mut t = tokio::time::timeout(
         GUARD,
         RtmpTransport::connect(&format!("rtmp://127.0.0.1:{port}/live/key"), &cfg),
@@ -142,10 +137,7 @@ async fn an_ipv6_push_target_sends_a_bracketed_tc_url() {
     };
     let port = listener.local_addr().unwrap().port();
     let peer = spawn_peer(listener, AfterPublish::DrainToEof);
-    let cfg = RtmpTransportConfig {
-        stream_key: "key".into(),
-        ..Default::default()
-    };
+    let cfg = RtmpTransportConfig::default().with_stream_key("key".into());
     let mut t = tokio::time::timeout(
         GUARD,
         RtmpTransport::connect(&format!("rtmp://[::1]:{port}/live/key"), &cfg),
@@ -169,10 +161,7 @@ async fn a_stalled_peer_fails_send_at_the_write_bound() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let _peer = spawn_peer(listener, AfterPublish::StopReading);
-    let cfg = RtmpTransportConfig {
-        stream_key: "key".into(),
-        ..config_with_write_bound()
-    };
+    let cfg = config_with_write_bound().with_stream_key("key".into());
     let mut t = tokio::time::timeout(
         GUARD,
         RtmpTransport::connect(&format!("rtmp://127.0.0.1:{port}/live/key"), &cfg),

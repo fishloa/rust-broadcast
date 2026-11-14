@@ -12,13 +12,13 @@ fn rewrap_matches(emsg_bytes: &[u8]) {
     let splice = emsg_to_scte35(emsg_bytes).expect("extract splice");
     // Rebuild cfg from the parsed box so the re-wrap is faithful.
     let b = EmsgBox::parse(emsg_bytes).unwrap();
-    let cfg = EmsgConfig {
-        timescale: b.timescale,
-        presentation: b.presentation_time,
-        event_duration: b.event_duration,
-        value: b.value.to_string(),
-        id: b.id,
-    };
+    let cfg = EmsgConfig::new(
+        b.timescale,
+        b.presentation_time,
+        b.event_duration,
+        b.value.to_string(),
+        b.id,
+    );
     let rebuilt = scte35_to_emsg(&splice, &cfg).expect("re-wrap");
     assert_eq!(
         rebuilt, emsg_bytes,

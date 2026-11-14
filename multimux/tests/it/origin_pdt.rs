@@ -336,12 +336,12 @@ fn file_config(
     bind: std::net::SocketAddr,
     program_date_time: Option<multimux::config::ProgramDateTimeSource>,
 ) -> Config {
-    let mut cfg = Config {
-        bind: bind.to_string(),
-        target_duration_secs: 0.5,
-        part_target: Duration::from_millis(100),
-        window_segments: 8,
-        routes: vec![Route {
+    let mut cfg = Config::default()
+        .with_bind(bind.to_string())
+        .with_target_duration_secs(0.5)
+        .with_part_target(Duration::from_millis(100))
+        .with_window_segments(8)
+        .with_routes(vec![Route {
             name: "cam".to_string(),
             input: InputSpec::File {
                 path: test_fixtures::path("ts/h264-aac.ts")
@@ -359,9 +359,7 @@ fn file_config(
             closed_caption_overrides: Vec::new(),
             audio_profiles: Vec::new(),
             subtitles: true,
-        }],
-        ..Config::default()
-    };
+        }]);
     if let Some(pdt) = program_date_time {
         cfg.program_date_time = pdt;
     }

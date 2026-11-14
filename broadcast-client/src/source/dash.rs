@@ -1378,27 +1378,32 @@ fn master_selection(selection: &ManifestSelection) -> MasterSelection {
     let variants = selection
         .variants
         .iter()
-        .map(|v| VariantInfo {
-            url: v.init_url.clone().unwrap_or_default(),
-            bandwidth: u32::try_from(v.bandwidth).unwrap_or(u32::MAX),
-            average_bandwidth: None,
-            resolution: v.resolution,
-            codecs: v.codecs.clone(),
-            audio_group: v.audio_group.clone(),
-            subtitles_group: None,
+        .map(|v| {
+            let mut info = VariantInfo::new(
+                v.init_url.clone().unwrap_or_default(),
+                u32::try_from(v.bandwidth).unwrap_or(u32::MAX),
+            );
+            info.resolution = v.resolution;
+            info.codecs = v.codecs.clone();
+            info.audio_group = v.audio_group.clone();
+            info.subtitles_group = None;
+            info
         })
         .collect();
     let renditions = selection
         .audio
         .iter()
-        .map(|a| RenditionInfo {
-            media_type: MediaType::Audio,
-            group_id: a.group.clone().unwrap_or_else(|| a.set.to_string()),
-            name: a.name.clone(),
-            language: a.language.clone(),
-            default: a.default,
-            autoselect: a.autoselect,
-            url: a.init_url.clone(),
+        .map(|a| {
+            let mut info = RenditionInfo::new(
+                MediaType::Audio,
+                a.group.clone().unwrap_or_else(|| a.set.to_string()),
+                a.name.clone(),
+            );
+            info.language = a.language.clone();
+            info.default = a.default;
+            info.autoselect = a.autoselect;
+            info.url = a.init_url.clone();
+            info
         })
         .collect();
     MasterSelection {

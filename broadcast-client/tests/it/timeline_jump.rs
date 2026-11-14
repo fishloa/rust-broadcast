@@ -545,18 +545,20 @@ fn config_custom_thresholds_applied() {
     let bytes = test_fixtures::read(SMALL);
     let tight = {
         let mut new_config = Config::default();
-        new_config.timeline_jump = Some(TimelineJumpConfig {
-            backward_us: 500_000,
-            forward_slack_us: 1_000_000,
-        });
+        new_config.timeline_jump = Some(
+            TimelineJumpConfig::default()
+                .with_backward_us(500_000)
+                .with_forward_slack_us(1_000_000),
+        );
         new_config
     };
     let loose = {
         let mut new_config = Config::default();
-        new_config.timeline_jump = Some(TimelineJumpConfig {
-            backward_us: 2_000_000,
-            forward_slack_us: 20_000_000,
-        });
+        new_config.timeline_jump = Some(
+            TimelineJumpConfig::default()
+                .with_backward_us(2_000_000)
+                .with_forward_slack_us(20_000_000),
+        );
         new_config
     };
     let back = |_: &Boundary| -(SEC_US - BACKWARD_MARGIN_US);

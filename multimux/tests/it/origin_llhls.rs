@@ -157,13 +157,7 @@ async fn end_to_end_pipeline_serves_valid_llhls() {
 }
 
 fn part(seq: u32, idx: u32) -> PartInfo {
-    PartInfo {
-        bytes: vec![0x10 + idx as u8; 4],
-        duration: 0.5,
-        independent: idx == 0,
-        segment_seq: seq,
-        part_index: idx,
-    }
+    PartInfo::new(vec![0x10 + idx as u8; 4], 0.5, seq, idx).with_independent(idx == 0)
 }
 
 /// Bites the blocking-reload wakeup path (`output::hls`'s internal `wait_for_progress`):

@@ -17,6 +17,17 @@ pub struct Crate {
     pub name: &'static str,
     pub skip: &'static [&'static str],
     pub variants: bool,
+    /// When true, also require `#[non_exhaustive]` on every `pub struct` whose
+    /// name ends in one of the struct suffixes below (or is named in
+    /// `struct_extra`), minus `struct_skip` (wire-layout structs).
+    pub structs: bool,
+    /// Struct names exempted from the struct suffix rule (spec-fixed wire
+    /// layouts that happen to share a config/policy/event suffix).
+    pub struct_skip: &'static [&'static str],
+    /// Struct names beyond the suffix rule that still must be
+    /// `#[non_exhaustive]` (config/event/value structs whose name carries no
+    /// suffix).
+    pub struct_extra: &'static [&'static str],
 }
 
 const fn plain(name: &'static str) -> Crate {
@@ -24,7 +35,36 @@ const fn plain(name: &'static str) -> Crate {
         name,
         skip: &[],
         variants: false,
+        structs: false,
+        struct_skip: &[],
+        struct_extra: &[],
     }
+}
+
+/// Name suffixes that mark a `pub struct` as a config/policy/event/stats
+/// record rather than a fixed wire layout. In a `structs` crate these must
+/// carry `#[non_exhaustive]` so a future field is an additive change, unless
+/// the struct is a spec-fixed wire layout named in `struct_skip`.
+const STRUCT_SUFFIXES: &[&str] = &[
+    "Config", "Options", "Policy", "Params", "Stats", "Info", "Event", "Record", "Report", "Spec",
+];
+
+fn struct_matches_rule(c: &Crate, trimmed: &str) -> Option<String> {
+    let rest = trimmed.strip_prefix("pub struct ")?;
+    let name: String = rest
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+    if name.is_empty() {
+        return None;
+    }
+    if c.struct_extra.contains(&name.as_str()) {
+        return Some(name);
+    }
+    STRUCT_SUFFIXES
+        .iter()
+        .any(|s| name.ends_with(s))
+        .then_some(name)
 }
 
 fn enum_name(trimmed: &str) -> Option<String> {
@@ -143,10 +183,27 @@ fn check_variant_non_exhaustive(
     enum_line + 1
 }
 
+fn scan_structs(c: &Crate, path: &str, content: &str, missing: &mut BTreeSet<String>) {
+    let lines: Vec<&str> = content.lines().collect();
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        let Some(name) = struct_matches_rule(c, trimmed) else {
+            continue;
+        };
+        if c.struct_skip.contains(&name.as_str()) {
+            continue;
+        }
+        if !has_non_exhaustive_above(&lines, i) {
+            missing.insert(format!("{}: {path}:{}: pub struct {name}", c.name, i + 1));
+        }
+    }
+}
+
 #[test]
 fn every_public_enum_is_non_exhaustive() {
     let mut missing = BTreeSet::new();
     let mut missing_variant = BTreeSet::new();
+    let mut missing_struct = BTreeSet::new();
     for c in crate::non_exhaustive_data::TABLE {
         let files = src_files(c.name);
         assert!(!files.is_empty(), "{}: no source files under src/", c.name);
@@ -155,6 +212,9 @@ fn every_public_enum_is_non_exhaustive() {
                 scan_enums_and_variants(c, path, content, &mut missing, &mut missing_variant);
             } else {
                 scan_enums(c, path, content, &mut missing);
+            }
+            if c.structs {
+                scan_structs(c, path, content, &mut missing_struct);
             }
         }
     }
@@ -172,6 +232,16 @@ fn every_public_enum_is_non_exhaustive() {
          Add `#[non_exhaustive]` immediately above the variant so its fields \
          remain non-constructible/non-matchable without `..` for downstream crates.",
         missing_variant.into_iter().collect::<Vec<_>>().join("\n")
+    );
+    assert!(
+        missing_struct.is_empty(),
+        "pub struct(s) missing `#[non_exhaustive]`:\n{}\n\
+         Add `#[non_exhaustive]` immediately above the `pub struct` declaration \
+         (these are config/policy/event/stats value structs, not fixed wire \
+         layouts, so a future field must be additive), or add the struct to the \
+         crate's `struct_skip` in non_exhaustive_data.rs with a one-line reason \
+         if it is genuinely a spec-fixed wire layout.",
+        missing_struct.into_iter().collect::<Vec<_>>().join("\n")
     );
 }
 
@@ -208,6 +278,9 @@ fn detector_bites() {
         name: "synthetic",
         skip: &[],
         variants: true,
+        structs: false,
+        struct_skip: &[],
+        struct_extra: &[],
     };
     scan_enums_and_variants(
         &v,
@@ -218,4 +291,31 @@ fn detector_bites() {
     );
     assert!(m.is_empty(), "{m:?}");
     assert_eq!(mv.len(), 1, "{mv:?}");
+
+    let mut ms = BTreeSet::new();
+    let s = Crate {
+        name: "synthetic",
+        skip: &[],
+        variants: false,
+        structs: true,
+        struct_skip: &[],
+        struct_extra: &["VariantInfo"],
+    };
+    scan_structs(
+        &s,
+        "src/z.rs",
+        "#[non_exhaustive]\npub struct OkConfig { pub x: u8 }\n\n\n\n\n\n\npub struct BadPolicy { pub x: u8 }\npub struct VariantInfo { pub x: u8 }\npub struct RawHeader { pub x: u8 }\n",
+        &mut ms,
+    );
+    // `BadPolicy` (suffix) and `VariantInfo` (struct_extra) are reported;
+    // `RawHeader` carries no suffix and is ignored by the rule.
+    assert_eq!(ms.len(), 2, "{ms:?}");
+    assert!(
+        ms.iter().any(|e| e.contains("pub struct BadPolicy")),
+        "{ms:?}"
+    );
+    assert!(
+        ms.iter().any(|e| e.contains("pub struct VariantInfo")),
+        "{ms:?}"
+    );
 }

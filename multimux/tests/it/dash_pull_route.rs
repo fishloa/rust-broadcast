@@ -79,12 +79,12 @@ async fn two_origins() -> (String, Arc<Media>) {
 }
 
 fn route_config(bind: SocketAddr, mpd: String, allow_cross_origin: bool) -> Config {
-    Config {
-        bind: bind.to_string(),
-        target_duration_secs: ROUTE_TARGET_DURATION_SECS,
-        part_target: Duration::from_millis(u64::from(ROUTE_PART_TARGET_MS)),
-        window_segments: ROUTE_WINDOW_SEGMENTS,
-        routes: vec![Route {
+    Config::default()
+        .with_bind(bind.to_string())
+        .with_target_duration_secs(ROUTE_TARGET_DURATION_SECS)
+        .with_part_target(Duration::from_millis(u64::from(ROUTE_PART_TARGET_MS)))
+        .with_window_segments(ROUTE_WINDOW_SEGMENTS)
+        .with_routes(vec![Route {
             name: "pulled".to_string(),
             input: InputSpec::DashPull {
                 url: mpd,
@@ -101,9 +101,7 @@ fn route_config(bind: SocketAddr, mpd: String, allow_cross_origin: bool) -> Conf
             closed_caption_overrides: Vec::new(),
             audio_profiles: Vec::new(),
             subtitles: true,
-        }],
-        ..Config::default()
-    }
+        }])
 }
 
 async fn extinf_within(client: &reqwest::Client, url: &str, ceiling: Duration) -> bool {
