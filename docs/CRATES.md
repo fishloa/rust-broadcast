@@ -190,7 +190,7 @@ The layer between TS packets and elementary streams: PES packet header parse/ser
 - **Cargo description:** PES (Packetized Elementary Stream) depacketization + PTS/DTS — ISO/IEC 13818-1 §2.4.3.
 - **Version (in-tree):** 0.8.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
-- **Used by (workspace):** [`media-doctor`](#media-doctor), [`mpeg-ps`](#mpeg-ps), [`transmux`](#transmux), [`ts-fix`](#ts-fix)
+- **Used by (workspace):** [`media-doctor`](#media-doctor), [`mpeg-ps`](#mpeg-ps), [`st291`](#st291), [`transmux`](#transmux), [`ts-fix`](#ts-fix)
 - **Links:** [README](../mpeg-pes/README.md) · [CHANGELOG](../mpeg-pes/CHANGELOG.md) · [crates.io](https://crates.io/crates/mpeg-pes) · [docs.rs](https://docs.rs/mpeg-pes)
 
 #### mpeg-ts
@@ -377,7 +377,7 @@ Parses and builds ANC data packets (DID/SDID, user data words, parity and checks
 - **Standards:** SMPTE ST 291-1:2011; ST 2038:2021 (`ts` feature); RFC 8331 / ST 2110-40:2023 (`rtp` feature)
 - **Cargo description:** SMPTE ST 291-1 ancillary (ANC) data content — typed parse/serialize for its transports: ST 2038:2021 MPEG-2 TS carriage (anc_data_descriptor + ANC data PES packet) and RFC 8331 / ST 2110-40 RTP carriage.
 - **Version (in-tree):** 0.7.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 2
-- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`rtp-packet`](#rtp-packet)
+- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`mpeg-pes`](#mpeg-pes), [`rtp-packet`](#rtp-packet)
 - **Used by (workspace):** none
 - **Links:** [README](../st291/README.md) · [CHANGELOG](../st291/CHANGELOG.md) · [crates.io](https://crates.io/crates/st291) · [docs.rs](https://docs.rs/st291)
 
@@ -1072,6 +1072,7 @@ flowchart BT
   ssai_runtime --> broadcast_hls
   st12_1 --> broadcast_common
   st2022 --> broadcast_common
+  st291 --> mpeg_pes
   st291 --> rtp_packet
   st337 --> broadcast_common
   st377_1 --> broadcast_common

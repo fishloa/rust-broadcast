@@ -16,14 +16,16 @@
 //! receive buffers to behave correctly once a stream's sequence numbers
 //! wrap past `0x7FFF_FFFF` back to `0`.
 
-use crate::packet::SEQ_NUMBER_MASK;
 use alloc::vec::Vec;
 use broadcast_common::seq::SeqSpace;
 
 /// The SRT sequence-number space: 31 bits (§3.1). The arithmetic itself is
 /// `broadcast_common::seq` (shared with `rist-runtime`, #1141), sized from
-/// [`SEQ_NUMBER_MASK`].
-const SPACE: SeqSpace = SeqSpace::new(SEQ_NUMBER_MASK.count_ones());
+/// the packet layer's own bit count.
+// `SEQ_NUMBER_MASK` is `0x7FFF_FFFF`; `space_mask_is_the_wire_mask` pins the
+// two spellings of "31 bits" together for every build that runs tests.
+const SPACE_BITS: u32 = 31;
+const SPACE: SeqSpace = broadcast_common::seq_space!(SPACE_BITS);
 
 /// Add `n` to a sequence number, wrapping at the 31-bit boundary.
 pub fn seq_add(seq: u32, n: u32) -> u32 {
@@ -84,6 +86,7 @@ pub fn contiguous_runs(seqs: &[u32]) -> Vec<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::packet::SEQ_NUMBER_MASK;
     use alloc::vec;
 
     #[test]
@@ -99,6 +102,7 @@ mod tests {
     #[test]
     fn space_mask_is_the_wire_mask() {
         assert_eq!(SPACE.mask(), SEQ_NUMBER_MASK);
+        assert_eq!(SPACE.bits(), SEQ_NUMBER_MASK.count_ones());
     }
 
     #[test]

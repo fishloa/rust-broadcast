@@ -36,7 +36,7 @@ use crate::controller::BufferController;
 use crate::error::Error;
 use crate::events::{Event, Hint};
 use crate::stall_memory::StallMemorySnapshot;
-use crate::time::{Clock27, duration_between, duration_micros, micros_as_duration};
+use crate::time::{Clock27, duration_between, instant_micros, micros_as_duration};
 
 const KIND_CHUNK: &str = "chunk";
 const KIND_MEDIA: &str = "media";
@@ -171,14 +171,14 @@ impl Input {
     pub fn write_row(&self, out: &mut impl Write) -> core::fmt::Result {
         match self {
             Self::Chunk { now_us, bytes, pcr } => {
-                write!(out, "{KIND_CHUNK},{},{bytes},", duration_micros(*now_us))?;
+                write!(out, "{KIND_CHUNK},{},{bytes},", instant_micros(*now_us))?;
                 write_opt(out, pcr.map(|p| p.ticks()))
             }
             Self::TrackMedia { now_us, track, end } => {
                 write!(
                     out,
                     "{KIND_MEDIA},{},{track},{}",
-                    duration_micros(*now_us),
+                    instant_micros(*now_us),
                     end.ticks()
                 )
             }
@@ -188,24 +188,24 @@ impl Input {
                 } else {
                     NO_POSITION
                 };
-                write!(out, "{KIND_TICK},{},{has},", duration_micros(*now_us))?;
+                write!(out, "{KIND_TICK},{},{has},", instant_micros(*now_us))?;
                 write_opt(out, pts.map(|p| p.ticks()))
             }
             Self::Register { now_us, track } => {
-                write!(out, "{KIND_REGISTER},{},{track},", duration_micros(*now_us))
+                write!(out, "{KIND_REGISTER},{},{track},", instant_micros(*now_us))
             }
             Self::Unregister { now_us, track } => {
                 write!(
                     out,
                     "{KIND_UNREGISTER},{},{track},",
-                    duration_micros(*now_us)
+                    instant_micros(*now_us)
                 )
             }
             Self::Hint { now_us, hint } => {
                 write!(
                     out,
                     "{KIND_HINT},{},{},",
-                    duration_micros(*now_us),
+                    instant_micros(*now_us),
                     hint.name()
                 )
             }
@@ -424,7 +424,7 @@ fn id_in<T: core::str::FromStr>(value: &str) -> Option<T> {
 /// A `config` row value printer: a span as its whole microsecond count (the
 /// unit a log has always carried), and the way back.
 fn span_out(span: Duration) -> u64 {
-    duration_micros(span)
+    instant_micros(span)
 }
 
 fn span_in(value: &str) -> Option<Duration> {
@@ -577,8 +577,8 @@ impl InputLog {
             writeln!(
                 out,
                 "{KIND_SEED},{CONFIG_NOW},{},{}",
-                duration_micros(s.peak),
-                duration_micros(s.age)
+                instant_micros(s.peak),
+                instant_micros(s.age)
             )?;
         }
         for input in &self.inputs {

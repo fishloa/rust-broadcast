@@ -11,7 +11,7 @@ use broadcast_common::{Parse, Serialize};
 
 use crate::ber::{BerLength, ber_length_size_for, decode_ber_length, encode_ber_length_as};
 use crate::error::{Error, Result};
-use crate::types::{UlBytes, parse_uid_batch, serialize_uid_batch, ul_bytes_from_prefix};
+use crate::types::{UidBatch, UlBytes, serialize_uid_batch, ul_bytes_from_prefix};
 
 /// Fixed bytes 1-13 of every Partition Pack Key (Table 4), i.e. everything
 /// except byte 8 (registry version, wildcard on parse), byte 14
@@ -165,6 +165,9 @@ pub struct PartitionPack {
     pub operational_pattern: UlBytes,
     /// Batch of Essence Container ULs used in/referenced by this file.
     pub essence_containers: Vec<UlBytes>,
+    /// The EssenceContainers Batch exactly as parsed (`None` for a freshly
+    /// built value), so its header reproduces byte-for-byte on serialize.
+    pub essence_containers_batch: Option<UidBatch>,
     /// The on-wire BER length-field width (issue #1047 / audit MX-C1) —
     /// [`BerLength::Minimal`] for a freshly built value, or the exact
     /// width `parse` found on the wire, so `serialize_into`
@@ -192,6 +195,13 @@ impl PartialEq for PartitionPack {
             && self.body_sid == other.body_sid
             && self.operational_pattern == other.operational_pattern
             && self.essence_containers == other.essence_containers
+            && match (
+                &self.essence_containers_batch,
+                &other.essence_containers_batch,
+            ) {
+                (Some(a), Some(b)) => a.header() == b.header(),
+                _ => true,
+            }
     }
 }
 
@@ -314,7 +324,8 @@ impl<'a> Parse<'a> for PartitionPack {
         let body_offset = u64_at(52);
         let body_sid = u32_at(60);
         let operational_pattern: UlBytes = ul_bytes_from_prefix(&v[64..]);
-        let essence_containers = parse_uid_batch(&v[80..])?;
+        let essence_containers_batch = UidBatch::parse(&v[80..])?;
+        let essence_containers = essence_containers_batch.items().to_vec();
 
         Ok(PartitionPack {
             kind,
@@ -332,6 +343,7 @@ impl<'a> Parse<'a> for PartitionPack {
             body_sid,
             operational_pattern,
             essence_containers,
+            essence_containers_batch: Some(essence_containers_batch),
             len_size: BerLength::fixed_from_consumed(len_token_size),
         })
     }
@@ -355,7 +367,12 @@ impl Serialize for PartitionPack {
         let total = self.serialized_len();
         need_out(buf, total)?;
         buf[0..16].copy_from_slice(&Self::key(self.kind, self.status));
-        let batch = serialize_uid_batch(&self.essence_containers);
+        let batch = match self.essence_containers_batch.as_ref() {
+            Some(parsed) if parsed.items() == self.essence_containers.as_slice() => {
+                parsed.serialize()?
+            }
+            _ => serialize_uid_batch(&self.essence_containers)?,
+        };
         let value_len = 2 + 2 + 4 + 8 + 8 + 8 + 8 + 8 + 4 + 8 + 4 + 16 + batch.len();
         let len_size = encode_ber_length_as(value_len as u64, self.len_size, &mut buf[16..])?;
         let mut pos = 16 + len_size;
@@ -411,6 +428,7 @@ mod tests {
             body_sid: 1,
             operational_pattern: [0xAA; 16],
             essence_containers: alloc::vec![[0xBBu8; 16]],
+            essence_containers_batch: None,
             len_size: BerLength::Minimal,
         }
     }

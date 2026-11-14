@@ -8,7 +8,7 @@
 use core::time::Duration;
 
 use crate::jitter::JitterEstimate;
-use crate::time::{Clock27, duration_micros};
+use crate::time::{Clock27, instant_micros};
 use alloc::collections::VecDeque;
 
 /// Event queue capacity (oldest non-critical event dropped first).
@@ -302,7 +302,7 @@ impl Event {
             Self::StartPlaying { media_27mhz, lead } => {
                 r.kind = kind::START_PLAYING;
                 r.media_27mhz = media_27mhz.ticks();
-                r.a = duration_micros(lead);
+                r.a = instant_micros(lead);
             }
             Self::Pause {
                 hold_at_27mhz,
@@ -318,23 +318,23 @@ impl Event {
                 }
                 r.reason = reason.code();
                 r.media_27mhz = hold_at_27mhz.ticks();
-                r.a = duration_micros(depth);
-                r.b = duration_micros(resume_target);
+                r.a = instant_micros(depth);
+                r.b = instant_micros(resume_target);
             }
             Self::Resume { media_27mhz, lead } => {
                 r.kind = kind::RESUME;
                 r.media_27mhz = media_27mhz.ticks();
-                r.a = duration_micros(lead);
+                r.a = instant_micros(lead);
             }
             Self::TargetChanged { old, new } => {
                 r.kind = kind::TARGET_CHANGED;
-                r.a = duration_micros(old);
-                r.b = duration_micros(new);
+                r.a = instant_micros(old);
+                r.b = instant_micros(new);
             }
             Self::OverMax { need, max } => {
                 r.kind = kind::OVER_MAX;
-                r.a = duration_micros(need);
-                r.b = duration_micros(max);
+                r.a = instant_micros(need);
+                r.b = instant_micros(max);
             }
             Self::Rebaselined => r.kind = kind::REBASELINED,
             Self::EventsDropped { count } => {

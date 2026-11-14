@@ -5,6 +5,7 @@ use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::string::ToString;
 use alloc::vec::Vec;
 use std::collections::HashMap;
+use std::time::Duration;
 use url::Url;
 
 use crate::ConnId;
@@ -369,7 +370,7 @@ pub(crate) fn route_head<P: PurposeKind, X>(
 
 pub(crate) fn record_refusal(
     head: ResponseHead<'_>,
-    retry_after_us: u64,
+    retry_after: Option<Duration>,
     refused_captures: &mut BTreeMap<ConnId, RefusedCapture>,
     out: Outbox<'_>,
 ) {
@@ -382,7 +383,7 @@ pub(crate) fn record_refusal(
     let refused =
         status == StatusCode::TOO_MANY_REQUESTS || status == StatusCode::SERVICE_UNAVAILABLE;
     if refused {
-        let cap = RefusedCapture::new(status, retry_after_us, headers);
+        let cap = RefusedCapture::new(status, retry_after, headers);
         if cap.wants_body() {
             refused_captures.insert(conn, cap);
             return;

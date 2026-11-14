@@ -32,7 +32,7 @@ fn main() {
             pkt.stream_num,
             pkt.content.did,
             pkt.content.sdid,
-            pkt.content.checksum,
+            pkt.content.compute_checksum(),
         );
     }
 

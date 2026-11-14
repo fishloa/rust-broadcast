@@ -4053,6 +4053,7 @@ name = "st291"
 version = "0.7.0"
 dependencies = [
  "broadcast-common",
+ "mpeg-pes",
  "rtp-packet",
  "serde",
  "test-fixtures",

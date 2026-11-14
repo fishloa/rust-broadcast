@@ -8,7 +8,7 @@
 use core::time::Duration;
 
 use crate::config::{PolicyConfig, Q8_SHIFT, US_PER_S, mul_q};
-use crate::time::{duration_micros, micros_as_duration};
+use crate::time::{instant_micros, micros_as_duration, window_micros};
 
 /// Target follower and threshold calculator.
 #[derive(Clone, Copy, Debug)]
@@ -31,14 +31,14 @@ impl Policy {
     pub fn new(cfg: PolicyConfig) -> Self {
         Self {
             cfg,
-            min_us: duration_micros(cfg.min),
-            initial_us: duration_micros(cfg.initial),
-            max_us: duration_micros(cfg.max),
-            margin_us: duration_micros(cfg.margin),
-            step_down_us_per_s: duration_micros(cfg.max_step_down_per_s),
-            reprime_floor_us: duration_micros(cfg.reprime_floor),
-            reprime_hold_us: duration_micros(cfg.reprime_hold),
-            target: duration_micros(cfg.min),
+            min_us: window_micros(cfg.min),
+            initial_us: window_micros(cfg.initial),
+            max_us: window_micros(cfg.max),
+            margin_us: window_micros(cfg.margin),
+            step_down_us_per_s: window_micros(cfg.max_step_down_per_s),
+            reprime_floor_us: window_micros(cfg.reprime_floor),
+            reprime_hold_us: window_micros(cfg.reprime_hold),
+            target: window_micros(cfg.min),
             last_t: None,
         }
     }
@@ -127,7 +127,7 @@ impl Policy {
     #[must_use]
     pub fn resume(&self, stall_peak: Duration) -> Duration {
         micros_as_duration(self.clamp(self.target.max(mul_q(
-            duration_micros(stall_peak),
+            instant_micros(stall_peak),
             self.cfg.after_rebuffer_q8,
             Q8_SHIFT,
         ))))

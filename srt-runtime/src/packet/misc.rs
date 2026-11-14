@@ -2,7 +2,8 @@
 //! Congestion Warning (§3.2.6), Shutdown (§3.2.7), ACKACK (§3.2.8), Message
 //! Drop Request (§3.2.9), and Peer Error (§3.2.10).
 
-use super::{Error, Result, be32, put_be32};
+use super::data::MESSAGE_NUMBER_BITS;
+use super::{Error, Result, SEQ_NUMBER_MASK, be32, put_be32};
 use broadcast_common::error::BufferTooShort;
 
 /// Peer error code for a file-system error — the only value
@@ -108,9 +109,26 @@ impl DropReqPacket {
         8
     }
 
-    pub(crate) fn write_cif(&self, buf: &mut [u8]) {
+    pub(crate) fn write_cif(&self, buf: &mut [u8]) -> Result<()> {
+        let seq_bits = SEQ_NUMBER_MASK.count_ones();
+        broadcast_common::len::fit_bits(
+            u64::from(self.first_seq),
+            seq_bits,
+            "First Packet Sequence Number",
+        )?;
+        broadcast_common::len::fit_bits(
+            u64::from(self.last_seq),
+            seq_bits,
+            "Last Packet Sequence Number",
+        )?;
+        broadcast_common::len::fit_bits(
+            u64::from(self.message_number),
+            MESSAGE_NUMBER_BITS,
+            "Message Number",
+        )?;
         put_be32(buf, 0, self.first_seq);
         put_be32(buf, 4, self.last_seq);
+        Ok(())
     }
 }
 
@@ -134,6 +152,7 @@ mod tests {
     use alloc::vec::Vec;
 
     use super::super::control::ControlPacket;
+    use super::super::data::MESSAGE_NUMBER_MASK;
     use super::*;
 
     #[test]
@@ -154,6 +173,43 @@ mod tests {
         assert_eq!(&buf[20..24], &20u32.to_be_bytes());
         let parsed = ControlPacket::parse(&buf).unwrap();
         assert_eq!(parsed, pkt);
+    }
+
+    #[test]
+    fn drop_req_rejects_numbers_that_do_not_fit_their_wire_fields() {
+        let fits = DropReqPacket {
+            message_number: 7,
+            timestamp: 100,
+            dest_socket_id: 200,
+            first_seq: SEQ_NUMBER_MASK,
+            last_seq: SEQ_NUMBER_MASK,
+        };
+        let mut buf = [0u8; 24];
+        assert!(
+            ControlPacket::DropReq(fits)
+                .serialize_into(&mut buf)
+                .is_ok()
+        );
+
+        for d in [
+            DropReqPacket {
+                first_seq: SEQ_NUMBER_MASK + 1,
+                ..fits
+            },
+            DropReqPacket {
+                last_seq: SEQ_NUMBER_MASK + 1,
+                ..fits
+            },
+            DropReqPacket {
+                message_number: MESSAGE_NUMBER_MASK + 1,
+                ..fits
+            },
+        ] {
+            assert!(matches!(
+                ControlPacket::DropReq(d).serialize_into(&mut buf),
+                Err(Error::FieldOverflow(_))
+            ));
+        }
     }
 
     #[test]

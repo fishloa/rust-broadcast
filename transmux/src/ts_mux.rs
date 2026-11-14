@@ -313,11 +313,7 @@ const STUFFING_BYTE: u8 = 0xFF;
 /// Media timescale of a Transport Stream / PES clock (90 kHz).
 /// The 90 kHz MPEG-2 Systems clock, both as a `Timescale` and as the `u64`
 /// scaling factor the rate arithmetic below uses.
-const TS_CLOCK: broadcast_common::timescale::Timescale =
-    match broadcast_common::timescale::Timescale::new(90_000) {
-        Some(t) => t,
-        None => unreachable!(),
-    };
+const TS_CLOCK: Timescale = broadcast_common::timescale!(90_000);
 const TS_CLOCK_HZ: u64 = 90_000;
 
 /// A PAT/PMT repetition interval in 90 kHz clock ticks, rounded down; a span
@@ -701,7 +697,7 @@ impl Package for StreamingTsMux {
             .tracks
             .iter()
             .map(|t| relative_decode_times(t, &origin))
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
         let times: Vec<&[i64]> = times.iter().map(Vec::as_slice).collect();
         let samples: Vec<&[Sample]> = media.tracks.iter().map(|t| t.samples.as_slice()).collect();
         mux_tracks_timed_with_cc(
@@ -962,7 +958,7 @@ pub(crate) fn mux_tracks(
     let times: Vec<Vec<i64>> = tracks
         .iter()
         .map(|t| relative_decode_times(t, &origin))
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
     let times: Vec<&[i64]> = times.iter().map(Vec::as_slice).collect();
     let mut cc = TsContinuity::default();
     let mut psi = PsiState::new(psi_interval_ticks);

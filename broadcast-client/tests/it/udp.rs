@@ -8,7 +8,7 @@ use broadcast_client::{
 };
 use broadcast_common::net::{MulticastInterface, MulticastJoin, UdpOptions};
 use broadcast_common::stage::Timestamp;
-use buffering_runtime::duration_micros;
+use buffering_runtime::instant_micros;
 use std::net::{IpAddr, Ipv4Addr};
 use std::num::NonZeroU32;
 use std::time::Duration;
@@ -413,7 +413,7 @@ fn a_gap_is_held_for_the_reorder_wait_and_the_wake_is_announced() {
     host.datagram(&rtp[2]);
     let held_at = host.now;
     assert_eq!(host.session.datagram_stats().lost, 0);
-    let wait = duration_micros(UdpConfig::default().reorder_wait);
+    let wait = instant_micros(UdpConfig::default().reorder_wait);
     assert!(
         host.wake.is_some_and(|w| w <= held_at + wait),
         "a host sleeping on WakeAt must wake when the held packet is due: {:?}",
@@ -532,7 +532,7 @@ fn a_single_far_behind_duplicate_is_not_a_restart() {
     host.datagram(&rtp[0]);
     host.datagram(&rtp[1]);
     host.datagram(&rtp[2]);
-    host.advance_to(2 * duration_micros(UdpConfig::default().reorder_wait));
+    host.advance_to(2 * instant_micros(UdpConfig::default().reorder_wait));
     let behind = u16::MAX - 200;
     let misordered = rtp_datagram(
         behind,
