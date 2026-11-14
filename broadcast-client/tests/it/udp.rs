@@ -8,8 +8,10 @@ use broadcast_client::{
 };
 use broadcast_common::net::{MulticastInterface, MulticastJoin, UdpOptions};
 use broadcast_common::stage::Timestamp;
+use buffering_runtime::duration_micros;
 use std::net::{IpAddr, Ipv4Addr};
 use std::num::NonZeroU32;
+use std::time::Duration;
 use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
@@ -22,7 +24,7 @@ const LIVE_CAPTURE: &str = "ts/live-channels/tf-1-8-mb.ts";
 const GROUP: &str = "udp://239.1.1.1:5000";
 const SSRC_A: u32 = 0xA1A1_A1A1;
 const SSRC_B: u32 = 0xB2B2_B2B2;
-const LONG_WAIT_US: u64 = 60_000_000;
+const LONG_WAIT: Duration = Duration::from_secs(60);
 const FAST_BPS: u64 = 100_000_000;
 const STALL_NOTICE_US: u64 = 5_000_000;
 const STALL_RECONNECT_US: u64 = 30_000_000;
@@ -221,8 +223,8 @@ fn bad_udp_urls_and_configs_are_typed_errors() {
         ),
         (
             GROUP,
-            udp_cfg(|c| c.reorder_wait_us = 0),
-            "udp.reorder_wait_us",
+            udp_cfg(|c| c.reorder_wait = Duration::ZERO),
+            "udp.reorder_wait",
         ),
     ] {
         match open(url, with(udp)) {
@@ -411,7 +413,7 @@ fn a_gap_is_held_for_the_reorder_wait_and_the_wake_is_announced() {
     host.datagram(&rtp[2]);
     let held_at = host.now;
     assert_eq!(host.session.datagram_stats().lost, 0);
-    let wait = UdpConfig::default().reorder_wait_us;
+    let wait = duration_micros(UdpConfig::default().reorder_wait);
     assert!(
         host.wake.is_some_and(|w| w <= held_at + wait),
         "a host sleeping on WakeAt must wake when the held packet is due: {:?}",
@@ -437,7 +439,7 @@ fn a_packet_beyond_the_window_gives_up_everything_held() {
     assert!(rtp.len() > window + 5);
     let mut host = UdpHost::open(
         "rtp://239.1.1.1:5000",
-        config_with(|c| c.udp.reorder_wait_us = LONG_WAIT_US),
+        config_with(|c| c.udp.reorder_wait = LONG_WAIT),
     );
     host.datagram(&rtp[0]);
     for d in &rtp[2..window + 2] {
@@ -530,7 +532,7 @@ fn a_single_far_behind_duplicate_is_not_a_restart() {
     host.datagram(&rtp[0]);
     host.datagram(&rtp[1]);
     host.datagram(&rtp[2]);
-    host.advance_to(2 * UdpConfig::default().reorder_wait_us);
+    host.advance_to(2 * duration_micros(UdpConfig::default().reorder_wait));
     let behind = u16::MAX - 200;
     let misordered = rtp_datagram(
         behind,

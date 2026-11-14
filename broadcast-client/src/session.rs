@@ -207,8 +207,8 @@ impl Session {
         };
         let config_identity = config.client_identity.clone().map(alloc::sync::Arc::new);
         let buffer_cfg = config.buffer;
-        let start_pending_wait_us = config.start_pending_track_wait_us;
-        let start_pending_hard_cap_us = config.start_pending_track_hard_cap_us;
+        let start_pending_wait = config.start_pending_track_wait;
+        let start_pending_hard_cap = config.start_pending_track_hard_cap;
         let jump = JumpDetector::new(config.timeline_jump);
         let event_cap = config.max_queued_events;
         let event_byte_budget = config.max_queued_bytes;
@@ -295,8 +295,8 @@ impl Session {
                 let mut feeder = crate::buffer::Feeder::new(
                     buffer_cfg,
                     seed,
-                    start_pending_wait_us,
-                    start_pending_hard_cap_us,
+                    start_pending_wait,
+                    start_pending_hard_cap,
                 );
                 feeder.set_recording(record_inputs, record_cap);
                 feeder
@@ -986,7 +986,7 @@ impl Session {
     ///
     /// Before the first [`BufferEvent::Start`](crate::BufferEvent::Start), a track this call drops
     /// from the rendered set keeps holding the start (the buffer controller still waits for it)
-    /// until it has had [`Config::start_pending_track_wait_us`] from the drop to deliver, or until
+    /// until it has had [`Config::start_pending_track_wait`] from the drop to deliver, or until
     /// that `Start`, whichever comes first; naming it again before then cancels the drop. So a
     /// host that declares `[video]` and then `[video, audio]` a few ms later never gets a `Start`
     /// judged on video alone, and a host that renders video only waits at most that long. After

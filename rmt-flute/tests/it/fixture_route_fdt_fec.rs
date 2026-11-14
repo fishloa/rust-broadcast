@@ -96,11 +96,11 @@ fn real_transfer_length_drives_the_block_partitioning_algorithm() {
     //   N = ceil(4/2) = 2
     //   A_large = ceil(4/2) = 2, A_small = floor(4/2) = 2, I = 4-2*2 = 0
     let partition = SourceBlockPartition::new(transfer_length, 100, 2).unwrap();
-    assert_eq!(partition.source_symbols, 4);
-    assert_eq!(partition.num_blocks, 2);
-    assert_eq!(partition.larger_block_len, 2);
-    assert_eq!(partition.smaller_block_len, 2);
-    assert_eq!(partition.larger_blocks, 0);
+    assert_eq!(partition.source_symbols(), 4);
+    assert_eq!(partition.num_blocks(), 2);
+    assert_eq!(partition.larger_block_len(), 2);
+    assert_eq!(partition.smaller_block_len(), 2);
+    assert_eq!(partition.larger_blocks(), 0);
     assert_eq!(partition.block_len(0), Some(2));
     assert_eq!(partition.block_len(1), Some(2));
     assert_eq!(partition.block_len(2), None);

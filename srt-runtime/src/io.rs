@@ -4264,11 +4264,9 @@ mod adapter_tests {
     }
 
     #[cfg(feature = "crypto")]
-    const REFRESH_TEST_THRESHOLDS: crate::km_refresh::KmRefreshThresholds =
-        crate::km_refresh::KmRefreshThresholds {
-            refresh_period: 20,
-            pre_announcement_period: 5,
-        };
+    fn refresh_test_thresholds() -> crate::km_refresh::KmRefreshThresholds {
+        crate::km_refresh::KmRefreshThresholds::new(20, 5).unwrap()
+    }
 
     #[cfg(feature = "crypto")]
     async fn encrypted_pair() -> (Driver, mpsc::Receiver<Bytes>, Driver, mpsc::Receiver<Bytes>) {
@@ -4282,7 +4280,7 @@ mod adapter_tests {
             d.tx_keys.install(KeyParity::Even, sek.clone(), salt);
             d.rx_keys.install(KeyParity::Even, sek.clone(), salt);
             d.km_refresh =
-                crate::km_refresh::KmRefreshDriver::new(REFRESH_TEST_THRESHOLDS, KeyParity::Even);
+                crate::km_refresh::KmRefreshDriver::new(refresh_test_thresholds(), KeyParity::Even);
         }
         (a, a_rx, b, b_rx)
     }

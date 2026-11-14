@@ -190,7 +190,7 @@ impl RtpAncPacket {
     /// Bit width before `word_align` padding: the 32-bit placement prefix
     /// plus the content's bit width.
     fn body_bits(&self) -> usize {
-        PLACEMENT_BITS + self.content.content_bit_width()
+        PLACEMENT_BITS + AncContent::content_bit_width_for(self.content.user_data_words.len())
     }
 
     /// Serialized byte length of this record **including** its trailing
@@ -204,9 +204,8 @@ impl RtpAncPacket {
     /// Write this record (placement + content + `word_align`) into `w`.
     ///
     /// # Errors
-    /// [`Error::FieldOverflow`] if a placement field exceeds its wire width;
-    /// [`Error::InconsistentUdwLength`] if `content.user_data_words.len()`
-    /// does not equal `content.data_count & 0xFF`.
+    /// [`Error::FieldOverflow`] if a placement field exceeds its wire width
+    /// or the content carries more than 255 user data words.
     fn write_into(&self, w: &mut BitWriter<'_>) -> Result<()> {
         w.write_bool(self.c)?;
         w.write_bits(
@@ -245,6 +244,18 @@ impl RtpAncPacket {
         let s = r.read_bool()?;
         let stream_num = r.read_bits(W_STREAM_NUM)? as u8;
         let content = AncContent::read_from(r)?;
+        if content.data_count != content.derived_data_count()? {
+            return Err(Error::DataCountMismatch {
+                stored: content.data_count,
+                derived: content.derived_data_count()?,
+            });
+        }
+        if content.checksum != content.compute_checksum() {
+            return Err(Error::ChecksumMismatch {
+                stored: content.checksum,
+                computed: content.compute_checksum(),
+            });
+        }
         let pad = bits_to_word_boundary(r.bits_read());
         if pad > 0 {
             let pad_value = r.read_bits(pad)?;
@@ -407,8 +418,7 @@ impl Serialize for AncRtpPayload {
     /// # Errors
     /// [`Error::BufferTooShort`] if `buf` is too small; [`Error::FieldOverflow`]
     /// if `anc_packets.len()` exceeds 255 or the recomputed `Length` exceeds
-    /// 65535; [`Error::FieldOverflow`] / [`Error::InconsistentUdwLength`] from
-    /// any [`RtpAncPacket`].
+    /// 65535; [`Error::FieldOverflow`] from any [`RtpAncPacket`].
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         need_out(buf, len)?;
@@ -452,13 +462,7 @@ mod tests {
                     horizontal_offset: 0,
                     s: false,
                     stream_num: 0,
-                    content: AncContent {
-                        did: 0x161,
-                        sdid: 0x101,
-                        data_count: 0x002,
-                        user_data_words: vec![0x2CF, 0x101],
-                        checksum: 0x233,
-                    },
+                    content: AncContent::build(0x61, 0x01, &[0xCF, 0x01]).unwrap(),
                 },
                 RtpAncPacket {
                     c: true,
@@ -466,13 +470,7 @@ mod tests {
                     horizontal_offset: 0x10,
                     s: false,
                     stream_num: 0,
-                    content: AncContent {
-                        did: 0x241,
-                        sdid: 0x102,
-                        data_count: 0x003,
-                        user_data_words: vec![0x111, 0x222, 0x333],
-                        checksum: 0x1AB,
-                    },
+                    content: AncContent::build(0x41, 0x02, &[0x11, 0x22, 0x33]).unwrap(),
                 },
             ],
         }

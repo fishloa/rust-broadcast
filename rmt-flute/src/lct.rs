@@ -17,6 +17,7 @@
 //! the space up to `HDR_LEN` words ([`crate::ext`]).
 
 use alloc::vec::Vec;
+use broadcast_common::error::UnsupportedVersion;
 use broadcast_common::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
@@ -198,6 +199,12 @@ impl<'a> LctHeader<'a> {
         // First 16 bits: V(4) C(2) PSI(2) S(1) O(2) H(1) Res(2) A(1) B(1).
         let w = u16::from_be_bytes([data[0], data[1]]);
         let version = (w >> 12) as u8 & 0x0F;
+        if version != LCT_VERSION {
+            return Err(Error::UnsupportedVersion(UnsupportedVersion {
+                what: "LCT",
+                found: version,
+            }));
+        }
         let c = (w >> 10) as u8 & 0x03;
         let psi = (w >> 8) as u8 & 0x03;
         let s = (w >> 7) as u8 & 0x01;
@@ -262,6 +269,12 @@ impl<'a> LctHeader<'a> {
         let total = self.serialized_len();
         need_out(out, total)?;
         broadcast_common::len::fit_bits(self.version as u64, 4, "version")?;
+        if self.version != LCT_VERSION {
+            return Err(Error::UnsupportedVersion(UnsupportedVersion {
+                what: "LCT",
+                found: self.version,
+            }));
+        }
         broadcast_common::len::fit_bits(self.psi as u64, 2, "PSI")?;
         broadcast_common::len::fit_bits(self.reserved as u64, 2, "Res")?;
         // Validate the flag-derived widths (also yields C/S/O/H).
@@ -508,6 +521,57 @@ mod tests {
         assert_ne!(a, b);
         assert_eq!(a[3], 0x00);
         assert_eq!(b[3], 0x7F);
+    }
+
+    #[test]
+    fn non_rfc5651_version_is_rejected_on_parse_and_serialize() {
+        let cci = [0u8; 4];
+        let mut out = vec![0u8; 8];
+        out[0] = LCT_VERSION << 4;
+        out[2] = 2;
+        out[4..].copy_from_slice(&cci);
+        assert!(LctHeader::parse(&out).is_ok());
+
+        // Version 2: the V field is the top nibble of the first byte.
+        out[0] = 2 << 4;
+        assert!(matches!(
+            LctHeader::parse(&out),
+            Err(Error::UnsupportedVersion(UnsupportedVersion {
+                found: 2,
+                ..
+            }))
+        ));
+
+        // Version 0.
+        out[0] = 0;
+        assert!(matches!(
+            LctHeader::parse(&out),
+            Err(Error::UnsupportedVersion(UnsupportedVersion {
+                found: 0,
+                ..
+            }))
+        ));
+
+        let hdr = LctHeader {
+            reserved: 0,
+            version: 2,
+            psi: 0,
+            close_session: false,
+            close_object: false,
+            codepoint: 0,
+            cci: &cci,
+            tsi: &[],
+            toi: &[],
+            extensions: vec![],
+        };
+        let mut out = vec![0u8; hdr.serialized_len()];
+        assert!(matches!(
+            hdr.serialize_into(&mut out),
+            Err(Error::UnsupportedVersion(UnsupportedVersion {
+                found: 2,
+                ..
+            }))
+        ));
     }
 
     // Header WITH a 2-element extension chain round-trips and HDR_LEN grows.

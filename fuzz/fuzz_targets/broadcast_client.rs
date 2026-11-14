@@ -119,7 +119,7 @@ const PLAYER_HINTS: [BufferHint; 3] = [
     BufferHint::PcrDiscontinuity,
 ];
 const RENDERED_IDS: [u32; 7] = [1, 2, 3, 1_001, 1_002, 999, u32::MAX];
-const HOLD_WALL_US: [u64; 4] = [0, 1_000, 1_000_000, u64::MAX];
+const HOLD_WALL_US: [Option<u64>; 4] = [None, Some(1_000), Some(1_000_000), Some(u64::MAX)];
 const START_WAIT_US: [u64; 4] = [0, 500_000, 1_500_000, u64::MAX];
 const DASH_US: [u64; 4] = [1, 1_000, 20_000_000, u64::MAX];
 const DASH_ZERO_OK_US: [u64; 4] = [0, 1_000, 20_000_000, u64::MAX];
@@ -128,6 +128,10 @@ const DASH_LIVE_DELAY_US: [Option<u64>; 4] = [None, Some(0), Some(6_000_000), So
 fn span_us(knob_us: u64) -> std::time::Duration {
     std::time::Duration::from_micros(knob_us)
 }
+
+fn opt_span_us(knob_us: Option<u64>) -> Option<std::time::Duration> {
+    knob_us.map(span_us)
+}
 const DASH_POLICIES: [DashClockPolicy; 4] = [
     DashClockPolicy::Auto,
     DashClockPolicy::PreferHost,
@@ -135,7 +139,7 @@ const DASH_POLICIES: [DashClockPolicy; 4] = [
     DashClockPolicy::PreferHost,
 ];
 const DASH_FLAGS: [(bool, bool); 4] = [(false, true), (true, true), (false, false), (true, false)];
-const HOLD_MEDIA_US: [u64; 4] = [0, 1_000, 1_000_000, u64::MAX];
+const HOLD_MEDIA_US: [Option<u64>; 4] = [None, Some(1_000), Some(1_000_000), Some(u64::MAX)];
 const HOLD_QUIET_BYTES: [usize; 4] = [1, TS_PACKET, 512 * 1024, 1 << 30];
 const HOLD_MAX_BYTES: [usize; 4] = [0, TS_PACKET, 4 * 1024 * 1024, usize::MAX];
 const QUEUE_CAPS: [usize; 4] = [1, 16, 100_000, usize::MAX];
@@ -626,8 +630,8 @@ fn config_from(header: &[u8]) -> Config {
     config.max_segment_bytes = knob(header, 5, &BYTE_LIMITS);
     config.request_timeout = std::time::Duration::from_micros(knob(header, 6, &TIMEOUTS_US));
     config.segment_timeout = std::time::Duration::from_micros(knob(header, 7, &TIMEOUTS_US));
-    config.tracks_hold_max_wall_us = knob(header, 8, &HOLD_WALL_US);
-    config.tracks_hold_max_media_us = knob(header, 9, &HOLD_MEDIA_US);
+    config.tracks_hold_max_wall = opt_span_us(knob(header, 8, &HOLD_WALL_US));
+    config.tracks_hold_max_media = opt_span_us(knob(header, 9, &HOLD_MEDIA_US));
     let quiet = knob(header, 10, &HOLD_QUIET_BYTES);
     config.tracks_hold_quiet_input_bytes = quiet;
     config.tracks_hold_max_input_bytes = knob(header, 11, &HOLD_MAX_BYTES).max(quiet);
@@ -639,10 +643,10 @@ fn config_from(header: &[u8]) -> Config {
                 .with_forward_slack(span_us(knob(header, 14, &JUMP_US))),
         ),
     };
-    config.playout.vod_start_lead_us = knob(header, 15, &LEAD_US);
-    config.playout.live_start_lead_us = knob(header, 16, &LEAD_US);
-    config.playout.pause_lead_us = knob(header, 17, &LEAD_US);
-    config.start_pending_track_wait_us = knob(header, 18, &START_WAIT_US);
+    config.playout.vod_start_lead = span_us(knob(header, 15, &LEAD_US));
+    config.playout.live_start_lead = span_us(knob(header, 16, &LEAD_US));
+    config.playout.pause_lead = span_us(knob(header, 17, &LEAD_US));
+    config.start_pending_track_wait = span_us(knob(header, 18, &START_WAIT_US));
     config.max_segment_failures = knob(header, 19, &SEGMENT_FAILURES);
     config.dash.clock_policy = knob(header, 20, &DASH_POLICIES);
     let utc_timeout = knob(header, 21, &DASH_US);

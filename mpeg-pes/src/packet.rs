@@ -739,9 +739,118 @@ impl Default for PesHeader<'_> {
 }
 
 impl PesHeader<'_> {
+    /// The two header flag bytes (ISO/IEC 13818-1 Table 2-21, §2.4.3.7):
+    /// `'10' | PES_scrambling_control | PES_priority | data_alignment_indicator
+    /// | copyright | original_or_copy`, then `PTS_DTS_flags` followed by one
+    /// flag bit per optional field this header carries.
+    #[must_use]
+    pub fn flag_bytes(&self) -> [u8; 2] {
+        // f1: marker '10' | scrambling(2) | priority(1) | align(1) | copyright(1) | orig(1)
+        let f1 = 0x80
+            | ((self.scrambling_control & 0x03) << 4)
+            | (u8::from(self.pes_priority) << 3)
+            | (u8::from(self.data_alignment_indicator) << 2)
+            | (u8::from(self.copyright) << 1)
+            | u8::from(self.original_or_copy);
+        // f2: pts_dts_flags(2) | escr_flag(1) | es_rate_flag(1) |
+        //     trick_mode(1) | add_copy(1) | crc(1) | ext(1)
+        let pts_dts_flags = match (self.pts.is_some(), self.dts.is_some()) {
+            (true, true) => 0b11u8,
+            (true, false) => 0b10,
+            _ => 0b00,
+        };
+        let f2 = (pts_dts_flags << 6)
+            | (u8::from(self.escr.is_some()) << 5)
+            | (u8::from(self.es_rate.is_some()) << 4)
+            | (u8::from(self.dsm_trick_mode.is_some()) << 3)
+            | (u8::from(self.additional_copy_info.is_some()) << 2)
+            | (u8::from(self.pes_crc.is_some()) << 1)
+            | u8::from(self.pes_extension.is_some());
+        [f1, f2]
+    }
+
+    /// Write every optional header field (`PTS`/`DTS`, `ESCR`, `ES_rate`,
+    /// `DSM_trick_mode`, `additional_copy_info`, `PES_CRC`,
+    /// `PES_extension`) followed by the header stuffing — i.e. everything
+    /// after `PES_header_data_length`, whose value is
+    /// [`Self::optional_len`].
+    ///
+    /// # Errors
+    /// [`Error::FieldOverflow`] if a sub-field exceeds its wire width,
+    /// [`Error::OutputBufferTooSmall`] if `buf` is shorter than the fields.
+    pub fn serialize_optional_fields(&self, buf: &mut [u8]) -> Result<usize> {
+        need_out(buf, self.optional_len())?;
+        let mut cursor = 0usize;
+
+        // PTS (and/or DTS).
+        if let Some(pts) = self.pts {
+            let prefix = if self.dts.is_some() {
+                0b0011u8
+            } else {
+                0b0010u8
+            };
+            buf[cursor..cursor + 5].copy_from_slice(&timestamp::write(pts.0, prefix));
+            cursor += 5;
+        }
+        if let Some(dts) = self.dts {
+            buf[cursor..cursor + 5].copy_from_slice(&timestamp::write(dts.0, 0b0001));
+            cursor += 5;
+        }
+        // ESCR.
+        if let Some(escr) = self.escr {
+            buf[cursor..cursor + 6].copy_from_slice(&escr.to_field_bytes());
+            cursor += 6;
+        }
+        // ES_rate: marker(1) | rate(22) | marker(1) = 3 bytes.
+        if let Some(rate) = self.es_rate {
+            let leading = if self.es_rate_marker_bits & 0b10 != 0 {
+                ES_RATE_LEADING_MARKER
+            } else {
+                0
+            };
+            buf[cursor] = leading | ((rate >> 15) as u8 & 0x7F);
+            buf[cursor + 1] = ((rate >> 7) & 0xFF) as u8;
+            buf[cursor + 2] =
+                (((rate & 0x7F) as u8) << 1) | (self.es_rate_marker_bits & ES_RATE_TRAILING_MARKER);
+            cursor += 3;
+        }
+        // DSM trick mode.
+        if let Some(tm) = self.dsm_trick_mode {
+            buf[cursor] = tm.to_byte();
+            cursor += 1;
+        }
+        // additional_copy_info: marker(1) | info(7).
+        if let Some(aci) = self.additional_copy_info {
+            let marker = if aci.marker {
+                ADDITIONAL_COPY_INFO_MARKER
+            } else {
+                0
+            };
+            buf[cursor] = marker | (aci.info & 0x7F);
+            cursor += 1;
+        }
+        // PES_CRC (2 bytes, big-endian).
+        if let Some(crc) = self.pes_crc {
+            buf[cursor..cursor + 2].copy_from_slice(&crc.to_be_bytes());
+            cursor += 2;
+        }
+        // PES_extension.
+        if let Some(ref ext) = self.pes_extension {
+            let written = ext.serialize_into(&mut buf[cursor..])?;
+            cursor += written;
+        }
+
+        // Trailing stuffing inside the header_data_length region
+        // (ISO/IEC 13818-1 Table 2-21), reproducing the encoder's pad.
+        buf[cursor..cursor + self.header_stuffing.len()].copy_from_slice(self.header_stuffing);
+        cursor += self.header_stuffing.len();
+        Ok(cursor)
+    }
+
     /// Number of bytes this header occupies in the serialized `PES_header_data_length`
     /// region (not counting the 3 fixed header bytes — the 2 flag bytes + length byte).
-    fn optional_len(&self) -> usize {
+    #[must_use]
+    pub fn optional_len(&self) -> usize {
         let mut n = 0usize;
         if self.pts.is_some() {
             n += 5;
@@ -867,6 +976,7 @@ impl<'a> PesPacket<'a> {
 
         // PTS/DTS (ISO/IEC 13818-1 §2.4.3.7 Table 2-21).
         let pts_dts_flags = (f2 >> 6) & 0x03;
+
         let (pts, dts) = match pts_dts_flags {
             0b10 => {
                 need_in(opt, cursor + 5, "PTS")?;
@@ -1039,95 +1149,14 @@ impl<'a> PesPacket<'a> {
                     return Err(Error::OptionalFieldsTooLarge(opt_len));
                 }
 
-                // f1: marker '10' | scrambling(2) | priority(1) | align(1) | copyright(1) | orig(1)
-                let f1 = 0x80
-                    | ((h.scrambling_control & 0x03) << 4)
-                    | (u8::from(h.pes_priority) << 3)
-                    | (u8::from(h.data_alignment_indicator) << 2)
-                    | (u8::from(h.copyright) << 1)
-                    | u8::from(h.original_or_copy);
-
-                // f2: pts_dts_flags(2) | escr_flag(1) | es_rate_flag(1) |
-                //     trick_mode(1) | add_copy(1) | crc(1) | ext(1)
-                let pts_dts_flags = match (h.pts.is_some(), h.dts.is_some()) {
-                    (true, true) => 0b11u8,
-                    (true, false) => 0b10,
-                    _ => 0b00,
-                };
-                let f2 = (pts_dts_flags << 6)
-                    | (u8::from(h.escr.is_some()) << 5)
-                    | (u8::from(h.es_rate.is_some()) << 4)
-                    | (u8::from(h.dsm_trick_mode.is_some()) << 3)
-                    | (u8::from(h.additional_copy_info.is_some()) << 2)
-                    | (u8::from(h.pes_crc.is_some()) << 1)
-                    | u8::from(h.pes_extension.is_some());
-
+                let [f1, f2] = h.flag_bytes();
                 buf[6] = f1;
                 buf[7] = f2;
                 buf[8] = opt_len as u8;
+                let cursor = MIN_LEN + HEADER_FIXED; // = 9
+                h.serialize_optional_fields(&mut buf[cursor..])?;
 
-                let mut cursor = MIN_LEN + HEADER_FIXED; // = 9
-
-                // PTS (and/or DTS).
-                if let Some(pts) = h.pts {
-                    let prefix = if h.dts.is_some() { 0b0011u8 } else { 0b0010u8 };
-                    buf[cursor..cursor + 5].copy_from_slice(&timestamp::write(pts.0, prefix));
-                    cursor += 5;
-                }
-                if let Some(dts) = h.dts {
-                    buf[cursor..cursor + 5].copy_from_slice(&timestamp::write(dts.0, 0b0001));
-                    cursor += 5;
-                }
-                // ESCR.
-                if let Some(escr) = h.escr {
-                    buf[cursor..cursor + 6].copy_from_slice(&escr.to_field_bytes());
-                    cursor += 6;
-                }
-                // ES_rate: marker(1) | rate(22) | marker(1) = 3 bytes.
-                if let Some(rate) = h.es_rate {
-                    let leading = if h.es_rate_marker_bits & 0b10 != 0 {
-                        ES_RATE_LEADING_MARKER
-                    } else {
-                        0
-                    };
-                    buf[cursor] = leading | ((rate >> 15) as u8 & 0x7F);
-                    buf[cursor + 1] = ((rate >> 7) & 0xFF) as u8;
-                    buf[cursor + 2] = (((rate & 0x7F) as u8) << 1)
-                        | (h.es_rate_marker_bits & ES_RATE_TRAILING_MARKER);
-                    cursor += 3;
-                }
-                // DSM trick mode.
-                if let Some(tm) = h.dsm_trick_mode {
-                    buf[cursor] = tm.to_byte();
-                    cursor += 1;
-                }
-                // additional_copy_info: marker(1) | info(7).
-                if let Some(aci) = h.additional_copy_info {
-                    let marker = if aci.marker {
-                        ADDITIONAL_COPY_INFO_MARKER
-                    } else {
-                        0
-                    };
-                    buf[cursor] = marker | (aci.info & 0x7F);
-                    cursor += 1;
-                }
-                // PES_CRC (2 bytes, big-endian).
-                if let Some(crc) = h.pes_crc {
-                    buf[cursor..cursor + 2].copy_from_slice(&crc.to_be_bytes());
-                    cursor += 2;
-                }
-                // PES_extension.
-                if let Some(ref ext) = h.pes_extension {
-                    let written = ext.serialize_into(&mut buf[cursor..])?;
-                    cursor += written;
-                }
-
-                // Trailing stuffing inside the header_data_length region
-                // (ISO/IEC 13818-1 Table 2-21), reproducing the encoder's pad.
-                buf[cursor..cursor + h.header_stuffing.len()].copy_from_slice(h.header_stuffing);
-                cursor += h.header_stuffing.len();
-
-                cursor
+                cursor + opt_len
             }
         };
         buf[payload_at..len].copy_from_slice(self.payload);
@@ -1232,7 +1261,7 @@ mod tests {
     fn forbidden_pts_dts_flags_01_is_rejected() {
         let mut b = [
             0x00, 0x00, 0x01, 0xE0, 0x00, 0x0E, 0x80, 0xC0, 0x0A, 0x31, 0x00, 0x03, 0x00, 0x01,
-            0x11, 0x00, 0x05, 0x00, 0x01, 0xCC,
+            0x11, 0x20, 0x05, 0x20, 0x01, 0xCC,
         ];
         b[7] = 0x40; // pts_dts_flags = 01 (top two bits of f2)
         assert!(matches!(

@@ -67,6 +67,8 @@ pub(crate) fn check_field_width(what: &'static str, value: u64, bits: u32) -> Re
 const WORD_MASK: u16 = 0x3FF;
 /// Mask of the 8-bit payload value `b7..b0` of a parity-protected word.
 const PAYLOAD_MASK: u16 = 0xFF;
+/// Mask of the low 9 bits (`b8..b0`) summed by the `Checksum_Word`.
+const LOW_9_BITS_MASK: u16 = 0x1FF;
 
 /// Result of [`AncContent::validate`]: one flag per ST 291-1:2011 rule,
 /// `true` = the rule holds.
@@ -214,16 +216,7 @@ impl AncContent {
     /// result (`private/specs-verified/smpte/st291/anc_packet_291.md` "Checksum_Word computation").
     #[must_use]
     pub fn compute_checksum(&self) -> u16 {
-        const LOW9: u16 = 0x1FF;
-        let mut sum: u32 = u32::from(self.did & LOW9)
-            + u32::from(self.sdid & LOW9)
-            + u32::from(self.data_count & LOW9);
-        for &udw in &self.user_data_words {
-            sum += u32::from(udw & LOW9);
-        }
-        let checksum_value = (sum & u32::from(LOW9)) as u16;
-        let b9 = 1 - (checksum_value >> 8);
-        (b9 << 9) | checksum_value
+        Self::checksum_for(self.did, self.sdid, self.data_count, &self.user_data_words)
     }
 
     /// `Ok(())` if the stored [`Self::checksum`] matches
@@ -272,13 +265,51 @@ impl AncContent {
         Ok(content)
     }
 
-    /// Bit width of this content sequence on the wire: the fixed 40-bit
-    /// `DID`+`SDID`+`Data_Count`+`Checksum_Word` plus 10 bits per
-    /// `User_Data_Word` (counted as `data_count & 0xFF`).
+    /// The `Data_Count` word (10-bit, with parity) ST 291-1:2011 §6.5 derives
+    /// for a content sequence with this many `User_Data_Words`.
+    ///
+    /// # Errors
+    /// [`Error::FieldOverflow`] if there are more than 255 words
+    /// (`Data_Count`'s 8-bit value field).
     #[cfg(any(feature = "ts", feature = "rtp"))]
-    pub(crate) fn content_bit_width(&self) -> usize {
-        (W_DID + W_SDID + W_DATA_COUNT + W_CHECKSUM) as usize
-            + self.udw_loop_count() * W_USER_DATA_WORD as usize
+    pub(crate) fn derived_data_count(&self) -> Result<u16> {
+        let count = broadcast_common::len::fit_u8(self.user_data_words.len(), "Data_Count")?;
+        Ok(Self::with_parity(count))
+    }
+
+    /// Bit width of a content sequence carrying `n` `User_Data_Words` on the
+    /// wire: the fixed 40-bit `DID`+`SDID`+`Data_Count`+`Checksum_Word` plus
+    /// 10 bits per word (`Data_Count & 0xFF` is `n` for a valid sequence).
+    #[cfg(any(feature = "ts", feature = "rtp"))]
+    pub(crate) fn content_bit_width_for(n: usize) -> usize {
+        (W_DID + W_SDID + W_DATA_COUNT + W_CHECKSUM) as usize + n * W_USER_DATA_WORD as usize
+    }
+
+    /// The `data_count & 0xFF` loop counter a content sequence carrying
+    /// `n` `User_Data_Words` must declare (`Data_Count` and `Checksum_Word`
+    /// are both derived from it).
+    ///
+    /// # Errors
+    /// [`Error::FieldOverflow`] if `n` exceeds `u8::MAX`.
+    #[cfg(any(feature = "ts", feature = "rtp"))]
+    pub(crate) fn udw_count_fields(n: usize) -> Result<usize> {
+        let count = broadcast_common::len::fit_u8(n, "Data_Count")?;
+        Ok(usize::from(count))
+    }
+
+    /// The `Checksum_Word` for the given field values (see
+    /// [`Self::compute_checksum`], which derives it from `self`).
+    #[must_use]
+    pub(crate) fn checksum_for(did: u16, sdid: u16, data_count: u16, udws: &[u16]) -> u16 {
+        let mut sum: u32 = u32::from(did & LOW_9_BITS_MASK)
+            + u32::from(sdid & LOW_9_BITS_MASK)
+            + u32::from(data_count & LOW_9_BITS_MASK);
+        for &udw in udws {
+            sum += u32::from(udw & LOW_9_BITS_MASK);
+        }
+        let checksum_value = (sum & u32::from(LOW_9_BITS_MASK)) as u16;
+        let b9 = 1 - (checksum_value >> 8);
+        (b9 << 9) | checksum_value
     }
 
     /// Write `DID`/`SDID`/`Data_Count`/`User_Data_Words`/`Checksum_Word` into
@@ -361,7 +392,7 @@ mod tests {
     #[test]
     fn round_trip() {
         let c = sample();
-        let bits = c.content_bit_width();
+        let bits = AncContent::content_bit_width_for(c.user_data_words.len());
         assert_eq!(bits, 40 + 2 * 10);
         let mut buf = vec![0u8; bits.div_ceil(8)];
         {

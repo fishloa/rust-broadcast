@@ -1,8 +1,10 @@
 //! Round-7 finding F4: a PMT that changes what an existing PID carries replaces the kind the
 //! start gate expects for it.
 
+use std::time::Duration;
+
 use crate::support;
-use broadcast_client::events::DEFAULT_START_PENDING_TRACK_WAIT_US;
+use broadcast_client::events::DEFAULT_START_PENDING_TRACK_WAIT;
 use broadcast_client::{BufferEvent, Config, Event};
 use support::ts_host::Host;
 use support::ts_pmt::{Es, find, rewrite};
@@ -85,7 +87,7 @@ fn flip_audio_to(stream_type: u8, descriptors: Vec<u8>) -> Vec<u8> {
 }
 
 fn waits(start: Option<u64>) -> bool {
-    start.is_some_and(|t| t >= DEFAULT_START_PENDING_TRACK_WAIT_US)
+    start.is_some_and(|t| Duration::from_micros(t) >= DEFAULT_START_PENDING_TRACK_WAIT)
 }
 
 fn released(start: Option<u64>) -> bool {
