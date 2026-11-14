@@ -46,9 +46,10 @@
 //!
 //! The version field is validated (must be 2). For the typed packets (SR/RR/
 //! SDES/BYE/APP) the padding (`P`) bit is parsed, the padding is validated and
-//! stripped (RFC 3550 §6.4.1), and this codec re-emits them unpadded (`P=0`).
+//! carried as a typed [`RtcpPadding`] (RFC 3550 §6.4.1), and re-emitted
+//! verbatim, so a padded packet round-trips byte-identical.
 //! `RtcpPacket::Unknown` is opaque: its `P` bit and trailing padding octets are
-//! preserved verbatim, so it round-trips byte-identical. `no_std` + `alloc`.
+//! preserved verbatim inside `payload`. `no_std` + `alloc`.
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -128,35 +129,114 @@ pub fn padding_count(body: &[u8]) -> core::result::Result<usize, PaddingCountErr
     Ok(count)
 }
 
-/// Validates and strips the trailing `P` (padding) octets from a packet
-/// body, per RFC 3550 §6.4.1. Every per-type `parse` calls this on its body
-/// slice before any type-specific parsing — without it, the `P` bit was
-/// parsed but never acted on, so a padded BYE's first padding byte was
-/// misread as the reason-length octet, and a padded APP's padding bytes
-/// became part of `data` (audit run-09 RTCP-W1).
-///
-/// Returns `Ok(body)` unchanged when `padding` is `false`.
-fn strip_padding<'a>(body: &'a [u8], padding: bool, what: &'static str) -> Result<&'a [u8]> {
-    if !padding {
-        return Ok(body);
+/// The trailing `P` (padding) octets of an RTCP packet (RFC 3550 §6.4.1):
+/// "the last octet of the padding is a count of how many padding octets should
+/// be ignored, including itself". The octets are retained verbatim so a
+/// padded packet re-serializes byte-identically.
+#[derive(Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct RtcpPadding {
+    octets: Vec<u8>,
+}
+
+impl RtcpPadding {
+    /// Build a padding region of `count` octets whose other octets are zero
+    /// and whose last octet is the count itself. `count` counts itself.
+    ///
+    /// # Errors
+    /// [`Error::InvalidValue`] when `count` is zero, or larger than 255.
+    pub fn new(count: usize) -> Result<Self> {
+        if count == 0 {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "rtcp_padding_count",
+                value: 0,
+                reason: "must be nonzero (the count octet counts itself)",
+            }));
+        }
+        let count_u8 = broadcast_common::len::fit_u8(count, "rtcp_padding_count").map_err(|e| {
+            Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: e.field,
+                value: e.value,
+                reason: "exceeds 8-bit RTCP padding count",
+            })
+        })?;
+        let mut octets = alloc::vec![0u8; count];
+        octets[count - 1] = count_u8;
+        Ok(Self { octets })
     }
-    if body.is_empty() {
-        return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
-                need: 1,
-                have: 0,
-                what,
-            },
-        ));
+
+    /// The padding octets exactly as they travel on the wire, the count octet
+    /// (last) included.
+    #[must_use]
+    pub fn octets(&self) -> &[u8] {
+        &self.octets
     }
-    let count = padding_count(body).map_err(|e| {
-        Error::InvalidValue(broadcast_common::error::InvalidValue {
+
+    /// The padding count: the value of the last (count) octet.
+    #[must_use]
+    pub fn count(&self) -> usize {
+        self.octets.last().map_or(0, |&c| usize::from(c))
+    }
+
+    /// Read the trailing padding of a packet whose `P` bit is set. `body` is
+    /// everything after the common header; its last `count` octets are the
+    /// padding. Returns `None` when the `P` bit is clear.
+    fn from_wire(body: &[u8], padding: bool, what: &'static str) -> Result<Option<Self>> {
+        if !padding {
+            return Ok(None);
+        }
+        if body.is_empty() {
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 1,
+                    have: 0,
+                    what,
+                },
+            ));
+        }
+        let count = padding_count(body).map_err(|e| {
+            Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "rtcp_padding_count",
+                value: e.count as u64,
+                reason: "must be nonzero and no larger than the packet body",
+            })
+        })?;
+        Ok(Some(Self {
+            octets: body[body.len() - count..].to_vec(),
+        }))
+    }
+}
+
+impl core::fmt::Debug for RtcpPadding {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("RtcpPadding")
+            .field("count", &self.count())
+            .finish()
+    }
+}
+
+/// Split a packet body (everything after the common header) into the region
+/// before its trailing padding and the padding octets themselves, per RFC 3550
+/// §6.4.1: the padding's count octet names how many trailing octets are the
+/// padding, itself included. Per-type alignment checks run on the returned
+/// unpadded region, not on the padding octets.
+fn split_padding<'a>(
+    body: &'a [u8],
+    padding: Option<&RtcpPadding>,
+    _what: &'static str,
+) -> Result<(&'a [u8], Option<RtcpPadding>)> {
+    let Some(padding) = padding else {
+        return Ok((body, None));
+    };
+    if padding.octets.len() > body.len() {
+        return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
             field: "rtcp_padding_count",
-            value: e.count as u64,
-            reason: "must be nonzero and no larger than the packet body",
-        })
-    })?;
-    Ok(&body[..body.len() - count])
+            value: padding.octets.len() as u64,
+            reason: "larger than the packet body",
+        }));
+    }
+    let unpadded = &body[..body.len() - padding.octets.len()];
+    Ok((unpadded, Some(padding.clone())))
 }
 
 // ---------------------------------------------------------------------------
@@ -465,10 +545,13 @@ pub struct SenderReport {
     /// Profile-specific extensions (RFC 3550 §6.4.1): the bytes after the
     /// report blocks, retained verbatim. Must be a multiple of 4 bytes.
     pub profile_extensions: Vec<u8>,
+    /// The trailing `P` (padding) octets, `None` when the packet carries none
+    /// (RFC 3550 §6.4.1).
+    pub padding: Option<RtcpPadding>,
 }
 
 impl SenderReport {
-    /// Build an SR with no profile-specific extensions.
+    /// Build an SR with no profile-specific extensions and no padding.
     pub fn new(
         ssrc: u32,
         ntp_msw: u32,
@@ -487,6 +570,7 @@ impl SenderReport {
             octet_count,
             report_blocks,
             profile_extensions: Vec::new(),
+            padding: None,
         }
     }
 
@@ -494,6 +578,13 @@ impl SenderReport {
     #[must_use]
     pub fn with_profile_extensions(mut self, ext: Vec<u8>) -> Self {
         self.profile_extensions = ext;
+        self
+    }
+
+    /// Set the trailing padding octets (RFC 3550 §6.4.1).
+    #[must_use]
+    pub fn with_padding(mut self, padding: RtcpPadding) -> Self {
+        self.padding = Some(padding);
         self
     }
 }
@@ -512,9 +603,14 @@ impl<'a> Parse<'a> for SenderReport {
         }
         let total = hdr.total_len();
         need_in(bytes, total, "RTCP SR")?;
-        let body = strip_padding(
+        let padding = RtcpPadding::from_wire(
             &bytes[RTCP_HEADER_LEN..total],
             hdr.padding,
+            "RTCP SR padding",
+        )?;
+        let (body, padding) = split_padding(
+            &bytes[RTCP_HEADER_LEN..total],
+            padding.as_ref(),
             "RTCP SR padding",
         )?;
         need_in(body, WORD_LEN + SR_SENDER_INFO_LEN, "RTCP SR sender info")?;
@@ -538,6 +634,7 @@ impl<'a> Parse<'a> for SenderReport {
             octet_count,
             report_blocks,
             profile_extensions,
+            padding,
         })
     }
 }
@@ -551,14 +648,18 @@ impl Serialize for SenderReport {
             + SR_SENDER_INFO_LEN
             + self.report_blocks.len() * REPORT_BLOCK_LEN
             + self.profile_extensions.len()
+            + self.padding.as_ref().map_or(0, |p| p.octets().len())
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         let rc = check_report_count(&self.report_blocks)?;
-        check_profile_extensions(&self.profile_extensions)?;
-        let hdr = CommonHeader::new(rc, PT_SENDER_REPORT, length_words_minus_one(len)?);
+        if self.padding.is_none() {
+            check_profile_extensions(&self.profile_extensions)?;
+        }
+        let mut hdr = CommonHeader::new(rc, PT_SENDER_REPORT, length_words_minus_one(len)?);
+        hdr.padding = self.padding.is_some();
         hdr.write(&mut buf[0..RTCP_HEADER_LEN]);
         let mut off = RTCP_HEADER_LEN;
         buf[off..off + 4].copy_from_slice(&self.ssrc.to_be_bytes());
@@ -573,6 +674,10 @@ impl Serialize for SenderReport {
             off += REPORT_BLOCK_LEN;
         }
         buf[off..off + self.profile_extensions.len()].copy_from_slice(&self.profile_extensions);
+        off += self.profile_extensions.len();
+        if let Some(padding) = &self.padding {
+            buf[off..off + padding.octets().len()].copy_from_slice(padding.octets());
+        }
         Ok(len)
     }
 }
@@ -593,15 +698,19 @@ pub struct ReceiverReport {
     /// Profile-specific extensions (RFC 3550 §6.4.2): the bytes after the
     /// report blocks, retained verbatim. Must be a multiple of 4 bytes.
     pub profile_extensions: Vec<u8>,
+    /// The trailing `P` (padding) octets, `None` when the packet carries none
+    /// (RFC 3550 §6.4.2).
+    pub padding: Option<RtcpPadding>,
 }
 
 impl ReceiverReport {
-    /// Build an RR with no profile-specific extensions.
+    /// Build an RR with no profile-specific extensions and no padding.
     pub fn new(ssrc: u32, report_blocks: Vec<ReportBlock>) -> Self {
         ReceiverReport {
             ssrc,
             report_blocks,
             profile_extensions: Vec::new(),
+            padding: None,
         }
     }
 
@@ -609,6 +718,13 @@ impl ReceiverReport {
     #[must_use]
     pub fn with_profile_extensions(mut self, ext: Vec<u8>) -> Self {
         self.profile_extensions = ext;
+        self
+    }
+
+    /// Set the trailing padding octets (RFC 3550 §6.4.2).
+    #[must_use]
+    pub fn with_padding(mut self, padding: RtcpPadding) -> Self {
+        self.padding = Some(padding);
         self
     }
 }
@@ -627,9 +743,14 @@ impl<'a> Parse<'a> for ReceiverReport {
         }
         let total = hdr.total_len();
         need_in(bytes, total, "RTCP RR")?;
-        let body = strip_padding(
+        let padding = RtcpPadding::from_wire(
             &bytes[RTCP_HEADER_LEN..total],
             hdr.padding,
+            "RTCP RR padding",
+        )?;
+        let (body, padding) = split_padding(
+            &bytes[RTCP_HEADER_LEN..total],
+            padding.as_ref(),
             "RTCP RR padding",
         )?;
         let ssrc = be_u32(body, 0, "RR ssrc")?;
@@ -641,6 +762,7 @@ impl<'a> Parse<'a> for ReceiverReport {
             ssrc,
             report_blocks,
             profile_extensions,
+            padding,
         })
     }
 }
@@ -653,14 +775,18 @@ impl Serialize for ReceiverReport {
             + WORD_LEN
             + self.report_blocks.len() * REPORT_BLOCK_LEN
             + self.profile_extensions.len()
+            + self.padding.as_ref().map_or(0, |p| p.octets().len())
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         let rc = check_report_count(&self.report_blocks)?;
-        check_profile_extensions(&self.profile_extensions)?;
-        let hdr = CommonHeader::new(rc, PT_RECEIVER_REPORT, length_words_minus_one(len)?);
+        if self.padding.is_none() {
+            check_profile_extensions(&self.profile_extensions)?;
+        }
+        let mut hdr = CommonHeader::new(rc, PT_RECEIVER_REPORT, length_words_minus_one(len)?);
+        hdr.padding = self.padding.is_some();
         hdr.write(&mut buf[0..RTCP_HEADER_LEN]);
         let mut off = RTCP_HEADER_LEN;
         buf[off..off + 4].copy_from_slice(&self.ssrc.to_be_bytes());
@@ -670,6 +796,10 @@ impl Serialize for ReceiverReport {
             off += REPORT_BLOCK_LEN;
         }
         buf[off..off + self.profile_extensions.len()].copy_from_slice(&self.profile_extensions);
+        off += self.profile_extensions.len();
+        if let Some(padding) = &self.padding {
+            buf[off..off + padding.octets().len()].copy_from_slice(padding.octets());
+        }
         Ok(len)
     }
 }
@@ -753,6 +883,29 @@ impl SdesItemType {
         }
     }
 
+    /// The item-type byte to write, rejecting a non-canonical value: the type-0
+    /// terminator, or an `Unknown` carrying a defined code (RFC 3550 §6.5).
+    fn wire_type(&self) -> Result<u8> {
+        match self {
+            SdesItemType::Unknown(0) => {
+                Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                    field: "sdes_item_type",
+                    value: 0,
+                    reason: "item type 0 is the chunk terminator and cannot be carried as an item",
+                }))
+            }
+            _ if matches!(self, SdesItemType::Unknown(c) if *c != 0 && SdesItemType::from_type(*c) != *self) => {
+                Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                    field: "sdes_item_type",
+                    value: self.item_type() as u64,
+                    reason: "Unknown must carry a code outside the defined RFC 3550 set, \
+                             not a defined type",
+                }))
+            }
+            other => Ok(other.item_type()),
+        }
+    }
+
     /// Spec token for this item type.
     pub fn name(&self) -> &'static str {
         match self {
@@ -810,6 +963,9 @@ impl SdesChunk {
 pub struct SourceDescription {
     /// The chunks (`SC` of them), one per described source.
     pub chunks: Vec<SdesChunk>,
+    /// The trailing `P` (padding) octets, `None` when the packet carries none
+    /// (RFC 3550 §6.5).
+    pub padding: Option<RtcpPadding>,
 }
 
 impl<'a> Parse<'a> for SourceDescription {
@@ -826,9 +982,14 @@ impl<'a> Parse<'a> for SourceDescription {
         }
         let total = hdr.total_len();
         need_in(bytes, total, "RTCP SDES")?;
-        let body = strip_padding(
+        let padding = RtcpPadding::from_wire(
             &bytes[RTCP_HEADER_LEN..total],
             hdr.padding,
+            "RTCP SDES padding",
+        )?;
+        let (body, padding) = split_padding(
+            &bytes[RTCP_HEADER_LEN..total],
+            padding.as_ref(),
             "RTCP SDES padding",
         )?;
         let mut chunks = Vec::with_capacity(hdr.count as usize);
@@ -838,7 +999,14 @@ impl<'a> Parse<'a> for SourceDescription {
             chunks.push(chunk);
             off += consumed;
         }
-        Ok(SourceDescription { chunks })
+        if off < body.len() {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "sdes_chunk_count",
+                value: hdr.count as u64,
+                reason: "bytes remain after the declared chunk count",
+            }));
+        }
+        Ok(SourceDescription { chunks, padding })
     }
 }
 
@@ -900,7 +1068,9 @@ impl Serialize for SourceDescription {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        RTCP_HEADER_LEN + self.chunks.iter().map(SdesChunk::padded_len).sum::<usize>()
+        RTCP_HEADER_LEN
+            + self.chunks.iter().map(SdesChunk::padded_len).sum::<usize>()
+            + self.padding.as_ref().map_or(0, |p| p.octets().len())
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -913,11 +1083,12 @@ impl Serialize for SourceDescription {
                 reason: "exceeds 5-bit SC field",
             }));
         }
-        let hdr = CommonHeader::new(
+        let mut hdr = CommonHeader::new(
             self.chunks.len() as u8,
             PT_SOURCE_DESCRIPTION,
             length_words_minus_one(len)?,
         );
+        hdr.padding = self.padding.is_some();
         hdr.write(&mut buf[0..RTCP_HEADER_LEN]);
         let mut off = RTCP_HEADER_LEN;
         for chunk in &self.chunks {
@@ -936,13 +1107,16 @@ impl Serialize for SourceDescription {
                         reason: "exceeds 8-bit SDES item length",
                     }));
                 }
-                buf[io] = item.item_type.item_type();
+                buf[io] = item.item_type.wire_type()?;
                 buf[io + 1] = item.text.len() as u8;
                 buf[io + 2..io + 2 + item.text.len()].copy_from_slice(item.text.as_bytes());
                 io += 2 + item.text.len();
             }
             // buf[io] terminator (already zeroed); remaining padding zeroed.
             off += padded;
+        }
+        if let Some(padding) = &self.padding {
+            buf[off..off + padding.octets().len()].copy_from_slice(padding.octets());
         }
         Ok(len)
     }
@@ -960,6 +1134,9 @@ pub struct Bye {
     pub sources: Vec<u32>,
     /// Optional textual reason for leaving.
     pub reason: Option<String>,
+    /// The trailing `P` (padding) octets, `None` when the packet carries none
+    /// (RFC 3550 §6.6).
+    pub padding: Option<RtcpPadding>,
 }
 
 impl Bye {
@@ -986,9 +1163,14 @@ impl<'a> Parse<'a> for Bye {
         }
         let total = hdr.total_len();
         need_in(bytes, total, "RTCP BYE")?;
-        let body = strip_padding(
+        let padding = RtcpPadding::from_wire(
             &bytes[RTCP_HEADER_LEN..total],
             hdr.padding,
+            "RTCP BYE padding",
+        )?;
+        let (body, padding) = split_padding(
+            &bytes[RTCP_HEADER_LEN..total],
+            padding.as_ref(),
             "RTCP BYE padding",
         )?;
         let sc = hdr.count as usize;
@@ -1018,7 +1200,11 @@ impl<'a> Parse<'a> for Bye {
         } else {
             None
         };
-        Ok(Bye { sources, reason })
+        Ok(Bye {
+            sources,
+            reason,
+            padding,
+        })
     }
 }
 
@@ -1026,8 +1212,15 @@ impl Serialize for Bye {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        let raw = RTCP_HEADER_LEN + self.sources.len() * WORD_LEN + self.reason_unpadded_len();
-        raw.div_ceil(WORD_LEN) * WORD_LEN
+        let raw = RTCP_HEADER_LEN
+            + self.sources.len() * WORD_LEN
+            + self.reason_unpadded_len()
+            + self.padding.as_ref().map_or(0, |p| p.octets().len());
+        if self.padding.is_some() {
+            raw
+        } else {
+            raw.div_ceil(WORD_LEN) * WORD_LEN
+        }
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -1052,11 +1245,12 @@ impl Serialize for Bye {
         for b in buf[..len].iter_mut() {
             *b = 0;
         }
-        let hdr = CommonHeader::new(
+        let mut hdr = CommonHeader::new(
             self.sources.len() as u8,
             PT_BYE,
             length_words_minus_one(len)?,
         );
+        hdr.padding = self.padding.is_some();
         hdr.write(&mut buf[0..RTCP_HEADER_LEN]);
         let mut off = RTCP_HEADER_LEN;
         for src in &self.sources {
@@ -1067,6 +1261,10 @@ impl Serialize for Bye {
             buf[off] = r.len() as u8;
             off += 1;
             buf[off..off + r.len()].copy_from_slice(r.as_bytes());
+            off += r.len();
+        }
+        if let Some(padding) = &self.padding {
+            buf[off..off + padding.octets().len()].copy_from_slice(padding.octets());
         }
         Ok(len)
     }
@@ -1086,8 +1284,21 @@ pub struct App {
     pub ssrc: u32,
     /// The 4-byte ASCII application name.
     pub name: [u8; APP_NAME_LEN],
-    /// Application-dependent data (must be a multiple of 4 bytes on the wire).
+    /// Application-dependent data (must be a multiple of 4 bytes when the
+    /// packet carries no padding; otherwise padding fills the last word).
     pub data: Vec<u8>,
+    /// The trailing `P` (padding) octets, `None` when the packet carries none
+    /// (RFC 3550 §6.7).
+    pub padding: Option<RtcpPadding>,
+}
+
+impl App {
+    /// Set the trailing padding octets (RFC 3550 §6.7).
+    #[must_use]
+    pub fn with_padding(mut self, padding: RtcpPadding) -> Self {
+        self.padding = Some(padding);
+        self
+    }
 }
 
 impl<'a> Parse<'a> for App {
@@ -1104,9 +1315,14 @@ impl<'a> Parse<'a> for App {
         }
         let total = hdr.total_len();
         need_in(bytes, total, "RTCP APP")?;
-        let body = strip_padding(
+        let padding = RtcpPadding::from_wire(
             &bytes[RTCP_HEADER_LEN..total],
             hdr.padding,
+            "RTCP APP padding",
+        )?;
+        let (body, padding) = split_padding(
+            &bytes[RTCP_HEADER_LEN..total],
+            padding.as_ref(),
             "RTCP APP padding",
         )?;
         need_in(body, WORD_LEN + APP_NAME_LEN, "RTCP APP ssrc+name")?;
@@ -1119,6 +1335,7 @@ impl<'a> Parse<'a> for App {
             ssrc,
             name,
             data,
+            padding,
         })
     }
 }
@@ -1127,7 +1344,11 @@ impl Serialize for App {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        RTCP_HEADER_LEN + WORD_LEN + APP_NAME_LEN + self.data.len()
+        RTCP_HEADER_LEN
+            + WORD_LEN
+            + APP_NAME_LEN
+            + self.data.len()
+            + self.padding.as_ref().map_or(0, |p| p.octets().len())
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -1137,7 +1358,7 @@ impl Serialize for App {
             return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "app_data_len",
                 value: self.data.len() as u64,
-                reason: "APP data must be 32-bit aligned",
+                reason: "APP data plus padding must be 32-bit aligned",
             }));
         }
         if self.subtype > RTCP_COUNT_MASK {
@@ -1147,7 +1368,8 @@ impl Serialize for App {
                 reason: "exceeds 5-bit subtype field",
             }));
         }
-        let hdr = CommonHeader::new(self.subtype, PT_APP, length_words_minus_one(len)?);
+        let mut hdr = CommonHeader::new(self.subtype, PT_APP, length_words_minus_one(len)?);
+        hdr.padding = self.padding.is_some();
         hdr.write(&mut buf[0..RTCP_HEADER_LEN]);
         let mut off = RTCP_HEADER_LEN;
         buf[off..off + 4].copy_from_slice(&self.ssrc.to_be_bytes());
@@ -1155,6 +1377,10 @@ impl Serialize for App {
         buf[off..off + APP_NAME_LEN].copy_from_slice(&self.name);
         off += APP_NAME_LEN;
         buf[off..off + self.data.len()].copy_from_slice(&self.data);
+        off += self.data.len();
+        if let Some(padding) = &self.padding {
+            buf[off..off + padding.octets().len()].copy_from_slice(padding.octets());
+        }
         Ok(len)
     }
 }
@@ -1467,6 +1693,7 @@ mod tests {
                 sample_block(0xBBBB_BBBB, 750, -3),
             ],
             profile_extensions: Vec::new(),
+            padding: None,
         }
     }
 
@@ -1619,6 +1846,7 @@ mod tests {
             ssrc: 0x0102_0304,
             report_blocks: vec![sample_block(0xCAFE_BABE, 33, -7)],
             profile_extensions: Vec::new(),
+            padding: None,
         };
         let bytes = rr.try_to_bytes().unwrap();
         assert_eq!(bytes[1], PT_RECEIVER_REPORT);
@@ -1643,6 +1871,7 @@ mod tests {
                     },
                 ],
             }],
+            padding: None,
         };
         let bytes = sdes.try_to_bytes().unwrap();
         assert_eq!(bytes[1], PT_SOURCE_DESCRIPTION);
@@ -1652,11 +1881,97 @@ mod tests {
         assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
+    /// Audit #2751: an item whose type is the type-0 terminator, or an `Unknown`
+    /// carrying a defined code, is refused on serialize instead of emitting a
+    /// mis-framing or non-canonical item-type byte.
+    #[test]
+    fn sdes_item_type_rejects_terminator_and_noncanonical_unknown() {
+        // Type-0 terminator as an item type.
+        let sdes = SourceDescription {
+            chunks: vec![SdesChunk {
+                source: 1,
+                items: vec![SdesItem {
+                    item_type: SdesItemType::Unknown(0),
+                    text: String::new(),
+                }],
+            }],
+            padding: None,
+        };
+        let mut buf = vec![0u8; sdes.serialized_len()];
+        assert!(matches!(
+            sdes.serialize_into(&mut buf),
+            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "sdes_item_type",
+                ..
+            }))
+        ));
+
+        // `Unknown(1)` is non-canonical (1 is the defined CNAME code).
+        let sdes = SourceDescription {
+            chunks: vec![SdesChunk {
+                source: 1,
+                items: vec![SdesItem {
+                    item_type: SdesItemType::Unknown(1),
+                    text: String::new(),
+                }],
+            }],
+            padding: None,
+        };
+        let mut buf = vec![0u8; sdes.serialized_len()];
+        assert!(matches!(
+            sdes.serialize_into(&mut buf),
+            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "sdes_item_type",
+                ..
+            }))
+        ));
+
+        // A genuine unknown code (outside 0..=8) round-trips.
+        let sdes = SourceDescription {
+            chunks: vec![SdesChunk {
+                source: 1,
+                items: vec![SdesItem {
+                    item_type: SdesItemType::Unknown(9),
+                    text: "x".to_string(),
+                }],
+            }],
+            padding: None,
+        };
+        let bytes = sdes.try_to_bytes().unwrap();
+        assert_eq!(SourceDescription::parse(&bytes).unwrap(), sdes);
+        assert_eq!(sdes.try_to_bytes().unwrap(), bytes);
+    }
+
+    /// Audit #2751: bytes after the declared SDES chunk count are refused,
+    /// rather than silently dropped.
+    #[test]
+    fn sdes_trailing_bytes_after_declared_chunks_are_rejected() {
+        let sdes = SourceDescription {
+            chunks: vec![SdesChunk {
+                source: 1,
+                items: vec![],
+            }],
+            padding: None,
+        };
+        let mut bytes = sdes.try_to_bytes().unwrap();
+        // Append a whole extra word that no chunk covers.
+        bytes.extend_from_slice(&[0, 0, 0, 0]);
+        bytes[3] += 1;
+        assert!(matches!(
+            SourceDescription::parse(&bytes),
+            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "sdes_chunk_count",
+                ..
+            }))
+        ));
+    }
+
     #[test]
     fn bye_round_trip_with_reason() {
         let bye = Bye {
             sources: vec![0x1111_1111, 0x2222_2222],
             reason: Some("teardown".to_string()),
+            padding: None,
         };
         let bytes = bye.try_to_bytes().unwrap();
         assert_eq!(bytes[1], PT_BYE);
@@ -1672,6 +1987,7 @@ mod tests {
         let bye = Bye {
             sources: vec![0xABCD_0000],
             reason: None,
+            padding: None,
         };
         let parsed = Bye::parse(&bye.try_to_bytes().unwrap()).unwrap();
         assert_eq!(parsed, bye);
@@ -1752,6 +2068,7 @@ mod tests {
             ssrc: 0x9988_7766,
             name: *b"TMUX",
             data: vec![0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04],
+            padding: None,
         };
         let bytes = app.try_to_bytes().unwrap();
         assert_eq!(bytes[1], PT_APP);
@@ -1797,6 +2114,7 @@ mod tests {
                     text: "cn".to_string(),
                 }],
             }],
+            padding: None,
         };
         let cp = CompoundPacket::new(vec![
             RtcpPacket::SenderReport(sample_sr()),
@@ -1816,6 +2134,7 @@ mod tests {
         let err = CompoundPacket::new(vec![RtcpPacket::Bye(Bye {
             sources: vec![1],
             reason: None,
+            padding: None,
         })]);
         assert!(matches!(
             &(err),
@@ -1825,6 +2144,7 @@ mod tests {
         let bye = Bye {
             sources: vec![1],
             reason: None,
+            padding: None,
         };
         let bytes = bye.try_to_bytes().unwrap();
         assert!(matches!(
@@ -1859,6 +2179,7 @@ mod tests {
             ssrc: 1,
             name: *b"BIGP",
             data: vec![0u8; 262_136],
+            padding: None,
         };
         let len = app.serialized_len();
         let mut buf = vec![0u8; len];
@@ -1930,5 +2251,116 @@ mod tests {
                 "pt {pt}"
             );
         }
+    }
+
+    /// Audit #2742: a typed packet that carries trailing padding re-serializes
+    /// byte-identically (the padding octets and the `P` bit are preserved),
+    /// rather than re-emitting the packet unpadded.
+    #[test]
+    fn padded_typed_packets_round_trip_byte_identical() {
+        let sr = sample_sr().with_padding(RtcpPadding::new(4).unwrap());
+        let bytes = sr.try_to_bytes().unwrap();
+        assert_eq!(bytes[0] & RTCP_PADDING_MASK, RTCP_PADDING_MASK);
+        assert_eq!(bytes.len(), 4 + 24 + 2 * REPORT_BLOCK_LEN + 4);
+        assert_eq!(&bytes[bytes.len() - 4..], &[0, 0, 0, 4]);
+        let parsed = SenderReport::parse(&bytes).unwrap();
+        assert_eq!(parsed, sr);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
+
+        let rr = ReceiverReport::new(0x0102_0304, vec![sample_block(1, 2, 3)])
+            .with_padding(RtcpPadding::new(8).unwrap());
+        let bytes = rr.try_to_bytes().unwrap();
+        assert_eq!(bytes[bytes.len() - 1], 8);
+        assert_eq!(ReceiverReport::parse(&bytes).unwrap(), rr);
+        assert_eq!(rr.try_to_bytes().unwrap(), bytes);
+
+        let sdes = SourceDescription {
+            chunks: vec![SdesChunk {
+                source: 1,
+                items: vec![SdesItem {
+                    item_type: SdesItemType::CName,
+                    text: "a".to_string(),
+                }],
+            }],
+            padding: Some(RtcpPadding::new(4).unwrap()),
+        };
+        let bytes = sdes.try_to_bytes().unwrap();
+        assert_eq!(SourceDescription::parse(&bytes).unwrap(), sdes);
+        assert_eq!(sdes.try_to_bytes().unwrap(), bytes);
+
+        let bye = Bye {
+            sources: vec![1],
+            reason: None,
+            padding: Some(RtcpPadding::new(4).unwrap()),
+        };
+        let bytes = bye.try_to_bytes().unwrap();
+        assert_eq!(Bye::parse(&bytes).unwrap(), bye);
+        assert_eq!(bye.try_to_bytes().unwrap(), bytes);
+    }
+
+    /// Audit #2742: a padded APP's trailing padding is carried separately from
+    /// `data`, so a parsed padded APP re-serializes instead of erroring on the
+    /// unaligned `data` (the padding fills the final word).
+    #[test]
+    fn padded_app_round_trips_byte_identical() {
+        let bytes: [u8; 20] = [
+            0b1010_0000,
+            PT_APP,
+            0x00,
+            0x04,
+            0x11,
+            0x22,
+            0x33,
+            0x44,
+            b'T',
+            b'E',
+            b'S',
+            b'T',
+            0xDE,
+            0xAD,
+            0xBE,
+            0xEF,
+            0x00,
+            0x00,
+            0x00,
+            0x04,
+        ];
+        let app = App::parse(&bytes).unwrap();
+        assert_eq!(app.data, vec![0xDE, 0xAD, 0xBE, 0xEF]);
+        assert_eq!(app.padding, Some(RtcpPadding::new(4).unwrap()));
+        assert_eq!(app.try_to_bytes().unwrap(), bytes);
+        assert_eq!(App::parse(&app.try_to_bytes().unwrap()).unwrap(), app);
+    }
+
+    /// A padded APP whose `data` plus padding does not fill a whole final word
+    /// is refused: padding is the packet's trailing region, never a separator.
+    #[test]
+    fn padded_app_unaligned_before_padding_is_rejected() {
+        let app = App {
+            subtype: 0,
+            ssrc: 1,
+            name: *b"TEST",
+            data: vec![1, 2, 3],
+            padding: Some(RtcpPadding::new(4).unwrap()),
+        };
+        let mut buf = vec![0u8; app.serialized_len()];
+        assert!(matches!(
+            app.serialize_into(&mut buf),
+            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "app_data_len",
+                ..
+            }))
+        ));
+    }
+
+    /// Audit #2742: a set `P` bit whose count byte exceeds the body is refused.
+    #[test]
+    fn padding_larger_than_body_is_rejected() {
+        let bytes = [0b1010_0001, PT_BYE, 0x00, 0x01, 0, 0, 0, 4];
+        assert!(
+            Bye::parse(&bytes).is_err(),
+            "a padding count larger than the BYE body must not parse"
+        );
+        assert!(RtcpPadding::new(0).is_err());
     }
 }
