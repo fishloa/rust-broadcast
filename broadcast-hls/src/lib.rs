@@ -157,6 +157,33 @@ impl ByteRange {
     }
 }
 
+impl From<broadcast_common::range::ByteSpan> for ByteRange {
+    fn from(span: broadcast_common::range::ByteSpan) -> Self {
+        ByteRange {
+            length: span.len.get(),
+            offset: Some(span.offset),
+        }
+    }
+}
+
+impl TryFrom<ByteRange> for broadcast_common::range::ByteSpan {
+    type Error = ZeroLengthRange;
+
+    fn try_from(range: ByteRange) -> core::result::Result<Self, Self::Error> {
+        let len = core::num::NonZeroU64::new(range.length).ok_or(ZeroLengthRange)?;
+        Ok(broadcast_common::range::ByteSpan::new(
+            range.offset.unwrap_or(0),
+            len,
+        ))
+    }
+}
+
+/// An HLS [`ByteRange`] with a zero length cannot name a [`ByteSpan`], whose
+/// length is always at least one byte.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ZeroLengthRange;
+
 /// The Media Initialization Section reference of `#EXT-X-MAP` (RFC 8216bis
 /// §4.4.4.5) — see [`MediaSegment::map`] for carry-forward/dedup semantics.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -4958,6 +4985,29 @@ mod tests {
 
     use super::*;
     use alloc::vec;
+
+    /// A `ByteRange` round-trips to [`ByteSpan`] and back (offset/length vs
+    /// first/last), and a zero-length range is refused rather than made empty.
+    #[test]
+    fn byte_range_and_byte_span_round_trip() {
+        use broadcast_common::range::ByteSpan;
+
+        let range = ByteRange {
+            length: 100,
+            offset: Some(50),
+        };
+        let span = ByteSpan::try_from(range).expect("non-zero length");
+        assert_eq!(span.offset, 50);
+        assert_eq!(span.len.get(), 100);
+        assert_eq!(ByteRange::from(span), range);
+
+        // A zero-length range cannot name a ByteSpan.
+        let empty = ByteRange {
+            length: 0,
+            offset: Some(0),
+        };
+        assert!(ByteSpan::try_from(empty).is_err());
+    }
 
     /// A `Duration` is always a valid decimal-seconds value, so the
     /// duration constructors need no validation and never panic.
