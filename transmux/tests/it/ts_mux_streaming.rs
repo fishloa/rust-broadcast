@@ -30,7 +30,7 @@ fn feed(m: &Media) -> Vec<(usize, Sample)> {
     let mut v: Vec<(i128, usize, Sample)> = Vec::new();
     for (ti, t) in m.tracks.iter().enumerate() {
         for s in &t.samples {
-            let k = i128::from(s.timing.map(|t| t.dts).unwrap()) * 90_000
+            let k = i128::from(s.timing.and_then(|t| t.dts()).unwrap()) * 90_000
                 / i128::from(t.spec.timescale.get());
             v.push((k, ti, s.clone()));
         }

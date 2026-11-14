@@ -110,7 +110,7 @@ fn segment_via_segmenter(media: &Media, target_secs: f64) -> (Vec<u8>, Vec<Vec<u
         let (track_id, sample) = {
             let c = &mut cursors[i];
             let s = c.samples[c.idx].clone();
-            c.dts_ticks += s.timing.map(|t| t.duration).unwrap_or(0) as u64;
+            c.dts_ticks += s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64;
             c.idx += 1;
             (c.track_id, s)
         };
@@ -139,7 +139,7 @@ fn recover_segment_timing(
             let dur: u64 = t
                 .samples
                 .iter()
-                .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
+                .map(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64)
                 .sum();
             let entry = out.entry(t.spec.track_id.value()).or_default();
             entry.0.push(dur);
@@ -248,7 +248,7 @@ fn static_mpd_structure_codecs_and_number_duration_math() {
             .expect("track")
             .samples
             .iter()
-            .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
+            .map(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64)
             .sum();
         assert_eq!(
             sum_of_real_segments, track_total,

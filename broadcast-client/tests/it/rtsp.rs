@@ -327,7 +327,7 @@ fn tracks_precede_first_sample_and_samples_equal_oracle() {
             track.samples.len(),
             "track {id}: every original sample is recovered"
         );
-        let origin = track.samples[0].timing.map(|t| t.pts).expect("fixture pts");
+        let origin = track.samples[0].timing.and_then(|t| t.pts()).expect("fixture pts");
         for (n, (recovered, original)) in mine.iter().zip(&track.samples).enumerate() {
             assert_eq!(
                 &recovered.data[..],
@@ -335,8 +335,8 @@ fn tracks_precede_first_sample_and_samples_equal_oracle() {
                 "track {id} sample {n}: payload bytes"
             );
             assert_eq!(
-                recovered.timing.map(|t| t.pts),
-                original.timing.map(|t| t.pts).map(|p| p - origin),
+                recovered.timing.and_then(|t| t.pts()),
+                original.timing.and_then(|t| t.pts()).map(|p| p - origin),
                 "track {id} sample {n}: pts"
             );
             assert_eq!(

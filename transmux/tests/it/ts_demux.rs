@@ -175,21 +175,21 @@ fn timestamps_and_sync_flags_match_csv_oracle() {
     for (i, s) in vid.samples.iter().enumerate() {
         let dts = s
             .timing
-            .map(|t| t.dts)
+            .and_then(|t| t.dts())
             .unwrap_or_else(|| panic!("video sample {i} has no dts"));
         let pts = s
             .timing
-            .map(|t| t.pts)
+            .and_then(|t| t.pts())
             .unwrap_or_else(|| panic!("video sample {i} has no pts"));
         assert_eq!(
             dts,
             video_oracle[i].dts(),
-            "video sample {i} DTS (actual s.timing.map(|t| t.dts)) must match oracle"
+            "video sample {i} DTS (actual s.timing.and_then(|t| t.dts())) must match oracle"
         );
         assert_eq!(
             pts,
             video_oracle[i].pts(),
-            "video sample {i} PTS (actual s.timing.map(|t| t.pts)) must match oracle"
+            "video sample {i} PTS (actual s.timing.and_then(|t| t.pts())) must match oracle"
         );
         assert_eq!(
             s.flags.is_sync,
@@ -225,15 +225,15 @@ fn timestamps_and_sync_flags_match_csv_oracle() {
     for (i, s) in aud.samples.iter().enumerate() {
         let dts = s
             .timing
-            .map(|t| t.dts)
+            .and_then(|t| t.dts())
             .unwrap_or_else(|| panic!("audio sample {i} has no dts")) as i128;
         let pts = s
             .timing
-            .map(|t| t.pts)
+            .and_then(|t| t.pts())
             .unwrap_or_else(|| panic!("audio sample {i} has no pts")) as i128;
         assert_eq!(
             pts, dts,
-            "audio sample {i}: s.timing.map(|t| t.pts) must equal s.timing.map(|t| t.dts) (no reordering)"
+            "audio sample {i}: s.timing.and_then(|t| t.pts()) must equal s.timing.and_then(|t| t.dts()) (no reordering)"
         );
 
         let dts_90k = (dts * 90_000 + audio_ts / 2).div_euclid(audio_ts);

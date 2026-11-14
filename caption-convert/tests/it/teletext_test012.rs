@@ -33,7 +33,7 @@ fn samples() -> Option<Vec<(u64, Vec<u8>)>> {
             .map(|s| {
                 let pts = s
                     .timing
-                    .map(|t| t.pts)
+                    .and_then(|t| t.pts())
                     .expect("teletext PES carries a PTS")
                     .max(0) as u64;
                 (pts, s.data.to_vec())

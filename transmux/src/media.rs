@@ -61,6 +61,7 @@ use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer};
 use crate::mpegh::{MHAC_FOURCC, MHADecoderConfigurationRecord};
 use crate::opus::OpusSpecificBox;
 use crate::pipeline::{build_init_segment, build_media_segment};
+use crate::segments::MOOF;
 use crate::visual_ext::{CleanApertureBox, ColourInformationBox, PixelAspectRatioBox};
 use alloc::sync::Arc;
 
@@ -222,7 +223,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
                 Err(e) => return Err(e),
             };
             let ty = bx.header.box_type.0;
-            if &ty == b"moof" {
+            if ty == MOOF {
                 match MovieFragmentBox::parse_body_budgeted(bx.body, &mut zero_width_budget) {
                     Ok(mut moof) => {
                         apply_trex_defaults(&mut moof, trex_defaults);
@@ -395,11 +396,7 @@ fn absorb_traf(
             let pts = crate::frag_offsets::add_offset(dts, r.composition_offset)?;
             samples.push(Sample {
                 data: file[r.start..r.end].to_vec().into(),
-                timing: crate::ir::SampleTiming::from_options(
-                    Some(dts),
-                    Some(pts),
-                    Some(r.duration),
-                ),
+                timing: Some(crate::ir::SampleTiming::timed(dts, pts)),
                 flags: crate::ir::SampleFlags::new(is_sync),
                 // fMP4 sources carry no per-sample source-container
                 // timestamps distinct from the fragment's own tfdt/trun
@@ -507,7 +504,11 @@ impl TimelineOrigin {
     pub(crate) fn of<'t>(tracks: impl IntoIterator<Item = &'t Track>) -> Self {
         let mut best: Option<(i64, Timescale)> = None;
         for t in tracks {
-            let Some(d) = t.samples.iter().find_map(|s| s.timing.map(|t| t.dts)) else {
+            let Some(d) = t
+                .samples
+                .iter()
+                .find_map(|s| s.timing.and_then(|t| t.dts()))
+            else {
                 continue;
             };
             let ts = t.spec.timescale;
@@ -543,12 +544,12 @@ pub(crate) fn relative_decode_times(track: &Track, origin: &TimelineOrigin) -> V
     let mut out = Vec::with_capacity(track.samples.len());
     let mut next: i64 = 0;
     for s in &track.samples {
-        let t = match s.timing.map(|t| t.dts) {
+        let t = match s.timing.and_then(|t| t.dts()) {
             Some(d) => d.saturating_sub(base),
             None => next,
         };
         out.push(t);
-        next = t.saturating_add(i64::from(s.timing.map(|t| t.duration).unwrap_or(0)));
+        next = t.saturating_add(i64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)));
     }
     out
 }
@@ -561,8 +562,8 @@ pub(crate) fn presentation_span_secs(tracks: &[&Track]) -> f64 {
     for t in tracks {
         let ts = f64::from(t.spec.timescale.get());
         for (s, dts) in t.samples.iter().zip(relative_decode_times(t, &origin)) {
-            let pts = (dts + i64::from(s.composition_offset())) as f64 / ts;
-            let end = pts + f64::from(s.timing.map(|t| t.duration).unwrap_or(0)) / ts;
+            let pts = (dts + i64::from(s.timing.and_then(|t| t.pts()).unwrap_or(dts))) as f64 / ts;
+            let end = pts + f64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)) / ts;
             span = Some(match span {
                 None => (pts, end),
                 Some((lo, hi)) => (lo.min(pts), hi.max(end)),
@@ -624,20 +625,17 @@ impl Package for HlsPackager {
             return Err(Error::InvalidInput("cannot package a Media with no tracks"));
         }
         // A section-carried track (SCTE-35 `stream_type` 0x86, DSM-CC, private
-        // sections) has no timestamps at all (`Sample::duration` is `None` for
-        // every sample, deliberately) — see the per-track skip below for why
-        // it is omitted from the playlist. Such a track is also frequently
-        // not BMFF-muxable at all (an opaque `CodecConfig::Data` track), so it
-        // must be excluded here too: only tracks that will actually become a
-        // `#EXTINF` segment below feed the shared init segment's track list.
+        // sections) has no timing at all (its samples carry neither a decode
+        // time nor a span, deliberately) — see the per-track skip below for
+        // why it is omitted from the playlist. Such a track is also
+        // frequently not BMFF-muxable at all (an opaque `CodecConfig::Data`
+        // track), so it must be excluded here too: only tracks that will
+        // actually become a `#EXTINF` segment below feed the shared init
+        // segment's track list.
         let kept: Vec<&Track> = media
             .tracks
             .iter()
-            .filter(|t| {
-                t.samples
-                    .iter()
-                    .any(|s| s.timing.map(|t| t.duration).unwrap_or(0) != 0)
-            })
+            .filter(|t| t.samples.iter().any(|s| s.timing.is_some()))
             .collect();
 
         // Every segment this packager names (`{prefix}{track_id}.m4s`) is
@@ -1558,7 +1556,7 @@ mod tests {
         // fragment's own declared tfdt, NOT on the running duration sum.
         let first_post_gap = &track.samples[FRAMES_PER_FRAGMENT as usize];
         assert_eq!(
-            first_post_gap.timing.map(|t| t.dts),
+            first_post_gap.timing.and_then(|t| t.dts()),
             Some(gapped_second_base as i64),
             "post-gap dts must come from the second fragment's tfdt \
              ({gapped_second_base}), not the pure duration sum \
@@ -1572,7 +1570,7 @@ mod tests {
         {
             let expected = gapped_second_base as i64 + (i as i64) * i64::from(FRAME_DUR);
             assert_eq!(
-                s.timing.map(|t| t.dts),
+                s.timing.and_then(|t| t.dts()),
                 Some(expected),
                 "sample {i} after the gap"
             );
@@ -1629,7 +1627,7 @@ mod tests {
         let got: Vec<i64> = media.tracks[0]
             .samples
             .iter()
-            .filter_map(|s| s.timing.map(|t| t.dts))
+            .filter_map(|s| s.timing.and_then(|t| t.dts()))
             .collect();
         let want: Vec<i64> = (0..FRAMES * 2)
             .map(|i| i64::from(i) * i64::from(FRAME_DUR))
@@ -1664,7 +1662,7 @@ mod tests {
                         vec![0u8; 4],
                         Some(i64::from(i) * i64::from(FRAME_DUR)),
                         Some(i64::from(i) * i64::from(FRAME_DUR)),
-                        Some(FRAME_DUR),
+                        None,
                         true,
                     )
                 })
@@ -1756,7 +1754,7 @@ mod tests {
         // One access unit, two NALs, each with a 2-byte length prefix.
         let sample = Sample {
             data: vec![0x00, 0x05, 0x65, 0x88, 0x84, 0x00, 0x21, 0x00, 0x01, 0x41].into(),
-            timing: crate::ir::SampleTiming::from_options(Some(0), Some(0), Some(1000)),
+            timing: Some(crate::ir::SampleTiming::timed(0, 0)),
             flags: SampleFlags::new(true),
             provenance: None,
             display: None,

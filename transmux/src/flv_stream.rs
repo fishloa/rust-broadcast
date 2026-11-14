@@ -100,7 +100,7 @@ use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::flv::{
     AUDIO_SAMPLE_SIZE_BITS, CODEC_ID_AVC, FLV_HEADER_LEN, FLV_TIMESCALE, FRAME_TYPE_KEYFRAME,
     FlvError, MAX_FLV_HEADER_LEN, PREV_TAG_SIZE_LEN, TAG_HEADER_LEN, aac_packet_type, asc_rate_hz,
-    avc_dimensions, avc_packet_type, build_aac_esds, read_si24, tag_type,
+    avc_dimensions, avc_packet_type, build_aac_esds, tag_type,
 };
 use crate::ir::DemuxEvent;
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
@@ -109,12 +109,12 @@ use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 /// next same-kind tag's timestamp makes its forward-delta duration knowable,
 /// or [`finish`](StreamingFlvDemux::finish) flushes it at end of stream.
 /// Mirrors [`FlvDemux`](crate::flv::FlvDemux)'s two-pass
-/// `delta_duration`/`backfill_last_duration` bookkeeping one sample at a
+/// `sample_duration`/`backfill_last_duration` bookkeeping one sample at a
 /// time instead of over a fully-buffered `Vec`.
 #[derive(Debug)]
 struct PendingSample {
     sample: Sample,
-    /// This sample's own FLV tag timestamp (ms) — the DTS the *next*
+    /// This sample's own FLV tag timestamp (ms) — the instant the *next*
     /// same-kind tag's timestamp is subtracted from to get its duration.
     dts: i64,
 }
@@ -150,7 +150,7 @@ struct TrackState {
     track_id: Option<TrackId>,
     pending: Option<PendingSample>,
     /// The last computed forward-delta duration, reused for the final
-    /// sample's duration at [`finish`](StreamingFlvDemux::finish) (or `0` if
+    /// sample's duration at [`finish`](StreamingFlvDemux::finish) (or `1` if
     /// only one sample was ever seen) — exactly
     /// [`crate::flv`]'s `backfill_last_duration` tail rule.
     last_duration: u32,
@@ -171,8 +171,8 @@ struct TrackState {
 
 impl TrackState {
     /// Advance the pending slot with a newly-decoded tag at `dts`, emitting
-    /// the *previous* pending sample now that its duration (`dts - prev.timing.map(|t| t.dts)`)
-    /// is known.
+    /// the *previous* pending sample now that its duration (`dts` minus its
+    /// own stamp) is known.
     fn advance(&mut self, sample: Sample, dts: i64, events: &mut VecDeque<DemuxEvent>) {
         let track_id = self
             .track_id
@@ -180,12 +180,9 @@ impl TrackState {
         if let Some(prev) = self.pending.take() {
             let duration = u32::try_from((dts - prev.dts).max(0)).unwrap_or(u32::MAX);
             self.last_duration = duration;
-            let mut emitted = prev.sample;
-            if let Some(t) = emitted.timing.as_mut() {
-                t.duration = duration;
-            } else {
-                emitted.timing = Some(crate::ir::SampleTiming::new(0, 0, duration));
-            }
+            let emitted = prev
+                .sample
+                .with_timing(Some(crate::ir::SampleTiming::DurationOnly { duration }));
             events.push_back(DemuxEvent::Sample {
                 track_id,
                 sample: emitted,
@@ -195,18 +192,17 @@ impl TrackState {
     }
 
     /// Flush a trailing pending sample at end-of-stream, reusing the last
-    /// known forward delta (`0` if this track only ever saw one sample).
+    /// known forward delta (`1` if this track only ever saw one sample).
     fn flush(&mut self, events: &mut VecDeque<DemuxEvent>) {
         let Some(track_id) = self.track_id else {
             return;
         };
         if let Some(prev) = self.pending.take() {
-            let mut emitted = prev.sample;
-            if let Some(t) = emitted.timing.as_mut() {
-                t.duration = self.last_duration;
-            } else {
-                emitted.timing = Some(crate::ir::SampleTiming::new(0, 0, self.last_duration));
-            }
+            let emitted = prev
+                .sample
+                .with_timing(Some(crate::ir::SampleTiming::DurationOnly {
+                    duration: self.last_duration,
+                }));
             events.push_back(DemuxEvent::Sample {
                 track_id,
                 sample: emitted,
@@ -520,7 +516,6 @@ impl StreamingFlvDemux {
         if body.len() < 5 {
             return Ok(());
         }
-        let composition_time = read_si24(&body[2..5]);
         let data = &body[5..];
         match avc_packet_type_byte {
             avc_packet_type::SEQUENCE_HEADER if !data.is_empty() => {
@@ -584,12 +579,10 @@ impl StreamingFlvDemux {
             // resolved the track yet — see the module `# Ordering
             // assumption` note.
             avc_packet_type::NALU if video.track_id.is_some() => {
-                // Absolute dts/pts (media plane step 2c): the FLV tag
-                // timestamp is already an absolute wire clock
-                // (milliseconds, `FLV_TIMESCALE`); `CompositionTime`
-                // (§E.4.3.2) folds directly into `pts`.
-                let dts_abs = timestamp;
-                let pts_abs = dts_abs + composition_time as i64;
+                // The FLV tag timestamp is the stream's only per-sample
+                // clock here (milliseconds, `FLV_TIMESCALE`); its span is the
+                // step to the next tag of the same kind, filled in by
+                // `TrackState::advance`.
                 // The NALU payload's NAL prefixes use the sequence header's
                 // `lengthSizeMinusOne` (§E.4.3.1); rewrite them to the crate's
                 // 4-byte form so the downstream pipeline reads them right
@@ -598,17 +591,7 @@ impl StreamingFlvDemux {
                     data,
                     video.nal_length_size.unwrap_or(NAL_LENGTH_SIZE),
                 )?;
-                let sample = Sample {
-                    data: data.into(),
-                    timing: crate::ir::SampleTiming::from_options(
-                        Some(dts_abs),
-                        Some(pts_abs),
-                        None,
-                    ), // filled in by `TrackState::advance`/`flush`
-                    flags: crate::ir::SampleFlags::new(frame_type == FRAME_TYPE_KEYFRAME),
-                    provenance: None,
-                    display: None,
-                };
+                let sample = Sample::from_duration(data, 1, frame_type == FRAME_TYPE_KEYFRAME);
                 video.advance(sample, timestamp, events);
             }
             avc_packet_type::END_OF_SEQUENCE => {}
@@ -687,18 +670,7 @@ impl StreamingFlvDemux {
             // Dropped (not buffered) if the sequence header hasn't resolved
             // the track yet — see the module `# Ordering assumption` note.
             aac_packet_type::RAW if audio.track_id.is_some() => {
-                let dts_abs = timestamp;
-                let sample = Sample {
-                    data: data.to_vec().into(),
-                    timing: crate::ir::SampleTiming::from_options(
-                        Some(dts_abs),
-                        Some(dts_abs),
-                        None,
-                    ), // filled in by `TrackState::advance`/`flush`
-                    flags: crate::ir::SampleFlags::SYNC,
-                    provenance: None,
-                    display: None,
-                };
+                let sample = Sample::from_duration(data.to_vec(), 1, true);
                 audio.advance(sample, timestamp, events);
             }
             _ => {}
@@ -970,7 +942,7 @@ mod tests {
                 DemuxEvent::Sample { sample, .. } => Some((
                     sample
                         .timing
-                        .map(|t| t.duration)
+                        .and_then(|t| t.duration())
                         .expect("FLV video samples always carry a duration"),
                     sample.data.clone(),
                 )),
@@ -1222,20 +1194,17 @@ mod tests {
             .iter()
             .filter_map(|e| match e {
                 DemuxEvent::Sample { sample, .. } => Some((
-                    sample.timing.map(|t| t.dts),
-                    sample.timing.map(|t| t.duration),
+                    sample.timing.and_then(|t| t.dts()),
+                    sample.timing.and_then(|t| t.duration()),
                 )),
                 _ => None,
             })
             .collect();
-        let start = i64::from(start);
         assert_eq!(
             stamps,
-            vec![
-                (Some(start), Some(40)),
-                (Some(start + 40), Some(40)),
-                (Some(start + 80), Some(40)),
-            ]
+            vec![(None, Some(40)), (None, Some(40)), (None, Some(40))],
+            "an FLV tag states a span, not an instant: the unroll is what keeps \
+             the spans stepping forward past 2^32 ms"
         );
     }
 

@@ -267,8 +267,8 @@ fn lead_points_from(nb_events: &[Event], rendered: &[u32], from: usize) -> Vec<P
                     continue;
                 }
                 let (is_video, ts) = kind[track];
-                let pts = sample.timing.map(|t| t.pts).unwrap();
-                let dur = i64::from(sample.timing.map(|t| t.duration).unwrap_or(0));
+                let pts = sample.timing.and_then(|t| t.pts()).unwrap();
+                let dur = i64::from(sample.timing.and_then(|t| t.duration()).unwrap_or(0));
                 first.entry(*track).or_insert_with(|| to27(pts, ts));
                 let m = max_pts.entry(*track).or_insert(pts);
                 *m = (*m).max(pts);
@@ -342,7 +342,7 @@ fn first_video_pts_after(nb_events: &[Event], from: usize) -> u64 {
             && track.value() == VIDEO
             && !matches!(join, Some(JoinDecision::Drop(_)))
         {
-            return to27(sample.timing.map(|t| t.pts).unwrap(), ts[track].get());
+            return to27(sample.timing.and_then(|t| t.pts()).unwrap(), ts[track].get());
         }
     }
     panic!("no video sample after {from}");
@@ -508,21 +508,14 @@ fn long_stream() -> HashMap<String, Vec<u8>> {
         for (t, s) in &samples {
             let mut s = s.clone();
             let off = k * SPAN_SECS * scale(*t);
-            if let Some(d) = s.timing.map(|t| t.dts).map(|d| d + off)
-                && let Some(t) = s.timing.as_mut()
-            {
-                t.dts = d;
-            }
-            if let Some(p) = s.timing.map(|t| t.pts).map(|p| p + off)
-                && let Some(t) = s.timing.as_mut()
-            {
-                t.pts = p;
+            if let Some(t) = s.timing.as_mut() {
+                t.shift(off);
             }
             all.push((*t, s));
         }
     }
     all.sort_by_key(|(t, s)| {
-        i128::from(s.timing.map(|t| t.dts).unwrap()) * 90_000 / i128::from(scale(*t))
+        i128::from(s.timing.and_then(|t| t.dts()).unwrap()) * 90_000 / i128::from(scale(*t))
     });
     let mut seg = StreamingTsHlsSegmenter::new(specs, LONG_TARGET_SECS, LONG_WINDOW).unwrap();
     for (t, s) in all {

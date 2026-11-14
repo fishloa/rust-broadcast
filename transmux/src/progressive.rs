@@ -90,7 +90,7 @@ fn decode_deltas(samples: &[Sample], times: &[i64]) -> Vec<u32> {
         .iter()
         .enumerate()
         .map(|(i, s)| {
-            let own = s.timing.map(|t| t.duration).unwrap_or(0);
+            let own = s.timing.and_then(|t| t.duration()).unwrap_or(0);
             match (times.get(i), times.get(i + 1)) {
                 (Some(&now), Some(&next)) if next >= now => {
                     u32::try_from(next - now).unwrap_or(own)
@@ -126,25 +126,26 @@ fn build_stts(deltas: &[u32]) -> TimeToSampleBox {
 /// `None` when every sample has a zero composition offset (in which case the box
 /// is omitted per §8.6.1.3). Uses version 1 (signed offsets) to support
 /// negative offsets from B-frame reordering.
-fn build_ctts(samples: &[Sample]) -> Option<CompositionOffsetBox> {
-    if samples.iter().all(|s| s.composition_offset() == 0) {
-        return None;
-    }
+fn build_ctts(samples: &[Sample]) -> Result<Option<CompositionOffsetBox>> {
     let mut entries: Vec<CttsEntry> = Vec::new();
     for s in samples {
+        let offset = s.composition_offset()?.unwrap_or(0);
         match entries.last_mut() {
-            Some(last) if last.sample_offset == s.composition_offset() => last.sample_count += 1,
+            Some(last) if last.sample_offset == offset => last.sample_count += 1,
             _ => entries.push(CttsEntry {
                 sample_count: 1,
-                sample_offset: s.composition_offset(),
+                sample_offset: offset,
             }),
         }
     }
-    Some(CompositionOffsetBox {
+    if entries.iter().all(|entry| entry.sample_offset == 0) {
+        return Ok(None);
+    }
+    Ok(Some(CompositionOffsetBox {
         version: 1,
         flags: 0,
         entries,
-    })
+    }))
 }
 
 /// Build the `stss` sync-sample list (§8.6.2) of 1-based sample indices, or
@@ -225,7 +226,7 @@ fn build_stbl_children(
         StblChild::Stsc(stsc),
         StblChild::Stsz(stsz),
     ];
-    if let Some(ctts) = build_ctts(samples) {
+    if let Some(ctts) = build_ctts(samples)? {
         // ctts follows stts in the recommended stbl order (§8.5.1).
         children.insert(2, StblChild::Ctts(ctts));
     }
@@ -717,8 +718,9 @@ fn track_timings(media: &Media, movie_timescale: Timescale) -> Vec<TrackTiming> 
         .map(|t| {
             let times = relative_decode_times(t, &origin);
             let pres = t.samples.iter().zip(&times).fold(None, |acc, (s, &d)| {
-                let p = d.saturating_add(i64::from(s.composition_offset()));
-                let e = p.saturating_add(i64::from(s.timing.map(|t| t.duration).unwrap_or(0)));
+                let p = d.saturating_add(i64::from(s.timing.and_then(|t| t.pts()).unwrap_or(d)));
+                let e =
+                    p.saturating_add(i64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)));
                 Some(match acc {
                     None => (p, e),
                     Some((lo, hi)) => (p.min(lo), e.max(hi)),

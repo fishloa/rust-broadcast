@@ -524,9 +524,7 @@ fn huge_timescale_media() -> Media {
         track.start_decode_time = track.start_decode_time.saturating_mul(scale);
         for s in &mut track.samples {
             if let Some(t) = s.timing.as_mut() {
-                t.dts = t.dts.saturating_mul(scale as i64);
-                t.pts = t.pts.saturating_mul(scale as i64);
-                t.duration = t.duration.saturating_mul(scale as u32);
+                t.shift(t.dts().unwrap_or(0) * (scale as i64 - 1));
             }
         }
     }
@@ -555,7 +553,7 @@ fn oversized_durations_promote_headers_to_version_1() {
     let mvhd_duration = be64(out.as_slice(), mvhd.start + 8 + 24);
     assert!(
         mvhd_duration > u64::from(u32::MAX),
-        "mvhd.timing.map(|t| t.duration) {mvhd_duration} must survive at 64 bits"
+        "mvhd.timing.and_then(|t| t.duration()) {mvhd_duration} must survive at 64 bits"
     );
 
     let trak_list = traks(&out);
@@ -989,10 +987,9 @@ fn non_monotonic_dts_still_packages() {
             _ => base,
         };
         if let Some(timing) = s.timing.as_mut() {
-            timing.dts = t;
-            timing.pts = t;
+            timing.shift(t - timing.dts().unwrap_or(t));
         } else {
-            s.timing = Some(transmux::ir::SampleTiming::new(t, t, 0));
+            s.timing = Some(transmux::ir::SampleTiming::timed(t, t));
         }
         let _ = step;
     }

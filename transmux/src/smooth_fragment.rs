@@ -23,11 +23,11 @@ use crate::box_types::{box_iter, parse_box};
 use crate::error::{Error, Result};
 use crate::ir::TrackId;
 use crate::movie_fragment::MovieFragmentBox;
+use crate::segments::MOOF;
 use crate::smooth::{TFXD_UUID, TfxdBox};
 use broadcast_smooth::default_limits;
 
 const PROTECTION_ELEMENT: &str = "Protection";
-const BOX_MOOF: [u8; 4] = *b"moof";
 const BOX_TRAF: [u8; 4] = *b"traf";
 const BOX_UUID: [u8; 4] = *b"uuid";
 const BOX_SENC: [u8; 4] = *b"senc";
@@ -134,7 +134,7 @@ pub fn fragment_state(bytes: &[u8]) -> FragmentState {
                 .unwrap_or([0; BOX_SIZE_LEN]),
         );
         let box_type = &bytes[offset + BOX_SIZE_LEN..offset + BOX_HEADER_LEN];
-        let is_moof = box_type == BOX_MOOF;
+        let is_moof = box_type == MOOF;
         if is_moof {
             saw_moof = true;
         }
@@ -200,7 +200,7 @@ pub fn fragment_track_id(fragment: &[u8]) -> Result<TrackId> {
     let mut offset = 0usize;
     while offset + BOX_HEADER_LEN <= fragment.len() {
         let (bx, consumed) = parse_box(&fragment[offset..])?;
-        if bx.header.box_type.is(&BOX_MOOF) {
+        if bx.header.box_type.is(&MOOF) {
             let moof = MovieFragmentBox::parse_body(bx.body)?;
             let traf = moof
                 .traf
@@ -223,7 +223,7 @@ pub fn fragment_track_id(fragment: &[u8]) -> Result<TrackId> {
 pub fn fragment_tfxd(fragment: &[u8]) -> Option<TfxdBox> {
     for result in box_iter(fragment) {
         let (bx, _) = result.ok()?;
-        if !bx.header.box_type.is(&BOX_MOOF) {
+        if !bx.header.box_type.is(&MOOF) {
             continue;
         }
         for child in box_iter(bx.body) {

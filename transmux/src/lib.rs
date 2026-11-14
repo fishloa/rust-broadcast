@@ -439,7 +439,8 @@ pub use sample_groups::{
 pub use segment_cut::{IdrWait, SegmentCutPolicy};
 pub use segmenter::{SegmentMeta, Segmenter};
 pub use segments::{
-    FileTypeBox, MediaDataBox, SegmentTypeBox, insert_event_message_boxes_after_styp,
+    FileTypeBox, MOOF, MediaDataBox, SegmentTypeBox, insert_event_message_boxes_after_styp,
+    starts_with_box_type, starts_with_moof,
 };
 #[cfg(feature = "std")]
 pub use smooth::{

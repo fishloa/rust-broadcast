@@ -729,7 +729,6 @@ impl<'a> Unpackage for FlvDemux<'a> {
                     if tag.body.len() < 5 {
                         continue;
                     }
-                    let composition_time = read_si24(&tag.body[2..5]);
                     let data = &tag.body[5..];
                     match avc_packet_type {
                         avc_packet_type::SEQUENCE_HEADER
@@ -756,14 +755,13 @@ impl<'a> Unpackage for FlvDemux<'a> {
                         }
                         avc_packet_type::NALU => {
                             let dts = tag.timestamp;
-                            // Absolute dts/pts (media plane step 2c): the FLV
-                            // tag timestamp is already an absolute wire clock
-                            // (milliseconds, matching `FLV_TIMESCALE`), unlike
-                            // the five demuxers this step fixes that used to
-                            // leave the anchor at 0 — FLV's `CompositionTime`
-                            // (§E.4.3.2) folds directly into `pts`.
-                            let dts_abs = dts as i64;
-                            let pts_abs = dts_abs + composition_time as i64;
+                            // The FLV tag timestamp is this crate's only
+                            // per-sample clock here (milliseconds, matching
+                            // `FLV_TIMESCALE`): the span between consecutive
+                            // tags of a kind is the sample's duration. A timed
+                            // FLV sample carries no composition offset of its
+                            // own; the `CompositionTime` (§E.4.3.2) is re-read
+                            // from the wire by the FLV muxer, not stored.
                             // The NALU payload's NAL prefixes use the
                             // `lengthSizeMinusOne` the AVC sequence header
                             // declared (§E.4.3.1 / ISO/IEC 14496-15:2017 §5.3.3) —
@@ -778,21 +776,11 @@ impl<'a> Unpackage for FlvDemux<'a> {
                                 });
                                 continue;
                             };
-                            // Only a good sample advances the duration clock.
-                            let duration = delta_duration(&mut last_video_dts, dts);
-                            video_samples.push(Sample {
-                                data: data.into(),
-                                timing: crate::ir::SampleTiming::from_options(
-                                    Some(dts_abs),
-                                    Some(pts_abs),
-                                    Some(duration),
-                                ),
-                                flags: crate::ir::SampleFlags::new(
-                                    frame_type == FRAME_TYPE_KEYFRAME,
-                                ),
-                                provenance: None,
-                                display: None,
-                            });
+                            video_samples.push(Sample::from_duration(
+                                data,
+                                sample_duration(&mut last_video_dts, dts),
+                                frame_type == FRAME_TYPE_KEYFRAME,
+                            ));
                         }
                         avc_packet_type::END_OF_SEQUENCE => {}
                         _ => {}
@@ -829,20 +817,11 @@ impl<'a> Unpackage for FlvDemux<'a> {
                             aac_esds = Some(build_aac_esds(data.to_vec()));
                         }
                         aac_packet_type::RAW => {
-                            let dts = tag.timestamp;
-                            let duration = delta_duration(&mut last_audio_dts, dts);
-                            let dts_abs = dts as i64;
-                            audio_samples.push(Sample {
-                                data: data.to_vec().into(),
-                                timing: crate::ir::SampleTiming::from_options(
-                                    Some(dts_abs),
-                                    Some(dts_abs),
-                                    Some(duration),
-                                ),
-                                flags: crate::ir::SampleFlags::SYNC,
-                                provenance: None,
-                                display: None,
-                            });
+                            audio_samples.push(Sample::from_duration(
+                                data.to_vec(),
+                                sample_duration(&mut last_audio_dts, tag.timestamp),
+                                true,
+                            ));
                         }
                         _ => {}
                     }
@@ -908,11 +887,10 @@ impl<'a> Unpackage for FlvDemux<'a> {
     }
 }
 
-/// Read a signed 24-bit big-endian integer (FLV `CompositionTime`, §E.4.3.2).
-///
-/// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738) so
-/// the two demuxers agree byte-for-byte on `CompositionTime` decoding.
-pub(crate) fn read_si24(b: &[u8]) -> i32 {
+/// Read a signed 24-bit big-endian integer (FLV `CompositionTime`, §E.4.3.2),
+/// kept as the wire reader the muxer's golden tests pin.
+#[cfg(test)]
+fn read_si24(b: &[u8]) -> i32 {
     let raw = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | (b[2] as u32);
     // Sign-extend from 24 bits.
     if raw & 0x0080_0000 != 0 {
@@ -922,37 +900,38 @@ pub(crate) fn read_si24(b: &[u8]) -> i32 {
     }
 }
 
-/// Compute a sample's duration as the delta from the previous DTS, updating the
-/// running previous-DTS. The first sample gets a provisional 0 (backfilled).
-fn delta_duration(prev: &mut Option<u32>, dts: u32) -> u32 {
+/// A FLV tag's span as the forward delta from the previous tag of its kind
+/// (milliseconds, the FLV timestamp unit): the first tag of a kind has no
+/// previous instant to subtract, so its provisional span is one tick.
+fn sample_duration(prev: &mut Option<u32>, dts: u32) -> u32 {
     let dur = match *prev {
         Some(p) => dts.saturating_sub(p),
-        None => 0,
+        None => 1,
     };
     *prev = Some(dts);
     dur
 }
 
-/// The delta scheme leaves sample 0 with duration 0 and the last sample with no
-/// forward delta. Shift durations so each sample carries the *forward* delta
-/// (dts[i+1]-dts[i]); the last sample repeats the previous forward delta.
+/// The delta scheme leaves sample 0 with a provisional span. Shift spans so
+/// each sample carries the *forward* delta (dts[i+1]-dts[i]); the last sample
+/// repeats the previous forward delta.
 fn backfill_last_duration(samples: &mut [Sample]) {
     let n = samples.len();
     if n == 0 {
         return;
     }
-    // `duration[i]` currently holds dts[i]-dts[i-1] (0 for i==0). Rebuild as the
-    // forward delta dts[i+1]-dts[i] by shifting left by one.
+    // `duration[i]` currently holds dts[i]-dts[i-1]. Rebuild as the forward
+    // delta dts[i+1]-dts[i] by shifting left by one.
     for i in 0..n.saturating_sub(1) {
-        let dur = samples[i + 1].timing.map(|t| t.duration);
-        if let (Some(a), Some(d)) = (samples[i].timing.as_mut(), dur) {
-            a.duration = d;
+        let dur = samples[i + 1].timing.and_then(|t| t.duration());
+        if let (Some(t), Some(dur)) = (samples[i].timing.as_mut(), dur) {
+            *t = t.with_duration(dur);
         }
     }
     if n >= 2 {
-        let dur = samples[n - 2].timing.map(|t| t.duration);
-        if let (Some(a), Some(d)) = (samples[n - 1].timing.as_mut(), dur) {
-            a.duration = d;
+        let dur = samples[n - 2].timing.and_then(|t| t.duration());
+        if let (Some(t), Some(dur)) = (samples[n - 1].timing.as_mut(), dur) {
+            *t = t.with_duration(dur);
         }
     }
 }
@@ -963,7 +942,7 @@ fn backfill_last_duration(samples: &mut [Sample]) {
 fn anchor_of(samples: &[Sample]) -> u64 {
     samples
         .first()
-        .and_then(|s| s.timing.map(|t| t.dts))
+        .and_then(|s| s.timing.and_then(|t| t.dts()))
         .map(|d| d.max(0) as u64)
         .unwrap_or(0)
 }
@@ -1346,11 +1325,12 @@ pub fn flv_frame_payloads(media: &Media) -> core::result::Result<Vec<FlvPayload>
     if let Some(vt) = video {
         let timescale = vt.spec.timescale;
         for s in &vt.samples {
-            let Some(dts) = s.timing.map(|t| t.dts) else {
+            let Some(dts) = s.timing.and_then(|t| t.dts()) else {
                 continue;
             };
             let ts_ms = clamped_ms(dts, timescale)?;
-            let comp_ms = composition_time_ms(s.composition_offset() as i64, timescale)?;
+            let comp_ms =
+                composition_time_ms(s.composition_offset()?.map_or(0, i64::from), timescale)?;
             let body = video_frame_body(s.flags.is_sync, comp_ms, &s.data);
             items.push((
                 ts_ms,
@@ -1368,7 +1348,7 @@ pub fn flv_frame_payloads(media: &Media) -> core::result::Result<Vec<FlvPayload>
         let timescale = at.spec.timescale;
         let sound_type = audio_sound_type(at);
         for s in &at.samples {
-            let Some(dts) = s.timing.map(|t| t.dts) else {
+            let Some(dts) = s.timing.and_then(|t| t.dts()) else {
                 continue;
             };
             let ts_ms = clamped_ms(dts, timescale)?;
@@ -1462,7 +1442,8 @@ impl Package for FlvMux {
                 // running tick sum is monotonic by construction, so truncating
                 // division cannot step it backwards.
                 let dts = ms_from_ticks(ticks, timescale)?;
-                let comp = composition_time_ms(s.composition_offset() as i64, timescale)?;
+                let comp =
+                    composition_time_ms(s.composition_offset()?.map_or(0, i64::from), timescale)?;
                 let body = video_frame_body(s.flags.is_sync, comp, &s.data);
                 items.push((
                     dts,
@@ -1474,7 +1455,8 @@ impl Package for FlvMux {
                     },
                 ));
                 seq += 1;
-                ticks = ticks.saturating_add(s.timing.map(|t| t.duration).unwrap_or(0) as i64);
+                ticks =
+                    ticks.saturating_add(s.timing.and_then(|t| t.duration()).unwrap_or(0) as i64);
             }
         }
         if let Some(at) = audio {
@@ -1493,7 +1475,8 @@ impl Package for FlvMux {
                     },
                 ));
                 seq += 1;
-                ticks = ticks.saturating_add(s.timing.map(|t| t.duration).unwrap_or(0) as i64);
+                ticks =
+                    ticks.saturating_add(s.timing.and_then(|t| t.duration()).unwrap_or(0) as i64);
             }
         }
         // Stable sort by DTS, tie-broken by original emission order.
@@ -1531,7 +1514,7 @@ fn media_duration_seconds(media: &Media) -> f64 {
         let ticks: u64 = t
             .samples
             .iter()
-            .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
+            .map(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64)
             .sum();
         let secs = ticks as f64 / f64::from(t.spec.timescale.get());
         if secs > max {

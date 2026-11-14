@@ -430,7 +430,7 @@ impl TsHttpSource {
                 DemuxEvent::Sample {
                     track_id, sample, ..
                 } => {
-                    let pts = sample.timing.map(|t| t.pts);
+                    let pts = sample.timing.and_then(|t| t.pts());
                     if !self.conn_seen_first_sample {
                         self.start_hold_if_unresolved();
                         self.conn_seen_first_sample = true;

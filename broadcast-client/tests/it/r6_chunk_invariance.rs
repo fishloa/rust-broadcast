@@ -93,8 +93,8 @@ fn drain(s: &mut Session, conn: &mut Option<ConnId>, now: u64, out: &mut Vec<Rec
                 join,
             } => Rec::Sample {
                 track: track.value(),
-                pts: sample.timing.map(|t| t.pts),
-                dts: sample.timing.map(|t| t.dts),
+                pts: sample.timing.and_then(|t| t.pts()),
+                dts: sample.timing.and_then(|t| t.dts()),
                 join: format!("{join:?}"),
                 len: sample.data.len(),
             },

@@ -50,7 +50,7 @@ fn presentation() -> Presentation {
 fn chunk_offset(prefix: &[Sample]) -> u64 {
     prefix
         .iter()
-        .map(|s| u64::from(s.timing.map(|t| t.duration).unwrap_or(0)))
+        .map(|s| u64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)))
         .sum()
 }
 
@@ -156,18 +156,18 @@ fn samples_equal_an_independent_demux_sample_for_sample() {
         assert_eq!(want.len(), SAMPLES_PER_SEGMENT);
         for (k, (g, w)) in got.iter().zip(&want).enumerate() {
             assert_eq!(
-                g.timing.map(|t| t.pts),
-                w.timing.map(|t| t.pts),
+                g.timing.and_then(|t| t.pts()),
+                w.timing.and_then(|t| t.pts()),
                 "rep {i} sample {k} pts"
             );
             assert_eq!(
-                g.timing.map(|t| t.dts),
-                w.timing.map(|t| t.dts),
+                g.timing.and_then(|t| t.dts()),
+                w.timing.and_then(|t| t.dts()),
                 "rep {i} sample {k} dts"
             );
             assert_eq!(
-                g.timing.map(|t| t.duration),
-                w.timing.map(|t| t.duration),
+                g.timing.and_then(|t| t.duration()),
+                w.timing.and_then(|t| t.duration()),
                 "rep {i} sample {k} duration"
             );
             assert_eq!(g.flags.is_sync, w.flags.is_sync, "rep {i} sample {k} sync");
@@ -245,7 +245,7 @@ fn duplicate_emits_nothing_and_regression_still_emits() {
         let SessionEvent::Sample { sample, .. } = e else {
             panic!("expected Sample, got {e:?}");
         };
-        assert_eq!(sample.timing.map(|t| t.dts), w.timing.map(|t| t.dts));
+        assert_eq!(sample.timing.and_then(|t| t.dts()), w.timing.and_then(|t| t.dts()));
         assert_eq!(sample.data, w.data);
     }
 }

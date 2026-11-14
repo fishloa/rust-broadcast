@@ -88,7 +88,7 @@ fn assemble(mut demux: StreamingTsDemux) -> Media {
                     // invariant), so derive it here instead, matching
                     // `TsDemux::demux`'s own oracle derivation.
                     if track.samples.is_empty()
-                        && let Some(dts) = sample.timing.map(|t| t.dts)
+                        && let Some(dts) = sample.timing.and_then(|t| t.dts())
                     {
                         track.start_decode_time = dts as u64;
                     }

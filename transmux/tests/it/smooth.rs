@@ -239,7 +239,7 @@ fn fragment_c_timeline() {
         let media_ticks: u64 = track
             .samples
             .iter()
-            .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
+            .map(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64)
             .sum();
         let ts = track.spec.timescale.get() as u64;
         let expected = (media_ticks * 10_000_000 + ts / 2) / ts;
@@ -409,11 +409,11 @@ fn lossless_round_trip_video() {
         let ts = u64::from(vid.spec.timescale.get());
         let in_10mhz = a
             .timing
-            .map(|t| t.duration)
+            .and_then(|t| t.duration())
             .map(|d| ((u64::from(d) * 10_000_000 + ts / 2) / ts) as u32);
         assert_eq!(
             in_10mhz,
-            b.timing.map(|t| t.duration),
+            b.timing.and_then(|t| t.duration()),
             "duration preserved at sample {i}"
         );
         assert_eq!(

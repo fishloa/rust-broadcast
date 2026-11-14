@@ -407,8 +407,8 @@ fn media_flushed_at_connection_close_reaches_the_controller_in_the_same_call() {
                 Event::Sample { track, sample, .. } => {
                     let ts = u64::from(timescale[&track.value()]);
                     let end = u64::try_from(
-                        sample.timing.map(|t| t.pts).unwrap()
-                            + i64::from(sample.timing.map(|t| t.duration).unwrap_or(0)),
+                        sample.timing.and_then(|t| t.pts()).unwrap()
+                            + i64::from(sample.timing.and_then(|t| t.duration()).unwrap_or(0)),
                     )
                     .unwrap();
                     let e27 = end * 27_000_000 / ts;

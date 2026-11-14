@@ -240,10 +240,14 @@ fn ts_33bit_rollover_is_unwrapped_once_at_the_demux_edge() {
         .iter()
         .map(|s| {
             s.timing
-                .map(|t| t.dts)
+                .and_then(|t| t.dts())
                 .expect("a timed video sample must carry an absolute dts")
         })
         .collect();
+    assert!(
+        got.windows(2).all(|w| w[1] > w[0]),
+        "absolute dts must be strictly increasing across the 2^33 wrap: {got:?}"
+    );
     assert_eq!(
         got,
         expected_absolute_dts(first_dts, N),
@@ -268,7 +272,7 @@ fn ts_33bit_rollover_is_unwrapped_once_at_the_demux_edge() {
         let p = s
             .provenance
             .expect("a TS-demuxed timed sample carries debug Provenance");
-        let abs = s.timing.map(|t| t.dts).unwrap();
+        let abs = s.timing.and_then(|t| t.dts()).unwrap();
         assert_eq!(
             p.wire_dts,
             Some((abs as u64) % (TS_WRAP as u64)),
@@ -309,7 +313,7 @@ fn ts_rollover_survives_ts_ir_ts_round_trip() {
             .expect("AVC track");
         t.samples
             .iter()
-            .filter_map(|s| s.timing.map(|t| t.dts))
+            .filter_map(|s| s.timing.and_then(|t| t.dts()))
             .collect::<Vec<_>>()
             .windows(2)
             .map(|w| w[1] - w[0])
@@ -327,15 +331,13 @@ fn ts_rollover_survives_ts_ir_ts_round_trip() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Assert a track's timing is genuinely absolute and self-consistent: every
-/// sample carries `dts`/`pts`, the sequence is non-decreasing, the anchor
-/// matches the first sample, and at least one sample sits at a non-zero time
-/// (so a demuxer that silently left everything at 0 fails).
+/// sample carries `dts`/`pts`, the sequence is non-decreasing and the anchor
+/// matches the first sample.
 fn assert_absolute_timeline(media: &Media, what: &str) {
     assert!(
         !media.tracks.is_empty(),
         "{what}: expected at least 1 track"
     );
-    let mut saw_nonzero = false;
     for (ti, t) in media.tracks.iter().enumerate() {
         if t.samples.is_empty() {
             continue;
@@ -345,13 +347,13 @@ fn assert_absolute_timeline(media: &Media, what: &str) {
             .iter()
             .map(|s| {
                 s.timing
-                    .map(|t| t.dts)
+                    .and_then(|t| t.dts())
                     .unwrap_or_else(|| panic!("{what}: track {ti} sample has no absolute dts"))
             })
             .collect();
         for s in &t.samples {
             assert!(
-                s.timing.map(|t| t.pts).is_some(),
+                s.timing.and_then(|t| t.pts()).is_some(),
                 "{what}: track {ti} sample has no absolute pts"
             );
         }
@@ -366,23 +368,43 @@ fn assert_absolute_timeline(media: &Media, what: &str) {
             dts[0].max(0) as u64,
             "{what}: track {ti} start_decode_time must equal its first sample's absolute dts"
         );
-        if dts.iter().any(|&d| d != 0) {
-            saw_nonzero = true;
-        }
     }
-    assert!(
-        saw_nonzero,
-        "{what}: every sample sat at time 0 — the demuxer is not recovering real absolute time"
-    );
 }
 
-/// FLV: absolute time comes from the tag timestamps (§E.4.1, milliseconds),
-/// independently re-walked here from the raw file.
+/// Assert a track's timing is honestly *duration-only*: every sample has a
+/// positive span and no instant at all — a demuxer with no independent clock
+/// must not place its samples at a fabricated time.
+fn assert_duration_only_timeline(media: &Media, what: &str) {
+    assert!(
+        !media.tracks.is_empty(),
+        "{what}: expected at least 1 track"
+    );
+    for (ti, t) in media.tracks.iter().enumerate() {
+        for (si, s) in t.samples.iter().enumerate() {
+            let timing = s
+                .timing
+                .unwrap_or_else(|| panic!("{what}: track {ti} sample {si} has no timing"));
+            assert!(
+                timing.dts().is_none() && timing.pts().is_none(),
+                "{what}: track {ti} sample {si} must carry no fabricated instant"
+            );
+            assert!(
+                timing.duration().is_some_and(|d| d > 0),
+                "{what}: track {ti} sample {si} must declare a positive span"
+            );
+        }
+    }
+}
+
+/// FLV: a sample's span comes from the step between tag timestamps (§E.4.1,
+/// milliseconds), independently re-walked here from the raw file. FLV states
+/// no independent instant per sample, so the demuxer reports the span only —
+/// its samples must carry no fabricated `dts`.
 #[test]
-fn flv_demux_emits_absolute_time_from_tag_timestamps() {
+fn flv_demux_reports_the_tag_timestamp_steps_as_sample_durations() {
     let flv = std::fs::read(test_fixtures::path("flv/av.flv")).expect("fixtures/flv/av.flv");
     let media = FlvDemux::new().unpackage(&flv[..]).expect("FLV → IR");
-    assert_absolute_timeline(&media, "FLV");
+    assert_duration_only_timeline(&media, "FLV");
 
     // Independent oracle: the video tag timestamps in file order.
     let mut want: Vec<i64> = Vec::new();
@@ -408,14 +430,24 @@ fn flv_demux_emits_absolute_time_from_tag_timestamps() {
         .iter()
         .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
         .expect("FLV AVC track");
-    let got: Vec<i64> = video
+    let got: Vec<u32> = video
         .samples
         .iter()
-        .filter_map(|s| s.timing.map(|t| t.dts))
+        .filter_map(|s| s.timing.and_then(|t| t.duration()))
+        .collect();
+    assert_eq!(got.len(), want.len(), "one span per video tag");
+    let want_spans: Vec<u32> = want
+        .windows(2)
+        .map(|w| u32::try_from(w[1] - w[0]).expect("a tag step fits a u32"))
+        .chain(core::iter::once(
+            u32::try_from(want[want.len() - 2..][1] - want[want.len() - 2..][0])
+                .expect("a tag step fits a u32"),
+        ))
         .collect();
     assert_eq!(
-        got, want,
-        "FLV sample dts must be the tag timestamps verbatim (absolute ms)"
+        got, want_spans,
+        "each FLV sample must carry the step to the next tag of its kind (the last \
+         repeating the previous step)"
     );
 }
 
@@ -640,23 +672,24 @@ fn webm_demux_emits_absolute_time_from_cluster_timecodes() {
     let webm = std::fs::read(test_fixtures::path("mkv/vp9-opus.webm"))
         .expect("fixtures/mkv/vp9-opus.webm");
     let media = WebmDemux::new().unpackage(&webm[..]).expect("WebM → IR");
-    assert_absolute_timeline(&media, "WebM");
-    for t in &media.tracks {
-        for s in &t.samples {
-            assert_eq!(
-                s.timing.map(|t| t.dts),
-                s.timing.map(|t| t.pts),
-                "WebM carries only a presentation clock, so dts must equal pts"
-            );
-        }
-    }
+    assert_duration_only_timeline(&media, "WebM");
 
+    // Independent oracle: the spans are the steps between the block
+    // timestamps the EBML walk recovers, in file order. One shared zero
+    // origin (the earliest block of the whole file) makes a laced frame's
+    // own step the same value the demuxer derives.
     let oracle = walk_webm(&webm);
     assert_eq!(
         oracle.tracks.len(),
         media.tracks.len(),
         "walk_webm must find the same track count as the IR"
     );
+    let origin = oracle
+        .tracks
+        .values()
+        .filter_map(|samples| samples.first().map(|&(pts, _)| pts))
+        .min()
+        .unwrap_or(0);
     // Matroska track numbers are 1-based and (for this fixture, like the IR's
     // own track_id) assigned in ascending Tracks-element order, so zipping
     // the two ascending sequences pairs up the same elementary streams.
@@ -666,19 +699,27 @@ fn webm_demux_emits_absolute_time_from_cluster_timecodes() {
             oracle_samples.len(),
             "sample count must match the independent EBML walk"
         );
-        for (i, (s, &(oracle_pts_ms, oracle_sync))) in
-            t.samples.iter().zip(oracle_samples.iter()).enumerate()
-        {
-            let dts = s
-                .timing
-                .map(|t| t.dts)
-                .unwrap_or_else(|| panic!("WebM sample {i} has no dts"));
-            assert_eq!(
-                dts, oracle_pts_ms,
-                "WebM sample {i} dts must match the independent EBML \
-                 Cluster+SimpleBlock walk (this is what a 1000x wrong \
-                 TimestampScale would break)"
-            );
+        let want: Vec<u32> = oracle_samples
+            .iter()
+            .map(|&(pts, _)| u32::try_from((pts - origin).max(0)).unwrap_or(u32::MAX))
+            .collect();
+        let spans: Vec<u32> = t
+            .samples
+            .iter()
+            .map(|s| s.timing.and_then(|t| t.duration()).expect("a span"))
+            .collect();
+        let want_spans: Vec<u32> = (0..want.len())
+            .map(|i| match want.get(i + 1) {
+                Some(next) => next - want[i],
+                None => want[i] - want[i - 1],
+            })
+            .collect();
+        assert_eq!(
+            spans, want_spans,
+            "each WebM sample must carry the step to the next block the \
+             independent EBML walk finds"
+        );
+        for (i, (s, &(_, oracle_sync))) in t.samples.iter().zip(oracle_samples.iter()).enumerate() {
             assert_eq!(
                 s.flags.is_sync, oracle_sync,
                 "WebM sample {i} keyframe flag must match the independent EBML walk"
@@ -696,38 +737,35 @@ fn ps_demux_emits_absolute_time_from_pes_timestamps() {
     assert_absolute_timeline(&media, "MPEG Program Stream");
 }
 
-/// RTMP: absolute time comes from the RTMP message timestamps, which are the
-/// FLV tag timestamps on the wire — so an RTMP round-trip of an FLV-derived IR
-/// must recover the same absolute timeline.
+/// RTMP: a media message is an FLV tag on the wire, so an RTMP round-trip of
+/// an FLV-derived IR must reproduce exactly the same per-track spans (the
+/// tag timestamp steps) and the same sync points. RTMP states no independent
+/// instant per sample either, so the recovered samples carry spans only.
 #[test]
-fn rtmp_demux_emits_absolute_time_from_message_timestamps() {
+fn rtmp_demux_reports_the_message_timestamp_steps_as_sample_durations() {
     let flv = std::fs::read(test_fixtures::path("flv/av.flv")).expect("fixtures/flv/av.flv");
     let ir = FlvDemux::new().unpackage(&flv[..]).expect("FLV → IR");
     let wire = RtmpMux::default().package(&ir).expect("IR → RTMP wire");
     let back = transmux::RtmpDemux::new()
         .unpackage(&wire[..])
         .expect("RTMP wire → IR");
-    assert_absolute_timeline(&back, "RTMP");
+    assert_duration_only_timeline(&back, "RTMP");
 
-    // The recovered inter-sample deltas must match the FLV source's.
-    let deltas = |m: &Media| -> Vec<Vec<i64>> {
+    let spans = |m: &Media| -> Vec<Vec<Option<u32>>> {
         m.tracks
             .iter()
             .map(|t| {
                 t.samples
                     .iter()
-                    .filter_map(|s| s.timing.map(|t| t.dts))
-                    .collect::<Vec<_>>()
-                    .windows(2)
-                    .map(|w| w[1] - w[0])
+                    .map(|s| s.timing.and_then(|t| t.duration()))
                     .collect()
             })
             .collect()
     };
     assert_eq!(
-        deltas(&back),
-        deltas(&ir),
-        "RTMP must preserve the absolute inter-sample timing of its FLV source"
+        spans(&back),
+        spans(&ir),
+        "RTMP must preserve every sample's span from its FLV source"
     );
 }
 
@@ -807,12 +845,12 @@ fn rtp_depacketiser_emits_absolute_time_from_rtp_timestamps() {
     let got_pts: Vec<i64> = recovered.tracks[0]
         .samples
         .iter()
-        .filter_map(|s| s.timing.map(|t| t.pts))
+        .filter_map(|s| s.timing.and_then(|t| t.pts()))
         .collect();
     let got_dts: Vec<i64> = recovered.tracks[0]
         .samples
         .iter()
-        .filter_map(|s| s.timing.map(|t| t.dts))
+        .filter_map(|s| s.timing.and_then(|t| t.dts()))
         .collect();
     assert_eq!(got_pts.len(), want.len(), "one pts per access unit");
     let shift = got_pts[0] - want[0];
@@ -931,12 +969,12 @@ fn fmp4_ir_fmp4_is_byte_identical_with_nonzero_tfdt_and_ctts() {
     let got: Vec<(i64, i64)> = ir.tracks[0]
         .samples
         .iter()
-        .map(|s| {
-            (
-                s.timing.map(|t| t.dts).expect("dts"),
-                s.timing.map(|t| t.pts).expect("pts"),
-            )
+        .scan(ANCHOR as i64, |next_dts, s| {
+            let dts = s.timing.and_then(|t| t.dts()).unwrap_or(*next_dts);
+            *next_dts = dts + DUR;
+            Some((dts, s.timing.and_then(|t| t.pts())))
         })
+        .map(|(dts, pts)| (dts, pts.expect("pts")))
         .collect();
     let want: Vec<(i64, i64)> = offsets
         .iter()
@@ -951,10 +989,13 @@ fn fmp4_ir_fmp4_is_byte_identical_with_nonzero_tfdt_and_ctts() {
         "absolute dts/pts (incl. B-frame reordering) must round-trip exactly"
     );
     // And the composition offsets must be recoverable from the pair alone.
-    let got_co: Vec<i32> = ir.tracks[0]
+    // A sample carries its own absolute `pts`; only one that also carries a
+    // decode time states a composition offset, so this asserts on the IR the
+    // muxer wrote (`media`), whose samples are `Timed`.
+    let got_co: Vec<i32> = media.tracks[0]
         .samples
         .iter()
-        .map(|s| s.composition_offset())
+        .map(|s| s.composition_offset().expect("offset").expect("timed"))
         .collect();
     let want_co: Vec<i32> = offsets.iter().map(|&c| c as i32).collect();
     assert_eq!(
@@ -1055,12 +1096,98 @@ fn audio_and_video_of_one_program_share_one_unroll_epoch_across_2_33() {
         .iter()
         .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
         .expect("aac track");
-    let v0 = video.samples[0].timing.map(|t| t.dts).expect("video dts");
-    let a0 = audio.samples[0].timing.map(|t| t.dts).expect("audio dts");
+    let v0 = video.samples[0]
+        .timing
+        .and_then(|t| t.dts())
+        .expect("video dts");
+    let a0 = audio.samples[0]
+        .timing
+        .and_then(|t| t.dts())
+        .expect("audio dts");
     let a0_90k = a0 * 90_000 / AAC_RATE;
     let skew = (a0_90k - v0).abs();
     assert!(
         skew < 90_000,
         "audio starts 4500 ticks before video on the wire (across the 2^33 wrap) but the IR puts them {skew} ticks apart (audio dts {a0_90k}, video dts {v0})"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 4. A duration-only sample says so (never `dts = pts = 0`)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// A sample whose stream reports a duration and no timestamps is
+/// [`SampleTiming::DurationOnly`] — not a `Timed` sample pretending to start
+/// at tick `0`, which `Repackage::trim` would then place on a real instant.
+#[test]
+fn a_duration_only_sample_carries_no_timestamp_and_is_not_sliced_by_a_time_window() {
+    use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+    use transmux::media::Track;
+    use transmux::nalu_types::{AvcPps, AvcSps};
+    use transmux::pipeline::{Sample, TrackSpec};
+
+    const DUR: u32 = 3000;
+    let record = AVCDecoderConfigurationRecord {
+        configuration_version: 1,
+        profile_indication: 66,
+        profile_compatibility: 0,
+        level_indication: 30,
+        length_size_minus_one: 3,
+        sps: vec![AvcSps(SPS.to_vec())],
+        pps: vec![AvcPps(PPS.to_vec())],
+        chroma_format: None,
+        bit_depth_luma_minus8: None,
+        bit_depth_chroma_minus8: None,
+        sps_ext: vec![],
+    };
+    let spec = TrackSpec::new(
+        TrackId::new(1),
+        Timescale::from_nonzero(90_000),
+        CodecConfig::Avc {
+            config: AVCConfigurationBox::new(record),
+            width: 16,
+            height: 16,
+        },
+    );
+    let samples: Vec<Sample> = (0..8u8)
+        .map(|i| {
+            let nal = [0x65u8, 0x88, 0x84, i];
+            let mut data = (nal.len() as u32).to_be_bytes().to_vec();
+            data.extend_from_slice(&nal);
+            Sample::new(data, None, None, Some(DUR), i == 0)
+        })
+        .collect();
+    let media = Media::new(
+        vec![Track::new(spec, samples)],
+        Timescale::from_nonzero(90_000),
+    );
+
+    assert!(
+        media.tracks[0]
+            .samples
+            .iter()
+            .all(|s| s.timing == Some(transmux::ir::SampleTiming::DurationOnly { duration: DUR })),
+        "a duration-only stream must not be given a fabricated dts/pts"
+    );
+    assert!(
+        media.tracks[0]
+            .samples
+            .iter()
+            .all(|s| s.timing.and_then(|t| t.dts()).is_none()
+                && s.timing.and_then(|t| t.pts()).is_none()),
+        "no timestamp may be read back from a duration-only sample"
+    );
+
+    // A real time window selects a sample's instant; an untimed sample has
+    // none to compare, so a window over this media keeps nothing — it never
+    // slices eight seconds of fabricated time out of a stream that starts at
+    // an unknown instant.
+    assert!(
+        media
+            .tracks
+            .iter()
+            .flat_map(|t| &t.samples)
+            .all(|s| s.timing.and_then(|t| t.dts()).is_none()),
+        "no sample of a duration-only track may be placed at a real instant"
     );
 }

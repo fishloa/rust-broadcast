@@ -231,27 +231,27 @@ fn ts_demux_broadcast_pair() {
     for (i, s) in video.samples.iter().enumerate() {
         let row = csv_video[i];
         assert_eq!(
-            s.timing.map(|t| t.duration),
+            s.timing.and_then(|t| t.duration()),
             Some(u32::try_from(row.duration()).unwrap()),
             "video[{i}] duration matches CSV"
         );
         let dts = s
             .timing
-            .map(|t| t.dts)
+            .and_then(|t| t.dts())
             .unwrap_or_else(|| panic!("video[{i}] has no dts")) as i128;
         assert_eq!(
             dts,
             i128::from(row.dts()),
-            "video[{i}] DTS (actual s.timing.map(|t| t.dts)) matches CSV"
+            "video[{i}] DTS (actual s.timing.and_then(|t| t.dts())) matches CSV"
         );
         let pts = s
             .timing
-            .map(|t| t.pts)
+            .and_then(|t| t.pts())
             .unwrap_or_else(|| panic!("video[{i}] has no pts")) as i128;
         assert_eq!(
             pts,
             i128::from(row.pts()),
-            "video[{i}] PTS (actual s.timing.map(|t| t.pts)) matches CSV"
+            "video[{i}] PTS (actual s.timing.and_then(|t| t.pts())) matches CSV"
         );
         assert_eq!(
             s.flags.is_sync,
@@ -278,23 +278,30 @@ fn ts_demux_broadcast_pair() {
         // duration is one MP2 frame = samples_per_frame ticks at the audio
         // timescale; converting to 90 kHz matches the CSV within a rounding tick.
         assert_eq!(
-            s.timing.map(|t| t.duration),
+            s.timing.and_then(|t| t.duration()),
             Some(samples_per_frame),
             "audio[{i}] duration = 1 MP2 frame"
         );
-        let dur_90k = s.timing.map(|t| t.duration).unwrap_or(0) as i128 * 90_000 / audio_ts as i128;
+        let dur_90k =
+            s.timing.and_then(|t| t.duration()).unwrap_or(0) as i128 * 90_000 / audio_ts as i128;
         assert!(
             (dur_90k - i128::from(csv_audio[i].duration())).abs() <= 1,
             "audio[{i}] duration matches CSV @90kHz within rounding"
         );
-        assert_eq!(s.composition_offset(), 0, "audio has no CTS offset");
+        assert_eq!(
+            s.composition_offset().expect("offset").unwrap_or(0),
+            0,
+            "audio has no CTS offset"
+        );
     }
     // Sanity: contiguous audio PTS grid (in 90 kHz) derived from the durations
     // spans the same range as the CSV (guards against dropped/extra frames).
     let apts0 = i128::from(csv_audio[0].pts());
     let total_90k: i128 = audio.samples[..audio.samples.len() - 1]
         .iter()
-        .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as i128 * 90_000 / audio_ts as i128)
+        .map(|s| {
+            s.timing.and_then(|t| t.duration()).unwrap_or(0) as i128 * 90_000 / audio_ts as i128
+        })
         .sum();
     let span_last = apts0 + total_90k;
     let csv_last = i128::from(csv_audio[csv_audio.len() - 1].pts());

@@ -73,7 +73,7 @@ fn run(readers: usize) -> (Vec<u64>, Vec<u64>) {
                         }
                     };
                     if let SampleCursorItem::Timed { sample, .. } = item
-                        && let Some(stamp) = sample.timing.map(|t| t.pts)
+                        && let Some(stamp) = sample.timing.and_then(|t| t.pts())
                     {
                         let now = base.elapsed().as_nanos() as i64;
                         latencies.push(u64::try_from(now - stamp).unwrap_or(0));

@@ -522,14 +522,14 @@ fn run(plan: &Plan, row: Row, starve_us: u64) -> Outcome {
                 }
                 Event::Sample { track, sample, .. } => {
                     if let (Some(pts), Some((ts, is_video, _))) =
-                        (sample.timing.map(|t| t.pts), kinds.get(&track.value()))
+                        (sample.timing.and_then(|t| t.pts()), kinds.get(&track.value()))
                     {
-                        let dur = i64::from(sample.timing.map(|t| t.duration).unwrap_or(0));
+                        let dur = i64::from(sample.timing.and_then(|t| t.duration()).unwrap_or(0));
                         let end = if *is_video {
                             i128::from(
                                 runs.entry(track.value())
                                     .or_insert_with(VideoRun::new)
-                                    .push(pts, sample.timing.map(|t| t.dts).unwrap_or(pts), dur),
+                                    .push(pts, sample.timing.and_then(|t| t.dts()).unwrap_or(pts), dur),
                             )
                         } else {
                             i128::from(pts) + i128::from(dur)

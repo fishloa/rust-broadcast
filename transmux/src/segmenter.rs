@@ -195,15 +195,15 @@ impl MediaClock {
     /// as the baseline for the next call. See the type docs for the
     /// duration-then-dts-delta rule.
     pub fn tick(&mut self, sample: &Sample) -> u64 {
-        let increment = match sample.timing.map(|t| t.duration) {
+        let increment = match sample.timing.and_then(|t| t.duration()) {
             Some(duration) if duration > 0 => u64::from(duration),
-            _ => match (self.last_dts, sample.timing.map(|t| t.dts)) {
+            _ => match (self.last_dts, sample.timing.and_then(|t| t.dts())) {
                 (Some(previous), Some(now)) => now.saturating_sub(previous).max(0) as u64,
                 _ => 0,
             },
         };
-        if sample.timing.map(|t| t.dts).is_some() {
-            self.last_dts = sample.timing.map(|t| t.dts);
+        if sample.timing.and_then(|t| t.dts()).is_some() {
+            self.last_dts = sample.timing.and_then(|t| t.dts());
         }
         increment
     }

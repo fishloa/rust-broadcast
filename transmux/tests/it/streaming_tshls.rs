@@ -47,7 +47,7 @@ fn merged_decode_order(ir: &Media) -> Vec<(usize, usize)> {
         for (i, s) in t.samples.iter().enumerate() {
             let start_secs = acc as f64 / scale as f64;
             items.push((start_secs, tpos, i));
-            acc += s.timing.map(|t| t.duration).unwrap_or(0) as u64;
+            acc += s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64;
         }
     }
     // Stable sort by decode-start time; ties keep original (track, sample)

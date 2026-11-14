@@ -157,8 +157,8 @@ fn ts_origin_fed_with(
         for (i, sample) in track.samples.iter().enumerate() {
             let dts = sample
                 .timing
-                .map(|t| t.dts)
-                .or(sample.timing.map(|t| t.pts))
+                .and_then(|t| t.dts())
+                .or(sample.timing.and_then(|t| t.pts()))
                 .expect("timed sample");
             let mut sample = sample.clone();
             if shape(i, dts, &mut sample) {
@@ -273,12 +273,12 @@ fn variable_frame_rate_reports_the_maximum_not_the_overall_mean() {
     let first = tracks[0]
         .samples
         .first()
-        .and_then(|s| s.timing.map(|t| t.dts))
+        .and_then(|s| s.timing.and_then(|t| t.dts()))
         .unwrap();
     let last = tracks[0]
         .samples
         .last()
-        .and_then(|s| s.timing.map(|t| t.dts))
+        .and_then(|s| s.timing.and_then(|t| t.dts()))
         .unwrap();
     let midpoint = first + (last - first) / 2;
     let (origin, _segments) = ts_origin_fed_with(tracks, |i, dts, sample| {
@@ -286,7 +286,8 @@ fn variable_frame_rate_reports_the_maximum_not_the_overall_mean() {
             return true;
         }
         if let Some(t) = sample.timing.as_mut() {
-            t.duration = t.duration.saturating_mul(2);
+            let doubled = t.duration().unwrap_or(2).saturating_mul(2);
+            *t = transmux::ir::SampleTiming::DurationOnly { duration: doubled };
         }
         i % 2 == 0
     });
@@ -379,9 +380,9 @@ fn video_piece(
     for sample in track.samples.iter().take(samples) {
         let mut sample = sample.clone();
         if let Some(t) = sample.timing.as_mut() {
-            t.duration = ticks;
+            *t = t.with_duration(ticks);
         } else {
-            sample.timing = Some(transmux::ir::SampleTiming::new(0, 0, ticks));
+            sample.timing = Some(transmux::ir::SampleTiming::timed(0, 0));
         }
         segmenter.push(track.spec.track_id, sample).expect("push");
     }

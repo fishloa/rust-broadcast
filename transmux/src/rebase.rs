@@ -49,8 +49,7 @@ pub fn rebase_to_zero(media: &mut Media) {
         }
         for s in &mut track.samples {
             if let Some(t) = s.timing.as_mut() {
-                t.dts -= anchor;
-                t.pts -= anchor;
+                t.shift(-anchor);
             }
         }
         track.start_decode_time = 0;
@@ -74,8 +73,7 @@ pub fn apply_offset(media: &mut Media, delta_ticks: i64) {
         let effective_delta = new_anchor as i64 - track.start_decode_time as i64;
         for s in &mut track.samples {
             if let Some(t) = s.timing.as_mut() {
-                t.dts += effective_delta;
-                t.pts += effective_delta;
+                t.shift(effective_delta);
             }
         }
         track.start_decode_time = new_anchor;
@@ -106,8 +104,7 @@ pub fn insert_discontinuity_gap(track: &mut Track, at_sample_index: usize, gap_t
     let idx = at_sample_index.min(track.samples.len());
     for s in &mut track.samples[idx..] {
         if let Some(t) = s.timing.as_mut() {
-            t.dts += gap;
-            t.pts += gap;
+            t.shift(gap);
         }
     }
 }
@@ -122,10 +119,10 @@ mod tests {
     use alloc::vec;
     use broadcast_common::timescale::Timescale;
 
-    fn sample(dts: i64, duration: u32) -> Sample {
+    fn sample(dts: i64) -> Sample {
         Sample {
             data: vec![0u8; 4].into(),
-            timing: crate::ir::SampleTiming::from_options(Some(dts), Some(dts), Some(duration)),
+            timing: Some(crate::ir::SampleTiming::timed(dts, dts)),
             flags: SampleFlags::SYNC,
             provenance: None,
             display: None,
@@ -138,7 +135,7 @@ mod tests {
         let mut dts = start;
         let mut samples = alloc::vec::Vec::with_capacity(durs.len());
         for &d in durs {
-            samples.push(sample(dts, d));
+            samples.push(sample(dts));
             dts += d as i64;
         }
         Track::new_at(spec(), samples, start as u64)
@@ -181,13 +178,19 @@ mod tests {
         );
         rebase_to_zero(&mut m);
         assert_eq!(m.tracks[0].start_decode_time, 0);
-        assert_eq!(m.tracks[0].samples[0].timing.map(|t| t.dts), Some(0));
-        assert_eq!(m.tracks[0].samples[1].timing.map(|t| t.dts), Some(3000));
-        assert_eq!(m.tracks[0].samples[1].timing.map(|t| t.pts), Some(3000));
+        assert_eq!(m.tracks[0].samples[0].timing.and_then(|t| t.dts()), Some(0));
+        assert_eq!(
+            m.tracks[0].samples[1].timing.and_then(|t| t.dts()),
+            Some(3000)
+        );
+        assert_eq!(
+            m.tracks[0].samples[1].timing.and_then(|t| t.pts()),
+            Some(3000)
+        );
         // Idempotent.
         rebase_to_zero(&mut m);
         assert_eq!(m.tracks[0].start_decode_time, 0);
-        assert_eq!(m.tracks[0].samples[0].timing.map(|t| t.dts), Some(0));
+        assert_eq!(m.tracks[0].samples[0].timing.and_then(|t| t.dts()), Some(0));
     }
 
     #[test]
@@ -196,12 +199,12 @@ mod tests {
         m.tracks[0].samples[0].timing = None;
         rebase_to_zero(&mut m);
         assert_eq!(
-            m.tracks[0].samples[0].timing.map(|t| t.dts),
+            m.tracks[0].samples[0].timing.and_then(|t| t.dts()),
             None,
             "never fabricate a dts"
         );
         assert_eq!(
-            m.tracks[0].samples[0].timing.map(|t| t.pts),
+            m.tracks[0].samples[0].timing.and_then(|t| t.pts()),
             None,
             "never fabricate a pts"
         );
@@ -212,11 +215,14 @@ mod tests {
         let mut m = Media::new(vec![track_at(100, &[10])], Timescale::from_nonzero(1000));
         apply_offset(&mut m, 50);
         assert_eq!(m.tracks[0].start_decode_time, 150);
-        assert_eq!(m.tracks[0].samples[0].timing.map(|t| t.dts), Some(150));
+        assert_eq!(
+            m.tracks[0].samples[0].timing.and_then(|t| t.dts()),
+            Some(150)
+        );
         apply_offset(&mut m, -1000);
         assert_eq!(m.tracks[0].start_decode_time, 0, "underflow saturates at 0");
         assert_eq!(
-            m.tracks[0].samples[0].timing.map(|t| t.dts),
+            m.tracks[0].samples[0].timing.and_then(|t| t.dts()),
             Some(0),
             "sample shift matches the saturated (clamped) anchor delta, not the raw delta"
         );
@@ -227,17 +233,17 @@ mod tests {
         let mut t = track_at(0, &[100, 100, 100]);
         insert_discontinuity_gap(&mut t, 2, 500);
         assert_eq!(
-            t.samples[0].timing.map(|t| t.dts),
+            t.samples[0].timing.and_then(|t| t.dts()),
             Some(0),
             "earlier sample unchanged"
         );
         assert_eq!(
-            t.samples[1].timing.map(|t| t.dts),
+            t.samples[1].timing.and_then(|t| t.dts()),
             Some(100),
             "earlier sample unchanged"
         );
         assert_eq!(
-            t.samples[2].timing.map(|t| t.dts),
+            t.samples[2].timing.and_then(|t| t.dts()),
             Some(700),
             "sample at the insertion point pushed out by the gap (200 + 500)"
         );
@@ -249,6 +255,6 @@ mod tests {
         let mut t = track_at(1000, &[100]);
         insert_discontinuity_gap(&mut t, 0, 250);
         assert_eq!(t.start_decode_time, 1250);
-        assert_eq!(t.samples[0].timing.map(|t| t.dts), Some(1250));
+        assert_eq!(t.samples[0].timing.and_then(|t| t.dts()), Some(1250));
     }
 }

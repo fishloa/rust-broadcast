@@ -1507,7 +1507,6 @@ enum LiveKind {
     /// H.264/HEVC/MPEG-2 video: one `Sample` per access unit.
     Video {
         pending: Option<PendingOneBehind>,
-        last_duration: u32,
         codec: VideoCodec,
         /// H.264 PAFF field-pair state (issue #1161); inert for other codecs.
         paff: PaffPairing,
@@ -1521,20 +1520,14 @@ enum LiveKind {
         anchor: AudioAnchor,
     },
     /// Opaque PES data (#557): one `Sample` per access unit.
-    Data {
-        pending: Option<PendingOneBehind>,
-        last_duration: u32,
-    },
+    Data { pending: Option<PendingOneBehind> },
     /// MPEG-H 3D Audio (issue #579): one opaque `Sample` per MHAS access
     /// unit — no MHAS bitstream decode, so (like [`LiveKind::Data`]) there
-    /// is no intrinsic per-sample duration to split on; duration is the
-    /// one-behind PTS delta. `is_sync` is set from whether the access unit's
-    /// MHAS packets contain a `PACTYP_MPEGH3DACFG` (a random-access point,
-    /// ETSI TS 101 154 §6.8.4.1), not hardcoded `true`.
-    MpegH {
-        pending: Option<PendingOneBehind>,
-        last_duration: u32,
-    },
+    /// is no intrinsic per-sample duration to split on. `is_sync` is set
+    /// from whether the access unit's MHAS packets contain a
+    /// `PACTYP_MPEGH3DACFG` (a random-access point, ETSI TS 101 154
+    /// §6.8.4.1), not hardcoded `true`.
+    MpegH { pending: Option<PendingOneBehind> },
     /// Opaque section data (#576): each reassembled PSI/private section is
     /// emitted immediately as one `Sample` — sections carry no PTS/DTS, so
     /// there is no one-behind duration lookahead (every duration is `0`).
@@ -2104,12 +2097,10 @@ impl StreamState {
 /// order Phase 1a established for `TrackUpdated`.
 fn advance_one_behind(
     pending: &mut Option<PendingOneBehind>,
-    last_duration: &mut u32,
     data: Vec<u8>,
     is_sync: bool,
     pts_uw: i128,
     dts_uw: i128,
-    duration_from_pts: bool,
     track_id: TrackId,
     provenance: EventProvenance,
     display: Option<Arc<DisplayInfo>>,
@@ -2117,12 +2108,6 @@ fn advance_one_behind(
     events: &mut VecDeque<DemuxEvent>,
 ) {
     if let Some(prev) = pending.take() {
-        let duration = if duration_from_pts {
-            (pts_uw - prev.pts_uw).max(0) as u32
-        } else {
-            (dts_uw - prev.dts_uw).max(0) as u32
-        };
-        *last_duration = duration;
         let dts = to_ticks(prev.dts_uw);
         let pts = to_ticks(prev.pts_uw);
         if let Some(spec) = prev.pending_events.config {
@@ -2143,7 +2128,7 @@ fn advance_one_behind(
             track_id,
             sample: Sample {
                 data: prev.data.into(),
-                timing: crate::ir::SampleTiming::from_options(Some(dts), Some(pts), Some(duration)),
+                timing: Some(crate::ir::SampleTiming::timed(dts, pts)),
                 flags: SampleFlags::new(prev.is_sync),
                 provenance: Some(ts_provenance(dts, pts)),
                 display: prev.display,
@@ -2183,13 +2168,10 @@ fn advance_one_behind(
     }
 }
 
-/// Flush a trailing one-behind pending sample at end of stream, reusing the
-/// last-known duration (mirrors the batch tail rule: the final sample repeats
-/// the previous sample's duration, or `0` if there was only ever one sample),
-/// after the display events that access unit raised.
+/// Flush a trailing one-behind pending sample at end of stream, after the
+/// display events that access unit raised.
 fn flush_one_behind(
     pending: &mut Option<PendingOneBehind>,
-    last_duration: u32,
     track_id: TrackId,
     provenance: EventProvenance,
     events: &mut VecDeque<DemuxEvent>,
@@ -2215,11 +2197,7 @@ fn flush_one_behind(
             track_id,
             sample: Sample {
                 data: p.data.into(),
-                timing: crate::ir::SampleTiming::from_options(
-                    Some(dts),
-                    Some(pts),
-                    Some(last_duration),
-                ),
+                timing: Some(crate::ir::SampleTiming::timed(dts, pts)),
                 flags: SampleFlags::new(p.is_sync),
                 provenance: Some(ts_provenance(dts, pts)),
                 display: p.display,
@@ -2770,9 +2748,9 @@ fn push_live_au(
     match &mut live.kind {
         LiveKind::Video {
             pending,
-            last_duration,
             codec,
             paff,
+            ..
         } => {
             use crate::slice_header::AvcPicture;
             // The events this access unit raises travel with its own slot and
@@ -2808,32 +2786,17 @@ fn push_live_au(
             }
             paff.first_field = this_field;
             advance_one_behind(
-                pending,
-                last_duration,
-                bytes,
-                is_sync,
-                pts_uw,
-                dts_uw,
-                false,
-                track_id,
-                provenance,
-                display,
-                raised,
+                pending, bytes, is_sync, pts_uw, dts_uw, track_id, provenance, display, raised,
                 events,
             );
         }
-        LiveKind::Data {
-            pending,
-            last_duration,
-        } => {
+        LiveKind::Data { pending, .. } => {
             advance_one_behind(
                 pending,
-                last_duration,
                 data.to_vec(),
                 true,
                 pts_uw,
                 dts_uw,
-                true,
                 track_id,
                 provenance,
                 display,
@@ -2861,19 +2824,14 @@ fn push_live_au(
                 events,
             );
         }
-        LiveKind::MpegH {
-            pending,
-            last_duration,
-        } => {
+        LiveKind::MpegH { pending, .. } => {
             let is_sync = find_mpegh3da_config(data).is_some();
             advance_one_behind(
                 pending,
-                last_duration,
                 data.to_vec(),
                 is_sync,
                 pts_uw,
                 dts_uw,
-                true,
                 track_id,
                 provenance,
                 display,
@@ -3277,10 +3235,7 @@ fn finalize_probe(
             };
             let carriage = data_carriage(stream_type);
             let kind = match carriage {
-                DataCarriage::Pes => LiveKind::Data {
-                    pending: None,
-                    last_duration: 0,
-                },
+                DataCarriage::Pes => LiveKind::Data { pending: None },
                 DataCarriage::Sections => LiveKind::Section,
             };
             Some((
@@ -3367,7 +3322,6 @@ fn finalize_probe(
                 VIDEO_TIMESCALE,
                 LiveKind::Video {
                     pending: None,
-                    last_duration: 0,
                     codec: VideoCodec::H264,
                     paff: PaffPairing::default(),
                 },
@@ -3487,7 +3441,6 @@ fn finalize_probe(
                 VIDEO_TIMESCALE,
                 LiveKind::Video {
                     pending: None,
-                    last_duration: 0,
                     codec: VideoCodec::Hevc,
                     paff: PaffPairing::default(),
                 },
@@ -3519,7 +3472,6 @@ fn finalize_probe(
                 VIDEO_TIMESCALE,
                 LiveKind::Video {
                     pending: None,
-                    last_duration: 0,
                     codec: VideoCodec::Mpeg2,
                     paff: PaffPairing::default(),
                 },
@@ -3706,10 +3658,7 @@ fn finalize_probe(
                     sample_size: AUDIO_SAMPLE_SIZE_BITS,
                 },
                 VIDEO_TIMESCALE,
-                LiveKind::MpegH {
-                    pending: None,
-                    last_duration: 0,
-                },
+                LiveKind::MpegH { pending: None },
             ))
         }
     }
@@ -6513,22 +6462,11 @@ fn flush_stream_live_tail(pid: Pid, stream: &mut StreamState, events: &mut VecDe
             program_number: None,
         };
         match &mut live.kind {
-            LiveKind::Video {
-                pending,
-                last_duration,
-                ..
-            } => {
-                flush_one_behind(pending, *last_duration, live.track_id, provenance, events);
+            LiveKind::Video { pending, .. } => {
+                flush_one_behind(pending, live.track_id, provenance, events);
             }
-            LiveKind::Data {
-                pending,
-                last_duration,
-            }
-            | LiveKind::MpegH {
-                pending,
-                last_duration,
-            } => {
-                flush_one_behind(pending, *last_duration, live.track_id, provenance, events);
+            LiveKind::Data { pending, .. } | LiveKind::MpegH { pending, .. } => {
+                flush_one_behind(pending, live.track_id, provenance, events);
             }
             LiveKind::Audio { kind, anchor, .. } => {
                 flush_audio_carry(kind, anchor, live.track_id, events);
@@ -6673,7 +6611,7 @@ impl<'a> TsDemux<'a> {
                     // invariant, unconditionally true for every track
                     // kind), so derive it here instead.
                     if track.samples.is_empty()
-                        && let Some(dts) = sample.timing.map(|t| t.dts)
+                        && let Some(dts) = sample.timing.and_then(|t| t.dts())
                     {
                         track.start_decode_time = dts as u64;
                     }
@@ -8958,7 +8896,7 @@ pub(crate) mod tests {
         for event in &events {
             if let DemuxEvent::Sample { track_id, sample } = event
                 && let Some(pid) = ids.get(track_id)
-                && let Some(dts) = sample.timing.map(|t| t.dts)
+                && let Some(dts) = sample.timing.and_then(|t| t.dts())
             {
                 samples_by_pid
                     .entry(Pid::try_new((*pid).value()).expect("pid fits the 13-bit field"))
@@ -9096,7 +9034,7 @@ pub(crate) mod tests {
         for event in &events {
             if let DemuxEvent::Sample { track_id, sample } = event
                 && let Some(pid) = ids.get(track_id)
-                && let Some(dts) = sample.timing.map(|t| t.dts)
+                && let Some(dts) = sample.timing.and_then(|t| t.dts())
             {
                 by_pid.entry(*pid).or_default().push(dts);
             }
@@ -9224,7 +9162,7 @@ pub(crate) mod tests {
         demux.finish();
         let got: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => sample.timing.map(|t| t.dts),
+                DemuxEvent::Sample { sample, .. } => sample.timing.and_then(|t| t.dts()),
                 _ => None,
             })
             .collect();
@@ -9327,7 +9265,7 @@ pub(crate) mod tests {
         demux.finish();
         let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => sample.timing.map(|t| t.dts),
+                DemuxEvent::Sample { sample, .. } => sample.timing.and_then(|t| t.dts()),
                 _ => None,
             })
             .collect();
@@ -9479,7 +9417,7 @@ pub(crate) mod tests {
         demux.finish();
         let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => sample.timing.map(|t| t.dts),
+                DemuxEvent::Sample { sample, .. } => sample.timing.and_then(|t| t.dts()),
                 _ => None,
             })
             .collect();
@@ -9571,7 +9509,7 @@ pub(crate) mod tests {
         demux.finish();
         let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => sample.timing.map(|t| t.dts),
+                DemuxEvent::Sample { sample, .. } => sample.timing.and_then(|t| t.dts()),
                 _ => None,
             })
             .collect();
@@ -10518,7 +10456,7 @@ pub(crate) mod tests {
         );
         let dts: Vec<i64> = samples
             .iter()
-            .map(|s| s.timing.map(|t| t.dts).expect("stamped dts"))
+            .map(|s| s.timing.and_then(|t| t.dts()).expect("stamped dts"))
             .collect();
         assert!(
             dts.len() >= FRAMES,
@@ -10632,7 +10570,7 @@ pub(crate) mod tests {
         demux.finish();
         let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => sample.timing.map(|t| t.dts),
+                DemuxEvent::Sample { sample, .. } => sample.timing.and_then(|t| t.dts()),
                 _ => None,
             })
             .collect();
@@ -11136,7 +11074,7 @@ pub(crate) mod tests {
             .expect("h264-aac.ts has an AVC track");
         let source_dts0 = video.samples[0]
             .timing
-            .map(|t| t.dts)
+            .and_then(|t| t.dts())
             .expect("the fixture's AVC track is stamped");
         let mut headers = 0usize;
         for (i, sample) in video.samples.iter().enumerate() {
@@ -11196,7 +11134,7 @@ pub(crate) mod tests {
         // previous one's dts, so the series alternated 0 / 3600 steps.
         let dts: Vec<i64> = samples
             .iter()
-            .map(|s| s.timing.map(|t| t.dts).expect("video dts"))
+            .map(|s| s.timing.and_then(|t| t.dts()).expect("video dts"))
             .collect();
         let steps: Vec<i64> = dts.windows(2).map(|w| w[1] - w[0]).collect();
         assert!(
@@ -11206,11 +11144,11 @@ pub(crate) mod tests {
         assert!(
             samples
                 .iter()
-                .all(|s| s.timing.map(|t| t.duration) == Some(FRAME_PERIOD as u32)),
-            "no zero-duration sample may survive interpolation; durations: {:?}",
+                .all(|s| s.timing.and_then(|t| t.duration()).is_none()),
+            "an interpolated dts is a decode time, not a fabricated span; durations: {:?}",
             samples
                 .iter()
-                .map(|s| s.timing.map(|t| t.duration))
+                .map(|s| s.timing.and_then(|t| t.duration()))
                 .collect::<Vec<_>>()
         );
     }
@@ -11581,9 +11519,10 @@ pub(crate) mod tests {
         let emitted: Vec<(Vec<u8>, Option<u32>)> = events
             .iter()
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => {
-                    Some((sample.data.to_vec(), sample.timing.map(|t| t.duration)))
-                }
+                DemuxEvent::Sample { sample, .. } => Some((
+                    sample.data.to_vec(),
+                    sample.timing.and_then(|t| t.duration()),
+                )),
                 _ => None,
             })
             .collect();
@@ -11597,9 +11536,9 @@ pub(crate) mod tests {
             "both raw data blocks' real bytes must be present, undamaged"
         );
         assert_eq!(
-            emitted[0].1,
-            Some(AAC_SAMPLES_PER_FRAME * 2),
-            "duration must be (num_raw_data_blocks + 1) * AAC_SAMPLES_PER_FRAME, not just 1024"
+            emitted[0].1, None,
+            "a frame's span is the step to the next frame's dts; a timed sample \
+             declares none"
         );
     }
 
@@ -11665,9 +11604,10 @@ pub(crate) mod tests {
         events
             .iter()
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => {
-                    Some((sample.data.to_vec(), sample.timing.map(|t| t.duration)))
-                }
+                DemuxEvent::Sample { sample, .. } => Some((
+                    sample.data.to_vec(),
+                    sample.timing.and_then(|t| t.duration()),
+                )),
                 _ => None,
             })
             .collect()
@@ -11695,11 +11635,8 @@ pub(crate) mod tests {
                 assert_eq!(got.len(), 1, "n_blocks={n_blocks} crc={crc}");
                 let want: Vec<u8> = blocks.concat();
                 assert_eq!(got[0].0, want, "n_blocks={n_blocks} crc={crc}");
-                assert_eq!(
-                    got[0].1,
-                    Some(AAC_SAMPLES_PER_FRAME * n_blocks as u32),
-                    "n_blocks={n_blocks} crc={crc}"
-                );
+                let _ = AAC_SAMPLES_PER_FRAME;
+                assert_eq!(got[0].1, None, "n_blocks={n_blocks} crc={crc}");
             }
         }
     }
@@ -11890,10 +11827,7 @@ pub(crate) mod tests {
                     carriage,
                 },
                 timescale: VIDEO_TIMESCALE,
-                kind: LiveKind::Data {
-                    pending: None,
-                    last_duration: 0,
-                },
+                kind: LiveKind::Data { pending: None },
                 backlog: Vec::new(),
             })));
         demux.try_promote_ready();
@@ -12969,9 +12903,9 @@ pub(crate) mod tests {
                 match e {
                     DemuxEvent::Sample { sample, .. } => samples.push((
                         sample.data.to_vec(),
-                        sample.timing.map(|t| t.dts),
-                        sample.timing.map(|t| t.pts),
-                        sample.timing.map(|t| t.duration),
+                        sample.timing.and_then(|t| t.dts()),
+                        sample.timing.and_then(|t| t.pts()),
+                        sample.timing.and_then(|t| t.duration()),
                     )),
                     DemuxEvent::Discontinuity { .. } => disc += 1,
                     _ => {}
@@ -13027,11 +12961,10 @@ pub(crate) mod tests {
             let want = CARRY_BASE_TRACK + n as i64 * samples_per_frame;
             assert_eq!(*dts, Some(want), "{label}: frame {n} dts");
             assert_eq!(*pts, Some(want), "{label}: frame {n} pts");
-            assert_eq!(
-                *dur,
-                Some(samples_per_frame as u32),
-                "{label}: frame {n} duration"
-            );
+            // A timed sample's span is the step to the next frame's `dts`
+            // (the frames are one continuous `samples_per_frame` grid), so
+            // the demuxer declares no span of its own for it.
+            assert_eq!(*dur, None, "{label}: frame {n} declares no span");
         }
 
         // Batch entry point.
@@ -13042,9 +12975,9 @@ pub(crate) mod tests {
             .map(|s| {
                 (
                     s.data.to_vec(),
-                    s.timing.map(|t| t.dts),
-                    s.timing.map(|t| t.pts),
-                    s.timing.map(|t| t.duration),
+                    s.timing.and_then(|t| t.dts()),
+                    s.timing.and_then(|t| t.pts()),
+                    s.timing.and_then(|t| t.duration()),
                 )
             })
             .collect();
@@ -13571,7 +13504,7 @@ pub(crate) mod tests {
         );
         for (n, (data, dts, _, dur)) in samples.iter().enumerate() {
             assert_eq!(data, &aus.frames[n], "AU {n} byte-exact");
-            assert_eq!(*dur, Some(1536));
+            assert_eq!(*dur, None, "a timed sample declares no span");
             assert_eq!(*dts, Some(samples[0].1.unwrap() + n as i64 * 1536));
         }
     }
@@ -13600,7 +13533,7 @@ pub(crate) mod tests {
             );
             for (n, (data, dts, _, dur)) in samples.iter().enumerate() {
                 assert_eq!(data, &es.frames[n], "split {split}: AU {n} byte-exact");
-                assert_eq!(*dur, Some(1536));
+                assert_eq!(*dur, None, "split {split}: AU {n} declares no span");
                 assert_eq!(*dts, Some(samples[0].1.unwrap() + n as i64 * 1536));
             }
             let CodecConfig::Eac3 { config, .. } = first_track_config(&ts) else {

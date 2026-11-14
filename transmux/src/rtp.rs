@@ -654,17 +654,23 @@ impl RtpPacketiser {
 /// series (in that case `dts == pts` at every sample, and both paths agree).
 fn sample_pts(track: &crate::media::Track, i: usize) -> u64 {
     if let (Some(first), Some(cur)) = (
-        track.samples.first().and_then(|s| s.timing.map(|t| t.pts)),
-        track.samples.get(i).and_then(|s| s.timing.map(|t| t.pts)),
+        track
+            .samples
+            .first()
+            .and_then(|s| s.timing.and_then(|t| t.pts())),
+        track
+            .samples
+            .get(i)
+            .and_then(|s| s.timing.and_then(|t| t.pts())),
     ) {
         // A hostile pair of timestamps can invert the subtraction; the
         // conversion is checked rather than an `as` cast, which would wrap a
         // large negative into a huge tick count.
-        return u64::try_from((cur - first).max(0)).unwrap_or(0);
+        return u64::try_from(cur.checked_sub(first).unwrap_or(0).max(0)).unwrap_or(0);
     }
     track.samples[..i]
         .iter()
-        .map(|s| u64::from(s.timing.map(|t| t.duration).unwrap_or(0)))
+        .map(|s| u64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)))
         .sum()
 }
 
@@ -1354,15 +1360,6 @@ fn decode_timeline(pts: &[i64]) -> (Vec<i64>, Vec<i64>) {
     (dts, shifted_pts)
 }
 
-/// A decode-time delta as a sample duration: clamped at 0 (a non-decreasing
-/// timeline cannot produce a negative one, but a hostile stream's clamped grid
-/// can tie), and checked rather than truncated — a delta past `u32::MAX` ticks
-/// is not a duration any container can carry, and saturating is the only
-/// lossless choice left for a value that is already the length of the stream.
-fn duration_from(delta: i64) -> u32 {
-    u32::try_from(delta.max(0)).unwrap_or(u32::MAX)
-}
-
 /// Reassembled RTP samples, exposed on [`Media`] via a light wrapper. Since the
 /// hub IR carries codec config, the depacketiser returns the raw reassembled
 /// access units on each track's samples for round-trip verification; callers
@@ -1414,76 +1411,16 @@ fn rtp_tracks_to_media(tracks: Vec<RtpTrack>) -> Result<Media> {
                     dts_series.iter().map(|d| (*d - origin).max(0)).collect();
                 let pts_series: Vec<i64> =
                     pts_series.iter().map(|p| (*p - origin).max(0)).collect();
-                let n = dts_series.len();
-                // The duration to reuse when a decode step is zero — see the
-                // per-sample fallback below. Seeded with the first positive step in
-                // the series, because a stream can open with repeated decode
-                // instants (the latch can clamp several frames onto the same tick)
-                // and the frames before the first positive step still need a
-                // duration. `None` only when the whole series is one instant.
-                let mut previous_nonzero_duration: Option<i64> =
-                    dts_series.windows(2).map(|w| w[1] - w[0]).find(|d| *d > 0);
                 let samples: Vec<Sample> = t
                     .samples
                     .iter()
                     .enumerate()
-                    .map(|(i, au)| {
-                        let pts = pts_series[i];
-                        let dts = dts_series[i];
-                        // Duration = the decode delta to the next AU; the final AU
-                        // reuses the previous delta (the same one-behind rule
-                        // `ts_demux`/`flv` use), and a single-AU track has no
-                        // measurable duration at all.
-                        //
-                        // A **non-final** frame never gets a zero duration: two AUs
-                        // stamped with the same instant is something the wire can
-                        // produce and the decode timeline then gives them a zero
-                        // step, but every container writer in this crate rejects a
-                        // zero-duration sample (it describes a frame the decoder is
-                        // told to replace instantly). The fallback is the most
-                        // recent non-zero duration, and 1 tick if there has not
-                        // been one yet — a duration the stream does not have is
-                        // still less wrong than one no writer accepts.
-                        let delta = if i + 1 < n {
-                            let d = dts_series[i + 1] - dts;
-                            if d > 0 {
-                                Some(d)
-                            } else {
-                                previous_nonzero_duration
-                            }
-                        } else if n >= 2 {
-                            let d = dts - dts_series[i - 1];
-                            if d > 0 {
-                                Some(d)
-                            } else {
-                                previous_nonzero_duration
-                            }
-                        } else {
-                            // A single-access-unit track has no measurable delta at
-                            // all. The IR requires a duration on every timed
-                            // sample, and no writer accepts zero, so the floor of
-                            // one tick is what is left — the same value the
-                            // per-sample fallback uses when nothing better is
-                            // known.
-                            Some(1)
-                        };
-                        if let Some(d) = delta
-                            && d > 0
-                        {
-                            previous_nonzero_duration = Some(d);
-                        }
-                        let duration = delta.map(|d| duration_from(d.max(1)));
-                        Sample {
-                            data: au.data.clone().into(),
-                            timing: crate::ir::SampleTiming::from_options(
-                                Some(dts),
-                                Some(pts),
-                                duration,
-                            ),
-                            flags: crate::ir::SampleFlags::new(au.is_sync),
-                            provenance: None,
-                            display: None,
-                        }
+                    .map(|(i, au)| Sample {
+                        data: au.data.clone().into(),
+                        timing: Some(crate::ir::SampleTiming::timed(dts_series[i], pts_series[i])),
+                        flags: crate::ir::SampleFlags::new(au.is_sync),
+                        provenance: None,
+                        display: None,
                     })
                     .collect();
                 // A placeholder AVC config: the RTP wire has no config; the SDP does.
@@ -1491,7 +1428,7 @@ fn rtp_tracks_to_media(tracks: Vec<RtpTrack>) -> Result<Media> {
                 // minimal AVC spec (never serialized to a container here).
                 let anchor = samples
                     .first()
-                    .and_then(|s| s.timing.map(|t| t.dts))
+                    .and_then(|s| s.timing.and_then(|t| t.dts()))
                     .map(|d| u64::try_from(d.max(0)).unwrap_or(0))
                     .unwrap_or(0);
                 Ok(crate::media::Track::new_at(spec, samples, anchor))
@@ -2402,28 +2339,28 @@ mod tests {
             .expect("depacketise");
         let samples = &ir.tracks[0].samples;
         assert_eq!(samples.len(), 4);
-        for (i, s) in samples.iter().enumerate() {
-            let d = s
-                .timing
-                .map(|t| t.duration)
-                .expect("a multi-sample track times every sample");
-            if i + 1 < samples.len() {
-                assert!(
-                    d > 0,
-                    "non-final sample {i} must not have a zero duration: {:?}",
-                    samples
-                        .iter()
-                        .map(|s| s.timing.map(|t| t.duration))
-                        .collect::<alloc::vec::Vec<_>>()
-                );
-            }
-        }
-        // The repeated instant's AU reuses the previous frame's period.
-        assert_eq!(samples[1].timing.map(|t| t.duration), Some(3000));
+        // A repeated wire instant yields a strictly later decode time (a
+        // frame is never told to replace itself instantly), and no sample
+        // fabricates a span of its own.
+        let dts: alloc::vec::Vec<i64> = samples
+            .iter()
+            .map(|s| s.timing.and_then(|t| t.dts()).expect("a dts"))
+            .collect();
+        assert!(
+            dts.windows(2).all(|w| w[1] >= w[0]),
+            "decode times must never step back: {dts:?}"
+        );
+        assert!(
+            samples
+                .iter()
+                .all(|s| s.timing.and_then(|t| t.duration()).is_none()),
+            "an RTP sample states no span; its duration is the next dts step"
+        );
+        assert_eq!(samples[1].timing.and_then(|t| t.pts()), Some(3000));
         assert_eq!(
-            samples[2].timing.map(|t| t.duration),
+            samples[2].timing.and_then(|t| t.pts()),
             Some(3000),
-            "the duplicate instant must reuse the previous non-zero duration"
+            "the duplicate instant keeps its wire presentation time"
         );
     }
 

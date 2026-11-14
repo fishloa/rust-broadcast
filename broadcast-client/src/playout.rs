@@ -228,11 +228,11 @@ impl Playout {
         }
         let (Some(info), Some(pts)) = (
             self.infos.get(&track).copied(),
-            sample.timing.map(|t| t.pts),
+            sample.timing.and_then(|t| t.pts()),
         ) else {
             return;
         };
-        let dur = i64::from(sample.timing.map(|t| t.duration).unwrap_or(0));
+        let dur = i64::from(sample.timing.and_then(|t| t.duration()).unwrap_or(0));
         let timescale = info.timescale;
         let shift = *self
             .origin_shift
@@ -427,11 +427,11 @@ mod tests {
         p.engage(Source::Vod);
         p.on_tracks(std::slice::from_ref(&track.spec));
         let mut s = track.samples[0].clone();
+        let _ = 3_000;
         if let Some(t) = s.timing.as_mut() {
-            t.pts = i64::MAX;
-            t.duration = 3_000;
+            t.shift(i64::MAX - t.pts().unwrap_or(i64::MAX));
         } else {
-            s.timing = Some(transmux::ir::SampleTiming::new(i64::MAX, i64::MAX, 3_000));
+            s.timing = Some(transmux::ir::SampleTiming::timed(i64::MAX, i64::MAX));
         }
         p.on_sample(track.spec.track_id, &s, None);
         let obs = p.obs.get(&track.spec.track_id).unwrap();
@@ -467,16 +467,11 @@ mod tests {
         let timescale = i64::from(spec.timescale.get());
         let mut s = template.clone();
         let pts = index * timescale;
+        let _ = spec.timescale.get();
         if let Some(t) = s.timing.as_mut() {
-            t.pts = pts;
-            t.dts = pts;
-            t.duration = spec.timescale.get();
+            t.shift(pts - t.dts().unwrap_or(pts));
         } else {
-            s.timing = Some(transmux::ir::SampleTiming::new(
-                pts,
-                pts,
-                spec.timescale.get(),
-            ));
+            s.timing = Some(transmux::ir::SampleTiming::timed(pts, pts));
         }
         s
     }
@@ -671,16 +666,11 @@ mod tests {
         let base: i64 = 1 << 33;
         let mut s1 = samples[0].clone();
         let pts1 = base + 5 * ts;
+        let _ = spec.timescale.get();
         if let Some(t) = s1.timing.as_mut() {
-            t.pts = pts1;
-            t.dts = pts1;
-            t.duration = spec.timescale.get();
+            t.shift(pts1 - t.dts().unwrap_or(pts1));
         } else {
-            s1.timing = Some(transmux::ir::SampleTiming::new(
-                pts1,
-                pts1,
-                spec.timescale.get(),
-            ));
+            s1.timing = Some(transmux::ir::SampleTiming::timed(pts1, pts1));
         }
         p.on_sample(spec.track_id, &s1, None);
         let evs = buffer_events(&mut p);
@@ -691,16 +681,11 @@ mod tests {
         let first_end = p.obs.get(&spec.track_id).unwrap().end;
         let mut s2 = samples[0].clone();
         let pts2 = base + 6 * ts;
+        let _ = spec.timescale.get();
         if let Some(t) = s2.timing.as_mut() {
-            t.pts = pts2;
-            t.dts = pts2;
-            t.duration = spec.timescale.get();
+            t.shift(pts2 - t.dts().unwrap_or(pts2));
         } else {
-            s2.timing = Some(transmux::ir::SampleTiming::new(
-                pts2,
-                pts2,
-                spec.timescale.get(),
-            ));
+            s2.timing = Some(transmux::ir::SampleTiming::timed(pts2, pts2));
         }
         p.on_sample(spec.track_id, &s2, None);
         let _ = buffer_events(&mut p);

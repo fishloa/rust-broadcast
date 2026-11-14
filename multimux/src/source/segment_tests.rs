@@ -1638,14 +1638,9 @@ fn jump_source_starts(jump: i64) -> Vec<Option<u64>> {
         let mut sample = sample_at(base, base.is_multiple_of(30));
         let pts = i64::from(base) * i64::from(FRAME_DUR) + if i >= 60 { jump } else { 0 };
         if let Some(t) = sample.timing.as_mut() {
-            t.pts = pts;
+            t.shift(pts - t.dts().unwrap_or(pts));
         } else {
-            sample.timing = Some(transmux::ir::SampleTiming::new(pts, pts, 0));
-        }
-        if let Some(t) = sample.timing.as_mut() {
-            t.dts = pts;
-        } else {
-            sample.timing = Some(transmux::ir::SampleTiming::new(pts, pts, 0));
+            sample.timing = Some(transmux::ir::SampleTiming::timed(pts, pts));
         }
         writer.publish(
             TrackId::new(1),

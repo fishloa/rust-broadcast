@@ -74,7 +74,16 @@ impl Stitcher {
     }
 
     /// Shift `samples` of `track` onto the continuous timeline, in place.
+    ///
+    /// A timed sample carries no span of its own, so a batch's own span — the
+    /// sum of the spans its samples declare (a [`DurationOnly`] sample states
+    /// one) — is what extends the track's known content for the next
+    /// discontinuity to stitch onto.
     pub fn apply(&mut self, track: TrackId, samples: &mut [Sample]) {
+        let span = samples
+            .iter()
+            .map(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0))
+            .fold(0u32, |acc, d| acc.saturating_add(d));
         for sample in samples {
             let Some(clock) = self.tracks.get(&track) else {
                 continue;
@@ -83,8 +92,8 @@ impl Stitcher {
             if self.pending
                 && let Some(first) = sample
                     .timing
-                    .map(|t| t.dts)
-                    .or(sample.timing.map(|t| t.pts))
+                    .and_then(|t| t.dts())
+                    .or(sample.timing.and_then(|t| t.pts()))
             {
                 self.pending = false;
                 let stitch = self.tracks.values().filter_map(|t| t.end_us).max();
@@ -102,13 +111,15 @@ impl Stitcher {
             }
             let shift = clock.offset_ticks;
             if let Some(t) = sample.timing.as_mut() {
-                t.dts = t.dts.saturating_add(shift);
-                t.pts = t.pts.saturating_add(shift);
+                t.shift(shift);
             }
-            if let Some(dts) = sample.timing.map(|t| t.dts) {
-                let dur = sample.timing.map(|t| t.duration).unwrap_or(0);
-                let end = dts.saturating_add(i64::from(dur));
-                clock.end_us = Some(ticks_to_us(end, timescale));
+            if let Some(dts) = sample.timing.and_then(|t| t.dts()) {
+                // What this sample covers so far: its own instant plus the
+                // batch's span, which is what the next discontinuity stitches
+                // after.
+                let end = ticks_to_us(dts, timescale)
+                    + to_micros(i128::from(span), timescale, Rounding::Nearest);
+                clock.end_us = Some(clock.end_us.map_or(end, |prior| prior.max(end)));
             }
         }
     }
@@ -142,7 +153,7 @@ mod tests {
     fn dts_of(samples: &[Sample]) -> Vec<i64> {
         samples
             .iter()
-            .map(|s| s.timing.map(|t| t.dts).unwrap())
+            .map(|s| s.timing.and_then(|t| t.dts()).unwrap())
             .collect()
     }
 
@@ -234,7 +245,7 @@ mod tests {
         st.apply(TrackId::new(1), &mut second);
         assert_eq!(dts_of(&second), [4_000, 6_000]);
         assert_eq!(
-            second[1].timing.map(|t| t.pts),
+            second[1].timing.and_then(|t| t.pts()),
             Some(6_000),
             "pts moves with dts"
         );

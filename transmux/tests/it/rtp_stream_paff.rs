@@ -166,16 +166,16 @@ fn field_pictures_use_a_depth_widened_for_fields() {
     );
     for w in samples.windows(2) {
         assert!(
-            w[0].timing.map(|t| t.dts) < w[1].timing.map(|t| t.dts),
+            w[0].timing.and_then(|t| t.dts()) < w[1].timing.and_then(|t| t.dts()),
             "dts must increase"
         );
     }
     for s in &samples {
         assert!(
-            s.timing.map(|t| t.dts) <= s.timing.map(|t| t.pts),
+            s.timing.and_then(|t| t.dts()) <= s.timing.and_then(|t| t.pts()),
             "dts {:?} > pts {:?}",
-            s.timing.map(|t| t.dts),
-            s.timing.map(|t| t.pts)
+            s.timing.and_then(|t| t.dts()),
+            s.timing.and_then(|t| t.pts())
         );
     }
 }

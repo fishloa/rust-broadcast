@@ -21,7 +21,7 @@ fn video_durations(skip_aus: usize) -> (Vec<(i64, u32)>, Vec<i64>) {
     let source_pts: Vec<i64> = track
         .samples
         .iter()
-        .map(|s| s.timing.map(|t| t.pts).unwrap())
+        .map(|s| s.timing.and_then(|t| t.pts()).unwrap())
         .collect();
     let mut p = RtpPacketiser {
         mtu: 1400,
@@ -61,8 +61,8 @@ fn video_durations(skip_aus: usize) -> (Vec<(i64, u32)>, Vec<i64>) {
             .iter()
             .map(|s| {
                 (
-                    s.timing.map(|t| t.pts).unwrap(),
-                    s.timing.map(|t| t.duration).unwrap_or(0),
+                    s.timing.and_then(|t| t.pts()).unwrap(),
+                    s.timing.and_then(|t| t.duration()).unwrap_or(0),
                 )
             })
             .collect(),

@@ -105,13 +105,12 @@ fn compose(video: &[u8], teletext: &[u8]) -> transmux::Media {
         .expect("teletext track");
     let first_pts = teletext.samples[0]
         .timing
-        .map(|t| t.pts)
+        .and_then(|t| t.pts())
         .expect("teletext PES PTS");
     let shift = first_video_dts + TELETEXT_STARTS_AFTER_VIDEO_TICKS - first_pts;
     for sample in &mut teletext.samples {
         if let Some(t) = sample.timing.as_mut() {
-            t.pts = t.pts.saturating_add(shift);
-            t.dts = t.dts.saturating_add(shift);
+            t.shift(shift);
         }
     }
     teletext.spec.track_id = transmux::TrackId::new(TELETEXT_TRACK_ID);
@@ -180,8 +179,8 @@ fn start_rig_on(media: transmux::Media, route: Arc<RouteHandle>, reconnect: bool
         for (si, s) in track.samples.iter().enumerate() {
             let at = s
                 .timing
-                .map(|t| t.dts)
-                .or(s.timing.map(|t| t.pts))
+                .and_then(|t| t.dts())
+                .or(s.timing.and_then(|t| t.pts()))
                 .unwrap_or(0);
             let delay = if matches!(track.spec.config, CodecConfig::Data { .. }) {
                 TELETEXT_MUX_DELAY_SECS
@@ -229,10 +228,14 @@ impl Driver {
             self.next += 1;
             let track = &self.rig.media.tracks[ti];
             let mut sample = track.samples[si].clone();
-            if let Some(t) = sample.timing.as_mut()
-                && t.dts == 0
+            if let Some(pts) = sample.timing.and_then(|t| t.pts())
+
+                && let Some(t) = sample.timing.as_mut()
+
+                && t.dts() == Some(0)
             {
-                t.dts = t.pts;
+
+            t.shift(pts);
             }
             self.writer
                 .publish(track.spec.track_id, RetentionClass::Timed, sample);
@@ -707,7 +710,7 @@ fn first_video_sync_dts(media: &transmux::Media) -> i64 {
         .samples
         .iter()
         .find(|s| s.flags.is_sync)
-        .and_then(|s| s.timing.map(|t| t.dts).or(s.timing.map(|t| t.pts)))
+        .and_then(|s| s.timing.and_then(|t| t.dts()).or(s.timing.and_then(|t| t.pts())))
         .expect("video sync sample")
 }
 
@@ -719,7 +722,7 @@ fn teletext_pts(media: &transmux::Media) -> Vec<i64> {
         .expect("teletext track")
         .samples
         .iter()
-        .map(|s| s.timing.map(|t| t.pts).expect("teletext PES PTS"))
+        .map(|s| s.timing.and_then(|t| t.pts()).expect("teletext PES PTS"))
         .collect()
 }
 

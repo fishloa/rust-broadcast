@@ -647,10 +647,10 @@ impl Feeder {
         let Some(timescale) = self.timescale_of(track) else {
             return;
         };
-        let Some(pts) = sample.timing.map(|t| t.pts) else {
+        let Some(pts) = sample.timing.and_then(|t| t.pts()) else {
             return;
         };
-        let dur = i64::from(sample.timing.map(|t| t.duration).unwrap_or(0));
+        let dur = i64::from(sample.timing.and_then(|t| t.duration()).unwrap_or(0));
         let rendered = self.rendered.contains(&track);
         self.first_seen.entry(track).or_insert(pts);
 
@@ -660,7 +660,7 @@ impl Feeder {
                     self.video_joined.insert(track);
                     self.video_join_at.insert(track, (pts, timescale));
                     let run =
-                        ReorderEnd::new(pts, sample.timing.map(|t| t.dts).unwrap_or(pts), dur);
+                        ReorderEnd::new(pts, sample.timing.and_then(|t| t.dts()).unwrap_or(pts), dur);
                     self.video_end.insert(track, run.end);
                     self.video_reorder.insert(track, run);
                     if rendered {
@@ -673,7 +673,7 @@ impl Feeder {
                         .video_reorder
                         .entry(track)
                         .or_insert_with(|| ReorderEnd::new(pts, pts, 0));
-                    let end = run.push(pts, sample.timing.map(|t| t.dts).unwrap_or(pts), dur);
+                    let end = run.push(pts, sample.timing.and_then(|t| t.dts()).unwrap_or(pts), dur);
                     self.video_end.insert(track, end);
                     if rendered {
                         self.queue_video_end(track);
@@ -933,7 +933,6 @@ mod tests {
     use transmux::{LiveJoin, TsDemux};
 
     const FIXTURE: &str = "ts/h264-aac.ts";
-    const FAR_PTS_DURATION: u32 = 3_000;
 
     struct Streams {
         video: (TrackSpec, Vec<Sample>),
@@ -970,15 +969,9 @@ mod tests {
     fn far(sample: &Sample) -> Sample {
         let mut s = sample.clone();
         if let Some(t) = s.timing.as_mut() {
-            t.pts = i64::MAX;
-            t.dts = i64::MAX;
-            t.duration = FAR_PTS_DURATION;
+            t.shift(i64::MAX - t.dts().unwrap_or(i64::MAX));
         } else {
-            s.timing = Some(transmux::ir::SampleTiming::new(
-                i64::MAX,
-                i64::MAX,
-                FAR_PTS_DURATION,
-            ));
+            s.timing = Some(transmux::ir::SampleTiming::timed(i64::MAX, i64::MAX));
         }
         s
     }
@@ -1104,13 +1097,10 @@ mod tests {
             let mut s = st.video.1[0].clone();
             let pts = BASE + pts_slot * FRAME;
             let dts = BASE + dts_slot * FRAME;
-            let dur = u32::try_from(FRAME).unwrap();
             if let Some(t) = s.timing.as_mut() {
-                t.pts = pts;
-                t.dts = dts;
-                t.duration = dur;
+                t.shift(dts - t.dts().unwrap_or(dts));
             } else {
-                s.timing = Some(transmux::ir::SampleTiming::new(dts, pts, dur));
+                s.timing = Some(transmux::ir::SampleTiming::timed(dts, pts));
             }
             f.on_sample(vid, &s, Some(join));
             f.video_end.get(&vid).copied().map(|e| (e - BASE) / FRAME)
@@ -1157,9 +1147,9 @@ mod tests {
         }
         let mut late_audio = st.audio.1[0].clone();
         if let Some(t) = late_audio.timing.as_mut() {
-            t.pts = 1 << 40;
+            t.shift((1 << 40) - t.dts().unwrap_or(1 << 40));
         } else {
-            late_audio.timing = Some(transmux::ir::SampleTiming::new(1 << 40, 1 << 40, 0));
+            late_audio.timing = Some(transmux::ir::SampleTiming::timed(1 << 40, 1 << 40));
         }
         f.on_sample(aid, &late_audio, None);
         assert!(f.rendered.contains(&vid) && f.video_joined.contains(&vid));
@@ -1299,12 +1289,11 @@ mod tests {
                 } else {
                     self.audio.clone()
                 };
+                let _ = dur;
                 if let Some(t) = s.timing.as_mut() {
-                    t.pts = pts;
-                    t.dts = pts;
-                    t.duration = dur;
+                    t.shift(pts - t.dts().unwrap_or(pts));
                 } else {
-                    s.timing = Some(transmux::ir::SampleTiming::new(pts, pts, dur));
+                    s.timing = Some(transmux::ir::SampleTiming::timed(pts, pts));
                 }
                 let join = if id == VIDEO_ID && k == 0 {
                     self.f.join_sample(track, &s)

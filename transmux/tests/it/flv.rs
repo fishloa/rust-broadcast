@@ -204,13 +204,13 @@ fn check_timing(samples: &[transmux::Sample], ora: &[&ffprobe::PacketRow], kind:
         // PTS = DTS + composition offset.
         let exp_pts_rel = p.pts() - base_dts;
         assert_eq!(
-            dts + s.composition_offset() as i64,
+            dts + i64::from(s.composition_offset().expect("offset").unwrap_or(0)),
             exp_pts_rel,
             "{kind} sample {i} PTS (= DTS + composition offset)"
         );
         // Advance by the forward-delta duration (exact for all but the last).
         if i + 1 < samples.len() {
-            dts += s.timing.map(|t| t.duration).unwrap_or(0) as i64;
+            dts += s.timing.and_then(|t| t.duration()).unwrap_or(0) as i64;
         }
     }
 }
@@ -446,7 +446,7 @@ fn streaming_payloads_are_flv_shaped_not_ts_shaped() {
     // absolute `dts` exactly (bites on any accidental batch-relative reset).
     let first_sample_dts = media.tracks[0].samples[0]
         .timing
-        .map(|t| t.dts)
+        .and_then(|t| t.dts())
         .expect("video dts");
     assert_eq!(
         video_frames[0].timestamp_ms as i64, first_sample_dts,
@@ -1073,7 +1073,7 @@ fn script_duration_seconds(media: &transmux::Media) -> f64 {
         let ticks: u64 = track
             .samples
             .iter()
-            .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
+            .map(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64)
             .sum();
         let secs = ticks as f64 / f64::from(track.spec.timescale.get());
         if secs > max {

@@ -68,10 +68,18 @@ pub(crate) const SAMPLE_FLAGS_NON_SYNC: u32 = 0x0101_0000;
 /// (§8.8.3.1, bit `[16]`). Set = the sample is **not** a sync sample.
 pub(crate) const SAMPLE_FLAG_IS_NON_SYNC: u32 = 0x0001_0000;
 
+/// The span a `trun.sample_duration` states for a sample whose stream never
+/// measured a decode step (a fragment's last sample): one timescale tick, the
+/// smallest span a fixed-width duration field can carry without describing a
+/// zero-length frame.
+pub(crate) const MIN_SAMPLE_DURATION: u32 = 1;
+
 /// One sample of a media fragment's `trun`, as the segment writers describe it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct MediaRunSample {
-    /// `sample_duration`, in the track timescale.
-    pub duration: u32,
+    /// `sample_duration`, in the track timescale; `None` when the sample
+    /// carries no decode time to state one from.
+    pub duration: Option<u32>,
     /// Coded size in bytes.
     pub size: usize,
     /// Sync sample (random-access point).
@@ -91,10 +99,14 @@ pub(crate) fn media_fragment_run(
     samples: impl Iterator<Item = MediaRunSample> + Clone,
 ) -> Result<(TrackFragmentHeaderBox, TrackFragmentRunBox)> {
     let any_cts = samples.clone().any(|s| s.composition_offset != 0);
+    // A run's samples are fixed-width fields (§8.8.8.2), so every present
+    // field is written for every sample; a sample with no measured decode
+    // step (the last of a fragment) writes the one span left, exactly one
+    // tick, which no reader can mistake for an unmeasured zero-length frame.
     let mut run_samples = Vec::new();
     for s in samples {
         run_samples.push(TrunSample {
-            sample_duration: Some(s.duration),
+            sample_duration: Some(s.duration.unwrap_or(MIN_SAMPLE_DURATION)),
             sample_size: Some(u32::try_from(s.size).map_err(|_| {
                 Error::InvalidInput("sample larger than the 32-bit trun sample_size field")
             })?),
@@ -107,9 +119,9 @@ pub(crate) fn media_fragment_run(
         });
     }
     let mut tr_flags = TRUN_DATA_OFFSET_PRESENT
-        | TRUN_SAMPLE_DURATION_PRESENT
         | TRUN_SAMPLE_SIZE_PRESENT
-        | TRUN_SAMPLE_FLAGS_PRESENT;
+        | TRUN_SAMPLE_FLAGS_PRESENT
+        | TRUN_SAMPLE_DURATION_PRESENT;
     // Version 1 carries a signed composition offset (needed for B-frames).
     let version = if any_cts {
         tr_flags |= TRUN_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT;

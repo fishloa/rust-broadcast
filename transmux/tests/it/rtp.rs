@@ -141,7 +141,7 @@ fn valid_rtp_headers_and_marker_semantics() {
         .expect("video track");
     let first_pts = video_track.samples[0]
         .timing
-        .map(|t| t.pts)
+        .and_then(|t| t.pts())
         .expect("timed sample");
     let ts_of = |tick: i64| -> u32 {
         let rel = u64::try_from(tick - first_pts).expect("presentation order");
@@ -151,7 +151,7 @@ fn valid_rtp_headers_and_marker_semantics() {
     let expected: Vec<u32> = video_track
         .samples
         .iter()
-        .map(|s| ts_of(s.timing.map(|t| t.pts).expect("timed")))
+        .map(|s| ts_of(s.timing.and_then(|t| t.pts()).expect("timed")))
         .collect();
     assert_eq!(expected.len(), aus.len(), "one AU per demuxed sample");
 
@@ -519,7 +519,7 @@ fn depacketised_tracks_carry_their_own_kind_clock_and_config() {
     let total: u64 = ir.tracks[1]
         .samples
         .iter()
-        .map(|s| u64::from(s.timing.map(|t| t.duration).unwrap_or(0)))
+        .map(|s| u64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)))
         .sum();
     const AAC_SAMPLES_PER_FRAME: u64 = 1024;
     const AUDIO_AUS: u64 = 131;
@@ -681,12 +681,16 @@ fn packetised_timestamps_are_presentation_times() {
     let pts_series: Vec<u64> = track
         .samples
         .iter()
-        .map(|s| u64::try_from(s.timing.map(|t| t.pts).expect("timed sample")).expect("pts >= 0"))
+        .map(|s| {
+            u64::try_from(s.timing.and_then(|t| t.pts()).expect("timed sample")).expect("pts >= 0")
+        })
         .collect();
     let dts_series: Vec<u64> = track
         .samples
         .iter()
-        .map(|s| u64::try_from(s.timing.map(|t| t.dts).expect("timed sample")).expect("dts >= 0"))
+        .map(|s| {
+            u64::try_from(s.timing.and_then(|t| t.dts()).expect("timed sample")).expect("dts >= 0")
+        })
         .collect();
     assert_ne!(
         pts_series, dts_series,
@@ -778,7 +782,7 @@ fn batch_depacketiser_reports_reordered_timestamps() {
     let pts: Vec<i64> = ir.tracks[0]
         .samples
         .iter()
-        .map(|s| s.timing.map(|t| t.pts).unwrap())
+        .map(|s| s.timing.and_then(|t| t.pts()).unwrap())
         .collect();
     assert!(
         pts.windows(2).any(|w| w[1] < w[0]),
@@ -833,7 +837,7 @@ fn streaming_depacketiser_reports_reordered_timestamps() {
     // decode timeline: the pts series is exactly the wire series.
     let pts: Vec<i64> = samples
         .iter()
-        .map(|s| s.timing.map(|t| t.pts).expect("timed"))
+        .map(|s| s.timing.and_then(|t| t.pts()).expect("timed"))
         .collect();
     let expected: Vec<i64> = {
         let mut seen: Vec<i64> = Vec::new();
@@ -855,7 +859,7 @@ fn streaming_depacketiser_reports_reordered_timestamps() {
     // and the reorder is still reported.
     let dts: Vec<i64> = samples
         .iter()
-        .map(|s| s.timing.map(|t| t.dts).expect("timed"))
+        .map(|s| s.timing.and_then(|t| t.dts()).expect("timed"))
         .collect();
     assert!(
         dts.windows(2).all(|w| w[0] < w[1]),
@@ -864,13 +868,13 @@ fn streaming_depacketiser_reports_reordered_timestamps() {
     assert!(
         samples
             .iter()
-            .all(|s| s.timing.map(|t| t.dts) <= s.timing.map(|t| t.pts)),
+            .all(|s| s.timing.and_then(|t| t.dts()) <= s.timing.and_then(|t| t.pts())),
         "dts must never exceed pts"
     );
     assert!(
         samples
             .iter()
-            .any(|s| s.timing.map(|t| t.dts) < s.timing.map(|t| t.pts)),
+            .any(|s| s.timing.and_then(|t| t.dts()) < s.timing.and_then(|t| t.pts())),
         "a reordered stream must have a positive composition offset"
     );
 }
@@ -1326,11 +1330,11 @@ fn vfr_stream_keeps_dts_equal_to_pts() {
     assert_eq!(samples.len(), 3);
     let dts: Vec<i64> = samples
         .iter()
-        .map(|s| s.timing.map(|t| t.dts).unwrap())
+        .map(|s| s.timing.and_then(|t| t.dts()).unwrap())
         .collect();
     let pts: Vec<i64> = samples
         .iter()
-        .map(|s| s.timing.map(|t| t.pts).unwrap())
+        .map(|s| s.timing.and_then(|t| t.pts()).unwrap())
         .collect();
     assert_eq!(
         dts,
@@ -1340,7 +1344,7 @@ fn vfr_stream_keeps_dts_equal_to_pts() {
     assert_eq!(pts, vec![0, 3000, 9000], "and so must pts");
     let durations: Vec<u32> = samples
         .iter()
-        .map(|s| s.timing.map(|t| t.duration).unwrap())
+        .map(|s| s.timing.and_then(|t| t.duration()).unwrap())
         .collect();
     assert_eq!(
         durations,
@@ -1380,11 +1384,11 @@ fn reordered_stream_gets_an_exact_decode_order() {
     let samples = &ir.tracks[0].samples;
     let dts: Vec<i64> = samples
         .iter()
-        .map(|s| s.timing.map(|t| t.dts).unwrap())
+        .map(|s| s.timing.and_then(|t| t.dts()).unwrap())
         .collect();
     let pts: Vec<i64> = samples
         .iter()
-        .map(|s| s.timing.map(|t| t.pts).unwrap())
+        .map(|s| s.timing.and_then(|t| t.pts()).unwrap())
         .collect();
 
     // The period is the fixture's own frame interval (3600 ticks at 90 kHz),
@@ -1418,7 +1422,7 @@ fn reordered_stream_gets_an_exact_decode_order() {
     // Durations are the grid step, never zero for a non-final frame.
     let durations: Vec<u32> = samples
         .iter()
-        .map(|s| s.timing.map(|t| t.duration).unwrap())
+        .map(|s| s.timing.and_then(|t| t.duration()).unwrap())
         .collect();
     assert!(
         durations.iter().all(|d| *d > 0),
@@ -1984,11 +1988,11 @@ fn reordered_video_and_audio_share_one_epoch() {
     assert_eq!(ir.tracks.len(), 2, "one track per stream");
     let video_first = ir.tracks[0].samples[0]
         .timing
-        .map(|t| t.dts)
+        .and_then(|t| t.dts())
         .expect("timed");
     let audio_first = ir.tracks[1].samples[0]
         .timing
-        .map(|t| t.dts)
+        .and_then(|t| t.dts())
         .expect("timed");
 
     // Every track is translated by the *same* constant, so the two epochs keep
@@ -2012,7 +2016,7 @@ fn reordered_video_and_audio_share_one_epoch() {
     // own wire epoch, neither zero-based independently of the other.
     let video_latch = ir.tracks[0].samples[0]
         .timing
-        .map(|t| t.pts)
+        .and_then(|t| t.pts())
         .expect("timed")
         .saturating_sub(video_first);
     assert!(
@@ -2021,7 +2025,7 @@ fn reordered_video_and_audio_share_one_epoch() {
     );
     let audio_latch = ir.tracks[1].samples[0]
         .timing
-        .map(|t| t.pts)
+        .and_then(|t| t.pts())
         .expect("timed")
         .saturating_sub(audio_first);
     assert_eq!(
@@ -2046,15 +2050,15 @@ fn reordered_video_and_audio_share_one_epoch() {
         assert!(
             t.samples
                 .iter()
-                .all(|s| s.timing.map(|t| t.dts).unwrap_or(0) >= 0),
+                .all(|s| s.timing.and_then(|t| t.dts()).unwrap_or(0) >= 0),
             "track {i} must have no negative dts"
         );
         assert!(
             t.samples
                 .iter()
                 .zip(t.samples.iter().skip(1))
-                .all(|(a, b)| b.timing.map(|t| t.dts).unwrap_or(0)
-                    >= a.timing.map(|t| t.dts).unwrap_or(0)),
+                .all(|(a, b)| b.timing.and_then(|t| t.dts()).unwrap_or(0)
+                    >= a.timing.and_then(|t| t.dts()).unwrap_or(0)),
             "track {i} dts must be non-decreasing"
         );
     }

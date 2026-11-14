@@ -226,7 +226,7 @@ pub(crate) async fn served_first_dts(app: &axum::Router, seq: u64) -> i64 {
         .expect("demux");
     media.tracks[0].samples[0]
         .timing
-        .map(|t| t.dts)
+        .and_then(|t| t.dts())
         .expect("dts")
 }
 

@@ -411,7 +411,7 @@ fn ir_trick_track_wired_to_signalling() {
         total_duration: trick_track
             .samples
             .iter()
-            .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
+            .map(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64)
             .sum(),
     };
     assert_eq!(

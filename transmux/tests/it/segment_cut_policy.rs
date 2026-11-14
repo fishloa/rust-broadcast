@@ -62,11 +62,11 @@ fn require_video(rel: &str) -> Video {
 fn span_ticks(samples: &[Sample]) -> i64 {
     let first = samples
         .first()
-        .and_then(|s| s.timing.map(|t| t.dts))
+        .and_then(|s| s.timing.and_then(|t| t.dts()))
         .expect("dts");
     let last = samples.last().expect("sample");
-    last.timing.map(|t| t.dts).expect("dts")
-        + i64::from(last.timing.map(|t| t.duration).expect("duration"))
+    last.timing.and_then(|t| t.dts()).expect("dts")
+        + i64::from(last.timing.and_then(|t| t.duration()).expect("duration"))
         - first
 }
 
@@ -77,9 +77,9 @@ fn looped(samples: &[Sample], reps: usize) -> Vec<Sample> {
         for s in samples {
             out.push(Sample::new(
                 s.data.to_vec(),
-                s.timing.map(|t| t.dts).map(|d| d + span * k),
-                s.timing.map(|t| t.pts).map(|p| p + span * k),
-                s.timing.map(|t| t.duration),
+                s.timing.and_then(|t| t.dts()).map(|d| d + span * k),
+                s.timing.and_then(|t| t.pts()).map(|p| p + span * k),
+                s.timing.and_then(|t| t.duration()),
                 s.flags.is_sync,
             ));
         }
@@ -151,8 +151,8 @@ fn oracle_cuts(samples: &[Sample], timescale: u32) -> Vec<usize> {
             buffered = 0;
         }
         let tick = match (
-            s.timing.map(|t| t.duration),
-            s.timing.map(|t| t.dts),
+            s.timing.and_then(|t| t.duration()),
+            s.timing.and_then(|t| t.dts()),
             prev_dts,
         ) {
             (Some(d), _, _) if d > 0 => u64::from(d),
@@ -160,7 +160,7 @@ fn oracle_cuts(samples: &[Sample], timescale: u32) -> Vec<usize> {
             _ => 0,
         };
         buffered += tick;
-        prev_dts = s.timing.map(|t| t.dts);
+        prev_dts = s.timing.and_then(|t| t.dts());
     }
     cuts
 }
@@ -208,9 +208,9 @@ fn hevc_patch_irap(sample: &Sample, nal_type: u8) -> Sample {
     assert!(patched, "fixture sample must carry an IRAP NAL to patch");
     Sample::new(
         data,
-        sample.timing.map(|t| t.dts),
-        sample.timing.map(|t| t.pts),
-        sample.timing.map(|t| t.duration),
+        sample.timing.and_then(|t| t.dts()),
+        sample.timing.and_then(|t| t.pts()),
+        sample.timing.and_then(|t| t.duration()),
         sample.flags.is_sync,
     )
 }
@@ -479,7 +479,7 @@ fn with_sps_prefix(idr: &Sample, p_frame: &Sample, dts: i64) -> Sample {
         data,
         Some(dts),
         Some(dts),
-        p_frame.timing.map(|t| t.duration),
+        p_frame.timing.and_then(|t| t.duration()),
         true,
     )
 }
@@ -496,8 +496,13 @@ fn sps_only_picture_is_not_a_cut_under_idr_only() {
     );
 
     let mut stream = vec![idr.clone()];
-    let step = i64::from(p_frames[0].timing.map(|t| t.duration).expect("duration"));
-    let mut dts = idr.timing.map(|t| t.dts).expect("dts") + step;
+    let step = i64::from(
+        p_frames[0]
+            .timing
+            .and_then(|t| t.duration())
+            .expect("duration"),
+    );
+    let mut dts = idr.timing.and_then(|t| t.dts()).expect("dts") + step;
     for k in 0..(LOOP_SECONDS * 25) as usize {
         let p = p_frames[k % p_frames.len()];
         stream.push(with_sps_prefix(idr, p, dts));
