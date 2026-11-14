@@ -1368,10 +1368,7 @@ fn master_selection(selection: &ManifestSelection) -> MasterSelection {
         .variants
         .iter()
         .map(|v| {
-            let mut info = VariantInfo::new(
-                v.init_url.clone().unwrap_or_default(),
-                u32::try_from(v.bandwidth).unwrap_or(u32::MAX),
-            );
+            let mut info = VariantInfo::new(v.init_url.clone().unwrap_or_default(), v.bandwidth);
             info.resolution = v.resolution;
             info.codecs = v.codecs.clone();
             info.audio_group = v.audio_group.clone();

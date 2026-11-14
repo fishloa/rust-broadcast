@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - A deadline that does not fit the clock is no deadline, not the last representable instant: RTSP, SRT, UDP/RTP and TS-over-HTTP source timers and the session's TS wake are computed with `Timestamp::checked_add`, so a session started near the end of its clock goes idle instead of waking on every poll forever (#2653).
 - A header value the server put in its own `Set-Cookie` lines (a DEL byte parses as a cookie but is not an HTTP field value) no longer panics the session when the next request is built: the header `http` cannot represent is dropped and the request goes out without it (#2689).
+- A DASH Representation's `@bandwidth` is reported in `Event::Variants` as parsed, not clamped to `u32::MAX` (the shared variant list carries a `u64`), and a Smooth quality's variant names no placeholder URI (it has none; the field is the empty string it always was, now documented as "no URI of its own" rather than a URL) (#2702).
 - A retry backoff whose cap a `broadcast_common::backoff::RetrySchedule` refuses (above `broadcast_common::backoff::MAX_FLOOR`) no longer needs a panic: `ReconnectTimer::new` clamps it to the ceiling and the internal schedules fall back to a zero cap (#2701).
 ### Changed
 - BREAKING: `playout::PlayoutConfig` and `tshttp::Config` are now `#[non_exhaustive]`; build them with `Default::default()` + `with_*` (e.g. `with_vod_start_lead_us`, `with_stall_reconnect_ms`, `with_backoff_ms`) instead of struct literals (#2664).

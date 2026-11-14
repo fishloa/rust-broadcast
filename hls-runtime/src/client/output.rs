@@ -50,10 +50,16 @@ impl VariantPolicy {
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct VariantInfo {
-    /// Resolved absolute URL of the variant's media playlist.
-    pub url: String,
-    /// `BANDWIDTH` in bits per second.
-    pub bandwidth: u32,
+    /// The URI the manifest declares for it: an absolute HLS media playlists' URL, a DASH
+    /// Representation's Initialization Segment URL, or empty for a protocol whose variant has
+    /// no URI of its own (Smooth, whose fragments live under the manifest's URL).
+    pub uri: String,
+    /// Its peak bandwidth in bits per second.
+    ///
+    /// [`u64`] because the protocols that report one do not share a width: an HLS
+    /// `BANDWIDTH` and a DASH `@bandwidth` are a `u32` and a `u64` (both range-checked where
+    /// they parse), and every value is carried as given rather than clamped into the narrower.
+    pub bandwidth: u64,
     /// `AVERAGE-BANDWIDTH`, if present.
     pub average_bandwidth: Option<u32>,
     /// `RESOLUTION` as `(width, height)`, if present.
@@ -67,11 +73,11 @@ pub struct VariantInfo {
 }
 
 impl VariantInfo {
-    /// Build a variant description from its required URL and bandwidth.
+    /// Build a variant description from its required URI and bandwidth.
     #[must_use]
-    pub fn new(url: String, bandwidth: u32) -> Self {
+    pub fn new(uri: String, bandwidth: u64) -> Self {
         Self {
-            url,
+            uri,
             bandwidth,
             average_bandwidth: None,
             resolution: None,

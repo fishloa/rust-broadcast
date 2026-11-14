@@ -185,6 +185,19 @@ fn one_at_a_time() -> Config {
 }
 
 #[test]
+fn a_dash_representation_above_the_u32_bandwidth_range_keeps_its_bandwidth() {
+    let huge = u32::MAX as u64 + 4;
+    let text =
+        base_manifest().replacen(r#"bandwidth="58141""#, &format!(r#"bandwidth="{huge}""#), 1);
+    assert!(text.contains(&format!(r#"bandwidth="{huge}""#)));
+    let mut sim = sim_for(MANIFEST, text, Config::default(), alias_ffmpeg);
+    sim.run_to_terminal(60 * SEC);
+    let m = manifests(&sim);
+    assert_eq!(m.len(), 1);
+    assert_eq!(m[0].variants[0].bandwidth, huge);
+}
+
+#[test]
 fn the_variants_event_maps_the_manifest_and_names_the_active_audio() {
     let mut sim = DashSim::static_origin(&format!("{HOST}/{MANIFEST}"), Config::default());
     sim.run_to_terminal(60 * SEC);
@@ -194,7 +207,7 @@ fn the_variants_event_maps_the_manifest_and_names_the_active_audio() {
     assert_eq!(m.chosen, 0);
     assert_eq!(m.variants.len(), 1);
     let v = &m.variants[0];
-    assert_eq!(v.url, "http://dash.test/init-stream0.m4s");
+    assert_eq!(v.uri, "http://dash.test/init-stream0.m4s");
     assert_eq!(v.bandwidth, 58_141);
     assert_eq!(v.average_bandwidth, None);
     assert_eq!(v.resolution, Some((320, 240)));
@@ -234,10 +247,10 @@ fn two_video_representations_list_in_mpd_order_and_the_best_is_chosen() {
     sim.run_to_terminal(60 * SEC);
     assert!(sim.ended(), "{:?}", sim.errors());
     let m = manifests(&sim)[0];
-    let bw: Vec<u32> = m.variants.iter().map(|v| v.bandwidth).collect();
+    let bw: Vec<u64> = m.variants.iter().map(|v| v.bandwidth).collect();
     assert_eq!(bw, [58_141, 20_000]);
     assert_eq!(m.chosen, 0, "the highest bandwidth");
-    assert_eq!(m.variants[1].url, "http://dash.test/alt-v-init.m4s");
+    assert_eq!(m.variants[1].uri, "http://dash.test/alt-v-init.m4s");
 }
 
 #[test]

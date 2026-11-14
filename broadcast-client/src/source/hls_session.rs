@@ -304,7 +304,7 @@ impl HlsSession {
             .master
             .as_ref()
             .and_then(|m| m.variants.get(m.chosen))
-            .map(|v| v.url.clone());
+            .map(|v| v.uri.clone());
         let want_url = rendition
             .as_ref()
             .and_then(|(_, r)| r.url.clone())
