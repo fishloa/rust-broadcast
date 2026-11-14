@@ -1,8 +1,11 @@
 use crate::support;
 use crate::support::video_run::VideoRun;
 
+use std::time::Duration;
+
 use broadcast_client::{Action, Config, Event, Session, TrackId};
 use broadcast_common::stage::Timestamp;
+use buffering_runtime::duration_micros;
 use support::replay::{TS_PACKET, bitrate_bps, open_live, replay_paced};
 
 /// The harness's microsecond clock as the session's `now`.
@@ -11,8 +14,8 @@ fn ts(us: u64) -> Timestamp {
 }
 
 const CHUNK: usize = 4096;
-const SETTLE_US: u64 = 500_000;
-const FAR_US: u64 = 60_000_000;
+const SETTLE: Duration = Duration::from_millis(500);
+const FAR: Option<Duration> = Some(Duration::from_secs(60));
 const TF1: &str = "http/live-channels/tf1-live.ts";
 const TF1_LAST_AUDIO: u16 = 0x84;
 const TF1_LATE_DATA: u16 = 0x97;
@@ -48,11 +51,11 @@ fn garbage(bytes: &[u8], pid: u16) -> Vec<u8> {
     out
 }
 
-fn config(wall: u64, media: u64) -> Config {
+fn config(wall: Option<Duration>, media: Option<Duration>) -> Config {
     {
         let mut new_config = Config::default();
-        new_config.tracks_hold_max_wall_us = wall;
-        new_config.tracks_hold_max_media_us = media;
+        new_config.tracks_hold_max_wall = wall;
+        new_config.tracks_hold_max_media = media;
         new_config
     }
 }
@@ -69,11 +72,11 @@ fn sets(r: &support::replay::Replay) -> Vec<Vec<TrackId>> {
 
 fn early_release_case(label: &str, bytes: &[u8]) {
     let bps = bitrate_bps(bytes);
-    let free = replay_paced(bytes, config(0, 0), CHUNK, bps);
+    let free = replay_paced(bytes, config(None, None), CHUNK, bps);
     let last_resolution = *free.tracks_times().last().unwrap();
     let final_set: Vec<_> = sets(&free).pop().unwrap();
 
-    let held = replay_paced(bytes, config(FAR_US, FAR_US), CHUNK, bps);
+    let held = replay_paced(bytes, config(FAR, FAR), CHUNK, bps);
     let held_sets = sets(&held);
     assert_eq!(
         held_sets.len(),
@@ -91,12 +94,15 @@ fn early_release_case(label: &str, bytes: &[u8]) {
         "{label}: released at {at} before the last stream resolved at {last_resolution}"
     );
     assert!(
-        at <= last_resolution + SETTLE_US,
+        at <= last_resolution + duration_micros(SETTLE),
         "{label}: released at {at}, later than last resolution {last_resolution} + settle"
     );
-    assert!(at < FAR_US / 10, "{label}: nowhere near the wall limit");
+    assert!(
+        at < duration_micros(FAR.expect("a far limit")) / 10,
+        "{label}: nowhere near the wall limit"
+    );
     assert_eq!(
-        replay_paced(bytes, config(0, 0), CHUNK, bps).samples(),
+        replay_paced(bytes, config(None, None), CHUNK, bps).samples(),
         held.samples(),
         "{label}: samples unchanged"
     );
@@ -118,8 +124,8 @@ fn a_declared_pid_that_never_sends_does_not_hold_the_tracks() {
     );
     early_release_case("silent audio pid", &bytes);
     let bps = bitrate_bps(&bytes);
-    let held = replay_paced(&bytes, config(FAR_US, FAR_US), CHUNK, bps);
-    let full = replay_paced(&b, config(FAR_US, FAR_US), CHUNK, bitrate_bps(&b));
+    let held = replay_paced(&bytes, config(FAR, FAR), CHUNK, bps);
+    let full = replay_paced(&b, config(FAR, FAR), CHUNK, bitrate_bps(&b));
     assert!(sets(&held)[0].len() < sets(&full)[0].len());
 }
 
@@ -130,13 +136,13 @@ fn a_stream_that_keeps_sending_but_never_resolves_is_bounded_by_the_wall_limit()
     };
     let bytes = garbage(&b, TF1_LAST_AUDIO);
     let bps = bitrate_bps(&bytes);
-    let free = replay_paced(&bytes, config(0, 0), CHUNK, bps);
+    let free = replay_paced(&bytes, config(None, None), CHUNK, bps);
     let first_media = free.first_sample_us().unwrap();
-    let wall = 2 * SETTLE_US;
+    let wall = 2 * SETTLE;
     let held = replay_paced(
         &bytes,
         {
-            let mut new_config = config(wall, FAR_US);
+            let mut new_config = config(Some(wall), FAR);
             new_config.tracks_hold_quiet_input_bytes = bytes.len() / 2;
             new_config.tracks_hold_max_input_bytes = bytes.len();
             new_config
@@ -146,10 +152,11 @@ fn a_stream_that_keeps_sending_but_never_resolves_is_bounded_by_the_wall_limit()
     );
     let at = held.tracks_times()[0];
     assert!(
-        at >= first_media + wall,
-        "released at {at}, before first media {first_media} + wall {wall}: the unresolved PID must be waited for"
+        at >= first_media + duration_micros(wall),
+        "released at {at}, before first media {first_media} + wall {:?}: the unresolved PID must be waited for",
+        wall
     );
-    assert!(at <= first_media + wall + 2 * CHUNK as u64 * 8 * 1_000_000 / bps);
+    assert!(at <= first_media + duration_micros(wall) + 2 * CHUNK as u64 * 8 * 1_000_000 / bps);
 }
 
 fn drive(s: &mut Session, now: u64, wake: &mut Option<u64>, events: &mut Vec<Event>) {
@@ -164,7 +171,7 @@ fn drive(s: &mut Session, now: u64, wake: &mut Option<u64>, events: &mut Vec<Eve
 }
 
 fn last_resolution_chunk(bytes: &[u8], chunk: usize) -> usize {
-    let free = replay_paced(bytes, config(0, 0), chunk, bitrate_bps(bytes));
+    let free = replay_paced(bytes, config(None, None), chunk, bitrate_bps(bytes));
     let t = *free.tracks_times().last().unwrap();
     let bps = bitrate_bps(bytes);
     let mut at = 0u64;
@@ -182,7 +189,7 @@ fn the_settle_is_armed_on_the_session_clock_when_the_source_goes_quiet() {
     let bytes = without_pid(&test_fixtures::read(FRANCE2), FRANCE2_SILENT);
     let chunk = 64 * 1024;
     let last_chunk = last_resolution_chunk(&bytes, chunk);
-    let (mut s, c) = open_live(config(FAR_US, FAR_US));
+    let (mut s, c) = open_live(config(FAR, FAR));
     let mut now = 0;
     let mut wake = None;
     let mut events = Vec::new();
@@ -199,7 +206,7 @@ fn the_settle_is_armed_on_the_session_clock_when_the_source_goes_quiet() {
         !events.iter().any(|e| matches!(e, Event::Tracks(_))),
         "the prefix ends at the last resolution: nothing to release yet"
     );
-    let release_at = resolved_at + SETTLE_US;
+    let release_at = resolved_at + duration_micros(SETTLE);
     for _ in 0..MAX_WAKES {
         let due = wake.take().expect("a wake-up stays armed while holding");
         assert!(
@@ -230,7 +237,7 @@ fn samples_released_by_a_wake_up_reach_the_controller_in_the_same_poll() {
 
     let bytes = without_pid(&test_fixtures::read(FRANCE2), FRANCE2_SILENT);
     let chunk = 64 * 1024;
-    let mut cfg = config(FAR_US, FAR_US);
+    let mut cfg = config(FAR, FAR);
     cfg.record_buffer_inputs = true;
     let (mut s, c) = open_live(cfg);
     let mut now = 0;
