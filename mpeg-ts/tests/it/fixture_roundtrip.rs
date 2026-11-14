@@ -8,7 +8,7 @@ use mpeg_ts::pid::Pid;
 use std::collections::HashMap;
 use std::fs;
 
-use broadcast_common::Parse;
+use broadcast_common::{Parse, Serialize};
 use mpeg_ts::section::Section;
 use mpeg_ts::ts::{
     AdaptationFieldControl, ScramblingControl, SectionReassembler, TS_PACKET_SIZE, TsHeader,
@@ -189,9 +189,40 @@ fn pat_section_reassembles_and_crc_validates() {
     // Parse the section header and validate the CRC-32.
     let section = Section::parse(&section_bytes).expect("PAT section header parses");
     assert_eq!(section.table_id, 0x00, "PAT table_id must be 0x00");
-    section
-        .validate_crc(&section_bytes)
-        .expect("PAT CRC-32 must validate");
+    section.validate_crc().expect("PAT CRC-32 must validate");
+    mpeg_ts::section::validate_crc(&section_bytes).expect("PAT CRC-32 must validate");
+}
+
+#[test]
+fn real_fixture_sections_round_trip_through_the_generic_section() {
+    // Every complete long-form section a real mux carries must re-serialize
+    // byte-identically from its parsed form, CRC recomputed (#2749). The
+    // PSI PIDs carry the PAT, PMT and SDT here.
+    let pids = [0x0000u16, 0x1000, 0x0011];
+    let buf = fs::read(fixture_path()).expect("read fixture");
+    let mut checked = 0usize;
+    for raw_pid in pids {
+        let pid = Pid::try_new(raw_pid).expect("13-bit pid");
+        let mut reasm = SectionReassembler::default();
+        for pkt in iter_packets(&buf) {
+            if pkt.header.pid != pid {
+                continue;
+            }
+            if let Some(payload) = pkt.payload {
+                reasm.feed(payload, pkt.header.pusi);
+            }
+        }
+        while let Some(bytes) = reasm.pop_section() {
+            let section = Section::parse(&bytes).expect("fixture section parses");
+            mpeg_ts::section::validate_crc(&bytes).expect("fixture section CRC");
+            let mut out = vec![0u8; section.serialized_len()];
+            let n = section.serialize_into(&mut out).expect("section serialize");
+            assert_eq!(n, bytes.len(), "pid {raw_pid:#06x}");
+            assert_eq!(out.as_slice(), bytes, "pid {raw_pid:#06x}");
+            checked += 1;
+        }
+    }
+    assert!(checked > 0, "fixture must carry at least one PSI section");
 }
 
 #[test]
