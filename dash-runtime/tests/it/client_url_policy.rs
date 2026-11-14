@@ -9,6 +9,7 @@ use dash_runtime::client::{
     Action, DashClient, DashConfig, DropCause, FatalKind, Output, PullLimits, ResponseMeta,
 };
 use dash_runtime::error::Unsupported;
+use url::Url;
 
 /// The test's microsecond clock as the client's `now`.
 fn now(us: u64) -> Timestamp {
@@ -61,7 +62,7 @@ struct Live {
 impl Live {
     fn start(dash: DashConfig, mpd: &str, meta: &ResponseMeta<'_>) -> Self {
         let mut client = DashClient::new(
-            dash_runtime::client::DashClientConfig::new(DOC)
+            dash_runtime::client::DashClientConfig::new(Url::parse(DOC).expect("URL"))
                 .with_dash(dash)
                 .with_limits(PullLimits::default()),
         );
@@ -70,7 +71,7 @@ impl Live {
         let Some(Action::FetchMpd { url, .. }) = client.poll(now(now_us)) else {
             panic!("first action is the MPD")
         };
-        assert_eq!(url, DOC);
+        assert_eq!(url.as_str(), DOC);
         client
             .on_mpd_with(now(now_us), mpd.as_bytes(), meta)
             .unwrap();
@@ -85,7 +86,7 @@ impl Live {
         for _ in 0..20 {
             while let Some(a) = self.client.poll(now(self.now)) {
                 if let Action::FetchMpd { url, .. } = &a {
-                    let url = url.clone();
+                    let url = url.as_str().to_string();
                     seen.push(a);
                     return (seen, Some(url));
                 }
@@ -176,9 +177,9 @@ fn a_non_http_location_never_becomes_an_action() {
             let (seen, next) = live.actions_until_next_mpd();
             assert_eq!(next.as_deref(), Some(DOC), "{loc}");
             assert!(
-                seen.iter().all(|a| !a.url().starts_with("file:")
-                    && !a.url().starts_with("ftp:")
-                    && !a.url().starts_with("data:")),
+                seen.iter().all(|a| !a.url().as_str().starts_with("file:")
+                    && !a.url().as_str().starts_with("ftp:")
+                    && !a.url().as_str().starts_with("data:")),
                 "{loc}: {seen:?}"
             );
         }
@@ -195,7 +196,7 @@ fn a_foreign_final_url_is_not_adopted_when_pinned() {
     assert!(
         seen.iter()
             .filter(|a| !matches!(a, Action::FetchMpd { .. }))
-            .all(|a| a.url().starts_with("http://dash.test/")),
+            .all(|a| a.url().as_str().starts_with("http://dash.test/")),
         "the pin origin moved: {seen:?}"
     );
 }
@@ -248,7 +249,7 @@ fn a_non_http_final_url_is_never_adopted() {
 fn a_foreign_final_url_of_a_static_mpd_is_not_adopted_when_pinned() {
     let mpd = static_mpd("", "seg$Number$.m4s");
     let mut client = DashClient::new(
-        dash_runtime::client::DashClientConfig::new(DOC)
+        dash_runtime::client::DashClientConfig::new(Url::parse(DOC).expect("URL"))
             .with_dash(pinned())
             .with_limits(PullLimits::default()),
     );
@@ -258,7 +259,7 @@ fn a_foreign_final_url_of_a_static_mpd_is_not_adopted_when_pinned() {
     let meta = ResponseMeta::at(0).with_final_url("http://evil.test/live/manifest.mpd");
     client.on_mpd_with(now(0), mpd.as_bytes(), &meta).unwrap();
     let urls: Vec<String> = std::iter::from_fn(|| client.poll(now(0)))
-        .map(|a| a.url().to_owned())
+        .map(|a| a.url().to_string())
         .collect();
     assert!(!urls.is_empty());
     assert!(
@@ -270,7 +271,7 @@ fn a_foreign_final_url_of_a_static_mpd_is_not_adopted_when_pinned() {
 fn static_urls_and_outcome(base: &str, media: &str) -> (Vec<String>, Vec<DropCause>) {
     let mpd = static_mpd(base, media);
     let mut client = DashClient::new(
-        dash_runtime::client::DashClientConfig::new(DOC)
+        dash_runtime::client::DashClientConfig::new(Url::parse(DOC).expect("URL"))
             .with_dash(DashConfig::default())
             .with_limits(PullLimits::default()),
     );
@@ -279,7 +280,7 @@ fn static_urls_and_outcome(base: &str, media: &str) -> (Vec<String>, Vec<DropCau
     };
     client.on_mpd(now(0), mpd.as_bytes()).unwrap();
     let urls: Vec<String> = std::iter::from_fn(|| client.poll(now(0)))
-        .map(|a| a.url().to_owned())
+        .map(|a| a.url().to_string())
         .collect();
     let mut drops = Vec::new();
     let mut fatal = None;
@@ -321,7 +322,7 @@ fn a_data_url_template_is_never_requested_and_reports_data_url() {
 fn a_data_url_init_is_never_requested() {
     let mpd = static_mpd("", "seg$Number$.m4s").replace("init.mp4", "data:video/mp4;base64,AAAA");
     let mut client = DashClient::new(
-        dash_runtime::client::DashClientConfig::new(DOC)
+        dash_runtime::client::DashClientConfig::new(Url::parse(DOC).expect("URL"))
             .with_dash(DashConfig::default())
             .with_limits(PullLimits::default()),
     );
@@ -330,7 +331,7 @@ fn a_data_url_init_is_never_requested() {
     };
     client.on_mpd(now(0), mpd.as_bytes()).unwrap();
     let urls: Vec<String> = std::iter::from_fn(|| client.poll(now(0)))
-        .map(|a| a.url().to_owned())
+        .map(|a| a.url().to_string())
         .collect();
     assert!(urls.iter().all(|u| !u.starts_with("data:")), "{urls:?}");
 }

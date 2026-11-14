@@ -21,8 +21,11 @@ fn bearer_of(req: &client::HttpRequest) -> Option<String> {
 
 fn established_client(location: &str) -> WhipClient {
     let mut c = WhipClient::new(
-        webrtc_runtime::session::client::WebRtcClientConfig::new(ENDPOINT)
-            .with_bearer_token(TOKEN.into()),
+        webrtc_runtime::session::client::WebRtcClientConfig::new(ENDPOINT).with_credentials(
+            broadcast_auth::Credentials::Bearer {
+                token: TOKEN.into(),
+            },
+        ),
     );
     let _ = c.offer(SDP_OFFER.to_vec()).unwrap();
     c.on_response(
@@ -41,8 +44,11 @@ fn established_client(location: &str) -> WhipClient {
 
 fn established_player(location: &str) -> WhepPlayer {
     let mut p = WhepPlayer::new(
-        webrtc_runtime::session::client::WebRtcClientConfig::new(ENDPOINT)
-            .with_bearer_token(TOKEN.into()),
+        webrtc_runtime::session::client::WebRtcClientConfig::new(ENDPOINT).with_credentials(
+            broadcast_auth::Credentials::Bearer {
+                token: TOKEN.into(),
+            },
+        ),
     );
     let _ = p.offer(SDP_OFFER.to_vec()).unwrap();
     p.on_response(
@@ -113,12 +119,18 @@ fn whep_player_sends_the_bearer_only_to_its_own_origin() {
 #[test]
 fn debug_never_prints_the_bearer_token_or_turn_credential() {
     let c = WhipClient::new(
-        webrtc_runtime::session::client::WebRtcClientConfig::new(ENDPOINT)
-            .with_bearer_token(TOKEN.into()),
+        webrtc_runtime::session::client::WebRtcClientConfig::new(ENDPOINT).with_credentials(
+            broadcast_auth::Credentials::Bearer {
+                token: TOKEN.into(),
+            },
+        ),
     );
     let p = WhepPlayer::new(
-        webrtc_runtime::session::client::WebRtcClientConfig::new(ENDPOINT)
-            .with_bearer_token(TOKEN.into()),
+        webrtc_runtime::session::client::WebRtcClientConfig::new(ENDPOINT).with_credentials(
+            broadcast_auth::Credentials::Bearer {
+                token: TOKEN.into(),
+            },
+        ),
     );
     for text in [format!("{c:?}"), format!("{p:?}")] {
         assert!(!text.contains(TOKEN), "{text}");
@@ -139,18 +151,16 @@ fn debug_never_prints_the_bearer_token_or_turn_credential() {
 #[test]
 fn media_transport_config_debug_hides_the_ice_passwords() {
     use webrtc_runtime::media::{MediaTransportConfig, SetupRole};
-    let cfg = MediaTransportConfig {
-        local_addr: "127.0.0.1:9".parse().unwrap(),
-        local_ice_ufrag: "lufrag".into(),
-        local_ice_pwd: "local-ice-password-123456".into(),
-        remote_ice_ufrag: "rufrag".into(),
-        remote_ice_pwd: "remote-ice-password-123456".into(),
-        is_controlling: false,
-        local_setup: SetupRole::Passive,
-        remote_fingerprint: "sha-256 00".into(),
-        stun_server: None,
-        max_remote_candidates: 8,
-    };
+    let cfg = MediaTransportConfig::new(
+        "127.0.0.1:9".parse().unwrap(),
+        "lufrag".into(),
+        "local-ice-password-123456".into(),
+        "rufrag".into(),
+        "remote-ice-password-123456".into(),
+        SetupRole::Passive,
+        "sha-256 00".into(),
+    )
+    .with_max_remote_candidates(8);
     let text = format!("{cfg:?}");
     assert!(!text.contains("local-ice-password"), "{text}");
     assert!(!text.contains("remote-ice-password"), "{text}");

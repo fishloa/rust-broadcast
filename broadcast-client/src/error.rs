@@ -15,6 +15,17 @@ pub enum Error {
     /// The session URL could not be parsed.
     #[error("invalid url: {0}")]
     InvalidUrl(String),
+    /// A UDP/RTP bind URL names a host rather than a literal IP address. A receive
+    /// socket binds an address, and this session never resolves a name (only the
+    /// host does, for a [`crate::Action::UdpConnect`] peer): use a literal IP in
+    /// the URL.
+    #[error("{scheme}://{host}: a datagram bind needs a literal IP address, not a host name")]
+    DatagramHostNotIp {
+        /// The URL scheme (`udp` or `rtp`).
+        scheme: &'static str,
+        /// The host name that is not an IP address.
+        host: String,
+    },
     /// The operation needs an adaptive-bitrate session (HLS or DASH): `select_variant` and
     /// `select_audio_rendition` act on a master playlist or an MPD's Representations, which
     /// TS-over-HTTP and RTSP sessions do not have.

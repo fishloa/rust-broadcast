@@ -20,6 +20,7 @@ use common::loopback::{
 use dash_runtime::client::{
     DashConfig, Error, FailureClass, FailureKind, FatalKind, PullLimits, Rejection, ResourceId,
 };
+use url::Url;
 
 const FFMPEG: &str = "http://dash.test/timeline-ffmpeg-quirk/manifest.mpd";
 const ONDEMAND: &str = "http://dash.test/ondemand-sidx/ondemand.mpd";
@@ -288,7 +289,7 @@ fn a_body_over_the_size_cap_is_a_counted_failure() {
 fn a_caller_reported_oversize_is_counted_like_any_other_failure() {
     use dash_runtime::client::{Action, DashClient, Failure};
     let mut c = DashClient::new(
-        dash_runtime::client::DashClientConfig::new(FFMPEG)
+        dash_runtime::client::DashClientConfig::new(Url::parse(FFMPEG).expect("URL"))
             .with_dash(DashConfig::default())
             .with_limits(cfg()),
     );

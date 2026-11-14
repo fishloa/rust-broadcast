@@ -505,17 +505,15 @@ impl DashClient {
         Some(Action::FetchMpd { url, validators })
     }
 
-    fn update_url(&self) -> Option<String> {
-        let live = self.live.as_ref()?;
+    fn update_url(&self) -> Option<Url> {
         let mpd = self.mpd.as_ref()?;
         if let Some(loc) = mpd.locations.first() {
             let base = self.doc_url.as_ref();
             let resolved = match base {
-                Some(b) => b.join(loc).ok().map(|u| u.to_string()),
-                None => Url::parse(loc).ok().map(|u| u.to_string()),
+                Some(b) => b.join(loc).ok(),
+                None => Url::parse(loc).ok(),
             };
-            if let Some(url) = resolved
-                && let Ok(parsed) = Url::parse(&url)
+            if let Some(parsed) = resolved
                 && matches!(parsed.scheme(), "http" | "https")
             {
                 let pin = !self.dash.cross_origin_urls;
@@ -525,11 +523,16 @@ impl DashClient {
                         .as_ref()
                         .is_none_or(|d| same_origin(d, &parsed));
                 if origin_ok {
-                    return Some(url);
+                    return Some(parsed);
                 }
             }
         }
-        live.refresh.redirect_url.clone()
+        self.live
+            .as_ref()?
+            .refresh
+            .redirect_url
+            .as_deref()
+            .and_then(|r| Url::parse(r).ok())
     }
 
     pub(super) fn utc_action(&mut self, now_us: u64) -> Option<Action> {
@@ -661,7 +664,7 @@ impl DashClient {
             .live
             .as_ref()
             .map_or(Exchange::new(now_us, now_us), |l| l.mpd_exchange);
-        let mut accept = |value: &str| -> Option<String> {
+        let mut accept = |value: &str| -> Option<Url> {
             let url = match &doc {
                 Some(d) => d.join(value).ok()?,
                 None => Url::parse(value).ok()?,
@@ -673,7 +676,7 @@ impl DashClient {
                 cross = true;
                 return None;
             }
-            matches!(url.scheme(), "http" | "https").then(|| url.to_string())
+            matches!(url.scheme(), "http" | "https").then_some(url)
         };
         let mut sampler = UtcSampler::new(&elements, &mut accept, exchange);
         if unsupported {

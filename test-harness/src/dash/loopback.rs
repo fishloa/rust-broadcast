@@ -261,7 +261,7 @@ impl Run {
 
 pub fn drive(url: &str, cfg: PullLimits, origin: &mut Origin, opts: &mut Drive) -> Run {
     let mut client = DashClient::new(
-        dash_runtime::client::DashClientConfig::new(url)
+        dash_runtime::client::DashClientConfig::new(Url::parse(url).expect("URL"))
             .with_dash(opts.dash)
             .with_limits(cfg),
     );
@@ -307,8 +307,8 @@ pub fn drive(url: &str, cfg: PullLimits, origin: &mut Origin, opts: &mut Drive) 
         let action = pending.remove(idx).expect("pending");
         now += 1_000;
         let req = Req {
-            url: action.url().to_owned(),
-            range: action.byte_range(),
+            url: action.url().to_string(),
+            range: action.byte_range().map(|s| (s.offset, s.len.get())),
         };
         run.requests.push(req.clone());
         let answer = origin.serve(&req);

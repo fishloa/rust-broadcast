@@ -86,15 +86,19 @@ impl<P: Profile> core::fmt::Debug for Client<P> {
     }
 }
 
-/// What a [`Client`] is configured by: the endpoint and an optional bearer
-/// token authenticating every request.
+/// What a [`Client`] is configured by: the endpoint and the optional
+/// credentials authenticating every request.
 #[derive(Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct WebRtcClientConfig {
     /// The WHIP/WHEP endpoint URL requests are sent to.
     pub endpoint_url: String,
-    /// A bearer token (RFC 6750) sent with every request, if any.
-    pub bearer_token: Option<String>,
+    /// Credentials sent with every request, if any. `Bearer` is applied
+    /// directly (RFC 6750); `Basic` is applied pre-emptively (RFC 7617) so a
+    /// WHIP endpoint behind a proxy that challenges for it works; `Digest`
+    /// needs a challenge round-trip this sans-IO client does not drive, so it
+    /// is not sent.
+    pub credentials: Option<broadcast_auth::Credentials>,
 }
 
 impl WebRtcClientConfig {
@@ -102,26 +106,26 @@ impl WebRtcClientConfig {
     pub fn new(endpoint_url: impl Into<String>) -> Self {
         WebRtcClientConfig {
             endpoint_url: endpoint_url.into(),
-            bearer_token: None,
+            credentials: None,
         }
     }
 
-    /// Authenticate every request with `bearer_token`.
+    /// Authenticate every request with `credentials`.
     #[must_use]
-    pub fn with_bearer_token(mut self, bearer_token: String) -> Self {
-        self.bearer_token = Some(bearer_token);
+    pub fn with_credentials(mut self, credentials: broadcast_auth::Credentials) -> Self {
+        self.credentials = Some(credentials);
         self
     }
 }
 
-/// Manual `Debug`: the bearer token never renders (issue #1142).
+/// Manual `Debug`: the credentials never render (issue #1142).
 impl core::fmt::Debug for WebRtcClientConfig {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("WebRtcClientConfig")
             .field("endpoint_url", &self.endpoint_url)
             .field(
-                "bearer_token",
-                &self.bearer_token.as_ref().map(|_| "<redacted>"),
+                "credentials",
+                &self.credentials.as_ref().map(|_| "<redacted>"),
             )
             .finish()
     }
@@ -131,7 +135,7 @@ impl<P: Profile> Client<P> {
     /// Create a new client from `config`.
     pub fn new(config: WebRtcClientConfig) -> Self {
         Self {
-            core: SessionCore::new(config.endpoint_url, config.bearer_token),
+            core: SessionCore::new(config.endpoint_url, config.credentials),
             state: State::Idle,
             profile: PhantomData,
         }

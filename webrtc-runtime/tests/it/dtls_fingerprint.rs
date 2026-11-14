@@ -27,8 +27,7 @@ use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
 
 use webrtc_runtime::media::{
-    MAX_REMOTE_CANDIDATES, MediaEvent, MediaTransport, MediaTransportConfig, SetupRole,
-    parse_remote_fingerprint,
+    MediaEvent, MediaTransport, MediaTransportConfig, SetupRole, parse_remote_fingerprint,
 };
 
 /// A syntactically valid SHA-256 SDP fingerprint value (RFC 8122 §5: the
@@ -65,22 +64,20 @@ fn config(
     is_controlling: bool,
     local_setup: SetupRole,
 ) -> MediaTransportConfig {
-    MediaTransportConfig {
+    // Every test here either checks the wrong-fingerprint rejection or
+    // overwrites the parsed digest (unit tests); no integration test
+    // needs a *matching* fingerprint — see the module doc for why that
+    // is impossible through the public API alone.
+    MediaTransportConfig::new(
         local_addr,
-        local_ice_ufrag: local_ufrag.into(),
-        local_ice_pwd: local_pwd.into(),
-        remote_ice_ufrag: remote_ufrag.into(),
-        remote_ice_pwd: remote_pwd.into(),
-        is_controlling,
+        local_ufrag.into(),
+        local_pwd.into(),
+        remote_ufrag.into(),
+        remote_pwd.into(),
         local_setup,
-        stun_server: None,
-        // Every test here either checks the wrong-fingerprint rejection or
-        // overwrites the parsed digest (unit tests); no integration test
-        // needs a *matching* fingerprint — see the module doc for why that
-        // is impossible through the public API alone.
-        remote_fingerprint: WRONG_FP.to_string(),
-        max_remote_candidates: MAX_REMOTE_CANDIDATES,
-    }
+        WRONG_FP.to_string(),
+    )
+    .with_is_controlling(is_controlling)
 }
 
 /// What one [`pump`] run observed.

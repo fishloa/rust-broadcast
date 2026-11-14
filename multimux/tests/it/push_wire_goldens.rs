@@ -111,11 +111,9 @@ async fn rtmp_push_wire_bodies_match_the_recorded_golden() {
         flv_bytes
     });
 
-    let cfg = RtmpTransportConfig {
-        app: "live".to_string(),
-        stream_key: "test".to_string(),
-        ..Default::default()
-    };
+    let cfg = RtmpTransportConfig::default()
+        .with_app("live".to_string())
+        .with_stream_key("test".to_string());
     let url = format!("rtmp://{addr}/live/test");
     let mut transport = tokio::time::timeout(GUARD, RtmpTransport::connect(&url, &cfg))
         .await

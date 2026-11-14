@@ -199,7 +199,7 @@ pub(crate) fn accept_head(
     resume_from: &mut Option<u64>,
     status: u16,
     headers: &[(String, String)],
-    byte_range: Option<(u64, u64)>,
+    byte_range: Option<broadcast_common::range::ByteSpan>,
 ) -> HeadOutcome {
     if let Some(received) = resume_from.take() {
         let outcome = basis
@@ -238,7 +238,7 @@ pub(crate) fn accept_head(
 #[derive(Debug)]
 pub(crate) struct Parked {
     pub(crate) url: String,
-    pub(crate) byte_range: Option<(u64, u64)>,
+    pub(crate) byte_range: Option<broadcast_common::range::ByteSpan>,
     pub(crate) body: BodyAcc,
     pub(crate) basis: Basis,
 }
@@ -266,7 +266,7 @@ impl<K: PartialEq> Stash<K> {
         &mut self,
         key: &K,
         url: &str,
-        byte_range: Option<(u64, u64)>,
+        byte_range: Option<broadcast_common::range::ByteSpan>,
     ) -> Option<Parked> {
         let at = self.items.iter().position(|(k, _)| k == key)?;
         let (_, parked) = self.items.remove(at);
@@ -514,7 +514,18 @@ mod tests {
         stash.put(1u8, parked("http://a/x"));
         assert!(stash.take(&1, "http://a/y", None).is_none());
         stash.put(1u8, parked("http://a/x"));
-        assert!(stash.take(&1, "http://a/x", Some((0, 1))).is_none());
+        assert!(
+            stash
+                .take(
+                    &1,
+                    "http://a/x",
+                    Some(broadcast_common::range::ByteSpan::new(
+                        0,
+                        core::num::NonZeroU64::new(1).expect("non-zero"),
+                    )),
+                )
+                .is_none()
+        );
         stash.put(1u8, parked("http://a/x"));
         assert!(stash.take(&1, "http://a/x", None).is_some());
         assert!(stash.take(&1, "http://a/x", None).is_none());

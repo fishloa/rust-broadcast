@@ -984,18 +984,14 @@ mod tests {
     }
 
     fn seg(seq: u32, duration: f64) -> SegmentInfo {
-        SegmentInfo {
-            bytes: vec![seq as u8; 8],
-            duration,
-            segment_seq: seq,
-            part_count: 1,
-        }
+        SegmentInfo::new(vec![seq as u8; 8], duration, seq).with_part_count(1)
     }
 
     fn gap_seg(seq: u32, duration: f64) -> SegmentInfo {
-        SegmentInfo {
-            bytes: Vec::new(),
-            ..seg(seq, duration)
+        {
+            let mut s = seg(seq, duration);
+            s.bytes = Vec::new();
+            s
         }
     }
 

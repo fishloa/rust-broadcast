@@ -182,12 +182,12 @@ async fn real_browser_whep_playback_decodes_real_video() {
     prebound
         .with_tcp(whip_addr.to_string(), whip_listener)
         .with_tcp(whep_addr.to_string(), whep_listener);
-    let config = Config {
-        bind: bind_addr.to_string(),
-        target_duration_secs: 0.5,
-        part_target: Duration::from_millis(100),
-        window_segments: 8,
-        routes: vec![Route {
+    let mut config = Config::default()
+        .with_bind(bind_addr.to_string())
+        .with_target_duration_secs(0.5)
+        .with_part_target(Duration::from_millis(100))
+        .with_window_segments(8)
+        .with_routes(vec![Route {
             name: "cam".to_string(),
             input: InputSpec::Whip {
                 listen: whip_addr.to_string(),
@@ -204,10 +204,8 @@ async fn real_browser_whep_playback_decodes_real_video() {
             closed_caption_overrides: Vec::new(),
             audio_profiles: Vec::new(),
             subtitles: true,
-        }],
-        prebound,
-        ..Config::default()
-    };
+        }]);
+    config.prebound = prebound;
 
     let server = tokio::spawn(
         multimux::Server::new(
@@ -301,23 +299,21 @@ async fn admin_added_route_starts_its_whep_listener() {
     prebound.with_tcp(whep_addr.to_string(), whep_listener);
     let prebound_observer = prebound.clone();
 
-    let config = Config {
-        bind: media_addr.to_string(),
-        target_duration_secs: 0.5,
-        part_target: Duration::from_millis(100),
-        window_segments: 8,
+    let config = Config::default()
+        .with_bind(media_addr.to_string())
+        .with_target_duration_secs(0.5)
+        .with_part_target(Duration::from_millis(100))
+        .with_window_segments(8)
         // `/admin/routes` requires at least one route in the config's own
         // validation to reload, but add_route itself is independent — start
         // empty and add the WHEP route entirely through the API.
-        routes: vec![],
-        admin: Some(AdminSpec {
-            bind: admin_addr.to_string(),
-            auth: OutputAuthSpec::Bearer {
+        .with_routes(vec![])
+        .with_admin(AdminSpec::new(
+            admin_addr.to_string(),
+            OutputAuthSpec::Bearer {
                 token: "admin-test-token".to_string(),
             },
-        }),
-        ..Config::default()
-    };
+        ));
 
     let dir = std::env::temp_dir().join(format!("multimux-admin-whep-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("temp dir");

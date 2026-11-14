@@ -115,7 +115,7 @@ pub(crate) struct HlsSource {
     lanes: Lanes<HlsAction>,
     window: Window<ResourceId>,
     gate: RetryGate,
-    retry_refetch: Option<(u64, String)>,
+    retry_refetch: Option<(u64, Url)>,
     refused_captures: BTreeMap<ConnId, RefusedCapture>,
     init_retry: bool,
     attempt: Attempts,
@@ -135,7 +135,7 @@ impl HlsSource {
         seed: u64,
     ) -> Self {
         let client = HlsClient::new(
-            HlsClientConfig::new(url.as_str()).with_variant_policy(config.variant_policy.clone()),
+            HlsClientConfig::new(url.clone()).with_variant_policy(config.variant_policy.clone()),
         );
         let (backoff_steps_ms, backoff_cap_ms) = backoff_ms(&config.backoff);
         let mut source = Self {
@@ -270,7 +270,7 @@ impl HlsSource {
         }
         self.reset_in_flight();
         self.attempt.reset();
-        self.retry_refetch = Some((now, self.client.playlist_url().to_string()));
+        self.retry_refetch = Some((now, self.client.playlist_url().clone()));
         self.pump_core();
         self.drain_outputs();
         if !auth.is_waiting() {
@@ -472,7 +472,7 @@ impl HlsSource {
             }
             Purpose::Key(id) => self.deliver_key(id, req.body.as_slice(), now),
             Purpose::Playlist => {
-                self.client.set_playlist_base(req.url.as_str());
+                self.client.set_playlist_base(req.url.clone());
                 self.deliver_now(
                     Purpose::Playlist,
                     req.body.as_slice(),
@@ -750,6 +750,7 @@ impl HlsSource {
         self.gate.hold_until(at);
         if let Some(url) = refetch
             && self.retry_refetch.is_none()
+            && let Ok(url) = Url::parse(&url)
         {
             self.retry_refetch = Some((at, url));
         }
@@ -843,8 +844,8 @@ impl HlsSource {
     fn issue(
         &mut self,
         purpose: Purpose,
-        url: &str,
-        byte_range: Option<(u64, u64)>,
+        url: &Url,
+        byte_range: Option<broadcast_common::range::ByteSpan>,
         now: u64,
         auth: &mut AuthState,
     ) {
@@ -853,23 +854,19 @@ impl HlsSource {
         {
             self.window.issue(id);
         }
-        match Url::parse(url) {
-            Ok(parsed) => {
-                let mut req = Req::new(purpose, parsed, byte_range, self.body_limit(purpose), ());
-                if let Some(parked) = self.stash.take(&purpose, &req.original_url, byte_range) {
-                    req.resume_from = Some(u64::try_from(parked.body.len()).unwrap_or(u64::MAX));
-                    req.body = parked.body;
-                    req.basis = Some(parked.basis);
-                }
-                self.send(req, auth, now);
-            }
-            Err(_) => {
-                if let Purpose::Resource(id) = purpose {
-                    self.window.fail(id);
-                }
-                self.fail_purpose(purpose, None, now, None);
-            }
+        let mut req = Req::new(
+            purpose,
+            url.clone(),
+            byte_range,
+            self.body_limit(purpose),
+            (),
+        );
+        if let Some(parked) = self.stash.take(&purpose, &req.original_url, byte_range) {
+            req.resume_from = Some(u64::try_from(parked.body.len()).unwrap_or(u64::MAX));
+            req.body = parked.body;
+            req.basis = Some(parked.basis);
         }
+        self.send(req, auth, now);
     }
 
     fn flush_refused(&mut self) {

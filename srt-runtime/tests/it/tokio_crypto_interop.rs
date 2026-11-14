@@ -32,11 +32,11 @@ fn crypto_config(passphrase: &str, key_len: usize) -> HandshakeConfig {
     };
     HandshakeConfig::default()
         .with_encryption_field(encryption_field)
-        .with_crypto(Some(CryptoConfig {
-            passphrase: passphrase.as_bytes().to_vec(),
-            salt: SALT,
-            sek: vec![0x22u8; key_len],
-        }))
+        .with_crypto(Some(CryptoConfig::new(
+            passphrase.as_bytes().to_vec(),
+            SALT,
+            vec![0x22u8; key_len],
+        )))
 }
 
 async fn recv_at_least(discard: &TokioUdpSocket, want_len: usize, timeout: Duration) -> Vec<u8> {

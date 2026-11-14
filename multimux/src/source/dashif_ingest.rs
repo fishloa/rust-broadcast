@@ -565,13 +565,9 @@ async fn dashif_handler(
     // Early classification (body assumed non-empty) to decide whether this is
     // a streamed Segment object (P3b). Non-segment objects keep the buffered path.
     let grouping_early = state.grouping.lock().clone();
-    let early_meta = RequestMeta {
-        method: ingest_method,
-        path: &relative,
-        content_length,
-        chunked,
-        body_empty: false,
-    };
+    let mut early_meta = RequestMeta::new(ingest_method, &relative);
+    early_meta.content_length = content_length;
+    early_meta.chunked = chunked;
     let early_kind = classify(&early_meta, grouping_early.as_ref()).ok();
     let segment = match early_kind {
         Some(kind @ dash_runtime::ingest::ObjectKind::Segment { .. }) => Some(kind),
@@ -741,13 +737,10 @@ async fn dashif_handler(
         let (body, _budget_hold) = body;
         let body_empty = body.is_empty();
 
-        let meta = RequestMeta {
-            method: ingest_method,
-            path: &relative,
-            content_length,
-            chunked,
-            body_empty,
-        };
+        let mut meta = RequestMeta::new(ingest_method, &relative);
+        meta.content_length = content_length;
+        meta.chunked = chunked;
+        meta.body_empty = body_empty;
 
         let grouping = state.grouping.lock().clone();
         let kind = match classify(&meta, grouping.as_ref()) {

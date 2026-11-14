@@ -9,6 +9,7 @@ use dash_runtime::address::template::{
 };
 use dash_runtime::address::timeline::TimelineIndex;
 use dash_runtime::address::{AddressError, PlanError, PlanOptions, plan_representation};
+use dash_runtime::mpd::base_url::{ResolveError, ResolvedRef};
 use dash_runtime::mpd::inherit::InheritError;
 use dash_runtime::mpd::urls::{
     append_query, base_candidates, representation_candidates, segment_url_query,
@@ -24,6 +25,13 @@ use url::Url;
 
 const S: i128 = 1_000_000;
 const NS: &str = "urn:mpeg:dash:schema:mpd:2011";
+
+fn flat(r: Result<ResolvedRef, ResolveError>) -> String {
+    match r.expect("resolves") {
+        ResolvedRef::Absolute(u) => u.to_string(),
+        ResolvedRef::Relative(s) => s,
+    }
+}
 
 fn mpd(attrs: &str, body: &str) -> Mpd {
     let xml = format!(r#"<?xml version="1.0"?><MPD xmlns="{NS}" {attrs}>{body}</MPD>"#);
@@ -541,21 +549,21 @@ fn base_url_join_override_alternates_and_query() {
     let (p, s, r) = RepRef::at(0, 0, 0).resolve(&m).unwrap();
     let c = representation_candidates(&m, p, s, r);
     assert_eq!(
-        c[0].resolve(Some(&doc), "1.m4s").unwrap(),
+        flat(c[0].resolve(Some(&doc), "1.m4s")),
         "http://cdn.example/root/p1/rep/1.m4s",
         "RFC 3986 join; the MPD URL query is not propagated"
     );
     let (p, s, r) = RepRef::at(0, 0, 1).resolve(&m).unwrap();
     let c = representation_candidates(&m, p, s, r);
     assert_eq!(
-        c[0].resolve(Some(&doc), "1.m4s").unwrap(),
+        flat(c[0].resolve(Some(&doc), "1.m4s")),
         "http://other.example/z/1.m4s"
     );
     // No BaseURL at all: resolves against the MPD URL (query dropped).
     let m2 = mpd(r#"type="static""#, r#"<Period/>"#);
     let c = base_candidates(&[&m2.base_urls]);
     assert_eq!(
-        c[0].resolve(Some(&doc), "seg.m4s").unwrap(),
+        flat(c[0].resolve(Some(&doc), "seg.m4s")),
         "http://origin.example/live/seg.m4s"
     );
     assert_eq!(append_query("http://h/a.m4s", "q=1"), "http://h/a.m4s?q=1");
@@ -575,7 +583,7 @@ fn base_url_alternates_are_ordered_by_priority_then_document_order() {
            <Period><BaseURL serviceLocation="b">pb/</BaseURL><BaseURL serviceLocation="a">pa/</BaseURL></Period>"#,
     );
     let c = base_candidates(&[&m.base_urls, &m.periods[0].base_urls]);
-    let urls: Vec<String> = c.iter().map(|c| c.resolve(None, "x").unwrap()).collect();
+    let urls: Vec<String> = c.iter().map(|c| flat(c.resolve(None, "x"))).collect();
     assert_eq!(
         urls,
         vec![

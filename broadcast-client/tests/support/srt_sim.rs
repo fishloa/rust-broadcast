@@ -94,7 +94,7 @@ impl SrtSim {
             while let Some(a) = self.session.poll(ts(self.now)) {
                 progressed = true;
                 match a {
-                    Action::UdpBind { conn, .. } => {
+                    Action::UdpConnect { conn, .. } => {
                         self.conn = Some(conn);
                         self.connected_to = self.binds.len() + 1;
                         self.binds.push(a);

@@ -377,7 +377,7 @@ fn play(port: u16, shape: &Shape) -> Observed {
                             (n.as_str().to_string(), v.to_str().unwrap_or("").to_string())
                         })
                         .collect(),
-                    range: byte_range,
+                    range: byte_range.map(|s| (s.offset, s.len.get())),
                 }),
                 Action::WakeAt(t) => wake = Some(wake.map_or(t, |w| w.min(t))),
                 _ => {}

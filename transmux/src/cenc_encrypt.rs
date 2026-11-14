@@ -188,6 +188,7 @@ pub enum SubsamplePolicy {
 /// field here would let a caller silently pair one running [`IvGen::Counter`]
 /// with a *different* key from call to call, which is exactly backwards.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct EncryptConfig {
     /// The protection scheme to apply (`cenc` AES-CTR or `cbcs` AES-CBC
     /// pattern).
@@ -206,6 +207,66 @@ pub struct EncryptConfig {
     /// IV replicated in each sample entry for maximum decryptor interop).
     /// See [`ConstantIvSenc`] for the rationale and the opt-out shape.
     pub constant_iv_senc: ConstantIvSenc,
+}
+
+impl EncryptConfig {
+    /// Build a protection configuration from its required scheme, Key ID, and
+    /// subsample policy. `iv` defaults to [`IvGen::Counter`], `pattern` to
+    /// `None` (the standard 1:9 `cbcs` pattern), and `constant_iv_senc` to
+    /// [`ConstantIvSenc::Emit`].
+    #[must_use]
+    pub fn new(scheme: CencScheme, kid: [u8; KEY_LEN], subsample: SubsamplePolicy) -> Self {
+        Self {
+            scheme,
+            kid,
+            iv: IvGen::Counter,
+            pattern: None,
+            subsample,
+            constant_iv_senc: ConstantIvSenc::default(),
+        }
+    }
+
+    /// Set the protection scheme.
+    #[must_use]
+    pub fn with_scheme(mut self, scheme: CencScheme) -> Self {
+        self.scheme = scheme;
+        self
+    }
+
+    /// Set the 16-byte Key ID.
+    #[must_use]
+    pub fn with_kid(mut self, kid: [u8; KEY_LEN]) -> Self {
+        self.kid = kid;
+        self
+    }
+
+    /// Set how each sample's IV is derived.
+    #[must_use]
+    pub fn with_iv(mut self, iv: IvGen) -> Self {
+        self.iv = iv;
+        self
+    }
+
+    /// Set the `cbcs` pattern.
+    #[must_use]
+    pub fn with_pattern(mut self, pattern: (u8, u8)) -> Self {
+        self.pattern = Some(pattern);
+        self
+    }
+
+    /// Set how the subsample map is chosen.
+    #[must_use]
+    pub fn with_subsample(mut self, subsample: SubsamplePolicy) -> Self {
+        self.subsample = subsample;
+        self
+    }
+
+    /// Set whether to emit a `senc` box for constant-IV `cbcs` tracks.
+    #[must_use]
+    pub fn with_constant_iv_senc(mut self, constant_iv_senc: ConstantIvSenc) -> Self {
+        self.constant_iv_senc = constant_iv_senc;
+        self
+    }
 }
 
 /// Applies CENC/CBCS sample protection to a [`Media`], implementing

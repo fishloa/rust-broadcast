@@ -55,6 +55,7 @@ const TEARDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Per-connection configuration for the RTSP push transport.
 #[derive(Clone, Default)]
+#[non_exhaustive]
 pub struct RtspTransportConfig {
     /// Optional credentials for RTSP auth. Takes precedence over any
     /// username/password already present in the push URL's userinfo.
@@ -110,6 +111,22 @@ impl RtspTransportConfig {
     #[must_use]
     pub fn with_timeouts(mut self, timeouts: broadcast_common::timeouts::Timeouts) -> Self {
         self.timeouts = timeouts;
+        self
+    }
+
+    /// Set the RTSP auth credentials.
+    #[must_use]
+    pub fn with_credentials(mut self, username: String, password: String) -> Self {
+        self.credentials = Some((username, password));
+        self
+    }
+
+    /// Set a fixed SSRC and RTP clock origin (test hooks only).
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_test_wire(mut self, test_wire: RtpWireState) -> Self {
+        self.test_wire = Some(test_wire);
         self
     }
 }

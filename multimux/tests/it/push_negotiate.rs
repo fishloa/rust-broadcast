@@ -139,11 +139,9 @@ async fn drive_push_negotiates_and_carries_only_flv_compatible_tracks() {
     // The client side: `drive_push` itself -- the production entry point
     // `crate::origin::spawn_push_outputs` calls for a configured
     // `rtmp_push` output.
-    let cfg = RtmpTransportConfig {
-        app: "live".to_string(),
-        stream_key: "test".to_string(),
-        ..Default::default()
-    };
+    let cfg = RtmpTransportConfig::default()
+        .with_app("live".to_string())
+        .with_stream_key("test".to_string());
     let url = format!("rtmp://{addr}/live/test");
     let cancel = CancellationToken::new();
     let push_cancel = cancel.clone();
@@ -153,11 +151,9 @@ async fn drive_push_negotiates_and_carries_only_flv_compatible_tracks() {
             url,
             cfg,
             PushFormat::Ts,
-            ReconnectPolicy {
-                initial_backoff_ms: 100,
-                max_backoff_ms: 1_000,
-                max_attempts: None,
-            },
+            ReconnectPolicy::default()
+                .with_initial_backoff_ms(100)
+                .with_max_backoff_ms(1_000),
             push_cancel,
         )
         .await

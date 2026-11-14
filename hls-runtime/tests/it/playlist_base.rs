@@ -1,5 +1,7 @@
 use hls_runtime::client::{Action, HlsClient};
 
+use url::Url;
+
 const ORIGIN_URL: &str = "http://origin.test/hls/index.m3u8";
 const FINAL_URL: &str = "http://cdn.test/live/index.m3u8";
 const PLAYLIST: &str = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n\
@@ -9,7 +11,9 @@ const PLAYLIST: &str = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT
 fn fetch_urls(client: &mut HlsClient) -> Vec<String> {
     std::iter::from_fn(|| client.poll())
         .filter_map(|a| match a {
-            Action::FetchResource { url, .. } | Action::FetchKey { url, .. } => Some(url),
+            Action::FetchResource { url, .. } | Action::FetchKey { url, .. } => {
+                Some(url.as_str().to_string())
+            }
             _ => None,
         })
         .collect()
@@ -17,7 +21,9 @@ fn fetch_urls(client: &mut HlsClient) -> Vec<String> {
 
 #[test]
 fn relative_uris_resolve_against_the_playlist_base_not_the_request_url() {
-    let mut control = HlsClient::new(hls_runtime::client::HlsClientConfig::new(ORIGIN_URL));
+    let mut control = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(ORIGIN_URL).expect("URL"),
+    ));
     control.poll();
     let _ = control.on_playlist(PLAYLIST.as_bytes());
     let before = fetch_urls(&mut control);
@@ -28,9 +34,11 @@ fn relative_uris_resolve_against_the_playlist_base_not_the_request_url() {
         "{before:?}"
     );
 
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(ORIGIN_URL));
+    let mut client = HlsClient::new(
+        hls_runtime::client::HlsClientConfig::new(Url::parse(ORIGIN_URL).expect("URL"))
+            .with_playlist_base(Url::parse(FINAL_URL).expect("URL")),
+    );
     client.poll();
-    client.set_playlist_base(FINAL_URL);
     let _ = client.on_playlist(PLAYLIST.as_bytes());
     let urls = fetch_urls(&mut client);
     assert!(!urls.is_empty());
@@ -43,7 +51,7 @@ fn relative_uris_resolve_against_the_playlist_base_not_the_request_url() {
         "{urls:?}"
     );
     assert_eq!(
-        client.playlist_url(),
+        client.playlist_url().as_str(),
         ORIGIN_URL,
         "reloads keep the request URL"
     );

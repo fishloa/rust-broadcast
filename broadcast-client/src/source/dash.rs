@@ -157,7 +157,7 @@ fn new_req(
     purpose: Purpose,
     method: &'static str,
     url: Url,
-    byte_range: Option<(u64, u64)>,
+    byte_range: Option<broadcast_common::range::ByteSpan>,
     body_limit: usize,
 ) -> Req {
     Req::new(
@@ -267,7 +267,7 @@ impl DashSource {
         pull.max_segment_failures = config.max_segment_failures;
         pull.max_init_failures = config.max_key_failures;
         let client = DashClient::new(
-            dash_runtime::client::DashClientConfig::new(url.as_str())
+            dash_runtime::client::DashClientConfig::new(url.clone())
                 .with_dash(config.dash)
                 .with_limits(pull.clone()),
         );
@@ -440,7 +440,7 @@ impl DashSource {
         }
         self.reset_in_flight();
         let mut client = DashClient::new(
-            dash_runtime::client::DashClientConfig::new(self.mpd_url.as_str())
+            dash_runtime::client::DashClientConfig::new(self.mpd_url.clone())
                 .with_dash(self.dash_config)
                 .with_limits(self.pull.clone()),
         );
@@ -995,25 +995,14 @@ impl DashSource {
             ),
             _ => return,
         };
-        match Url::parse(&url) {
-            Ok(parsed) => {
-                let mut req = new_req(
-                    purpose,
-                    method,
-                    parsed,
-                    byte_range,
-                    self.body_limit(purpose),
-                );
-                req.extra.conditional = conditional;
-                if let Some(parked) = self.stash.take(&purpose, &req.original_url, byte_range) {
-                    req.resume_from = Some(u64::try_from(parked.body.len()).unwrap_or(u64::MAX));
-                    req.body = parked.body;
-                    req.basis = Some(parked.basis);
-                }
-                self.send(req, auth, now);
-            }
-            Err(_) => self.fail_purpose(purpose, now, Failure::Transport),
+        let mut req = new_req(purpose, method, url, byte_range, self.body_limit(purpose));
+        req.extra.conditional = conditional;
+        if let Some(parked) = self.stash.take(&purpose, &req.original_url, byte_range) {
+            req.resume_from = Some(u64::try_from(parked.body.len()).unwrap_or(u64::MAX));
+            req.body = parked.body;
+            req.basis = Some(parked.basis);
         }
+        self.send(req, auth, now);
     }
 
     fn flush_refused(&mut self) {
@@ -1378,27 +1367,32 @@ fn master_selection(selection: &ManifestSelection) -> MasterSelection {
     let variants = selection
         .variants
         .iter()
-        .map(|v| VariantInfo {
-            url: v.init_url.clone().unwrap_or_default(),
-            bandwidth: u32::try_from(v.bandwidth).unwrap_or(u32::MAX),
-            average_bandwidth: None,
-            resolution: v.resolution,
-            codecs: v.codecs.clone(),
-            audio_group: v.audio_group.clone(),
-            subtitles_group: None,
+        .map(|v| {
+            let mut info = VariantInfo::new(
+                v.init_url.clone().unwrap_or_default(),
+                u32::try_from(v.bandwidth).unwrap_or(u32::MAX),
+            );
+            info.resolution = v.resolution;
+            info.codecs = v.codecs.clone();
+            info.audio_group = v.audio_group.clone();
+            info.subtitles_group = None;
+            info
         })
         .collect();
     let renditions = selection
         .audio
         .iter()
-        .map(|a| RenditionInfo {
-            media_type: MediaType::Audio,
-            group_id: a.group.clone().unwrap_or_else(|| a.set.to_string()),
-            name: a.name.clone(),
-            language: a.language.clone(),
-            default: a.default,
-            autoselect: a.autoselect,
-            url: a.init_url.clone(),
+        .map(|a| {
+            let mut info = RenditionInfo::new(
+                MediaType::Audio,
+                a.group.clone().unwrap_or_else(|| a.set.to_string()),
+                a.name.clone(),
+            );
+            info.language = a.language.clone();
+            info.default = a.default;
+            info.autoselect = a.autoselect;
+            info.url = a.init_url.clone();
+            info
         })
         .collect();
     MasterSelection {

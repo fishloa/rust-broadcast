@@ -96,15 +96,15 @@ fn whip_answer_matches_golden() {
 fn whep_answer_matches_golden() {
     let answer = render_whep_answer_for_test(
         OFFER,
-        WhepAnswerParams {
-            local_addr: LOCAL_ADDR.parse().expect("local address"),
-            local_ice_ufrag: LOCAL_UFRAG,
-            local_ice_pwd: LOCAL_PWD,
-            setup_role: SetupRole::Active,
-            config: &config(),
-            fingerprint: FINGERPRINT,
-            candidates: &candidates(),
-        },
+        WhepAnswerParams::new(
+            LOCAL_ADDR.parse().expect("local address"),
+            LOCAL_UFRAG,
+            LOCAL_PWD,
+            SetupRole::Active,
+            &config(),
+            FINGERPRINT,
+            &candidates(),
+        ),
     )
     .expect("render the answer");
     check("golden/webrtc/whep-answer.golden", answer.as_bytes());

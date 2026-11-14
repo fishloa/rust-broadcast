@@ -67,13 +67,18 @@ fn sidx_of(
     };
     let range = base.index_range.ok_or("SegmentBase without indexRange")?;
     let cands = dash_runtime::mpd::urls::representation_candidates(mpd, period, set, rep);
-    let file = Url::parse(
-        &cands[0]
-            .resolve(Some(doc), "")
-            .ok_or("unresolvable BaseURL")?,
-    )?
-    .to_file_path()
-    .map_err(|()| "BaseURL is not a file")?;
+    let resolved = cands[0]
+        .resolve(Some(doc), "")
+        .map_err(|_| "unresolvable BaseURL")?;
+    let resolved = match resolved {
+        dash_runtime::mpd::base_url::ResolvedRef::Absolute(u) => u,
+        dash_runtime::mpd::base_url::ResolvedRef::Relative(_) => {
+            return Err("BaseURL is not a file".into());
+        }
+    };
+    let file = resolved
+        .to_file_path()
+        .map_err(|()| "BaseURL is not a file")?;
     let bytes = std::fs::read(file)?;
     let (a, b) = (
         range.first as usize,
@@ -121,11 +126,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             rep.id, rep.bandwidth
                         );
                         if let Some(init) = p.plan.init() {
-                            let url = p.candidates[0].resolve(Some(&doc), &init.reference);
-                            println!("    init   {}", url.unwrap_or_default());
+                            let url = p.candidates[0]
+                                .resolve(Some(&doc), &init.reference)
+                                .ok()
+                                .map(|r| match r {
+                                    dash_runtime::mpd::base_url::ResolvedRef::Absolute(u) => {
+                                        u.to_string()
+                                    }
+                                    dash_runtime::mpd::base_url::ResolvedRef::Relative(s) => s,
+                                })
+                                .unwrap_or_default();
+                            println!("    init   {}", url);
                         }
                         for seg in p.plan.iter().take(args.first) {
-                            let url = p.candidates[0].resolve(Some(&doc), &seg.reference);
+                            let url = p.candidates[0]
+                                .resolve(Some(&doc), &seg.reference)
+                                .ok()
+                                .map(|r| match r {
+                                    dash_runtime::mpd::base_url::ResolvedRef::Absolute(u) => {
+                                        u.to_string()
+                                    }
+                                    dash_runtime::mpd::base_url::ResolvedRef::Relative(s) => s,
+                                })
+                                .unwrap_or_default();
                             let range = seg
                                 .byte_range
                                 .map(|r| format!(" bytes {}-{}", r.first, r.last.unwrap_or(0)))
@@ -135,7 +158,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 seg.number,
                                 seg.start_us as f64 / 1e6,
                                 seg.duration_us as f64 / 1e6,
-                                url.unwrap_or_default()
+                                url
                             );
                         }
                     }

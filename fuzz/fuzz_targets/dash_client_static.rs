@@ -128,7 +128,7 @@ fuzz_target!(|data: &[u8]| {
     let mpd = pick_mpd(&MPDS, head[1], head[2], head[3], &mut rest);
 
     let url = format!("{BASE_URL}{MPD_NAME}");
-    let mut client = DashClient::new(dash_runtime::client::DashClientConfig::new(url).with_dash(dash).with_limits(cfg));
+    let mut client = DashClient::new(dash_runtime::client::DashClientConfig::new(url::Url::parse(&url).expect("URL")).with_dash(dash).with_limits(cfg));
     let mut pending: VecDeque<Action> = VecDeque::new();
     let mut terminal = false;
     let mut chunks = rest
@@ -174,7 +174,10 @@ fuzz_target!(|data: &[u8]| {
         now_us += 1_000;
         let real = match action.id() {
             None => Some(mpd.clone()),
-            Some(_) => real_body(action.url(), action.byte_range()),
+            Some(_) => real_body(
+                action.url().as_str(),
+                action.byte_range().map(|s| (s.offset, s.len.get())),
+            ),
         };
         let reply = answer(real, mode, aux, &mut tail_data);
         match (action.id(), reply) {

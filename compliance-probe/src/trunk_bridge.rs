@@ -304,26 +304,23 @@ mod tests {
     fn event_cursor_drain_handles_resolved_and_unresolved_anchors() {
         let trunk = small_trunk();
         let writer = trunk.writer().expect("first writer");
-        let event = TimedEvent {
-            id: Some(1),
-            kind: EventKind::BreakStart,
-            at: Some(MediaTime(1_000)),
-            duration: None,
-            source: SourcePayload::Scte35 {
+        let event = TimedEvent::new(
+            EventKind::BreakStart,
+            SourcePayload::Scte35 {
                 raw: alloc::vec![0xFC],
             },
-        };
+        )
+        .with_id(1)
+        .with_at(MediaTime(1_000));
         writer.publish_event(event, EventAnchor::Media(MediaTime(1_000)));
 
-        let unresolved = TimedEvent {
-            id: Some(2),
-            kind: EventKind::BreakEnd,
-            at: None,
-            duration: None,
-            source: SourcePayload::Scte35 {
+        let unresolved = TimedEvent::new(
+            EventKind::BreakEnd,
+            SourcePayload::Scte35 {
                 raw: alloc::vec![0xFC],
             },
-        };
+        )
+        .with_id(2);
         writer.publish_event(
             unresolved,
             EventAnchor::Utc {

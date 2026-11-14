@@ -601,10 +601,11 @@ fn config_from(header: &[u8]) -> Config {
     config.tracks_hold_max_input_bytes = knob(header, 11, &HOLD_MAX_BYTES).max(quiet);
     config.timeline_jump = match knob(header, 12, &[0u8, 1, 2, 3]) {
         0 => None,
-        _ => Some(broadcast_client::TimelineJumpConfig {
-            backward_us: knob(header, 13, &JUMP_US),
-            forward_slack_us: knob(header, 14, &JUMP_US),
-        }),
+        _ => Some(
+            broadcast_client::TimelineJumpConfig::default()
+                .with_backward_us(knob(header, 13, &JUMP_US))
+                .with_forward_slack_us(knob(header, 14, &JUMP_US)),
+        ),
     };
     config.playout.vod_start_lead_us = knob(header, 15, &LEAD_US);
     config.playout.live_start_lead_us = knob(header, 16, &LEAD_US);
@@ -913,8 +914,8 @@ fn datagram_pump(session: &mut Session, watch: &mut Watch, now: u64, conn: &mut 
         };
         steps += 1;
         match action {
-            Action::UdpBind { conn: c, .. } => {
-                assert!(!watch.closed, "UdpBind after close");
+            Action::UdpBind { conn: c, .. } | Action::UdpConnect { conn: c, .. } => {
+                assert!(!watch.closed, "datagram bind after close");
                 assert!(watch.live.insert(c), "live conn id {c} issued twice");
                 *conn = Some(c);
                 session.on_connected(c);

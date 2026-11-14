@@ -5,9 +5,9 @@
 
 use crate::ConnId;
 use alloc::collections::BTreeMap;
-use alloc::string::{String, ToString};
+use alloc::string::ToString;
 use alloc::vec::Vec;
-use core::net::IpAddr;
+use core::net::{IpAddr, SocketAddr};
 use core::time::Duration;
 
 use broadcast_common::Parse;
@@ -19,7 +19,7 @@ use url::{Host, Url};
 
 use crate::source::srt::{Notice, SrtCaller};
 use crate::srt::SrtCallerConfig;
-use crate::udp::{DatagramStats, UdpConfig, UdpMode};
+use crate::udp::{DatagramStats, UdpConfig};
 use crate::{Action, Error};
 use broadcast_common::net::{JoinMismatch, MulticastJoin, UdpOptions};
 
@@ -256,10 +256,17 @@ pub(crate) struct Effects {
     pub notices: Vec<Notice>,
 }
 
+/// Where a [`Datagram`] source binds or connects: a resolved local/multicast
+/// [`SocketAddr`] (UDP/RTP receive) or a [`Host`] the host resolves (SRT caller).
+enum Address {
+    /// A literal address to bind.
+    Bind(SocketAddr),
+    /// A peer to resolve, then connect to.
+    Connect { host: Host, port: u16 },
+}
+
 pub(crate) struct Datagram {
-    host: String,
-    port: u16,
-    mode: UdpMode,
+    address: Address,
     options: UdpOptions,
     kind: Kind,
     sends: Vec<Vec<u8>>,
@@ -268,12 +275,22 @@ pub(crate) struct Datagram {
 
 impl Datagram {
     pub(crate) fn udp(url: &Url, config: &UdpConfig, rtp: bool) -> Result<Self, Error> {
+        let scheme = if rtp { "rtp" } else { "udp" };
         let ip = match url.host() {
             Some(Host::Ipv4(a)) => IpAddr::V4(a),
             Some(Host::Ipv6(a)) => IpAddr::V6(a),
-            Some(Host::Domain(name)) => name
-                .parse::<IpAddr>()
-                .map_err(|_| Error::InvalidUrl("udp needs an IP address".to_string()))?,
+            // A non-special URL scheme (udp/rtp) keeps a numeric host as an opaque
+            // `Domain`, so `127.0.0.1` arrives here, not as `Host::Ipv4`: accept it
+            // when it parses as an IP literal, and reject a real host name.
+            Some(Host::Domain(name)) => match name.parse::<IpAddr>() {
+                Ok(ip) => ip,
+                Err(_) => {
+                    return Err(Error::DatagramHostNotIp {
+                        scheme,
+                        host: name.to_string(),
+                    });
+                }
+            },
             None => return Err(Error::InvalidUrl("missing host".to_string())),
         };
         let port = match url.port() {
@@ -305,9 +322,7 @@ impl Datagram {
             None => Kind::Udp(Ingest::new(rtp, config)),
         };
         Ok(Self {
-            host: ip.to_string(),
-            port,
-            mode: UdpMode::Receive,
+            address: Address::Bind(SocketAddr::new(ip, port)),
             options,
             kind,
             sends: Vec::new(),
@@ -316,20 +331,16 @@ impl Datagram {
     }
 
     pub(crate) fn srt(url: &Url, config: &SrtCallerConfig) -> Result<Self, Error> {
-        let host = match url.host() {
-            Some(Host::Domain(name)) => name.to_string(),
-            Some(Host::Ipv4(a)) => a.to_string(),
-            Some(Host::Ipv6(a)) => a.to_string(),
-            None => return Err(Error::InvalidUrl("missing host".to_string())),
+        let Some(host) = url.host() else {
+            return Err(Error::InvalidUrl("missing host".to_string()));
         };
+        let host = host.to_owned();
         let port = match url.port() {
             Some(p) if p != 0 => p,
             _ => return Err(Error::InvalidUrl("missing port".to_string())),
         };
         Ok(Self {
-            host,
-            port,
-            mode: UdpMode::Connect,
+            address: Address::Connect { host, port },
             options: UdpOptions::default(),
             kind: Kind::Srt(Box::new(SrtCaller::new(config)?)),
             sends: Vec::new(),
@@ -343,12 +354,18 @@ impl Datagram {
             Kind::Sdp(s) => s.reset(),
             Kind::Srt(s) => s.reset(),
         }
-        Action::UdpBind {
-            conn,
-            host: self.host.clone(),
-            port: self.port,
-            mode: self.mode,
-            options: self.options.clone(),
+        match &self.address {
+            Address::Bind(addr) => Action::UdpBind {
+                conn,
+                addr: *addr,
+                options: self.options.clone(),
+            },
+            Address::Connect { host, port } => Action::UdpConnect {
+                conn,
+                host: host.clone(),
+                port: *port,
+                options: self.options.clone(),
+            },
         }
     }
 

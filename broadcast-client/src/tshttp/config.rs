@@ -12,6 +12,7 @@ use broadcast_common::timeouts::Timeouts;
 /// [`Config::clamped`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct Config {
     /// Start timeout, measured from `Open` (T6, T20).
     pub start_timeout: Duration,
@@ -48,6 +49,41 @@ impl Config {
         self.start_timeout = timeouts.connect.max(MIN_START_TIMEOUT);
         self.stall_notice = reconnect / STALL_NOTICE_DIVISOR;
         self.stall_reconnect = reconnect;
+        self
+    }
+
+    /// Set the start timeout (`T6`, `T20`).
+    #[must_use]
+    pub fn with_start_timeout(mut self, start_timeout: Duration) -> Self {
+        self.start_timeout = start_timeout;
+        self
+    }
+
+    /// Set the stall notice threshold (`T11`, `T14`, `T15`).
+    #[must_use]
+    pub fn with_stall_notice(mut self, stall_notice: Duration) -> Self {
+        self.stall_notice = stall_notice;
+        self
+    }
+
+    /// Set the stall reconnect threshold (`T12`).
+    #[must_use]
+    pub fn with_stall_reconnect(mut self, stall_reconnect: Duration) -> Self {
+        self.stall_reconnect = stall_reconnect;
+        self
+    }
+
+    /// Set the backoff schedule (`T9`).
+    #[must_use]
+    pub fn with_backoff(mut self, backoff: BackoffSteps) -> Self {
+        self.backoff = backoff;
+        self
+    }
+
+    /// Set the minimum reconnect interval (`T8`).
+    #[must_use]
+    pub fn with_min_reconnect_interval(mut self, min_reconnect_interval: Duration) -> Self {
+        self.min_reconnect_interval = min_reconnect_interval;
         self
     }
 }

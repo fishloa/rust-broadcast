@@ -101,14 +101,12 @@ fn route(path: &std::path::Path, outputs: Vec<OutputKind>, cut: TsHlsCutPolicy) 
 }
 
 fn config(bind: SocketAddr, route: Route) -> Config {
-    Config {
-        bind: bind.to_string(),
-        target_duration_secs: 1.0,
-        part_target: Duration::from_millis(200),
-        window_segments: 32,
-        routes: vec![route],
-        ..Config::default()
-    }
+    Config::default()
+        .with_bind(bind.to_string())
+        .with_target_duration_secs(1.0)
+        .with_part_target(Duration::from_millis(200))
+        .with_window_segments(32)
+        .with_routes(vec![route])
 }
 
 async fn get_text(client: &reqwest::Client, url: &str) -> Option<String> {
@@ -221,12 +219,12 @@ async fn hevc_program_on_ts_hls_fails_with_typed_error() {
         media,
         route(&hevc, vec![OutputKind::TsHls], TsHlsCutPolicy::default()),
     );
-    cfg.admin = Some(AdminSpec {
-        bind: admin.to_string(),
-        auth: OutputAuthSpec::Bearer {
+    cfg.admin = Some(AdminSpec::new(
+        admin.to_string(),
+        OutputAuthSpec::Bearer {
             token: ADMIN_TOKEN.to_string(),
         },
-    });
+    ));
     let server = tokio::spawn(
         multimux::Server::new(
             multimux::ServeRequest::new(cfg)

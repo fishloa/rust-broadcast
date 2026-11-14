@@ -10,6 +10,7 @@ use common::loopback::{
     oracle,
 };
 use dash_runtime::client::{DashConfig, FailureClass, FatalKind, Output, PullLimits};
+use url::Url;
 
 /// The test's microsecond clock as the client's `now`.
 fn now(us: u64) -> Timestamp {
@@ -120,7 +121,7 @@ fn restart_period_two_inits_are_requested_while_period_one_is_in_flight() {
     let mut cfg = PullLimits::default();
     cfg.max_inflight_segments = 8;
     let mut c = DashClient::new(
-        dash_runtime::client::DashClientConfig::new(RESTART)
+        dash_runtime::client::DashClientConfig::new(Url::parse(RESTART).expect("URL"))
             .with_dash(DashConfig::default())
             .with_limits(cfg),
     );
@@ -132,10 +133,14 @@ fn restart_period_two_inits_are_requested_while_period_one_is_in_flight() {
         urls.push(a.url().to_owned());
     }
     assert!(
-        urls.iter().any(|u| u.contains("p2_dash_track1_init")),
+        urls.iter()
+            .any(|u| u.as_str().contains("p2_dash_track1_init")),
         "{urls:?}"
     );
-    assert!(urls.iter().any(|u| u.contains("p1_dash_track1_1.m4s")));
+    assert!(
+        urls.iter()
+            .any(|u| u.as_str().contains("p1_dash_track1_1.m4s"))
+    );
 }
 
 #[test]

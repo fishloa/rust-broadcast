@@ -3,7 +3,7 @@ use std::net::{ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
 use url::Url;
 
-use broadcast_client::{Action, Config, ConnId, Event, Session, UdpMode};
+use broadcast_client::{Action, Config, ConnId, Event, Session};
 
 use super::replay::{Replay, TimedEvent};
 use broadcast_common::stage::Timestamp;
@@ -49,15 +49,10 @@ impl WireHost {
         let now = self.now_us();
         while let Some(a) = self.session.poll(ts(now)) {
             match a {
-                Action::UdpBind {
-                    conn,
-                    host,
-                    port,
-                    mode,
-                    ..
+                Action::UdpConnect {
+                    conn, host, port, ..
                 } => {
-                    assert_eq!(mode, UdpMode::Connect);
-                    let peer = (host.as_str(), port)
+                    let peer = (host.to_string(), port)
                         .to_socket_addrs()
                         .unwrap()
                         .next()

@@ -339,7 +339,9 @@ pub fn http_requests(actions: &[Action]) -> Vec<(ConnId, String)> {
 
 pub fn oracle_events(playlist_url: &str, bodies: &HashMap<String, Vec<u8>>) -> Vec<Event> {
     use hls_runtime::client::{Action as HlsAction, HlsClient, Output};
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(playlist_url));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        url::Url::parse(playlist_url).expect("URL"),
+    ));
     let mut out = Vec::new();
     let mut joins: HashMap<transmux::TrackId, transmux::LiveJoin> = HashMap::new();
     for _ in 0..10_000 {
@@ -384,12 +386,12 @@ pub fn oracle_events(playlist_url: &str, bodies: &HashMap<String, Vec<u8>>) -> V
             Some(a @ HlsAction::FetchPlaylist { .. }) => {
                 let url = a.playlist_request_url().expect("playlist url");
                 client
-                    .on_playlist(bodies.get(&url).expect("oracle playlist body"))
+                    .on_playlist(bodies.get(url.as_str()).expect("oracle playlist body"))
                     .expect("oracle playlist");
             }
             Some(HlsAction::FetchResource { id, url, .. }) => {
                 client
-                    .on_resource(id, bodies.get(&url).expect("oracle resource body"))
+                    .on_resource(id, bodies.get(url.as_str()).expect("oracle resource body"))
                     .expect("oracle resource");
             }
             Some(_) => {}

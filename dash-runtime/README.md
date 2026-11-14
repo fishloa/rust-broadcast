@@ -75,12 +75,13 @@ Playing a static MPD (the host performs the I/O):
 ```rust
 use broadcast_common::stage::Timestamp;
 use dash_runtime::client::{Action, DashClient, DashClientConfig};
+use url::Url;
 
 // Every instant is the host's own monotonic clock, in microseconds.
 let at = |us: u64| Timestamp::from_micros(us);
-let mut client = DashClient::new(DashClientConfig::new("https://origin.example/vod/manifest.mpd"));
+let mut client = DashClient::new(DashClientConfig::new(Url::parse("https://origin.example/vod/manifest.mpd").unwrap()));
 let Some(Action::FetchMpd { url, .. }) = client.poll(at(0)) else { unreachable!() };
-assert_eq!(url, "https://origin.example/vod/manifest.mpd");
+assert_eq!(url.as_str(), "https://origin.example/vod/manifest.mpd");
 // GET it, then client.on_mpd(now, &body); poll() now yields FetchInit / FetchIndex /
 // FetchSegment actions, each answered with on_init / on_index / on_segment (or
 // on_failure), and next_output() yields Manifest, Tracks, Samples ... EndOfStream.
@@ -91,9 +92,10 @@ Playing a live MPD (the host performs the I/O and tells the client the time):
 ```rust
 use broadcast_common::stage::Timestamp;
 use dash_runtime::client::{Action, DashClient, DashClientConfig};
+use url::Url;
 
 let at = |us: u64| Timestamp::from_micros(us);
-let mut client = DashClient::new(DashClientConfig::new("https://origin.example/live/manifest.mpd"));
+let mut client = DashClient::new(DashClientConfig::new(Url::parse("https://origin.example/live/manifest.mpd").unwrap()));
 // Optional: the host's UTC clock, read back to back with the monotonic clock. Without it
 // (and without a UTCTiming element) the client falls back to the MPD response's Date.
 client.set_wall_clock(at(0), 1_788_000_000_000_000);

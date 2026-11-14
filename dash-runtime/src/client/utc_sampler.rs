@@ -13,6 +13,7 @@ use crate::timing::utc_timing::{
     Exchange, UtcSample, UtcScheme, sample_from_body, sample_from_date_header, sample_from_direct,
 };
 use broadcast_dash::UtcTiming;
+use url::Url;
 
 const STATUS_METHOD_NOT_ALLOWED: u16 = 405;
 const STATUS_NOT_IMPLEMENTED: u16 = 501;
@@ -20,7 +21,7 @@ const STATUS_NOT_IMPLEMENTED: u16 = 501;
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Cand {
     Direct(String),
-    Http { scheme: UtcScheme, url: String },
+    Http { scheme: UtcScheme, url: Url },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,7 +64,7 @@ pub(crate) struct UtcSampler {
 /// The candidates an MPD offers, in the order they are tried: `direct` and
 /// the HTTP schemes in document order, `http-head` last (IOP 4.7.2: a cache
 /// with an unsynchronised clock makes `Date` the weakest source).
-fn ordered(elements: &[UtcTiming], accept: &mut dyn FnMut(&str) -> Option<String>) -> Vec<Cand> {
+fn ordered(elements: &[UtcTiming], accept: &mut dyn FnMut(&str) -> Option<Url>) -> Vec<Cand> {
     let mut first = Vec::new();
     let mut last = Vec::new();
     for e in elements {
@@ -101,7 +102,7 @@ impl UtcSampler {
     /// absolute URL to fetch, or `None` to skip it.
     pub(crate) fn new(
         elements: &[UtcTiming],
-        accept: &mut dyn FnMut(&str) -> Option<String>,
+        accept: &mut dyn FnMut(&str) -> Option<Url>,
         mpd_exchange: Exchange,
     ) -> Self {
         Self {

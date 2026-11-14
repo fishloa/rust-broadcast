@@ -82,6 +82,7 @@ Multicast (not run here, needs a network):
 ```rust,no_run
 # #[cfg(feature = "udp")] {
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::num::NonZeroU32;
 use broadcast_common::net::{MulticastInterface, MulticastJoin, UdpOptions};
 use dvb_stream::UdpSectionStream;
 
@@ -91,7 +92,7 @@ let join = MulticastJoin::new(IpAddr::V4(Ipv4Addr::new(239, 0, 0, 1)))
     .with_interface(MulticastInterface::V4(Ipv4Addr::UNSPECIFIED));
 let options = UdpOptions::new()
     .with_join(join)
-    .with_recv_buffer_bytes(4 << 20);
+    .with_recv_buffer_bytes(NonZeroU32::new(4 << 20).unwrap());
 let socket = dvb_stream::udp::bind_udp(bind_addr, &options)?;
 let _stream = UdpSectionStream::from_socket(tokio::net::UdpSocket::from_std(socket.into())?);
 # Ok(()) }

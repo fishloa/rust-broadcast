@@ -26,13 +26,7 @@ fn make_state() -> Arc<AppState> {
     store.set_init(program, vec![0xAA; 4]);
     store.add_part(
         program,
-        transmux::PartInfo {
-            bytes: vec![0x10; 4],
-            duration: 0.5,
-            independent: true,
-            segment_seq: 1,
-            part_index: 0,
-        },
+        transmux::PartInfo::new(vec![0x10; 4], 0.5, 1, 0).with_independent(true),
     );
     let mut streams = HashMap::new();
     streams.insert(

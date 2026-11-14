@@ -24,6 +24,7 @@ use hls_runtime::client::{Action, HlsClient, Output, ResourceId};
 use transmux::TrackId;
 use transmux::ll_hls::{LlHlsSegmenter, PartInfo, SegmentInfo};
 use transmux::{CodecConfig, Sample, TrackSpec};
+use url::Url;
 
 use crate::dummy_avc_config::dummy_avc_config;
 
@@ -68,16 +69,13 @@ fn abs_uri(relative: &str) -> String {
 }
 
 fn part_spec(p: &PartInfo) -> PartSpec {
-    PartSpec {
-        uri: part_uri(p),
+    PartSpec::new(
+        part_uri(p),
         // Test fixture data: every `PartInfo::duration` literal in this
         // file is a small positive constant (issue #1140).
-        duration: DecimalSeconds::new(p.duration).expect("fixture duration is finite, >= 0"),
-        independent: p.independent,
-        byte_range: None,
-        gap: false,
-        extra_attrs: vec![],
-    }
+        DecimalSeconds::new(p.duration).expect("fixture duration is finite, >= 0"),
+    )
+    .with_independent(p.independent)
 }
 
 /// Render a full LL-HLS media playlist from whatever the segmenter has
@@ -147,19 +145,20 @@ impl PlaylistBuilder<'_> {
             open_segment,
             endlist: self.endlist,
             extra_tags: vec![],
-            low_latency: Some(LowLatencyConfig {
-                // Test fixture data: `part_target_secs` is a small positive
-                // constant in every case this file builds (issue #1140).
-                part_target: Some(
-                    DecimalSeconds::new(self.part_target_secs)
-                        .expect("fixture part_target_secs is finite, >= 0"),
-                ),
-                part_hold_back: Some(
-                    DecimalSeconds::new(3.0 * self.part_target_secs)
-                        .expect("fixture part_target_secs is finite, >= 0"),
-                ),
-                preload_hint_part,
-                ..Default::default()
+            low_latency: Some({
+                let mut cfg = LowLatencyConfig::default()
+                    // Test fixture data: `part_target_secs` is a small positive
+                    // constant in every case this file builds (issue #1140).
+                    .with_part_target(
+                        DecimalSeconds::new(self.part_target_secs)
+                            .expect("fixture part_target_secs is finite, >= 0"),
+                    )
+                    .with_part_hold_back(
+                        DecimalSeconds::new(3.0 * self.part_target_secs)
+                            .expect("fixture part_target_secs is finite, >= 0"),
+                    );
+                cfg.preload_hint_part = preload_hint_part;
+                cfg
             }),
             iframes_only: false,
             rendition_reports: vec![],
@@ -182,10 +181,10 @@ impl Origin {
             Action::FetchResource { id, url, .. } => {
                 let bytes = if *id == ResourceId::Init {
                     self.init_bytes.clone()
-                } else if let Some(b) = self.parts_by_uri.get(url) {
+                } else if let Some(b) = self.parts_by_uri.get(url.as_str()) {
                     b.clone()
                 } else {
-                    self.segments_by_uri.get(url).cloned()?
+                    self.segments_by_uri.get(url.as_str()).cloned()?
                 };
                 Some((*id, bytes))
             }
@@ -323,19 +322,17 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
     };
 
     // === Drive the client ===
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(PLAYLIST_URL));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(PLAYLIST_URL).expect("URL"),
+    ));
 
     // 1. First action: fetch the playlist (no LL info known yet).
     let first = client.poll().expect("first action");
     match &first {
-        Action::FetchPlaylist {
-            url,
-            blocking,
-            skip,
-        } => {
-            assert_eq!(url, PLAYLIST_URL);
-            assert!(blocking.is_none());
-            assert!(!skip);
+        Action::FetchPlaylist(r) => {
+            assert_eq!(r.url.as_str(), PLAYLIST_URL);
+            assert!(r.blocking.is_none());
+            assert!(!r.skip);
         }
         other => panic!("expected FetchPlaylist, got {other:?}"),
     }
@@ -349,7 +346,7 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
     assert!(
         actions
             .iter()
-            .any(|a| matches!(a, Action::FetchResource { id: ResourceId::Init, url, .. } if url == INIT_URL)),
+            .any(|a| matches!(a, Action::FetchResource { id: ResourceId::Init, url, .. } if url.as_str() == INIT_URL)),
         "must request the init segment: {actions:#?}"
     );
     // Assert: every part of segment 1 requested.
@@ -358,7 +355,7 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
         assert!(
             actions.iter().any(|a| matches!(a,
                 Action::FetchResource { id: ResourceId::Part { msn: 1, part }, url, .. }
-                    if *part == p.part_index as u64 && *url == want_url
+                    if *part == p.part_index as u64 && url.as_str() == want_url
             )),
             "must request seg1 part {}: {actions:#?}",
             p.part_index
@@ -381,7 +378,7 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
     assert!(
         actions.iter().any(|a| matches!(a,
             Action::FetchResource { id: ResourceId::Part { msn: 2, part: 1 }, url, .. }
-                if url == "http://origin/live/seg2.1.m4s"
+                if url.as_str() == "http://origin/live/seg2.1.m4s"
         )),
         "must prefetch the EXT-X-PRELOAD-HINT part (seg2 part 1): {actions:#?}"
     );
@@ -392,9 +389,9 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
         .find(|a| matches!(a, Action::FetchPlaylist { .. }))
         .expect("a reload action must be queued");
     match reload {
-        Action::FetchPlaylist { url, blocking, .. } => {
-            assert_eq!(url, PLAYLIST_URL);
-            let b = blocking.expect("must be a blocking reload (LL playlist)");
+        Action::FetchPlaylist(r) => {
+            assert_eq!(r.url.as_str(), PLAYLIST_URL);
+            let b = r.blocking.expect("must be a blocking reload (LL playlist)");
             assert_eq!(b.msn, 2, "blocking reload must target seg 2");
             assert_eq!(
                 b.part,
@@ -405,8 +402,8 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
         _ => unreachable!(),
     }
     let reload_url = reload.playlist_request_url().unwrap();
-    assert!(reload_url.contains("_HLS_msn=2"), "{reload_url}");
-    assert!(reload_url.contains("_HLS_part=1"), "{reload_url}");
+    assert!(reload_url.as_str().contains("_HLS_msn=2"), "{reload_url}");
+    assert!(reload_url.as_str().contains("_HLS_part=1"), "{reload_url}");
 
     // 3. Deliver every FetchResource the client asked for, from the origin
     //    fixture (init, seg1's 3 parts, seg2's part 0, and the prefetched
@@ -470,12 +467,12 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
     // (0 and 1, both already delivered) — must produce ZERO new fetch
     // actions for segment 2 (no re-fetch of the whole segment, no re-fetch
     // of its already-delivered parts), only the next reload. ===
-    let seg2_closed = SegmentInfo {
-        bytes: Vec::new(), // never fetched whole in the LL (parts-coalesce) path
-        duration: seg2_all_parts.iter().map(|p| p.duration).sum(),
-        segment_seq: 2,
-        part_count: 2,
-    };
+    let seg2_closed = SegmentInfo::new(
+        Vec::new(), // never fetched whole in the LL (parts-coalesce) path
+        seg2_all_parts.iter().map(|p| p.duration).sum(),
+        2,
+    )
+    .with_part_count(2);
     let closed2 = vec![
         (ready_segments[0].clone(), seg1_parts.clone()),
         (seg2_closed, seg2_all_parts.clone()),
@@ -530,14 +527,10 @@ fn can_block_reload_no_yields_non_blocking_reload_with_backoff() {
             uri: "seg0.m4s".to_string(),
             duration: DecimalSeconds::new(1.0).unwrap(),
             discontinuous: false,
-            parts: vec![PartSpec {
-                uri: "seg0.0.m4s".to_string(),
-                duration: DecimalSeconds::new(1.0).unwrap(),
-                independent: true,
-                byte_range: None,
-                gap: false,
-                extra_attrs: vec![],
-            }],
+            parts: vec![
+                PartSpec::new("seg0.0.m4s".to_string(), DecimalSeconds::new(1.0).unwrap())
+                    .with_independent(true),
+            ],
             byte_range: None,
             map: Some(MapTag {
                 uri: INIT_URL.to_string(),
@@ -549,19 +542,21 @@ fn can_block_reload_no_yields_non_blocking_reload_with_backoff() {
         open_segment: None,
         endlist: false,
         extra_tags: vec![],
-        low_latency: Some(LowLatencyConfig {
-            part_target: Some(DecimalSeconds::new(0.5).unwrap()),
-            part_hold_back: Some(DecimalSeconds::new(1.5).unwrap()),
-            can_block_reload: false,
-            ..Default::default()
-        }),
+        low_latency: Some(
+            LowLatencyConfig::default()
+                .with_part_target(DecimalSeconds::new(0.5).unwrap())
+                .with_part_hold_back(DecimalSeconds::new(1.5).unwrap())
+                .with_can_block_reload(false),
+        ),
         iframes_only: false,
         rendition_reports: vec![],
         skip: None,
         ..Default::default()
     };
 
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(PLAYLIST_URL));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(PLAYLIST_URL).expect("URL"),
+    ));
     let _ = client.poll(); // discard the initial plain GET
     client
         .on_playlist(pl.to_m3u8().expect("valid playlist").as_bytes())
@@ -573,9 +568,9 @@ fn can_block_reload_no_yields_non_blocking_reload_with_backoff() {
         .find(|a| matches!(a, Action::FetchPlaylist { .. }))
         .expect("a reload action must be queued");
     match reload {
-        Action::FetchPlaylist { blocking, .. } => {
+        Action::FetchPlaylist(r) => {
             assert!(
-                blocking.is_none(),
+                r.blocking.is_none(),
                 "CAN-BLOCK-RELOAD=NO must never produce a blocking reload: {reload:?}"
             );
         }
@@ -652,7 +647,9 @@ fn non_ll_playlist_plays_via_full_segment_fallback() {
         ..Default::default()
     };
 
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(PLAYLIST_URL));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(PLAYLIST_URL).expect("URL"),
+    ));
     let _ = client.poll();
     client
         .on_playlist(pl.to_m3u8().expect("valid playlist").as_bytes())
@@ -663,10 +660,7 @@ fn non_ll_playlist_plays_via_full_segment_fallback() {
     assert!(
         !actions.iter().any(|a| matches!(
             a,
-            Action::FetchPlaylist {
-                blocking: Some(_),
-                ..
-            }
+            Action::FetchPlaylist(r) if r.blocking.is_some()
         )),
         "non-LL playlist must never request a blocking reload: {actions:#?}"
     );
@@ -681,7 +675,7 @@ fn non_ll_playlist_plays_via_full_segment_fallback() {
     assert!(actions.iter().any(|a| matches!(
         a,
         Action::FetchResource { id: ResourceId::Segment { msn: 0 }, url, .. }
-            if url == "http://origin/live/seg1.m4s"
+            if url.as_str() == "http://origin/live/seg1.m4s"
     )));
 
     for a in &actions {

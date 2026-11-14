@@ -9,7 +9,9 @@ use core::time::Duration;
 use mpeg_ts::ts::TS_SYNC_BYTE;
 use transmux::TrackId;
 
+use ::url::Url;
 use broadcast_common::Unpackage;
+use broadcast_common::range::ByteSpan;
 use broadcast_common::timescale::Timescale;
 use broadcast_common::url_ref;
 use broadcast_hls::{
@@ -199,8 +201,8 @@ enum InitFetch {
 #[derive(Debug)]
 struct InitSlot {
     map: MapTag,
-    url: String,
-    byte_range: Option<(u64, u64)>,
+    url: Url,
+    byte_range: Option<ByteSpan>,
     encryption: Option<MediaKey>,
     crypto: Option<SegmentCrypto>,
     fetch: InitFetch,
@@ -363,8 +365,8 @@ fn program_date_time_ms(seg: &MediaSegment) -> Option<i64> {
 ///   unchanged; the two never overlap for a single playlist.
 #[derive(Debug)]
 pub struct HlsClient {
-    playlist_url: String,
-    base_override: Option<String>,
+    playlist_url: Url,
+    base_override: Option<Url>,
     variant_policy: VariantPolicy,
     master: Option<MasterSelection>,
 
@@ -402,9 +404,9 @@ pub struct HlsClient {
     pending_demux: VecDeque<(ResourceId, Vec<u8>)>,
 
     /// Key id per distinct absolute key URI.
-    key_ids: BTreeMap<String, KeyId>,
+    key_ids: BTreeMap<Url, KeyId>,
     /// The URI each assigned id was issued for.
-    key_urls: BTreeMap<KeyId, String>,
+    key_urls: BTreeMap<KeyId, Url>,
     /// Keys fetched so far, cached for the life of the client.
     key_material: BTreeMap<KeyId, KeyBytes>,
     /// Keys whose fetch is outstanding.
@@ -423,7 +425,7 @@ pub struct HlsClient {
     requested: BTreeSet<ResourceId>,
     /// URL and byte range of every Part/Segment fetch issued, so [`Self::retry_resource`] can re-request a failed one
     /// without a playlist reload. Pruned with the other MSN-keyed records.
-    resource_requests: BTreeMap<ResourceId, (String, Option<(u64, u64)>)>,
+    resource_requests: BTreeMap<ResourceId, (Url, Option<ByteSpan>)>,
     /// Ids whose bytes `on_resource` has accepted (delivered *or* buffered in
     /// [`Self::pending_demux`]) — the exactly-once guard against a second
     /// delivery of the same id. Pruned with the other MSN-keyed sets.
@@ -522,19 +524,19 @@ pub fn choose_variant(variants: &[VariantInfo], policy: &VariantPolicy) -> usize
 #[non_exhaustive]
 pub struct HlsClientConfig {
     /// The Media (or Master) Playlist URL to follow.
-    pub playlist_url: String,
+    pub playlist_url: Url,
     /// How a Master Playlist's variant is chosen.
     pub variant_policy: VariantPolicy,
     /// The URL relative playlist URIs resolve against until the first playlist
     /// response says otherwise; `None` resolves against `playlist_url`.
-    pub playlist_base: Option<String>,
+    pub playlist_base: Option<Url>,
 }
 
 impl HlsClientConfig {
     /// A config following `playlist_url` with the default [`VariantPolicy`].
-    pub fn new(playlist_url: impl Into<String>) -> Self {
+    pub fn new(playlist_url: Url) -> Self {
         HlsClientConfig {
-            playlist_url: playlist_url.into(),
+            playlist_url,
             variant_policy: VariantPolicy::default(),
             playlist_base: None,
         }
@@ -549,8 +551,8 @@ impl HlsClientConfig {
 
     /// Replace [`HlsClientConfig::playlist_base`].
     #[must_use]
-    pub fn with_playlist_base(mut self, playlist_base: impl Into<String>) -> Self {
-        self.playlist_base = Some(playlist_base.into());
+    pub fn with_playlist_base(mut self, playlist_base: Url) -> Self {
+        self.playlist_base = Some(playlist_base);
         self
     }
 }
@@ -562,11 +564,11 @@ impl HlsClient {
     pub fn new(config: HlsClientConfig) -> Self {
         let playlist_url = config.playlist_url;
         let mut pending_actions = VecDeque::new();
-        pending_actions.push_back(Action::FetchPlaylist {
+        pending_actions.push_back(Action::FetchPlaylist(super::action::PlaylistRequest {
             url: playlist_url.clone(),
             blocking: None,
             skip: false,
-        });
+        }));
         Self {
             playlist_url,
             base_override: config.playlist_base,
@@ -613,20 +615,21 @@ impl HlsClient {
     }
 
     /// The Media Playlist URL this client is following.
-    pub fn playlist_url(&self) -> &str {
+    pub fn playlist_url(&self) -> &Url {
         &self.playlist_url
     }
 
     /// Set the URL relative playlist URIs resolve against: the final URL of the next playlist
     /// response after redirects (RFC 3986 section 5.1.3). Reloads keep requesting
     /// [`HlsClient::playlist_url`]; the base is cleared when the client switches to another
-    /// playlist URL.
-    pub fn set_playlist_base(&mut self, base: impl Into<String>) {
-        self.base_override = Some(base.into());
+    /// playlist URL. A pull client that follows redirects uses this per response (the config's
+    /// [`HlsClientConfig::playlist_base`] is only the initial value).
+    pub fn set_playlist_base(&mut self, base: Url) {
+        self.base_override = Some(base);
     }
 
-    fn base(&self) -> &str {
-        self.base_override.as_deref().unwrap_or(&self.playlist_url)
+    fn base(&self) -> &Url {
+        self.base_override.as_ref().unwrap_or(&self.playlist_url)
     }
 
     /// Whether a playlist carrying `EXT-X-ENDLIST` has been processed (the stream is VOD or
@@ -652,21 +655,28 @@ impl HlsClient {
         if index >= variants_len {
             return Err(Error::NoSuchVariant { index });
         }
-        let url = self
+        let variant_url = self
             .master
             .as_ref()
             .and_then(|m| m.variants.get(index))
             .map(|v| v.url.clone())
             .ok_or(Error::NoSuchVariant { index })?;
+        let url = url_ref::resolve(self.base(), &variant_url).map_err(|source| {
+            Error::UnresolvableReference {
+                uri: variant_url.clone(),
+                source,
+            }
+        })?;
         self.restart_after_regression()?;
         self.pending_actions.clear();
         self.playlist_url = url.clone();
         self.base_override = None;
-        self.pending_actions.push_back(Action::FetchPlaylist {
-            url,
-            blocking: None,
-            skip: false,
-        });
+        self.pending_actions
+            .push_back(Action::FetchPlaylist(super::action::PlaylistRequest {
+                url,
+                blocking: None,
+                skip: false,
+            }));
         if let Some(m) = &mut self.master {
             m.chosen = index;
         }
@@ -721,7 +731,7 @@ impl HlsClient {
         let text = core::str::from_utf8(bytes)?;
         if text.contains("#EXT-X-STREAM-INF") {
             let master = MasterPlaylist::parse(text)?;
-            let base = self.base().to_string();
+            let base = self.base().clone();
             let mut variants: Vec<VariantInfo> = Vec::new();
             for v in &master.variants {
                 let Some(resolved) = self.fetch_url(&base, &v.uri) else {
@@ -769,14 +779,21 @@ impl HlsClient {
             else {
                 return Err(Error::NoSuchVariant { index: chosen });
             };
+            let chosen_url = url_ref::resolve(&base, &chosen_url).map_err(|source| {
+                Error::UnresolvableReference {
+                    uri: chosen_url,
+                    source,
+                }
+            })?;
             self.playlist_url = chosen_url.clone();
             self.base_override = None;
             self.pending_actions.clear();
-            self.pending_actions.push_back(Action::FetchPlaylist {
-                url: chosen_url,
-                blocking: None,
-                skip: false,
-            });
+            self.pending_actions
+                .push_back(Action::FetchPlaylist(super::action::PlaylistRequest {
+                    url: chosen_url,
+                    blocking: None,
+                    skip: false,
+                }));
             return Ok(());
         }
         let playlist = MediaPlaylist::parse(text)?;
@@ -898,9 +915,9 @@ impl HlsClient {
                     };
                     if !self.requested.contains(&id)
                         && !self.delivered_parts.contains(&(next_msn, part_idx))
+                        && let Ok(url) = Url::parse(&url::resolve(self.base(), hint_uri))
                     {
-                        let url = url::resolve(self.base(), hint_uri);
-                        let byte_range = self.resolve_hint_byte_range(&url, ll)?;
+                        let byte_range = self.resolve_hint_byte_range(url.as_str(), ll)?;
                         self.request_resource(id, url, byte_range);
                     }
                 }
@@ -952,11 +969,12 @@ impl HlsClient {
                 .and_then(|ll| ll.can_skip_until)
                 .is_some();
             let skip = can_skip && self.last_full_playlist.is_some();
-            self.pending_actions.push_back(Action::FetchPlaylist {
-                url: self.playlist_url.clone(),
-                blocking,
-                skip,
-            });
+            self.pending_actions
+                .push_back(Action::FetchPlaylist(super::action::PlaylistRequest {
+                    url: self.playlist_url.clone(),
+                    blocking,
+                    skip,
+                }));
             if blocking.is_none() {
                 self.pending_actions
                     .push_back(Action::Wait(reload_wait(playlist.target_duration)));
@@ -982,11 +1000,12 @@ impl HlsClient {
                 .push_back(Action::Wait(reload_wait(delta.target_duration)));
         }
         self.full_reload_requested = true;
-        self.pending_actions.push_back(Action::FetchPlaylist {
-            url: self.playlist_url.clone(),
-            blocking: None,
-            skip: false,
-        });
+        self.pending_actions
+            .push_back(Action::FetchPlaylist(super::action::PlaylistRequest {
+                url: self.playlist_url.clone(),
+                blocking: None,
+                skip: false,
+            }));
         Error::DeltaNotMergeable {
             media_sequence: delta.media_sequence,
             skipped_segments: delta.skip.as_ref().map_or(0, |s| s.skipped_segments),
@@ -1000,15 +1019,16 @@ impl HlsClient {
         if self
             .pending_actions
             .iter()
-            .any(|a| matches!(a, Action::FetchPlaylist { .. }))
+            .any(|a| matches!(a, Action::FetchPlaylist(_)))
         {
             return false;
         }
-        self.pending_actions.push_back(Action::FetchPlaylist {
-            url: self.playlist_url.clone(),
-            blocking: None,
-            skip: false,
-        });
+        self.pending_actions
+            .push_back(Action::FetchPlaylist(super::action::PlaylistRequest {
+                url: self.playlist_url.clone(),
+                blocking: None,
+                skip: false,
+            }));
         true
     }
 
@@ -1133,11 +1153,12 @@ impl HlsClient {
     /// The query is not part of the identity: a CDN that re-signs the map URI
     /// on every reload (as it does segment URIs, see [`without_query`]) still
     /// names the same init.
-    fn init_slot_for(&self, url: &str, byte_range: &Option<ByteRange>) -> Option<InitId> {
+    fn init_slot_for(&self, url: &Url, byte_range: &Option<ByteRange>) -> Option<InitId> {
         self.inits
             .iter()
             .find(|(_, slot)| {
-                without_query(&slot.url) == without_query(url) && slot.map.byte_range == *byte_range
+                without_query(slot.url.as_str()) == without_query(url.as_str())
+                    && slot.map.byte_range == *byte_range
             })
             .map(|(id, _)| *id)
     }
@@ -1164,7 +1185,7 @@ impl HlsClient {
             .iter()
             .find(|e| e.map == *map)
             .map_or((None, 0), |e| (e.encryption.clone(), e.first_msn));
-        let byte_range = self.resolve_byte_range(&url, &map.byte_range)?;
+        let byte_range = self.resolve_byte_range(url.as_str(), &map.byte_range)?;
         let crypto = match key.as_ref().and_then(|k| k.uri.as_deref().map(|u| (k, u))) {
             Some((key, uri)) => {
                 let key_id = self.ensure_key_requested(uri)?;
@@ -1822,7 +1843,7 @@ impl HlsClient {
                     return Ok(());
                 };
                 self.bind_init(msn, seg.map.as_ref())?;
-                let byte_range = self.request_byte_range(id, &url, &seg.byte_range)?;
+                let byte_range = self.request_byte_range(id, url.as_str(), &seg.byte_range)?;
                 self.request_resource(id, url, byte_range);
             }
             return Ok(());
@@ -1841,7 +1862,7 @@ impl HlsClient {
                     return Ok(());
                 };
                 self.bind_init(msn, seg.map.as_ref())?;
-                let byte_range = self.request_byte_range(id, &url, &part.byte_range)?;
+                let byte_range = self.request_byte_range(id, url.as_str(), &part.byte_range)?;
                 self.request_resource(id, url, byte_range);
             }
         }
@@ -1896,7 +1917,7 @@ impl HlsClient {
                     return Ok(());
                 };
                 self.bind_init(msn, open.map.as_ref())?;
-                let byte_range = self.request_byte_range(id, &url, &part.byte_range)?;
+                let byte_range = self.request_byte_range(id, url.as_str(), &part.byte_range)?;
                 self.request_resource(id, url, byte_range);
             }
         }
@@ -1914,9 +1935,9 @@ impl HlsClient {
     /// when the guarded resolver in `broadcast_common::url_ref` refuses it:
     /// a reference carrying an ASCII control character is never sanitised into
     /// a different URL and never requested (issue #2458).
-    fn fetch_url(&mut self, base: &str, uri: &str) -> Option<String> {
+    fn fetch_url(&mut self, base: &Url, uri: &str) -> Option<String> {
         match self.resolved_url(base, uri) {
-            Ok(url) => Some(url),
+            Ok(url) => Some(url.to_string()),
             Err(report) => {
                 self.pending_errors.push_back(report);
                 None
@@ -1927,8 +1948,8 @@ impl HlsClient {
     /// The resolved URL, or the [`Error::UnresolvableReference`] to report for
     /// it — without reporting it, so a caller that fails the whole playlist
     /// (an unusable init) can return the error directly.
-    fn resolved_url(&self, base: &str, uri: &str) -> core::result::Result<String, Error> {
-        url_ref::resolve_str(base, uri).map_err(|source| Error::UnresolvableReference {
+    fn resolved_url(&self, base: &Url, uri: &str) -> core::result::Result<Url, Error> {
+        url_ref::resolve(base, uri).map_err(|source| Error::UnresolvableReference {
             uri: uri.to_string(),
             source,
         })
@@ -1938,8 +1959,8 @@ impl HlsClient {
     /// keeps) resolves to, or `None` (with the report queued) when the guarded
     /// resolver refuses it: the segment stays unrequested instead of being
     /// silently renamed (issue #2458).
-    fn segment_url(&mut self, msn: u64, uri: &str) -> Option<String> {
-        match url_ref::resolve_str(self.base(), uri) {
+    fn segment_url(&mut self, msn: u64, uri: &str) -> Option<Url> {
+        match url_ref::resolve(self.base(), uri) {
             Ok(url) => Some(url),
             Err(source) => {
                 self.report_unresolvable(msn, uri, source);
@@ -1972,7 +1993,7 @@ impl HlsClient {
         self.pending_errors.pop_front()
     }
 
-    fn request_resource(&mut self, id: ResourceId, url: String, byte_range: Option<(u64, u64)>) {
+    fn request_resource(&mut self, id: ResourceId, url: Url, byte_range: Option<ByteSpan>) {
         self.requested.insert(id);
         self.resource_requests.insert(id, (url.clone(), byte_range));
         self.outstanding_fetches += 1;
@@ -1991,7 +2012,7 @@ impl HlsClient {
         id: ResourceId,
         url: &str,
         br: &Option<ByteRange>,
-    ) -> Result<Option<(u64, u64)>> {
+    ) -> Result<Option<ByteSpan>> {
         if let Some((_, stored)) = self.resource_requests.get(&id) {
             return Ok(*stored);
         }
@@ -1999,9 +2020,9 @@ impl HlsClient {
     }
 
     /// Resolve a `PartSpec`/`MediaSegment`/`MapTag` `BYTERANGE` into an
-    /// absolute `(offset, length)`, honouring the "omitted offset continues
-    /// the previous sub-range of the same resource" rule (tracked per
-    /// resolved URL).
+    /// absolute [`ByteSpan`] (`offset`, `length`), honouring the "omitted
+    /// offset continues the previous sub-range of the same resource" rule
+    /// (tracked per resolved URL).
     ///
     /// # Errors
     /// [`Error::ByteRangeOverflow`] if `offset + length` (both taken
@@ -2011,7 +2032,7 @@ impl HlsClient {
         &mut self,
         url: &str,
         br: &Option<ByteRange>,
-    ) -> Result<Option<(u64, u64)>> {
+    ) -> Result<Option<ByteSpan>> {
         let Some(br) = br.as_ref() else {
             return Ok(None);
         };
@@ -2027,7 +2048,10 @@ impl HlsClient {
                     length: br.length,
                 })?;
         self.byte_range_cursor.insert(url.to_string(), next_cursor);
-        Ok(Some((offset, br.length)))
+        match core::num::NonZeroU64::new(br.length) {
+            Some(len) => Ok(Some(ByteSpan::new(offset, len))),
+            None => Ok(None),
+        }
     }
 
     /// Same overflow contract as [`Self::resolve_byte_range`] — see
@@ -2036,7 +2060,7 @@ impl HlsClient {
         &mut self,
         url: &str,
         ll: &broadcast_hls::LowLatencyConfig,
-    ) -> Result<Option<(u64, u64)>> {
+    ) -> Result<Option<ByteSpan>> {
         let Some(length) = ll.preload_hint_byte_range_length else {
             return Ok(None);
         };
@@ -2667,6 +2691,10 @@ mod tests {
     use alloc::vec;
     use transmux::sample_aes::aes128_encrypt_segment;
 
+    fn config(url: &str) -> HlsClientConfig {
+        HlsClientConfig::new(Url::parse(url).expect("test URL"))
+    }
+
     const EMPTY_FRAGMENT: &[u8] = &[
         0, 0, 0, 8, b'm', b'o', b'o', b'f', 0, 0, 0, 8, b'm', b'd', b'a', b't',
     ];
@@ -2703,7 +2731,7 @@ mod tests {
     // accepted. Must FAIL if that check is ever removed.
     #[test]
     fn on_resource_rejects_a_never_requested_id() {
-        let mut client = HlsClient::new(HlsClientConfig::new("http://example.com/playlist.m3u8"));
+        let mut client = HlsClient::new(config("http://example.com/playlist.m3u8"));
         let id = ResourceId::Segment { msn: 0 };
 
         let err = client
@@ -2736,9 +2764,13 @@ mod tests {
     // must still be accepted, not spuriously rejected.
     #[test]
     fn on_resource_accepts_a_previously_requested_id() {
-        let mut client = HlsClient::new(HlsClientConfig::new("http://example.com/playlist.m3u8"));
+        let mut client = HlsClient::new(config("http://example.com/playlist.m3u8"));
         let id = ResourceId::Segment { msn: 0 };
-        client.request_resource(id, "http://example.com/seg0.m4s".to_string(), None);
+        client.request_resource(
+            id,
+            Url::parse("http://example.com/seg0.m4s").expect("URL"),
+            None,
+        );
 
         // No init segment cached yet, so this is buffered rather than
         // demuxed — the point here is only that it is *not* rejected as
@@ -2758,7 +2790,7 @@ mod tests {
     // say yes to a genuine TS resource (sync byte, no map ever seen)...
     #[test]
     fn is_ts_segment_true_when_no_map_seen_and_sync_byte_present() {
-        let client = HlsClient::new(HlsClientConfig::new("http://example.com/playlist.m3u8"));
+        let client = HlsClient::new(config("http://example.com/playlist.m3u8"));
         assert!(client.is_ts_segment(&[TS_SYNC_BYTE, 0x40, 0x11, 0x00]));
     }
 
@@ -2768,7 +2800,7 @@ mod tests {
     // misrouted into `TsDemux` (which would reject it as malformed TS).
     #[test]
     fn is_ts_segment_false_for_an_isobmff_resource_with_no_map_seen() {
-        let client = HlsClient::new(HlsClientConfig::new("http://example.com/playlist.m3u8"));
+        let client = HlsClient::new(config("http://example.com/playlist.m3u8"));
         let ftyp_box = b"\x00\x00\x00\x18ftypiso5\x00\x00\x02\x00iso5iso6mp41";
         assert!(!client.is_ts_segment(ftyp_box));
     }
@@ -2781,7 +2813,7 @@ mod tests {
     // fetched bytes belong with.
     #[test]
     fn is_ts_segment_false_once_a_map_has_been_requested() {
-        let mut client = HlsClient::new(HlsClientConfig::new("http://example.com/playlist.m3u8"));
+        let mut client = HlsClient::new(config("http://example.com/playlist.m3u8"));
         client
             .ensure_init_requested(&MapTag {
                 uri: "init.mp4".to_string(),
@@ -2809,7 +2841,7 @@ mod tests {
     // observe that exact panic, then restored the checked_add.
     #[test]
     fn resolve_byte_range_rejects_an_offset_plus_length_that_overflows_u64() {
-        let mut client = HlsClient::new(HlsClientConfig::new("http://example.com/playlist.m3u8"));
+        let mut client = HlsClient::new(config("http://example.com/playlist.m3u8"));
         let br = Some(ByteRange {
             length: u64::MAX,
             offset: Some(1),
@@ -2838,7 +2870,7 @@ mod tests {
     // `offset + length` itself overflows.
     #[test]
     fn resolve_byte_range_rejects_a_cursor_accumulation_that_overflows_u64() {
-        let mut client = HlsClient::new(HlsClientConfig::new("http://example.com/playlist.m3u8"));
+        let mut client = HlsClient::new(config("http://example.com/playlist.m3u8"));
         let url = "http://example.com/seg0.m4s";
         // Seed the cursor near the top of the u64 range with an explicit
         // offset, then the next omitted-offset range pushes it over.
@@ -2846,11 +2878,11 @@ mod tests {
             length: u64::MAX - 10,
             offset: Some(5),
         });
-        let (offset, length) = client
+        let span = client
             .resolve_byte_range(url, &seed)
             .expect("seed range does not itself overflow")
             .expect("Some for a Some(ByteRange)");
-        assert_eq!((offset, length), (5, u64::MAX - 10));
+        assert_eq!((span.offset, span.len.get()), (5, u64::MAX - 10));
 
         let next = Some(ByteRange {
             length: 100,
@@ -2887,7 +2919,7 @@ mod tests {
     // checked/try_from guard.
     #[test]
     fn merge_delta_does_not_panic_on_an_overflowing_skipped_segments() {
-        let mut client = HlsClient::new(HlsClientConfig::new("http://example.com/playlist.m3u8"));
+        let mut client = HlsClient::new(config("http://example.com/playlist.m3u8"));
         let prev = MediaPlaylist {
             media_sequence: 0,
             segments: vec![MediaSegment::default(); 2],
@@ -2900,10 +2932,7 @@ mod tests {
 
         let delta = MediaPlaylist {
             media_sequence: 10, // prefix_start == 10 - 0 == 10
-            skip: Some(broadcast_hls::SkipInfo {
-                skipped_segments: u64::MAX - 5,
-                ..Default::default()
-            }),
+            skip: Some(broadcast_hls::SkipInfo::new(u64::MAX - 5)),
             segments: Vec::new(),
             ..Default::default()
         };
@@ -2931,7 +2960,7 @@ mod tests {
     // the life of the pull. Expected contents are literals.
     #[test]
     fn state_is_pruned_to_the_current_window() {
-        let mut client = HlsClient::new(HlsClientConfig::new("http://example.com/p.m3u8"));
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
         client
             .on_playlist(byte_range_playlist(0, "a.ts").as_bytes())
             .unwrap();
@@ -2970,7 +2999,7 @@ mod tests {
     // bookkeeping below the window is dropped too.
     #[test]
     fn discontinuity_bookkeeping_below_the_window_is_dropped() {
-        let mut client = HlsClient::new(HlsClientConfig::new("http://example.com/p.m3u8"));
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
         let pl = |first: u64| {
             format!(
                 "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n\
@@ -3020,7 +3049,7 @@ mod tests {
 
     #[test]
     fn pending_keyed_is_pruned_with_the_window() {
-        let mut client = HlsClient::new(HlsClientConfig::new("http://example.com/p.m3u8"));
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
         client
             .on_playlist(keyed_playlist(0, 1, "key.bin").as_bytes())
             .unwrap();
@@ -3044,7 +3073,7 @@ mod tests {
 
     #[test]
     fn pending_keyed_is_capped_and_drops_the_oldest_with_a_typed_error() {
-        let mut client = HlsClient::new(HlsClientConfig::new("http://example.com/p.m3u8"));
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
         client
             .on_playlist(keyed_playlist(0, 2, "key.bin").as_bytes())
             .unwrap();
@@ -3076,7 +3105,7 @@ mod tests {
 
     #[test]
     fn key_maps_do_not_grow_with_per_reload_tokenised_key_urls() {
-        let mut client = HlsClient::new(HlsClientConfig::new("http://example.com/p.m3u8"));
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
         for n in 0..8u64 {
             client
                 .on_playlist(keyed_playlist(n, 2, &format!("key.bin?t={n}")).as_bytes())
@@ -3093,7 +3122,7 @@ mod tests {
     #[test]
     fn next_wait_reports_the_queued_wait_hint_without_consuming_it() {
         use core::time::Duration;
-        let mut c = HlsClient::new(HlsClientConfig::new("http://h/p.m3u8"));
+        let mut c = HlsClient::new(config("http://h/p.m3u8"));
         assert_eq!(c.next_wait(), None, "the first queued action is a fetch");
         let _ = c.poll();
         c.on_playlist(

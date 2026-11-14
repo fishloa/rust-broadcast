@@ -9,6 +9,7 @@ use broadcast_client::{
 use broadcast_common::net::{MulticastInterface, MulticastJoin, UdpOptions};
 use broadcast_common::stage::Timestamp;
 use std::net::{IpAddr, Ipv4Addr};
+use std::num::NonZeroU32;
 use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
@@ -76,27 +77,23 @@ fn bind_of(session: &mut Session) -> Action {
 #[test]
 fn a_multicast_url_asks_the_host_to_bind_and_join_the_group() {
     let config = config_with(|cfg| {
-        cfg.udp.options = UdpOptions::new().with_recv_buffer_bytes(4 << 20).with_join(
-            join_on(MulticastInterface::V4(Ipv4Addr::new(192, 168, 1, 10)))
-                .with_source(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 7))),
-        );
+        cfg.udp.options = UdpOptions::new()
+            .with_recv_buffer_bytes(NonZeroU32::new(4 << 20).unwrap())
+            .with_join(
+                join_on(MulticastInterface::V4(Ipv4Addr::new(192, 168, 1, 10)))
+                    .with_source(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 7))),
+            );
     });
     let mut s = Session::open(Url::parse(GROUP).unwrap(), config, ts(0)).unwrap();
-    let Action::UdpBind {
-        host,
-        port,
-        mode,
-        options,
-        ..
-    } = bind_of(&mut s)
-    else {
+    let Action::UdpBind { addr, options, .. } = bind_of(&mut s) else {
         unreachable!()
     };
     assert_eq!(
-        (host.as_str(), port, mode),
-        ("239.1.1.1", 5000, UdpMode::Receive)
+        (addr.ip().to_string().as_str(), addr.port()),
+        ("239.1.1.1", 5000)
     );
-    assert_eq!(options.recv_buffer_bytes, Some(4 << 20));
+    assert!(addr.is_ipv4());
+    assert_eq!(options.recv_buffer_bytes, NonZeroU32::new(4 << 20));
     let join: MulticastJoin = options.join.expect("a multicast join");
     assert_eq!(join.group, "239.1.1.1".parse::<IpAddr>().unwrap());
     assert_eq!(
@@ -127,11 +124,11 @@ fn a_unicast_or_at_prefixed_url_binds_without_a_join() {
         "rtp://[::1]:5000",
     ] {
         let mut s = Session::open(Url::parse(url).unwrap(), Config::default(), ts(0)).unwrap();
-        let Action::UdpBind { options, mode, .. } = bind_of(&mut s) else {
+        let Action::UdpBind { addr, options, .. } = bind_of(&mut s) else {
             unreachable!()
         };
         assert_eq!(options.join, None, "{url}");
-        assert_eq!(mode, UdpMode::Receive, "{url}");
+        assert_eq!(addr.port(), 5000, "{url}");
     }
     let mut s = Session::open(
         Url::parse("rtp://[ff02::1]:5000").unwrap(),
@@ -139,11 +136,34 @@ fn a_unicast_or_at_prefixed_url_binds_without_a_join() {
         ts(0),
     )
     .unwrap();
-    let Action::UdpBind { host, options, .. } = bind_of(&mut s) else {
+    let Action::UdpBind { addr, options, .. } = bind_of(&mut s) else {
         unreachable!()
     };
-    assert_eq!(host, "ff02::1");
+    assert_eq!(addr.ip().to_string(), "ff02::1");
     assert!(options.join.is_some());
+}
+
+/// A UDP/RTP receive URL must name a literal IP: a host name is a typed error at
+/// open (the session never resolves a name, only the host does, for `UdpConnect`).
+#[test]
+fn a_host_name_in_a_receive_url_is_a_typed_error_not_a_guess() {
+    for (url, scheme) in [
+        ("udp://camera.example.test:5000", "udp"),
+        ("rtp://camera.example.test:5000", "rtp"),
+    ] {
+        match Session::open(Url::parse(url).unwrap(), Config::default(), ts(0)) {
+            Err(Error::DatagramHostNotIp { scheme: got, host }) => {
+                assert_eq!(got, scheme, "{url}");
+                assert_eq!(host, "camera.example.test", "{url}");
+            }
+            other => panic!("{url}: expected DatagramHostNotIp, got {other:?}"),
+        }
+    }
+    // A literal IP (unicast or multicast) is accepted as a bind.
+    for url in ["udp://127.0.0.1:5000", "udp://239.1.1.1:5000"] {
+        let mut s = Session::open(Url::parse(url).unwrap(), Config::default(), ts(0)).unwrap();
+        assert!(matches!(bind_of(&mut s), Action::UdpBind { .. }), "{url}");
+    }
 }
 
 #[test]
@@ -153,7 +173,7 @@ fn bad_udp_urls_and_configs_are_typed_errors() {
     };
     assert!(matches!(
         open("udp://example.com:5000", Config::default()),
-        Error::InvalidUrl(_)
+        Error::DatagramHostNotIp { scheme: "udp", .. }
     ));
     assert!(matches!(
         open("udp://239.1.1.1", Config::default()),
@@ -203,11 +223,6 @@ fn bad_udp_urls_and_configs_are_typed_errors() {
             GROUP,
             udp_cfg(|c| c.reorder_wait_us = 0),
             "udp.reorder_wait_us",
-        ),
-        (
-            GROUP,
-            udp_cfg(|c| c.options = c.options.clone().with_recv_buffer_bytes(0)),
-            "udp.recv_buffer_bytes",
         ),
     ] {
         match open(url, with(udp)) {

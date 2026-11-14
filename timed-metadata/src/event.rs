@@ -70,6 +70,7 @@ pub enum SourcePayload {
 /// The canonical event passed between format adapters.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct TimedEvent {
     /// Event id (`splice_event_id` / emsg `id`).
     pub id: Option<u32>,
@@ -84,6 +85,41 @@ pub struct TimedEvent {
 }
 
 impl TimedEvent {
+    /// Build a canonical event from its required meaning and source, leaving
+    /// `id`/`at`/`duration` unset (set them with [`Self::with_id`] /
+    /// [`Self::with_at`] / [`Self::with_duration`] as applicable).
+    #[must_use]
+    pub fn new(kind: EventKind, source: SourcePayload) -> Self {
+        Self {
+            id: None,
+            kind,
+            at: None,
+            duration: None,
+            source,
+        }
+    }
+
+    /// Attach the event id (`splice_event_id` / emsg `id`).
+    #[must_use]
+    pub fn with_id(mut self, id: u32) -> Self {
+        self.id = Some(id);
+        self
+    }
+
+    /// Attach the media-timeline instant.
+    #[must_use]
+    pub fn with_at(mut self, at: MediaTime) -> Self {
+        self.at = Some(at);
+        self
+    }
+
+    /// Attach the event duration.
+    #[must_use]
+    pub fn with_duration(mut self, duration: MediaDuration) -> Self {
+        self.duration = Some(duration);
+        self
+    }
+
     /// Build from a parsed SCTE-35 section, retaining `raw` verbatim.
     ///
     /// Every `pts_time` is shifted by the section's `pts_adjustment` (SCTE 35

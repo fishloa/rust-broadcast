@@ -53,7 +53,7 @@ pub(crate) struct Req<P, X> {
     pub(crate) purpose: P,
     pub(crate) original_url: alloc::string::String,
     pub(crate) url: Url,
-    pub(crate) byte_range: Option<(u64, u64)>,
+    pub(crate) byte_range: Option<broadcast_common::range::ByteSpan>,
     pub(crate) redirects: u32,
     pub(crate) authed: bool,
     pub(crate) stale_replayed: bool,
@@ -71,7 +71,7 @@ impl<P: PurposeKind, X> Req<P, X> {
     pub(crate) fn new(
         purpose: P,
         url: Url,
-        byte_range: Option<(u64, u64)>,
+        byte_range: Option<broadcast_common::range::ByteSpan>,
         body_limit: usize,
         extra: X,
     ) -> Self {

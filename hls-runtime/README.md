@@ -42,22 +42,25 @@ Drive the client over real ffmpeg fMP4 HLS output, with the playlist text and th
 
 ```rust
 use hls_runtime::client::{Action, HlsClient, Output};
+use url::Url;
 
 let playlist = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:1\n#EXT-X-MEDIA-SEQUENCE:0\n\
     #EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-MAP:URI=\"init.mp4\"\n\
     #EXTINF:1.000000,\nindex0.m4s\n#EXTINF:1.000000,\nindex1.m4s\n#EXTINF:1.000000,\nindex2.m4s\n\
     #EXT-X-ENDLIST\n";
 
-let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new("http://origin/live/index.m3u8"));
+let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+    Url::parse("http://origin/live/index.m3u8").unwrap(),
+));
 // The first action is always a plain playlist GET.
-assert!(matches!(client.poll(), Some(Action::FetchPlaylist { .. })));
+assert!(matches!(client.poll(), Some(Action::FetchPlaylist(_))));
 client.on_playlist(playlist.as_bytes()).unwrap();
 
 let (mut init, mut samples) = (0, 0);
 loop {
     while let Some(action) = client.poll() {
         if let Action::FetchResource { id, url, .. } = action {
-            let file = url.rsplit('/').next().unwrap();
+            let file = url.path_segments().and_then(|s| s.last()).unwrap();
             let bytes = test_fixtures::read(&format!("hls/cmaf-fmp4/{file}"));
             client.on_resource(id, &bytes).unwrap();
         }

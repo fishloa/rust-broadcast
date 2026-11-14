@@ -1,6 +1,7 @@
 //! Master (multivariant) playlist handling in `HlsClient`.
 
 use hls_runtime::client::{Action, Error, HlsClient, Output, VariantPolicy};
+use url::Url;
 
 fn read_ts_fixture(name: &str) -> Vec<u8> {
     let path = test_fixtures::path("hls/ts-hls").join(name);
@@ -11,8 +12,10 @@ const PLAYLIST_URL: &str = "http://fixture/index.m3u8";
 
 #[test]
 fn master_emits_selection_then_fetches_chosen_variant_playlist() {
-    let master_url = "http://example.com/bipbop/master.m3u8";
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(master_url));
+    let master_url = Url::parse("http://example.com/bipbop/master.m3u8").expect("URL");
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        master_url.clone(),
+    ));
     let bytes = test_fixtures::read("hls/real/bipbop-ts/master.m3u8");
     client.on_playlist(&bytes).expect("master parses");
 
@@ -26,8 +29,11 @@ fn master_emits_selection_then_fetches_chosen_variant_playlist() {
 
     let action = client.poll().expect("FetchPlaylist");
     match action {
-        Action::FetchPlaylist { url, .. } => {
-            assert_eq!(url, "http://example.com/bipbop/gear5/prog_index.m3u8");
+        Action::FetchPlaylist(request) => {
+            assert_eq!(
+                request.url.as_str(),
+                "http://example.com/bipbop/gear5/prog_index.m3u8"
+            );
         }
         other => panic!("expected FetchPlaylist, got {other:?}"),
     }
@@ -50,9 +56,9 @@ const TIE_MASTER: &str =
 fn selection_policy_table() {
     let bipbop = || test_fixtures::read("hls/real/bipbop-ts/master.m3u8");
     let hevc = || test_fixtures::read("hls/real/bipbop-fmp4-hevc/master.m3u8");
-    let codecs = |names: [&str; 2]| VariantPolicy {
-        supported_codecs: Some(names.iter().map(|n| (*n).to_string()).collect()),
-        ..Default::default()
+    let codecs = |names: [&str; 2]| {
+        VariantPolicy::default()
+            .with_supported_codecs(names.iter().map(|n| (*n).to_string()).collect())
     };
     let cases: Vec<(&str, Vec<u8>, VariantPolicy, Expect)> = vec![
         (
@@ -64,19 +70,13 @@ fn selection_policy_table() {
         (
             "max_bandwidth picks the highest not above",
             bipbop(),
-            VariantPolicy {
-                max_bandwidth: Some(1_000_000),
-                ..Default::default()
-            },
+            VariantPolicy::default().with_max_bandwidth(1_000_000),
             Expect::Bandwidth(915905),
         ),
         (
             "max_height filters by resolution",
             bipbop(),
-            VariantPolicy {
-                max_height: Some(540),
-                ..Default::default()
-            },
+            VariantPolicy::default().with_max_height(540),
             Expect::Bandwidth(915905),
         ),
         (
@@ -94,10 +94,7 @@ fn selection_policy_table() {
         (
             "none fit falls back to the lowest bandwidth",
             bipbop(),
-            VariantPolicy {
-                max_bandwidth: Some(1),
-                ..Default::default()
-            },
+            VariantPolicy::default().with_max_bandwidth(1),
             Expect::LowestBandwidth,
         ),
         (
@@ -109,8 +106,10 @@ fn selection_policy_table() {
     ];
     for (label, master, policy, expect) in cases {
         let mut client = HlsClient::new(
-            hls_runtime::client::HlsClientConfig::new("http://example.com/bipbop/master.m3u8")
-                .with_variant_policy(policy),
+            hls_runtime::client::HlsClientConfig::new(
+                Url::parse("http://example.com/bipbop/master.m3u8").expect("URL"),
+            )
+            .with_variant_policy(policy),
         );
         client.on_playlist(&master).expect("master parses");
         let sel = match client.next_output().unwrap() {
@@ -141,7 +140,8 @@ fn selection_policy_table() {
 
 #[test]
 fn master_exposes_audio_renditions_with_resolved_urls() {
-    let master_url = "http://example.com/9.6-multivariant-alternative-audio.m3u8";
+    let master_url =
+        Url::parse("http://example.com/9.6-multivariant-alternative-audio.m3u8").expect("URL");
     let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(master_url));
     let Some(bytes) = test_fixtures::require_bytes(
         "hls/spec/9.6-multivariant-alternative-audio.m3u8",
@@ -192,7 +192,7 @@ fn master_exposes_audio_renditions_with_resolved_urls() {
 fn relative_and_absolute_variant_uris_resolve_against_master_url() {
     // relative (bipbop)
     let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
-        "http://example.com/bipbop/master.m3u8",
+        Url::parse("http://example.com/bipbop/master.m3u8").expect("URL"),
     ));
     let bytes = test_fixtures::read("hls/real/bipbop-ts/master.m3u8");
     client.on_playlist(&bytes).expect("master parses");
@@ -207,7 +207,7 @@ fn relative_and_absolute_variant_uris_resolve_against_master_url() {
 
     // absolute (9.4)
     let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
-        "http://base/playlist.m3u8",
+        Url::parse("http://base/playlist.m3u8").expect("URL"),
     ));
     let Some(bytes) = test_fixtures::require_bytes(
         "hls/spec/9.4-multivariant-playlist.m3u8",
@@ -225,8 +225,10 @@ fn relative_and_absolute_variant_uris_resolve_against_master_url() {
 
 #[test]
 fn select_variant_switches_emits_discontinuity_and_repoints() {
-    let master_url = "http://example.com/bipbop/master.m3u8";
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(master_url));
+    let master_url = Url::parse("http://example.com/bipbop/master.m3u8").expect("URL");
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        master_url.clone(),
+    ));
     let bytes = test_fixtures::read("hls/real/bipbop-ts/master.m3u8");
     client.on_playlist(&bytes).expect("master parses");
     let _ = client.next_output(); // Master
@@ -235,8 +237,11 @@ fn select_variant_switches_emits_discontinuity_and_repoints() {
     assert!(matches!(out, Output::Discontinuity));
     let action = client.poll().expect("FetchPlaylist");
     match action {
-        Action::FetchPlaylist { url, .. } => {
-            assert_eq!(url, "http://example.com/bipbop/gear2/prog_index.m3u8");
+        Action::FetchPlaylist(request) => {
+            assert_eq!(
+                request.url.as_str(),
+                "http://example.com/bipbop/gear2/prog_index.m3u8"
+            );
         }
         other => panic!("{other:?}"),
     }
@@ -245,7 +250,7 @@ fn select_variant_switches_emits_discontinuity_and_repoints() {
 #[test]
 fn select_variant_out_of_range_and_before_master_error() {
     let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
-        "http://example.com/m.m3u8",
+        Url::parse("http://example.com/m.m3u8").expect("URL"),
     ));
     assert!(matches!(
         client.select_variant(0),
@@ -254,7 +259,7 @@ fn select_variant_out_of_range_and_before_master_error() {
 
     let bytes = test_fixtures::read("hls/real/bipbop-ts/master.m3u8");
     let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
-        "http://example.com/bipbop/master.m3u8",
+        Url::parse("http://example.com/bipbop/master.m3u8").expect("URL"),
     ));
     client.on_playlist(&bytes).expect("master parses");
     let _ = client.next_output();
@@ -267,7 +272,7 @@ fn select_variant_out_of_range_and_before_master_error() {
 #[test]
 fn media_playlist_input_unchanged() {
     let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
-        "http://example.com/media.m3u8",
+        Url::parse("http://example.com/media.m3u8").expect("URL"),
     ));
     let Some(bytes) = test_fixtures::require_bytes(
         "hls/spec/9.1-simple-media-playlist.m3u8",
@@ -283,7 +288,7 @@ fn media_playlist_input_unchanged() {
 fn full_flow_master_to_samples() {
     let master_text = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nhttp://fixture/index.m3u8\n";
     let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
-        "http://example.com/master.m3u8",
+        Url::parse("http://example.com/master.m3u8").expect("URL"),
     ));
     client
         .on_playlist(master_text.as_bytes())
@@ -295,8 +300,8 @@ fn full_flow_master_to_samples() {
     // drive
     loop {
         match client.poll() {
-            Some(Action::FetchPlaylist { url, .. }) => {
-                if url == PLAYLIST_URL {
+            Some(Action::FetchPlaylist(request)) => {
+                if request.url.as_str() == PLAYLIST_URL {
                     let text = read_ts_fixture("index.m3u8");
                     let text = String::from_utf8(text).expect("utf8");
                     client
@@ -304,11 +309,11 @@ fn full_flow_master_to_samples() {
                         .expect("variant playlist");
                 } else {
                     // shouldn't happen
-                    panic!("unexpected playlist url {url}");
+                    panic!("unexpected playlist url {}", request.url);
                 }
             }
             Some(Action::FetchResource { id, url, .. }) => {
-                let name = url.rsplit('/').next().expect("url path");
+                let name = url.path().rsplit("/").next().expect("url path");
                 let bytes = read_ts_fixture(name);
                 client.on_resource(id, &bytes).expect("resource");
             }
