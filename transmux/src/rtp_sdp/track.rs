@@ -6,6 +6,7 @@ use super::{
     rtpmap_clock_rate,
 };
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+use broadcast_common::timescale::Timescale;
 use crate::pipeline::CodecConfig;
 use alloc::vec::Vec;
 
@@ -32,7 +33,7 @@ pub struct SdpTrack {
     /// parameter sets when an H.264 section carries none (RFC 6184 §8.2.1 allows them in-band).
     pub config: CodecConfig,
     /// RTP clock rate in Hz, from the chosen payload type's `a=rtpmap` (RFC 4566 §6).
-    pub clock_rate: u32,
+    pub clock_rate: Timescale,
     /// The chosen payload type (RFC 3551 §3: 7 bits; dynamic types 96-127); `None` when the
     /// `m=` line's token is not a number in `0..=255`.
     pub payload_type: Option<u8>,
@@ -180,7 +181,7 @@ fn track_of_payload(media: &sdp_types::Media, payload_type: &str) -> Option<SdpT
     Some(SdpTrack {
         kind,
         config,
-        clock_rate,
+        clock_rate: Timescale::new(clock_rate)?,
         payload_type: payload_type.parse::<u8>().ok().filter(|&pt| pt <= 127),
         control: media
             .get_first_attribute_value("control")
@@ -249,7 +250,7 @@ mod tests {
         ));
         let track = sdp_track(&m).unwrap();
         assert_eq!(track.kind, RtpMediaKind::Aac);
-        assert_eq!(track.clock_rate, 48_000);
+        assert_eq!(track.clock_rate, Timescale::from_nonzero(48_000));
     }
 
     #[test]

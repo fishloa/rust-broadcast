@@ -6,8 +6,8 @@ use alloc::vec::Vec;
 use url::Url;
 
 use crate::tshttp::{Config as TsConfig, TsHttpClient};
-use broadcast_common::clock33::PCR_HZ;
-use broadcast_common::timescale::{Rounding, rescale_u64};
+use broadcast_common::clock33::PCR_TIMESCALE;
+use broadcast_common::timescale::{Rounding, Timescale, rescale_u64};
 use transmux::{DemuxEvent, TrackId, TrackSpec};
 
 use mpeg_ts::pid::Pid;
@@ -29,11 +29,11 @@ struct HoldState {
     settle_base_span_us: u64,
 }
 
-fn to_27mhz(ticks: u64, clock_hz: u32) -> u64 {
+fn to_27mhz(ticks: u64, clock_hz: Timescale) -> u64 {
     rescale_u64(
         ticks,
-        clock_hz.into(),
-        (PCR_HZ as u32).into(),
+        clock_hz,
+        PCR_TIMESCALE,
         Rounding::TowardZero,
     )
 }

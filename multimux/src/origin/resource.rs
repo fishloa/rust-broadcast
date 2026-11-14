@@ -33,6 +33,7 @@
 //! advertises an in-progress segment's whole-segment URI (RFC 8216bis
 //! §4.4.4.9), so a well-behaved client never requests one.
 
+use broadcast_common::timescale::Timescale;
 use std::sync::Arc;
 
 use axum::Router;
@@ -54,7 +55,7 @@ const EMSG_SCHEME_ID_URI: &str = "urn:scte:scte35:2013:bin";
 
 /// The `emsg` `timescale` field: the trunk event ring's 90 kHz clock, which
 /// is also `presentation_time`'s clock (ANSI/SCTE 214-3).
-const EMSG_TIMESCALE: u32 = broadcast_common::clock33::PTS_HZ as u32;
+const EMSG_TIMESCALE: Timescale = broadcast_common::clock33::PTS_TIMESCALE;
 
 use crate::http::{self, BLOCKING_RELOAD_TIMEOUT};
 use crate::route::{ProgramServing, RouteHandle};

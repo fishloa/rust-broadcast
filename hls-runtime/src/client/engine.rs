@@ -8,6 +8,7 @@ use container_probe::segment;
 use mpeg_ts::ts::TS_SYNC_BYTE;
 use transmux::TrackId;
 
+use broadcast_common::timescale::Timescale;
 use broadcast_common::Unpackage;
 use broadcast_common::url_ref;
 use broadcast_hls::{
@@ -27,7 +28,7 @@ use broadcast_common::units::MILLIS_PER_SEC;
 /// HLS: the 90 kHz MPEG-2 system clock the PES PTS/DTS are expressed in
 /// (ISO/IEC 13818-1 §2.4.3.7), the same clock `transmux`'s TS demuxer stamps
 /// its samples with.
-const TS_MOVIE_TIMESCALE: u32 = 90_000;
+const TS_MOVIE_TIMESCALE: Timescale = transmux::VIDEO_CLOCK_TIMESCALE;
 
 /// How many Target Durations before the end of a live Playlist the first
 /// segment the client plays must start at the latest (RFC 8216 §6.3.3: "the

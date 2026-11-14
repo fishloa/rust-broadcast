@@ -64,6 +64,9 @@ impl Timescale {
         None => unreachable!(),
     });
 
+    /// Ticks per second of the nanosecond timescale.
+    pub const NANOS: Self = Self::from_nonzero(1_000_000_000);
+
     /// Construct from a value the compiler can prove non-zero: a literal or a
     /// named `const`. A `0` is a compile error, so no runtime value can be
     /// silently flattened to `1`; a runtime `u32` goes through the fallible

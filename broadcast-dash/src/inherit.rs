@@ -183,7 +183,7 @@ fn finish_multi(m: MultiInfo) -> Result<ResolvedMulti, InheritError> {
         return Err(InheritError::DurationAndTimeline);
     }
     Ok(ResolvedMulti {
-        timescale: m.base.timescale.unwrap_or(DEFAULT_TIMESCALE),
+        timescale: m.base.effective_timescale(),
         presentation_time_offset: m
             .base
             .presentation_time_offset

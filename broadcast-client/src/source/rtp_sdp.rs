@@ -5,6 +5,7 @@
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
+use broadcast_common::timescale::Timescale;
 use broadcast_common::Parse;
 use rtp_packet::RtpPacket;
 use rtsp_runtime::MAX_TRACKS;
@@ -20,7 +21,7 @@ struct Declared {
     track_id: TrackId,
     kind: RtpMediaKind,
     config: CodecConfig,
-    clock_rate: u32,
+    clock_rate: Timescale,
     payload_type: u8,
 }
 

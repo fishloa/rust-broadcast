@@ -79,7 +79,7 @@ use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use broadcast_common::clock33::PTS_HZ;
+use broadcast_common::clock33::PTS_TIMESCALE;
 use broadcast_common::timescale::{Rounding, Timescale, rescale_u64};
 use transmux::TrackId;
 
@@ -101,7 +101,6 @@ use crate::segmenter::audio::AudioFollower;
 
 use crate::segmenter::audio::{LEADER_DURATION_HISTORY, LeaderDurations, leader_tracks};
 use crate::segmenter::subtitle::{LeaderPart, SubtitleFollower};
-use broadcast_common::units::NANOS_PER_SEC;
 use broadcast_hls::InstreamId;
 
 /// Configuration for one [`ProgramSegmenter`], replaceable on route reload:
@@ -905,7 +904,7 @@ impl ProgramSegmenter {
                 }
                 match LlHlsSegmenter::with_part_target_at(
                     muxable,
-                    transmux::VIDEO_CLOCK_RATE,
+                    transmux::VIDEO_CLOCK_TIMESCALE,
                     target_duration_secs,
                     part_target_ms,
                     next_seq.value(),
@@ -1616,7 +1615,7 @@ impl ProgramSegmenter {
 
                     match LlHlsSegmenter::with_part_target_at(
                         muxable,
-                        transmux::VIDEO_CLOCK_RATE,
+                        transmux::VIDEO_CLOCK_TIMESCALE,
                         self.config.target_duration_secs,
                         self.config.part_target_ms,
                         next_seq,
@@ -1912,8 +1911,8 @@ impl ProgramSegmenter {
             let delta_ns = self.next_timeline_ns.saturating_sub(anchor.timeline_ns);
             let delta_90k = rescale_u64(
                 delta_ns,
-                (NANOS_PER_SEC as u32).into(),
-                (PTS_HZ as u32).into(),
+                Timescale::NANOS,
+                PTS_TIMESCALE,
                 Rounding::Floor,
             );
             let start_90k = anchor.source_90k.saturating_add(delta_90k);
@@ -2036,7 +2035,7 @@ fn rescale_to_90k(pts: i64, timescale: broadcast_common::timescale::Timescale) -
     rescale_u64(
         u64::try_from(pts).unwrap_or(0),
         timescale,
-        (PTS_HZ as u32).into(),
+        PTS_TIMESCALE,
         Rounding::Floor,
     )
 }

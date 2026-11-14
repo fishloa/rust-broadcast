@@ -13,6 +13,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Demand, Stage, Timestamp, Unpackage};
 use container_probe::{Format, IsobmffLayout, Probe};
 use thiserror::Error;
@@ -617,7 +618,7 @@ where
 /// 90 kHz clock (a 27 MHz system clock divided by 300), per ISO/IEC 13818-1 —
 /// every TS demuxer's track timescales are multiples of it. A named constant
 /// (not a bare `90_000`) so the value's source is cited where it is used.
-const MPEG_TS_MOVIE_TIMESCALE: u32 = 90_000;
+const MPEG_TS_MOVIE_TIMESCALE: Timescale = transmux::VIDEO_CLOCK_TIMESCALE;
 
 /// Convert a non-negative seconds value into a wall-clock [`Duration`] without
 /// panicking — `Duration::from_secs_f64` panics on a non-finite, negative, or

@@ -2,6 +2,7 @@
 
 use std::collections::VecDeque;
 
+use broadcast_common::timescale::Timescale;
 use broadcast_common::Unpackage;
 use broadcast_smooth::{QualityLevel, SmoothManifest, StreamIndex};
 use transmux::smooth_fragment::fragment_tfxd;
@@ -26,7 +27,7 @@ pub(crate) struct HeldFragment {
 
 pub(crate) struct Stream {
     pub(crate) index: StreamIndex,
-    pub(crate) timescale: u32,
+    pub(crate) timescale: Timescale,
     pub(crate) quality: QualityLevel,
     pub(crate) fetched: QualityLevel,
     pub(crate) applied: QualityLevel,
@@ -44,7 +45,7 @@ pub(crate) struct Stream {
 }
 
 impl Stream {
-    pub(crate) fn new(index: StreamIndex, timescale: u32, quality: QualityLevel) -> Self {
+    pub(crate) fn new(index: StreamIndex, timescale: Timescale, quality: QualityLevel) -> Self {
         Self {
             index,
             timescale,

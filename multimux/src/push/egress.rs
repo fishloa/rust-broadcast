@@ -311,11 +311,14 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
         // PMT and the PCR PID from the track set, so a one-track `Media` per
         // sample would map every track onto the first ES PID and flip the
         // PMT frame to frame (#1024).
-        let timescale = self
+        let Some(timescale) = self
             .specs
             .iter()
             .find(|s| s.track_id == track_id)
-            .map_or(1, |s| s.timescale.get());
+            .map(|s| s.timescale)
+        else {
+            return Ok(());
+        };
         let tracks = self
             .specs
             .iter()

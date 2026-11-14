@@ -238,7 +238,7 @@ fn rescale_90k(value: i64, timescale: Timescale) -> i64 {
     rescale_i64(
         value,
         timescale,
-        (clock33::PTS_HZ as u32).into(),
+        clock33::PTS_TIMESCALE,
         Rounding::TowardZero,
     )
 }

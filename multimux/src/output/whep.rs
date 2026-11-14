@@ -111,7 +111,7 @@ use tokio_util::sync::CancellationToken;
 use transmux::ir::Track;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::{
-    DEFAULT_AUDIO_PT, DEFAULT_MTU, DEFAULT_VIDEO_PT, RtpPacket, RtpPacketiser, VIDEO_CLOCK_RATE,
+    DEFAULT_AUDIO_PT, DEFAULT_MTU, DEFAULT_VIDEO_PT, RtpPacket, RtpPacketiser, VIDEO_CLOCK_RATE, VIDEO_CLOCK_TIMESCALE,
 };
 
 use webrtc_runtime::media::{
@@ -1012,7 +1012,7 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
 fn whep_avc_track_spec() -> TrackSpec {
     TrackSpec::new(
         TrackId::new(1),
-        VIDEO_CLOCK_RATE,
+        VIDEO_CLOCK_TIMESCALE,
         CodecConfig::Avc {
             config: transmux::AVCConfigurationBox::new(transmux::AVCDecoderConfigurationRecord {
                 configuration_version: 1,
@@ -1059,7 +1059,7 @@ fn trunk_with_avc_track() -> Arc<Trunk> {
 /// RTP timestamps are modulo 2^32 (RFC 3550 §5.1), so the rescaled
 /// value wraps into the 32-bit range before it is placed in the header.
 fn rescale_to_90k(ticks: u64, from_timescale: broadcast_common::timescale::Timescale) -> u32 {
-    transmux::rtp::rescale_ts(ticks, from_timescale, VIDEO_CLOCK_RATE.into())
+    transmux::rtp::rescale_ts(ticks, from_timescale, VIDEO_CLOCK_TIMESCALE)
 }
 
 /// Overwrites an RTP packet's `sequence number` and `timestamp` fields on

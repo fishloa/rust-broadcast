@@ -287,6 +287,14 @@ pub struct BaseInfo {
     pub representation_index: Option<UrlType>,
 }
 
+impl BaseInfo {
+    /// `@timescale` with its absent default applied (ISO/IEC 23009-1 5.3.9.2.2).
+    #[must_use]
+    pub fn effective_timescale(&self) -> Timescale {
+        self.timescale.unwrap_or(crate::inherit::DEFAULT_TIMESCALE)
+    }
+}
+
 /// `SegmentBase` element.
 #[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]

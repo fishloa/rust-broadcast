@@ -168,7 +168,7 @@ impl AudioFollower {
         let next_seq = writer.next_sequence_number().value();
         let seg = match LlHlsSegmenter::with_part_target_at(
             vec![spec.clone()],
-            transmux::VIDEO_CLOCK_RATE,
+            transmux::VIDEO_CLOCK_TIMESCALE,
             target_duration_secs,
             part_target_ms,
             next_seq,

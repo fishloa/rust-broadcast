@@ -524,7 +524,7 @@ pub mod test_support {
             .expect("valid sprop");
         TrackSpec::new(
             track_id,
-            90_000,
+            transmux::VIDEO_CLOCK_TIMESCALE,
             CodecConfig::Avc {
                 config: avc,
                 width: 0,
@@ -568,7 +568,7 @@ pub mod test_support {
             })
             .collect();
         let track = Track::new(spec, samples);
-        let media = transmux::media::Media::new(vec![track], 90_000);
+        let media = transmux::media::Media::new(vec![track], transmux::VIDEO_CLOCK_TIMESCALE);
         TsMux::default().package(&media).expect("mux to TS")
     }
 }

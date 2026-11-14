@@ -6,6 +6,7 @@ use std::sync::{Arc, LazyLock};
 
 use url::Url;
 
+use broadcast_common::timescale::Timescale;
 use super::output::QualityInfo;
 
 /// Fragments before the live edge a live join starts at.
@@ -28,7 +29,7 @@ pub const DEFAULT_REFRESH_MIN_US: u64 = 500_000;
 /// Longest live manifest refresh wait, in microseconds.
 pub const DEFAULT_REFRESH_MAX_US: u64 = 5_000_000;
 /// `mvhd` timescale of each synthesized init segment (ISO/IEC 14496-12:2026 §8.2.2).
-pub const SYNTHETIC_MOVIE_TIMESCALE: u32 = 90_000;
+pub const SYNTHETIC_MOVIE_TIMESCALE: Timescale = transmux::VIDEO_CLOCK_TIMESCALE;
 /// [`SmoothClientConfig::default`]'s placeholder manifest URL: a default has no
 /// real manifest, so a client built from one is only useful after
 /// [`SmoothClientConfig::new`] or `with_manifest_url`.

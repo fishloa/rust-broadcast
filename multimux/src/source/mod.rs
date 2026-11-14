@@ -791,7 +791,7 @@ pub struct TrackInit {
     /// Codec config built from the SDP fmtp.
     pub config: CodecConfig,
     /// RTP clock rate (Hz) = IR timescale.
-    pub clock_rate: u32,
+    pub clock_rate: broadcast_common::timescale::Timescale,
     /// Per-media `a=control` URL suffix for SETUP (RTSP only; unused by
     /// [`rtp_udp::RtpUdpRoute`], which has no control plane).
     pub control: Option<String>,

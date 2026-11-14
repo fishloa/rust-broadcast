@@ -83,6 +83,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 use transmux::TrackId;
 
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Demand, Parse as _, Serialize as _, Stage, Timestamp};
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::{Notify, OnceCell, mpsc};
@@ -168,7 +169,7 @@ struct AdmittedWhip {
 struct WhipTrack {
     track_id: TrackId,
     payload_type: u8,
-    clock_rate: u32,
+    clock_rate: Timescale,
 }
 
 /// Bind-once, reuse-forever infrastructure — see [`WhipRoute::ensure_infra`]
@@ -696,7 +697,7 @@ struct ParsedOffer {
     mid: String,
     candidates: Vec<String>,
     payload_type: u8,
-    clock_rate: u32,
+    clock_rate: Timescale,
     /// The chosen `m=video` media section, cloned so the answer reconstructs
     /// `m=`/`c=`/codec attributes from the typed offer rather than verbatim
     /// echoed text.
@@ -730,7 +731,9 @@ fn parse_whip_offer(offer: &str) -> Result<ParsedOffer> {
     let (payload_type, rtpmap) = crate::webrtc_session::h264_payload(media).ok_or_else(|| {
         MultimuxError::Sdp("whip: m=video has no H.264 (a=rtpmap naming H264) payload type".into())
     })?;
-    let clock_rate = transmux::rtpmap_clock_rate(rtpmap).unwrap_or(90_000);
+    let clock_rate = transmux::rtpmap_clock_rate(rtpmap)
+        .and_then(Timescale::new)
+        .ok_or_else(|| MultimuxError::Sdp("whip: H.264 a=rtpmap has no valid clock rate".into()))?;
 
     Ok(ParsedOffer {
         remote_ufrag,
@@ -1142,7 +1145,7 @@ pub struct WhipIngestSession {
     media: parking_lot::Mutex<Option<MediaTransport>>,
     depacketiser: RtpStreamDepacketiser,
     pt_to_track: HashMap<u8, TrackId>,
-    clock_rate_by_track: HashMap<TrackId, u32>,
+    clock_rate_by_track: HashMap<TrackId, Timescale>,
     captured: HashMap<TrackId, CapturedConfig>,
     /// Samples observed before every track's config was captured — replayed
     /// immediately once the establishment gate fires. See the module doc.
@@ -1168,7 +1171,7 @@ impl WhipIngestSession {
             spec.track_id,
             transmux::rtp::RtpMediaKind::H264,
             spec.config.clone(),
-            spec.timescale.get(),
+            spec.timescale,
         )]);
         let control = SessionControl::new();
         WhipIngestSession {
@@ -1183,7 +1186,7 @@ impl WhipIngestSession {
             media: parking_lot::Mutex::new(None),
             depacketiser,
             pt_to_track: std::iter::once((payload_type, spec.track_id)).collect(),
-            clock_rate_by_track: std::iter::once((spec.track_id, spec.timescale.get())).collect(),
+            clock_rate_by_track: std::iter::once((spec.track_id, spec.timescale)).collect(),
             captured: std::iter::once((
                 spec.track_id,
                 Some(match &spec.config {
