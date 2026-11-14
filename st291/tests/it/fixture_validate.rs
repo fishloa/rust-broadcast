@@ -18,7 +18,9 @@ fn synthetic_st2038_fixture_conforms_to_st291() {
     let pkt = AncDataPacket::parse(&data).unwrap();
     assert!(!pkt.anc_packets.is_empty());
     for (i, p) in pkt.anc_packets.iter().enumerate() {
-        let r = p.validate();
+        let r = p
+            .validate()
+            .unwrap_or_else(|e| panic!("ANC packet {i}: {e}"));
         assert_eq!(
             r,
             ValidationReport::new(true, true, true, true, true),
@@ -28,36 +30,27 @@ fn synthetic_st2038_fixture_conforms_to_st291() {
     }
 }
 
-/// The bite: a hand-built packet with the two defects the old fixtures had
-/// (`Data_Count` without parity bits, checksum off by one) must be reported,
-/// independently of any committed fixture.
+/// The bite: a hand-built packet with a field whose `b9` is not `NOT b8`
+/// (DID word with the parity bits swapped) must be reported, independently of
+/// any committed fixture. `Data_Count` and `Checksum_Word` can no longer be
+/// wrong — they are derived from the other fields (#2762).
 #[test]
 fn hand_built_nonconformant_packet_is_reported() {
-    // DID 0x161 / SDID 0x101 are parity-correct; DC 0x002 is not (0x02 has one
-    // set bit -> b8 = 1, b9 = 0 -> 0x102). With the correct DC 0x102 the
-    // checksum is 0x134 (0x161+0x101+0x102+0x2CF+0x101 = 0x734 -> 0x134, b8 = 1
-    // -> b9 = 0); 0x233 is wrong.
     let bad = AncPacket {
         c_not_y_channel_flag: false,
         line_number: 9,
         horizontal_offset: 0,
-        did: 0x161,
+        did: 0x161 ^ 0x300,
         sdid: 0x101,
-        data_count: 0x002,
         user_data_words: vec![0x2CF, 0x101],
-        checksum: 0x233,
     };
-    let r = bad.validate();
-    assert_eq!(r, ValidationReport::new(true, true, false, true, false));
+    let r = bad.validate().unwrap();
+    assert_eq!(r, ValidationReport::new(false, true, true, true, true));
     assert!(!r.is_valid());
 
-    // Fixing exactly those two words makes the same packet valid.
-    let good = AncPacket {
-        data_count: 0x102,
-        checksum: 0x134,
-        ..bad
-    };
-    assert!(good.validate().is_valid());
+    // Restoring the parity bits makes the same packet valid.
+    let good = AncPacket { did: 0x161, ..bad };
+    assert!(good.validate().unwrap().is_valid());
 }
 
 #[cfg(feature = "rtp")]
@@ -71,6 +64,6 @@ fn synthetic_rtp_fixture_conforms_to_st291() {
     let payload = AncRtpPayload::parse(&data[12..]).unwrap();
     assert!(!payload.anc_packets.is_empty());
     for p in &payload.anc_packets {
-        assert!(p.content.validate().is_valid());
+        assert!(p.content.validate().is_valid(),);
     }
 }
