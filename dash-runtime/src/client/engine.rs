@@ -922,7 +922,13 @@ impl DashClient {
         reference: &str,
         media: bool,
     ) -> std::result::Result<Url, DropCause> {
-        self.resolve_with(&rep.candidates, rep.cand, rep.query.as_ref(), reference, media)
+        self.resolve_with(
+            &rep.candidates,
+            rep.cand,
+            rep.query.as_ref(),
+            reference,
+            media,
+        )
     }
 
     /// [`Self::resolve`] over the parts of a Representation it reads, so a
