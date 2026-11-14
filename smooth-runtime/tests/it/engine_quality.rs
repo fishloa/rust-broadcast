@@ -47,7 +47,7 @@ fn an_unknown_quality_index_is_refused() {
     assert!(!host.client.select_video_quality(2));
 }
 
-const SKIPPED_STREAM: &str = "<StreamIndex Type=\"video\" TimeScale=\"0\" QualityLevels=\"1\" Chunks=\"1\" Url=\"Skipped({bitrate})/Fragments(video={start time})\">\n<QualityLevel Index=\"0\" Bitrate=\"11111\" FourCC=\"H264\" MaxWidth=\"320\" MaxHeight=\"240\" CodecPrivateData=\"00\" />\n<c n=\"0\" d=\"10000000\" />\n</StreamIndex>\n";
+const SKIPPED_STREAM: &str = "<StreamIndex Type=\"video\" QualityLevels=\"0\" Chunks=\"1\" Url=\"Skipped({bitrate})/Fragments(video={start time})\">\n<c n=\"0\" d=\"10000000\" />\n</StreamIndex>\n";
 
 const LOW_LEVEL_BITRATE: &str = "30000";
 const FIRST_LEVEL_WIDTH: u32 = 320;

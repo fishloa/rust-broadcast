@@ -11865,7 +11865,7 @@ pub(crate) mod tests {
                     descriptors: Vec::new(),
                     carriage,
                 },
-                timescale: VIDEO_TIMESCALE.into(),
+                timescale: VIDEO_TIMESCALE,
                 kind: LiveKind::Data {
                     pending: None,
                     last_duration: 0,
