@@ -897,7 +897,8 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
         !reference_consistent || av_offset.abs() < COMMON_TIMELINE_BOUND_SECONDS,
         "A/V offset (median audio pts-minus-RTP-packet-arrival minus the same for video, after SenderReport sync) is {av_offset} s"
     );
-    let configured_start_lead_us = Config::default().buffer.policy.initial_us;
+    let configured_start_lead_us =
+        buffering_runtime::duration_micros(Config::default().buffer.policy.initial);
     let origin_27 = first_video_keyframe_pts.map(|pts| {
         let ts = track_timescale
             .values()
@@ -935,10 +936,10 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
 #[cfg(feature = "test-seams")]
 fn print_lead_series(label: &str, session: &Session) {
     use broadcast_client::BufferInput;
-    use buffering_runtime::Ticks27;
+    use buffering_runtime::Clock27;
     use std::collections::BTreeMap;
-    let mut end: BTreeMap<u32, Ticks27> = BTreeMap::new();
-    let mut origin: Option<Ticks27> = None;
+    let mut end: BTreeMap<u32, Clock27> = BTreeMap::new();
+    let mut origin: Option<Clock27> = None;
     let mut next_print = 0u64;
     for input in session.buffer_input_log() {
         match input {
@@ -953,20 +954,22 @@ fn print_lead_series(label: &str, session: &Session) {
             } => {
                 origin = origin.or(Some(*e));
                 end.insert(*track, *e);
-                if now_us.0 >= next_print {
-                    next_print = now_us.0 + 250_000;
-                    let o = origin.map_or(0, |o| o.0);
+                if buffering_runtime::duration_micros(*now_us) >= next_print {
+                    next_print = buffering_runtime::duration_micros(*now_us) + 250_000;
+                    let o = origin.map_or(0, |o| o.ticks());
                     let per: Vec<String> = end
                         .iter()
-                        .map(|(t, e)| format!("t{t}_end={}ms", (e.0 as i128 - o as i128) / 27_000))
+                        .map(|(t, e)| {
+                            format!("t{t}_end={}ms", (e.ticks() as i128 - o as i128) / 27_000)
+                        })
                         .collect();
                     let lead = end
                         .values()
                         .min()
-                        .map_or(0, |m| (m.0 as i128 - o as i128) / 27_000);
+                        .map_or(0, |m| (m.ticks() as i128 - o as i128) / 27_000);
                     eprintln!(
                         "LEAD[{label}] at={}ms {} min_lead={}ms",
-                        now_us.0 / 1000,
+                        buffering_runtime::duration_micros(*now_us) / 1000,
                         per.join(" "),
                         lead
                     );

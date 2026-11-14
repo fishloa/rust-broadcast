@@ -24,6 +24,10 @@ use transmux::pipeline::{
     CodecConfig, FragmentTrackData, TrackSpec, build_init_segment, build_media_segment,
 };
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 fn fixture() -> Vec<u8> {
     let path = test_fixtures::path("mp4/cmaf-av-subtitle/av-frag.mp4");
     fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()))
@@ -218,7 +222,7 @@ fn cmaf_package_is_byte_transparent_over_build_helpers() {
 /// A `Media` with no tracks is rejected by the packagers.
 #[test]
 fn empty_media_rejected() {
-    let media = Media::new(vec![], Timescale::from_nonzero(1000));
+    let media = Media::new(vec![], timescale(1000));
     let mut mux = CmafMux::default();
     assert!(
         matches!(

@@ -341,6 +341,10 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
 
 #[cfg(test)]
 mod tests {
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
+
     use super::*;
     use async_trait::async_trait;
     use broadcast_common::timescale::Timescale;
@@ -392,7 +396,7 @@ mod tests {
     fn avc_spec(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
             CodecConfig::Avc {
                 config: transmux::AVCConfigurationBox::new(
                     transmux::AVCDecoderConfigurationRecord {
@@ -418,7 +422,7 @@ mod tests {
     fn opaque_spec(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
             CodecConfig::Data {
                 stream_type: 0x06,
                 descriptors: Vec::new(),

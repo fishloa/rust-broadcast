@@ -564,7 +564,7 @@ mod tests {
                 msn,
                 part_index,
                 start_dts,
-                timescale: Timescale::from_nonzero(90_000),
+                timescale: Timescale::try_new(90_000).expect("non-zero timescale"),
             },
             duration_secs: PART_SECS,
         }

@@ -8,6 +8,10 @@ use broadcast_dash::{
     AdaptationSet, CommonAttributes, Mpd, Period, PresentationType, Representation, SegmentTemplate,
 };
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 fn main() {
     let mut video = Representation::default();
     video.id = "v0".to_string();
@@ -22,7 +26,7 @@ fn main() {
     let mut tmpl = SegmentTemplate::default();
     tmpl.media = Some("chunk-$Number$.m4s".to_string());
     tmpl.initialization = Some("init.mp4".to_string());
-    tmpl.multi.base.timescale = Some(Timescale::from_nonzero(90000));
+    tmpl.multi.base.timescale = Some(timescale(90000));
     tmpl.multi.duration = Some(90000);
     tmpl.multi.start_number = Some(1);
     video.segment.template = Some(tmpl);
@@ -38,7 +42,7 @@ fn main() {
     let mut atmpl = SegmentTemplate::default();
     atmpl.media = Some("audio-chunk-$Number$.m4s".to_string());
     atmpl.initialization = Some("audio-init.mp4".to_string());
-    atmpl.multi.base.timescale = Some(Timescale::from_nonzero(48000));
+    atmpl.multi.base.timescale = Some(timescale(48000));
     atmpl.multi.duration = Some(48000);
     atmpl.multi.start_number = Some(1);
     audio.segment.template = Some(atmpl);

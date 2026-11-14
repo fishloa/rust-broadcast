@@ -1,5 +1,6 @@
 use broadcast_client::{Config, Error, Session, TimelineJumpConfig};
 use broadcast_common::stage::Timestamp;
+use buffering_runtime::micros_as_duration;
 use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
@@ -44,7 +45,7 @@ fn every_numeric_field_that_would_silently_drop_output_is_rejected_by_name() {
             c.hls_key_timeout = std::time::Duration::ZERO;
         }),
         ("buffer", |c| {
-            c.buffer.track_silence_timeout_us = buffering_runtime::Micros(0);
+            c.buffer.track_silence_timeout = micros_as_duration(0);
         }),
         ("timeline_jump.backward", |c| {
             c.timeline_jump =

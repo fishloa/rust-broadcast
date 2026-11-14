@@ -20,7 +20,7 @@ use super::model::{
 };
 
 /// `@timescale` default (5.3.9.2.2).
-pub const DEFAULT_TIMESCALE: Timescale = Timescale::from_nonzero(1);
+pub const DEFAULT_TIMESCALE: Timescale = broadcast_common::timescale!(1);
 /// `@startNumber` default (5.3.9.5.3).
 pub const DEFAULT_START_NUMBER: u64 = 1;
 /// `@presentationTimeOffset` default (5.3.9.2.2).

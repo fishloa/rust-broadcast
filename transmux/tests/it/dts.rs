@@ -53,6 +53,10 @@ use transmux::{
 //   00 03          (ChannelLayout)
 //   00             (flags)
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 #[rustfmt::skip]
 const DDTS_ORACLE: [u8; DDTS_BODY_LEN] = [
     0x00, 0x00, 0xBB, 0x80, // DTSSamplingFrequency = 48000
@@ -272,7 +276,7 @@ fn dtsc_init_segment_ddts_round_trip() {
         },
     )];
 
-    let init = build_init_segment(&tracks, Timescale::from_nonzero(1000)).unwrap();
+    let init = build_init_segment(&tracks, timescale(1000)).unwrap();
 
     // Navigate into moov → trak → mdia → minf → stbl → stsd → dtsc → ddts.
     let ddts_body = find_ddts_body(&init).expect("ddts box must be present in init segment");
@@ -315,7 +319,7 @@ fn stsd_round_trip_dts_entry() {
         },
     )];
 
-    let init = build_init_segment(&tracks, Timescale::from_nonzero(1000)).unwrap();
+    let init = build_init_segment(&tracks, timescale(1000)).unwrap();
 
     // Parse the moov.
     let moov = {

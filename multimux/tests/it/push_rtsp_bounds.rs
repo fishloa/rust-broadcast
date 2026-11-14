@@ -5,6 +5,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use transmux::TrackId;
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 use multimux::config::{PushFormat, ReconnectPolicy};
 use multimux::push::{PushTransport, RtspTransport, RtspTransportConfig, drive_push};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -238,7 +242,7 @@ async fn a_stalled_interleaved_write_fails_send_at_the_write_bound() {
 fn avc_spec(track_id: TrackId) -> transmux::ir::TrackSpec {
     transmux::ir::TrackSpec::new(
         track_id,
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
         transmux::CodecConfig::Avc {
             config: transmux::AVCConfigurationBox::new(transmux::AVCDecoderConfigurationRecord {
                 configuration_version: 1,

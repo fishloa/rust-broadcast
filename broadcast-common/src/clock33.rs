@@ -146,16 +146,14 @@ pub fn signed_distance(from: u64, to: u64) -> i64 {
 pub const PTS_HZ: u64 = PTS_TIMESCALE.as_u64();
 
 /// [`PTS_HZ`] as a [`Timescale`](crate::timescale::Timescale).
-pub const PTS_TIMESCALE: crate::timescale::Timescale =
-    crate::timescale::Timescale::from_nonzero(90_000);
+pub const PTS_TIMESCALE: crate::timescale::Timescale = crate::timescale!(90_000);
 
 /// The 27 MHz system-clock rate: the unit of a full `PCR` (`base * 300 +
 /// extension`), ESCR and SCR value (ISO/IEC 13818-1 §2.4.2.1 / §2.4.3.5).
 pub const PCR_HZ: u64 = PCR_TIMESCALE.as_u64();
 
 /// [`PCR_HZ`] as a [`Timescale`](crate::timescale::Timescale).
-pub const PCR_TIMESCALE: crate::timescale::Timescale =
-    crate::timescale::Timescale::from_nonzero(27_000_000);
+pub const PCR_TIMESCALE: crate::timescale::Timescale = crate::timescale!(27_000_000);
 
 /// `base * 300 + extension`: how many 27 MHz ticks one 90 kHz base tick spans
 /// (`PCR_HZ / PTS_HZ`), and the modulus of the 9-bit `extension`.
@@ -422,24 +420,20 @@ impl core::fmt::Display for Clock33 {
 /// to use it. This is the one representation of a PCR/ESCR/SCR: `mpeg-ts`'s
 /// `Pcr` and `mpeg-ps`'s `Scr` wrap it and add only their wire codecs.
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Clock27 {
     /// The 33-bit base (27 MHz ticks / 300).
-    #[cfg_attr(feature = "serde", serde(with = "clock33_serde"))]
     pub base: Clock33,
     /// The 9-bit extension (27 MHz ticks within the current base tick).
     pub ext: u16,
 }
 
-/// Serializes a [`Clock33`] as its raw tick count (the value it is a newtype
-/// over).
+/// Serializes as the 27 MHz tick count: a PCR is stored as the one number
+/// its wire fields code, so a snapshot survives the lossless `from_wire_parts`
+/// round trip.
 #[cfg(feature = "serde")]
-mod clock33_serde {
-    use super::Clock33;
-    use serde::Serializer;
-
-    pub fn serialize<S: Serializer>(c: &Clock33, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_u64(c.ticks())
+impl serde::Serialize for Clock27 {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_u64(self.ticks())
     }
 }
 
@@ -484,6 +478,25 @@ impl Clock27 {
         let (base, ext) = pcr_split(ticks);
         // `ticks < PCR_WRAP_27MHZ` puts both parts in range by construction.
         Self::from_parts(base, ext)
+    }
+
+    /// The position `ticks` names on the 27 MHz clock, taking any count:
+    /// `ticks` itself when it is below [`PCR_WRAP_27MHZ`], and `ticks`
+    /// reduced modulo the wrap otherwise (a reading from a free-running counter
+    /// that has passed the wrap).
+    ///
+    /// Infallible: the reduction puts both wire parts in range, so this is the
+    /// constructor for a raw count that may be past the wrap, and
+    /// [`from_27mhz`](Self::from_27mhz) the checked one that reports it.
+    #[must_use]
+    pub const fn from_27mhz_wrapping(ticks: u64) -> Self {
+        let (base, ext) = pcr_split(ticks % PCR_WRAP_27MHZ);
+        Self {
+            // `ticks % PCR_WRAP_27MHZ` is 33 bits (base) times 300 (ext), so
+            // both parts are in range by construction.
+            base: Clock33(base),
+            ext,
+        }
     }
 
     /// The full value on the 27 MHz clock: `base * 300 + ext`.
@@ -785,6 +798,24 @@ mod tests {
         assert_eq!(PCR_WRAP_27MHZ, (1u64 << 33) * 300);
         assert_eq!(PCR_WRAP_27MHZ, 2_576_980_377_600);
         assert_eq!(PCR_HZ, PTS_HZ * PCR_EXT_MODULUS);
+    }
+
+    /// A count past the wrap is reduced onto the clock, a count below it is
+    /// taken as it is, and the result is always a real position.
+    #[test]
+    fn a_wrapping_27mhz_constructor_reduces_onto_the_clock() {
+        for ticks in [0, 1, 299, 300, 27_000_000, PCR_WRAP_27MHZ - 1] {
+            let c = Clock27::from_27mhz_wrapping(ticks);
+            assert_eq!(c.ticks(), ticks);
+            assert!(c.is_valid());
+        }
+        let wrapped = Clock27::from_27mhz_wrapping(PCR_WRAP_27MHZ + 300);
+        assert_eq!(wrapped.ticks(), 300);
+        assert!(wrapped.is_valid());
+        assert_eq!(
+            Clock27::from_27mhz_wrapping(u64::MAX).ticks(),
+            u64::MAX % PCR_WRAP_27MHZ
+        );
     }
 
     #[test]

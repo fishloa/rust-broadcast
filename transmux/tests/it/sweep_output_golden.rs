@@ -12,6 +12,10 @@ use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
 use transmux::{PsDemux, TsDemux, WebmDemux};
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 fn fnv1a(bytes: &[u8]) -> u64 {
     const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -349,7 +353,7 @@ fn rtp_stream_depacketiser_output_is_unchanged() {
         TrackId::new(1),
         RtpMediaKind::H264,
         config,
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
     )]);
     let mut samples = Vec::new();
     for p in &stream.packets {
@@ -427,7 +431,7 @@ fn fragment_writer_outputs_are_unchanged() {
         0xb843_b6bc_d7f7_ee94,
     );
     let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
-    let mut ll = LlSegmenter::new(specs, Timescale::from_nonzero(1000), 2.0, 5).unwrap();
+    let mut ll = LlSegmenter::new(specs, timescale(1000), 2.0, 5).unwrap();
     let chunks = ll.package(&media).unwrap();
     check(
         &mut bad,

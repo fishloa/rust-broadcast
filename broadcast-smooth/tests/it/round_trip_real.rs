@@ -86,7 +86,8 @@ fn mutating_a_parsed_manifest_changes_the_output() {
             continue;
         };
         let before = model.to_xml();
-        model.timescale = Timescale::from_nonzero(model.timescale.get().saturating_add(1));
+        model.timescale = Timescale::try_new(model.timescale.get().saturating_add(1))
+            .expect("a bumped timescale stays non-zero");
         let after = model.to_xml();
         assert_ne!(before, after, "{name}: a mutated TimeScale changed nothing");
     }

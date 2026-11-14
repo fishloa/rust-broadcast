@@ -4,7 +4,11 @@ use transmux::{FlvDemux, FlvError, Media, MkvMux, RtmpFlvError, RtmpMux, TsDemux
 
 #[test]
 fn an_rtmp_chunk_size_beyond_the_u32_field_is_reported_not_wrapped() {
-    let media = Media::new(Vec::new(), Timescale::from_nonzero(1000));
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
+
+    let media = Media::new(Vec::new(), timescale(1000));
     let err = RtmpMux::with_chunk_size(usize::MAX)
         .package(&media)
         .unwrap_err();

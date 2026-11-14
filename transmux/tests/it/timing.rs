@@ -13,6 +13,10 @@ use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize};
 use transmux::{CompositionOffsetBox, EditListBox, SegmentIndexBox, TimeToSampleBox, box_iter};
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 /// Navigate a container hierarchy by following child boxes with the given
 /// four-CC sequence. Returns the body of the final box in the chain.
 fn enter_chain<'a>(data: &'a [u8], types: &[&[u8; 4]]) -> &'a [u8] {
@@ -228,11 +232,7 @@ fn sidx_real_fixture_round_trip() {
             // Verify known values
             assert_eq!(parsed.version, 0, "sidx version");
             assert_eq!(parsed.reference_id, 1, "sidx reference_id");
-            assert_eq!(
-                parsed.timescale,
-                Timescale::from_nonzero(90000),
-                "sidx timescale"
-            );
+            assert_eq!(parsed.timescale, timescale(90000), "sidx timescale");
             assert_eq!(parsed.earliest_presentation_time, 0, "sidx EPT");
             assert_eq!(parsed.first_offset, 68, "sidx first_offset");
             assert_eq!(parsed.references.len(), 2, "sidx reference_count");

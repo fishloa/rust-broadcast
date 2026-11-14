@@ -7,7 +7,7 @@ use broadcast_client::{
 };
 use broadcast_common::clock33::Clock27;
 use broadcast_common::stage::Timestamp;
-use buffering_runtime::Micros;
+use buffering_runtime::{duration_micros, micros_as_duration};
 use support::replay::{TS_PACKET, bitrate_bps, open_live};
 
 /// The harness's microsecond clock as the session's `now`.
@@ -144,7 +144,7 @@ fn config_with_lead(hold: Hold, len: usize, start_lead_us: u64) -> Config {
             new_config
         }
     };
-    cfg.buffer.policy.initial_us = Micros(start_lead_us);
+    cfg.buffer.policy.initial = micros_as_duration(start_lead_us);
     cfg.start_pending_track_hard_cap_us = 0;
     cfg.record_buffer_inputs = true;
     cfg
@@ -830,8 +830,12 @@ fn a_long_wait_is_not_cut_short_by_the_controller_silence_timeout() {
     let Some(b) = gulp_without_audio() else {
         return;
     };
-    let silence = Config::default().buffer.track_silence_timeout_us;
-    assert!(silence.0 < LONG_WAIT_US, "{silence}");
+    let silence = Config::default().buffer.track_silence_timeout;
+    assert!(
+        duration_micros(silence) < LONG_WAIT_US,
+        "{}",
+        silence.as_micros()
+    );
     let o = run(
         &b,
         cfg_wait(b.len(), FLAP_LEAD_US, LONG_WAIT_US),

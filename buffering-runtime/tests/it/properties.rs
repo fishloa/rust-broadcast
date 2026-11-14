@@ -1,14 +1,25 @@
 //! Property tests over random operation streams (seeded xorshift; no extra
 //! dependency): no panic on any input, and a fixed invariant set.
-use crate::support::Rng;
-use buffering_runtime::{BufferController, ControllerConfig, Event, Hint, Micros, State, Ticks27};
+use broadcast_common::clock33::PCR_WRAP_27MHZ;
 
-const fn us(v: u64) -> Micros {
-    Micros(v)
+/// A 27 MHz tick count as a validated clock position.
+fn clock27(ticks: u64) -> Clock27 {
+    Clock27::from_27mhz(ticks % PCR_WRAP_27MHZ).expect("a reduced count is on the clock")
 }
 
-const MIN: Micros = Micros(300_000);
-const MAX: Micros = Micros(3_000_000);
+const fn dur(us: u64) -> Duration {
+    Duration::from_micros(us)
+}
+use crate::support::Rng;
+use buffering_runtime::{BufferController, Clock27, ControllerConfig, Event, Hint, State};
+use core::time::Duration;
+
+const fn us(v: u64) -> Duration {
+    dur(v)
+}
+
+const MIN: Duration = dur(300_000);
+const MAX: Duration = dur(3_000_000);
 
 fn pick_u64(r: &mut Rng) -> u64 {
     match r.below(10) {
@@ -29,7 +40,7 @@ fn run(seed: u64, steps: u32, hostile: bool) -> u64 {
     let mut playing = false;
     let mut started = false;
     let mut paused = false;
-    let mut prev_target = (c.target_us(), now);
+    let mut prev_target = (c.target(), now);
     let mut fp = 0xcbf2_9ce4_8422_2325u64;
     let mut mix = |v: u64| {
         fp ^= v;
@@ -57,14 +68,14 @@ fn run(seed: u64, steps: u32, hostile: bool) -> u64 {
                 c.on_chunk(
                     us(t_in),
                     u32::try_from(rng.below(1 << 20)).unwrap(),
-                    (rng.below(8) != 0).then_some(Ticks27(pcr)),
+                    (rng.below(8) != 0).then_some(clock27(pcr)),
                 );
                 media = media.wrapping_add(35_000 * 27);
-                c.on_media(us(t_in), Ticks27(media));
+                c.on_media(us(t_in), clock27(media));
             }
             3 | 4 => c.on_tick(
                 us(t_in),
-                (rng.below(5) != 0).then(|| Ticks27(pick_u64(&mut rng))),
+                (rng.below(5) != 0).then(|| clock27(pick_u64(&mut rng))),
             ),
             _ => {
                 let h = [
@@ -83,16 +94,17 @@ fn run(seed: u64, steps: u32, hostile: bool) -> u64 {
             now = t_in;
         }
         // invariants
-        let t = c.target_us();
-        assert!((MIN..=MAX).contains(&t), "target {t} out of [min, max]");
+        let t = c.target();
+        assert!((MIN..=MAX).contains(&t), "target {:?} out of [min, max]", t);
         // never falls faster than max_step_down (100 ms/s); rises are free
         // (only meaningful on a sane clock: a hostile clock jump is a legitimate long dt)
         if !hostile && now > prev_target.1 && t < prev_target.0 {
-            let fall = Micros(prev_target.0.0 - t.0);
+            let fall = prev_target.0 - t;
             let allowed = u128::from(100_000u64) * u128::from(now - prev_target.1) / 1_000_000 + 1;
             assert!(
-                u128::from(fall.0) <= allowed || !hostile,
-                "target fell {fall} in {} us",
+                fall.as_micros() <= allowed || !hostile,
+                "target fell {}us in {}us",
+                fall.as_micros(),
                 now - prev_target.1
             );
         }
@@ -107,11 +119,9 @@ fn run(seed: u64, steps: u32, hostile: bool) -> u64 {
                     started = true;
                     playing = true;
                 }
-                Event::Pause {
-                    resume_target_us, ..
-                } => {
+                Event::Pause { resume_target, .. } => {
                     assert!(playing, "Pause while not playing");
-                    assert!(resume_target_us <= MAX);
+                    assert!(resume_target <= MAX);
                     playing = false;
                     paused = true;
                 }
@@ -123,8 +133,8 @@ fn run(seed: u64, steps: u32, hostile: bool) -> u64 {
                     playing = true;
                     paused = false;
                 }
-                Event::TargetChanged { new_us, .. } => assert!(new_us <= MAX),
-                Event::OverMax { max_us, need_us } => assert!(need_us > max_us),
+                Event::TargetChanged { new, .. } => assert!(new <= MAX),
+                Event::OverMax { max, need } => assert!(need > max),
                 Event::EventsDropped { .. } | Event::Rebaselined => {}
                 _ => {}
             }
@@ -134,8 +144,8 @@ fn run(seed: u64, steps: u32, hostile: bool) -> u64 {
         let s = c.stats();
         assert_eq!(s.state == State::Playing, playing);
         mix(u64::from(s.state.code()));
-        mix(s.target_us.0);
-        mix(s.est.baseline_us.0);
+        mix(s.target.as_micros() as u64);
+        mix(s.est.baseline.as_micros() as u64);
     }
     fp
 }

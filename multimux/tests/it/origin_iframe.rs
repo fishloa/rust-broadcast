@@ -2,6 +2,10 @@
 //! (issue #1413 P3b). Reuses the `feed_via_segmenter` pattern from
 //! `origin_llhls.rs`.
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 use crate::support::origin::{body_bytes, body_string, get};
 use crate::support::segmenter_feed::{
     PART_TARGET_MS, TARGET_DURATION_SECS, feed_via_segmenter, video_batches_n, video_track_spec,
@@ -102,7 +106,7 @@ async fn iframe_master_variant_gating() {
     use transmux::rtp_sdp::aac_config_from_asc_hex;
     let audio_spec = TrackSpec::new(
         TrackId::new(1),
-        Timescale::from_nonzero(48000),
+        timescale(48000),
         aac_config_from_asc_hex("1210").expect("aac"),
     );
     let mut audio_batches = Vec::new();

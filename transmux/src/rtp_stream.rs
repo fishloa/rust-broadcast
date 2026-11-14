@@ -1689,6 +1689,10 @@ impl Stage for RtpStreamDepacketiser {
 
 #[cfg(test)]
 mod tests {
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
+
     use super::*;
     use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 
@@ -1777,7 +1781,7 @@ mod tests {
         let mut d = single_track(
             RtpMediaKind::H264,
             avc_with_sps(SPS_25FPS_FIXED),
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
         );
         assert!(
             d.push(id, &vpkt(1, 1000, true, &[0x65, 0xAA]))
@@ -1795,7 +1799,7 @@ mod tests {
         let mut d = single_track(
             RtpMediaKind::H264,
             avc_with_sps(SPS_NO_TIMING),
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
         );
         d.set_track_config(id, avc_with_sps(SPS_25FPS_FIXED));
         assert!(
@@ -1815,7 +1819,7 @@ mod tests {
         let mut d = single_track(
             RtpMediaKind::H264,
             avc_with_sps(SPS_NO_TIMING),
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
         );
         assert!(
             d.push(id, &vpkt(1, 1000, true, &[0x65, 0xAA]))
@@ -1833,7 +1837,7 @@ mod tests {
         let id = TrackId::new(1);
         for (asc, expected) in [(ASC_LC_48K_STEREO_1024, 1024), (ASC_LC_48K_STEREO_960, 960)] {
             let cfg = crate::rtp_sdp::aac_config_from_asc_bytes(asc.to_vec()).unwrap();
-            let mut d = single_track(RtpMediaKind::Aac, cfg, Timescale::from_nonzero(48_000));
+            let mut d = single_track(RtpMediaKind::Aac, cfg, timescale(48_000));
             assert!(
                 d.push(id, &aac_packet(1, 5000, &[&[1, 2]]))
                     .unwrap()
@@ -1850,7 +1854,7 @@ mod tests {
         let id = TrackId::new(1);
         let cfg =
             crate::rtp_sdp::aac_config_from_asc_bytes(ASC_LC_48K_STEREO_1024.to_vec()).unwrap();
-        let mut d = single_track(RtpMediaKind::Aac, cfg, Timescale::from_nonzero(48_000));
+        let mut d = single_track(RtpMediaKind::Aac, cfg, timescale(48_000));
         let aus: [&[u8]; 4] = [&[1], &[2], &[3], &[4]];
         assert!(d.push(id, &aac_packet(1, 10_000, &aus)).unwrap().is_empty());
         assert!(
@@ -1877,11 +1881,7 @@ mod tests {
     #[test]
     fn aggregated_group_with_delta_below_au_count_and_no_known_duration_is_not_emitted() {
         let id = TrackId::new(1);
-        let mut d = single_track(
-            RtpMediaKind::Aac,
-            dummy_avc(),
-            Timescale::from_nonzero(48_000),
-        );
+        let mut d = single_track(RtpMediaKind::Aac, dummy_avc(), timescale(48_000));
         let aus: [&[u8]; 4] = [&[1], &[2], &[3], &[4]];
         assert!(d.push(id, &aac_packet(1, 10_000, &aus)).unwrap().is_empty());
         assert!(
@@ -1916,7 +1916,7 @@ mod tests {
             id,
             RtpMediaKind::Aac,
             dummy_avc(),
-            Timescale::from_nonzero(48_000),
+            timescale(48_000),
         )]);
         let aus: [&[u8]; 4] = [&[1, 1], &[2, 2], &[3, 3], &[4, 4]];
         assert!(d.push(id, &aac_packet(1, 10_000, &aus)).unwrap().is_empty());
@@ -1956,7 +1956,7 @@ mod tests {
             TrackId::new(1),
             RtpMediaKind::H264,
             dummy_avc(),
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
         )]);
         declare_reorder_depth(&mut d, 0);
 
@@ -2006,7 +2006,7 @@ mod tests {
             TrackId::new(1),
             RtpMediaKind::H264,
             dummy_avc(),
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
         )]);
         let mut oracle_samples: Vec<Sample> = Vec::new();
         for pkt in &packets {
@@ -2019,7 +2019,7 @@ mod tests {
             TrackId::new(1),
             RtpMediaKind::H264,
             dummy_avc(),
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
         )]);
         let mut staged_samples: Vec<Sample> = Vec::new();
         for pkt in &packets {
@@ -2053,13 +2053,13 @@ mod tests {
                 TrackId::new(1),
                 RtpMediaKind::H264,
                 dummy_avc(),
-                Timescale::from_nonzero(90_000)
+                timescale(90_000)
             ),
             RtpStreamTrack::new(
                 TrackId::new(2),
                 RtpMediaKind::H264,
                 dummy_avc(),
-                Timescale::from_nonzero(90_000)
+                timescale(90_000)
             ),
         ]);
         let err = Stage::feed(&mut d, &vpkt(1, 1000, true, &[0x65]), Timestamp::ZERO).unwrap_err();
@@ -2098,7 +2098,7 @@ mod tests {
             TrackId::new(1),
             RtpMediaKind::H264,
             dummy_avc(),
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
         )]);
         declare_reorder_depth(&mut d, 0);
 
@@ -2174,7 +2174,7 @@ mod tests {
             TrackId::new(7),
             RtpMediaKind::H264,
             dummy_avc(),
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
         )]);
         let specs = d.track_specs();
         assert_eq!(specs.len(), 1);
@@ -2189,7 +2189,7 @@ mod tests {
         let mut d = single_track(
             RtpMediaKind::H264,
             avc_with_sps(SPS_25FPS_FIXED),
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
         );
         declare_reorder_depth(&mut d, depth);
         let mut emitted = Vec::new();

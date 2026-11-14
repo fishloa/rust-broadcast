@@ -45,6 +45,38 @@ impl Rounding {
 
 crate::impl_spec_display!(Rounding);
 
+/// A media timescale from a literal (or a named constant) the compiler can
+/// prove non-zero.
+///
+/// The whole check happens at compile time: the `match` sits in an inline
+/// `const` block, so `timescale!(0)` is a compile error even inside a `fn` and
+/// there is no runtime path that could reach the `panic!`.
+///
+/// ```compile_fail
+/// // A zero timescale cannot be named, not even inside a function.
+/// fn price() -> broadcast_common::timescale::Timescale {
+///     broadcast_common::timescale!(0)
+/// }
+/// ```
+///
+/// ```
+/// let t = broadcast_common::timescale!(90_000);
+/// assert_eq!(t.get(), 90_000);
+/// let micros = ::broadcast_common::timescale!(::broadcast_common::timescale::MICROS_PER_SECOND);
+/// assert_eq!(micros, ::broadcast_common::timescale::Timescale::MICROS);
+/// ```
+#[macro_export]
+macro_rules! timescale {
+    ($value:expr) => {
+        const {
+            match ::core::num::NonZeroU32::new($value) {
+                ::core::option::Option::Some(nz) => $crate::timescale::Timescale::from_nonzero(nz),
+                ::core::option::Option::None => panic!("a timescale is never zero"),
+            }
+        }
+    };
+}
+
 /// A media timescale (ticks per second), guaranteed non-zero.
 ///
 /// The wire can carry a zero timescale (a parsed `mdhd`/`TimeScale` field, an
@@ -55,34 +87,23 @@ crate::impl_spec_display!(Rounding);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
-pub struct Timescale(pub core::num::NonZeroU32);
+pub struct Timescale(core::num::NonZeroU32);
 
 impl Timescale {
     /// Ticks per second of the microsecond timescale.
-    pub const MICROS: Self = Self(match core::num::NonZeroU32::new(MICROS_PER_SECOND) {
-        Some(nz) => nz,
-        None => unreachable!(),
-    });
+    pub const MICROS: Self = crate::timescale!(MICROS_PER_SECOND);
 
     /// Ticks per second of the nanosecond timescale.
-    pub const NANOS: Self = Self::from_nonzero(1_000_000_000);
+    pub const NANOS: Self = crate::timescale!(1_000_000_000);
 
-    /// Construct from a value the compiler can prove non-zero: a literal or a
-    /// named `const`. A `0` is a compile error, so no runtime value can be
-    /// silently flattened to `1`; a runtime `u32` goes through the fallible
-    /// [`TryFrom<u32>`], which errors on zero.
+    /// A timescale from a value already known non-zero, with no failure path.
     ///
-    /// ```compile_fail
-    /// // A zero timescale cannot be named, not even as a literal.
-    /// const _: broadcast_common::timescale::Timescale =
-    ///     broadcast_common::timescale::Timescale::from_nonzero(0);
-    /// ```
+    /// A literal belongs in [`timescale!`](crate::timescale!), which proves it
+    /// non-zero at compile time; a runtime `u32` goes through [`Self::new`] or
+    /// [`Self::try_new`], which report the zero instead of panicking.
     #[must_use]
-    pub const fn from_nonzero(value: u32) -> Self {
-        match core::num::NonZeroU32::new(value) {
-            Some(nz) => Self(nz),
-            None => panic!("Timescale cannot be zero"),
-        }
+    pub const fn from_nonzero(value: core::num::NonZeroU32) -> Self {
+        Self(value)
     }
 
     /// Construct from a raw value, returning `None` for zero.
@@ -249,13 +270,17 @@ mod tests {
     use super::*;
     use alloc::string::ToString;
 
-    const T1: Timescale = Timescale::from_nonzero(1);
-    const T48K: Timescale = Timescale::from_nonzero(48_000);
-    const T90K: Timescale = Timescale::from_nonzero(90_000);
+    const T1: Timescale = crate::timescale!(1);
+    const T48K: Timescale = crate::timescale!(48_000);
+    const T90K: Timescale = crate::timescale!(90_000);
+
+    fn ts(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
 
     #[test]
     fn rounding_modes_differ_on_a_half_and_a_negative() {
-        let two = Timescale::from_nonzero(2);
+        let two = ts(2);
         assert_eq!(rescale(3, two, T1, Rounding::Floor), 1);
         assert_eq!(rescale(3, two, T1, Rounding::Nearest), 2);
         assert_eq!(rescale(3, two, T1, Rounding::TowardZero), 1);
@@ -266,7 +291,7 @@ mod tests {
 
     #[test]
     fn micros_helpers_are_rescale_against_one_million() {
-        let three = Timescale::from_nonzero(3);
+        let three = ts(3);
         assert_eq!(to_micros(90_000, T90K, Rounding::Floor), 1_000_000);
         assert_eq!(to_micros(1, three, Rounding::TowardZero), 333_333);
         assert_eq!(to_micros(-1, three, Rounding::Floor), -333_334);
@@ -280,6 +305,26 @@ mod tests {
         assert_eq!(rescale(90_000, T90K, T90K, Rounding::Nearest), 90_000);
         assert_eq!(rescale(48_000, T48K, T90K, Rounding::Floor), 90_000);
         assert_eq!(rescale_u64(1024, T48K, T90K, Rounding::Nearest), 1920);
+    }
+
+    /// A zero timescale has no panicking constructor: a runtime `u32` goes
+    /// through the fallible `try_new`/`TryFrom` and is answered with a
+    /// typed error, never a `panic!` a caller cannot see in the signature.
+    #[test]
+    fn a_zero_timescale_is_an_error_from_every_runtime_constructor() {
+        assert!(Timescale::try_new(0).is_err());
+        assert!(Timescale::try_from(0u32).is_err());
+        assert_eq!(Timescale::new(0), None);
+    }
+
+    /// The literal macro builds the value it names, in a `const` item and in an
+    /// ordinary expression alike (the compile-time proof is what lets it).
+    #[test]
+    fn the_literal_macro_names_the_timescale_it_is_given() {
+        const T: Timescale = crate::timescale!(90_000);
+        assert_eq!(T.get(), 90_000);
+        assert_eq!(crate::timescale!(1).get(), 1);
+        assert_eq!(Timescale::from_nonzero(core::num::NonZeroU32::MIN).get(), 1);
     }
 
     /// A zero timescale cannot reach the arithmetic: the type has no zero
@@ -314,32 +359,24 @@ mod tests {
 
     #[test]
     fn saturates_instead_of_wrapping() {
-        let max = Timescale::from_nonzero(u32::MAX);
+        let max = ts(u32::MAX);
         assert_eq!(rescale_i64(i64::MAX, T1, max, Rounding::Floor), i64::MAX);
         assert_eq!(rescale_i64(i64::MIN, T1, max, Rounding::Floor), i64::MIN);
         assert_eq!(rescale_u64(u64::MAX, T1, max, Rounding::Nearest), u64::MAX);
         assert_eq!(rescale_u64(0, T1, T1, Rounding::Nearest), 0);
-        assert_eq!(
-            rescale(i128::MAX, T1, Timescale::from_nonzero(2), Rounding::Floor),
-            i128::MAX
-        );
+        assert_eq!(rescale(i128::MAX, T1, ts(2), Rounding::Floor), i128::MAX);
     }
 
     #[test]
     fn ceil_rounds_toward_positive_infinity() {
-        let two = Timescale::from_nonzero(2);
+        let two = ts(2);
         assert_eq!(rescale(3, two, T1, Rounding::Ceil), 2);
         assert_eq!(rescale(4, two, T1, Rounding::Ceil), 2);
         assert_eq!(rescale(-3, two, T1, Rounding::Ceil), -1);
         assert_eq!(rescale(-4, two, T1, Rounding::Ceil), -2);
         assert_eq!(rescale(5, T1, T1, Rounding::Ceil), 5);
         assert_eq!(
-            rescale_i64(
-                i64::MAX,
-                T1,
-                Timescale::from_nonzero(u32::MAX),
-                Rounding::Ceil
-            ),
+            rescale_i64(i64::MAX, T1, ts(u32::MAX), Rounding::Ceil),
             i64::MAX
         );
     }
@@ -348,14 +385,8 @@ mod tests {
     fn cmp_ticks_is_exact_across_timescales() {
         use core::cmp::Ordering::{Equal, Greater, Less};
         assert_eq!(cmp_ticks(90_000, T90K, 48_000, T48K), Equal);
-        assert_eq!(
-            cmp_ticks(1, Timescale::from_nonzero(3), 1, Timescale::from_nonzero(2)),
-            Less
-        );
-        assert_eq!(
-            cmp_ticks(i64::MAX, T1, i64::MAX, Timescale::from_nonzero(2)),
-            Greater
-        );
+        assert_eq!(cmp_ticks(1, ts(3), 1, ts(2)), Less);
+        assert_eq!(cmp_ticks(i64::MAX, T1, i64::MAX, ts(2)), Greater);
         assert_eq!(cmp_ticks(5, T1, 5, T1), Equal);
     }
 

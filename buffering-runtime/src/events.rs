@@ -2,11 +2,13 @@
 //!
 //! Every enum has a stable `u32` code (`code()`), used by the C-ABI mirror;
 //! codes are never renumbered. [`Event`] converts to the `#[repr(C)]`
-//! [`EventRecord`] with [`Event::to_record`]; the `a_us` / `b_us` meaning per
+//! [`EventRecord`] with [`Event::to_record`]; the `a` / `b` meaning per
 //! kind is the table on [`EventRecord`].
 
-use crate::config::{Micros, Ticks27};
+use core::time::Duration;
+
 use crate::jitter::JitterEstimate;
+use crate::time::{Clock27, duration_micros};
 use alloc::collections::VecDeque;
 
 /// Event queue capacity (oldest non-critical event dropped first).
@@ -54,13 +56,13 @@ broadcast_common::impl_spec_display!(State);
 pub enum Reason {
     /// First fill after construction/reset.
     Startup,
-    /// Lead exhausted and no chunk for `nodata_after_us` (or the source ended).
+    /// Lead exhausted and no chunk for `nodata_after` (or the source ended).
     NoData,
     /// Lead exhausted while chunks were still arriving.
     DataArriving,
     /// Baseline reset (reconnect, sync loss, PCR discontinuity).
     Discontinuity,
-    /// Voluntary re-prime (`reprime_floor_us`).
+    /// Voluntary re-prime (`reprime_floor`).
     Reprime,
 }
 
@@ -168,22 +170,22 @@ pub enum Event {
     /// oldest buffered media) and rate 1.
     StartPlaying {
         /// Position to start from.
-        media_27mhz: Ticks27,
+        media_27mhz: Clock27,
         /// Lead at the decision.
-        lead_us: Micros,
+        lead: Duration,
     },
     /// Underrun or re-prime. Set the renderer rate to 0 and hold the clock at
     /// `hold_at_27mhz`; keep queueing every chunk that arrives meanwhile.
     Pause {
         /// Position to freeze at (never ahead of the data).
-        hold_at_27mhz: Ticks27,
+        hold_at_27mhz: Clock27,
         /// Why.
         reason: Reason,
         /// Buffered lead at the pause (0 if the clock overran the data).
-        depth_us: Micros,
+        depth: Duration,
         /// Resume target known now; it can rise when the first post-stall
         /// chunk reveals the stall depth.
-        resume_target_us: Micros,
+        resume_target: Duration,
         /// For an underrun or re-prime with two or more tracks known: the
         /// track whose media end bounded the lead (the starving track).
         /// `None` otherwise (single track, discontinuity).
@@ -202,24 +204,24 @@ pub enum Event {
     /// from there if the audio renderer flushes.
     Resume {
         /// Position to restart from.
-        media_27mhz: Ticks27,
+        media_27mhz: Clock27,
         /// Lead at the decision.
-        lead_us: Micros,
+        lead: Duration,
     },
     /// The target moved by at least one histogram bucket (or hit a bound).
     TargetChanged {
         /// Previously reported target.
-        old_us: Micros,
-        /// New target (never above `max_us`).
-        new_us: Micros,
+        old: Duration,
+        /// New target (never above `max`).
+        new: Duration,
     },
-    /// The estimated need exceeds `max_us`; the target is clamped (the cap is
-    /// a guarantee). Raised once per excursion.
+    /// The estimated need exceeds the configured `max`; the target is clamped
+    /// (the cap is a guarantee). Raised once per excursion.
     OverMax {
         /// Unclamped need.
-        need_us: Micros,
+        need: Duration,
         /// The cap.
-        max_us: Micros,
+        max: Duration,
     },
     /// The baseline was reset (discontinuity, reconnect, sync loss).
     Rebaselined,
@@ -250,23 +252,26 @@ pub mod kind {
 
 /// Plain-data, `#[repr(C)]` form of an [`Event`] for a C ABI.
 ///
-/// | kind | `reason` | `media_27mhz` | `a_us` | `b_us` |
+/// | kind | `reason` | `media_27mhz` | `a` | `b` |
 /// |---|---|---|---|---|
-/// | 1 StartPlaying | 0 | start position | lead | 0 |
-/// | 2 Pause | [`Reason::code`] | hold position | depth | resume target |
-/// | 3 Resume | 0 | restart position | lead | 0 |
-/// | 4 TargetChanged | 0 | 0 | old target | new target |
-/// | 5 OverMax | 0 | 0 | need | max |
+/// | 1 StartPlaying | 0 | start position | lead, µs | 0 |
+/// | 2 Pause | [`Reason::code`] | hold position | depth, µs | resume target, µs |
+/// | 3 Resume | 0 | restart position | lead, µs | 0 |
+/// | 4 TargetChanged | 0 | 0 | old target, µs | new target, µs |
+/// | 5 OverMax | 0 | 0 | need, µs | max, µs |
 /// | 6 Rebaselined | 0 | 0 | 0 | 0 |
 /// | 7 EventsDropped | 0 | 0 | count | 0 |
 ///
+/// `a`/`b` are whole microseconds: the `#[repr(C)]` record is an
+/// integer-only ABI, so a `Duration` crosses it by its microsecond value.
+///
 /// `track_valid` is 1 only for a `Pause` that names the starving track in
 /// `track` (two or more tracks known); otherwise both are 0. Layout (ABI
-/// version 2): 40 bytes, `kind@0 reason@4 media_27mhz@8 a_us@16 b_us@24
+/// version 2): 40 bytes, `kind@0 reason@4 media_27mhz@8 a@16 b@24
 /// track@32 track_valid@36`.
 ///
 /// There is no separate "Starved" event: a starvation is a `Pause` whose
-/// `reason` is 2/3 and whose `a_us` is the lead at that instant.
+/// `reason` is 2/3 and whose `a` is the lead at that instant.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[repr(C)]
@@ -278,10 +283,10 @@ pub struct EventRecord {
     pub reason: u32,
     /// Media position (PTS domain, 27 MHz), else 0.
     pub media_27mhz: u64,
-    /// First value (table above).
-    pub a_us: u64,
-    /// Second value (table above).
-    pub b_us: u64,
+    /// First value in whole microseconds (table above).
+    pub a: u64,
+    /// Second value in whole microseconds (table above).
+    pub b: u64,
     /// The starving track when `track_valid == 1`, else 0.
     pub track: u32,
     /// 1 when `track` is meaningful, else 0.
@@ -294,19 +299,16 @@ impl Event {
     pub fn to_record(&self) -> EventRecord {
         let mut r = EventRecord::default();
         match *self {
-            Self::StartPlaying {
-                media_27mhz,
-                lead_us,
-            } => {
+            Self::StartPlaying { media_27mhz, lead } => {
                 r.kind = kind::START_PLAYING;
-                r.media_27mhz = media_27mhz.0;
-                r.a_us = lead_us.0;
+                r.media_27mhz = media_27mhz.ticks();
+                r.a = duration_micros(lead);
             }
             Self::Pause {
                 hold_at_27mhz,
                 reason,
-                depth_us,
-                resume_target_us,
+                depth,
+                resume_target,
                 track,
             } => {
                 r.kind = kind::PAUSE;
@@ -315,32 +317,29 @@ impl Event {
                     r.track_valid = 1;
                 }
                 r.reason = reason.code();
-                r.media_27mhz = hold_at_27mhz.0;
-                r.a_us = depth_us.0;
-                r.b_us = resume_target_us.0;
+                r.media_27mhz = hold_at_27mhz.ticks();
+                r.a = duration_micros(depth);
+                r.b = duration_micros(resume_target);
             }
-            Self::Resume {
-                media_27mhz,
-                lead_us,
-            } => {
+            Self::Resume { media_27mhz, lead } => {
                 r.kind = kind::RESUME;
-                r.media_27mhz = media_27mhz.0;
-                r.a_us = lead_us.0;
+                r.media_27mhz = media_27mhz.ticks();
+                r.a = duration_micros(lead);
             }
-            Self::TargetChanged { old_us, new_us } => {
+            Self::TargetChanged { old, new } => {
                 r.kind = kind::TARGET_CHANGED;
-                r.a_us = old_us.0;
-                r.b_us = new_us.0;
+                r.a = duration_micros(old);
+                r.b = duration_micros(new);
             }
-            Self::OverMax { need_us, max_us } => {
+            Self::OverMax { need, max } => {
                 r.kind = kind::OVER_MAX;
-                r.a_us = need_us.0;
-                r.b_us = max_us.0;
+                r.a = duration_micros(need);
+                r.b = duration_micros(max);
             }
             Self::Rebaselined => r.kind = kind::REBASELINED,
             Self::EventsDropped { count } => {
                 r.kind = kind::EVENTS_DROPPED;
-                r.a_us = u64::from(count);
+                r.a = u64::from(count);
             }
         }
         r
@@ -381,17 +380,17 @@ pub struct Stats {
     /// meaningful only while `state != Playing`.
     pub reason: crate::events::Reason,
     /// Signed lead at the last tick (negative: the clock ran ahead of the media).
-    pub lead_us: i64,
+    pub lead: Duration,
     /// Current target.
-    pub target_us: Micros,
+    pub target: Duration,
     /// Underrun pauses (not the first fill, discontinuities or re-primes).
     pub stalls: u32,
     /// Voluntary re-primes.
     pub reprimes: u32,
     /// Stall-memory peak when the last stall ended.
-    pub last_stall_depth_us: Micros,
+    pub last_stall_depth: Duration,
     /// Longest pause (Pause to Resume).
-    pub longest_freeze_us: Micros,
+    pub longest_freeze: Duration,
     /// Estimator outputs.
     pub est: JitterEstimate,
     /// Arrival/tick clock regressions seen (clamped or ignored).

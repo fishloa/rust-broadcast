@@ -10,31 +10,31 @@ pub enum ConfigField {
     MinWindow,
     /// `JitterConfig::interval_us` is zero.
     Interval,
-    /// `bucket_us` or `buckets` is zero, or `max_us` exceeds the histogram range.
+    /// `bucket` or `buckets` is zero, or `max` exceeds the histogram range.
     Bucket,
     /// `forget_q15` is not below 32768 (1.0 in Q15).
     Forget,
     /// `quantile_permille` is zero or above 1000.
     Quantile,
-    /// `min_us <= initial_us <= max_us` does not hold (or `min_us` is zero).
+    /// `min <= initial <= max` does not hold (or `min` is zero).
     Order,
     /// `max_samples` below the minimum deque capacity.
     Capacity,
-    /// `starve_threshold_us` not below `min_us`, or `nodata_after_us` zero.
+    /// `starve_threshold` not below `min`, or `nodata_after` zero.
     Threshold,
     /// A Q8 multiplier is zero.
     Multiplier,
-    /// `outlier_us` is zero.
+    /// `outlier` is zero.
     Outlier,
-    /// `decay_us` is zero.
+    /// `decay` is zero.
     Decay,
-    /// `discontinuity_us` is zero.
+    /// `discontinuity` is zero.
     Discontinuity,
-    /// `max_step_down_us_per_s` is zero.
+    /// `max_step_down_per_s` is zero.
     Slew,
-    /// `track_silence_timeout_us` is zero.
+    /// `track_silence_timeout` is zero.
     TrackSilence,
-    /// `granularity_decay_us` is zero.
+    /// `granularity_decay` is zero.
     GranularityDecay,
 }
 
@@ -71,7 +71,7 @@ pub enum Error {
     /// A configuration field is out of range.
     #[error("invalid configuration: {0}")]
     InvalidConfig(ConfigField),
-    /// `min_window_us` is zero (a zero-length sliding window has no minimum).
+    /// `min_window` is zero (a zero-length sliding window has no minimum).
     #[error("zero-length minimum window")]
     ZeroLengthWindow,
 }

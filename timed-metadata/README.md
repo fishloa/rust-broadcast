@@ -97,7 +97,7 @@ assert!(line.contains("SCTE35-"));
 
 // Edge 2: SCTE-35 -> DASH emsg, and Edge 3: back to the verbatim section.
 let cfg = EmsgConfig::new(
-    Timescale::from_nonzero(90_000),
+    Timescale::try_new(90_000).expect("a non-zero timescale"),
     PresentationTime::Delta(0),
     2_160_000, // 24 s * 90000
     "34".to_string(),
