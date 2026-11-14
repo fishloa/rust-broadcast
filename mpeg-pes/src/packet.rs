@@ -898,6 +898,19 @@ pub struct PesPacket<'a> {
     pub payload: &'a [u8],
 }
 
+/// A PES unit that ended before its declared `PES_packet_length`
+/// (ISO/IEC 13818-1 Table 2-21), as reported by
+/// [`PesPacket::parse_unit`](PesPacket::parse_unit).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct Truncation {
+    /// The `PES_packet_length` the unit declared (bytes after that field).
+    pub declared: usize,
+    /// The bytes that actually followed the length field, fewer than
+    /// `declared`.
+    pub available: usize,
+}
+
 impl<'a> PesPacket<'a> {
     /// A packet with no optional header and an empty payload.
     ///
@@ -917,7 +930,31 @@ impl<'a> PesPacket<'a> {
     /// `PES_packet_length` bounds everything after it (ISO/IEC 13818-1
     /// Table 2-21): a buffer shorter than the declared length is a truncated
     /// packet, reported as `BufferTooShort` instead of a silent short read.
+    /// Use [`parse_unit`](Self::parse_unit) for a unit that may arrive before
+    /// its next start indicator, where the trailing bytes are simply absent.
     pub fn parse(b: &'a [u8]) -> Result<Self> {
+        Self::parse_select(b, false).map(|(packet, _)| packet)
+    }
+
+    /// Parse a PES unit from the bytes starting at its
+    /// `packet_start_code_prefix`, accepting one that ends before its declared
+    /// `PES_packet_length`.
+    ///
+    /// A transport stream hands a PES packet its bytes up to the next
+    /// `payload_unit_start_indicator`; a broadcast encoder may declare a
+    /// `PES_packet_length` longer than the bytes that arrived. [`parse`](Self::parse)
+    /// reports that as `BufferTooShort`; this entry returns the packet's bytes
+    /// as received together with a [`Truncation`] naming what was declared and
+    /// what arrived (or `None` when the unit is complete). The payload is
+    /// exactly the bytes present, never padded.
+    pub fn parse_unit(b: &'a [u8]) -> Result<(Self, Option<Truncation>)> {
+        Self::parse_select(b, true)
+    }
+
+    /// Shared parse body. `lenient` accepts a buffer shorter than the declared
+    /// `PES_packet_length` and reports the shortfall as [`Truncation`]; the
+    /// strict path returns [`Error::BufferTooShort`] instead.
+    fn parse_select(b: &'a [u8], lenient: bool) -> Result<(Self, Option<Truncation>)> {
         need_in(b, MIN_LEN, "PES packet header")?;
         if b[0..3] != PACKET_START_CODE_PREFIX {
             return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
@@ -934,16 +971,35 @@ impl<'a> PesPacket<'a> {
             b.len()
         } else {
             let end = MIN_LEN + usize::from(pes_packet_length);
-            need_in(b, end, "PES_packet_length")?;
-            end
+            if end > b.len() {
+                if lenient {
+                    b.len()
+                } else {
+                    need_in(b, end, "PES_packet_length")?;
+                    end
+                }
+            } else {
+                end
+            }
         };
+        // Only a bounded packet that ran out of bytes is a truncation; the
+        // unbounded `0` form is a whole packet by definition.
+        let truncation = (pes_packet_length != 0
+            && payload_end < MIN_LEN + usize::from(pes_packet_length))
+        .then(|| Truncation {
+            declared: usize::from(pes_packet_length),
+            available: payload_end.saturating_sub(MIN_LEN),
+        });
 
         if !stream_id.has_optional_header() {
-            return Ok(PesPacket {
-                stream_id,
-                header: None,
-                payload: &b[MIN_LEN..payload_end],
-            });
+            return Ok((
+                PesPacket {
+                    stream_id,
+                    header: None,
+                    payload: &b[MIN_LEN..payload_end],
+                },
+                truncation,
+            ));
         }
 
         need_in(b, MIN_LEN + HEADER_FIXED, "PES optional header")?;
@@ -1091,11 +1147,14 @@ impl<'a> PesPacket<'a> {
             header_stuffing,
         };
 
-        Ok(PesPacket {
-            stream_id,
-            header: Some(header),
-            payload: &b[hdr_end..payload_end],
-        })
+        Ok((
+            PesPacket {
+                stream_id,
+                header: Some(header),
+                payload: &b[hdr_end..payload_end],
+            },
+            truncation,
+        ))
     }
 
     /// Serialized length in bytes.

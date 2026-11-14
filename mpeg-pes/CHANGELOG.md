@@ -4,6 +4,7 @@
 ### Fixed
 - `PesPacket::parse` reports a buffer shorter than the declared `PES_packet_length` as `Error::BufferTooShort` (a truncated packet) instead of a silent short read (regression from the #1159 fix that stopped re-serializing past the declared length) (#2746).
 ### Added
+- `PesPacket::parse_unit` — the lenient entry for a PES unit that may end before its declared `PES_packet_length` (a transport-stream join), returning the packet plus a `Truncation { declared, available }` (or `None` when complete). `PesPacket::parse` stays strict. `Truncation` is exported (#2746).
 - `PesHeader::flag_bytes`, `PesHeader::serialize_optional_fields` and a public `PesHeader::optional_len`: the one implementation of the PES optional-header bytes (flag bytes, PTS/DTS, ESCR, ES_rate, trick mode, copy info, CRC, extension, stuffing), so a crate that frames its own PES payload (e.g. `st291`'s ANC PES) can build on this codec instead of re-implementing the timestamp coding (#2762). `PesPacket::serialize_into` now calls them; its output is unchanged (every round-trip test stays byte-identical).
 - `StreamId::unbounded_length_allowed` — whether the unbounded `0` form may be written for that stream (video).
 ### Changed

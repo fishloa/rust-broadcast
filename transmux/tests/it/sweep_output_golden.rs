@@ -318,14 +318,7 @@ const TS_FIXTURES: &[(&str, u64)] = &[
     // stalled that track, and in PMT order every track behind it, on a live feed
     // (zenith regression). The config is built from that first frame, as 0.26.0
     // did, so its `bsmod` is the isolated frame's (see #1186 note above).
-    //
-    // Re-blessed for #2746: `PesPacket::parse` now reports a capture unit whose
-    // declared `PES_packet_length` runs past the captured bytes (this stream
-    // joins mid-PES) instead of returning it short, so its E-AC-3 tracks keep
-    // only the whole frames of each unit (3/1/3 and 6/3/3 frames per track
-    // before). No other fixture in the sweep changed (0xf1c0bc83662f59e7
-    // before).
-    ("ts/m6-single.ts", 0x762a3ab9ab8fd314),
+    ("ts/m6-single.ts", 0xf1c0bc83662f59e7),
     // 0x322faa14c5c28795 before #1161: the capture is field-coded (PAFF), and
     // is now one sample per field pair (293 fields -> 147 samples) instead of
     // one per field. Every other fixture is unchanged.
