@@ -518,14 +518,23 @@ impl WatchState {
         let future_total = &mut self.scte35_in_future_total;
         let past_total = &mut self.scte35_in_past_total;
         let immediate_total = &mut self.scte35_immediate_total;
-        track.feed(payload, ts_packet.header.pusi, |observation| {
-            *events_total += 1;
-            match cue_timing(observation.event.times.as_slice(), now_pts) {
-                CueTiming::Immediate => *immediate_total += 1,
-                CueTiming::InFuture => *future_total += 1,
-                CueTiming::InPast => *past_total += 1,
-            }
-        });
+        let _ = track.feed(
+            payload,
+            ts_packet.header.pusi,
+            ts_packet.header.continuity_counter,
+            ts_packet
+                .adaptation_field()
+                .and_then(Result::ok)
+                .is_some_and(|af| af.discontinuity_indicator),
+            |observation| {
+                *events_total += 1;
+                match cue_timing(observation.event.times.as_slice(), now_pts) {
+                    CueTiming::Immediate => *immediate_total += 1,
+                    CueTiming::InFuture => *future_total += 1,
+                    CueTiming::InPast => *past_total += 1,
+                }
+            },
+        );
     }
 
     /// The reference "now" for judging a cue's target time: the highest

@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `Scte35Check` reports a reassembled `splice_info_section` that does not parse (CRC-32 mismatch, impossible length, invalid field) as a `scte35-malformed` Error finding: `SpliceTracker::feed` used to drop such a section silently.
+
+### Dependencies
 - `scte35-splice` 6 -> 7: `SpliceTime::pts_time` is a validated `broadcast_common::clock33::Clock33`, and `SpliceInsert` carries its flags and times in one `SpliceMode` (see that crate's changelog).
 
 ### Changed

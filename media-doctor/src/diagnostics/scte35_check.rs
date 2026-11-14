@@ -9,6 +9,9 @@
 //!   same `splice_event_id` by end of stream → Warning.
 //! - **Duplicate open out**: two "out" `splice_insert`s with the same
 //!   `splice_event_id` and no intervening "in" → Warning.
+//! - **Corrupt cue**: a complete `splice_info_section` that does not parse
+//!   (CRC-32 mismatch, impossible length, invalid field) → Error, reported
+//!   instead of being dropped.
 //!
 //! Events with `splice_event_cancel_indicator == true` are ignored (they cancel
 //! the named event and neither open nor close a splice). Well-formed, balanced
@@ -24,7 +27,7 @@ use crate::Report;
 use crate::diagnostics::codec_common::{collect_pmt_streams, pids_with_stream_type};
 use crate::report::{Finding, Location, Severity};
 use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
-use scte35_splice::SpliceTracker;
+use scte35_splice::{NoCue, SpliceTracker};
 
 /// Checks SCTE-35 splice insertion consistency across the stream.
 ///
@@ -32,6 +35,7 @@ use scte35_splice::SpliceTracker;
 /// - An "out" splice_insert has no matching "in" by stream end (Warning).
 /// - A duplicate "out" splice_insert arrives without an intervening "in"
 ///   (Warning).
+/// - A reassembled splice_info_section does not parse (Error).
 ///
 /// Balanced out→in pairs with the same splice_event_id produce no findings.
 /// Cancelled events (`splice_event_cancel_indicator == true`) are ignored.
@@ -87,21 +91,37 @@ impl Diagnostic for Scte35Check {
             };
 
             let state = pid_states.entry(pid).or_default();
-            state.feed(payload, pkt.header.pusi, |event| {
-                if event.duplicate_open {
-                    // Duplicate open "out" with no intervening "in".
-                    report.push(Finding::new(
-                        Severity::Warning,
-                        Location::at_pid(i, pid),
-                        "scte35-dup-out",
-                        alloc::format!(
-                            "duplicate open splice_insert: out event_id {} \
-                             with no intervening in",
-                            event.event_id,
-                        ),
-                    ));
-                }
-            });
+            let outcome = state.feed(
+                payload,
+                pkt.header.pusi,
+                pkt.header.continuity_counter,
+                pkt.adaptation_field()
+                    .and_then(Result::ok)
+                    .is_some_and(|af| af.discontinuity_indicator),
+                |event| {
+                    if event.duplicate_open {
+                        // Duplicate open "out" with no intervening "in".
+                        report.push(Finding::new(
+                            Severity::Warning,
+                            Location::at_pid(i, pid),
+                            "scte35-dup-out",
+                            alloc::format!(
+                                "duplicate open splice_insert: out event_id {} \
+                                 with no intervening in",
+                                event.event_id,
+                            ),
+                        ));
+                    }
+                },
+            );
+            if let Err(NoCue::Malformed { error, .. }) = outcome {
+                report.push(Finding::new(
+                    Severity::Error,
+                    Location::at_pid(i, pid),
+                    "scte35-malformed",
+                    alloc::format!("corrupt splice_info_section: {error}"),
+                ));
+            }
         }
 
         for (&pid, state) in pid_states.iter() {
@@ -305,6 +325,60 @@ mod tests {
                 .iter()
                 .all(|f| f.rule_id != "scte35-dup-out"),
             "{:?}",
+            report.findings()
+        );
+    }
+
+    /// A complete section whose CRC-32 does not check out is reported, not
+    /// silently discarded (the tracker used to `continue` past it).
+    #[test]
+    fn corrupt_section_produces_a_malformed_finding() {
+        let pid = 0x01F0u16;
+        let mut corrupt = make_splice_insert_section(7, true, false);
+        let last = corrupt.len() - 1;
+        corrupt[last] ^= 0xFF;
+
+        let mut payload = vec![0x00];
+        payload.extend_from_slice(&corrupt);
+
+        let ts = make_packet(&payload, Pid::from_wire_masked(pid), 0);
+        let mut report = Report::new();
+        Scte35Check.run(&ts, &mut report);
+        let malformed: Vec<_> = report
+            .findings()
+            .iter()
+            .filter(|f| f.rule_id == "scte35-malformed")
+            .collect();
+        assert_eq!(
+            malformed.len(),
+            1,
+            "expected 1 malformed finding, got {:?}",
+            report.findings()
+        );
+        assert!(malformed[0].message.contains("CRC-32 mismatch"));
+    }
+
+    /// A byte-identical retransmission at the TS-packet layer is one cue, not
+    /// a corrupt one: the packet's continuity counter tells the tracker to
+    /// drop the repeat.
+    #[test]
+    fn a_repeated_packet_is_not_corrupt() {
+        let out_bytes = make_splice_insert_section(100, true, false);
+        let mut payload = Vec::new();
+        payload.push(0x00);
+        payload.extend_from_slice(&out_bytes);
+
+        let packet = make_packet(&payload, Pid::from_wire_masked(0x01F0), 0);
+        let mut ts = packet.clone();
+        ts.extend_from_slice(&packet);
+        let mut report = Report::new();
+        Scte35Check.run(&ts, &mut report);
+        assert!(
+            report
+                .findings()
+                .iter()
+                .all(|f| f.rule_id != "scte35-malformed"),
+            "a legal duplicate is not corruption, got {:?}",
             report.findings()
         );
     }
