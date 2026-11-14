@@ -9,26 +9,7 @@ const fn plain(name: &'static str) -> Crate {
     Crate { name, allow: &[] }
 }
 
-/// `broadcast-client`: a constant-width, compile-time timescale; the match arm a
-/// non-zero constant can never take.
-const BROADCAST_CLIENT: Crate = Crate {
-    name: "broadcast-client",
-    allow: &[
-        (
-            "src/buffer.rs",
-            "None => core::unreachable!(),",
-            "Timescale::new of a non-zero constant, checked at compile time",
-        ),
-        (
-            "src/buffer.rs",
-            "Err(_) => core::unreachable!(),",
-            "Clock27::from_27mhz of a count already reduced modulo its wrap, so the range check cannot fail and there is no case for a caller to handle",
-        ),
-    ],
-};
-
 pub const TABLE: &[Crate] = &[
-    BROADCAST_CLIENT,
     plain("broadcast-smooth"),
     plain("smooth-runtime"),
     plain("caption-convert"),
@@ -40,4 +21,5 @@ pub const TABLE: &[Crate] = &[
     plain("scte35-splice"),
     plain("ssai-runtime"),
     plain("timed-metadata"),
+    plain("broadcast-client"),
 ];

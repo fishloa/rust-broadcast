@@ -18,14 +18,9 @@ use crate::join::VideoJoin;
 
 const SILENCE_MARGIN_US: u64 = 500_000;
 
-/// A raw 27 MHz tick count as a playback position: the count is reduced onto
-/// the clock first, so the checked constructor cannot fail and its error is not
-/// a case the caller could act on.
+/// A raw 27 MHz tick count as a playback position, reduced onto the clock.
 fn clock27(ticks: u64) -> Clock27 {
-    match Clock27::from_27mhz(ticks % broadcast_common::clock33::PCR_WRAP_27MHZ) {
-        Ok(position) => position,
-        Err(_) => core::unreachable!(),
-    }
+    Clock27::from_27mhz_wrapping(ticks)
 }
 
 /// The end of the contiguous decodable run of a video track, in presentation order. Samples arrive
@@ -138,10 +133,7 @@ macro_rules! rec {
 const TICKS_PER_SEC_27MHZ: u32 = 27_000_000;
 
 /// [`TICKS_PER_SEC_27MHZ`] as a [`Timescale`].
-const CLOCK_27MHZ: Timescale = match Timescale::new(TICKS_PER_SEC_27MHZ) {
-    Some(t) => t,
-    None => core::unreachable!(),
-};
+const CLOCK_27MHZ: Timescale = broadcast_common::timescale!(TICKS_PER_SEC_27MHZ);
 
 /// Controller key of the placeholder for a declared stream that has not resolved yet; a real
 /// `TrackId` never takes it.
