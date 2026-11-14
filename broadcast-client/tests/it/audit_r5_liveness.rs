@@ -2,6 +2,7 @@
 //! ends, with no end-of-stream flush to lean on.
 
 use std::collections::VecDeque;
+use url::Url;
 
 use broadcast_client::{Action, Config, ConnId, Event, Session, Status};
 use broadcast_common::stage::Timestamp;
@@ -60,7 +61,12 @@ fn aligned(mut b: Vec<u8>) -> Vec<u8> {
 }
 
 fn ts_http_live(bytes: &[u8]) -> Seen {
-    let mut s = Session::open("http://h/live.ts", Config::default(), ts(0)).unwrap();
+    let mut s = Session::open(
+        Url::parse("http://h/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let mut seen = Seen::default();
     let mut now = 0u64;
     let mut conn = None;
@@ -96,7 +102,12 @@ fn hls_live(bytes: &[u8]) -> Seen {
     for i in 0..SEGMENTS {
         pl.push_str(&format!("#EXTINF:3.5,\nseg{i}.ts\n"));
     }
-    let mut s = Session::open("http://h/p/index.m3u8", Config::default(), ts(0)).unwrap();
+    let mut s = Session::open(
+        Url::parse("http://h/p/index.m3u8").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let mut seen = Seen::default();
     let mut now = 0u64;
     while now <= HLS_RUN_US {

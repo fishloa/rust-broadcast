@@ -1,4 +1,5 @@
 use crate::support;
+use url::Url;
 
 use broadcast_client::{Action, BufferEvent, Config, ConnId, Event, Session};
 use broadcast_common::stage::Timestamp;
@@ -110,7 +111,12 @@ fn drain(s: &mut Session, conn: &mut Option<ConnId>, now: u64, out: &mut Vec<Rec
 }
 
 fn run(bytes: &[u8], sizes: &mut dyn FnMut() -> usize, clock: &Clock) -> Vec<Rec> {
-    let mut s = Session::open("http://h/live.ts", Config::default(), ts(0)).unwrap();
+    let mut s = Session::open(
+        Url::parse("http://h/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let mut conn = None;
     let mut out = Vec::new();
     let mut now = 0u64;

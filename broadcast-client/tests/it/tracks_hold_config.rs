@@ -1,5 +1,6 @@
 use broadcast_client::{Action, Config, ConnId, Error, Event, Session, TrackId};
 use broadcast_common::stage::Timestamp;
+use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -24,7 +25,7 @@ fn without_pid(bytes: &[u8], pid: u16) -> Vec<u8> {
 }
 
 fn open_live(config: Config) -> (Session, ConnId) {
-    let mut s = Session::open("http://h/live.ts", config, ts(0)).unwrap();
+    let mut s = Session::open(Url::parse("http://h/live.ts").unwrap(), config, ts(0)).unwrap();
     let mut conn = None;
     while let Some(a) = s.poll(ts(0)) {
         if let Action::HttpRequest { conn: c, .. } = a {
@@ -165,7 +166,7 @@ fn a_short_wall_limit_releases_a_stream_whose_declared_pid_never_sends() {
 }
 
 fn rejected(config: Config) -> &'static str {
-    match Session::open("http://h/live.ts", config, ts(0)) {
+    match Session::open(Url::parse("http://h/live.ts").unwrap(), config, ts(0)) {
         Err(Error::InvalidConfig { field }) => field,
         other => panic!("expected InvalidConfig, got {:?}", other.map(|_| ())),
     }
@@ -194,7 +195,7 @@ fn the_documented_hold_defaults_are_unchanged_and_valid() {
     assert_eq!(c.tracks_hold_quiet_input_bytes, 512 * 1024);
     assert_eq!(c.tracks_hold_max_media_us, 1_000_000);
     assert_eq!(c.tracks_hold_max_wall_us, 1_000_000);
-    assert!(Session::open("http://h/live.ts", c, ts(0)).is_ok());
+    assert!(Session::open(Url::parse("http://h/live.ts").unwrap(), c, ts(0)).is_ok());
 }
 
 #[test]
@@ -205,5 +206,5 @@ fn zero_wall_and_media_limits_are_valid() {
         new_config.tracks_hold_max_media_us = 0;
         new_config
     };
-    assert!(Session::open("http://h/live.ts", c, ts(0)).is_ok());
+    assert!(Session::open(Url::parse("http://h/live.ts").unwrap(), c, ts(0)).is_ok());
 }

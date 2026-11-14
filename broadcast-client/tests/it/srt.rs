@@ -3,6 +3,7 @@ use crate::support::srt_peer::{Cipher, PEER_ISN, SrtPeer};
 use crate::support::srt_sim::{Fate, SEED, SrtSim, config_with_seed};
 use crate::support::udp_host::{TS_PACKET, ts_datagrams};
 use broadcast_common::stage::Timestamp;
+use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
 fn stamp(us: u64) -> Timestamp {
@@ -443,7 +444,7 @@ fn closing_before_the_handshake_completes_sends_nothing_but_the_close() {
 #[test]
 fn the_entropy_seed_is_required_and_every_attempt_derives_fresh_identifiers() {
     assert!(matches!(
-        Session::open(URL, Config::default(), stamp(0)).unwrap_err(),
+        Session::open(Url::parse(URL).unwrap(), Config::default(), stamp(0)).unwrap_err(),
         Error::InvalidConfig {
             field: "srt.entropy_seed"
         }
@@ -493,7 +494,8 @@ fn a_latency_below_the_default_is_accepted_and_the_stream_plays() {
 
 #[test]
 fn bad_srt_settings_are_typed_errors() {
-    let open = |f: fn(&mut Config)| Session::open(URL, cfg(f), stamp(0)).unwrap_err();
+    let open =
+        |f: fn(&mut Config)| Session::open(Url::parse(URL).unwrap(), cfg(f), stamp(0)).unwrap_err();
     for (err, field) in [
         (
             open(|c| c.srt.timeouts = Timeouts::default().with_handshake(Duration::ZERO)),
@@ -514,12 +516,22 @@ fn bad_srt_settings_are_typed_errors() {
         }
     }
     assert!(matches!(
-        Session::open("srt://127.0.0.1", cfg(|_| {}), stamp(0)).unwrap_err(),
+        Session::open(
+            Url::parse("srt://127.0.0.1").unwrap(),
+            cfg(|_| {}),
+            stamp(0)
+        )
+        .unwrap_err(),
         Error::InvalidUrl(_)
     ));
     assert!(matches!(
-        Session::open(URL, cfg(|c| c.kind = SourceKind::Udp), stamp(0)).unwrap_err(),
-        Error::UnsupportedScheme(_)
+        Session::open(
+            Url::parse(URL).unwrap(),
+            cfg(|c| c.kind = SourceKind::Udp),
+            stamp(0)
+        )
+        .unwrap_err(),
+        Error::UnsupportedScheme { .. }
     ));
 }
 
@@ -725,7 +737,7 @@ fn a_rejection_is_reported_from_the_callback_without_a_poll() {
     use broadcast_client::Action;
     let mut peer = SrtPeer::new(Cipher::Aes128, Some(PASS), LATENCY_MS);
     let mut session = Session::open(
-        URL,
+        Url::parse(URL).unwrap(),
         {
             let mut c = encrypted(SrtKeyLength::Aes128);
             c.srt.encryption = Some(SrtEncryption::new("wrong passphrase", SrtKeyLength::Aes128));

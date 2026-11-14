@@ -1,5 +1,6 @@
 use broadcast_client::{Action, Config, Session};
 use broadcast_common::stage::Timestamp;
+use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -9,8 +10,12 @@ fn ts(us: u64) -> Timestamp {
 #[test]
 fn resolve_all_3xx_codes_session() {
     for code in [301u16, 302, 303, 307, 308] {
-        let mut session =
-            Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+        let mut session = Session::open(
+            Url::parse("http://example/live.ts").unwrap(),
+            Config::default(),
+            ts(0),
+        )
+        .unwrap();
         let conn = match session.poll(ts(0)).unwrap() {
             Action::HttpRequest { conn, .. } => conn,
             _ => panic!(),
@@ -34,7 +39,12 @@ fn resolve_all_3xx_codes_session() {
 
 #[test]
 fn redirect_limit_in_session() {
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let mut conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
@@ -72,7 +82,12 @@ fn redirect_limit_in_session() {
 
 #[test]
 fn redirect_without_location_is_connect_error() {
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
@@ -94,7 +109,12 @@ fn redirect_without_location_is_connect_error() {
 #[test]
 fn cross_origin_redirect_drops_authorization() {
     use broadcast_client::Credentials;
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     session
         .set_credentials(Credentials::bearer("secret-token"))
         .unwrap();

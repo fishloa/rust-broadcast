@@ -1,6 +1,7 @@
 use std::io::ErrorKind;
 use std::net::{ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
+use url::Url;
 
 use broadcast_client::{Action, Config, ConnId, Event, Session, UdpMode};
 
@@ -29,7 +30,7 @@ pub struct WireHost {
 impl WireHost {
     pub fn open(url: &str, config: Config) -> Self {
         Self {
-            session: Session::open(url, config, ts(0)).unwrap(),
+            session: Session::open(Url::parse(url).unwrap(), config, ts(0)).unwrap(),
             socket: None,
             conn: ConnId::new(0),
             start: Instant::now(),

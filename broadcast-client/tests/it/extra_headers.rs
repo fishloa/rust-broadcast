@@ -1,4 +1,5 @@
 use crate::support;
+use url::Url;
 
 use broadcast_client::{Config, Credentials, Error, Session};
 use broadcast_common::stage::Timestamp;
@@ -41,7 +42,8 @@ fn with_headers(headers: Vec<(String, String)>) -> Config {
 }
 
 fn open_err(headers: Vec<(String, String)>) -> Error {
-    Session::open(TS_URL, with_headers(headers), ts(0)).expect_err("open must fail")
+    Session::open(Url::parse(TS_URL).unwrap(), with_headers(headers), ts(0))
+        .expect_err("open must fail")
 }
 
 fn hls_with_headers() -> Config {

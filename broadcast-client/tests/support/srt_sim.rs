@@ -1,5 +1,6 @@
 use broadcast_client::{Action, Config, ConnId, Event, Session, SrtEntropySeed};
 use broadcast_common::stage::Timestamp;
+use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -55,7 +56,7 @@ impl SrtSim {
     }
 
     pub fn open_with_peers(url: &str, config: Config, peers: Vec<SrtPeer>) -> Self {
-        let session = Session::open(url, config, ts(0)).unwrap();
+        let session = Session::open(Url::parse(url).unwrap(), config, ts(0)).unwrap();
         let mut sim = Self {
             session,
             peers,

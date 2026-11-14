@@ -1,5 +1,6 @@
 #![no_main]
 
+use url::Url;
 use std::collections::BTreeMap;
 
 use broadcast_common::stage::Timestamp;
@@ -328,7 +329,7 @@ fuzz_target!(|data: &[u8]| {
         .and_then(|m| m.publish_time_us)
         .unwrap_or(DEFAULT_PUBLISH_US);
 
-    let Ok(mut session) = Session::open(MPD_URL, config, Timestamp::from_micros(0)) else {
+    let Ok(mut session) = Session::open(Url::parse(MPD_URL).unwrap(), config, Timestamp::from_micros(0)) else {
         return;
     };
     if head[7] & 1 != 0 {

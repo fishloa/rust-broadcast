@@ -3,6 +3,7 @@
 //! the callbacks a real host makes (`on_response`, `on_data`, `on_closed`). No clock is read.
 
 use std::collections::{BTreeMap, BTreeSet};
+use url::Url;
 
 use broadcast_client::{Action, Config, ConnId, Event, Session, Status, TransportError};
 use transmux::Sample;
@@ -318,7 +319,8 @@ pub struct DashSim {
 
 impl DashSim {
     pub fn new(url: &str, config: Config, world: World, backend: Box<dyn Backend>) -> Self {
-        let session = Session::open(url, config, ts(world.mono())).expect("open");
+        let session =
+            Session::open(Url::parse(url).unwrap(), config, ts(world.mono())).expect("open");
         Self::with_session(session, world, backend)
     }
 

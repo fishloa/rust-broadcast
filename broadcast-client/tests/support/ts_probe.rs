@@ -1,5 +1,6 @@
 use broadcast_client::{Action, Config, ConnId, Session};
 use broadcast_common::stage::Timestamp;
+use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -76,7 +77,7 @@ pub fn one(session: &mut Session, now: u64) -> Req {
 }
 
 pub fn open(url: &str, config: Config) -> Session {
-    Session::open(url, config, ts(0)).expect("open")
+    Session::open(Url::parse(url).unwrap(), config, ts(0)).expect("open")
 }
 
 pub fn respond(session: &mut Session, req: &Req, status: u16, headers: &[(String, String)]) {

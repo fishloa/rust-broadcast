@@ -125,7 +125,8 @@ fn auto_detects_m3u8_suffix() {
         "http://origin.test/hls/index.M3U8?token=abc",
         "http://origin.test/hls/index.m3u",
     ] {
-        let mut s = Session::open(url, Config::default(), ts(0)).expect("open");
+        let mut s =
+            Session::open(Url::parse(url).unwrap(), Config::default(), ts(0)).expect("open");
         let first = drain_actions(&mut s, 0);
         let (conn, req_url) = single_http_request(&first);
         assert_eq!(req_url, url);
@@ -145,8 +146,12 @@ fn auto_detects_m3u8_suffix() {
         );
     }
 
-    let mut ts_host =
-        Session::open("http://origin.test/hls/live.ts", Config::default(), ts(0)).expect("open");
+    let mut ts_host = Session::open(
+        Url::parse("http://origin.test/hls/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut ts_host, 0));
     respond_ok(&mut ts_host, conn, &ts_playlist(), 0);
     assert!(
@@ -159,7 +164,12 @@ fn auto_detects_m3u8_suffix() {
         new_config.kind = SourceKind::TsHttp;
         new_config
     };
-    let mut ts2 = Session::open("http://origin.test/hls/index.m3u8", forced, ts(0)).expect("open");
+    let mut ts2 = Session::open(
+        Url::parse("http://origin.test/hls/index.m3u8").unwrap(),
+        forced,
+        ts(0),
+    )
+    .expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut ts2, 0));
     respond_ok(&mut ts2, conn, &ts_playlist(), 0);
     assert!(
@@ -279,7 +289,7 @@ fn media_playlist_fmp4_segments_emit_tracks_then_samples() {
 
 #[test]
 fn master_emits_variants_event_then_fetches_chosen_variant() {
-    let mut s = Session::open(MASTER_URL, hls_config(), ts(0)).expect("open");
+    let mut s = Session::open(Url::parse(MASTER_URL).unwrap(), hls_config(), ts(0)).expect("open");
     let (conn, url) = single_http_request(&drain_actions(&mut s, 0));
     assert_eq!(url, MASTER_URL);
     respond_ok(&mut s, conn, two_variant_master_text().as_bytes(), 0);
@@ -304,8 +314,12 @@ fn master_emits_variants_event_then_fetches_chosen_variant() {
     let real = String::from_utf8(test_fixtures::read("hls/real/bipbop-ts/master.m3u8"))
         .expect("utf8 bipbop master");
     let n_variants = real.matches("#EXT-X-STREAM-INF").count();
-    let mut s2 =
-        Session::open("http://origin.test/bip/master.m3u8", hls_config(), ts(0)).expect("open");
+    let mut s2 = Session::open(
+        Url::parse("http://origin.test/bip/master.m3u8").unwrap(),
+        hls_config(),
+        ts(0),
+    )
+    .expect("open");
     let (c2, _) = single_http_request(&drain_actions(&mut s2, 0));
     respond_ok(&mut s2, c2, real.as_bytes(), 0);
     let evs = drain_events(&mut s2);
@@ -337,7 +351,7 @@ fn variant_policy_in_config_applied() {
         };
         new_config
     };
-    let mut s = Session::open(MASTER_URL, by_bandwidth, ts(0)).expect("open");
+    let mut s = Session::open(Url::parse(MASTER_URL).unwrap(), by_bandwidth, ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s, 0));
     respond_ok(&mut s, conn, two_variant_master_text().as_bytes(), 0);
     let sel = drain_events(&mut s)
@@ -360,7 +374,7 @@ fn variant_policy_in_config_applied() {
         };
         new_config
     };
-    let mut s2 = Session::open(MASTER_URL, by_height, ts(0)).expect("open");
+    let mut s2 = Session::open(Url::parse(MASTER_URL).unwrap(), by_height, ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s2, 0));
     respond_ok(&mut s2, conn, two_variant_master_text().as_bytes(), 0);
     let (_, url2) = single_http_request(&drain_actions(&mut s2, 0));
@@ -395,8 +409,12 @@ fn select_variant_switches_and_emits_discontinuity() {
         Err(Error::NoSuchVariant(9))
     ));
 
-    let mut ts_host =
-        Session::open("http://origin.test/x.ts", Config::default(), ts(0)).expect("open");
+    let mut ts_host = Session::open(
+        Url::parse("http://origin.test/x.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .expect("open");
     assert!(matches!(ts_host.select_variant(0), Err(Error::NotHls)));
 }
 
@@ -443,7 +461,7 @@ fn live_blocking_reload_query_in_request_url() {
               #EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:2.0,\nseg100.m4s\n\
               #EXT-X-PART:DURATION=0.5,URI=\"p101.0.m4s\",INDEPENDENT=YES\n";
     let url = "http://origin.test/ll/live.m3u8";
-    let mut s = Session::open(url, hls_config(), ts(0)).expect("open");
+    let mut s = Session::open(Url::parse(url).unwrap(), hls_config(), ts(0)).expect("open");
     let (conn, first) = single_http_request(&drain_actions(&mut s, 0));
     assert_eq!(first, url, "the first fetch is a plain GET");
     respond_ok(&mut s, conn, ll.as_bytes(), 0);
@@ -464,7 +482,8 @@ fn live_blocking_reload_query_in_request_url() {
 #[test]
 fn prefetch_concurrent_connections_tracked() {
     let bodies = cmaf_bodies();
-    let mut s = Session::open(CMAF_PLAYLIST_URL, hls_config(), ts(0)).expect("open");
+    let mut s =
+        Session::open(Url::parse(CMAF_PLAYLIST_URL).unwrap(), hls_config(), ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s, 0));
     respond_ok(&mut s, conn, &bodies[CMAF_PLAYLIST_URL], 0);
     let reqs = http_requests(&drain_actions(&mut s, 0));
@@ -545,7 +564,8 @@ fn session_samples_equal_bare_hls_client_oracle() {
 
 #[test]
 fn backoff_2_4_8_then_10_forever() {
-    let mut s = Session::open(TS_PLAYLIST_URL, hls_config(), ts(0)).expect("open");
+    let mut s =
+        Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), hls_config(), ts(0)).expect("open");
     let mut now = 0u64;
     let mut deltas = Vec::new();
     let mut attempts = Vec::new();
@@ -751,7 +771,8 @@ fn oversized_playlist_body_closes_and_fails() {
         new_config
     };
     let exact = padded_playlist(limit);
-    let mut ok = Session::open(TS_PLAYLIST_URL, config.clone(), ts(0)).expect("open");
+    let mut ok =
+        Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), config.clone(), ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut ok, 0));
     respond_ok(&mut ok, conn, &exact, 0);
     assert_eq!(
@@ -760,7 +781,7 @@ fn oversized_playlist_body_closes_and_fails() {
         "a body of exactly the limit is accepted"
     );
 
-    let mut s = Session::open(TS_PLAYLIST_URL, config, ts(0)).expect("open");
+    let mut s = Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), config, ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s, 0));
     s.on_response(conn, 200, &[], ts(0));
     s.on_data(conn, &exact, ts(0));
@@ -790,7 +811,7 @@ fn oversized_segment_body_closes_and_fails() {
         new_config.max_segment_bytes = limit;
         new_config
     };
-    let mut s = Session::open(TS_PLAYLIST_URL, config, ts(0)).expect("open");
+    let mut s = Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), config, ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s, 0));
     respond_ok(&mut s, conn, &ts_playlist(), 0);
     let reqs = http_requests(&drain_actions(&mut s, 0));
@@ -812,7 +833,8 @@ fn oversized_segment_body_closes_and_fails() {
 
 #[test]
 fn request_timeout_aborts_playlist_and_segment() {
-    let mut s = Session::open(TS_PLAYLIST_URL, hls_config(), ts(0)).expect("open");
+    let mut s =
+        Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), hls_config(), ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s, 0));
     assert!(drain_actions(&mut s, 20 * SEC - 1).is_empty());
     let aborted = drain_actions(&mut s, 20 * SEC);
@@ -822,7 +844,7 @@ fn request_timeout_aborts_playlist_and_segment() {
 
     let mut config = hls_config();
     config.segment_inactivity_timeout = std::time::Duration::from_nanos(u64::MAX);
-    let mut s2 = Session::open(TS_PLAYLIST_URL, config, ts(0)).expect("open");
+    let mut s2 = Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), config, ts(0)).expect("open");
     let (c, _) = single_http_request(&drain_actions(&mut s2, 0));
     respond_ok(&mut s2, c, &ts_playlist(), 0);
     let reqs = http_requests(&drain_actions(&mut s2, 0));
@@ -993,7 +1015,8 @@ fn per_request_redirect_followed_and_counted_separately() {
 
 #[test]
 fn credentials_401_on_playlist_waits_no_retry() {
-    let mut s = Session::open(TS_PLAYLIST_URL, hls_config(), ts(0)).expect("open");
+    let mut s =
+        Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), hls_config(), ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s, 0));
     s.on_response(
         conn,
@@ -1045,7 +1068,8 @@ fn credentials_401_on_playlist_waits_no_retry() {
 
 #[test]
 fn late_callbacks_after_close_ignored() {
-    let mut s = Session::open(TS_PLAYLIST_URL, hls_config(), ts(0)).expect("open");
+    let mut s =
+        Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), hls_config(), ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s, 0));
     respond_ok(&mut s, conn, &ts_playlist(), 0);
     let reqs = http_requests(&drain_actions(&mut s, 0));
@@ -1072,7 +1096,7 @@ fn late_callbacks_after_close_ignored() {
         new_config.max_manifest_bytes = 100;
         new_config
     };
-    let mut o = Session::open(TS_PLAYLIST_URL, config, ts(0)).expect("open");
+    let mut o = Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), config, ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut o, 0));
     o.on_response(conn, 200, &[], ts(1));
     o.on_data(conn, &[b'#'; 101], ts(0));

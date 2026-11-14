@@ -1,4 +1,5 @@
 use crate::support;
+use url::Url;
 
 use std::collections::BTreeSet;
 
@@ -448,7 +449,7 @@ fn cookie_name_with_control_character_is_rejected_at_open() {
             new_config.initial_cookies = vec![(name.to_string(), "v".to_string())];
             new_config
         };
-        let result = Session::open(TS_URL, config, ts(0));
+        let result = Session::open(Url::parse(TS_URL).unwrap(), config, ts(0));
         assert!(
             matches!(result, Err(broadcast_client::Error::InvalidHeader { .. })),
             "{name:?} accepted"
@@ -459,7 +460,7 @@ fn cookie_name_with_control_character_is_rejected_at_open() {
         new_config.initial_cookies = vec![("good-name_1".to_string(), "v".to_string())];
         new_config
     };
-    assert!(Session::open(TS_URL, ok, ts(0)).is_ok());
+    assert!(Session::open(Url::parse(TS_URL).unwrap(), ok, ts(0)).is_ok());
 }
 
 fn jar_after(url: &str, lines: &[&str]) -> Vec<(String, String)> {

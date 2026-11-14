@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use url::Url;
 
 use broadcast_client::{Action, Config, ConnId, Event, Session, SourceKind, TransportError};
 use broadcast_common::Unpackage;
@@ -83,7 +84,7 @@ pub struct RtmpHost {
 
 impl RtmpHost {
     pub fn new(url: &str, config: Config, peer_config: PeerConfig) -> Self {
-        let session = Session::open(url, config, ts(0)).expect("open");
+        let session = Session::open(Url::parse(url).unwrap(), config, ts(0)).expect("open");
         Self {
             session,
             now: 0,

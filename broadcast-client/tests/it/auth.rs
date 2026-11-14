@@ -1,6 +1,7 @@
 use broadcast_auth::Scheme as AuthScheme;
 use broadcast_client::{Action, Config, ConnId, Credentials, Event, Session, Status};
 use broadcast_common::stage::Timestamp;
+use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -9,7 +10,12 @@ fn ts(us: u64) -> Timestamp {
 
 #[test]
 fn bearer_preemptive() {
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     session
         .set_credentials(Credentials::bearer("secret-token"))
         .unwrap();
@@ -31,7 +37,12 @@ fn explicit_basic_is_sent_on_the_first_request_only_when_preemptive_basic_is_on(
     for (preemptive, expected) in [(false, false), (true, true)] {
         let mut config = Config::default();
         config.preemptive_basic = preemptive;
-        let mut session = Session::open("http://example/live.m3u8", config, ts(0)).unwrap();
+        let mut session = Session::open(
+            Url::parse("http://example/live.m3u8").unwrap(),
+            config,
+            ts(0),
+        )
+        .unwrap();
         session
             .set_credentials(Credentials::Basic {
                 username: "user".to_string(),
@@ -54,8 +65,12 @@ fn explicit_basic_is_sent_on_the_first_request_only_when_preemptive_basic_is_on(
 /// the request URL.
 #[test]
 fn an_empty_username_in_the_url_userinfo_is_credentials() {
-    let mut session =
-        Session::open("http://:pw@example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://:pw@example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let Some(Action::HttpRequest { conn, url, .. }) = session.poll(ts(0)) else {
         panic!("a first request");
     };
@@ -99,7 +114,12 @@ fn error_kinds_report_their_refusal_status_and_permanence() {
 
 #[test]
 fn basic_401_replay_then_200() {
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     session
         .set_credentials(Credentials::new("user", "pass"))
         .unwrap();
@@ -146,7 +166,12 @@ fn basic_401_replay_then_200() {
 
 #[test]
 fn digest_401_replay_then_200() {
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     session
         .set_credentials(Credentials::new("user", "pass"))
         .unwrap();
@@ -179,7 +204,12 @@ fn digest_401_replay_then_200() {
 
 #[test]
 fn basic_digest_preemptive_after_replay() {
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     session
         .set_credentials(Credentials::new("user", "pass"))
         .unwrap();
@@ -221,7 +251,12 @@ fn basic_digest_preemptive_after_replay() {
 
 #[test]
 fn digest_stale_rechallenge_replays() {
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     session
         .set_credentials(Credentials::new("user", "pass"))
         .unwrap();
@@ -273,7 +308,12 @@ fn digest_stale_rechallenge_replays() {
 
 #[test]
 fn no_credentials_401_waits_no_timers() {
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
@@ -319,7 +359,12 @@ fn no_credentials_401_waits_no_timers() {
 
 #[test]
 fn no_credentials_407_waits() {
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
@@ -349,7 +394,12 @@ fn no_credentials_407_waits() {
 
 #[test]
 fn auth_rejected_after_bad_credentials() {
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     session
         .set_credentials(Credentials::new("user", "pass"))
         .unwrap();
@@ -395,7 +445,12 @@ fn auth_rejected_after_bad_credentials() {
 
 #[test]
 fn set_credentials_while_waiting_reopens() {
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
@@ -423,7 +478,8 @@ fn set_credentials_while_waiting_reopens() {
 fn set_credentials_while_streaming_stored_not_interrupt() {
     let mut config = Config::default();
     config.ts_http.min_reconnect_interval = std::time::Duration::ZERO;
-    let mut session = Session::open("http://example/live.ts", config, ts(0)).unwrap();
+    let mut session =
+        Session::open(Url::parse("http://example/live.ts").unwrap(), config, ts(0)).unwrap();
     let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, headers, .. } => {
             assert!(
@@ -477,7 +533,12 @@ fn set_credentials_while_streaming_stored_not_interrupt() {
 
 #[test]
 fn forbidden_then_retry_policy() {
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
@@ -508,7 +569,12 @@ fn forbidden_then_retry_policy() {
 
 #[test]
 fn debug_does_not_contain_secret() {
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     session
         .set_credentials(Credentials::bearer("supersecret-token"))
         .unwrap();
@@ -539,7 +605,12 @@ fn authorization(headers: &[(String, String)]) -> Option<&str> {
 }
 
 fn challenged_session(challenge: &str) -> Session {
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let (conn, headers) = first_request_headers(&mut session, 0);
     assert!(authorization(&headers).is_none());
     session.on_response(

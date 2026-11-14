@@ -4,6 +4,7 @@
 //! may change.
 
 use crate::support;
+use url::Url;
 
 use std::collections::BTreeSet;
 
@@ -72,7 +73,8 @@ struct Drive {
 impl Drive {
     fn new(config: Config) -> Self {
         Self {
-            session: Session::open(TS_PLAYLIST_URL, config, ts(0)).expect("open"),
+            session: Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), config, ts(0))
+                .expect("open"),
             now: 0,
             pending: Vec::new(),
             wakes: BTreeSet::new(),
@@ -509,7 +511,7 @@ fn nothing_closes_one_microsecond_before_the_timeout() {
         }
         (requests, closes)
     }
-    let mut session = Session::open(TS_PLAYLIST_URL, config(), ts(0)).unwrap();
+    let mut session = Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), config(), ts(0)).unwrap();
     let (opened, _) = collect(&mut session, 0);
     let playlist_conn = opened[0].0;
     let playlist = ts_playlist();
@@ -811,7 +813,7 @@ fn a_segment_that_stalls_every_time_exhausts_the_retry_budget() {
 fn a_playlist_is_exempt_and_only_the_request_timeout_bounds_it() {
     let mut config = config();
     config.request_timeout = std::time::Duration::from_secs(20);
-    let mut session = Session::open(TS_PLAYLIST_URL, config, ts(0)).unwrap();
+    let mut session = Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), config, ts(0)).unwrap();
     let mut conn = None;
     let mut closed = false;
     for now in [0, INACTIVITY_US, 2 * INACTIVITY_US, 20 * SEC - 1, 20 * SEC] {

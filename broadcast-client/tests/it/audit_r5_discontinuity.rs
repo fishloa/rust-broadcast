@@ -2,6 +2,7 @@
 //! or cost samples beyond the pre-discontinuity tail.
 
 use std::collections::{BTreeMap, VecDeque};
+use url::Url;
 
 use broadcast_client::{Action, Config, ConnId, Event, Session};
 use broadcast_common::stage::Timestamp;
@@ -77,7 +78,12 @@ fn run(segs: &[Vec<u8>], disc_at: Option<usize>) -> Outcome {
         }
         pl
     };
-    let mut s = Session::open("http://h/p/index.m3u8", Config::default(), ts(0)).unwrap();
+    let mut s = Session::open(
+        Url::parse("http://h/p/index.m3u8").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let mut out = Outcome::default();
     let mut now = 0u64;
     while now <= RUN_US {

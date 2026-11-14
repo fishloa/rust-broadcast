@@ -3,6 +3,7 @@
 //! holds, (e) a 40-stream PMT with a declared audio stream that never sends.
 
 use crate::support;
+use url::Url;
 
 use std::collections::VecDeque;
 
@@ -364,7 +365,12 @@ impl HeldRun {
 
 fn run_ts_hls(segs: &[Vec<u8>], disc_at: Option<usize>, starve: bool) -> HeldRun {
     let n = segs.len();
-    let mut s = Session::open("http://h/p/index.m3u8", Config::default(), ts(0)).unwrap();
+    let mut s = Session::open(
+        Url::parse("http://h/p/index.m3u8").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let mut out = HeldRun::default();
     let mut now = 0u64;
     let mut position: Option<(u64, u64)> = None;

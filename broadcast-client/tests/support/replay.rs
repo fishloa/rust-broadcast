@@ -1,5 +1,6 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use url::Url;
 
 use broadcast_client::{Action, BufferEvent, Config, ConnId, Event, Session};
 use broadcast_common::stage::Timestamp;
@@ -111,7 +112,7 @@ impl Replay {
 }
 
 pub fn open_live(config: Config) -> (Session, ConnId) {
-    let mut s = Session::open("http://h/live.ts", config, ts(0)).unwrap();
+    let mut s = Session::open(Url::parse("http://h/live.ts").unwrap(), config, ts(0)).unwrap();
     let mut conn = None;
     while let Some(a) = s.poll(ts(0)) {
         if let Action::HttpRequest { conn: c, .. } = a {

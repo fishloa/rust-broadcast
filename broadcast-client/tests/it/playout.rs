@@ -1,4 +1,5 @@
 use crate::support;
+use url::Url;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -74,7 +75,7 @@ struct Drv {
 
 impl Drv {
     fn new(url: &str, config: Config, bodies: HashMap<String, Vec<u8>>) -> Self {
-        let session = Session::open(url, config, ts(0)).expect("open");
+        let session = Session::open(Url::parse(url).unwrap(), config, ts(0)).expect("open");
         let mut d = Self {
             session,
             now: 0,
@@ -656,7 +657,7 @@ fn hls_live_pause_and_resume_cycle_with_delivery_gap() {
 }
 
 fn finite_session(config: Config) -> Session {
-    Session::open(FINITE_URL, config, ts(0)).unwrap()
+    Session::open(Url::parse(FINITE_URL).unwrap(), config, ts(0)).unwrap()
 }
 
 fn feed_finite(session: &mut Session, chunk: usize, positions: bool) -> Vec<Event> {
@@ -715,7 +716,8 @@ fn live_ts_http_still_uses_buffering_runtime() {
     let (status, headers) = tf1_headers!();
     let mut config = Config::default();
     config.record_buffer_inputs = true;
-    let mut s = Session::open("http://example/live.ts", config, ts(0)).unwrap();
+    let mut s =
+        Session::open(Url::parse("http://example/live.ts").unwrap(), config, ts(0)).unwrap();
     let conn = match s.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),

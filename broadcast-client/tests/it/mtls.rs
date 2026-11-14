@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use url::Url;
 
 use crate::support::replay::{SampleRec, replay_paced};
 use crate::support::tls_pki::{Ca, TlsServer, https_get};
@@ -61,7 +62,7 @@ fn every_https_source_offers_the_identity_on_its_first_request() {
         "https://h.example/live.m3u8",
         "https://h.example/live.mpd",
     ] {
-        let mut s = Session::open(url, with_handle(|_| {}), ts(0)).unwrap();
+        let mut s = Session::open(Url::parse(url).unwrap(), with_handle(|_| {}), ts(0)).unwrap();
         let (_, request_url, identity) = first_http(&mut s, 0);
         assert_eq!(request_url, url);
         assert_eq!(identity_handle(&identity), Some(HANDLE), "{url}");
@@ -75,7 +76,7 @@ fn rtsps_offers_the_identity_and_plain_rtsp_does_not() {
         ("rtsp://cam.example/live", false),
         ("rtsp://cam.example:322/live", false),
     ] {
-        let mut s = Session::open(url, with_handle(|_| {}), ts(0)).unwrap();
+        let mut s = Session::open(Url::parse(url).unwrap(), with_handle(|_| {}), ts(0)).unwrap();
         let mut seen = None;
         while let Some(a) = s.poll(ts(0)) {
             if let Action::TcpConnect {
@@ -92,21 +93,31 @@ fn rtsps_offers_the_identity_and_plain_rtsp_does_not() {
 
 #[test]
 fn a_plain_http_request_never_carries_the_identity() {
-    let mut s = Session::open("http://h.example/live.ts", with_handle(|_| {}), ts(0)).unwrap();
+    let mut s = Session::open(
+        Url::parse("http://h.example/live.ts").unwrap(),
+        with_handle(|_| {}),
+        ts(0),
+    )
+    .unwrap();
     let (_, _, identity) = first_http(&mut s, 0);
     assert!(identity.is_none());
 }
 
 #[test]
 fn without_an_identity_no_action_carries_one() {
-    let mut s = Session::open("https://h.example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut s = Session::open(
+        Url::parse("https://h.example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let (_, _, identity) = first_http(&mut s, 0);
     assert!(identity.is_none());
 }
 
 fn redirect_target_identity(scope: ClientIdentityScope, to: &str) -> Option<u64> {
     let mut s = Session::open(
-        "https://a.example/live.ts",
+        Url::parse("https://a.example/live.ts").unwrap(),
         with_handle(|c| c.client_identity_scope = scope),
         ts(0),
     )
@@ -152,7 +163,7 @@ fn an_hls_segment_on_a_cdn_origin_gets_the_identity_only_under_any_https() {
         (ClientIdentityScope::AnyHttps, Some(HANDLE)),
     ] {
         let mut s = Session::open(
-            "https://a.example/live.m3u8",
+            Url::parse("https://a.example/live.m3u8").unwrap(),
             with_handle(|c| c.client_identity_scope = scope),
             ts(0),
         )
@@ -197,7 +208,12 @@ fn malformed_identities_fail_open_with_a_typed_error() {
     for identity in mixed {
         let config = cfg(|c| c.client_identity = Some(identity));
         assert!(matches!(
-            Session::open("https://h.example/live.ts", config, ts(0)).unwrap_err(),
+            Session::open(
+                Url::parse("https://h.example/live.ts").unwrap(),
+                config,
+                ts(0)
+            )
+            .unwrap_err(),
             Error::InvalidConfig {
                 field: "client_identity"
             }
@@ -205,11 +221,22 @@ fn malformed_identities_fail_open_with_a_typed_error() {
     }
     for identity in [leaf.pem_identity(), leaf.der_identity()] {
         let config = cfg(|c| c.client_identity = Some(identity));
-        Session::open("https://h.example/live.ts", config, ts(0)).unwrap();
+        Session::open(
+            Url::parse("https://h.example/live.ts").unwrap(),
+            config,
+            ts(0),
+        )
+        .unwrap();
     }
     for identity in bad {
         let config = cfg(|c| c.client_identity = Some(identity));
-        match Session::open("https://h.example/live.ts", config, ts(0)).unwrap_err() {
+        match Session::open(
+            Url::parse("https://h.example/live.ts").unwrap(),
+            config,
+            ts(0),
+        )
+        .unwrap_err()
+        {
             Error::InvalidConfig { field } => assert_eq!(field, "client_identity"),
             other => panic!("{other:?}"),
         }
@@ -227,7 +254,12 @@ fn key_material_never_appears_in_debug_output() {
         .collect();
     assert!(key_body.len() > 40);
     let config = cfg(|c| c.client_identity = Some(leaf.pem_identity()));
-    let mut s = Session::open("https://h.example/live.ts", config.clone(), ts(0)).unwrap();
+    let mut s = Session::open(
+        Url::parse("https://h.example/live.ts").unwrap(),
+        config.clone(),
+        ts(0),
+    )
+    .unwrap();
     let (_, _, identity) = first_http(&mut s, 0);
     let action = Action::HttpRequest {
         conn: ConnId::new(1),
@@ -262,7 +294,7 @@ fn drive(
     horizon_us: u64,
 ) -> Outcome {
     let url = format!("https://localhost:{}/live.ts", server.addr.port());
-    let mut session = Session::open(&url, config, ts(0)).unwrap();
+    let mut session = Session::open(Url::parse(&url).unwrap(), config, ts(0)).unwrap();
     let mut now = 0u64;
     let mut out = Outcome {
         events: Vec::new(),
@@ -380,7 +412,7 @@ fn a_certificate_from_the_wrong_ca_is_refused() {
 
 fn rtsps_redirect_identity(scope: ClientIdentityScope, to: &str) -> Option<u64> {
     let mut s = Session::open(
-        "rtsps://a.example/live/",
+        Url::parse("rtsps://a.example/live/").unwrap(),
         with_handle(|c| c.client_identity_scope = scope),
         ts(0),
     )

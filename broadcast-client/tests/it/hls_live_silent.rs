@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use url::Url;
 
 use broadcast_client::{Action, Config, ConnId, Event, Session, Status};
 use broadcast_common::stage::Timestamp;
@@ -120,7 +121,7 @@ fn answer(
 }
 
 fn run(mut origin: Origin, order: Order, mut on_tick: impl FnMut(u64, &mut Origin)) -> Tally {
-    let mut session = Session::open(INDEX, Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(Url::parse(INDEX).unwrap(), Config::default(), ts(0)).unwrap();
     let mut t = Tally::default();
     let mut now = 0;
     while now <= END_US {

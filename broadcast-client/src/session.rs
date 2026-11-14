@@ -101,7 +101,7 @@ pub struct Session {
 
 impl Session {
     /// Open a session.
-    pub fn open(url: &str, config: Config, now: Timestamp) -> Result<Self, Error> {
+    pub fn open(url: Url, config: Config, now: Timestamp) -> Result<Self, Error> {
         Self::open_with_memory(url, config, now, None)
     }
 
@@ -116,13 +116,13 @@ impl Session {
 
     /// Open a session seeded with stall memory.
     pub fn open_with_memory(
-        url: &str,
+        url: Url,
         config: Config,
         now: Timestamp,
         seed: Option<buffering_runtime::StallMemorySnapshot>,
     ) -> Result<Self, Error> {
         let now_us = now.as_micros();
-        let parsed = Url::parse(url).map_err(|e| Error::InvalidUrl(e.to_string()))?;
+        let parsed = url;
         let userinfo = broadcast_auth::credentials_from_url(&parsed)
             .map_err(|e| Error::InvalidUrl(e.to_string()))?;
         if let Some(creds) = &userinfo {
@@ -157,7 +157,9 @@ impl Session {
             || (is_srt_scheme && srt_allowed)
             || (is_rtmp_scheme && rtmp_allowed))
         {
-            return Err(Error::UnsupportedScheme(scheme.to_string()));
+            return Err(Error::UnsupportedScheme {
+                scheme: scheme.to_string(),
+            });
         }
         if is_rtsp_scheme && parsed.host().is_none() {
             return Err(Error::InvalidUrl("missing host".to_string()));
@@ -1632,8 +1634,12 @@ mod tests {
 
     #[test]
     fn alloc_conn_skips_live_ids_when_the_counter_wraps() {
-        let mut session =
-            Session::open("http://example/live.ts", Config::default(), Timestamp::ZERO).unwrap();
+        let mut session = Session::open(
+            Url::parse("http://example/live.ts").unwrap(),
+            Config::default(),
+            Timestamp::ZERO,
+        )
+        .unwrap();
         let url = Url::parse("http://example/live.ts").unwrap();
         session.next_conn = u32::MAX;
         let a = session.alloc_conn(url.clone());
@@ -1653,8 +1659,12 @@ mod tests {
         let media = transmux::TsDemux::new().unpackage(&data[..]).unwrap();
         let specs: Vec<transmux::TrackSpec> = media.tracks.into_iter().map(|t| t.spec).collect();
         assert_eq!(specs.len(), 2);
-        let mut session =
-            Session::open("http://example/live.ts", Config::default(), Timestamp::ZERO).unwrap();
+        let mut session = Session::open(
+            Url::parse("http://example/live.ts").unwrap(),
+            Config::default(),
+            Timestamp::ZERO,
+        )
+        .unwrap();
         session.source.inject(Some(Event::Tracks(specs.clone())));
         session.drain_source();
         assert!(specs.iter().all(|s| session.buffer.has_track(s.track_id)));
@@ -1694,8 +1704,12 @@ mod tests {
         };
         let low = with_id(&audio, LOW_AUDIO);
         let high = with_id(&audio, HIGH_AUDIO);
-        let mut session =
-            Session::open("http://example/live.ts", Config::default(), Timestamp::ZERO).unwrap();
+        let mut session = Session::open(
+            Url::parse("http://example/live.ts").unwrap(),
+            Config::default(),
+            Timestamp::ZERO,
+        )
+        .unwrap();
         assert_eq!(session.default_rendered_tracks(), (None, None));
         session
             .source
@@ -1766,7 +1780,12 @@ mod tests {
             record_buffer_inputs: true,
             ..Config::default()
         };
-        let mut session = Session::open("http://example/live.ts", config, Timestamp::ZERO).unwrap();
+        let mut session = Session::open(
+            Url::parse("http://example/live.ts").unwrap(),
+            config,
+            Timestamp::ZERO,
+        )
+        .unwrap();
         session
             .source
             .inject(Some(Event::Tracks(vec![video.spec.clone()])));

@@ -1,5 +1,6 @@
 #![no_main]
 
+use url::Url;
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
@@ -641,7 +642,7 @@ fn split_header(data: &[u8]) -> (&[u8], &[u8]) {
 fn drive(url: &str, data: &[u8]) {
     let (header, data) = split_header(data);
     let config = config_from(header);
-    let mut session = match Session::open(url, config, Timestamp::ZERO) {
+    let mut session = match Session::open(Url::parse(url).unwrap(), config, Timestamp::ZERO) {
         Ok(s) => s,
         Err(_) => return,
     };
@@ -827,7 +828,7 @@ fn rtsp_pump(
 
 fn drive_rtsp(url: &str, data: &[u8]) {
     let (header, data) = split_header(data);
-    let mut session = match Session::open(url, config_from(header), Timestamp::ZERO) {
+    let mut session = match Session::open(Url::parse(url).unwrap(), config_from(header), Timestamp::ZERO) {
         Ok(s) => s,
         Err(_) => return,
     };
@@ -950,7 +951,7 @@ fn srt_like(chunk: &[u8], pick: u8) -> Vec<u8> {
 
 fn drive_datagram(url: &str, data: &[u8]) {
     let (header, data) = split_header(data);
-    let mut session = match Session::open(url, config_from(header), Timestamp::ZERO) {
+    let mut session = match Session::open(Url::parse(url).unwrap(), config_from(header), Timestamp::ZERO) {
         Ok(s) => s,
         Err(_) => return,
     };

@@ -8,6 +8,7 @@ use broadcast_client::{
 use broadcast_common::stage::Timestamp;
 use rtmp_runtime::message::UserControl;
 use test_harness::rtmp_play_peer::Seen;
+use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -35,7 +36,7 @@ fn host() -> RtmpHost {
 
 #[test]
 fn the_first_action_is_a_tcp_connect_to_the_default_port() {
-    let mut s = Session::open(URL, rtmp_config(), ts(0)).unwrap();
+    let mut s = Session::open(Url::parse(URL).unwrap(), rtmp_config(), ts(0)).unwrap();
     match s.poll(ts(0)) {
         Some(Action::TcpConnect {
             host, port, tls, ..
@@ -50,7 +51,12 @@ fn the_first_action_is_a_tcp_connect_to_the_default_port() {
 
 #[test]
 fn rtmps_connects_with_tls_on_443_and_a_port_in_the_url_wins() {
-    let mut s = Session::open("rtmps://origin.test/live/cam1", Config::default(), ts(0)).unwrap();
+    let mut s = Session::open(
+        Url::parse("rtmps://origin.test/live/cam1").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     assert!(matches!(
         s.poll(ts(0)),
         Some(Action::TcpConnect {
@@ -60,7 +66,7 @@ fn rtmps_connects_with_tls_on_443_and_a_port_in_the_url_wins() {
         })
     ));
     let mut s = Session::open(
-        "rtmp://origin.test:1936/live/cam1",
+        Url::parse("rtmp://origin.test:1936/live/cam1").unwrap(),
         Config::default(),
         ts(0),
     )
@@ -77,7 +83,7 @@ fn rtmps_connects_with_tls_on_443_and_a_port_in_the_url_wins() {
 
 #[test]
 fn auto_selects_rtmp_from_the_scheme() {
-    let mut s = Session::open(URL, Config::default(), ts(0)).unwrap();
+    let mut s = Session::open(Url::parse(URL).unwrap(), Config::default(), ts(0)).unwrap();
     assert!(matches!(s.poll(ts(0)), Some(Action::TcpConnect { .. })));
 }
 
@@ -93,7 +99,7 @@ fn an_rtmp_url_needs_an_app_and_a_stream_and_a_matching_kind() {
     ] {
         assert!(
             matches!(
-                Session::open(bad, rtmp_config(), ts(0)),
+                Session::open(Url::parse(bad).unwrap(), rtmp_config(), ts(0)),
                 Err(Error::InvalidUrl(_))
             ),
             "{bad}"
@@ -102,12 +108,16 @@ fn an_rtmp_url_needs_an_app_and_a_stream_and_a_matching_kind() {
     let mut cfg = rtmp_config();
     cfg.kind = SourceKind::Hls;
     assert!(matches!(
-        Session::open(URL, cfg, ts(0)),
-        Err(Error::UnsupportedScheme(_))
+        Session::open(Url::parse(URL).unwrap(), cfg, ts(0)),
+        Err(Error::UnsupportedScheme { .. })
     ));
     assert!(matches!(
-        Session::open("http://origin.test/live.ts", rtmp_config(), ts(0)),
-        Err(Error::UnsupportedScheme(_))
+        Session::open(
+            Url::parse("http://origin.test/live.ts").unwrap(),
+            rtmp_config(),
+            ts(0)
+        ),
+        Err(Error::UnsupportedScheme { .. })
     ));
 }
 
@@ -142,7 +152,12 @@ fn app_stream_and_query_reach_the_server() {
 
 #[test]
 fn a_tc_url_keeps_a_non_default_port_and_brackets_an_ipv6_host() {
-    let mut s = Session::open("rtmp://[::1]:1936/live/cam1", Config::default(), ts(0)).unwrap();
+    let mut s = Session::open(
+        Url::parse("rtmp://[::1]:1936/live/cam1").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     assert!(matches!(
         s.poll( ts(0)),
         Some(Action::TcpConnect { host, port: 1936, .. }) if host == "::1"

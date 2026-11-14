@@ -3,6 +3,7 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use url::Url;
 
 use broadcast_client::{Action, ClientIdentity, Config, ConnId, Event, Session, TransportError};
 use rustls::pki_types::ServerName;
@@ -195,7 +196,7 @@ pub struct WireHost {
 impl WireHost {
     pub fn open(url: &str, config: Config, port: u16, server_ca: Option<Ca>) -> Self {
         Self {
-            session: Session::open(url, config, ts(0)).unwrap(),
+            session: Session::open(Url::parse(url).unwrap(), config, ts(0)).unwrap(),
             events: Vec::new(),
             connects: 0,
             offered_identity: 0,

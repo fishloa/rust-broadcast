@@ -150,13 +150,14 @@ fn finish_stream_after(host: &mut Host, lasted_us: u64) -> Vec<Event> {
 #[test]
 fn auto_detects_rtsp_and_rtsps_schemes() {
     for url in ["rtsp://cam.test/live/", "rtsps://cam.test/live/"] {
-        let mut session = Session::open(url, Config::default(), ts(0)).expect("open");
+        let mut session =
+            Session::open(Url::parse(url).unwrap(), Config::default(), ts(0)).expect("open");
         assert!(
             matches!(session.poll(ts(0)), Some(Action::TcpConnect { .. })),
             "{url} must start with a TCP connect under Auto"
         );
         let mut explicit = Session::open(
-            url,
+            Url::parse(url).unwrap(),
             {
                 let mut new_config = Config::default();
                 new_config.kind = SourceKind::Rtsp;
@@ -170,8 +171,12 @@ fn auto_detects_rtsp_and_rtsps_schemes() {
             Some(Action::TcpConnect { .. })
         ));
     }
-    let mut http =
-        Session::open("http://cam.test/live.ts", Config::default(), ts(0)).expect("open");
+    let mut http = Session::open(
+        Url::parse("http://cam.test/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .expect("open");
     assert!(matches!(http.poll(ts(0)), Some(Action::HttpRequest { .. })));
     assert_eq!(SourceKind::Rtsp.to_string(), "rtsp");
     for (url, kind) in [
@@ -186,8 +191,8 @@ fn auto_detects_rtsp_and_rtsps_schemes() {
         };
         assert!(
             matches!(
-                Session::open(url, config, ts(0)),
-                Err(Error::UnsupportedScheme(_))
+                Session::open(Url::parse(url).unwrap(), config, ts(0)),
+                Err(Error::UnsupportedScheme { .. })
             ),
             "{url} with {kind} must be rejected"
         );
@@ -205,7 +210,8 @@ fn connect_action_has_host_port_default_ports_and_tls_flag() {
         ("rtsps://[::1]:1322/x", "::1", 1322, true),
     ];
     for (url, host, port, tls) in cases {
-        let mut session = Session::open(url, Config::default(), ts(0)).expect("open");
+        let mut session =
+            Session::open(Url::parse(url).unwrap(), Config::default(), ts(0)).expect("open");
         let first = session.poll(ts(0)).expect("connect action");
         assert_eq!(
             first,
@@ -220,7 +226,11 @@ fn connect_action_has_host_port_default_ports_and_tls_flag() {
         );
     }
     assert!(matches!(
-        Session::open("rtsp:///nohost", Config::default(), ts(0)),
+        Session::open(
+            Url::parse("rtsp:///nohost").unwrap(),
+            Config::default(),
+            ts(0)
+        ),
         Err(Error::InvalidUrl(_))
     ));
 }

@@ -1,4 +1,5 @@
 use std::cell::{Cell, RefCell};
+use url::Url;
 
 use broadcast_auth::{AuthResult, RequestContext, Verifier};
 use broadcast_client::{Action, Config, ConnId, Event, Session};
@@ -449,7 +450,8 @@ pub struct Host {
 
 impl Host {
     pub fn new(url: &str, config: Config, server: Server) -> Self {
-        let session = Session::open(url, config, ts(0)).expect("open rtsp session");
+        let session =
+            Session::open(Url::parse(url).unwrap(), config, ts(0)).expect("open rtsp session");
         Self {
             session,
             server,

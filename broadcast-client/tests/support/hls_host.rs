@@ -1,4 +1,5 @@
 use std::collections::{BTreeSet, HashMap, VecDeque};
+use url::Url;
 
 use broadcast_client::{Action, Config, ConnId, Event, Session, SourceKind, TransportError};
 use broadcast_common::stage::Timestamp;
@@ -122,7 +123,7 @@ pub struct Host {
 
 impl Host {
     pub fn new(url: &str, config: Config) -> Self {
-        let session = Session::open(url, config, ts(0)).expect("open");
+        let session = Session::open(Url::parse(url).unwrap(), config, ts(0)).expect("open");
         Self {
             session,
             now: 0,

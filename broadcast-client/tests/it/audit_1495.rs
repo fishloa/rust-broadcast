@@ -1,4 +1,5 @@
 use crate::support;
+use url::Url;
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
 
@@ -132,7 +133,7 @@ fn run_vod(
 }
 
 fn vod_session(config: Config) -> Session {
-    Session::open(VOD_PLAYLIST_URL, config, ts(0)).expect("open")
+    Session::open(Url::parse(VOD_PLAYLIST_URL).unwrap(), config, ts(0)).expect("open")
 }
 
 #[test]
@@ -402,7 +403,12 @@ fn finite_ts_reconnect_after_ended_still_restarts() {
     let (status, base_headers) = tf1_headers!();
     let mut headers = base_headers;
     headers.push(("Content-Length".to_string(), bytes.len().to_string()));
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),

@@ -1,4 +1,5 @@
 use crate::support;
+use url::Url;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -579,7 +580,7 @@ fn select_audio_out_of_range_and_before_master_error() {
     assert!(h.session.select_audio_rendition(None).is_ok());
 
     let mut ts_host = Session::open(
-        "http://origin.test/live.ts",
+        Url::parse("http://origin.test/live.ts").unwrap(),
         {
             let mut new_config = Config::default();
             new_config.kind = SourceKind::TsHttp;

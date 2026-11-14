@@ -1,4 +1,5 @@
 use crate::support;
+use url::Url;
 
 use broadcast_client::{
     Action, BufferEvent, BufferInput, Config, ConnId, Event, Hint, Session, Status, TrackId,
@@ -40,7 +41,7 @@ impl LiveHost {
     fn open(mut config: Config) -> Option<Self> {
         config.record_buffer_inputs = true;
         let (status, headers) = support::read_tf1_headers()?;
-        let mut session = Session::open(URL, config, ts(0)).unwrap();
+        let mut session = Session::open(Url::parse(URL).unwrap(), config, ts(0)).unwrap();
         let conn = loop {
             match session.poll(ts(0)).expect("first request") {
                 Action::HttpRequest { conn, .. } => break conn,
@@ -495,7 +496,7 @@ fn a_looped_small_finite_ts_is_not_paused_by_the_hosts_stale_position() {
 fn finite_loop(file: &[u8]) {
     let mut config = Config::default();
     config.record_buffer_inputs = true;
-    let mut session = Session::open(URL, config, ts(0)).unwrap();
+    let mut session = Session::open(Url::parse(URL).unwrap(), config, ts(0)).unwrap();
     let conn = request_conn(&mut session, 0);
     let first = skip_none!(finite_pass(&mut session, conn, file, 0, None));
     assert!(

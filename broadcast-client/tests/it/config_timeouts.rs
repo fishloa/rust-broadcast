@@ -1,4 +1,5 @@
 use std::time::Duration;
+use url::Url;
 
 use broadcast_common::stage::Timestamp;
 
@@ -123,7 +124,12 @@ fn a_zero_bound_is_floored_for_every_protocol() {
     assert_eq!(srt.srt.timeouts.handshake, Duration::ZERO);
     assert_eq!(srt.srt.timeouts.read_idle, Duration::ZERO);
     assert!(
-        Session::open("srt://127.0.0.1:9000", srt, Timestamp::from_micros(0)).is_err(),
+        Session::open(
+            Url::parse("srt://127.0.0.1:9000").unwrap(),
+            srt,
+            Timestamp::from_micros(0)
+        )
+        .is_err(),
         "a zero SRT bound is rejected when the session opens"
     );
     let ts = with(SourceKind::TsHttp, zero);

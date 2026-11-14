@@ -15,6 +15,7 @@
 use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::time::Duration;
+use url::Url;
 
 use broadcast_client::{
     Action, Config, ConnId, Error, ErrorKind, Event, Session, Status, TransportError, UdpMode,
@@ -230,15 +231,17 @@ impl SessionStep {
         config.preemptive_basic = true;
         let start = Instant::now();
         let mut session =
-            Session::open(url, config, Timestamp::from_micros(0)).map_err(|e| match e {
-                Error::InvalidConfig { field } => MultimuxError::ConfigInvalid {
-                    field,
-                    reason: format!("{}: {e}", labels.what),
+            Session::open(Url::parse(url).unwrap(), config, Timestamp::from_micros(0)).map_err(
+                |e| match e {
+                    Error::InvalidConfig { field } => MultimuxError::ConfigInvalid {
+                        field,
+                        reason: format!("{}: {e}", labels.what),
+                    },
+                    other => MultimuxError::Connect {
+                        reason: format!("{}: {other}", labels.what),
+                    },
                 },
-                other => MultimuxError::Connect {
-                    reason: format!("{}: {other}", labels.what),
-                },
-            })?;
+            )?;
         if let Some(credentials) = credentials {
             session.set_credentials(credentials).map_err(|e| {
                 MultimuxError::Auth(broadcast_auth::Error::ChallengeParse(

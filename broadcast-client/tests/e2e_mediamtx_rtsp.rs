@@ -13,6 +13,7 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 use test_fixtures::process::free_tcp_port;
+use url::Url;
 
 use broadcast_common::stage::Timestamp;
 
@@ -503,7 +504,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
         std::collections::BTreeMap::new();
     let mut config = Config::default();
     config.record_buffer_inputs = true;
-    let mut session = Session::open(&url, config, ts(0)).expect("open");
+    let mut session = Session::open(Url::parse(&url).unwrap(), config, ts(0)).expect("open");
     let mut stream: Option<(ConnId, TcpStream)> = None;
     let mut events = Vec::new();
     let mut buf = vec![0u8; READ_CHUNK];
