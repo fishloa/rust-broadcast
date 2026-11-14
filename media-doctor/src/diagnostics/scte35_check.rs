@@ -160,10 +160,11 @@ mod tests {
 
         let si = SpliceInsert {
             splice_event_id: event_id,
-            splice_event_cancel_indicator: cancel,
+            cancel: cancel.then_some(event_id),
             out_of_network_indicator: out_of_network,
-            program_splice_flag: true,
-            splice_immediate_flag: true,
+            mode: scte35_splice::commands::SpliceMode::Program(
+                scte35_splice::commands::ProgramSplice::Immediate,
+            ),
             break_duration: break_duration.map(|(auto_return, duration)| BreakDuration {
                 auto_return,
                 duration,

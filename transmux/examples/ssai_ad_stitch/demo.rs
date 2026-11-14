@@ -69,7 +69,7 @@ use broadcast_common::{Serialize, Unpackage};
 use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment};
 use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 use scte35_splice::SpliceInfoSection;
-use scte35_splice::commands::{AnyCommand, SpliceInsert};
+use scte35_splice::commands::{AnyCommand, ProgramSplice, SpliceInsert, SpliceMode};
 use scte35_splice::time::{BreakDuration, SpliceTime};
 use timed_metadata::convert::{EmsgConfig, SCTE35_SCHEME};
 use timed_metadata::{DateRange, TimeAnchor, Timeline};
@@ -297,15 +297,12 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
     // ------------------------------------------------------------------
     let splice_insert_cmd = SpliceInsert {
         splice_event_id: SPLICE_EVENT_ID,
-        splice_event_cancel_indicator: false,
+        cancel: None,
         out_of_network_indicator: true,
-        program_splice_flag: true,
-        splice_immediate_flag: false,
         event_id_compliance_flag: true,
-        splice_time: Some(SpliceTime::at(
+        mode: SpliceMode::Program(ProgramSplice::At(SpliceTime::at(
             broadcast_common::clock33::Clock33::try_new(splice_dts).expect("in range"),
-        )),
-        components: Vec::new(),
+        ))),
         break_duration: Some(BreakDuration {
             auto_return: true,
             duration: ad_duration_ticks_90k,

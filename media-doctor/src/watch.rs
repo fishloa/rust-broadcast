@@ -1055,8 +1055,9 @@ pub(crate) mod tests {
             AnyCommand::SpliceInsert(SpliceInsert {
                 splice_event_id: event_id,
                 out_of_network_indicator: out,
-                program_splice_flag: true,
-                splice_immediate_flag: true,
+                mode: scte35_splice::commands::SpliceMode::Program(
+                    scte35_splice::commands::ProgramSplice::Immediate,
+                ),
                 ..SpliceInsert::default()
             }),
             &[],
@@ -1243,8 +1244,9 @@ pub(crate) mod tests {
             AnyCommand::SpliceInsert(SpliceInsert {
                 splice_event_id: 42,
                 out_of_network_indicator: true,
-                program_splice_flag: true,
-                splice_immediate_flag: true,
+                mode: scte35_splice::commands::SpliceMode::Program(
+                    scte35_splice::commands::ProgramSplice::Immediate,
+                ),
                 ..SpliceInsert::default()
             }),
             &[],
@@ -1330,8 +1332,9 @@ pub(crate) mod tests {
                 AnyCommand::SpliceInsert(SpliceInsert {
                     splice_event_id: event_id,
                     out_of_network_indicator: out,
-                    program_splice_flag: true,
-                    splice_immediate_flag: true,
+                    mode: scte35_splice::commands::SpliceMode::Program(
+                        scte35_splice::commands::ProgramSplice::Immediate,
+                    ),
                     break_duration: auto_return.map(|auto_return| BreakDuration {
                         auto_return,
                         duration: 90_000,

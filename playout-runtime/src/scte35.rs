@@ -12,12 +12,11 @@
 //! boundary, which is exactly the bug class this workspace keeps finding.
 
 use crate::error::Result;
-use alloc::vec::Vec;
 use broadcast_common::clock33::{self, Clock33};
 use core::time::Duration;
 use scte35_splice::SpliceInfoSection;
 use scte35_splice::commands::AnyCommand;
-use scte35_splice::commands::SpliceInsert;
+use scte35_splice::commands::{ProgramSplice, SpliceInsert, SpliceMode};
 use scte35_splice::time::{BreakDuration, SpliceTime, duration_to_ticks};
 pub use ssai_runtime::splice::ConditionedSplicePoint;
 
@@ -88,16 +87,13 @@ pub fn build_splice_insert(
         ssai_runtime::splice::condition_splice_point(requested_pts, candidates, max_delta)?;
     let insert = SpliceInsert {
         splice_event_id,
-        splice_event_cancel_indicator: false,
+        cancel: None,
         out_of_network_indicator: matches!(edge, BreakEdge::Enter),
-        program_splice_flag: true,
-        splice_immediate_flag: false,
         event_id_compliance_flag: true,
-        splice_time: Some(SpliceTime::at(
+        mode: SpliceMode::Program(ProgramSplice::At(SpliceTime::at(
             broadcast_common::clock33::Clock33::try_new(conditioned.snapped_pts.ticks())
                 .expect("in range"),
-        )),
-        components: Vec::new(),
+        ))),
         break_duration: break_duration_ticks.map(|duration| BreakDuration {
             auto_return: true,
             duration,
@@ -136,6 +132,15 @@ mod tests {
         Duration::from_nanos(n * 1_000_000_000 / 90_000)
     }
 
+    /// The one program-mode `splice_time()` these cues carry (they are always
+    /// scheduled program splices; the mode cannot disagree with the flags).
+    fn program_splice_time(insert: &SpliceInsert) -> SpliceTime {
+        match &insert.mode {
+            SpliceMode::Program(ProgramSplice::At(splice_time)) => *splice_time,
+            other => panic!("expected a scheduled program splice, got {other:?}"),
+        }
+    }
+
     /// The cue and the reported point agree on one instant: a cue just before
     /// the wrap snapping to a boundary just after it names the *reduced*
     /// boundary in `pts_time`, so a caller rendering the returned point and a
@@ -153,7 +158,7 @@ mod tests {
         .unwrap();
         assert_eq!(conditioned.snapped_pts, pts(50));
         assert_eq!(
-            insert.splice_time.unwrap().pts_time.map(|c| c.ticks()),
+            program_splice_time(&insert).pts_time.map(|c| c.ticks()),
             Some(50)
         );
     }
@@ -173,7 +178,7 @@ mod tests {
         assert_eq!(insert.splice_event_id, 7);
         assert!(insert.out_of_network_indicator);
         assert_eq!(
-            insert.splice_time.unwrap().pts_time.map(|c| c.ticks()),
+            program_splice_time(&insert).pts_time.map(|c| c.ticks()),
             Some(1_050)
         );
         assert_eq!(insert.break_duration.unwrap().duration, 1_800_000);
@@ -182,7 +187,7 @@ mod tests {
         // The cue must reflect the *conditioned* point, not the raw request
         // — proves this isn't a passthrough of `requested_pts`.
         assert_ne!(
-            insert.splice_time.unwrap().pts_time.map(|c| c.ticks()),
+            program_splice_time(&insert).pts_time.map(|c| c.ticks()),
             Some(1_000)
         );
     }
@@ -274,7 +279,7 @@ mod tests {
             AnyCommand::SpliceInsert(reparsed) => {
                 assert_eq!(reparsed.splice_event_id, 42);
                 assert_eq!(
-                    reparsed.splice_time.unwrap().pts_time.map(|c| c.ticks()),
+                    program_splice_time(&reparsed).pts_time.map(|c| c.ticks()),
                     Some(1_000)
                 );
                 assert_eq!(reparsed.break_duration.unwrap().duration, 900_000);
@@ -308,7 +313,7 @@ mod tests {
         assert_eq!(conditioned.delta_ticks, 150);
         assert_eq!(conditioned.direction, ssai_runtime::SnapDirection::After);
         assert_eq!(
-            insert.splice_time.unwrap().pts_time.map(|c| c.ticks()),
+            program_splice_time(&insert).pts_time.map(|c| c.ticks()),
             Some(50)
         );
         // Too tight a tolerance is still refused (circularly measured).

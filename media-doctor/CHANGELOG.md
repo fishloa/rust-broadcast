@@ -1,7 +1,7 @@
 # Changelog
 
 ## [Unreleased]
-- `scte35-splice` 6 -> 7 (its `SpliceTime::pts_time` is now a validated `broadcast_common::clock33::Clock33`).
+- `scte35-splice` 6 -> 7: `SpliceTime::pts_time` is a validated `broadcast_common::clock33::Clock33`, and `SpliceInsert` carries its flags and times in one `SpliceMode` (see that crate's changelog).
 
 ### Changed
 - BREAKING: `cli::WatchArgs::udp_config` returns `Result<UdpOptions, broadcast_common::net::InterfaceError>` (was `Result<_, String>`), the error `MulticastInterface::parse` already produces; the binary renders it next to `--udp-interface`. A caller matching on the message text now matches the typed variant (#2695).

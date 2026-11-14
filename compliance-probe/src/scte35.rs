@@ -134,7 +134,7 @@ mod tests {
     use super::*;
     use broadcast_common::Serialize;
     use scte35_splice::commands::AnyCommand;
-    use scte35_splice::commands::{SpliceInsert, SpliceInsertComponent};
+    use scte35_splice::commands::{ProgramSplice, SpliceInsert, SpliceInsertComponent, SpliceMode};
     use scte35_splice::time::{PTS_MODULUS, SpliceTime};
 
     fn splice_insert_section(
@@ -144,9 +144,10 @@ mod tests {
         let si = SpliceInsert {
             splice_event_id: 7,
             out_of_network_indicator: out_of_network,
-            program_splice_flag: true,
-            splice_immediate_flag: pts_time.is_none(),
-            splice_time: pts_time.map(SpliceTime::at),
+            mode: match pts_time {
+                Some(pts_time) => SpliceMode::Program(ProgramSplice::At(SpliceTime::at(pts_time))),
+                None => SpliceMode::Program(ProgramSplice::Immediate),
+            },
             ..SpliceInsert::default()
         };
         let section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
@@ -231,11 +232,9 @@ mod tests {
         let si = SpliceInsert {
             splice_event_id: 7,
             out_of_network_indicator: true,
-            program_splice_flag: true,
-            splice_immediate_flag: false,
-            splice_time: Some(SpliceTime::at(
+            mode: SpliceMode::Program(ProgramSplice::At(SpliceTime::at(
                 broadcast_common::clock33::Clock33::try_new(raw_pts_time).expect("in range"),
-            )),
+            ))),
             ..SpliceInsert::default()
         };
         let mut section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
@@ -259,11 +258,9 @@ mod tests {
         let si = SpliceInsert {
             splice_event_id: 7,
             out_of_network_indicator: true,
-            program_splice_flag: true,
-            splice_immediate_flag: false,
-            splice_time: Some(SpliceTime::at(
+            mode: SpliceMode::Program(ProgramSplice::At(SpliceTime::at(
                 broadcast_common::clock33::Clock33::try_new(raw_pts_time).expect("in range"),
-            )),
+            ))),
             ..SpliceInsert::default()
         };
         let mut section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
@@ -281,11 +278,9 @@ mod tests {
         let si = SpliceInsert {
             splice_event_id: 7,
             out_of_network_indicator: true,
-            program_splice_flag: true,
-            splice_immediate_flag: false,
-            splice_time: Some(SpliceTime::at(
+            mode: SpliceMode::Program(ProgramSplice::At(SpliceTime::at(
                 broadcast_common::clock33::Clock33::try_new(raw_pts_time).expect("in range"),
-            )),
+            ))),
             ..SpliceInsert::default()
         };
         let mut section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
@@ -307,9 +302,7 @@ mod tests {
     #[test]
     fn cancelled_splice_insert_is_cancelled_not_immediate() {
         let si = SpliceInsert {
-            splice_event_id: 7,
-            splice_event_cancel_indicator: true,
-            ..SpliceInsert::default()
+            ..SpliceInsert::cancel(7)
         };
         let b = bytes(&SpliceInfoSection::new_clear(
             AnyCommand::SpliceInsert(si),
@@ -324,17 +317,21 @@ mod tests {
             let si = SpliceInsert {
                 splice_event_id: 8,
                 out_of_network_indicator: true,
-                program_splice_flag: false,
-                splice_immediate_flag: false,
-                components: tags_and_pts
-                    .iter()
-                    .map(|&(component_tag, pts)| SpliceInsertComponent {
-                        component_tag,
-                        splice_time: Some(SpliceTime::at(
-                            broadcast_common::clock33::Clock33::try_new(pts).expect("in range"),
-                        )),
-                    })
-                    .collect(),
+                mode: SpliceMode::Components {
+                    immediate: false,
+                    components: tags_and_pts
+                        .iter()
+                        .map(|&(component_tag, pts)| {
+                            SpliceInsertComponent::new(
+                                component_tag,
+                                Some(SpliceTime::at(
+                                    broadcast_common::clock33::Clock33::try_new(pts)
+                                        .expect("in range"),
+                                )),
+                            )
+                        })
+                        .collect(),
+                },
                 ..SpliceInsert::default()
             };
             bytes(&SpliceInfoSection::new_clear(
@@ -365,8 +362,7 @@ mod tests {
     fn immediate_flag_wins_over_any_time_field() {
         let si = SpliceInsert {
             splice_event_id: 9,
-            program_splice_flag: true,
-            splice_immediate_flag: true,
+            mode: SpliceMode::Program(ProgramSplice::Immediate),
             ..SpliceInsert::default()
         };
         let b = bytes(&SpliceInfoSection::new_clear(

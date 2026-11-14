@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Dependencies
-- `scte35-splice` 6 -> 7 (its `SpliceTime::pts_time` is now a validated `broadcast_common::clock33::Clock33`).
+- `scte35-splice` 6 -> 7: `SpliceTime::pts_time` is a validated `broadcast_common::clock33::Clock33`, and `SpliceInsert` carries its flags and times in one `SpliceMode` (see that crate's changelog).
 
 ### Changed
 - BREAKING: the subtitle follower's internal segment number is a `broadcast_hls::MediaSequence` (and its part index a `PartIndex`), matching the cuts a leader hands it; `LeaderDurations` keeps its `u32` key, since it holds a segment duration per leader segment for every follower, not a playlist number (#2699).

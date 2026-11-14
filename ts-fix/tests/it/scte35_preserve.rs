@@ -13,7 +13,7 @@
 use broadcast_common::traits::Parse;
 use mpeg_ts::pid::Pid;
 use scte35_splice::SpliceInfoSection;
-use scte35_splice::commands::AnyCommand;
+use scte35_splice::commands::{AnyCommand, ProgramSplice, SpliceMode};
 use ts_fix::{PcrRestamp, PidFilter, TsFix};
 
 const PKT: usize = 188;
@@ -263,9 +263,12 @@ fn restamp_pcr_preserves_splice_pts_time() {
             .map(|s| {
                 let clear = s.clear.as_ref().expect("clear cue");
                 let pts = match &clear.command {
-                    AnyCommand::SpliceInsert(si) => {
-                        si.splice_time.and_then(|t| t.pts_time).map(u64::from)
-                    }
+                    AnyCommand::SpliceInsert(si) => match &si.mode {
+                        SpliceMode::Program(ProgramSplice::At(splice_time)) => {
+                            splice_time.pts_time.map(u64::from)
+                        }
+                        _ => None,
+                    },
                     AnyCommand::TimeSignal(t) => t.splice_time.pts_time.map(u64::from),
                     _ => None,
                 };

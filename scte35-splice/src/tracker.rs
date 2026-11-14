@@ -38,7 +38,7 @@
 use alloc::collections::BTreeSet;
 use alloc::vec::Vec;
 
-use crate::commands::AnyCommand;
+use crate::commands::{AnyCommand, ProgramSplice, SpliceMode};
 use crate::section::SpliceInfoSection;
 use broadcast_common::Parse;
 use mpeg_ts::ts::SectionReassembler;
@@ -103,7 +103,7 @@ impl SpliceTracker {
         let AnyCommand::SpliceInsert(si) = &clear.command else {
             return None;
         };
-        if si.splice_event_cancel_indicator {
+        if si.cancel.is_some() {
             return None;
         }
         let retransmission = !self.last_section.is_empty() && raw == &self.last_section[..];
@@ -227,25 +227,24 @@ pub fn splice_event<'a>(command: &'a AnyCommand<'a>, pts_adjustment: u64) -> Opt
     let AnyCommand::SpliceInsert(si) = command else {
         return None;
     };
-    if si.splice_event_cancel_indicator {
+    if si.cancel.is_some() {
         return None;
     }
-    let times = if si.splice_immediate_flag {
-        Vec::new()
-    } else {
-        let program_time = si.splice_time.as_ref().and_then(|st| st.pts_time);
-        let component_times = si
-            .components
+    let times = match &si.mode {
+        SpliceMode::Program(ProgramSplice::Immediate) => Vec::new(),
+        SpliceMode::Program(ProgramSplice::At(splice_time)) => splice_time
+            .pts_time
+            .map(|pts_time| crate::time::pts_add_wrapping(u64::from(pts_time), pts_adjustment))
+            .into_iter()
+            .collect(),
+        SpliceMode::Components {
+            immediate: true, ..
+        } => Vec::new(),
+        SpliceMode::Components { components, .. } => components
             .iter()
-            .filter_map(|c| c.splice_time.as_ref().and_then(|st| st.pts_time));
-        let raw: Vec<u64> = if si.program_splice_flag {
-            program_time.map(u64::from).into_iter().collect()
-        } else {
-            component_times.map(u64::from).collect()
-        };
-        raw.into_iter()
-            .map(|pts_time| crate::time::pts_add_wrapping(pts_time, pts_adjustment))
-            .collect()
+            .filter_map(|c| c.splice_time.as_ref().and_then(|st| st.pts_time))
+            .map(|pts_time| crate::time::pts_add_wrapping(u64::from(pts_time), pts_adjustment))
+            .collect(),
     };
     Some(SpliceEvent {
         out_of_network_indicator: si.out_of_network_indicator,
@@ -279,9 +278,10 @@ mod tests {
         let si = SpliceInsert {
             splice_event_id: 7,
             out_of_network_indicator: out_of_network,
-            program_splice_flag: true,
-            splice_immediate_flag: pts_time.is_none(),
-            splice_time: pts_time.map(SpliceTime::at),
+            mode: match pts_time {
+                Some(pts_time) => SpliceMode::Program(ProgramSplice::At(SpliceTime::at(pts_time))),
+                None => SpliceMode::Program(ProgramSplice::Immediate),
+            },
             ..SpliceInsert::default()
         };
         let section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
@@ -367,9 +367,7 @@ mod tests {
     fn cancel_and_encrypted_sections_are_not_observed() {
         let mut t = tracker();
         let si = SpliceInsert {
-            splice_event_id: 9,
-            splice_event_cancel_indicator: true,
-            ..SpliceInsert::default()
+            ..SpliceInsert::cancel(9)
         };
         let cancel = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
         let mut cancel_buf = alloc::vec![0u8; cancel.serialized_len()];
@@ -395,10 +393,9 @@ mod tests {
         let si = SpliceInsert {
             splice_event_id: 7,
             out_of_network_indicator: true,
-            program_splice_flag: true,
-            splice_time: Some(SpliceTime::at(
-                broadcast_common::clock33::Clock33::try_new(90_000 * 3).expect("in range"),
-            )),
+            mode: SpliceMode::Program(ProgramSplice::At(SpliceTime::at(
+                Clock33::try_new(90_000 * 3).expect("in range"),
+            ))),
             ..SpliceInsert::default()
         };
         let mut section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
@@ -416,7 +413,7 @@ mod tests {
     fn immediate_cue_has_no_times() {
         let si = SpliceInsert {
             splice_event_id: 7,
-            splice_immediate_flag: true,
+            mode: SpliceMode::Program(ProgramSplice::Immediate),
             ..SpliceInsert::default()
         };
         let section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
@@ -430,17 +427,20 @@ mod tests {
         let si = SpliceInsert {
             splice_event_id: 8,
             out_of_network_indicator: true,
-            program_splice_flag: false,
-            components: [1u8, 2]
-                .into_iter()
-                .map(|tag| SpliceInsertComponent {
-                    component_tag: tag,
-                    splice_time: Some(SpliceTime::at(
-                        broadcast_common::clock33::Clock33::try_new(u64::from(tag) * 90_000)
-                            .expect("in range"),
-                    )),
-                })
-                .collect(),
+            mode: SpliceMode::Components {
+                immediate: false,
+                components: [1u8, 2]
+                    .into_iter()
+                    .map(|tag| {
+                        SpliceInsertComponent::new(
+                            tag,
+                            Some(SpliceTime::at(
+                                Clock33::try_new(u64::from(tag) * 90_000).expect("in range"),
+                            )),
+                        )
+                    })
+                    .collect(),
+            },
             ..SpliceInsert::default()
         };
         let section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);

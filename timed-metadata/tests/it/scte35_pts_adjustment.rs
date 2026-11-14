@@ -89,9 +89,11 @@ fn splice_at_pts(pts: u64) -> Vec<u8> {
     let cmd = SpliceInsert {
         splice_event_id: 7,
         out_of_network_indicator: true,
-        splice_time: Some(SpliceTime::at(
-            broadcast_common::clock33::Clock33::try_new(pts).expect("in range"),
-        )),
+        mode: scte35_splice::commands::SpliceMode::Program(
+            scte35_splice::commands::ProgramSplice::At(SpliceTime::at(
+                broadcast_common::clock33::Clock33::try_new(pts).expect("in range"),
+            )),
+        ),
         ..Default::default()
     };
     SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(cmd), &[])

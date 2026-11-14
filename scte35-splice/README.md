@@ -106,6 +106,11 @@ assert!(matches!(parsed.clear.as_ref().unwrap().command, AnyCommand::TimeSignal(
   `encrypted_packet` + `encryption_algorithm` (encrypted region kept raw), 33-bit
   `pts_adjustment`, `cw_index`, 12-bit `tier`,
   `splice_command_length` / type, descriptor loop, CRC-32 (verified on parse).
+- **`splice_insert`** (§9.7.3): one `SpliceMode` rather than a flag/option pair —
+  `Program(ProgramSplice::Immediate | ProgramSplice::At(SpliceTime))` or the deprecated
+  `Components { immediate, components }` — so the wire flags can never disagree with the
+  splice time they describe; `cancel: Option<u32>` is the id a cancel names
+  (`SpliceInsert::cancel(id)`).
 - **Segmentation tables** (§10.3.3.1): typed `DeviceRestrictions` (Table 21),
   `SegmentationUpidType` (Table 22) and `SegmentationTypeId` (Table 23), each with a
   `Reserved(u8)` catch-all so unrecognised values round-trip.

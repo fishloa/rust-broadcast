@@ -5,8 +5,8 @@
 use broadcast_common::{Parse, Serialize};
 use scte35_splice::SpliceInfoSection;
 use scte35_splice::commands::{
-    AnyCommand, BandwidthReservation, PrivateCommand, SpliceInsert, SpliceNull, SpliceSchedule,
-    SpliceScheduleEvent, TimeSignal,
+    AnyCommand, BandwidthReservation, PrivateCommand, ProgramSplice, SpliceInsert, SpliceMode,
+    SpliceNull, SpliceSchedule, SpliceScheduleEvent, TimeSignal,
 };
 use scte35_splice::descriptors::{
     AudioComponent, AudioDescriptor, AvailDescriptor, CUEI, DtmfDescriptor, SegmentationDescriptor,
@@ -69,10 +69,9 @@ fn splice_insert_section() {
     let cmd = SpliceInsert {
         splice_event_id: 0x4800_00AB,
         out_of_network_indicator: true,
-        program_splice_flag: true,
-        splice_time: Some(SpliceTime::at(
+        mode: SpliceMode::Program(ProgramSplice::At(SpliceTime::at(
             broadcast_common::clock33::Clock33::try_new(0x0_1111_2222).expect("in range"),
-        )),
+        ))),
         break_duration: Some(BreakDuration {
             auto_return: false,
             duration: 90_000 * 15,

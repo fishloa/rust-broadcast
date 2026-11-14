@@ -8,7 +8,7 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
 use broadcast_common::{Parse, Serialize};
 use scte35_splice::SpliceInfoSection;
-use scte35_splice::commands::AnyCommand;
+use scte35_splice::commands::{AnyCommand, ProgramSplice, SpliceMode};
 use scte35_splice::descriptors::{
     AnySpliceDescriptor, DeviceRestrictions, SegmentationTypeId, SegmentationUpidType,
 };
@@ -38,14 +38,14 @@ fn splice_insert_4800008f() {
         other => panic!("expected SpliceInsert, got {other:?}"),
     };
     assert_eq!(si.splice_event_id, 0x4800_008F);
-    assert!(!si.splice_event_cancel_indicator);
+    assert!(si.cancel.is_none());
     assert!(si.out_of_network_indicator);
-    assert!(si.program_splice_flag);
-    assert!(!si.splice_immediate_flag);
-    assert_eq!(
-        si.splice_time.unwrap().pts_time.map(|c| c.ticks()),
-        Some(0x0_7369_C02E)
-    );
+    match &si.mode {
+        SpliceMode::Program(ProgramSplice::At(splice_time)) => {
+            assert_eq!(splice_time.pts_time.map(|c| c.ticks()), Some(0x0_7369_C02E))
+        }
+        other => panic!("a scheduled program splice, got {other:?}"),
+    }
     let bd = si.break_duration.expect("break_duration present");
     assert!(bd.auto_return);
     assert_eq!(bd.duration, 0x52_CCF5);

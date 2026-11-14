@@ -1,7 +1,7 @@
 # Changelog
 
 ## [Unreleased]
-- `scte35-splice` 6 -> 7 (its `SpliceTime::pts_time` is now a validated `broadcast_common::clock33::Clock33`).
+- `scte35-splice` 6 -> 7: `SpliceTime::pts_time` is a validated `broadcast_common::clock33::Clock33`, and `SpliceInsert` carries its flags and times in one `SpliceMode` (see that crate's changelog).
 
 ### Changed
 - The catch-up playlist renders each `#EXTINF` from the segment's `Duration` through `broadcast_hls::DecimalSeconds::from_duration` instead of re-validating a converted `f64` with `.expect`, so a production path cannot panic on a non-finite duration. The live tail's segment duration now comes from `hls_runtime::server::ClosedSegment::duration` (a `Duration`) rather than a float round-trip (#2713).

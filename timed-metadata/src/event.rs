@@ -3,7 +3,7 @@ use crate::error::Result;
 use alloc::{string::String, vec::Vec};
 use scte35_splice::{
     SpliceInfoSection,
-    commands::AnyCommand,
+    commands::{AnyCommand, ProgramSplice, SpliceMode},
     descriptors::{AnySpliceDescriptor, SegmentationTypeId},
 };
 
@@ -144,7 +144,7 @@ impl TimedEvent {
             match &clear.command {
                 AnyCommand::SpliceInsert(si) => {
                     id = Some(si.splice_event_id);
-                    kind = if si.splice_event_cancel_indicator {
+                    kind = if si.cancel.is_some() {
                         // A cancel carries no out_of_network_indicator (§9.7.3);
                         // it is neither a break start nor a break end.
                         EventKind::Unspecified
@@ -153,7 +153,7 @@ impl TimedEvent {
                     } else {
                         EventKind::BreakEnd
                     };
-                    if let Some(st) = &si.splice_time {
+                    if let SpliceMode::Program(ProgramSplice::At(st)) = &si.mode {
                         at = st.pts_time.map(adjust);
                     }
                     if let Some(bd) = &si.break_duration {
