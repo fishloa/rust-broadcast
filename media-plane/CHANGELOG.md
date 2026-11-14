@@ -6,7 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-### Added
+#### Changed
+- BREAKING: `ByteMerge::new` now takes `num_sources: NonZeroUsize`, `max_queued: NonZeroUsize` and returns `Result<Self, MergeConfigError>` instead of panicking (#2659).
+
+## Added
 - `AudioFollower::with_rendition` and `AudioFollower::rendition`: the declared rendition a follower serves, so a host pairs it with its serving by identity (#2637).
 
 
