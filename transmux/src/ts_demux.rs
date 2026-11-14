@@ -239,7 +239,7 @@ use broadcast_common::{Demand, Parse, Serialize, Stage, Timestamp, Unpackage};
 use mpeg_pes::{PesAssembler, PesPacket};
 use mpeg_ts::resync::TsResync;
 use mpeg_ts::ts::{
-    ContinuityCounter, Pcr, ScramblingControl, SectionReassembler, TS_PACKET_SIZE, TsPacket,
+    ContinuityCounter, ScramblingControl, SectionReassembler, TS_PACKET_SIZE, TsPacket,
 };
 
 use crate::aac_asc::{
@@ -4758,11 +4758,6 @@ pub struct StreamingTsDemux {
     skipped: BTreeSet<Pid>,
     next_track_id: TrackId,
     events: VecDeque<DemuxEvent>,
-    /// The wire `Pcr` behind each queued [`DemuxEvent::ClockReference`], in
-    /// the same FIFO order — so a batch fold can keep the parsed 33-bit
-    /// base / 9-bit extension the event's 27 MHz `ticks` cannot round-trip
-    /// (an extension in `300..=511` is off the clock).
-    wire_pcr: VecDeque<(u64, Pcr)>,
     /// Monotonic track-set generation (issue #774): bumped exactly once per
     /// *applied* PMT diff (add/update/remove), never per PID count. This is
     /// the [`DemuxEvent::TracksResolved`] de-dup key — a PID count is not
@@ -4837,7 +4832,6 @@ impl StreamingTsDemux {
             skipped: BTreeSet::new(),
             next_track_id: TrackId::new(1),
             events: VecDeque::new(),
-            wire_pcr: VecDeque::new(),
             generation: 0,
             tracks_resolved_signalled_at: None,
             cc_states: BTreeMap::new(),
@@ -5085,9 +5079,9 @@ impl StreamingTsDemux {
                     || self.pmt_reasm.values().any(|pmt| pmt.pcr_pid.is_none());
                 let mut emit = |program_number: Option<u16>| {
                     let ticks = pcr.as_27mhz();
-                    self.wire_pcr.push_back((ticks, pcr));
                     self.events.push_back(DemuxEvent::ClockReference {
                         ticks,
+                        pcr: Some(pcr),
                         clock_hz: PCR_CLOCK_HZ,
                         discontinuous: af.discontinuity_indicator,
                         provenance: EventProvenance {
@@ -6683,24 +6677,17 @@ impl<'a> TsDemux<'a> {
                 }
                 DemuxEvent::Sample { .. } => {}
                 DemuxEvent::ClockReference {
-                    ticks,
+                    pcr: wire,
                     discontinuous,
                     provenance,
                     ..
                 } => {
                     // This batch wrapper only ever demuxes TS, where a
-                    // `ClockReference` is emitted straight from a parsed
-                    // adaptation-field `Pcr`: `wire_pcr` still holds it, so
-                    // keep the wire parts instead of rebuilding a `Pcr` from
-                    // the 27 MHz view (a parsed extension in `300..=511` is
-                    // off the clock and survives only as the wire value).
-                    // A mismatch falls back to the lossy rebuild.
-                    let source = match demux.wire_pcr.front() {
-                        Some(&(t, pcr)) if t == ticks => Some(pcr),
-                        _ => None,
-                    }
-                    .or_else(|| Pcr::from_27mhz(ticks).ok());
-                    if let Some(wire) = source {
+                    // `ClockReference` carries the parsed adaptation-field
+                    // `Pcr` itself, so the wire parts survive without a
+                    // rebuild from the 27 MHz view (a parsed extension in
+                    // `300..=511` is off the clock and has no 27 MHz value).
+                    if let Some(wire) = wire {
                         pcr.push(PcrSample {
                             pcr: wire,
                             // This batch wrapper only ever demuxes TS, whose
@@ -13889,6 +13876,148 @@ pub(crate) mod tests {
         assert!(
             held <= MAX_PES_BUFFER_BYTES,
             "the replayed PES must not be held past the cap (held {held})"
+        );
+    }
+
+    /// Issue #2719: every clock observation must reach the consumer and the
+    /// batch IR with its own wire PCR parts, an off-clock extension included.
+    ///
+    /// A PCR is a 33-bit base plus a 9-bit extension (§2.4.3.5); an extension
+    /// in `300..=511` is off the 27 MHz clock, so an event's `ticks` view
+    /// cannot name it. The batch fold used to match one queued wire PCR
+    /// against each event's `ticks` and fall back to `Pcr::from_27mhz`, so
+    /// every observation after the first lost that extension and a failed
+    /// rebuild dropped the sample silently.
+    #[test]
+    fn every_clock_reference_keeps_its_own_wire_pcr_parts() {
+        use mpeg_ts::ts::Pcr;
+
+        /// `PCR_base` of the on-clock observation (90 kHz units).
+        const BASE: u64 = 1_000_000;
+        /// One `PCR_base` step; on the 27 MHz clock this is 300 ticks, which
+        /// carries an extension of exactly [`OFF_CLOCK_EXT`].
+        const BASE_STEP: u64 = 1;
+        /// A `PCR_ext` past the 27 MHz clock's own modulus (300), inside the
+        /// 9-bit field: only a lossless parse keeps it.
+        const OFF_CLOCK_EXT: u16 = 511;
+        /// An on-clock extension, for the first observation.
+        const ON_CLOCK_EXT: u16 = 0;
+        /// Encoded PCR/OPCR field width (§2.4.3.5).
+        const PCR_FIELD_LEN: usize = 6;
+        /// `adaptation_field_length` sits right after the 4-byte TS header.
+        const AF_LENGTH_AT: usize = 4;
+        /// The 9-bit extension's top bit within the first extension byte (bit
+        /// 0; bits 6-1 are the reserved bits, bit 7 the base's last bit).
+        const OFF_CLOCK_EXT_HIGH_BIT: u8 = 0x01;
+        /// `stream_id` of the PES the access units travel in (Table 2-22).
+        const PES_STREAM_ID: u8 = 0xE0;
+        /// A length-prefixed H.264 SPS NAL unit
+        /// (`sequence_parameter_set_rbsp()`, ISO/IEC 14496-10 §7.3.2.1.1):
+        /// what recovers the program's codec config.
+        const SPS_NAL: [u8; 2] = [0x67, 0x42];
+        /// One access unit, ample for probe-head resolution.
+        const AU_COUNT: usize = 8;
+        /// Continuity counter of the access-unit packets.
+        const AU_CC: u8 = 0;
+        /// The stream's `PCR_base` per observation, in arrival order.
+        const BASES: [u64; 2] = [BASE, BASE + BASE_STEP];
+        /// The stream's `PCR_ext` per observation, in arrival order.
+        const EXTS: [u16; 2] = [ON_CLOCK_EXT, OFF_CLOCK_EXT];
+
+        /// One PCR-only packet (§2.4.3.4: adaptation field present, no
+        /// payload), and the continuity counter it carries.
+        fn pcr_packet(pcr: Pcr, cc: u8) -> [u8; TS_PACKET_SIZE] {
+            let mut adaptation = mpeg_ts::ts::AdaptationField::new();
+            adaptation.pcr = Some(pcr);
+            let body_len = adaptation.serialized_len();
+            let mut packet = null_packet();
+            let header = mpeg_ts::ts::TsHeader {
+                tei: false,
+                pusi: false,
+                pid: ES_PID_UNDER_TEST,
+                scrambling: mpeg_ts::ts::ScramblingControl::NotScrambled,
+                adaptation_field_control: mpeg_ts::ts::AdaptationFieldControl::AdaptationOnly,
+                continuity_counter: mpeg_ts::ts::ContinuityCounter::from_wire_masked(cc),
+            };
+            header
+                .serialize_into(&mut packet[..4])
+                .expect("a 4-byte TS header fits");
+            packet[AF_LENGTH_AT] =
+                u8::try_from(body_len).expect("an adaptation field is one length byte");
+            adaptation
+                .serialize_into(&mut packet[AF_LENGTH_AT + 1..AF_LENGTH_AT + 1 + body_len])
+                .expect("the adaptation field fits the rest of the packet");
+            assert_eq!(packet.len(), TS_PACKET_SIZE);
+            packet
+        }
+
+        let mut input = Vec::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            input.extend_from_slice(&null_packet());
+        }
+        input.extend_from_slice(&psi_section_packets(
+            PAT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PAT,
+            &pat_body(),
+        ));
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PMT,
+            &pmt_body_with_pcr_pid(ES_PID_UNDER_TEST, STREAM_TYPE_AVC, ES_PID_UNDER_TEST),
+        ));
+        // An on-clock packet is built through the crate's own serializer; the
+        // off-clock one needs a 27 MHz value that has no `Pcr`, so its field
+        // bytes are patched afterwards.
+        let on_clock = Pcr::from_parts(BASES[0], EXTS[0]).expect("ext 0 is on the clock");
+        let second = Pcr::from_parts(BASES[1], EXTS[0]).expect("ext 0 is on the clock");
+        let mut off_clock = pcr_packet(second, 0);
+        let mut field = second.to_field_bytes();
+        field[PCR_FIELD_LEN - 2] =
+            (field[PCR_FIELD_LEN - 2] & !OFF_CLOCK_EXT_HIGH_BIT) | ((EXTS[1] >> 8) as u8);
+        field[PCR_FIELD_LEN - 1] = EXTS[1] as u8;
+        off_clock[AF_LENGTH_AT + 2..AF_LENGTH_AT + 2 + PCR_FIELD_LEN].copy_from_slice(&field);
+        input.extend_from_slice(&pcr_packet(on_clock, 0));
+        input.extend_from_slice(&off_clock);
+        // Abandonment re-runs resolution, which drops the queued clock events,
+        // so the PID must resolve: access units carrying a codec config do.
+        let mut au = Vec::new();
+        au.extend_from_slice(&SPS_NAL);
+        let pes = pes_packet(PES_STREAM_ID, BASE as i64, None, &au);
+        let packets = pes_packets(ES_PID_UNDER_TEST, AU_CC, &pes);
+        for _ in 0..AU_COUNT {
+            input.extend_from_slice(&packets);
+        }
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input);
+        let observed: Vec<Pcr> = std::iter::from_fn(|| demux.poll_event())
+            .filter_map(|event| match event {
+                DemuxEvent::ClockReference { pcr: Some(pcr), .. } => Some(pcr),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            observed
+                .iter()
+                .map(|pcr| (pcr.base(), pcr.extension()))
+                .collect::<Vec<_>>(),
+            BASES.into_iter().zip(EXTS).collect::<Vec<_>>(),
+            "every observation reaches the consumer with its own wire parts"
+        );
+
+        let media = TsDemux::new()
+            .unpackage(&input)
+            .expect("a PMT-declared PCR PID demuxes");
+        assert_eq!(
+            media
+                .pcr
+                .iter()
+                .map(|sample| (sample.pcr.base(), sample.pcr.extension()))
+                .collect::<Vec<_>>(),
+            alloc::vec![(BASE, ON_CLOCK_EXT), (BASE + BASE_STEP, OFF_CLOCK_EXT)],
+            "the IR keeps every observation's own wire parts, not just the first"
         );
     }
 }
