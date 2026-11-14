@@ -121,11 +121,7 @@ fn same_passphrase_negotiates_identical_sek_verified_by_matching_ciphertext() {
     let salt = [0x11u8; srt_runtime::crypto::SALT_LEN];
     let sek = vec![0x42u8; 16]; // AES-128, matching EncryptionField::Aes128.
 
-    let caller_cfg = config_with_crypto(CryptoConfig::new(
-        passphrase.clone(),
-        salt,
-        sek.clone(),
-    ));
+    let caller_cfg = config_with_crypto(CryptoConfig::new(passphrase.clone(), salt, sek.clone()));
     let listener_cfg = config_with_crypto(CryptoConfig::new(
         passphrase,
         [0u8; srt_runtime::crypto::SALT_LEN], // unused on the responder side
@@ -211,11 +207,7 @@ fn different_passphrases_are_rejected_and_never_share_a_sek() {
     let salt = [0x22u8; srt_runtime::crypto::SALT_LEN];
     let sek = vec![0x55u8; 16];
 
-    let caller_cfg = config_with_crypto(CryptoConfig::new(
-        b"passphrase A".to_vec(),
-        salt,
-        sek,
-    ));
+    let caller_cfg = config_with_crypto(CryptoConfig::new(b"passphrase A".to_vec(), salt, sek));
     let listener_cfg = config_with_crypto(CryptoConfig::new(
         b"passphrase B (different)".to_vec(),
         [0u8; srt_runtime::crypto::SALT_LEN],

@@ -60,7 +60,11 @@ impl SrtPeer {
                 Cipher::Aes256 => EncryptionField::Aes256,
             });
         if let Some(p) = passphrase {
-            config.crypto = Some(CryptoConfig::new(p.as_bytes().to_vec(), [0; 16], Vec::new()));
+            config.crypto = Some(CryptoConfig::new(
+                p.as_bytes().to_vec(),
+                [0; 16],
+                Vec::new(),
+            ));
         }
         Self {
             hs: ListenerHandshake::new(PEER_SOCKET_ID, PEER_COOKIE, config),

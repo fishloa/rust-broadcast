@@ -51,7 +51,8 @@ fn selection_policy_table() {
     let bipbop = || test_fixtures::read("hls/real/bipbop-ts/master.m3u8");
     let hevc = || test_fixtures::read("hls/real/bipbop-fmp4-hevc/master.m3u8");
     let codecs = |names: [&str; 2]| {
-        VariantPolicy::default().with_supported_codecs(names.iter().map(|n| (*n).to_string()).collect())
+        VariantPolicy::default()
+            .with_supported_codecs(names.iter().map(|n| (*n).to_string()).collect())
     };
     let cases: Vec<(&str, Vec<u8>, VariantPolicy, Expect)> = vec![
         (

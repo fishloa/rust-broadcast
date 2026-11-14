@@ -867,10 +867,8 @@ mod tests {
                 ),
             ];
         }
-        base.low_latency = Some(
-            LowLatencyConfig::default()
-                .with_part_target(DecimalSeconds::new(3.0).unwrap()),
-        );
+        base.low_latency =
+            Some(LowLatencyConfig::default().with_part_target(DecimalSeconds::new(3.0).unwrap()));
         let plain = base.to_m3u8().unwrap();
         let first_part = plain.find("#EXT-X-PART:").expect("the base has parts");
         let first_extinf = plain.find("#EXTINF:").unwrap();

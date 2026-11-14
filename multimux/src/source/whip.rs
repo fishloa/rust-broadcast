@@ -102,8 +102,7 @@ use transmux::{
 };
 
 use webrtc_runtime::media::{
-    Datagram, MediaEvent, MediaTransport, MediaTransportConfig, SetupRole,
-    parse_remote_fingerprint,
+    Datagram, MediaEvent, MediaTransport, MediaTransportConfig, SetupRole, parse_remote_fingerprint,
 };
 
 use crate::error::{MultimuxError, Result};

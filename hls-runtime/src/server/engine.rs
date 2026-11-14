@@ -3920,10 +3920,8 @@ impl HlsOrigin {
         // rendition report" (issue #1595).
         let rendition_reports = if self.part_target.is_some() {
             let (last_msn, last_part) = self.current_live_edge();
-            let first = broadcast_hls::RenditionReport::new(
-                media_playlist_name.to_string(),
-                last_msn,
-            );
+            let first =
+                broadcast_hls::RenditionReport::new(media_playlist_name.to_string(), last_msn);
             let mut reports = vec![if let Some(lp) = last_part {
                 first.with_last_part(lp)
             } else {

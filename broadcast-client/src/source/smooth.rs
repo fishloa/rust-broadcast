@@ -59,10 +59,7 @@ pub(crate) struct SmoothSource {
 }
 
 fn variant_info(q: &QualityInfo) -> VariantInfo {
-    let mut info = VariantInfo::new(
-        String::new(),
-        u32::try_from(q.bitrate).unwrap_or(u32::MAX),
-    );
+    let mut info = VariantInfo::new(String::new(), u32::try_from(q.bitrate).unwrap_or(u32::MAX));
     info.resolution = q.resolution;
     info.codecs = q.codecs.clone();
     info

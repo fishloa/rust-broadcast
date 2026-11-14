@@ -49,20 +49,12 @@ pub const TABLE: &[Crate] = &[
     plain("atsc3"),
     // `RequestContext` is the sole non-suffix config/value struct; `Error` and
     // the challenge/method enums are covered by the enum rule.
-    runtime(
-        "broadcast-auth",
-        &[],
-        &["RequestContext"],
-    ),
+    runtime("broadcast-auth", &[], &["RequestContext"]),
     // `tshttp::Config` (matches `*Config`), `PlayoutConfig` (no suffix) are
     // config value structs; `TsHttpPolicy` is the pull-policy engine (all
     // private fields, built via `TsHttpPolicy::new`), not a config value.
     // `SrtCallerConfig`/`UdpConfig` etc. already carry the attribute.
-    runtime(
-        "broadcast-client",
-        &["TsHttpPolicy"],
-        &["PlayoutConfig"],
-    ),
+    runtime("broadcast-client", &["TsHttpPolicy"], &["PlayoutConfig"]),
     Crate {
         name: "broadcast-common",
         // `xml::Frame`: a private-to-the-module traversal stack that this
@@ -98,11 +90,7 @@ pub const TABLE: &[Crate] = &[
     // `EventRecord` grows; the `*Config`/`Stats` structs already carry the
     // attribute. `Policy` is the target-follower engine (private fields,
     // built via `Policy::new`), not a config value struct.
-    runtime(
-        "buffering-runtime",
-        &["Policy"],
-        &[],
-    ),
+    runtime("buffering-runtime", &["Policy"], &[]),
     plain("caption-convert"),
     plain("cc-data"),
     plain("compliance-probe"),
@@ -116,11 +104,7 @@ pub const TABLE: &[Crate] = &[
     },
     // `RequestMeta` is the ingest request value struct (no suffix); the
     // `*Config`/`Policy`/`VariantInfo` structs already carry the attribute.
-    runtime(
-        "dash-runtime",
-        &[],
-        &["RequestMeta"],
-    ),
+    runtime("dash-runtime", &[], &["RequestMeta"]),
     plain("smooth-runtime"),
     plain("dvb-bbframe"),
     // `SlotInfo` matches the `Info` suffix rule and is a runtime state value
@@ -144,11 +128,7 @@ pub const TABLE: &[Crate] = &[
     // so it cannot be constructed by literal outside the crate; only
     // `MetricsServerConfig` (already attributed) and future all-pub structs
     // match the suffix rule meaningfully.
-    runtime(
-        "media-doctor",
-        &["Report"],
-        &[],
-    ),
+    runtime("media-doctor", &["Report"], &[]),
     plain("media-plane"),
     plain("mp4-emsg"),
     plain("mpeg-pes"),
@@ -214,9 +194,5 @@ pub const TABLE: &[Crate] = &[
     // `HttpRequest`/`HttpResponse`/`MediaTransportConfig` are the sans-IO
     // action/value types the caller builds; `WebRtcClientConfig` already
     // carries the attribute.
-    runtime(
-        "webrtc-runtime",
-        &[],
-        &["HttpRequest", "HttpResponse"],
-    ),
+    runtime("webrtc-runtime", &[], &["HttpRequest", "HttpResponse"]),
 ];

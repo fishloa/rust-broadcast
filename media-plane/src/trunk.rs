@@ -4968,8 +4968,11 @@ mod tests {
     /// resolves it. `at`/`duration` are left `None`: this step's
     /// [`EventAnchor`] carries the resolution state, not `TimedEvent::at`.
     fn basic_event(id: u32) -> TimedEvent {
-        TimedEvent::new(EventKind::BreakStart, SourcePayload::Scte35 { raw: Vec::new() })
-            .with_id(id)
+        TimedEvent::new(
+            EventKind::BreakStart,
+            SourcePayload::Scte35 { raw: Vec::new() },
+        )
+        .with_id(id)
     }
 
     fn event_id(item: &EventCursorItem) -> Option<u32> {

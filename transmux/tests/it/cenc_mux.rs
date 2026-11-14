@@ -26,8 +26,7 @@ use transmux::cenc::{
 use transmux::init_segment::{MovieBox, SampleEntryVariant, StblChild, protect_init_segment};
 use transmux::movie_fragment::{FragmentProtection, MovieFragmentBox, protect_media_segment};
 use transmux::{
-    CencEncryptor, CencScheme, CmafMux, CodecConfig, EncryptConfig, Media,
-    SubsamplePolicy, TsDemux,
+    CencEncryptor, CencScheme, CmafMux, CodecConfig, EncryptConfig, Media, SubsamplePolicy, TsDemux,
 };
 
 const KID: [u8; 16] = [

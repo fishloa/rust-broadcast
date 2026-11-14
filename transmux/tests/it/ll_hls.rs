@@ -167,8 +167,7 @@ fn independent_flag_tracks_sync_first_sample() {
                 format!("seg1.{i}.m4s"),
                 // The segmenter's own computed part duration (issue #1140):
                 // always finite and non-negative.
-                DecimalSeconds::new(p.duration)
-                    .expect("segmenter part duration is finite, >= 0"),
+                DecimalSeconds::new(p.duration).expect("segmenter part duration is finite, >= 0"),
             )
             .with_independent(p.independent)
         })
@@ -582,8 +581,7 @@ fn zero_anchor_timescale_does_not_render_inf_or_nan_into_playlist() {
             PartSpec::new(
                 format!("seg1.{i}.m4s"),
                 // Same reasoning as above: segmenter-computed, finite, >= 0.
-                DecimalSeconds::new(p.duration)
-                    .expect("segmenter part duration is finite, >= 0"),
+                DecimalSeconds::new(p.duration).expect("segmenter part duration is finite, >= 0"),
             )
             .with_independent(p.independent)
         })

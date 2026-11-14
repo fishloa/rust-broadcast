@@ -51,8 +51,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     use transmux::movie_fragment::{FragmentProtection, protect_media_segment};
     use transmux::pipeline::CodecConfig;
     use transmux::{
-        CencEncryptor, CencScheme, CmafMux, DashPackager, EncryptConfig, IvGen,
-        Media, SubsamplePolicy, TrackEncryption, TsDemux,
+        CencEncryptor, CencScheme, CmafMux, DashPackager, EncryptConfig, IvGen, Media,
+        SubsamplePolicy, TrackEncryption, TsDemux,
     };
 
     // A test KID/key (never a real production key) — the standard `cbcs`

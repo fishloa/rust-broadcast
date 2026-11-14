@@ -2566,7 +2566,10 @@ impl Config {
 
     /// Set the concurrency-queue timeout (seconds).
     #[must_use]
-    pub fn with_concurrency_queue_timeout_secs(mut self, concurrency_queue_timeout_secs: f64) -> Self {
+    pub fn with_concurrency_queue_timeout_secs(
+        mut self,
+        concurrency_queue_timeout_secs: f64,
+    ) -> Self {
         self.concurrency_queue_timeout_secs = concurrency_queue_timeout_secs;
         self
     }

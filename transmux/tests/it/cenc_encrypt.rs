@@ -40,8 +40,7 @@ use transmux::TrackId;
 use broadcast_common::{Encrypt, Unpackage};
 use bytes::Bytes;
 use transmux::{
-    CencEncryptor, CencScheme, CodecConfig, EncryptConfig, IvGen, SubsamplePolicy,
-    Track,
+    CencEncryptor, CencScheme, CodecConfig, EncryptConfig, IvGen, SubsamplePolicy, Track,
 };
 use transmux::{Media, TsDemux};
 
@@ -206,8 +205,8 @@ fn cbcs_encrypt_changes_bytes_and_records_well_formed_metadata() {
     let mut media_a = clear_video_media();
     let original = snapshot(&media_a);
 
-    let cfg_a = EncryptConfig::new(CencScheme::Cbcs, KID_A, SubsamplePolicy::Video)
-        .with_pattern((1, 9));
+    let cfg_a =
+        EncryptConfig::new(CencScheme::Cbcs, KID_A, SubsamplePolicy::Video).with_pattern((1, 9));
     CencEncryptor::new(KEY_A)
         .encrypt(&mut media_a, &cfg_a)
         .expect("encrypt (key A)");
@@ -487,7 +486,9 @@ fn constant_iv_under_cbcs_still_works() {
 #[test]
 fn cbcs_pattern_zero_crypt_nonzero_skip_errors() {
     let mut media = clear_video_media();
-    let cfg = cenc_cfg().with_scheme(CencScheme::Cbcs).with_pattern((0, 9));
+    let cfg = cenc_cfg()
+        .with_scheme(CencScheme::Cbcs)
+        .with_pattern((0, 9));
     let err = CencEncryptor::new(KEY_A)
         .encrypt(&mut media, &cfg)
         .unwrap_err();
@@ -502,7 +503,9 @@ fn cbcs_pattern_zero_crypt_nonzero_skip_errors() {
 #[test]
 fn cbcs_pattern_component_too_large_errors() {
     let mut media = clear_video_media();
-    let cfg = cenc_cfg().with_scheme(CencScheme::Cbcs).with_pattern((17, 9));
+    let cfg = cenc_cfg()
+        .with_scheme(CencScheme::Cbcs)
+        .with_pattern((17, 9));
     let err = CencEncryptor::new(KEY_A)
         .encrypt(&mut media, &cfg)
         .unwrap_err();

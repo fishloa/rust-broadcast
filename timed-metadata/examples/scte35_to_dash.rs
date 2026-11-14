@@ -29,8 +29,8 @@ fn main() {
     let cfg = EmsgConfig::new(
         Timescale::from_nonzero(90_000),
         PresentationTime::Delta(0),
-        2_160_000,              // 24s * 90000
-        "34".to_string(),       // segmentation_type_id for Provider Ad Start
+        2_160_000,        // 24s * 90000
+        "34".to_string(), // segmentation_type_id for Provider Ad Start
         event.id.unwrap_or(0),
     );
 

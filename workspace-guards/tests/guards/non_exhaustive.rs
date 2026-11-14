@@ -46,16 +46,7 @@ const fn plain(name: &'static str) -> Crate {
 /// carry `#[non_exhaustive]` so a future field is an additive change, unless
 /// the struct is a spec-fixed wire layout named in `struct_skip`.
 const STRUCT_SUFFIXES: &[&str] = &[
-    "Config",
-    "Options",
-    "Policy",
-    "Params",
-    "Stats",
-    "Info",
-    "Event",
-    "Record",
-    "Report",
-    "Spec",
+    "Config", "Options", "Policy", "Params", "Stats", "Info", "Event", "Record", "Report", "Spec",
 ];
 
 fn struct_matches_rule(c: &Crate, trimmed: &str) -> Option<String> {

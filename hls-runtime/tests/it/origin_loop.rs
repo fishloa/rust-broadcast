@@ -528,11 +528,10 @@ fn can_block_reload_no_yields_non_blocking_reload_with_backoff() {
             uri: "seg0.m4s".to_string(),
             duration: DecimalSeconds::new(1.0).unwrap(),
             discontinuous: false,
-            parts: vec![PartSpec::new(
-                "seg0.0.m4s".to_string(),
-                DecimalSeconds::new(1.0).unwrap(),
-            )
-            .with_independent(true)],
+            parts: vec![
+                PartSpec::new("seg0.0.m4s".to_string(), DecimalSeconds::new(1.0).unwrap())
+                    .with_independent(true),
+            ],
             byte_range: None,
             map: Some(MapTag {
                 uri: INIT_URL.to_string(),
