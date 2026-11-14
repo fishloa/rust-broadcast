@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - AV3A `Av3aDepacketizer` no longer emits the tail of an over-size frame as a bogus short frame: once a fragment overflows the cap, the depacketizer discards every later fragment up to the over-size frame's marker, then resumes on the next frame (audit19b #2750). Its bit-read truncation errors now carry the real byte counts, not fabricated `need/have` of 0.
+- RTCP SDES refuses to serialize an item whose type is the type-0 terminator or an `Unknown` carrying a defined code (audit19b #2751), and its parser now errs on bytes after the declared chunk count instead of silently dropping them.
 
 ## [0.7.0] - 2026-11-14
 ### Added

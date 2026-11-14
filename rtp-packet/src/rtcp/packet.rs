@@ -883,6 +883,29 @@ impl SdesItemType {
         }
     }
 
+    /// The item-type byte to write, rejecting a non-canonical value: the type-0
+    /// terminator, or an `Unknown` carrying a defined code (RFC 3550 §6.5).
+    fn wire_type(&self) -> Result<u8> {
+        match self {
+            SdesItemType::Unknown(0) => {
+                Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                    field: "sdes_item_type",
+                    value: 0,
+                    reason: "item type 0 is the chunk terminator and cannot be carried as an item",
+                }))
+            }
+            _ if matches!(self, SdesItemType::Unknown(c) if *c != 0 && SdesItemType::from_type(*c) != *self) => {
+                Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                    field: "sdes_item_type",
+                    value: self.item_type() as u64,
+                    reason: "Unknown must carry a code outside the defined RFC 3550 set, \
+                             not a defined type",
+                }))
+            }
+            other => Ok(other.item_type()),
+        }
+    }
+
     /// Spec token for this item type.
     pub fn name(&self) -> &'static str {
         match self {
@@ -975,6 +998,13 @@ impl<'a> Parse<'a> for SourceDescription {
             let (chunk, consumed) = parse_sdes_chunk(&body[off..])?;
             chunks.push(chunk);
             off += consumed;
+        }
+        if off < body.len() {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "sdes_chunk_count",
+                value: hdr.count as u64,
+                reason: "bytes remain after the declared chunk count",
+            }));
         }
         Ok(SourceDescription { chunks, padding })
     }
@@ -1077,7 +1107,7 @@ impl Serialize for SourceDescription {
                         reason: "exceeds 8-bit SDES item length",
                     }));
                 }
-                buf[io] = item.item_type.item_type();
+                buf[io] = item.item_type.wire_type()?;
                 buf[io + 1] = item.text.len() as u8;
                 buf[io + 2..io + 2 + item.text.len()].copy_from_slice(item.text.as_bytes());
                 io += 2 + item.text.len();
@@ -1849,6 +1879,91 @@ mod tests {
         let parsed = SourceDescription::parse(&bytes).unwrap();
         assert_eq!(parsed, sdes);
         assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
+    }
+
+    /// Audit #2751: an item whose type is the type-0 terminator, or an `Unknown`
+    /// carrying a defined code, is refused on serialize instead of emitting a
+    /// mis-framing or non-canonical item-type byte.
+    #[test]
+    fn sdes_item_type_rejects_terminator_and_noncanonical_unknown() {
+        // Type-0 terminator as an item type.
+        let sdes = SourceDescription {
+            chunks: vec![SdesChunk {
+                source: 1,
+                items: vec![SdesItem {
+                    item_type: SdesItemType::Unknown(0),
+                    text: String::new(),
+                }],
+            }],
+            padding: None,
+        };
+        let mut buf = vec![0u8; sdes.serialized_len()];
+        assert!(matches!(
+            sdes.serialize_into(&mut buf),
+            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "sdes_item_type",
+                ..
+            }))
+        ));
+
+        // `Unknown(1)` is non-canonical (1 is the defined CNAME code).
+        let sdes = SourceDescription {
+            chunks: vec![SdesChunk {
+                source: 1,
+                items: vec![SdesItem {
+                    item_type: SdesItemType::Unknown(1),
+                    text: String::new(),
+                }],
+            }],
+            padding: None,
+        };
+        let mut buf = vec![0u8; sdes.serialized_len()];
+        assert!(matches!(
+            sdes.serialize_into(&mut buf),
+            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "sdes_item_type",
+                ..
+            }))
+        ));
+
+        // A genuine unknown code (outside 0..=8) round-trips.
+        let sdes = SourceDescription {
+            chunks: vec![SdesChunk {
+                source: 1,
+                items: vec![SdesItem {
+                    item_type: SdesItemType::Unknown(9),
+                    text: "x".to_string(),
+                }],
+            }],
+            padding: None,
+        };
+        let bytes = sdes.try_to_bytes().unwrap();
+        assert_eq!(SourceDescription::parse(&bytes).unwrap(), sdes);
+        assert_eq!(sdes.try_to_bytes().unwrap(), bytes);
+    }
+
+    /// Audit #2751: bytes after the declared SDES chunk count are refused,
+    /// rather than silently dropped.
+    #[test]
+    fn sdes_trailing_bytes_after_declared_chunks_are_rejected() {
+        let sdes = SourceDescription {
+            chunks: vec![SdesChunk {
+                source: 1,
+                items: vec![],
+            }],
+            padding: None,
+        };
+        let mut bytes = sdes.try_to_bytes().unwrap();
+        // Append a whole extra word that no chunk covers.
+        bytes.extend_from_slice(&[0, 0, 0, 0]);
+        bytes[3] += 1;
+        assert!(matches!(
+            SourceDescription::parse(&bytes),
+            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "sdes_chunk_count",
+                ..
+            }))
+        ));
     }
 
     #[test]
