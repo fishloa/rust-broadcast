@@ -21,6 +21,7 @@ use quick_xml::events::Event;
 
 use crate::box_types::{box_iter, parse_box};
 use crate::error::{Error, Result};
+use crate::ir::TrackId;
 use crate::movie_fragment::MovieFragmentBox;
 use crate::smooth::{TFXD_UUID, TfxdBox};
 use broadcast_smooth::default_limits;
@@ -195,7 +196,7 @@ fn moof_is_encrypted(moof_body: &[u8]) -> Option<bool> {
 /// # Errors
 /// [`Error::UnexpectedBox`] when the fragment has no `moof` or its `moof` no `traf`; the box
 /// parser's own error for a malformed box.
-pub fn fragment_track_id(fragment: &[u8]) -> Result<u32> {
+pub fn fragment_track_id(fragment: &[u8]) -> Result<TrackId> {
     let mut offset = 0usize;
     while offset + BOX_HEADER_LEN <= fragment.len() {
         let (bx, consumed) = parse_box(&fragment[offset..])?;
@@ -205,7 +206,7 @@ pub fn fragment_track_id(fragment: &[u8]) -> Result<u32> {
                 .traf
                 .first()
                 .ok_or(Error::UnexpectedBox { expected: "traf" })?;
-            return Ok(traf.tfhd.track_id.value());
+            return Ok(TrackId::new(traf.tfhd.track_id.value()));
         }
         if consumed == 0 {
             break;

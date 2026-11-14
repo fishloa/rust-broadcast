@@ -45,7 +45,7 @@ fn a_packaged_fragment_reports_its_track_id_tfxd_and_clear_state() {
 
         assert_eq!(
             fragment_track_id(&fragment.data).unwrap(),
-            track.spec.track_id.value()
+            track.spec.track_id
         );
         let tfxd = fragment_tfxd(&fragment.data).expect("tfxd in the fragment");
         assert_eq!(tfxd.fragment_absolute_time, start);
@@ -149,6 +149,28 @@ fn fragment_track_id_reports_a_missing_moof_or_traf() {
         ),
         "{got:?}"
     );
+}
+
+#[test]
+fn fragment_track_id_hands_back_the_typed_track_id() {
+    // Issue #2647: the return is a `TrackId`, so no raw integer escapes the
+    // typed-id boundary; the wire `tfhd@track_ID` is 3 here on purpose (not 1)
+    // so a hard-coded default cannot pass.
+    const TFHD_FULL_BOX: u8 = 0x00;
+    const TFHD_FLAGS: [u8; 3] = [0x00, 0x00, 0x00];
+    const TRACK_ID: u32 = 3;
+    let mut tfhd_body = vec![TFHD_FULL_BOX];
+    tfhd_body.extend_from_slice(&TFHD_FLAGS);
+    tfhd_body.extend_from_slice(&TRACK_ID.to_be_bytes());
+    let moof = [
+        bx(b"mfhd", &[0, 0, 0, 0, 0, 0, 0, 1]),
+        bx(b"traf", &bx(b"tfhd", &tfhd_body)),
+    ]
+    .concat();
+    let fragment = bx(b"moof", &moof);
+    let got: transmux::TrackId =
+        fragment_track_id(&fragment).expect("a well-formed moof/traf/tfhd carries its id");
+    assert_eq!(got, transmux::TrackId::new(TRACK_ID));
 }
 
 #[test]
