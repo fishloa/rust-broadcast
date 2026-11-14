@@ -3,11 +3,17 @@
 
 use crate::common;
 
+use broadcast_common::stage::Timestamp;
 use common::scenario::*;
 use common::synth::{Addressing, MPD_URL, Synth};
 use common::world::{MICROS, xs_datetime_ms};
 use dash_runtime::client::{Action, DashClient, DashConfig, PullLimits, UtcMethod, UtcResponse};
 use dash_runtime::timing::utc_timing::UtcScheme;
+
+/// The test's microsecond clock as the client's `now`.
+fn now(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 fn element(scheme: &str, value: &str) -> String {
     format!("<UTCTiming schemeIdUri=\"urn:mpeg:dash:utc:{scheme}:2014\" value=\"{value}\"/>")
@@ -26,10 +32,10 @@ fn client_with(elements: &[String], direct: Option<i64>) -> (DashClient, Vec<Act
             .with_dash(DashConfig::default())
             .with_limits(PullLimits::default()),
     );
-    assert!(matches!(c.poll(0), Some(Action::FetchMpd { .. })));
-    c.on_mpd(0, text.as_bytes()).unwrap();
+    assert!(matches!(c.poll(now(0)), Some(Action::FetchMpd { .. })));
+    c.on_mpd(now(0), text.as_bytes()).unwrap();
     let mut actions = Vec::new();
-    while let Some(a) = c.poll(0) {
+    while let Some(a) = c.poll(now(0)) {
         actions.push(a);
         if actions.len() > 8 {
             break;
@@ -65,7 +71,7 @@ fn utc_id(actions: &[Action]) -> dash_runtime::client::UtcId {
 
 fn drain(c: &mut DashClient) -> Vec<Action> {
     let mut v = Vec::new();
-    while let Some(a) = c.poll(0) {
+    while let Some(a) = c.poll(now(0)) {
         v.push(a);
     }
     v
@@ -85,7 +91,7 @@ fn http_head_is_tried_after_the_other_http_schemes() {
         assert_eq!(seen.len(), 1, "one candidate at a time");
         order.push((seen[0].1.clone(), seen[0].2));
         c.on_utc_failure(
-            0,
+            now(0),
             utc_id(&actions),
             dash_runtime::client::Failure::Status(500),
         )
@@ -118,10 +124,10 @@ fn a_value_with_several_urls_offers_each_in_order() {
             _ => None,
         })
         .unwrap();
-    c.on_utc_failure(0, id, dash_runtime::client::Failure::Transport)
+    c.on_utc_failure(now(0), id, dash_runtime::client::Failure::Transport)
         .unwrap();
     let mut next = Vec::new();
-    while let Some(a) = c.poll(0) {
+    while let Some(a) = c.poll(now(0)) {
         next.push(a);
     }
     assert_eq!(utc_urls(&next)[0].1, "http://utc.test/two");
@@ -173,16 +179,16 @@ fn an_answer_for_an_unknown_id_is_an_error_not_a_panic() {
         .unwrap();
     let body = xs_datetime_ms(AST_US + 41 * MICROS).into_bytes();
     let r = UtcResponse::new(0, 0, &body);
-    c.on_utc_response(0, id, &r).unwrap();
+    c.on_utc_response(now(0), id, &r).unwrap();
     assert!(
         matches!(
-            c.on_utc_response(0, id, &r),
+            c.on_utc_response(now(0), id, &r),
             Err(dash_runtime::client::Error::UnrequestedUtc { .. })
         ),
         "answered twice"
     );
     assert!(
-        c.on_utc_failure(0, id, dash_runtime::client::Failure::Timeout)
+        c.on_utc_failure(now(0), id, dash_runtime::client::Failure::Timeout)
             .is_err()
     );
 }

@@ -17,7 +17,8 @@ pub fn pull_limits(flags: u8) -> PullLimits {
     limits
 }
 
-pub fn deliver_resource(client: &mut DashClient, now: u64, id: ResourceId, body: &[u8]) {
+pub fn deliver_resource(client: &mut DashClient, now_us: u64, id: ResourceId, body: &[u8]) {
+    let now = broadcast_common::stage::Timestamp::from_micros(now_us);
     let result = match id {
         ResourceId::Init { .. } => client.on_init(now, id, body),
         ResourceId::Index { .. } => client.on_index(now, id, body),

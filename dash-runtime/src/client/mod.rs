@@ -36,16 +36,19 @@
 //! * With `DashConfig::cross_origin_urls = false` every URL the MPD makes the
 //!   client request must have the MPD's origin.
 //!
-//! No clock is read; the `now_us` arguments are the caller's monotonic clock.
+//! No clock is read; the `now` arguments are the caller's monotonic clock, as a
+//! [`broadcast_common::stage::Timestamp`] (microseconds on the caller's own epoch).
 //!
 //! ```
+//! use broadcast_common::stage::Timestamp;
 //! use dash_runtime::client::{Action, DashClient, DashConfig, PullLimits};
 //!
+//! let at = |us: u64| Timestamp::from_micros(us);
 //! let mut client = DashClient::new(dash_runtime::client::DashClientConfig::new("https://origin.example/vod/manifest.mpd").with_dash(DashConfig::default()).with_limits(PullLimits::default()));
-//! let Some(Action::FetchMpd { url, .. }) = client.poll(0) else { unreachable!() };
+//! let Some(Action::FetchMpd { url, .. }) = client.poll(at(0)) else { unreachable!() };
 //! assert_eq!(url, "https://origin.example/vod/manifest.mpd");
 //! // The MPD is requested once until the caller reports a failure and retries.
-//! assert!(client.poll(0).is_none());
+//! assert!(client.poll(at(0)).is_none());
 //! ```
 
 mod action;

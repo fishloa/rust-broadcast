@@ -4,11 +4,17 @@
 
 use crate::common;
 
+use broadcast_common::stage::Timestamp;
 use common::loopback::{
     Drive, Fault, FaultKind, Order, Origin, Run, Sig, assert_matches_oracle, drive, mpd_text,
     oracle,
 };
 use dash_runtime::client::{DashConfig, FailureClass, FatalKind, Output, PullLimits};
+
+/// The test's microsecond clock as the client's `now`.
+fn now(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const RESTART: &str = "http://dash.test/multiperiod-restart/multiperiod.mpd";
 const CONTINUOUS: &str = "http://dash.test/multiperiod-continuous/multiperiod.mpd";
@@ -118,11 +124,11 @@ fn restart_period_two_inits_are_requested_while_period_one_is_in_flight() {
             .with_dash(DashConfig::default())
             .with_limits(cfg),
     );
-    assert!(matches!(c.poll(0), Some(Action::FetchMpd { .. })));
+    assert!(matches!(c.poll(now(0)), Some(Action::FetchMpd { .. })));
     let mpd = test_fixtures::read("dash/multiperiod-restart/multiperiod.mpd");
-    c.on_mpd(0, &mpd).unwrap();
+    c.on_mpd(now(0), &mpd).unwrap();
     let mut urls = Vec::new();
-    while let Some(a) = c.poll(0) {
+    while let Some(a) = c.poll(now(0)) {
         urls.push(a.url().to_owned());
     }
     assert!(

@@ -373,7 +373,8 @@ impl DashSource {
         if self.fatal {
             return;
         }
-        self.client.set_wall_clock(now_us, unix_us);
+        self.client
+            .set_wall_clock(Timestamp::from_micros(now_us), unix_us);
         self.drain_outputs();
     }
 
@@ -441,7 +442,7 @@ impl DashSource {
                 .with_limits(self.pull.clone()),
         );
         if let Some((mono, unix)) = self.anchor {
-            client.set_wall_clock(mono, unix);
+            client.set_wall_clock(Timestamp::from_micros(mono), unix);
         }
         self.client = client;
         self.mpd_accepted = false;
@@ -676,7 +677,9 @@ impl DashSource {
 
     fn deliver_unchanged(&mut self, req: &Req, now: u64) {
         let meta = Self::meta(req, None);
-        let _ = self.client.on_mpd_unchanged(now, &meta);
+        let _ = self
+            .client
+            .on_mpd_unchanged(Timestamp::from_micros(now), &meta);
         self.mpd_failures.reset();
         self.drain_outputs();
     }
@@ -684,7 +687,10 @@ impl DashSource {
     fn deliver_mpd(&mut self, req: &Req, now: u64) {
         let final_url = (req.url.as_str() != req.original_url).then(|| req.url.to_string());
         let meta = Self::meta(req, final_url.as_deref());
-        match self.client.on_mpd_with(now, req.body.as_slice(), &meta) {
+        match self
+            .client
+            .on_mpd_with(Timestamp::from_micros(now), req.body.as_slice(), &meta)
+        {
             Ok(()) => {
                 self.mpd_failures.reset();
                 self.mpd_accepted = true;
@@ -726,14 +732,18 @@ impl DashSource {
         if let Some(date) = req.extra.head.date.as_deref() {
             response = response.with_date(date);
         }
-        let _ = self.client.on_utc_response(now, id, &response);
+        let _ = self
+            .client
+            .on_utc_response(Timestamp::from_micros(now), id, &response);
     }
 
     fn deliver_resource(&mut self, id: ResourceId, body: &[u8], now: u64) {
         let result = match id {
-            ResourceId::Init { .. } => self.client.on_init(now, id, body),
-            ResourceId::Index { .. } => self.client.on_index(now, id, body),
-            _ => self.client.on_segment(now, id, body),
+            ResourceId::Init { .. } => self.client.on_init(Timestamp::from_micros(now), id, body),
+            ResourceId::Index { .. } => self.client.on_index(Timestamp::from_micros(now), id, body),
+            _ => self
+                .client
+                .on_segment(Timestamp::from_micros(now), id, body),
         };
         match result {
             Ok(()) => {
@@ -781,17 +791,24 @@ impl DashSource {
     fn fail_purpose(&mut self, purpose: Purpose, now: u64, failure: Failure) {
         match purpose {
             Purpose::Mpd => {
-                let class = self.client.on_mpd_failure(now, failure);
+                let class = self
+                    .client
+                    .on_mpd_failure(Timestamp::from_micros(now), failure);
                 if let FailureClass::Retry { attempt, .. } = class {
                     self.schedule_mpd_retry(now, u64::from(attempt));
                 }
             }
             Purpose::Utc(id) => {
-                let _ = self.client.on_utc_failure(now, id, failure);
+                let _ = self
+                    .client
+                    .on_utc_failure(Timestamp::from_micros(now), id, failure);
             }
             Purpose::Resource(id) => {
                 self.init_undecodable.remove(&id);
-                if let Ok(class) = self.client.on_failure(now, id, failure) {
+                if let Ok(class) = self
+                    .client
+                    .on_failure(Timestamp::from_micros(now), id, failure)
+                {
                     self.after_class(id, class, now);
                 }
             }
@@ -839,7 +856,7 @@ impl DashSource {
             && now >= at
         {
             self.mpd_retry_at = None;
-            self.client.retry_mpd(now);
+            self.client.retry_mpd(Timestamp::from_micros(now));
         }
         let due: Vec<ResourceId> = self
             .retries
@@ -849,7 +866,7 @@ impl DashSource {
             .collect();
         for id in due {
             self.retries.remove(&id);
-            if !self.client.retry(now, id) {
+            if !self.client.retry(Timestamp::from_micros(now), id) {
                 self.stash.discard(&Purpose::Resource(id));
             }
         }
@@ -888,7 +905,7 @@ impl DashSource {
             }
             self.run_due_retries(now);
             let mut issued = false;
-            while let Some(action) = self.client.poll(now) {
+            while let Some(action) = self.client.poll(Timestamp::from_micros(now)) {
                 issued = true;
                 self.issue(action, now, auth);
                 if self.fatal {

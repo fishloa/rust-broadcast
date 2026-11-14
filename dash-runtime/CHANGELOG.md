@@ -5,6 +5,7 @@ All notable changes to dash-runtime will be documented in this file.
 ## [Unreleased]
 
 ### Changed
+- BREAKING: every `now` `DashClient` takes is a `broadcast_common::stage::Timestamp` (the host's monotonic clock, microseconds) instead of a `now_us: u64`: `poll`, `on_mpd`, `on_mpd_with`, `on_mpd_unchanged`, `on_mpd_failure`, `retry_mpd`, `on_init`, `on_index`, `on_segment`, `on_failure`, `retry`, `skip`, `on_utc_response`, `on_utc_failure`, `set_wall_clock` and `utc_at`. Migration: wrap the host's microsecond reading in `Timestamp::from_micros(now_us)`; the engine's own microsecond arithmetic is unchanged.
 - `quick-xml` is a dev-dependency only (its parser is reached through `broadcast-common::xml`), so it no longer appears in the built dependency graph.
 
 ## [0.4.0] - 2026-11-14

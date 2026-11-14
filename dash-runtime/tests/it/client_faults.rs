@@ -7,6 +7,12 @@
 //! terminal state.
 
 use crate::common;
+use broadcast_common::stage::Timestamp;
+
+/// The test's microsecond clock as the client's `now`.
+fn now(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 use common::loopback::{
     Drive, Fault, FaultKind, Origin, Run, Sig, assert_matches_oracle, drive, oracle,
@@ -286,19 +292,19 @@ fn a_caller_reported_oversize_is_counted_like_any_other_failure() {
             .with_dash(DashConfig::default())
             .with_limits(cfg()),
     );
-    let Some(Action::FetchMpd { .. }) = c.poll(0) else {
+    let Some(Action::FetchMpd { .. }) = c.poll(now(0)) else {
         panic!("mpd first")
     };
     let mpd = test_fixtures::read("dash/timeline-ffmpeg-quirk/manifest.mpd");
-    c.on_mpd(0, &mpd).unwrap();
+    c.on_mpd(now(0), &mpd).unwrap();
     let id = loop {
-        match c.poll(0) {
+        match c.poll(now(0)) {
             Some(Action::FetchSegment { id, .. }) => break id,
             Some(_) => {}
             None => panic!("no segment requested"),
         }
     };
-    let class = c.on_failure(0, id, Failure::TooLarge).unwrap();
+    let class = c.on_failure(now(0), id, Failure::TooLarge).unwrap();
     assert!(matches!(
         class,
         FailureClass::Retry {

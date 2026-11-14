@@ -112,25 +112,28 @@ pub fn run(data: &[u8], load: &dyn Fn(&str) -> Vec<u8>) -> bool {
         .collect::<Vec<_>>();
     chunks.reverse();
     let mut tail_data: &[u8] = rest;
-    let mut now = 0u64;
+    let mut now_us = 0u64;
 
-    let give_clock = |client: &mut DashClient, now: u64, skew: i64| {
+    let give_clock = |client: &mut DashClient, now_us: u64, skew: i64| {
         let unix = publish
-            .saturating_add(i64::try_from(now).unwrap_or(0))
+            .saturating_add(i64::try_from(now_us).unwrap_or(0))
             .saturating_add(skew);
-        client.set_wall_clock(now, u64::try_from(unix.max(0)).unwrap_or(0));
+        client.set_wall_clock(
+            broadcast_common::stage::Timestamp::from_micros(now_us),
+            u64::try_from(unix.max(0)).unwrap_or(0),
+        );
     };
     match host_mode {
-        1 => give_clock(&mut client, now, 0),
-        2 => give_clock(&mut client, now, 7 * 1_000_000),
-        3 => give_clock(&mut client, now, -90 * 1_000_000),
+        1 => give_clock(&mut client, now_us, 0),
+        2 => give_clock(&mut client, now_us, 7 * 1_000_000),
+        3 => give_clock(&mut client, now_us, -90 * 1_000_000),
         _ => {}
     }
 
     for _ in 0..STEP_BUDGET {
-        while let Some(a) = client.poll(now) {
+        while let Some(a) = client.poll(broadcast_common::stage::Timestamp::from_micros(now_us)) {
             assert!(!terminal, "an action after a terminal output");
-            pending.push_back((a, now));
+            pending.push_back((a, now_us));
             assert!(pending.len() < PENDING_CAP, "unbounded requests");
         }
         pending.retain(|(a, _)| a.id().is_none_or(|id| client.awaits(id)));
@@ -157,15 +160,19 @@ pub fn run(data: &[u8], load: &dyn Fn(&str) -> Vec<u8>) -> bool {
         };
         let wake = client.next_wake();
         let step = STEPS_US[usize::from(jump) % STEPS_US.len()];
-        let previous = now;
-        now = if jump.is_multiple_of(7) {
-            wake.map_or(now, |w| w.max(now))
+        let previous = now_us;
+        now_us = if jump.is_multiple_of(7) {
+            wake.map_or(now_us, |w| w.max(now_us))
         } else {
-            now.saturating_add(step)
+            now_us.saturating_add(step)
         };
-        assert!(now >= previous, "time ran backwards");
+        assert!(now_us >= previous, "time ran backwards");
         if mode % MODES == 19 && aux.is_multiple_of(4) {
-            give_clock(&mut client, now, i64::from(aux) * 1_000_000 - 100_000_000);
+            give_clock(
+                &mut client,
+                now_us,
+                i64::from(aux) * 1_000_000 - 100_000_000,
+            );
         }
         if pending.is_empty() {
             if terminal || (wake.is_none() && jump % 7 != 0) {
@@ -177,7 +184,7 @@ pub fn run(data: &[u8], load: &dyn Fn(&str) -> Vec<u8>) -> bool {
         let Some((action, sent)) = pending.remove(idx) else {
             break;
         };
-        let received = now.max(sent);
+        let received = now_us.max(sent);
         let alt = world.mpds[usize::from(aux) % world.mpds.len()].as_slice();
         match action {
             Action::FetchMpd { .. } => {
@@ -192,16 +199,28 @@ pub fn run(data: &[u8], load: &dyn Fn(&str) -> Vec<u8>) -> bool {
                 }
                 match reply {
                     Answer::Body(b) => {
-                        if let Err(Error::Mpd(_)) = client.on_mpd_with(received, &b, &meta) {
-                            client.retry_mpd(received);
+                        if let Err(Error::Mpd(_)) = client.on_mpd_with(
+                            broadcast_common::stage::Timestamp::from_micros(received),
+                            &b,
+                            &meta,
+                        ) {
+                            client.retry_mpd(broadcast_common::stage::Timestamp::from_micros(
+                                received,
+                            ));
                         }
                     }
                     Answer::NotModified => {
-                        let _ = client.on_mpd_unchanged(received, &meta);
+                        let _ = client.on_mpd_unchanged(
+                            broadcast_common::stage::Timestamp::from_micros(received),
+                            &meta,
+                        );
                     }
                     Answer::Fail(f) => {
-                        client.on_mpd_failure(received, f);
-                        client.retry_mpd(received);
+                        client.on_mpd_failure(
+                            broadcast_common::stage::Timestamp::from_micros(received),
+                            f,
+                        );
+                        client.retry_mpd(broadcast_common::stage::Timestamp::from_micros(received));
                     }
                 }
             }
@@ -209,7 +228,11 @@ pub fn run(data: &[u8], load: &dyn Fn(&str) -> Vec<u8>) -> bool {
                 let reply = answer(None, mode, aux, &mut tail_data, None);
                 match reply {
                     Answer::Fail(f) => {
-                        let _ = client.on_utc_failure(received, id, f);
+                        let _ = client.on_utc_failure(
+                            broadcast_common::stage::Timestamp::from_micros(received),
+                            id,
+                            f,
+                        );
                     }
                     _ => {
                         let body = utc_body(mode, aux, received, publish, &mut tail_data);
@@ -218,7 +241,11 @@ pub fn run(data: &[u8], load: &dyn Fn(&str) -> Vec<u8>) -> bool {
                             resp =
                                 resp.with_date(HTTP_DATES[usize::from(aux / 2) % HTTP_DATES.len()]);
                         }
-                        let _ = client.on_utc_response(received, id, &resp);
+                        let _ = client.on_utc_response(
+                            broadcast_common::stage::Timestamp::from_micros(received),
+                            id,
+                            &resp,
+                        );
                     }
                 }
             }
@@ -227,8 +254,15 @@ pub fn run(data: &[u8], load: &dyn Fn(&str) -> Vec<u8>) -> bool {
                 let real = world.real_body(other.url(), other.byte_range());
                 match answer(real, mode, aux, &mut tail_data, None) {
                     Answer::Fail(f) => {
-                        if let Ok(FailureClass::Retry { .. }) = client.on_failure(received, id, f) {
-                            client.retry(received, id);
+                        if let Ok(FailureClass::Retry { .. }) = client.on_failure(
+                            broadcast_common::stage::Timestamp::from_micros(received),
+                            id,
+                            f,
+                        ) {
+                            client.retry(
+                                broadcast_common::stage::Timestamp::from_micros(received),
+                                id,
+                            );
                         }
                     }
                     Answer::Body(b) => deliver_resource(&mut client, received, id, &b),
