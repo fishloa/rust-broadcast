@@ -54,8 +54,10 @@ use broadcast_client::fetch::ReconnectTimer;
 use broadcast_common::backoff::{RetrySchedule, mix_seed};
 
 use crate::MultimuxError;
+use crate::error::{Phase, ProtocolFailure};
 use crate::route::{HealthState, RouteHandle};
 use broadcast_common::units::MICROS_PER_MILLI;
+use http;
 
 /// Production default backoff: starts at 500 ms, doubles, caps at 30 s.
 const DEFAULT_BACKOFF_MIN: Duration = Duration::from_millis(500);
@@ -137,7 +139,7 @@ const MAX_DESCRIBE_NOT_FOUND_BEFORE_PERMANENT: u32 = 5;
 ///   input kind's own `Protocol`-shaped errors (SRT/RTMP/HTTP-pull, none of
 ///   which reuse this exact phase/reason pairing).
 pub(crate) fn is_auth_failure(err: &MultimuxError) -> bool {
-    matches!(err, MultimuxError::Auth { .. })
+    matches!(err, MultimuxError::Auth(_))
 }
 
 /// See [`is_auth_failure`]'s doc — the DESCRIBE-404 half of the same
@@ -145,8 +147,9 @@ pub(crate) fn is_auth_failure(err: &MultimuxError) -> bool {
 pub(crate) fn is_permanent_describe_not_found(err: &MultimuxError) -> bool {
     matches!(
         err,
-        MultimuxError::Protocol { phase, reason }
-            if *phase == "DESCRIBE" && reason == "non-success status Not Found"
+        MultimuxError::Protocol { phase, kind }
+            if *phase == Phase::Describe
+                && matches!(kind, ProtocolFailure::Status(s) if *s == http::StatusCode::NOT_FOUND)
     )
 }
 
@@ -554,39 +557,39 @@ mod tests {
 
     #[test]
     fn is_auth_failure_true_only_for_the_auth_variant() {
-        assert!(is_auth_failure(&MultimuxError::Auth {
-            reason: "DESCRIBE: 401 Unauthorized".into()
-        }));
+        assert!(is_auth_failure(&MultimuxError::Auth(
+            broadcast_auth::Error::ChallengeParse("DESCRIBE: 401 Unauthorized".into())
+        )));
         assert!(!is_auth_failure(&MultimuxError::Connect {
             reason: "connect refused".into()
         }));
         assert!(!is_auth_failure(&MultimuxError::Protocol {
-            phase: "DESCRIBE",
-            reason: "non-success status Not Found".into(),
+            phase: Phase::Describe,
+            kind: ProtocolFailure::Status(http::StatusCode::NOT_FOUND),
         }));
     }
 
     #[test]
     fn is_permanent_describe_not_found_true_only_for_that_exact_shape() {
         assert!(is_permanent_describe_not_found(&MultimuxError::Protocol {
-            phase: "DESCRIBE",
-            reason: "non-success status Not Found".into(),
+            phase: Phase::Describe,
+            kind: ProtocolFailure::Status(http::StatusCode::NOT_FOUND),
         }));
         // Same status text on a different phase (e.g. SETUP) is not a wrong
         // URL path on DESCRIBE — must not be classified permanent.
         assert!(!is_permanent_describe_not_found(&MultimuxError::Protocol {
-            phase: "SETUP",
-            reason: "non-success status Not Found".into(),
+            phase: Phase::Setup,
+            kind: ProtocolFailure::Status(http::StatusCode::NOT_FOUND),
         }));
         // A different status on DESCRIBE (e.g. a transient 503) must not be
         // classified permanent.
         assert!(!is_permanent_describe_not_found(&MultimuxError::Protocol {
-            phase: "DESCRIBE",
-            reason: "non-success status Service Unavailable".into(),
+            phase: Phase::Describe,
+            kind: ProtocolFailure::Status(http::StatusCode::SERVICE_UNAVAILABLE),
         }));
-        assert!(!is_permanent_describe_not_found(&MultimuxError::Auth {
-            reason: "DESCRIBE: 401 Unauthorized".into()
-        }));
+        assert!(!is_permanent_describe_not_found(&MultimuxError::Auth(
+            broadcast_auth::Error::ChallengeParse("DESCRIBE: 401 Unauthorized".into())
+        )));
     }
 
     /// An `attempt` that always fails the same way (never touching health) —
@@ -631,8 +634,10 @@ mod tests {
         ));
         let call_count = Arc::new(AtomicUsize::new(0));
         let attempt = always_fails(
-            || MultimuxError::Auth {
-                reason: "DESCRIBE: 401 Unauthorized".into(),
+            || {
+                MultimuxError::Auth(broadcast_auth::Error::ChallengeParse(
+                    "DESCRIBE: 401 Unauthorized".into(),
+                ))
             },
             call_count.clone(),
         );
@@ -716,8 +721,8 @@ mod tests {
         let call_count = Arc::new(AtomicUsize::new(0));
         let attempt = always_fails(
             || MultimuxError::Protocol {
-                phase: "DESCRIBE",
-                reason: "non-success status Not Found".into(),
+                phase: Phase::Describe,
+                kind: ProtocolFailure::Status(http::StatusCode::NOT_FOUND),
             },
             call_count.clone(),
         );
@@ -768,8 +773,8 @@ mod tests {
                 if n < 2 {
                     // Two transient 404s, then success.
                     return Err(MultimuxError::Protocol {
-                        phase: "DESCRIBE",
-                        reason: "non-success status Not Found".into(),
+                        phase: Phase::Describe,
+                        kind: ProtocolFailure::Status(http::StatusCode::NOT_FOUND),
                     });
                 }
                 route_handle.set_health(HealthState::Live);
@@ -823,9 +828,9 @@ mod tests {
             Box::pin(async move {
                 let n = cc.fetch_add(1, Ordering::SeqCst);
                 if n < fail_times {
-                    return Err(MultimuxError::Auth {
-                        reason: "DESCRIBE: 401 Unauthorized".into(),
-                    });
+                    return Err(MultimuxError::Auth(broadcast_auth::Error::ChallengeParse(
+                        "DESCRIBE: 401 Unauthorized".into(),
+                    )));
                 }
                 route_handle.set_health(HealthState::Live);
                 tokio::time::sleep(Duration::from_millis(20)).await;

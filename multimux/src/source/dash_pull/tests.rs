@@ -921,10 +921,7 @@ async fn a_wrong_password_ends_the_attempt_with_an_auth_error() {
     let (_, result) = Pull::start(route(wrong), SkewedClock::new(0))
         .finish()
         .await;
-    assert!(
-        matches!(result, Err(MultimuxError::Auth { .. })),
-        "{result:?}"
-    );
+    assert!(matches!(result, Err(MultimuxError::Auth(_))), "{result:?}");
     assert!(
         started.elapsed() < Duration::from_secs(2),
         "no backoff first: {:?}",

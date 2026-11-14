@@ -423,7 +423,7 @@ async fn drive_client_until_ice_connected(
     let mut buf = [0u8; 2048];
     let connected = |events: &[webrtc_runtime::media::MediaEvent]| {
         events.iter().any(|e| {
-                matches!(e, webrtc_runtime::media::MediaEvent::IceStateChanged(s) if s == "Connected")
+                matches!(e, webrtc_runtime::media::MediaEvent::IceStateChanged(s) if *s == webrtc_runtime::media::IceConnectionState::Connected)
             })
     };
     let mut seen = false;

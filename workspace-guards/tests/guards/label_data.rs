@@ -149,7 +149,9 @@ pub const TABLE: &[Crate] = &[
         // message-bearing or descriptive variant set, not spec labels.
         // `BerLength`: a serialization-form choice (`Minimal` vs a preserved
         // on-wire `Fixed` width), not a wire field. `Frame`: the XML reader's
-        // own traversal stack, not a label.
+        // own traversal stack, not a label. `MulticastInterface` and
+        // `JoinMismatch`: how a UDP socket's multicast join is chosen and why
+        // one is refused (a config selector and an error), not spec labels.
         skip: &[
             "BitError",
             "KlvError",
@@ -157,6 +159,8 @@ pub const TABLE: &[Crate] = &[
             "BerLength",
             "Frame",
             "HttpDateError",
+            "MulticastInterface",
+            "JoinMismatch",
         ],
         expected: None,
         min_enums: None,
@@ -846,9 +850,8 @@ pub const TABLE: &[Crate] = &[
         matcher: Matcher::Loose,
         // Enums that are not spec/field labels (errors, dispatch wrappers, CLI args).
         skip: &[
-            "CheckArgs",          // clap argument struct
-            "Cli",                // clap CLI dispatch enum
-            "MulticastInterface", // config selector (which interface a group is joined on), not a spec/field label
+            "CheckArgs", // clap argument struct
+            "Cli",       // clap CLI dispatch enum
         ],
         expected: None,
         min_enums: None,
@@ -1130,6 +1133,8 @@ pub const TABLE: &[Crate] = &[
             "RtmpPushError",
             "RtspPushError",
             "SendMediaError",
+            "DvrError",
+            "ProtocolFailure",
             "InputSpec",
             "AuthSpec",
             "OutputAuthSpec",
@@ -1873,8 +1878,21 @@ pub const TABLE: &[Crate] = &[
         name: "webrtc-runtime",
         scope: Scope::PerFile,
         matcher: Matcher::Loose,
-        skip: &["Error", "Event", "State", "MediaEvent", "Whip", "Whep"],
-        expected: Some(&["SetupRole", "Direction", "CodecAttributeName"]),
+        skip: &[
+            "Error",
+            "Event",
+            "State",
+            "MediaEvent",
+            "Whip",
+            "Whep",
+            "MediaError",
+        ],
+        expected: Some(&[
+            "SetupRole",
+            "Direction",
+            "CodecAttributeName",
+            "IceConnectionState",
+        ]),
         min_enums: None,
     },
 ];
