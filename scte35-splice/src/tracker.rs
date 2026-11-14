@@ -239,9 +239,9 @@ pub fn splice_event<'a>(command: &'a AnyCommand<'a>, pts_adjustment: u64) -> Opt
             .iter()
             .filter_map(|c| c.splice_time.as_ref().and_then(|st| st.pts_time));
         let raw: Vec<u64> = if si.program_splice_flag {
-            program_time.into_iter().collect()
+            program_time.map(u64::from).into_iter().collect()
         } else {
-            component_times.collect()
+            component_times.map(u64::from).collect()
         };
         raw.into_iter()
             .map(|pts_time| crate::time::pts_add_wrapping(pts_time, pts_adjustment))
@@ -269,18 +269,19 @@ mod tests {
     use crate::commands::{SpliceInsert, SpliceInsertComponent};
     use crate::time::{PTS_MODULUS, SpliceTime};
     use broadcast_common::Serialize;
+    use broadcast_common::clock33::Clock33;
 
     fn tracker() -> SpliceTracker {
         SpliceTracker::default()
     }
 
-    fn splice_insert(pts_time: Option<u64>, out_of_network: bool) -> alloc::vec::Vec<u8> {
+    fn splice_insert(pts_time: Option<Clock33>, out_of_network: bool) -> alloc::vec::Vec<u8> {
         let si = SpliceInsert {
             splice_event_id: 7,
             out_of_network_indicator: out_of_network,
             program_splice_flag: true,
             splice_immediate_flag: pts_time.is_none(),
-            splice_time: pts_time.map(SpliceTime::with_pts),
+            splice_time: pts_time.map(SpliceTime::at),
             ..SpliceInsert::default()
         };
         let section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
@@ -341,7 +342,7 @@ mod tests {
     #[test]
     fn section_observation_carries_the_event_id() {
         let mut t = tracker();
-        let raw = splice_insert(Some(90_000), true);
+        let raw = splice_insert(Some(Clock33::try_new(90_000).expect("in range")), true);
         let sis = SpliceInfoSection::parse(&raw).expect("parse");
         let observation = t.observe_section(&sis, &raw).expect("a splice_insert");
         assert_eq!(observation.event_id, 7);
@@ -352,7 +353,7 @@ mod tests {
     #[test]
     fn identical_sections_are_one_observation_not_a_duplicate() {
         let mut t = tracker();
-        let raw = splice_insert(Some(90_000), true);
+        let raw = splice_insert(Some(Clock33::try_new(90_000).expect("in range")), true);
         let sis = SpliceInfoSection::parse(&raw).expect("parse");
         assert!(!t.observe_section(&sis, &raw).expect("first").duplicate_open);
         assert!(
@@ -395,7 +396,9 @@ mod tests {
             splice_event_id: 7,
             out_of_network_indicator: true,
             program_splice_flag: true,
-            splice_time: Some(SpliceTime::with_pts(90_000 * 3)),
+            splice_time: Some(SpliceTime::at(
+                broadcast_common::clock33::Clock33::try_new(90_000 * 3).expect("in range"),
+            )),
             ..SpliceInsert::default()
         };
         let mut section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
@@ -432,7 +435,10 @@ mod tests {
                 .into_iter()
                 .map(|tag| SpliceInsertComponent {
                     component_tag: tag,
-                    splice_time: Some(SpliceTime::with_pts(u64::from(tag) * 90_000)),
+                    splice_time: Some(SpliceTime::at(
+                        broadcast_common::clock33::Clock33::try_new(u64::from(tag) * 90_000)
+                            .expect("in range"),
+                    )),
                 })
                 .collect(),
             ..SpliceInsert::default()

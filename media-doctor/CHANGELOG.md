@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+- `scte35-splice` 6 -> 7 (its `SpliceTime::pts_time` is now a validated `broadcast_common::clock33::Clock33`).
+
 ### Changed
 - BREAKING: `cli::WatchArgs::udp_config` returns `Result<UdpOptions, broadcast_common::net::InterfaceError>` (was `Result<_, String>`), the error `MulticastInterface::parse` already produces; the binary renders it next to `--udp-interface`. A caller matching on the message text now matches the typed variant (#2695).
 - BREAKING: `cli::WatchArgs::metrics_io_timeout` is a `std::time::Duration` (was `metrics_io_timeout_ms: u64`); the `--metrics-io-timeout-ms` flag still takes whole milliseconds and is converted at parse (#2693).

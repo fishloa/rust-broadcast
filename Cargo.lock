@@ -3735,7 +3735,7 @@ dependencies = [
 
 [[package]]
 name = "scte35-splice"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "base64 0.23.1",
  "broadcast-common",

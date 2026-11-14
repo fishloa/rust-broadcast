@@ -113,7 +113,11 @@ fn main() {
         AnyCommand::SpliceInsert(reparsed_insert) => {
             assert_eq!(reparsed_insert.splice_event_id, 0x6A78_D416);
             assert_eq!(
-                reparsed_insert.splice_time.unwrap().pts_time,
+                reparsed_insert
+                    .splice_time
+                    .unwrap()
+                    .pts_time
+                    .map(|c| c.ticks()),
                 Some(NEAREST_KEYFRAME_PTS % (1u64 << 33))
             );
         }

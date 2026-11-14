@@ -284,7 +284,9 @@ mod tests {
             program_splice_flag: true,
             splice_immediate_flag: false,
             event_id_compliance_flag: false,
-            splice_time: Some(SpliceTime::with_pts(0x0_0123_4567)),
+            splice_time: Some(SpliceTime::at(
+                broadcast_common::clock33::Clock33::try_new(0x0_0123_4567).expect("in range"),
+            )),
             break_duration: Some(BreakDuration {
                 auto_return: true,
                 duration: 90_000 * 30,
@@ -340,7 +342,9 @@ mod tests {
             components: vec![
                 SpliceInsertComponent {
                     component_tag: 1,
-                    splice_time: Some(SpliceTime::with_pts(0x1000)),
+                    splice_time: Some(SpliceTime::at(
+                        broadcast_common::clock33::Clock33::try_new(0x1000).expect("in range"),
+                    )),
                 },
                 SpliceInsertComponent {
                     component_tag: 2,

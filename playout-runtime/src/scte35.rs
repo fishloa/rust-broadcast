@@ -93,7 +93,10 @@ pub fn build_splice_insert(
         program_splice_flag: true,
         splice_immediate_flag: false,
         event_id_compliance_flag: true,
-        splice_time: Some(SpliceTime::with_pts(conditioned.snapped_pts.ticks())),
+        splice_time: Some(SpliceTime::at(
+            broadcast_common::clock33::Clock33::try_new(conditioned.snapped_pts.ticks())
+                .expect("in range"),
+        )),
         components: Vec::new(),
         break_duration: break_duration_ticks.map(|duration| BreakDuration {
             auto_return: true,
@@ -149,7 +152,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(conditioned.snapped_pts, pts(50));
-        assert_eq!(insert.splice_time.unwrap().pts_time, Some(50));
+        assert_eq!(
+            insert.splice_time.unwrap().pts_time.map(|c| c.ticks()),
+            Some(50)
+        );
     }
 
     #[test]
@@ -166,13 +172,19 @@ mod tests {
         assert_eq!(conditioned.snapped_pts, pts(1_050));
         assert_eq!(insert.splice_event_id, 7);
         assert!(insert.out_of_network_indicator);
-        assert_eq!(insert.splice_time.unwrap().pts_time, Some(1_050));
+        assert_eq!(
+            insert.splice_time.unwrap().pts_time.map(|c| c.ticks()),
+            Some(1_050)
+        );
         assert_eq!(insert.break_duration.unwrap().duration, 1_800_000);
         assert!(insert.break_duration.unwrap().auto_return);
 
         // The cue must reflect the *conditioned* point, not the raw request
         // — proves this isn't a passthrough of `requested_pts`.
-        assert_ne!(insert.splice_time.unwrap().pts_time, Some(1_000));
+        assert_ne!(
+            insert.splice_time.unwrap().pts_time.map(|c| c.ticks()),
+            Some(1_000)
+        );
     }
 
     /// The `break_duration()` field is 33 bits, so a duration under 2^33
@@ -261,7 +273,10 @@ mod tests {
         match parsed.clear.unwrap().command {
             AnyCommand::SpliceInsert(reparsed) => {
                 assert_eq!(reparsed.splice_event_id, 42);
-                assert_eq!(reparsed.splice_time.unwrap().pts_time, Some(1_000));
+                assert_eq!(
+                    reparsed.splice_time.unwrap().pts_time.map(|c| c.ticks()),
+                    Some(1_000)
+                );
                 assert_eq!(reparsed.break_duration.unwrap().duration, 900_000);
             }
             other => panic!("expected SpliceInsert, got {other:?}"),
@@ -292,7 +307,10 @@ mod tests {
         assert_eq!(conditioned.snapped_pts, pts(50));
         assert_eq!(conditioned.delta_ticks, 150);
         assert_eq!(conditioned.direction, ssai_runtime::SnapDirection::After);
-        assert_eq!(insert.splice_time.unwrap().pts_time, Some(50));
+        assert_eq!(
+            insert.splice_time.unwrap().pts_time.map(|c| c.ticks()),
+            Some(50)
+        );
         // Too tight a tolerance is still refused (circularly measured).
         assert!(matches!(
             build_splice_insert(BreakEdge::Enter, 9, requested, &[pts(50)], ticks(149), None),

@@ -115,7 +115,10 @@ fn committed_scte35_real_ts() {
     let si = insert(&s);
     assert_eq!(si.splice_event_id, 1_207_959_695);
     assert!(si.out_of_network_indicator && si.program_splice_flag && !si.splice_immediate_flag);
-    assert_eq!(si.splice_time.unwrap().pts_time, Some(1_936_310_318));
+    assert_eq!(
+        si.splice_time.unwrap().pts_time.map(|c| c.ticks()),
+        Some(1_936_310_318)
+    );
     let bd = si.break_duration.expect("duration_flag set");
     assert!(bd.auto_return);
     assert_eq!(bd.duration, 5_426_421);
@@ -156,7 +159,10 @@ fn committed_ssai_splice_insert_with_pts_adjustment() {
     assert_eq!(s.pts_adjustment, 1_899_923_872);
     let si = insert(&s);
     assert_eq!(si.splice_event_id, 1_786_303_510);
-    assert_eq!(si.splice_time.unwrap().pts_time, Some(6_690_010_720));
+    assert_eq!(
+        si.splice_time.unwrap().pts_time.map(|c| c.ticks()),
+        Some(6_690_010_720)
+    );
     let bd = si.break_duration.unwrap();
     assert!(bd.auto_return);
     assert_eq!(bd.duration, 1_800_000);
@@ -189,7 +195,10 @@ fn local_archive_splice_command_length_0xfff_sentinel() {
     let si = insert(&s);
     assert_eq!(si.splice_event_id, 1_644_174_462);
     assert!(si.out_of_network_indicator);
-    assert_eq!(si.splice_time.unwrap().pts_time, Some(7_965_436_329));
+    assert_eq!(
+        si.splice_time.unwrap().pts_time.map(|c| c.ticks()),
+        Some(7_965_436_329)
+    );
     let bd = si.break_duration.unwrap();
     assert!(bd.auto_return);
     assert_eq!(bd.duration, 5_400_000);
@@ -217,11 +226,17 @@ fn local_archive_avail_descriptor_inserts() {
         match si.break_duration {
             None => {
                 assert!(!si.out_of_network_indicator);
-                assert_eq!(si.splice_time.unwrap().pts_time, Some(1_982_351_994));
+                assert_eq!(
+                    si.splice_time.unwrap().pts_time.map(|c| c.ticks()),
+                    Some(1_982_351_994)
+                );
             }
             Some(bd) => {
                 assert!(si.out_of_network_indicator);
-                assert_eq!(si.splice_time.unwrap().pts_time, Some(1_975_601_994));
+                assert_eq!(
+                    si.splice_time.unwrap().pts_time.map(|c| c.ticks()),
+                    Some(1_975_601_994)
+                );
                 assert!(!bd.auto_return);
                 assert_eq!(bd.duration, 6_750_000);
             }
@@ -247,9 +262,15 @@ fn local_archive_null_and_insert_mix() {
                 inserts += 1;
                 assert_eq!(si.splice_event_id, 1);
                 match si.break_duration {
-                    None => assert_eq!(si.splice_time.unwrap().pts_time, Some(4_897_220_136)),
+                    None => assert_eq!(
+                        si.splice_time.unwrap().pts_time.map(|c| c.ticks()),
+                        Some(4_897_220_136)
+                    ),
                     Some(bd) => {
-                        assert_eq!(si.splice_time.unwrap().pts_time, Some(4_894_520_136));
+                        assert_eq!(
+                            si.splice_time.unwrap().pts_time.map(|c| c.ticks()),
+                            Some(4_894_520_136)
+                        );
                         assert_eq!(bd.duration, 2_700_000);
                         assert_eq!((si.avail_num, si.avails_expected), (1, 1));
                     }

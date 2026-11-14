@@ -302,7 +302,9 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
         program_splice_flag: true,
         splice_immediate_flag: false,
         event_id_compliance_flag: true,
-        splice_time: Some(SpliceTime::with_pts(splice_dts)),
+        splice_time: Some(SpliceTime::at(
+            broadcast_common::clock33::Clock33::try_new(splice_dts).expect("in range"),
+        )),
         components: Vec::new(),
         break_duration: Some(BreakDuration {
             auto_return: true,

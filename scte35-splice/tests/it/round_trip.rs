@@ -46,7 +46,9 @@ fn bandwidth_reservation_section() {
 #[test]
 fn time_signal_section() {
     section_round_trip(&clear(AnyCommand::TimeSignal(TimeSignal {
-        splice_time: SpliceTime::with_pts(0x0_0ABC_DEF0),
+        splice_time: SpliceTime::at(
+            broadcast_common::clock33::Clock33::try_new(0x0_0ABC_DEF0).expect("in range"),
+        ),
     })));
     section_round_trip(&clear(AnyCommand::TimeSignal(TimeSignal::default())));
 }
@@ -68,7 +70,9 @@ fn splice_insert_section() {
         splice_event_id: 0x4800_00AB,
         out_of_network_indicator: true,
         program_splice_flag: true,
-        splice_time: Some(SpliceTime::with_pts(0x0_1111_2222)),
+        splice_time: Some(SpliceTime::at(
+            broadcast_common::clock33::Clock33::try_new(0x0_1111_2222).expect("in range"),
+        )),
         break_duration: Some(BreakDuration {
             auto_return: false,
             duration: 90_000 * 15,
@@ -174,7 +178,9 @@ fn section_with_full_descriptor_loop() {
 
     let section = SpliceInfoSection::new_clear(
         AnyCommand::TimeSignal(TimeSignal {
-            splice_time: SpliceTime::with_pts(0x1000),
+            splice_time: SpliceTime::at(
+                broadcast_common::clock33::Clock33::try_new(0x1000).expect("in range"),
+            ),
         }),
         &loop_bytes,
     );

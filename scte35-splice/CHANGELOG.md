@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- BREAKING: `SpliceTime::pts_time` is `Option<broadcast_common::clock33::Clock33>` instead of `Option<u64>`, and `SpliceTime::with_pts(u64)` is replaced by `SpliceTime::at(Clock33)` with a matching `SpliceTime::immediate()` for the `time_specified_flag == 0` form (audit 19b, finding 17). `with_pts` used to mask its argument with `& PTS_MAX` while `serialize_into` rejected anything above `PTS_MAX`: one field with two policies, so a value the constructor accepted could not be written. The field now cannot hold an off-clock value at all. `SpliceTime::parse` reports a `pts_time` wider than 33 bits, which used to be masked back onto the clock, as `Error::InvalidValue { field: "splice_time.pts_time" }`. `SpliceTime` is `#[non_exhaustive]`: build it with `at`, `immediate` or `Default`, and recover the raw tick count with `pts_time.map(|c| c.ticks())`.
+
 
 ## [6.0.0] - 2026-11-14
 ### Added

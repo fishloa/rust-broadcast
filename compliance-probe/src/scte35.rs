@@ -137,13 +137,16 @@ mod tests {
     use scte35_splice::commands::{SpliceInsert, SpliceInsertComponent};
     use scte35_splice::time::{PTS_MODULUS, SpliceTime};
 
-    fn splice_insert_section(pts_time: Option<u64>, out_of_network: bool) -> alloc::vec::Vec<u8> {
+    fn splice_insert_section(
+        pts_time: Option<broadcast_common::clock33::Clock33>,
+        out_of_network: bool,
+    ) -> alloc::vec::Vec<u8> {
         let si = SpliceInsert {
             splice_event_id: 7,
             out_of_network_indicator: out_of_network,
             program_splice_flag: true,
             splice_immediate_flag: pts_time.is_none(),
-            splice_time: pts_time.map(SpliceTime::with_pts),
+            splice_time: pts_time.map(SpliceTime::at),
             ..SpliceInsert::default()
         };
         let section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
@@ -176,7 +179,10 @@ mod tests {
     fn cue_target_ahead_of_now_is_in_future() {
         let now = 90_000;
         let target = now + 90_000 * 5;
-        let bytes = splice_insert_section(Some(target), true);
+        let bytes = splice_insert_section(
+            Some(broadcast_common::clock33::Clock33::try_new(target).expect("in range")),
+            true,
+        );
         assert_eq!(check_section(&bytes, now), Scte35Sanity::InFuture);
     }
 
@@ -184,7 +190,10 @@ mod tests {
     fn cue_target_behind_now_is_in_past() {
         let now = 90_000 * 10;
         let target = 90_000 * 3;
-        let bytes = splice_insert_section(Some(target), true);
+        let bytes = splice_insert_section(
+            Some(broadcast_common::clock33::Clock33::try_new(target).expect("in range")),
+            true,
+        );
         assert_eq!(check_section(&bytes, now), Scte35Sanity::InPast);
     }
 
@@ -193,7 +202,10 @@ mod tests {
     #[test]
     fn cue_target_equal_to_now_is_in_future() {
         let now = 12_345u64;
-        let bytes = splice_insert_section(Some(now), false);
+        let bytes = splice_insert_section(
+            Some(broadcast_common::clock33::Clock33::try_new(now).expect("in range")),
+            false,
+        );
         assert_eq!(check_section(&bytes, now), Scte35Sanity::InFuture);
     }
 
@@ -221,7 +233,9 @@ mod tests {
             out_of_network_indicator: true,
             program_splice_flag: true,
             splice_immediate_flag: false,
-            splice_time: Some(SpliceTime::with_pts(raw_pts_time)),
+            splice_time: Some(SpliceTime::at(
+                broadcast_common::clock33::Clock33::try_new(raw_pts_time).expect("in range"),
+            )),
             ..SpliceInsert::default()
         };
         let mut section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
@@ -247,7 +261,9 @@ mod tests {
             out_of_network_indicator: true,
             program_splice_flag: true,
             splice_immediate_flag: false,
-            splice_time: Some(SpliceTime::with_pts(raw_pts_time)),
+            splice_time: Some(SpliceTime::at(
+                broadcast_common::clock33::Clock33::try_new(raw_pts_time).expect("in range"),
+            )),
             ..SpliceInsert::default()
         };
         let mut section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
@@ -267,7 +283,9 @@ mod tests {
             out_of_network_indicator: true,
             program_splice_flag: true,
             splice_immediate_flag: false,
-            splice_time: Some(SpliceTime::with_pts(raw_pts_time)),
+            splice_time: Some(SpliceTime::at(
+                broadcast_common::clock33::Clock33::try_new(raw_pts_time).expect("in range"),
+            )),
             ..SpliceInsert::default()
         };
         let mut section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
@@ -312,7 +330,9 @@ mod tests {
                     .iter()
                     .map(|&(component_tag, pts)| SpliceInsertComponent {
                         component_tag,
-                        splice_time: Some(SpliceTime::with_pts(pts)),
+                        splice_time: Some(SpliceTime::at(
+                            broadcast_common::clock33::Clock33::try_new(pts).expect("in range"),
+                        )),
                     })
                     .collect(),
                 ..SpliceInsert::default()

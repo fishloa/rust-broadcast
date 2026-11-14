@@ -42,7 +42,10 @@ fn splice_insert_4800008f() {
     assert!(si.out_of_network_indicator);
     assert!(si.program_splice_flag);
     assert!(!si.splice_immediate_flag);
-    assert_eq!(si.splice_time.unwrap().pts_time, Some(0x0_7369_C02E));
+    assert_eq!(
+        si.splice_time.unwrap().pts_time.map(|c| c.ticks()),
+        Some(0x0_7369_C02E)
+    );
     let bd = si.break_duration.expect("break_duration present");
     assert!(bd.auto_return);
     assert_eq!(bd.duration, 0x52_CCF5);
@@ -104,7 +107,10 @@ fn time_signal_segmentation_placement_opportunity_start_s14_1() {
         AnyCommand::TimeSignal(ts) => ts,
         other => panic!("expected TimeSignal, got {other:?}"),
     };
-    assert_eq!(ts.splice_time.pts_time, Some(0x0_72BD_0050));
+    assert_eq!(
+        ts.splice_time.pts_time.map(|c| c.ticks()),
+        Some(0x0_72BD_0050)
+    );
 
     let descs: Vec<_> = s.descriptors().map(Result::unwrap).collect();
     assert_eq!(descs.len(), 1);

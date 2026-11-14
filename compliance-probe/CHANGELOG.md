@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+- `scte35-splice` 6 -> 7 (its `SpliceTime::pts_time` is now a validated `broadcast_common::clock33::Clock33`).
+
 
 ### Removed
 - Removed the unused `metrics-exporter-prometheus` dev-dependency.

@@ -263,8 +263,10 @@ fn restamp_pcr_preserves_splice_pts_time() {
             .map(|s| {
                 let clear = s.clear.as_ref().expect("clear cue");
                 let pts = match &clear.command {
-                    AnyCommand::SpliceInsert(si) => si.splice_time.and_then(|t| t.pts_time),
-                    AnyCommand::TimeSignal(t) => t.splice_time.pts_time,
+                    AnyCommand::SpliceInsert(si) => {
+                        si.splice_time.and_then(|t| t.pts_time).map(u64::from)
+                    }
+                    AnyCommand::TimeSignal(t) => t.splice_time.pts_time.map(u64::from),
                     _ => None,
                 };
                 (s.pts_adjustment, pts)

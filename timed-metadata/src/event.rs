@@ -133,8 +133,12 @@ impl TimedEvent {
         let mut at = None;
         let mut duration = None;
 
-        let adjust =
-            |pts: u64| MediaTime(broadcast_common::clock33::add(pts, section.pts_adjustment));
+        let adjust = |pts: broadcast_common::clock33::Clock33| {
+            MediaTime(broadcast_common::clock33::add(
+                pts.ticks(),
+                section.pts_adjustment,
+            ))
+        };
 
         if let Some(clear) = &section.clear {
             match &clear.command {

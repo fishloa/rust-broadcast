@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Dependencies
+- `scte35-splice` 6 -> 7 (its `SpliceTime::pts_time` is now a validated `broadcast_common::clock33::Clock33`).
 
 ## [0.9.0] - 2026-11-14
 ### Changed

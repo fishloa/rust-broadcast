@@ -87,7 +87,9 @@ use broadcast_common::{Parse, Serialize};
 
 // A minimal time_signal() section with no descriptors, built and emitted.
 let ts = scte35_splice::commands::TimeSignal {
-    splice_time: scte35_splice::time::SpliceTime::with_pts(0x0_0012_3456),
+    splice_time: scte35_splice::time::SpliceTime::at(
+        broadcast_common::clock33::Clock33::try_new(0x0_0012_3456u64).expect("in range"),
+    ),
 };
 let section = SpliceInfoSection::new_clear(AnyCommand::TimeSignal(ts), &[]);
 let bytes = section.try_to_bytes().unwrap();

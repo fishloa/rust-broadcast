@@ -40,7 +40,7 @@ test-fixtures = { path = "../test-fixtures" }
 # fixtures in-test, to drive `timed_metadata::Timeline`'s 33-bit PTS
 # wrap-unroll across a genuine wrap boundary — see the event-log wrap test in
 # `src/trunk.rs`. Test-only: the library itself depends only on `timed-metadata`.
-scte35-splice = { path = "../scte35-splice", version = "6.0.0", default-features = false }
+scte35-splice = { path = "../scte35-splice", version = "7.0.0", default-features = false }
 criterion     = { workspace = true, features = ["html_reports"] }
 
 [features]

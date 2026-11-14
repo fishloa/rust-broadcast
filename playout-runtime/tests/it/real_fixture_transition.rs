@@ -127,12 +127,12 @@ fn transition_into_a_real_non_idr_aligned_cue_plans_a_continuous_timeline() {
         on_the_pts_circle(NEAREST_KEYFRAME_PTS)
     );
     assert_eq!(
-        insert.splice_time.unwrap().pts_time,
+        insert.splice_time.unwrap().pts_time.map(|c| c.ticks()),
         Some(NEAREST_KEYFRAME_PTS % clock33::WRAP_33BIT),
         "the emitted cue must carry the conditioned (snapped) instant, not the raw request"
     );
     assert_ne!(
-        insert.splice_time.unwrap().pts_time,
+        insert.splice_time.unwrap().pts_time.map(|c| c.ticks()),
         Some(requested_pts % (1u64 << 33)),
         "the emitted cue must not be a passthrough of the raw, non-aligned request"
     );
@@ -164,7 +164,11 @@ fn transition_into_a_real_non_idr_aligned_cue_plans_a_continuous_timeline() {
             assert_eq!(reparsed_insert.splice_event_id, 0x6A78_D416);
             assert!(reparsed_insert.out_of_network_indicator);
             assert_eq!(
-                reparsed_insert.splice_time.unwrap().pts_time,
+                reparsed_insert
+                    .splice_time
+                    .unwrap()
+                    .pts_time
+                    .map(|c| c.ticks()),
                 Some(NEAREST_KEYFRAME_PTS % clock33::WRAP_33BIT)
             );
             assert_eq!(reparsed_insert.break_duration.unwrap().duration, 1_800_000);
