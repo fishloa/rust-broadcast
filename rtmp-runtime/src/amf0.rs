@@ -203,20 +203,27 @@ fn parse_pairs(bytes: &[u8], depth: usize) -> Result<(Vec<(String, Amf0Value)>, 
                 return Ok((pairs, after_key + MARKER_LEN));
             }
         }
-        let value = parse_value(&bytes[after_key..], depth)?;
-        let value_len = value.serialized_len();
+        let (value, value_len) = parse_value(&bytes[after_key..], depth)?;
         pairs.push((key, value));
-        consumed = after_key + value_len;
+        consumed = after_key
+            .checked_add(value_len)
+            .ok_or(RtmpError::Malformed {
+                what: "amf0 object pair length",
+            })?;
     }
 }
 
 /// Parse one AMF0 value (marker + body) from the front of `bytes`, ignoring
-/// any surplus trailing bytes. `depth` counts container nesting already
+/// any surplus trailing bytes, and return it with the number of bytes its
+/// encoding occupied. That count comes from the parser itself, so a caller
+/// walking a sequence of values advances by what was actually read rather
+/// than by a re-serialized length, which only agrees while every encoding is
+/// canonical. `depth` counts container nesting already
 /// entered (0 at the top level); checked *before* descending into a nested
 /// Object/ECMA-Array/Strict-Array so recursion is bounded by
 /// [`MAX_AMF0_DEPTH`] regardless of how deeply the input is (adversarially)
 /// nested.
-fn parse_value(bytes: &[u8], depth: usize) -> Result<Amf0Value> {
+fn parse_value(bytes: &[u8], depth: usize) -> Result<(Amf0Value, usize)> {
     if bytes.is_empty() {
         return Err(buffer_too_short(MARKER_LEN, 0, "amf0 value marker"));
     }
@@ -228,17 +235,17 @@ fn parse_value(bytes: &[u8], depth: usize) -> Result<Amf0Value> {
             }
             let mut b = [0u8; NUMBER_LEN];
             b.copy_from_slice(&body[..NUMBER_LEN]);
-            Ok(Amf0Value::Number(f64::from_be_bytes(b)))
+            Ok((Amf0Value::Number(f64::from_be_bytes(b)), MARKER_LEN + NUMBER_LEN))
         }
         marker::BOOLEAN => {
             if body.is_empty() {
                 return Err(buffer_too_short(BOOLEAN_LEN, 0, "amf0 boolean"));
             }
-            Ok(Amf0Value::Boolean(body[0] != 0))
+            Ok((Amf0Value::Boolean(body[0] != 0), MARKER_LEN + BOOLEAN_LEN))
         }
         marker::STRING => {
-            let (s, _) = read_utf8_short(body, "amf0 string")?;
-            Ok(Amf0Value::String(s))
+            let (s, len) = read_utf8_short(body, "amf0 string")?;
+            Ok((Amf0Value::String(s), MARKER_LEN + len))
         }
         marker::OBJECT => {
             if depth >= MAX_AMF0_DEPTH {
@@ -246,11 +253,11 @@ fn parse_value(bytes: &[u8], depth: usize) -> Result<Amf0Value> {
                     what: "amf0 nesting depth exceeded",
                 });
             }
-            let (pairs, _) = parse_pairs(body, depth + 1)?;
-            Ok(Amf0Value::Object(pairs))
+            let (pairs, len) = parse_pairs(body, depth + 1)?;
+            Ok((Amf0Value::Object(pairs), MARKER_LEN + len))
         }
-        marker::NULL => Ok(Amf0Value::Null),
-        marker::UNDEFINED => Ok(Amf0Value::Undefined),
+        marker::NULL => Ok((Amf0Value::Null, MARKER_LEN)),
+        marker::UNDEFINED => Ok((Amf0Value::Undefined, MARKER_LEN)),
         marker::ECMA_ARRAY => {
             if depth >= MAX_AMF0_DEPTH {
                 return Err(RtmpError::Unsupported {
@@ -268,8 +275,8 @@ fn parse_value(bytes: &[u8], depth: usize) -> Result<Amf0Value> {
             // object-end terminator is authoritative, so it is read and
             // discarded rather than cross-checked against the parsed pair
             // count.
-            let (pairs, _) = parse_pairs(&body[U32_LEN..], depth + 1)?;
-            Ok(Amf0Value::EcmaArray(pairs))
+            let (pairs, len) = parse_pairs(&body[U32_LEN..], depth + 1)?;
+            Ok((Amf0Value::EcmaArray(pairs), MARKER_LEN + U32_LEN + len))
         }
         marker::STRICT_ARRAY => {
             if depth >= MAX_AMF0_DEPTH {
@@ -288,12 +295,22 @@ fn parse_value(bytes: &[u8], depth: usize) -> Result<Amf0Value> {
             let mut rest = &body[U32_LEN..];
             let mut values = Vec::new();
             for _ in 0..count {
-                let value = parse_value(rest, depth + 1)?;
-                let consumed = value.serialized_len();
+                let (value, consumed) = parse_value(rest, depth + 1)?;
                 values.push(value);
-                rest = &rest[consumed..];
+                rest = rest.get(consumed..).ok_or(RtmpError::Malformed {
+                    what: "amf0 strict array element length",
+                })?;
             }
-            Ok(Amf0Value::StrictArray(values))
+            let elements_len = body[U32_LEN..]
+                .len()
+                .checked_sub(rest.len())
+                .ok_or(RtmpError::Malformed {
+                    what: "amf0 strict array element length",
+                })?;
+            Ok((
+                Amf0Value::StrictArray(values),
+                MARKER_LEN + U32_LEN + elements_len,
+            ))
         }
         marker::DATE => {
             if body.len() < NUMBER_LEN + DATE_RESERVED_LEN {
@@ -311,16 +328,30 @@ fn parse_value(bytes: &[u8], depth: usize) -> Result<Amf0Value> {
                     what: "amf0 date reserved time zone (must be 0x0000)",
                 });
             }
-            Ok(Amf0Value::Date(f64::from_be_bytes(b)))
+            Ok((
+                Amf0Value::Date(f64::from_be_bytes(b)),
+                MARKER_LEN + NUMBER_LEN + DATE_RESERVED_LEN,
+            ))
         }
         marker::LONG_STRING => {
-            let (s, _) = read_utf8_long(body, "amf0 long string")?;
-            Ok(Amf0Value::LongString(s))
+            let (s, len) = read_utf8_long(body, "amf0 long string")?;
+            Ok((Amf0Value::LongString(s), MARKER_LEN + len))
         }
         _ => Err(RtmpError::Unsupported {
             what: "amf0 value marker (reserved, legacy, or amf3-switch)",
         }),
     }
+}
+
+/// The `FieldOverflow` for a value sequence whose total length does not fit a
+/// `usize`: the sum of real element lengths against the addressable maximum.
+fn sequence_length_overflow(so_far: usize, next: usize) -> RtmpError {
+    RtmpError::FieldOverflow(broadcast_common::len::FieldOverflow {
+        field: "amf0 value sequence length",
+        value: u64::from(u32::try_from(so_far).unwrap_or(u32::MAX))
+            + u64::from(u32::try_from(next).unwrap_or(u32::MAX)),
+        max: u64::try_from(usize::MAX).unwrap_or(u64::MAX),
+    })
 }
 
 fn pairs_body_len(pairs: &[(String, Amf0Value)]) -> usize {
@@ -365,7 +396,8 @@ impl<'a> Parse<'a> for Amf0Value {
     type Error = RtmpError;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        parse_value(bytes, 0)
+        let (value, _) = parse_value(bytes, 0)?;
+        Ok(value)
     }
 }
 
@@ -487,8 +519,8 @@ impl Command {
     /// second is not a Number; [`RtmpError::BufferTooShort`] /
     /// [`RtmpError::Unsupported`] propagated from [`Amf0Value::parse`].
     pub fn parse(payload: &[u8]) -> Result<Self> {
-        let name_value = Amf0Value::parse(payload)?;
-        let mut offset = name_value.serialized_len();
+        let (name_value, name_len) = parse_value(payload, 0)?;
+        let mut offset = name_len;
         let name = match name_value {
             Amf0Value::String(s) => s,
             _ => {
@@ -498,8 +530,15 @@ impl Command {
             }
         };
 
-        let txn_value = Amf0Value::parse(&payload[offset..])?;
-        offset += txn_value.serialized_len();
+        let (txn_value, txn_len) = parse_value(
+            payload.get(offset..).unwrap_or_default(),
+            0,
+        )?;
+        offset = offset
+            .checked_add(txn_len)
+            .ok_or(RtmpError::Malformed {
+                what: "rtmp command transaction id length",
+            })?;
         let transaction_id = match txn_value {
             Amf0Value::Number(n) => n,
             _ => {
@@ -511,8 +550,10 @@ impl Command {
 
         let mut arguments = Vec::new();
         while offset < payload.len() {
-            let value = Amf0Value::parse(&payload[offset..])?;
-            offset += value.serialized_len();
+            let (value, len) = parse_value(&payload[offset..], 0)?;
+            offset = offset.checked_add(len).ok_or(RtmpError::Malformed {
+                what: "rtmp command argument length",
+            })?;
             arguments.push(value);
         }
 
@@ -551,14 +592,9 @@ impl Command {
 /// length prefix (see [`Amf0Value`]'s own serializer).
 pub fn amf0_values(values: &[Amf0Value]) -> Result<Vec<u8>> {
     let len = values.iter().try_fold(0usize, |acc, value| {
-        acc.checked_add(value.serialized_len())
-            .ok_or(RtmpError::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
-                    field: "amf0 value sequence length",
-                    value: u64::MAX,
-                    max: u64::MAX,
-                },
-            ))
+        let value_len = value.serialized_len();
+        acc.checked_add(value_len)
+            .ok_or_else(|| sequence_length_overflow(acc, value_len))
     })?;
     let mut out = alloc::vec![0u8; len];
     let mut written = 0usize;
@@ -591,6 +627,44 @@ mod tests {
         let mut expected = values[0].try_to_bytes().unwrap();
         expected.extend(values[1].try_to_bytes().unwrap());
         assert_eq!(body, expected);
+    }
+
+    /// #2761: the overflow error carried `value = u64::MAX, max = u64::MAX`,
+    /// telling a caller nothing. It now carries the real current length and
+    /// the addressable maximum.
+    #[test]
+    fn a_sequence_length_overflow_reports_the_real_lengths() {
+        let err = sequence_length_overflow(6, 8);
+        let RtmpError::FieldOverflow(overflow) = err else {
+            panic!("expected FieldOverflow, got {err:?}");
+        };
+        assert_eq!(overflow.value, 14);
+        assert_eq!(
+            overflow.max,
+            u64::try_from(usize::MAX).expect("usize fits u64 on every supported target")
+        );
+    }
+
+    /// #2761: `Command::parse` advanced by each parsed value's re-serialized
+    /// length. The parser now reports what it consumed, so a value whose
+    /// encoding is not its canonical form (here AMF0 permits any non-zero
+    /// Boolean byte, and `0x02` re-serializes as `0x01`) no longer shifts the
+    /// boundary of the following argument.
+    #[test]
+    fn command_argument_boundaries_come_from_the_parse_not_a_re_derived_length() {
+        let mut payload = Amf0Value::String("connect".to_string())
+            .try_to_bytes()
+            .unwrap();
+        payload.extend(Amf0Value::Number(1.0).try_to_bytes().unwrap());
+        for i in 0..8u8 {
+            payload.extend([marker::BOOLEAN, i]);
+        }
+
+        let command = Command::parse(&payload).expect("any boolean byte is legal AMF0");
+        assert_eq!(
+            command.arguments,
+            (0..8u8).map(|i| Amf0Value::Boolean(i != 0)).collect::<Vec<_>>()
+        );
     }
 
     #[test]

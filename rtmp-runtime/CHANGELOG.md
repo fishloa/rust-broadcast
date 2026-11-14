@@ -6,6 +6,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `Command::parse` takes each argument's length from the parser that read it instead of re-serializing the parsed value and measuring that. The two agree only while every AMF0 encoding is canonical (any non-zero Boolean byte decodes to `true` but re-serializes to `0x01`), so a non-canonical argument could shift every following boundary and fail the command. `amf0_values` reports a real over-long sequence with its actual length and the addressable maximum instead of a fabricated `u64::MAX`/`u64::MAX` (#2761).
+
 ### Changed
 - BREAKING: `RtmpClientConfig::play_buffer` is a `core::time::Duration` (was `play_buffer_ms: u32`) and the default constant is `DEFAULT_PLAY_BUFFER` (was `DEFAULT_PLAY_BUFFER_MS`); the value still goes on the wire as whole milliseconds in SetBufferLength (§6.7) (#2693).
 - BREAKING: `flv::FlvHeader` no longer stores a `data_offset` field; the `DataOffset` it writes is derived from `FLV_HEADER_LEN + extra.len()` (§E.2) and readable with `FlvHeader::data_offset()`. A header whose field disagreed with its `extra` bytes used to serialize to an offset the parser rejects, so the serializer could emit un-parseable output (#2760). Migration: read `header.data_offset()`; to write a larger offset, set `header.extra` to that many bytes.
