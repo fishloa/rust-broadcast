@@ -8,7 +8,7 @@ use std::fs;
 use media_doctor::Diagnostic;
 use media_doctor::{
     CcAnomalyCheck, Finding, Location, PatPmtVersionCheck, PcrCheck, Report, Severity,
-    SyncByteCheck,
+    StreamLocator, SyncByteCheck,
 };
 
 /// Path helper: fixture TS file.
@@ -75,13 +75,13 @@ fn report_text_format() {
     let mut r = Report::new();
     r.push(Finding::new(
         Severity::Error,
-        Location::new(0, 0x0100),
+        Location::at_pid(0, Pid::from_const(0x0100)),
         "sync-byte",
         "bad sync",
     ));
     r.push(Finding::new(
         Severity::Warning,
-        Location::new(5, 0x0010),
+        Location::at_pid(5, Pid::from_const(0x0010)),
         "test-rule",
         "warning msg",
     ));
@@ -98,13 +98,13 @@ fn report_json_roundtrip() {
     let mut report = Report::new();
     report.push(Finding::new(
         Severity::Error,
-        Location::new(42, 0x0100),
+        Location::at_pid(42, Pid::from_const(0x0100)),
         "sync-byte",
         "bad sync byte",
     ));
     report.push(Finding::new(
         Severity::Info,
-        Location::new(99, 0),
+        Location::new(99),
         "test",
         "info message",
     ));
@@ -181,7 +181,10 @@ fn cc_anomaly_wrong_cc() {
         .collect();
     assert_eq!(cc_findings.len(), 1);
     assert_eq!(cc_findings[0].severity, Severity::Error);
-    assert_eq!(cc_findings[0].location.pid, u32::from(pid));
+    assert_eq!(
+        cc_findings[0].location.stream,
+        StreamLocator::Ts(Pid::from_wire_masked(pid))
+    );
 }
 
 /// A legal duplicate (same CC + identical payload) must NOT be flagged.
@@ -280,7 +283,12 @@ fn cc_anomaly_m6_single_has_many_errors() {
     // Count findings on PID 0x82, 0x83, 0x84.
     let pids_82_83_84: Vec<_> = cc_findings
         .iter()
-        .filter(|f| matches!(f.location.pid, 0x82..=0x84))
+        .filter(|f| {
+            matches!(
+                f.location.stream,
+                StreamLocator::Ts(p) if (0x82..=0x84).contains(&p.value())
+            )
+        })
         .collect();
     assert!(
         pids_82_83_84.len() >= 70,
@@ -683,7 +691,7 @@ fn pat_pmt_version_real_capture_tracks_the_tsduck_pmt_pid() {
         report2
             .findings()
             .iter()
-            .all(|f| f.location.pid != u32::from(PAT_CRC_ALIASED_PID)),
+            .all(|f| f.location.stream != StreamLocator::Ts(Pid::from_const(PAT_CRC_ALIASED_PID))),
         "PID {PAT_CRC_ALIASED_PID:#06X} is the PAT's CRC_32, never a PMT PID",
     );
 }
@@ -907,7 +915,10 @@ fn pcr_check_discontinuity_not_flagged() {
     let disc_on_0208: Vec<_> = report
         .findings()
         .iter()
-        .filter(|f| f.rule_id == "pcr-discontinuity" && f.location.pid == 0x0208)
+        .filter(|f| {
+            f.rule_id == "pcr-discontinuity"
+                && f.location.stream == StreamLocator::Ts(Pid::from_const(0x0208))
+        })
         .collect();
 
     assert!(
@@ -919,7 +930,10 @@ fn pcr_check_discontinuity_not_flagged() {
     let rep_on_0208: Vec<_> = report
         .findings()
         .iter()
-        .filter(|f| f.rule_id == "pcr-repetition" && f.location.pid == 0x0208)
+        .filter(|f| {
+            f.rule_id == "pcr-repetition"
+                && f.location.stream == StreamLocator::Ts(Pid::from_const(0x0208))
+        })
         .collect();
 
     assert!(
@@ -974,7 +988,7 @@ fn pcr_check_corrupted_pcr_produces_finding() {
         .findings()
         .iter()
         .filter(|f| {
-            f.location.pid == 0x0208
+            f.location.stream == StreamLocator::Ts(Pid::from_const(0x0208))
                 && (f.rule_id == "pcr-repetition" || f.rule_id == "pcr-discontinuity")
         })
         .collect();
