@@ -2,28 +2,21 @@
 //! socket, the multicast join it performs, the reorder settings and the counters a session keeps.
 
 use alloc::string::String;
-use core::net::IpAddr;
+
+use broadcast_common::net::UdpOptions;
 
 /// UDP and RTP source settings ([`crate::Config::udp`]).
 ///
-/// The host applies the socket-level settings (`SO_RCVBUF`, the multicast interface, the
-/// source-specific join) when it executes [`crate::Action::UdpBind`]; the session only decides
-/// them.
+/// The host applies the socket-level settings ([`UdpOptions`]: `SO_RCVBUF`, the multicast
+/// interface, the source-specific join) when it executes [`crate::Action::UdpBind`]; the session
+/// only decides them. A live multicast feed of a few Mbit/s overruns the usual 200 KB receive
+/// buffer during a decoder hiccup, so `options.recv_buffer_bytes` is worth setting.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UdpConfig {
-    /// Local interface address a multicast group is joined on; `None` lets the host pick.
-    pub interface: Option<IpAddr>,
-    /// Interface index an IPv6 multicast group is joined on, when the interface is named by
-    /// index rather than address; `None` lets the host pick. Only valid for an IPv6 group, and
-    /// not together with [`UdpConfig::interface`].
-    pub interface_index: Option<u32>,
-    /// Source address for a source-specific multicast join (RFC 4607); `None` joins any-source.
-    /// Must be of the same address family as the group.
-    pub source: Option<IpAddr>,
-    /// Requested `SO_RCVBUF` in bytes; `None` keeps the host default. A live multicast feed of a
-    /// few Mbit/s overruns the usual 200 KB default during a decoder hiccup.
-    pub recv_buffer_bytes: Option<u32>,
+    /// The socket options for the bind, the multicast join included. The session fills in the
+    /// join's group from the URL; a join set here is only valid for a multicast URL.
+    pub options: UdpOptions,
     /// RTP only: an out-of-band SDP (RFC 4566) describing the streams, which switches an `rtp://`
     /// session from MPEG-2 transport stream (payload type 33) to the H.264 (RFC 6184) and AAC
     /// (RFC 3640) streams the SDP declares, played by RTP payload type. The tracks are announced
@@ -48,10 +41,7 @@ pub const MAX_REORDER_PACKETS: usize = 8_192;
 impl Default for UdpConfig {
     fn default() -> Self {
         Self {
-            interface: None,
-            interface_index: None,
-            source: None,
-            recv_buffer_bytes: None,
+            options: UdpOptions::default(),
             sdp: None,
             reorder_packets: DEFAULT_REORDER_PACKETS,
             reorder_wait_us: DEFAULT_REORDER_WAIT_US,
@@ -68,7 +58,7 @@ impl UdpConfig {
         if self.reorder_wait_us == 0 {
             return invalid("udp.reorder_wait_us");
         }
-        if self.recv_buffer_bytes == Some(0) {
+        if self.options.recv_buffer_bytes == Some(0) {
             return invalid("udp.recv_buffer_bytes");
         }
         Ok(())
@@ -80,7 +70,8 @@ impl UdpConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UdpMode {
     /// Bind `host:port` locally and receive datagrams sent to it; join the group when
-    /// [`crate::Action::UdpBind::multicast`] is set. The datagram's sender is of no interest.
+    /// the bind's [`broadcast_common::net::UdpOptions::join`] is set. The datagram's sender is of no
+    /// interest.
     Receive,
     /// Open a socket connected to `host:port` (resolve the name first), so that
     /// [`crate::Action::Send`] writes one datagram to that peer and only that peer's datagrams are
@@ -100,22 +91,6 @@ impl UdpMode {
 }
 
 broadcast_common::impl_spec_display!(UdpMode);
-
-/// Multicast membership the host establishes for a [`UdpMode::Receive`] socket whose address is
-/// a multicast group.
-#[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MulticastJoin {
-    /// Interface address to join on; for an IPv6 group the host maps it to its interface index.
-    /// `None` lets the host pick.
-    pub interface: Option<IpAddr>,
-    /// Interface index to join an IPv6 group on; `None` lets the host pick. Never set together
-    /// with `interface`.
-    pub interface_index: Option<u32>,
-    /// Source address of a source-specific join (`IP_ADD_SOURCE_MEMBERSHIP`,
-    /// `MCAST_JOIN_SOURCE_GROUP`); `None` is an any-source join.
-    pub source: Option<IpAddr>,
-}
 
 /// Datagram counters of a UDP, RTP or SRT session ([`crate::Session::datagram_stats`]). They
 /// accumulate over the life of the session, reconnects included.

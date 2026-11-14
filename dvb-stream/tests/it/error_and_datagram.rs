@@ -7,16 +7,16 @@
 
 use mpeg_ts::pid::Pid;
 #[cfg(feature = "udp")]
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 #[cfg(feature = "udp")]
 use std::time::Duration;
 
 #[cfg(feature = "udp")]
-use dvb_stream::UdpSectionStream;
+use broadcast_common::net::{MulticastJoin, UdpOptions};
 #[cfg(feature = "udp")]
-use dvb_stream::udp::MulticastConfig;
+use dvb_stream::UdpSectionStream;
 use dvb_stream::{SectionStream, T2miEventStream};
 use futures_core::Stream;
 #[cfg(feature = "udp")]
@@ -93,7 +93,7 @@ fn make_ts_packet(cc: u8) -> [u8; 188] {
 #[cfg(feature = "udp")]
 const UDP_TEST_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Multicast variant of the W-DS-2 regression: `MulticastConfig` on an OS-assigned port (no fixed
+/// Multicast variant of the W-DS-2 regression: a multicast [`UdpOptions`] bind on an OS-assigned port (no fixed
 /// port shared between parallel test runs), the port read back from the bound socket.
 /// Skips cleanly where the sandbox has no multicast bind/join/loopback.
 #[cfg(feature = "udp")]
@@ -103,8 +103,11 @@ async fn udp_multicast_stream_does_not_truncate_oversized_datagram() {
     // any UDP datagram larger than 7 TS packets. Send 10 packets (1880 bytes)
     // in one datagram and check all 10 are counted, not just 7.
     let group = Ipv4Addr::new(239, 209, 7, 1);
-    let config = MulticastConfig::new(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0), group);
-    let std_socket = match config.bind() {
+    let join = MulticastJoin::new(IpAddr::V4(group));
+    let std_socket = match dvb_stream::udp::bind_udp(
+        SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)),
+        &UdpOptions::new().with_join(join),
+    ) {
         Ok(s) => s,
         Err(e) => {
             eprintln!(
@@ -114,9 +117,14 @@ async fn udp_multicast_stream_does_not_truncate_oversized_datagram() {
             return;
         }
     };
-    let port = std_socket.local_addr().expect("local addr").port();
+    let port = std_socket
+        .local_addr()
+        .expect("local addr")
+        .as_socket()
+        .expect("an IP address")
+        .port();
     let mut stream = UdpSectionStream::from_socket(
-        tokio::net::UdpSocket::from_std(std_socket).expect("tokio socket"),
+        tokio::net::UdpSocket::from_std(std_socket.into()).expect("tokio socket"),
     );
 
     let sender = tokio::net::UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))

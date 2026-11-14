@@ -338,13 +338,22 @@ impl SessionStep {
                     host,
                     port,
                     mode: UdpMode::Receive,
-                    multicast,
-                    recv_buffer_bytes,
+                    options,
                 } => {
-                    let socket = self
-                        .udp
-                        .bind(&host, port, multicast.as_ref(), recv_buffer_bytes)
-                        .await?;
+                    // The route's own socket options are the base when the
+                    // session leaves a value unset (the receive-buffer default
+                    // and any configured reuse); the session's join is the
+                    // route's when the route configured one.
+                    let mut merged = self.udp.options.clone();
+                    if options.recv_buffer_bytes.is_some() {
+                        merged.recv_buffer_bytes = options.recv_buffer_bytes;
+                    }
+                    merged.reuse_address |= options.reuse_address;
+                    merged.reuse_port |= options.reuse_port;
+                    if let Some(join) = options.join {
+                        merged = merged.with_join(join);
+                    }
+                    let socket = self.udp.bind(&host, port, merged).await?;
                     self.register_socket(conn, socket);
                     self.session.on_connected(conn);
                 }
@@ -754,7 +763,7 @@ async fn fetch(request: reqwest::RequestBuilder, conn: u32, tx: mpsc::Sender<Mes
 #[derive(Default)]
 pub(crate) struct UdpHost {
     pub(crate) prebound: Option<UdpSocket>,
-    pub(crate) options: crate::source::udp::UdpBindOptions,
+    pub(crate) options: broadcast_common::net::UdpOptions,
 }
 
 impl UdpHost {
@@ -762,34 +771,24 @@ impl UdpHost {
         &mut self,
         host: &str,
         port: u16,
-        multicast: Option<&broadcast_client::udp::MulticastJoin>,
-        recv_buffer_bytes: Option<u32>,
+        options: broadcast_common::net::UdpOptions,
     ) -> Result<UdpSocket, MultimuxError> {
         if let Some(socket) = self.prebound.take() {
             return Ok(socket);
         }
-        let mut options = self.options.clone();
-        if let Some(bytes) = recv_buffer_bytes {
-            options.recv_buffer_bytes = usize::try_from(bytes).ok();
-        }
-        let (addr, group) = match multicast {
-            Some(join) => {
-                if let Some(interface) = join.interface {
-                    options.multicast_interface = Some(interface.to_string());
-                } else if let Some(index) = join.interface_index {
-                    options.multicast_interface = Some(index.to_string());
-                }
+        let addr = match &options.join {
+            Some(_) => {
                 let any = if host.contains(':') {
                     "[::]"
                 } else {
                     "0.0.0.0"
                 };
-                (format!("{any}:{port}"), Some(host))
+                format!("{any}:{port}")
             }
-            None if host.contains(':') => (format!("[{host}]:{port}"), None),
-            None => (format!("{host}:{port}"), None),
+            None if host.contains(':') => format!("[{host}]:{port}"),
+            None => format!("{host}:{port}"),
         };
-        crate::source::udp::bind_udp(&addr, group, options).await
+        crate::source::udp::bind_udp(&addr, None, options).await
     }
 }
 

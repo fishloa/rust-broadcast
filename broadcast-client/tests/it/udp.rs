@@ -3,8 +3,9 @@ use crate::support::udp_host::{
     MP2T_PAYLOAD_TYPE, TS_PACKET, UdpHost, rtp_datagram, rtp_datagrams, ts_datagrams,
 };
 use broadcast_client::{
-    Action, Config, Error, Event, MulticastJoin, Session, SourceKind, Status, UdpConfig, UdpMode,
+    Action, Config, Error, Event, Session, SourceKind, Status, UdpConfig, UdpMode,
 };
+use broadcast_common::net::{MulticastInterface, MulticastJoin, UdpOptions};
 use std::net::{IpAddr, Ipv4Addr};
 
 const SMALL: &str = "ts/h264-aac.ts";
@@ -23,6 +24,10 @@ fn udp_cfg(f: impl FnOnce(&mut UdpConfig)) -> UdpConfig {
     let mut c = UdpConfig::default();
     f(&mut c);
     c
+}
+
+fn join_on(interface: MulticastInterface) -> MulticastJoin {
+    MulticastJoin::new(std::net::IpAddr::V4(Ipv4Addr::UNSPECIFIED)).with_interface(interface)
 }
 
 fn config_with(f: impl FnOnce(&mut Config)) -> Config {
@@ -63,17 +68,17 @@ fn bind_of(session: &mut Session) -> Action {
 #[test]
 fn a_multicast_url_asks_the_host_to_bind_and_join_the_group() {
     let config = config_with(|cfg| {
-        cfg.udp.interface = Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)));
-        cfg.udp.source = Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 7)));
-        cfg.udp.recv_buffer_bytes = Some(4 << 20);
+        cfg.udp.options = UdpOptions::new().with_recv_buffer_bytes(4 << 20).with_join(
+            join_on(MulticastInterface::V4(Ipv4Addr::new(192, 168, 1, 10)))
+                .with_source(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 7))),
+        );
     });
     let mut s = Session::open(GROUP, config, 0).unwrap();
     let Action::UdpBind {
         host,
         port,
         mode,
-        multicast,
-        recv_buffer_bytes,
+        options,
         ..
     } = bind_of(&mut s)
     else {
@@ -83,24 +88,27 @@ fn a_multicast_url_asks_the_host_to_bind_and_join_the_group() {
         (host.as_str(), port, mode),
         ("239.1.1.1", 5000, UdpMode::Receive)
     );
-    assert_eq!(recv_buffer_bytes, Some(4 << 20));
-    let join: MulticastJoin = multicast.expect("a multicast join");
+    assert_eq!(options.recv_buffer_bytes, Some(4 << 20));
+    let join: MulticastJoin = options.join.expect("a multicast join");
+    assert_eq!(join.group, "239.1.1.1".parse::<IpAddr>().unwrap());
     assert_eq!(
         join.interface,
-        Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)))
+        MulticastInterface::V4(Ipv4Addr::new(192, 168, 1, 10))
     );
     assert_eq!(join.source, Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 7))));
 }
 
 #[test]
 fn an_ipv6_group_carries_the_interface_index_to_the_host() {
-    let config = config_with(|cfg| cfg.udp.interface_index = Some(7));
+    let config = config_with(|cfg| {
+        cfg.udp.options = UdpOptions::new().with_join(join_on(MulticastInterface::V6Index(7)));
+    });
     let mut s = Session::open("udp://[ff02::1]:5000", config, 0).unwrap();
-    let Action::UdpBind { multicast, .. } = bind_of(&mut s) else {
+    let Action::UdpBind { options, .. } = bind_of(&mut s) else {
         unreachable!()
     };
-    let join = multicast.expect("a multicast join");
-    assert_eq!((join.interface, join.interface_index), (None, Some(7)));
+    let join = options.join.expect("a multicast join");
+    assert_eq!(join.interface, MulticastInterface::V6Index(7));
 }
 
 #[test]
@@ -111,24 +119,18 @@ fn a_unicast_or_at_prefixed_url_binds_without_a_join() {
         "rtp://[::1]:5000",
     ] {
         let mut s = Session::open(url, Config::default(), 0).unwrap();
-        let Action::UdpBind {
-            multicast, mode, ..
-        } = bind_of(&mut s)
-        else {
+        let Action::UdpBind { options, mode, .. } = bind_of(&mut s) else {
             unreachable!()
         };
-        assert_eq!(multicast, None, "{url}");
+        assert_eq!(options.join, None, "{url}");
         assert_eq!(mode, UdpMode::Receive, "{url}");
     }
     let mut s = Session::open("rtp://[ff02::1]:5000", Config::default(), 0).unwrap();
-    let Action::UdpBind {
-        host, multicast, ..
-    } = bind_of(&mut s)
-    else {
+    let Action::UdpBind { host, options, .. } = bind_of(&mut s) else {
         unreachable!()
     };
     assert_eq!(host, "ff02::1");
-    assert!(multicast.is_some());
+    assert!(options.join.is_some());
 }
 
 #[test]
@@ -148,36 +150,34 @@ fn bad_udp_urls_and_configs_are_typed_errors() {
     ));
     let with = |udp: UdpConfig| config_with(|c| c.udp = udp);
     let v4 = |a, b, c, d| Some(IpAddr::V4(Ipv4Addr::new(a, b, c, d)));
+    let joined = |join: MulticastJoin| udp_cfg(|c| c.options = c.options.clone().with_join(join));
     for (url, udp, field) in [
         (
             "udp://127.0.0.1:5000",
-            udp_cfg(|c| c.source = v4(10, 0, 0, 1)),
-            "udp.source",
-        ),
-        (
-            "udp://127.0.0.1:5000",
-            udp_cfg(|c| c.interface = v4(10, 0, 0, 1)),
-            "udp.interface",
+            joined(
+                MulticastJoin::new(v4(239, 1, 1, 1).unwrap()).with_source(v4(10, 0, 0, 1).unwrap()),
+            ),
+            "udp.options.join",
         ),
         (
             GROUP,
-            udp_cfg(|c| c.source = Some("::1".parse().unwrap())),
-            "udp.source",
+            joined(
+                MulticastJoin::new(v4(239, 1, 1, 1).unwrap()).with_source("::1".parse().unwrap()),
+            ),
+            "udp.options.join.source",
         ),
         (
             GROUP,
-            udp_cfg(|c| c.source = v4(239, 1, 1, 2)),
-            "udp.source",
-        ),
-        (
-            "udp://127.0.0.1:5000",
-            udp_cfg(|c| c.interface_index = Some(2)),
-            "udp.interface_index",
+            joined(
+                MulticastJoin::new(v4(239, 1, 1, 1).unwrap())
+                    .with_source(v4(239, 1, 1, 2).unwrap()),
+            ),
+            "udp.options.join.source",
         ),
         (
             GROUP,
-            udp_cfg(|c| c.interface_index = Some(2)),
-            "udp.interface_index",
+            joined(join_on(MulticastInterface::V6Index(2))),
+            "udp.options.join.interface",
         ),
         (
             GROUP,
@@ -191,7 +191,7 @@ fn bad_udp_urls_and_configs_are_typed_errors() {
         ),
         (
             GROUP,
-            udp_cfg(|c| c.recv_buffer_bytes = Some(0)),
+            udp_cfg(|c| c.options = c.options.clone().with_recv_buffer_bytes(0)),
             "udp.recv_buffer_bytes",
         ),
     ] {
