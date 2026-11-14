@@ -241,7 +241,7 @@ async fn viewer(
                     }
                 }
                 MediaEvent::TimerError(e) | MediaEvent::AuthFailure { reason: e, .. } => {
-                    result.error = Some(e);
+                    result.error = Some(e.to_string());
                     return result;
                 }
                 MediaEvent::DtlsClosed => {

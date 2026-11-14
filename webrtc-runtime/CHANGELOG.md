@@ -5,6 +5,8 @@ All notable changes to this crate will be documented in this file.
 ## [Unreleased]
 
 ### Changed
+- BREAKING: `MediaEvent::IceStateChanged` now carries `IceConnectionState` instead of a `String`; `LocalCandidateGathered` carries `IceCandidate`; `AuthFailure`/`TimerError` carry `MediaError`; `Error::Media(String)` becomes `Media(#[from] MediaError)`; `DecryptedRtp.payload`/extension data use `bytes::Bytes` (#2658).
+
 - Narrowed the `tokio` dev-dependency from `features = ["full"]` to the features the tests use (`net`, `io-util`, `rt`, `rt-multi-thread`, `macros`, `time`, `sync`).
 
 ## [0.7.0] - 2026-11-14
