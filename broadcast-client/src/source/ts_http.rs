@@ -41,8 +41,6 @@ fn to_27mhz(ticks: u64, clock_hz: Timescale) -> u64 {
 pub struct TsHttpSource {
     ts: TsHttpClient,
     url: Url,
-    seed: u64,
-    ts_config: TsConfig,
     events: VecDeque<Item>,
     tracks: BTreeMap<TrackId, TrackSpec>,
     tracks_dirty: bool,
@@ -76,15 +74,8 @@ impl TsHttpSource {
     /// fixed one.
     pub(crate) fn with_seed(url: Url, config: TsConfig, now_us: u64, seed: u64) -> Self {
         Self {
-            ts: TsHttpClient::with_seed(
-                url.as_str(),
-                config.clone(),
-                Timestamp::from_micros(now_us),
-                seed,
-            ),
+            ts: TsHttpClient::with_seed(url.as_str(), config, Timestamp::from_micros(now_us), seed),
             url,
-            seed,
-            ts_config: config,
             events: VecDeque::new(),
             tracks: BTreeMap::new(),
             tracks_dirty: false,
@@ -161,25 +152,11 @@ impl TsHttpSource {
     }
 
     /// Poll next tshttp action.
-    pub fn poll_action(&mut self, now_us: u64) -> Option<crate::tshttp::Action> {
-        loop {
-            if let Some(action) = self.caller_actions.pop_front() {
-                return Some(action);
-            }
-            let action = self.ts.poll()?;
-            if matches!(action, crate::tshttp::Action::Reconnect { .. })
-                && !self.ts.action_ready(Timestamp::from_micros(now_us))
-            {
-                continue;
-            }
-            return self.announce_reconnect(action);
+    pub fn poll_action(&mut self) -> Option<crate::tshttp::Action> {
+        if let Some(action) = self.caller_actions.pop_front() {
+            return Some(action);
         }
-    }
-
-    fn announce_reconnect(
-        &mut self,
-        action: crate::tshttp::Action,
-    ) -> Option<crate::tshttp::Action> {
+        let action = self.ts.poll()?;
         if matches!(action, crate::tshttp::Action::Reconnect { .. }) {
             if self.failure_announced {
                 self.failure_announced = false;
@@ -387,26 +364,13 @@ impl TsHttpSource {
     }
 
     /// Reconnect at `now_us`.
-    ///
-    /// The policy is rebuilt at that instant rather than told to resume: a policy that reopens
-    /// after a refused credentials response keeps `last_byte_at` at the instant it raised that
-    /// wait, and a host that idled would then reconnect from the last instant it polled instead
-    /// of the one it asked for.
     pub fn reconnect(&mut self, now_us: u64) {
         self.now_us = now_us;
-        let mut fresh = TsHttpClient::with_seed(
-            self.url.as_str(),
-            self.ts_config.clone(),
-            Timestamp::from_micros(now_us),
-            self.seed,
-        );
-        while let Some(action) = fresh.poll() {
+        self.ts.reconnect(Timestamp::from_micros(now_us));
+        while let Some(action) = self.ts.poll() {
             self.caller_actions.push_back(action);
         }
-        while let Some(ev) = fresh.poll_event() {
-            self.map_ts_event(ev);
-        }
-        self.ts = fresh;
+        self.drain_ts_events();
     }
 
     fn drain_ts_events(&mut self) {

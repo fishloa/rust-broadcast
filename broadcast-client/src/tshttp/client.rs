@@ -116,6 +116,13 @@ impl TsHttpClient {
         self.sync_demux();
     }
 
+    /// Caller-initiated reconnect (T13).
+    pub fn reconnect(&mut self, now: Timestamp) {
+        self.flush_demux(now);
+        self.policy.reconnect(now);
+        self.sync_demux();
+    }
+
     /// Advance timers (T6, T10-T12, T15).
     pub fn poll_timeout(&mut self, now: Timestamp) {
         let demux = &mut self.demux;
@@ -124,13 +131,6 @@ impl TsHttpClient {
             drain_demux(demux, |ev| events.push_back(ev))
         });
         self.sync_demux();
-    }
-
-    /// Whether an action from [`Self::poll`] is to be acted on now: all of them are, except a
-    /// reopen whose backoff would end past the end of the host clock, which the host must not act
-    /// on at `now` (it never comes due).
-    pub fn action_ready(&self, now: Timestamp) -> bool {
-        self.policy.reconnect_ready(now)
     }
 
     /// Earliest deadline for [`Self::poll_timeout`].

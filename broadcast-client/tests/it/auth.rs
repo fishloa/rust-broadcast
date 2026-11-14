@@ -732,34 +732,38 @@ fn set_credentials_after_a_dropped_connection_resumes_from_the_instant_the_call_
         ts(0),
     )
     .unwrap();
+    let conn = match session.poll(ts(0)).unwrap() {
+        Action::HttpRequest { conn, .. } => conn,
+        other => panic!("{other:?}"),
+    };
+    session.on_response(
+        conn,
+        401,
+        &[(
+            "WWW-Authenticate".to_string(),
+            "Bearer realm=\"tv\"".to_string(),
+        )],
+        ts(0),
+    );
     while session.poll(ts(0)).is_some() {}
     while session.next_event().is_some() {}
-    session.reconnect(ts(late));
-    while session.next_event().is_some() {}
-    session.set_credentials(ts(late), Credentials::new("user", "pass")).unwrap();
+    // The auth wait freezes the source; the resume below reconnects from `late`, not from the
+    // instant the wait froze at.
+    session
+        .set_credentials(ts(late), Credentials::bearer("secret-token"))
+        .unwrap();
     let resumed = drain_at(&mut session, late);
-    let tail = wakes(&mut session, late);
-    let deadline: Vec<Timestamp> = resumed
-        .iter()
-        .chain(&[])
-        .filter_map(|a| match a {
-            Action::WakeAt(at) => Some(*at),
-            _ => None,
-        })
-        .chain(tail.iter().copied())
-        .collect();
     assert!(
         resumed
             .iter()
             .any(|a| matches!(a, Action::HttpRequest { .. })),
-        "the authorized request is stamped from the instant set_credentials is given: {resumed:?}"
+        "the request set_credentials starts is stamped from the instant it is given: {resumed:?}"
     );
-    let start = late + 1_000_000;
     assert!(
-        deadline
+        resumed
             .iter()
-            .any(|at| at.as_micros() >= start && at.as_micros() <= start + 1_000_000),
-        "and its deadline counts from that instant, not from the last one the session saw: {resumed:?} {tail:?}"
+            .any(|a| matches!(a, Action::WakeAt(at) if *at == ts(late + 1_000_000))),
+        "the resume's wake is a tick after the instant it was given, not after the last one the session saw: {resumed:?}"
     );
 }
 /// Every action a poll at `now` yields, failing instead of spinning when the session never drains.
@@ -773,14 +777,4 @@ fn drain_at(session: &mut Session, now: u64) -> Vec<Action> {
         drained.len()
     );
     drained
-}
-
-fn wakes(session: &mut Session, now: u64) -> Vec<Timestamp> {
-    drain_at(session, now)
-        .into_iter()
-        .filter_map(|a| match a {
-            Action::WakeAt(at) => Some(at),
-            _ => None,
-        })
-        .collect()
 }

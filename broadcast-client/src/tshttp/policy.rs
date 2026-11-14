@@ -170,16 +170,6 @@ impl TsHttpPolicy {
         }
     }
 
-    /// Allowed to act on a queued reopen now? `false` when the backoff it waits out would end
-    /// past the end of the clock: that deadline is never reached, so the policy never reopens and
-    /// raises no wake for it (the backoff stays outstanding, and `Ended` is never entered).
-    pub(crate) fn reconnect_ready(&self, now: Timestamp) -> bool {
-        match self.phase {
-            Phase::Backoff { due } => due > now,
-            _ => true,
-        }
-    }
-
     /// Server-requested retry delay (a `Retry-After`), applied to the next failure.
     pub fn set_retry_after(&mut self, retry_after: Duration) {
         self.retry_after = retry_after;
@@ -373,10 +363,12 @@ impl TsHttpPolicy {
     }
 
     /// Caller-initiated reconnect (T13).
+    ///
+    /// Resets whatever phase the policy is in: a connection that was waiting out a backoff (a
+    /// refused response) restarts its reopen from `now` instead of from the stale instant it first
+    /// raised that wait, so a host that idled reconnects from the instant it asked for, not the
+    /// last one the policy happened to see. A finite source restarts from `Ended` too.
     pub fn reconnect(&mut self, now: Timestamp) {
-        if matches!(self.phase, Phase::Ended) {
-            return;
-        }
         self.attempt = 0;
         self.finite = false;
         self.expected_bytes = 0;
@@ -386,6 +378,7 @@ impl TsHttpPolicy {
         self.starved_nodata_fired = false;
         self.first_notice_at = None;
         self.next_notice_at = None;
+        self.notice_step = STALL_NOTICE_REPEAT;
         self.actions.push_back(Action::Abort);
         self.actions.push_back(Action::Reconnect {
             after: Duration::ZERO,
@@ -518,6 +511,7 @@ impl TsHttpPolicy {
         self.last_sample_at = now;
         self.first_notice_at = None;
         self.next_notice_at = None;
+        self.notice_step = STALL_NOTICE_REPEAT;
         self.starved_data_fired = false;
         self.starved_nodata_fired = false;
         self.finite = false;
