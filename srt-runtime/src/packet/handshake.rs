@@ -36,14 +36,15 @@ use super::{Error, Result, be16, be32, put_be16, put_be32};
 /// Address, §3.2.1 Figure 5) — 12 header words.
 pub const HANDSHAKE_CIF_FIXED_LEN: usize = 48;
 
-/// `Encryption Field` wire values (§3.2.1, Table 2).
-pub const ENCRYPTION_FIELD_NONE: u16 = 0;
+/// `Encryption Field` wire values (§3.2.1, Table 2). Crate-private: they back
+/// [`EncryptionField`]'s conversions, which the enum exposes.
+pub(crate) const ENCRYPTION_FIELD_NONE: u16 = 0;
 /// AES-128.
-pub const ENCRYPTION_FIELD_AES_128: u16 = 2;
+pub(crate) const ENCRYPTION_FIELD_AES_128: u16 = 2;
 /// AES-192.
-pub const ENCRYPTION_FIELD_AES_192: u16 = 3;
+pub(crate) const ENCRYPTION_FIELD_AES_192: u16 = 3;
 /// AES-256.
-pub const ENCRYPTION_FIELD_AES_256: u16 = 4;
+pub(crate) const ENCRYPTION_FIELD_AES_256: u16 = 4;
 
 /// `Encryption Field`: block cipher family and key size advertised in the
 /// handshake (`draft-sharabayko-srt-01` §3.2.1, Table 2).
@@ -100,16 +101,17 @@ impl EncryptionField {
 
 broadcast_common::impl_spec_display!(EncryptionField, Reserved);
 
-/// `Handshake Type` wire values (§3.2.1, Table 4).
-pub const HANDSHAKE_TYPE_DONE: u32 = 0xFFFF_FFFD;
+/// `Handshake Type` wire values (§3.2.1, Table 4). Crate-private: they back
+/// [`HandshakeType`]'s conversions, which the enum exposes.
+pub(crate) const HANDSHAKE_TYPE_DONE: u32 = 0xFFFF_FFFD;
 /// AGREEMENT.
-pub const HANDSHAKE_TYPE_AGREEMENT: u32 = 0xFFFF_FFFE;
+pub(crate) const HANDSHAKE_TYPE_AGREEMENT: u32 = 0xFFFF_FFFE;
 /// CONCLUSION.
-pub const HANDSHAKE_TYPE_CONCLUSION: u32 = 0xFFFF_FFFF;
+pub(crate) const HANDSHAKE_TYPE_CONCLUSION: u32 = 0xFFFF_FFFF;
 /// WAVEHAND.
-pub const HANDSHAKE_TYPE_WAVEHAND: u32 = 0x0000_0000;
+pub(crate) const HANDSHAKE_TYPE_WAVEHAND: u32 = 0x0000_0000;
 /// INDUCTION.
-pub const HANDSHAKE_TYPE_INDUCTION: u32 = 0x0000_0001;
+pub(crate) const HANDSHAKE_TYPE_INDUCTION: u32 = 0x0000_0001;
 
 /// `Handshake Type` (`draft-sharabayko-srt-01` §3.2.1, Table 4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1020,5 +1022,44 @@ mod tests {
             assert!(!accessor(HandshakeExtensionMessageFlags(!*bit)));
             assert!(accessor(HandshakeExtensionMessageFlags(u32::MAX)));
         }
+    }
+}
+
+#[cfg(test)]
+mod enum_tests {
+    use super::*;
+
+    #[test]
+    fn every_encryption_field_round_trips_its_table_2_wire_value() {
+        for (field, value) in [
+            (EncryptionField::NoEncryption, 0u16),
+            (EncryptionField::Aes128, 2),
+            (EncryptionField::Aes192, 3),
+            (EncryptionField::Aes256, 4),
+        ] {
+            assert_eq!(field.to_bits(), value, "{}", field.name());
+            assert_eq!(EncryptionField::from_bits(value), field);
+        }
+        // 1 is not assigned by Table 2.
+        assert_eq!(EncryptionField::from_bits(1), EncryptionField::Reserved(1));
+    }
+
+    #[test]
+    fn every_handshake_type_round_trips_its_table_4_wire_value() {
+        for (ty, value) in [
+            (HandshakeType::Done, 0xFFFF_FFFD),
+            (HandshakeType::Agreement, 0xFFFF_FFFE),
+            (HandshakeType::Conclusion, 0xFFFF_FFFF),
+            (HandshakeType::Wavehand, 0x0000_0000),
+            (HandshakeType::Induction, 0x0000_0001),
+        ] {
+            assert_eq!(ty.to_bits(), value, "{}", ty.name());
+            assert_eq!(HandshakeType::from_bits(value), ty);
+        }
+        assert_eq!(
+            HandshakeType::from_bits(2),
+            HandshakeType::Reserved(2),
+            "2 is not assigned by Table 4"
+        );
     }
 }

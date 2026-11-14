@@ -26,7 +26,7 @@
 use core::time::Duration;
 
 use srt_runtime::handshake_sm::HandshakeConfig;
-use srt_runtime::io::{IoConfig, SrtListener, SrtSocket};
+use srt_runtime::io::{IoConfig, SrtListener, SrtSocket, SrtSocketConfig};
 use tokio::net::UdpSocket as TokioUdpSocket;
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -44,7 +44,7 @@ fn payload(stream: u8, i: usize) -> Vec<u8> {
 async fn two_concurrent_callers_do_not_cross_talk() {
     tokio::time::timeout(TEST_TIMEOUT, async {
         let listener_addr = "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap();
-        let mut listener = SrtListener::bind(listener_addr, HandshakeConfig::default())
+        let mut listener = SrtListener::bind(listener_addr, SrtSocketConfig::default())
             .await
             .expect("listener bind");
         let bound_addr = listener.local_addr().expect("listener local addr");
@@ -71,13 +71,13 @@ async fn two_concurrent_callers_do_not_cross_talk() {
             SrtSocket::connect_from_socket(
                 sock_a,
                 bound_addr,
-                srt_runtime::io::SrtConfig::new(HandshakeConfig::default())
+                srt_runtime::io::SrtSocketConfig::new(HandshakeConfig::default())
                     .with_io(IoConfig::default())
             ),
             SrtSocket::connect_from_socket(
                 sock_b,
                 bound_addr,
-                srt_runtime::io::SrtConfig::new(HandshakeConfig::default())
+                srt_runtime::io::SrtSocketConfig::new(HandshakeConfig::default())
                     .with_io(IoConfig::default())
             ),
         );

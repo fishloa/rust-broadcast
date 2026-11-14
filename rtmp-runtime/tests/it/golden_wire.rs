@@ -4,7 +4,7 @@
 //! transcript is stable. Regenerate only with `GOLDEN_UPDATE=1` on `main`.
 
 use rtmp_runtime::amf0::Amf0Value;
-use rtmp_runtime::client::{ClientConfig, ClientSession};
+use rtmp_runtime::client::{ClientSession, RtmpClientConfig};
 use rtmp_runtime::server::ServerSession;
 
 fn hex(label: &str, bytes: &[u8], out: &mut String) {
@@ -18,10 +18,10 @@ fn hex(label: &str, bytes: &[u8], out: &mut String) {
     }
 }
 
-// `ClientConfig` is `#[non_exhaustive]`: outside its crate a struct expression is not allowed.
+// `RtmpClientConfig` is `#[non_exhaustive]`: outside its crate a struct expression is not allowed.
 #[test]
 fn client_publish_transcript_is_byte_identical() {
-    let mut cfg = ClientConfig::default();
+    let mut cfg = RtmpClientConfig::default();
     cfg.app = "live".into();
     cfg.stream_key = "key".into();
     cfg.tc_url = Some("rtmp://example.test:1935/live".into());

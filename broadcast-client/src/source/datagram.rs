@@ -15,7 +15,7 @@ use rtp_packet::{RtpPacket, SeqValidity, SeqVerdict};
 use url::{Host, Url};
 
 use crate::source::srt::{Notice, SrtCaller};
-use crate::srt::SrtConfig;
+use crate::srt::SrtCallerConfig;
 use crate::udp::{DatagramStats, UdpConfig, UdpMode};
 use crate::{Action, Error};
 use broadcast_common::net::{JoinMismatch, MulticastJoin, UdpOptions};
@@ -314,7 +314,7 @@ impl Datagram {
         })
     }
 
-    pub(crate) fn srt(url: &Url, config: &SrtConfig) -> Result<Self, Error> {
+    pub(crate) fn srt(url: &Url, config: &SrtCallerConfig) -> Result<Self, Error> {
         let host = match url.host() {
             Some(Host::Domain(name)) => name.to_string(),
             Some(Host::Ipv4(a)) => a.to_string(),

@@ -6,13 +6,13 @@ use std::io::ErrorKind;
 use std::time::Duration;
 
 use broadcast_common::timeouts::Timeouts;
-use rtmp_runtime::client::{ClientConfig, ClientSession};
-use rtmp_runtime::io::RtmpConnection;
+use rtmp_runtime::client::{ClientSession, RtmpClientConfig};
+use rtmp_runtime::io::{RtmpConnection, RtmpServerConfig};
 use rtmp_runtime::server::ServerSession;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, duplex};
 
-fn conn(io: tokio::io::DuplexStream, t: Timeouts) -> RtmpConnection<tokio::io::DuplexStream> {
-    RtmpConnection::from_stream(io, ServerSession::with_defaults(), t)
+fn conn(io: tokio::io::DuplexStream, t: Timeouts) -> RtmpConnection {
+    RtmpConnection::from_stream(io, RtmpServerConfig::default().with_timeouts(t))
 }
 
 #[tokio::test(start_paused = true)]
@@ -38,7 +38,7 @@ async fn an_idle_peer_times_out_at_read_idle() {
 async fn a_peer_that_never_completes_connect_times_out_at_handshake() {
     let (mut client, server) = duplex(4096);
     // Client sends C0+C1 and then goes quiet: handshake bytes arrive, `connect` never does.
-    let mut cs = ClientSession::new(ClientConfig::default());
+    let mut cs = ClientSession::new(RtmpClientConfig::default());
     client.write_all(&cs.start()).await.unwrap();
     let mut c = conn(
         server,
@@ -58,7 +58,7 @@ async fn a_peer_that_never_completes_connect_times_out_at_handshake() {
 #[tokio::test(start_paused = true)]
 async fn a_peer_that_stops_reading_times_out_the_write() {
     let (mut client, server) = duplex(2048); // reply (3073 B) cannot fit
-    let mut cs = ClientSession::new(ClientConfig::default());
+    let mut cs = ClientSession::new(RtmpClientConfig::default());
     client.write_all(&cs.start()).await.unwrap(); // 1537 B fits
     let mut c = conn(
         server,
@@ -73,7 +73,7 @@ async fn a_peer_that_stops_reading_times_out_the_write() {
 /// The peer must receive the reply exactly once, byte-identical to an uncancelled run.
 #[tokio::test]
 async fn a_cancelled_next_events_neither_loses_nor_duplicates_the_reply() {
-    let c0c1 = ClientSession::new(ClientConfig::default()).start();
+    let c0c1 = ClientSession::new(RtmpClientConfig::default()).start();
     let expected = {
         let mut s = ServerSession::with_defaults();
         s.handle_data(&c0c1).unwrap().0
@@ -122,11 +122,11 @@ async fn a_cancelled_next_events_neither_loses_nor_duplicates_the_reply() {
 /// restart per chunk, so the connection times out at 5 s, long before the 300 s handshake bound.
 #[tokio::test(start_paused = true)]
 async fn a_peer_dripping_empty_chunks_is_bounded_by_read_idle_across_batches() {
-    let c0c1 = ClientSession::new(ClientConfig::default()).start();
+    let c0c1 = ClientSession::new(RtmpClientConfig::default()).start();
     let (reply, c2) = {
         let mut s = ServerSession::with_defaults();
         let reply = s.handle_data(&c0c1).unwrap().0;
-        let mut cs = ClientSession::new(ClientConfig::default());
+        let mut cs = ClientSession::new(RtmpClientConfig::default());
         let _ = cs.start();
         (reply.clone(), cs.handle_data(&reply).unwrap().0)
     };

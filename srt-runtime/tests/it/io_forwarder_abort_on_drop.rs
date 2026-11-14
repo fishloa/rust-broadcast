@@ -12,13 +12,16 @@
 #![cfg(feature = "tokio")]
 
 use srt_runtime::handshake_sm::HandshakeConfig;
-use srt_runtime::io::{IoConfig, SrtListener, SrtSocket};
+use srt_runtime::io::{IoConfig, SrtListener, SrtSocket, SrtSocketConfig};
 
 #[tokio::test]
 async fn caller_drop_releases_its_local_port_for_reuse() {
-    let mut listener = SrtListener::bind("127.0.0.1:0", HandshakeConfig::default())
-        .await
-        .expect("bind listener");
+    let mut listener = SrtListener::bind(
+        "127.0.0.1:0",
+        SrtSocketConfig::new(HandshakeConfig::default()),
+    )
+    .await
+    .expect("bind listener");
     let listener_addr = listener.local_addr().expect("listener local addr");
     let accept_jh = tokio::spawn(async move {
         let s = listener.accept().await.expect("accept");
@@ -33,7 +36,8 @@ async fn caller_drop_releases_its_local_port_for_reuse() {
     let caller = SrtSocket::connect_from_socket(
         sock,
         listener_addr,
-        srt_runtime::io::SrtConfig::new(HandshakeConfig::default()).with_io(IoConfig::default()),
+        srt_runtime::io::SrtSocketConfig::new(HandshakeConfig::default())
+            .with_io(IoConfig::default()),
     )
     .await
     .expect("connect_from");

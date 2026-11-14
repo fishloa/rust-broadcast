@@ -432,11 +432,12 @@ pub enum ErrorKind {
         /// The peer's reason (`name()` of the draft's rejection reason, e.g. `bad-secret`).
         reason: &'static str,
     },
-    /// The SRT handshake did not finish inside `SrtConfig::handshake_timeout_ms`. Non-fatal: the
-    /// connect-failure backoff follows.
+    /// The SRT handshake did not finish inside `SrtCallerConfig::timeouts`'
+    /// `handshake` bound. Non-fatal: the connect-failure backoff follows.
     SrtHandshakeTimeout,
-    /// The SRT peer sent nothing, not even a keepalive, for `SrtConfig::peer_idle_timeout_ms`.
-    /// Non-fatal: the link is dropped and rebuilt at once.
+    /// The SRT peer sent nothing, not even a keepalive, for
+    /// `SrtCallerConfig::timeouts`' `read_idle` bound. Non-fatal: the link is
+    /// dropped and rebuilt at once.
     SrtPeerIdle,
     /// An RTSP server answered DESCRIBE, SETUP or PLAY with a status the session cannot proceed
     /// on (other than the authentication, forbidden and DESCRIBE-not-found answers, which have
@@ -1149,7 +1150,7 @@ pub struct Config {
     /// UDP and RTP source settings.
     pub udp: crate::udp::UdpConfig,
     /// SRT caller settings.
-    pub srt: crate::srt::SrtConfig,
+    pub srt: crate::srt::SrtCallerConfig,
     /// Client certificate for mutual TLS, carried on the actions the host executes over TLS
     /// (HTTPS requests, `rtsps` connections). The session never performs TLS itself.
     pub client_identity: Option<crate::identity::ClientIdentity>,
@@ -1197,9 +1198,9 @@ impl Config {
     /// - [`SourceKind::Dash`] and [`SourceKind::Smooth`]: `read_idle` bounds each
     ///   manifest and segment request ([`Config::request_timeout_us`],
     ///   [`Config::segment_timeout_us`]).
-    /// - [`SourceKind::Srt`]: exactly [`crate::srt::SrtConfig::with_timeouts`]:
-    ///   `handshake` bounds the handshake (`srt.handshake_timeout_ms`) and
-    ///   `read_idle` the peer-idle bound (`srt.peer_idle_timeout_ms`).
+    /// - [`SourceKind::Srt`]: exactly [`crate::srt::SrtCallerConfig::with_timeouts`]:
+    ///   `handshake` bounds the handshake (`srt.timeouts.handshake`) and
+    ///   `read_idle` the peer-idle bound (`srt.timeouts.read_idle`).
     /// - [`SourceKind::Auto`]: the session picks the protocol from the URL, so
     ///   every mapping above is applied and the one the URL resolves to takes
     ///   effect.
@@ -1373,7 +1374,7 @@ impl Default for Config {
             start_pending_track_hard_cap_us: DEFAULT_START_PENDING_TRACK_HARD_CAP_US,
             dash: DashConfig::default(),
             udp: crate::udp::UdpConfig::default(),
-            srt: crate::srt::SrtConfig::default(),
+            srt: crate::srt::SrtCallerConfig::default(),
             client_identity: None,
             client_identity_scope: crate::identity::ClientIdentityScope::default(),
             preemptive_basic: false,

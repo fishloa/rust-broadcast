@@ -27,9 +27,9 @@ use tokio::time::Instant;
 use tokio_util::codec::Framed;
 
 use crate::amf0::Amf0Value;
-use crate::client::{ClientConfig, ClientEvent, ClientSession};
+use crate::client::{ClientEvent, ClientSession, RtmpClientConfig as SessionClientConfig};
 use crate::codec::{ClientCodec, RtmpSession, ServerCodec, SessionCodec, io_err};
-use crate::server::{ServerConfig, ServerEvent, ServerSession};
+use crate::server::{ServerEvent, ServerSession};
 use crate::target::RtmpTarget;
 use broadcast_common::timeouts::Timeouts;
 
@@ -37,44 +37,63 @@ fn timed_out(what: &str) -> io::Error {
     io::Error::new(io::ErrorKind::TimedOut, format!("RTMP {what} timed out"))
 }
 
-/// A `tokio::net::TcpListener` that accepts inbound RTMP publishers and hands
-/// back a driven [`RtmpConnection`] per connection.
-#[derive(Debug)]
-pub struct AsyncRtmpServer {
-    listener: TcpListener,
-    config: ServerConfig,
-    timeouts: Timeouts,
+/// What an [`AsyncRtmpServer`] is configured by: the sans-IO session settings
+/// and the [`Timeouts`] on every awaited I/O. Build it from
+/// [`RtmpServerConfig::default`] with `with_session` and `with_timeouts`.
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct RtmpServerConfig {
+    /// The settings each accepted connection's [`ServerSession`] is built from.
+    pub session: crate::server::RtmpServerConfig,
+    /// Bounds on every awaited I/O of every accepted connection.
+    pub timeouts: Timeouts,
 }
 
-impl AsyncRtmpServer {
-    /// Binds a listen address (e.g. `"0.0.0.0:1935"`, the IANA-assigned RTMP
-    /// port). `config` is cloned into a fresh [`ServerSession`] for each
-    /// accepted connection.
-    pub async fn bind<A: ToSocketAddrs>(addr: A, config: ServerConfig) -> io::Result<Self> {
-        let listener = TcpListener::bind(addr).await?;
-        Ok(Self {
-            listener,
-            config,
-            timeouts: Timeouts::default(),
-        })
+impl RtmpServerConfig {
+    /// Replace [`RtmpServerConfig::session`].
+    #[must_use]
+    pub fn with_session(mut self, session: crate::server::RtmpServerConfig) -> Self {
+        self.session = session;
+        self
     }
 
-    /// Replaces the [`Timeouts`] given to every accepted connection.
+    /// Replace [`RtmpServerConfig::timeouts`].
     #[must_use]
     pub fn with_timeouts(mut self, timeouts: Timeouts) -> Self {
         self.timeouts = timeouts;
         self
     }
+}
+
+/// A `tokio::net::TcpListener` that accepts inbound RTMP publishers and hands
+/// back a driven [`RtmpConnection`] per connection.
+#[derive(Debug)]
+pub struct AsyncRtmpServer {
+    listener: TcpListener,
+    config: RtmpServerConfig,
+}
+
+impl AsyncRtmpServer {
+    /// Binds a listen address (e.g. `"0.0.0.0:1935"`, the IANA-assigned RTMP
+    /// port). The config's session settings are cloned into a fresh
+    /// [`ServerSession`] for each accepted connection, and its [`Timeouts`]
+    /// bound every awaited I/O of that connection.
+    pub async fn bind<A: ToSocketAddrs>(addr: A, config: RtmpServerConfig) -> io::Result<Self> {
+        let listener = TcpListener::bind(addr).await?;
+        Ok(Self { listener, config })
+    }
 
     /// Accepts the next inbound connection and wraps it with a fresh
-    /// [`ServerSession`] built from this server's [`ServerConfig`].
+    /// [`ServerSession`] built from this server's [`RtmpServerConfig::session`].
     pub async fn accept(&self) -> io::Result<AcceptedRtmpConnection> {
         let (stream, peer) = self.listener.accept().await?;
         Ok(AcceptedRtmpConnection::new(
-            RtmpConnection::from_stream_erased(
+            RtmpConnection::from_stream(
                 stream,
-                ServerSession::new(self.config.clone()),
-                self.timeouts,
+                RtmpServerConfig {
+                    session: self.config.session.clone(),
+                    timeouts: self.config.timeouts,
+                },
             ),
             peer,
         ))
@@ -231,24 +250,21 @@ pub struct RtmpConnection<S = BoxStream> {
 }
 
 impl RtmpConnection<BoxStream> {
-    /// Wrap any connected stream, erasing its type — the constructor
-    /// [`AsyncRtmpServer::accept`] uses, so one `RtmpConnection` names the
-    /// connection whatever the transport.
-    pub fn from_stream_erased<S>(stream: S, session: ServerSession, timeouts: Timeouts) -> Self
+    /// Wraps an already-connected stream, erasing its type, and drives the
+    /// session `config` carries: the constructor [`AsyncRtmpServer::accept`]
+    /// uses, so one `RtmpConnection` names the connection whatever the
+    /// transport. [`RtmpServerConfig::default`] carries a fresh session (a
+    /// [`RtmpServerConfig`]) and the default [`Timeouts`].
+    pub fn from_stream<S>(stream: S, config: RtmpServerConfig) -> Self
     where
         S: RtmpStream + 'static,
     {
         let erased: BoxStream = Box::pin(stream);
-        Self::from_stream(erased, session, timeouts)
-    }
-}
-
-impl<S: AsyncRead + AsyncWrite + Unpin> RtmpConnection<S> {
-    /// Wraps an already-connected stream with a session and explicit
-    /// [`Timeouts`].
-    pub fn from_stream(stream: S, session: ServerSession, timeouts: Timeouts) -> Self {
         Self {
-            driver: Driver::new(Framed::new(stream, ServerCodec::new(session)), timeouts),
+            driver: Driver::new(
+                Framed::new(erased, ServerCodec::new(ServerSession::new(config.session))),
+                config.timeouts,
+            ),
         }
     }
 
@@ -280,53 +296,85 @@ impl<S: AsyncRead + AsyncWrite + Unpin> RtmpConnection<S> {
     }
 }
 
+/// What an [`AsyncRtmpClient`] is configured by: the publish target and the
+/// [`Timeouts`] on every awaited I/O. Build it with `RtmpClientConfig::new` and
+/// `with_timeouts`.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct RtmpClientConfig {
+    /// The server to publish to (app, stream key, `tcUrl`).
+    pub target: RtmpTarget,
+    /// Bounds on every awaited I/O; `connect` bounds the DNS lookup and TCP
+    /// connect.
+    pub timeouts: Timeouts,
+}
+
+impl RtmpClientConfig {
+    /// A config publishing to `target`, with the default [`Timeouts`].
+    pub fn new(target: RtmpTarget) -> Self {
+        RtmpClientConfig {
+            target,
+            timeouts: Timeouts::default(),
+        }
+    }
+
+    /// Replace [`RtmpClientConfig::timeouts`].
+    #[must_use]
+    pub fn with_timeouts(mut self, timeouts: Timeouts) -> Self {
+        self.timeouts = timeouts;
+        self
+    }
+}
+
 /// A publishing RTMP client over a stream (a [`TcpStream`] by default): the
 /// adapter for [`ClientSession`], mirroring
-/// [`RtmpConnection`]. Every awaited IO is bounded by [`Timeouts`].
+/// [`RtmpConnection`]. Every awaited IO is bounded by the config's [`Timeouts`].
 #[derive(Debug)]
 pub struct AsyncRtmpClient<S = TcpStream> {
     driver: Driver<S, ClientSession>,
 }
 
 impl AsyncRtmpClient<TcpStream> {
-    /// DNS + TCP connect bounded by `timeouts.connect`; `publish` is NOT started.
+    /// DNS + TCP connect bounded by the config's `timeouts.connect`; `publish`
+    /// is NOT started.
     ///
     /// An `rtmps` target is refused: this adapter opens plain TCP, and sending
     /// RTMP in the clear to a TLS port (443) would leak the stream key. Wrap a
     /// TLS stream and use [`AsyncRtmpClient::from_stream`] instead.
-    pub async fn connect(target: &RtmpTarget, timeouts: Timeouts) -> io::Result<Self> {
-        if target.tls {
+    pub async fn connect(config: RtmpClientConfig) -> io::Result<Self> {
+        if config.target.tls {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 "rtmps needs a TLS stream: wrap one and use AsyncRtmpClient::from_stream",
             ));
         }
-        let stream = tokio::time::timeout(timeouts.connect, async {
-            let addrs = target.resolve().await?;
+        let stream = tokio::time::timeout(config.timeouts.connect, async {
+            let addrs = config.target.resolve().await?;
             TcpStream::connect(&addrs[..]).await
         })
         .await
         .map_err(|_| timed_out("connect"))??;
-        Ok(Self::from_stream(stream, target, timeouts))
+        Ok(Self::from_stream(stream, config))
     }
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRtmpClient<S> {
-    /// Wraps an already-connected stream; the handshake bytes are queued and go
-    /// out with the first call that flushes.
-    pub fn from_stream(stream: S, target: &RtmpTarget, timeouts: Timeouts) -> Self {
-        let cfg = ClientConfig {
-            app: target.app.clone(),
-            stream_key: target.stream_key.clone(),
-            tc_url: Some(target.tc_url.clone()),
-            ..ClientConfig::default()
+    /// Wraps an already-connected stream (e.g. a TLS one, for an `rtmps`
+    /// target); the handshake bytes are queued and go out with the first call
+    /// that flushes.
+    pub fn from_stream(stream: S, config: RtmpClientConfig) -> Self {
+        let cfg = SessionClientConfig {
+            app: config.target.app.clone(),
+            stream_key: config.target.stream_key.clone(),
+            tc_url: Some(config.target.tc_url.clone()),
+            ..SessionClientConfig::default()
         };
         let mut codec = ClientCodec::new(ClientSession::new(cfg));
         let c0c1 = codec.session_mut().start();
         let mut framed = Framed::new(stream, codec);
         framed.write_buffer_mut().extend_from_slice(&c0c1);
         Self {
-            driver: Driver::new(framed, timeouts),
+            driver: Driver::new(framed, config.timeouts),
         }
     }
 
@@ -446,6 +494,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRtmpClient<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     const FIXTURE: &str = "rtmp/obs-publish.bin";
@@ -464,7 +513,7 @@ mod tests {
         let fixture = std::fs::read(test_fixtures::path(FIXTURE))
             .expect("read ../fixtures/rtmp/obs-publish.bin");
 
-        let server = AsyncRtmpServer::bind("127.0.0.1:0", ServerConfig::default())
+        let server = AsyncRtmpServer::bind("127.0.0.1:0", RtmpServerConfig::default())
             .await
             .expect("bind ephemeral loopback port");
         let addr = server.local_addr().expect("local_addr");
@@ -549,7 +598,7 @@ mod tests {
     /// reuses the first's chunk-stream basic header via a type-2/3 header).
     #[tokio::test]
     async fn encode_then_write_frames_decode_on_the_server_with_header_compression() {
-        let server = AsyncRtmpServer::bind("127.0.0.1:0", ServerConfig::default())
+        let server = AsyncRtmpServer::bind("127.0.0.1:0", RtmpServerConfig::default())
             .await
             .expect("bind");
         let addr = server.local_addr().expect("addr");
@@ -582,9 +631,13 @@ mod tests {
             medias
         });
 
-        let mut client = AsyncRtmpClient::connect(&target, Timeouts::default())
-            .await
-            .expect("connect");
+        let config = RtmpClientConfig::new(target.clone()).with_timeouts(
+            Timeouts::default()
+                .with_connect(Duration::from_secs(30))
+                .with_handshake(Duration::from_secs(30)),
+        );
+        assert_eq!(config.target.stream_key, "testkey");
+        let mut client = AsyncRtmpClient::connect(config).await.expect("connect");
         client.publish().await.expect("publish");
 
         // Two video messages (FLV AVCVIDEOPACKET bodies) via the sans-IO

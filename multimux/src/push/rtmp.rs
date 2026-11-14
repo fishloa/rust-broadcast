@@ -109,9 +109,11 @@ impl PushTransport for RtmpTransport {
 
         // Every IO the adapter performs is bounded (SP6.1, defect 4):
         // connect/handshake and each write by `config.timeouts` (audit run 7, W17).
-        let mut client = rtmp_runtime::io::AsyncRtmpClient::connect(&target, config.timeouts)
-            .await
-            .map_err(|e| RtmpPushError::Connect(e.to_string()))?;
+        let mut client = rtmp_runtime::io::AsyncRtmpClient::connect(
+            rtmp_runtime::io::RtmpClientConfig::new(target).with_timeouts(config.timeouts),
+        )
+        .await
+        .map_err(|e| RtmpPushError::Connect(e.to_string()))?;
         client
             .publish()
             .await

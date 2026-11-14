@@ -5,6 +5,7 @@ All notable changes to this crate will be documented in this file.
 ## [Unreleased]
 
 ### Changed
+- BREAKING: `session::client::ClientConfig` is `session::client::WebRtcClientConfig` (the crate no longer names a type `ClientConfig`), and `WebRtcClientConfig::new(endpoint_url: impl Into<String>)` takes any string-like endpoint. Migration: `ClientConfig::new(URL.into())` -> `WebRtcClientConfig::new(URL)` (#2660).
 - BREAKING: `MediaEvent::IceStateChanged` now carries `IceConnectionState` instead of a `String`; `LocalCandidateGathered` carries `IceCandidate`; `AuthFailure`/`TimerError` carry `MediaError`; `Error::Media(String)` becomes `Media(#[from] MediaError)`; `DecryptedRtp.payload`/extension data use `bytes::Bytes` (#2658).
 
 - Narrowed the `tokio` dev-dependency from `features = ["full"]` to the features the tests use (`net`, `io-util`, `rt`, `rt-multi-thread`, `macros`, `time`, `sync`).

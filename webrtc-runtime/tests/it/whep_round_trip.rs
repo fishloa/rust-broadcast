@@ -36,8 +36,8 @@ fn patch_headers(content_type: &str, if_match: Option<&str>) -> HeaderMap {
 
 #[test]
 fn whep_player_direct_accept() {
-    let mut player = WhepPlayer::new(webrtc_runtime::session::client::ClientConfig::new(
-        ENDPOINT.into(),
+    let mut player = WhepPlayer::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
+        ENDPOINT,
     ));
     assert_eq!(*player.state(), player::State::Idle);
 
@@ -72,8 +72,8 @@ fn whep_player_direct_accept() {
 
 #[test]
 fn whep_player_counter_offer_flow() {
-    let mut player = WhepPlayer::new(webrtc_runtime::session::client::ClientConfig::new(
-        ENDPOINT.into(),
+    let mut player = WhepPlayer::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
+        ENDPOINT,
     ));
     let _ = player.offer(SDP_OFFER.to_vec()).unwrap();
 
@@ -124,8 +124,8 @@ fn whep_player_counter_offer_flow() {
 
 #[test]
 fn whep_player_no_publisher() {
-    let mut player = WhepPlayer::new(webrtc_runtime::session::client::ClientConfig::new(
-        ENDPOINT.into(),
+    let mut player = WhepPlayer::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
+        ENDPOINT,
     ));
     let _ = player.offer(SDP_OFFER.to_vec()).unwrap();
 
@@ -136,8 +136,8 @@ fn whep_player_no_publisher() {
 
 #[test]
 fn whep_player_trickle_ice_and_terminate() {
-    let mut player = WhepPlayer::new(webrtc_runtime::session::client::ClientConfig::new(
-        ENDPOINT.into(),
+    let mut player = WhepPlayer::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
+        ENDPOINT,
     ));
     let _ = player.offer(SDP_OFFER.to_vec()).unwrap();
     let _ = player
@@ -185,8 +185,8 @@ fn whep_player_trickle_ice_and_terminate() {
 
 #[test]
 fn whep_player_ice_restart() {
-    let mut player = WhepPlayer::new(webrtc_runtime::session::client::ClientConfig::new(
-        ENDPOINT.into(),
+    let mut player = WhepPlayer::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
+        ENDPOINT,
     ));
     let _ = player.offer(SDP_OFFER.to_vec()).unwrap();
     let _ = player
@@ -235,8 +235,8 @@ fn whep_player_ice_restart() {
 // ICE-restart answer.
 #[test]
 fn whep_player_trickle_ack_with_200_and_etag_is_not_misread_as_ice_restart() {
-    let mut player = WhepPlayer::new(webrtc_runtime::session::client::ClientConfig::new(
-        ENDPOINT.into(),
+    let mut player = WhepPlayer::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
+        ENDPOINT,
     ));
     let _ = player.offer(SDP_OFFER.to_vec()).unwrap();
     let _ = player
@@ -274,8 +274,8 @@ fn whep_player_trickle_ack_with_200_and_etag_is_not_misread_as_ice_restart() {
 // transition to `Closed` and emit `Terminated`.
 #[test]
 fn whep_player_terminate_ack_with_204_transitions_to_closed() {
-    let mut player = WhepPlayer::new(webrtc_runtime::session::client::ClientConfig::new(
-        ENDPOINT.into(),
+    let mut player = WhepPlayer::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
+        ENDPOINT,
     ));
     let _ = player.offer(SDP_OFFER.to_vec()).unwrap();
     let _ = player
@@ -301,8 +301,8 @@ fn whep_player_terminate_ack_with_204_transitions_to_closed() {
 
 #[test]
 fn whep_player_wrong_state_errors() {
-    let mut player = WhepPlayer::new(webrtc_runtime::session::client::ClientConfig::new(
-        ENDPOINT.into(),
+    let mut player = WhepPlayer::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
+        ENDPOINT,
     ));
 
     // answer_counter_offer in Idle -> error
@@ -335,7 +335,7 @@ fn whep_player_wrong_state_errors() {
 fn whep_player_bearer_auth() {
     let token = "viewer-token";
     let mut player = WhepPlayer::new(
-        webrtc_runtime::session::client::ClientConfig::new(ENDPOINT.into())
+        webrtc_runtime::session::client::WebRtcClientConfig::new(ENDPOINT)
             .with_bearer_token(token.into()),
     );
 
@@ -349,8 +349,8 @@ fn whep_player_bearer_auth() {
 
 #[test]
 fn whep_player_missing_location_on_201() {
-    let mut player = WhepPlayer::new(webrtc_runtime::session::client::ClientConfig::new(
-        ENDPOINT.into(),
+    let mut player = WhepPlayer::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
+        ENDPOINT,
     ));
     let _ = player.offer(SDP_OFFER.to_vec()).unwrap();
 
@@ -370,8 +370,8 @@ fn whep_player_missing_location_on_201() {
 
 #[test]
 fn whep_player_missing_location_on_406() {
-    let mut player = WhepPlayer::new(webrtc_runtime::session::client::ClientConfig::new(
-        ENDPOINT.into(),
+    let mut player = WhepPlayer::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
+        ENDPOINT,
     ));
     let _ = player.offer(SDP_OFFER.to_vec()).unwrap();
 

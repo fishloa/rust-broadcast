@@ -30,7 +30,7 @@ use test_fixtures::process::KillOnDrop;
 
 use srt_runtime::Error;
 use srt_runtime::handshake_sm::{HandshakeConfig, RejectionReason};
-use srt_runtime::io::{SrtListener, SrtSocket};
+use srt_runtime::io::{SrtListener, SrtSocket, SrtSocketConfig};
 use srt_runtime::packet::{ControlPacket, HandshakeType, SrtPacket};
 use tokio::net::UdpSocket as TokioUdpSocket;
 
@@ -163,7 +163,7 @@ async fn our_caller_completes_real_handshake_and_data_with_libsrt_listener() {
                 format!("127.0.0.1:{listen_port}")
                     .parse::<SocketAddr>()
                     .unwrap(),
-                HandshakeConfig::default(),
+                SrtSocketConfig::new(HandshakeConfig::default()),
             ),
         )
         .await
@@ -215,7 +215,7 @@ async fn real_libsrt_caller_completes_handshake_and_data_with_our_listener() {
     tokio::time::timeout(TEST_TIMEOUT, async {
         let mut listener = SrtListener::bind(
             "127.0.0.1:0".parse::<SocketAddr>().unwrap(),
-            HandshakeConfig::default(),
+            SrtSocketConfig::new(HandshakeConfig::default()),
         )
         .await
         .expect("listener bind");
@@ -267,7 +267,7 @@ async fn libsrt_refusal_reaches_the_caller_as_a_typed_rejection() {
                 format!("127.0.0.1:{listen_port}")
                     .parse::<SocketAddr>()
                     .unwrap(),
-                HandshakeConfig::default(),
+                SrtSocketConfig::new(HandshakeConfig::default()),
             ),
         )
         .await
@@ -305,9 +305,7 @@ async fn libsrt_closes_promptly_when_our_socket_is_dropped() {
             SrtSocket::connect(
                 format!("127.0.0.1:{listen_port}")
                     .parse::<SocketAddr>()
-                    .unwrap(),
-                HandshakeConfig::default(),
-            ),
+                    .unwrap(), SrtSocketConfig::new(HandshakeConfig::default())),
         )
         .await
         .expect("connect timed out")
@@ -346,7 +344,7 @@ async fn our_listener_sees_libsrts_shutdown() {
     tokio::time::timeout(TEST_TIMEOUT, async {
         let mut listener = SrtListener::bind(
             "127.0.0.1:0".parse::<SocketAddr>().unwrap(),
-            HandshakeConfig::default(),
+            SrtSocketConfig::new(HandshakeConfig::default()),
         )
         .await
         .expect("listener bind");
@@ -493,7 +491,7 @@ async fn libsrt_caller_survives_a_lost_conclusion_response() {
     tokio::time::timeout(TEST_TIMEOUT, async {
         let mut listener = SrtListener::bind(
             "127.0.0.1:0".parse::<SocketAddr>().unwrap(),
-            HandshakeConfig::default(),
+            SrtSocketConfig::new(HandshakeConfig::default()),
         )
         .await
         .expect("listener bind");

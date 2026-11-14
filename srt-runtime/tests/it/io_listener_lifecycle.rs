@@ -4,7 +4,7 @@ use std::net::{SocketAddr, UdpSocket};
 use std::time::Duration;
 
 use srt_runtime::HandshakeConfig;
-use srt_runtime::io::{SrtListener, SrtSocket};
+use srt_runtime::io::{SrtListener, SrtSocket, SrtSocketConfig};
 
 const WAIT: Duration = Duration::from_secs(10);
 
@@ -26,9 +26,12 @@ async fn port_is_released(addr: SocketAddr) -> bool {
 /// listener when the NEXT datagram arrived, so an idle listener kept its port bound forever.
 #[tokio::test]
 async fn dropping_an_idle_listener_releases_its_udp_port() {
-    let listener = SrtListener::bind("127.0.0.1:0", HandshakeConfig::default())
-        .await
-        .unwrap();
+    let listener = SrtListener::bind(
+        "127.0.0.1:0",
+        SrtSocketConfig::new(HandshakeConfig::default()),
+    )
+    .await
+    .unwrap();
     let addr = listener.local_addr().unwrap();
     drop(listener);
     assert!(
@@ -40,12 +43,15 @@ async fn dropping_an_idle_listener_releases_its_udp_port() {
 /// Review-focus 1: dropping the listener HANDLE must not kill connections it already accepted.
 #[tokio::test]
 async fn an_accepted_connection_outlives_the_listener_handle_and_then_releases_the_port() {
-    let mut listener = SrtListener::bind("127.0.0.1:0", HandshakeConfig::default())
-        .await
-        .unwrap();
+    let mut listener = SrtListener::bind(
+        "127.0.0.1:0",
+        SrtSocketConfig::new(HandshakeConfig::default()),
+    )
+    .await
+    .unwrap();
     let addr = listener.local_addr().unwrap();
     let accept = tokio::spawn(async move { listener.accept().await.map(|s| (s, listener)) });
-    let mut caller = SrtSocket::connect(addr, HandshakeConfig::default())
+    let mut caller = SrtSocket::connect(addr, SrtSocketConfig::new(HandshakeConfig::default()))
         .await
         .unwrap();
     let (mut accepted, listener) = tokio::time::timeout(WAIT, accept)
@@ -80,13 +86,16 @@ async fn an_accepted_connection_outlives_the_listener_handle_and_then_releases_t
 /// Handshakes used to advance only while `accept()` was being polled.
 #[tokio::test]
 async fn a_caller_connects_even_though_accept_is_not_being_polled() {
-    let mut listener = SrtListener::bind("127.0.0.1:0", HandshakeConfig::default())
-        .await
-        .unwrap();
+    let mut listener = SrtListener::bind(
+        "127.0.0.1:0",
+        SrtSocketConfig::new(HandshakeConfig::default()),
+    )
+    .await
+    .unwrap();
     let addr = listener.local_addr().unwrap();
     let caller = tokio::time::timeout(
         Duration::from_secs(3),
-        SrtSocket::connect(addr, HandshakeConfig::default()),
+        SrtSocket::connect(addr, SrtSocketConfig::new(HandshakeConfig::default())),
     )
     .await
     .expect("handshake must complete without anyone calling accept()")
@@ -102,12 +111,15 @@ async fn a_caller_connects_even_though_accept_is_not_being_polled() {
 /// to `accept`) must not stop the routing of connections already accepted.
 #[tokio::test]
 async fn a_handshake_after_the_handle_is_gone_does_not_break_an_accepted_connection() {
-    let mut listener = SrtListener::bind("127.0.0.1:0", HandshakeConfig::default())
-        .await
-        .unwrap();
+    let mut listener = SrtListener::bind(
+        "127.0.0.1:0",
+        SrtSocketConfig::new(HandshakeConfig::default()),
+    )
+    .await
+    .unwrap();
     let addr = listener.local_addr().unwrap();
     let accept = tokio::spawn(async move { listener.accept().await.map(|s| (s, listener)) });
-    let mut caller = SrtSocket::connect(addr, HandshakeConfig::default())
+    let mut caller = SrtSocket::connect(addr, SrtSocketConfig::new(HandshakeConfig::default()))
         .await
         .unwrap();
     let (mut accepted, listener) = tokio::time::timeout(WAIT, accept)
@@ -119,7 +131,7 @@ async fn a_handshake_after_the_handle_is_gone_does_not_break_an_accepted_connect
     // A second caller completes its handshake against the handle-less listener.
     let _late = tokio::time::timeout(
         Duration::from_secs(3),
-        SrtSocket::connect(addr, HandshakeConfig::default()),
+        SrtSocket::connect(addr, SrtSocketConfig::new(HandshakeConfig::default())),
     )
     .await;
     // More unrouted traffic (destination socket id 0) after the core stopped
@@ -144,15 +156,18 @@ async fn a_handshake_after_the_handle_is_gone_does_not_break_an_accepted_connect
 async fn connections_beyond_the_accept_backlog_are_counted_and_the_backlog_is_kept() {
     const BACKLOG: usize = 64;
     const EXTRA: u64 = 3;
-    let mut listener = SrtListener::bind("127.0.0.1:0", HandshakeConfig::default())
-        .await
-        .unwrap();
+    let mut listener = SrtListener::bind(
+        "127.0.0.1:0",
+        SrtSocketConfig::new(HandshakeConfig::default()),
+    )
+    .await
+    .unwrap();
     let addr = listener.local_addr().unwrap();
     assert_eq!(listener.accept_overflow_dropped(), 0);
     let mut callers = Vec::new();
     for _ in 0..(BACKLOG as u64 + EXTRA) {
         callers.push(
-            SrtSocket::connect(addr, HandshakeConfig::default())
+            SrtSocket::connect(addr, SrtSocketConfig::new(HandshakeConfig::default()))
                 .await
                 .unwrap(),
         );

@@ -134,8 +134,8 @@ use std::time::{Duration, Instant};
 use transmux::TrackId;
 
 use broadcast_common::{Demand, Stage, Timestamp};
-use rtmp_runtime::io::{AcceptedRtmpConnection, AsyncRtmpServer, RtmpConnection};
-use rtmp_runtime::server::{ServerConfig, ServerEvent};
+use rtmp_runtime::io::{AcceptedRtmpConnection, AsyncRtmpServer, RtmpConnection, RtmpServerConfig};
+use rtmp_runtime::server::{RtmpServerConfig as SessionServerConfig, ServerEvent};
 use tokio::sync::{OnceCell, mpsc};
 use tokio::task::JoinSet;
 use transmux::pipeline::{Sample, TrackSpec};
@@ -274,7 +274,7 @@ impl RtmpRoute {
 
     /// Requires the publisher's `publish` stream key to match exactly, if
     /// set — passed straight through as
-    /// [`ServerConfig::expected_stream_key`], so a mismatched key is
+    /// [`SessionServerConfig::expected_stream_key`], so a mismatched key is
     /// rejected by the sans-IO session itself (`NetStream.Publish.BadName`)
     /// before this source ever sees a `Publish`/`Media` event.
     #[must_use]
@@ -299,8 +299,10 @@ impl RtmpRoute {
         let infra = self
             .infra
             .get_or_try_init(|| async {
-                let config =
-                    ServerConfig::default().with_expected_stream_key(self.stream_key.clone());
+                let config = RtmpServerConfig::default().with_session(
+                    SessionServerConfig::default()
+                        .with_expected_stream_key(self.stream_key.clone()),
+                );
                 let server = AsyncRtmpServer::bind(self.listen.as_str(), config)
                     .await
                     .map(Arc::new)
@@ -950,7 +952,7 @@ mod tests {
     /// empirically (not hand-picked) so this stays correct if the fixture is
     /// ever swapped for a different capture.
     fn fixture_offset_after_publish_before_any_media(fixture: &[u8]) -> usize {
-        let mut session = ServerSession::new(ServerConfig::default());
+        let mut session = ServerSession::new(SessionServerConfig::default());
         for (i, byte) in fixture.iter().enumerate() {
             let (_, events) = session
                 .handle_data(std::slice::from_ref(byte))
@@ -1447,7 +1449,7 @@ mod tests {
         // Find the fixture byte offset at which the FIRST track's
         // `DemuxEvent::TrackAdded` fires, and the offset for the SECOND.
         let (first_track_offset, _second_track_offset) = {
-            let mut session = ServerSession::new(ServerConfig::default());
+            let mut session = ServerSession::new(SessionServerConfig::default());
             let mut demux = StreamingFlvDemux::new();
             let mut offsets = Vec::new();
             for (i, byte) in fixture.iter().enumerate() {
@@ -1662,17 +1664,12 @@ mod tests {
     /// own task, not futures the publisher loop polls between its own work.
     #[tokio::test]
     async fn session_reads_progress_while_the_publisher_is_not_receiving() {
-        use broadcast_common::timeouts::Timeouts;
         let (tx, _unread) = mpsc::channel(OUTCOMES_PER_SESSION);
         let mut readers = JoinSet::new();
         let mut clients = Vec::new();
         for id in 0..2 {
             let (client, server) = tokio::io::duplex(4 * HANDSHAKE_REPLY_LEN);
-            let conn = RtmpConnection::from_stream_erased(
-                server,
-                ServerSession::new(ServerConfig::default()),
-                Timeouts::default(),
-            );
+            let conn = RtmpConnection::from_stream(server, RtmpServerConfig::default());
             readers.spawn(read_session(
                 SessionId(id),
                 conn,

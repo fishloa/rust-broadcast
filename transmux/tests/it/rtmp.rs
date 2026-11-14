@@ -12,7 +12,7 @@
 
 use broadcast_common::{Package, Unpackage};
 use rtmp_runtime::chunk::{ChunkWriter, Message};
-use rtmp_runtime::message::msg_type;
+use rtmp_runtime::message::MessageTypeId;
 use transmux::FlvDemux;
 use transmux::rtmp::{RtmpDemux, RtmpMux};
 
@@ -45,12 +45,12 @@ fn rtmp_demux_matches_flv_demux() {
     let mut saw_multichunk_video = false;
     for (tag_type, ts, body) in &tags {
         let (csid, mt) = match *tag_type {
-            8 => (4u32, msg_type::AUDIO),
-            9 => (5u32, msg_type::VIDEO),
-            18 => (6u32, msg_type::DATA_AMF0),
+            8 => (4u32, MessageTypeId::Audio),
+            9 => (5u32, MessageTypeId::Video),
+            18 => (6u32, MessageTypeId::DataAmf0),
             _ => continue,
         };
-        if mt == msg_type::VIDEO && body.len() > CHUNK {
+        if mt == MessageTypeId::Video && body.len() > CHUNK {
             saw_multichunk_video = true;
         }
         messages.push(Message {

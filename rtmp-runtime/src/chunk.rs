@@ -19,6 +19,7 @@ use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 use crate::RtmpError;
+use crate::message::MessageTypeId;
 use alloc::vec::Vec;
 
 type Result<T> = core::result::Result<T, RtmpError>;
@@ -352,7 +353,7 @@ pub enum MessageHeader {
         /// Length in bytes of the whole message (not the chunk payload).
         message_length: u32,
         /// Message type id (§6/§7.1).
-        message_type_id: u8,
+        message_type_id: MessageTypeId,
         /// Message stream id. The wire encoding of this field alone is
         /// little-endian (§5.3.1.2.1).
         message_stream_id: u32,
@@ -366,7 +367,7 @@ pub enum MessageHeader {
         /// Length in bytes of the whole message.
         message_length: u32,
         /// Message type id (§6/§7.1).
-        message_type_id: u8,
+        message_type_id: MessageTypeId,
     },
     /// Type 2 (§5.3.1.2.3, 3 bytes before any Extended Timestamp). Neither
     /// stream id nor message length included — both inherited.
@@ -398,7 +399,7 @@ impl MessageHeader {
                 need_in(bytes, TYPE0_LEN, "type 0 message header")?;
                 let raw_timestamp = read_u24_be(&bytes[0..U24_LEN]);
                 let message_length = read_u24_be(&bytes[U24_LEN..2 * U24_LEN]);
-                let message_type_id = bytes[2 * U24_LEN];
+                let message_type_id = MessageTypeId::from_u8(bytes[2 * U24_LEN]);
                 let message_stream_id =
                     u32::from_le_bytes([bytes[7], bytes[8], bytes[9], bytes[10]]);
 
@@ -418,7 +419,7 @@ impl MessageHeader {
                 need_in(bytes, TYPE1_LEN, "type 1 message header")?;
                 let raw_delta = read_u24_be(&bytes[0..U24_LEN]);
                 let message_length = read_u24_be(&bytes[U24_LEN..2 * U24_LEN]);
-                let message_type_id = bytes[2 * U24_LEN];
+                let message_type_id = MessageTypeId::from_u8(bytes[2 * U24_LEN]);
 
                 let (timestamp_delta, consumed) = resolve_extended(raw_delta, bytes, TYPE1_LEN)?;
 
@@ -499,7 +500,7 @@ impl Serialize for MessageHeader {
                     &mut buf[U24_LEN..2 * U24_LEN],
                     "message length",
                 )?;
-                buf[2 * U24_LEN] = message_type_id;
+                buf[2 * U24_LEN] = message_type_id.to_u8();
                 buf[7..11].copy_from_slice(&message_stream_id.to_le_bytes());
                 if extended {
                     buf[11..15].copy_from_slice(&timestamp.to_be_bytes());
@@ -525,7 +526,7 @@ impl Serialize for MessageHeader {
                     &mut buf[U24_LEN..2 * U24_LEN],
                     "message length",
                 )?;
-                buf[2 * U24_LEN] = message_type_id;
+                buf[2 * U24_LEN] = message_type_id.to_u8();
                 if extended {
                     buf[7..11].copy_from_slice(&timestamp_delta.to_be_bytes());
                 }
@@ -567,8 +568,8 @@ fn extended_len(field: u32) -> usize {
 /// stream at a single (resolved, absolute) timestamp (§6.1). Produced by
 /// [`ChunkAssembler::push`] and consumed by [`ChunkWriter::write`].
 ///
-/// Task 5 (`message.rs`) adds typed interpretation of `payload`/
-/// `message_type_id`; this carrier stays stable underneath that.
+/// The message type id is the typed [`MessageTypeId`] (`message.rs`); the
+/// payload stays opaque here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Message {
     /// Chunk stream id this message was carried on.
@@ -577,7 +578,7 @@ pub struct Message {
     /// Extended Timestamp — never a delta).
     pub timestamp: u32,
     /// Message type id (§6/§7.1).
-    pub message_type_id: u8,
+    pub message_type_id: MessageTypeId,
     /// Message stream id.
     pub message_stream_id: u32,
     /// The whole message payload (reassembled across every chunk it was
@@ -603,8 +604,9 @@ struct CsidState {
     timestamp_delta: u32,
     /// Total length in bytes of the current/most recent message.
     message_length: u32,
-    /// Message type id of the current/most recent message.
-    message_type_id: u8,
+    /// Message type id of the current/most recent message. `None` until the
+    /// first Type 0/1 header on this csid, since a Type 3 chunk inherits it.
+    message_type_id: Option<MessageTypeId>,
     /// Message stream id of the current/most recent message.
     message_stream_id: u32,
     /// Whether the most recent Type 0/1/2 header on this csid used the
@@ -817,7 +819,7 @@ impl ChunkAssembler {
     ///
     /// ```
     /// use rtmp_runtime::chunk::{ChunkAssembler, ChunkWriter, Message};
-    /// use rtmp_runtime::message::{ChunkSize, msg_type, ProtocolControl};
+    /// use rtmp_runtime::message::{ChunkSize, MessageTypeId, ProtocolControl};
     ///
     /// let mut writer = ChunkWriter::new();
     /// let mut wire = Vec::new();
@@ -827,7 +829,7 @@ impl ChunkAssembler {
     /// let media = Message {
     ///     chunk_stream_id: 4,
     ///     timestamp: 0,
-    ///     message_type_id: msg_type::AUDIO,
+    ///     message_type_id: MessageTypeId::Audio,
     ///     message_stream_id: 1,
     ///     payload: vec![0u8; 5000],
     /// };
@@ -837,7 +839,7 @@ impl ChunkAssembler {
     /// assembler.feed(&wire);
     /// let mut sizes = Vec::new();
     /// while let Some(message) = assembler.next_message()? {
-    ///     if message.message_type_id == msg_type::SET_CHUNK_SIZE {
+    ///     if message.message_type_id == MessageTypeId::SetChunkSize {
     ///         if let Some(ProtocolControl::SetChunkSize(size)) =
     ///             ProtocolControl::from_message(&message)?
     ///         {
@@ -912,7 +914,11 @@ impl ChunkAssembler {
                         let msg = Message {
                             chunk_stream_id: parsed.csid,
                             timestamp: state.timestamp,
-                            message_type_id: state.message_type_id,
+                            message_type_id: state.message_type_id.ok_or(
+                                RtmpError::Malformed {
+                                    what: "completed message on a csid that never set its message type id",
+                                },
+                            )?,
                             message_stream_id: state.message_stream_id,
                             payload: core::mem::take(&mut state.payload),
                         };
@@ -1108,12 +1114,15 @@ impl ChunkAssembler {
                     });
                 }
                 let used_extended = mh_consumed > TYPE2_LEN;
+                let message_type_id = existing.message_type_id.ok_or(RtmpError::Malformed {
+                    what: "type 2 chunk header on a csid with no message type id to inherit",
+                })?;
                 (
                     ResolvedHeader {
                         timestamp: existing.timestamp.wrapping_add(timestamp_delta),
                         timestamp_delta,
                         message_length: existing.message_length,
-                        message_type_id: existing.message_type_id,
+                        message_type_id,
                         message_stream_id: existing.message_stream_id,
                         extended: used_extended,
                     },
@@ -1125,6 +1134,9 @@ impl ChunkAssembler {
                     what: "type 3 chunk header on a csid with no prior chunk to inherit from",
                 })?;
                 let continuation = existing.in_progress;
+                let message_type_id = existing.message_type_id.ok_or(RtmpError::Malformed {
+                    what: "type 3 chunk header on a csid with no message type id to inherit",
+                })?;
                 if existing.extended {
                     if buf.len() < consumed + EXTENDED_TIMESTAMP_LEN {
                         return Ok(None);
@@ -1143,7 +1155,7 @@ impl ChunkAssembler {
                             timestamp: existing.timestamp,
                             timestamp_delta: existing.timestamp_delta,
                             message_length: existing.message_length,
-                            message_type_id: existing.message_type_id,
+                            message_type_id,
                             message_stream_id: existing.message_stream_id,
                             extended: existing.extended,
                         },
@@ -1155,7 +1167,7 @@ impl ChunkAssembler {
                             timestamp: existing.timestamp.wrapping_add(existing.timestamp_delta),
                             timestamp_delta: existing.timestamp_delta,
                             message_length: existing.message_length,
-                            message_type_id: existing.message_type_id,
+                            message_type_id,
                             message_stream_id: existing.message_stream_id,
                             extended: existing.extended,
                         },
@@ -1231,7 +1243,7 @@ impl ChunkAssembler {
         state.timestamp = resolved.timestamp;
         state.timestamp_delta = resolved.timestamp_delta;
         state.message_length = resolved.message_length;
-        state.message_type_id = resolved.message_type_id;
+        state.message_type_id = Some(resolved.message_type_id);
         state.message_stream_id = resolved.message_stream_id;
         state.extended = resolved.extended;
         state.initialized = true;
@@ -1262,7 +1274,7 @@ struct ExistingHeader {
     timestamp: u32,
     timestamp_delta: u32,
     message_length: u32,
-    message_type_id: u8,
+    message_type_id: Option<MessageTypeId>,
     message_stream_id: u32,
     extended: bool,
     in_progress: bool,
@@ -1275,7 +1287,7 @@ struct ResolvedHeader {
     timestamp: u32,
     timestamp_delta: u32,
     message_length: u32,
-    message_type_id: u8,
+    message_type_id: MessageTypeId,
     message_stream_id: u32,
     extended: bool,
 }
@@ -1488,7 +1500,7 @@ mod tests {
         let hdr = MessageHeader::Type0 {
             timestamp: 0,
             message_length: 16,
-            message_type_id: 9,
+            message_type_id: MessageTypeId::Video,
             message_stream_id: 1,
         };
         let mut buf = [0u8; TYPE0_LEN - 1];
@@ -1500,7 +1512,7 @@ mod tests {
         let hdr = MessageHeader::Type1 {
             timestamp_delta: 0,
             message_length: 16,
-            message_type_id: 9,
+            message_type_id: MessageTypeId::Video,
         };
         let mut buf = [0u8; TYPE1_LEN - 1];
         assert!(matches!(
@@ -1524,13 +1536,13 @@ mod tests {
             MessageHeader::Type0 {
                 timestamp: 0,
                 message_length: 0x0100_0000,
-                message_type_id: 9,
+                message_type_id: MessageTypeId::Video,
                 message_stream_id: 1,
             },
             MessageHeader::Type1 {
                 timestamp_delta: 0,
                 message_length: 0x0100_0000,
-                message_type_id: 9,
+                message_type_id: MessageTypeId::Video,
             },
         ] {
             assert!(matches!(
@@ -1541,7 +1553,7 @@ mod tests {
         let ok = MessageHeader::Type1 {
             timestamp_delta: 0,
             message_length: 0x00FF_FFFF,
-            message_type_id: 9,
+            message_type_id: MessageTypeId::Video,
         };
         assert!(ok.serialize_into(&mut buf).is_ok());
     }
@@ -1779,7 +1791,7 @@ mod tests {
         let mh = MessageHeader::Type0 {
             timestamp: 0x0011_2233,
             message_length: 0x0004_5566,
-            message_type_id: 0x09,
+            message_type_id: MessageTypeId::Video,
             message_stream_id: 0xAABB_CCDD,
         };
         let mut buf = [0u8; TYPE0_LEN];
@@ -1809,7 +1821,7 @@ mod tests {
             MessageHeader::Type0 {
                 timestamp: 0x0000_1122,
                 message_length: 0x0033_4455,
-                message_type_id: 0x09,
+                message_type_id: MessageTypeId::Video,
                 message_stream_id: 0xAABB_CCDD,
             }
         );
@@ -1840,7 +1852,7 @@ mod tests {
             MessageHeader::Type0 {
                 timestamp: 0x0102_0304,
                 message_length: 0x0000_0010,
-                message_type_id: 0x08,
+                message_type_id: MessageTypeId::Audio,
                 message_stream_id: 1,
             }
         );
@@ -1860,7 +1872,7 @@ mod tests {
         let mh = MessageHeader::Type0 {
             timestamp: EXTENDED_TIMESTAMP_MARKER,
             message_length: 10,
-            message_type_id: 1,
+            message_type_id: MessageTypeId::SetChunkSize,
             message_stream_id: 0,
         };
         assert_eq!(mh.serialized_len(), TYPE0_LEN + 4);
@@ -1889,7 +1901,7 @@ mod tests {
         let mh = MessageHeader::Type1 {
             timestamp_delta: 20,
             message_length: 32,
-            message_type_id: 8,
+            message_type_id: MessageTypeId::Audio,
         };
         let mut buf = [0u8; TYPE1_LEN];
         let n = mh.serialize_into(&mut buf).unwrap();
@@ -1914,7 +1926,7 @@ mod tests {
             MessageHeader::Type1 {
                 timestamp_delta: 0x0A0B_0C0D,
                 message_length: 0x0000_0020,
-                message_type_id: 0x09,
+                message_type_id: MessageTypeId::Video,
             }
         );
         let mut buf = [0u8; TYPE1_LEN + 4];
@@ -2020,7 +2032,13 @@ mod tests {
 
     // ── ChunkAssembler / ChunkWriter ─────────────────────────────────────
 
-    fn msg(csid: u32, timestamp: u32, type_id: u8, stream_id: u32, payload: Vec<u8>) -> Message {
+    fn msg(
+        csid: u32,
+        timestamp: u32,
+        type_id: MessageTypeId,
+        stream_id: u32,
+        payload: Vec<u8>,
+    ) -> Message {
         Message {
             chunk_stream_id: csid,
             timestamp,
@@ -2032,7 +2050,7 @@ mod tests {
 
     #[test]
     fn writer_assembler_round_trip_small_message_single_chunk() {
-        let original = msg(4, 1000, 9, 1, vec![0xAB; 50]);
+        let original = msg(4, 1000, MessageTypeId::Video, 1, vec![0xAB; 50]);
         let mut writer = ChunkWriter::new();
         let bytes = writer.write(&original).unwrap();
 
@@ -2047,7 +2065,7 @@ mod tests {
     /// only the low 24 bits, silently misframing the chunk stream with `Ok`.
     #[test]
     fn write_oversized_payload_errors() {
-        let original = msg(4, 0, 9, 1, vec![0xABu8; 1 << 24]);
+        let original = msg(4, 0, MessageTypeId::Video, 1, vec![0xABu8; 1 << 24]);
         let err = ChunkWriter::new().write(&original).unwrap_err();
         assert!(
             matches!(
@@ -2069,7 +2087,7 @@ mod tests {
         // checks the written header bytes directly rather than
         // round-tripping through the assembler.
         let payload = vec![0xCDu8; (1 << 24) - 1];
-        let original = msg(4, 0, 9, 1, payload.clone());
+        let original = msg(4, 0, MessageTypeId::Video, 1, payload.clone());
         let bytes = ChunkWriter::new().write(&original).unwrap();
 
         // BasicHeader (1 byte, csid 4) + timestamp (3 bytes) precede
@@ -2082,7 +2100,13 @@ mod tests {
     fn writer_assembler_round_trip_message_larger_than_chunk_size() {
         // 300-byte payload at the default 128-byte chunk size => 3 chunks
         // (128 + 128 + 44): Type 0 first chunk, two Type 3 continuations.
-        let original = msg(6, 5000, 9, 42, (0u8..=255).cycle().take(300).collect());
+        let original = msg(
+            6,
+            5000,
+            MessageTypeId::Video,
+            42,
+            (0u8..=255).cycle().take(300).collect(),
+        );
         let mut writer = ChunkWriter::new();
         let bytes = writer.write(&original).unwrap();
 
@@ -2120,7 +2144,7 @@ mod tests {
         let mh0 = MessageHeader::Type0 {
             timestamp: 0,
             message_length: 10,
-            message_type_id: 8,
+            message_type_id: MessageTypeId::Audio,
             message_stream_id: 0,
         };
         let mut input = Vec::new();
@@ -2165,7 +2189,7 @@ mod tests {
             &MessageHeader::Type0 {
                 timestamp: 1000,
                 message_length: 5,
-                message_type_id: 8,
+                message_type_id: MessageTypeId::Audio,
                 message_stream_id: 7,
             },
         );
@@ -2183,7 +2207,7 @@ mod tests {
             &MessageHeader::Type1 {
                 timestamp_delta: 20,
                 message_length: 5,
-                message_type_id: 8,
+                message_type_id: MessageTypeId::Audio,
             },
         );
         input.extend_from_slice(&[1; 5]);
@@ -2217,17 +2241,21 @@ mod tests {
 
         assert_eq!(out[0].timestamp, 1000);
         assert_eq!(out[0].message_stream_id, 7);
-        assert_eq!(out[0].message_type_id, 8);
+        assert_eq!(out[0].message_type_id, MessageTypeId::Audio);
         assert_eq!(out[0].payload, vec![0; 5]);
 
         assert_eq!(out[1].timestamp, 1020, "fmt1: 1000 + delta 20");
         assert_eq!(out[1].message_stream_id, 7, "fmt1 inherits stream id");
-        assert_eq!(out[1].message_type_id, 8);
+        assert_eq!(out[1].message_type_id, MessageTypeId::Audio);
         assert_eq!(out[1].payload, vec![1; 5]);
 
         assert_eq!(out[2].timestamp, 1050, "fmt2: 1020 + delta 30");
         assert_eq!(out[2].message_stream_id, 7, "fmt2 inherits stream id");
-        assert_eq!(out[2].message_type_id, 8, "fmt2 inherits type id");
+        assert_eq!(
+            out[2].message_type_id,
+            MessageTypeId::Audio,
+            "fmt2 inherits type id"
+        );
         assert_eq!(out[2].payload, vec![2; 5], "fmt2 inherits message length");
 
         assert_eq!(
@@ -2235,7 +2263,11 @@ mod tests {
             "fmt3 (new message) inherits fmt2's delta 30: 1050 + 30"
         );
         assert_eq!(out[3].message_stream_id, 7, "fmt3 inherits stream id");
-        assert_eq!(out[3].message_type_id, 8, "fmt3 inherits type id");
+        assert_eq!(
+            out[3].message_type_id,
+            MessageTypeId::Audio,
+            "fmt3 inherits type id"
+        );
         assert_eq!(out[3].payload, vec![3; 5], "fmt3 inherits message length");
     }
 
@@ -2249,7 +2281,7 @@ mod tests {
         let mut assembler = ChunkAssembler::new();
         let csid = 7;
 
-        let first = msg(csid, 100, 8, 1, vec![0xAA; 10]);
+        let first = msg(csid, 100, MessageTypeId::Audio, 1, vec![0xAA; 10]);
         let mut writer = ChunkWriter::new();
         let first_bytes = writer.write(&first).unwrap();
         let out = assembler.push(&first_bytes).unwrap();
@@ -2263,7 +2295,7 @@ mod tests {
         let mh0 = MessageHeader::Type0 {
             timestamp: 200,
             message_length: 10,
-            message_type_id: 8,
+            message_type_id: MessageTypeId::Audio,
             message_stream_id: 1,
         };
         let mut chunk1 = Vec::new();
@@ -2301,7 +2333,13 @@ mod tests {
         // Timestamp (§3.1.3) — payload longer than chunk_size so at least
         // one Type 3 continuation chunk exercises the "fmt3 also carries
         // extended timestamp" edge.
-        let original = msg(8, EXTENDED_TIMESTAMP_MARKER + 12345, 9, 2, vec![0x7E; 300]);
+        let original = msg(
+            8,
+            EXTENDED_TIMESTAMP_MARKER + 12345,
+            MessageTypeId::Video,
+            2,
+            vec![0x7E; 300],
+        );
         let mut writer = ChunkWriter::new();
         let bytes = writer.write(&original).unwrap();
 
@@ -2337,7 +2375,7 @@ mod tests {
 
     #[test]
     fn assembler_partial_feed_split_mid_header_no_drop_or_duplicate() {
-        let original = msg(9, 42, 8, 3, vec![0x11; 200]);
+        let original = msg(9, 42, MessageTypeId::Audio, 3, vec![0x11; 200]);
         let mut writer = ChunkWriter::new();
         let bytes = writer.write(&original).unwrap();
 
@@ -2356,7 +2394,7 @@ mod tests {
 
     #[test]
     fn assembler_partial_feed_split_mid_payload_no_drop_or_duplicate() {
-        let original = msg(10, 42, 8, 3, vec![0x22; 300]);
+        let original = msg(10, 42, MessageTypeId::Audio, 3, vec![0x22; 300]);
         let mut writer = ChunkWriter::new();
         let bytes = writer.write(&original).unwrap();
 
@@ -2376,7 +2414,7 @@ mod tests {
     /// aborted (never-completed) payload.
     #[test]
     fn abort_discards_in_progress_message_on_csid() {
-        let aborted = msg(12, 1, 8, 3, vec![0xAA; 300]); // spans 3 chunks at default 128
+        let aborted = msg(12, 1, MessageTypeId::Audio, 3, vec![0xAA; 300]); // spans 3 chunks at default 128
         let mut writer = ChunkWriter::new();
         let aborted_bytes = writer.write(&aborted).unwrap();
 
@@ -2391,7 +2429,7 @@ mod tests {
 
         // A brand-new, independent Type 0 message on the SAME csid must
         // now parse as itself.
-        let fresh = msg(12, 2, 8, 3, vec![0xBB; 50]);
+        let fresh = msg(12, 2, MessageTypeId::Audio, 3, vec![0xBB; 50]);
         let fresh_bytes = writer.write(&fresh).unwrap();
         let out2 = assembler.push(&fresh_bytes).unwrap();
         assert_eq!(out2.len(), 1);
@@ -2407,7 +2445,7 @@ mod tests {
     /// stale) payload instead of starting a clean new accumulation.
     #[test]
     fn abort_makes_next_type3_chunk_start_fresh_not_continue() {
-        let aborted = msg(12, 1, 8, 3, vec![0xAA; 300]); // message_length=300, no extended ts
+        let aborted = msg(12, 1, MessageTypeId::Audio, 3, vec![0xAA; 300]); // message_length=300, no extended ts
         let mut writer = ChunkWriter::new();
         let aborted_bytes = writer.write(&aborted).unwrap();
 
@@ -2446,7 +2484,7 @@ mod tests {
     /// in-flight bytes.
     #[test]
     fn type1_header_mid_message_is_rejected() {
-        let in_progress = msg(12, 1, 8, 3, vec![0xAA; 300]); // 3 chunks at default 128
+        let in_progress = msg(12, 1, MessageTypeId::Audio, 3, vec![0xAA; 300]); // 3 chunks at default 128
         let mut writer = ChunkWriter::new();
         let bytes = writer.write(&in_progress).unwrap();
 
@@ -2470,7 +2508,7 @@ mod tests {
 
     #[test]
     fn assembler_partial_feed_byte_at_a_time_never_drops_or_duplicates() {
-        let original = msg(11, 7, 9, 4, vec![0x33; 260]);
+        let original = msg(11, 7, MessageTypeId::Video, 4, vec![0x33; 260]);
         let mut writer = ChunkWriter::new();
         let bytes = writer.write(&original).unwrap();
 
@@ -2499,7 +2537,7 @@ mod tests {
             &MessageHeader::Type1 {
                 timestamp_delta: 5,
                 message_length: 3,
-                message_type_id: 1,
+                message_type_id: MessageTypeId::SetChunkSize,
             },
         );
         input.extend_from_slice(&[0, 0, 0]);
@@ -2528,7 +2566,7 @@ mod tests {
 
     #[test]
     fn assembler_truncated_input_never_panics_across_many_split_points() {
-        let original = msg(12, 99, 8, 5, vec![0x44; 400]);
+        let original = msg(12, 99, MessageTypeId::Audio, 5, vec![0x44; 400]);
         let mut writer = ChunkWriter::new();
         let bytes = writer.write(&original).unwrap();
 
@@ -2579,7 +2617,7 @@ mod tests {
             &MessageHeader::Type0 {
                 timestamp: 1000,
                 message_length: 5,
-                message_type_id: 8,
+                message_type_id: MessageTypeId::Audio,
                 message_stream_id: 2,
             },
         );
@@ -2655,7 +2693,7 @@ mod tests {
             &MessageHeader::Type0 {
                 timestamp: 0,
                 message_length: payload.len() as u32,
-                message_type_id: 8,
+                message_type_id: MessageTypeId::Audio,
                 message_stream_id: 0,
             },
         );
@@ -2705,7 +2743,7 @@ mod tests {
             &MessageHeader::Type0 {
                 timestamp: 1,
                 message_length: 3,
-                message_type_id: 8,
+                message_type_id: MessageTypeId::Audio,
                 message_stream_id: 0,
             },
         );
@@ -2752,7 +2790,7 @@ mod tests {
             &MessageHeader::Type0 {
                 timestamp: 0,
                 message_length: payload.len() as u32,
-                message_type_id: 9,
+                message_type_id: MessageTypeId::Video,
                 message_stream_id: 1,
             },
         );
@@ -2785,7 +2823,7 @@ mod tests {
             &MessageHeader::Type0 {
                 timestamp: 0,
                 message_length: 0x00FF_FFFF, // ~16 MiB: the largest 24-bit value.
-                message_type_id: 9,
+                message_type_id: MessageTypeId::Video,
                 message_stream_id: 1,
             },
         );
@@ -2816,7 +2854,7 @@ mod tests {
             &MessageHeader::Type0 {
                 timestamp: 0,
                 message_length: MAX_MESSAGE_LEN,
-                message_type_id: 9,
+                message_type_id: MessageTypeId::Video,
                 message_stream_id: 1,
             },
         );
@@ -2898,7 +2936,7 @@ mod tests {
             &MessageHeader::Type0 {
                 timestamp: 0,
                 message_length: declared_len,
-                message_type_id: 9,
+                message_type_id: MessageTypeId::Video,
                 message_stream_id: 1,
             },
         );
@@ -3046,7 +3084,7 @@ mod tests {
     #[test]
     fn reassembling_an_8mib_message_at_chunk_size_one_is_linear_not_quadratic() {
         let payload: Vec<u8> = (0..MAX_MESSAGE_LEN).map(|i| (i % 251) as u8).collect();
-        let original = msg(10, 0, 9, 1, payload.clone());
+        let original = msg(10, 0, MessageTypeId::Video, 1, payload.clone());
 
         let mut writer = ChunkWriter::new();
         writer.set_chunk_size(1);
@@ -3082,7 +3120,7 @@ mod invalid_csid_tests {
         Message {
             chunk_stream_id: csid,
             timestamp: 0,
-            message_type_id: 20,
+            message_type_id: MessageTypeId::CommandAmf0,
             message_stream_id: 1,
             payload: vec![1, 2, 3],
         }

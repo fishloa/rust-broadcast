@@ -16,7 +16,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use crate::tshttp::{Config as TsConfig, TsHttpPolicy};
-use rtmp_runtime::client::{ClientConfig, ClientEvent, ClientMode, ClientSession};
+use rtmp_runtime::client::{ClientEvent, ClientMode, ClientSession, RtmpClientConfig};
 use rtmp_runtime::target::RtmpTarget;
 use transmux::{DemuxEvent, StreamingFlvDemux, TrackId, TrackSpec};
 use url::{Host, Url};
@@ -269,8 +269,8 @@ impl RtmpSource {
         }
     }
 
-    fn client_config(&self) -> ClientConfig {
-        let mut config = ClientConfig::default();
+    fn client_config(&self) -> RtmpClientConfig {
+        let mut config = RtmpClientConfig::default();
         config.mode = ClientMode::Play;
         config.app.clone_from(&self.target.app);
         config.stream_key.clone_from(&self.target.stream);

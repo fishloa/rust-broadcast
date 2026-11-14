@@ -3,19 +3,22 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 use broadcast_common::timeouts::Timeouts;
+use core::time::Duration;
 
 use zeroize::Zeroize;
 
 /// Length of the entropy seed in bytes.
 pub const ENTROPY_SEED_LEN: usize = 32;
 
-/// Default [`SrtConfig::latency_ms`] (120 ms, libsrt's default), which suits a LAN or a
+/// Default [`SrtCallerConfig::latency_ms`] (120 ms, libsrt's default), which suits a LAN or a
 /// well-provisioned WAN. The negotiated value is the larger of this and the peer's.
 pub const DEFAULT_LATENCY_MS: u16 = 120;
-/// Default [`SrtConfig::handshake_timeout_ms`]: libsrt's 3 s connect timeout.
-pub const DEFAULT_HANDSHAKE_TIMEOUT_MS: u64 = 3_000;
-/// Default [`SrtConfig::peer_idle_timeout_ms`]: libsrt's 5 s peer idle timeout.
-pub const DEFAULT_PEER_IDLE_TIMEOUT_MS: u64 = 5_000;
+/// Default [`SrtCallerConfig::timeouts`]' handshake bound: libsrt's 3 s connect
+/// timeout.
+pub const DEFAULT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(3);
+/// Default [`SrtCallerConfig::timeouts`]' peer-idle bound: libsrt's 5 s peer
+/// idle timeout.
+pub const DEFAULT_PEER_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// AES key length of an encrypted SRT connection (the stream key the caller generates).
 #[non_exhaustive]
@@ -121,10 +124,12 @@ impl core::fmt::Debug for SrtEntropySeed {
     }
 }
 
-/// SRT caller settings.
+/// SRT caller settings ([`crate::Config::srt`]): what the sans-IO caller sends
+/// and how long it waits, not the tokio adapter's socket settings (those are
+/// `srt_runtime::io::SrtSocketConfig`).
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SrtConfig {
+pub struct SrtCallerConfig {
     /// TSBPD latency this side asks for in milliseconds (the connection uses the larger of this
     /// and the peer's); any value is accepted, a smaller one trades loss recovery for delay.
     pub latency_ms: u16,
@@ -134,54 +139,44 @@ pub struct SrtConfig {
     pub encryption: Option<SrtEncryption>,
     /// Required for an `srt://` session: see [`SrtEntropySeed`].
     pub entropy_seed: Option<SrtEntropySeed>,
-    /// Longest the handshake may take before the attempt fails.
-    pub handshake_timeout_ms: u64,
-    /// Longest silence from the peer (not even a keepalive) before the connection is dropped.
-    pub peer_idle_timeout_ms: u64,
+    /// The bounds the caller reads its clock against: `handshake` is the
+    /// longest the handshake may take before the attempt fails and `read_idle`
+    /// the longest silence from the peer (not even a keepalive) before the
+    /// connection is dropped. `connect` and `write` are unused (the session
+    /// performs no I/O of its own). Defaults: 3 s handshake, 5 s peer idle.
+    pub timeouts: Timeouts,
 }
 
-impl Default for SrtConfig {
+impl Default for SrtCallerConfig {
     fn default() -> Self {
         Self {
             latency_ms: DEFAULT_LATENCY_MS,
             stream_id: None,
             encryption: None,
             entropy_seed: None,
-            handshake_timeout_ms: DEFAULT_HANDSHAKE_TIMEOUT_MS,
-            peer_idle_timeout_ms: DEFAULT_PEER_IDLE_TIMEOUT_MS,
+            timeouts: Timeouts::default()
+                .with_handshake(DEFAULT_HANDSHAKE_TIMEOUT)
+                .with_read_idle(DEFAULT_PEER_IDLE_TIMEOUT),
         }
     }
 }
 
-impl SrtConfig {
-    /// The handshake and peer-idle bounds as [`Timeouts`]: `handshake` and
-    /// `read_idle` come from this config, `connect` and `write` are the
-    /// [`Timeouts`] defaults (the session performs no I/O of its own).
-    #[must_use]
-    pub fn timeouts(&self) -> Timeouts {
-        Timeouts::default()
-            .with_handshake(core::time::Duration::from_millis(self.handshake_timeout_ms))
-            .with_read_idle(core::time::Duration::from_millis(self.peer_idle_timeout_ms))
-    }
-
-    /// Take the handshake bound from `timeouts.handshake` and the peer-idle
-    /// bound from `timeouts.read_idle`, each at least one millisecond.
+impl SrtCallerConfig {
+    /// Replace the handshake and peer-idle bounds with `timeouts`' (`handshake`
+    /// and `read_idle`; `connect`/`write` are not used).
     #[must_use]
     pub fn with_timeouts(mut self, timeouts: Timeouts) -> Self {
-        let millis =
-            |d: core::time::Duration| u64::try_from(d.as_millis()).unwrap_or(u64::MAX).max(1);
-        self.handshake_timeout_ms = millis(timeouts.handshake);
-        self.peer_idle_timeout_ms = millis(timeouts.read_idle);
+        self.timeouts = timeouts;
         self
     }
 
     pub(crate) fn validate(&self) -> Result<(), crate::Error> {
         let invalid = |field| Err(crate::Error::InvalidConfig { field });
-        if self.handshake_timeout_ms == 0 {
-            return invalid("srt.handshake_timeout_ms");
+        if self.timeouts.handshake.is_zero() {
+            return invalid("srt.timeouts.handshake");
         }
-        if self.peer_idle_timeout_ms == 0 {
-            return invalid("srt.peer_idle_timeout_ms");
+        if self.timeouts.read_idle.is_zero() {
+            return invalid("srt.timeouts.read_idle");
         }
         if self
             .encryption
@@ -200,29 +195,42 @@ mod timeouts_tests {
     use core::time::Duration;
 
     #[test]
-    fn with_timeouts_sets_the_handshake_and_idle_bounds_and_timeouts_reads_them_back() {
-        let timeouts = Timeouts::default()
-            .with_handshake(Duration::from_millis(1500))
-            .with_read_idle(Duration::from_millis(7000));
-        let config = SrtConfig::default().with_timeouts(timeouts);
-        assert_eq!(config.handshake_timeout_ms, 1500);
-        assert_eq!(config.peer_idle_timeout_ms, 7000);
-        let back = config.timeouts();
-        assert_eq!(back.handshake, Duration::from_millis(1500));
-        assert_eq!(back.read_idle, Duration::from_millis(7000));
+    fn the_default_bounds_are_three_seconds_of_handshake_and_five_of_peer_idle() {
+        let config = SrtCallerConfig::default();
+        assert_eq!(config.timeouts.handshake, Duration::from_secs(3));
+        assert_eq!(config.timeouts.read_idle, Duration::from_secs(5));
+        assert_eq!(config.timeouts.handshake, DEFAULT_HANDSHAKE_TIMEOUT);
+        assert_eq!(config.timeouts.read_idle, DEFAULT_PEER_IDLE_TIMEOUT);
     }
 
     #[test]
-    fn a_zero_bound_is_raised_to_one_millisecond() {
-        let config = SrtConfig::default().with_timeouts(
-            Timeouts::default()
-                .with_handshake(Duration::ZERO)
-                .with_read_idle(Duration::ZERO),
-        );
-        assert_eq!(
-            (config.handshake_timeout_ms, config.peer_idle_timeout_ms),
-            (1, 1)
-        );
-        assert!(config.validate().is_ok());
+    fn with_timeouts_stores_the_one_timeouts_value_it_is_given() {
+        let timeouts = Timeouts::default()
+            .with_handshake(Duration::from_millis(1500))
+            .with_read_idle(Duration::from_millis(7000));
+        let config = SrtCallerConfig::default().with_timeouts(timeouts);
+        assert_eq!(config.timeouts, timeouts);
+        assert_eq!(config.timeouts.handshake, Duration::from_millis(1500));
+        assert_eq!(config.timeouts.read_idle, Duration::from_millis(7000));
+    }
+
+    #[test]
+    fn a_zero_bound_is_rejected_rather_than_widened() {
+        let config = SrtCallerConfig::default()
+            .with_timeouts(Timeouts::default().with_handshake(Duration::ZERO));
+        assert!(matches!(
+            config.validate(),
+            Err(crate::Error::InvalidConfig {
+                field: "srt.timeouts.handshake"
+            })
+        ));
+        let config = SrtCallerConfig::default()
+            .with_timeouts(Timeouts::default().with_read_idle(Duration::ZERO));
+        assert!(matches!(
+            config.validate(),
+            Err(crate::Error::InvalidConfig {
+                field: "srt.timeouts.read_idle"
+            })
+        ));
     }
 }

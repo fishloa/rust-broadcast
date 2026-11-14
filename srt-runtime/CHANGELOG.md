@@ -6,6 +6,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Removed
+- BREAKING: the `packet::control::CONTROL_TYPE_*` (`u16`) and `packet::handshake::ENCRYPTION_FIELD_*` (`u16`) / `HANDSHAKE_TYPE_*` (`u32`) constants; they duplicated the wire values of `ControlType`, `EncryptionField` and `HandshakeType`, which carry them through `from_bits`/`to_bits` (and `name()`/`Display`). Migration: `HANDSHAKE_TYPE_INDUCTION` -> `HandshakeType::Induction` (compare `handshake_type.to_bits()` with it), `CONTROL_TYPE_SHUTDOWN` -> `ControlType::Shutdown`, `ENCRYPTION_FIELD_NONE` -> `EncryptionField::NoEncryption` (#2666).
+
+### Changed
+- BREAKING: `io::SrtConfig` is `io::SrtSocketConfig`, matching `RtspClientConfig`/`RtmpClientConfig`/`HlsClientConfig`; it is named for its role, not `SrtClientConfig`, because one config serves both the caller (`SrtSocket::connect`) and the listener (`SrtListener::bind`). Migration: every `srt_runtime::io::SrtConfig` becomes `srt_runtime::io::SrtSocketConfig`.
+
+### Removed
+- BREAKING: `impl Into<SrtSocketConfig>` on the `SrtSocket`/`SrtListener` constructors and the `From<HandshakeConfig>` impl: `connect`, `connect_from`, `connect_from_socket`, `rendezvous`, `rendezvous_from_socket` and `bind` take an `io::SrtSocketConfig` by value, so a config is written out explicitly rather than implied at the call site. Migration: `bind(addr, handshake)` -> `bind(addr, SrtSocketConfig::new(handshake))`, `connect(addr, handshake.clone())` -> `connect(addr, SrtSocketConfig::default())` when the handshake is the default, and `SrtConfig::default()` -> `SrtSocketConfig::default()` (#2660).
+
 ## [0.9.0] - 2026-11-14
 ### Removed
 - BREAKING: `SrtSocket::{connect_with, connect_from_with, rendezvous_with}` and `SrtListener::bind_with`; pass `SrtConfig::new(handshake).with_io(io)` to `connect`, `connect_from`, `rendezvous` and `bind`. `connect_from_socket` and `rendezvous_from_socket` take the config in place of the separate handshake and io arguments (#2514).

@@ -90,8 +90,8 @@ fn io_err(context: IoContext, source: std::io::Error) -> Error {
 
 /// What an [`AsyncRtspClient`] is configured by: the session (credentials,
 /// user agent) and the [`Timeouts`] on every awaited I/O. Every client
-/// constructor takes `impl Into<RtspClientConfig>`, so a bare [`ClientSession`]
-/// is accepted as is.
+/// constructor takes the config; [`RtspClientConfig::default`] plus
+/// `with_session`/`with_timeouts` build it.
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct RtspClientConfig {
@@ -104,15 +104,8 @@ pub struct RtspClientConfig {
 }
 
 impl RtspClientConfig {
-    /// A config with `session` and the default [`Timeouts`].
-    pub fn new(session: ClientSession) -> Self {
-        RtspClientConfig {
-            session,
-            timeouts: Timeouts::default(),
-        }
-    }
-
-    /// Replace [`RtspClientConfig::session`].
+    /// Replace [`RtspClientConfig::session`] (a fresh [`ClientSession`] by
+    /// default).
     #[must_use]
     pub fn with_session(mut self, session: ClientSession) -> Self {
         self.session = session;
@@ -128,21 +121,19 @@ impl RtspClientConfig {
 }
 
 impl Default for RtspClientConfig {
+    /// A fresh [`ClientSession`] and the default [`Timeouts`].
     fn default() -> Self {
-        RtspClientConfig::new(ClientSession::new())
-    }
-}
-
-impl From<ClientSession> for RtspClientConfig {
-    fn from(session: ClientSession) -> Self {
-        RtspClientConfig::new(session)
+        RtspClientConfig {
+            session: ClientSession::new(),
+            timeouts: Timeouts::default(),
+        }
     }
 }
 
 /// What an [`AsyncRtspServer`] is configured by: the session and the
 /// [`Timeouts`] on every awaited I/O (`handshake` bounds the TLS handshake and
-/// the first complete request). Every server constructor takes
-/// `impl Into<RtspServerConfig>`, so a bare [`ServerSession`] is accepted as is.
+/// the first complete request). Every server constructor takes the config;
+/// [`RtspServerConfig::default`] plus `with_session`/`with_timeouts` build it.
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct RtspServerConfig {
@@ -153,14 +144,6 @@ pub struct RtspServerConfig {
 }
 
 impl RtspServerConfig {
-    /// A config with `session` and the default [`Timeouts`].
-    pub fn new(session: ServerSession) -> Self {
-        RtspServerConfig {
-            session,
-            timeouts: Timeouts::default(),
-        }
-    }
-
     /// Replace [`RtspServerConfig::session`].
     #[must_use]
     pub fn with_session(mut self, session: ServerSession) -> Self {
@@ -177,15 +160,13 @@ impl RtspServerConfig {
 }
 
 impl Default for RtspServerConfig {
-    /// A session whose ids come from the OS random source.
+    /// A session whose ids come from the OS random source, and the default
+    /// [`Timeouts`].
     fn default() -> Self {
-        RtspServerConfig::new(ServerSession::try_new(os_session_id))
-    }
-}
-
-impl From<ServerSession> for RtspServerConfig {
-    fn from(session: ServerSession) -> Self {
-        RtspServerConfig::new(session)
+        RtspServerConfig {
+            session: ServerSession::try_new(os_session_id),
+            timeouts: Timeouts::default(),
+        }
     }
 }
 
@@ -217,20 +198,19 @@ impl AsyncRtspClient<TcpStream> {
     /// `addr` is any [`tokio::net::ToSocketAddrs`]; for the RTSP default port use
     /// `(host, RTSP_DEFAULT_PORT)`.
     ///
-    /// `config` is an [`RtspClientConfig`] (or a bare [`ClientSession`], e.g.
-    /// one carrying [`Credentials`](crate::Credentials)).
+    /// `config` is an [`RtspClientConfig`], e.g. one carrying
+    /// [`Credentials`](crate::Credentials).
     pub async fn connect<A: tokio::net::ToSocketAddrs>(
         addr: A,
-        config: impl Into<RtspClientConfig>,
+        config: RtspClientConfig,
     ) -> Result<Self> {
-        let config = config.into();
         let stream = bounded(config.timeouts.connect, "connect", async {
             TcpStream::connect(addr)
                 .await
                 .map_err(|e| io_err(IoContext::Connect, e))
         })
         .await?;
-        Ok(Self::with_stream(stream, config))
+        Ok(Self::from_stream(stream, config))
     }
 }
 
@@ -239,8 +219,7 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     /// Wraps an already-connected stream (plain or TLS) with `config`.
-    pub fn with_stream(stream: S, config: impl Into<RtspClientConfig>) -> Self {
-        let config = config.into();
+    pub fn from_stream(stream: S, config: RtspClientConfig) -> Self {
         AsyncRtspClient {
             framed: Framed::new(stream, ClientCodec::new(config.session)),
             pending_media: VecDeque::new(),
@@ -717,7 +696,7 @@ impl AsyncRtspClient<tokio_rustls::client::TlsStream<TcpStream>> {
         addr: A,
         server_name: &str,
         tls: rustls::ClientConfig,
-        config: impl Into<RtspClientConfig>,
+        config: RtspClientConfig,
     ) -> Result<Self> {
         let addr = addr;
         connect_tls_via(
@@ -728,7 +707,7 @@ impl AsyncRtspClient<tokio_rustls::client::TlsStream<TcpStream>> {
             },
             server_name,
             tls,
-            config.into(),
+            config,
         )
         .await
     }
@@ -765,7 +744,7 @@ where
             .map_err(|e| io_err(IoContext::TlsHandshake, e))
     })
     .await?;
-    Ok(AsyncRtspClient::with_stream(stream, config))
+    Ok(AsyncRtspClient::from_stream(stream, config))
 }
 
 /// Builds a [`rustls::ClientConfig`] trusting the `webpki-roots` public-CA
@@ -806,6 +785,13 @@ pub fn default_tls_client_config() -> crate::Result<rustls::ClientConfig> {
 /// `rtsp_types`), calls [`ServerSession::handle_request`], writes the response
 /// bytes back, and returns the [`ServerEvent`]s. Every awaited IO is bounded by
 /// [`Timeouts`].
+///
+/// Both constructors, [`from_stream`](Self::from_stream) (an accepted plain
+/// or TLS stream; [`from_stream` (plain TCP)](AsyncRtspServer::<TcpStream>::from_stream)
+/// takes it without one) and [`accept_tls`](Self::accept_tls) (an `rtsps://`
+/// server), take an [`RtspServerConfig`]. A default config's session takes its
+/// ids from the OS random source; when that is unavailable the `SETUP` that
+/// needs an id fails with [`Error::RandomSource`].
 #[derive(Debug)]
 pub struct AsyncRtspServer<S> {
     framed: Framed<S, ServerCodec>,
@@ -814,20 +800,6 @@ pub struct AsyncRtspServer<S> {
     first_request_seen: bool,
     /// Events of a request whose response is still being written (cancel safety).
     ready: Option<Vec<ServerEvent>>,
-}
-
-impl AsyncRtspServer<TcpStream> {
-    /// Wraps an accepted plain-TCP connection with a fresh [`ServerSession`]
-    /// whose `Session` ids come from the OS random source; when it is unavailable the `SETUP`
-    /// that needs an id fails with [`Error::RandomSource`].
-    pub fn accept(stream: TcpStream) -> Self {
-        Self::with_stream(stream, ServerSession::try_new(os_session_id))
-    }
-
-    /// Wraps an accepted plain-TCP connection with a pre-configured session.
-    pub fn accept_with(stream: TcpStream, session: ServerSession) -> Self {
-        Self::with_stream(stream, session)
-    }
 }
 
 #[cfg(feature = "tls")]
@@ -839,9 +811,9 @@ impl AsyncRtspServer<tokio_rustls::server::TlsStream<TcpStream>> {
     pub async fn accept_tls(
         stream: TcpStream,
         tls: rustls::ServerConfig,
-        config: impl Into<RtspServerConfig>,
+        config: RtspServerConfig,
     ) -> Result<Self> {
-        accept_tls_via(stream, tls, config.into()).await
+        accept_tls_via(stream, tls, config).await
     }
 }
 
@@ -866,7 +838,7 @@ where
             .map_err(|e| io_err(IoContext::TlsHandshake, e))
     })
     .await?;
-    Ok(AsyncRtspServer::with_stream(tls, config))
+    Ok(AsyncRtspServer::from_stream(tls, config))
 }
 
 /// A `Session` id value from the OS random source (RFC 2326 §3.4).
@@ -881,8 +853,7 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     /// Wraps an already-connected stream (plain or TLS) with `config`.
-    pub fn with_stream(stream: S, config: impl Into<RtspServerConfig>) -> Self {
-        let config = config.into();
+    pub fn from_stream(stream: S, config: RtspServerConfig) -> Self {
         AsyncRtspServer {
             framed: Framed::new(stream, ServerCodec::default()),
             session: config.session,
