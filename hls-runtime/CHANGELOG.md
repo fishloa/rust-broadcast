@@ -7,6 +7,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Removed
+- Removed the unused `axum` dev-dependency.
+
 ## [0.13.0] - 2026-11-14
 ### Removed
 - BREAKING: `server::Container` moved to `transmux::Container` (same variants and methods, `segment_extension` now public); `HlsOriginBuilder` and the origin take and report that type (issue #2554).

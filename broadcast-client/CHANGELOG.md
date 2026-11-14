@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- Removed the unused `cookie`, `cookie_store` and `percent-encoding` dependencies; the cookie jar lives in `broadcast-auth`.
+
 ## [0.5.0] - 2026-11-14
 ### Removed
 - BREAKING: `Session` is no longer `UnwindSafe` or `RefUnwindSafe`, and `tshttp::{TsHttpClient, TsHttpPolicy, TsHttpSource}` are no longer `RefUnwindSafe` (they now hold state that is not unwind-safe, such as the shared `RetrySchedule`'s jitter `Cell`); code that moves them across `std::panic::catch_unwind` must wrap them in `AssertUnwindSafe`.

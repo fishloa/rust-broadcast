@@ -696,7 +696,7 @@ Four layers (`Dialer`/`Listener` -> byte stages -> `IngestSession` -> IR transfo
 
 #### media-doctor
 
-A pluggable diagnostics harness: each `Diagnostic` checks one rule (sync, PAT/PMT versioning, continuity, PCR, PTS/DTS monotonicity, SCTE 35 splice consistency) and produces findings, plus HLS playlist, DASH MPD and fMP4/CMAF structural validation. Features `net`/`metrics` serve Prometheus; `cli` builds the `media-doctor` binary.
+A pluggable diagnostics harness: each `Diagnostic` checks one rule (sync, PAT/PMT versioning, continuity, PCR, PTS/DTS monotonicity, SCTE 35 splice consistency) and produces findings, plus HLS playlist, DASH MPD and fMP4/CMAF structural validation. Features `net`/`metrics` serve Prometheus; `cli` (opt-in, not default) builds the `media-doctor` binary: `cargo install media-doctor --features cli`.
 
 - **Standards:** Checks against ISO/IEC 13818-1, RFC 8216, ISO/IEC 23009-1, SCTE 35
 - **Cargo description:** Media diagnostics harness for DVB/MPEG-TS: pluggable lint-style checks (sync, PAT/PMT versioning, CC anomalies, PCR, PTS/DTS monotonicity, SCTE-35 splice consistency) + HLS playlist validation.

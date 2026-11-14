@@ -6,6 +6,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- Narrowed the `tokio` dev-dependency from `features = ["full"]` to the features the tests use (`net`, `io-util`, `rt`, `rt-multi-thread`, `macros`, `time`, `sync`, `test-util`).
+
 ## [0.11.0] - 2026-11-14
 ### Removed
 - BREAKING: the `connect_with`, `connect_with_timeouts`, `connect_tls_with`, `connect_tls_with_timeouts`, `accept_tls_with_timeouts` and `with_stream_timeouts` ladder. `AsyncRtspClient::connect(addr, config)`, `connect_tls(addr, server_name, tls, config)`, `with_stream(stream, config)` and `AsyncRtspServer::accept_tls(stream, tls, config)` / `with_stream(stream, config)` take the config; `connect(addr)` and `connect_tls(addr, name, tls)` without one now pass `RtspClientConfig::default()` (#2514).

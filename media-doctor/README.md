@@ -47,9 +47,10 @@ in the private repo: `private/specs` set (ISO/IEC 23009-1) the edition is marked
 | `serde` | no | JSON report output (`serde`, `serde_json`) |
 | `metrics` | no | `render_metrics` / `publish_metrics`: the `metrics` facade and `metrics-exporter-prometheus` (implies `std`) |
 | `net` | no | `metrics_server` (`hyper` http1 `GET /metrics`) and `udp` (`socket2` bind); implies `metrics` |
-| `cli` | yes | The `media-doctor` binary (`clap`), including `watch`; implies `std`, `net` and `serde`, and pulls in `container-probe` |
+| `cli` | no | The `media-doctor` binary (`clap`), including `watch`; implies `std`, `net` and `serde`, and pulls in `container-probe` |
 
-`serde` is opt-in and off by default; enable it explicitly:
+`serde` and `cli` are opt-in and off by default; enable them explicitly. A
+library dependency therefore costs no `clap`/`hyper`/`tokio` unless asked for:
 
 ```toml
 media-doctor = { version = "0.15", features = ["serde"] }
@@ -113,6 +114,17 @@ Public types: `Diagnostic` (trait), `Finding`, `Report`, `Severity`, `Location`
 (`feed_datagram`, `snapshot`), `WatchSnapshot`, `ConformanceSample`, `PidFlag`.
 
 ## CLI
+
+The binary lives behind the opt-in `cli` feature (the `[[bin]]` declares
+`required-features = ["cli"]`), so installing it must name the feature:
+
+```console
+$ cargo install media-doctor --features cli
+```
+
+Under 0.16 and earlier `cli` was a default feature and the bare
+`cargo install media-doctor` was enough; since 0.17 it builds only the library
+and installs no binary.
 
 ```text
 $ media-doctor --help

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- Removed the unused optional `url` dependency (and the `dep:url` entry in the `std` feature): base-URL resolution goes through `broadcast-dash`/`hls-runtime`, so a `std` build of `transmux` compiles 40 fewer crates and no longer pulls the `idna`/`icu_*` stack.
+
 ## [0.31.0] - 2026-11-14
 ### Changed
 - Legal-duplicate TS packet detection now imports `mpeg_ts::ts_dup` instead of `broadcast_common::ts_dup` (#2466).

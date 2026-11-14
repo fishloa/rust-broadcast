@@ -4,6 +4,9 @@ All notable changes to dash-runtime will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- `quick-xml` is a dev-dependency only (its parser is reached through `broadcast-common::xml`), so it no longer appears in the built dependency graph.
+
 ## [0.4.0] - 2026-11-14
 ### Changed
 - BREAKING: `DashifIngestSession::new()` takes a `DashifIngestConfig`; the `Default` impl is removed (#2514).
