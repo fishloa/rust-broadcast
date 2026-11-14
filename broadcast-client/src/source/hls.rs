@@ -38,7 +38,7 @@ const STATUS_RANGE_NOT_SATISFIABLE: u16 = 416;
 const METHOD_GET: &str = "GET";
 
 const ENCRYPTED_SAMPLE_ENTRIES: [&str; 2] = ["encv", "enca"];
-const UNNAMED_TRACK_ID: u32 = 0;
+const UNNAMED_TRACK_ID: TrackId = TrackId::new(0);
 const FIELD_MAX_MANIFEST_BYTES: &str = "max_manifest_bytes";
 const FIELD_MAX_SEGMENT_BYTES: &str = "max_segment_bytes";
 const REASON_NON_FRAGMENTED_MP4: &str = "non_fragmented_mp4";
@@ -940,7 +940,7 @@ impl HlsSource {
                         self.reserved_id_reported = true;
                         self.events.push_back(Event::Error {
                             kind: ErrorKind::TrackIdReserved {
-                                track_id: first.track_id.value(),
+                                track_id: first.track_id,
                             },
                             fatal: false,
                         });
@@ -993,7 +993,7 @@ impl HlsSource {
                     if self.dropped_reported.insert(track_id) {
                         self.events.push_back(Event::Error {
                             kind: ErrorKind::TrackDropped {
-                                track_id: track_id.value(),
+                                track_id,
                                 stream_type,
                                 fourcc: None,
                             },
@@ -1039,7 +1039,7 @@ fn skipped_kind(track_id: Option<u32>, fourcc: String) -> ErrorKind {
         ErrorKind::UnsupportedEncryption { method: fourcc }
     } else {
         ErrorKind::TrackDropped {
-            track_id: track_id.unwrap_or(UNNAMED_TRACK_ID),
+            track_id: track_id.map_or(UNNAMED_TRACK_ID, TrackId::new),
             stream_type: None,
             fourcc: Some(fourcc),
         }
