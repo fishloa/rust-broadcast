@@ -5,7 +5,7 @@
 use std::net::SocketAddr;
 
 /// Bind `127.0.0.1:0`, returning the concrete address and the still-bound
-/// tokio listener — pass the listener to `serve_*_on`.
+/// tokio listener — pass the listener to `ServeRequest::with_prebound_*`.
 pub fn bind_tcp() -> (SocketAddr, tokio::net::TcpListener) {
     let std_listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind 127.0.0.1:0");
     std_listener.set_nonblocking(true).expect("set nonblocking");

@@ -1,6 +1,6 @@
 //! End-to-end coverage of the `InputSpec::File` route (issue #748 WP5): a
 //! file route actually streams — real media bytes in through
-//! `multimux::serve_with_registry`/`spawn_ingest`, real servable segments out
+//! `multimux::Server`/`spawn_ingest`, real servable segments out
 //! over a real HTTP `GET` of the resulting LL-HLS media playlist.
 //!
 //! This exists to prove the point of the whole work package: that a `File`
@@ -16,7 +16,6 @@ use multimux::config::{Config, InputSpec, Route};
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
 use multimux::registry::SchemeRegistry;
-use multimux::serve_with_registry_on;
 
 use crate::support::listener;
 use crate::support::shared_it::{fixture_string, poll_until_extinf};
@@ -58,7 +57,7 @@ fn file_config(bind: SocketAddr, path: String, loop_file: bool) -> Config {
 /// `#EXTINF:` line — never satisfied by `#EXT-X-MAP`/`#EXT-X-PART-INF`, so a
 /// route with zero closed segments (the `advance_route`-removed mutation)
 /// cannot pass. Generous hang guard, not a latency assertion.
-/// A `File` route serves: after `serve_with_registry` spawns its ingest
+/// A `File` route serves: after `Server` spawns its ingest
 /// (which drives the file through `advance_route`), the route's served LL-HLS
 /// media playlist carries a real closed-segment `#EXTINF:` line — not merely
 /// that samples landed in a Trunk.
@@ -78,11 +77,14 @@ async fn file_route_serves_real_media_segments() {
     let (bind_addr, bind_listener) = bind_tcp();
     let config = file_config(bind_addr, fixture_string("ts/h264-aac.ts"), false);
 
-    let server = tokio::spawn(serve_with_registry_on(
-        bind_listener,
-        config,
-        SchemeRegistry::new(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(SchemeRegistry::new())
+                .with_prebound_media(bind_listener),
+        )
+        .serve(),
+    );
 
     let client = reqwest::Client::new();
     let playlist_url = format!("http://{bind_addr}/cam/media.m3u8");
@@ -160,11 +162,14 @@ fn total_extinf_secs(playlist: &str) -> f64 {
 async fn file_route_loop_false_stops() {
     let (bind, bind_listener) = bind_tcp();
     let config = file_config(bind, fixture_string("ts/h264-aac.ts"), false);
-    let server = tokio::spawn(serve_with_registry_on(
-        bind_listener,
-        config,
-        SchemeRegistry::new(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(SchemeRegistry::new())
+                .with_prebound_media(bind_listener),
+        )
+        .serve(),
+    );
     let client = reqwest::Client::new();
     let playlist_url = format!("http://{bind}/cam/media.m3u8");
 
@@ -257,11 +262,14 @@ async fn file_route_loop_false_stops() {
 async fn file_route_loop_true_keeps_serving_and_paces_across_the_loop_point() {
     let (bind, bind_listener) = bind_tcp();
     let config = file_config(bind, fixture_string("ts/h264-aac.ts"), true);
-    let server = tokio::spawn(serve_with_registry_on(
-        bind_listener,
-        config,
-        SchemeRegistry::new(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(SchemeRegistry::new())
+                .with_prebound_media(bind_listener),
+        )
+        .serve(),
+    );
     let client = reqwest::Client::new();
     let playlist_url = format!("http://{bind}/cam/media.m3u8");
 

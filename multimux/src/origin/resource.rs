@@ -1179,7 +1179,7 @@ mod tests {
         // Parse a real SCTE-35 splice (a program-splice, so `at` is None) and
         // publish it as a Media-anchored event at the start of segment 1.
         let splice_bytes = test_fixtures::read("scte35/splice-insert-2002.bin");
-        let mut timeline = timed_metadata::Timeline::new();
+        let mut timeline = timed_metadata::Timeline::default();
         let ev = timeline.push_scte35(&splice_bytes).unwrap();
         writer.publish_event(
             ev.clone(),
@@ -1289,7 +1289,7 @@ mod tests {
         // id-less shape (`TimedEvent::id == None`) that a `time_signal`
         // produces.
         let sb = test_fixtures::read("scte35/splice-insert-2002.bin");
-        let mut timeline = timed_metadata::Timeline::new();
+        let mut timeline = timed_metadata::Timeline::default();
         let mut ev = timeline.push_scte35(&sb).unwrap();
         ev.id = None; // force the id-less shape under test
         assert_eq!(ev.id, None, "this test needs an id-less event");
@@ -1720,7 +1720,7 @@ mod tests {
             utc_epoch_ms: 1_000_000_000_000,
         });
         let splice_bytes = test_fixtures::read("scte35/splice-insert-2002.bin");
-        let mut timeline = timed_metadata::Timeline::new();
+        let mut timeline = timed_metadata::Timeline::default();
         let ev = timeline.push_scte35(&splice_bytes).unwrap();
         writer.publish_event(
             ev.clone(),

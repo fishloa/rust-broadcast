@@ -158,7 +158,7 @@ pub const DEFAULT_WINDOW_SEGMENTS: usize = 8;
 /// [`RouteHandle::name`]'s value until [`RouteHandle::with_name`] sets a real
 /// one — matches `crate::origin::mod`'s own `"unknown"` fallback token for an
 /// unrecognized route in its HTTP-path metrics labelling, so a route driven
-/// directly (skipping `crate::origin::serve_with_registry`, e.g. a bare unit
+/// directly (skipping `crate::Server`, e.g. a bare unit
 /// test) still labels its own metrics with a clearly-synthetic, never-blank
 /// value rather than an empty string.
 const DEFAULT_ROUTE_NAME: &str = "unknown";
@@ -1632,7 +1632,7 @@ impl ProgramServing {
 }
 
 /// One route's shared state — replaces the deleted `MediaStore`. Built once
-/// per configured route ([`crate::origin::serve_with_registry`]), then shared
+/// per configured route ([`crate::Server`]), then shared
 /// (via `Arc`) between whatever ingest publishes into it (every
 /// driver-backed `crate::source::*::run_*`, via `crate::source::report_driver_progress`/
 /// `crate::source::segment::drive_program_segmenters` — or the single
@@ -1843,7 +1843,7 @@ pub struct RouteHandle {
     /// `media_plane::IngestDriver` mints one `Trunk` per program the instant
     /// it observes `media_plane::SessionEvent::NewProgram`, while this
     /// `RouteHandle` is built *before* any program is known
-    /// (`crate::origin::serve_with_registry` constructs one per configured
+    /// (`crate::Server` constructs one per configured
     /// route, ahead of dialing/listening). This map is how those two
     /// lifetimes reconcile without forcing either one to change when the
     /// other becomes ready: [`RouteHandle::publish_program`] is the ingest
@@ -1877,7 +1877,7 @@ pub struct RouteHandle {
     /// recorded from code with no other way to know it (issue #809:
     /// `crate::source::segment::drive_program_segmenters`'s parts/segments
     /// counters). Defaults to [`DEFAULT_ROUTE_NAME`] until [`Self::with_name`]
-    /// sets a real one; `crate::origin::serve_with_registry` always does, for
+    /// sets a real one; `crate::Server` always does, for
     /// every production route.
     name: String,
     /// Per-route DVR config — `None` when not configured, passed to every
@@ -2000,7 +2000,7 @@ impl RouteHandle {
     }
 
     /// Names this route (see [`Self::name`]'s own field doc) — a consuming
-    /// builder so `crate::origin::serve_with_registry`'s one production call
+    /// builder so `crate::Server`'s one production call
     /// site can chain it straight onto [`Self::new`] before wrapping the
     /// result in an `Arc`.
     pub fn with_name(mut self, name: impl Into<String>) -> Self {

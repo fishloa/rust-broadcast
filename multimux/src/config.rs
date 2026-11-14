@@ -80,7 +80,7 @@ fn default_file_loop() -> bool {
 ///
 /// - [`InputSpec::Custom`] (issue #663 external scheme plugin registry) names
 ///   an external input scheme by an opaque `type_tag`, resolved at
-///   `crate::origin::serve_with_registry` time via
+///   `crate::Server` time via
 ///   [`crate::registry::SchemeRegistry::input`] — the escape hatch that lets
 ///   a third-party crate add a new ingest transport without editing this
 ///   crate. `params` is passed through unexamined to the registered factory.
@@ -468,7 +468,7 @@ impl AuthSpec {
     /// HTTP sources actually authenticate with.
     ///
     /// Called from the per-route ingest wiring in
-    /// `crate::origin::serve_with_registry` for every input kind that carries
+    /// `crate::Server` for every input kind that carries
     /// an `AuthSpec` (RTSP, TS-HTTP, HLS/DASH/Smooth pull) — see the
     /// `with_auth(auth.as_ref().map(AuthSpec::to_credentials))` call sites in
     /// `src/origin/mod.rs`.
@@ -872,7 +872,7 @@ impl OutputAuthSpec {
             }
             OutputAuthSpec::Custom { .. } => unreachable!(
                 "OutputAuthSpec::Custom cannot build a Verifier without a SchemeRegistry — \
-                 crate::origin::serve_with_registry resolves it via `registry.auth(type_tag)` \
+                 crate::Server resolves it via `registry.auth(type_tag)` \
                  before this method is ever called on a Custom variant"
             ),
         })
@@ -1234,7 +1234,7 @@ impl InputSpec {
                 (None, Some(remote)) => validate_host_port(remote),
             },
             // Always structurally valid: the registered factory (resolved at
-            // `crate::origin::serve_with_registry` time, not here) validates
+            // `crate::Server` time, not here) validates
             // `params` itself.
             InputSpec::Custom { .. } => Ok(()),
             // Path existence/reachability is checked at connect time, not
@@ -5662,7 +5662,7 @@ mod tests {
     }
 
     /// `OutputAuthSpec::Custom`'s `build_verifier` is never called by
-    /// production code (`crate::origin::serve_with_registry` resolves it via
+    /// production code (`crate::Server` resolves it via
     /// the registry first) — documented via `#[should_panic]` so a future
     /// refactor that accidentally routes a `Custom` value into
     /// `build_verifier` fails loudly instead of silently misbehaving.

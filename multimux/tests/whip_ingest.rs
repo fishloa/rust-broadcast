@@ -55,7 +55,6 @@ use multimux::config::{Config, InputSpec, Route};
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
 use multimux::registry::SchemeRegistry;
-use multimux::serve_with_registry_on;
 
 #[path = "support/listener.rs"]
 mod listener;
@@ -215,11 +214,14 @@ async fn real_browser_whip_publish_produces_llhls_segments() {
         ..Config::default()
     };
 
-    let server = tokio::spawn(serve_with_registry_on(
-        bind_listener,
-        config,
-        SchemeRegistry::new(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(SchemeRegistry::new())
+                .with_prebound_media(bind_listener),
+        )
+        .serve(),
+    );
 
     let whip_url = format!("http://{whip_addr}/whip");
     let whip_url_for_check = whip_url.clone();
@@ -303,14 +305,17 @@ async fn real_browser_whip_publish_after_the_connect_budget_still_produces_segme
         ..Config::default()
     };
 
-    let server = tokio::spawn(serve_with_registry_on(
-        bind_listener,
-        config,
-        SchemeRegistry::new(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(SchemeRegistry::new())
+                .with_prebound_media(bind_listener),
+        )
+        .serve(),
+    );
 
     // Real elapsed time since the route started is the thing under test, and
-    // `serve_with_registry` offers no clock to inject, so this real-browser
+    // `Server` offers no clock to inject, so this real-browser
     // test waits it out; the deterministic coverage of the same logic is
     // `source::SessionClocks` (shared by the RTMP and WHIP loops) and the
     // hand-clocked RTMP test `a_publisher_connecting_after_the_route_handshake_budget_still_lands`.

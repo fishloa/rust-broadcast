@@ -1,4 +1,4 @@
-//! `dash_pull` through the full `serve_with_registry_on` route: the route
+//! `dash_pull` through the full `ServeRequest::with_prebound_media` route: the route
 //! config's `allow_cross_origin` reaches the pull, and a pulled presentation
 //! produces closed segments on the LL-HLS output.
 //!
@@ -19,7 +19,6 @@ use multimux::config::{Config, InputSpec, Route};
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
 use multimux::registry::SchemeRegistry;
-use multimux::serve_with_registry_on;
 
 use crate::support::listener;
 use listener::bind_tcp;
@@ -126,11 +125,14 @@ async fn extinf_within(client: &reqwest::Client, url: &str, ceiling: Duration) -
 async fn a_route_that_allows_cross_origin_urls_pulls_the_media_from_the_other_origin() {
     let (mpd, media) = two_origins().await;
     let (bind, listener) = bind_tcp();
-    let server = tokio::spawn(serve_with_registry_on(
-        listener,
-        route_config(bind, mpd, true),
-        SchemeRegistry::new(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(route_config(bind, mpd, true))
+                .with_registry(SchemeRegistry::new())
+                .with_prebound_media(listener),
+        )
+        .serve(),
+    );
     let client = reqwest::Client::new();
     let closed = extinf_within(
         &client,
@@ -147,11 +149,14 @@ async fn a_route_that_allows_cross_origin_urls_pulls_the_media_from_the_other_or
 async fn a_route_refuses_the_other_origin_unless_it_opts_in() {
     let (mpd, media) = two_origins().await;
     let (bind, listener) = bind_tcp();
-    let server = tokio::spawn(serve_with_registry_on(
-        listener,
-        route_config(bind, mpd, false),
-        SchemeRegistry::new(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(route_config(bind, mpd, false))
+                .with_registry(SchemeRegistry::new())
+                .with_prebound_media(listener),
+        )
+        .serve(),
+    );
     let client = reqwest::Client::new();
     let closed = extinf_within(
         &client,

@@ -5,7 +5,7 @@
 //! H.264 whose GOPs open with an IDR at samples 0 and 48 and with non-IDR
 //! sync samples at 20 and 65) is demuxed, looped with rebased timestamps,
 //! re-muxed to a TS file and played through `InputSpec::File` into
-//! `serve_with_registry_on`; every segment is fetched back over a real HTTP
+//! `ServeRequest::with_prebound_media`; every segment is fetched back over a real HTTP
 //! `GET` and demuxed to check which picture it starts on.
 #![cfg(feature = "test-seams")]
 
@@ -18,7 +18,6 @@ use multimux::config::{AdminSpec, Config, InputSpec, OutputAuthSpec, Route, TsHl
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
 use multimux::registry::SchemeRegistry;
-use multimux::{serve_with_registry_on, serve_with_registry_on_admin};
 use transmux::media::{Media, Track};
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::{Fmp4Demux, NalCodec, TsDemux, TsMux, access_unit_is_idr};
@@ -171,11 +170,14 @@ fn ts_segment_starts_on_idr(bytes: &[u8]) -> bool {
 async fn served_ts_segment_starts(cut: TsHlsCutPolicy, tag: &str) -> Vec<bool> {
     let path = write_ts(tag);
     let (bind, listener) = bind_tcp();
-    let server = tokio::spawn(serve_with_registry_on(
-        listener,
-        config(bind, route(&path, vec![OutputKind::TsHls], cut)),
-        SchemeRegistry::new(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config(bind, route(&path, vec![OutputKind::TsHls], cut)))
+                .with_registry(SchemeRegistry::new())
+                .with_prebound_media(listener),
+        )
+        .serve(),
+    );
     let client = reqwest::Client::new();
     let base = format!("http://{bind}/cam");
     let (_, uris) = playlist_with_segments(&client, &base, ".ts").await;
@@ -225,12 +227,14 @@ async fn hevc_program_on_ts_hls_fails_with_typed_error() {
             token: ADMIN_TOKEN.to_string(),
         },
     });
-    let server = tokio::spawn(serve_with_registry_on_admin(
-        media_listener,
-        admin_listener,
-        cfg,
-        SchemeRegistry::new(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(cfg)
+                .with_registry(SchemeRegistry::new())
+                .with_prebound_listeners(media_listener, admin_listener),
+        )
+        .serve(),
+    );
 
     let client = reqwest::Client::new();
     let deadline = tokio::time::Instant::now() + HANG_GUARD;
@@ -308,11 +312,14 @@ fn config_option_parses_and_rejects_unknown_value() {
 async fn fmp4_first_segment(cut: TsHlsCutPolicy, tag: &str) -> (Vec<u8>, Vec<u8>) {
     let path = write_ts(tag);
     let (bind, listener) = bind_tcp();
-    let server = tokio::spawn(serve_with_registry_on(
-        listener,
-        config(bind, route(&path, vec![OutputKind::LlHls], cut)),
-        SchemeRegistry::new(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config(bind, route(&path, vec![OutputKind::LlHls], cut)))
+                .with_registry(SchemeRegistry::new())
+                .with_prebound_media(listener),
+        )
+        .serve(),
+    );
     let client = reqwest::Client::new();
     let base = format!("http://{bind}/cam");
     let (body, uris) = playlist_with_segments(&client, &base, ".m4s").await;

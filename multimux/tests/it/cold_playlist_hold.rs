@@ -21,7 +21,6 @@ use multimux::output::hls::HlsOutput;
 use multimux::output::{Output, OutputKind};
 use multimux::registry::SchemeRegistry;
 use multimux::route::RouteHandle;
-use multimux::serve_with_registry_on;
 use test_fixtures::process::{output_bounded, tool_available};
 
 use crate::support::listener::bind_tcp;
@@ -342,11 +341,14 @@ async fn wait_for_init(client: &reqwest::Client, url: &str) {
 #[tokio::test]
 async fn cold_file_route_first_answer_carries_a_segment() {
     let (bind, listener) = bind_tcp();
-    let server = tokio::spawn(serve_with_registry_on(
-        listener,
-        fixture_config(bind, false),
-        SchemeRegistry::new(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(fixture_config(bind, false))
+                .with_registry(SchemeRegistry::new())
+                .with_prebound_media(listener),
+        )
+        .serve(),
+    );
     let client = reqwest::Client::new();
     let url = format!("http://{bind}/cam/media.m3u8");
 
@@ -372,11 +374,14 @@ async fn ffmpeg_opens_a_cold_stream() {
         return;
     }
     let (bind, listener) = bind_tcp();
-    let server = tokio::spawn(serve_with_registry_on(
-        listener,
-        fixture_config(bind, true),
-        SchemeRegistry::new(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(fixture_config(bind, true))
+                .with_registry(SchemeRegistry::new())
+                .with_prebound_media(listener),
+        )
+        .serve(),
+    );
     let url = format!("http://{bind}/cam/media.m3u8");
     wait_for_init(
         &reqwest::Client::new(),

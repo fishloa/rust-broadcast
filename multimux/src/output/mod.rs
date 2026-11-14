@@ -47,7 +47,7 @@ use crate::route::RouteHandle;
 ///
 /// [`OutputKind::Custom`] (issue #663 external scheme plugin registry) names
 /// an external delivery protocol by an opaque `type_tag`, resolved at
-/// `crate::origin::serve_with_registry` time via
+/// `crate::Server` time via
 /// [`crate::registry::SchemeRegistry::output`] — the escape hatch that lets a
 /// third-party crate add a new output without editing this crate. Its
 /// `params` is a `serde_json::Value`, which is `Clone` but not `Copy`, so this
@@ -248,7 +248,7 @@ impl OutputKind {
     /// (like [`Self::is_push`]'s outputs, no [`Output`] trait object, no
     /// axum manifest routes) but, unlike a push output, one that *accepts*
     /// inbound viewer connections rather than dialing out to a fixed URL —
-    /// see `crate::origin::serve_with_registry_impl`'s output-spawning
+    /// see the serve path's output-spawning
     /// split. Defined unconditionally (returning `false` when the `whep`
     /// feature is off) so call sites never need their own `#[cfg]`.
     pub fn is_whep(&self) -> bool {
@@ -271,7 +271,7 @@ impl OutputKind {
     ///
     /// Panics if `self` is [`OutputKind::Custom`] — a custom output cannot be
     /// built without a [`crate::registry::SchemeRegistry`]; use
-    /// `crate::origin::serve_with_registry`, which resolves it via
+    /// `crate::Server`, which resolves it via
     /// `registry.output(type_tag)` instead of calling this method.
     pub fn build(&self) -> crate::Result<Arc<dyn Output>> {
         self.build_with_playlist_name(hls::DEFAULT_PLAYLIST_NAME)

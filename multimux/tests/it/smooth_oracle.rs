@@ -3,7 +3,7 @@
 //!
 //! The committed `fixtures/ts/h264-aac.ts` capture (real H.264 + AAC) is
 //! pushed through `InputSpec::TsUdp` into a `smooth` route served by
-//! `serve_with_registry`; the client Manifest and every advertised fragment
+//! `Server`; the client Manifest and every advertised fragment
 //! are then fetched back over real loopback HTTP.
 //!
 //! Two independent checks, neither of which shares our code:
@@ -102,7 +102,7 @@ struct Served {
 /// manifest advertises at least `min_chunks` chunks.
 ///
 /// Both the media listener AND the UDP input socket are bound `:0` here and
-/// handed over live (SP7.1) — the media listener into `serve_with_registry_on`
+/// handed over live (SP7.1) — the media listener into `ServeRequest::with_prebound_media`
 /// and the UDP socket into the route via `Config::prebound` — so the origin
 /// never races a reserved port. No whole-attempt retry loop is needed now that
 /// neither address can lose a bind race.

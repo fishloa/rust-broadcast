@@ -12,11 +12,11 @@
 //! [`crate::config::OutputAuthSpec::Custom`]), and a [`SchemeRegistry`] —
 //! built by the embedding application, never by multimux itself — maps each
 //! `type_tag` to a factory closure that knows how to build the real thing
-//! from the opaque `params` JSON. [`crate::origin::serve_with_registry`]
+//! from the opaque `params` JSON. [`crate::Server`]
 //! resolves `Custom` variants through the registry at route-build time;
-//! [`crate::origin::serve`] is `serve_with_registry` with an empty registry,
-//! so an unregistered `Custom` tag in a config passed to plain `serve`
-//! always fails with `MultimuxError::UnknownScheme`, never silently no-ops.
+//! a [`crate::origin::ServeRequest`] built with [`crate::origin::ServeRequest::new`]
+//! carries an empty registry, so an unregistered `Custom` tag always fails
+//! with `MultimuxError::UnknownScheme`, never silently no-ops.
 //!
 //! # Writing an input factory
 //!
@@ -70,7 +70,7 @@ pub struct InputCtx {
     pub part_target: Duration,
     /// The shared shutdown token every other route's supervisor task watches
     /// — the factory's spawned task must watch it too, so
-    /// [`crate::origin::serve_with_registry`]'s graceful shutdown actually
+    /// [`crate::Server`]'s graceful shutdown actually
     /// waits for it instead of leaving it running detached.
     pub cancel: tokio_util::sync::CancellationToken,
 }
@@ -119,7 +119,7 @@ pub type AuthFactory =
 /// thing. Empty by default ([`SchemeRegistry::new`]) — built-ins are the
 /// typed config fast path and need no registration; only an application
 /// embedding multimux that actually uses a `Custom` scheme needs to build and
-/// populate one, then pass it to [`crate::origin::serve_with_registry`].
+/// populate one, then pass it to [`crate::Server`].
 #[derive(Clone, Default)]
 pub struct SchemeRegistry {
     inputs: HashMap<String, InputFactory>,

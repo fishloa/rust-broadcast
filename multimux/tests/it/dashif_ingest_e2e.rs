@@ -6,7 +6,6 @@ use bytes::Bytes;
 use multimux::config::{Config, InputSpec, OutputAuthSpec, Route};
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
-use multimux::serve_with_registry_on;
 use transmux::FragmentTrackData;
 use transmux::dash::DashPackager;
 use transmux::pipeline::{build_init_segment, build_media_segment};
@@ -145,11 +144,14 @@ impl Rig {
         let mut prebound = multimux::config::PreboundBinds::default();
         prebound.with_tcp(ingest_addr.to_string(), ingest_listener);
         let config = config_with(bind_addr, ingest_addr, prebound, publishing_point);
-        let server = tokio::spawn(serve_with_registry_on(
-            bind_listener,
-            config,
-            multimux::registry::SchemeRegistry::new(),
-        ));
+        let server = tokio::spawn(
+            multimux::Server::new(
+                multimux::ServeRequest::new(config)
+                    .with_registry(multimux::registry::SchemeRegistry::new())
+                    .with_prebound_media(bind_listener),
+            )
+            .serve(),
+        );
         Rig {
             ingest: format!("http://{ingest_addr}"),
             origin: format!("http://{bind_addr}"),
@@ -165,11 +167,14 @@ impl Rig {
         prebound.with_tcp(ingest_addr.to_string(), ingest_listener);
         let mut config = config_with(bind_addr, ingest_addr, prebound, publishing_point);
         tweak(&mut config);
-        let server = tokio::spawn(serve_with_registry_on(
-            bind_listener,
-            config,
-            multimux::registry::SchemeRegistry::new(),
-        ));
+        let server = tokio::spawn(
+            multimux::Server::new(
+                multimux::ServeRequest::new(config)
+                    .with_registry(multimux::registry::SchemeRegistry::new())
+                    .with_prebound_media(bind_listener),
+            )
+            .serve(),
+        );
         Rig {
             ingest: format!("http://{ingest_addr}"),
             origin: format!("http://{bind_addr}"),

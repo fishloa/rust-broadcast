@@ -144,7 +144,8 @@ graceful shutdown itself. Call it from `#[tokio::main]`:
     }
 
     // SNIPPET-BEGIN
-    multimux::origin::serve(config)
+    multimux::Server::new(multimux::ServeRequest::new(config))
+        .serve()
         .await
         .expect("origin server");
 ```
@@ -152,15 +153,14 @@ graceful shutdown itself. Call it from `#[tokio::main]`:
 
 Choosing the entry point:
 
-| Call | Use when |
+| Request | Use when |
 |---|---|
-| `multimux::serve(config)` | in-memory config, built-in schemes only |
-| `multimux::serve_with_registry(config, registry)` | in-memory config, custom schemes registered |
-| `multimux::serve_config_file(path)` | config on disk (needed for `POST /admin/reload`) |
-| `multimux::serve_config_file_with_registry(path, registry)` | both |
+| `ServeRequest::new(config)` | in-memory config, built-in schemes only |
+| `.with_registry(registry)` | custom schemes registered |
+| `ServeRequest::from_json_file(path)` | config on disk (needed for `POST /admin/reload`) |
 
-All four are re-exported at the crate root (`multimux/src/lib.rs`) and defined
-in `multimux/src/origin/mod.rs`.
+`multimux::Server::new(request).serve().await` runs any of them; both types are
+re-exported at the crate root (`multimux/src/lib.rs`).
 
 **Admin API.** Opt-in via `"admin": { "bind", "auth" }` in the config — the
 listener must differ from `bind` and `auth` is mandatory (without it the

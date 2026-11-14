@@ -10,7 +10,6 @@ use multimux::config::{Config, InputSpec, Route};
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
 use multimux::registry::SchemeRegistry;
-use multimux::serve_with_registry_on;
 use transmux::validate::{Severity, validate_media_segment};
 
 fn dvr_config(tmp: &std::path::Path) -> DvrConfig {
@@ -59,11 +58,14 @@ async fn catchup_output_end_to_end() {
 
     let (bind_addr, bind_listener) = bind_tcp();
     let config = file_config(bind_addr, fixture_string("ts/h264-aac.ts"), &tmp);
-    let server = tokio::spawn(serve_with_registry_on(
-        bind_listener,
-        config,
-        SchemeRegistry::new(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(SchemeRegistry::new())
+                .with_prebound_media(bind_listener),
+        )
+        .serve(),
+    );
 
     let client = reqwest::Client::new();
     let playlist_url = format!("http://{bind_addr}/cam/catchup.m3u8");

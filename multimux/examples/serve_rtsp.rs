@@ -1,7 +1,7 @@
 //! Serve a single live RTSP source as LL-HLS and/or DASH.
 //!
 //! Builds a single-route [`multimux::config::Config`] from an RTSP URL given
-//! on the command line and hands it to [`multimux::origin::serve`] — the
+//! on the command line and hands it to [`multimux::Server`] — the
 //! same entrypoint the `multimux` CLI binary drives, minus the argument
 //! parsing.
 //!
@@ -99,7 +99,8 @@ async fn main() {
         );
     }
 
-    multimux::origin::serve(config)
+    multimux::Server::new(multimux::ServeRequest::new(config))
+        .serve()
         .await
         .expect("origin server");
 }
