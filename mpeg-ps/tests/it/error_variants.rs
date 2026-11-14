@@ -16,7 +16,8 @@ fn fixture() -> Vec<u8> {
 }
 
 fn first_pack_and_system_header_bytes(data: &[u8]) -> (Vec<u8>, Vec<u8>) {
-    let (packs, _) = program_stream::parse_all_packs(data).unwrap();
+    let scan = program_stream::scan_packs(data);
+    let packs = scan.packs;
     let ph_len = packs[0].pack_header.serialized_len();
     let sh_len = packs[0].system_header.as_ref().unwrap().serialized_len();
     (

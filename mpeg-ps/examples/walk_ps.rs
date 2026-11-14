@@ -18,7 +18,15 @@ fn main() {
             path.display()
         )
     });
-    let (packs, trailing) = program_stream::parse_all_packs(&data).unwrap();
+    let scan = program_stream::scan_packs(&data);
+    let trailing = scan.remaining;
+    let packs = scan.packs;
+    for region in &scan.skipped {
+        println!(
+            "Skipped {} bytes at offset {}: {}",
+            region.len, region.offset, region.error
+        );
+    }
 
     println!("File: {}", path.display());
     println!("Size: {} bytes", data.len());

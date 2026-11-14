@@ -26,6 +26,7 @@ const PROGRAM_END_CODE: u32 = 0x0000_01B9;
 /// `system_header()`, an optional Program Stream Map, and zero or more PES
 /// packets.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Pack<'a> {
     /// The pack header (SCR, program_mux_rate, stuffing).
     pub pack_header: PackHeader<'a>,
@@ -140,10 +141,9 @@ impl Serialize for Pack<'_> {
 /// `private_stream_1`) are not start-code-emulation-free, so a chance
 /// `00 00 01 BA` inside real payload bytes truncated the PES loop early,
 /// leaving the last real PES packet's tail unparsed and the whole pack
-/// (and, via `parse_all_packs`, the whole stream) rejected with a spurious
-/// `BufferTooShort`/`Err`. Checking for the boundary only right after a
-/// fully-parsed PES packet (by its own declared `PES_packet_length`) cannot
-/// see mid-payload emulation at all.
+/// rejected with a spurious `BufferTooShort`/`Err`. Checking for the boundary
+/// only right after a fully-parsed PES packet (by its own declared
+/// `PES_packet_length`) cannot see mid-payload emulation at all.
 fn parse_pes_loop(
     data: &[u8],
 ) -> Result<(
@@ -194,31 +194,10 @@ fn parse_pes_loop(
     Ok((packets, psm, pos))
 }
 
-/// Iterate over all packs in a Program Stream buffer.
-///
-/// Returns all packs and the remaining trailing bytes (if any).
-pub fn parse_all_packs(b: &[u8]) -> Result<(Vec<Pack<'_>>, &[u8])> {
-    let mut packs = Vec::new();
-    let mut remaining = b;
-    while remaining.len() >= 4 {
-        let (pack_opt, consumed) = parse_pack(remaining)?;
-        match pack_opt {
-            Some(pack) => {
-                remaining = &remaining[consumed..];
-                packs.push(pack);
-            }
-            None => {
-                remaining = &remaining[4..];
-                break;
-            }
-        }
-    }
-    Ok((packs, remaining))
-}
-
 /// A span of the input [`scan_packs`] skipped because the pack starting
 /// there did not parse.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SkippedRegion {
     /// Byte offset (from the start of the scanned buffer) where the failed
     /// pack began.
@@ -232,6 +211,7 @@ pub struct SkippedRegion {
 
 /// The outcome of [`scan_packs`].
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct PackScan<'a> {
     /// Every pack that parsed, in stream order.
     pub packs: Vec<Pack<'a>>,
@@ -242,8 +222,9 @@ pub struct PackScan<'a> {
     pub remaining: &'a [u8],
 }
 
-/// Walk a Program Stream like [`parse_all_packs`], but **resynchronise** after
-/// a pack that fails to parse instead of abandoning the whole stream.
+/// Walk a Program Stream, **resynchronising** after a pack that fails to
+/// parse instead of abandoning the whole stream (every pack parsed before the
+/// failure is kept).
 ///
 /// On a parse failure the failed span is recorded in
 /// [`PackScan::skipped`] (with the error, never swallowed) and scanning

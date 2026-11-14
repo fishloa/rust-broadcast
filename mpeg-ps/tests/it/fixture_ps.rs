@@ -1,6 +1,6 @@
 use broadcast_common::Parse;
+use mpeg_ps::SystemHeader;
 use mpeg_ps::program_stream;
-use mpeg_ps::{Error, SystemHeader};
 
 // Fixture: ffmpeg -f lavfi -i testsrc2=duration=1:size=352x288:rate=25 -f lavfi -i sine=frequency=440:duration=1 -c:v mpeg2video -c:a mp2 -f vob -y fixtures/ps/ffmpeg-mpeg2-ps.mpg
 
@@ -11,7 +11,14 @@ fn fixture() -> Vec<u8> {
 #[test]
 fn real_fixture_walk() {
     let data = fixture();
-    let (packs, trailing) = program_stream::parse_all_packs(&data).unwrap();
+    let scan = program_stream::scan_packs(&data);
+    let trailing = scan.remaining;
+    let packs = scan.packs;
+    assert!(
+        scan.skipped.is_empty(),
+        "the committed fixture must scan without a skipped region: {:?}",
+        scan.skipped
+    );
 
     // 7 pack headers expected
     assert!(
@@ -182,21 +189,17 @@ fn scan_packs_resyncs_after_a_corrupt_pack_and_reports_it() {
     let clean = fixture();
     let offsets = pack_offsets(&clean);
     assert!(offsets.len() >= 7);
-    let (clean_packs, _) = program_stream::parse_all_packs(&clean).unwrap();
+    let clean_scan = program_stream::scan_packs(&clean);
+    assert!(clean_scan.skipped.is_empty());
+    let clean_packs = clean_scan.packs;
 
-    // A clean stream scans identically to parse_all_packs, nothing skipped.
-    let scan = program_stream::scan_packs(&clean);
-    assert_eq!(scan.packs.len(), clean_packs.len());
-    assert!(scan.skipped.is_empty());
+    // The length-driven walk and the scan find the same packs.
+    assert_eq!(pack_offsets(&clean).len(), clean_packs.len());
 
     // 1. Destroy pack #2's start code (its first byte 0x00 -> 0xFF, so the
     //    preceding pack's PES loop also stops there).
     let mut bad = clean.clone();
     bad[offsets[2]] = 0xFF;
-    assert!(matches!(
-        program_stream::parse_all_packs(&bad),
-        Err(Error::BadPackStartCode(_))
-    ));
     let scan = program_stream::scan_packs(&bad);
     assert_eq!(scan.packs.len(), clean_packs.len() - 1);
     assert_eq!(scan.skipped.len(), 1);
