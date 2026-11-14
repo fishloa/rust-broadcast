@@ -29,7 +29,7 @@ orchestrator that owns the clock and the media.
   `broadcast_hls::mark_init_discontinuities` would act on `discontinuity` at the
   playlist level; neither is a dependency here.
 - No boundary conditioning of its own: it delegates to
-  `ssai_runtime::splice::condition_splice_point_wrapping` so two implementations
+  `ssai_runtime::splice::condition_splice_point` so two implementations
   cannot disagree about the same boundary.
 - No schedule wire format and no SCTE 224 (ESNI): the schedule is an in-memory
   model of our own (there is no `Parse` / `Serialize` pair; SCTE 224 covers
@@ -54,11 +54,13 @@ orchestrator that owns the clock and the media.
 ## Quick start
 
 ```rust
+use broadcast_common::clock33::Clock33;
 use broadcast_common::timescale::Timescale;
 use playout_runtime::{
     BreakEdge, CodecConfigId, EntryKind, Playhead, Schedule, ScheduleEntry, build_splice_insert,
     next_transition,
 };
+use std::time::Duration;
 
 let mut schedule = Schedule::new();
 schedule
@@ -91,16 +93,18 @@ assert_eq!(t.plan.rebase(5_000), Some(54_000_000));
 
 // The splice_insert() that entering the break implies, snapped to the nearest
 // real boundary (2_000 ticks before the nominal instant beats 3_000 after).
+let clock = |ticks| Clock33::try_new(ticks).unwrap();
+let ticks = |n: u64| Duration::from_nanos(n * 1_000_000_000 / 90_000);
 let (point, insert) = build_splice_insert(
     BreakEdge::Enter,
     1,
-    t.plan.at_pts,
-    &[53_998_000, 54_003_000],
-    5_000,
-    Some(2_700_000),
+    clock(t.plan.at_pts),
+    &[clock(53_998_000), clock(54_003_000)],
+    ticks(5_000),
+    Some(ticks(2_700_000)),
 )
 .unwrap();
-assert_eq!(point.snapped_pts, 53_998_000);
+assert_eq!(point.snapped_pts, clock(53_998_000));
 assert!(insert.out_of_network_indicator);
 ```
 
@@ -115,10 +119,12 @@ assert!(insert.out_of_network_indicator);
   `discontinuity`; `TransitionPlan::rebase` maps a source PTS onto the channel
   timeline (`None` rather than wrapping out of range) and `rebase_wrapped`
   unrolls a raw 33-bit PTS first.
-- **`scte35`**: `build_splice_insert(BreakEdge, event_id, requested_pts,
-  candidates, max_delta_ticks, break_duration_ticks)` returns the
-  `ConditionedSplicePoint` and the `SpliceInsert`; `to_section` wraps it in a
-  clear `SpliceInfoSection`. Distances are circular modulo 2^33.
+- **`scte35`**: `build_splice_insert(BreakEdge, event_id, requested_pts:
+  Clock33, candidates: &[Clock33], max_delta: Duration, break_duration:
+  Option<Duration>)` returns the `ConditionedSplicePoint` and the
+  `SpliceInsert`; `to_section` wraps it in a clear `SpliceInfoSection`.
+  Distances are circular on the 33-bit PTS clock, and the reported point and
+  the cue's `pts_time` name the same boundary.
 - **`error`**: `Error` (including `SpliceConditioning`).
 
 ### Timeline continuity: the primary tested property

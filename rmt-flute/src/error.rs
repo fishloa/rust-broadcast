@@ -20,6 +20,9 @@ pub enum Error {
     /// A reserved / version field carried an unexpected value.
     #[error(transparent)]
     InvalidField(#[from] broadcast_common::error::InvalidField),
+    /// A format version this crate does not implement.
+    #[error(transparent)]
+    UnsupportedVersion(#[from] broadcast_common::error::UnsupportedVersion),
     /// A header-extension was malformed (bad HET/HEL or truncated content).
     #[error("invalid header extension: {reason}")]
     InvalidExtension {

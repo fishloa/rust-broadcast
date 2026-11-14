@@ -312,9 +312,22 @@ mod tests {
     /// typed error, never a `panic!` a caller cannot see in the signature.
     #[test]
     fn a_zero_timescale_is_an_error_from_every_runtime_constructor() {
-        assert!(Timescale::try_new(0).is_err());
-        assert!(Timescale::try_from(0u32).is_err());
-        assert_eq!(Timescale::new(0), None);
+        assert_eq!(
+            Timescale::try_new(0).map(Timescale::get),
+            Err(InvalidValue {
+                field: "timescale",
+                value: 0,
+                reason: "must be non-zero",
+            })
+        );
+        assert_eq!(
+            Timescale::try_from(0u32).map(Timescale::get),
+            Err(InvalidValue {
+                field: "timescale",
+                value: 0,
+                reason: "must be non-zero",
+            })
+        );
     }
 
     /// The literal macro builds the value it names, in a `const` item and in an
@@ -332,7 +345,7 @@ mod tests {
     /// typed error naming the field instead of flattening it to `1`.
     #[test]
     fn zero_timescale_is_rejected_not_flattened_to_one() {
-        assert_eq!(Timescale::new(0), None);
+        assert!(Timescale::try_new(0).is_err());
         let err = Timescale::try_new(0).expect_err("a zero timescale is an error");
         assert_eq!(err.field, "timescale");
         assert_eq!(err.value, 0);

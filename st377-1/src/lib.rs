@@ -59,8 +59,8 @@ pub use timecode_component::TimecodeComponent;
 pub use track::{EventTrack, StaticTrack, TimelineTrack};
 pub use types::{
     Auid, MxfTimestamp, PRODUCT_VERSION_LEN, PackageId, ProductVersion, RATIONAL_LEN, Rational,
-    ReleaseType, StrongRef, TIMESTAMP_LEN, UlBytes, decode_utf16_be, encode_utf16_be,
-    parse_uid_batch, serialize_uid_batch,
+    ReleaseType, StrongRef, TIMESTAMP_LEN, UidBatch, UlBytes, decode_utf16_be, encode_utf16_be,
+    serialize_uid_batch,
 };
 
 // Re-exported so downstream code can build owned local-set item lists for

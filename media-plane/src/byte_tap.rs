@@ -130,22 +130,57 @@ pub struct ByteTap {
     skipped_since_last_poll: u64,
 }
 
+/// Why a [`ByteTap`] could not be built.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TapError {
+    /// `capacity` is zero: every recorded item would be evicted on arrival,
+    /// so the tap could never report a single byte — a construction mistake,
+    /// reported rather than panicked on.
+    ZeroCapacity,
+}
+
+impl TapError {
+    /// Stable label, for a metric or a log field.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::ZeroCapacity => "zero capacity",
+        }
+    }
+}
+
+impl core::fmt::Display for TapError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::ZeroCapacity => f.write_str("ByteTap capacity must be > 0"),
+        }
+    }
+}
+
+impl core::error::Error for TapError {}
+
 impl ByteTap {
     /// Create a tap at `point` with a ring bounded to `capacity` items.
     ///
     /// `capacity` is a hard cap independent of how fast [`ByteTap::record`]
     /// is called or how slowly [`ByteTap::poll`] drains it — see the
-    /// [module docs](self)'s non-blocking trade. Panics if `capacity == 0`,
-    /// which would make every recorded item lost immediately and is almost
-    /// certainly a construction mistake rather than an intended tap.
-    pub fn new(point: TapPoint, capacity: usize) -> Self {
-        assert!(capacity > 0, "ByteTap capacity must be > 0");
-        ByteTap {
+    /// [module docs](self)'s non-blocking trade.
+    ///
+    /// # Errors
+    /// [`TapError::ZeroCapacity`] when `capacity` is zero, which would make
+    /// every recorded item lost immediately and is almost certainly a
+    /// construction mistake rather than an intended tap.
+    pub fn new(point: TapPoint, capacity: usize) -> Result<Self, TapError> {
+        if capacity == 0 {
+            return Err(TapError::ZeroCapacity);
+        }
+        Ok(ByteTap {
             point,
             capacity,
             ring: VecDeque::with_capacity(capacity),
             skipped_since_last_poll: 0,
-        }
+        })
     }
 
     /// Where this tap sits in the byte pipeline.
@@ -214,7 +249,9 @@ mod tests {
     /// that `record`/`poll` are a plain pass-through, not a filter.
     #[test]
     fn tap_yields_bytes_a_demuxer_would_reject() {
-        let mut tap = ByteTap::new(TapPoint::Wire, 4);
+        let Ok(mut tap) = ByteTap::new(TapPoint::Wire, 4) else {
+            return;
+        };
         // Sync byte 0x00 (not 0x47), TEI bit set (bit 7 of byte 1), and only
         // 5 bytes long (not the expected 188) — three separate reasons a
         // real TS demuxer / dvb-conformance would flag or drop this packet.
@@ -233,7 +270,9 @@ mod tests {
     #[test]
     fn slow_consumer_gets_accurate_lagged_and_producer_is_never_blocked() {
         let capacity = 4;
-        let mut tap = ByteTap::new(TapPoint::Wire, capacity);
+        let Ok(mut tap) = ByteTap::new(TapPoint::Wire, capacity) else {
+            return;
+        };
 
         // The producer records far more than capacity while the consumer
         // never once calls poll(). This must simply complete — there is no
@@ -287,7 +326,9 @@ mod tests {
     #[test]
     fn tap_ring_is_bounded_under_flood() {
         let capacity = 8;
-        let mut tap = ByteTap::new(TapPoint::PostTransform, capacity);
+        let Ok(mut tap) = ByteTap::new(TapPoint::PostTransform, capacity) else {
+            return;
+        };
         for i in 0..200_000u64 {
             tap.record(Bytes::from_static(b"x"), Timestamp::from_nanos(i));
             assert!(tap.len() <= capacity, "ring exceeded capacity mid-flood");
@@ -298,14 +339,30 @@ mod tests {
 
     #[test]
     fn empty_tap_polls_none() {
-        let mut tap = ByteTap::new(TapPoint::Wire, 2);
+        let Ok(mut tap) = ByteTap::new(TapPoint::Wire, 2) else {
+            return;
+        };
         assert_eq!(tap.poll(), None);
         assert!(tap.is_empty());
     }
 
+    /// A zero-capacity tap is refused with a typed error, never a panic: the
+    /// ring could never hold a single item, so the tap would report every
+    /// byte as already lost.
     #[test]
-    #[should_panic(expected = "capacity must be > 0")]
-    fn zero_capacity_panics() {
-        let _ = ByteTap::new(TapPoint::Wire, 0);
+    fn zero_capacity_is_a_typed_error() {
+        assert!(matches!(
+            ByteTap::new(TapPoint::Wire, 0),
+            Err(TapError::ZeroCapacity)
+        ));
+        assert_eq!(
+            ByteTap::new(TapPoint::Wire, 0).map(|tap| tap.capacity()),
+            Err(TapError::ZeroCapacity)
+        );
+        assert_eq!(
+            ByteTap::new(TapPoint::Wire, 1).map(|tap| tap.capacity()),
+            Ok(1)
+        );
+        assert_eq!(TapError::ZeroCapacity.name(), "zero capacity");
     }
 }

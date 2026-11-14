@@ -10,11 +10,12 @@ use broadcast_common::Parse;
 
 use crate::error::{Error, Result};
 use crate::local_set::{LocalSet, StructuralSetKind};
+use crate::sets::batch_bytes;
 use crate::sets::{
     InterchangeObjectFields, LocalSetOwnedItem, collect_dark, get_optional_fixed, get_optional_raw,
     get_required_fixed, get_required_raw,
 };
-use crate::types::{MxfTimestamp, UlBytes, parse_uid_batch, serialize_uid_batch};
+use crate::types::{MxfTimestamp, UidBatch, UlBytes};
 
 // ORDER: Annex A.2 property-table order (spec clause order), not numeric.
 /// Local tag: Last Modified Date (A.2).
@@ -64,7 +65,7 @@ pub const VERSION_1_3: u16 = 0x0103;
 /// consulted to learn which tag a given file used) are preserved
 /// byte-for-byte in `dark` rather than individually typed in this first
 /// pass — see `private/specs-verified/smpte/st377-1/st377-1.md`'s Scope section.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Preface {
     /// Interchange Object (A.1) base properties.
     pub interchange: InterchangeObjectFields,
@@ -87,6 +88,9 @@ pub struct Preface {
     /// `Vec`, so serialize always re-emitted the property even when the
     /// source never had it, breaking the round-trip.
     pub identifications: Option<Vec<UlBytes>>,
+    /// The Identifications Batch exactly as parsed (`None` when the property
+    /// is absent or freshly built).
+    pub identifications_batch: Option<UidBatch>,
     /// Content Storage (`0x3B03`, Req) — strong reference to the
     /// `ContentStorage` Set.
     pub content_storage: UlBytes,
@@ -96,14 +100,53 @@ pub struct Preface {
     /// EssenceContainers (`0x3B0A`, Req) — Batch of Essence Container ULs
     /// used in/referenced by this file.
     pub essence_containers: Vec<UlBytes>,
+    /// The EssenceContainers Batch exactly as parsed (`None` for a freshly
+    /// built value).
+    pub essence_containers_batch: Option<UidBatch>,
     /// DM Schemes (`0x3B0B`, Req) — Batch of Descriptive Metadata Scheme
     /// ULs used in this file.
     pub dm_schemes: Vec<UlBytes>,
+    /// The DMSchemes Batch exactly as parsed (`None` for a freshly built
+    /// value).
+    pub dm_schemes_batch: Option<UidBatch>,
     /// Every other property found on parse, including any "dyn"-tagged
     /// optional property (`ApplicationSchemes`/`IsRIPPresent`) and any
     /// private/dark extension — preserved byte-for-byte, not decoded.
     pub dark: Vec<(u16, Vec<u8>)>,
 }
+
+impl PartialEq for Preface {
+    fn eq(&self, other: &Self) -> bool {
+        self.interchange == other.interchange
+            && self.last_modified_date == other.last_modified_date
+            && self.version == other.version
+            && self.object_model_version == other.object_model_version
+            && self.primary_package == other.primary_package
+            && self.identifications == other.identifications
+            && match (&self.identifications_batch, &other.identifications_batch) {
+                (Some(a), Some(b)) => a.header() == b.header(),
+                _ => true,
+            }
+            && self.content_storage == other.content_storage
+            && self.operational_pattern == other.operational_pattern
+            && self.essence_containers == other.essence_containers
+            && match (
+                &self.essence_containers_batch,
+                &other.essence_containers_batch,
+            ) {
+                (Some(a), Some(b)) => a.header() == b.header(),
+                _ => true,
+            }
+            && self.dm_schemes == other.dm_schemes
+            && match (&self.dm_schemes_batch, &other.dm_schemes_batch) {
+                (Some(a), Some(b)) => a.header() == b.header(),
+                _ => true,
+            }
+            && self.dark == other.dark
+    }
+}
+
+impl Eq for Preface {}
 
 impl<'a> Parse<'a> for Preface {
     type Error = Error;
@@ -134,9 +177,10 @@ impl<'a> Parse<'a> for Preface {
                 .map(u32::from_be_bytes);
         let primary_package =
             get_optional_fixed::<16>(items, TAG_PRIMARY_PACKAGE, "Primary Package")?;
-        let identifications = get_optional_raw(items, TAG_IDENTIFICATIONS)
-            .map(parse_uid_batch)
+        let identifications_batch = get_optional_raw(items, TAG_IDENTIFICATIONS)
+            .map(UidBatch::parse)
             .transpose()?;
+        let identifications = identifications_batch.as_ref().map(|b| b.items().to_vec());
         let content_storage =
             get_required_fixed::<16>(items, TAG_CONTENT_STORAGE, "Content Storage", "Preface")?;
         let operational_pattern = get_required_fixed::<16>(
@@ -145,18 +189,20 @@ impl<'a> Parse<'a> for Preface {
             "Operational Pattern",
             "Preface",
         )?;
-        let essence_containers = parse_uid_batch(get_required_raw(
+        let essence_containers_batch = UidBatch::parse(get_required_raw(
             items,
             TAG_ESSENCE_CONTAINERS,
             "EssenceContainers",
             "Preface",
         )?)?;
-        let dm_schemes = parse_uid_batch(get_required_raw(
+        let essence_containers = essence_containers_batch.items().to_vec();
+        let dm_schemes_batch = UidBatch::parse(get_required_raw(
             items,
             TAG_DM_SCHEMES,
             "DM Schemes",
             "Preface",
         )?)?;
+        let dm_schemes = dm_schemes_batch.items().to_vec();
         let dark = collect_dark(items, &KNOWN_TAGS);
 
         Ok(Preface {
@@ -166,10 +212,13 @@ impl<'a> Parse<'a> for Preface {
             object_model_version,
             primary_package,
             identifications,
+            identifications_batch,
             content_storage,
             operational_pattern,
             essence_containers,
+            essence_containers_batch: Some(essence_containers_batch),
             dm_schemes,
+            dm_schemes_batch: Some(dm_schemes_batch),
             dark,
         })
     }
@@ -205,7 +254,7 @@ impl Preface {
         if let Some(ref ids) = self.identifications {
             out.push(LocalSetOwnedItem::owned(
                 TAG_IDENTIFICATIONS,
-                serialize_uid_batch(ids),
+                batch_bytes(self.identifications_batch.as_ref(), ids),
             ));
         }
         out.push(LocalSetOwnedItem::fixed(
@@ -218,11 +267,14 @@ impl Preface {
         ));
         out.push(LocalSetOwnedItem::owned(
             TAG_ESSENCE_CONTAINERS,
-            serialize_uid_batch(&self.essence_containers),
+            batch_bytes(
+                self.essence_containers_batch.as_ref(),
+                &self.essence_containers,
+            ),
         ));
         out.push(LocalSetOwnedItem::owned(
             TAG_DM_SCHEMES,
-            serialize_uid_batch(&self.dm_schemes),
+            batch_bytes(self.dm_schemes_batch.as_ref(), &self.dm_schemes),
         ));
         out
     }
@@ -256,10 +308,13 @@ mod tests {
             object_model_version: Some(1),
             primary_package: Some([0x33; 16]),
             identifications: Some(alloc::vec![[0x44; 16]]),
+            identifications_batch: None,
             content_storage: [0x55; 16],
             operational_pattern: [0x66; 16],
             essence_containers: alloc::vec![[0x77; 16]],
+            essence_containers_batch: None,
             dm_schemes: Vec::new(),
+            dm_schemes_batch: None,
             dark: Vec::new(),
         }
     }

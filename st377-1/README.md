@@ -87,6 +87,7 @@ let pack = PartitionPack {
     body_sid: 0,
     operational_pattern: [0u8; 16],
     essence_containers: Vec::new(),
+    essence_containers_batch: None,
     len_size: BerLength::Minimal,
 };
 let bytes = pack.try_to_bytes().unwrap();

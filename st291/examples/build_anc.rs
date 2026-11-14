@@ -20,9 +20,7 @@ fn main() {
                 horizontal_offset: 0,
                 did: 0x161,
                 sdid: 0x101,
-                data_count: 0x002, // low 8 bits => 2 user_data_words
                 user_data_words: vec![0x2CF, 0x101],
-                checksum: 0x233,
             },
             AncPacket {
                 c_not_y_channel_flag: true,
@@ -30,9 +28,7 @@ fn main() {
                 horizontal_offset: 0x10,
                 did: 0x241,
                 sdid: 0x102,
-                data_count: 0x003, // 3 user_data_words
                 user_data_words: vec![0x111, 0x222, 0x333],
-                checksum: 0x1AB,
             },
         ],
         stuffing_bytes: 4,
@@ -52,9 +48,9 @@ fn main() {
             anc.horizontal_offset,
             anc.did,
             anc.sdid,
-            anc.data_count,
-            anc.udw_loop_count(),
-            anc.checksum,
+            anc.data_count().unwrap(),
+            anc.udw_loop_count().unwrap(),
+            anc.checksum().unwrap(),
         );
     }
     println!("stuffing bytes: {}", pkt.stuffing_bytes);

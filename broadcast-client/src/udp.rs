@@ -2,6 +2,7 @@
 //! socket, the multicast join it performs, the reorder settings and the counters a session keeps.
 
 use alloc::string::String;
+use core::time::Duration;
 
 use broadcast_common::net::UdpOptions;
 
@@ -26,14 +27,14 @@ pub struct UdpConfig {
     /// RTP only: most packets the reorder buffer holds while it waits for a missing one.
     pub reorder_packets: usize,
     /// RTP only: longest a held packet waits for the missing one before the gap is counted lost.
-    pub reorder_wait_us: u64,
+    pub reorder_wait: Duration,
 }
 
 /// Default [`UdpConfig::reorder_packets`]: about 190 ms of a 10 Mbit/s stream (7 TS packets per
 /// RTP packet), more than the reordering ordinary IP paths produce.
 pub const DEFAULT_REORDER_PACKETS: usize = 128;
-/// Default [`UdpConfig::reorder_wait_us`]: 100 ms.
-pub const DEFAULT_REORDER_WAIT_US: u64 = 100_000;
+/// Default [`UdpConfig::reorder_wait`]: 100 ms.
+pub const DEFAULT_REORDER_WAIT: Duration = Duration::from_millis(100);
 /// Largest [`UdpConfig::reorder_packets`]: the window must stay well inside the signed half of
 /// the 16-bit RTP sequence space so "ahead" and "behind" are never ambiguous.
 pub const MAX_REORDER_PACKETS: usize = 8_192;
@@ -44,7 +45,7 @@ impl Default for UdpConfig {
             options: UdpOptions::default(),
             sdp: None,
             reorder_packets: DEFAULT_REORDER_PACKETS,
-            reorder_wait_us: DEFAULT_REORDER_WAIT_US,
+            reorder_wait: DEFAULT_REORDER_WAIT,
         }
     }
 }
@@ -55,8 +56,8 @@ impl UdpConfig {
         if self.reorder_packets == 0 || self.reorder_packets > MAX_REORDER_PACKETS {
             return invalid("udp.reorder_packets");
         }
-        if self.reorder_wait_us == 0 {
-            return invalid("udp.reorder_wait_us");
+        if self.reorder_wait.is_zero() {
+            return invalid("udp.reorder_wait");
         }
         Ok(())
     }

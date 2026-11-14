@@ -258,10 +258,7 @@ mod tests {
         sched
             .push(entry("ad-1", EntryKind::Ad, 90_000, 0, 2))
             .unwrap();
-        let clock = match Timescale::new(90_000) {
-            Some(clock) => clock,
-            None => return,
-        };
+        let clock = broadcast_common::timescale!(90_000);
         let name = |t: &PlannedTransition<'_>| t.from.id.clone();
         let before = next_transition(&sched, Playhead::new(500, Timescale::MICROS));
         let after = next_transition(&sched, Playhead::new(4_500, clock));

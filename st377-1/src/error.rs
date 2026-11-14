@@ -91,6 +91,10 @@ pub enum Error {
         /// Actual remaining buffer length after the 8-byte header.
         buffer_len: usize,
     },
+    /// A count or length did not fit its wire width (it would otherwise be
+    /// silently truncated by the narrowing cast).
+    #[error(transparent)]
+    FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
     /// A UTF-16 string property contained an invalid UTF-16 code unit
     /// sequence (unpaired surrogate).
     #[error("invalid UTF-16 in property {tag:#06X} ({name})")]

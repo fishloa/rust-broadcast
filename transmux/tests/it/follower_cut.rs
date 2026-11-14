@@ -888,7 +888,7 @@ fn follow_part_rejects_invalid_boundaries_with_typed_errors() {
     let mut f = part_follower();
     // A zero timescale is refused by the type, not by a runtime check here:
     // `follow_part` takes a non-zero `Timescale`.
-    assert!(Timescale::new(0).is_none());
+    assert!(Timescale::try_new(0).is_err());
     f.follow_part(
         broadcast_hls::MediaSequence::new(2),
         broadcast_hls::PartIndex::new(0),

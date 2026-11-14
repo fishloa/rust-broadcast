@@ -23,7 +23,7 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
     let (head, body) = data.split_at(TIMING_LEN);
-    let Some(timescale) = Timescale::new(u32::from_le_bytes(head[0..4].try_into().unwrap())) else {
+    let Ok(timescale) = Timescale::try_new(u32::from_le_bytes(head[0..4].try_into().unwrap())) else {
         return;
     };
     let timing = SegmentTiming {

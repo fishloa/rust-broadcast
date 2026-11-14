@@ -25,8 +25,11 @@ SMPTE ST 2038) or as an RTP stream (SMPTE ST 2110-40 IP facilities).
 - It does **not** interpret the payload. `DID`/`SDID` and the user data words
   are opaque; there is no CEA-708 / AFD / ST 12-2 timecode / SCTE 104
   decoding here.
-- It does **not** validate parity or checksum on parse: a bit-flipped packet
-  still parses `Ok`, and the caller opts in with `verify_checksum()`.
+- It does **not** validate word parity on parse: a packet with flipped parity
+  bits still parses `Ok`, and the caller opts in with `verify_parity()` /
+  `validate()`. `Data_Count` and `Checksum_Word`, being derived values, are
+  checked against the fields they derive from (a disagreement is a
+  `DataCountMismatch` / `ChecksumMismatch`).
 - It does **not** implement the SDI wire (ST 292/424 HANC/VANC word packing),
   the ST 2110-40 SDP/session layer, or the RTP fixed header (that is the
   `rtp-packet` crate's job).
@@ -70,9 +73,7 @@ let pkt = AncDataPacket {
         horizontal_offset: 0,
         did: 0x161,
         sdid: 0x101,
-        data_count: 0x002,
         user_data_words: vec![0x2CF, 0x101],
-        checksum: 0x233,
     }],
     stuffing_bytes: 0,
 };
@@ -101,13 +102,7 @@ let payload = AncRtpPayload {
         horizontal_offset: 0,
         s: false,
         stream_num: 0,
-        content: AncContent {
-            did: 0x161,
-            sdid: 0x101,
-            data_count: 0x002,
-            user_data_words: vec![0x2CF, 0x101],
-            checksum: 0x233,
-        },
+        content: AncContent::build(0x61, 0x01, &[0xCF, 0x01]).unwrap(),
     }],
 };
 let mut bytes = vec![0u8; payload.serialized_len()];
@@ -123,13 +118,16 @@ More runnable programs: `cargo run -p st291 --example build_anc`,
 
 ## What is implemented
 
-- **Shared content** (`AncContent`): `DID`, `SDID`, `data_count`,
-  `user_data_words`, `checksum`, all stored as raw 10-bit values (parity bits
-  included). The `user_data_word` loop counter uses the low 8 bits of
-  `data_count`; a mismatch with `user_data_words.len()` is rejected on
-  serialize (`Error::InconsistentUdwLength`). Helpers: `with_parity`,
-  `compute_checksum`, `verify_checksum`, `build`.
-- **`ts` transport**: `AncDataDescriptor` (PMT ES-loop descriptor, tag
+- **Shared content** (`AncContent`): `DID`, `SDID`, `user_data_words`,
+  `data_count`, `checksum`, all as raw 10-bit values (parity bits included).
+  `data_count` and `checksum` are derived from the other fields (ST 291-1:2011
+  §6.5/§6.7), so `AncPacket` stores neither: they are recomputed on serialize
+  and a parsed packet whose stored words disagree is rejected
+  (`Error::DataCountMismatch` / `Error::ChecksumMismatch`). Helpers:
+  `with_parity`, `compute_checksum`, `verify_checksum`, `build`.
+- **`ts` transport**: the PES header is parsed and written by the shared
+  `mpeg-pes` codec (`mpeg_pes::PesPacket`), then ST 2038's pinned fields are
+  validated. `AncDataDescriptor` (PMT ES-loop descriptor, tag
   `0xC4`, with its `"VANC"` format identifier and `ANC_STREAM_TYPE` constants);
   `AncDataPacket` (PES packet, `stream_id` `0xBD`, PTS,
   `PES_header_data_length == 5`) holding a list of `AncPacket` (adds
