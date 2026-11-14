@@ -1108,13 +1108,13 @@ impl RtspSource {
         match self.next_notice_at {
             None => {
                 self.next_notice_at = now.checked_add(Duration::from_secs(1));
-                self.push_stalled(idle.as_secs());
+                self.push_stalled(idle);
             }
             Some(mut next) => {
                 let mut emitted = 0u32;
                 while now >= next && emitted < MAX_STALL_NOTICES_PER_POLL {
                     let elapsed = next.saturating_sub(self.last_byte_at);
-                    self.push_stalled(elapsed.as_secs());
+                    self.push_stalled(elapsed);
                     // At the end of the clock there is no later notice: stop here.
                     let Some(later) = next.checked_add(Duration::from_secs(1)) else {
                         break;
@@ -1138,9 +1138,9 @@ impl RtspSource {
         false
     }
 
-    fn push_stalled(&mut self, secs: u64) {
+    fn push_stalled(&mut self, stalled: Duration) {
         self.events
-            .push_back(Event::Status(Status::Stalled { secs }));
+            .push_back(Event::Status(Status::Stalled { stalled }));
         self.stalled = true;
     }
 

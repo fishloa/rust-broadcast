@@ -40,8 +40,8 @@ const CMD_FC_PUBLISH: &str = "FCPublish";
 /// `play` Start argument (§7.2.2.1): `-2` plays the live stream of that name, else a recorded
 /// one, else waits for a live one.
 const PLAY_START_LIVE_OR_RECORDED: f64 = -2.0;
-/// Default playback buffer length announced with SetBufferLength before `play` (§6.7), ms.
-pub const DEFAULT_PLAY_BUFFER_MS: u32 = 3_000;
+/// Default playback buffer length announced with SetBufferLength before `play` (§6.7).
+pub const DEFAULT_PLAY_BUFFER: core::time::Duration = core::time::Duration::from_secs(3);
 const STATUS_PLAY_START: &str = "NetStream.Play.Start";
 const STATUS_PLAY_STOP: &str = "NetStream.Play.Stop";
 const STATUS_PLAY_COMPLETE: &str = "NetStream.Play.Complete";
@@ -80,8 +80,8 @@ pub struct RtmpClientConfig {
     /// Publish (default) or play.
     pub mode: ClientMode,
     /// Playback buffer length announced to the server before `play` (§6.7 SetBufferLength),
-    /// milliseconds. Play mode only.
-    pub play_buffer_ms: u32,
+    /// sent as whole milliseconds on the wire. Play mode only.
+    pub play_buffer: core::time::Duration,
     /// Outbound chunk size (§5.4.1).
     pub chunk_size: u32,
     /// Window Acknowledgement Size (§5.4.4).
@@ -106,7 +106,7 @@ impl core::fmt::Debug for RtmpClientConfig {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("RtmpClientConfig")
             .field("mode", &self.mode)
-            .field("play_buffer_ms", &self.play_buffer_ms)
+            .field("play_buffer", &self.play_buffer)
             .field("chunk_size", &self.chunk_size)
             .field("window_ack_size", &self.window_ack_size)
             .field("app", &self.app)
@@ -121,7 +121,7 @@ impl Default for RtmpClientConfig {
     fn default() -> Self {
         Self {
             mode: ClientMode::Publish,
-            play_buffer_ms: DEFAULT_PLAY_BUFFER_MS,
+            play_buffer: DEFAULT_PLAY_BUFFER,
             chunk_size: 4096,
             window_ack_size: 2_500_000,
             app: String::new(),
@@ -579,7 +579,7 @@ impl ClientSession {
         let mut out = Vec::new();
         let buffer = UserControl::SetBufferLength {
             stream_id,
-            buffer_ms: self.config.play_buffer_ms,
+            buffer_ms: u32::try_from(self.config.play_buffer.as_millis()).unwrap_or(u32::MAX),
         };
         out.extend_from_slice(&self.writer.write(&buffer.to_message())?);
         let cmd = Command {

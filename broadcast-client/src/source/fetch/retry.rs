@@ -343,7 +343,8 @@ impl RefusedCapture {
     pub(crate) fn into_event(self) -> Event {
         Event::ServerRefused {
             status: self.status,
-            retry_after_us: (self.retry_after_us > 0).then_some(self.retry_after_us),
+            retry_after: (self.retry_after_us > 0)
+                .then(|| Duration::from_micros(self.retry_after_us)),
             reason: sanitize_refused_reason(self.content_type.as_deref(), &self.body),
         }
     }
@@ -615,6 +616,16 @@ mod tests {
             retry_after_us(503, &h, at(0), Some(&anchor)),
             0,
             "a URL past 584 557 AD is a past date, never a 584 557-year wait"
+        );
+    }
+
+    #[test]
+    fn a_seconds_long_wait_keeps_its_milliseconds() {
+        let h = header("Retry-After", "4");
+        assert_eq!(
+            retry_after_us(503, &h, at(NOW), Some(&anchored())),
+            4_000_000,
+            "a server wait is a whole span, not whole seconds"
         );
     }
 

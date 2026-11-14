@@ -9,8 +9,10 @@
 
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
+use std::time::Duration;
 use transmux::dovi::{DVCC_FOURCC, DVH1_FOURCC, DVVC_FOURCC};
 use transmux::ir::{CodecConfig, TrackSpec};
+
 use transmux::ts_demux::TsDemux;
 use transmux::{
     CmafMux, DoviBlSignalCompatibilityId, DoviDecoderConfigurationRecord, Fmp4Demux, Media,
@@ -393,7 +395,7 @@ fn p5_dash_codecs_name_the_dvh1_sample_entry() {
         "DASH codecs {:?} must contain {expected}",
         codecs_attrs(&mpd)
     );
-    let mut ll = crate::ll_packager::ll_packager(2.0, 0.5, 3000);
+    let mut ll = crate::ll_packager::ll_packager(2.0, 0.5, Duration::from_secs(3));
     let ll_mpd = ll.package(&media).unwrap();
     assert!(codecs_attrs(&ll_mpd).contains(&expected));
 }
@@ -432,7 +434,7 @@ fn assert_companion_dolby_set(
         vec![vec![base.clone()], vec![dv.clone()]],
         "{mpd}"
     );
-    let mut ll = crate::ll_packager::ll_packager(2.0, 0.5, 3000);
+    let mut ll = crate::ll_packager::ll_packager(2.0, 0.5, Duration::from_secs(3));
     let ll_mpd = ll.package(&media).unwrap();
     assert!(adaptation_set_codecs(&ll_mpd).contains(&vec![dv]));
 }

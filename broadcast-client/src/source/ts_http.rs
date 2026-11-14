@@ -477,9 +477,9 @@ impl TsHttpSource {
                 }
                 _ => {}
             },
-            crate::tshttp::Event::StallNotice { secs } => {
+            crate::tshttp::Event::StallNotice { stalled } => {
                 self.release_hold();
-                self.push(Event::Status(Status::Stalled { secs }));
+                self.push(Event::Status(Status::Stalled { stalled }));
                 self.stalled = true;
             }
             crate::tshttp::Event::Reconnecting { attempt } => {

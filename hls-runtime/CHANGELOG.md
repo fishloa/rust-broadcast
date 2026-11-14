@@ -8,6 +8,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
+- BREAKING: `server::ClosedSegment::start` is a `timed_metadata::MediaTime` (was `start_ns: u64`) and `ClosedSegment::new` takes one, so a closed segment's position travels with the timebase the `Trunk` assigned it (#2693).
 - BREAKING: `HlsClientConfig::new(url)` takes a `url::Url` (not `impl Into<String>`), `HlsClientConfig::playlist_url`/`playlist_base` are `url::Url`, and every `Action` URL is a `url::Url`; `Action::FetchPlaylist` carries a `PlaylistRequest { url, blocking, skip }` (`PlaylistRequest::request_url()` returns the query-augmented `Url`); `HlsClient::set_playlist_base` is removed (use `HlsClientConfig::with_playlist_base`) (#2655, #2661).
 - BREAKING: `Action::FetchResource::byte_range` is `Option<broadcast_common::range::ByteSpan>` (offset + non-zero length) instead of `Option<(u64, u64)>` (#2655).
 - BREAKING: `HlsOriginBuilder` and `HlsOrigin::builder` are replaced by `HlsOriginConfig` and `HlsOrigin::new` (the `SmoothOrigin` shape): the required `target_duration_secs` and `window_segments` are `HlsOriginConfig::new(trunk, target_duration_secs, window_segments)` arguments, the optional settings stay `with_*`, and `HlsOrigin::new(config)` builds it. `HlsOriginBuildError::MissingTargetDurationSecs`/`MissingWindowSegments` are gone (the required values cannot be missing). Migration: `HlsOrigin::builder(trunk).with_target_duration_secs(t).with_window_segments(w)…build()` becomes `HlsOrigin::new(HlsOriginConfig::new(trunk, t, w)… )` (#2661).

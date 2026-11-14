@@ -15,6 +15,7 @@ use crate::splice::ConditionedSplicePoint;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use broadcast_common::stage::Timestamp;
+use core::time::Duration;
 
 /// One session's ad break: the decision being rendered, plus the conditioned
 /// splice points it entered (and, once known, resumed) at.
@@ -104,9 +105,10 @@ impl SessionStore {
     }
 
     /// Evicts every session last touched (by [`Self::begin_break`] or
-    /// [`Self::resume`]) more than `ttl_us` before the store's clock; returns
+    /// [`Self::resume`]) more than `ttl` before the store's clock; returns
     /// how many were evicted.
-    pub fn expire_idle(&mut self, ttl_us: u64) -> usize {
+    pub fn expire_idle(&mut self, ttl: Duration) -> usize {
+        let ttl_us = u64::try_from(ttl.as_micros()).unwrap_or(u64::MAX);
         let before = self.sessions.len();
         let now = self.now_us;
         self.sessions
@@ -296,12 +298,12 @@ mod tests {
             .begin_break("new", BreakState::new(decision, splice_point()))
             .unwrap();
         store.advance(Timestamp::from_micros(6_000));
-        assert_eq!(store.expire_idle(2_000), 1);
+        assert_eq!(store.expire_idle(Duration::from_micros(2_000)), 1);
         assert!(store.get("old").is_none());
         assert!(store.get("new").is_some());
         store.advance(Timestamp::from_micros(1));
         assert_eq!(
-            store.expire_idle(1_000),
+            store.expire_idle(Duration::from_micros(1_000)),
             0,
             "the clock never goes backwards"
         );

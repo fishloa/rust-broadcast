@@ -7,6 +7,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
+- BREAKING: every TSBPD latency and handshake retransmit setting is a `core::time::Duration` instead of a bare integer: `HandshakeConfig::latency` (was `latency_ms: u16`), `HandshakeConfig::retransmit_after` (was `retransmit_after_ticks: u32`, now the caller-clock silence before a retransmit), their setters `with_latency`/`with_retransmit_after` (were `with_latency_ms`/`with_retransmit_after_ticks`), `NegotiatedParams::latency` (was `latency_ms`), `url::SrtUrl::latency` (was `latency_ms: Option<u16>`), and `CallerHandshake::tick`/`ListenerHandshake::tick`/`RendezvousHandshake::tick` take the caller-clock time advanced since the last call (`tick(elapsed: Duration)`) instead of counting fixed ticks. A latency still goes on the wire as whole milliseconds (rounded down, `DEFAULT_RETRANSMIT_AFTER` replaces the old three-tick default). Migration: `with_latency_ms(180)` -> `with_latency(Duration::from_millis(180))`, `with_retransmit_after_ticks(n)` -> `with_retransmit_after(period / n)`, and `tick()` -> `tick(period)` (#2693).
+
+### Changed
 - BREAKING: `CryptoConfig` and `NegotiatedParams` are now `#[non_exhaustive]`; build `CryptoConfig` with `CryptoConfig::new(passphrase, salt, sek)` instead of a struct literal (#2664).
 - BREAKING: `TsbpdScheduler::new` takes the TSBPD delay as a `core::time::Duration` instead of `tsbpd_delay_ms: u64`; the 120 ms floor is unchanged, applied to the duration's whole milliseconds. Migration: `TsbpdScheduler::new(.., 120, ..)` -> `TsbpdScheduler::new(.., Duration::from_millis(120), ..)`.
 

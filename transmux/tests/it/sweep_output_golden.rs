@@ -373,7 +373,7 @@ fn muxer_outputs_are_unchanged() {
     // covered by tests/it/ts_mux_psi_repeat.rs, which proves the default output is
     // exactly this once-only output plus the PSI repeats.
     let ts = TsMux::new()
-        .with_psi_interval_ms(None)
+        .with_psi_interval(None)
         .package(&media)
         .unwrap();
     check(&mut bad, "ts", fnv1a(&ts), 0xe5b08f3fd235cf03);
@@ -445,7 +445,7 @@ fn hevc_and_dolby_muxer_outputs_are_unchanged() {
             // Once-only PSI: see muxer_outputs_are_unchanged.
             (
                 "ts",
-                hash_result(TsMux::new().with_psi_interval_ms(None).package(&media)),
+                hash_result(TsMux::new().with_psi_interval(None).package(&media)),
             ),
             ("cmaf", hash_result(CmafMux::new(1).package(&media))),
         ];

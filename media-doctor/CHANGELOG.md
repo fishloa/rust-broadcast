@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 ### Changed
+- BREAKING: `cli::WatchArgs::metrics_io_timeout` is a `std::time::Duration` (was `metrics_io_timeout_ms: u64`); the `--metrics-io-timeout-ms` flag still takes whole milliseconds and is converted at parse (#2693).
+### Changed
 - BREAKING: `udp::UdpConfig` and `udp::MulticastInterface` are removed in favour of `broadcast_common::net::UdpOptions`; `udp::bind_udp(SocketAddr, &UdpOptions)` binds through `dvb_stream::udp::bind_udp`, and the new `udp::udp_options(recv_buffer, reuse_addr, interface)` builds the options `--udp-rcvbuf`/`--udp-reuse-addr`/`--udp-interface` describe, with `udp::join_on` for a join's interface. Migration: `UdpConfig { recv_buffer, reuse_addr, interface }` becomes `udp_options(recv_buffer, reuse_addr, interface)`; `recv_buffer: None, reuse_addr: true` becomes `UdpOptions::new().with_reuse_address(true)` (#2663).
 - `--udp-interface` now also accepts a system interface name (an IPv4 address, an IPv6 interface index, or a name such as `eth0`); a value written like an IPv4 address but not one is still refused at startup, now with the reason naming what was wrong with it.
 ### Fixed

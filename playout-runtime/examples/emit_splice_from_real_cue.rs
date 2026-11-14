@@ -12,9 +12,10 @@
 //! cargo run -p playout-runtime --example emit_splice_from_real_cue
 //! ```
 
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize};
 use mp4_emsg::{EmsgBox, PresentationTime};
-use playout_runtime::schedule::{CodecConfigId, EntryKind, Schedule, ScheduleEntry};
+use playout_runtime::schedule::{CodecConfigId, EntryKind, Playhead, Schedule, ScheduleEntry};
 use playout_runtime::scte35::{BreakEdge, build_splice_insert, to_section};
 use playout_runtime::transition::next_transition;
 use scte35_splice::SpliceInfoSection;
@@ -59,7 +60,8 @@ fn main() {
         })
         .unwrap();
 
-    let t = next_transition(&schedule, 0).expect("a transition is scheduled");
+    let t = next_transition(&schedule, Playhead::new(0, Timescale::MICROS))
+        .expect("a transition is scheduled");
     println!(
         "planned transition: {} -> {} at pts={} discontinuity={}",
         t.from.id, t.to.id, t.plan.at_pts, t.plan.discontinuity

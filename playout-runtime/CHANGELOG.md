@@ -4,6 +4,9 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+### Changed
+- BREAKING: `next_transition(schedule, now: Playhead)` takes the playhead as ticks on the schedule's own timescale (`Playhead::new(ticks, Timescale)`) instead of a bare `now_pts: u64`, so a media position cannot be read in one clock while it was produced on another (#2693).
+
 ## [0.6.0] - 2026-11-14
 ### Fixed
 - `build_splice_insert` rejects a `break_duration_ticks` of 2^33 or more with the new `Error::BreakDurationTooLong` (`Error` is `#[non_exhaustive]`); it used to build the cue and fail only when it was serialized.

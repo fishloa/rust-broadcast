@@ -1,6 +1,7 @@
 use crate::support;
 
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use broadcast_auth::{Credentials as AuthCredentials, Scheme as AuthScheme, Verifier};
 use broadcast_client::{
@@ -830,10 +831,14 @@ fn stall_5s_notice_and_30s_reconnect_with_teardown_abort() {
     );
     host.advance_to(last_byte + STALL_NOTICE);
     let events = host.events();
-    assert!(statuses(&events).contains(&Status::Stalled { secs: 5 }));
+    assert!(statuses(&events).contains(&Status::Stalled {
+        stalled: Duration::from_secs(5)
+    }));
     assert!(events.contains(&Event::Starved(broadcast_client::StarveKind::NoData)));
     host.advance_to(last_byte + 6 * SEC);
-    assert!(statuses(&host.events()).contains(&Status::Stalled { secs: 6 }));
+    assert!(statuses(&host.events()).contains(&Status::Stalled {
+        stalled: Duration::from_secs(6)
+    }));
     host.now = last_byte + 10 * SEC;
     host.deliver(&frames[SOME_FRAMES]);
     assert!(

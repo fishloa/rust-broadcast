@@ -438,13 +438,15 @@ impl TsHttpPolicy {
                 if self.first_notice_at.is_none() {
                     self.first_notice_at = Some(now_ms);
                     self.next_notice_at = Some(now_ms.saturating_add(STALL_NOTICE_REPEAT_MS));
-                    self.events
-                        .push_back(Event::StallNotice { secs: idle / 1000 });
+                    self.events.push_back(Event::StallNotice {
+                        stalled: Duration::from_millis(idle),
+                    });
                 } else if let Some(n) = self.next_notice_at
                     && now_ms >= n
                 {
-                    self.events
-                        .push_back(Event::StallNotice { secs: idle / 1000 });
+                    self.events.push_back(Event::StallNotice {
+                        stalled: Duration::from_millis(idle),
+                    });
                     let steps = (now_ms - n) / STALL_NOTICE_REPEAT_MS + 1;
                     self.next_notice_at =
                         Some(n.saturating_add(steps.saturating_mul(STALL_NOTICE_REPEAT_MS)));

@@ -299,10 +299,11 @@ pub enum InputSpec {
         /// §3.2.1.3).
         #[serde(default)]
         stream_id: Option<String>,
-        /// Overrides the negotiated TSBPD latency (milliseconds); `None`
-        /// keeps the handshake's default.
+        /// Overrides the TSBPD latency, in whole milliseconds on the wire;
+        /// `None` keeps the handshake's default.
         #[serde(default)]
-        latency_ms: Option<u16>,
+        #[serde(with = "latency_ms")]
+        latency: Option<Duration>,
     },
     /// External input scheme resolved at runtime via
     /// [`crate::registry::SchemeRegistry`]. `type_tag` selects the registered
@@ -1168,13 +1169,13 @@ impl std::fmt::Debug for InputSpec {
                 listen,
                 remote,
                 stream_id,
-                latency_ms,
+                latency,
             } => f
                 .debug_struct("Srt")
                 .field("listen", listen)
                 .field("remote", remote)
                 .field("stream_id", stream_id)
-                .field("latency_ms", latency_ms)
+                .field("latency", latency)
                 .finish(),
             InputSpec::Custom { type_tag, .. } => f
                 .debug_struct("Custom")
@@ -2216,6 +2217,19 @@ impl ProgramDateTimeSource {
 }
 
 broadcast_common::impl_spec_display!(ProgramDateTimeSource);
+/// An optional TSBPD latency in the JSON as whole milliseconds (the `srt://`
+/// `latency` query unit), or `null` for the handshake's default.
+mod latency_ms {
+    use serde::{Deserialize, Deserializer};
+    use std::time::Duration;
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<Option<Duration>, D::Error> {
+        Ok(Option::<u16>::deserialize(d)?.map(|ms| Duration::from_millis(u64::from(ms))))
+    }
+}
+
 /// `Duration` in the JSON as whole milliseconds (the LL-HLS part target's
 /// long-standing wire unit and key name).
 mod millis_duration {
@@ -5918,7 +5932,7 @@ mod tests {
             listen: listen.map(str::to_string),
             remote: remote.map(str::to_string),
             stream_id: None,
-            latency_ms: None,
+            latency: None,
         }
     }
 

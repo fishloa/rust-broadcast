@@ -1886,7 +1886,7 @@ fn spawn_ingest(
             listen,
             remote,
             stream_id,
-            latency_ms,
+            latency,
         } => {
             // `config.validate()` (called at the top of the serve path)
             // already enforced exactly one of `listen`/`remote` is `Some`.
@@ -1910,7 +1910,7 @@ fn spawn_ingest(
                 _ => unreachable!("config.validate() enforces exactly one of Srt listen/remote"),
             }
             .with_stream_id(stream_id.clone())
-            .with_latency_ms(*latency_ms)
+            .with_latency(*latency)
             .with_timeouts(timeouts);
             spawn_supervised(
                 srt_route,
@@ -4614,7 +4614,7 @@ mod tests {
                 listen: None,
                 remote: Some(quiet_srt_addr.to_string()),
                 stream_id: None,
-                latency_ms: None,
+                latency: None,
             },
             crate::config::InputSpec::HlsPull {
                 url: format!("http://{refused_addr}/x"),

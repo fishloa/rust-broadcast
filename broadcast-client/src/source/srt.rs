@@ -140,7 +140,7 @@ impl SrtCaller {
         let own_socket_id = first_u32(&derive(&seed, LABEL_SOCKET_ID, attempt)) % MAX_SOCKET_ID + 1;
         let isn = first_u32(&derive(&seed, LABEL_ISN, attempt)) & SEQ_NUMBER_MASK;
         let mut hs_config = HandshakeConfig::default()
-            .with_latency_ms(self.config.latency_ms)
+            .with_latency(self.config.latency)
             .with_initial_seq_number(isn)
             .with_stream_id(self.config.stream_id.clone());
         if let Some(enc) = &self.config.encryption {
@@ -154,8 +154,7 @@ impl SrtCaller {
             let sek = derive(&seed, LABEL_SEK, attempt)[..enc.key_length.bytes()].to_vec();
             hs_config.crypto = Some(CryptoConfig::new(enc.passphrase().to_vec(), salt, sek));
         }
-        let ticks = hs_config.retransmit_after_ticks.max(1);
-        let tick_period_us = HANDSHAKE_RETRANSMIT_PERIOD_US / u64::from(ticks);
+        let tick_period_us = HANDSHAKE_RETRANSMIT_PERIOD_US;
         let mut hs = CallerHandshake::new(own_socket_id, hs_config);
         match hs.start() {
             Ok(induction) => {
@@ -247,7 +246,7 @@ impl SrtCaller {
             tsbpd: TsbpdScheduler::new(
                 peer_isn,
                 -i64::from(peer_ts_us),
-                Duration::from_millis(u64::from(params.latency_ms)),
+                params.latency,
                 DRIFT_US,
                 params.flags.tlpktdrop(),
                 None,
@@ -316,7 +315,7 @@ impl SrtCaller {
                         break;
                     };
                     h.next_tick_us = next;
-                    for output in h.hs.tick() {
+                    for output in h.hs.tick(Duration::from_micros(h.tick_period_us.max(1))) {
                         match output {
                             HandshakeOutput::Send(b) => self.out.sends.push(b),
                             HandshakeOutput::TimedOut => {

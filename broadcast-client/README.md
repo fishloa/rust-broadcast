@@ -57,7 +57,7 @@ to the peer), reports it with `Session::on_connected(conn)`, writes every `Actio
 every received datagram to `Session::on_data(conn, datagram, now_us)`. The session drives `srt-runtime`'s handshake, ARQ receiver
 (NAK, ACK) and TSBPD scheduler.
 
-`Config::srt` (an `SrtCallerConfig`) carries `latency_ms` (at least 120), `stream_id`, one `broadcast_common::timeouts::Timeouts`
+`Config::srt` (an `SrtCallerConfig`) carries `latency` (a `Duration`, 120 ms by default), `stream_id`, one `broadcast_common::timeouts::Timeouts`
 (`handshake` bounds the handshake, `read_idle` the peer-idle bound; 3 s and 5 s by default), an optional
 `SrtEncryption::new(passphrase, SrtKeyLength)` and the required `entropy_seed`: 32 bytes from the host's CSPRNG
 (`SrtEntropySeed::new`). The session reads no randomness; it derives each connection's socket id, initial sequence number, salt and
@@ -169,8 +169,8 @@ Offline replay: set `Config::record_buffer_inputs` and drain `Session::drain_buf
 A new timeline that no TS discontinuity flag announces (origin restart, a recorder looping a file, a
 channel swap behind one URL) is detected by the session itself (`Config::timeline_jump`,
 `TimelineJumpConfig`, on by default; `None` disables it). Per video track, between consecutive kept
-samples (`join` not `Drop`), a step below `-backward_us` (1 s) or above the session-clock time
-between the two deliveries plus `forward_slack_us` (5 s) starts a new timeline; inside one burst the
+samples (`join` not `Drop`), a step below `-backward` (1 s) or above the session-clock time
+between the two deliveries plus `forward_slack` (5 s) starts a new timeline; inside one burst the
 elapsed time is zero. Audio is watched the same way only for the first rendered audio track of a
 stream without video. Before the first sample of the new timeline the session emits
 `Event::Discontinuity`, re-arms the join, hints `PcrDiscontinuity` (live TS), and resets the playout
@@ -178,7 +178,7 @@ gate, so `Start`/`Resume` follows from the new timeline's media. B-frame reorder
 the backward threshold. Applies to TS-over-HTTP, HLS (main and audio rendition) and RTSP.
 
 After a detected jump every other track delivers nothing until its first sample lies within
-`forward_slack_us` of the new timeline's first sample (trailing samples of the old timeline queued
+`forward_slack` of the new timeline's first sample (trailing samples of the old timeline queued
 behind the late video sample are dropped, counted by `Session::stale_samples_dropped()`). A PCR
 discontinuity that coincides with a jump hints and re-arms once. A reconnect, a `Discontinuity`
 from a new connection or a jump re-arms the live join and the buffering controller (the reconnected
@@ -210,7 +210,7 @@ goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbid
 - `on_response(conn, status, headers, now_us)` takes the host clock at which the response head
   arrived, so a redirect or 401 replay after a long blocking reload gets a fresh deadline and cookie
   `Max-Age` counts from the response.
-- Live TS decides `Event::Buffer` inside `on_playback_position(now, pos)`: a host that never calls it
+- Live TS decides `Event::Buffer` inside `on_playback_position(now, position: Option<Clock27>)`: a host that never calls it
   gets no `Start` at all, and calling it less often than every display tick only delays `Start` (a
   captured stream missing a declared audio started at 5.3 s with ticks only after the data, 1.6 s with
   a tick per chunk); call it every display tick (`pos` is `None` before `Start`). `Start.at_27mhz` / `Resume.at_27mhz` are the 27 MHz position the
@@ -292,7 +292,7 @@ goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbid
   `Session::open` returns `Error::InvalidConfig` when the quiet limit is `0` or exceeds the input limit.
   It also rejects every other value that silently disables output: `max_queued_events`, `max_queued_bytes`, `max_manifest_bytes`,
   `max_segment_bytes`, `max_key_bytes`, `request_timeout_us`, `segment_timeout_us`,
-  `segment_inactivity_timeout_us`, `hls_key_timeout_us`, `timeline_jump.backward_us` and `timeline_jump.forward_slack_us` of `0`, an invalid
+  `segment_inactivity_timeout_us`, `hls_key_timeout_us`, `timeline_jump.backward` and `timeline_jump.forward_slack` of zero, an invalid
   `dash` field (see the clock section), and a
   `buffer` that `buffering_runtime::ControllerConfig::validate` rejects. `ts_http` values are clamped to the
   nearest valid ones (`TsHttpConfig::clamped`), `max_key_failures: 0` behaves as `1`, `max_segment_failures: 0` makes the first segment failure final, and a

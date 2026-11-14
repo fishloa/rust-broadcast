@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use broadcast_client::{
     Action, BufferEvent, Config, ErrorKind, Event, Session, Status, StreamKind, TrackId,
 };
+use broadcast_common::clock33::Clock27;
 use broadcast_common::stage::Timestamp;
 use buffering_runtime::Micros;
 use support::replay::{TS_PACKET, bitrate_bps, open_live};
@@ -196,9 +197,9 @@ struct Host {
 }
 
 impl Host {
-    fn position(&self, now: u64) -> u64 {
+    fn position(&self, now: u64) -> Option<Clock27> {
         let at = self.paused_at.map_or(now, |p| p.max(self.anchor_us));
-        self.anchor_pos + (at - self.anchor_us) * TICKS_PER_US
+        Clock27::from_27mhz(self.anchor_pos + (at - self.anchor_us) * TICKS_PER_US).ok()
     }
 }
 
@@ -338,7 +339,7 @@ pub fn run_until(bytes: &[u8], cfg: Config, declare: Declare, stop: Stop) -> Out
             wake = None;
             step(&mut s, now, &mut wake, &mut host, &mut out);
         } else if t == next_tick && next_tick <= next_chunk_at {
-            s.on_playback_position(ts(now), host.as_ref().map(|h| h.position(now)));
+            s.on_playback_position(ts(now), host.as_ref().and_then(|h| h.position(now)));
             step(&mut s, now, &mut wake, &mut host, &mut out);
             next_tick += TICK_US;
         } else {

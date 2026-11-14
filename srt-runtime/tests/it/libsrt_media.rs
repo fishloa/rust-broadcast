@@ -205,7 +205,10 @@ async fn libsrt_caller_to_our_listener() {
 
         let mut listener = SrtListener::bind(
             "127.0.0.1:0".parse::<SocketAddr>().unwrap(),
-            SrtSocketConfig::new(HandshakeConfig::default().with_latency_ms(LATENCY_MS)),
+            SrtSocketConfig::new(
+                HandshakeConfig::default()
+                    .with_latency(Duration::from_millis(u64::from(LATENCY_MS))),
+            ),
         )
         .await
         .expect("bind");

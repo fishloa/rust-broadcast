@@ -4,6 +4,7 @@ use url::Url;
 use broadcast_client::{
     BufferEvent, BufferInput, Config, ErrorKind, Event, InputLog, PauseReason, Session,
 };
+use broadcast_common::clock33::Clock27;
 use broadcast_common::stage::Timestamp;
 use buffering_runtime::Event as RtEvent;
 
@@ -26,12 +27,13 @@ struct Clock {
 }
 
 impl Clock {
-    fn position(&self, now: u64) -> u64 {
-        if self.running {
+    fn position(&self, now: u64) -> Option<Clock27> {
+        let ticks = if self.running {
             self.anchor_pos + (now - self.anchor_us) * TICKS_PER_US
         } else {
             self.anchor_pos
-        }
+        };
+        Clock27::from_27mhz(ticks).ok()
     }
 
     fn set(&mut self, now: u64, pos: u64, running: bool) {
@@ -79,7 +81,7 @@ fn run(config: Config, drain: bool) -> Run {
             next_chunk = now + part.len() as u64 * 8 * MICROS / bps;
         } else {
             now = next_tick;
-            let pos = started.then(|| clock.position(now));
+            let pos = started.then(|| clock.position(now)).flatten();
             session.on_playback_position(ts(now), pos);
             next_tick += TICK_US;
         }

@@ -7,6 +7,7 @@ use broadcast_client::{
     AUDIO_TRACK_ID_OFFSET, Action, BufferEvent, Config, ConnId, Event, PauseReason, PlayoutConfig,
     Session, SourceKind, TrackId,
 };
+use broadcast_common::clock33::Clock27;
 use broadcast_common::stage::Timestamp;
 use support::hls_host::*;
 use support::renditions::{self, AUDIO_DIR, AUDIO_PLAYLIST_URL, MASTER_URL};
@@ -185,7 +186,8 @@ impl Drv {
     }
 
     fn pos(&mut self, pts: Option<u64>) {
-        self.session.on_playback_position(ts(self.now), pts);
+        let position = pts.and_then(|ticks| Clock27::from_27mhz(ticks).ok());
+        self.session.on_playback_position(ts(self.now), position);
         self.pump();
     }
 }

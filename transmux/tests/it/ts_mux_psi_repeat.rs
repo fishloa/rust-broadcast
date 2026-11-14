@@ -130,7 +130,8 @@ fn default_repeats_pat_and_pmt_within_the_interval() {
             assert!(occ.len() > 2, "{name} pid {pid:#x}: only {} PSI", occ.len());
             let gap = max_gap(&occ);
             assert!(
-                gap <= interval_bound(transmux::DEFAULT_PSI_INTERVAL_MS),
+                gap <= TsMux::new().psi_interval_ticks().unwrap_or(u64::MAX)
+                    + crate::ts_mux_psi_repeat::SAMPLE_SLACK_TICKS,
                 "{name} pid {pid:#x}: gap {gap}"
             );
             assert!(gap <= TR101290_MAX_TICKS);
@@ -142,19 +143,21 @@ fn default_repeats_pat_and_pmt_within_the_interval() {
 #[test]
 fn configured_interval_is_honoured() {
     let media = demux(&fixture("h264-aac-40s.ts"));
-    let mux = |iv| {
-        TsMux::new()
-            .with_psi_interval_ms(iv)
-            .package(&media)
-            .unwrap()
-    };
+    let mux = |iv| TsMux::new().with_psi_interval(iv).package(&media).unwrap();
     let pats = |ts: &[u8]| psi_occurrences(ts, PAT_PID);
-    assert_eq!(pats(&mux(Some(0))).len(), 1, "Some(0) means once-only");
+    assert_eq!(
+        pats(&mux(Some(Duration::ZERO))).len(),
+        1,
+        "a zero interval means once-only"
+    );
     assert_eq!(pats(&mux(None)).len(), 1);
-    let (fast, slow) = (pats(&mux(Some(100))), pats(&mux(Some(400))));
+    let (fast, slow) = (
+        pats(&mux(Some(Duration::from_millis(100)))),
+        pats(&mux(Some(Duration::from_millis(400)))),
+    );
     assert!(fast.len() > slow.len() && slow.len() > 1);
     assert!(max_gap(&slow) <= interval_bound(400));
-    assert_cc_valid(&mux(Some(400)));
+    assert_cc_valid(&mux(Some(Duration::from_millis(400))));
 }
 
 #[test]
@@ -174,7 +177,7 @@ fn whole_file_round_trip_is_unchanged_but_for_psi_repeats() {
     for &name in FIXTURES {
         let media = demux(&fixture(name));
         let once = TsMux::new()
-            .with_psi_interval_ms(None)
+            .with_psi_interval(None)
             .package(&media)
             .unwrap();
         let periodic = TsMux::new().package(&media).unwrap();
@@ -214,7 +217,7 @@ fn stream_cut_at_packet_aligned_offsets_still_yields_all_tracks() {
     assert!(want >= 2);
     let out = TsMux::new().package(&media).unwrap();
     let once = TsMux::new()
-        .with_psi_interval_ms(None)
+        .with_psi_interval(None)
         .package(&media)
         .unwrap();
     let n = out.len() / PKT;

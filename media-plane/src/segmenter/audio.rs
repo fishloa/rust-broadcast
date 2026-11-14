@@ -251,9 +251,9 @@ impl AudioFollower {
         }
     }
 
-    pub fn set_start_time_ns(&mut self, start_ns: u64) {
-        self.seg.set_start_time_ns(start_ns);
-        self.next_timeline_ns = start_ns;
+    pub fn set_start_time(&mut self, start: Duration) {
+        self.seg.set_start_time(start);
+        self.next_timeline_ns = u64::try_from(start.as_nanos()).unwrap_or(u64::MAX);
         self.first_discontinuous = true;
     }
 

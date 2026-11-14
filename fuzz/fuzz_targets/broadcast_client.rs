@@ -8,6 +8,7 @@ use broadcast_client::{
     Action, BufferHint, ClientIdentity, Config, ConnId, Credentials, DashClockPolicy, Event,
     Session, SourceKind, SrtEntropySeed, TrackId, TransportError,
 };
+use broadcast_common::clock33::Clock27;
 use broadcast_common::stage::Timestamp;
 use broadcast_common::{Package, Unpackage};
 use libfuzzer_sys::fuzz_target;
@@ -348,11 +349,13 @@ fn player(session: &mut Session, now: u64, chunk: &[u8]) {
     let byte = |i: usize| chunk.get(i).copied().unwrap_or(0);
     match byte(2) % 5 {
         0 => {
-            let position = match byte(3) % 8 {
+            let ticks = match byte(3) % 8 {
                 0 => u64::MAX,
                 _ => u64::from(byte(4)) * POSITION_UNIT,
             };
-            session.on_playback_position(at, Some(position));
+            if let Ok(position) = Clock27::from_27mhz(ticks) {
+                session.on_playback_position(at, Some(position));
+            }
         }
         1 => session.on_playback_position(at, None),
         2 => {
@@ -607,8 +610,8 @@ fn config_from(header: &[u8]) -> Config {
         0 => None,
         _ => Some(
             broadcast_client::TimelineJumpConfig::default()
-                .with_backward_us(knob(header, 13, &JUMP_US))
-                .with_forward_slack_us(knob(header, 14, &JUMP_US)),
+                .with_backward(span_us(knob(header, 13, &JUMP_US)))
+                .with_forward_slack(span_us(knob(header, 14, &JUMP_US))),
         ),
     };
     config.playout.vod_start_lead_us = knob(header, 15, &LEAD_US);

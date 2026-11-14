@@ -1218,7 +1218,7 @@ fn start_time_moves_every_tfdt_and_nothing_else() {
         )
         .unwrap();
         if let Some(ns) = start_ns {
-            seg.set_start_time_ns(ns);
+            seg.set_start_time(std::time::Duration::from_nanos(ns));
         }
         for i in 0..31u8 {
             seg.push(TrackId::new(1), vsample(i % 30 == 0, i)).unwrap();

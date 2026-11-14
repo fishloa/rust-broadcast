@@ -67,11 +67,12 @@
 
 use alloc::vec::Vec;
 use broadcast_common::error::InvalidValue;
+use core::time::Duration;
 use mpeg_ts::pid::Pid;
 
 #[cfg(test)]
 use broadcast_common::crc32_mpeg2;
-use broadcast_common::timescale::{Rounding, rescale_u64};
+use broadcast_common::timescale::{Rounding, Timescale, rescale_u64};
 use broadcast_common::{Package, Serialize};
 use mpeg_pes::{Pts as PesPts, StreamId};
 use mpeg_ts::mux::SectionPacketiser;
@@ -318,6 +319,17 @@ const TS_CLOCK: broadcast_common::timescale::Timescale =
         None => unreachable!(),
     };
 const TS_CLOCK_HZ: u64 = 90_000;
+
+/// A PAT/PMT repetition interval in 90 kHz clock ticks, rounded down; a span
+/// past the 90 kHz range's whole seconds saturates.
+fn psi_interval_ticks(interval: Duration) -> u64 {
+    rescale_u64(
+        u64::try_from(interval.as_micros()).unwrap_or(u64::MAX),
+        Timescale::MICROS,
+        TS_CLOCK,
+        Rounding::Floor,
+    )
+}
 /// 33-bit PTS/DTS modulus (90 kHz clock, §2.4.3.7) — alias of
 /// [`broadcast_common::clock33::WRAP_33BIT`], the shared owner.
 const TS_TIMESTAMP_MOD: u64 = broadcast_common::clock33::WRAP_33BIT;
@@ -529,24 +541,22 @@ struct TaggedPacket {
 ///
 /// The PAT and PMT are written at the start of the output and then repeated
 /// periodically, driven by media time (the PCR/DTS clock): by default at least
-/// every [`DEFAULT_PSI_INTERVAL_MS`] ms, so a receiver or a player joining the
+/// every [`DEFAULT_PSI_INTERVAL`], so a receiver or a player joining the
 /// stream at an arbitrary packet-aligned offset finds the programme structure
 /// within one interval (ETSI TR 101 290 indicators 1.3/1.5 require PAT/PMT at
 /// least every 0.5 s). Repeats are always whole sections, placed between PES
 /// packets, with correct per-PID continuity counters; within one `TsMux` run
-/// the PMT content (and its `version_number`) never changes. Use [`TsMux::with_psi_interval_ms`] to tune
+/// the PMT content (and its `version_number`) never changes. Use [`TsMux::with_psi_interval`] to tune
 /// the interval, or `None` to write the PSI once only.
 #[derive(Debug, Clone)]
 pub struct TsMux {
-    psi_interval_ms: Option<u32>,
+    psi_interval: Option<Duration>,
 }
 
-/// Default PAT/PMT repetition interval of [`TsMux`], in milliseconds of media
-/// time (well inside the 0.5 s bound of ETSI TR 101 290 indicators 1.3/1.5).
-pub const DEFAULT_PSI_INTERVAL_MS: u32 = 100;
-
-/// Milliseconds per second, for the interval -> 90 kHz tick conversion.
-const MS_PER_SECOND: u64 = 1000;
+/// Default PAT/PMT repetition interval of [`TsMux`], measured on the media
+/// timebase (well inside the 0.5 s bound of ETSI TR 101 290 indicators
+/// 1.3/1.5).
+pub const DEFAULT_PSI_INTERVAL: Duration = Duration::from_millis(100);
 
 impl Default for TsMux {
     fn default() -> Self {
@@ -556,25 +566,31 @@ impl Default for TsMux {
 
 impl TsMux {
     /// Create a new TS muxer repeating PAT/PMT every
-    /// [`DEFAULT_PSI_INTERVAL_MS`] ms of media time.
+    /// [`DEFAULT_PSI_INTERVAL`] of media time.
     pub fn new() -> Self {
         Self {
-            psi_interval_ms: Some(DEFAULT_PSI_INTERVAL_MS),
+            psi_interval: Some(DEFAULT_PSI_INTERVAL),
         }
     }
 
-    /// Set the PAT/PMT repetition interval in milliseconds of media time.
-    /// `None` (or `Some(0)`) disables repetition: the PSI is written once at the
-    /// start of the output only, which cannot be joined mid-stream.
+    /// Set the PAT/PMT repetition interval in media time. `None` (or a zero
+    /// interval) disables repetition: the PSI is written once at the start of
+    /// the output only, which cannot be joined mid-stream.
     #[must_use]
-    pub fn with_psi_interval_ms(mut self, interval_ms: Option<u32>) -> Self {
-        self.psi_interval_ms = interval_ms.filter(|&ms| ms > 0);
+    pub fn with_psi_interval(mut self, interval: Option<Duration>) -> Self {
+        self.psi_interval = interval.filter(|d| !d.is_zero());
         self
     }
 
+    /// The configured PAT/PMT repetition interval on the 90 kHz clock
+    /// (`None` = written once); [`Self::psi_interval`] is the same value.
+    pub fn psi_interval_ticks(&self) -> Option<u64> {
+        self.psi_interval.map(psi_interval_ticks)
+    }
+
     /// The configured PAT/PMT repetition interval (`None` = written once).
-    pub fn psi_interval_ms(&self) -> Option<u32> {
-        self.psi_interval_ms
+    pub fn psi_interval(&self) -> Option<Duration> {
+        self.psi_interval
     }
 }
 
@@ -588,9 +604,7 @@ impl Package for TsMux {
             return Err(Error::InvalidInput("cannot package a Media with no tracks"));
         }
         let samples: Vec<&[Sample]> = media.tracks.iter().map(|t| t.samples.as_slice()).collect();
-        let interval_ticks = self
-            .psi_interval_ms
-            .map(|ms| u64::from(ms) * TS_CLOCK_HZ / MS_PER_SECOND);
+        let interval_ticks = self.psi_interval.map(psi_interval_ticks);
         mux_tracks(&media.tracks, &samples, interval_ticks)
     }
 }
@@ -613,15 +627,15 @@ impl Package for TsMux {
 ///   *before* the origin clamps to it, so feed samples in (roughly) decode
 ///   order. Samples without a `dts` are not supported on this path.
 /// - **PSI**: the PAT/PMT are written once at the start and then repeated every
-///   [`psi_interval_ms`](Self::psi_interval_ms) of media time across calls
-///   (default [`DEFAULT_PSI_INTERVAL_MS`]), never inside a PES packet.
+///   [`psi_interval`](Self::psi_interval) of media time across calls
+///   (default [`DEFAULT_PSI_INTERVAL`]), never inside a PES packet.
 ///
 /// The track set must not change between calls (the PMT is fixed by the first
 /// call). The same samples fed one-by-one or as one `Media` yield byte-identical
 /// packets per PID; only the PAT/PMT placement differs.
 #[derive(Debug, Clone)]
 pub struct StreamingTsMux {
-    psi_interval_ms: Option<u32>,
+    psi_interval: Option<Duration>,
     origin: Option<TimelineOrigin>,
     continuity: TsContinuity,
     psi: PsiState,
@@ -635,26 +649,26 @@ impl Default for StreamingTsMux {
 
 impl StreamingTsMux {
     /// A fresh streaming muxer repeating PAT/PMT every
-    /// [`DEFAULT_PSI_INTERVAL_MS`] ms of media time.
+    /// [`DEFAULT_PSI_INTERVAL`] of media time.
     pub fn new() -> Self {
-        Self::with_psi_interval_ms(Some(DEFAULT_PSI_INTERVAL_MS))
+        Self::with_psi_interval(Some(DEFAULT_PSI_INTERVAL))
     }
 
     /// A fresh streaming muxer with an explicit PAT/PMT repetition interval
-    /// (`None`/`Some(0)` writes the PSI once only).
-    pub fn with_psi_interval_ms(interval_ms: Option<u32>) -> Self {
-        let interval_ms = interval_ms.filter(|&ms| ms > 0);
+    /// (`None` or a zero interval writes the PSI once only).
+    pub fn with_psi_interval(interval: Option<Duration>) -> Self {
+        let interval = interval.filter(|d| !d.is_zero());
         Self {
-            psi_interval_ms: interval_ms,
+            psi_interval: interval,
             origin: None,
             continuity: TsContinuity::new(),
-            psi: PsiState::new(interval_ms.map(|ms| u64::from(ms) * TS_CLOCK_HZ / MS_PER_SECOND)),
+            psi: PsiState::new(interval.map(psi_interval_ticks)),
         }
     }
 
     /// The configured PAT/PMT repetition interval (`None` = written once).
-    pub fn psi_interval_ms(&self) -> Option<u32> {
-        self.psi_interval_ms
+    pub fn psi_interval(&self) -> Option<Duration> {
+        self.psi_interval
     }
 }
 

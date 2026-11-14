@@ -64,7 +64,8 @@ fn the_caller_plays_a_srt_runtime_listener_stream_exactly() {
             let mut listener = SrtListener::bind(
                 "127.0.0.1:0",
                 SrtSocketConfig::new(
-                    HandshakeConfig::default().with_latency_ms(LOCAL_SRT_LATENCY_MS),
+                    HandshakeConfig::default()
+                        .with_latency(Duration::from_millis(u64::from(LOCAL_SRT_LATENCY_MS))),
                 ),
             )
             .await
@@ -80,7 +81,7 @@ fn the_caller_plays_a_srt_runtime_listener_stream_exactly() {
     });
     let port = rx.recv().unwrap();
     let mut config = config_with_seed(Config::default());
-    config.srt.latency_ms = LOCAL_SRT_LATENCY_MS;
+    config.srt.latency = Duration::from_millis(u64::from(LOCAL_SRT_LATENCY_MS));
     let mut host = WireHost::open(&format!("srt://127.0.0.1:{port}"), config);
     let finished = host.run_until(RUN_DEADLINE, |h| {
         h.closes >= 1 && h.count(|e| matches!(e, Event::Sample { .. })) > 0
@@ -126,7 +127,7 @@ fn libsrt_stream_is_intact(passphrase: Option<&str>, key_length: SrtKeyLength, t
             .expect("spawn srt-live-transmit"),
     );
     let mut config = config_with_seed(Config::default());
-    config.srt.latency_ms = LOCAL_SRT_LATENCY_MS;
+    config.srt.latency = Duration::from_millis(u64::from(LOCAL_SRT_LATENCY_MS));
     if let Some(p) = passphrase {
         config.srt.encryption = Some(SrtEncryption::new(p, key_length));
     }
@@ -340,7 +341,7 @@ fn libsrt_retransmissions_repair_a_lossy_link() {
     );
     let proxy = LossyProxy::start(srt_port);
     let mut config = config_with_seed(Config::default());
-    config.srt.latency_ms = LOCAL_SRT_LATENCY_MS;
+    config.srt.latency = Duration::from_millis(u64::from(LOCAL_SRT_LATENCY_MS));
     let mut host = WireHost::open(&format!("srt://127.0.0.1:{}", proxy.port), config);
     let datagrams = ts_datagrams(ts, PAYLOAD_PACKETS);
     let connected = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));

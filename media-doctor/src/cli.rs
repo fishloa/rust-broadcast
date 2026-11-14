@@ -1,6 +1,7 @@
 //! CLI subcommands and entry-point (feature `cli`).
 
 use std::num::NonZeroU32;
+use std::time::Duration;
 
 /// `media-doctor check-hls` — run HLS playlist validation.
 #[derive(clap::Parser, Debug)]
@@ -63,8 +64,13 @@ pub struct WatchArgs {
     /// written, before it is dropped (milliseconds). A *total* deadline, not
     /// a per-read timeout: a peer that dribbles one byte at a time cannot
     /// hold a connection open indefinitely.
-    #[arg(long = "metrics-io-timeout-ms", default_value_t = DEFAULT_METRICS_IO_TIMEOUT_MS)]
-    pub metrics_io_timeout_ms: u64,
+    #[arg(
+        long = "metrics-io-timeout-ms",
+        value_parser = parse_timeout_ms,
+        default_value = "5000",
+        hide_default_value = true
+    )]
+    pub metrics_io_timeout: Duration,
 
     /// Requested `SO_RCVBUF` for the UDP socket, in bytes (the kernel may cap
     /// it; a warning is printed when it grants less than requested). Must be
@@ -110,9 +116,12 @@ impl WatchArgs {
 /// Default concurrent-connection cap for the metrics endpoint.
 pub const DEFAULT_METRICS_MAX_CONNS: usize = 32;
 
-/// Default total per-connection deadline for the metrics endpoint, in
-/// milliseconds.
-pub const DEFAULT_METRICS_IO_TIMEOUT_MS: u64 = 5_000;
+/// Parse a `--metrics-io-timeout-ms` value as a whole number of milliseconds.
+fn parse_timeout_ms(text: &str) -> Result<Duration, String> {
+    text.parse::<u64>()
+        .map(Duration::from_millis)
+        .map_err(|_| format!("`{text}` is not a whole number of milliseconds"))
+}
 
 /// Top-level CLI.
 #[derive(clap::Parser, Debug)]
