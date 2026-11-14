@@ -1,7 +1,9 @@
 use crate::support;
 use url::Url;
 
-use broadcast_client::{Action, Config, ConnId, Credentials, ErrorKind, Event, Session, Status};
+use broadcast_client::{
+    Action, Config, ConnId, Credentials, ErrorKind, Event, Session, Status, TrackId,
+};
 use broadcast_common::stage::Timestamp;
 use support::hls_host::*;
 use transmux::sample_aes::aes128_encrypt_segment;
@@ -825,7 +827,7 @@ fn error_kind_names_are_stable() {
         ),
         (
             ErrorKind::TrackDropped {
-                track_id: 0,
+                track_id: TrackId::new(0),
                 stream_type: None,
                 fourcc: None,
             },

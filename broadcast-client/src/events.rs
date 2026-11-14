@@ -339,7 +339,7 @@ pub enum ErrorKind {
     /// and its samples are dropped (reported once per session); the other tracks play.
     TrackIdReserved {
         /// The first offending track id.
-        track_id: u32,
+        track_id: TrackId,
     },
     /// An HLS track was left out. For a TS segment: an elementary stream that cannot be carried
     /// in the fragmented MP4 the HLS source produces (opaque data such as SCTE-35, ID3 or
@@ -348,11 +348,11 @@ pub enum ErrorKind {
     /// [`ErrorKind::UnsupportedEncryption`]). Reported once per track per source; the other
     /// tracks play, and a stream with no playable track ends fatally after these reports.
     TrackDropped {
-        /// The dropped track's id (remapped for an audio rendition); `0` for a track the fMP4
-        /// demuxer could not name. For RTSP it is not the id of an announced track: it is the
-        /// 1-based position of the dropped `m=` line among all media lines of the DESCRIBE SDP,
-        /// whatever the other lines are.
-        track_id: u32,
+        /// The dropped track's id (remapped for an audio rendition); [`TrackId::new(0)`] for a
+        /// track the fMP4 demuxer could not name. For RTSP it is not the id of an announced track:
+        /// it is the 1-based position of the dropped `m=` line among all media lines of the
+        /// DESCRIBE SDP, whatever the other lines are.
+        track_id: TrackId,
         /// The PMT `stream_type` (ISO/IEC 13818-1 Table 2-34) when the track is opaque TS data.
         stream_type: Option<u8>,
         /// The fMP4 sample entry's four-character code (`None` for a TS stream).
@@ -383,7 +383,7 @@ pub enum ErrorKind {
     /// default set meanwhile.
     UnknownRenderedTrack {
         /// The declared id.
-        track_id: u32,
+        track_id: TrackId,
     },
     /// An MPD could not be read as XML or broke a size or structure bound (`reason` is a stable
     /// token). Non-fatal and reported once per kind until a good MPD arrives; the session keeps
@@ -1487,5 +1487,51 @@ impl From<broadcast_auth::AuthEvent> for Event {
             }
             _ => Event::Status(Status::WaitingForCredentials),
         }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::{ErrorKind, TrackId};
+
+    #[test]
+    fn track_id_reports_carry_their_typed_id_and_the_unnamed_sentinel_is_zero() {
+        let reserved = ErrorKind::TrackIdReserved {
+            track_id: TrackId::new(7),
+        };
+        let dropped = ErrorKind::TrackDropped {
+            track_id: TrackId::new(0),
+            stream_type: None,
+            fourcc: None,
+        };
+        let unknown = ErrorKind::UnknownRenderedTrack {
+            track_id: TrackId::new(999),
+        };
+        assert_eq!(
+            reserved,
+            ErrorKind::TrackIdReserved {
+                track_id: TrackId::new(7)
+            }
+        );
+        assert_ne!(
+            reserved,
+            ErrorKind::TrackIdReserved {
+                track_id: TrackId::new(8)
+            }
+        );
+        assert_eq!(
+            dropped,
+            ErrorKind::TrackDropped {
+                track_id: TrackId::new(0),
+                stream_type: None,
+                fourcc: None,
+            }
+        );
+        assert_eq!(
+            unknown,
+            ErrorKind::UnknownRenderedTrack {
+                track_id: TrackId::new(999)
+            }
+        );
+        assert_eq!(dropped.name(), "track_dropped");
     }
 }

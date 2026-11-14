@@ -1002,9 +1002,7 @@ impl Session {
         }
         for track in resolution.unknown {
             self.events.push_back(Event::Error {
-                kind: ErrorKind::UnknownRenderedTrack {
-                    track_id: track.value(),
-                },
+                kind: ErrorKind::UnknownRenderedTrack { track_id: track },
                 fatal: false,
             });
         }

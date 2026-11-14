@@ -2,7 +2,7 @@ use crate::support;
 
 use std::sync::OnceLock;
 
-use broadcast_client::{Config, ErrorKind, Event, Status};
+use broadcast_client::{Config, ErrorKind, Event, Status, TrackId};
 use broadcast_common::stage::Timestamp;
 use sdp_types::{Media, MediaType, TransportProto};
 use support::rtsp_host::{BASE_URL, Host, MediaFixture, SEC, Server, interleaved, samples_of};
@@ -63,7 +63,7 @@ fn errors(events: &[Event]) -> Vec<(ErrorKind, bool)> {
         .collect()
 }
 
-fn dropped(events: &[Event]) -> Vec<u32> {
+fn dropped(events: &[Event]) -> Vec<TrackId> {
     errors(events)
         .into_iter()
         .filter_map(|(k, fatal)| match k {
@@ -126,7 +126,7 @@ fn an_unplayable_media_line_beside_a_playable_one_is_reported_once_and_the_rest_
         })
         .collect();
     assert_eq!(tracks, vec![vec![1, 2]]);
-    assert_eq!(dropped(&events), vec![3]);
+    assert_eq!(dropped(&events), vec![TrackId::new(3)]);
     assert!(errors(&events).iter().all(|(_, fatal)| !fatal));
     let per_track = |t: u32| samples_of(&events).iter().filter(|s| s.0 == t).count();
     assert!(per_track(1) > 0 && per_track(2) > 0);
