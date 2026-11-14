@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use broadcast_common::Timestamp;
 use bytes::Bytes;
-use hls_runtime::server::{DEFAULT_TRACK_ID, HlsBody, HlsOrigin, HlsRequest};
+use hls_runtime::server::{DEFAULT_TRACK_ID, HlsBody, HlsOrigin, HlsOriginConfig, HlsRequest};
 use media_plane::ServedEgress;
 use media_plane::egress::{AwaitPolicy, EgressResponse};
 use media_plane::ids::SegmentSeq;
@@ -31,11 +31,7 @@ fn trunk_with() -> (Arc<Trunk>, SegmentWriter) {
 }
 
 fn origin(trunk: &Arc<Trunk>) -> HlsOrigin {
-    HlsOrigin::builder(Arc::clone(trunk))
-        .with_target_duration_secs(1.0)
-        .with_window_segments(nz(8))
-        .with_instance(7)
-        .build()
+    HlsOrigin::new(HlsOriginConfig::new(Arc::clone(trunk), 1.0, nz(8)).with_instance(7))
         .expect("origin builds")
 }
 

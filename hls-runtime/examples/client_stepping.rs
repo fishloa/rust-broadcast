@@ -17,7 +17,9 @@ use std::time::Duration;
 
 use broadcast_common::Timestamp;
 use hls_runtime::client::{Action, HlsClient};
-use hls_runtime::server::{BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsOrigin, HlsRequest};
+use hls_runtime::server::{
+    BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsOrigin, HlsOriginConfig, HlsRequest,
+};
 use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
 use media_plane::ids::{PartIndex, SegmentSeq};
 use media_plane::trunk::{PartEntry, SegmentEntry, Trunk, TrunkConfig};
@@ -47,12 +49,11 @@ fn canned_playlist() -> String {
     let writer = trunk
         .segment_writer()
         .expect("first (and only) segment writer");
-    let origin = HlsOrigin::builder(std::sync::Arc::clone(&trunk))
-        .with_target_duration_secs(1.0)
-        .with_window_segments(nz(4))
-        .with_low_latency(Duration::from_millis(500))
-        .build()
-        .expect("both required fields set");
+    let origin = HlsOrigin::new(
+        HlsOriginConfig::new(std::sync::Arc::clone(&trunk), 1.0, nz(4))
+            .with_low_latency(Duration::from_millis(500)),
+    )
+    .expect("valid configuration");
     origin.set_init(vec![0xAA; 32]);
 
     writer.publish_part(PartEntry::new(

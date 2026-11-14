@@ -20,7 +20,8 @@ use std::time::Duration;
 
 use broadcast_common::Timestamp;
 use hls_runtime::server::{
-    BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsOrigin, HlsRequest, master_playlist_m3u8,
+    BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsOrigin, HlsOriginConfig, HlsRequest,
+    master_playlist_m3u8,
 };
 use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
 use media_plane::ids::{PartIndex, SegmentSeq};
@@ -62,12 +63,15 @@ fn main() {
     let writer = trunk
         .segment_writer()
         .expect("first (and only) segment writer");
-    let origin = HlsOrigin::builder(std::sync::Arc::clone(&trunk))
-        .with_target_duration_secs(TARGET_DURATION_SECS)
-        .with_window_segments(nz(WINDOW_SEGMENTS))
-        .with_low_latency(PART_TARGET)
-        .build()
-        .expect("both required fields set");
+    let origin = HlsOrigin::new(
+        HlsOriginConfig::new(
+            std::sync::Arc::clone(&trunk),
+            TARGET_DURATION_SECS,
+            nz(WINDOW_SEGMENTS),
+        )
+        .with_low_latency(PART_TARGET),
+    )
+    .expect("valid configuration");
     origin.set_init(vec![0xAA; 32]);
 
     // Segment 1 closes with two parts.

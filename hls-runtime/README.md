@@ -96,7 +96,7 @@ For the origin, `examples/origin_playlist.rs` builds a `Trunk`, publishes parts 
 - **Caption signalling:** `HlsOrigin::set_declared_closed_caption_languages` and `HlsOrigin::set_detected_closed_captions` render `CLOSED-CAPTIONS` (or `CLOSED-CAPTIONS=NONE`) on every variant from the ATSC `caption_service_descriptor` (issue #1428).
 - **Blocking reloads:** `HlsOrigin::published_target_duration()` exposes the frozen `EXT-X-TARGETDURATION` so an adapter can bound a blocking reload by three target durations (issue #1651).
 - **Variant selection:** `client::choose_variant(&[VariantInfo], &VariantPolicy)` is public for adaptive sources (issue #1460).
-- **Cold playlists and discontinuity sequence:** `HlsOriginBuilder::with_hold_cold_playlist(bool)` (default `HOLD_COLD_PLAYLIST_DEFAULT = true`) holds a Media Playlist request made before the first segment closes until it does (false restores the immediate answer); `HlsOriginBuilder::with_discontinuity_sequence(u64)` and `HlsOrigin::discontinuity_sequence_after()` let an origin that replaces another continue its `EXT-X-DISCONTINUITY-SEQUENCE`.
+- **Cold playlists and discontinuity sequence:** `HlsOriginConfig::with_hold_cold_playlist(bool)` (default `HOLD_COLD_PLAYLIST_DEFAULT = true`) holds a Media Playlist request made before the first segment closes until it does (false restores the immediate answer); `HlsOriginConfig::with_discontinuity_sequence(u64)` and `HlsOrigin::discontinuity_sequence_after()` let an origin that replaces another continue its `EXT-X-DISCONTINUITY-SEQUENCE`.
 
 ## Design notes
 
