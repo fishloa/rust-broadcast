@@ -64,7 +64,9 @@ fn time_signal_without_id_errors_on_daterange_conversion() {
     // event's id is genuinely absent (not just untested).
     let section = scte35_splice::SpliceInfoSection::new_clear(
         scte35_splice::commands::AnyCommand::TimeSignal(scte35_splice::commands::TimeSignal {
-            splice_time: scte35_splice::time::SpliceTime::with_pts(1_000),
+            splice_time: scte35_splice::time::SpliceTime::at(
+                broadcast_common::clock33::Clock33::try_new(1_000).expect("in range"),
+            ),
         }),
         &[],
     );
@@ -87,7 +89,11 @@ fn splice_at_pts(pts: u64) -> Vec<u8> {
     let cmd = SpliceInsert {
         splice_event_id: 7,
         out_of_network_indicator: true,
-        splice_time: Some(SpliceTime::with_pts(pts)),
+        mode: scte35_splice::commands::SpliceMode::Program(
+            scte35_splice::commands::ProgramSplice::At(SpliceTime::at(
+                broadcast_common::clock33::Clock33::try_new(pts).expect("in range"),
+            )),
+        ),
         ..Default::default()
     };
     SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(cmd), &[])

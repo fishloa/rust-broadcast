@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+- `scte35-splice` 6 -> 7: `SpliceTime::pts_time` is a validated `broadcast_common::clock33::Clock33`, and `SpliceInsert` carries its flags and times in one `SpliceMode` (see that crate's changelog).
+
 ### Changed
 - The catch-up playlist renders each `#EXTINF` from the segment's `Duration` through `broadcast_hls::DecimalSeconds::from_duration` instead of re-validating a converted `f64` with `.expect`, so a production path cannot panic on a non-finite duration. The live tail's segment duration now comes from `hls_runtime::server::ClosedSegment::duration` (a `Duration`) rather than a float round-trip (#2713).
 - BREAKING: `config::ReconnectPolicy` is `broadcast_common::backoff::ReconnectPolicy` (`backoff: BackoffSteps` + `max_attempts: Option<NonZeroU32>`) instead of a local `initial_backoff_ms`/`max_backoff_ms` struct, and the origin supervisor's `Backoff` is gone (its reconnect pacing is `broadcast_common::backoff::RetrySchedule` directly). Migration: a JSON `reconnect` object now names `backoff.steps` (a duration list) and `backoff.cap` (a duration) rather than `initial_backoff_ms`/`max_backoff_ms`, and a bounded retry names `max_attempts` as a non-zero number; `ReconnectPolicy::doubling(min, max)` rebuilds the old doubling schedule (#2690).

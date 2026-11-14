@@ -4998,13 +4998,15 @@ mod tests {
         use broadcast_common::Serialize;
         use scte35_splice::SpliceInfoSection;
         use scte35_splice::commands::AnyCommand;
-        use scte35_splice::commands::splice_insert::SpliceInsert;
+        use scte35_splice::commands::{ProgramSplice, SpliceInsert, SpliceMode};
         use scte35_splice::time::SpliceTime;
 
         let si = SpliceInsert {
             splice_event_id: event_id,
             out_of_network_indicator: true,
-            splice_time: Some(SpliceTime::with_pts(pts_time)),
+            mode: SpliceMode::Program(ProgramSplice::At(SpliceTime::at(
+                broadcast_common::clock33::Clock33::try_new(pts_time).expect("in range"),
+            ))),
             ..SpliceInsert::default()
         };
         let section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);

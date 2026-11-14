@@ -232,14 +232,14 @@ impl Session {
                 &parsed,
                 &config,
                 Self::jitter_seed(now_us),
-            ))))
+            )?)))
         } else if use_dash {
             Some(Adaptive::Dash(Box::new(DashSource::new(
                 &parsed,
                 &config,
                 ConnAlloc::new(),
                 Self::jitter_seed(now_us),
-            ))))
+            )?)))
         } else if use_smooth {
             Some(Adaptive::Smooth(Box::new(SmoothSource::new(
                 &parsed,
@@ -255,14 +255,16 @@ impl Session {
         } else {
             None
         };
-        let mut rtsp = is_rtsp_scheme.then(|| {
-            Box::new(RtspSource::new(
+        let mut rtsp = if is_rtsp_scheme {
+            Some(Box::new(RtspSource::new(
                 &parsed,
                 &config.ts_http.clamped(),
                 config.max_redirects,
                 now,
-            ))
-        });
+            )?))
+        } else {
+            None
+        };
         if let Some(r) = rtsp.as_mut() {
             r.on_credentials(now, &auth);
         }

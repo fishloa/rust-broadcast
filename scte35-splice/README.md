@@ -87,7 +87,9 @@ use broadcast_common::{Parse, Serialize};
 
 // A minimal time_signal() section with no descriptors, built and emitted.
 let ts = scte35_splice::commands::TimeSignal {
-    splice_time: scte35_splice::time::SpliceTime::with_pts(0x0_0012_3456),
+    splice_time: scte35_splice::time::SpliceTime::at(
+        broadcast_common::clock33::Clock33::try_new(0x0_0012_3456u64).expect("in range"),
+    ),
 };
 let section = SpliceInfoSection::new_clear(AnyCommand::TimeSignal(ts), &[]);
 let bytes = section.try_to_bytes().unwrap();
@@ -104,6 +106,11 @@ assert!(matches!(parsed.clear.as_ref().unwrap().command, AnyCommand::TimeSignal(
   `encrypted_packet` + `encryption_algorithm` (encrypted region kept raw), 33-bit
   `pts_adjustment`, `cw_index`, 12-bit `tier`,
   `splice_command_length` / type, descriptor loop, CRC-32 (verified on parse).
+- **`splice_insert`** (§9.7.3): one `SpliceMode` rather than a flag/option pair —
+  `Program(ProgramSplice::Immediate | ProgramSplice::At(SpliceTime))` or the deprecated
+  `Components { immediate, components }` — so the wire flags can never disagree with the
+  splice time they describe; `cancel: Option<u32>` is the id a cancel names
+  (`SpliceInsert::cancel(id)`).
 - **Segmentation tables** (§10.3.3.1): typed `DeviceRestrictions` (Table 21),
   `SegmentationUpidType` (Table 22) and `SegmentationTypeId` (Table 23), each with a
   `Reserved(u8)` catch-all so unrecognised values round-trip.
@@ -119,7 +126,7 @@ assert!(matches!(parsed.clear.as_ref().unwrap().command, AnyCommand::TimeSignal(
 - **DVB-TA** (`dvb_ta`): `DVB_DAS_descriptor`, compact SCTE 35 (Tables 6 and 8 as
   re-aligned from the PDF, typed preserved `reserved` fields), stream-event payload
   with an RFC 4648 base-64 helper, PPO/DPO profiling helpers.
-- **Live cue tracking** (`tracker`): `SpliceTracker` (open `splice_insert` events, bounded by `MAX_OPEN_EVENTS`), `splice_event`, `judge_splice_time` and the `SpliceSanity`/`SpliceObservation` verdicts, the one cue-sanity engine shared by `media-doctor` and `compliance-probe`.
+- **Live cue tracking** (`tracker`): `SpliceTracker` (open `splice_insert` events, oldest evicted past `MAX_OPEN_EVENTS`; `feed` rejects a legally repeated packet by its continuity counter and reports every non-cue section as `NoCue` instead of dropping it), `splice_event`, `judge_splice_time` and the `SpliceSanity`/`SpliceObservation` verdicts, the one cue-sanity engine shared by `media-doctor` and `compliance-probe`.
 - **Dispatch**: `AnyCommand` and `AnySpliceDescriptor` are generated from single
   `declare_*!` lists with compile-time drift tests; adding a type is one line.
 

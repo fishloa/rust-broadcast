@@ -8,7 +8,7 @@ use broadcast_client::{
 };
 use broadcast_common::clock33::Clock27;
 use broadcast_common::stage::Timestamp;
-use buffering_runtime::{duration_micros, micros_as_duration};
+use buffering_runtime::{instant_micros, micros_as_duration};
 use support::replay::{TS_PACKET, bitrate_bps, open_live};
 
 /// The harness's microsecond clock as the session's `now`.
@@ -660,7 +660,7 @@ fn an_intermediate_wait_changes_start_between_the_extremes() {
         );
         assert!(n < s && s < f, "{why}: {n} {s} {f}");
         assert!(
-            s - n <= duration_micros(SHORT_WAIT_US) + TICK_US,
+            s - n <= instant_micros(SHORT_WAIT_US) + TICK_US,
             "{why}: {n} {s}"
         );
         assert!(none.flap_within(FLAP_WINDOW_US).is_some(), "{why}");
@@ -765,11 +765,11 @@ fn audio_beyond_the_hard_cap_starts_on_video_at_the_cap_and_reports_it_once() {
         let at = start.expect(&why).at_us;
         assert_eq!(start.unwrap().leads_ms.len(), 1, "video alone: {why}");
         assert!(
-            at >= first + duration_micros(CAP_US) - AFTER_CAP_BOUND_US,
+            at >= first + instant_micros(CAP_US) - AFTER_CAP_BOUND_US,
             "{at}: {why}"
         );
         assert!(
-            at <= first + duration_micros(CAP_US) + AFTER_CAP_BOUND_US,
+            at <= first + instant_micros(CAP_US) + AFTER_CAP_BOUND_US,
             "{at}: {why}"
         );
         assert_eq!(o.notices.len(), 1, "{why}");
@@ -790,7 +790,7 @@ fn a_declared_audio_that_never_arrives_starts_at_the_cap_and_reports_it_once() {
         let first = o.first_sample_us.expect(&why);
         let at = o.start_us().expect(&why);
         assert!(
-            at <= first + duration_micros(CAP_US) + AFTER_CAP_BOUND_US,
+            at <= first + instant_micros(CAP_US) + AFTER_CAP_BOUND_US,
             "{at}: {why}"
         );
         assert_eq!(o.notices.len(), 1, "{why}");
@@ -812,11 +812,11 @@ fn a_zero_hard_cap_reproduces_the_wait_alone() {
     let off_at = off.start_us().expect("started without cap");
     let on_at = on.start_us().expect("started with cap");
     assert!(
-        off_at <= first + duration_micros(DEFAULT_WAIT_US) + AFTER_CAP_BOUND_US,
+        off_at <= first + instant_micros(DEFAULT_WAIT_US) + AFTER_CAP_BOUND_US,
         "{off_at}"
     );
     assert!(
-        on_at >= off_at + (duration_micros(CAP_US) - duration_micros(DEFAULT_WAIT_US)) / 2,
+        on_at >= off_at + (instant_micros(CAP_US) - instant_micros(DEFAULT_WAIT_US)) / 2,
         "{off_at} {on_at}"
     );
     assert_eq!(off.notices.len(), 1);
@@ -861,11 +861,11 @@ fn a_long_wait_is_not_cut_short_by_the_controller_silence_timeout() {
     let first = o.first_sample_us.expect("media");
     let at = o.start_us().expect("started");
     assert!(
-        at >= first + duration_micros(LONG_WAIT_US),
+        at >= first + instant_micros(LONG_WAIT_US),
         "start {at} us, first {first} us"
     );
     assert!(
-        at <= first + duration_micros(LONG_WAIT_US) + AFTER_WAIT_BOUND_US,
+        at <= first + instant_micros(LONG_WAIT_US) + AFTER_WAIT_BOUND_US,
         "start {at} us"
     );
 }
