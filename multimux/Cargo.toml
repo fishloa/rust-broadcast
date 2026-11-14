@@ -184,7 +184,8 @@ rtp-packet        = { path = "../rtp-packet", version = "0.7.0", default-feature
 # clock. `default-features = false` — only `std` (this crate always links
 # std) + `ts` (the section reassembler `SiDemux` needs); `chrono`/`serde`
 # are not needed since `dvr::EitProgramme` decodes MJD+BCD itself.
-dvb-si            = { path = "../dvb-si", version = "14.0.0", default-features = false, features = ["std", "ts"] }
+# `legacy-charsets` keeps KS X 1001 / GB-2312 / Big5 event names decoding.
+dvb-si            = { path = "../dvb-si", version = "14.0.0", default-features = false, features = ["std", "ts", "legacy-charsets"] }
 # TS packet/PSI-section framing. Two uses: `mpeg_ts::pid::Pid`, which
 # `dvr::DvrRecorder::new` wraps the EIT PID (`dvb_si::tables::eit::PID`) in
 # to pass to `SiDemux::builder().pid(..)`; and

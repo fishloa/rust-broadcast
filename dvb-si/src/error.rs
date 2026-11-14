@@ -51,6 +51,14 @@ pub enum Error {
         reason: &'static str,
     },
 
+    /// Text in a Table A.3 character set whose codec needs the
+    /// `legacy-charsets` feature, decoded with that feature off.
+    #[error("{charset} text needs the `legacy-charsets` feature")]
+    CharsetNotEnabled {
+        /// The character set the selector names.
+        charset: crate::text::LegacyCharset,
+    },
+
     /// A `section_length` declared more bytes than the containing buffer could hold.
     #[error("section_length {declared} exceeds remaining buffer ({available} bytes)")]
     SectionLengthOverflow {

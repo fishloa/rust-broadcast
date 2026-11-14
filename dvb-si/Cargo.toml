@@ -34,6 +34,8 @@ test-alloc = { path = "../test-alloc" }
 quick-xml = { workspace = true }
 serde_json = { workspace = true }
 criterion  = { workspace = true, features = ["html_reports"] }
+# Oracle for the tabulated ISO 8859 parts (`text::iso8859` tests).
+encoding_rs = { version = "0.8" }
 
 [[bench]]
 name     = "si_hot_paths"
@@ -41,11 +43,17 @@ harness  = false
 required-features = ["ts"]
 
 [features]
-default = ["std", "chrono", "ts"]
+default = ["std", "chrono", "ts", "legacy-charsets"]
 
 # `std` links the standard library. Without it the crate is `#![no_std]` and
 # needs only `alloc`. chrono's wall-clock and the std `Error` glue are std-only.
-std      = ["broadcast-common/std", "chrono?/std", "chrono?/clock", "thiserror/std", "num_enum/std", "dep:encoding_rs", "bytes?/std", "mpeg-ts/std", "serde?/std"]
+std      = ["broadcast-common/std", "chrono?/std", "chrono?/clock", "thiserror/std", "num_enum/std", "bytes?/std", "mpeg-ts/std", "serde?/std"]
+
+# EN 300 468 Annex A KS X 1001 / GB-2312 / Big5 text (selectors 0x12-0x14),
+# decoded with `encoding_rs`'s codec tables. Off = those three selectors are
+# `Error::CharsetNotEnabled` from `try_decode` (U+FFFD from `decode`); every
+# other Annex A charset, ISO 8859 included, decodes without it.
+legacy-charsets = ["std", "dep:encoding_rs"]
 
 # Date/time decoding (MJD + BCD -> chrono DateTime<Utc>). Off = raw bytes returned.
 chrono   = ["dep:chrono", "broadcast-common/chrono"]

@@ -153,6 +153,7 @@ memory-capped. Layering: `dvb-si/src/carousel/mod.rs`.
 | Feature | Default | Effect |
 |---|---|---|
 | `std` | on | off → `#![no_std]` + `alloc` |
+| `legacy-charsets` | on | KS X 1001 / GB-2312 / Big5 text via `encoding_rs`; off → `DvbText::try_decode` is `Error::CharsetNotEnabled` for those |
 | `ts` | on | `demux::SiDemux`; off → bring your own section bytes |
 | `chrono` | on | MJD+BCD → `chrono::DateTime<Utc>` helpers, `epg` module |
 | `serde` | off | serialize-only JSON support |

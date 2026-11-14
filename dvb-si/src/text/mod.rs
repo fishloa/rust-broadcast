@@ -10,9 +10,14 @@
 //! selectors (0x08, 0x0C–0x0F, 0x16–0x1E) yield U+FFFD per byte. The
 //! selector → decoder table is generated into
 //! `private/specs-verified/dvb/dvb-si/COVERAGE.md`.
-//! ISO 8859-2 … -15, KS X 1001, GB-2312 and Big5 use `encoding_rs` and need
-//! the `std` feature (without it they decode lossily, raw bytes stay
-//! available); default Latin, ISO 8859-1, UCS-2 and UTF-8 decode without it.
+//! The ISO 8859 parts are tabulated in this crate (`iso8859`), so the default
+//! Latin table, every ISO 8859 part, UCS-2 and UTF-8 decode with no codec
+//! dependency, `no_std` included. KS X 1001, GB-2312 and Big5 need the
+//! `encoding_rs` codec tables and the `legacy-charsets` feature (off by
+//! default): without it [`try_decode_dvb_string`] / [`DvbText::try_decode`]
+//! return [`Error::CharsetNotEnabled`](crate::Error::CharsetNotEnabled) naming
+//! the [`LegacyCharset`], while the infallible [`decode_dvb_string`] /
+//! [`DvbText::decode`] yield U+FFFD per byte; the raw bytes stay available.
 //!
 //! Glyph mappings are pinned to EN 300 468 V1.19.1 (2025-02) Figure A.1
 //! "Character code table 00 - Latin alphabet with Unicode equivalents"
@@ -39,47 +44,110 @@
 //! assert_eq!(LangCode(*b"fre").as_str(), "fre");
 //! ```
 
+mod iso8859;
+
 use alloc::borrow::Cow;
 use alloc::string::String;
+
+/// A Table A.3 character set whose codec tables come from `encoding_rs` and
+/// so need the `legacy-charsets` feature.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum LegacyCharset {
+    /// KS X 1001 Korean (selector 0x12), decoded as EUC-KR.
+    Ksx1001,
+    /// GB-2312 Simplified Chinese (selector 0x13), decoded via GBK (a GB-2312
+    /// superset).
+    Gb2312,
+    /// Big5 Traditional Chinese (selector 0x14).
+    Big5,
+}
+
+impl LegacyCharset {
+    /// The Table A.3 name of the character set.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Ksx1001 => "KS X 1001",
+            Self::Gb2312 => "GB-2312",
+            Self::Big5 => "Big5",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(LegacyCharset);
 
 /// Decode a DVB text payload (e.g. short_event_descriptor event_name_char)
 /// into an owned UTF-8 `String`. The first byte may be a charset indicator
 /// per ETSI EN 300 468 Annex A Table A.3.
+///
+/// Infallible: a [`LegacyCharset`] body decoded without the
+/// `legacy-charsets` feature yields U+FFFD per byte, as a reserved selector
+/// does. [`try_decode_dvb_string`] reports that case as an error instead.
 #[must_use]
 pub fn decode_dvb_string(bytes: &[u8]) -> String {
     if bytes.is_empty() {
         return String::new();
     }
-
     let (charset, body) = split_charset(bytes);
-    let decoded = match charset {
+    let decoded = decode_charset(charset, body).unwrap_or_else(|_| replacement(body));
+    strip_control_codes(decoded)
+}
+
+/// [`decode_dvb_string`], but a body in a [`LegacyCharset`] while the
+/// `legacy-charsets` feature is off is
+/// [`Error::CharsetNotEnabled`](crate::Error::CharsetNotEnabled) rather than
+/// replacement characters.
+///
+/// # Errors
+///
+/// [`Error::CharsetNotEnabled`](crate::Error::CharsetNotEnabled) as above.
+pub fn try_decode_dvb_string(bytes: &[u8]) -> crate::Result<String> {
+    if bytes.is_empty() {
+        return Ok(String::new());
+    }
+    let (charset, body) = split_charset(bytes);
+    decode_charset(charset, body)
+        .map(strip_control_codes)
+        .map_err(|charset| crate::Error::CharsetNotEnabled { charset })
+}
+
+fn replacement(body: &[u8]) -> String {
+    body.iter().map(|_| char::REPLACEMENT_CHARACTER).collect()
+}
+
+/// Decode `body` in `charset`, before the Annex A.1 control-code pass.
+fn decode_charset(charset: Charset, body: &[u8]) -> core::result::Result<String, LegacyCharset> {
+    Ok(match charset {
         Charset::Iso6937 => decode_iso_6937(body),
         Charset::Iso8859(n) => decode_iso_8859(n, body),
         Charset::Utf8 => String::from_utf8_lossy(body).into_owned(),
         Charset::Ucs2Be => decode_ucs2_be(body),
-        #[cfg(feature = "std")]
-        Charset::Ksx1001 => decode_with(encoding_rs::EUC_KR, body),
-        #[cfg(feature = "std")]
-        Charset::Gb2312 => decode_with(encoding_rs::GBK, body),
-        #[cfg(feature = "std")]
-        Charset::Big5 => decode_with(encoding_rs::BIG5, body),
-        // The CJK codec tables come from `encoding_rs`, which is std-only; under
-        // `no_std` these decode lossily (replacement chars), like an unsupported
-        // charset. The raw bytes remain available via `DvbText`.
-        #[cfg(not(feature = "std"))]
-        Charset::Ksx1001 | Charset::Gb2312 | Charset::Big5 => {
-            body.iter().map(|_| '\u{FFFD}').collect()
-        }
-        Charset::Unsupported(_indicator) => body.iter().map(|_| '\u{FFFD}').collect(),
-    };
+        Charset::Legacy(legacy) => return decode_legacy(legacy, body),
+        Charset::Unsupported(_indicator) => replacement(body),
+    })
+}
 
-    // Annex A.1 control codes:
-    //   single-byte tables: 0x86 emphasis on, 0x87 emphasis off, 0x8A CR/LF
-    //   -> space; other C0/C1 controls are stripped.
-    //   two-byte tables (Table A.2): the same functions live at U+E086 /
-    //   U+E087 / U+E08A inside the ISO 10646 PUA; the rest of
-    //   U+E080..U+E09F is reserved for control functions and stripped.
-    strip_control_codes(decoded)
+#[cfg(feature = "legacy-charsets")]
+fn decode_legacy(
+    charset: LegacyCharset,
+    body: &[u8],
+) -> core::result::Result<String, LegacyCharset> {
+    let encoding = match charset {
+        LegacyCharset::Ksx1001 => encoding_rs::EUC_KR,
+        LegacyCharset::Gb2312 => encoding_rs::GBK,
+        LegacyCharset::Big5 => encoding_rs::BIG5,
+    };
+    let (cow, _, _) = encoding.decode(body);
+    Ok(cow.into_owned())
+}
+
+#[cfg(not(feature = "legacy-charsets"))]
+fn decode_legacy(
+    charset: LegacyCharset,
+    _body: &[u8],
+) -> core::result::Result<String, LegacyCharset> {
+    Err(charset)
 }
 
 /// `true` for a decoded char the Annex A.1 control-code pass must touch:
@@ -88,7 +156,11 @@ fn is_control_char(c: char) -> bool {
     matches!(c as u32, 0x00..0x20 | 0x80..0xA0 | 0xE080..0xE0A0)
 }
 
-/// Apply the Annex A.1 control-code rules to an already-decoded string.
+/// Apply the Annex A.1 control-code rules to an already-decoded string:
+/// single-byte tables use 0x86 emphasis on, 0x87 emphasis off and 0x8A CR/LF
+/// (-> space), other C0/C1 controls are stripped; two-byte tables (Table A.2)
+/// carry the same functions at U+E086 / U+E087 / U+E08A in the ISO 10646 PUA,
+/// and the rest of U+E080..U+E09F is reserved and stripped.
 ///
 /// Text without any control char (the overwhelmingly common case) is
 /// returned as is — no second copy; otherwise one right-sized pass (audit
@@ -110,11 +182,16 @@ fn strip_control_codes(decoded: String) -> String {
     out
 }
 
+/// Selector-less printable ASCII: decodes to itself.
+fn is_plain_ascii(bytes: &[u8]) -> bool {
+    bytes.iter().all(|&b| b.is_ascii() && b >= b' ')
+}
+
 /// Convenience wrapper returning `Cow::Borrowed` for pure-ASCII input,
 /// `Cow::Owned` otherwise.
 #[must_use]
 pub fn decode(bytes: &[u8]) -> Cow<'_, str> {
-    if bytes.iter().all(|&b| b.is_ascii() && b >= 0x20) {
+    if is_plain_ascii(bytes) {
         return Cow::Borrowed(core::str::from_utf8(bytes).unwrap_or(""));
     }
     Cow::Owned(decode_dvb_string(bytes))
@@ -144,6 +221,18 @@ impl<'a> DvbText<'a> {
     #[must_use]
     pub fn decode(&self) -> Cow<'a, str> {
         decode(self.0)
+    }
+    /// [`Self::decode`], but text in a [`LegacyCharset`] while the
+    /// `legacy-charsets` feature is off is an error instead of U+FFFD.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::CharsetNotEnabled`](crate::Error::CharsetNotEnabled).
+    pub fn try_decode(&self) -> crate::Result<Cow<'a, str>> {
+        if is_plain_ascii(self.0) {
+            return Ok(decode(self.0));
+        }
+        try_decode_dvb_string(self.0).map(Cow::Owned)
     }
 }
 
@@ -227,12 +316,8 @@ enum Charset {
     Iso8859(u8),
     Utf8,
     Ucs2Be,
-    /// KS X 1001 (selector 0x12), decoded as EUC-KR.
-    Ksx1001,
-    /// GB-2312 (selector 0x13), decoded via GBK (a GB-2312 superset).
-    Gb2312,
-    /// Big5 (selector 0x14).
-    Big5,
+    /// KS X 1001, GB-2312 or Big5 (selectors 0x12–0x14).
+    Legacy(LegacyCharset),
     Unsupported(u8),
 }
 
@@ -246,9 +331,9 @@ fn split_charset(bytes: &[u8]) -> (Charset, &[u8]) {
         0x01..=0x0B => (Charset::Iso8859(bytes[0] + 4), &bytes[1..]),
         0x10 if bytes.len() >= 3 && bytes[1] == 0x00 => (Charset::Iso8859(bytes[2]), &bytes[3..]),
         0x11 => (Charset::Ucs2Be, &bytes[1..]),
-        0x12 => (Charset::Ksx1001, &bytes[1..]),
-        0x13 => (Charset::Gb2312, &bytes[1..]),
-        0x14 => (Charset::Big5, &bytes[1..]),
+        0x12 => (Charset::Legacy(LegacyCharset::Ksx1001), &bytes[1..]),
+        0x13 => (Charset::Legacy(LegacyCharset::Gb2312), &bytes[1..]),
+        0x14 => (Charset::Legacy(LegacyCharset::Big5), &bytes[1..]),
         0x15 => (Charset::Utf8, &bytes[1..]),
         // 0x1F: an 8-bit encoding_type_id follows (Table A.4 area); no ids are
         // registered for broadcast text — treat the body as undecodable.
@@ -563,76 +648,11 @@ fn combine(prefix: u8, base: u8) -> Option<char> {
 
 fn decode_iso_8859(n: u8, bytes: &[u8]) -> String {
     // ISO/IEC 8859-1 (Latin-1) is the first 256 Unicode code points exactly, so
-    // a byte→char cast is a correct decode — and needs no codec tables, so it
-    // works under `no_std` too. (encoding_rs has no pure 8859-1; WINDOWS_1252
-    // differs in 0x80–0x9F, so don't use it here.)
+    // a byte→char cast is a correct decode.
     if n == 1 {
-        return bytes.iter().map(|&b| b as char).collect();
+        return bytes.iter().map(|&b| char::from(b)).collect();
     }
-    // The other 8859 parts use `encoding_rs`'s codec tables, which are std-only;
-    // under `no_std` they decode lossily (replacement chars). Raw bytes remain
-    // available via `DvbText`.
-    #[cfg(feature = "std")]
-    {
-        use encoding_rs::*;
-        // `encoding_rs` (and the WHATWG label registry it implements) has no
-        // pure ISO/IEC 8859-9 or 8859-11 codec: web-compat routes both labels
-        // to windows-1254 / windows-874, which match the true 8859-9 / 8859-11
-        // GR range (0xA0-0xFF) byte-for-byte but remap 0x80-0x9F to printable
-        // characters, where DVB Annex A's single-byte tables leave that range
-        // as the C1 control set (§A.1's 0x86/0x87/0x8A emphasis/CR-LF codes
-        // live there, and `decode_dvb_string`'s post-filter only strips them
-        // in the C1 range) — so a Turkish/Thai emphasis marker or line break
-        // was coming out as a Windows-1252-style printable glyph instead of
-        // being recognised and stripped/converted. Every byte of these
-        // encodings decodes to exactly one code point (no multi-byte
-        // sequences, no BOM handling for a non-Unicode encoding), so decode
-        // then overwrite just the 0x80-0x9F positions with the raw C1 code
-        // point.
-        if n == 9 || n == 11 {
-            let encoding: &'static Encoding = if n == 9 { WINDOWS_1254 } else { WINDOWS_874 };
-            let (cow, _) = encoding.decode_without_bom_handling(bytes);
-            debug_assert_eq!(cow.chars().count(), bytes.len());
-            return bytes
-                .iter()
-                .zip(cow.chars())
-                .map(|(&b, c)| {
-                    if (0x80..=0x9F).contains(&b) {
-                        b as char
-                    } else {
-                        c
-                    }
-                })
-                .collect();
-        }
-        let encoding: &'static Encoding = match n {
-            2 => ISO_8859_2,
-            3 => ISO_8859_3,
-            4 => ISO_8859_4,
-            5 => ISO_8859_5,
-            6 => ISO_8859_6,
-            7 => ISO_8859_7,
-            8 => ISO_8859_8,
-            10 => ISO_8859_10,
-            13 => ISO_8859_13,
-            14 => ISO_8859_14,
-            15 => ISO_8859_15,
-            _ => return bytes.iter().map(|_| '\u{FFFD}').collect(),
-        };
-        let (cow, _, _) = encoding.decode(bytes);
-        cow.into_owned()
-    }
-    #[cfg(not(feature = "std"))]
-    {
-        let _ = n;
-        bytes.iter().map(|_| '\u{FFFD}').collect()
-    }
-}
-
-#[cfg(feature = "std")]
-fn decode_with(encoding: &'static encoding_rs::Encoding, bytes: &[u8]) -> String {
-    let (cow, _, _) = encoding.decode(bytes);
-    cow.into_owned()
+    iso8859::decode(n, bytes).unwrap_or_else(|| replacement(bytes))
 }
 
 fn decode_ucs2_be(bytes: &[u8]) -> String {
@@ -732,7 +752,6 @@ mod tests {
     /// emphasis marker (0x86/0x87) in Turkish/Thai text decoded as a
     /// Windows-125x glyph and leaked through `decode_dvb_string`'s
     /// control-code filter untouched, instead of being recognised.
-    #[cfg(feature = "std")]
     #[test]
     fn decode_selector_9_and_11_treat_0x80_0x9f_as_c1_controls() {
         // Selector 9 = ISO 8859-9: 0x8A must become a space (CR/LF), exactly
@@ -757,18 +776,21 @@ mod tests {
         assert_eq!(s, "İ");
     }
 
+    #[cfg(feature = "legacy-charsets")]
     #[test]
     fn decode_selector_0x12_ksx1001_euc_kr() {
         // EUC-KR 0xB0A1 = '가' (HANGUL SYLLABLE GA).
         assert_eq!(decode_dvb_string(&[0x12, 0xB0, 0xA1]), "가");
     }
 
+    #[cfg(feature = "legacy-charsets")]
     #[test]
     fn decode_selector_0x13_gb2312() {
         // GB-2312/GBK 0xC4E3 = '你'.
         assert_eq!(decode_dvb_string(&[0x13, 0xC4, 0xE3]), "你");
     }
 
+    #[cfg(feature = "legacy-charsets")]
     #[test]
     fn decode_selector_0x14_big5() {
         // Big5 0xA4A4 = '中'.
@@ -778,6 +800,7 @@ mod tests {
     /// A multi-byte trail byte in 0x80–0x9F must survive: the C1 control
     /// filter operates on decoded code points, never on raw trail bytes.
     /// GBK 0x8180 = '亐' (U+4E90, trail byte in the C1 range).
+    #[cfg(feature = "legacy-charsets")]
     #[test]
     fn decode_selector_0x13_gbk_trail_byte_in_c1_range() {
         assert_eq!(decode_dvb_string(&[0x13, 0x81, 0x80]), "亐");
@@ -786,10 +809,61 @@ mod tests {
     /// Annex A.1 two-byte control codes live at U+E080–U+E09F in the PUA
     /// (Table A.2): U+E08A is CR/LF → space; the reserved rest is stripped.
     /// GBK 0xABCD decodes to U+E08A; GBK 0xABC3 decodes to U+E080.
+    #[cfg(feature = "legacy-charsets")]
     #[test]
     fn two_byte_control_codes_filtered() {
         assert_eq!(decode_dvb_string(&[0x13, 0xAB, 0xCD]), " ");
         assert_eq!(decode_dvb_string(&[0x13, 0xAB, 0xC3]), "");
+    }
+
+    #[cfg(feature = "legacy-charsets")]
+    #[test]
+    fn try_decode_legacy_charsets_when_enabled() {
+        assert_eq!(try_decode_dvb_string(&[0x12, 0xB0, 0xA1]).unwrap(), "가");
+        assert_eq!(try_decode_dvb_string(&[0x13, 0xC4, 0xE3]).unwrap(), "你");
+        assert_eq!(
+            DvbText::new(&[0x14, 0xA4, 0xA4]).try_decode().unwrap(),
+            "中"
+        );
+    }
+
+    #[cfg(not(feature = "legacy-charsets"))]
+    #[test]
+    fn legacy_charsets_are_a_typed_error_when_disabled() {
+        let cases = [
+            ([0x12u8, 0xB0, 0xA1], LegacyCharset::Ksx1001),
+            ([0x13, 0xC4, 0xE3], LegacyCharset::Gb2312),
+            ([0x14, 0xA4, 0xA4], LegacyCharset::Big5),
+        ];
+        for (raw, charset) in cases {
+            let expected = crate::Error::CharsetNotEnabled { charset };
+            assert_eq!(try_decode_dvb_string(&raw), Err(expected.clone()));
+            assert_eq!(DvbText::new(&raw).try_decode(), Err(expected));
+            assert_eq!(decode_dvb_string(&raw), "\u{FFFD}\u{FFFD}");
+        }
+    }
+
+    /// Every charset other than the three legacy ones decodes through
+    /// `try_decode_dvb_string` whatever the feature state.
+    #[test]
+    fn try_decode_non_legacy_charsets() {
+        assert_eq!(try_decode_dvb_string(&[0xC2, b'e']).unwrap(), "é");
+        assert_eq!(try_decode_dvb_string(&[0x01, 0xB0, 0xB1]).unwrap(), "АБ");
+        assert_eq!(
+            try_decode_dvb_string(&[0x10, 0x00, 0x02, 0xA1]).unwrap(),
+            "Ą"
+        );
+        assert_eq!(try_decode_dvb_string(&[0x11, 0x00, 0x41]).unwrap(), "A");
+        assert_eq!(try_decode_dvb_string(&[0x15, 0xC3, 0xA9]).unwrap(), "é");
+        assert_eq!(try_decode_dvb_string(&[]).unwrap(), "");
+        assert_eq!(DvbText::new(b"PLAIN").try_decode().unwrap(), "PLAIN");
+    }
+
+    #[test]
+    fn legacy_charset_labels() {
+        assert_eq!(LegacyCharset::Ksx1001.to_string(), "KS X 1001");
+        assert_eq!(LegacyCharset::Gb2312.name(), "GB-2312");
+        assert_eq!(LegacyCharset::Big5.name(), "Big5");
     }
 
     /// 0x1F consumes its 8-bit encoding_type_id; the body is undecodable

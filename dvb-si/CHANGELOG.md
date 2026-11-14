@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- Feature `legacy-charsets` (on by default) carries `encoding_rs`, which is now needed only for the EN 300 468 Annex A KS X 1001, GB-2312 and Big5 selectors (0x12–0x14); `std` no longer pulls it in. With the feature off, `text::try_decode_dvb_string` and `DvbText::try_decode` return the new `Error::CharsetNotEnabled { charset: text::LegacyCharset }` for those three selectors, and the infallible `decode` yields U+FFFD per byte (#2635).
+### Changed
+- ISO/IEC 8859-2 … -15 text (selectors 0x01–0x0B and 0x10 0x00 nn) is decoded from tables in the crate, pinned byte for byte against `encoding_rs`, so it no longer needs `encoding_rs` and now also decodes under `no_std` instead of yielding U+FFFD (#2635).
 
 ## [14.0.0] - 2026-11-14
 ### Changed

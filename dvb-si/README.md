@@ -247,7 +247,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 | Feature | Default | Enables |
 |---|---|---|
-| `std` | yes | Links `std`. Off → `#![no_std]` + `alloc`. The non-Latin text charsets (`encoding_rs`) and wall-clock time need it. |
+| `std` | yes | Links `std`. Off → `#![no_std]` + `alloc`. Wall-clock time needs it. |
+| `legacy-charsets` | yes | KS X 1001 / GB-2312 / Big5 text (Annex A selectors 0x12–0x14) via `encoding_rs` (implies `std`). Off → `DvbText::try_decode` returns `Error::CharsetNotEnabled` for those three and `decode()` yields U+FFFD; every other Annex A charset, ISO 8859 included, decodes without it. |
 | `chrono` | yes | MJD + BCD fields also as `chrono::DateTime<Utc>` (EIT `start_time_chrono()`, TDT/TOT `utc_time()`), local time offsets as `chrono::Duration`; the `epg` module. Off → `MjdBcdDateTime` and raw bytes only. |
 | `ts` | yes | `demux::SiDemux` over 188-byte packets (framing from [`mpeg-ts`](https://crates.io/crates/mpeg-ts)). Off → bring your own section bytes. |
 | `serde` | no | `Serialize` on every table, descriptor and text type (`DvbText` as its decoded string). Serialize-only by design. |
