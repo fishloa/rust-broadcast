@@ -120,7 +120,7 @@ use transmux::TrackId;
 
 use broadcast_common::Timestamp;
 use bytes::Bytes;
-use hls_runtime::server::HlsOrigin;
+use hls_runtime::server::{HlsOrigin, HlsOriginConfig};
 use media_plane::trunk::{
     PartEntry, SegmentCursor, SegmentCursorItem, SegmentEntry, SegmentWriter, TrunkConfig,
 };
@@ -950,13 +950,12 @@ impl ProgramServing {
         let hold_cold_playlist = route.hold_cold_playlist;
         let warms = Arc::clone(&route.warms);
         let media_sequence_offset = epoch.seq_offset;
-        let mut builder = HlsOrigin::builder(Arc::clone(&trunk))
-            .with_target_duration_secs(target_duration_secs)
-            .with_window_segments(window_segments)
-            .with_container(container)
-            .with_media_sequence_offset(media_sequence_offset)
-            .with_discontinuity_sequence(epoch.discontinuity_sequence)
-            .with_hold_cold_playlist(hold_cold_playlist);
+        let mut builder =
+            HlsOriginConfig::new(Arc::clone(&trunk), target_duration_secs, window_segments)
+                .with_container(container)
+                .with_media_sequence_offset(media_sequence_offset)
+                .with_discontinuity_sequence(epoch.discontinuity_sequence)
+                .with_hold_cold_playlist(hold_cold_playlist);
         if program_date_time == crate::config::ProgramDateTimeSource::Arrival {
             builder = builder.with_program_date_time_arrival(Arc::new(|| {
                 jiff::Timestamp::now().as_millisecond()
@@ -987,13 +986,15 @@ impl ProgramServing {
         for (idx, decl) in sibling_decls.iter().enumerate() {
             let sibling_trunk = Arc::new(Trunk::new(route.trunk_config));
             let track_id = transmux::TrackId::new(u32::try_from(idx + 2).unwrap_or(u32::MAX));
-            let mut ab = HlsOrigin::builder(Arc::clone(&sibling_trunk))
-                .with_target_duration_secs(target_duration_secs)
-                .with_window_segments(window_segments)
-                .with_container(Container::Fmp4)
-                .with_media_sequence_offset(media_sequence_offset)
-                .with_discontinuity_sequence(epoch.discontinuity_sequence)
-                .with_hold_cold_playlist(hold_cold_playlist);
+            let mut ab = HlsOriginConfig::new(
+                Arc::clone(&sibling_trunk),
+                target_duration_secs,
+                window_segments,
+            )
+            .with_container(Container::Fmp4)
+            .with_media_sequence_offset(media_sequence_offset)
+            .with_discontinuity_sequence(epoch.discontinuity_sequence)
+            .with_hold_cold_playlist(hold_cold_playlist);
             if program_date_time == crate::config::ProgramDateTimeSource::Arrival {
                 ab = ab.with_program_date_time_arrival(Arc::new(|| {
                     jiff::Timestamp::now().as_millisecond()
@@ -1001,7 +1002,7 @@ impl ProgramServing {
             }
             ab = ab.with_low_latency(part_target);
             ab = ab.with_playlist_uri(decl.uri.clone());
-            let origin = Arc::new(ab.build()?);
+            let origin = Arc::new(HlsOrigin::new(ab)?);
             sibling_origins.push(Arc::clone(&origin));
             audio_servings.push(AudioServing {
                 decl: decl.clone(),
@@ -1017,7 +1018,7 @@ impl ProgramServing {
         // `build` rejects a non-finite/non-positive target duration, a zero
         // part target and an offset with no room for u32 — all reachable
         // from caller-supplied numbers, so surfaced, never `expect`ed.
-        let ll_hls = Arc::new(builder.build()?);
+        let ll_hls = Arc::new(HlsOrigin::new(builder)?);
         if let Some(init) = previous.and_then(|p| p.init.clone()) {
             ll_hls.set_init(init);
         }
@@ -1222,21 +1223,23 @@ impl ProgramServing {
                     .with_event_capacity(nz(DEFAULT_EVENT_CAPACITY))
                     .with_part_capacity(nz(DEFAULT_PART_CAPACITY)),
             );
-            let mut builder = HlsOrigin::builder(Arc::clone(&trunk))
-                .with_target_duration_secs(params.target_duration_secs)
-                .with_window_segments(params.window_segments)
-                .with_container(Container::WebVtt)
-                .with_media_sequence_offset(params.media_sequence_offset)
-                .with_discontinuity_sequence(params.discontinuity_sequence)
-                .with_hold_cold_playlist(params.hold_cold_playlist)
-                .with_low_latency(params.part_target)
-                .with_playlist_uri(decl.uri.clone());
+            let mut builder = HlsOriginConfig::new(
+                Arc::clone(&trunk),
+                params.target_duration_secs,
+                params.window_segments,
+            )
+            .with_container(Container::WebVtt)
+            .with_media_sequence_offset(params.media_sequence_offset)
+            .with_discontinuity_sequence(params.discontinuity_sequence)
+            .with_hold_cold_playlist(params.hold_cold_playlist)
+            .with_low_latency(params.part_target)
+            .with_playlist_uri(decl.uri.clone());
             if params.program_date_time == crate::config::ProgramDateTimeSource::Arrival {
                 builder = builder.with_program_date_time_arrival(Arc::new(|| {
                     jiff::Timestamp::now().as_millisecond()
                 }));
             }
-            let origin = match builder.build() {
+            let origin = match HlsOrigin::new(builder) {
                 Ok(origin) => Arc::new(origin),
                 Err(error) => {
                     tracing::warn!(%error, "subtitle rendition origin build failed");
@@ -1898,7 +1901,7 @@ pub struct RouteHandle {
     /// See [`Self::with_hold_cold_playlist`].
     hold_cold_playlist: bool,
     /// Operator-declared peak bitrate (bits/second) for this route's HLS
-    /// master playlist (see [`HlsOriginBuilder::with_declared_bandwidth_bps`]).
+    /// master playlist (see [`HlsOriginConfig::with_declared_bandwidth_bps`]).
     /// `None` means none.
     declared_bandwidth_bps: Option<u64>,
     /// Audio renditions advertised in this route's HLS master playlist

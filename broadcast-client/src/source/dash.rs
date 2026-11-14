@@ -63,7 +63,7 @@ const MIN_WAKE_STEP_US: u64 = MICROS_PER_MILLI;
 const MAX_ADVANCE_ROUNDS: usize = 64;
 
 const ENCRYPTED_SAMPLE_ENTRIES: [&str; 2] = ["encv", "enca"];
-const UNNAMED_TRACK_ID: u32 = 0;
+const UNNAMED_TRACK_ID: TrackId = TrackId::new(0);
 const FIELD_MAX_MANIFEST_BYTES: &str = "max_manifest_bytes";
 const FIELD_MAX_SEGMENT_BYTES: &str = "max_segment_bytes";
 const REASON_NON_FRAGMENTED_MP4: &str = "non_fragmented_mp4";
@@ -1356,7 +1356,7 @@ fn skipped_kind(track_id: Option<u32>, fourcc: String) -> ErrorKind {
         ErrorKind::UnsupportedEncryption { method: fourcc }
     } else {
         ErrorKind::TrackDropped {
-            track_id: track_id.unwrap_or(UNNAMED_TRACK_ID),
+            track_id: track_id.map_or(UNNAMED_TRACK_ID, TrackId::new),
             stream_type: None,
             fourcc: Some(fourcc),
         }

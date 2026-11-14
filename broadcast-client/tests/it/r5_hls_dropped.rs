@@ -1,6 +1,6 @@
 use crate::support;
 
-use broadcast_client::{ErrorKind, Event, Status};
+use broadcast_client::{ErrorKind, Event, Status, TrackId};
 use support::hls_host::{Host, hls_config};
 use support::ts_split::split_at_pat;
 
@@ -36,7 +36,7 @@ fn errors(events: &[Event]) -> Vec<&Event> {
         .collect()
 }
 
-fn dropped(events: &[Event]) -> Vec<(u32, Option<u8>)> {
+fn dropped(events: &[Event]) -> Vec<(TrackId, Option<u8>)> {
     events
         .iter()
         .filter_map(|e| match e {
@@ -54,7 +54,7 @@ fn dropped(events: &[Event]) -> Vec<(u32, Option<u8>)> {
         .collect()
 }
 
-fn unmuxable_tracks(ts: &[u8]) -> Vec<(u32, Option<u8>)> {
+fn unmuxable_tracks(ts: &[u8]) -> Vec<(TrackId, Option<u8>)> {
     use broadcast_common::Unpackage;
     let media = transmux::TsDemux::new().unpackage(ts).unwrap();
     media
@@ -66,7 +66,7 @@ fn unmuxable_tracks(ts: &[u8]) -> Vec<(u32, Option<u8>)> {
                 transmux::CodecConfig::Data { stream_type, .. } => Some(*stream_type),
                 _ => None,
             };
-            (t.spec.track_id.value(), st)
+            (t.spec.track_id, st)
         })
         .collect()
 }

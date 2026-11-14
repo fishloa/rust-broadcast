@@ -79,7 +79,7 @@ fn registrations(host: &Host) -> Vec<String> {
         .collect()
 }
 
-fn unknown_reports(host: &Host) -> Vec<u32> {
+fn unknown_reports(host: &Host) -> Vec<TrackId> {
     host.log
         .iter()
         .filter_map(|e| match e {
@@ -134,7 +134,7 @@ fn declaring_only_an_unknown_track_neither_blocks_start_nor_registers_it() {
         "{:?}",
         registrations(&host)
     );
-    assert_eq!(unknown_reports(&host), vec![999]);
+    assert_eq!(unknown_reports(&host), vec![TrackId::new(999)]);
 }
 
 #[test]
@@ -147,7 +147,7 @@ fn an_unknown_id_beside_a_real_one_is_ignored_and_reported_once() {
         samples_before_start(&video_only)
     );
     assert!(!registrations(&host).iter().any(|r| r.contains("999")));
-    assert_eq!(unknown_reports(&host), vec![999]);
+    assert_eq!(unknown_reports(&host), vec![TrackId::new(999)]);
     assert!(unknown_reports(&video_only).is_empty());
 }
 

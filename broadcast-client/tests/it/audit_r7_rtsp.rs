@@ -5,7 +5,7 @@ use crate::support;
 
 use std::sync::OnceLock;
 
-use broadcast_client::{Config, ErrorKind, Event};
+use broadcast_client::{Config, ErrorKind, Event, TrackId};
 use broadcast_common::stage::Timestamp;
 use sdp_types::{Media, MediaType, TransportProto};
 use support::rtsp_host::{BASE_URL, Host, MediaFixture, SEC, Server, samples_of};
@@ -54,7 +54,7 @@ fn sdp_with(extra: &[(usize, Media)]) -> String {
     String::from_utf8(out).unwrap()
 }
 
-fn dropped(events: &[Event]) -> Vec<u32> {
+fn dropped(events: &[Event]) -> Vec<TrackId> {
     events
         .iter()
         .filter_map(|e| match e {
@@ -86,11 +86,11 @@ fn a_different_sdp_on_reconnect_reports_its_own_dropped_media() {
     let first = sdp_with(&[(2, pcma())]);
     let second = sdp_with(&[(2, hevc())]);
     let mut host = Host::new(BASE_URL, Config::default(), Server::new(&first));
-    assert_eq!(dropped(&play(&mut host)), vec![3]);
+    assert_eq!(dropped(&play(&mut host)), vec![TrackId::new(3)]);
     let again = reconnect_with(&mut host, &second);
     assert_eq!(
         dropped(&again),
-        vec![3],
+        vec![TrackId::new(3)],
         "a different media at the same position"
     );
 }
@@ -99,7 +99,7 @@ fn a_different_sdp_on_reconnect_reports_its_own_dropped_media() {
 fn the_same_sdp_on_reconnect_reports_nothing_again() {
     let sdp = sdp_with(&[(2, pcma())]);
     let mut host = Host::new(BASE_URL, Config::default(), Server::new(&sdp));
-    assert_eq!(dropped(&play(&mut host)), vec![3]);
+    assert_eq!(dropped(&play(&mut host)), vec![TrackId::new(3)]);
     assert!(dropped(&reconnect_with(&mut host, &sdp)).is_empty());
     assert!(dropped(&reconnect_with(&mut host, &sdp)).is_empty());
 }
@@ -109,16 +109,19 @@ fn a_media_that_comes_back_and_is_dropped_again_is_reported_again() {
     let with = sdp_with(&[(2, pcma())]);
     let without = sdp_with(&[]);
     let mut host = Host::new(BASE_URL, Config::default(), Server::new(&with));
-    assert_eq!(dropped(&play(&mut host)), vec![3]);
+    assert_eq!(dropped(&play(&mut host)), vec![TrackId::new(3)]);
     assert!(dropped(&reconnect_with(&mut host, &without)).is_empty());
-    assert_eq!(dropped(&reconnect_with(&mut host, &with)), vec![3]);
+    assert_eq!(
+        dropped(&reconnect_with(&mut host, &with)),
+        vec![TrackId::new(3)]
+    );
 }
 
 #[test]
 fn track_dropped_id_is_the_media_position_not_the_playable_count() {
     let middle = sdp_with(&[(1, pcma())]);
     let mut host = Host::new(BASE_URL, Config::default(), Server::new(&middle));
-    assert_eq!(dropped(&play(&mut host)), vec![2]);
+    assert_eq!(dropped(&play(&mut host)), vec![TrackId::new(2)]);
 }
 
 #[test]
@@ -126,7 +129,7 @@ fn an_unsupported_first_media_does_not_stop_the_second_from_playing() {
     let sdp = sdp_with(&[(0, pcma())]);
     let mut host = Host::new(BASE_URL, Config::default(), Server::new(&sdp));
     let events = play(&mut host);
-    assert_eq!(dropped(&events), vec![1]);
+    assert_eq!(dropped(&events), vec![TrackId::new(1)]);
     let announced: Vec<Vec<u32>> = events
         .iter()
         .filter_map(|e| match e {

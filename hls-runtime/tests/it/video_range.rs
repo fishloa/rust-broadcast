@@ -4,7 +4,7 @@
 use broadcast_common::timescale::Timescale;
 use std::num::NonZeroUsize;
 
-use hls_runtime::server::HlsOrigin;
+use hls_runtime::server::{HlsOrigin, HlsOriginConfig};
 use media_plane::trunk::{Trunk, TrunkConfig};
 use transmux::Container;
 use transmux::ir::{ColourDescription, DisplayGeometry, VideoFormat, VideoSignalType};
@@ -26,13 +26,12 @@ fn origin() -> HlsOrigin {
             .with_event_capacity(nz(8))
             .with_part_capacity(nz(64)),
     );
-    HlsOrigin::builder(trunk)
-        .with_target_duration_secs(4.0)
-        .with_window_segments(nz(4))
-        .with_instance(7)
-        .with_declared_bandwidth_bps(5_000_000)
-        .build()
-        .expect("build")
+    HlsOrigin::new(
+        HlsOriginConfig::new(trunk, 4.0, nz(4))
+            .with_instance(7)
+            .with_declared_bandwidth_bps(5_000_000),
+    )
+    .expect("build")
 }
 
 fn render(origin: &HlsOrigin) -> String {
@@ -170,14 +169,13 @@ fn set_init_reset_clears_video_range() {
             .with_event_capacity(nz(8))
             .with_part_capacity(nz(64)),
     );
-    let origin = HlsOrigin::builder(trunk)
-        .with_target_duration_secs(4.0)
-        .with_window_segments(nz(4))
-        .with_container(Container::Fmp4)
-        .with_instance(7)
-        .with_declared_bandwidth_bps(5_000_000)
-        .build()
-        .expect("build");
+    let origin = HlsOrigin::new(
+        HlsOriginConfig::new(trunk, 4.0, nz(4))
+            .with_container(Container::Fmp4)
+            .with_instance(7)
+            .with_declared_bandwidth_bps(5_000_000),
+    )
+    .expect("build");
     let spec = spec_with(1, Some(16), true, true);
     origin.set_track_specs(&[spec]).unwrap();
     assert!(render(&origin).contains("VIDEO-RANGE=PQ"));
@@ -204,13 +202,12 @@ fn real_sdr_capture_omits_video_range() {
             .with_event_capacity(nz(8))
             .with_part_capacity(nz(64)),
     );
-    let origin = HlsOrigin::builder(trunk)
-        .with_target_duration_secs(4.0)
-        .with_window_segments(nz(4))
-        .with_instance(7)
-        .with_declared_bandwidth_bps(5_000_000)
-        .build()
-        .expect("build");
+    let origin = HlsOrigin::new(
+        HlsOriginConfig::new(trunk, 4.0, nz(4))
+            .with_instance(7)
+            .with_declared_bandwidth_bps(5_000_000),
+    )
+    .expect("build");
     origin.set_track_specs(&specs).unwrap();
     let body = render(&origin);
     assert!(!body.contains("VIDEO-RANGE"), "body: {body}");
@@ -233,13 +230,12 @@ fn real_sdr_krone_omits_video_range() {
             .with_event_capacity(nz(8))
             .with_part_capacity(nz(64)),
     );
-    let origin = HlsOrigin::builder(trunk)
-        .with_target_duration_secs(4.0)
-        .with_window_segments(nz(4))
-        .with_instance(7)
-        .with_declared_bandwidth_bps(5_000_000)
-        .build()
-        .expect("build");
+    let origin = HlsOrigin::new(
+        HlsOriginConfig::new(trunk, 4.0, nz(4))
+            .with_instance(7)
+            .with_declared_bandwidth_bps(5_000_000),
+    )
+    .expect("build");
     origin.set_track_specs(&specs).unwrap();
     let body = render(&origin);
     assert!(!body.contains("VIDEO-RANGE"), "body: {body}");

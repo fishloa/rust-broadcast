@@ -6,7 +6,7 @@ use crate::support::dash_common;
 use crate::support::dash_sim;
 use crate::support::fmp4_split;
 
-use broadcast_client::{BufferEvent, Config, ErrorKind, Event, Status};
+use broadcast_client::{BufferEvent, Config, ErrorKind, Event, Status, TrackId};
 use broadcast_common::stage::Timestamp;
 use dash_common::loopback::Origin;
 use dash_common::synth::{Addressing, MPD_URL, Synth};
@@ -309,7 +309,7 @@ fn a_subtitle_set_is_dropped_once_with_a_track_dropped_error() {
         kinds(&sim),
         vec![(
             ErrorKind::TrackDropped {
-                track_id: 0,
+                track_id: TrackId::new(0),
                 stream_type: None,
                 fourcc: None
             },
