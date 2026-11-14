@@ -23,10 +23,10 @@ use crate::source::{Source, Timeouts};
 pub struct TsUdpRoute {
     name: String,
     addr: String,
-    multicast_group: Option<String>,
-    /// Socket options for the bind (SP1.6); the default (all unset except
-    /// `reuse_address: false`) reproduces the pre-SP1.6 bind.
-    socket: crate::source::udp::UdpBindOptions,
+    /// Socket options for the bind (SP1.6), the multicast join included;
+    /// the default reproduces the pre-SP1.6 bind except for the receive
+    /// buffer, which the bind only requests when set.
+    socket: broadcast_common::net::UdpOptions,
     timeouts: Timeouts,
     /// A socket bound by the caller (SP7.1): a test binds `127.0.0.1:0`, reads
     /// the live address, and hands the socket in, so `bind` uses it directly
@@ -40,7 +40,6 @@ impl std::fmt::Debug for TsUdpRoute {
         f.debug_struct("TsUdpRoute")
             .field("name", &self.name)
             .field("addr", &self.addr)
-            .field("multicast_group", &self.multicast_group)
             .field("socket", &self.socket)
             .finish()
     }
@@ -48,16 +47,11 @@ impl std::fmt::Debug for TsUdpRoute {
 
 impl TsUdpRoute {
     /// Build a route descriptor.
-    pub fn new(
-        name: impl Into<String>,
-        addr: impl Into<String>,
-        multicast_group: Option<String>,
-    ) -> Self {
+    pub fn new(name: impl Into<String>, addr: impl Into<String>) -> Self {
         TsUdpRoute {
             name: name.into(),
             addr: addr.into(),
-            multicast_group,
-            socket: crate::source::udp::UdpBindOptions::default(),
+            socket: broadcast_common::net::UdpOptions::default(),
             timeouts: Timeouts::default(),
             prebound: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
@@ -68,9 +62,10 @@ impl TsUdpRoute {
     /// racing reserve-then-rebind. Mirrors
     /// `crate::source::whip::WhipRoute::with_listener`.
     ///
-    /// The supplied socket is used verbatim, so a `multicast_group` cannot be
-    /// joined on it: setting one (via [`Self::with_multicast_group`]) makes
-    /// [`run_ts_udp`] fail rather than silently ignore the group.
+    /// The supplied socket is used verbatim, so a multicast group cannot be
+    /// joined on it: a socket option carrying a join (via
+    /// [`Self::with_socket_options`]) makes [`run_ts_udp`] fail rather than
+    /// silently ignore the group.
     pub fn with_socket(name: impl Into<String>, socket: UdpSocket) -> Self {
         let addr = socket
             .local_addr()
@@ -79,26 +74,15 @@ impl TsUdpRoute {
         TsUdpRoute {
             name: name.into(),
             addr,
-            multicast_group: None,
-            socket: crate::source::udp::UdpBindOptions::default(),
+            socket: broadcast_common::net::UdpOptions::default(),
             timeouts: Timeouts::default(),
             prebound: std::sync::Arc::new(std::sync::Mutex::new(Some(socket))),
         }
     }
 
-    /// Configure the multicast group to join. Meaningful only for a route that
-    /// binds its own `addr`; on a [`Self::with_socket`] route it is a
-    /// contradiction (`run_ts_udp` fails rather than silently dropping
-    /// it) — see that ctor.
-    #[must_use]
-    pub fn with_multicast_group(mut self, group: impl Into<String>) -> Self {
-        self.multicast_group = Some(group.into());
-        self
-    }
-
     /// Set the UDP socket options applied at bind (SP1.6).
     #[must_use]
-    pub fn with_socket_options(mut self, socket: crate::source::udp::UdpBindOptions) -> Self {
+    pub fn with_socket_options(mut self, socket: broadcast_common::net::UdpOptions) -> Self {
         self.socket = socket;
         self
     }
@@ -123,18 +107,14 @@ impl TsUdpRoute {
     }
 
     fn session_url(&self) -> Result<String, MultimuxError> {
-        crate::source::udp::session_url("udp", &self.addr, self.multicast_group.as_deref())
+        crate::source::udp::session_url("udp", &self.addr, self.socket.join.as_ref())
     }
 
     fn session_config(&self) -> Result<Config, MultimuxError> {
         let mut config = Config::relay();
         config.kind = SourceKind::Udp;
         config.max_queued_bytes = crate::source::LIVE_EVENT_QUEUE_BYTES;
-        crate::source::udp::apply_socket_options(
-            &mut config,
-            self.multicast_group.as_deref(),
-            &self.socket,
-        )?;
+        crate::source::udp::apply_socket_options(&mut config, &self.socket)?;
         Ok(config)
     }
 }
@@ -160,13 +140,14 @@ pub async fn run_ts_udp(
 ) -> MultimuxError {
     let prebound = route.take_prebound();
     if prebound.is_some()
-        && let Some(group) = route.multicast_group.as_deref()
+        && let Some(join) = &route.socket.join
     {
         return MultimuxError::ConfigInvalid {
             field: "routes.input.multicast_group",
             reason: format!(
-                "a pre-bound socket cannot join multicast_group {group:?}; drop the group, \
-                 or let the route bind its own addr"
+                "a pre-bound socket cannot join multicast group {}; drop the group, \
+                 or let the route bind its own addr",
+                join.group
             ),
         };
     }
@@ -212,8 +193,10 @@ const WHAT: &str = "ts/udp";
 mod tests {
     use super::*;
     use crate::route::RouteConfig;
+    use broadcast_common::net::{MulticastInterface, MulticastJoin, UdpOptions};
     use media_plane::trunk::SampleCursorItem;
     use media_plane::ts_session::test_support::{build_ts_bytes, handshake, trunk_config};
+    use std::net::{IpAddr, Ipv4Addr};
     use std::time::Duration;
     use tokio_util::sync::CancellationToken;
     use transmux::TrackId;
@@ -319,7 +302,9 @@ mod tests {
     #[tokio::test]
     async fn with_socket_rejects_a_configured_multicast_group() {
         let socket = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
-        let route = TsUdpRoute::with_socket("cam-ts", socket).with_multicast_group("239.1.2.3");
+        let join = MulticastJoin::new("239.1.2.3".parse().unwrap());
+        let route = TsUdpRoute::with_socket("cam-ts", socket)
+            .with_socket_options(UdpOptions::new().with_join(join));
         let error = run_ts_udp(
             &route,
             trunk_config(),
@@ -340,7 +325,7 @@ mod tests {
 
     #[test]
     fn a_poisoned_prebound_lock_does_not_panic() {
-        let route = TsUdpRoute::new("cam-ts", "127.0.0.1:0", None);
+        let route = TsUdpRoute::new("cam-ts", "127.0.0.1:0");
         let prebound = std::sync::Arc::clone(&route.prebound);
         let _ = std::thread::spawn(move || {
             let _guard = prebound.lock().expect("lock");
@@ -352,32 +337,59 @@ mod tests {
 
     #[test]
     fn the_session_url_names_the_group_or_the_bind_address() {
-        let unicast = TsUdpRoute::new("a", "127.0.0.1:5000", None);
+        let unicast = TsUdpRoute::new("a", "127.0.0.1:5000");
         assert_eq!(unicast.session_url().unwrap(), "udp://127.0.0.1:5000");
-        let multicast = TsUdpRoute::new("a", "0.0.0.0:5000", Some("239.1.1.1".into()));
+        let group =
+            |group: &str| UdpOptions::new().with_join(MulticastJoin::new(group.parse().unwrap()));
+        let multicast =
+            TsUdpRoute::new("a", "0.0.0.0:5000").with_socket_options(group("239.1.1.1"));
         assert_eq!(multicast.session_url().unwrap(), "udp://239.1.1.1:5000");
-        let v6 = TsUdpRoute::new("a", "[::]:5000", Some("ff02::1".into()));
+        let v6 = TsUdpRoute::new("a", "[::]:5000").with_socket_options(group("ff02::1"));
         assert_eq!(v6.session_url().unwrap(), "udp://[ff02::1]:5000");
     }
 
     #[test]
     fn the_session_config_carries_the_socket_options() {
-        let options = crate::source::udp::UdpBindOptions {
-            recv_buffer_bytes: Some(1 << 20),
-            multicast_interface: Some("192.168.1.10".into()),
-            ..Default::default()
-        };
-        let route = TsUdpRoute::new("a", "0.0.0.0:5000", Some("239.1.1.1".into()))
-            .with_socket_options(options.clone());
+        let options = UdpOptions::new()
+            .with_recv_buffer_bytes(1 << 20)
+            .with_reuse_address(true)
+            .with_join(
+                MulticastJoin::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED))
+                    .with_interface(MulticastInterface::V4(Ipv4Addr::new(192, 168, 1, 10))),
+            );
+        // The route's group is the bind's group: the session URL and the join agree.
+        let route = TsUdpRoute::new("a", "0.0.0.0:5000").with_socket_options(
+            options.clone().with_join(
+                MulticastJoin::new("239.1.1.1".parse().unwrap())
+                    .with_interface(MulticastInterface::V4(Ipv4Addr::new(192, 168, 1, 10))),
+            ),
+        );
         let config = route.session_config().unwrap();
-        assert_eq!(config.udp.recv_buffer_bytes, Some(1 << 20));
-        assert_eq!(config.udp.interface, Some("192.168.1.10".parse().unwrap()));
-        let indexed = crate::source::udp::UdpBindOptions {
-            multicast_interface: Some("3".into()),
-            ..options
-        };
-        let route =
-            TsUdpRoute::new("a", "[::]:5000", Some("ff02::1".into())).with_socket_options(indexed);
-        assert_eq!(route.session_config().unwrap().udp.interface_index, Some(3));
+        assert_eq!(config.udp.options.recv_buffer_bytes, Some(1 << 20));
+        assert!(config.udp.options.reuse_address);
+        assert_eq!(
+            config.udp.options.join,
+            Some(
+                MulticastJoin::new(IpAddr::V4(Ipv4Addr::new(239, 1, 1, 1)))
+                    .with_interface(MulticastInterface::V4(Ipv4Addr::new(192, 168, 1, 10)))
+            )
+        );
+        let indexed = UdpOptions::new().with_join(
+            MulticastJoin::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED))
+                .with_interface(MulticastInterface::V6Index(3)),
+        );
+        let route = TsUdpRoute::new("a", "[::]:5000").with_socket_options(
+            indexed.with_join(
+                MulticastJoin::new("ff02::1".parse().unwrap())
+                    .with_interface(MulticastInterface::V6Index(3)),
+            ),
+        );
+        assert_eq!(
+            route.session_config().unwrap().udp.options.join,
+            Some(
+                MulticastJoin::new(IpAddr::V6("ff02::1".parse().unwrap()))
+                    .with_interface(MulticastInterface::V6Index(3))
+            )
+        );
     }
 }

@@ -69,6 +69,7 @@ pub mod klv;
 pub mod lang;
 pub mod len;
 pub mod mux;
+pub mod net;
 pub mod parity;
 pub mod pusi;
 pub mod seq;
