@@ -109,7 +109,7 @@ impl ServerSession {
     /// `session_ids` is called once per allocated `Session` id and must return
     /// values from a cryptographically secure random source (RFC 2326 §3.4) —
     /// the id is the only thing tying later requests to this session. The
-    /// `tokio` adapter's `io::AsyncRtspServer::accept` supplies the OS RNG. The
+    /// `tokio` adapter's `io::RtspServerConfig::default` supplies the OS RNG. The
     /// source must be `Send + Sync`, so a session can be shared behind an `Arc`.
     pub fn new(mut session_ids: impl FnMut() -> u64 + Send + Sync + 'static) -> Self {
         Self::try_new(move || Ok(session_ids()))

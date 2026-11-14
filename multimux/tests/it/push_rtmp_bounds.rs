@@ -14,7 +14,8 @@ const GUARD: Duration = Duration::from_secs(5);
 /// C0 (1) + C1 (1536) + C2 (1536) (Adobe RTMP 1.0 §5.2).
 const HANDSHAKE_PREFIX: usize = 1 + 1536 + 1536;
 /// RTMP message type id of an AMF0 command (Adobe RTMP 1.0 §7.1.1).
-const MSG_COMMAND_AMF0: u8 = 20;
+const MSG_COMMAND_AMF0: rtmp_runtime::message::MessageTypeId =
+    rtmp_runtime::message::MessageTypeId::CommandAmf0;
 
 /// The write bound is the `write` field of the config's `timeouts`.
 fn config_with_write_bound() -> RtmpTransportConfig {
@@ -71,7 +72,7 @@ fn captured_tc_url(raw: &[u8]) -> String {
     // The client announces its own chunk size (SetChunkSize) before `connect`
     // and frames everything after it with that size.
     let messages = ChunkAssembler::new()
-        .with_chunk_size(rtmp_runtime::client::ClientConfig::default().chunk_size)
+        .with_chunk_size(rtmp_runtime::client::RtmpClientConfig::default().chunk_size)
         .push(&raw[HANDSHAKE_PREFIX..])
         .expect("the client's chunk stream decodes");
     for m in messages

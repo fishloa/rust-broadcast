@@ -1,8 +1,11 @@
-//! Tunables: [`SmoothConfig`] and the video-quality choice [`QualitySelector`].
+//! Tunables: [`SmoothClientConfig`] and the video-quality choice
+//! [`QualitySelector`].
 
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
+
+use url::Url;
 
 use super::output::QualityInfo;
 use broadcast_common::backoff::BackoffSteps;
@@ -25,7 +28,7 @@ pub const DEFAULT_BACKOFF_STEPS: [Duration; 4] = [
 ];
 /// Backoff once the list is exhausted.
 pub const DEFAULT_BACKOFF_CAP: Duration = Duration::from_millis(4_000);
-/// Default [`SmoothConfig::jitter_seed`]; a host that runs more than one client sets its own.
+/// Default [`SmoothClientConfig::jitter_seed`]; a host that runs more than one client sets its own.
 pub const DEFAULT_JITTER_SEED: u64 = 0;
 /// Shortest live manifest refresh wait.
 pub const DEFAULT_REFRESH_MIN: Duration = Duration::from_millis(500);
@@ -33,6 +36,16 @@ pub const DEFAULT_REFRESH_MIN: Duration = Duration::from_millis(500);
 pub const DEFAULT_REFRESH_MAX: Duration = Duration::from_secs(5);
 /// `mvhd` timescale of each synthesized init segment (ISO/IEC 14496-12:2026 §8.2.2).
 pub const SYNTHETIC_MOVIE_TIMESCALE: u32 = 90_000;
+/// [`SmoothClientConfig::default`]'s placeholder manifest URL: a default has no
+/// real manifest, so a client built from one is only useful after
+/// [`SmoothClientConfig::new`] or `with_manifest_url`.
+static DEFAULT_MANIFEST_URL: LazyLock<Url> = LazyLock::new(|| {
+    if let Ok(url) = Url::parse("http://localhost/Manifest") {
+        url
+    } else {
+        std::process::abort()
+    }
+});
 
 type SelectFn = dyn Fn(&[QualityInfo]) -> usize + Send + Sync;
 
@@ -62,11 +75,14 @@ impl fmt::Debug for QualitySelector {
     }
 }
 
-/// Engine tunables: start from [`SmoothConfig::default`] and set what differs
-/// with the `with_*` setters.
+/// Engine tunables and the manifest to play: build it with
+/// [`SmoothClientConfig::new`] (the manifest URL) and set what differs with the
+/// `with_*` setters. Every engine field has a documented default.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub struct SmoothConfig {
+pub struct SmoothClientConfig {
+    /// The manifest URL the first [`Action`](super::Action) fetches.
+    pub manifest_url: Url,
     /// Live join point, in fragments behind the newest.
     pub live_join_fragments: usize,
     /// Consecutive failures of one fragment before it is skipped (live) or the session ends (static); default 5.
@@ -91,9 +107,34 @@ pub struct SmoothConfig {
     pub video_quality: QualitySelector,
 }
 
-impl Default for SmoothConfig {
+impl SmoothClientConfig {
+    /// A client for the manifest at `manifest_url` (an absolute URL, e.g.
+    /// `http://origin/live/Manifest`), with every engine tunable at its
+    /// default. A string that does not parse leaves
+    /// [`SmoothClientConfig::manifest_url`] at [`SmoothClientConfig::default`]'s
+    /// placeholder, which no origin serves; [`SmoothClientConfig::with_manifest_url`]
+    /// takes a `Url` already parsed.
+    pub fn new(manifest_url: impl Into<String>) -> Self {
+        let mut config = SmoothClientConfig::default();
+        let Ok(url) = Url::parse(&manifest_url.into()) else {
+            return config;
+        };
+        config.manifest_url = url;
+        config
+    }
+
+    /// Replace [`SmoothClientConfig::manifest_url`].
+    #[must_use]
+    pub fn with_manifest_url(mut self, manifest_url: Url) -> Self {
+        self.manifest_url = manifest_url;
+        self
+    }
+}
+
+impl Default for SmoothClientConfig {
     fn default() -> Self {
         Self {
+            manifest_url: DEFAULT_MANIFEST_URL.clone(),
             live_join_fragments: DEFAULT_LIVE_JOIN_FRAGMENTS,
             max_fragment_failures: DEFAULT_MAX_FRAGMENT_FAILURES,
             max_manifest_failures: DEFAULT_MAX_MANIFEST_FAILURES,
@@ -110,7 +151,7 @@ impl Default for SmoothConfig {
     }
 }
 
-impl SmoothConfig {
+impl SmoothClientConfig {
     /// Set [`Self::live_join_fragments`].
     #[must_use]
     pub fn with_live_join_fragments(mut self, live_join_fragments: usize) -> Self {
@@ -172,5 +213,33 @@ impl SmoothConfig {
     pub fn with_video_quality(mut self, video_quality: QualitySelector) -> Self {
         self.video_quality = video_quality;
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_carries_the_manifest_url_bytes_for_bytes() {
+        let config = SmoothClientConfig::new("http://origin.example/live/Manifest?token=a%20b");
+        assert_eq!(
+            config.manifest_url.as_str(),
+            "http://origin.example/live/Manifest?token=a%20b"
+        );
+    }
+
+    #[test]
+    fn with_manifest_url_replaces_the_url_and_keeps_the_tunables() {
+        let config = SmoothClientConfig::new("http://a.example/Manifest")
+            .with_live_join_fragments(7)
+            .with_manifest_url(Url::parse("http://b.example/Manifest").expect("URL"));
+        assert_eq!(config.manifest_url.as_str(), "http://b.example/Manifest");
+        assert_eq!(config.live_join_fragments, 7);
+    }
+
+    #[test]
+    fn the_default_carries_a_parsed_placeholder_manifest() {
+        assert!(SmoothClientConfig::default().manifest_url.has_host());
     }
 }

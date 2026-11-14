@@ -12,6 +12,9 @@ use broadcast_client::{
     Config, Error, ErrorKind, Event, Session, SourceKind, SrtEncryption, SrtEntropySeed,
     SrtKeyLength, Status,
 };
+use broadcast_common::timeouts::Timeouts;
+
+use std::time::Duration;
 
 const URL: &str = "srt://127.0.0.1:9000";
 const SMALL: &str = "ts/h264-aac.ts";
@@ -404,12 +407,14 @@ fn close_says_goodbye_to_a_connected_peer_once_and_then_closes_the_socket() {
     }
     let _ = before;
     assert_eq!(sends.len(), 1);
-    const CONTROL_TYPE_SHUTDOWN: u16 = 0x0005;
     let shutdown = &sends[0];
     assert_eq!(shutdown[0] & 0x80, 0x80, "a control packet");
     assert_eq!(
-        u16::from_be_bytes([shutdown[0] & 0x7F, shutdown[1]]),
-        CONTROL_TYPE_SHUTDOWN
+        srt_runtime::packet::ControlType::from_bits(u16::from_be_bytes([
+            shutdown[0] & 0x7F,
+            shutdown[1]
+        ])),
+        srt_runtime::packet::ControlType::Shutdown
     );
     let dest = u32::from_be_bytes([shutdown[12], shutdown[13], shutdown[14], shutdown[15]]);
     assert_eq!(dest, sim.peers[0].connected_peer_socket_id());
@@ -491,12 +496,12 @@ fn bad_srt_settings_are_typed_errors() {
     let open = |f: fn(&mut Config)| Session::open(URL, cfg(f), stamp(0)).unwrap_err();
     for (err, field) in [
         (
-            open(|c| c.srt.handshake_timeout_ms = 0),
-            "srt.handshake_timeout_ms",
+            open(|c| c.srt.timeouts = Timeouts::default().with_handshake(Duration::ZERO)),
+            "srt.timeouts.handshake",
         ),
         (
-            open(|c| c.srt.peer_idle_timeout_ms = 0),
-            "srt.peer_idle_timeout_ms",
+            open(|c| c.srt.timeouts = Timeouts::default().with_read_idle(Duration::ZERO)),
+            "srt.timeouts.read_idle",
         ),
         (
             open(|c| c.srt.encryption = Some(SrtEncryption::new("", SrtKeyLength::Aes128))),
@@ -630,7 +635,11 @@ fn the_session_announces_a_wake_for_the_next_ack_so_a_wake_driven_host_keeps_the
 fn the_handshake_budget_is_the_configured_timeout_not_the_retransmit_count() {
     let mut sim = SrtSim::open(
         URL,
-        cfg(|c| c.srt.handshake_timeout_ms = 1_000),
+        cfg(|c| {
+            c.srt.timeouts = Timeouts::default()
+                .with_handshake(Duration::from_secs(1))
+                .with_read_idle(Duration::from_secs(5))
+        }),
         SrtPeer::new(Cipher::Clear, None, LATENCY_MS),
     );
     sim.peer_listening = false;

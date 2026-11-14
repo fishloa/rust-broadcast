@@ -36,7 +36,7 @@ async fn announce_then_record_round_trips_over_loopback() {
 
     let server = tokio::spawn(async move {
         let (sock, _) = listener.accept().await.unwrap();
-        let mut srv = AsyncRtspServer::accept(sock);
+        let mut srv = AsyncRtspServer::from_stream(sock, rtsp_runtime::RtspServerConfig::default());
         // ANNOUNCE, SETUP, RECORD = 3 requests.
         let mut methods = Vec::new();
         for _ in 0..3 {
@@ -83,7 +83,7 @@ async fn a_client_interleaved_send_arrives_as_a_frame_at_the_server() {
 
     let server = tokio::spawn(async move {
         let (sock, _) = listener.accept().await.unwrap();
-        let mut srv = AsyncRtspServer::accept(sock);
+        let mut srv = AsyncRtspServer::from_stream(sock, rtsp_runtime::RtspServerConfig::default());
         loop {
             let events = srv.next_request().await.unwrap()?;
             for e in events {
@@ -114,9 +114,16 @@ async fn a_stalled_interleaved_send_times_out_at_the_write_bound() {
     // write blocks, and the `write` bound must fail it (paused virtual time).
     let (client_io, _server_io) = duplex(8);
     let timeouts = Timeouts::default().with_write(Duration::from_secs(1));
-    let mut client = AsyncRtspClient::with_stream(
+    let mut client = AsyncRtspClient::from_stream(
         client_io,
-        rtsp_runtime::RtspClientConfig::new(ClientSession::new()).with_timeouts(timeouts),
+        rtsp_runtime::RtspClientConfig::default()
+            .with_session(ClientSession::new())
+            .with_timeouts(timeouts),
+    );
+    assert_eq!(
+        client.timeouts(),
+        timeouts,
+        "the config's timeouts reach the adapter"
     );
     // Wrapped in an outer virtual-time bound so a MISSING write bound fails
     // with a clear message instead of hanging the suite.
@@ -209,9 +216,10 @@ async fn announce_carries_the_sdp_body_and_content_type_to_the_server() {
 #[tokio::test(start_paused = true)]
 async fn a_send_only_pusher_still_emits_a_get_parameter_keepalive() {
     let (client_io, mut peer) = duplex(64 * 1024);
-    let mut client = AsyncRtspClient::with_stream(
+    let mut client = AsyncRtspClient::from_stream(
         client_io,
-        rtsp_runtime::RtspClientConfig::new(ClientSession::new())
+        rtsp_runtime::RtspClientConfig::default()
+            .with_session(ClientSession::new())
             .with_timeouts(Timeouts::default()),
     );
 
@@ -295,9 +303,10 @@ async fn read_one_interleaved(peer: &mut tokio::io::DuplexStream) -> Vec<u8> {
 async fn a_454_keepalive_response_is_surfaced_not_discarded() {
     // 64 KiB each way — the manually-driven peer never fills them.
     let (client_io, mut peer) = duplex(64 * 1024);
-    let mut client = AsyncRtspClient::with_stream(
+    let mut client = AsyncRtspClient::from_stream(
         client_io,
-        rtsp_runtime::RtspClientConfig::new(ClientSession::new())
+        rtsp_runtime::RtspClientConfig::default()
+            .with_session(ClientSession::new())
             .with_timeouts(Timeouts::default()),
     );
 
@@ -466,9 +475,10 @@ async fn send_interleaved_never_parks_on_the_inbound_probe() {
     const FRAMES: usize = 1000;
     const BOUND: Duration = Duration::from_millis(750);
     let (client_io, _server_io) = duplex(8 << 20);
-    let mut client = AsyncRtspClient::with_stream(
+    let mut client = AsyncRtspClient::from_stream(
         client_io,
-        rtsp_runtime::RtspClientConfig::new(ClientSession::new())
+        rtsp_runtime::RtspClientConfig::default()
+            .with_session(ClientSession::new())
             .with_timeouts(Timeouts::default()),
     );
     let start = std::time::Instant::now();

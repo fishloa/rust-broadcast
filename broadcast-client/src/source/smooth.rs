@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use hls_runtime::client::{MasterSelection, VariantInfo, choose_variant};
 use smooth_runtime::{
     Action, Dropped, FetchFailure, Output, QualityInfo, QualitySelector, RequestId, SmoothClient,
-    SmoothConfig, SmoothError,
+    SmoothClientConfig, SmoothError,
 };
 use url::Url;
 
@@ -69,9 +69,9 @@ fn variant_info(q: &QualityInfo) -> VariantInfo {
     }
 }
 
-fn engine_config(config: &Config, jitter_seed: u64) -> SmoothConfig {
+fn engine_config(url: &Url, config: &Config, jitter_seed: u64) -> SmoothClientConfig {
     let policy = config.variant_policy.clone();
-    SmoothConfig::default()
+    SmoothClientConfig::new(url.as_str())
         .with_max_fragment_failures(config.max_segment_failures)
         .with_max_manifest_failures(config.max_key_failures)
         .with_backoff(config.backoff.clone())
@@ -103,7 +103,7 @@ impl SmoothSource {
         let mut source = Self {
             config: config.clone(),
             conn_alloc,
-            client: SmoothClient::new(url.clone(), engine_config(config, jitter_seed)),
+            client: SmoothClient::new(engine_config(url, config, jitter_seed)),
             reqs: HashMap::new(),
             parked: Vec::new(),
             actions: VecDeque::new(),

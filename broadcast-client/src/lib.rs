@@ -42,7 +42,7 @@ pub use identity::{ClientIdentity, ClientIdentityScope};
 pub use playout::PlayoutConfig;
 pub use session::Session;
 pub use source::ts_http::TsHttpSource;
-pub use srt::{SrtConfig, SrtEncryption, SrtEntropySeed, SrtKeyLength};
+pub use srt::{SrtCallerConfig, SrtEncryption, SrtEntropySeed, SrtKeyLength};
 pub use transmux::TimelineJumpConfig;
 pub use transmux::{DisplayInfo, Sample, TrackId, TrackSpec};
 pub use udp::{DatagramStats, UdpConfig, UdpMode};

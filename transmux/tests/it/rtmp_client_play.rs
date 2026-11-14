@@ -5,8 +5,8 @@
 use broadcast_common::Unpackage;
 use rtmp_runtime::amf0::{Amf0Value, Command};
 use rtmp_runtime::chunk::Message;
-use rtmp_runtime::client::{ClientConfig, ClientEvent, ClientMode, ClientSession};
-use rtmp_runtime::message::{UserControl, msg_type};
+use rtmp_runtime::client::{ClientEvent, ClientMode, ClientSession, RtmpClientConfig};
+use rtmp_runtime::message::{MessageTypeId, UserControl};
 use transmux::{FlvDemux, Media, StreamingFlvDemux};
 
 use super::rtmp_play_peer::{PLAY_STREAM_ID, PeerConfig, PlayPeer, Seen};
@@ -19,8 +19,8 @@ const APP: &str = "live";
 const STREAM: &str = "cam1";
 const SMALL_WINDOW: u32 = 4_000;
 
-fn play_config(stream: &str) -> ClientConfig {
-    let mut c = ClientConfig::default();
+fn play_config(stream: &str) -> RtmpClientConfig {
+    let mut c = RtmpClientConfig::default();
     c.mode = ClientMode::Play;
     c.app = APP.to_string();
     c.stream_key = stream.to_string();
@@ -42,7 +42,7 @@ pub struct Rig {
 }
 
 impl Rig {
-    fn new(client: ClientConfig, peer: PeerConfig) -> Self {
+    fn new(client: RtmpClientConfig, peer: PeerConfig) -> Self {
         Self {
             client: ClientSession::new(client),
             peer: PlayPeer::new(peer),
@@ -127,7 +127,10 @@ fn direct_media() -> Media {
 
 fn play_all(rig: &mut Rig) {
     for (tag_type, ts, body) in fixture_tags() {
-        let bytes = rig.peer.media(tag_type, ts, &body).expect("media");
+        let bytes = rig
+            .peer
+            .media(MessageTypeId::from_u8(tag_type), ts, &body)
+            .expect("media");
         rig.deliver(&bytes);
     }
 }
@@ -225,7 +228,11 @@ fn media_arriving_in_one_byte_reads_demuxes_the_same() {
     rig.handshake_and_play();
     let mut wire = Vec::new();
     for (tag_type, ts, body) in fixture_tags() {
-        wire.extend(rig.peer.media(tag_type, ts, &body).unwrap());
+        wire.extend(
+            rig.peer
+                .media(MessageTypeId::from_u8(tag_type), ts, &body)
+                .unwrap(),
+        );
     }
     for b in wire.chunks(1) {
         rig.deliver(b);
@@ -240,12 +247,19 @@ fn a_chunk_size_change_in_the_middle_of_the_stream_takes_effect_for_the_next_chu
     let tags = fixture_tags();
     let (head, tail) = tags.split_at(tags.len() / 2);
     for (tag_type, ts, body) in head {
-        let bytes = rig.peer.media(*tag_type, *ts, body).unwrap();
+        let bytes = rig
+            .peer
+            .media(MessageTypeId::from_u8(*tag_type), *ts, body)
+            .unwrap();
         rig.deliver(&bytes);
     }
     let mut wire = rig.peer.set_chunk_size(60_000).unwrap();
     for (tag_type, ts, body) in tail {
-        wire.extend(rig.peer.media(*tag_type, *ts, body).unwrap());
+        wire.extend(
+            rig.peer
+                .media(MessageTypeId::from_u8(*tag_type), *ts, body)
+                .unwrap(),
+        );
     }
     rig.deliver(&wire);
     assert_matches_direct(&rig.flv());
@@ -273,7 +287,10 @@ fn an_acknowledgement_is_sent_each_time_the_peer_window_is_crossed_with_the_tota
     );
     let mut total_from_peer = 0u64;
     for (tag_type, ts, body) in fixture_tags() {
-        let bytes = rig.peer.media(tag_type, ts, &body).unwrap();
+        let bytes = rig
+            .peer
+            .media(MessageTypeId::from_u8(tag_type), ts, &body)
+            .unwrap();
         total_from_peer += bytes.len() as u64;
         rig.deliver(&bytes);
     }
@@ -312,7 +329,10 @@ fn the_ack_sequence_number_is_exactly_the_bytes_received_after_the_handshake() {
     let before = rig.peer.acks().len();
     let (tag_type, ts, body) = fixture_tags().remove(0);
     let chunk_bytes_before = rig.client_bytes_after_handshake();
-    let bytes = rig.peer.media(tag_type, ts, &body).unwrap();
+    let bytes = rig
+        .peer
+        .media(MessageTypeId::from_u8(tag_type), ts, &body)
+        .unwrap();
     rig.deliver(&bytes);
     let acks = rig.peer.acks();
     assert_eq!(acks.len(), before + 1);
@@ -432,7 +452,7 @@ fn an_aggregate_message_is_unpacked_into_the_same_flv_tags() {
     let msg = Message {
         chunk_stream_id: 4,
         timestamp: tags[0].1,
-        message_type_id: msg_type::AGGREGATE,
+        message_type_id: MessageTypeId::Aggregate,
         message_stream_id: PLAY_STREAM_ID,
         payload: body,
     };
@@ -454,7 +474,9 @@ fn media_before_the_play_command_is_not_delivered() {
             .all(|e| !matches!(e, ClientEvent::Media { .. }))
     );
     let (tag_type, ts, body) = fixture_tags().remove(0);
-    let bytes = peer.media(tag_type, ts, &body).unwrap();
+    let bytes = peer
+        .media(MessageTypeId::from_u8(tag_type), ts, &body)
+        .unwrap();
     let (_, events) = client.handle_data(&bytes).unwrap();
     assert!(
         events
@@ -489,7 +511,7 @@ fn a_command_sent_as_amf3_is_decoded_after_its_marker_byte() {
     let msg = Message {
         chunk_stream_id: 3,
         timestamp: 0,
-        message_type_id: msg_type::COMMAND_AMF3,
+        message_type_id: MessageTypeId::CommandAmf3,
         message_stream_id: PLAY_STREAM_ID,
         payload,
     };

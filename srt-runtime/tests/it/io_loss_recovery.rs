@@ -24,7 +24,7 @@ use core::time::Duration;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
-use srt_runtime::io::{SrtListener, SrtSocket};
+use srt_runtime::io::{SrtListener, SrtSocket, SrtSocketConfig};
 use srt_runtime::packet::SrtPacket;
 
 const NUM_PAYLOADS: usize = 40;
@@ -113,9 +113,10 @@ async fn loss_recovery_through_io_layer() {
         // stall longer than the 120 ms latency lets the receiver skip a gap
         // before its retransmission lands, and the 40th payload never comes.
         let listener_config = crate::without_tlpktdrop();
-        let mut listener = SrtListener::bind(listener_bind_addr, listener_config)
-            .await
-            .expect("listener bind");
+        let mut listener =
+            SrtListener::bind(listener_bind_addr, SrtSocketConfig::new(listener_config))
+                .await
+                .expect("listener bind");
         let listener_addr = listener.local_addr().expect("listener local addr");
 
         // --- Loss-injecting relay between caller and listener ---
@@ -141,7 +142,7 @@ async fn loss_recovery_through_io_layer() {
         // --- Caller connects THROUGH the relay, not directly to the listener ---
         let caller_config = crate::without_tlpktdrop();
         let jh = tokio::spawn(async move { listener.accept().await.expect("listener accept") });
-        let mut caller = SrtSocket::connect(relay_addr, caller_config)
+        let mut caller = SrtSocket::connect(relay_addr, SrtSocketConfig::new(caller_config))
             .await
             .expect("caller connect");
         let receiver = jh.await.expect("join listener");

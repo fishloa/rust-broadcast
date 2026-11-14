@@ -1,6 +1,8 @@
 use std::time::Duration;
 
-use broadcast_client::{Config, SourceKind};
+use broadcast_common::stage::Timestamp;
+
+use broadcast_client::{Config, Session, SourceKind};
 use broadcast_common::timeouts::Timeouts;
 
 fn with(kind: SourceKind, timeouts: Timeouts) -> Config {
@@ -50,11 +52,12 @@ fn srt_takes_handshake_and_peer_idle_from_the_same_fields_as_srt_config() {
         .with_read_idle(Duration::from_millis(5_000));
     let base = Config::relay();
     let c = with(SourceKind::Srt, t);
-    assert_eq!(c.srt.handshake_timeout_ms, 3_000);
-    assert_eq!(c.srt.peer_idle_timeout_ms, 5_000);
+    assert_eq!(c.srt.timeouts.handshake, Duration::from_secs(3));
+    assert_eq!(c.srt.timeouts.read_idle, Duration::from_secs(5));
     let direct = base.srt.clone().with_timeouts(t);
-    assert_eq!(c.srt.handshake_timeout_ms, direct.handshake_timeout_ms);
-    assert_eq!(c.srt.peer_idle_timeout_ms, direct.peer_idle_timeout_ms);
+    assert_eq!(c.srt.timeouts, direct.timeouts);
+    assert_eq!(c.srt.timeouts.handshake, direct.timeouts.handshake);
+    assert_eq!(c.srt.timeouts.read_idle, direct.timeouts.read_idle);
     assert_eq!(c.request_timeout, base.request_timeout);
 }
 
@@ -73,8 +76,8 @@ fn auto_applies_the_mapping_of_every_protocol_the_url_can_resolve_to() {
     }
     assert_eq!(auto.hls_key_timeout, Duration::from_secs(5));
     assert_eq!(auto.request_timeout, Duration::from_secs(5));
-    assert_eq!(auto.srt.handshake_timeout_ms, 3_000);
-    assert_eq!(auto.srt.peer_idle_timeout_ms, 5_000);
+    assert_eq!(auto.srt.timeouts.handshake, Duration::from_secs(3));
+    assert_eq!(auto.srt.timeouts.read_idle, Duration::from_secs(5));
     assert_eq!(auto.ts_http.start_timeout, Duration::from_millis(7_000));
     assert_ne!(auto.request_timeout, base.request_timeout);
 }
@@ -109,15 +112,20 @@ fn the_stall_policy_kinds_take_start_from_connect_and_reconnect_from_read_idle()
 
 /// A zero bound never produces a zero timeout: every protocol floors at one
 /// millisecond (two for the stall-reconnect threshold, so its half stays
-/// positive and the notice stays below it).
+/// positive and the notice stays below it). SRT keeps the bound verbatim: a
+/// zero one is rejected by `Config::validate`, never widened silently.
 #[test]
 fn a_zero_bound_is_floored_for_every_protocol() {
     let zero = timeouts(0, 0).with_handshake(Duration::ZERO);
     let hls = with(SourceKind::Hls, zero);
     assert_eq!(hls.request_timeout, Duration::from_millis(1));
     let srt = with(SourceKind::Srt, zero);
-    assert_eq!(srt.srt.handshake_timeout_ms, 1);
-    assert_eq!(srt.srt.peer_idle_timeout_ms, 1);
+    assert_eq!(srt.srt.timeouts.handshake, Duration::ZERO);
+    assert_eq!(srt.srt.timeouts.read_idle, Duration::ZERO);
+    assert!(
+        Session::open("srt://127.0.0.1:9000", srt, Timestamp::from_micros(0)).is_err(),
+        "a zero SRT bound is rejected when the session opens"
+    );
     let ts = with(SourceKind::TsHttp, zero);
     assert_eq!(
         (

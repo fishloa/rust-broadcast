@@ -34,7 +34,7 @@ pub mod server;
 
 pub use client::{
     Action, Dropped, FetchFailure, ManifestFault, Output, QualityInfo, QualitySelector, RequestId,
-    SmoothClient, SmoothConfig, StreamId,
+    SmoothClient, SmoothClientConfig, StreamId,
 };
 pub use error::SmoothError;
 #[cfg(feature = "std")]

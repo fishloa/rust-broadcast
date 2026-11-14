@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use rtmp_runtime::client::{ClientConfig, ClientMode, ClientSession};
+use rtmp_runtime::client::{ClientMode, ClientSession, RtmpClientConfig};
 use rtmp_runtime::server::ServerSession;
 
 // RTMP client entry point (#1460): the bytes a remote server sends, fed to
@@ -18,7 +18,7 @@ fuzz_target!(|data: &[u8]| {
     let Some((&flags, stream)) = data.split_first() else {
         return;
     };
-    let mut config = ClientConfig::default();
+    let mut config = RtmpClientConfig::default();
     config.mode = if flags & MODE_PUBLISH_BIT == 0 {
         ClientMode::Play
     } else {

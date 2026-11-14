@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 use broadcast_common::stage::Timestamp;
 
 use libfuzzer_sys::fuzz_target;
-use smooth_runtime::{Action, FetchFailure, SmoothClient, SmoothConfig};
+use smooth_runtime::{Action, FetchFailure, SmoothClient, SmoothClientConfig};
 use url::Url;
 
 const STEP_BUDGET: usize = 2_000;
@@ -56,7 +56,7 @@ fuzz_target!(|data: &[u8]| {
     let Ok(url) = Url::parse("http://origin.test/Manifest") else {
         return;
     };
-    let mut client = SmoothClient::new(url, SmoothConfig::default());
+    let mut client = SmoothClient::new(SmoothClientConfig::default().with_manifest_url(url));
     let mut now = 0u64;
     for _ in 0..STEP_BUDGET {
         while let Some(action) = client.poll(Timestamp::from_micros(now)) {

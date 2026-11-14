@@ -1,4 +1,4 @@
-use smooth_runtime::{Action, Output, SmoothConfig};
+use smooth_runtime::{Action, Output, SmoothClientConfig};
 use transmux::TrackSpec;
 
 use crate::common::{Host, fixture, is_ended, is_fatal, now};
@@ -21,7 +21,7 @@ fn two_quality_manifest() -> Vec<u8> {
 }
 
 fn host_after_manifest() -> Host {
-    let mut host = Host::new(SmoothConfig::default());
+    let mut host = Host::new(SmoothClientConfig::default());
     host.serve_dir("av");
     let Some(Action::FetchManifest { id, .. }) = host.client.poll(now(0)) else {
         panic!("first action is the manifest fetch");
@@ -73,7 +73,7 @@ fn real_low_level() -> String {
 }
 
 fn announced_host(manifest: &[u8]) -> Host {
-    let mut host = Host::new(SmoothConfig::default());
+    let mut host = Host::new(SmoothClientConfig::default());
     host.serve_dir("av");
     host.serve_dir("av-low");
     let Some(Action::FetchManifest { id, .. }) = host.client.poll(now(0)) else {
@@ -157,7 +157,7 @@ fn the_offered_levels_index_the_stream_that_select_video_quality_switches() {
             "<StreamIndex Type=\"video\" QualityLevels=\"1\"",
             &format!("{SKIPPED_STREAM}<StreamIndex Type=\"video\" QualityLevels=\"1\""),
         );
-    let mut host = Host::new(SmoothConfig::default());
+    let mut host = Host::new(SmoothClientConfig::default());
     host.serve_dir("av");
     let Some(Action::FetchManifest { id, .. }) = host.client.poll(now(0)) else {
         panic!("first action is the manifest fetch");

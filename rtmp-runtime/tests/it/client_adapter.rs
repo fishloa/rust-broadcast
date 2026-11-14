@@ -6,12 +6,14 @@ use std::io::ErrorKind;
 use std::time::Duration;
 
 use broadcast_common::timeouts::Timeouts;
-use rtmp_runtime::io::{AsyncRtmpClient, AsyncRtmpServer};
-use rtmp_runtime::server::{ServerConfig, ServerEvent};
+use rtmp_runtime::io::{
+    AsyncRtmpClient, AsyncRtmpServer, RtmpClientConfig, RtmpConnection, RtmpServerConfig,
+};
+use rtmp_runtime::server::ServerEvent;
 use rtmp_runtime::target::RtmpTarget;
 
 async fn publish_roundtrip(bind: &str, url_host: &str) {
-    let server = match AsyncRtmpServer::bind(bind, ServerConfig::default()).await {
+    let server = match AsyncRtmpServer::bind(bind, RtmpServerConfig::default()).await {
         Ok(s) => s,
         // Only a host genuinely without IPv6 loopback may skip; anything else is a failure.
         Err(e) if e.kind() == ErrorKind::AddrNotAvailable || e.raw_os_error() == Some(97) => {
@@ -33,7 +35,7 @@ async fn publish_roundtrip(bind: &str, url_host: &str) {
         seen
     });
     let target = RtmpTarget::parse(&format!("rtmp://{url_host}:{port}/live/testkey")).unwrap();
-    let mut c = AsyncRtmpClient::connect(&target, Timeouts::default())
+    let mut c = AsyncRtmpClient::connect(RtmpClientConfig::new(target))
         .await
         .unwrap();
     c.publish().await.unwrap();
@@ -68,11 +70,14 @@ async fn publishes_over_ipv6_loopback() {
 async fn publish_to_a_peer_that_never_answers_times_out_at_handshake() {
     let (client_io, _server_io) = tokio::io::duplex(8192);
     let target = RtmpTarget::parse("rtmp://h/live/k").unwrap();
-    let mut c = AsyncRtmpClient::from_stream(
-        client_io,
-        &target,
-        Timeouts::default().with_handshake(Duration::from_secs(4)),
+    let config = RtmpClientConfig::new(target)
+        .with_timeouts(Timeouts::default().with_handshake(Duration::from_secs(4)));
+    assert_eq!(
+        config.timeouts.handshake,
+        Duration::from_secs(4),
+        "the config carries the handshake bound"
     );
+    let mut c = AsyncRtmpClient::from_stream(client_io, config);
     let t0 = tokio::time::Instant::now();
     let err = c.publish().await.expect_err("handshake deadline");
     assert_eq!(err.kind(), ErrorKind::TimedOut, "{err}");
@@ -83,7 +88,10 @@ async fn publish_to_a_peer_that_never_answers_times_out_at_handshake() {
 async fn a_server_that_rejects_publish_surfaces_connection_refused() {
     let server = AsyncRtmpServer::bind(
         "127.0.0.1:0",
-        ServerConfig::default().with_expected_stream_key(Some("right".into())),
+        RtmpServerConfig::default().with_session(
+            rtmp_runtime::server::RtmpServerConfig::default()
+                .with_expected_stream_key(Some("right".into())),
+        ),
     )
     .await
     .unwrap();
@@ -93,7 +101,7 @@ async fn a_server_that_rejects_publish_surfaces_connection_refused() {
         while let Ok(Some(_)) = conn.next_events().await {}
     });
     let target = RtmpTarget::parse(&format!("rtmp://127.0.0.1:{port}/live/wrong")).unwrap();
-    let mut c = AsyncRtmpClient::connect(&target, Timeouts::default())
+    let mut c = AsyncRtmpClient::connect(RtmpClientConfig::new(target))
         .await
         .unwrap();
     let err = c.publish().await.expect_err("BadName");
@@ -105,14 +113,9 @@ async fn a_server_that_rejects_publish_surfaces_connection_refused() {
 /// missing bound fails instead of hanging.
 #[tokio::test(start_paused = true)]
 async fn send_video_to_a_peer_that_stops_reading_times_out_the_write() {
-    use rtmp_runtime::io::RtmpConnection;
     let (client_io, server_io) = tokio::io::duplex(4096);
     tokio::spawn(async move {
-        let mut conn = RtmpConnection::from_stream(
-            server_io,
-            rtmp_runtime::server::ServerSession::with_defaults(),
-            Timeouts::default(),
-        );
+        let mut conn = RtmpConnection::from_stream(server_io, RtmpServerConfig::default());
         while let Ok(Some(batch)) = conn.next_events().await {
             if batch
                 .iter()
@@ -125,8 +128,8 @@ async fn send_video_to_a_peer_that_stops_reading_times_out_the_write() {
     let target = RtmpTarget::parse("rtmp://h/live/k").unwrap();
     let mut c = AsyncRtmpClient::from_stream(
         client_io,
-        &target,
-        Timeouts::default().with_write(Duration::from_secs(4)),
+        RtmpClientConfig::new(target)
+            .with_timeouts(Timeouts::default().with_write(Duration::from_secs(4))),
     );
     c.publish().await.unwrap();
     let t0 = tokio::time::Instant::now();
@@ -142,14 +145,9 @@ async fn send_video_to_a_peer_that_stops_reading_times_out_the_write() {
 /// The client's `next_events` honours `read_idle` once publishing (a silent server).
 #[tokio::test(start_paused = true)]
 async fn next_events_on_a_silent_server_times_out_at_read_idle() {
-    use rtmp_runtime::io::RtmpConnection;
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
     tokio::spawn(async move {
-        let mut conn = RtmpConnection::from_stream(
-            server_io,
-            rtmp_runtime::server::ServerSession::with_defaults(),
-            Timeouts::default(),
-        );
+        let mut conn = RtmpConnection::from_stream(server_io, RtmpServerConfig::default());
         while let Ok(Some(batch)) = conn.next_events().await {
             if batch
                 .iter()
@@ -162,8 +160,8 @@ async fn next_events_on_a_silent_server_times_out_at_read_idle() {
     let target = RtmpTarget::parse("rtmp://h/live/k").unwrap();
     let mut c = AsyncRtmpClient::from_stream(
         client_io,
-        &target,
-        Timeouts::default().with_read_idle(Duration::from_secs(5)),
+        RtmpClientConfig::new(target)
+            .with_timeouts(Timeouts::default().with_read_idle(Duration::from_secs(5))),
     );
     c.publish().await.unwrap();
     let t0 = tokio::time::Instant::now();

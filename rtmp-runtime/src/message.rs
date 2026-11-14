@@ -6,9 +6,10 @@
 //! Types, §7.1) for the wire layout.
 //!
 //! This module adds typed interpretation on top of the [`crate::chunk::Message`]
-//! carrier: the message-type-id catalogue ([`msg_type`]), the Chunk-Stream-layer
-//! protocol control messages ([`ProtocolControl`], §4/§5.4), and the
-//! streaming-layer user control events ([`UserControl`], §5.3/§6.2/§6.7).
+//! carrier: the message type id ([`crate::chunk::Message::message_type_id`], a
+//! [`MessageTypeId`]), the Chunk-Stream-layer protocol control messages
+//! ([`ProtocolControl`], §4/§5.4), and the streaming-layer user control events
+//! ([`UserControl`], §5.3/§6.2/§6.7).
 
 use broadcast_common::error::BufferTooShort;
 use broadcast_common::len::need_in;
@@ -21,37 +22,158 @@ type Result<T> = core::result::Result<T, RtmpError>;
 
 // ── Message type ids (§6 / §7.1) ────────────────────────────────────────
 
-/// RTMP message type id catalogue (§6, RTMP Message Types §7.1). Type ids
-/// `1..=6` are Chunk-Stream-layer protocol control (this doc's §4, spec
-/// §5.4); the rest are streaming-layer message types (§6/§7.1).
-pub mod msg_type {
-    /// Set Chunk Size (§5.4.1).
+/// The §7.1 message type ids in ascending wire order: the reference the enum,
+/// its `from_u8`/`to_u8` arms and its `name()` arms must agree with, kept once so
+/// a new id has one place to state its number (the ordering tripwire checks this
+/// block, and the conversion tests pin the enum to it).
+mod wire {
+    /// `1` — Set Chunk Size (§5.4.1).
     pub const SET_CHUNK_SIZE: u8 = 1;
-    /// Abort Message (§5.4.2).
+    /// `2` — Abort Message (§5.4.2).
     pub const ABORT: u8 = 2;
-    /// Acknowledgement (§5.4.3).
+    /// `3` — Acknowledgement (§5.4.3).
     pub const ACKNOWLEDGEMENT: u8 = 3;
-    /// User Control Message (§6.2/§7.1.7).
+    /// `4` — User Control Message (§6.2/§7.1.7).
     pub const USER_CONTROL: u8 = 4;
-    /// Window Acknowledgement Size (§5.4.4).
+    /// `5` — Window Acknowledgement Size (§5.4.4).
     pub const WINDOW_ACK_SIZE: u8 = 5;
-    /// Set Peer Bandwidth (§5.4.5).
+    /// `6` — Set Peer Bandwidth (§5.4.5).
     pub const SET_PEER_BANDWIDTH: u8 = 6;
-    /// Audio Message (§7.1.4).
+    /// `8` — Audio Message (§7.1.4).
     pub const AUDIO: u8 = 8;
-    /// Video Message (§7.1.5).
+    /// `9` — Video Message (§7.1.5).
     pub const VIDEO: u8 = 9;
-    /// Data Message, AMF3-encoded (§7.1.2).
+    /// `15` — Data Message, AMF3-encoded (§7.1.2).
     pub const DATA_AMF3: u8 = 15;
-    /// Command Message, AMF3-encoded (§7.1.1).
+    /// `17` — Command Message, AMF3-encoded (§7.1.1).
     pub const COMMAND_AMF3: u8 = 17;
-    /// Data Message, AMF0-encoded (§7.1.2).
+    /// `18` — Data Message, AMF0-encoded (§7.1.2).
     pub const DATA_AMF0: u8 = 18;
-    /// Command Message, AMF0-encoded (§7.1.1).
+    /// `20` — Command Message, AMF0-encoded (§7.1.1).
     pub const COMMAND_AMF0: u8 = 20;
-    /// Aggregate Message (§7.1.6).
+    /// `22` — Aggregate Message (§7.1.6).
     pub const AGGREGATE: u8 = 22;
 }
+
+/// RTMP message type id (§6, RTMP Message Types §7.1; the `Message Type ID`
+/// field of the chunk message header, §5.3.1). Ids `1..=6` are
+/// Chunk-Stream-layer protocol control (§5.4); the rest are streaming-layer
+/// message types (§6/§7.1). A value §7.1 does not define is kept in
+/// [`MessageTypeId::Other`], since a peer may send one and the payload is
+/// still carried.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum MessageTypeId {
+    /// `1` — Set Chunk Size (§5.4.1).
+    SetChunkSize,
+    /// `2` — Abort Message (§5.4.2).
+    Abort,
+    /// `3` — Acknowledgement (§5.4.3).
+    Acknowledgement,
+    /// `4` — User Control Message (§6.2/§7.1.7).
+    UserControl,
+    /// `5` — Window Acknowledgement Size (§5.4.4).
+    WindowAckSize,
+    /// `6` — Set Peer Bandwidth (§5.4.5).
+    SetPeerBandwidth,
+    /// `8` — Audio Message (§7.1.4).
+    Audio,
+    /// `9` — Video Message (§7.1.5).
+    Video,
+    /// `15` — Data Message, AMF3-encoded (§7.1.2).
+    DataAmf3,
+    /// `17` — Command Message, AMF3-encoded (§7.1.1).
+    CommandAmf3,
+    /// `18` — Data Message, AMF0-encoded (§7.1.2).
+    DataAmf0,
+    /// `20` — Command Message, AMF0-encoded (§7.1.1).
+    CommandAmf0,
+    /// `22` — Aggregate Message (§7.1.6).
+    Aggregate,
+    /// A message type id §7.1 does not define.
+    Other(u8),
+}
+
+impl MessageTypeId {
+    /// Decode a wire message type id (lossless: an undefined id becomes
+    /// [`MessageTypeId::Other`]).
+    #[must_use]
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            wire::SET_CHUNK_SIZE => MessageTypeId::SetChunkSize,
+            wire::ABORT => MessageTypeId::Abort,
+            wire::ACKNOWLEDGEMENT => MessageTypeId::Acknowledgement,
+            wire::USER_CONTROL => MessageTypeId::UserControl,
+            wire::WINDOW_ACK_SIZE => MessageTypeId::WindowAckSize,
+            wire::SET_PEER_BANDWIDTH => MessageTypeId::SetPeerBandwidth,
+            wire::AUDIO => MessageTypeId::Audio,
+            wire::VIDEO => MessageTypeId::Video,
+            wire::DATA_AMF3 => MessageTypeId::DataAmf3,
+            wire::COMMAND_AMF3 => MessageTypeId::CommandAmf3,
+            wire::DATA_AMF0 => MessageTypeId::DataAmf0,
+            wire::COMMAND_AMF0 => MessageTypeId::CommandAmf0,
+            wire::AGGREGATE => MessageTypeId::Aggregate,
+            other => MessageTypeId::Other(other),
+        }
+    }
+
+    /// The wire value.
+    #[must_use]
+    pub fn to_u8(self) -> u8 {
+        match self {
+            MessageTypeId::SetChunkSize => wire::SET_CHUNK_SIZE,
+            MessageTypeId::Abort => wire::ABORT,
+            MessageTypeId::Acknowledgement => wire::ACKNOWLEDGEMENT,
+            MessageTypeId::UserControl => wire::USER_CONTROL,
+            MessageTypeId::WindowAckSize => wire::WINDOW_ACK_SIZE,
+            MessageTypeId::SetPeerBandwidth => wire::SET_PEER_BANDWIDTH,
+            MessageTypeId::Audio => wire::AUDIO,
+            MessageTypeId::Video => wire::VIDEO,
+            MessageTypeId::DataAmf3 => wire::DATA_AMF3,
+            MessageTypeId::CommandAmf3 => wire::COMMAND_AMF3,
+            MessageTypeId::DataAmf0 => wire::DATA_AMF0,
+            MessageTypeId::CommandAmf0 => wire::COMMAND_AMF0,
+            MessageTypeId::Aggregate => wire::AGGREGATE,
+            MessageTypeId::Other(v) => v,
+        }
+    }
+
+    /// Spec label.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            MessageTypeId::SetChunkSize => "set chunk size",
+            MessageTypeId::Abort => "abort",
+            MessageTypeId::Acknowledgement => "acknowledgement",
+            MessageTypeId::UserControl => "user control",
+            MessageTypeId::WindowAckSize => "window acknowledgement size",
+            MessageTypeId::SetPeerBandwidth => "set peer bandwidth",
+            MessageTypeId::Audio => "audio",
+            MessageTypeId::Video => "video",
+            MessageTypeId::DataAmf3 => "data (AMF3)",
+            MessageTypeId::CommandAmf3 => "command (AMF3)",
+            MessageTypeId::DataAmf0 => "data (AMF0)",
+            MessageTypeId::CommandAmf0 => "command (AMF0)",
+            MessageTypeId::Aggregate => "aggregate",
+            MessageTypeId::Other(_) => "other",
+        }
+    }
+}
+
+impl From<u8> for MessageTypeId {
+    fn from(v: u8) -> Self {
+        MessageTypeId::from_u8(v)
+    }
+}
+
+impl From<MessageTypeId> for u8 {
+    fn from(id: MessageTypeId) -> Self {
+        id.to_u8()
+    }
+}
+
+broadcast_common::impl_spec_display!(MessageTypeId, Other);
 
 /// Chunk stream id protocol control messages and user control messages
 /// MUST/SHOULD be sent on (§4, §5.3).
@@ -240,13 +362,13 @@ impl ProtocolControl {
 
     /// This variant's message type id (§6/§7.1).
     #[must_use]
-    pub fn message_type_id(&self) -> u8 {
+    pub fn message_type_id(&self) -> MessageTypeId {
         match self {
-            ProtocolControl::SetChunkSize(_) => msg_type::SET_CHUNK_SIZE,
-            ProtocolControl::Abort { .. } => msg_type::ABORT,
-            ProtocolControl::Acknowledgement(_) => msg_type::ACKNOWLEDGEMENT,
-            ProtocolControl::WindowAckSize(_) => msg_type::WINDOW_ACK_SIZE,
-            ProtocolControl::SetPeerBandwidth { .. } => msg_type::SET_PEER_BANDWIDTH,
+            ProtocolControl::SetChunkSize(_) => MessageTypeId::SetChunkSize,
+            ProtocolControl::Abort { .. } => MessageTypeId::Abort,
+            ProtocolControl::Acknowledgement(_) => MessageTypeId::Acknowledgement,
+            ProtocolControl::WindowAckSize(_) => MessageTypeId::WindowAckSize,
+            ProtocolControl::SetPeerBandwidth { .. } => MessageTypeId::SetPeerBandwidth,
         }
     }
 
@@ -274,9 +396,9 @@ impl ProtocolControl {
     ///
     /// # Errors
     /// See [`ProtocolControl::from_message`].
-    pub fn from_payload(message_type_id: u8, payload: &[u8]) -> Result<Option<Self>> {
+    pub fn from_payload(message_type_id: MessageTypeId, payload: &[u8]) -> Result<Option<Self>> {
         match message_type_id {
-            msg_type::SET_CHUNK_SIZE => {
+            MessageTypeId::SetChunkSize => {
                 let raw = need_u32(payload, "set chunk size payload")?;
                 if raw & SET_CHUNK_SIZE_RESERVED_MASK != 0 {
                     return Err(RtmpError::Malformed {
@@ -291,19 +413,19 @@ impl ProtocolControl {
                 }
                 Ok(Some(ProtocolControl::SetChunkSize(ChunkSize(size))))
             }
-            msg_type::ABORT => {
+            MessageTypeId::Abort => {
                 let chunk_stream_id = need_u32(payload, "abort message payload")?;
                 Ok(Some(ProtocolControl::Abort { chunk_stream_id }))
             }
-            msg_type::ACKNOWLEDGEMENT => {
+            MessageTypeId::Acknowledgement => {
                 let sequence_number = need_u32(payload, "acknowledgement payload")?;
                 Ok(Some(ProtocolControl::Acknowledgement(sequence_number)))
             }
-            msg_type::WINDOW_ACK_SIZE => {
+            MessageTypeId::WindowAckSize => {
                 let window = need_u32(payload, "window acknowledgement size payload")?;
                 Ok(Some(ProtocolControl::WindowAckSize(window)))
             }
-            msg_type::SET_PEER_BANDWIDTH => {
+            MessageTypeId::SetPeerBandwidth => {
                 need_in(
                     payload,
                     SET_PEER_BANDWIDTH_LEN,
@@ -478,7 +600,7 @@ impl UserControl {
         Message {
             chunk_stream_id: CONTROL_CHUNK_STREAM_ID,
             timestamp: 0,
-            message_type_id: msg_type::USER_CONTROL,
+            message_type_id: MessageTypeId::UserControl,
             message_stream_id: CONTROL_MESSAGE_STREAM_ID,
             payload: self
                 .try_to_bytes()
@@ -576,7 +698,7 @@ impl Serialize for UserControl {
 mod tests {
     use super::*;
 
-    fn message(message_type_id: u8, payload: Vec<u8>) -> Message {
+    fn message(message_type_id: MessageTypeId, payload: Vec<u8>) -> Message {
         Message {
             chunk_stream_id: CONTROL_CHUNK_STREAM_ID,
             timestamp: 0,
@@ -603,7 +725,7 @@ mod tests {
             Err(RtmpError::Malformed { .. })
         ));
         let msg = ProtocolControl::SetChunkSize(ChunkSize::try_new(4096).unwrap()).to_message();
-        assert_eq!(msg.message_type_id, msg_type::SET_CHUNK_SIZE);
+        assert_eq!(msg.message_type_id, MessageTypeId::SetChunkSize);
         assert_eq!(msg.payload, vec![0x00, 0x00, 0x10, 0x00]);
     }
 
@@ -682,7 +804,7 @@ mod tests {
     fn set_chunk_size_reserved_top_bit_rejected_on_parse() {
         let bytes = 0x8000_1000u32.to_be_bytes().to_vec();
         assert!(matches!(
-            ProtocolControl::from_payload(msg_type::SET_CHUNK_SIZE, &bytes),
+            ProtocolControl::from_payload(MessageTypeId::SetChunkSize, &bytes),
             Err(RtmpError::Malformed { .. })
         ));
     }
@@ -691,7 +813,7 @@ mod tests {
     fn set_chunk_size_zero_rejected() {
         let bytes = 0u32.to_be_bytes().to_vec();
         assert!(matches!(
-            ProtocolControl::from_payload(msg_type::SET_CHUNK_SIZE, &bytes),
+            ProtocolControl::from_payload(MessageTypeId::SetChunkSize, &bytes),
             Err(RtmpError::Malformed { .. })
         ));
         assert!(ChunkSize::try_new(0).is_err());
@@ -727,14 +849,14 @@ mod tests {
 
     #[test]
     fn from_message_none_for_non_control_type_id() {
-        let msg = message(msg_type::AUDIO, vec![0u8; 4]);
+        let msg = message(MessageTypeId::Audio, vec![0u8; 4]);
         assert!(ProtocolControl::from_message(&msg).unwrap().is_none());
     }
 
     #[test]
     fn from_message_some_for_control_type_id() {
         let msg = message(
-            msg_type::WINDOW_ACK_SIZE,
+            MessageTypeId::WindowAckSize,
             1_000_000u32.to_be_bytes().to_vec(),
         );
         assert!(ProtocolControl::from_message(&msg).unwrap().is_some());
@@ -745,7 +867,7 @@ mod tests {
         let msg = ProtocolControl::SetChunkSize(ChunkSize::try_new(4096).unwrap()).to_message();
         assert_eq!(msg.chunk_stream_id, CONTROL_CHUNK_STREAM_ID);
         assert_eq!(msg.message_stream_id, CONTROL_MESSAGE_STREAM_ID);
-        assert_eq!(msg.message_type_id, msg_type::SET_CHUNK_SIZE);
+        assert_eq!(msg.message_type_id, MessageTypeId::SetChunkSize);
     }
 
     #[test]
@@ -841,6 +963,87 @@ mod tests {
         let msg = UserControl::StreamBegin(1).to_message();
         assert_eq!(msg.chunk_stream_id, CONTROL_CHUNK_STREAM_ID);
         assert_eq!(msg.message_stream_id, CONTROL_MESSAGE_STREAM_ID);
-        assert_eq!(msg.message_type_id, msg_type::USER_CONTROL);
+        assert_eq!(msg.message_type_id, MessageTypeId::UserControl);
+    }
+
+    #[test]
+    fn message_type_ids_round_trip_the_spec_table() {
+        // Every id §7.1 defines, taken from the one table the ordering tripwire checks, in
+        // ascending wire order: a new id is added there, and the conversions must follow it.
+        for (value, id) in [
+            (wire::SET_CHUNK_SIZE, MessageTypeId::SetChunkSize),
+            (wire::ABORT, MessageTypeId::Abort),
+            (wire::ACKNOWLEDGEMENT, MessageTypeId::Acknowledgement),
+            (wire::USER_CONTROL, MessageTypeId::UserControl),
+            (wire::WINDOW_ACK_SIZE, MessageTypeId::WindowAckSize),
+            (wire::SET_PEER_BANDWIDTH, MessageTypeId::SetPeerBandwidth),
+            (wire::AUDIO, MessageTypeId::Audio),
+            (wire::VIDEO, MessageTypeId::Video),
+            (wire::DATA_AMF3, MessageTypeId::DataAmf3),
+            (wire::COMMAND_AMF3, MessageTypeId::CommandAmf3),
+            (wire::DATA_AMF0, MessageTypeId::DataAmf0),
+            (wire::COMMAND_AMF0, MessageTypeId::CommandAmf0),
+            (wire::AGGREGATE, MessageTypeId::Aggregate),
+        ] {
+            assert_eq!(id.to_u8(), value, "{}", id.name());
+            assert_eq!(MessageTypeId::from_u8(value), id);
+            assert_eq!(id.to_string(), id.name());
+        }
+        // The table is strictly ascending, so an id can only be added at its numeric place.
+        let table = [
+            wire::SET_CHUNK_SIZE,
+            wire::ABORT,
+            wire::ACKNOWLEDGEMENT,
+            wire::USER_CONTROL,
+            wire::WINDOW_ACK_SIZE,
+            wire::SET_PEER_BANDWIDTH,
+            wire::AUDIO,
+            wire::VIDEO,
+            wire::DATA_AMF3,
+            wire::COMMAND_AMF3,
+            wire::DATA_AMF0,
+            wire::COMMAND_AMF0,
+            wire::AGGREGATE,
+        ];
+        assert!(table.windows(2).all(|w| w[0] < w[1]), "{table:?}");
+    }
+
+    #[test]
+    fn an_undefined_message_type_id_is_kept_as_other_and_displays_its_byte() {
+        // 7, 10..=14, 16, 19 and 21 are not in §7.1's table.
+        for value in [0u8, 7, 10, 16, 19, 21, 200] {
+            assert_eq!(
+                MessageTypeId::from_u8(value),
+                MessageTypeId::Other(value),
+                "type id {value}"
+            );
+            assert_eq!(MessageTypeId::from_u8(value).to_u8(), value);
+        }
+        assert_eq!(MessageTypeId::Other(7).name(), "other");
+        assert_eq!(MessageTypeId::Other(7).to_string(), "other(0x07)");
+    }
+
+    #[test]
+    fn a_header_and_a_message_carry_the_undecoded_message_type_id() {
+        use crate::chunk::{ChunkWriter, MessageHeader};
+
+        let header = MessageHeader::Type0 {
+            timestamp: 0,
+            message_length: 4,
+            message_type_id: MessageTypeId::Other(99),
+            message_stream_id: 1,
+        };
+        let bytes = header.try_to_bytes().expect("header");
+        let (back, consumed) =
+            MessageHeader::parse(crate::chunk::Fmt::Type0, &bytes).expect("parse");
+        assert_eq!(consumed, bytes.len());
+        assert_eq!(back, header);
+
+        let message = message(MessageTypeId::Other(99), vec![0; 4]);
+        let wire = ChunkWriter::new().write(&message).expect("write");
+        // Basic header (1) + three 24-bit header fields before the type id.
+        assert_eq!(wire[7], 99, "the wire carries the raw message type id");
+        let mut assembler = crate::chunk::ChunkAssembler::new();
+        assert_eq!(assembler.push(&wire).expect("push"), vec![message]);
     }
 }

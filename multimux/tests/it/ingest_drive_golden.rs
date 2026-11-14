@@ -30,7 +30,6 @@
 
 use std::num::NonZeroUsize;
 
-use broadcast_common::timeouts::Timeouts;
 use broadcast_common::{Serialize, Timestamp};
 use media_plane::ingress::{HandshakePolicy, ListenDriver, SessionId};
 use media_plane::trunk::TrunkConfig;
@@ -39,8 +38,8 @@ use multimux::ingest_golden::{
 };
 use multimux::source::rtmp::RtmpIngestSession;
 use multimux::source::whip::WhipIngestSession;
-use rtmp_runtime::io::RtmpConnection;
-use rtmp_runtime::server::{ServerConfig, ServerEvent, ServerSession};
+use rtmp_runtime::io::{RtmpConnection, RtmpServerConfig};
+use rtmp_runtime::server::{RtmpServerConfig as SessionServerConfig, ServerEvent, ServerSession};
 
 const GOLDEN_DIR: &str = "golden/ingest";
 
@@ -189,7 +188,7 @@ async fn whip_publish_event_sequence_matches_the_golden() {
 /// live accept loop reads it in — and closed at end of capture.
 fn rtmp_events() -> Vec<ServerEvent> {
     let capture = test_fixtures::read("rtmp/obs-publish.bin");
-    let mut session = ServerSession::new(ServerConfig::default());
+    let mut session = ServerSession::new(SessionServerConfig::default());
     let mut events = Vec::new();
     for chunk in capture.chunks(RTMP_CHUNK_BYTES) {
         let Ok((_, emitted)) = session.handle_data(chunk) else {
@@ -238,11 +237,7 @@ async fn rtmp_publish_event_sequence_matches_the_golden() {
         };
         tokio::join!(drain, send);
     });
-    let conn = RtmpConnection::from_stream_erased(
-        server,
-        ServerSession::new(ServerConfig::default()),
-        Timeouts::default(),
-    );
+    let conn = RtmpConnection::from_stream(server, RtmpServerConfig::default());
     let session = RtmpIngestSession::from_connection(conn);
     let (mut driver, recorder) =
         recording_driver(vec![session], 1, trunk_config(), handshake(), nz(64));

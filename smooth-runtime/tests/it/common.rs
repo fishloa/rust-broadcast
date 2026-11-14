@@ -1,17 +1,17 @@
 use std::collections::HashMap;
 
 use broadcast_common::stage::Timestamp;
-use smooth_runtime::{Action, FetchFailure, Output, RequestId, SmoothClient, SmoothConfig};
+use smooth_runtime::{Action, FetchFailure, Output, RequestId, SmoothClient, SmoothClientConfig};
 use transmux::{Sample, TrackId};
 use url::Url;
+
+pub const ORIGIN: &str = "http://origin.test/";
+pub const STEP_LIMIT: usize = 2_000;
 
 /// The test host's microsecond clock as the client's `now`.
 pub fn now(us: u64) -> Timestamp {
     Timestamp::from_micros(us)
 }
-
-pub const ORIGIN: &str = "http://origin.test/";
-pub const STEP_LIMIT: usize = 2_000;
 
 #[derive(Clone)]
 pub enum Reply {
@@ -40,9 +40,9 @@ pub fn fixture(rel: &str) -> Vec<u8> {
 }
 
 impl Host {
-    pub fn new(config: SmoothConfig) -> Self {
+    pub fn new(config: SmoothClientConfig) -> Self {
         Self {
-            client: SmoothClient::new(manifest_url(), config),
+            client: SmoothClient::new(config.with_manifest_url(manifest_url())),
             now: 0,
             outputs: Vec::new(),
             requested: Vec::new(),

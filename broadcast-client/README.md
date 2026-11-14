@@ -57,7 +57,8 @@ to the peer), reports it with `Session::on_connected(conn)`, writes every `Actio
 every received datagram to `Session::on_data(conn, datagram, now_us)`. The session drives `srt-runtime`'s handshake, ARQ receiver
 (NAK, ACK) and TSBPD scheduler.
 
-`Config::srt` carries `latency_ms` (at least 120), `stream_id`, `handshake_timeout_ms`, `peer_idle_timeout_ms`, an optional
+`Config::srt` (an `SrtCallerConfig`) carries `latency_ms` (at least 120), `stream_id`, one `broadcast_common::timeouts::Timeouts`
+(`handshake` bounds the handshake, `read_idle` the peer-idle bound; 3 s and 5 s by default), an optional
 `SrtEncryption::new(passphrase, SrtKeyLength)` and the required `entropy_seed`: 32 bytes from the host's CSPRNG
 (`SrtEntropySeed::new`). The session reads no randomness; it derives each connection's socket id, initial sequence number, salt and
 stream key from the seed and an attempt counter, so a reconnect never reuses them. An `srt://` session without a seed fails to open
@@ -65,7 +66,7 @@ with `Error::InvalidConfig { field: "srt.entropy_seed" }`. The passphrase and se
 
 A refused handshake is a non-fatal `ErrorKind::SrtRejected { reason }` (`bad-secret` for a wrong passphrase) followed by the usual
 backoff; a handshake that does not finish is `ErrorKind::SrtHandshakeTimeout`. `Session::datagram_stats()` counts lost, late,
-duplicate, malformed and undecryptable packets. A silent peer (`peer_idle_timeout_ms`) or a peer SHUTDOWN ends the link and a played
+duplicate, malformed and undecryptable packets. A silent peer (`timeouts.read_idle`) or a peer SHUTDOWN ends the link and a played
 stream reconnects at once with fresh identifiers and an `Event::Discontinuity`; `close()` sends one SHUTDOWN datagram and then
 `Close`. Not supported: rendezvous, listener mode, in-band key refresh.
 

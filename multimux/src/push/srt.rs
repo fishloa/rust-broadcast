@@ -12,7 +12,7 @@
 use crate::push::PushTransport;
 use srt_runtime::HandshakeConfig;
 use srt_runtime::SrtUrl;
-use srt_runtime::io::SrtSocket;
+use srt_runtime::io::{SrtSocket, SrtSocketConfig};
 use srt_runtime::url::{SrtMode, UrlRejection};
 
 /// Per-connection configuration for the SRT push transport — the SRT
@@ -127,7 +127,7 @@ impl PushTransport for SrtTransport {
         if let Some(latency_ms) = srt_url.latency_ms {
             srt_config.latency_ms = latency_ms;
         }
-        let socket = SrtSocket::connect(addr, srt_config).await?;
+        let socket = SrtSocket::connect(addr, SrtSocketConfig::new(srt_config)).await?;
         Ok(Self {
             socket: Some(socket),
             ts_mux: transmux::StreamingTsMux::new(),
@@ -256,7 +256,7 @@ mod tests {
         let received_for_task = Arc::clone(&received);
 
         let listener_addr = "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap();
-        let mut listener = SrtListener::bind(listener_addr, HandshakeConfig::default())
+        let mut listener = SrtListener::bind(listener_addr, SrtSocketConfig::default())
             .await
             .expect("bind");
         let bound = listener.local_addr().expect("local addr");

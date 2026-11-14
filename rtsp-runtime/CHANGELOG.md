@@ -6,7 +6,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+#### Removed
+- BREAKING: `RtspClientConfig::new(session)`, `RtspServerConfig::new(session)` and the `From<ClientSession>`/`From<ServerSession>` impls, and the `impl Into<RtspClientConfig>`/`impl Into<RtspServerConfig>` parameters that let a bare session stand in for a config. Build a config with `RtspClientConfig::default().with_session(session).with_timeouts(t)` (or the server's), so `with_*` is only ever a builder setter. Migration: `RtspClientConfig::new(s)` -> `RtspClientConfig::default().with_session(s)`, `connect(addr, session)` -> `connect(addr, RtspClientConfig::default().with_session(session))`.
+- BREAKING: `AsyncRtspServer::accept(stream)` and `accept_with(stream, session)`. Migration: `AsyncRtspServer::from_stream(stream, RtspServerConfig::default())` (the default config's session takes its ids from the OS random source, exactly as `accept` did) and `from_stream(stream, RtspServerConfig::default().with_session(session))` for `accept_with`.
+
+#### Added
+- `AsyncRtspServer::from_stream(stream, RtspServerConfig)`: the one plain (or TLS-stream) server constructor, named as `AsyncRtmpClient::from_stream`/`AsyncRtmpServer::bind` are, beside `accept_tls` for an accepted `rtsps://` connection.
+
 #### Changed
+- BREAKING: `AsyncRtspClient::with_stream` and `AsyncRtspServer::with_stream` are now `from_stream` (a constructor named `with_*` read as a builder setter; `with_*` stays reserved for setters). Every constructor takes its `RtspClientConfig`/`RtspServerConfig` by value, no `impl Into` (#2660).
 - BREAKING: `Error::TransportParse`, `HeaderSerialize`, `SessionParse`, `InterleavedFrame` and `InvalidSdp` now wrap reason enums (`TransportParseError`, `HeaderSerializeError`, `SessionParseError`, `FrameError`, `SdpParseError`) instead of `String`; `InterleavedFrame::payload` is now `bytes::Bytes` (zero-copy) (#2659).
 
 ## Changed

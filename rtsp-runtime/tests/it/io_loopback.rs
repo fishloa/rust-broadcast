@@ -5,6 +5,7 @@
 //! [`AsyncRtspClient`]/[`AsyncRtspServer`] — no mocks, no in-memory pipes.
 #![cfg(feature = "tokio")]
 
+use broadcast_common::timeouts::Timeouts;
 use rtsp_runtime::client::ClientEvent;
 use rtsp_runtime::server::ServerEvent;
 use rtsp_runtime::{
@@ -31,7 +32,7 @@ async fn plain_tcp_full_session() {
     // Server task: drive Init -> Ready -> Playing -> Init and record the states.
     let server = tokio::spawn(async move {
         let (sock, _) = listener.accept().await.unwrap();
-        let mut srv = AsyncRtspServer::accept(sock);
+        let mut srv = AsyncRtspServer::from_stream(sock, rtsp_runtime::RtspServerConfig::default());
         let mut states = Vec::new();
         // OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN = 5 requests.
         for _ in 0..5 {
@@ -101,7 +102,7 @@ async fn interleaved_media_over_tcp() {
     let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
     let server = tokio::spawn(async move {
         let (sock, _) = listener.accept().await.unwrap();
-        let mut srv = AsyncRtspServer::accept(sock);
+        let mut srv = AsyncRtspServer::from_stream(sock, rtsp_runtime::RtspServerConfig::default());
         // SETUP then PLAY.
         srv.next_request().await.unwrap().expect("SETUP");
         srv.next_request().await.unwrap().expect("PLAY");
@@ -180,7 +181,11 @@ async fn digest_auth_over_loopback() {
     });
 
     let session = ClientSession::new().with_credentials(Credentials::new("admin", "12345"));
-    let mut client = AsyncRtspClient::connect(addr, session).await.unwrap();
+    let config = rtsp_runtime::RtspClientConfig::default()
+        .with_session(session)
+        .with_timeouts(Timeouts::default());
+    assert_eq!(config.timeouts, Timeouts::default());
+    let mut client = AsyncRtspClient::connect(addr, config).await.unwrap();
     // describe() must complete transparently through the 401 -> retry -> 200.
     let ev = client.describe(URI).await.unwrap();
     assert!(matches!(ev, ClientEvent::Response { status, .. } if status == StatusCode::Ok));
@@ -364,7 +369,7 @@ async fn server_receives_interleaved_frame_during_play() {
 
     let server = tokio::spawn(async move {
         let (sock, _) = listener.accept().await.unwrap();
-        let mut srv = AsyncRtspServer::accept(sock);
+        let mut srv = AsyncRtspServer::from_stream(sock, rtsp_runtime::RtspServerConfig::default());
         let setup_events = srv.next_request().await.unwrap().expect("SETUP");
         assert!(
             setup_events
@@ -445,7 +450,7 @@ async fn server_read_buffer_is_capped_against_an_unterminated_header() {
 
     let server = tokio::spawn(async move {
         let (sock, _) = listener.accept().await.unwrap();
-        let mut srv = AsyncRtspServer::accept(sock);
+        let mut srv = AsyncRtspServer::from_stream(sock, rtsp_runtime::RtspServerConfig::default());
         srv.next_request().await
     });
 
@@ -486,7 +491,7 @@ async fn pending_media_queue_is_capped_while_exchange_waits() {
 
     let server = tokio::spawn(async move {
         let (sock, _) = listener.accept().await.unwrap();
-        let mut srv = AsyncRtspServer::accept(sock);
+        let mut srv = AsyncRtspServer::from_stream(sock, rtsp_runtime::RtspServerConfig::default());
         srv.next_request().await.unwrap().expect("SETUP");
         srv.next_request().await.unwrap().expect("PLAY");
         // Flush every media frame before ever reading/answering the

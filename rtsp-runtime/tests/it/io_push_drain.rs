@@ -7,7 +7,10 @@ use tokio::io::AsyncWriteExt;
 #[tokio::test]
 async fn a_decode_error_swallowed_by_the_push_drain_still_surfaces_as_a_parse_error() {
     let (client_io, mut server_io) = tokio::io::duplex(64 * 1024);
-    let mut client = AsyncRtspClient::with_stream(client_io, ClientSession::new());
+    let mut client = AsyncRtspClient::from_stream(
+        client_io,
+        rtsp_runtime::RtspClientConfig::default().with_session(ClientSession::new()),
+    );
     server_io.write_all(b"GARBAGE\r\n\r\n").await.unwrap();
     server_io.flush().await.unwrap();
 

@@ -11,7 +11,7 @@
 use core::time::Duration;
 
 use srt_runtime::handshake_sm::HandshakeConfig;
-use srt_runtime::io::SrtSocket;
+use srt_runtime::io::{SrtSocket, SrtSocketConfig};
 use srt_runtime::packet::{ControlPacket, SrtPacket};
 use tokio::net::UdpSocket;
 
@@ -37,7 +37,7 @@ async fn capture_induction(config: HandshakeConfig) -> (u32, u32) {
     let peer_addr = fake_peer.local_addr().expect("fake peer addr");
 
     let connect_task = tokio::spawn(async move {
-        let _ = SrtSocket::connect(peer_addr, config).await;
+        let _ = SrtSocket::connect(peer_addr, SrtSocketConfig::new(config)).await;
     });
 
     let mut buf = [0u8; 1500];

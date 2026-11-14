@@ -39,8 +39,8 @@ fn trickle_ct() -> HeaderMap {
 
 #[test]
 fn whip_client_full_lifecycle() {
-    let mut client = WhipClient::new(webrtc_runtime::session::client::ClientConfig::new(
-        ENDPOINT.into(),
+    let mut client = WhipClient::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
+        ENDPOINT,
     ));
     assert_eq!(*client.state(), client::State::Idle);
 
@@ -107,8 +107,8 @@ fn whip_client_full_lifecycle() {
 
 #[test]
 fn whip_client_wrong_state_errors() {
-    let mut client = WhipClient::new(webrtc_runtime::session::client::ClientConfig::new(
-        ENDPOINT.into(),
+    let mut client = WhipClient::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
+        ENDPOINT,
     ));
 
     // flush_candidates in Idle -> error
@@ -189,8 +189,8 @@ fn whip_client_wrong_state_errors() {
 
 #[test]
 fn whip_client_ice_restart() {
-    let mut client = WhipClient::new(webrtc_runtime::session::client::ClientConfig::new(
-        ENDPOINT.into(),
+    let mut client = WhipClient::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
+        ENDPOINT,
     ));
     let _ = client.offer(SDP_OFFER.to_vec()).unwrap();
     let _ = client
@@ -253,8 +253,8 @@ fn whip_client_ice_restart() {
 // bogus restart event carrying the trickle body as a fake "server fragment".
 #[test]
 fn whip_client_trickle_ack_with_200_and_etag_is_not_misread_as_ice_restart() {
-    let mut client = WhipClient::new(webrtc_runtime::session::client::ClientConfig::new(
-        ENDPOINT.into(),
+    let mut client = WhipClient::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
+        ENDPOINT,
     ));
     let _ = client.offer(SDP_OFFER.to_vec()).unwrap();
     let _ = client
@@ -296,8 +296,8 @@ fn whip_client_trickle_ack_with_200_and_etag_is_not_misread_as_ice_restart() {
 // ack and leave the client `Established` forever.
 #[test]
 fn whip_client_terminate_ack_with_204_transitions_to_closed() {
-    let mut client = WhipClient::new(webrtc_runtime::session::client::ClientConfig::new(
-        ENDPOINT.into(),
+    let mut client = WhipClient::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
+        ENDPOINT,
     ));
     let _ = client.offer(SDP_OFFER.to_vec()).unwrap();
     let _ = client
@@ -325,7 +325,7 @@ fn whip_client_terminate_ack_with_204_transitions_to_closed() {
 fn whip_client_bearer_auth() {
     let token = "my-secret-token";
     let mut client = WhipClient::new(
-        webrtc_runtime::session::client::ClientConfig::new(ENDPOINT.into())
+        webrtc_runtime::session::client::WebRtcClientConfig::new(ENDPOINT)
             .with_bearer_token(token.into()),
     );
 
@@ -370,8 +370,8 @@ fn whip_client_bearer_auth() {
 
 #[test]
 fn whip_client_missing_location_on_201() {
-    let mut client = WhipClient::new(webrtc_runtime::session::client::ClientConfig::new(
-        ENDPOINT.into(),
+    let mut client = WhipClient::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
+        ENDPOINT,
     ));
     let _ = client.offer(SDP_OFFER.to_vec()).unwrap();
 
@@ -391,8 +391,8 @@ fn whip_client_missing_location_on_201() {
 
 #[test]
 fn whip_client_http_error_propagated() {
-    let mut client = WhipClient::new(webrtc_runtime::session::client::ClientConfig::new(
-        ENDPOINT.into(),
+    let mut client = WhipClient::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
+        ENDPOINT,
     ));
     let _ = client.offer(SDP_OFFER.to_vec()).unwrap();
 
@@ -552,8 +552,8 @@ fn whip_server_trickle_without_if_match_is_428() {
 
 #[test]
 fn whip_client_406_is_a_plain_http_error_not_a_counter_offer() {
-    let mut client = WhipClient::new(webrtc_runtime::session::client::ClientConfig::new(
-        ENDPOINT.into(),
+    let mut client = WhipClient::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
+        ENDPOINT,
     ));
     let _ = client.offer(SDP_OFFER.to_vec()).unwrap();
     let err = client
@@ -570,8 +570,8 @@ fn whip_client_406_is_a_plain_http_error_not_a_counter_offer() {
 
 #[test]
 fn whip_client_409_is_a_plain_http_error_not_no_publisher() {
-    let mut client = WhipClient::new(webrtc_runtime::session::client::ClientConfig::new(
-        ENDPOINT.into(),
+    let mut client = WhipClient::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
+        ENDPOINT,
     ));
     let _ = client.offer(SDP_OFFER.to_vec()).unwrap();
     let err = client
@@ -581,8 +581,8 @@ fn whip_client_409_is_a_plain_http_error_not_no_publisher() {
 }
 
 fn established_client() -> WhipClient {
-    let mut client = WhipClient::new(webrtc_runtime::session::client::ClientConfig::new(
-        ENDPOINT.into(),
+    let mut client = WhipClient::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
+        ENDPOINT,
     ));
     let _ = client.offer(SDP_OFFER.to_vec()).unwrap();
     let _ = client

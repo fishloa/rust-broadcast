@@ -19,9 +19,11 @@ fn short() -> Timeouts {
 #[tokio::test(start_paused = true)]
 async fn a_server_that_never_answers_times_out_the_request() {
     let (client_io, _server_io) = duplex(4096); // peer kept alive, never replies
-    let mut c = AsyncRtspClient::with_stream(
+    let mut c = AsyncRtspClient::from_stream(
         client_io,
-        rtsp_runtime::RtspClientConfig::new(ClientSession::new()).with_timeouts(short()),
+        rtsp_runtime::RtspClientConfig::default()
+            .with_session(ClientSession::new())
+            .with_timeouts(short()),
     );
     let err = c.options(URI).await.expect_err("must time out");
     assert!(
@@ -33,9 +35,11 @@ async fn a_server_that_never_answers_times_out_the_request() {
 #[tokio::test(start_paused = true)]
 async fn a_peer_that_stops_reading_times_out_the_write() {
     let (client_io, _server_io) = duplex(8); // 8-byte pipe, never drained
-    let mut c = AsyncRtspClient::with_stream(
+    let mut c = AsyncRtspClient::from_stream(
         client_io,
-        rtsp_runtime::RtspClientConfig::new(ClientSession::new()).with_timeouts(short()),
+        rtsp_runtime::RtspClientConfig::default()
+            .with_session(ClientSession::new())
+            .with_timeouts(short()),
     );
     let err = c.options(URI).await.expect_err("must time out");
     assert!(
@@ -58,9 +62,11 @@ async fn a_response_dripped_one_byte_at_a_time_still_times_out_as_a_whole() {
             }
         }
     });
-    let mut c = AsyncRtspClient::with_stream(
+    let mut c = AsyncRtspClient::from_stream(
         client_io,
-        rtsp_runtime::RtspClientConfig::new(ClientSession::new()).with_timeouts(short()),
+        rtsp_runtime::RtspClientConfig::default()
+            .with_session(ClientSession::new())
+            .with_timeouts(short()),
     );
     let err = c
         .options(URI)
@@ -78,9 +84,10 @@ fn server_over(
     io: tokio::io::DuplexStream,
     t: Timeouts,
 ) -> AsyncRtspServer<tokio::io::DuplexStream> {
-    AsyncRtspServer::with_stream(
+    AsyncRtspServer::from_stream(
         io,
-        rtsp_runtime::RtspServerConfig::new(ServerSession::new(|| 7).with_session_seed(1))
+        rtsp_runtime::RtspServerConfig::default()
+            .with_session(ServerSession::new(|| 7).with_session_seed(1))
             .with_timeouts(t),
     )
 }
@@ -165,14 +172,15 @@ async fn recv_interleaved_sends_a_keepalive_before_the_session_expires() {
     let (client_io, server_io) = duplex(16 * 1024);
     let (seen_tx, mut seen_rx) = tokio::sync::mpsc::unbounded_channel::<tokio::time::Instant>();
     let server = tokio::spawn(async move {
-        let mut s = AsyncRtspServer::with_stream(
+        let mut s = AsyncRtspServer::from_stream(
             server_io,
-            rtsp_runtime::RtspServerConfig::new(
-                ServerSession::new(|| 9)
-                    .with_session_seed(9)
-                    .with_session_timeout(20),
-            )
-            .with_timeouts(Timeouts::default().with_read_idle(Duration::from_secs(120))),
+            rtsp_runtime::RtspServerConfig::default()
+                .with_session(
+                    ServerSession::new(|| 9)
+                        .with_session_seed(9)
+                        .with_session_timeout(20),
+                )
+                .with_timeouts(Timeouts::default().with_read_idle(Duration::from_secs(120))),
         );
         let mut n = 0;
         while let Ok(Some(events)) = s.next_request().await {
@@ -186,9 +194,10 @@ async fn recv_interleaved_sends_a_keepalive_before_the_session_expires() {
         }
     });
     let t0 = tokio::time::Instant::now();
-    let mut c = AsyncRtspClient::with_stream(
+    let mut c = AsyncRtspClient::from_stream(
         client_io,
-        rtsp_runtime::RtspClientConfig::new(ClientSession::new())
+        rtsp_runtime::RtspClientConfig::default()
+            .with_session(ClientSession::new())
             .with_timeouts(Timeouts::default().with_read_idle(Duration::from_secs(120))),
     );
     c.setup(
@@ -222,14 +231,15 @@ async fn keepalive_is_sent_while_interleaved_media_flows() {
     let (client_io, server_io) = duplex(64 * 1024);
     let (seen_tx, mut seen_rx) = tokio::sync::mpsc::unbounded_channel::<tokio::time::Instant>();
     let server = tokio::spawn(async move {
-        let mut s = AsyncRtspServer::with_stream(
+        let mut s = AsyncRtspServer::from_stream(
             server_io,
-            rtsp_runtime::RtspServerConfig::new(
-                ServerSession::new(|| 9)
-                    .with_session_seed(9)
-                    .with_session_timeout(20),
-            )
-            .with_timeouts(Timeouts::default().with_read_idle(Duration::from_secs(120))),
+            rtsp_runtime::RtspServerConfig::default()
+                .with_session(
+                    ServerSession::new(|| 9)
+                        .with_session_seed(9)
+                        .with_session_timeout(20),
+                )
+                .with_timeouts(Timeouts::default().with_read_idle(Duration::from_secs(120))),
         );
         let (mut n, mut tick) = (0, tokio::time::interval(Duration::from_secs(1)));
         loop {
@@ -249,9 +259,10 @@ async fn keepalive_is_sent_while_interleaved_media_flows() {
         }
     });
     let t0 = tokio::time::Instant::now();
-    let mut c = AsyncRtspClient::with_stream(
+    let mut c = AsyncRtspClient::from_stream(
         client_io,
-        rtsp_runtime::RtspClientConfig::new(ClientSession::new())
+        rtsp_runtime::RtspClientConfig::default()
+            .with_session(ClientSession::new())
             .with_timeouts(Timeouts::default().with_read_idle(Duration::from_secs(120))),
     );
     c.setup(
@@ -334,9 +345,11 @@ async fn eof_mid_frame_is_an_error_not_a_clean_end() {
     let (client_io, mut server_io) = duplex(4096);
     server_io.write_all(&[0x24, 0, 0, 10, 1, 2]).await.unwrap(); // frame cut short
     drop(server_io);
-    let mut c = AsyncRtspClient::with_stream(
+    let mut c = AsyncRtspClient::from_stream(
         client_io,
-        rtsp_runtime::RtspClientConfig::new(ClientSession::new()).with_timeouts(short()),
+        rtsp_runtime::RtspClientConfig::default()
+            .with_session(ClientSession::new())
+            .with_timeouts(short()),
     );
     let err = c.recv_interleaved().await.expect_err("truncated frame");
     assert!(matches!(err, Error::Io { .. }), "{err:?}");

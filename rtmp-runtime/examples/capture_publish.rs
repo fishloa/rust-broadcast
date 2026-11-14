@@ -16,14 +16,14 @@
 //! `required-features = ["tokio"]` (see `Cargo.toml`) — the sans-IO core
 //! itself needs no socket/runtime; only this example does.
 
-use rtmp_runtime::io::AsyncRtmpServer;
-use rtmp_runtime::server::{ServerConfig, ServerEvent};
+use rtmp_runtime::io::{AsyncRtmpServer, RtmpServerConfig};
+use rtmp_runtime::server::ServerEvent;
 
 const LISTEN_ADDR: &str = "127.0.0.1:1935";
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> std::io::Result<()> {
-    let server = AsyncRtmpServer::bind(LISTEN_ADDR, ServerConfig::default()).await?;
+    let server = AsyncRtmpServer::bind(LISTEN_ADDR, RtmpServerConfig::default()).await?;
     eprintln!("capture_publish: listening on {LISTEN_ADDR}, waiting for one RTMP publish...");
 
     let accepted = server.accept().await?;

@@ -90,18 +90,18 @@ impl<P: Profile> core::fmt::Debug for Client<P> {
 /// token authenticating every request.
 #[derive(Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub struct ClientConfig {
+pub struct WebRtcClientConfig {
     /// The WHIP/WHEP endpoint URL requests are sent to.
     pub endpoint_url: String,
     /// A bearer token (RFC 6750) sent with every request, if any.
     pub bearer_token: Option<String>,
 }
 
-impl ClientConfig {
+impl WebRtcClientConfig {
     /// A config targeting `endpoint_url`, with no authentication.
-    pub fn new(endpoint_url: String) -> Self {
-        ClientConfig {
-            endpoint_url,
+    pub fn new(endpoint_url: impl Into<String>) -> Self {
+        WebRtcClientConfig {
+            endpoint_url: endpoint_url.into(),
             bearer_token: None,
         }
     }
@@ -115,9 +115,9 @@ impl ClientConfig {
 }
 
 /// Manual `Debug`: the bearer token never renders (issue #1142).
-impl core::fmt::Debug for ClientConfig {
+impl core::fmt::Debug for WebRtcClientConfig {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("ClientConfig")
+        f.debug_struct("WebRtcClientConfig")
             .field("endpoint_url", &self.endpoint_url)
             .field(
                 "bearer_token",
@@ -129,7 +129,7 @@ impl core::fmt::Debug for ClientConfig {
 
 impl<P: Profile> Client<P> {
     /// Create a new client from `config`.
-    pub fn new(config: ClientConfig) -> Self {
+    pub fn new(config: WebRtcClientConfig) -> Self {
         Self {
             core: SessionCore::new(config.endpoint_url, config.bearer_token),
             state: State::Idle,
