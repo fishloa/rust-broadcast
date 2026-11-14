@@ -4,6 +4,10 @@
 //!
 //! Every test bites against the demuxed oracle, never hardcoded values.
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 #[cfg(feature = "std")]
 use crate::sdp_session;
 #[cfg(feature = "std")]
@@ -810,7 +814,7 @@ fn streaming_depacketiser_reports_reordered_timestamps() {
         TrackId::new(1),
         RtpMediaKind::H264,
         config,
-        Timescale::from_nonzero(VIDEO_CLOCK_RATE),
+        timescale(VIDEO_CLOCK_RATE),
     )]);
     let mut samples = Vec::new();
     for pkt in &packets {

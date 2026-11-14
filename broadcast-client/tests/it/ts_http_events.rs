@@ -431,7 +431,7 @@ fn media_flushed_at_connection_close_reaches_the_controller_in_the_same_call() {
         for i in s.drain_buffer_inputs() {
             if let BufferInput::TrackMedia { track, end, .. } = i {
                 let slot = reported.entry(track).or_insert(0);
-                *slot = (*slot).max(end.0);
+                *slot = (*slot).max(end.ticks());
             }
         }
     };

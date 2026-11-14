@@ -11,6 +11,10 @@
 //!
 //! Skips cleanly when `mp4dump` is not on `PATH`.
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 use broadcast_common::timescale::Timescale;
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
@@ -32,7 +36,7 @@ use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 
 const TARGET_DURATION_SECS: f64 = 1.0;
 const TRACK_ID: u32 = 1;
-const TIMESCALE: Timescale = Timescale::from_nonzero(90_000);
+const TIMESCALE: Timescale = broadcast_common::timescale!(90_000);
 const FRAME_DUR: u32 = TIMESCALE.get() / 30;
 const SYNC_INTERVAL: u32 = 15;
 
@@ -285,7 +289,7 @@ async fn served_segment_carries_a_decodable_emsg_with_a_nonzero_pts_origin() {
     );
     assert_eq!(
         box0.timescale,
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
         "the emsg timescale must be the trunk's 90 kHz clock"
     );
 }

@@ -3,6 +3,10 @@
 //! out of the chain. Ported from transmux's second reader (issue #2340).
 
 use broadcast_common::timescale::Timescale;
+
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
 use dash_runtime::mpd::PresentationType;
 use dash_runtime::mpd::inherit::SegmentInfo;
 use dash_runtime::mpd::inherit::effective_common;
@@ -76,7 +80,7 @@ fn real_fixture_structure() {
     assert_eq!(v.common.height, Some(240));
 
     let v_st = template(period, video_set, v);
-    assert_eq!(v_st.multi.timescale, Timescale::from_nonzero(90000));
+    assert_eq!(v_st.multi.timescale, timescale(90000));
     assert_eq!(
         v_st.initialization.as_deref(),
         Some("init-stream$RepresentationID$.m4s")
@@ -101,7 +105,7 @@ fn real_fixture_structure() {
     assert_eq!(a.common.audio_sampling_rate.as_deref(), Some("44100"));
 
     let a_st = template(period, audio_set, a);
-    assert_eq!(a_st.multi.timescale, Timescale::from_nonzero(44100));
+    assert_eq!(a_st.multi.timescale, timescale(44100));
     assert_eq!(
         a_st.media.as_deref(),
         Some("chunk-stream$RepresentationID$-$Number%05d$.m4s")
@@ -140,11 +144,7 @@ fn inheritance_fixture_merges_every_level_in_order() {
     let v = &video.representations[0];
     assert_eq!(v.id, "0");
     let v_st = template(period, video, v);
-    assert_eq!(
-        v_st.multi.timescale,
-        Timescale::from_nonzero(90000),
-        "from the Period"
-    );
+    assert_eq!(v_st.multi.timescale, timescale(90000), "from the Period");
     assert_eq!(v_st.multi.start_number, 1, "from the Period");
     assert_eq!(
         v_st.media.as_deref(),
@@ -168,7 +168,7 @@ fn inheritance_fixture_merges_every_level_in_order() {
     let a_st = template(period, audio, a);
     assert_eq!(
         a_st.multi.timescale,
-        Timescale::from_nonzero(44100),
+        timescale(44100),
         "the audio set restates @timescale"
     );
     assert_eq!(a_st.multi.start_number, 1);

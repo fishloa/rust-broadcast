@@ -15,6 +15,10 @@ use transmux::{
     SampleEntryVariant, StblChild, TrackSpec, build_init_segment, build_media_segment,
 };
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 fn fixture() -> Vec<u8> {
     test_fixtures::read("mp4/h264-aac-frag.mp4")
 }
@@ -162,7 +166,7 @@ fn init_segment_from_real_config_reparses() {
     let moov = MovieBox::parse(&moov_bytes).unwrap();
     let (specs, _) = track_specs(&moov);
 
-    let init = build_init_segment(&specs, Timescale::from_nonzero(1000)).expect("build init");
+    let init = build_init_segment(&specs, timescale(1000)).expect("build init");
 
     // ftyp first, then moov.
     let (_, ftyp) = find_top_box(&init, b"ftyp");

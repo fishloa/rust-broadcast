@@ -1,19 +1,29 @@
 //! The state machine, policy, configuration and event queue, driven by hand.
 //! DESIGN.md section 2.4: every state x input cell is asserted.
-use crate::support::*;
 use broadcast_common::clock33::PCR_WRAP_27MHZ;
-use buffering_runtime::policy::Policy;
-use buffering_runtime::{
-    BufferController, ConfigField, ControllerConfig, Error, Event, Hint, JitterConfig, Micros,
-    PolicyConfig, Reason, StallMemorySnapshot, State, Ticks27,
-};
 
-const fn us(v: u64) -> Micros {
-    Micros(v)
+/// A 27 MHz tick count as a validated clock position.
+fn clock27(ticks: u64) -> Clock27 {
+    Clock27::from_27mhz(ticks % PCR_WRAP_27MHZ).expect("a reduced count is on the clock")
 }
 
-const fn t(v: u64) -> Ticks27 {
-    Ticks27(v)
+const fn dur(us: u64) -> Duration {
+    Duration::from_micros(us)
+}
+use crate::support::*;
+use buffering_runtime::policy::Policy;
+use buffering_runtime::{
+    BufferController, Clock27, ConfigField, ControllerConfig, Error, Event, Hint, JitterConfig,
+    PolicyConfig, Reason, StallMemorySnapshot, State, pts90k_to_clock27,
+};
+use core::time::Duration;
+
+const fn us(v: u64) -> Duration {
+    dur(v)
+}
+
+fn t(v: u64) -> Clock27 {
+    clock27(v)
 }
 
 const STEP_US: u64 = 35_000;
@@ -22,11 +32,11 @@ const STEP_TICKS: u64 = STEP_US * TICKS_PER_US;
 /// A hand-driven caller: steady 35 ms chunks, an obedient renderer.
 struct Rig {
     c: BufferController,
-    now: Micros,
+    now: Duration,
     media: u64,
     running: bool,
     clock: u64,
-    t_set: Micros,
+    t_set: Duration,
     log: Vec<Event>,
 }
 
@@ -47,7 +57,8 @@ impl Rig {
     }
     fn pos(&self) -> u64 {
         if self.running {
-            (self.clock + (self.now.0 - self.t_set.0) * TICKS_PER_US) % PCR_WRAP_27MHZ
+            (self.clock + (self.now - self.t_set).as_micros() as u64 * TICKS_PER_US)
+                % PCR_WRAP_27MHZ
         } else {
             self.clock
         }
@@ -57,12 +68,12 @@ impl Rig {
         while let Some(e) = self.c.poll_event() {
             match e {
                 Event::StartPlaying { media_27mhz, .. } | Event::Resume { media_27mhz, .. } => {
-                    self.clock = media_27mhz.0;
+                    self.clock = media_27mhz.ticks();
                     self.t_set = self.now;
                     self.running = true;
                 }
                 Event::Pause { hold_at_27mhz, .. } => {
-                    self.clock = hold_at_27mhz.0;
+                    self.clock = hold_at_27mhz.ticks();
                     self.running = false;
                 }
                 _ => {}
@@ -75,7 +86,7 @@ impl Rig {
     /// `n` chunks, each 35 ms apart in arrival and media.
     fn feed(&mut self, n: u32) {
         for _ in 0..n {
-            self.now = Micros(self.now.0 + STEP_US);
+            self.now += us(STEP_US);
             self.media += STEP_TICKS;
             self.c
                 .on_chunk(self.now, 1316, Some(t(self.media % PCR_WRAP_27MHZ)));
@@ -88,10 +99,10 @@ impl Rig {
         self.drain()
     }
     fn advance(&mut self, by: u64) {
-        self.now = Micros(self.now.0 + by);
+        self.now += dur(by);
     }
-    fn lead_us(&self) -> i64 {
-        self.c.stats().lead_us
+    fn lead(&self) -> i64 {
+        self.c.stats().lead.as_micros() as i64
     }
 
     // ---- reach each state
@@ -151,7 +162,7 @@ fn kinds(ev: &[Event]) -> Vec<&'static str> {
 
 #[test]
 fn initial_target_default_is_the_owner_approved_1800_ms() {
-    assert_eq!(PolicyConfig::DEFAULT.initial_us, us(1_800_000));
+    assert_eq!(PolicyConfig::DEFAULT.initial, us(1_800_000));
     assert_eq!(ControllerConfig::default(), ControllerConfig::DEFAULT);
     assert_eq!(PolicyConfig::default(), PolicyConfig::DEFAULT);
     assert_eq!(JitterConfig::default(), JitterConfig::DEFAULT);
@@ -219,8 +230,8 @@ fn table_playing() {
     let media_end = t(r.media % PCR_WRAP_27MHZ);
     let ev = {
         r.c.on_tick(
-            Micros(r.now.0 + 5_000),
-            Some(Ticks27(media_end.0 - 10_000 * TICKS_PER_US)),
+            r.now + us(5_000),
+            Some(clock27(media_end.ticks() - 10_000 * TICKS_PER_US)),
         );
         r.drain()
     };
@@ -236,7 +247,10 @@ fn table_playing() {
             Event::TargetChanged { .. },
         ] => {
             assert_eq!(reason, Reason::DataArriving);
-            assert_eq!(hold_at_27mhz, Ticks27(media_end.0 - 10_000 * TICKS_PER_US));
+            assert_eq!(
+                hold_at_27mhz,
+                clock27(media_end.ticks() - 10_000 * TICKS_PER_US)
+            );
         }
         _ => panic!("{ev:?}"),
     }
@@ -259,7 +273,7 @@ fn table_playing() {
         [
             Event::Pause {
                 hold_at_27mhz,
-                depth_us,
+                depth,
                 ..
             },
         ] => {
@@ -268,7 +282,7 @@ fn table_playing() {
                 t(r.media % PCR_WRAP_27MHZ),
                 "never ahead of the data"
             );
-            assert_eq!(depth_us, us(0));
+            assert_eq!(depth, us(0));
         }
         ref e => panic!("{e:?}"),
     }
@@ -337,17 +351,12 @@ fn table_starved() {
     r.feed(95);
     let ev = decisions(&r.tick());
     match ev[..] {
-        [
-            Event::Resume {
-                media_27mhz,
-                lead_us,
-            },
-        ] => {
+        [Event::Resume { media_27mhz, lead }] => {
             assert_eq!(
                 media_27mhz, hold,
                 "Resume carries the media time to restart from"
             );
-            assert!(lead_us >= us(2_700_000));
+            assert!(lead >= us(2_700_000));
         }
         _ => panic!("{ev:?}"),
     }
@@ -413,7 +422,7 @@ fn hysteresis_exit_only_at_the_after_rebuffer_bar() {
     // a 1.4 s gap makes the stall peak ~1.4 s: the exit bar is 1.25 x that
     let mut r = Rig::new({
         let mut c = ControllerConfig::default();
-        c.policy.initial_us = us(500_000);
+        c.policy.initial = us(500_000);
         c
     });
     r.feed(30);
@@ -424,14 +433,14 @@ fn hysteresis_exit_only_at_the_after_rebuffer_bar() {
     r.tick();
     assert_eq!(r.c.state(), State::Starved);
     r.feed(1); // first post-gap chunk reveals the depth
-    let peak = r.c.stats().est.stall_peak_us;
+    let peak = r.c.stats().est.stall_peak;
     assert!(peak >= us(1_300_000));
-    let bar = Micros(peak.0 * 320 / 256);
+    let bar = dur(peak.as_micros() as u64 * 320 / 256);
     let mut resumed_at = None;
     for i in 0..200 {
         r.feed(1);
         let ev = r.tick();
-        let lead = r.lead_us();
+        let lead = r.lead();
         if let Some(Event::Resume { .. }) = ev.first() {
             resumed_at = Some((i, lead));
             break;
@@ -439,14 +448,18 @@ fn hysteresis_exit_only_at_the_after_rebuffer_bar() {
         assert_eq!(
             r.c.state(),
             State::Starved,
-            "lead {lead} below the bar {bar}: no exit"
+            "lead {} below the bar {}us: no exit",
+            lead,
+            bar.as_micros()
         );
-        assert!(lead < bar.0 as i64);
+        assert!(lead < bar.as_micros() as i64);
     }
     let (_, lead) = resumed_at.expect("resumes");
     assert!(
-        lead >= bar.0 as i64,
-        "resumed at {lead} below the bar {bar}"
+        lead >= bar.as_micros() as i64,
+        "resumed at {} below the bar {}us",
+        lead,
+        bar.as_micros()
     );
     // and the lead hovering around the ENTER threshold cannot flap a Playing state
     // back out: once Starved, a lead of 100 ms (> 20 ms) is not an exit
@@ -474,12 +487,12 @@ fn startup_suppression_gap_during_the_first_fill() {
     let mut r = Rig::default();
     r.feed(14);
     r.advance(1_330_000);
-    let mut lead = None;
+    let mut lead: Option<Duration> = None;
     for _ in 0..120 {
         r.feed(1);
         for e in r.tick() {
-            if let Event::StartPlaying { lead_us, .. } = e {
-                lead = Some(lead_us);
+            if let Event::StartPlaying { lead: l, .. } = e {
+                lead = Some(l);
             }
         }
         if lead.is_some() {
@@ -489,24 +502,29 @@ fn startup_suppression_gap_during_the_first_fill() {
     let lead = lead.expect("started");
     let s = r.c.stats();
     assert_eq!(s.stalls, 0, "the first fill is never a stall");
-    assert_eq!(s.longest_freeze_us, us(0));
+    assert_eq!(s.longest_freeze, us(0));
     // never the after_rebuffer escalation (1.25 x 1.33 s = 1.7 s): the start
     // threshold is max(initial, target) = 1.8 s here
-    assert!(lead < us(2_000_000), "start lead {lead}");
+    assert!(lead < us(2_000_000), "start lead {}us", lead.as_micros());
     // ...but the gap fed the stall memory: the target rose
-    assert!(s.target_us >= us(1_550_000), "target {}", s.target_us);
+    assert!(
+        s.target >= us(1_550_000),
+        "target {}us",
+        s.target.as_micros()
+    );
     // a lower initial shows the memory raising the START target
     let mut cfg = ControllerConfig::default();
-    cfg.policy.initial_us = us(500_000);
+    cfg.policy.initial = us(500_000);
     let mut r = Rig::new(cfg);
     r.feed(14);
     r.advance(1_330_000);
     for _ in 0..120 {
         r.feed(1);
-        if let Some(Event::StartPlaying { lead_us, .. }) = r.tick().first().copied() {
+        if let Some(Event::StartPlaying { lead, .. }) = r.tick().first().copied() {
             assert!(
-                lead_us >= us(1_550_000),
-                "start target raised by the startup gap: {lead_us}"
+                lead >= us(1_550_000),
+                "start target raised by the startup gap: {}us",
+                lead.as_micros()
             );
             return;
         }
@@ -517,7 +535,7 @@ fn startup_suppression_gap_during_the_first_fill() {
 #[test]
 fn a_gap_while_paused_leaves_no_permanent_starvation() {
     let mut cfg = ControllerConfig::default();
-    cfg.policy.initial_us = us(500_000);
+    cfg.policy.initial = us(500_000);
     let mut s = Synth::new(30 * SEC);
     // first gap stalls the player; the second 1.5 s gap hits while it refills
     s.gaps = vec![(8 * SEC, 1_400_000), (11 * SEC, 1_500_000)];
@@ -581,19 +599,20 @@ fn reconnect_keeps_the_stall_memory_and_resumes_at_the_target() {
     let st = r.ctl.stats();
     // the 1.4 s stall memory is alive after the reconnect, the 3.4 s dead time did not replace it
     assert!(
-        st.est.stall_peak_us >= us(1_350_000) && st.est.stall_peak_us < us(1_600_000),
-        "{}",
-        st.est.stall_peak_us
+        st.est.stall_peak >= us(1_350_000) && st.est.stall_peak < us(1_600_000),
+        "{}us",
+        st.est.stall_peak.as_micros()
     );
     // the resume after the reconnect used the target, not 1.25 x depth
     let resume_lead = r.events.iter().rev().find_map(|(_, e)| match e {
-        Event::Resume { lead_us, .. } => Some(*lead_us),
+        Event::Resume { lead, .. } => Some(*lead),
         _ => None,
     });
     let l = resume_lead.expect("resume after reconnect");
     assert!(
         l < us(2_000_000),
-        "resume lead {l} must be the target, not the 2.1 s stall bar"
+        "resume lead {}us must be the target, not the 2.1 s stall bar",
+        l.as_micros()
     );
     assert_eq!(st.state, State::Playing);
 }
@@ -629,7 +648,7 @@ fn source_ended_turns_a_later_pause_into_no_data() {
     // chunks keep arriving (reason would be DataArriving) but the clock overruns
     r.feed(1);
     let p = t(r.media % PCR_WRAP_27MHZ);
-    r.c.on_tick(Micros(r.now.0 + 1_000), Some(p));
+    r.c.on_tick(r.now + us(1_000), Some(p));
     match r.drain()[..] {
         [Event::Pause { reason, .. }] => assert_eq!(reason, Reason::NoData),
         ref e => panic!("{e:?}"),
@@ -651,7 +670,7 @@ fn voluntary_reprime_is_off_by_default_and_works_when_enabled() {
         )));
     }
     let mut cfg = ControllerConfig::default();
-    cfg.policy.reprime_floor_us = us(1_000_000);
+    cfg.policy.reprime_floor = us(1_000_000);
     let mut r = Rig::new(cfg);
     r.feed(60);
     r.tick();
@@ -684,28 +703,31 @@ fn policy_follower_matches_a_brute_force_reference_and_never_falls_faster_than_t
     let cfg = PolicyConfig::DEFAULT;
     let mut p = Policy::new(cfg);
     let mut rng = Rng(11);
-    let mut target = i128::from(cfg.min_us.0);
+    let mut target = i128::from(cfg.min.as_micros() as u64);
     let (mut now, mut prev_t): (u64, Option<u64>) = (0, None);
     let mut binding = false;
     for _ in 0..20_000 {
         now += rng.below(2_000_000);
-        let need = Micros(if rng.below(4) == 0 {
+        let need = if rng.below(4) == 0 {
             rng.below(6_000_000)
         } else {
             rng.below(500_000)
-        });
-        let raw = i128::from(need.0.clamp(cfg.min_us.0, cfg.max_us.0));
+        };
+        let raw = i128::from(need.clamp(cfg.min.as_micros() as u64, cfg.max.as_micros() as u64));
         let got = p.follow(need, now);
         // reference: rise at once, fall at most `step` per second (no fall on the first call)
         let fall = prev_t.map_or(0, |t| {
-            i128::from(cfg.max_step_down_us_per_s) * i128::from(now - t) / 1_000_000
+            i128::from(cfg.max_step_down_per_s.as_micros() as u64) * i128::from(now - t) / 1_000_000
         });
         let want = raw.max(target - fall);
-        assert_eq!(i128::from(got.0), want);
+        assert_eq!(i128::from(got), want);
         binding |= want > raw;
         target = want;
         prev_t = Some(now);
-        assert!((cfg.min_us..=cfg.max_us).contains(&got));
+        assert!(
+            i128::from(got) >= i128::from(cfg.min.as_micros() as u64)
+                && i128::from(got) <= i128::from(cfg.max.as_micros() as u64)
+        );
     }
     assert!(binding, "the slew limit bound at least once");
 }
@@ -714,13 +736,13 @@ fn policy_follower_matches_a_brute_force_reference_and_never_falls_faster_than_t
 fn policy_need_start_and_resume_formulas() {
     let c = PolicyConfig::DEFAULT;
     let p = Policy::new(c);
-    // need = max(k1*base + margin, k2*peak) in Q8
-    assert_eq!(p.need_us(us(20_000), us(0)), us(40_000 + 100_000));
-    assert_eq!(p.need_us(us(0), us(1_447_000)), us(1_447_000 * 307 / 256));
-    assert_eq!(p.need_us(us(1_000_000), us(0)), us(2_100_000));
-    assert_eq!(p.start_us(), us(1_800_000));
-    assert_eq!(p.resume_us(us(1_000_000)), us(1_250_000));
-    assert_eq!(p.resume_us(us(0)), c.min_us);
+    // need = max(k1*base + margin, k2*peak) in Q8, in whole microseconds
+    assert_eq!(p.need_us(20_000, 0), 40_000 + 100_000);
+    assert_eq!(p.need_us(0, 1_447_000), 1_447_000 * 307 / 256);
+    assert_eq!(p.need_us(1_000_000, 0), 2_100_000);
+    assert_eq!(p.start(), us(1_800_000));
+    assert_eq!(p.resume(us(1_000_000)), us(1_250_000));
+    assert_eq!(p.resume(us(0)), c.min);
 }
 
 #[test]
@@ -730,25 +752,28 @@ fn max_us_is_a_hard_cap_everywhere() {
     for v in [
         us(0),
         us(1),
-        c.max_us,
-        Micros(c.max_us.0 + 1),
+        c.max,
+        c.max + us(1),
         us(u64::MAX / 2),
         us(u64::MAX),
     ] {
-        assert!(p.clamp(v) <= c.max_us);
-        assert!(p.resume_us(v) <= c.max_us);
-        let t = p.follow(p.need_us(v, v), v.0 / 1000);
-        assert!(t <= c.max_us && t >= c.min_us);
-        p.raise(v);
-        assert!(p.target_us() <= c.max_us);
-        assert!(p.start_us() <= c.max_us);
+        assert!(p.clamp(v.as_micros() as u64) <= c.max.as_micros() as u64);
+        assert!(p.resume(v) <= c.max);
+        let t = p.follow(
+            p.need_us(v.as_micros() as u64, v.as_micros() as u64),
+            v.as_micros() as u64 / 1000,
+        );
+        assert!(t <= c.max.as_micros() as u64 && t >= c.min.as_micros() as u64);
+        p.raise(v.as_micros() as u64);
+        assert!(p.target() <= c.max);
+        assert!(p.start() <= c.max);
     }
     // through the controller: a huge seeded stall memory and a 10 s gap
     let seed = StallMemorySnapshot::new(us(u64::MAX), us(0));
     let mut ctl = BufferController::new(ControllerConfig::default(), Some(seed)).unwrap();
-    assert_eq!(ctl.target_us(), c.max_us);
+    assert_eq!(ctl.target(), c.max);
     ctl.restore_memory(StallMemorySnapshot::new(us(u64::MAX), us(0)));
-    assert!(ctl.target_us() <= c.max_us);
+    assert!(ctl.target() <= c.max);
 }
 
 #[test]
@@ -758,13 +783,13 @@ fn over_max_is_reported_once_per_excursion_and_the_target_stays_capped() {
     let mut o = Opts::new(500_000);
     o.send_hints = false; // a long silence here is a stall, not a reconnect
     let r = replay(&s.generate(), &o);
-    let max = PolicyConfig::DEFAULT.max_us;
+    let max = PolicyConfig::DEFAULT.max;
     assert!(r.targets.iter().all(|&t| t <= max));
     let overs: Vec<_> = r
         .events
         .iter()
         .filter_map(|(_, e)| match e {
-            Event::OverMax { need_us, max_us } => Some((*need_us, *max_us)),
+            Event::OverMax { need, max } => Some((*need, *max)),
             _ => None,
         })
         .collect();
@@ -772,14 +797,13 @@ fn over_max_is_reported_once_per_excursion_and_the_target_stays_capped() {
     assert!(overs[0].0 > max && overs[0].1 == max);
     for (_, e) in &r.events {
         match e {
-            Event::TargetChanged { new_us, .. } => assert!(*new_us <= max),
-            Event::Pause {
-                resume_target_us, ..
-            } => assert!(*resume_target_us <= max),
-            Event::Resume { lead_us, .. } => {
+            Event::TargetChanged { new, .. } => assert!(*new <= max),
+            Event::Pause { resume_target, .. } => assert!(*resume_target <= max),
+            Event::Resume { lead, .. } => {
                 assert!(
-                    *lead_us <= Micros(max.0 + 40_000),
-                    "asked to hold {lead_us} > cap"
+                    *lead <= max + us(40_000),
+                    "asked to hold {}us > cap",
+                    lead.as_micros()
                 );
             }
             _ => {}
@@ -800,19 +824,19 @@ fn config_validation_names_every_bad_field() {
     };
     use ConfigField::*;
     assert_eq!(
-        bad(&|c| c.jitter.min_window_us = us(0)),
+        bad(&|c| c.jitter.min_window = us(0)),
         Err(Error::ZeroLengthWindow)
     );
     assert_eq!(
-        bad(&|c| c.jitter.interval_us = us(0)),
+        bad(&|c| c.jitter.interval = us(0)),
         Err(Error::InvalidConfig(Interval))
     );
     assert_eq!(
-        bad(&|c| c.jitter.min_window_us = us(999_999)),
+        bad(&|c| c.jitter.min_window = us(999_999)),
         Err(Error::InvalidConfig(MinWindow))
     );
     assert_eq!(
-        bad(&|c| c.jitter.bucket_us = 0),
+        bad(&|c| c.jitter.bucket = Duration::ZERO),
         Err(Error::InvalidConfig(Bucket))
     );
     assert_eq!(
@@ -822,7 +846,7 @@ fn config_validation_names_every_bad_field() {
     assert_eq!(
         bad(&|c| c.jitter.buckets = 100),
         Err(Error::InvalidConfig(Bucket)),
-        "max_us beyond the histogram range"
+        "max beyond the histogram range"
     );
     assert_eq!(
         bad(&|c| c.jitter.forget_q15 = 32768),
@@ -837,11 +861,11 @@ fn config_validation_names_every_bad_field() {
         Err(Error::InvalidConfig(Quantile))
     );
     assert_eq!(
-        bad(&|c| c.jitter.outlier_us = us(0)),
+        bad(&|c| c.jitter.outlier = us(0)),
         Err(Error::InvalidConfig(Outlier))
     );
     assert_eq!(
-        bad(&|c| c.jitter.decay_us = us(0)),
+        bad(&|c| c.jitter.decay = us(0)),
         Err(Error::InvalidConfig(Decay))
     );
     assert_eq!(
@@ -849,19 +873,19 @@ fn config_validation_names_every_bad_field() {
         Err(Error::InvalidConfig(Capacity))
     );
     assert_eq!(
-        bad(&|c| c.jitter.discontinuity_us = us(0)),
+        bad(&|c| c.jitter.discontinuity = us(0)),
         Err(Error::InvalidConfig(Discontinuity))
     );
     assert_eq!(
-        bad(&|c| c.policy.min_us = us(0)),
+        bad(&|c| c.policy.min = us(0)),
         Err(Error::InvalidConfig(Order))
     );
     assert_eq!(
-        bad(&|c| c.policy.initial_us = us(100)),
+        bad(&|c| c.policy.initial = us(100)),
         Err(Error::InvalidConfig(Order))
     );
     assert_eq!(
-        bad(&|c| c.policy.max_us = us(1_000_000)),
+        bad(&|c| c.policy.max = us(1_000_000)),
         Err(Error::InvalidConfig(Order))
     );
     assert_eq!(
@@ -877,20 +901,20 @@ fn config_validation_names_every_bad_field() {
         Err(Error::InvalidConfig(Multiplier))
     );
     assert_eq!(
-        bad(&|c| c.policy.max_step_down_us_per_s = 0),
+        bad(&|c| c.policy.max_step_down_per_s = Duration::ZERO),
         Err(Error::InvalidConfig(Slew))
     );
     assert_eq!(
-        bad(&|c| c.starve_threshold_us = us(300_000)),
+        bad(&|c| c.starve_threshold = us(300_000)),
         Err(Error::InvalidConfig(Threshold))
     );
     assert_eq!(
-        bad(&|c| c.nodata_after_us = us(0)),
+        bad(&|c| c.nodata_after = us(0)),
         Err(Error::InvalidConfig(Threshold))
     );
     // a bad config can never build a controller, and the error renders
     let mut c = ok;
-    c.jitter.interval_us = us(0);
+    c.jitter.interval = us(0);
     let e = BufferController::new(c, None).unwrap_err();
     assert_eq!(e.to_string(), "invalid configuration: interval");
     assert!(ControllerConfig::new(ok.jitter, ok.policy, us(20_000), us(200_000)).is_ok());
@@ -938,31 +962,31 @@ fn abi_surface_codes_are_stable() {
     let rec = Event::Pause {
         hold_at_27mhz: t(9),
         reason: Reason::NoData,
-        depth_us: us(3),
-        resume_target_us: us(4),
+        depth: us(3),
+        resume_target: us(4),
         track: None,
     }
     .to_record();
     assert_eq!(
-        (rec.kind, rec.reason, rec.media_27mhz, rec.a_us, rec.b_us),
+        (rec.kind, rec.reason, rec.media_27mhz, rec.a, rec.b),
         (2, 2, 9, 3, 4)
     );
     let rec = Event::OverMax {
-        need_us: us(5),
-        max_us: us(6),
+        need: us(5),
+        max: us(6),
     }
     .to_record();
-    assert_eq!((rec.kind, rec.a_us, rec.b_us), (5, 5, 6));
+    assert_eq!((rec.kind, rec.a, rec.b), (5, 5, 6));
     let rec = Event::TargetChanged {
-        old_us: us(1),
-        new_us: us(2),
+        old: us(1),
+        new: us(2),
     }
     .to_record();
-    assert_eq!((rec.kind, rec.a_us, rec.b_us), (4, 1, 2));
+    assert_eq!((rec.kind, rec.a, rec.b), (4, 1, 2));
     assert_eq!(
         Event::StartPlaying {
             media_27mhz: t(7),
-            lead_us: us(8)
+            lead: us(8)
         }
         .to_record()
         .kind,
@@ -971,19 +995,19 @@ fn abi_surface_codes_are_stable() {
     assert_eq!(
         Event::Resume {
             media_27mhz: t(7),
-            lead_us: us(8)
+            lead: us(8)
         }
         .to_record()
         .kind,
         3
     );
     assert_eq!(Event::Rebaselined.to_record().kind, 6);
-    assert_eq!(Event::EventsDropped { count: 3 }.to_record().a_us, 3);
-    assert_eq!(buffering_runtime::pts90k_to_27mhz(90_000), t(27_000_000));
+    assert_eq!(Event::EventsDropped { count: 3 }.to_record().a, 3);
+    assert_eq!(pts90k_to_clock27(90_000).unwrap(), t(27_000_000));
     // one PTS wrap is exactly one PCR wrap
-    assert_eq!(buffering_runtime::pts90k_to_27mhz(1 << 33), t(0));
+    assert_eq!(pts90k_to_clock27(1 << 33).unwrap(), t(0));
     assert_eq!(
-        buffering_runtime::pts90k_to_27mhz((1 << 33) - 1),
+        pts90k_to_clock27((1 << 33) - 1).unwrap(),
         t(PCR_WRAP_27MHZ - 300)
     );
     // config() accessor
@@ -1000,9 +1024,9 @@ fn event_queue_drops_non_critical_events_first_and_reports_the_loss() {
     let chunks = s.generate();
     let mut c = BufferController::new(ControllerConfig::DEFAULT, None).unwrap();
     for ch in &chunks {
-        c.on_chunk(Micros(ch.arrival_us), ch.bytes, ch.pcr.map(Ticks27));
-        c.on_media(Micros(ch.arrival_us), Ticks27(ch.pcr.unwrap()));
-        c.on_tick(Micros(ch.arrival_us), None);
+        c.on_chunk(dur(ch.arrival_us), ch.bytes, ch.pcr.map(clock27));
+        c.on_media(dur(ch.arrival_us), clock27(ch.pcr.unwrap()));
+        c.on_tick(dur(ch.arrival_us), None);
     }
     let dropped = c.stats().events_dropped;
     assert!(dropped > 0, "the ramp overflowed the 16-entry queue");
@@ -1024,17 +1048,17 @@ fn reset_keeps_or_drops_the_stall_memory() {
     let mut s = Synth::new(30 * SEC);
     s.gaps = vec![(8 * SEC, 1_400_000)];
     let mut r = replay(&s.generate(), &Opts::new(1_800_000));
-    let peak = r.ctl.stats().est.stall_peak_us;
+    let peak = r.ctl.stats().est.stall_peak;
     assert!(peak > us(1_300_000));
     r.ctl.reset(true);
     assert_eq!(r.ctl.state(), State::Buffering);
     assert!(
-        r.ctl.target_us() >= us(1_550_000),
-        "kept memory lifts the target: {}",
-        r.ctl.target_us()
+        r.ctl.target() >= us(1_550_000),
+        "kept memory lifts the target: {}us",
+        r.ctl.target().as_micros()
     );
     r.ctl.reset(false);
-    assert_eq!(r.ctl.target_us(), PolicyConfig::DEFAULT.min_us);
+    assert_eq!(r.ctl.target(), PolicyConfig::DEFAULT.min);
     assert_eq!(r.ctl.snapshot_memory(), StallMemorySnapshot::default());
 }
 
@@ -1042,19 +1066,19 @@ fn reset_keeps_or_drops_the_stall_memory() {
 fn seeded_memory_raises_the_start_target_for_the_hold_and_decay() {
     let snap = StallMemorySnapshot::new(us(1_450_000), us(0));
     let mut cfg = ControllerConfig::default();
-    cfg.policy.initial_us = us(500_000);
+    cfg.policy.initial = us(500_000);
     let c = BufferController::new(cfg, Some(snap)).unwrap();
-    assert!(c.target_us() >= us(1_700_000) && c.target_us() <= us(1_740_000));
+    assert!(c.target() >= us(1_700_000) && c.target() <= us(1_740_000));
     // aged 30 s: still held; aged 200 s: gone
     let c = BufferController::new(cfg, Some(snap.aged(us(30_000_000)))).unwrap();
-    assert!(c.target_us() >= us(1_700_000));
+    assert!(c.target() >= us(1_700_000));
     let c = BufferController::new(cfg, Some(snap.aged(us(200_000_000)))).unwrap();
-    assert_eq!(c.target_us(), cfg.policy.min_us);
+    assert_eq!(c.target(), cfg.policy.min);
     // snapshot round trip through a live controller
     let mut c = BufferController::new(cfg, Some(snap)).unwrap();
     c.on_chunk(us(1_000), 1316, Some(t(1)));
     let s2 = c.snapshot_memory();
-    assert_eq!(s2.peak_us, us(1_450_000));
+    assert_eq!(s2.peak, us(1_450_000));
 }
 
 /// `StallMemorySnapshot::new` is `const` (FFI wrappers build statics with it;
@@ -1062,7 +1086,7 @@ fn seeded_memory_raises_the_start_target_for_the_hold_and_decay() {
 #[test]
 fn snapshot_new_is_const_and_matches_fields() {
     const S: StallMemorySnapshot = StallMemorySnapshot::new(us(7), us(9));
-    assert_eq!((S.peak_us, S.age_us), (us(7), us(9)));
+    assert_eq!((S.peak, S.age), (us(7), us(9)));
     assert_eq!(
         StallMemorySnapshot::new(us(0), us(0)),
         StallMemorySnapshot::default()
@@ -1082,11 +1106,12 @@ fn restored_stall_memory_keeps_its_age_when_the_clock_starts_small() {
     // 90 s old: 30 s into the 60 s decay
     c.on_chunk(us(1_000_000), 1316, Some(t(0)));
     c.on_chunk(us(31_000_000), 1316, Some(t(30_000_000 * TICKS_PER_US)));
-    let held = c.stats().est.stall_peak_us;
+    let held = c.stats().est.stall_peak;
     assert_eq!(
         held,
-        us(peak.0 / 2),
-        "stall memory 90 s after its peak should have decayed to half ({} us), reads {held} us",
-        peak.0 / 2
+        us(peak.as_micros() as u64 / 2),
+        "stall memory 90 s after its peak should have decayed to half ({} us), reads {} us",
+        peak.as_micros() as u64 / 2,
+        held.as_micros()
     );
 }

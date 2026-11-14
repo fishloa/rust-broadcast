@@ -23,6 +23,10 @@ use mp4_emsg::{EMSG_BOX_TYPE, EmsgBox, EmsgVersion, PresentationTime};
 use transmux::TrackId;
 use transmux::{FragmentTrackData, Sample, build_media_segment, build_media_segment_with_events};
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 /// The SCTE 35 scheme URI for binary `splice_info_section` delivery
 /// (ANSI/SCTE 214-3 §8.3.3).
 const SCTE35_SCHEME: &str = "urn:scte:scte35:2013:bin";
@@ -186,7 +190,7 @@ fn two_emsgs_appear_in_order_before_moof() {
         flags: 0,
         scheme_id_uri: SCTE35_SCHEME,
         value: "",
-        timescale: Timescale::from_nonzero(90_000),
+        timescale: timescale(90_000),
         presentation_time: PresentationTime::Delta(0),
         event_duration: 0xFFFF_FFFF,
         id: 1,
@@ -196,7 +200,7 @@ fn two_emsgs_appear_in_order_before_moof() {
         flags: 0,
         scheme_id_uri: SCTE35_SCHEME,
         value: "",
-        timescale: Timescale::from_nonzero(90_000),
+        timescale: timescale(90_000),
         presentation_time: PresentationTime::Delta(9000),
         event_duration: 0xFFFF_FFFF,
         id: 2,

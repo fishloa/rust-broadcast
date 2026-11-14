@@ -7,6 +7,10 @@ use transmux::{
     DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor, TrackId,
 };
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 pub fn dummy_avc_config() -> AVCConfigurationBox {
     AVCConfigurationBox::new(AVCDecoderConfigurationRecord {
         configuration_version: 1,
@@ -43,7 +47,7 @@ pub fn dummy_esds() -> EsdsBox {
 pub fn video_track() -> TrackSpec {
     TrackSpec::new(
         TrackId::new(1),
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
         CodecConfig::Avc {
             config: dummy_avc_config(),
             width: 320,
@@ -55,7 +59,7 @@ pub fn video_track() -> TrackSpec {
 pub fn audio_track() -> TrackSpec {
     TrackSpec::new(
         TrackId::new(2),
-        Timescale::from_nonzero(48_000),
+        timescale(48_000),
         CodecConfig::Aac {
             esds: dummy_esds(),
             channel_count: 2,

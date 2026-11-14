@@ -14,6 +14,10 @@ use mpeg_ts::pusi::PusiReassembler;
 /// adaptation-field-stuffed, payload = 98-byte emsg box.
 const TS_FIXTURE: &str = "ts/emsg-pid4.ts";
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 /// Path to the known-good emsg box bytes (98 bytes, version 1, SCTE-35).
 const EMSG_FIXTURE: &str = "scte35/emsg-v1-scte35-livesim.bin";
 
@@ -57,7 +61,7 @@ fn reassemble_emsg_from_ts() {
         mp4_emsg::EmsgBox::parse(&reassembled).expect("reassembled bytes must parse as EmsgBox");
     assert_eq!(
         emsg.timescale,
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
         "expected timescale 90000 for SCTE-35 livesim emsg"
     );
 

@@ -491,7 +491,9 @@ fn controller_inputs_after_jump_include_pcr_discontinuity_hint_and_fresh_join_or
     let first_report_after = log[hints[0]..]
         .iter()
         .find_map(|l| match l {
-            BufferInput::TrackMedia { track, end, .. } if *track == vid.value() => Some(end.0),
+            BufferInput::TrackMedia { track, end, .. } if *track == vid.value() => {
+                Some(end.ticks())
+            }
             _ => None,
         })
         .expect("a video media report on the new timeline");
@@ -507,7 +509,9 @@ fn controller_inputs_after_jump_include_pcr_discontinuity_hint_and_fresh_join_or
     let reports_after: Vec<u64> = log[hints[0]..]
         .iter()
         .filter_map(|l| match l {
-            BufferInput::TrackMedia { track, end, .. } if *track == vid.value() => Some(end.0),
+            BufferInput::TrackMedia { track, end, .. } if *track == vid.value() => {
+                Some(end.ticks())
+            }
             _ => None,
         })
         .collect();

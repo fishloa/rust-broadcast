@@ -1,25 +1,17 @@
 //! [`Stage`] — the incremental-drive contract every streaming stage in the
-//! workspace will adopt (media-plane migration step 1).
+//! workspace adopts (media-plane migration step 1), plus the [`Timestamp`]
+//! clock it is driven on.
 //!
 //! # Why
 //!
-//! Today the workspace has four incompatible "keep feeding me bytes/samples"
-//! APIs, each shaped slightly differently:
-//!
-//! - `transmux::StreamingTsDemux::feed` returns `()` — output is pulled through
-//!   a separate accessor.
-//! - `transmux::StreamingFlvDemux::feed` returns `Result<(), Error>` — but still
-//!   no inline output.
-//! - `transmux::StreamingTsHlsSegmenter::push` returns the completed segment
-//!   inline from the feed call itself.
-//! - `hls_runtime`'s `LlHlsSegmenter` splits draining into two separate
-//!   methods, `take_ready_parts` and `take_ready_segments`.
-//!
-//! None of these agree on whether output comes back from `feed`, from a
-//! separate pull, or from two separate pulls — and none of them carry a clock,
-//! which blocks deadline-driven stages (rate-scheduled SI emission, RTCP
-//! timeout, segment-boundary timers) from ever sharing a driver loop with the
-//! byte-shovelling stages. `Stage` unifies the shape: push input in with
+//! The streaming families in the workspace grew "keep me fed" APIs, each
+//! shaped differently: a `feed` returning `()` with output pulled through a
+//! separate accessor, a `feed` returning only a `Result`, a `push` returning
+//! the completed segment inline, and segmenters splitting draining into several
+//! `take_*` methods. None of them carry a clock, which blocks deadline-driven
+//! work (rate-scheduled SI emission, RTCP timeout, segment-boundary timers)
+//! from sharing a driver loop with the byte-shovelling stages. `Stage` unifies
+//! the shape: push input in with
 //! [`Stage::feed`], pull typed output out with [`Stage::poll`] (repeatable,
 //! decoupled from `feed`), signal end-of-input with [`Stage::finish`], and let
 //! time-driven work happen via [`Stage::next_deadline`] / [`Stage::on_deadline`]
@@ -38,15 +30,15 @@
 //! too. This is what lets one driver loop, generic only over `S: Stage`, span
 //! both families (see `transmux/tests/it/stage.rs`'s `drive` helper).
 //!
-//! This module defines the trait plus its two small supporting types; it does
-//! not migrate any existing implementor (that is the workspace's media-plane
-//! migration step 2 onward — see `docs/superpowers/specs/2026-07-26-media-plane-architecture.md`).
+//! This module defines the trait plus its two small supporting types. The
+//! media-plane byte stages implement it; see
+//! `docs/superpowers/specs/2026-07-26-media-plane-architecture.md` for the
+//! migration it shapes.
 //!
 //! # Clock: why a clock parameter at all
 //!
-//! An audit of the wider workspace found a clockless `Stage` would only fit the
-//! container-demux family. Several existing drive loops already take a clock
-//! and cannot be expressed without one:
+//! A clockless `Stage` would only fit the container-demux family. Several
+//! drive loops already take a clock and cannot be expressed without one:
 //!
 //! - `dvb_conformance::ConformanceMonitor::feed(pkt, t: Duration)` — TR 101 290
 //!   timing indicators need packet arrival time.
@@ -63,9 +55,14 @@
 //! `std::time::Instant` cannot exist in that build. [`Timestamp`] is a plain
 //! `u64` microsecond count from an epoch the *driver* chooses (not the stage).
 //! A driver that does have `std` can derive one from a pair of `Instant`s via
-//! [`Timestamp::from_instant`]. All arithmetic on `Timestamp` saturates instead
-//! of panicking, since a stage must never crash on a clock that runs backwards
-//! or wraps.
+//! [`Timestamp::from_instant`].
+//!
+//! Arithmetic on a *reading* saturates instead of panicking, since a stage
+//! must never crash on a clock that runs backwards or wraps. A *deadline* is
+//! [`Timestamp::checked_add`]: an instant that does not fit the clock can
+//! never be reached, so it is a timer that never fires (`None`), never a
+//! saturated instant that reads as "due now" forever (the time rule in
+//! `docs/API-CONVENTIONS.md`).
 
 use core::time::Duration;
 
@@ -81,10 +78,16 @@ use crate::units::{MICROS_PER_MILLI, NANOS_PER_MICRO};
 /// [`Stage`] — stages must treat `Timestamp` as an opaque, monotonically
 /// non-decreasing counter and never assume it relates to wall-clock time.
 ///
-/// All arithmetic saturates rather than panicking: a [`Stage`] must not crash
-/// because a driver's clock underflowed or overflowed.
+/// The microsecond count is private: one spelling of one thing
+/// ([`from_micros`](Self::from_micros), [`from_nanos`](Self::from_nanos),
+/// [`from_millis`](Self::from_millis), each rounding toward the later instant),
+/// so a raw count cannot slip in beside them with different rounding.
+///
+/// Arithmetic on a reading saturates rather than panicking: a [`Stage`] must
+/// not crash because a driver's clock underflowed or overflowed. A deadline is
+/// [`checked_add`](Self::checked_add) instead, which reports "never fires".
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, Default)]
-pub struct Timestamp(pub u64);
+pub struct Timestamp(u64);
 
 impl Timestamp {
     /// The zero timestamp — whatever epoch the driver has chosen.
@@ -641,6 +644,16 @@ mod tests {
         );
         let huge = Duration::from_secs(u64::MAX);
         assert_eq!(zero.saturating_add(huge), Timestamp::from_micros(u64::MAX));
+    }
+
+    /// One spelling of one thing: a reading is built only by a constructor
+    /// that rounds toward the later instant, and comes back out as the whole
+    /// microsecond it holds.
+    #[test]
+    fn a_reading_is_built_only_by_the_rounding_constructors() {
+        assert_eq!(Timestamp::from_micros(7).as_micros(), 7);
+        assert_eq!(Timestamp::from_nanos(1_999).as_micros(), 2);
+        assert_eq!(Timestamp::from_millis(7).as_micros(), 7_000);
     }
 
     #[test]

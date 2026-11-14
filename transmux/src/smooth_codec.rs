@@ -333,6 +333,10 @@ fn channel_configuration_for(channels: u16) -> CrateResult<u8> {
 
 #[cfg(test)]
 mod tests {
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
+
     use super::*;
 
     use crate::pipeline::CodecConfig;
@@ -358,7 +362,7 @@ mod tests {
         let quality = QualityLevel::new("H264".to_string(), 500_000, cpd);
         let spec = track_spec_from_quality_level(
             TrackId::new(1),
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
             StreamType::Video,
             &quality,
         )
@@ -382,7 +386,7 @@ mod tests {
         let quality = QualityLevel::new("AACL".to_string(), 128_000, alloc::vec![0x12, 0x10]);
         let spec = track_spec_from_quality_level(
             TrackId::new(2),
-            Timescale::from_nonzero(44_100),
+            timescale(44_100),
             StreamType::Audio,
             &quality,
         )
@@ -409,7 +413,7 @@ mod tests {
         let quality = QualityLevel::new("EC-3".to_string(), 128_000, alloc::vec![0x10, 0x3D]);
         match track_spec_from_quality_level(
             TrackId::new(2),
-            Timescale::from_nonzero(48_000),
+            timescale(48_000),
             StreamType::Audio,
             &quality,
         ) {
@@ -426,7 +430,7 @@ mod tests {
         assert!(matches!(
             track_spec_from_quality_level(
                 TrackId::new(2),
-                Timescale::from_nonzero(48_000),
+                timescale(48_000),
                 StreamType::Audio,
                 &quality
             ),
@@ -445,7 +449,7 @@ mod tests {
         );
         match track_spec_from_quality_level(
             TrackId::new(1),
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
             StreamType::Video,
             &quality,
         ) {
@@ -472,7 +476,7 @@ mod tests {
             assert!(
                 track_spec_from_quality_level(
                     TrackId::new(1),
-                    Timescale::from_nonzero(90_000),
+                    timescale(90_000),
                     StreamType::Video,
                     &quality
                 )
@@ -486,7 +490,7 @@ mod tests {
             assert!(
                 track_spec_from_quality_level(
                     TrackId::new(2),
-                    Timescale::from_nonzero(44_100),
+                    timescale(44_100),
                     StreamType::Audio,
                     &quality
                 )
@@ -519,7 +523,7 @@ mod tests {
 
         let spec = track_spec_from_quality_level(
             TrackId::new(2),
-            Timescale::from_nonzero(44_100),
+            timescale(44_100),
             StreamType::Audio,
             &quality,
         )
@@ -560,7 +564,7 @@ mod tests {
         // actually lands in the esds.
         let spec = track_spec_from_quality_level(
             TrackId::new(3),
-            Timescale::from_nonzero(44_100),
+            timescale(44_100),
             StreamType::Audio,
             &quality,
         )
@@ -681,7 +685,7 @@ mod tests {
         assert_eq!(decoded.width, 65_536);
         match track_spec_from_quality_level(
             TrackId::new(1),
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
             StreamType::Video,
             &quality,
         ) {
@@ -707,7 +711,7 @@ mod tests {
         .with_size(70_000, 360);
         match track_spec_from_quality_level(
             TrackId::new(1),
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
             StreamType::Video,
             &quality,
         ) {
@@ -726,7 +730,7 @@ mod tests {
         assert!(matches!(
             track_spec_from_quality_level(
                 TrackId::new(3),
-                Timescale::from_nonzero(1000),
+                timescale(1000),
                 StreamType::Text,
                 &quality
             ),
@@ -740,7 +744,7 @@ mod tests {
         assert!(matches!(
             track_spec_from_quality_level(
                 TrackId::new(1),
-                Timescale::from_nonzero(90_000),
+                timescale(90_000),
                 StreamType::Video,
                 &quality
             ),

@@ -428,7 +428,12 @@ async fn rtmp_dispatch_serves_real_media_end_to_end() {
 // --- `InputSpec::Custom` driver-backed coverage (issue #805 task 5) ---
 
 mod custom_dispatch_driver_backed {
+
     use super::*;
+
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
     use broadcast_common::timescale::Timescale;
     use std::collections::VecDeque;
     use std::convert::Infallible;
@@ -732,7 +737,7 @@ mod custom_dispatch_driver_backed {
                     self.announced = true;
                     let track_1 = TrackSpec::new(
                         TrackId::new(1),
-                        Timescale::from_nonzero(90_000),
+                        timescale(90_000),
                         CodecConfig::Avc {
                             config: transmux::avc_config_from_sprop(
                                 "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==",
@@ -744,7 +749,7 @@ mod custom_dispatch_driver_backed {
                     );
                     let track_7 = TrackSpec::new(
                         TrackId::new(7),
-                        Timescale::from_nonzero(90_000),
+                        timescale(90_000),
                         CodecConfig::Avc {
                             config: transmux::avc_config_from_sprop(
                                 "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==",

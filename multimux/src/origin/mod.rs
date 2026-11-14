@@ -50,6 +50,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+
 #[cfg(test)]
 use transmux::TrackId;
 
@@ -2262,6 +2263,11 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
+
     use crate::dvr::DvrConfig;
     use crate::output::hls::HlsOutput;
     use crate::route::HealthState;
@@ -2697,7 +2703,7 @@ mod tests {
             crate::route::SPTS_PROGRAM_ID,
             vec![transmux::TrackSpec::new(
                 TrackId::new(9),
-                Timescale::from_nonzero(90_000),
+                timescale(90_000),
                 transmux::CodecConfig::Vp8 {
                     width: 640,
                     height: 480,
@@ -2812,7 +2818,7 @@ mod tests {
             crate::route::SPTS_PROGRAM_ID,
             vec![transmux::TrackSpec::new(
                 TrackId::new(1),
-                Timescale::from_nonzero(90_000),
+                timescale(90_000),
                 transmux::CodecConfig::Vp8 {
                     width: 640,
                     height: 480,
@@ -2863,7 +2869,7 @@ mod tests {
             crate::route::SPTS_PROGRAM_ID,
             vec![transmux::TrackSpec::new(
                 TrackId::new(9),
-                Timescale::from_nonzero(90_000),
+                timescale(90_000),
                 transmux::CodecConfig::Vp8 {
                     width: 640,
                     height: 480,
@@ -3009,7 +3015,7 @@ mod tests {
             crate::route::SPTS_PROGRAM_ID,
             vec![transmux::TrackSpec::new(
                 TrackId::new(1),
-                Timescale::from_nonzero(90_000),
+                timescale(90_000),
                 transmux::CodecConfig::Vp8 {
                     width: 640,
                     height: 480,
@@ -3081,7 +3087,7 @@ mod tests {
             crate::route::SPTS_PROGRAM_ID,
             vec![transmux::TrackSpec::new(
                 TrackId::new(1),
-                Timescale::from_nonzero(90_000),
+                timescale(90_000),
                 transmux::CodecConfig::Vp8 {
                     width: 640,
                     height: 480,

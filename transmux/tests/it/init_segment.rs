@@ -11,6 +11,10 @@ use broadcast_common::{Parse, Serialize};
 use transmux::TrackId;
 use transmux::{MovieBox, SampleDescriptionBox, SampleEntryVariant};
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 /// Find a top-level box by type and return its full bytes (header + body).
 fn find_top_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> &'a [u8] {
     let mut offset = 0usize;
@@ -94,11 +98,7 @@ fn moov_real_fixture_round_trip() {
 
     // Verify key mvhd fields
     assert_eq!(moov.mvhd.version, 0, "mvhd version");
-    assert_eq!(
-        moov.mvhd.timescale,
-        Timescale::from_nonzero(1000),
-        "mvhd timescale"
-    );
+    assert_eq!(moov.mvhd.timescale, timescale(1000), "mvhd timescale");
     assert_eq!(moov.mvhd.duration, 2000, "mvhd duration");
     assert_eq!(
         moov.mvhd.next_track_id,

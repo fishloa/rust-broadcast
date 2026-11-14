@@ -20,6 +20,10 @@ use transmux::{
 // Fixture plumbing (mirrors tests/it/pipeline.rs)
 // ---------------------------------------------------------------------------
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 fn fixture() -> Vec<u8> {
     test_fixtures::read("mp4/h264-aac-frag.mp4")
 }
@@ -124,7 +128,7 @@ fn clean_init() -> Vec<u8> {
     let data = fixture();
     let (_, moov_bytes) = find_top_box(&data, b"moov");
     let moov = MovieBox::parse(&moov_bytes).unwrap();
-    build_init_segment(&[video_spec(&moov)], Timescale::from_nonzero(1000)).expect("build init")
+    build_init_segment(&[video_spec(&moov)], timescale(1000)).expect("build init")
 }
 
 /// A clean media segment with the given sequence_number + base decode time,

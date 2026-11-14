@@ -4,27 +4,40 @@
 //! 12 frames, per chunk; the first integration reported per frame and the floor
 //! never engaged).
 
-use broadcast_common::clock33::PCR_HZ;
+const fn dur(us: u64) -> Duration {
+    Duration::from_micros(us)
+}
 use broadcast_common::clock33::PCR_WRAP_27MHZ;
-use buffering_runtime::{BufferController, ControllerConfig, Event, Micros, PolicyConfig, Ticks27};
+use broadcast_common::clock33::{PCR_EXT_MODULUS, PCR_HZ};
+use buffering_runtime::{BufferController, Clock27, ControllerConfig, Event, PolicyConfig};
+use core::time::Duration;
 
 const AUDIO: u32 = 1;
 const VIDEO: u32 = 2;
 const TICKS_PER_US: u64 = PCR_HZ / 1_000_000;
-const BASE: Ticks27 = Ticks27(PCR_WRAP_27MHZ - 5 * PCR_HZ);
+/// A reduced 27 MHz tick count as a validated clock position.
+const fn clock27(ticks: u64) -> Clock27 {
+    match Clock27::from_parts(ticks / PCR_EXT_MODULUS, (ticks % PCR_EXT_MODULUS) as u16) {
+        Ok(c) => c,
+        Err(_) => unreachable!(),
+    }
+}
 
-fn at(offset_us: u64) -> Ticks27 {
-    Ticks27((BASE.0 + offset_us * TICKS_PER_US) % PCR_WRAP_27MHZ)
+const BASE: Clock27 = clock27(PCR_WRAP_27MHZ - 5 * 27_000_000);
+
+fn at(offset_us: u64) -> Clock27 {
+    Clock27::from_27mhz((BASE.ticks() + offset_us * TICKS_PER_US) % PCR_WRAP_27MHZ)
+        .expect("a reduced count is on the clock")
 }
 
 fn cfg() -> ControllerConfig {
     let d = ControllerConfig::default();
     let mut p = PolicyConfig::default();
-    p.initial_us = p.min_us;
-    ControllerConfig::new(d.jitter, p, d.starve_threshold_us, d.nodata_after_us).unwrap()
+    p.initial = p.min;
+    ControllerConfig::new(d.jitter, p, d.starve_threshold, d.nodata_after).unwrap()
 }
 
-type Run = (Vec<(Micros, Event)>, Micros, Vec<Micros>);
+type Run = (Vec<(Duration, Event)>, Duration, Vec<Duration>);
 
 /// A PCR chunk every 100 ms, video end `t + 0.9 s` per chunk, one audio PES
 /// (300 ms of media) in every third chunk, reported as ONE end per delivered
@@ -34,23 +47,19 @@ fn pes_run(per_frame: bool, between_us: u64) -> Run {
     let mut c = BufferController::new(cfg(), None).unwrap();
     let mut log = Vec::new();
     let mut targets = Vec::new();
-    let t0 = Micros(1_000_000);
+    let t0 = dur(1_000_000);
     c.on_chunk(t0, 1000, Some(at(0)));
     c.on_track_media(t0, AUDIO, at(0));
     c.on_track_media(t0, VIDEO, at(0));
     let (mut audio, mut clock, mut t_set, mut running) = (0u64, at(0), t0, false);
     for i in 1..=600u64 {
-        let t = Micros(t0.0 + i * 100_000);
+        let t = t0 + dur(i * 100_000);
         c.on_chunk(t, 1000, Some(at(i * 100_000)));
         c.on_track_media(t, VIDEO, at(i * 100_000 + 900_000));
         if i % 3 == 0 {
             if per_frame {
                 for f in 1..=12u64 {
-                    c.on_track_media(
-                        Micros(t.0 + (f - 1) * between_us),
-                        AUDIO,
-                        at(audio + f * 25_000),
-                    );
+                    c.on_track_media(t + dur((f - 1) * between_us), AUDIO, at(audio + f * 25_000));
                 }
             } else {
                 c.on_track_media(t, AUDIO, at(audio + 300_000));
@@ -58,7 +67,9 @@ fn pes_run(per_frame: bool, between_us: u64) -> Run {
             audio += 300_000;
         }
         let pos = if running {
-            Ticks27((clock.0 + (t.0 - t_set.0) * TICKS_PER_US) % PCR_WRAP_27MHZ)
+            clock27(
+                (clock.ticks() + (t - t_set).as_micros() as u64 * TICKS_PER_US) % PCR_WRAP_27MHZ,
+            )
         } else {
             clock
         };
@@ -78,9 +89,9 @@ fn pes_run(per_frame: bool, between_us: u64) -> Run {
             }
             log.push((t, e));
         }
-        targets.push(c.target_us());
+        targets.push(c.target());
     }
-    (log, c.target_us(), targets)
+    (log, c.target(), targets)
 }
 
 /// Per-PES and per-frame (at one instant, or microseconds apart) reports give
@@ -90,11 +101,15 @@ fn pes_run(per_frame: bool, between_us: u64) -> Run {
 /// floor and the equality fails.
 #[test]
 fn per_chunk_and_per_frame_reports_give_the_same_floor() {
-    let margin = cfg().policy.margin_us;
+    let margin = cfg().policy.margin;
     let a = pes_run(false, 0);
     let b = pes_run(true, 0);
     let c = pes_run(true, 50);
-    assert!(a.1.0 >= 300_000 + margin.0, "floor must engage: {}", a.1);
+    assert!(
+        a.1.as_micros() >= 300_000 + margin.as_micros(),
+        "floor must engage: {:?}",
+        a.1
+    );
     assert_eq!(a, b, "per-frame at one instant");
     assert_eq!(a, c, "per-frame microseconds apart");
 }
@@ -109,27 +124,27 @@ fn chunkless_callers_coalesce_within_a_millisecond() {
         let d = ControllerConfig::default();
         let mut p = PolicyConfig::default();
         p.k1_q8 = 1;
-        let cfg = ControllerConfig::new(d.jitter, p, d.starve_threshold_us, d.nodata_after_us)
+        let cfg = ControllerConfig::new(d.jitter, p, d.starve_threshold, d.nodata_after)
             .unwrap()
             .with_track_granularity(floor);
         let mut c = BufferController::new(cfg, None).unwrap();
-        let mut t = Micros(1_000_000);
+        let mut t = dur(1_000_000);
         c.on_track_media(t, AUDIO, at(0));
         for k in 0..40u64 {
-            t = Micros(t.0 + 300_000);
+            t += dur(300_000);
             for f in 1..=12u64 {
                 c.on_track_media(
-                    Micros(t.0 + (f - 1) * frame_gap_us),
+                    t + dur((f - 1) * frame_gap_us),
                     AUDIO,
                     at(k * 300_000 + f * 25_000),
                 );
             }
         }
-        c.target_us()
+        c.target()
     };
     // 12 frames inside 1 ms: one 300 ms step, the floor adds to the PDV term
-    assert!(run(10, false).0 < 300_000 + cfg().policy.margin_us.0);
-    assert!(run(10, true).0 >= 300_000 + cfg().policy.margin_us.0);
+    assert!(run(10, false).as_micros() < 300_000 + cfg().policy.margin.as_micros());
+    assert!(run(10, true).as_micros() >= 300_000 + cfg().policy.margin.as_micros());
     // frames 25 ms apart in arrival time are fine-grained: the floor is idle
     assert_eq!(run(25_000, true), run(25_000, false));
 }

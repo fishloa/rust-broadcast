@@ -5,6 +5,10 @@
 use crate::common;
 use broadcast_common::timescale::Timescale;
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 use common::Rng;
 use dash_runtime::address::{PlanOptions, plan_representation};
 use dash_runtime::mpd::Mpd;
@@ -138,17 +142,14 @@ fn extreme_inputs_never_panic_or_wrap() {
         let _ = p.plan.get(0);
     }
     assert_eq!(
-        complete_count_constant(i128::MAX, 0, 0, 0, 1, Timescale::from_nonzero(1)),
+        complete_count_constant(i128::MAX, 0, 0, 0, 1, timescale(1)),
         u64::MAX
     );
     assert_eq!(
-        complete_count_constant(i128::MIN, 0, 0, 0, 1, Timescale::from_nonzero(1)),
+        complete_count_constant(i128::MIN, 0, 0, 0, 1, timescale(1)),
         0
     );
-    assert_eq!(
-        complete_count_constant(0, 0, 0, 0, 0, Timescale::from_nonzero(1)),
-        0
-    );
+    assert_eq!(complete_count_constant(0, 0, 0, 0, 0, timescale(1)), 0);
     assert!(Timescale::try_new(0).is_err());
     assert_eq!(ato_seconds_to_us(f64::INFINITY), ato_seconds_to_us(1.0e30));
     assert_eq!(ato_seconds_to_us(f64::NAN), 0);

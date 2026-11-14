@@ -8,7 +8,7 @@
 //! * a track becomes **active** on its first delivery;
 //! * a track announced with [`BufferController::register_track`](crate::BufferController::register_track) that has not delivered yet
 //!   **blocks** a start or resume (no effective end) until it delivers or has
-//!   been silent for `silence_timeout_us`; while playing it is skipped, so the
+//!   been silent for `track_silence_timeout`; while playing it is skipped, so the
 //!   starvation check keeps running over the tracks that have delivered;
 //! * a track removed with
 //!   [`BufferController::unregister_track`](crate::BufferController::unregister_track)
@@ -48,7 +48,7 @@
 //! track between two [`on_chunk`](crate::BufferController::on_chunk) calls are
 //! ONE delivery, and the step is `end after the last call - end before the
 //! first call`. A caller that never calls `on_chunk` gets the fallback: calls
-//! less than [`COALESCE_US`] apart are one delivery. So a caller reporting one
+//! less than [`COALESCE`] apart are one delivery. So a caller reporting one
 //! end per delivered chunk and a caller reporting one per demuxed sample (a
 //! 0.3 s MP2 PES as 12 frames of 24 ms) produce the same floor. The step is
 //! folded into the memory when the window closes (at the next `on_chunk`, or at
@@ -63,8 +63,11 @@
 //!
 //! All position comparisons are wrap-safe (`broadcast_common::clock33`).
 
-use crate::config::{Micros, TICKS_PER_US, Ticks27};
+use core::time::Duration;
+
+use crate::config::TICKS_PER_US;
 use crate::stall_memory::MaxHold;
+use crate::time::{Clock27, duration_add, duration_between, duration_micros, micros_as_duration};
 use alloc::vec::Vec;
 use broadcast_common::clock33::pcr_signed_distance;
 
@@ -76,7 +79,7 @@ pub const DEFAULT_TRACK: u32 = 0;
 
 /// Fallback coalescing window (microseconds) for a caller that never calls
 /// `on_chunk`: calls this close are one delivery.
-pub const COALESCE_US: Micros = Micros(1_000);
+pub const COALESCE: Duration = Duration::from_millis(1);
 
 /// Delivery steps a track must have shown before a start/resume is granted on
 /// its granularity (see `TrackSet::granularity_known`): the third delivery's
@@ -84,19 +87,19 @@ pub const COALESCE_US: Micros = Micros(1_000);
 pub const LEARN_STEPS: u32 = 2;
 
 /// Wrap-safe: is `a` strictly before `b`?
-fn before(a: Ticks27, b: Ticks27) -> bool {
-    pcr_signed_distance(a.0, b.0) > 0
+fn before(a: Clock27, b: Clock27) -> bool {
+    pcr_signed_distance(a.ticks(), b.ticks()) > 0
 }
 
 /// Delivery-instant bookkeeping for the granularity measurement.
 #[derive(Clone, Copy, Debug)]
 struct Step {
     /// End as of the previous distinct delivery instant, and that instant.
-    prev_end: Ticks27,
-    prev_at: Micros,
+    prev_end: Clock27,
+    prev_at: Duration,
     /// End as of the current delivery instant, and that instant.
-    cur_end: Ticks27,
-    cur_at: Micros,
+    cur_end: Clock27,
+    cur_at: Duration,
     /// Chunk counter of the current delivery window.
     cur_epoch: u64,
     /// The window holds calls not yet folded into the memory.
@@ -107,11 +110,11 @@ struct Step {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct StepRules {
     /// Instants this far apart or more are not a cadence (the silence timeout).
-    pub(crate) max_interval_us: Micros,
-    /// Allowance of media advance over the arrival interval (`nodata_after_us`): more is a catch-up or a jump, not a cadence.
-    pub(crate) max_excess_us: Micros,
+    pub(crate) max_interval: Duration,
+    /// Allowance of media advance over the arrival interval (`nodata_after`): more is a catch-up or a jump, not a cadence.
+    pub(crate) max_excess: Duration,
     /// Arrival time of the chunk that ended the latest global data gap.
-    pub(crate) gap_end_at: Option<Micros>,
+    pub(crate) gap_end_at: Option<Duration>,
     /// Number of `on_chunk` calls so far: the delivery-window counter. 0 means
     /// the caller does not use chunk calls (time-based coalescing applies).
     pub(crate) epoch: u64,
@@ -121,12 +124,12 @@ pub(crate) struct StepRules {
 struct Track {
     id: u32,
     registered: bool,
-    end: Option<Ticks27>,
+    end: Option<Clock27>,
     /// Arrival time of the last delivery, or of the registration while none.
-    seen_at: Micros,
+    seen_at: Duration,
     step: Option<Step>,
     /// Arrival time of the first delivery since the slot was (re)started.
-    first_at: Micros,
+    first_at: Duration,
     /// Delivery windows closed so far (deliveries seen, minus the open one).
     windows: u32,
     /// Largest delivery step (microseconds) with hold and decay.
@@ -136,7 +139,7 @@ struct Track {
 /// The reduction result.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Effective {
-    pub(crate) end: Ticks27,
+    pub(crate) end: Clock27,
     /// The track that bounds `end`.
     pub(crate) limiting: u32,
 }
@@ -156,27 +159,27 @@ impl Track {
         let (prev_end, prev_at, cur_end, cur_at) = (s.prev_end, s.prev_at, s.cur_end, s.cur_at);
         s.prev_end = cur_end;
         s.prev_at = cur_at;
-        let advance = pcr_signed_distance(prev_end.0, cur_end.0);
-        let interval = cur_at.saturating_sub(prev_at);
-        if advance <= 0 || interval == Micros::ZERO || interval >= rules.max_interval_us {
+        let advance = pcr_signed_distance(prev_end.ticks(), cur_end.ticks());
+        let interval = duration_between(prev_at, cur_at);
+        if advance <= 0 || interval.is_zero() || interval >= rules.max_interval {
             return;
         }
         if rules.gap_end_at.is_some_and(|g| g > prev_at) {
             return;
         }
-        let step_us = u64::try_from(advance).unwrap_or(0) / TICKS_PER_US;
-        if step_us > interval.0.saturating_add(rules.max_excess_us.0) {
+        let step = u64::try_from(advance).unwrap_or(0) / TICKS_PER_US;
+        if step > duration_micros(interval).saturating_add(duration_micros(rules.max_excess)) {
             return;
         }
-        self.gran.observe(cur_at.0, step_us);
+        self.gran.observe(duration_micros(cur_at), step);
     }
 
     /// Fold one delivery into its delivery window; a call that does not belong
     /// to the open window closes it first.
-    fn observe_step(&mut self, now: Micros, end: Ticks27, rules: StepRules) {
+    fn observe_step(&mut self, now: Duration, end: Clock27, rules: StepRules) {
         let same_window = self.step.as_ref().is_some_and(|s| {
             s.cur_epoch == rules.epoch
-                && (rules.epoch > 0 || now.saturating_sub(s.cur_at) < COALESCE_US)
+                && (rules.epoch > 0 || duration_between(s.cur_at, now) < COALESCE)
         });
         if !same_window {
             self.commit_window(rules);
@@ -206,24 +209,24 @@ impl Track {
 #[derive(Clone, Debug)]
 pub(crate) struct TrackSet {
     v: Vec<Track>,
-    gran_hold_us: Micros,
-    gran_decay_us: Micros,
+    gran_hold: Duration,
+    gran_decay: Duration,
     /// Arrival time of the most recent delivery on any track; the clock the
     /// silence rule measures against. `None` until a delivery.
-    last_delivery: Option<Micros>,
+    last_delivery: Option<Duration>,
     /// Arrival time of the first delivery on any track since the set was
     /// cleared or rebaselined: where a never-delivered track's silence clock
     /// starts (a registration made before any media carries a clock that has
     /// not started, so it cannot be the origin).
-    first_delivery: Option<Micros>,
+    first_delivery: Option<Duration>,
 }
 
 impl TrackSet {
-    pub(crate) fn new(gran_hold_us: Micros, gran_decay_us: Micros) -> Self {
+    pub(crate) fn new(gran_hold: Duration, gran_decay: Duration) -> Self {
         Self {
             v: Vec::new(),
-            gran_hold_us,
-            gran_decay_us,
+            gran_hold,
+            gran_decay,
             last_delivery: None,
             first_delivery: None,
         }
@@ -239,7 +242,7 @@ impl TrackSet {
         self.first_delivery = None;
     }
 
-    fn slot(&mut self, id: u32, now: Micros) -> Option<&mut Track> {
+    fn slot(&mut self, id: u32, now: Duration) -> Option<&mut Track> {
         let i = match self.v.iter().position(|t| t.id == id) {
             Some(i) => i,
             None => {
@@ -254,7 +257,10 @@ impl TrackSet {
                     step: None,
                     first_at: now,
                     windows: 0,
-                    gran: MaxHold::new(self.gran_hold_us.0, self.gran_decay_us.0),
+                    gran: MaxHold::new(
+                        duration_micros(self.gran_hold),
+                        duration_micros(self.gran_decay),
+                    ),
                 });
                 self.v.len() - 1
             }
@@ -262,7 +268,7 @@ impl TrackSet {
         self.v.get_mut(i)
     }
 
-    pub(crate) fn register(&mut self, id: u32, now: Micros) {
+    pub(crate) fn register(&mut self, id: u32, now: Duration) {
         if let Some(t) = self.slot(id, now) {
             t.registered = true;
         }
@@ -278,8 +284,8 @@ impl TrackSet {
     pub(crate) fn deliver(
         &mut self,
         id: u32,
-        now: Micros,
-        end: Ticks27,
+        now: Duration,
+        end: Clock27,
         rules: StepRules,
     ) -> Option<bool> {
         let t = self.slot(id, now)?;
@@ -312,45 +318,45 @@ impl TrackSet {
     /// excluded only at the first delivery that landed `silence_us` after the
     /// first one, up to a whole step late), while a global gap still moves the
     /// clock by no more than one expected step, so it excludes nobody.
-    fn silence_clock(&self, now: Micros) -> Option<Micros> {
+    fn silence_clock(&self, now: Duration) -> Option<Duration> {
         let last = self.last_delivery?;
         let step = self
             .v
             .iter()
-            .map(|t| t.gran.value(now.0))
+            .map(|t| t.gran.value(duration_micros(now)))
             .max()
             .unwrap_or(0);
-        Some(last.max(now.min(last.saturating_add(Micros(step)))))
+        Some(last.max(now.min(duration_add(last, micros_as_duration(step)))))
     }
 
     /// Silent relative to the (expected) most recent delivery on any track.
-    fn is_silent(&self, t: &Track, silence_us: Micros, clock: Option<Micros>) -> bool {
+    fn is_silent(&self, t: &Track, silence: &Duration, clock: Option<Duration>) -> bool {
         // a track that never delivered has been waited for since the first
         // delivery on any track at the earliest, whenever it was registered
         let since = match (t.end, self.first_delivery) {
             (None, Some(f)) => t.seen_at.max(f),
             _ => t.seen_at,
         };
-        clock.is_some_and(|l| l.saturating_sub(since).0 >= silence_us.0)
+        clock.is_some_and(|l| duration_between(since, l) >= *silence)
     }
 
     /// Is `id` known and not excluded by the relative-silence rule at `now`?
-    pub(crate) fn is_live(&self, id: u32, now: Micros, silence_us: Micros) -> bool {
+    pub(crate) fn is_live(&self, id: u32, now: Duration, silence: Duration) -> bool {
         let clock = self.silence_clock(now);
         self.v
             .iter()
-            .any(|t| t.id == id && !self.is_silent(t, silence_us, clock))
+            .any(|t| t.id == id && !self.is_silent(t, &silence, clock))
     }
 
     /// Largest held delivery step over the non-excluded tracks at `now`.
-    pub(crate) fn granularity_us(&self, now: Micros, silence_us: Micros) -> Micros {
+    pub(crate) fn granularity(&self, now: Duration, silence: Duration) -> Duration {
         let clock = self.silence_clock(now);
         self.v
             .iter()
-            .filter(|t| !self.is_silent(t, silence_us, clock))
-            .map(|t| Micros(t.gran.value(now.0)))
+            .filter(|t| !self.is_silent(t, &silence, clock))
+            .map(|t| micros_as_duration(t.gran.value(duration_micros(now))))
             .max()
-            .unwrap_or(Micros::ZERO)
+            .unwrap_or(Duration::ZERO)
     }
 
     /// Has every non-excluded, delivering track shown enough deliveries for its
@@ -359,20 +365,20 @@ impl TrackSet {
     /// forever)? A start before this would be granted blind to the cadence.
     pub(crate) fn granularity_known(
         &self,
-        now: Micros,
-        silence_us: Micros,
-        max_wait_us: Micros,
+        now: Duration,
+        silence: Duration,
+        max_wait: Duration,
     ) -> bool {
         let clock = self.silence_clock(now);
         self.v
             .iter()
-            .filter(|t| t.end.is_some() && !self.is_silent(t, silence_us, clock))
-            .all(|t| t.windows > LEARN_STEPS || now.saturating_sub(t.first_at).0 >= max_wait_us.0)
+            .filter(|t| t.end.is_some() && !self.is_silent(t, &silence, clock))
+            .all(|t| t.windows > LEARN_STEPS || duration_between(t.first_at, now) >= max_wait)
     }
 
     /// Forget every end (a discontinuity); registrations survive and wait
     /// again from `now`.
-    pub(crate) fn rebaseline(&mut self, now: Micros) {
+    pub(crate) fn rebaseline(&mut self, now: Duration) {
         self.v.retain(|t| t.registered);
         self.last_delivery = None;
         self.first_delivery = None;
@@ -390,8 +396,8 @@ impl TrackSet {
     /// starvation check while playing).
     pub(crate) fn effective(
         &self,
-        now: Micros,
-        silence_us: Micros,
+        now: Duration,
+        silence: Duration,
         pending_blocks: bool,
     ) -> Option<Effective> {
         let clock = self.silence_clock(now);
@@ -399,7 +405,7 @@ impl TrackSet {
         for t in self
             .v
             .iter()
-            .filter(|t| !self.is_silent(t, silence_us, clock))
+            .filter(|t| !self.is_silent(t, &silence, clock))
         {
             let Some(end) = t.end else {
                 if pending_blocks {
