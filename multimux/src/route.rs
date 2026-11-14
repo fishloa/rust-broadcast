@@ -1384,7 +1384,7 @@ impl ProgramServing {
 
     fn continuation(self: &Arc<Self>) -> ProgramContinuation {
         let window = self.dash_window_segments();
-        let mut servings = std::mem::take(&mut *self.retained.lock());
+        let mut servings = self.retained.lock().clone();
         servings.push(Arc::clone(self));
         ProgramContinuation {
             window,

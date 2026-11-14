@@ -2110,4 +2110,32 @@ mod tests {
         assert_eq!(after.minimum_update_period, before.minimum_update_period);
         assert!(after.publish_time_us > before.publish_time_us);
     }
+    #[test]
+    fn a_second_continue_from_the_same_route_keeps_the_retained_programs() {
+        let program = crate::route::SPTS_PROGRAM_ID;
+        let (_a, b) = replaced(vec![0xA1; 8], vec![0xB2; 8]);
+        b.add_segment(program, seg(1, 4.0)).expect("add_segment");
+        let make = || {
+            let c = reload_route();
+            c.continue_from(&b);
+            c.publish_new_program(program);
+            c.set_init(program, vec![0xB2; 8]);
+            c.set_track_specs(program, vec![video_spec(TrackId::new(1))]);
+            c
+        };
+        let (c1, c2) = (make(), make());
+        let first = c1
+            .serving(program)
+            .expect("first serving")
+            .retained_servings();
+        let second = c2
+            .serving(program)
+            .expect("second serving")
+            .retained_servings();
+        assert!(first.len() >= 2, "the earlier program must be retained");
+        assert_eq!(first.len(), second.len(), "retained programs");
+        for (a, b) in first.iter().zip(second.iter()) {
+            assert!(std::sync::Arc::ptr_eq(a, b), "same retained serving");
+        }
+    }
 }

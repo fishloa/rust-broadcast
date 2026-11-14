@@ -1199,10 +1199,13 @@ impl Config {
     /// - [`SourceKind::Dash`] and [`SourceKind::Smooth`]: `read_idle` bounds each
     ///   manifest and segment request ([`Config::request_timeout_us`],
     ///   [`Config::segment_timeout_us`]).
-    /// - [`SourceKind::Srt`]: `connect` bounds the handshake
-    ///   (`srt.handshake_timeout_ms`); the peer-idle bound keeps its own value (set
-    ///   it with [`crate::srt::SrtConfig::with_timeouts`]).
-    /// - every other kind (TS over HTTP, RTSP, UDP, RTP, RTMP, and `Auto`): the
+    /// - [`SourceKind::Srt`]: exactly [`crate::srt::SrtConfig::with_timeouts`]:
+    ///   `handshake` bounds the handshake (`srt.handshake_timeout_ms`) and
+    ///   `read_idle` the peer-idle bound (`srt.peer_idle_timeout_ms`).
+    /// - [`SourceKind::Auto`]: the session picks the protocol from the URL, so
+    ///   every mapping above is applied and the one the URL resolves to takes
+    ///   effect.
+    /// - every other kind (TS over HTTP, RTSP, UDP, RTP, RTMP): the
     ///   stall policy ([`Config::ts_http`], see [`crate::tshttp::Config::with_timeouts`]):
     ///   `connect` is the start timeout, `read_idle` the stall-reconnect
     ///   threshold.
@@ -1214,23 +1217,28 @@ impl Config {
         let floor = core::time::Duration::from_millis(1);
         let micros =
             |d: core::time::Duration| u64::try_from(d.max(floor).as_micros()).unwrap_or(u64::MAX);
-        match self.kind {
-            SourceKind::Hls => {
-                let read = micros(timeouts.read_idle);
-                self.request_timeout_us = read;
-                self.segment_timeout_us = read;
-                self.hls_key_timeout_us = read;
-            }
-            SourceKind::Dash | SourceKind::Smooth => {
-                let read = micros(timeouts.read_idle);
-                self.request_timeout_us = read;
-                self.segment_timeout_us = read;
-            }
-            SourceKind::Srt => {
-                self.srt.handshake_timeout_ms =
-                    u64::try_from(timeouts.connect.max(floor).as_millis()).unwrap_or(u64::MAX);
-            }
-            _ => self.ts_http = self.ts_http.with_timeouts(timeouts),
+        let auto = matches!(self.kind, SourceKind::Auto);
+        let hls = auto || matches!(self.kind, SourceKind::Hls);
+        let manifest = hls || matches!(self.kind, SourceKind::Dash | SourceKind::Smooth);
+        let srt = auto || matches!(self.kind, SourceKind::Srt);
+        let stall = auto
+            || !matches!(
+                self.kind,
+                SourceKind::Hls | SourceKind::Dash | SourceKind::Smooth | SourceKind::Srt
+            );
+        if manifest {
+            let read = micros(timeouts.read_idle);
+            self.request_timeout_us = read;
+            self.segment_timeout_us = read;
+        }
+        if hls {
+            self.hls_key_timeout_us = micros(timeouts.read_idle);
+        }
+        if srt {
+            self.srt = self.srt.clone().with_timeouts(timeouts);
+        }
+        if stall {
+            self.ts_http = self.ts_http.with_timeouts(timeouts);
         }
         self
     }

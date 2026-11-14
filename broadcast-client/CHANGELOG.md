@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- `Config::with_timeouts` maps SRT exactly as `SrtConfig::with_timeouts` does (`handshake` to the handshake bound, `read_idle` to the peer-idle bound; it used `connect` for the handshake), and under the default `SourceKind::Auto` applies every protocol's mapping so the one the URL resolves to takes effect, instead of only the TS-over-HTTP stall policy (#2639).
+
 
 ### Removed
 - Removed the unused `cookie`, `cookie_store` and `percent-encoding` dependencies; the cookie jar lives in `broadcast-auth`.

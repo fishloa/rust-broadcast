@@ -733,6 +733,7 @@ mod tests {
         let route = SrtRoute::new_caller("cam-srt-dead", addr.to_string()).with_timeouts(
             broadcast_common::timeouts::Timeouts::default()
                 .with_connect(CONNECT_TIMEOUT)
+                .with_handshake(CONNECT_TIMEOUT)
                 .with_read_idle(Duration::from_secs(30)),
         );
         let route_handle = Arc::new(crate::route::RouteHandle::new(

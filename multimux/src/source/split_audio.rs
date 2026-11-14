@@ -47,7 +47,8 @@ pub(crate) fn build_core_followers(
                 &serving.trunk,
                 target_duration_secs,
                 part_target_ms,
-            )?;
+            )?
+            .with_rendition(*rendition);
             if let Some(init) = core.take_init() {
                 serving.origin.set_init(init);
             }

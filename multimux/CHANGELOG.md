@@ -1,6 +1,11 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- A split-audio rendition's LL-HLS part target is applied to its own rendition: followers carry their rendition index instead of being paired with audio servings by position, so an earlier rendition whose selector matched nothing no longer shifts every later part target one slot (#2637).
+- A failed reload that restores a changed route keeps every DASH Period the route still listed: continuing from a route no longer drains its retained programs, so a second continuation from the same route sees them too (#2638).
+- Removed a leftover question comment from the end-of-ingest flush path (#2639).
+
 
 ### Removed
 - Removed the unused `backon`, `percent-encoding` and `caption-convert` dependencies (reconnect backoff is the crate's own `supervisor::Backoff`) and the unused `sha2` dev-dependency.
