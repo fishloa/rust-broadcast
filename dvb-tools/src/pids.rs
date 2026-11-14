@@ -119,7 +119,11 @@ pub fn run(path: &str) -> ExitCode {
             // into a single 27 MHz tick count (ISO/IEC 13818-1 §2.4.3.5);
             // `PcrTrack::push` separately unwraps that value's own ~26.5h
             // rollover (`clock33::PCR_WRAP_27MHZ`, §2.4.2.2) across samples.
-            let pcr_27 = pcr.as_27mhz();
+            // Only a value on the 27 MHz clock can be unrolled into a timeline.
+            let Ok(clock) = pcr.to_clock27() else {
+                continue;
+            };
+            let pcr_27 = clock.ticks();
             pcr_tracks
                 .entry(pid.value())
                 .or_default()

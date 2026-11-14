@@ -86,7 +86,7 @@ fn track_for_pid(media: &Media, pid: u16) -> &Track {
     media
         .tracks
         .iter()
-        .find(|t| t.spec.source_pid == Some(Pid::new(pid)))
+        .find(|t| t.spec.source_pid == Some(Pid::from_wire_masked(pid)))
         .unwrap_or_else(|| panic!("no track for PID {pid:#06x}"))
 }
 

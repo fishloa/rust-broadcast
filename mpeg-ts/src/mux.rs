@@ -10,7 +10,9 @@ use alloc::vec::Vec;
 use core::time::Duration;
 
 use crate::pid::{Pid, well_known};
-use crate::ts::{CC_MASK, TS_PACKET_SIZE, TsHeader};
+use crate::ts::{
+    AdaptationFieldControl, ContinuityCounter, ScramblingControl, TS_PACKET_SIZE, TsHeader,
+};
 
 /// Maximum data bytes in a PUSI=1 packet (188 − 4 header − 1 pointer_field). §2.4.4.
 const PUSI_PAYLOAD_CAP: usize = 183;
@@ -28,7 +30,7 @@ use crate::ts::STUFFING_BYTE;
 /// ISO/IEC 13818-1:2007 §2.4.4 (`private/specs-verified/mpeg/mpeg-ts/tables/h222_0/psi_section.md`).
 pub struct SectionPacketiser {
     pid: Pid,
-    continuity_counter: u8,
+    continuity_counter: ContinuityCounter,
 }
 
 impl SectionPacketiser {
@@ -36,15 +38,15 @@ impl SectionPacketiser {
     pub fn new(pid: Pid) -> Self {
         Self {
             pid,
-            continuity_counter: 0,
+            continuity_counter: ContinuityCounter::ZERO,
         }
     }
 
-    /// Start at a specific continuity_counter (0..=15) — for resuming a stream.
-    pub fn with_continuity(pid: Pid, cc: u8) -> Self {
+    /// Start at a specific continuity_counter — for resuming a stream.
+    pub fn with_continuity(pid: Pid, cc: ContinuityCounter) -> Self {
         Self {
             pid,
-            continuity_counter: cc & CC_MASK,
+            continuity_counter: cc,
         }
     }
 
@@ -54,7 +56,7 @@ impl SectionPacketiser {
     }
 
     /// The continuity_counter for the next emitted packet.
-    pub fn continuity_counter(&self) -> u8 {
+    pub fn continuity_counter(&self) -> ContinuityCounter {
         self.continuity_counter
     }
 
@@ -136,16 +138,15 @@ impl SectionPacketiser {
                 tei: false,
                 pusi,
                 pid: self.pid,
-                scrambling: 0,
-                has_adaptation: false,
-                has_payload: true,
+                scrambling: ScramblingControl::NotScrambled,
+                adaptation: AdaptationFieldControl::PayloadOnly,
                 continuity_counter: self.continuity_counter,
             };
             header
                 .serialize_into(&mut pkt[..4])
                 .expect("4-byte header buffer");
 
-            self.continuity_counter = (self.continuity_counter + 1) & CC_MASK;
+            self.continuity_counter = self.continuity_counter.next();
 
             let mut write_pos = 4usize;
 
@@ -182,35 +183,132 @@ impl SectionPacketiser {
 // ── Default interval constants ────────────────────────────────────────────────
 
 /// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2 — NIT maximum interval.
-pub const NIT_MAX_INTERVAL: Duration = Duration::from_secs(10);
+pub const NIT_MAX_INTERVAL: SectionInterval = SectionInterval::from_const(Duration::from_secs(10));
 /// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2 — BAT maximum interval.
-pub const BAT_MAX_INTERVAL: Duration = Duration::from_secs(10);
+pub const BAT_MAX_INTERVAL: SectionInterval = SectionInterval::from_const(Duration::from_secs(10));
 /// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2 — SDT actual maximum interval.
-pub const SDT_ACTUAL_MAX_INTERVAL: Duration = Duration::from_secs(2);
+pub const SDT_ACTUAL_MAX_INTERVAL: SectionInterval =
+    SectionInterval::from_const(Duration::from_secs(2));
 /// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2 — SDT other maximum interval.
-pub const SDT_OTHER_MAX_INTERVAL: Duration = Duration::from_secs(10);
+pub const SDT_OTHER_MAX_INTERVAL: SectionInterval =
+    SectionInterval::from_const(Duration::from_secs(10));
 /// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2 — EIT present/following actual maximum interval.
-pub const EIT_PF_ACTUAL_MAX_INTERVAL: Duration = Duration::from_secs(2);
+pub const EIT_PF_ACTUAL_MAX_INTERVAL: SectionInterval =
+    SectionInterval::from_const(Duration::from_secs(2));
 /// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1 — EIT present/following other maximum interval
 /// (satellite and cable; §4.4.2 gives 20 s for terrestrial).
-pub const EIT_PF_OTHER_MAX_INTERVAL: Duration = Duration::from_secs(10);
+pub const EIT_PF_OTHER_MAX_INTERVAL: SectionInterval =
+    SectionInterval::from_const(Duration::from_secs(10));
 /// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1 — EIT schedule (first 8 days) maximum interval.
-pub const EIT_SCHED_MAX_INTERVAL: Duration = Duration::from_secs(10);
+pub const EIT_SCHED_MAX_INTERVAL: SectionInterval =
+    SectionInterval::from_const(Duration::from_secs(10));
 /// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1 — EIT schedule (further than 8 days ahead) maximum interval.
-pub const EIT_SCHED_EXT_MAX_INTERVAL: Duration = Duration::from_secs(30);
+pub const EIT_SCHED_EXT_MAX_INTERVAL: SectionInterval =
+    SectionInterval::from_const(Duration::from_secs(30));
 /// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2 — TDT maximum interval.
-pub const TDT_MAX_INTERVAL: Duration = Duration::from_secs(30);
+pub const TDT_MAX_INTERVAL: SectionInterval = SectionInterval::from_const(Duration::from_secs(30));
 /// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2 — TOT maximum interval.
-pub const TOT_MAX_INTERVAL: Duration = Duration::from_secs(30);
+pub const TOT_MAX_INTERVAL: SectionInterval = SectionInterval::from_const(Duration::from_secs(30));
 
-/// private/specs-verified/dvb/dvb-si/ §4.1.7 — PAT maximum interval (shall ≤ 100 ms).
-pub const PAT_MAX_INTERVAL: Duration = Duration::from_millis(100);
-/// private/specs-verified/dvb/dvb-si/ §4.1.7 — PMT maximum interval (shall ≤ 100 ms).
-pub const PMT_MAX_INTERVAL: Duration = Duration::from_millis(100);
+/// The inter-section repetition interval of one table (EN 300 468 §5.1.4.1):
+/// a [`Duration`] that is never below [`MIN_SECTION_INTERVAL`].
+///
+/// The 25 ms floor used to be a `debug_assert!` inside [`SiMux::upsert`], so a
+/// release build accepted `Duration::ZERO` (one section every poll) silently.
+/// The bound is a property of the interval itself, so it is checked here, once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+pub struct SectionInterval(Duration);
+
+/// A repetition interval below the EN 300 468 §5.1.4.1 floor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SectionIntervalTooShort {
+    /// The rejected interval.
+    pub interval: Duration,
+    /// The floor it must reach ([`MIN_SECTION_INTERVAL`]).
+    pub min: Duration,
+}
+
+impl core::fmt::Display for SectionIntervalTooShort {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "section interval {:?} is below the {:?} minimum (EN 300 468 §5.1.4.1)",
+            self.interval, self.min
+        )
+    }
+}
+
+impl core::error::Error for SectionIntervalTooShort {}
+
+impl SectionInterval {
+    /// Validate `interval` against the EN 300 468 §5.1.4.1 25 ms floor.
+    ///
+    /// # Errors
+    /// [`SectionIntervalTooShort`] when `interval < MIN_SECTION_INTERVAL`.
+    pub const fn try_new(
+        interval: Duration,
+    ) -> core::result::Result<Self, SectionIntervalTooShort> {
+        // A `Duration` comparison is not usable in a `const fn`; compare nanos.
+        if interval.as_nanos() < MIN_SECTION_INTERVAL_NANOS {
+            Err(SectionIntervalTooShort {
+                interval,
+                min: MIN_SECTION_INTERVAL,
+            })
+        } else {
+            Ok(Self(interval))
+        }
+    }
+
+    /// Validate at compile time, for the spec's own named intervals
+    /// ([`PAT_MAX_INTERVAL`] and friends): a mistyped interval is then a build
+    /// error rather than a run-time `try_new`.
+    ///
+    /// # Panics
+    /// In a `const` context, when `interval < MIN_SECTION_INTERVAL`.
+    #[must_use]
+    pub const fn from_const(interval: Duration) -> Self {
+        assert!(
+            interval.as_nanos() >= MIN_SECTION_INTERVAL_NANOS,
+            "named section interval is below the 25 ms minimum (EN 300 468 §5.1.4.1)"
+        );
+        Self(interval)
+    }
+
+    /// The interval.
+    #[must_use]
+    pub const fn duration(self) -> Duration {
+        self.0
+    }
+}
+
+impl TryFrom<Duration> for SectionInterval {
+    type Error = SectionIntervalTooShort;
+    fn try_from(interval: Duration) -> core::result::Result<Self, Self::Error> {
+        Self::try_new(interval)
+    }
+}
+
+impl From<SectionInterval> for Duration {
+    fn from(interval: SectionInterval) -> Self {
+        interval.0
+    }
+}
 
 /// private/specs-verified/dvb/dvb-si/tables/en_300_468/514-repetition-rates-and-random-access-hand-transcribed.md
 /// §5.1.4.1 — minimum inter-section interval floor (≤100 Mbit/s TSs).
 pub const MIN_SECTION_INTERVAL: Duration = Duration::from_millis(25);
+/// [`MIN_SECTION_INTERVAL`] in nanoseconds, for the `const` comparisons.
+const MIN_SECTION_INTERVAL_NANOS: u128 = 25_000_000;
+
+/// private/specs-verified/dvb/dvb-si/ §4.1.7 — PAT maximum interval (shall ≤ 100 ms).
+pub const PAT_MAX_INTERVAL: SectionInterval =
+    SectionInterval::from_const(Duration::from_millis(100));
+/// private/specs-verified/dvb/dvb-si/ §4.1.7 — PMT maximum interval (shall ≤ 100 ms).
+pub const PMT_MAX_INTERVAL: SectionInterval =
+    SectionInterval::from_const(Duration::from_millis(100));
 
 // ── SiMux ────────────────────────────────────────────────────────────────────
 
@@ -236,10 +334,9 @@ pub const MIN_SECTION_INTERVAL: Duration = Duration::from_millis(25);
 ///
 /// # 25 ms floor
 ///
-/// [`MIN_SECTION_INTERVAL`] is the minimum valid interval (EN 300 468 §5.1.4.1).
-/// Supplying an interval below this in [`upsert`](Self::upsert) triggers a
-/// `debug_assert` — in release builds the assertion compiles out; the caller
-/// must ensure compliance.
+/// [`MIN_SECTION_INTERVAL`] is the minimum valid interval (EN 300 468 §5.1.4.1),
+/// enforced by [`SectionInterval::try_new`]: an interval below it cannot reach
+/// [`upsert`](Self::upsert) at all.
 pub struct SiMux {
     entries: Vec<Entry>,
     /// One packetiser per distinct PID, shared across every table_id on it.
@@ -250,7 +347,7 @@ struct Entry {
     pid: Pid,
     table_id: u8,
     sections: Vec<u8>,
-    interval: Duration,
+    interval: SectionInterval,
     last_emit: Option<Duration>,
 }
 
@@ -284,7 +381,8 @@ impl SiMux {
         }
     }
 
-    /// Register or replace the sections emitted on `pid` at `interval`.
+    /// Register or replace the sections emitted on `pid` at `interval` (a
+    /// validated [`SectionInterval`]: EN 300 468 §5.1.4.1's 25 ms floor).
     ///
     /// `sections` is the concatenated complete-section bytes for one emission
     /// cycle; its first byte (`table_id`) plus `pid` is the dedupe key, so
@@ -292,17 +390,7 @@ impl SiMux {
     /// interval of that one table while preserving the PID's shared
     /// continuity counter — a *different* table_id on the same `pid` (e.g.
     /// TOT after TDT, both on `0x0014`) becomes a second, independent entry.
-    ///
-    /// # Panics (debug only)
-    ///
-    /// `debug_assert!(interval >= MIN_SECTION_INTERVAL)` — EN 300 468 §5.1.4.1
-    /// requires a minimum inter-section interval of 25 ms.
-    pub fn upsert(&mut self, pid: Pid, sections: Vec<u8>, interval: Duration) {
-        debug_assert!(
-            interval >= MIN_SECTION_INTERVAL,
-            "interval {interval:?} is below the 25 ms minimum (EN 300 468 §5.1.4.1)"
-        );
-
+    pub fn upsert(&mut self, pid: Pid, sections: Vec<u8>, interval: SectionInterval) {
         let table_id = table_id_of(&sections);
         if let Some(entry) = self
             .entries
@@ -375,7 +463,7 @@ impl SiMux {
         for entry in &mut self.entries {
             let due = match entry.last_emit {
                 None => true,
-                Some(last) => now.saturating_sub(last) >= entry.interval,
+                Some(last) => now.saturating_sub(last) >= entry.interval.duration(),
             };
             if due {
                 let refs = split_sections(&entry.sections);
@@ -444,7 +532,7 @@ mod tests {
     /// Round-trip `sections` through packetise → reassembler, asserting
     /// byte-identical output in order and no leftovers.
     fn assert_round_trip(sections: &[Vec<u8>]) {
-        let mut packetiser = SectionPacketiser::new(Pid::new(0x0100));
+        let mut packetiser = SectionPacketiser::new(Pid::from_const(0x0100));
         let refs: Vec<&[u8]> = sections.iter().map(|s| s.as_slice()).collect();
         let packets = packetiser.packetise(&refs);
 
@@ -527,25 +615,38 @@ mod tests {
         assert_eq!(refs[0], s.as_slice());
     }
 
+    fn cc(v: u8) -> ContinuityCounter {
+        ContinuityCounter::try_new(v).expect("4-bit counter")
+    }
+
     // ── interval constants pinned to spec ────────────────────────────────────
 
     #[test]
     fn interval_constants_match_spec() {
         // TR 101 211 §4.4.1/§4.4.2
-        assert_eq!(NIT_MAX_INTERVAL, Duration::from_secs(10));
-        assert_eq!(BAT_MAX_INTERVAL, Duration::from_secs(10));
-        assert_eq!(SDT_ACTUAL_MAX_INTERVAL, Duration::from_secs(2));
-        assert_eq!(SDT_OTHER_MAX_INTERVAL, Duration::from_secs(10));
-        assert_eq!(EIT_PF_ACTUAL_MAX_INTERVAL, Duration::from_secs(2));
-        assert_eq!(EIT_PF_OTHER_MAX_INTERVAL, Duration::from_secs(10));
-        assert_eq!(EIT_SCHED_MAX_INTERVAL, Duration::from_secs(10));
-        assert_eq!(EIT_SCHED_EXT_MAX_INTERVAL, Duration::from_secs(30));
-        assert_eq!(TDT_MAX_INTERVAL, Duration::from_secs(30));
-        assert_eq!(TOT_MAX_INTERVAL, Duration::from_secs(30));
+        assert_eq!(NIT_MAX_INTERVAL.duration(), Duration::from_secs(10));
+        assert_eq!(BAT_MAX_INTERVAL.duration(), Duration::from_secs(10));
+        assert_eq!(SDT_ACTUAL_MAX_INTERVAL.duration(), Duration::from_secs(2));
+        assert_eq!(SDT_OTHER_MAX_INTERVAL.duration(), Duration::from_secs(10));
+        assert_eq!(
+            EIT_PF_ACTUAL_MAX_INTERVAL.duration(),
+            Duration::from_secs(2)
+        );
+        assert_eq!(
+            EIT_PF_OTHER_MAX_INTERVAL.duration(),
+            Duration::from_secs(10)
+        );
+        assert_eq!(EIT_SCHED_MAX_INTERVAL.duration(), Duration::from_secs(10));
+        assert_eq!(
+            EIT_SCHED_EXT_MAX_INTERVAL.duration(),
+            Duration::from_secs(30)
+        );
+        assert_eq!(TDT_MAX_INTERVAL.duration(), Duration::from_secs(30));
+        assert_eq!(TOT_MAX_INTERVAL.duration(), Duration::from_secs(30));
 
         // TS 101 154 §4.1.7
-        assert_eq!(PAT_MAX_INTERVAL, Duration::from_millis(100));
-        assert_eq!(PMT_MAX_INTERVAL, Duration::from_millis(100));
+        assert_eq!(PAT_MAX_INTERVAL.duration(), Duration::from_millis(100));
+        assert_eq!(PMT_MAX_INTERVAL.duration(), Duration::from_millis(100));
 
         // EN 300 468 §5.1.4.1
         assert_eq!(MIN_SECTION_INTERVAL, Duration::from_millis(25));
@@ -565,7 +666,11 @@ mod tests {
     fn first_poll_always_emits() {
         let s = test_fixtures::psi::short_section(0x42, &[0xAA; 10]);
         let mut mux = SiMux::new();
-        mux.upsert(Pid::new(0x0100), s.clone(), Duration::from_millis(100));
+        mux.upsert(
+            Pid::from_const(0x0100),
+            s.clone(),
+            SectionInterval::from_const(Duration::from_millis(100)),
+        );
         let pkts = mux.poll(Duration::ZERO);
         assert!(!pkts.is_empty(), "first poll must emit");
     }
@@ -575,16 +680,24 @@ mod tests {
         let s1 = test_fixtures::psi::short_section(0x42, &[0x01; 5]);
         let s2 = test_fixtures::psi::short_section(0x46, &[0x02; 5]);
         let mut mux = SiMux::new();
-        mux.upsert(Pid::new(0x0100), s1.clone(), Duration::from_millis(100));
-        mux.upsert(Pid::new(0x0200), s2.clone(), Duration::from_millis(200));
+        mux.upsert(
+            Pid::from_const(0x0100),
+            s1.clone(),
+            SectionInterval::from_const(Duration::from_millis(100)),
+        );
+        mux.upsert(
+            Pid::from_const(0x0200),
+            s2.clone(),
+            SectionInterval::from_const(Duration::from_millis(200)),
+        );
         let pkts = mux.poll(Duration::ZERO);
         // Both entries should emit — we count PID occurrences
         let pids: Vec<Pid> = pkts
             .iter()
             .map(|raw| TsPacket::parse(raw).unwrap().header.pid)
             .collect();
-        assert!(pids.contains(&Pid::new(0x0100)));
-        assert!(pids.contains(&Pid::new(0x0200)));
+        assert!(pids.contains(&Pid::from_const(0x0100)));
+        assert!(pids.contains(&Pid::from_const(0x0200)));
     }
 
     // ── deterministic schedule ───────────────────────────────────────────────
@@ -593,7 +706,11 @@ mod tests {
     fn entry_emits_only_when_due() {
         let s = test_fixtures::psi::short_section(0x42, &[0xAA; 10]);
         let mut mux = SiMux::new();
-        mux.upsert(Pid::new(0x0100), s.clone(), Duration::from_millis(100));
+        mux.upsert(
+            Pid::from_const(0x0100),
+            s.clone(),
+            SectionInterval::from_const(Duration::from_millis(100)),
+        );
 
         // First poll at t=0: emits
         let pkts0 = mux.poll(Duration::ZERO);
@@ -618,14 +735,14 @@ mod tests {
         let s2 = test_fixtures::psi::short_section(0x46, &[0x02; 5]);
         let mut mux = SiMux::new();
         mux.upsert(
-            Pid::new(0x0100),
+            Pid::from_const(0x0100),
             concat_sections(&[s1]),
-            Duration::from_millis(100),
+            SectionInterval::from_const(Duration::from_millis(100)),
         );
         mux.upsert(
-            Pid::new(0x0200),
+            Pid::from_const(0x0200),
             concat_sections(&[s2]),
-            Duration::from_millis(200),
+            SectionInterval::from_const(Duration::from_millis(200)),
         );
 
         // t=0: both emit
@@ -640,11 +757,11 @@ mod tests {
             .map(|raw| TsPacket::parse(raw).unwrap().header.pid)
             .collect();
         assert!(
-            pids100.contains(&Pid::new(0x0100)),
+            pids100.contains(&Pid::from_const(0x0100)),
             "PID 0x0100 should emit at t=100"
         );
         assert!(
-            !pids100.contains(&Pid::new(0x0200)),
+            !pids100.contains(&Pid::from_const(0x0200)),
             "PID 0x0200 should NOT emit at t=100"
         );
 
@@ -659,11 +776,11 @@ mod tests {
             .map(|raw| TsPacket::parse(raw).unwrap().header.pid)
             .collect();
         assert!(
-            pids200.contains(&Pid::new(0x0100)),
+            pids200.contains(&Pid::from_const(0x0100)),
             "PID 0x0100 should emit at t=200"
         );
         assert!(
-            pids200.contains(&Pid::new(0x0200)),
+            pids200.contains(&Pid::from_const(0x0200)),
             "PID 0x0200 should emit at t=200"
         );
     }
@@ -672,7 +789,11 @@ mod tests {
     fn entry_emits_again_after_full_interval() {
         let s = test_fixtures::psi::short_section(0x42, &[0xAA; 20]);
         let mut mux = SiMux::new();
-        mux.upsert(Pid::new(0x0100), s, Duration::from_secs(1));
+        mux.upsert(
+            Pid::from_const(0x0100),
+            s,
+            SectionInterval::from_const(Duration::from_secs(1)),
+        );
 
         // t=0
         let n0 = mux.poll_into(Duration::ZERO, &mut Vec::new());
@@ -699,8 +820,16 @@ mod tests {
         let s2 = test_fixtures::psi::short_section(0x42, &[0xBB; 10]);
         let mut mux = SiMux::new();
 
-        mux.upsert(Pid::new(0x0100), s1, Duration::from_millis(100));
-        mux.upsert(Pid::new(0x0100), s2.clone(), Duration::from_millis(200));
+        mux.upsert(
+            Pid::from_const(0x0100),
+            s1,
+            SectionInterval::from_const(Duration::from_millis(100)),
+        );
+        mux.upsert(
+            Pid::from_const(0x0100),
+            s2.clone(),
+            SectionInterval::from_const(Duration::from_millis(200)),
+        );
 
         let pkts = mux.poll(Duration::ZERO);
 
@@ -708,7 +837,7 @@ mod tests {
         let mut reasm = SectionReassembler::default();
         for raw in &pkts {
             let pkt = TsPacket::parse(raw).unwrap();
-            if pkt.header.pid == Pid::new(0x0100) {
+            if pkt.header.pid == Pid::from_const(0x0100) {
                 reasm.feed(pkt.payload.unwrap(), pkt.header.pusi);
             }
         }
@@ -737,14 +866,14 @@ mod tests {
 
         let mut table_ids_seen = Vec::new();
         let mut reasm = SectionReassembler::default();
-        let mut prev_cc: Option<u8> = None;
+        let mut prev_cc: Option<ContinuityCounter> = None;
         for raw in &pkts {
             let pkt = TsPacket::parse(raw).unwrap();
             assert_eq!(pkt.header.pid, well_known::TDT_TOT);
             if let Some(prev) = prev_cc {
                 assert_eq!(
-                    pkt.header.continuity_counter,
-                    (prev + 1) & CC_MASK,
+                    pkt.header.continuity_counter.forward_distance_from(prev),
+                    1,
                     "continuity counter must be continuous across table kinds on one PID"
                 );
             }
@@ -771,7 +900,7 @@ mod tests {
         mux.upsert(
             well_known::SDT_BAT,
             bat.clone(),
-            Duration::from_millis(1000),
+            SectionInterval::from_const(Duration::from_millis(1000)),
         );
 
         let pkts = mux.poll(Duration::ZERO);
@@ -816,8 +945,8 @@ mod tests {
             .map(|raw| TsPacket::parse(raw).unwrap().header.pid)
             .collect();
         assert!(pids.iter().all(|&p| p == well_known::PAT));
-        assert!(mux.poll(PAT_MAX_INTERVAL / 2).is_empty());
-        assert!(!mux.poll(PAT_MAX_INTERVAL).is_empty());
+        assert!(mux.poll(PAT_MAX_INTERVAL.duration() / 2).is_empty());
+        assert!(!mux.poll(PAT_MAX_INTERVAL.duration()).is_empty());
     }
 
     #[test]
@@ -832,8 +961,8 @@ mod tests {
             .map(|raw| TsPacket::parse(raw).unwrap().header.pid)
             .collect();
         assert!(pids.iter().all(|&p| p == well_known::NIT));
-        assert!(mux.poll(NIT_MAX_INTERVAL / 2).is_empty());
-        assert!(!mux.poll(NIT_MAX_INTERVAL).is_empty());
+        assert!(mux.poll(NIT_MAX_INTERVAL.duration() / 2).is_empty());
+        assert!(!mux.poll(NIT_MAX_INTERVAL.duration()).is_empty());
     }
 
     #[test]
@@ -870,9 +999,9 @@ mod tests {
         let s2 = test_fixtures::psi::short_section(0x46, &[0xBB; 15]);
         let mut mux = SiMux::new();
         mux.upsert(
-            Pid::new(0x0100),
+            Pid::from_const(0x0100),
             concat_sections(&[s1.clone(), s2.clone()]),
-            Duration::from_millis(100),
+            SectionInterval::from_const(Duration::from_millis(100)),
         );
 
         let pkts = mux.poll(Duration::ZERO);
@@ -880,7 +1009,7 @@ mod tests {
         let mut reasm = SectionReassembler::default();
         for raw in &pkts {
             let pkt = TsPacket::parse(raw).unwrap();
-            if pkt.header.pid == Pid::new(0x0100) {
+            if pkt.header.pid == Pid::from_const(0x0100) {
                 reasm.feed(pkt.payload.unwrap(), pkt.header.pusi);
             }
         }
@@ -895,8 +1024,16 @@ mod tests {
         let s_a = test_fixtures::psi::short_section(0x42, &[0xA0; 10]);
         let s_b = test_fixtures::psi::short_section(0x46, &[0xB0; 10]);
         let mut mux = SiMux::new();
-        mux.upsert(Pid::new(0x0100), s_a.clone(), Duration::from_millis(100));
-        mux.upsert(Pid::new(0x0200), s_b.clone(), Duration::from_millis(100));
+        mux.upsert(
+            Pid::from_const(0x0100),
+            s_a.clone(),
+            SectionInterval::from_const(Duration::from_millis(100)),
+        );
+        mux.upsert(
+            Pid::from_const(0x0200),
+            s_b.clone(),
+            SectionInterval::from_const(Duration::from_millis(100)),
+        );
 
         let pkts = mux.poll(Duration::ZERO);
 
@@ -925,7 +1062,11 @@ mod tests {
         // Section large enough to span at least 2 packets.
         let s = test_fixtures::psi::short_section(0x42, &[0xAA; 250]);
         let mut mux = SiMux::new();
-        mux.upsert(Pid::new(0x0100), s, Duration::from_millis(100));
+        mux.upsert(
+            Pid::from_const(0x0100),
+            s,
+            SectionInterval::from_const(Duration::from_millis(100)),
+        );
 
         let pkts1 = mux.poll(Duration::ZERO);
         assert!(pkts1.len() >= 2, "need ≥2 packets to test CC continuity");
@@ -944,8 +1085,8 @@ mod tests {
             .continuity_counter;
 
         assert_eq!(
-            first_cc_pkts2,
-            (last_cc_pkts1 + 1) & 0x0F,
+            first_cc_pkts2.forward_distance_from(last_cc_pkts1),
+            1,
             "CC must continue across poll cycles"
         );
     }
@@ -956,29 +1097,65 @@ mod tests {
     fn poll_into_clears_out_before_appending() {
         let s = test_fixtures::psi::short_section(0x42, &[0xAA; 5]);
         let mut mux = SiMux::new();
-        mux.upsert(Pid::new(0x0100), s, Duration::from_millis(100));
+        mux.upsert(
+            Pid::from_const(0x0100),
+            s,
+            SectionInterval::from_const(Duration::from_millis(100)),
+        );
 
         let mut out = vec![[0u8; TS_PACKET_SIZE]; 42];
         let n = mux.poll_into(Duration::ZERO, &mut out);
         assert_eq!(n, out.len(), "out must contain only new packets");
     }
 
-    // ── debug_assert on sub-25 ms interval ───────────────────────────────────
+    // ── the 25 ms interval floor ─────────────────────────────────────────────
 
+    /// The 25 ms floor is a `const` check on the spec's own named intervals, so
+    /// a sub-floor one is a build error (verified by `from_const` panicking in
+    /// a `const` context, which the `should_panic` surfaces here).
     #[test]
-    #[cfg(debug_assertions)]
     #[should_panic(expected = "25 ms")]
-    fn upsert_rejects_sub_25ms_interval_in_debug() {
-        let s = test_fixtures::psi::short_section(0x42, &[0xAA; 5]);
-        let mut mux = SiMux::new();
-        mux.upsert(Pid::new(0x0100), s, Duration::from_millis(10));
+    fn named_interval_const_rejects_sub_25ms_interval() {
+        let _ = SectionInterval::from_const(Duration::from_millis(10));
+    }
+
+    /// EN 300 468 §5.1.4.1's 25 ms floor is enforced at construction, so a
+    /// zero or sub-floor interval cannot reach the scheduler (it used to be a
+    /// `debug_assert!` that release builds compiled out).
+    #[test]
+    fn section_interval_rejects_below_the_25ms_floor() {
+        for bad in [
+            Duration::ZERO,
+            Duration::from_millis(1),
+            Duration::from_millis(24),
+            MIN_SECTION_INTERVAL - Duration::from_nanos(1),
+        ] {
+            let err = SectionInterval::try_new(bad).unwrap_err();
+            assert_eq!(err.interval, bad);
+            assert_eq!(err.min, MIN_SECTION_INTERVAL);
+            assert!(SectionInterval::try_from(bad).is_err());
+        }
+        assert_eq!(
+            SectionInterval::try_new(MIN_SECTION_INTERVAL)
+                .expect("the floor itself is valid")
+                .duration(),
+            MIN_SECTION_INTERVAL
+        );
+        assert_eq!(
+            Duration::from(SectionInterval::from_const(Duration::from_secs(2))),
+            Duration::from_secs(2)
+        );
     }
 
     #[test]
     fn upsert_accepts_25ms_interval() {
         let s = test_fixtures::psi::short_section(0x42, &[0xAA; 5]);
         let mut mux = SiMux::new();
-        mux.upsert(Pid::new(0x0100), s, MIN_SECTION_INTERVAL);
+        mux.upsert(
+            Pid::from_const(0x0100),
+            s,
+            SectionInterval::from_const(MIN_SECTION_INTERVAL),
+        );
         let pkts = mux.poll(Duration::ZERO);
         assert!(!pkts.is_empty());
     }
@@ -1069,7 +1246,7 @@ mod tests {
         assert_eq!(s1.len(), 366);
         let s2 = test_fixtures::psi::short_section(0x52, &[0xB1, 0xB2, 0xB3]);
 
-        let mut packetiser = SectionPacketiser::new(Pid::new(0x0100));
+        let mut packetiser = SectionPacketiser::new(Pid::from_const(0x0100));
         let packets = packetiser.packetise(&[s1.as_slice(), s2.as_slice()]);
 
         for pkt_raw in &packets {
@@ -1112,17 +1289,21 @@ mod tests {
         // Use a section large enough to span several packets.
         let body = vec![0xAA; 500];
         let section = test_fixtures::psi::short_section(0x42, &body);
-        let mut p = SectionPacketiser::new(Pid::new(0x0100));
+        let mut p = SectionPacketiser::new(Pid::from_const(0x0100));
 
         let packets = p.packetise(&[&section]);
         assert!(packets.len() >= 3, "need multiple packets to test CC");
 
-        let mut last_cc: Option<u8> = None;
+        let mut last_cc: Option<ContinuityCounter> = None;
         for pkt_raw in &packets {
             let pkt = TsPacket::parse(pkt_raw).unwrap();
             let cc = pkt.header.continuity_counter;
             if let Some(last) = last_cc {
-                assert_eq!(cc, (last + 1) & 0x0F, "CC must increment per packet");
+                assert_eq!(
+                    cc.forward_distance_from(last),
+                    1,
+                    "CC must increment per packet"
+                );
             }
             last_cc = Some(cc);
         }
@@ -1130,7 +1311,7 @@ mod tests {
 
     #[test]
     fn continuity_counter_wraps_and_continues_across_calls() {
-        let mut p = SectionPacketiser::with_continuity(Pid::new(0x0100), 14);
+        let mut p = SectionPacketiser::with_continuity(Pid::from_const(0x0100), cc(14));
         // Section large enough to span at least 3 packets.
         let body = vec![0xBB; 500];
         let s = test_fixtures::psi::short_section(0x42, &body);
@@ -1140,19 +1321,27 @@ mod tests {
         assert!(pkts1.len() >= 3, "section must span ≥3 packets");
         let ccs1: Vec<u8> = pkts1
             .iter()
-            .map(|b| TsPacket::parse(b).unwrap().header.continuity_counter)
+            .map(|b| {
+                TsPacket::parse(b)
+                    .unwrap()
+                    .header
+                    .continuity_counter
+                    .value()
+            })
             .collect();
         assert_eq!(ccs1[0], 14);
         assert_eq!(ccs1[1], 15);
         assert_eq!(ccs1[2], 0);
 
         // Second call: CC continues from where first left off.
+        let previous = ContinuityCounter::try_new(ccs1.last().copied().unwrap_or(0))
+            .expect("the last emitted counter is 4-bit");
         let pkts2 = p.packetise(&[&s]);
         let cc_first_pkt2 = TsPacket::parse(&pkts2[0])
             .unwrap()
             .header
             .continuity_counter;
-        assert_eq!(cc_first_pkt2, ccs1.last().map(|c| (c + 1) & 0x0F).unwrap());
+        assert_eq!(cc_first_pkt2.forward_distance_from(previous), 1);
     }
 
     // ── PUSI placement ──────────────────────────────────────────────────────
@@ -1160,7 +1349,7 @@ mod tests {
     #[test]
     fn pusi_set_when_section_starts() {
         let s = test_fixtures::psi::short_section(0x42, &[0xAA; 10]);
-        let mut p = SectionPacketiser::new(Pid::new(0x0100));
+        let mut p = SectionPacketiser::new(Pid::from_const(0x0100));
         let packets = p.packetise(&[&s]);
         assert!(!packets.is_empty());
         let pkt = TsPacket::parse(&packets[0]).unwrap();
@@ -1171,7 +1360,7 @@ mod tests {
     fn pusi_not_set_on_mid_section_continuation() {
         let body = vec![0xAA; 500];
         let s = test_fixtures::psi::short_section(0x42, &body);
-        let mut p = SectionPacketiser::new(Pid::new(0x0100));
+        let mut p = SectionPacketiser::new(Pid::from_const(0x0100));
         let packets = p.packetise(&[&s]);
         assert!(packets.len() >= 2);
         let pkt1 = TsPacket::parse(&packets[0]).unwrap();
@@ -1194,7 +1383,7 @@ mod tests {
         let s2 = test_fixtures::psi::short_section(0x54, &[0xB1; 47]); // 50-byte section
         assert_eq!(s2.len(), 50);
 
-        let mut p = SectionPacketiser::new(Pid::new(0x0100));
+        let mut p = SectionPacketiser::new(Pid::from_const(0x0100));
         let packets = p.packetise(&[&s1, &s2]);
 
         // Find the packet where PUSI=1 and pointer>0.
@@ -1217,7 +1406,7 @@ mod tests {
     #[test]
     fn final_packet_unused_tail_is_stuffing() {
         let s = test_fixtures::psi::short_section(0x42, &[0xAA; 5]); // 8 bytes total
-        let mut p = SectionPacketiser::new(Pid::new(0x0100));
+        let mut p = SectionPacketiser::new(Pid::from_const(0x0100));
         let packets = p.packetise(&[&s]);
 
         let pkt = TsPacket::parse(&packets[0]).unwrap();
@@ -1239,7 +1428,7 @@ mod tests {
         let s1 = test_fixtures::psi::short_section(0x42, &[0xAA; 10]);
         let s2 = test_fixtures::psi::short_section(0x46, &[0xBB; 5]);
 
-        let mut p = SectionPacketiser::new(Pid::new(0x0100));
+        let mut p = SectionPacketiser::new(Pid::from_const(0x0100));
         let packets = p.packetise(&[&s1, &s2]);
 
         let mut reasm = SectionReassembler::default();
@@ -1260,7 +1449,7 @@ mod tests {
 
     #[test]
     fn empty_batch_produces_no_packets() {
-        let mut p = SectionPacketiser::new(Pid::new(0x0100));
+        let mut p = SectionPacketiser::new(Pid::from_const(0x0100));
         let packets: Vec<[u8; TS_PACKET_SIZE]> = p.packetise(&[]);
         assert!(packets.is_empty());
     }
@@ -1268,7 +1457,7 @@ mod tests {
     #[test]
     fn packetise_into_clears_out_first() {
         let s = test_fixtures::psi::short_section(0x42, &[0xAA; 5]);
-        let mut p = SectionPacketiser::new(Pid::new(0x0100));
+        let mut p = SectionPacketiser::new(Pid::from_const(0x0100));
 
         let mut out = vec![[0u8; TS_PACKET_SIZE]; 99]; // pre-existing junk
         let n = p.packetise_into(&[&s], &mut out);
@@ -1285,27 +1474,35 @@ mod tests {
 
     #[test]
     fn pid_is_correct() {
-        let p = SectionPacketiser::new(Pid::new(0x1234));
-        assert_eq!(p.pid(), Pid::new(0x1234));
+        let p = SectionPacketiser::new(Pid::from_const(0x1234));
+        assert_eq!(p.pid(), Pid::from_const(0x1234));
     }
 
     #[test]
     fn with_continuity_masks_to_4_bits() {
-        let p = SectionPacketiser::with_continuity(Pid::new(0x0100), 0xFE);
-        assert_eq!(p.continuity_counter(), 0x0E);
+        let expected = ContinuityCounter::try_new(0x0E).expect("4-bit counter");
+        let p = SectionPacketiser::with_continuity(Pid::from_const(0x0100), expected);
+        assert_eq!(p.continuity_counter(), expected);
     }
 
     #[test]
     fn has_payload_always_true_no_adaptation() {
         let s = test_fixtures::psi::short_section(0x42, &[0xAA; 50]);
-        let mut p = SectionPacketiser::new(Pid::new(0x0100));
+        let mut p = SectionPacketiser::new(Pid::from_const(0x0100));
         let packets = p.packetise(&[&s]);
         for pkt_raw in &packets {
             let pkt = TsPacket::parse(pkt_raw).unwrap();
-            assert!(pkt.header.has_payload, "every packet must carry payload");
-            assert!(!pkt.header.has_adaptation, "no adaptation field is emitted");
+            assert!(pkt.header.has_payload(), "every packet must carry payload");
+            assert!(
+                !pkt.header.has_adaptation(),
+                "no adaptation field is emitted"
+            );
             assert!(!pkt.header.tei, "TEI must be false");
-            assert_eq!(pkt.header.scrambling, 0, "scrambling must be 0");
+            assert_eq!(
+                pkt.header.scrambling,
+                ScramblingControl::NotScrambled,
+                "scrambling must be 0"
+            );
         }
     }
 }

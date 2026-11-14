@@ -362,7 +362,7 @@ fn count_legal_duplicates(ts: &[u8]) -> (usize, usize) {
             continue;
         };
         let pid = pkt.header.pid;
-        if pid == Pid::new(0x1FFF) || !pkt.header.has_payload {
+        if pid == Pid::from_const(0x1FFF) || !pkt.header.has_payload() {
             continue;
         }
         let st = states.entry(pid.value()).or_insert(St {
@@ -515,7 +515,7 @@ fn pat_pmt_ts(
         current_next,
         0,
         0,
-        vec![PatEntry::new(1, Pid::new(PAT_PMT_PID))],
+        vec![PatEntry::new(1, Pid::from_const(PAT_PMT_PID))],
     );
     let mut pat_bytes = vec![0u8; pat.serialized_len()];
     let n = pat.serialize_into(&mut pat_bytes).expect("serialize PAT");
@@ -526,13 +526,17 @@ fn pat_pmt_ts(
         dvb_si::tables::SectionVersion::new(version, current_next, 0, 0),
         streams
             .first()
-            .map(|&(pid, _)| Pid::new(pid))
-            .unwrap_or(Pid::new(0x1FFF)),
+            .map(|&(pid, _)| Pid::from_wire_masked(pid))
+            .unwrap_or(Pid::from_const(0x1FFF)),
         DescriptorLoop::new(&[]),
         streams
             .iter()
             .map(|&(pid, stream_type)| {
-                PmtStream::new(stream_type, Pid::new(pid), DescriptorLoop::new(&[]))
+                PmtStream::new(
+                    stream_type,
+                    Pid::from_wire_masked(pid),
+                    DescriptorLoop::new(&[]),
+                )
             })
             .collect(),
     );
@@ -544,7 +548,7 @@ fn pat_pmt_ts(
     for packet in SectionPacketiser::new(dvb_si::tables::pat::PID).packetise(&[&pat_bytes]) {
         ts.extend_from_slice(&packet);
     }
-    for packet in SectionPacketiser::new(Pid::new(PAT_PMT_PID)).packetise(&[&pmt_bytes]) {
+    for packet in SectionPacketiser::new(Pid::from_const(PAT_PMT_PID)).packetise(&[&pmt_bytes]) {
         ts.extend_from_slice(&packet);
     }
     assert_eq!(ts.len() % TS_PACKET_SIZE, 0);
@@ -753,8 +757,8 @@ fn nit_and_null_pids_are_not_tracked() {
         0,
         0,
         vec![
-            PatEntry::new(0, Pid::new(0x0010)),
-            PatEntry::new(1, Pid::new(0x1FFF)),
+            PatEntry::new(0, Pid::from_const(0x0010)),
+            PatEntry::new(1, Pid::from_const(0x1FFF)),
         ],
     );
     let mut buf = vec![0u8; pat.serialized_len()];
@@ -948,10 +952,9 @@ fn pcr_check_corrupted_pcr_produces_finding() {
         };
         // Corrupt the PCR base by adding ~12 s (12 x 90_000 ticks) without
         // setting discontinuity_indicator.
-        let corrupted = Pcr {
-            base: (pcr.base + 12 * 90_000) & PCR_BASE_MASK,
-            extension: pcr.extension,
-        };
+        let corrupted =
+            Pcr::from_parts((pcr.base() + 12 * 90_000) & PCR_BASE_MASK, pcr.extension())
+                .expect("within the PCR range");
         let packet: &mut [u8; 188] = (&mut ts[i..i + 188]).try_into().unwrap();
         OwnedTsPacket::set_pcr(packet, corrupted).unwrap();
         found = true;

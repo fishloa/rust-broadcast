@@ -28,7 +28,7 @@ const FIXTURE: &str = "ts/pcr-wrap.ts";
 const PCR_27MHZ_MODULUS: u64 = (1u64 << 33) * 300;
 
 fn pid(p: &[u8]) -> Pid {
-    Pid::new((((p[1] & 0x1f) as u16) << 8) | p[2] as u16)
+    Pid::from_wire_masked((((p[1] & 0x1f) as u16) << 8) | p[2] as u16)
 }
 
 /// Unroll a PCR sequence across the PCR modulus for monotonicity checking.
@@ -82,7 +82,7 @@ fn interpolate_preserves_33bit_pcr_base_wrap() {
     // Extract output PCRs.
     let out_pcrs: Vec<u64> = out
         .chunks_exact(PKT)
-        .filter(|p| pid(p) == Pid::new(0x0100))
+        .filter(|p| pid(p) == Pid::from_const(0x0100))
         .filter_map(pcr_27mhz)
         .collect();
     assert_eq!(out_pcrs.len(), 5, "all 5 output PCRs present");

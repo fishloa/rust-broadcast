@@ -30,7 +30,7 @@ fn main() {
         "TS packet: pid=0x{:04X} pusi={} has_payload={}",
         pkt.header.pid.value(),
         pkt.header.pusi,
-        pkt.header.has_payload
+        pkt.header.has_payload()
     );
 
     let mut reasm = SectionReassembler::default();

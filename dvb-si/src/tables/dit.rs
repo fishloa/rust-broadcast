@@ -11,7 +11,7 @@ use broadcast_common::{Parse, Serialize};
 /// table_id for the Discontinuity Information Table.
 pub const TABLE_ID: u8 = 0x7E;
 /// Well-known PID on which the DIT is carried.
-pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x001E);
+pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::from_const(0x001E);
 
 const HEADER_LEN: usize = 3;
 /// Body length: one byte holding `transition_flag` + reserved bits (§7.1.1).

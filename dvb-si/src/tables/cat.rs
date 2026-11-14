@@ -17,7 +17,7 @@ use mpeg_ts::pid::Pid;
 /// CAT table_id (ISO/IEC 13818-1 Table 2-30).
 pub const TABLE_ID: u8 = 0x01;
 /// CAT well-known PID.
-pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0001);
+pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::from_const(0x0001);
 /// The 16 reserved bits in place of `table_id_extension` (all ones).
 const RESERVED_EXTENSION: u16 = 0xFFFF;
 
@@ -232,7 +232,7 @@ mod tests {
         let cas = cat.ca_descriptors().unwrap();
         assert_eq!(cas.len(), 1);
         assert_eq!(cas[0].ca_system_id, 0x0500);
-        assert_eq!(cas[0].ca_pid, Pid::new(0x0050));
+        assert_eq!(cas[0].ca_pid, Pid::from_const(0x0050));
         assert!(cas[0].private_data.is_empty());
     }
 
@@ -249,7 +249,7 @@ mod tests {
         assert_eq!(cas[0].ca_system_id, 0x0500);
         assert_eq!(cas[1].ca_system_id, 0x0650);
         assert_eq!(cas[2].ca_system_id, 0x0100);
-        assert_eq!(cas[1].ca_pid, Pid::new(0x0062));
+        assert_eq!(cas[1].ca_pid, Pid::from_const(0x0062));
     }
 
     #[test]

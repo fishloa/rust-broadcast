@@ -139,7 +139,7 @@
 //! #     use broadcast_common::Serialize;
 //! #     use dvb_si::tables::pat::{PatSection, PatEntry};
 //! #     use mpeg_ts::pid::Pid;
-//! #     const PMT_PID: Pid = Pid::new(0x0100);
+//! #     const PMT_PID: Pid = Pid::from_const(0x0100);
 //! #     let pat = PatSection::new(1, 0, true, 0, 0, vec![PatEntry::new(1, PMT_PID)]);
 //! #     let mut section = vec![0u8; pat.serialized_len()];
 //! #     pat.serialize_into(&mut section).unwrap();

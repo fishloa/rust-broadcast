@@ -29,7 +29,7 @@ fn reassemble_emsg_from_ts() {
     };
 
     let pkt = OwnedTsPacket::parse(ts_bytes).expect("failed to parse TS packet");
-    assert_eq!(pkt.pid(), Pid::new(0x0004), "expected PID 0x0004");
+    assert_eq!(pkt.pid(), Pid::from_const(0x0004), "expected PID 0x0004");
     assert!(pkt.pusi(), "expected PUSI=1");
     assert!(pkt.has_adaptation(), "expected adaptation field");
 
@@ -41,8 +41,8 @@ fn reassemble_emsg_from_ts() {
     assert_eq!(expected.len(), 98, "expected emsg fixture to be 98 bytes");
 
     // Reassemble via PusiReassembler.
-    let mut reasm = PusiReassembler::new(Pid::new(0x0004));
-    assert!(reasm.push(Pid::new(0x0004), true, payload).is_none());
+    let mut reasm = PusiReassembler::new(Pid::from_const(0x0004));
+    assert!(reasm.push(Pid::from_const(0x0004), true, payload).is_none());
     let reassembled = reasm.flush().expect("flush should return the unit");
 
     // Byte-exact match.

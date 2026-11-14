@@ -18,7 +18,7 @@ fn is_null_packet(pkt: &[u8]) -> bool {
     if pkt.len() < 3 {
         return false;
     }
-    crate::support::extract_pid(pkt) == Pid::new(0x1FFF)
+    crate::support::extract_pid(pkt) == Pid::from_const(0x1FFF)
 }
 
 /// Validate that a packet is a properly-formed null packet.
@@ -31,7 +31,7 @@ fn validate_null_packet(pkt: &[u8]) -> bool {
         return false;
     }
     // PID must be 0x1FFF
-    if crate::support::extract_pid(pkt) != Pid::new(0x1FFF) {
+    if crate::support::extract_pid(pkt) != Pid::from_const(0x1FFF) {
         return false;
     }
     // Adaptation field control must be 01 (payload only).

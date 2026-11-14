@@ -18,7 +18,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use mpeg_ts::mux::{SectionPacketiser, SiMux};
+use mpeg_ts::mux::{SectionInterval, SectionPacketiser, SiMux};
 use mpeg_ts::pid::{Pid, PidOutOfRange, well_known};
 use mpeg_ts::pusi::PusiReassembler;
 use mpeg_ts::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE, TsHeader, TsPacket};
@@ -133,15 +133,15 @@ fn every_corpus_capture_pid_matches_the_wire() {
 }
 
 #[test]
-fn try_new_rejects_out_of_range_and_new_masks_wire_values() {
+fn try_new_rejects_out_of_range_and_from_wire_masked_masks() {
     assert_eq!(Pid::try_new(0x1FFF).unwrap(), well_known::NULL);
     assert_eq!(Pid::try_new(0x0000).unwrap(), well_known::PAT);
     for bad in [0x2000u16, 0x2064, 0x8000, 0xFFFF] {
         let err: PidOutOfRange = Pid::try_new(bad).unwrap_err();
         assert_eq!(err.value, bad);
         assert!(matches!(Pid::try_from(bad), Err(PidOutOfRange { .. })));
-        // `new` is the wire-parsing constructor: it masks, never errors.
-        assert_eq!(Pid::new(bad).value(), bad & 0x1FFF);
+        // `from_wire_masked` is the parse-site constructor: it masks, never errors.
+        assert_eq!(Pid::from_wire_masked(bad).value(), bad & 0x1FFF);
     }
     assert_eq!(u16::from(Pid::try_new(0x0100).unwrap()), 0x0100);
     let msg = Pid::try_new(0x2000).unwrap_err().to_string();
@@ -188,7 +188,11 @@ fn si_mux_upsert_takes_typed_pids() {
     let section = tiny_section();
     let pid = Pid::try_new(0x0123).unwrap();
     let mut mux = SiMux::new();
-    mux.upsert(pid, section.clone(), Duration::from_millis(100));
+    mux.upsert(
+        pid,
+        section.clone(),
+        SectionInterval::from_const(Duration::from_millis(100)),
+    );
     let pkts = mux.poll(Duration::ZERO);
     assert!(!pkts.is_empty());
     assert!(pkts.iter().all(|p| raw_pid(p) == 0x0123));

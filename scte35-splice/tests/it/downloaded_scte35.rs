@@ -37,7 +37,7 @@ fn russia_t2mi_scte35_parse() {
     };
 
     let data = fs::read(&path).expect("read capture");
-    let mut rec = InnerTsRecovery::new_for_plp(Pid::new(T2MI_PID), 0);
+    let mut rec = InnerTsRecovery::new_for_plp(Pid::from_const(T2MI_PID), 0);
 
     let mut scte35_sections = 0usize;
     let mut splice_commands = 0usize;

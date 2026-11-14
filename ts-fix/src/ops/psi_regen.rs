@@ -87,9 +87,9 @@ use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsHeader, extract_ts_paylo
 use crate::ops::{Op, StreamModel};
 
 /// PAT well-known PID (ISO/IEC 13818-1 §2.4.4.4).
-const PAT_PID: Pid = Pid::new(0x0000);
+const PAT_PID: Pid = Pid::from_const(0x0000);
 /// Null-packet PID (ISO/IEC 13818-1 §2.4.1).
-const NULL_PID: Pid = Pid::new(0x1FFF);
+const NULL_PID: Pid = Pid::from_const(0x1FFF);
 
 // ── The operation ──────────────────────────────────────────────────────────
 
@@ -166,7 +166,7 @@ impl PsiRegenOp {
 
     /// Extract the PID from a TS packet header (bytes 1-2).
     fn pid_from_packet(packet: &[u8]) -> Pid {
-        Pid::new((((packet[1] & 0x1F) as u16) << 8) | packet[2] as u16)
+        Pid::from_wire_masked((((packet[1] & 0x1F) as u16) << 8) | packet[2] as u16)
     }
 
     /// The `table_id` a PUSI section payload begins with, if any.

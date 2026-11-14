@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration as StdDuration;
 
-use mpeg_ts::mux::SiMux;
+use mpeg_ts::mux::{SectionInterval, SiMux};
 use mpeg_ts::ts::TS_PACKET_SIZE;
 
 fn scratch_dir(name: &str) -> PathBuf {
@@ -189,7 +189,11 @@ fn sdt_and_bat_both_present_per_tsduck() {
     let bat = build_long_section(0x4A, 0x0001, &[0xF0, 0x00, 0xF0, 0x00]);
     let mut mux = SiMux::new();
     mux.upsert_sdt_actual(sdt);
-    mux.upsert(Pid::new(0x0011), bat, StdDuration::from_millis(1000));
+    mux.upsert(
+        Pid::from_const(0x0011),
+        bat,
+        SectionInterval::from_const(StdDuration::from_millis(1000)),
+    );
     let packets = mux.poll(StdDuration::ZERO);
     assert!(!packets.is_empty());
 

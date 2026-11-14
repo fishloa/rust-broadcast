@@ -5,9 +5,11 @@
 
 /// A 13-bit MPEG-TS Packet Identifier.
 ///
-/// Thin newtype over the wire `u16`. Values are masked to 13 bits on
-/// construction (`0x0000..=0x1FFF`), matching the transport header field
-/// width (ISO/IEC 13818-1 §2.4.3.2).
+/// Thin newtype over the wire `u16`, always in `0x0000..=0x1FFF` (the
+/// transport header field width, ISO/IEC 13818-1 §2.4.3.2). Construction never
+/// masks a caller-supplied value: [`Pid::try_new`] rejects an out-of-range
+/// one, [`Pid::from_wire_masked`] is the explicit parse-site constructor, and
+/// [`Pid::from_const`] is the compile-time constructor for constants.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
@@ -17,18 +19,33 @@ impl Pid {
     /// Mask covering the 13 valid PID bits.
     pub const MASK: u16 = 0x1FFF;
 
-    /// Construct a `Pid`, masking to the low 13 bits.
+    /// Construct a constant `Pid`, **failing compilation** (a `const` panic)
+    /// when `value` exceeds [`Pid::MASK`].
+    ///
+    /// This is the constructor for well-known PIDs and table constants: a
+    /// mistyped literal is a build error, never a silently masked different
+    /// PID. Runtime values use [`Pid::try_new`].
+    ///
+    /// ```
+    /// use mpeg_ts::pid::Pid;
+    /// const PMT: Pid = Pid::from_const(0x0100);
+    /// assert_eq!(PMT.value(), 0x0100);
+    /// ```
     #[must_use]
-    pub const fn new(value: u16) -> Self {
-        Self(value & Self::MASK)
+    pub const fn from_const(value: u16) -> Self {
+        assert!(
+            value <= Self::MASK,
+            "PID constant exceeds the 13-bit range 0x0000..=0x1FFF"
+        );
+        Self(value)
     }
 
     /// Construct a `Pid` from the low 13 bits of `value`, **deliberately**
     /// discarding the rest: the explicit name for extracting the 13-bit PID
     /// field out of a wider wire word (e.g. `reserved(3)` + `PID(13)`), where
-    /// masking is the specified behaviour. Identical to [`Pid::new`]; prefer
-    /// this at parse sites so the intent is visible and a caller-supplied
-    /// value is never masked by accident (use [`Pid::try_new`] for those).
+    /// masking is the specified behaviour. Use this only at parse sites, so a
+    /// caller-supplied value is never masked by accident; use
+    /// [`Pid::try_new`] for those and [`Pid::from_const`] for constants.
     ///
     /// ```
     /// use mpeg_ts::pid::Pid;
@@ -43,8 +60,7 @@ impl Pid {
 
     /// Construct a `Pid`, rejecting any value above [`Pid::MASK`] (`0x1FFF`).
     ///
-    /// Use this at API boundaries that take a caller-supplied value; use
-    /// [`Pid::new`] only where the bits are already masked by the wire format.
+    /// Use this at API boundaries that take a caller-supplied value.
     ///
     /// # Errors
     /// [`PidOutOfRange`] when `value > 0x1FFF`.
@@ -123,56 +139,71 @@ impl core::fmt::Display for Pid {
 /// Well-known PIDs. The transport stream MUST carry the corresponding tables
 /// on these PIDs.
 ///
-/// **API 2.0 type change:** constants are now [`crate::pid::Pid`] instead of `u16`.
-/// Call `.value()` to obtain the raw `u16`, or use `Pid::from(u16)` /
-/// `u16::from(Pid)` for conversions.
+/// Each constant is a [`crate::pid::Pid`]; call `.value()` to obtain the raw
+/// `u16`, or use `Pid::try_from(u16)` / `u16::from(Pid)` for conversions.
 pub mod well_known {
     use super::Pid;
 
     /// Program Association Table (MPEG-2).
-    pub const PAT: Pid = Pid::new(0x0000);
+    pub const PAT: Pid = Pid::from_const(0x0000);
     /// Conditional Access Table (MPEG-2).
-    pub const CAT: Pid = Pid::new(0x0001);
+    pub const CAT: Pid = Pid::from_const(0x0001);
     /// Transport Stream Description Table (MPEG-2).
-    pub const TSDT: Pid = Pid::new(0x0002);
+    pub const TSDT: Pid = Pid::from_const(0x0002);
     /// IPMP Control Information Table (MPEG-2).
-    pub const IPMP_CIT: Pid = Pid::new(0x0003);
+    pub const IPMP_CIT: Pid = Pid::from_const(0x0003);
     /// Network Information Table (DVB).
-    pub const NIT: Pid = Pid::new(0x0010);
+    pub const NIT: Pid = Pid::from_const(0x0010);
     /// Service Description Table + Bouquet Association Table (DVB).
-    pub const SDT_BAT: Pid = Pid::new(0x0011);
+    pub const SDT_BAT: Pid = Pid::from_const(0x0011);
     /// Event Information Table (DVB).
-    pub const EIT: Pid = Pid::new(0x0012);
+    pub const EIT: Pid = Pid::from_const(0x0012);
     /// Running Status Table (DVB).
-    pub const RST: Pid = Pid::new(0x0013);
+    pub const RST: Pid = Pid::from_const(0x0013);
     /// Time and Date + Time Offset + Stuffing (DVB).
-    pub const TDT_TOT: Pid = Pid::new(0x0014);
+    pub const TDT_TOT: Pid = Pid::from_const(0x0014);
     /// Network synchronisation.
-    pub const NETWORK_SYNC: Pid = Pid::new(0x0015);
+    pub const NETWORK_SYNC: Pid = Pid::from_const(0x0015);
     /// Resolution Notification Table.
-    pub const RNT: Pid = Pid::new(0x0016);
+    pub const RNT: Pid = Pid::from_const(0x0016);
     /// Satellite Access Table (EN 300 468 Table 1).
-    pub const SAT: Pid = Pid::new(0x001B);
+    pub const SAT: Pid = Pid::from_const(0x001B);
     /// Link-local inband signalling (EN 300 468 Table 1); only for use between
     /// devices in a controlled environment, never on a broadcast signal.
-    pub const INBAND_SIGNALLING: Pid = Pid::new(0x001C);
+    pub const INBAND_SIGNALLING: Pid = Pid::from_const(0x001C);
     /// Measurement (reserved).
-    pub const MEASUREMENT: Pid = Pid::new(0x001D);
+    pub const MEASUREMENT: Pid = Pid::from_const(0x001D);
     /// Discontinuity Information Table.
-    pub const DIT: Pid = Pid::new(0x001E);
+    pub const DIT: Pid = Pid::from_const(0x001E);
     /// Selection Information Table.
-    pub const SIT: Pid = Pid::new(0x001F);
+    pub const SIT: Pid = Pid::from_const(0x001F);
 
     /// ATSC PSIP base PID.
-    pub const ATSC_PSIP: Pid = Pid::new(0x1FFB);
+    pub const ATSC_PSIP: Pid = Pid::from_const(0x1FFB);
 
     /// Null-packet padding PID. Payload is ignored.
-    pub const NULL: Pid = Pid::new(0x1FFF);
+    pub const NULL: Pid = Pid::from_const(0x1FFF);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn from_const_is_the_compile_time_constructor() {
+        const PMT: Pid = Pid::from_const(0x0100);
+        assert_eq!(PMT.value(), 0x0100);
+        assert_eq!(Pid::from_const(0).value(), 0);
+        assert_eq!(Pid::from_const(Pid::MASK).value(), 0x1FFF);
+    }
+
+    #[test]
+    fn try_new_and_from_wire_masked_differ_only_in_policy() {
+        assert_eq!(Pid::try_new(0x0000), Ok(well_known::PAT));
+        assert_eq!(Pid::try_new(Pid::MASK), Ok(well_known::NULL));
+        assert!(Pid::try_new(0x2000).is_err());
+        assert_eq!(Pid::from_wire_masked(0xE100).value(), 0x0100);
+    }
 
     #[test]
     fn inband_signalling_sits_between_sat_and_measurement() {

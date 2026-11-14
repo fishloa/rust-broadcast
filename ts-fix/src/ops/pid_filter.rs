@@ -42,11 +42,11 @@ use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsHeader, extract_ts_paylo
 use crate::ops::{Op, StreamModel};
 
 /// PAT well-known PID (ISO/IEC 13818-1 §2.4.4.4).
-const PAT_PID: Pid = Pid::new(0x0000);
+const PAT_PID: Pid = Pid::from_const(0x0000);
 /// CAT well-known PID (ISO/IEC 13818-1 §2.4.4.7).
-const CAT_PID: Pid = Pid::new(0x0001);
+const CAT_PID: Pid = Pid::from_const(0x0001);
 /// Null-packet PID (ISO/IEC 13818-1 §2.4.1).
-const NULL_PID: Pid = Pid::new(0x1FFF);
+const NULL_PID: Pid = Pid::from_const(0x1FFF);
 
 /// Configuration for [`TsFixBuilder::filter_pids`](crate::TsFixBuilder::filter_pids).
 ///
@@ -83,7 +83,7 @@ impl PidFilter {
     /// ```
     /// use mpeg_ts::pid::Pid;
     /// use ts_fix::PidFilter;
-    /// let cfg = PidFilter::keep([Pid::new(0x0101), Pid::new(0x0102)]);
+    /// let cfg = PidFilter::keep([Pid::from_const(0x0101), Pid::from_const(0x0102)]);
     /// ```
     pub fn keep(pids: impl IntoIterator<Item = Pid>) -> Self {
         let mut set: BTreeSet<Pid> = pids.into_iter().collect();
@@ -379,8 +379,7 @@ impl PidFilterOp {
                         *pmt_version = pmt.version_number;
                         let mut emm_pids = BTreeSet::new();
                         for p in keep.iter() {
-                            if *p != PAT_PID && *p != CAT_PID && *p != Pid::new((*pmt_pid).value())
-                            {
+                            if *p != PAT_PID && *p != CAT_PID && *p != *pmt_pid {
                                 emm_pids.insert(*p);
                             }
                         }
@@ -492,7 +491,13 @@ mod tests {
         }
         // PID is the 13-bit field: byte1 low 5 bits (the top 3 flag bits are
         // ignored) and byte 2.
-        assert_eq!(pid_of(&[0x47, 0xFF, 0xFF, 0x10]), Some(Pid::new(0x1FFF)));
-        assert_eq!(pid_of(&[0x47, 0x41, 0x23, 0x10]), Some(Pid::new(0x0123)));
+        assert_eq!(
+            pid_of(&[0x47, 0xFF, 0xFF, 0x10]),
+            Some(Pid::from_const(0x1FFF))
+        );
+        assert_eq!(
+            pid_of(&[0x47, 0x41, 0x23, 0x10]),
+            Some(Pid::from_const(0x0123))
+        );
     }
 }

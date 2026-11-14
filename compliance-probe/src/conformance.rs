@@ -157,7 +157,7 @@ mod tests {
         for _ in 0..20 {
             pcr += PCR_HZ / 10; // exactly 100ms worth of 27MHz ticks
             t += Duration::from_millis(100);
-            last = tracker.observe(Pid::new(pid), pcr, t);
+            last = tracker.observe(Pid::from_wire_masked(pid), pcr, t);
         }
         let sample = last.expect("must have a sample after >1 observation");
         assert!(
@@ -180,7 +180,7 @@ mod tests {
     #[test]
     fn steady_pcr_across_the_wrap_keeps_zero_drift() {
         let mut tracker = PcrTracker::new();
-        let pid = Pid::new(0x0100);
+        let pid = Pid::from_const(0x0100);
         let step = PCR_HZ / 10;
         // Start 5 steps before the wrap so the series crosses it.
         let mut pcr = PCR_WRAP_27MHZ - 5 * step;
@@ -216,7 +216,7 @@ mod tests {
         for _ in 0..30 {
             pcr += signalled_hz / 10;
             t += Duration::from_millis(100);
-            last = tracker.observe(Pid::new(pid), pcr, t);
+            last = tracker.observe(Pid::from_wire_masked(pid), pcr, t);
         }
         let sample = last.unwrap();
         assert!(
@@ -232,7 +232,7 @@ mod tests {
     fn first_observation_yields_no_sample() {
         let mut tracker = PcrTracker::new();
         assert_eq!(
-            tracker.observe(Pid::new(0x0100), 12_345, Duration::from_millis(1)),
+            tracker.observe(Pid::from_const(0x0100), 12_345, Duration::from_millis(1)),
             None
         );
     }
@@ -243,10 +243,17 @@ mod tests {
     fn large_gap_is_treated_as_discontinuity_not_drift() {
         let mut tracker = PcrTracker::new();
         let pid = 0x0100;
-        assert_eq!(tracker.observe(Pid::new(pid), 0, Duration::ZERO), None);
+        assert_eq!(
+            tracker.observe(Pid::from_wire_masked(pid), 0, Duration::ZERO),
+            None
+        );
         // 20 real seconds elapse with only a small PCR advance recorded —
         // this must not be reported as a multi-million-ppm drift.
-        let sample = tracker.observe(Pid::new(pid), PCR_HZ / 10, Duration::from_secs(20));
+        let sample = tracker.observe(
+            Pid::from_wire_masked(pid),
+            PCR_HZ / 10,
+            Duration::from_secs(20),
+        );
         assert!(
             sample.is_none(),
             "expected a suppressed discontinuity, got {sample:?}"
@@ -269,16 +276,16 @@ mod tests {
         for _ in 0..5 {
             pcr += PCR_HZ / 10;
             t += Duration::from_millis(100);
-            tracker.observe(Pid::new(pid), pcr, t);
+            tracker.observe(Pid::from_wire_masked(pid), pcr, t);
         }
 
         // A 2-second forward PCR jump over a 40ms wall-clock interval — the
         // shape of a real splice discontinuity — but the caller has just
         // told us (via `reset`) that this PID's PCR series discontinued.
-        tracker.reset(Pid::new(pid));
+        tracker.reset(Pid::from_wire_masked(pid));
         pcr += PCR_HZ * 2;
         t += Duration::from_millis(40);
-        let sample = tracker.observe(Pid::new(pid), pcr, t);
+        let sample = tracker.observe(Pid::from_wire_masked(pid), pcr, t);
         assert_eq!(
             sample, None,
             "a reset PID's next observation must be treated as a fresh \
@@ -289,7 +296,7 @@ mod tests {
         pcr += PCR_HZ / 10;
         t += Duration::from_millis(100);
         let sample = tracker
-            .observe(Pid::new(pid), pcr, t)
+            .observe(Pid::from_wire_masked(pid), pcr, t)
             .expect("tracking resumes");
         assert!(
             sample.drift_ppm.abs() < 1.0,
@@ -314,8 +321,16 @@ mod tests {
             steady_pcr += PCR_HZ / 10;
             fast_pcr += (PCR_HZ + 27_000) / 10; // +1000 ppm
             t += Duration::from_millis(100);
-            steady_sample = tracker.observe(Pid::new(steady_pid), steady_pcr, t);
-            fast_sample = tracker.observe(Pid::new(fast_pid), fast_pcr, t);
+            steady_sample = tracker.observe(
+                Pid::try_new(steady_pid).expect("pid fits the 13-bit field"),
+                steady_pcr,
+                t,
+            );
+            fast_sample = tracker.observe(
+                Pid::try_new(fast_pid).expect("pid fits the 13-bit field"),
+                fast_pcr,
+                t,
+            );
         }
         assert!(steady_sample.unwrap().drift_ppm.abs() < 1.0);
         assert!((fast_sample.unwrap().drift_ppm - 1000.0).abs() < 5.0);

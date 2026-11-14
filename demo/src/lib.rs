@@ -1168,7 +1168,7 @@ mod tests {
         const VERSIONS: u8 = 32; // version_number is 5 bits
         let mut ts = Vec::new();
         for n in 0..(MAX_TABLE_ENTRIES + 50) {
-            let pat = PatSection::new(1, (n % usize::from(VERSIONS)) as u8, true, 0, 0, vec![PatEntry::new(1, Pid::new(0x0100))]);
+            let pat = PatSection::new(1, (n % usize::from(VERSIONS)) as u8, true, 0, 0, vec![PatEntry::new(1, Pid::from_const(0x0100))]);
             let mut bytes = vec![0u8; pat.serialized_len()];
             pat.serialize_into(&mut bytes).unwrap();
             let mut pkt = [0xFFu8; TS_PACKET_SIZE];
@@ -1176,10 +1176,9 @@ mod tests {
                 tei: false,
                 pusi: true,
                 pid: wk::PAT,
-                scrambling: 0,
-                has_adaptation: false,
-                has_payload: true,
-                continuity_counter: (n % 16) as u8,
+                scrambling: ScramblingControl::NotScrambled,
+                adaptation: AdaptationFieldControl::PayloadOnly,
+                continuity_counter: ContinuityCounter::from_wire_masked((n % 16) as u8),
             }
             .serialize_into(&mut pkt)
             .unwrap();
@@ -1276,8 +1275,8 @@ mod tests {
         use scte35_splice::SpliceInfoSection;
         use scte35_splice::commands::AnyCommand;
 
-        const PMT_PID: Pid = Pid::new(0x0100);
-        const SCTE35_PID: Pid = Pid::new(0x0101);
+        const PMT_PID: Pid = Pid::from_const(0x0100);
+        const SCTE35_PID: Pid = Pid::from_const(0x0101);
 
         fn ts_packet(pid: Pid, section: &[u8]) -> [u8; TS_PACKET_SIZE] {
             let mut pkt = [0xFFu8; TS_PACKET_SIZE];
@@ -1285,10 +1284,9 @@ mod tests {
                 tei: false,
                 pusi: true,
                 pid,
-                scrambling: 0,
-                has_adaptation: false,
-                has_payload: true,
-                continuity_counter: 0,
+                scrambling: ScramblingControl::NotScrambled,
+                adaptation: AdaptationFieldControl::PayloadOnly,
+                continuity_counter: ContinuityCounter::try_new(0).expect("4-bit counter"),
             };
             header.serialize_into(&mut pkt).unwrap();
             pkt[4] = 0x00; // pointer_field
@@ -1364,7 +1362,7 @@ mod tests {
     /// RGBA preview.
     #[test]
     fn analyzes_real_subtitle_fixture_and_decodes_a_preview() {
-        const SUBTITLE_PID: Pid = Pid::new(0x008C);
+        const SUBTITLE_PID: Pid = Pid::from_const(0x008C);
 
         let bytes = fixture("france2.ts");
         let result = analyze_impl(&bytes);

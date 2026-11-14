@@ -88,13 +88,18 @@ impl Probe {
         let Ok(ts_packet) = TsPacket::parse(packet) else {
             return;
         };
-        if !ts_packet.header.has_adaptation {
+        if !ts_packet.header.has_adaptation() {
             return;
         }
         let Some(Ok(af)) = ts_packet.adaptation_field() else {
             return;
         };
         let Some(pcr) = af.pcr else {
+            return;
+        };
+        // A PCR whose 9-bit extension is off the 27 MHz clock names no time;
+        // there is nothing to measure drift against (#2656).
+        let Ok(clock) = pcr.to_clock27() else {
             return;
         };
         if af.discontinuity_indicator {
@@ -104,7 +109,7 @@ impl Probe {
             // (W-CP-2).
             self.pcr.reset(ts_packet.header.pid);
         }
-        if let Some(sample) = self.pcr.observe(ts_packet.header.pid, pcr.as_27mhz(), t) {
+        if let Some(sample) = self.pcr.observe(ts_packet.header.pid, clock.ticks(), t) {
             let pid_label = alloc::format!("0x{:04X}", sample.pid);
             record_gauge!(
                 crate::metric_names::PCR_DRIFT_PPM,

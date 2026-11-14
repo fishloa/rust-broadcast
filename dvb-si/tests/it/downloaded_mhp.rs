@@ -57,8 +57,8 @@ fn hotbird_mhp_dsmcc_parse() {
         };
 
         // Only scan carousel-range PIDs (skip well-known SI).
-        if pkt.header.pid < Pid::new(MIN_CAROUSEL_PID)
-            || pkt.header.pid > Pid::new(MAX_CAROUSEL_PID)
+        if pkt.header.pid < Pid::from_const(MIN_CAROUSEL_PID)
+            || pkt.header.pid > Pid::from_const(MAX_CAROUSEL_PID)
         {
             continue;
         }
@@ -138,7 +138,7 @@ fn hotbird_mhp_dvb_j_descriptors_typed() {
     // via application_signalling_descriptor), so add the observed AIT PIDs.
     let mut builder = SiDemux::builder();
     for pid in AIT_PIDS {
-        builder = builder.pid(Pid::new(pid));
+        builder = builder.pid(Pid::from_wire_masked(pid));
     }
     let mut demux = builder.build();
 

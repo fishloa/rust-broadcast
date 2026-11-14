@@ -115,7 +115,7 @@ Runnable examples: `cargo run -p broadcast-common --example crc_and_bcd` and
 | `bcd` | `from_bcd_byte`, `to_bcd_byte` and wider helpers; `None` on out-of-range input, never garbage |
 | `time` | `MjdBcdDateTime`, `decode_mjd_bcd`/`encode_mjd_bcd`, `decode_bcd_duration`/`encode_bcd_duration`, `mjd_to_ymd`/`ymd_to_mjd`; with `jiff`: `decode_mjd_bcd_utc`/`encode_mjd_bcd_utc`, `decode_seconds_since_2000_utc`/`encode_seconds_since_2000_utc` (`jiff::Timestamp`). The encoder rejects impossible days (31 Feb) |; `MonoUtc` (monotonic-to-UTC anchor mapping)
 | `bits` | `BitReader`, `BitWriter` (MSB-first, up to 64 bits per field, spans bytes), `BitError` |
-| `clock33` | `WRAP_33BIT`, `unwrap_delta`, `wrapping_forward_distance`, `add`, `add_signed`, `signed_distance`; PCR: `PTS_HZ`, `PCR_HZ`, `PCR_EXT_MODULUS`, `PCR_WRAP_27MHZ`, `pcr_from_parts`, `pcr_split`, `pcr_forward_distance`, `pcr_signed_distance`; marker-bit timestamp field: `Marked`, `MARKERS_ALL_SET`, `unpack_marked`, `pack_marked`, `pack_marked_with` |
+| `clock33` | `Clock33` (validated 33-bit 90 kHz sample: `try_new`, `ZERO`, `wrapping_add`, `wrapping_add_signed`, `signed_distance_to`) and `Clock27` (`base * 300 + ext` 27 MHz value: strict `from_parts`/`from_27mhz`, lossless `from_wire_parts`, checked `to_clock27`/`is_valid`, `ticks`, `signed_distance_to`), the workspace's one PTS/DTS and PCR/ESCR/SCR representation, with `ClockOutOfRange`; `WRAP_33BIT`, `unwrap_delta`, `wrapping_forward_distance`, `add`, `add_signed`, `signed_distance`; PCR: `PTS_HZ`, `PCR_HZ`, `PCR_EXT_MODULUS`, `PCR_WRAP_27MHZ`, `pcr_from_parts`, `pcr_split`, `pcr_forward_distance`, `pcr_signed_distance`; marker-bit timestamp field: `Marked`, `MARKERS_ALL_SET`, `unpack_marked`, `pack_marked`, `pack_marked_with` |
 | `error` | The shared failure kinds (`BufferTooShort`, `OutputBufferTooSmall`, `FieldOverflow`, `CrcMismatch`, `InvalidSync`, `ReservedBits`, `InvalidValue`, `InvalidField`, `UnsupportedVersion`, `LengthMismatch`) that crate error enums wrap with `#[error(transparent)]` + `#[from]` |
 | `len` | `FieldOverflow`, `fit_bits`, `fit_mask`, `fit_u8`, `fit_u16`, `fit_u24`, `fit_u32`: checked width narrowing for serializers |
 | `pusi` | `PusiAccumulator` (size-capped, `DEFAULT_MAX_UNIT_SIZE` 16 MiB): the unit splitter wrapped by `mpeg-ts` and `mpeg-pes` |
@@ -150,7 +150,12 @@ Runnable examples: `cargo run -p broadcast-common --example crc_and_bcd` and
 - **Checked widths, not masks.** `len::fit_*` returns `FieldOverflow` when a
   value does not fit its field; the `& MASK` idiom is banned in serializers.
 - **One clock implementation.** PCR/PTS/DTS/`pts_time` wrap arithmetic lives in
-  `clock33`; the 2^33 modulus must not be re-derived elsewhere.
+  `clock33`; the 2^33 modulus must not be re-derived elsewhere, and the values
+  are its types: `Clock33` for a 33-bit 90 kHz sample, `Clock27` for a 27 MHz
+  `base * 300 + ext`. Constructing is strict and parsing is lossless: a wire
+  field goes through `Clock27::from_wire_parts`, and `to_clock27` is the checked
+  view that reports an off-clock value (a 9-bit extension of 300..=511) instead
+  of making real data unparseable.
 - **Label convention.** `impl_spec_display!` keeps `Display` in lockstep with
   the hand-written `name()` of every public spec enum.
 - `#![forbid(unsafe_code)]`, `#![warn(missing_docs)]`, `no_std` + `alloc`

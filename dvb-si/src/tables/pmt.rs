@@ -904,7 +904,7 @@ mod tests {
         assert_eq!(pmt.program_number, 42);
         assert_eq!(pmt.version_number, 5);
         assert!(pmt.current_next_indicator);
-        assert_eq!(pmt.pcr_pid, Pid::new(0x0100));
+        assert_eq!(pmt.pcr_pid, Pid::from_const(0x0100));
         assert_eq!(pmt.program_info.raw(), &[0xAA, 0xBB]);
         assert_eq!(pmt.streams.len(), 0);
     }
@@ -921,10 +921,10 @@ mod tests {
         let pmt = PmtSection::parse(&bytes).unwrap();
         assert_eq!(pmt.streams.len(), 2);
         assert_eq!(pmt.streams[0].stream_type, StreamType::Mpeg2Video);
-        assert_eq!(pmt.streams[0].elementary_pid, Pid::new(0x102));
+        assert_eq!(pmt.streams[0].elementary_pid, Pid::from_const(0x102));
         assert_eq!(pmt.streams[0].es_info.raw(), &[0x11, 0x22]);
         assert_eq!(pmt.streams[1].stream_type, StreamType::H264);
-        assert_eq!(pmt.streams[1].elementary_pid, Pid::new(0x103));
+        assert_eq!(pmt.streams[1].elementary_pid, Pid::from_const(0x103));
         assert_eq!(pmt.streams[1].es_info.raw(), &[0x33]);
     }
 
@@ -950,7 +950,7 @@ mod tests {
         let pmt = PmtSection::new(
             1,
             crate::tables::SectionVersion::new(0, true, 0, 0),
-            Pid::new(0x100),
+            Pid::from_const(0x100),
             DescriptorLoop::new(&[]),
             vec![],
         );
@@ -968,20 +968,24 @@ mod tests {
         let pmt = PmtSection::new(
             0xABCD,
             crate::tables::SectionVersion::new(7, true, 0, 0),
-            Pid::new(0x1F0),
+            Pid::from_const(0x1F0),
             DescriptorLoop::new(&prog_info),
             vec![
                 PmtStream::new(
                     StreamType::Mpeg2Video,
-                    Pid::new(0x100),
+                    Pid::from_const(0x100),
                     DescriptorLoop::new(&es1),
                 ),
                 PmtStream::new(
                     StreamType::Mpeg1Audio,
-                    Pid::new(0x101),
+                    Pid::from_const(0x101),
                     DescriptorLoop::new(&es2),
                 ),
-                PmtStream::new(StreamType::H264, Pid::new(0x102), DescriptorLoop::new(&[])),
+                PmtStream::new(
+                    StreamType::H264,
+                    Pid::from_const(0x102),
+                    DescriptorLoop::new(&[]),
+                ),
             ],
         );
         let mut buf = vec![0u8; pmt.serialized_len()];
@@ -1029,7 +1033,7 @@ mod tests {
         let pmt = PmtSection::new(
             1,
             crate::tables::SectionVersion::new(0, true, 0, 0),
-            Pid::new(0x100),
+            Pid::from_const(0x100),
             DescriptorLoop::new(&pi),
             vec![],
         );
@@ -1046,7 +1050,7 @@ mod tests {
         let pmt = PmtSection::new(
             1,
             crate::tables::SectionVersion::new(0, true, 0, 0),
-            Pid::new(0x100),
+            Pid::from_const(0x100),
             DescriptorLoop::new(&pi),
             vec![],
         );
@@ -1063,11 +1067,11 @@ mod tests {
         let pmt = PmtSection::new(
             1,
             crate::tables::SectionVersion::new(0, true, 0, 0),
-            Pid::new(0x100),
+            Pid::from_const(0x100),
             DescriptorLoop::new(&[]),
             vec![PmtStream::new(
                 StreamType::from_u8(0x02),
-                Pid::new(0x101),
+                Pid::from_const(0x101),
                 DescriptorLoop::new(&es),
             )],
         );
@@ -1365,7 +1369,7 @@ mod tests {
         let pmt = PmtSection::new(
             42,
             crate::tables::SectionVersion::new(1, true, 3, 7),
-            Pid::new(0x0200),
+            Pid::from_const(0x0200),
             DescriptorLoop::new(&[]),
             vec![],
         );

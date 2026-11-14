@@ -47,6 +47,12 @@ pub enum Error {
         max: usize,
     },
 
+    /// A PCR or ESCR value did not fit the 27 MHz clock: a base wider than
+    /// 33 bits, or an extension `>= 300` (the 9-bit wire field can carry
+    /// `300..=511`).
+    #[error(transparent)]
+    ClockOutOfRange(#[from] broadcast_common::clock33::ClockOutOfRange),
+
     /// A length or count field's value does not fit its wire field
     /// (see `broadcast_common::len`, #1129).
     #[error(transparent)]

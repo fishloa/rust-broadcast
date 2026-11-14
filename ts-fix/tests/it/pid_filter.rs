@@ -37,7 +37,7 @@ use ts_fix::{PidFilter, TsFix};
 // ── Helper: extract all PIDs present in a TS byte slice ─────────────────────
 
 fn pid_from_packet(pkt: &[u8]) -> Pid {
-    Pid::new((((pkt[1] & 0x1F) as u16) << 8) | pkt[2] as u16)
+    Pid::from_wire_masked((((pkt[1] & 0x1F) as u16) << 8) | pkt[2] as u16)
 }
 
 fn all_pids_in(ts: &[u8]) -> std::collections::BTreeSet<Pid> {
@@ -361,9 +361,9 @@ fn build_scrambled_ts(cycles: usize) -> Vec<u8> {
     stream
 }
 
-const CAT_PID: Pid = Pid::new(0x0001);
-const ECM_PID: Pid = Pid::new(0x0200);
-const EMM_PID: Pid = Pid::new(0x0300);
+const CAT_PID: Pid = Pid::from_const(0x0001);
+const ECM_PID: Pid = Pid::from_const(0x0200);
+const EMM_PID: Pid = Pid::from_const(0x0300);
 
 /// Service extract of a scrambled service must keep the CAT, the EMM PID, and
 /// the ECM PID from the PMT's CA_descriptors — otherwise the output is

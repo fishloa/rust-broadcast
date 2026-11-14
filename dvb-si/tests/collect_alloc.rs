@@ -24,7 +24,7 @@ fn nit_sections() -> Vec<Vec<u8>> {
         let Ok(pkt) = TsPacket::parse(chunk) else {
             continue;
         };
-        if pkt.header.pid != Pid::new(0x0010) {
+        if pkt.header.pid != Pid::from_const(0x0010) {
             continue;
         }
         if let Some(payload) = pkt.payload {

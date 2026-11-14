@@ -110,7 +110,7 @@ impl<'a> Parse<'a> for MsCaPmt<'a> {
         let list_management = CaPmtListManagement::from_u8(body[1]);
         let program_number = u16::from_be_bytes([body[2], body[3]]);
         // reserved(3) + PMT_PID(13).
-        let pmt_pid = Pid::new((((body[4] & 0x1F) as u16) << 8) | body[5] as u16);
+        let pmt_pid = Pid::from_wire_masked((((body[4] & 0x1F) as u16) << 8) | body[5] as u16);
         let reserved_pmt_pid = ReservedOnes::from_bits(body[4] >> 5);
         let reserved_version = ReservedOnes::from_bits(body[6] >> 6);
         let reserved_program_info = ReservedOnes::from_bits(body[7] >> 4);
@@ -340,7 +340,7 @@ mod tests {
             lts_id: 0x02,
             list_management: CaPmtListManagement::Only,
             program_number: 0x0001,
-            pmt_pid: Pid::new(0x0064),
+            pmt_pid: Pid::from_const(0x0064),
             version_number: 1,
             current_next_indicator: true,
             cmd_id: Some(CaPmtCmdId::OkDescrambling),
@@ -349,7 +349,7 @@ mod tests {
                 reserved_es_info: Default::default(),
                 reserved_pid: Default::default(),
                 stream_type: 0x02,
-                elementary_pid: Pid::new(0x0200),
+                elementary_pid: Pid::from_const(0x0200),
                 cmd_id: Some(CaPmtCmdId::OkDescrambling),
                 ca_descriptors: &es_desc,
             }],
@@ -383,7 +383,7 @@ mod tests {
         assert_eq!(MsCaPmt::parse(&bytes).unwrap(), pmt);
         // Field-mutation: change PMT_PID.
         let mut other = pmt.clone();
-        other.pmt_pid = Pid::new(0x0065);
+        other.pmt_pid = Pid::from_const(0x0065);
         assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
@@ -397,7 +397,7 @@ mod tests {
             lts_id: 0x00,
             list_management: CaPmtListManagement::Update,
             program_number: 0x0009,
-            pmt_pid: Pid::new(0x1FFF),
+            pmt_pid: Pid::from_const(0x1FFF),
             version_number: 0,
             current_next_indicator: true,
             cmd_id: None,
@@ -430,13 +430,13 @@ mod tests {
                 CaPmtReplyStream {
                     reserved_ca_enable: Default::default(),
                     reserved_pid: Default::default(),
-                    elementary_pid: Pid::new(0x0200),
+                    elementary_pid: Pid::from_const(0x0200),
                     ca_enable: Some(CaEnable::Possible),
                 },
                 CaPmtReplyStream {
                     reserved_ca_enable: Default::default(),
                     reserved_pid: Default::default(),
-                    elementary_pid: Pid::new(0x0201),
+                    elementary_pid: Pid::from_const(0x0201),
                     ca_enable: None,
                 },
             ],
@@ -471,7 +471,7 @@ mod tests {
             lts_id: 0,
             list_management: CaPmtListManagement::Only,
             program_number: 1,
-            pmt_pid: Pid::new(0x64),
+            pmt_pid: Pid::from_const(0x64),
             version_number: 0,
             current_next_indicator: true,
             cmd_id: None,
@@ -511,7 +511,7 @@ mod tests {
             lts_id: 0,
             list_management: CaPmtListManagement::Only,
             program_number: 1,
-            pmt_pid: Pid::new(0x1FFF),
+            pmt_pid: Pid::from_const(0x1FFF),
             version_number: 0,
             current_next_indicator: true,
             cmd_id: None,

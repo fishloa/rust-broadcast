@@ -558,7 +558,7 @@ impl WatchState {
     /// framing and decode-timestamp monotonicity on each completed unit.
     fn feed_es(&mut self, pid: Pid, ts_packet: &TsPacket<'_>) {
         let mut discontinuity = false;
-        if ts_packet.header.has_adaptation
+        if ts_packet.header.has_adaptation()
             && let Some(Ok(af)) = ts_packet.adaptation_field()
         {
             discontinuity = af.discontinuity_indicator;
@@ -679,7 +679,7 @@ impl WatchState {
                 .iter()
                 .filter(|(_, t)| t.any_au)
                 .map(|(&pid, t)| PidFlag {
-                    pid: Pid::new(pid),
+                    pid: Pid::from_wire_masked(pid),
                     set: !t.structured,
                 })
                 .collect(),
@@ -688,7 +688,7 @@ impl WatchState {
                 .iter()
                 .filter(|(_, t)| t.prev_decode.is_some())
                 .map(|(&pid, t)| PidFlag {
-                    pid: Pid::new(pid),
+                    pid: Pid::from_wire_masked(pid),
                     set: t.decode_anomaly,
                 })
                 .collect(),
@@ -701,6 +701,7 @@ impl WatchState {
 pub(crate) mod tests {
     use super::*;
     use alloc::string::String;
+    use mpeg_ts::ts::{AdaptationFieldControl, ContinuityCounter, ScramblingControl};
 
     #[cfg(feature = "metrics")]
     /// Parse Prometheus text into (family -> (help, type)) and
@@ -854,14 +855,14 @@ pub(crate) mod tests {
     }
 
     /// PMT PID every synthetic PMT fixture is carried on.
-    const PAT_PMT_PID: Pid = Pid::new(0x0100);
+    const PAT_PMT_PID: Pid = Pid::from_const(0x0100);
     /// Elementary PID the synthetic fixtures declare.
-    const SHARED_PID: Pid = Pid::new(0x0101);
+    const SHARED_PID: Pid = Pid::from_const(0x0101);
     /// SCTE-35 cue PID the synthetic fixtures declare.
-    const CUE_PID: Pid = Pid::new(0x0102);
+    const CUE_PID: Pid = Pid::from_const(0x0102);
     /// An unrelated elementary PID, used where a program must stop
     /// referencing `SHARED_PID`.
-    const OTHER_PID: Pid = Pid::new(0x0103);
+    const OTHER_PID: Pid = Pid::from_const(0x0103);
 
     /// PMT declaring one H.264 video PID.
     const SINGLE_H264_PMT: u8 = 0;
@@ -893,10 +894,9 @@ pub(crate) mod tests {
                 tei: false,
                 pusi: false,
                 pid: mpeg_ts::pid::well_known::NULL,
-                scrambling: 0,
-                has_adaptation: false,
-                has_payload: true,
-                continuity_counter: 0,
+                scrambling: ScramblingControl::NotScrambled,
+                adaptation: AdaptationFieldControl::PayloadOnly,
+                continuity_counter: ContinuityCounter::try_new(0).expect("4-bit counter"),
             };
             header.serialize_into(&mut null).unwrap();
             feed(state, &null);
@@ -932,10 +932,9 @@ pub(crate) mod tests {
             tei: false,
             pusi: true,
             pid,
-            scrambling: 0,
-            has_adaptation: false,
-            has_payload: true,
-            continuity_counter: cc & 0x0F,
+            scrambling: ScramblingControl::NotScrambled,
+            adaptation: AdaptationFieldControl::PayloadOnly,
+            continuity_counter: ContinuityCounter::from_wire_masked(cc & 0x0F),
         };
         header.serialize_into(&mut pkt).unwrap();
         pkt[4] = 0x00; // pointer_field
@@ -973,7 +972,7 @@ pub(crate) mod tests {
             streams
                 .first()
                 .map(|s| s.elementary_pid)
-                .unwrap_or(Pid::new(0x1FFF)),
+                .unwrap_or(Pid::from_const(0x1FFF)),
             DescriptorLoop::new(&[]),
             streams,
         );
@@ -1026,10 +1025,9 @@ pub(crate) mod tests {
             tei: false,
             pusi: true,
             pid,
-            scrambling: 0,
-            has_adaptation: false,
-            has_payload: true,
-            continuity_counter: cc & 0x0F,
+            scrambling: ScramblingControl::NotScrambled,
+            adaptation: AdaptationFieldControl::PayloadOnly,
+            continuity_counter: ContinuityCounter::from_wire_masked(cc & 0x0F),
         };
         header.serialize_into(&mut pkt).unwrap();
         pkt[4..4 + pes.len()].copy_from_slice(&pes);
@@ -1204,8 +1202,8 @@ pub(crate) mod tests {
         use scte35_splice::SpliceInfoSection;
         use scte35_splice::commands::{AnyCommand, SpliceInsert};
 
-        const PMT_PID: Pid = Pid::new(0x0100);
-        const SCTE35_PID: Pid = Pid::new(0x0101);
+        const PMT_PID: Pid = Pid::from_const(0x0100);
+        const SCTE35_PID: Pid = Pid::from_const(0x0101);
 
         fn ts_packet(pid: Pid, section: &[u8]) -> [u8; TS_PACKET_SIZE] {
             let mut pkt = [0xFFu8; TS_PACKET_SIZE];
@@ -1213,10 +1211,9 @@ pub(crate) mod tests {
                 tei: false,
                 pusi: true,
                 pid,
-                scrambling: 0,
-                has_adaptation: false,
-                has_payload: true,
-                continuity_counter: 0,
+                scrambling: ScramblingControl::NotScrambled,
+                adaptation: AdaptationFieldControl::PayloadOnly,
+                continuity_counter: ContinuityCounter::try_new(0).expect("4-bit counter"),
             };
             header.serialize_into(&mut pkt).unwrap();
             pkt[4] = 0x00; // pointer_field
@@ -1308,8 +1305,8 @@ pub(crate) mod tests {
         use scte35_splice::commands::{AnyCommand, SpliceInsert};
         use scte35_splice::time::BreakDuration;
 
-        const PMT_PID: Pid = Pid::new(0x0100);
-        const SCTE35_PID: Pid = Pid::new(0x0101);
+        const PMT_PID: Pid = Pid::from_const(0x0100);
+        const SCTE35_PID: Pid = Pid::from_const(0x0101);
         const CYCLES: u32 = 20;
 
         fn ts_packet(pid: Pid, cc: u8, section: &[u8]) -> [u8; TS_PACKET_SIZE] {
@@ -1318,10 +1315,9 @@ pub(crate) mod tests {
                 tei: false,
                 pusi: true,
                 pid,
-                scrambling: 0,
-                has_adaptation: false,
-                has_payload: true,
-                continuity_counter: cc & 0x0F,
+                scrambling: ScramblingControl::NotScrambled,
+                adaptation: AdaptationFieldControl::PayloadOnly,
+                continuity_counter: ContinuityCounter::from_wire_masked(cc & 0x0F),
             };
             header.serialize_into(&mut pkt).unwrap();
             pkt[4] = 0x00; // pointer_field
@@ -1435,8 +1431,8 @@ pub(crate) mod tests {
         use mpeg_ts::pid::well_known as wk;
         use mpeg_ts::ts::TsHeader;
 
-        const PMT_PID: Pid = Pid::new(0x0100);
-        const VIDEO_PID: Pid = Pid::new(0x0101);
+        const PMT_PID: Pid = Pid::from_const(0x0100);
+        const VIDEO_PID: Pid = Pid::from_const(0x0101);
 
         /// A PES packet with the given PTS (`pts_dts_flags = 10`) — encoded
         /// with `mpeg-pes`'s own field serializer, never a hand-rolled one.
@@ -1459,10 +1455,9 @@ pub(crate) mod tests {
                 tei: false,
                 pusi: true,
                 pid,
-                scrambling: 0,
-                has_adaptation: true,
-                has_payload: true,
-                continuity_counter: cc & 0x0F,
+                scrambling: ScramblingControl::NotScrambled,
+                adaptation: AdaptationFieldControl::AdaptationAndPayload,
+                continuity_counter: ContinuityCounter::from_wire_masked(cc & 0x0F),
             };
             header.serialize_into(&mut pkt).unwrap();
             pkt[4] = 1; // adaptation_field_length: flags byte only
@@ -1495,10 +1490,9 @@ pub(crate) mod tests {
                 tei: false,
                 pusi: true,
                 pid,
-                scrambling: 0,
-                has_adaptation: false,
-                has_payload: true,
-                continuity_counter: cc & 0x0F,
+                scrambling: ScramblingControl::NotScrambled,
+                adaptation: AdaptationFieldControl::PayloadOnly,
+                continuity_counter: ContinuityCounter::from_wire_masked(cc & 0x0F),
             };
             header.serialize_into(&mut pkt).unwrap();
             pkt[4] = 0x00; // pointer_field
@@ -1515,10 +1509,9 @@ pub(crate) mod tests {
                 tei: false,
                 pusi: false,
                 pid: wk::NULL,
-                scrambling: 0,
-                has_adaptation: false,
-                has_payload: true,
-                continuity_counter: 0,
+                scrambling: ScramblingControl::NotScrambled,
+                adaptation: AdaptationFieldControl::PayloadOnly,
+                continuity_counter: ContinuityCounter::try_new(0).expect("4-bit counter"),
             };
             header.serialize_into(&mut null).unwrap();
             state.feed_datagram(&null, clock);
@@ -1567,8 +1560,8 @@ pub(crate) mod tests {
         use mpeg_ts::pid::well_known as wk;
         use mpeg_ts::ts::TsHeader;
 
-        const PMT_PID: Pid = Pid::new(0x0100);
-        const MIXED_PID: Pid = Pid::new(0x0101);
+        const PMT_PID: Pid = Pid::from_const(0x0100);
+        const MIXED_PID: Pid = Pid::from_const(0x0101);
 
         fn section_packet(pid: Pid, cc: u8, section: &[u8]) -> [u8; TS_PACKET_SIZE] {
             let mut pkt = [0xFFu8; TS_PACKET_SIZE];
@@ -1576,10 +1569,9 @@ pub(crate) mod tests {
                 tei: false,
                 pusi: true,
                 pid,
-                scrambling: 0,
-                has_adaptation: false,
-                has_payload: true,
-                continuity_counter: cc & 0x0F,
+                scrambling: ScramblingControl::NotScrambled,
+                adaptation: AdaptationFieldControl::PayloadOnly,
+                continuity_counter: ContinuityCounter::from_wire_masked(cc & 0x0F),
             };
             header.serialize_into(&mut pkt).unwrap();
             pkt[4] = 0x00; // pointer_field
@@ -1627,10 +1619,9 @@ pub(crate) mod tests {
                 tei: false,
                 pusi: true,
                 pid: MIXED_PID,
-                scrambling: 0,
-                has_adaptation: false,
-                has_payload: true,
-                continuity_counter: cc & 0x0F,
+                scrambling: ScramblingControl::NotScrambled,
+                adaptation: AdaptationFieldControl::PayloadOnly,
+                continuity_counter: ContinuityCounter::from_wire_masked(cc & 0x0F),
             };
             header.serialize_into(&mut pkt).unwrap();
             let pes = audio_pes();
@@ -1651,10 +1642,9 @@ pub(crate) mod tests {
                 tei: false,
                 pusi: false,
                 pid: wk::NULL,
-                scrambling: 0,
-                has_adaptation: false,
-                has_payload: true,
-                continuity_counter: 0,
+                scrambling: ScramblingControl::NotScrambled,
+                adaptation: AdaptationFieldControl::PayloadOnly,
+                continuity_counter: ContinuityCounter::try_new(0).expect("4-bit counter"),
             };
             header.serialize_into(&mut null).unwrap();
             feed(&mut state, &null);

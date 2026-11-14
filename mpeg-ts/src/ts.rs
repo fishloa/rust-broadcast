@@ -122,8 +122,9 @@ broadcast_common::impl_spec_display!(ScramblingControl);
 /// 2-bit `adaptation_field_control` field — ITU-T H.222.0 (08/2023) Table 2-5.
 ///
 /// Decoders shall discard packets with value `00` (`Reserved`). Null packets use `01`
-/// (`PayloadOnly`). The two flags `has_adaptation`/`has_payload` on [`TsHeader`] carry
-/// the decoded booleans; this enum provides the typed composite view.
+/// (`PayloadOnly`). [`TsHeader::adaptation`] carries the value;
+/// [`TsHeader::has_adaptation`] / [`TsHeader::has_payload`] answer the two flag
+/// questions.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -139,7 +140,7 @@ pub enum AdaptationFieldControl {
 }
 
 impl AdaptationFieldControl {
-    /// Derive from the two decoded boolean flags stored on [`TsHeader`].
+    /// Combine the two decoded boolean flags.
     pub fn from_flags(has_adaptation: bool, has_payload: bool) -> Self {
         match (has_adaptation, has_payload) {
             (false, false) => Self::Reserved,
@@ -149,8 +150,8 @@ impl AdaptationFieldControl {
         }
     }
 
-    /// The `(has_adaptation, has_payload)` flag pair stored on [`TsHeader`];
-    /// the inverse of [`from_flags`](Self::from_flags).
+    /// The `(has_adaptation, has_payload)` flag pair; the inverse of
+    /// [`from_flags`](Self::from_flags).
     pub fn to_flags(self) -> (bool, bool) {
         match self {
             Self::Reserved => (false, false),
@@ -195,12 +196,122 @@ const PUSI_MASK: u8 = 0x40;
 pub const PID_MASK_HI: u8 = 0x1F;
 /// ISO/IEC 13818-1 §2.4.3.3: byte 3 bits `[7:6]` = 2-bit scrambling control.
 pub const SCRAMBLING_MASK: u8 = 0xC0;
+/// Shift of the 2-bit `transport_scrambling_control` in header byte 3.
+const SCRAMBLING_SHIFT: u32 = 6;
+/// Shift of the 2-bit `adaptation_field_control` in header byte 3.
+const ADAPTATION_SHIFT: u32 = 4;
+/// Width mask of the 2-bit `adaptation_field_control` value.
+const ADAPTATION_CONTROL_MASK: u8 = 0b11;
 /// ISO/IEC 13818-1 §2.4.3.3: byte 3 bit 5 = adaptation_field_control (bit 5 = 1 means adaptation present).
 pub const ADAPTATION_FLAG: u8 = 0x20;
 /// ISO/IEC 13818-1 §2.4.3.3: byte 3 bit 4 = adaptation_field_control (bit 4 = 1 means payload present).
 pub const PAYLOAD_FLAG: u8 = 0x10;
 /// ISO/IEC 13818-1 §2.4.3.3: byte 3 bits `[3:0]` = 4-bit continuity_counter.
 pub const CC_MASK: u8 = 0x0F;
+
+/// The 4-bit `continuity_counter` field (ISO/IEC 13818-1 §2.4.3.3).
+///
+/// Wraps modulo 16 per PID; only packets that carry a payload increment it.
+/// The value is always `0..=15`, so an out-of-range counter cannot be written
+/// into a header.
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+pub struct ContinuityCounter(u8);
+
+impl ContinuityCounter {
+    /// The counter value that starts a stream (`0`).
+    pub const ZERO: Self = Self(0);
+
+    /// The counter after `self`: `(self + 1) mod 16`.
+    #[must_use]
+    pub const fn next(self) -> Self {
+        Self((self.0 + 1) % COUNT_MODULUS)
+    }
+
+    /// The raw 4-bit value (`0..=15`).
+    #[must_use]
+    pub const fn value(self) -> u8 {
+        self.0
+    }
+
+    /// The forward distance from `from` to `self`, `(self - from) mod 16`:
+    /// `1` for an in-order step, `0` for a duplicate, `2` for one lost
+    /// packet, wrapping correctly from 15 to 0.
+    #[must_use]
+    pub const fn forward_distance_from(self, from: Self) -> u8 {
+        (self.0 + COUNT_MODULUS - from.0) % COUNT_MODULUS
+    }
+
+    /// Construct from a raw value, rejecting anything wider than 4 bits.
+    ///
+    /// # Errors
+    /// [`ContinuityCounterOutOfRange`] when `value > 15`.
+    pub const fn try_new(value: u8) -> core::result::Result<Self, ContinuityCounterOutOfRange> {
+        if value > CC_MASK {
+            Err(ContinuityCounterOutOfRange { value })
+        } else {
+            Ok(Self(value))
+        }
+    }
+
+    /// Construct from the low 4 bits of `value`, **deliberately** discarding
+    /// the rest: the explicit name for extracting the field out of header
+    /// byte 3 (ISO/IEC 13818-1 §2.4.3.3, bits `[3:0]`).
+    #[must_use]
+    pub const fn from_wire_masked(value: u8) -> Self {
+        Self(value & CC_MASK)
+    }
+}
+
+/// The modulus of the 4-bit `continuity_counter` (ISO/IEC 13818-1 §2.4.3.3).
+const COUNT_MODULUS: u8 = CC_MASK + 1;
+
+impl From<ContinuityCounter> for u8 {
+    fn from(cc: ContinuityCounter) -> Self {
+        cc.0
+    }
+}
+
+impl TryFrom<u8> for ContinuityCounter {
+    type Error = ContinuityCounterOutOfRange;
+    fn try_from(value: u8) -> core::result::Result<Self, Self::Error> {
+        Self::try_new(value)
+    }
+}
+
+impl core::fmt::Debug for ContinuityCounter {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "ContinuityCounter({})", self.0)
+    }
+}
+
+impl core::fmt::Display for ContinuityCounter {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// A value that does not fit the 4-bit `continuity_counter` field
+/// (ISO/IEC 13818-1 §2.4.3.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ContinuityCounterOutOfRange {
+    /// The rejected value.
+    pub value: u8,
+}
+
+impl core::fmt::Display for ContinuityCounterOutOfRange {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "continuity_counter {} exceeds the 4-bit range 0..=15",
+            self.value
+        )
+    }
+}
+
+impl core::error::Error for ContinuityCounterOutOfRange {}
 
 /// Parsed TS header — the 4-byte transport header fields.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -214,14 +325,14 @@ pub struct TsHeader {
     pub pusi: bool,
     /// 13-bit Packet Identifier.
     pub pid: Pid,
-    /// 2-bit transport_scrambling_control (0 = not scrambled).
-    pub scrambling: u8,
-    /// Adaptation field present flag (adaptation_field_control bit 1).
-    pub has_adaptation: bool,
-    /// Payload present flag (adaptation_field_control bit 0).
-    pub has_payload: bool,
-    /// 4-bit continuity_counter (wraps 0..=15 per PID).
-    pub continuity_counter: u8,
+    /// 2-bit `transport_scrambling_control` (ISO/IEC 13818-1 Table 2-4; DVB
+    /// assigns `01`/`10`/`11`, see [`ScramblingControl`]).
+    pub scrambling: ScramblingControl,
+    /// 2-bit `adaptation_field_control` (ISO/IEC 13818-1 Table 2-5): whether
+    /// the adaptation field and/or the payload follow the header.
+    pub adaptation: AdaptationFieldControl,
+    /// 4-bit `continuity_counter` (wraps 0..=15 per PID).
+    pub continuity_counter: ContinuityCounter,
 }
 
 /// Borrowed view into one 188-byte TS packet.
@@ -234,8 +345,9 @@ pub struct TsHeader {
 pub struct TsPacket<'a> {
     /// Parsed header fields.
     pub header: TsHeader,
-    /// Slice into the packet's payload, or `None` when `has_payload == false`
-    /// or the adaptation field consumed the whole packet body.
+    /// Slice into the packet's payload, or `None` when there is no payload
+    /// (`adaptation_field_control` has its payload bit clear) or the
+    /// adaptation field consumed the whole packet body.
     pub payload: Option<&'a [u8]>,
     /// The adaptation-field bytes (after the length byte). Internal capture
     /// feeding [`adaptation_field`](Self::adaptation_field); not public.
@@ -256,20 +368,17 @@ impl TsHeader {
 
         let tei = (b1 & TEI_MASK) != 0;
         let pusi = (b1 & PUSI_MASK) != 0;
-        let pid = Pid::new((((b1 & PID_MASK_HI) as u16) << 8) | (b2 as u16));
-        let scrambling = (b3 & SCRAMBLING_MASK) >> 6;
+        let pid = Pid::from_wire_masked((u16::from(b1 & PID_MASK_HI) << 8) | u16::from(b2));
         let has_adaptation = (b3 & ADAPTATION_FLAG) != 0;
         let has_payload = (b3 & PAYLOAD_FLAG) != 0;
-        let continuity_counter = b3 & CC_MASK;
 
         Ok(Self {
             tei,
             pusi,
             pid,
-            scrambling,
-            has_adaptation,
-            has_payload,
-            continuity_counter,
+            scrambling: ScramblingControl::from_bits(b3 >> SCRAMBLING_SHIFT),
+            adaptation: AdaptationFieldControl::from_flags(has_adaptation, has_payload),
+            continuity_counter: ContinuityCounter::from_wire_masked(b3),
         })
     }
 
@@ -292,31 +401,22 @@ impl TsHeader {
         let pid = self.pid.value();
         buf[1] |= ((pid >> 8) as u8) & PID_MASK_HI;
         buf[2] = pid.to_be_bytes()[1];
-        buf[3] = (self.scrambling << 6) & SCRAMBLING_MASK;
-        if self.has_adaptation {
-            buf[3] |= ADAPTATION_FLAG;
-        }
-        if self.has_payload {
-            buf[3] |= PAYLOAD_FLAG;
-        }
-        buf[3] |= self.continuity_counter & CC_MASK;
+        buf[3] = (self.scrambling.to_bits() << SCRAMBLING_SHIFT)
+            | ((self.adaptation.to_bits() & ADAPTATION_CONTROL_MASK) << ADAPTATION_SHIFT)
+            | self.continuity_counter.value();
         Ok(4)
     }
 
-    /// Typed view of the 2-bit `transport_scrambling_control` field.
-    ///
-    /// See [`ScramblingControl`] for the spec citation (H.222.0 Table 2-4 +
-    /// ETSI TS 100 289 §5.1 Table 1).
-    pub fn scrambling_control(&self) -> ScramblingControl {
-        ScramblingControl::from_bits(self.scrambling)
+    /// Whether an adaptation field follows the header
+    /// (`adaptation_field_control` bit 1, ISO/IEC 13818-1 Table 2-5).
+    pub fn has_adaptation(&self) -> bool {
+        self.adaptation.to_flags().0
     }
 
-    /// Typed view of the `adaptation_field_control` 2-bit field, derived from the
-    /// `has_adaptation`/`has_payload` flags.
-    ///
-    /// See [`AdaptationFieldControl`] for the spec citation (H.222.0 Table 2-5).
-    pub fn adaptation_field_control(&self) -> AdaptationFieldControl {
-        AdaptationFieldControl::from_flags(self.has_adaptation, self.has_payload)
+    /// Whether a payload follows the header/adaptation field
+    /// (`adaptation_field_control` bit 0, ISO/IEC 13818-1 Table 2-5).
+    pub fn has_payload(&self) -> bool {
+        self.adaptation.to_flags().1
     }
 }
 
@@ -400,7 +500,7 @@ impl<'a> TsPacket<'a> {
         // Reject (this crate's existing policy in `owned.rs`) rather than
         // truncate: leave `adaptation` as `None` for an over-long field, same
         // as `OwnedTsPacket`.
-        if header.has_adaptation && cursor < TS_PACKET_SIZE {
+        if header.has_adaptation() && cursor < TS_PACKET_SIZE {
             let af_len = raw[cursor] as usize;
             let af_start = cursor + 1;
             if af_len > 0 && af_start < TS_PACKET_SIZE && af_start + af_len <= TS_PACKET_SIZE {
@@ -411,9 +511,9 @@ impl<'a> TsPacket<'a> {
         // re-derive this same "skip past the adaptation field" walk from
         // scratch (with its own `adaptation_field_control` bit-mask) instead
         // of reusing this one.
-        cursor += adaptation_field_skip(raw, header.has_adaptation);
+        cursor += adaptation_field_skip(raw, header.has_adaptation());
 
-        if header.has_payload && cursor < TS_PACKET_SIZE {
+        if header.has_payload() && cursor < TS_PACKET_SIZE {
             payload = Some(&raw[cursor..]);
         }
 
@@ -457,36 +557,76 @@ pub(crate) const PCR_FIELD_LEN: usize = 6;
 
 /// Program Clock Reference (ISO/IEC 13818-1:2007 §2.4.3.5): a 33-bit base on a
 /// 90 kHz clock plus a 9-bit extension on a 27 MHz clock.
+///
+/// Constructing is strict: [`from_parts`](Self::from_parts) / [`from_27mhz`](Self::from_27mhz)
+/// reject parts that do not name a position on the 27 MHz clock, and
+/// [`clock`](Self::clock) hands back the validated
+/// [`broadcast_common::clock33::Clock27`] shared with the ESCR and the
+/// program-stream SCR. Parsing is lossless: the wire extension is 9 bits, so a
+/// real capture can carry `300..=511`, which this type keeps exactly as written
+/// and re-serializes byte-identically; [`to_clock27`](Self::to_clock27) is the
+/// checked view that reports such a value as
+/// [`Error::ClockOutOfRange`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct Pcr {
-    /// 33-bit base (90 kHz units).
-    pub base: u64,
-    /// 9-bit extension (27 MHz units).
-    pub extension: u16,
-}
+pub struct Pcr(broadcast_common::clock33::Clock27);
 
 impl Pcr {
-    /// Full PCR value on the 27 MHz clock: `base * 300 + extension`.
+    /// Construct from the two wire parts, checking both widths.
     ///
-    /// ISO/IEC 13818-1:2007 §2.4.3.5: PCR = `PCR_base * 300 + PCR_ext`.
-    #[must_use]
-    pub fn as_27mhz(self) -> u64 {
-        broadcast_common::clock33::pcr_from_parts(self.base, self.extension)
+    /// # Errors
+    /// [`Error::ClockOutOfRange`] when `base >= 2^33` or `extension >= 300`.
+    pub fn from_parts(base: u64, extension: u16) -> Result<Self> {
+        Ok(Self(broadcast_common::clock33::Clock27::from_parts(
+            base, extension,
+        )?))
     }
 
-    /// Construct a [`Pcr`] from an absolute 27 MHz clock value.
+    /// Construct from an absolute 27 MHz clock value, clamping nothing.
     ///
-    /// Decomposes `ticks` into `base = ticks / 300` and
-    /// `extension = ticks % 300`, clamping each to its wire width
-    /// (33-bit base, 9-bit extension) — ISO/IEC 13818-1:2007 §2.4.3.5.
+    /// # Errors
+    /// [`Error::ClockOutOfRange`] when `ticks >= 2^33 * 300`.
+    pub fn from_27mhz(ticks: u64) -> Result<Self> {
+        Ok(Self(broadcast_common::clock33::Clock27::from_27mhz(ticks)?))
+    }
+
+    /// The validated 27 MHz value.
     ///
-    /// Round-trips with [`as_27mhz`](Self::as_27mhz):
-    /// `Pcr::from_27mhz(p.as_27mhz()) == p` for any valid `Pcr`.
+    /// # Errors
+    /// [`Error::ClockOutOfRange`] for a parsed PCR whose extension is at or
+    /// above 300 (off the 27 MHz clock).
+    pub fn to_clock27(self) -> Result<broadcast_common::clock33::Clock27> {
+        Ok(self.0.to_clock27()?)
+    }
+
+    /// The underlying value, kept exactly as the wire carried it (see the
+    /// type's docs on the lossless parse).
     #[must_use]
-    pub fn from_27mhz(ticks: u64) -> Self {
-        let (base, extension) = broadcast_common::clock33::pcr_split(ticks);
-        Self { base, extension }
+    pub const fn clock(self) -> broadcast_common::clock33::Clock27 {
+        self.0
+    }
+
+    /// 33-bit base (90 kHz units).
+    #[must_use]
+    pub const fn base(self) -> u64 {
+        self.0.base.ticks()
+    }
+
+    /// 9-bit extension as carried: `0..=299` on the 27 MHz clock, `300..=511`
+    /// for a parsed value off it (see [`to_clock27`](Self::to_clock27)).
+    #[must_use]
+    pub const fn extension(self) -> u16 {
+        self.0.ext
+    }
+
+    /// Full PCR value on the 27 MHz clock: `base * 300 + extension`.
+    ///
+    /// ISO/IEC 13818-1:2007 §2.4.3.5: PCR = `PCR_base * 300 + PCR_ext`. For a
+    /// parsed value whose extension is at or above 300 this is not a time on
+    /// the clock; check [`to_clock27`](Self::to_clock27) first.
+    #[must_use]
+    pub fn as_27mhz(self) -> u64 {
+        self.0.ticks()
     }
 
     /// Encode as the exact 6-byte PCR/OPCR field used in the adaptation field
@@ -496,11 +636,12 @@ impl Pcr {
     /// `[base[32:25]][base[24:17]][base[16:9]][base[8:1]][base[0] | 6×reserved(1) | ext[8]][ext[7:0]]`
     ///
     /// The 6 reserved bits are set to `1` as per the spec's "reserved" convention.
-    /// Exact inverse of the private `parse` function.
+    /// Exact inverse of the private `parse` function, including an off-clock
+    /// extension a parsed value kept.
     #[must_use]
     pub fn to_field_bytes(self) -> [u8; PCR_FIELD_LEN] {
-        let b = self.base;
-        let e = self.extension as u64;
+        let b = self.0.base.ticks();
+        let e = u64::from(self.0.ext);
         [
             ((b >> 25) & 0xFF) as u8,
             ((b >> 17) & 0xFF) as u8,
@@ -512,25 +653,33 @@ impl Pcr {
         ]
     }
 
-    /// Decode the 6-byte PCR/OPCR field starting at `at` within `af`.
-    pub(crate) fn parse(af: &[u8], at: usize) -> Result<Self> {
-        let b: &[u8; PCR_FIELD_LEN] = af
-            .get(at..at + PCR_FIELD_LEN)
-            .and_then(|s| s.try_into().ok())
-            .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
-                    need: at + PCR_FIELD_LEN,
-                    have: af.len(),
-                    what: "adaptation_field PCR",
-                },
-            ))?;
+    /// Decode six PCR/OPCR field bytes (`buf[from..from + 6]`).
+    ///
+    /// Lossless for every field the wire can carry: the 9-bit extension is kept
+    /// as read (`0..=511`) so the packet round-trips byte-identically, and a
+    /// value off the 27 MHz clock is reported by
+    /// [`to_clock27`](Self::to_clock27), not here.
+    pub(crate) fn parse(buf: &[u8], from: usize) -> Result<Self> {
+        let end = from + PCR_FIELD_LEN;
+        let b: &[u8; PCR_FIELD_LEN] =
+            buf.get(from..end)
+                .and_then(|s| s.try_into().ok())
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: end,
+                        have: buf.len(),
+                        what: "adaptation_field PCR",
+                    },
+                ))?;
         let base = ((b[0] as u64) << 25)
             | ((b[1] as u64) << 17)
             | ((b[2] as u64) << 9)
             | ((b[3] as u64) << 1)
-            | ((b[4] as u64) >> 7);
-        let extension = (((b[4] & 0x01) as u16) << 8) | (b[5] as u16);
-        Ok(Self { base, extension })
+            | (u64::from(b[4]) >> 7);
+        let extension = ((b[4] & 0x01) as u16) << 8 | u16::from(b[5]);
+        Ok(Self(broadcast_common::clock33::Clock27::from_wire_parts(
+            base, extension,
+        )))
     }
 }
 
@@ -1130,7 +1279,7 @@ impl<'a> AdaptationField<'a> {
 pub struct SectionReassembler {
     buf: bytes::BytesMut,
     ready: alloc::collections::VecDeque<bytes::Bytes>,
-    last_continuity_counter: Option<u8>,
+    last_continuity_counter: Option<ContinuityCounter>,
 }
 
 impl SectionReassembler {
@@ -1163,7 +1312,7 @@ impl SectionReassembler {
         &mut self,
         payload: &[u8],
         pusi: bool,
-        continuity_counter: u8,
+        continuity_counter: ContinuityCounter,
         discontinuity: bool,
     ) {
         let duplicate = !discontinuity && self.last_continuity_counter == Some(continuity_counter);
@@ -1329,10 +1478,10 @@ pub fn extract_ts_payload(pkt: &[u8]) -> Option<&[u8]> {
         return None;
     }
     let header = TsHeader::parse(&pkt[..4]).ok()?;
-    if !header.has_payload {
+    if !header.has_payload() {
         return None;
     }
-    let cursor = 4 + adaptation_field_skip(pkt, header.has_adaptation);
+    let cursor = 4 + adaptation_field_skip(pkt, header.has_adaptation());
     if cursor < pkt.len() {
         Some(&pkt[cursor..])
     } else {
@@ -1343,6 +1492,10 @@ pub fn extract_ts_payload(pkt: &[u8]) -> Option<&[u8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cc(v: u8) -> ContinuityCounter {
+        ContinuityCounter::try_new(v).expect("4-bit counter")
+    }
     use alloc::string::ToString;
     use alloc::vec;
     use alloc::vec::Vec;
@@ -1380,29 +1533,26 @@ mod tests {
             TsHeader {
                 tei: false,
                 pusi: true,
-                pid: Pid::new(0x0000),
-                scrambling: 0,
-                has_adaptation: false,
-                has_payload: true,
-                continuity_counter: 0,
+                pid: Pid::from_const(0x0000),
+                scrambling: ScramblingControl::NotScrambled,
+                adaptation: AdaptationFieldControl::PayloadOnly,
+                continuity_counter: ContinuityCounter::ZERO,
             },
             TsHeader {
                 tei: true,
                 pusi: false,
-                pid: Pid::new(0x1FFF),
-                scrambling: 0b11,
-                has_adaptation: true,
-                has_payload: true,
-                continuity_counter: 0x0F,
+                pid: Pid::from_const(0x1FFF),
+                scrambling: ScramblingControl::OddKey,
+                adaptation: AdaptationFieldControl::AdaptationAndPayload,
+                continuity_counter: ContinuityCounter::try_new(0x0F).expect("4-bit counter"),
             },
             TsHeader {
                 tei: false,
                 pusi: false,
-                pid: Pid::new(0x0100),
-                scrambling: 0b10,
-                has_adaptation: true,
-                has_payload: false,
-                continuity_counter: 7,
+                pid: Pid::from_const(0x0100),
+                scrambling: ScramblingControl::EvenKey,
+                adaptation: AdaptationFieldControl::AdaptationOnly,
+                continuity_counter: ContinuityCounter::try_new(7).expect("4-bit counter"),
             },
         ];
         for h in cases {
@@ -1421,8 +1571,8 @@ mod tests {
         // b1 = 0b00_010010 = 0x12 (no tei, no pusi)
         let pkt = make_packet(0x12, 0x34, 0x05, &[]);
         let pkt = TsPacket::parse(&pkt).unwrap();
-        assert_eq!(pkt.header.pid, Pid::new(0x1234));
-        assert_eq!(pkt.header.continuity_counter, 5);
+        assert_eq!(pkt.header.pid, Pid::from_const(0x1234));
+        assert_eq!(pkt.header.continuity_counter.value(), 5);
     }
 
     #[test]
@@ -1646,10 +1796,10 @@ mod tests {
         first.extend_from_slice(&section[..183]);
 
         let mut reasm = SectionReassembler::default();
-        reasm.feed_with_continuity(&first, true, 0, false);
-        reasm.feed_with_continuity(&section[183..250], false, 1, false);
-        reasm.feed_with_continuity(&section[183..250], false, 1, false);
-        reasm.feed_with_continuity(&section[250..], false, 2, false);
+        reasm.feed_with_continuity(&first, true, cc(0), false);
+        reasm.feed_with_continuity(&section[183..250], false, cc(1), false);
+        reasm.feed_with_continuity(&section[183..250], false, cc(1), false);
+        reasm.feed_with_continuity(&section[250..], false, cc(2), false);
 
         let out = reasm.pop_section().expect("section survives the duplicate");
         assert_eq!(out.as_ref(), &section[..]);
@@ -1666,9 +1816,9 @@ mod tests {
         first.extend_from_slice(&section[..183]);
 
         let mut reasm = SectionReassembler::default();
-        reasm.feed_with_continuity(&first, true, 0, false);
-        reasm.feed_with_continuity(&section[183..250], false, 0, true);
-        reasm.feed_with_continuity(&section[250..], false, 1, false);
+        reasm.feed_with_continuity(&first, true, cc(0), false);
+        reasm.feed_with_continuity(&section[183..250], false, cc(0), true);
+        reasm.feed_with_continuity(&section[250..], false, cc(1), false);
 
         let out = reasm
             .pop_section()
@@ -1839,22 +1989,11 @@ mod tests {
     #[test]
     fn pcr_as_27mhz_known_value() {
         assert_eq!(
-            Pcr {
-                base: 10_000,
-                extension: 0
-            }
-            .as_27mhz(),
+            Pcr::from_parts(10_000, 0).expect("in range").as_27mhz(),
             3_000_000
         );
         // base*300 + extension: 1*300 + 100 = 400.
-        assert_eq!(
-            Pcr {
-                base: 1,
-                extension: 100
-            }
-            .as_27mhz(),
-            400
-        );
+        assert_eq!(Pcr::from_parts(1, 100).expect("in range").as_27mhz(), 400);
     }
 
     #[test]
@@ -1862,13 +2001,8 @@ mod tests {
         // 6-byte PCR encoding base=10000, extension=0 (reserved bits set).
         let af = [0x10u8, 0x00, 0x00, 0x13, 0x88, 0x7E, 0x00];
         let pcr = Pcr::parse(&af, 1).expect("6 bytes present");
-        assert_eq!(
-            pcr,
-            Pcr {
-                base: 10_000,
-                extension: 0
-            }
-        );
+        assert_eq!(pcr, Pcr::from_parts(10_000, 0).expect("in range"));
+        assert_eq!((pcr.base(), pcr.extension()), (10_000, 0));
         assert_eq!(pcr.as_27mhz(), 3_000_000);
     }
 
@@ -1891,13 +2025,7 @@ mod tests {
             .expect("adaptation field parses");
         assert!(af.discontinuity_indicator);
         assert!(!af.random_access_indicator);
-        assert_eq!(
-            af.pcr,
-            Some(Pcr {
-                base: 10_000,
-                extension: 0
-            })
-        );
+        assert_eq!(af.pcr, Some(Pcr::from_parts(10_000, 0).expect("in range")));
         assert_eq!(af.pcr.unwrap().as_27mhz(), 3_000_000);
         assert!(af.opcr.is_none());
         assert!(af.splice_countdown.is_none());
@@ -2032,48 +2160,29 @@ mod tests {
     }
 
     #[test]
-    fn ts_header_scrambling_control_accessor() {
+    fn ts_header_field_types_carry_the_decoded_values() {
         let hdr = TsHeader {
             tei: false,
             pusi: false,
-            pid: Pid::new(0x0100),
-            scrambling: 0b10,
-            has_adaptation: false,
-            has_payload: true,
-            continuity_counter: 0,
+            pid: Pid::from_const(0x0100),
+            scrambling: ScramblingControl::EvenKey,
+            adaptation: AdaptationFieldControl::PayloadOnly,
+            continuity_counter: ContinuityCounter::ZERO,
         };
-        assert_eq!(hdr.scrambling_control(), ScramblingControl::EvenKey);
-    }
-
-    #[test]
-    fn ts_header_adaptation_field_control_accessor() {
-        let hdr_payload_only = TsHeader {
-            tei: false,
-            pusi: false,
-            pid: Pid::new(0x0100),
-            scrambling: 0,
-            has_adaptation: false,
-            has_payload: true,
-            continuity_counter: 0,
-        };
-        assert_eq!(
-            hdr_payload_only.adaptation_field_control(),
-            AdaptationFieldControl::PayloadOnly
-        );
+        assert_eq!(hdr.scrambling, ScramblingControl::EvenKey);
+        assert_eq!(hdr.adaptation, AdaptationFieldControl::PayloadOnly);
+        assert!(hdr.has_payload());
+        assert!(!hdr.has_adaptation());
 
         let hdr_both = TsHeader {
-            tei: false,
-            pusi: false,
-            pid: Pid::new(0x0100),
-            scrambling: 0,
-            has_adaptation: true,
-            has_payload: true,
-            continuity_counter: 0,
+            adaptation: AdaptationFieldControl::AdaptationAndPayload,
+            ..hdr
         };
         assert_eq!(
-            hdr_both.adaptation_field_control(),
+            hdr_both.adaptation,
             AdaptationFieldControl::AdaptationAndPayload
         );
+        assert!(hdr_both.has_adaptation() && hdr_both.has_payload());
     }
 
     // ── iter_packets / extract_ts_payload helpers ──
@@ -2093,8 +2202,8 @@ mod tests {
 
         let pkts: Vec<_> = super::iter_packets(&buf).collect();
         assert_eq!(pkts.len(), 2, "bad sync packet must be skipped");
-        assert_eq!(pkts[0].header.pid, Pid::new(0x0000));
-        assert_eq!(pkts[1].header.pid, Pid::new(0x0064));
+        assert_eq!(pkts[0].header.pid, Pid::from_const(0x0000));
+        assert_eq!(pkts[1].header.pid, Pid::from_const(0x0064));
     }
 
     #[test]
@@ -2118,31 +2227,23 @@ mod tests {
     #[test]
     fn pcr_from_27mhz_round_trips() {
         for &ticks in &[0u64, 1, 300, 27_000_000, u64::from(u32::MAX), 8_589_934_591] {
-            let pcr = Pcr::from_27mhz(ticks);
+            let pcr = Pcr::from_27mhz(ticks).expect("in range");
             assert_eq!(pcr.as_27mhz(), ticks, "ticks={ticks}");
         }
     }
 
     /// `to_field_bytes` → `parse` → same `Pcr` (field-bytes round-trip).
+    ///
+    /// The extension cases stop at 299: the 9-bit wire field can carry
+    /// `300..=511`, but those cannot name a 27 MHz position, and
+    /// `pcr_wire_extension_at_or_above_300_is_rejected` pins that.
     #[test]
     fn pcr_to_field_bytes_round_trips_parse() {
         let cases = [
-            Pcr {
-                base: 0,
-                extension: 0,
-            },
-            Pcr {
-                base: 10_000,
-                extension: 0,
-            },
-            Pcr {
-                base: 1,
-                extension: 100,
-            },
-            Pcr {
-                base: 0x1_FFFF_FFFF,
-                extension: 0x1FF,
-            },
+            Pcr::from_parts(0, 0).expect("in range"),
+            Pcr::from_parts(10_000, 0).expect("in range"),
+            Pcr::from_parts(1, 100).expect("in range"),
+            Pcr::from_parts(0x1_FFFF_FFFF, 299).expect("in range"),
         ];
         for pcr in cases {
             let bytes = pcr.to_field_bytes();
@@ -2155,14 +2256,64 @@ mod tests {
         }
     }
 
+    /// A full-width PCR survives the wire codec byte-exactly.
+    #[test]
+    fn pcr_full_width_extension_round_trips_the_field() {
+        let pcr = Pcr::from_parts(0x1_FFFF_FFFF, 299).expect("in range");
+        // byte 4: base[0] = 1 (bit 7), reserved 6 bits (0x7E), ext[8] = 1 (bit 0).
+        assert_eq!(pcr.to_field_bytes(), [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x2B]);
+        assert_eq!(Pcr::parse(&pcr.to_field_bytes(), 0).expect("parse"), pcr);
+        assert_eq!(
+            pcr.as_27mhz(),
+            broadcast_common::clock33::PCR_WRAP_27MHZ - 1
+        );
+    }
+
+    /// The 9-bit wire extension can encode 300..=511, which is off the 27 MHz
+    /// clock. Parsing keeps it (lossless round trip) and the checked view
+    /// reports it, so a real capture still parses and re-serializes.
+    #[test]
+    fn pcr_off_clock_wire_extension_parses_losslessly_and_reports() {
+        let mut bytes = Pcr::from_parts(5, 0).expect("in range").to_field_bytes();
+        bytes[4] |= 0x01; // extension bit 8
+        bytes[5] = 0x2C; // extension = 0x12C = 300
+        let pcr = Pcr::parse(&bytes, 0).expect("a wire-legal field parses");
+        assert_eq!((pcr.base(), pcr.extension()), (5, 300));
+        assert_eq!(
+            pcr.to_field_bytes(),
+            bytes,
+            "re-serializes byte-identically"
+        );
+        assert!(!pcr.clock().is_valid());
+        assert!(matches!(
+            pcr.to_clock27(),
+            Err(Error::ClockOutOfRange(
+                broadcast_common::clock33::ClockOutOfRange {
+                    field: "27 MHz extension",
+                    value: 300,
+                    ..
+                }
+            ))
+        ));
+        // Every extension the 9-bit field can carry survives the codec.
+        for ext in 0u16..512 {
+            let mut bytes = Pcr::from_parts(0x1_2345_6789 & ((1 << 33) - 1), 0)
+                .expect("in range")
+                .to_field_bytes();
+            bytes[4] = (bytes[4] & !0x01) | ((ext >> 8) as u8 & 0x01);
+            bytes[5] = (ext & 0xFF) as u8;
+            let decoded = Pcr::parse(&bytes, 0).expect("extension is 9 bits on the wire");
+            assert_eq!(decoded.extension(), ext);
+            assert_eq!(decoded.to_field_bytes(), bytes);
+            assert_eq!(decoded.to_clock27().is_ok(), ext < 300);
+        }
+    }
+
     /// Known vector from ts.rs existing test — base=10000, extension=0 produces
     /// the 6-byte encoding `[0x00, 0x00, 0x13, 0x88, 0x7E, 0x00]`.
     #[test]
     fn pcr_to_field_bytes_known_vector() {
-        let pcr = Pcr {
-            base: 10_000,
-            extension: 0,
-        };
+        let pcr = Pcr::from_parts(10_000, 0).expect("in range");
         let bytes = pcr.to_field_bytes();
         assert_eq!(bytes, [0x00, 0x00, 0x13, 0x88, 0x7E, 0x00]);
     }
@@ -2203,10 +2354,7 @@ mod tests {
             discontinuity_indicator: true,
             random_access_indicator: false,
             elementary_stream_priority_indicator: false,
-            pcr: Some(Pcr {
-                base: 10_000,
-                extension: 0,
-            }),
+            pcr: Some(Pcr::from_parts(10_000, 0).expect("in range")),
             opcr: None,
             splice_countdown: None,
             transport_private_data: None,
@@ -2260,10 +2408,7 @@ mod tests {
             discontinuity_indicator: true,
             random_access_indicator: false,
             elementary_stream_priority_indicator: false,
-            pcr: Some(Pcr {
-                base: 10_000,
-                extension: 0,
-            }),
+            pcr: Some(Pcr::from_parts(10_000, 0).expect("in range")),
             opcr: None,
             splice_countdown: None,
             transport_private_data: None,
@@ -2285,14 +2430,8 @@ mod tests {
             discontinuity_indicator: false,
             random_access_indicator: true,
             elementary_stream_priority_indicator: true,
-            pcr: Some(Pcr {
-                base: 1,
-                extension: 100,
-            }),
-            opcr: Some(Pcr {
-                base: 999,
-                extension: 5,
-            }),
+            pcr: Some(Pcr::from_parts(1, 100).expect("in range")),
+            opcr: Some(Pcr::from_parts(999, 5).expect("in range")),
             splice_countdown: Some(-3),
             transport_private_data: None,
             extension: None,
@@ -2339,10 +2478,7 @@ mod tests {
             discontinuity_indicator: false,
             random_access_indicator: false,
             elementary_stream_priority_indicator: false,
-            pcr: Some(Pcr {
-                base: 0,
-                extension: 0,
-            }),
+            pcr: Some(Pcr::from_parts(0, 0).expect("in range")),
             opcr: None,
             splice_countdown: None,
             transport_private_data: None,
@@ -2483,10 +2619,7 @@ mod tests {
             discontinuity_indicator: false,
             random_access_indicator: false,
             elementary_stream_priority_indicator: false,
-            pcr: Some(Pcr {
-                base: 12_345,
-                extension: 7,
-            }),
+            pcr: Some(Pcr::from_parts(12_345, 7).expect("in range")),
             opcr: None,
             splice_countdown: None,
             transport_private_data: None,
@@ -2532,10 +2665,7 @@ mod tests {
             discontinuity_indicator: true,
             random_access_indicator: false,
             elementary_stream_priority_indicator: false,
-            pcr: Some(Pcr {
-                base: 90_000,
-                extension: 50,
-            }),
+            pcr: Some(Pcr::from_parts(90_000, 50).expect("in range")),
             opcr: None,
             splice_countdown: Some(10),
             transport_private_data: Some(&tpd),
@@ -2586,10 +2716,7 @@ mod tests {
         let decoded = AdaptationField::parse(&ser).unwrap();
         assert_eq!(
             decoded.pcr,
-            Some(Pcr {
-                base: 10_000,
-                extension: 0
-            })
+            Some(Pcr::from_parts(10_000, 0).expect("in range"))
         );
         assert!(decoded.discontinuity_indicator);
     }

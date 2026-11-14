@@ -340,7 +340,13 @@ impl Op for PcrRestampOp {
 
         let mut buf = [0u8; TS_PACKET_SIZE];
         buf.copy_from_slice(packet);
-        if OwnedTsPacket::set_pcr(&mut buf, Pcr::from_27mhz(new_27mhz)).is_ok() {
+        // `wrap_add` reduces modulo the 27 MHz modulus, so the value is always
+        // a valid clock reading.
+        let Ok(pcr) = Pcr::from_27mhz(new_27mhz) else {
+            out(packet);
+            return;
+        };
+        if OwnedTsPacket::set_pcr(&mut buf, pcr).is_ok() {
             out(&buf);
         } else {
             out(packet);
@@ -397,7 +403,11 @@ mod tests {
         // Packet k (0-based) observes PCR k*STEP; the first is the anchor.
         for k in 0..N {
             let obs = (k * STEP) % PCR_27MHZ_MODULUS;
-            OwnedTsPacket::set_pcr(&mut buf, Pcr::from_27mhz(obs)).unwrap();
+            OwnedTsPacket::set_pcr(
+                &mut buf,
+                Pcr::from_27mhz(obs).expect("within the PCR range"),
+            )
+            .unwrap();
             op.process(&buf, &mut model, &mut |p| last.copy_from_slice(p));
             assert_eq!(pcr_of(&last), obs, "clean packet {k} must pass through");
         }
@@ -406,7 +416,11 @@ mod tests {
         // anchor at the observed rate: exactly N steps after the anchor.
         let corrupt = ((N - 1) * STEP % PCR_27MHZ_MODULUS + PCR_27MHZ_MODULUS - 135_000_000)
             % PCR_27MHZ_MODULUS;
-        OwnedTsPacket::set_pcr(&mut buf, Pcr::from_27mhz(corrupt)).unwrap();
+        OwnedTsPacket::set_pcr(
+            &mut buf,
+            Pcr::from_27mhz(corrupt).expect("within the PCR range"),
+        )
+        .unwrap();
         op.process(&buf, &mut model, &mut |p| last.copy_from_slice(p));
         assert_eq!(pcr_of(&last), (N * STEP) % PCR_27MHZ_MODULUS);
     }

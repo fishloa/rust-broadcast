@@ -41,7 +41,7 @@ pub const REQUERY_DEFAULT: Duration = Duration::ZERO;
 /// 13818-1 §2.4.4.9, Table 2-33's `PCR_PID` field). A `ManagedService` whose
 /// `pcr_pid` is this value carries no dedicated PCR PID to route — it must be
 /// excluded from [`ManagedCa::required_pids`], never treated as a routable PID.
-const PCR_PID_NONE: Pid = Pid::new(0x1FFF);
+const PCR_PID_NONE: Pid = Pid::from_const(0x1FFF);
 
 /// Errors from the managed CAS-layer API (`Driver::add_service` and friends,
 /// #763).
@@ -463,7 +463,7 @@ const CA_PID_HIGH_MASK: u8 = 0x1F;
 /// carry the mandatory fields.
 fn ca_pid_of(body: &[u8]) -> Option<Pid> {
     let field = body.get(CA_PID_BODY_OFFSET..CA_PID_BODY_OFFSET + CA_PID_FIELD_LEN)?;
-    Some(Pid::new(
+    Some(Pid::from_wire_masked(
         (u16::from(field[0] & CA_PID_HIGH_MASK) << 8) | u16::from(field[1]),
     ))
 }
@@ -535,7 +535,7 @@ mod tests {
     fn set_cat_keeps_every_emm_pid_of_a_shared_caid() {
         let entry = |caid, pid| CatCaEntry {
             ca_system_id: caid,
-            ca_pid: Pid::new(pid),
+            ca_pid: Pid::from_wire_masked(pid),
             private_data: Vec::new(),
         };
         let mut m = ManagedCa::new();
@@ -551,10 +551,10 @@ mod tests {
         assert_eq!(
             m.emm_pids(),
             &[
-                Pid::new(0x0258),
-                Pid::new(0x0259),
-                Pid::new(0x025A),
-                Pid::new(0x033E)
+                Pid::from_const(0x0258),
+                Pid::from_const(0x0259),
+                Pid::from_const(0x025A),
+                Pid::from_const(0x033E)
             ]
         );
     }
@@ -563,8 +563,8 @@ mod tests {
     fn record_tracks_the_service() {
         let mut m = ManagedCa::new();
         let svc = ManagedService {
-            es_pids: vec![Pid::new(0x100), Pid::new(0x101)],
-            ca_pids: vec![Pid::new(0x0064)],
+            es_pids: vec![Pid::from_const(0x100), Pid::from_const(0x101)],
+            ca_pids: vec![Pid::from_const(0x0064)],
             pcr_pid: PCR_PID_NONE,
             cmd: CaPmtCmdId::OkDescrambling,
             last_ca_enable: None,
@@ -600,8 +600,8 @@ mod tests {
         m.record(
             1,
             ManagedService {
-                es_pids: vec![Pid::new(0x100)],
-                ca_pids: vec![Pid::new(0x64)],
+                es_pids: vec![Pid::from_const(0x100)],
+                ca_pids: vec![Pid::from_const(0x64)],
                 pcr_pid: PCR_PID_NONE,
                 cmd: CaPmtCmdId::OkDescrambling,
                 last_ca_enable: None,
@@ -628,8 +628,8 @@ mod tests {
         m.record(
             1,
             ManagedService {
-                es_pids: vec![Pid::new(0x100)],
-                ca_pids: vec![Pid::new(0x64)],
+                es_pids: vec![Pid::from_const(0x100)],
+                ca_pids: vec![Pid::from_const(0x64)],
                 pcr_pid: PCR_PID_NONE,
                 cmd: CaPmtCmdId::OkDescrambling,
                 last_ca_enable: None,
@@ -654,8 +654,8 @@ mod tests {
         m.record(
             1,
             ManagedService {
-                es_pids: vec![Pid::new(0x100)],
-                ca_pids: vec![Pid::new(0x64)],
+                es_pids: vec![Pid::from_const(0x100)],
+                ca_pids: vec![Pid::from_const(0x64)],
                 pcr_pid: PCR_PID_NONE,
                 cmd: CaPmtCmdId::OkDescrambling,
                 last_ca_enable: None,
@@ -674,8 +674,8 @@ mod tests {
         m.record(
             1,
             ManagedService {
-                es_pids: vec![Pid::new(0x100)],
-                ca_pids: vec![Pid::new(0x64)],
+                es_pids: vec![Pid::from_const(0x100)],
+                ca_pids: vec![Pid::from_const(0x64)],
                 pcr_pid: PCR_PID_NONE,
                 cmd: CaPmtCmdId::OkDescrambling,
                 last_ca_enable: None,
@@ -694,8 +694,8 @@ mod tests {
         m.record(
             1,
             ManagedService {
-                es_pids: vec![Pid::new(0x100)],
-                ca_pids: vec![Pid::new(0x64)],
+                es_pids: vec![Pid::from_const(0x100)],
+                ca_pids: vec![Pid::from_const(0x64)],
                 pcr_pid: PCR_PID_NONE,
                 cmd: CaPmtCmdId::OkDescrambling,
                 last_ca_enable: None,
@@ -729,8 +729,8 @@ mod tests {
         m.record(
             1,
             ManagedService {
-                es_pids: vec![Pid::new(0x100), Pid::new(0x101)],
-                ca_pids: vec![Pid::new(0x64)],
+                es_pids: vec![Pid::from_const(0x100), Pid::from_const(0x101)],
+                ca_pids: vec![Pid::from_const(0x64)],
                 pcr_pid: PCR_PID_NONE,
                 cmd: CaPmtCmdId::OkDescrambling,
                 last_ca_enable: None,
@@ -742,8 +742,8 @@ mod tests {
         m.record(
             2,
             ManagedService {
-                es_pids: vec![Pid::new(0x200)],
-                ca_pids: vec![Pid::new(0x65)],
+                es_pids: vec![Pid::from_const(0x200)],
+                ca_pids: vec![Pid::from_const(0x65)],
                 pcr_pid: PCR_PID_NONE,
                 cmd: CaPmtCmdId::OkDescrambling,
                 last_ca_enable: None,
@@ -770,7 +770,7 @@ mod tests {
         assert!(m.services().get(&1).is_none());
         assert_eq!(
             m.descramble_pids(),
-            &[Pid::new(0x200)],
+            &[Pid::from_const(0x200)],
             "descramble_pids must recompute (drop program 1's PIDs) after remove"
         );
     }
@@ -784,8 +784,8 @@ mod tests {
         m.record(
             1,
             ManagedService {
-                es_pids: vec![Pid::new(0x100)],
-                ca_pids: vec![Pid::new(0x64)],
+                es_pids: vec![Pid::from_const(0x100)],
+                ca_pids: vec![Pid::from_const(0x64)],
                 pcr_pid: PCR_PID_NONE,
                 cmd: CaPmtCmdId::OkDescrambling,
                 last_ca_enable: None,
@@ -796,7 +796,7 @@ mod tests {
         );
         m.set_cat(&[CatCaEntry {
             ca_system_id: 0x0648,
-            ca_pid: Pid::new(0x1FF0),
+            ca_pid: Pid::from_const(0x1FF0),
             private_data: Vec::new(),
         }]);
         m.set_cam_caids([0x0648].into_iter().collect());
@@ -832,8 +832,8 @@ mod tests {
         m.record(
             1,
             ManagedService {
-                es_pids: vec![Pid::new(0x0100), Pid::new(0x0101)],
-                ca_pids: vec![Pid::new(0x0064), Pid::new(0x0065)],
+                es_pids: vec![Pid::from_const(0x0100), Pid::from_const(0x0101)],
+                ca_pids: vec![Pid::from_const(0x0064), Pid::from_const(0x0065)],
                 pcr_pid: PCR_PID_NONE,
                 cmd: CaPmtCmdId::OkDescrambling,
                 last_ca_enable: None,
@@ -845,10 +845,10 @@ mod tests {
         m.record(
             2,
             ManagedService {
-                es_pids: vec![Pid::new(0x0200)],
+                es_pids: vec![Pid::from_const(0x0200)],
                 // Shares 0x0065 with program 1 to prove dedup, plus a
                 // distinct 0x0066.
-                ca_pids: vec![Pid::new(0x0065), Pid::new(0x0066)],
+                ca_pids: vec![Pid::from_const(0x0065), Pid::from_const(0x0066)],
                 pcr_pid: PCR_PID_NONE,
                 cmd: CaPmtCmdId::OkDescrambling,
                 last_ca_enable: None,
@@ -860,7 +860,11 @@ mod tests {
 
         assert_eq!(
             m.ca_pids(),
-            &[Pid::new(0x0064), Pid::new(0x0065), Pid::new(0x0066)],
+            &[
+                Pid::from_const(0x0064),
+                Pid::from_const(0x0065),
+                Pid::from_const(0x0066)
+            ],
             "ca_pids must be the dedup+sorted union of both services' ca_pids"
         );
 
@@ -868,13 +872,13 @@ mod tests {
         // exercises all three classes.
         m.set_cat(&[CatCaEntry {
             ca_system_id: 0x0648,
-            ca_pid: Pid::new(0x1FF0),
+            ca_pid: Pid::from_const(0x1FF0),
             private_data: Vec::new(),
         }]);
         m.set_cam_caids([0x0648].into_iter().collect());
         assert_eq!(
             m.emm_pids(),
-            &[Pid::new(0x1FF0)],
+            &[Pid::from_const(0x1FF0)],
             "precondition: emm_pids populated"
         );
 
@@ -882,13 +886,13 @@ mod tests {
             m.required_pids(),
             vec![
                 CAT_PID,
-                Pid::new(0x0064),
-                Pid::new(0x0065),
-                Pid::new(0x0066),
-                Pid::new(0x0100),
-                Pid::new(0x0101),
-                Pid::new(0x0200),
-                Pid::new(0x1FF0)
+                Pid::from_const(0x0064),
+                Pid::from_const(0x0065),
+                Pid::from_const(0x0066),
+                Pid::from_const(0x0100),
+                Pid::from_const(0x0101),
+                Pid::from_const(0x0200),
+                Pid::from_const(0x1FF0)
             ],
             "required_pids must be CAT ∪ descramble_pids ∪ ca_pids ∪ emm_pids"
         );
@@ -908,18 +912,24 @@ mod tests {
         let pmt = PmtSection::parse(&pmt_bytes).unwrap();
         assert_eq!(
             pmt.pcr_pid,
-            Pid::new(0x00FF),
+            Pid::from_const(0x00FF),
             "fixture precondition: dedicated PCR PID outside the ES/CA set"
         );
 
         let svc = service_of(&pmt, CaPmtCmdId::OkDescrambling, vec![], vec![]);
         assert_eq!(
             svc.pcr_pid,
-            Pid::new(0x00FF),
+            Pid::from_const(0x00FF),
             "service_of must capture pmt.pcr_pid"
         );
-        assert_eq!(svc.es_pids, vec![Pid::new(0x0100), Pid::new(0x0101)]);
-        assert_eq!(svc.ca_pids, vec![Pid::new(0x0064), Pid::new(0x0065)]);
+        assert_eq!(
+            svc.es_pids,
+            vec![Pid::from_const(0x0100), Pid::from_const(0x0101)]
+        );
+        assert_eq!(
+            svc.ca_pids,
+            vec![Pid::from_const(0x0064), Pid::from_const(0x0065)]
+        );
 
         let mut m = ManagedCa::new();
         m.record(1550, svc);
@@ -928,7 +938,7 @@ mod tests {
         // absent (it's neither an ES nor a CA nor an EMM PID) and the
         // dedicated PCR clock reference never reaches ci0.
         assert!(
-            m.required_pids().contains(&Pid::new(0x00FF)),
+            m.required_pids().contains(&Pid::from_const(0x00FF)),
             "required_pids must include the service's dedicated PCR PID, got {:?}",
             m.required_pids()
         );
@@ -940,8 +950,8 @@ mod tests {
         m.record(
             1,
             ManagedService {
-                es_pids: vec![Pid::new(0x0100)],
-                ca_pids: vec![Pid::new(0x0064)],
+                es_pids: vec![Pid::from_const(0x0100)],
+                ca_pids: vec![Pid::from_const(0x0064)],
                 // PCR_PID_NONE (0x1FFF, ISO/IEC 13818-1 §2.4.4.9) — this
                 // programme carries no PCR of its own.
                 pcr_pid: PCR_PID_NONE,
@@ -954,7 +964,7 @@ mod tests {
         );
         assert_eq!(
             m.required_pids(),
-            vec![CAT_PID, Pid::new(0x0064), Pid::new(0x0100)],
+            vec![CAT_PID, Pid::from_const(0x0064), Pid::from_const(0x0100)],
             "PCR_PID_NONE (0x1FFF) must never be added to required_pids"
         );
     }
@@ -965,12 +975,12 @@ mod tests {
         m.record(
             1,
             ManagedService {
-                es_pids: vec![Pid::new(0x0100)],
-                ca_pids: vec![Pid::new(0x0064)],
+                es_pids: vec![Pid::from_const(0x0100)],
+                ca_pids: vec![Pid::from_const(0x0064)],
                 // PCR piggybacked on the ES PID (the common case, already
                 // covered by every other fixture in this file) — must not
                 // produce a duplicate/spurious entry.
-                pcr_pid: Pid::new(0x0100),
+                pcr_pid: Pid::from_const(0x0100),
                 cmd: CaPmtCmdId::OkDescrambling,
                 last_ca_enable: None,
                 last_descrambling_ok: false,
@@ -980,7 +990,7 @@ mod tests {
         );
         assert_eq!(
             m.required_pids(),
-            vec![CAT_PID, Pid::new(0x0064), Pid::new(0x0100)],
+            vec![CAT_PID, Pid::from_const(0x0064), Pid::from_const(0x0100)],
             "a pcr_pid coinciding with an ES PID must not duplicate/add a spurious entry"
         );
     }

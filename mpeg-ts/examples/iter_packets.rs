@@ -34,8 +34,8 @@ fn main() {
         let hdr = &pkt.header;
         *pid_counts.entry(hdr.pid.value()).or_insert(0) += 1;
 
-        let sc = hdr.scrambling_control();
-        let afc = hdr.adaptation_field_control();
+        let sc = hdr.scrambling;
+        let afc = hdr.adaptation;
 
         if sc != ScramblingControl::NotScrambled {
             scrambled += 1;
