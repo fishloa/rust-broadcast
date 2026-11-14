@@ -19,13 +19,54 @@
 
 use srt_runtime::km_refresh::{KeyParity, KmRefreshDriver, KmRefreshEvent, KmRefreshThresholds};
 
-const REFRESH_PERIOD: u64 = KmRefreshThresholds::RECOMMENDED.refresh_period; // 2^25
-const PRE_ANNOUNCE: u64 = KmRefreshThresholds::RECOMMENDED.pre_announcement_period; // 4000
+const REFRESH_PERIOD: u64 = KmRefreshThresholds::RECOMMENDED.refresh_period(); // 2^25
+const PRE_ANNOUNCE: u64 = KmRefreshThresholds::RECOMMENDED.pre_announcement_period(); // 4000
 
 #[test]
 fn recommended_thresholds_are_the_spec_values() {
     assert_eq!(REFRESH_PERIOD, 1u64 << 25);
     assert_eq!(PRE_ANNOUNCE, 4000);
+}
+
+#[test]
+fn one_batch_spanning_with_the_real_thresholds_rotates_every_cycle() {
+    let mut driver = KmRefreshDriver::new(KmRefreshThresholds::RECOMMENDED, KeyParity::Even);
+    let batch = 3 * REFRESH_PERIOD - PRE_ANNOUNCE;
+    let events = driver.on_packet_sent(batch);
+    assert_eq!(driver.total_sent(), batch);
+    assert_eq!(
+        events,
+        vec![
+            KmRefreshEvent::PreAnnounce {
+                next_parity: KeyParity::Odd
+            },
+            KmRefreshEvent::Switchover {
+                new_active: KeyParity::Odd
+            },
+            KmRefreshEvent::Decommission {
+                retired: KeyParity::Even
+            },
+            KmRefreshEvent::PreAnnounce {
+                next_parity: KeyParity::Even
+            },
+            KmRefreshEvent::Switchover {
+                new_active: KeyParity::Even
+            },
+            KmRefreshEvent::Decommission {
+                retired: KeyParity::Odd
+            },
+            KmRefreshEvent::PreAnnounce {
+                next_parity: KeyParity::Odd
+            },
+        ]
+    );
+    assert_eq!(driver.active_parity(), KeyParity::Even);
+}
+
+#[test]
+fn degenerate_thresholds_are_rejected() {
+    assert!(KmRefreshThresholds::new(0, 0).is_err());
+    assert!(KmRefreshThresholds::new(4000, 4000).is_err());
 }
 
 #[test]

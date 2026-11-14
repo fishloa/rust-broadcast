@@ -5,7 +5,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_common::len::{fit_u32, need_in, need_out};
 
 use broadcast_common::{Parse, Serialize};
 
@@ -207,7 +207,8 @@ impl Serialize for RandomIndexPack {
             buf[pos..pos + 8].copy_from_slice(&p.byte_offset.to_be_bytes());
             pos += 8;
         }
-        buf[pos..pos + 4].copy_from_slice(&(total as u32).to_be_bytes());
+        buf[pos..pos + 4]
+            .copy_from_slice(&fit_u32(total, "Random Index Pack Length")?.to_be_bytes());
         pos += 4;
         Ok(pos)
     }
@@ -302,6 +303,26 @@ mod tests {
         assert!(matches!(
             RandomIndexPack::parse(&buf),
             Err(Error::InvalidPropertyLength { .. })
+        ));
+    }
+
+    /// The trailing overall Length is range-checked into its 32-bit field
+    /// rather than narrowed with `as u32` (#2758). A RIP that large cannot be
+    /// allocated in a test, so the guard itself is pinned: the value just
+    /// past `u32::MAX` is rejected, and the largest representable one is not.
+    #[test]
+    fn trailing_length_beyond_u32_is_rejected_not_wrapped() {
+        let max = usize::try_from(u32::MAX).unwrap();
+        assert_eq!(
+            broadcast_common::len::fit_u32(max, "Random Index Pack Length"),
+            Ok(u32::MAX)
+        );
+        assert!(matches!(
+            broadcast_common::len::fit_u32(max + 1, "Random Index Pack Length"),
+            Err(broadcast_common::len::FieldOverflow {
+                field: "Random Index Pack Length",
+                ..
+            })
         ));
     }
 }

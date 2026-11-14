@@ -366,7 +366,7 @@ fn plan_mdat_layout(media: &Media, movie_timescale: Timescale) -> Result<MdatLay
     // (start tick, track index, first sample, count) for the global merge.
     let mut pending: Vec<(i64, usize, usize, usize)> = Vec::new();
     for (i, track) in media.tracks.iter().enumerate() {
-        let times = relative_decode_times(track, &TimelineOrigin::of(&media.tracks));
+        let times = relative_decode_times(track, &TimelineOrigin::of(&media.tracks))?;
         let mut chunks: Vec<Chunk> = Vec::new();
         let mut start = 0usize;
         while start < track.samples.len() {
@@ -716,7 +716,7 @@ fn track_timings(media: &Media, movie_timescale: Timescale) -> Result<Vec<TrackT
         .tracks
         .iter()
         .map(|t| -> Result<Span> {
-            let times = relative_decode_times(t, &origin);
+            let times = relative_decode_times(t, &origin)?;
             let pres = t.samples.iter().zip(&times).fold(None, |acc, (s, &d)| {
                 let p = d.saturating_add(i64::from(
                     s.composition_offset().ok().flatten().unwrap_or(0),

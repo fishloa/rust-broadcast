@@ -1,19 +1,30 @@
 use crate::support;
 
+use std::time::Duration;
+
 use broadcast_client::Config;
 use support::replay::{bitrate_bps, replay_paced, replay_with_host};
 
 const CHUNK: usize = 32 * 1024;
 const MAX_BYTES: usize = 3 * 1024 * 1024;
 const MIN_FIXTURES: usize = 20;
-const WALLS_US: [u64; 3] = [0, 300_000, 3_000_000];
-const SOAK_WALLS_US: [u64; 4] = [0, 300_000, 1_000_000, 3_000_000];
+const WALLS: [Option<Duration>; 3] = [
+    None,
+    Some(Duration::from_millis(300)),
+    Some(Duration::from_secs(3)),
+];
+const SOAK_WALLS: [Option<Duration>; 4] = [
+    None,
+    Some(Duration::from_millis(300)),
+    Some(Duration::from_secs(1)),
+    Some(Duration::from_secs(3)),
+];
 
-fn walls() -> &'static [u64] {
+fn walls() -> &'static [Option<Duration>] {
     if std::env::var_os("RUST_BROADCAST_SOAK").is_some() {
-        &SOAK_WALLS_US
+        &SOAK_WALLS
     } else {
-        &WALLS_US
+        &WALLS
     }
 }
 
@@ -41,10 +52,10 @@ fn corpus(mut paths: Vec<std::path::PathBuf>) -> Vec<(String, Vec<u8>)> {
         .collect()
 }
 
-fn with_wall(w: u64) -> Config {
+fn with_wall(w: Option<Duration>) -> Config {
     {
         let mut new_config = Config::default();
-        new_config.tracks_hold_max_wall_us = w;
+        new_config.tracks_hold_max_wall = w;
         new_config
     }
 }
@@ -64,13 +75,13 @@ fn the_hold_never_changes_the_sample_sequence(corpus: Vec<(String, Vec<u8>)>) ->
             let held = replay_paced(bytes, with_wall(*w), CHUNK, bps).samples();
             if base.len() != held.len() {
                 failures.push(format!(
-                    "{name} wall {w}: {} vs {} samples",
+                    "{name} wall {w:?}: {} vs {} samples",
                     base.len(),
                     held.len()
                 ));
             } else if let Some(i) = base.iter().zip(&held).position(|(a, b)| a != b) {
                 failures.push(format!(
-                    "{name} wall {w}: sample {i} differs: {:?} vs {:?}",
+                    "{name} wall {w:?}: sample {i} differs: {:?} vs {:?}",
                     base[i], held[i]
                 ));
             }
@@ -159,9 +170,9 @@ fn a_host_playing_from_start_never_sees_a_late_sample_whatever_the_hold() {
                 replay_with_host(&bytes, with_wall(w), CHUNK, bps, Some(HOST_TICK_US));
             let first_tracks = replay.tracks_times().first().copied();
             if let (Some(start), Some(tracks)) = (host.start_at_us, first_tracks) {
-                assert!(start >= tracks, "{rel} wall {w}: Start before Tracks");
+                assert!(start >= tracks, "{rel} wall {w:?}: Start before Tracks");
             }
-            assert_eq!(host.late_drops, 0, "{rel} wall {w}: {host:?}");
+            assert_eq!(host.late_drops, 0, "{rel} wall {w:?}: {host:?}");
         }
     }
 }

@@ -126,9 +126,10 @@ impl TsHttpSource {
     pub(crate) fn next_deadline(&self) -> Option<Timestamp> {
         let ts = self.ts.next_deadline();
         let hold = self.hold.as_ref().and_then(|h| {
-            let wall = h
-                .started
-                .checked_add(Duration::from_micros(self.hold_limits.max_wall_us));
+            let wall = self
+                .hold_limits
+                .max_wall
+                .and_then(|max| h.started.checked_add(max));
             if !self.active_resolved() {
                 return wall;
             }
@@ -261,12 +262,7 @@ impl TsHttpSource {
             h.bytes,
             h.quiet_bytes,
             h.span_us,
-            u64::try_from(
-                Timestamp::from_micros(self.now_us)
-                    .saturating_sub(h.started)
-                    .as_micros(),
-            )
-            .unwrap_or(u64::MAX),
+            Timestamp::from_micros(self.now_us).saturating_sub(h.started),
         ) || self
             .declared
             .as_ref()

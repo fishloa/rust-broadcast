@@ -7,6 +7,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
+- BREAKING: `km_refresh::KmRefreshThresholds` is `#[non_exhaustive]` with private fields; build it with `KmRefreshThresholds::new(refresh_period, pre_announcement_period)`, which rejects `pre_announcement_period == 0` and any pre-announcement at or past the refresh period, and read it back with `refresh_period()`/`pre_announcement_period()`. A zero refresh period no longer rotates the active key on every packet. Migration: `KmRefreshThresholds { refresh_period: r, pre_announcement_period: p }` -> `KmRefreshThresholds::new(r, p)` (#2753, #2771).
+- `KmRefreshDriver::on_packet_sent` rotates through every cycle a batch crosses, returning each cycle's PreAnnounce/Switchover/Decommission in order, instead of at most one switchover per call (#2753).
+
+### Fixed
+- A truncated handshake extension block header now reports the bytes actually available in `BufferTooShort::have` instead of always `0` (#2752).
+- Control packets validate their numbers against their wire fields, as data packets already did: an ACK's `last_ack_seq` must fit 31 bits and its `ack_number` 31 bits, a DROPREQ's `first_seq`/`last_seq` 31 bits and `message_number` 26 bits. An out-of-range value returns `Error::FieldOverflow` instead of wrapping into a different packet (#2766).
+
+### Changed
 - BREAKING: every TSBPD latency and handshake retransmit setting is a `core::time::Duration` instead of a bare integer: `HandshakeConfig::latency` (was `latency_ms: u16`), `HandshakeConfig::retransmit_after` (was `retransmit_after_ticks: u32`, now the caller-clock silence before a retransmit), their setters `with_latency`/`with_retransmit_after` (were `with_latency_ms`/`with_retransmit_after_ticks`), `NegotiatedParams::latency` (was `latency_ms`), `url::SrtUrl::latency` (was `latency_ms: Option<u16>`), and `CallerHandshake::tick`/`ListenerHandshake::tick`/`RendezvousHandshake::tick` take the caller-clock time advanced since the last call (`tick(elapsed: Duration)`) instead of counting fixed ticks. A latency still goes on the wire as whole milliseconds (rounded down, `DEFAULT_RETRANSMIT_AFTER` replaces the old three-tick default). Migration: `with_latency_ms(180)` -> `with_latency(Duration::from_millis(180))`, `with_retransmit_after_ticks(n)` -> `with_retransmit_after(period / n)`, and `tick()` -> `tick(period)` (#2693).
 
 ### Changed

@@ -9,7 +9,7 @@
 //!   Size.
 //! - **Light** (4-byte CIF): only Last Acknowledged Packet Sequence Number.
 
-use super::{Error, Result, be32, put_be32};
+use super::{Error, Result, SEQ_NUMBER_MASK, be32, put_be32};
 
 /// CIF length, in bytes, of a Full ACK (§3.2.4).
 pub const ACK_CIF_LEN_FULL: usize = 28;
@@ -17,6 +17,10 @@ pub const ACK_CIF_LEN_FULL: usize = 28;
 pub const ACK_CIF_LEN_SMALL: usize = 16;
 /// CIF length, in bytes, of a Light ACK (§3.2.4).
 pub const ACK_CIF_LEN_LIGHT: usize = 4;
+/// Bit width of the 31-bit Acknowledgement Number (§3.2.4). The field shares
+/// the `Type-specific Information` word's low 31 bits; the top bit is the `F`
+/// bit.
+pub const ACK_NUMBER_BITS: u32 = 31;
 
 /// The ACK Control Information Field — its shape (Full/Small/Light) is
 /// selected by which fields are present on the wire (§3.2.4). Data-carrying
@@ -123,6 +127,16 @@ impl AckPacket {
     }
 
     pub(crate) fn write_cif(&self, buf: &mut [u8]) -> Result<()> {
+        let last_ack_seq = match self.cif {
+            AckCif::Full { last_ack_seq, .. }
+            | AckCif::Small { last_ack_seq, .. }
+            | AckCif::Light { last_ack_seq } => last_ack_seq,
+        };
+        broadcast_common::len::fit_bits(
+            u64::from(last_ack_seq),
+            SEQ_NUMBER_MASK.count_ones(),
+            "Last Acknowledged Packet Sequence Number",
+        )?;
         match self.cif {
             AckCif::Full {
                 last_ack_seq,
@@ -213,6 +227,70 @@ mod tests {
             pkt.serialize_into(&mut buf).unwrap();
             assert_eq!(ControlPacket::parse(&buf).unwrap(), pkt);
         }
+    }
+
+    #[test]
+    fn ack_rejects_numbers_that_do_not_fit_their_wire_fields() {
+        let full = AckCif::Full {
+            last_ack_seq: super::super::SEQ_NUMBER_MASK,
+            rtt_us: 2,
+            rtt_var_us: 3,
+            avail_buf_size: 4,
+            pkt_recv_rate: 5,
+            est_link_capacity: 6,
+            recv_rate_bps: 7,
+        };
+        let pkt = ControlPacket::Ack(AckPacket {
+            ack_number: 2u32.pow(ACK_NUMBER_BITS) - 1,
+            timestamp: 1000,
+            dest_socket_id: 2000,
+            cif: full,
+        });
+        let mut buf = alloc::vec![0u8; pkt.serialized_len()];
+        assert_eq!(pkt.serialize_into(&mut buf).unwrap(), buf.len());
+
+        for cif in [
+            AckCif::Full {
+                last_ack_seq: super::super::SEQ_NUMBER_MASK + 1,
+                rtt_us: 2,
+                rtt_var_us: 3,
+                avail_buf_size: 4,
+                pkt_recv_rate: 5,
+                est_link_capacity: 6,
+                recv_rate_bps: 7,
+            },
+            AckCif::Small {
+                last_ack_seq: super::super::SEQ_NUMBER_MASK + 1,
+                rtt_us: 2,
+                rtt_var_us: 3,
+                avail_buf_size: 4,
+            },
+            AckCif::Light {
+                last_ack_seq: super::super::SEQ_NUMBER_MASK + 1,
+            },
+        ] {
+            let p = AckPacket {
+                ack_number: 1,
+                timestamp: 1000,
+                dest_socket_id: 2000,
+                cif,
+            };
+            assert!(matches!(
+                ControlPacket::Ack(p).serialize_into(&mut buf),
+                Err(Error::FieldOverflow(_))
+            ));
+        }
+
+        let p = AckPacket {
+            ack_number: 2u32.pow(ACK_NUMBER_BITS),
+            timestamp: 1000,
+            dest_socket_id: 2000,
+            cif: full,
+        };
+        assert!(matches!(
+            ControlPacket::Ack(p).serialize_into(&mut buf),
+            Err(Error::FieldOverflow(_))
+        ));
     }
 
     #[test]

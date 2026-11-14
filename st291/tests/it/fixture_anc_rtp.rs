@@ -42,13 +42,7 @@ fn parses_expected_fields() {
                 horizontal_offset: 0,
                 s: false,
                 stream_num: 0,
-                content: AncContent {
-                    did: 0x161,
-                    sdid: 0x101,
-                    data_count: 0x102,
-                    user_data_words: vec![0x2CF, 0x101],
-                    checksum: 0x134,
-                },
+                content: AncContent::build(0x61, 0x01, &[0xCF, 0x01]).unwrap(),
             },
             RtpAncPacket {
                 c: true,

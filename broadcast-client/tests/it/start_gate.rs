@@ -1,6 +1,7 @@
 use crate::support;
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use broadcast_client::{
     Action, BufferEvent, Config, ErrorKind, Event, Session, Status, StreamKind, TrackId,
@@ -22,7 +23,7 @@ const PAYLOAD_START: usize = 4;
 const GARBAGE: u8 = 0xa5;
 const TICKS_PER_US: u64 = 27;
 const MICROS: u64 = 1_000_000;
-const BACKSTOP_WALL_US: u64 = 200_000;
+const BACKSTOP_WALL_US: Duration = Duration::from_millis(200);
 const FLAP_WINDOW_US: u64 = 2_000_000;
 const DEFAULT_START_LEAD_US: u64 = 1_800_000;
 const START_LEADS_US: [u64; 2] = [1_800_000, 1_100_000];
@@ -132,20 +133,20 @@ fn config_with_lead(hold: Hold, len: usize, start_lead_us: u64) -> Config {
         Hold::Early => Config::default(),
         Hold::Disabled => {
             let mut new_config = Config::default();
-            new_config.tracks_hold_max_wall_us = 0;
-            new_config.tracks_hold_max_media_us = 0;
+            new_config.tracks_hold_max_wall = None;
+            new_config.tracks_hold_max_media = None;
             new_config
         }
         Hold::Backstop => {
             let mut new_config = Config::default();
             new_config.tracks_hold_quiet_input_bytes = len / 2;
             new_config.tracks_hold_max_input_bytes = len;
-            new_config.tracks_hold_max_wall_us = BACKSTOP_WALL_US;
+            new_config.tracks_hold_max_wall = Some(BACKSTOP_WALL_US);
             new_config
         }
     };
     cfg.buffer.policy.initial = micros_as_duration(start_lead_us);
-    cfg.start_pending_track_hard_cap_us = 0;
+    cfg.start_pending_track_hard_cap = Duration::ZERO;
     cfg.record_buffer_inputs = true;
     cfg
 }
@@ -588,19 +589,19 @@ fn start_waits_for_audio_when_an_unresolvable_pid_is_in_the_mux() {
     }
 }
 
-const NO_WAIT_US: u64 = 0;
-const SHORT_WAIT_US: u64 = 500_000;
+const NO_WAIT_US: Duration = Duration::ZERO;
+const SHORT_WAIT_US: Duration = Duration::from_millis(500);
 const FLAP_LEAD_US: u64 = 1_100_000;
 const FLAP_SKEW_MS: usize = 500;
 const LONG_SKEW_MS: usize = 1_000;
-const DEFAULT_WAIT_US: u64 = 1_500_000;
+const DEFAULT_WAIT_US: Duration = Duration::from_millis(1_500);
 
-fn cfg_wait(len: usize, lead_us: u64, wait_us: u64) -> Config {
+fn cfg_wait(len: usize, lead_us: u64, wait_us: Duration) -> Config {
     let mut cfg = config_with_lead(Hold::Early, len, lead_us);
     cfg.tracks_hold_quiet_input_bytes = len / 2;
     cfg.tracks_hold_max_input_bytes = len;
-    cfg.start_pending_track_wait_us = wait_us;
-    cfg.start_pending_track_hard_cap_us = 0;
+    cfg.start_pending_track_wait = wait_us;
+    cfg.start_pending_track_hard_cap = Duration::ZERO;
     cfg
 }
 
@@ -616,7 +617,10 @@ fn gulp_with_unresolvable_pid(skew_ms: usize) -> Option<Vec<u8>> {
 
 #[test]
 fn the_default_wait_is_the_documented_one() {
-    assert_eq!(Config::default().start_pending_track_wait_us, 1_500_000);
+    assert_eq!(
+        Config::default().start_pending_track_wait,
+        Duration::from_millis(1_500)
+    );
 }
 
 #[test]
@@ -630,7 +634,11 @@ fn no_wait_starts_on_video_alone_and_brings_back_the_flap() {
         let start = o.marks.iter().find(|m| m.what == Transition::Start);
         assert_eq!(start.map(|m| m.leads_ms.len()), Some(1), "{why}");
         assert!(o.flap_within(FLAP_WINDOW_US).is_some(), "{why}");
-        let waiting = run(&b, cfg_wait(b.len(), FLAP_LEAD_US, 1_500_000), declare);
+        let waiting = run(
+            &b,
+            cfg_wait(b.len(), FLAP_LEAD_US, DEFAULT_WAIT_US),
+            declare,
+        );
         assert!(waiting.start_us() > o.start_us(), "{why}");
         assert!(waiting.flap_within(FLAP_WINDOW_US).is_none(), "{why}");
     }
@@ -651,7 +659,10 @@ fn an_intermediate_wait_changes_start_between_the_extremes() {
             full.start_us().expect(&why),
         );
         assert!(n < s && s < f, "{why}: {n} {s} {f}");
-        assert!(s - n <= SHORT_WAIT_US + TICK_US, "{why}: {n} {s}");
+        assert!(
+            s - n <= duration_micros(SHORT_WAIT_US) + TICK_US,
+            "{why}: {n} {s}"
+        );
         assert!(none.flap_within(FLAP_WINDOW_US).is_some(), "{why}");
         assert!(
             short.flap_within(FLAP_WINDOW_US).is_some(),
@@ -681,17 +692,17 @@ fn the_extreme_waits_validate_and_run() {
     let Some(b) = gulp_with_unresolvable_pid(FLAP_SKEW_MS) else {
         return;
     };
-    for wait in [NO_WAIT_US, u64::MAX] {
+    for wait in [NO_WAIT_US, Duration::MAX] {
         let o = run(&b, cfg_wait(b.len(), FLAP_LEAD_US, wait), Declare::Default);
-        assert!(o.start_us().is_some(), "wait {wait}");
+        assert!(o.start_us().is_some(), "wait {wait:?}");
     }
 }
 
-const CAP_US: u64 = 4_000_000;
+const CAP_US: Duration = Duration::from_secs(4);
 const AFTER_CAP_BOUND_US: u64 = 700_000;
 const LATE_AUDIO_SKEWS_MS: [usize; 2] = [2_000, 3_000];
 const BEYOND_CAP_SKEW_MS: usize = 5_000;
-const LONG_WAIT_US: u64 = 6_000_000;
+const LONG_WAIT_US: Duration = Duration::from_secs(6);
 const AFTER_WAIT_BOUND_US: u64 = 800_000;
 
 fn gulp_skewed(skew_ms: usize) -> Option<Vec<u8>> {
@@ -715,7 +726,7 @@ fn gulp_without_audio() -> Option<Vec<u8>> {
 
 #[test]
 fn the_default_hard_cap_is_the_documented_one() {
-    assert_eq!(Config::default().start_pending_track_hard_cap_us, CAP_US);
+    assert_eq!(Config::default().start_pending_track_hard_cap, CAP_US);
 }
 
 #[test]
@@ -753,8 +764,14 @@ fn audio_beyond_the_hard_cap_starts_on_video_at_the_cap_and_reports_it_once() {
         let start = o.marks.iter().find(|m| m.what == Transition::Start);
         let at = start.expect(&why).at_us;
         assert_eq!(start.unwrap().leads_ms.len(), 1, "video alone: {why}");
-        assert!(at >= first + CAP_US - AFTER_CAP_BOUND_US, "{at}: {why}");
-        assert!(at <= first + CAP_US + AFTER_CAP_BOUND_US, "{at}: {why}");
+        assert!(
+            at >= first + duration_micros(CAP_US) - AFTER_CAP_BOUND_US,
+            "{at}: {why}"
+        );
+        assert!(
+            at <= first + duration_micros(CAP_US) + AFTER_CAP_BOUND_US,
+            "{at}: {why}"
+        );
         assert_eq!(o.notices.len(), 1, "{why}");
         assert_eq!(o.notices[0].1, StreamKind::Audio, "{why}");
         assert!(o.notices[0].0 <= at, "notice precedes the Start: {why}");
@@ -772,7 +789,10 @@ fn a_declared_audio_that_never_arrives_starts_at_the_cap_and_reports_it_once() {
         let why = describe(&CAPTURES[0], Hold::Early, declare, 0, &o);
         let first = o.first_sample_us.expect(&why);
         let at = o.start_us().expect(&why);
-        assert!(at <= first + CAP_US + AFTER_CAP_BOUND_US, "{at}: {why}");
+        assert!(
+            at <= first + duration_micros(CAP_US) + AFTER_CAP_BOUND_US,
+            "{at}: {why}"
+        );
         assert_eq!(o.notices.len(), 1, "{why}");
         assert_eq!(o.notices[0].1, StreamKind::Audio, "{why}");
         assert!(o.flap_within(FLAP_WINDOW_US).is_none(), "{why}");
@@ -785,18 +805,18 @@ fn a_zero_hard_cap_reproduces_the_wait_alone() {
         return;
     };
     let mut capped_off = Config::default();
-    capped_off.start_pending_track_hard_cap_us = 0;
+    capped_off.start_pending_track_hard_cap = Duration::ZERO;
     let off = run(&b, capped_off, Declare::Default);
     let on = run(&b, Config::default(), Declare::Default);
     let first = off.first_sample_us.expect("media");
     let off_at = off.start_us().expect("started without cap");
     let on_at = on.start_us().expect("started with cap");
     assert!(
-        off_at <= first + DEFAULT_WAIT_US + AFTER_CAP_BOUND_US,
+        off_at <= first + duration_micros(DEFAULT_WAIT_US) + AFTER_CAP_BOUND_US,
         "{off_at}"
     );
     assert!(
-        on_at >= off_at + (CAP_US - DEFAULT_WAIT_US) / 2,
+        on_at >= off_at + (duration_micros(CAP_US) - duration_micros(DEFAULT_WAIT_US)) / 2,
         "{off_at} {on_at}"
     );
     assert_eq!(off.notices.len(), 1);
@@ -832,11 +852,7 @@ fn a_long_wait_is_not_cut_short_by_the_controller_silence_timeout() {
         return;
     };
     let silence = Config::default().buffer.track_silence_timeout;
-    assert!(
-        duration_micros(silence) < LONG_WAIT_US,
-        "{}",
-        silence.as_micros()
-    );
+    assert!(silence < LONG_WAIT_US, "{}", silence.as_micros());
     let o = run(
         &b,
         cfg_wait(b.len(), FLAP_LEAD_US, LONG_WAIT_US),
@@ -845,11 +861,11 @@ fn a_long_wait_is_not_cut_short_by_the_controller_silence_timeout() {
     let first = o.first_sample_us.expect("media");
     let at = o.start_us().expect("started");
     assert!(
-        at >= first + LONG_WAIT_US,
+        at >= first + duration_micros(LONG_WAIT_US),
         "start {at} us, first {first} us"
     );
     assert!(
-        at <= first + LONG_WAIT_US + AFTER_WAIT_BOUND_US,
+        at <= first + duration_micros(LONG_WAIT_US) + AFTER_WAIT_BOUND_US,
         "start {at} us"
     );
 }
