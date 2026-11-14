@@ -370,7 +370,7 @@ fn play(port: u16, shape: &Shape) -> Observed {
                     method,
                     url,
                     headers,
-                    range: byte_range,
+                    range: byte_range.map(|s| (s.offset, s.len.get())),
                 }),
                 Action::WakeAt(t) => wake = Some(wake.map_or(t, |w| w.min(t))),
                 _ => {}

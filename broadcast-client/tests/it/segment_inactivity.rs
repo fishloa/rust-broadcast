@@ -96,7 +96,7 @@ impl Drive {
                         conn,
                         url,
                         headers,
-                        byte_range,
+                        byte_range: byte_range.map(|s| (s.offset, s.len.get())),
                         at_us: self.now,
                     };
                     self.log.push(req.clone());

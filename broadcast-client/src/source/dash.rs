@@ -156,7 +156,7 @@ fn new_req(
     purpose: Purpose,
     method: &'static str,
     url: Url,
-    byte_range: Option<(u64, u64)>,
+    byte_range: Option<broadcast_common::range::ByteSpan>,
     body_limit: usize,
 ) -> Req {
     Req::new(
@@ -266,7 +266,7 @@ impl DashSource {
         pull.max_segment_failures = config.max_segment_failures;
         pull.max_init_failures = config.max_key_failures;
         let client = DashClient::new(
-            dash_runtime::client::DashClientConfig::new(url.as_str())
+            dash_runtime::client::DashClientConfig::new(url.clone())
                 .with_dash(config.dash)
                 .with_limits(pull.clone()),
         );
@@ -439,7 +439,7 @@ impl DashSource {
         }
         self.reset_in_flight();
         let mut client = DashClient::new(
-            dash_runtime::client::DashClientConfig::new(self.mpd_url.as_str())
+            dash_runtime::client::DashClientConfig::new(self.mpd_url.clone())
                 .with_dash(self.dash_config)
                 .with_limits(self.pull.clone()),
         );
@@ -994,25 +994,20 @@ impl DashSource {
             ),
             _ => return,
         };
-        match Url::parse(&url) {
-            Ok(parsed) => {
-                let mut req = new_req(
-                    purpose,
-                    method,
-                    parsed,
-                    byte_range,
-                    self.body_limit(purpose),
-                );
-                req.extra.conditional = conditional;
-                if let Some(parked) = self.stash.take(&purpose, &req.original_url, byte_range) {
-                    req.resume_from = Some(u64::try_from(parked.body.len()).unwrap_or(u64::MAX));
-                    req.body = parked.body;
-                    req.basis = Some(parked.basis);
-                }
-                self.send(req, auth, now);
-            }
-            Err(_) => self.fail_purpose(purpose, now, Failure::Transport),
+        let mut req = new_req(
+            purpose,
+            method,
+            url,
+            byte_range,
+            self.body_limit(purpose),
+        );
+        req.extra.conditional = conditional;
+        if let Some(parked) = self.stash.take(&purpose, &req.original_url, byte_range) {
+            req.resume_from = Some(u64::try_from(parked.body.len()).unwrap_or(u64::MAX));
+            req.body = parked.body;
+            req.basis = Some(parked.basis);
         }
+        self.send(req, auth, now);
     }
 
     fn flush_refused(&mut self) {
