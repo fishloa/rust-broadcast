@@ -411,8 +411,8 @@ impl TsHlsPackager {
 fn placement_secs(sample: &Sample, acc_ticks: u64, timescale: Timescale, origin_secs: f64) -> f64 {
     let timescale = f64::from(timescale.get());
     match (
-        sample.timing.map(|t| t.duration).filter(|&d| d != 0),
-        sample.timing.map(|t| t.dts),
+        sample.timing.and_then(|t| t.duration()).filter(|&d| d != 0),
+        sample.timing.and_then(|t| t.dts()),
     ) {
         (None, Some(dts)) => (dts.max(0) as f64 / timescale) - origin_secs,
         _ => acc_ticks as f64 / timescale,
@@ -502,7 +502,9 @@ fn partition_tracks(
     let anchor_samples = &tracks[anchor].samples;
     let anchor_scale = tracks[anchor].spec.timescale.get() as u64;
     let origin_secs = timeline_origin_secs(
-        anchor_samples.first().and_then(|s| s.timing.map(|t| t.dts)),
+        anchor_samples
+            .first()
+            .and_then(|s| s.timing.and_then(|t| t.dts())),
         tracks[anchor].spec.timescale,
     );
 
@@ -1121,7 +1123,7 @@ impl StreamingTsHlsSegmenter {
         if idx == self.anchor {
             if self.origin_secs.is_none() {
                 self.origin_secs = Some(timeline_origin_secs(
-                    sample.timing.map(|t| t.dts),
+                    sample.timing.and_then(|t| t.dts()),
                     self.tracks[self.anchor].spec.timescale,
                 ));
             }
@@ -1609,7 +1611,10 @@ mod tests {
             data: vec![0u8; 4].into(),
             // Boundary selection is duration-driven; absolute time is not
             // what this helper exercises.
-            timing: crate::ir::SampleTiming::from_options(None, None, Some(dur)),
+            timing: Some(crate::ir::SampleTiming::DurationOnly {
+                duration: core::num::NonZeroU32::new(dur)
+                    .unwrap_or_else(|| core::num::NonZeroU32::new(1).unwrap()),
+            }),
             flags: crate::ir::SampleFlags::new(sync),
             provenance: None,
             display: None,
@@ -1691,7 +1696,7 @@ mod tests {
     fn section_sample() -> Sample {
         Sample {
             data: vec![0xFCu8, 0x30, 0x11].into(),
-            timing: crate::ir::SampleTiming::from_options(None, None, None),
+            timing: None,
             flags: crate::ir::SampleFlags::SYNC,
             provenance: None,
             display: None,

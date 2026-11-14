@@ -353,7 +353,7 @@
 //! per call, however many times it is polled.
 
 use std::collections::{BTreeMap, HashMap};
-use std::num::{NonZeroU32, NonZeroUsize};
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -1160,25 +1160,13 @@ pub fn run_dial<D: Dialer>(
 /// [`Dialer::dial`] is retried before giving up, never how long to wait
 /// between attempts (that stays with the caller; see
 /// [Reconnect](self#reconnect-caller-chosen-backoff-never-a-hardcoded-sleep)).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct ReconnectPolicy {
-    /// Maximum number of consecutive [`Dialer::dial`] attempts before
-    /// [`DialSupervisor::try_dial`] gives up.
-    pub max_attempts: NonZeroU32,
-}
-
-impl ReconnectPolicy {
-    /// Build a policy bounded to `max_attempts` consecutive dial failures.
-    ///
-    /// `NonZeroU32` rather than `u32` + a panic: a policy that never even
-    /// tries once is not a real bound, and a value that arrives from a
-    /// config file must not be able to crash the process (the same reasoning
-    /// as [`TrunkConfig`]'s `NonZeroUsize` capacities).
-    pub fn new(max_attempts: NonZeroU32) -> Self {
-        ReconnectPolicy { max_attempts }
-    }
-}
+///
+/// The workspace's one reconnect policy (issue audit 18: the same concept once
+/// lived in multimux and here under the same name); a dial supervisor reads
+/// only [`ReconnectPolicy::max_attempts`](broadcast_common::backoff::ReconnectPolicy::max_attempts),
+/// so its backoff configuration is whatever the caller sets and a bound of
+/// `None` means "never give up".
+pub use broadcast_common::backoff::ReconnectPolicy;
 
 /// The result of one [`DialSupervisor::try_dial`] call.
 ///
@@ -1269,7 +1257,7 @@ impl<D: Dialer> DialSupervisor<D> {
                 ))
             }
             Err(e) => {
-                if self.attempts >= self.policy.max_attempts.get() {
+                if self.policy.exhausted(self.attempts) {
                     self.exhausted = true;
                     DialAttempt::GaveUp(e)
                 } else {
@@ -3060,12 +3048,15 @@ mod tests {
     /// in `new` is now unrepresentable (`NonZeroU32::new(0)` is `None`).
     #[test]
     fn minimum_policy_gives_up_on_first_failure_and_zero_is_unrepresentable() {
-        assert_eq!(NonZeroU32::new(0), None);
+        assert_eq!(std::num::NonZeroU32::new(0), None);
         let dialer = ScriptedDialer {
             sessions: VecDeque::new(),
             fail_with: FakeError("connection refused"),
         };
-        let mut supervisor = DialSupervisor::new(dialer, ReconnectPolicy::new(NonZeroU32::MIN));
+        let mut supervisor = DialSupervisor::new(
+            dialer,
+            ReconnectPolicy::default().with_max_attempts(std::num::NonZeroU32::MIN),
+        );
         assert!(matches!(
             supervisor.try_dial(trunk_config(), handshake(), max_programs()),
             DialAttempt::GaveUp(_)
@@ -3080,8 +3071,10 @@ mod tests {
             sessions: VecDeque::new(),
             fail_with: FakeError("connection refused"),
         };
-        let mut supervisor =
-            DialSupervisor::new(dialer, ReconnectPolicy::new(NonZeroU32::new(3).unwrap()));
+        let mut supervisor = DialSupervisor::new(
+            dialer,
+            ReconnectPolicy::default().with_max_attempts(std::num::NonZeroU32::new(3).unwrap()),
+        );
 
         assert!(matches!(
             supervisor.try_dial(trunk_config(), handshake(), max_programs()),
@@ -3123,8 +3116,10 @@ mod tests {
             sessions: VecDeque::from(vec![good_session]),
             fail_with: FakeError("refused"),
         };
-        let mut supervisor =
-            DialSupervisor::new(dialer, ReconnectPolicy::new(NonZeroU32::new(2).unwrap()));
+        let mut supervisor = DialSupervisor::new(
+            dialer,
+            ReconnectPolicy::default().with_max_attempts(std::num::NonZeroU32::new(2).unwrap()),
+        );
 
         // First attempt succeeds immediately (the scripted dialer's one
         // queued session comes out on the very first `dial()` call).

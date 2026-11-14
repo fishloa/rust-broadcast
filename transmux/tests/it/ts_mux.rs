@@ -174,13 +174,13 @@ fn timing_preserved_for_video() {
     // Per-sample DTS delta (== duration) and composition offset (PTS − DTS).
     for (i, (a, b)) in v0.samples.iter().zip(&v2.samples).enumerate() {
         assert_eq!(
-            b.timing.map(|t| t.duration),
-            a.timing.map(|t| t.duration),
+            b.timing.and_then(|t| t.duration()),
+            a.timing.and_then(|t| t.duration()),
             "video sample {i}: DTS delta (duration) must be preserved"
         );
         assert_eq!(
-            b.composition_offset(),
-            a.composition_offset(),
+            b.composition_offset().expect("offset"),
+            a.composition_offset().expect("offset"),
             "video sample {i}: composition offset (PTS − DTS) must be preserved"
         );
     }
@@ -473,16 +473,11 @@ fn ac3_media(spacing_ticks: i64) -> Media {
     t.samples.truncate(4);
     for (i, s) in t.samples.iter_mut().enumerate() {
         let dts = (i as i64) * spacing_ticks;
+        let _ = u32::try_from(scale);
         if let Some(t) = s.timing.as_mut() {
-            t.dts = dts;
-            t.pts = dts;
-            t.duration = u32::try_from(scale).unwrap_or(u32::MAX);
+            t.shift(dts - t.dts().unwrap_or(dts));
         } else {
-            s.timing = Some(transmux::ir::SampleTiming::new(
-                dts,
-                dts,
-                u32::try_from(scale).unwrap_or(u32::MAX),
-            ));
+            s.timing = Some(transmux::ir::SampleTiming::timed(dts, dts));
         }
     }
     let _ = scale;

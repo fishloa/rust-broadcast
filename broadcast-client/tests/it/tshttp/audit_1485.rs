@@ -112,7 +112,9 @@ fn opening_has_a_deadline_and_it_fires_the_failure_path() {
     c.poll_timeout(ts(15_000));
     assert_eq!(
         actions(&mut c),
-        vec![Action::Abort, Action::Reconnect { after_ms: 2_000 }]
+        vec![Action::Abort, Action::Reconnect {
+            after: Duration::from_millis(2000),
+        }]
     );
     assert!(matches!(
         events(&mut c).as_slice(),
@@ -137,7 +139,9 @@ fn opening_response_in_time_cancels_the_opening_deadline() {
 fn short_played_connection_cannot_spin() {
     let mut c = playing(Config::default());
     c.on_eof(ts(0));
-    assert_eq!(actions(&mut c), vec![Action::Reconnect { after_ms: 1_000 }]);
+    assert_eq!(actions(&mut c), vec![Action::Reconnect {
+            after: Duration::from_millis(1000),
+        }]);
     assert_eq!(c.next_deadline(), Some(Timestamp::from_millis(1_000)));
     c.poll_timeout(ts(999));
     assert!(actions(&mut c).is_empty());
@@ -149,7 +153,9 @@ fn short_played_connection_cannot_spin() {
 fn short_played_connection_floor_is_open_to_open() {
     let mut c = playing(Config::default());
     c.on_eof(ts(400));
-    assert_eq!(actions(&mut c), vec![Action::Reconnect { after_ms: 600 }]);
+    assert_eq!(actions(&mut c), vec![Action::Reconnect {
+            after: Duration::from_millis(600),
+        }]);
 }
 
 #[test]
@@ -160,14 +166,18 @@ fn short_played_connection_keeps_attempt_reset() {
     c.poll_timeout(ts(1_000));
     let _ = actions(&mut c);
     c.on_response(500, &[], ts(1_000));
-    assert_eq!(actions(&mut c), vec![Action::Reconnect { after_ms: 2_000 }]);
+    assert_eq!(actions(&mut c), vec![Action::Reconnect {
+            after: Duration::from_millis(2000),
+        }]);
 }
 
 #[test]
 fn long_lived_stream_reconnects_with_zero_delay() {
     let mut c = playing(Config::default());
     c.on_eof(ts(60_000));
-    assert_eq!(actions(&mut c), vec![Action::Reconnect { after_ms: 0 }]);
+    assert_eq!(actions(&mut c), vec![Action::Reconnect {
+            after: Duration::from_millis(0),
+        }]);
     assert_eq!(c.next_deadline(), Some(Timestamp::from_millis(60_000)));
 }
 
@@ -175,7 +185,9 @@ fn long_lived_stream_reconnects_with_zero_delay() {
 fn connection_just_at_the_floor_reconnects_with_zero_delay() {
     let mut c = playing(Config::default());
     c.on_eof(ts(1_000));
-    assert_eq!(actions(&mut c), vec![Action::Reconnect { after_ms: 0 }]);
+    assert_eq!(actions(&mut c), vec![Action::Reconnect {
+            after: Duration::from_millis(0),
+        }]);
 }
 
 #[test]
@@ -389,6 +401,8 @@ fn empty_backoff_and_zero_timeouts_do_not_spin_the_client() {
     c.poll_timeout(ts(1));
     assert_eq!(
         actions(&mut c),
-        vec![Action::Abort, Action::Reconnect { after_ms: 500 }]
+        vec![Action::Abort, Action::Reconnect {
+            after: Duration::from_millis(500),
+        }]
     );
 }

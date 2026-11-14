@@ -133,7 +133,7 @@ fn fixture_path(rel: &str) -> PathBuf {
 fn cumulative(samples: &[Sample], upto: usize) -> u64 {
     samples[..upto]
         .iter()
-        .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
+        .map(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64)
         .sum()
 }
 
@@ -141,7 +141,7 @@ fn cumulative(samples: &[Sample], upto: usize) -> u64 {
 fn range_duration(samples: &[Sample], lo: usize, hi: usize) -> u64 {
     samples[lo..hi]
         .iter()
-        .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
+        .map(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64)
         .sum()
 }
 
@@ -155,7 +155,7 @@ fn index_at_offset(samples: &[Sample], offset_ticks: u64) -> usize {
         if acc >= offset_ticks {
             return i;
         }
-        acc += s.timing.map(|t| t.duration).unwrap_or(0) as u64;
+        acc += s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64;
     }
     samples.len()
 }
@@ -263,7 +263,7 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
     let ad_video_samples = video.samples[content_split..].to_vec();
     let ad_duration_ticks_90k = ad_video_samples
         .iter()
-        .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
+        .map(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64)
         .sum::<u64>();
     let base_audio_samples = audio.samples[..audio_content_split].to_vec();
     let ad_audio_samples = audio.samples[audio_content_split..].to_vec();

@@ -241,10 +241,10 @@ fn samples_of_a_track_never_go_back_in_decode_time() {
     for (id, samples) in run.samples() {
         let mut last: Option<i64> = None;
         for (n, s) in samples.iter().enumerate() {
-            if let (Some(l), Some(d)) = (last, s.timing.map(|t| t.dts)) {
+            if let (Some(l), Some(d)) = (last, s.timing.and_then(|t| t.dts())) {
                 assert!(d >= l, "track {id} sample {n}: dts {d} after {l}");
             }
-            last = s.timing.map(|t| t.dts).or(last);
+            last = s.timing.and_then(|t| t.dts()).or(last);
         }
     }
 }

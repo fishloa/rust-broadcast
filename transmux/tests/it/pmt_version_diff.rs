@@ -1209,7 +1209,7 @@ fn post_removal_payload_is_not_replayed_into_the_re_added_track() {
          replayed pre-removal orphan payload"
     );
     assert_eq!(
-        first.timing.map(|t| t.dts),
+        first.timing.and_then(|t| t.dts()),
         Some(REPLACEMENT_PTS as i64),
         "start_decode_time must not be anchored in the past by a replayed orphan"
     );

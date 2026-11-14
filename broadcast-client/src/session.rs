@@ -40,7 +40,6 @@ use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 use crate::tshttp::Action as TsAction;
 use broadcast_common::clock33::Clock27;
 use broadcast_common::stage::Timestamp;
-use broadcast_common::units::MICROS_PER_MILLI;
 use core::time::Duration;
 
 const SCHEME_HTTP: &str = "http";
@@ -52,10 +51,13 @@ const SCHEME_RTP: &str = "rtp";
 const SCHEME_SRT: &str = "srt";
 const RTSPS_DEFAULT_PORT: u16 = 322;
 const HTTPS_DEFAULT_PORT: u16 = 443;
-const TS_WAKE_TICK_US: u64 = 1_000_000;
 const FIRST_CONN_ID: u32 = 1;
 const STATUS_TOO_MANY_REQUESTS: StatusCode = StatusCode::TOO_MANY_REQUESTS;
 const STATUS_SERVICE_UNAVAILABLE: StatusCode = StatusCode::SERVICE_UNAVAILABLE;
+
+/// The fallback wake a session arms when its next deadline is due on the current poll: one tick
+/// out, so the poll that fires it re-arms the next one rather than returning nothing forever.
+const TS_WAKE_TICK: Duration = Duration::from_secs(1);
 
 const MAX_UNAUTHENTICATED_REPLAYS: u32 = 2;
 
@@ -543,7 +545,7 @@ impl Session {
                 }
             }
             if lost {
-                self.hint(Hint::SourceError);
+                self.hint(Timestamp::from_micros(now_us), Hint::SourceError);
             }
             return;
         }
@@ -621,7 +623,7 @@ impl Session {
             self.flush_rtsp();
             self.settle_buffer();
             if ended {
-                self.hint(hint);
+                self.hint(now, hint);
             }
             return;
         }
@@ -631,7 +633,7 @@ impl Session {
             self.flush_rtmp();
             self.settle_buffer();
             if ended {
-                self.hint(hint);
+                self.hint(now, hint);
             }
             return;
         }
@@ -797,12 +799,18 @@ impl Session {
         self.rtsp.as_ref().map_or(0, |r| r.rtcp_rejected())
     }
 
-    /// Set credentials.
+    /// Set credentials. `now` is the host clock at the call, as for every other input: the
+    /// requests and timers this call starts (an RTSP re-authentication, an HLS resume, a TS
+    /// reconnect) are stamped with it, not with the last instant the session saw.
     ///
     /// # Errors
     /// [`Error::InvalidCredentials`] when the token, user name or password cannot be sent in an
     /// HTTP header; the previous credentials stay in force.
-    pub fn set_credentials(&mut self, creds: crate::Credentials) -> Result<(), Error> {
+    pub fn set_credentials(
+        &mut self,
+        now: Timestamp,
+        creds: crate::Credentials,
+    ) -> Result<(), Error> {
         if self.closed {
             return Ok(());
         }
@@ -812,18 +820,21 @@ impl Session {
             self.auth.preauthorize_basic();
         }
         if let Some(r) = self.rtsp.as_mut() {
-            r.on_credentials(Timestamp::from_micros(self.now_us), &self.auth);
+            r.on_credentials(now, &self.auth);
             self.flush_rtsp();
             return Ok(());
         }
+        // Every source resumes from the instant this call is given, not from the last one the
+        // session saw: a host that idled would otherwise schedule its next request in the past.
+        self.now_us = now.as_micros();
+        if was_waiting && let Some(h) = self.adaptive.as_mut() {
+            h.resume(self.now_us, &mut self.auth);
+            self.flush_adaptive();
+            return Ok(());
+        }
         if was_waiting {
-            if let Some(h) = self.adaptive.as_mut() {
-                h.resume(self.now_us, &mut self.auth);
-                self.flush_adaptive();
-            } else {
-                self.source.reconnect(self.now_us);
-                self.drain_source();
-            }
+            self.source.reconnect(self.now_us);
+            self.drain_source();
         }
         Ok(())
     }
@@ -898,12 +909,14 @@ impl Session {
     /// Switch to another variant of the last [`Event::Variants`]: an HLS variant of the master
     /// playlist, or a video Representation of the current DASH Period (the switch takes effect at the
     /// next segment boundary and is kept in later Periods). After [`Status::Ended`] a known index is
-    /// accepted and ignored: nothing is started and nothing is emitted.
+    /// accepted and ignored: nothing is started and nothing is emitted. `now` is the host clock at
+    /// the call; the requests the switch schedules are stamped with it.
     ///
     /// # Errors
     /// [`Error::NotHls`] for a session that is neither HLS nor DASH, [`Error::NoSuchVariant`] for an
     /// unknown index.
-    pub fn select_variant(&mut self, index: usize) -> Result<(), Error> {
+    pub fn select_variant(&mut self, now: Timestamp, index: usize) -> Result<(), Error> {
+        self.now_us = now.as_micros();
         let Some(h) = self.adaptive.as_mut() else {
             return Err(Error::NotHls);
         };
@@ -927,12 +940,18 @@ impl Session {
     /// addresses every audio AdaptationSet of the current Period in MPD order, `None` stops requesting
     /// audio and a later `Some` starts it again. A manual selection replaces automatic selection
     /// until the session ends. After [`Status::Ended`] the call is accepted and ignored: nothing is
-    /// started and nothing more is emitted.
+    /// started and nothing more is emitted. `now` is the host clock at the call; the requests the
+    /// selection schedules are stamped with it.
     ///
     /// # Errors
     /// [`Error::NotHls`] for a session that is neither HLS nor DASH, [`Error::NoSuchRendition`] for
     /// an out-of-range index or when no master playlist (or MPD selection) was seen yet.
-    pub fn select_audio_rendition(&mut self, index: Option<usize>) -> Result<(), Error> {
+    pub fn select_audio_rendition(
+        &mut self,
+        now: Timestamp,
+        index: Option<usize>,
+    ) -> Result<(), Error> {
+        self.now_us = now.as_micros();
         let Some(h) = self.adaptive.as_mut() else {
             return Err(Error::NotHls);
         };
@@ -1027,8 +1046,10 @@ impl Session {
         self.buffer.default_rendered()
     }
 
-    /// Hint passthrough.
-    pub fn hint(&mut self, h: Hint) {
+    /// Hint passthrough. `now` is the host clock at the call, which the buffer controller reads
+    /// the hint at.
+    pub fn hint(&mut self, now: Timestamp, h: Hint) {
+        self.now_us = now.as_micros();
         if self.closed {
             return;
         }
@@ -1039,8 +1060,10 @@ impl Session {
         }
     }
 
-    /// Re-arm join state without PcrDiscontinuity hint or controller reset.
-    pub fn rejoin(&mut self) {
+    /// Re-arm join state without PcrDiscontinuity hint or controller reset. `now` is the host
+    /// clock at the call, as for every other input.
+    pub fn rejoin(&mut self, now: Timestamp) {
+        self.now_us = now.as_micros();
         if self.closed {
             return;
         }
@@ -1115,7 +1138,9 @@ impl Session {
     /// Queued actions other than [`Action::Close`] are dropped and every live connection gets
     /// exactly one `Close`; an RTSP session with a server-side session id first queues one
     /// [`Action::Send`] carrying `TEARDOWN`. Afterwards `poll` and `next_event` return `None`.
-    pub fn close(&mut self) {
+    /// `now` is the host clock at the call, which the farewell's own timers are stamped with.
+    pub fn close(&mut self, now: Timestamp) {
+        self.now_us = now.as_micros();
         if self.closed {
             return;
         }
@@ -1491,16 +1516,36 @@ impl Session {
             return;
         };
         let now = Timestamp::from_micros(self.now_us);
-        let at = if deadline > now {
-            deadline
-        } else {
-            now.saturating_add(Duration::from_micros(TS_WAKE_TICK_US))
-        };
-        let outstanding = self.ts_wake.is_some_and(|w| w == at || (w > now && w < at));
-        if !outstanding {
-            self.actions.push_back(Action::WakeAt(at));
-            self.ts_wake = Some(at);
+        // A deadline already passed is due on this poll (which raises the work); re-poll one tick
+        // out so the session that fired it re-arms the next one. A deadline that fits no instant
+        // is no deadline and arms no wake.
+        if deadline <= now {
+            self.arm_ts_wake(now.checked_add(TS_WAKE_TICK));
+            return;
         }
+        self.arm_ts_wake(Some(deadline));
+    }
+
+    /// Emit [`Action::WakeAt`] for `at` unless a wake this poll already holds fires no later, and
+    /// remember it. `None` is a wake the host clock cannot reach: it is never emitted.
+    fn arm_ts_wake(&mut self, at: Option<Timestamp>) {
+        let now = Timestamp::from_micros(self.now_us);
+        let outstanding = self.ts_wake == at
+            || at.is_some_and(|at| self.ts_wake.is_some_and(|w| w > now && w < at));
+        if outstanding {
+            return;
+        }
+        if let Some(at) = at {
+            self.actions.push_back(Action::WakeAt(at));
+        }
+        self.ts_wake = at;
+    }
+
+    /// Wait `after` before reopening a TS source: the policy's own backoff, measured from the
+    /// last instant the host gave the session.
+    fn schedule_reconnect(&mut self, after: Duration) {
+        let at = Timestamp::from_micros(self.now_us).checked_add(after);
+        self.arm_ts_wake(at);
     }
 
     fn map_source_action(&mut self, a: TsAction) {
@@ -1551,13 +1596,7 @@ impl Session {
                 self.conn_auth.clear();
                 self.live_conn = None;
             }
-            TsAction::Reconnect { after_ms } => {
-                self.actions
-                    .push_back(Action::WakeAt(Timestamp::from_micros(
-                        self.now_us
-                            .saturating_add(after_ms.saturating_mul(MICROS_PER_MILLI)),
-                    )));
-            }
+            TsAction::Reconnect { after } => self.schedule_reconnect(after),
         }
     }
 
@@ -1772,10 +1811,9 @@ mod tests {
         let at = |i: usize, pts: i64| {
             let mut s = video.samples[i].clone();
             if let Some(t) = s.timing.as_mut() {
-                t.pts = pts;
-                t.dts = pts;
+                t.shift(pts - t.dts().unwrap_or(pts));
             } else {
-                s.timing = Some(transmux::ir::SampleTiming::new(pts, pts, 0));
+                s.timing = Some(transmux::ir::SampleTiming::timed(pts, pts));
             }
             Event::Sample {
                 track: id,

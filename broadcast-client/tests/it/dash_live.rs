@@ -746,7 +746,7 @@ fn a_clock_set_after_close_changes_nothing() {
         Config::default(),
     );
     sim.run_for(SEC);
-    sim.session.close();
+    sim.session.close(ts(sim.world.mono()));
     while sim.session.poll(ts(sim.world.mono())).is_some() {}
     while sim.session.next_event().is_some() {}
     sim.give_host_clock();
@@ -806,7 +806,7 @@ fn a_live_variant_switch_continues_on_the_other_representation_without_a_gap() {
     assert_eq!(m.variants.len(), 2);
     assert_eq!(m.chosen, 1, "the 262 kbit/s Representation is the best");
     let switch_at = sim.world.true_utc();
-    sim.session.select_variant(0).unwrap();
+    sim.session.select_variant(ts(sim.world.mono()), 0).unwrap();
     sim.run_for(20 * SEC);
     assert!(sim.fatal().is_none(), "{:?}", sim.errors());
     let video: Vec<_> = segment_requests(&sim, geo)
@@ -844,7 +844,7 @@ fn a_clock_given_to_a_closed_session_produces_no_event() {
         clock_events(&sim).is_empty(),
         "the ladder is still waiting for UTCTiming"
     );
-    sim.session.close();
+    sim.session.close(ts(sim.world.mono()));
     while sim.session.poll(ts(sim.world.mono())).is_some() {}
     while sim.session.next_event().is_some() {}
     sim.give_host_clock();

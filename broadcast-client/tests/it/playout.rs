@@ -19,7 +19,7 @@ fn ts(us: u64) -> Timestamp {
     Timestamp::from_micros(us)
 }
 
-const TICKS_PER_SEC: u64 = 27_000_000;
+const TICKS_PER_SEC: u64 = broadcast_common::clock33::PCR_HZ;
 const TICKS_PER_MS: u64 = 27_000;
 const VIDEO: u32 = 1;
 const AUDIO: u32 = 2;
@@ -274,8 +274,8 @@ fn lead_points_from(nb_events: &[Event], rendered: &[u32], from: usize) -> Vec<P
                     continue;
                 }
                 let (is_video, ts) = kind[track];
-                let pts = sample.timing.map(|t| t.pts).unwrap();
-                let dur = i64::from(sample.timing.map(|t| t.duration).unwrap_or(0));
+                let pts = sample.timing.and_then(|t| t.pts()).unwrap();
+                let dur = i64::from(sample.timing.and_then(|t| t.duration()).unwrap_or(0));
                 first.entry(*track).or_insert_with(|| to27(pts, ts));
                 let m = max_pts.entry(*track).or_insert(pts);
                 *m = (*m).max(pts);
@@ -349,7 +349,10 @@ fn first_video_pts_after(nb_events: &[Event], from: usize) -> u64 {
             && track.value() == VIDEO
             && !matches!(join, Some(JoinDecision::Drop(_)))
         {
-            return to27(sample.timing.map(|t| t.pts).unwrap(), ts[track].get());
+            return to27(
+                sample.timing.and_then(|t| t.pts()).unwrap(),
+                ts[track].get(),
+            );
         }
     }
     panic!("no video sample after {from}");
@@ -515,21 +518,14 @@ fn long_stream() -> HashMap<String, Vec<u8>> {
         for (t, s) in &samples {
             let mut s = s.clone();
             let off = k * SPAN_SECS * scale(*t);
-            if let Some(d) = s.timing.map(|t| t.dts).map(|d| d + off)
-                && let Some(t) = s.timing.as_mut()
-            {
-                t.dts = d;
-            }
-            if let Some(p) = s.timing.map(|t| t.pts).map(|p| p + off)
-                && let Some(t) = s.timing.as_mut()
-            {
-                t.pts = p;
+            if let Some(t) = s.timing.as_mut() {
+                t.shift(off);
             }
             all.push((*t, s));
         }
     }
     all.sort_by_key(|(t, s)| {
-        i128::from(s.timing.map(|t| t.dts).unwrap()) * 90_000 / i128::from(scale(*t))
+        i128::from(s.timing.and_then(|t| t.dts()).unwrap()) * 90_000 / i128::from(scale(*t))
     });
     let mut seg = StreamingTsHlsSegmenter::new(specs, LONG_TARGET_SECS, LONG_WINDOW).unwrap();
     for (t, s) in all {
@@ -932,7 +928,7 @@ fn set_rendered_tracks_audio_only_uses_audio_origin() {
 fn rejoin_resets_origin_and_restarts() {
     let mut d = partial_vod(vod_lead(500));
     assert_eq!(names(&d.events), vec!["start"]);
-    d.session.rejoin();
+    d.session.rejoin(ts(0));
     d.pump();
     let from = nb(&d.events).len();
     finish_vod(&mut d);
@@ -993,7 +989,7 @@ fn hls_variant_switch_resets_gate() {
     d.serve_all_except(&["http://origin.test/hls/high/index1.ts"]);
     assert_eq!(names(&d.events), vec!["start"]);
     let from = nb(&d.events).len();
-    d.session.select_variant(0).expect("select");
+    d.session.select_variant(ts(0), 0).expect("select");
     d.serve_all_except(&[]);
     let list = nb(&d.events);
     let disc = from
@@ -1181,7 +1177,9 @@ fn playout_audio_rendition_switch_does_not_pin_stale_audio_obs() {
     r.serve_all_except(&withheld_refs);
 
     // Switch to the other audio rendition mid-play; its segments are not served.
-    r.session.select_audio_rendition(Some(1)).expect("switch");
+    r.session
+        .select_audio_rendition(ts(0), Some(1))
+        .expect("switch");
     r.pump();
 
     // Advance playback position to the old audio end; must not spuriously pause

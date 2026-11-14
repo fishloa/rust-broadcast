@@ -209,9 +209,9 @@ fn observe(ts: &[u8], chunk: usize) -> BTreeMap<TrackId, Vec<Sample>> {
                     .or_default()
                     .push((
                         sample.data.to_vec(),
-                        sample.timing.map(|t| t.dts),
-                        sample.timing.map(|t| t.pts),
-                        sample.timing.map(|t| t.duration),
+                        sample.timing.and_then(|t| t.dts()),
+                        sample.timing.and_then(|t| t.pts()),
+                        sample.timing.and_then(|t| t.duration()),
                     ));
             }
         }
@@ -239,9 +239,9 @@ fn batch(ts: &[u8]) -> BTreeMap<TrackId, Vec<Sample>> {
                     .map(|s| {
                         (
                             s.data.to_vec(),
-                            s.timing.map(|t| t.dts),
-                            s.timing.map(|t| t.pts),
-                            s.timing.map(|t| t.duration),
+                            s.timing.and_then(|t| t.dts()),
+                            s.timing.and_then(|t| t.pts()),
+                            s.timing.and_then(|t| t.duration()),
                         )
                     })
                     .collect(),

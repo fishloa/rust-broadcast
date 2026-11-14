@@ -621,7 +621,7 @@ async fn w13_real_multitrack_per_chunk_timeline_is_exact() {
         if specs.iter().any(|s| s.track_id == track.spec.track_id) {
             for sample in &track.samples {
                 events.push((
-                    sample.timing.map(|t| t.dts).unwrap_or(0),
+                    sample.timing.and_then(|t| t.dts()).unwrap_or(0),
                     track.spec.track_id.value(),
                     sample.clone(),
                 ));

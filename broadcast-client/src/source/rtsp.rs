@@ -23,7 +23,7 @@ use url::{Host, Url};
 
 use crate::events::{Action, ErrorKind, Event, Status};
 use crate::redirect;
-use crate::source::fetch::retry::{ReconnectTimer, backoff_ms};
+use crate::source::fetch::retry::ReconnectTimer;
 use crate::source::rtsp_sdp::{ParsedSdp, SdpError, SkippedMedia, TrackInit, parse_tracks};
 use broadcast_auth::{AuthDecision, AuthState};
 use broadcast_common::backoff::mix_seed;
@@ -173,7 +173,6 @@ impl RtspSource {
         let mut request_url = url.clone();
         let _ = request_url.set_username("");
         let _ = request_url.set_password(None);
-        let (backoff_steps_ms, backoff_cap_ms) = backoff_ms(&cfg.backoff);
         let mut me = Self {
             original_url: request_url.clone(),
             max_redirects,
@@ -204,7 +203,7 @@ impl RtspSource {
             seen_first_sample: false,
             stalled: false,
             attempt: 0,
-            retry: ReconnectTimer::new(&backoff_steps_ms, backoff_cap_ms, mix_seed(now_us)),
+            retry: ReconnectTimer::new(&cfg.backoff.steps, cfg.backoff.cap, mix_seed(now_us)),
             connected_at: now,
             last_byte_at: now,
             last_sample_at: now,
@@ -340,7 +339,7 @@ impl RtspSource {
             return;
         }
         self.connected_at = now;
-        self.retry.on_connected(now.as_micros());
+        self.retry.on_connected(now);
         self.last_byte_at = now;
         self.last_sample_at = now;
         if !self.send(req) {
@@ -1180,12 +1179,14 @@ impl RtspSource {
     /// Re-reads the engine's keepalive deadline after a request exchange. The
     /// engine re-arms on the request it builds, so the new deadline is always
     /// ahead of `now`; `max(now + 1)` keeps a coarse clock from waking in a
-    /// loop.
+    /// loop. A `now` at the end of the clock has no next instant, so the wake
+    /// never fires (`checked_add`), never a saturated one due forever.
     fn arm_keepalive_wake(&mut self, now: Timestamp) {
+        let next = now.checked_add(Duration::from_nanos(1));
         self.keepalive_wake = self
             .client
             .poll_timeout()
-            .map(|due| due.max(now.saturating_add_nanos(1)));
+            .map(|due| next.map_or(due, |next| due.max(next)));
     }
 
     fn note_written(&mut self, now: Timestamp) {
@@ -1214,7 +1215,7 @@ impl RtspSource {
 
     fn fail_before_playing(&mut self, now: Timestamp) {
         self.attempt = self.attempt.saturating_add(1);
-        let wait = self.retry.on_disconnected(now.as_micros());
+        let wait = self.retry.on_disconnected(now);
         self.events.push_back(Event::Status(Status::Reconnecting {
             attempt: self.retry.attempts(),
         }));

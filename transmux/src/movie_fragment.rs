@@ -69,6 +69,7 @@ pub(crate) const SAMPLE_FLAGS_NON_SYNC: u32 = 0x0101_0000;
 pub(crate) const SAMPLE_FLAG_IS_NON_SYNC: u32 = 0x0001_0000;
 
 /// One sample of a media fragment's `trun`, as the segment writers describe it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct MediaRunSample {
     /// `sample_duration`, in the track timescale.
     pub duration: u32,

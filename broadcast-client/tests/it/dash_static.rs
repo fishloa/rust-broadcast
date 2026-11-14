@@ -411,7 +411,7 @@ fn close_is_terminal_and_closes_every_connection_in_flight_exactly_once() {
     while sim.log.len() < 6 {
         sim.run_for(5_000);
     }
-    sim.session.close();
+    sim.session.close(ts(sim.world.mono()));
     let mut closed = Vec::new();
     while let Some(a) = sim.session.poll(ts(sim.world.mono())) {
         if let broadcast_client::Action::Close { conn } = a {

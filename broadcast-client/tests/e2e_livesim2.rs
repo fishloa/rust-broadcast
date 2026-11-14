@@ -392,7 +392,7 @@ fn play(port: u16, shape: &Shape) -> Observed {
             .min(IDLE_SLEEP);
         thread::sleep(sleep);
     }
-    session.close();
+    session.close(ts(mono()));
     drain(&mut session, &mut observed);
     observed
 }

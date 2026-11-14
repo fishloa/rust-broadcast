@@ -194,7 +194,9 @@ impl LiveHost {
                     track,
                     sample,
                     join,
-                } if *track == vid => Some((i, sample.timing.map(|t| t.pts).unwrap(), *join)),
+                } if *track == vid => {
+                    Some((i, sample.timing.and_then(|t| t.pts()).unwrap(), *join))
+                }
                 _ => None,
             })
             .collect()
@@ -300,7 +302,7 @@ fn a_reconnect_onto_a_lower_pts_base_starts_playing_on_the_new_timeline() {
     );
 }
 
-const PCR_HZ_U: u64 = 27_000_000;
+const PCR_HZ_U: u64 = broadcast_common::clock33::PCR_HZ;
 const GO_DEADLINE_US: u64 = 5_000_000;
 
 #[test]
@@ -688,7 +690,9 @@ fn no_old_timeline_audio_follows_a_detected_jump() {
     let after: Vec<i64> = h.events[d..]
         .iter()
         .filter_map(|e| match e {
-            Event::Sample { track, sample, .. } if *track == audio => sample.timing.map(|t| t.pts),
+            Event::Sample { track, sample, .. } if *track == audio => {
+                sample.timing.and_then(|t| t.pts())
+            }
             _ => None,
         })
         .collect();

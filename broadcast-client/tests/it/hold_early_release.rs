@@ -259,13 +259,13 @@ fn samples_released_by_a_wake_up_reach_the_controller_in_the_same_poll() {
                 }
                 Event::Sample { track, sample, .. } => {
                     let ts = u64::from(timescale[&track.value()]);
-                    let pts = sample.timing.map(|t| t.pts).unwrap();
-                    let dur = i64::from(sample.timing.map(|t| t.duration).unwrap_or(0));
+                    let pts = sample.timing.and_then(|t| t.pts()).unwrap();
+                    let dur = i64::from(sample.timing.and_then(|t| t.duration()).unwrap_or(0));
                     let end = if is_video[&track.value()] {
                         video
                             .entry(track.value())
                             .or_insert_with(VideoRun::new)
-                            .push(pts, sample.timing.map(|t| t.dts).unwrap_or(pts), dur)
+                            .push(pts, sample.timing.and_then(|t| t.dts()).unwrap_or(pts), dur)
                     } else {
                         pts + dur
                     };

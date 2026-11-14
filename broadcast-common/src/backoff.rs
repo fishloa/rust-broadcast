@@ -54,6 +54,7 @@
 
 use core::cell::Cell;
 use core::fmt;
+use core::num::NonZeroU32;
 use core::time::Duration;
 
 /// The highest attempt the exponential series is raised to; well before it
@@ -407,6 +408,91 @@ impl BackoffSteps {
     /// Whatever [`RetrySchedule::from_steps`] rejects.
     pub fn schedule(&self, seed: u64) -> Result<RetrySchedule, InvalidBackoff> {
         RetrySchedule::from_steps(&self.steps, self.cap, seed)
+    }
+}
+
+/// One reconnect/backoff policy: the schedule a caller retries on and how many
+/// attempts before it gives up.
+///
+/// [`backoff`](Self::backoff) is the schedule's configuration (a `BackoffSteps`
+/// table); [`max_attempts`](Self::max_attempts) is `None` for "never give up",
+/// or a `NonZeroU32` so a policy that gives up at zero attempts is
+/// unrepresentable (a value that arrives from a config file must not be able to
+/// mean "no attempt at all").
+#[derive(Clone, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub struct ReconnectPolicy {
+    /// The retry schedule's step table and cap, as configuration (a
+    /// [`RetrySchedule`] carries a cursor and reseeds on clone, so it is not a
+    /// `Clone`-faithful config value).
+    pub backoff: BackoffSteps,
+    /// How many attempts before giving up; `None` retries forever.
+    pub max_attempts: Option<NonZeroU32>,
+}
+
+impl ReconnectPolicy {
+    /// A policy over `backoff` that never gives up.
+    #[must_use]
+    pub fn new(backoff: BackoffSteps) -> Self {
+        Self {
+            backoff,
+            max_attempts: None,
+        }
+    }
+
+    /// The same policy bounded to `max_attempts` consecutive retries.
+    #[must_use]
+    pub fn with_max_attempts(mut self, max_attempts: NonZeroU32) -> Self {
+        self.max_attempts = Some(max_attempts);
+        self
+    }
+
+    /// A policy whose schedule doubles on every attempt: `initial`, `initial *
+    /// 2`, `initial * 4`, … up to `max` (the last doubling step then `max` as
+    /// the cap). The common exponential-backoff shape a config exposes as two
+    /// bounds rather than a hand-written table.
+    #[must_use]
+    pub fn doubling(initial: Duration, max: Duration) -> Self {
+        let mut steps = alloc::vec::Vec::new();
+        let mut step = if initial.is_zero() {
+            Duration::from_millis(1)
+        } else {
+            initial
+        };
+        while step < max {
+            steps.push(step);
+            step = step.saturating_mul(2);
+        }
+        Self::new(BackoffSteps {
+            steps,
+            cap: max.max(initial),
+        })
+    }
+
+    /// Whether an `attempt` (0-based) is the last one this policy allows.
+    ///
+    /// `false` for a policy that retries forever; for a bounded one, `true` once
+    /// the attempt count has reached [`max_attempts`](Self::max_attempts).
+    #[must_use]
+    pub fn exhausted(&self, attempt: u32) -> bool {
+        self.max_attempts.is_some_and(|max| attempt >= max.get())
+    }
+}
+
+impl Default for ReconnectPolicy {
+    fn default() -> Self {
+        let second = Duration::from_secs(1);
+        Self::new(BackoffSteps {
+            steps: alloc::vec![
+                second,
+                second.saturating_mul(2),
+                second.saturating_mul(4),
+                second.saturating_mul(8),
+                second.saturating_mul(16),
+            ],
+            cap: Duration::from_secs(30),
+        })
     }
 }
 
@@ -800,5 +886,28 @@ mod tests {
         let schedule = steps.schedule(1).unwrap();
         assert_eq!(schedule.raw_delay_for_attempt(0), ms(7));
         assert_eq!(schedule.min(), ms(7));
+    }
+
+    #[test]
+    fn reconnect_policy_bounds_attempts_but_never_repairs_a_schedule() {
+        let steps = BackoffSteps {
+            steps: alloc::vec![ms(500), ms(1_000)],
+            cap: ms(30_000),
+        };
+        // Never give up: `exhausted` is always false.
+        let forever = ReconnectPolicy::new(steps.clone());
+        assert_eq!(forever.max_attempts, None);
+        for attempt in [0, 1, 2, 7, u32::MAX] {
+            assert!(!forever.exhausted(attempt));
+        }
+        // A bounded policy gives up at exactly its bound, and zero is unrepresentable.
+        let bounded = forever
+            .clone()
+            .with_max_attempts(NonZeroU32::new(3).unwrap());
+        assert_eq!(bounded.max_attempts, Some(NonZeroU32::new(3).unwrap()));
+        assert!(!bounded.exhausted(0));
+        assert!(!bounded.exhausted(2));
+        assert!(bounded.exhausted(3));
+        assert!(bounded.exhausted(u32::MAX));
     }
 }

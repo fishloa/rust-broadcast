@@ -328,7 +328,10 @@ fn tracks_precede_first_sample_and_samples_equal_oracle() {
             track.samples.len(),
             "track {id}: every original sample is recovered"
         );
-        let origin = track.samples[0].timing.map(|t| t.pts).expect("fixture pts");
+        let origin = track.samples[0]
+            .timing
+            .and_then(|t| t.pts())
+            .expect("fixture pts");
         for (n, (recovered, original)) in mine.iter().zip(&track.samples).enumerate() {
             assert_eq!(
                 &recovered.data[..],
@@ -336,8 +339,8 @@ fn tracks_precede_first_sample_and_samples_equal_oracle() {
                 "track {id} sample {n}: payload bytes"
             );
             assert_eq!(
-                recovered.timing.map(|t| t.pts),
-                original.timing.map(|t| t.pts).map(|p| p - origin),
+                recovered.timing.and_then(|t| t.pts()),
+                original.timing.and_then(|t| t.pts()).map(|p| p - origin),
                 "track {id} sample {n}: pts"
             );
             assert_eq!(
@@ -505,7 +508,7 @@ fn close_sends_teardown_then_close_conn_once() {
     let mut host = playing();
     host.clear_actions();
     let conn = host.conn.expect("live");
-    host.session.close();
+    host.session.close(ts(0));
     host.drain();
     let order: Vec<&Action> = host.actions.iter().collect();
     assert_eq!(
@@ -518,7 +521,7 @@ fn close_sends_teardown_then_close_conn_once() {
     let teardown = host.server.log.last().expect("teardown reached the server");
     assert_eq!(teardown.method, TEARDOWN);
     assert_eq!(teardown.header("session"), Some(session_id()));
-    host.session.close();
+    host.session.close(ts(0));
     assert!(host.session.poll(ts(host.now + SEC)).is_none());
     assert!(host.session.next_event().is_none());
 }
@@ -549,7 +552,7 @@ fn auth_basic_challenge_flow() {
         "a 401 without credentials is not retried"
     );
     host.session
-        .set_credentials(user_credentials(PASSWORD))
+        .set_credentials(ts(host.now), user_credentials(PASSWORD))
         .unwrap();
     host.drain();
     let describes: Vec<_> = host
@@ -588,7 +591,7 @@ fn auth_digest_challenge_flow() {
         Event::AuthRequired {scheme: AuthScheme::Digest, realm: Some(r), .. } if r == REALM
     )));
     host.session
-        .set_credentials(user_credentials(PASSWORD))
+        .set_credentials(ts(host.now), user_credentials(PASSWORD))
         .unwrap();
     host.drain();
     let second = host
@@ -638,7 +641,7 @@ fn credentials_rejected_emits_auth_rejected() {
     let mut host = connected(Config::default(), authed_server(basic_verifier()));
     host.events();
     host.session
-        .set_credentials(user_credentials("wrong"))
+        .set_credentials(ts(0), user_credentials("wrong"))
         .unwrap();
     host.drain();
     let events = host.events();
@@ -660,7 +663,7 @@ fn credentials_rejected_emits_auth_rejected() {
     );
     assert_eq!(host.server.log.len(), sent);
     host.session
-        .set_credentials(user_credentials(PASSWORD))
+        .set_credentials(ts(host.now), user_credentials(PASSWORD))
         .unwrap();
     host.drain();
     assert_eq!(
@@ -1107,7 +1110,7 @@ fn rtp_packet_loss_does_not_stop_stream() {
 fn late_callbacks_after_close_ignored() {
     let mut host = playing();
     let conn = host.conn.expect("live");
-    host.session.close();
+    host.session.close(ts(0));
     host.drain();
     host.events();
     let seen = host.actions.len();
@@ -1123,7 +1126,7 @@ fn late_callbacks_after_close_ignored() {
         ts(host.now),
     );
     host.session
-        .set_credentials(user_credentials(PASSWORD))
+        .set_credentials(ts(host.now), user_credentials(PASSWORD))
         .unwrap();
     host.session.reconnect(ts(host.now));
     assert!(host.session.poll(ts(host.now + 100 * SEC)).is_none());

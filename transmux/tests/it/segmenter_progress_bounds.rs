@@ -616,7 +616,7 @@ fn section_sample_lands_in_the_same_segment_batch_and_streaming() {
     // cut attributed to the push that produced it, and `streamed` in cut order
     // (which is what `section_segment_index` reads a segment *index* out of).
     for s in &video {
-        if !pushed_cue && s.timing.map(|t| t.dts).unwrap_or(0) >= CUE_DTS {
+        if !pushed_cue && s.timing.and_then(|t| t.dts()).unwrap_or(0) >= CUE_DTS {
             seg.push(TrackId::new(SCTE_ID), section.clone())
                 .expect("push cue");
             streamed.extend(seg.take_ready().into_iter().map(|c| c.bytes));

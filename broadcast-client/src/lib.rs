@@ -8,11 +8,6 @@ extern crate alloc;
 mod buffer;
 pub mod error;
 
-/// Sans-IO fetch cores (retry/backoff policy and helpers).
-pub mod fetch {
-    pub use crate::source::fetch::retry::{HEALTHY_CONNECTION_US, ReconnectTimer, retry_after_us};
-    pub use crate::source::fetch::wall::WallClock;
-}
 pub mod events;
 mod headers;
 pub mod identity;

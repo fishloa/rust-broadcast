@@ -370,7 +370,7 @@ fn auto_select_disabled_starts_no_audio_adapter() {
     assert_eq!(count_video(&h.events), VIDEO_SAMPLES);
     assert_eq!(ended_count(&h.events), 1);
     h.session
-        .select_audio_rendition(Some(0))
+        .select_audio_rendition(ts(0), Some(0))
         .expect("manual select after Ended is accepted and ignored");
     h.run_until(|_| false, SPLIT_STEPS);
     assert_eq!(h.hits(AUDIO_PLAYLIST_URL), 0);
@@ -389,7 +389,7 @@ fn manual_audio_selection_before_ended_still_plays_the_rendition() {
         SPLIT_STEPS,
     );
     h.session
-        .select_audio_rendition(Some(0))
+        .select_audio_rendition(ts(0), Some(0))
         .expect("manual select");
     h.run_until(|evs| count_audio(evs) >= AUDIO_SAMPLES, SPLIT_STEPS);
     assert_eq!(count_audio(&h.events), AUDIO_SAMPLES);
@@ -442,12 +442,12 @@ fn rendition_without_uri_not_fetched() {
         )]
     );
     h.session
-        .select_audio_rendition(Some(0))
+        .select_audio_rendition(ts(0), Some(0))
         .expect("muxed rendition selectable");
     h.run_until(|_| false, 50);
     assert_eq!(h.hits(alt), 0);
     h.session
-        .select_audio_rendition(Some(1))
+        .select_audio_rendition(ts(0), Some(1))
         .expect("uri rendition");
     h.run_until(|_| false, 50);
     assert!(
@@ -481,7 +481,9 @@ fn select_audio_rendition_switches_and_emits_audio_rendition_event() {
     step_until_hits(&mut h, &first_seg, 1);
     let old_conn = h.requests_to(&first_seg)[0].conn;
     assert!(count_audio(&h.events) > 0);
-    h.session.select_audio_rendition(Some(1)).expect("switch");
+    h.session
+        .select_audio_rendition(ts(h.now), Some(1))
+        .expect("switch");
     h.collect();
     assert!(h.closes.contains(&old_conn), "old audio connection closed");
     assert_eq!(
@@ -529,7 +531,9 @@ fn select_audio_none_stops_audio_adapter_and_closes_conns() {
     h.route(&second_seg, vec![Reply::Hang]);
     step_until_hits(&mut h, &second_seg, 1);
     let audio_conn = h.requests_to(&second_seg)[0].conn;
-    h.session.select_audio_rendition(None).expect("stop audio");
+    h.session
+        .select_audio_rendition(ts(h.now), None)
+        .expect("stop audio");
     h.collect();
     assert!(h.closes.contains(&audio_conn), "audio connection closed");
     let audio_before = count_audio(&h.events);
@@ -567,11 +571,11 @@ fn select_audio_out_of_range_and_before_master_error() {
     let f = fixture();
     let mut h = host(&f, default_master(), hls_config());
     assert!(matches!(
-        h.session.select_audio_rendition(Some(0)),
+        h.session.select_audio_rendition(ts(h.now), Some(0)),
         Err(Error::NoSuchRendition)
     ));
     assert!(matches!(
-        h.session.select_audio_rendition(None),
+        h.session.select_audio_rendition(ts(h.now), None),
         Err(Error::NoSuchRendition)
     ));
     h.run_until(
@@ -579,15 +583,16 @@ fn select_audio_out_of_range_and_before_master_error() {
         SPLIT_STEPS,
     );
     assert!(matches!(
-        h.session.select_audio_rendition(Some(1)),
+        h.session.select_audio_rendition(ts(h.now), Some(1)),
         Err(Error::NoSuchRendition)
     ));
     assert!(matches!(
-        h.session.select_audio_rendition(Some(usize::MAX)),
+        h.session
+            .select_audio_rendition(ts(h.now), Some(usize::MAX)),
         Err(Error::NoSuchRendition)
     ));
-    assert!(h.session.select_audio_rendition(Some(0)).is_ok());
-    assert!(h.session.select_audio_rendition(None).is_ok());
+    assert!(h.session.select_audio_rendition(ts(h.now), Some(0)).is_ok());
+    assert!(h.session.select_audio_rendition(ts(h.now), None).is_ok());
 
     let mut ts_host = Session::open(
         Url::parse("http://origin.test/live.ts").unwrap(),
@@ -600,7 +605,7 @@ fn select_audio_out_of_range_and_before_master_error() {
     )
     .expect("open");
     assert!(matches!(
-        ts_host.select_audio_rendition(Some(0)),
+        ts_host.select_audio_rendition(ts(0), Some(0)),
         Err(Error::NotHls)
     ));
 }
@@ -631,7 +636,9 @@ fn select_variant_reevaluates_audio_group() {
     assert_eq!(chosen, 1, "policy picks the high variant");
     let hung = h.requests_to(&hi_second_audio)[0].conn;
     assert_eq!(h.hits(AUDIO_PLAYLIST_URL), 0);
-    h.session.select_variant(0).expect("select variant");
+    h.session
+        .select_variant(ts(h.now), 0)
+        .expect("select variant");
     h.collect();
     assert!(h.closes.contains(&hung), "previous group's audio closed");
     h.run_until(|evs| ended_count(evs) == 1, SPLIT_STEPS);
@@ -747,7 +754,7 @@ fn auth_applies_to_rendition_requests_same_origin_only() {
     let expected = format!("Bearer {BEARER}");
     let mut h = host(&f, default_master(), hls_config());
     h.session
-        .set_credentials(Credentials::bearer(BEARER))
+        .set_credentials(ts(0), Credentials::bearer(BEARER))
         .unwrap();
     h.run_to_end();
     let audio_requests: Vec<&Seen> = h
@@ -770,7 +777,7 @@ fn auth_applies_to_rendition_requests_same_origin_only() {
         f.audio.bodies(CDN_AUDIO_DIR, CDN_AUDIO_PLAYLIST_URL),
     );
     h.session
-        .set_credentials(Credentials::bearer(BEARER))
+        .set_credentials(ts(0), Credentials::bearer(BEARER))
         .unwrap();
     h.run_to_end();
     let cdn: Vec<&Seen> = h
@@ -872,7 +879,7 @@ fn rendition_key_fetch_uses_shared_machinery() {
     }
     h.ok(KEY_URL, AUDIO_KEY.to_vec());
     h.session
-        .set_credentials(Credentials::bearer(BEARER))
+        .set_credentials(ts(0), Credentials::bearer(BEARER))
         .unwrap();
     h.run_to_end();
     assert_eq!(h.hits(KEY_URL), 1, "key fetched once for all segments");
@@ -921,8 +928,8 @@ fn fatal_rendition_error_is_fatal_for_whole_session() {
     let video_before = count_video(&h.events);
     h.run_until(|_| false, 200);
     h.collect();
-    let _ = h.session.select_audio_rendition(Some(1));
-    let _ = h.session.select_variant(0);
+    let _ = h.session.select_audio_rendition(ts(h.now), Some(1));
+    let _ = h.session.select_variant(ts(h.now), 0);
     h.run_until(|_| false, 200);
     h.collect();
     assert_eq!(h.seen.len(), seen_before, "no requests after a fatal error");
@@ -986,7 +993,7 @@ fn late_callbacks_after_close_ignored_for_both_adapters() {
     let video_conn = h.requests_to(&video_seg)[0].conn;
     let audio_conn = h.requests_to(&audio_seg)[0].conn;
     assert_ne!(video_conn, audio_conn);
-    h.session.close();
+    h.session.close(ts(h.now));
     h.collect();
     assert!(h.closes.contains(&video_conn));
     assert!(h.closes.contains(&audio_conn));
@@ -1017,7 +1024,9 @@ fn conn_ids_never_collide_between_adapters() {
     let f = fixture();
     let mut h = host(&f, two_language_master(), hls_config());
     h.run_until(|evs| count_audio(evs) > 0, SPLIT_STEPS);
-    h.session.select_audio_rendition(Some(1)).expect("switch");
+    h.session
+        .select_audio_rendition(ts(h.now), Some(1))
+        .expect("switch");
     h.run_to_end();
     let ids: Vec<ConnId> = h.seen.iter().map(|s| s.conn).collect();
     let unique: HashSet<ConnId> = ids.iter().copied().collect();

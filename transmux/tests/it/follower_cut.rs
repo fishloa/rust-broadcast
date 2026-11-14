@@ -193,7 +193,7 @@ fn check_follower(audio: &Track, movie_ts: Timescale, plans: &[CutPlan]) {
         .map(|p| vec![Vec::new(); p.parts.len().max(1)])
         .collect();
     for s in &audio.samples {
-        let d = s.timing.map(|t| t.dts).unwrap();
+        let d = s.timing.and_then(|t| t.dts()).unwrap();
         let si = segment_of(d, ts, plans);
         expected_segment[si].push(s);
         expected_part[si][part_slot_of(d, ts, &plans[si])].push(s);
@@ -229,7 +229,7 @@ fn check_follower(audio: &Track, movie_ts: Timescale, plans: &[CutPlan]) {
             &validate_media_segment(&seg.bytes),
         );
         if si > 0 {
-            let first = expected[0].timing.map(|t| t.dts).unwrap();
+            let first = expected[0].timing.and_then(|t| t.dts()).unwrap();
             assert!(
                 opens_next(first, ts, plans[si].segment_start, plans[si].timescale),
                 "first sample of segment {} starts at or after the leader start",
@@ -237,7 +237,12 @@ fn check_follower(audio: &Track, movie_ts: Timescale, plans: &[CutPlan]) {
             );
         }
         if let Some(next) = plans.get(si + 1) {
-            let last = expected.last().unwrap().timing.map(|t| t.dts).unwrap();
+            let last = expected
+                .last()
+                .unwrap()
+                .timing
+                .and_then(|t| t.dts())
+                .unwrap();
             assert!(
                 !opens_next(last, ts, next.segment_start, next.timescale),
                 "last sample of segment {} starts before the next leader start",
@@ -295,7 +300,7 @@ fn check_fixture(name: &str) {
     let plans = leader_plans(video, ir.movie_timescale);
     assert_eq!(
         plans[0].segment_start,
-        video.samples[0].timing.map(|t| t.dts).unwrap(),
+        video.samples[0].timing.and_then(|t| t.dts()).unwrap(),
         "leader cuts are absolute decode times"
     );
     for pair in plans.windows(2) {
@@ -304,7 +309,7 @@ fn check_fixture(name: &str) {
             video
                 .samples
                 .iter()
-                .any(|s| s.timing.map(|t| t.dts) == Some(boundary) && s.flags.is_sync),
+                .any(|s| s.timing.and_then(|t| t.dts()) == Some(boundary) && s.flags.is_sync),
             "segment {} starts on a video sync sample",
             pair[1].segment_seq
         );
@@ -745,7 +750,7 @@ fn incremental_part_cuts_match_whole_segment() {
     let mut incremental_parts: Vec<PartInfo> = Vec::new();
     for cut in &part_cuts {
         while let Some(sample) = audio.samples.get(next_sample)
-            && sample.timing.map(|t| t.dts).is_some_and(|d| {
+            && sample.timing.and_then(|t| t.dts()).is_some_and(|d| {
                 !opens_next(d, audio.spec.timescale.get(), cut.start_dts, cut.timescale)
             })
         {

@@ -825,15 +825,19 @@ pub(crate) fn build_chunk(
 
     let mut traf_boxes = Vec::with_capacity(tracks.len());
     for ft in tracks {
-        let (tfhd, trun) = media_fragment_run(
-            ft.track_id,
-            ft.samples.iter().map(|s| MediaRunSample {
-                duration: s.timing.map(|t| t.duration).unwrap_or(0),
-                size: s.data.len(),
-                is_sync: s.flags.is_sync,
-                composition_offset: s.composition_offset(),
-            }),
-        )?;
+        let runs = ft
+            .samples
+            .iter()
+            .map(|s| {
+                Ok(MediaRunSample {
+                    duration: s.timing.and_then(|t| t.duration()).unwrap_or(0),
+                    size: s.data.len(),
+                    is_sync: s.flags.is_sync,
+                    composition_offset: s.composition_offset()?.unwrap_or(0),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let (tfhd, trun) = media_fragment_run(ft.track_id, runs.into_iter())?;
         let tfdt = TrackFragmentBaseMediaDecodeTimeBox::new_v1(ft.base_media_decode_time);
         traf_boxes.push(TrackFragmentBox::new(tfhd, Some(tfdt), vec![trun]));
     }

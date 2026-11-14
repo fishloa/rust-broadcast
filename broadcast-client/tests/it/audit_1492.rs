@@ -106,7 +106,7 @@ fn cross_origin_401_chain(session: &mut Session) -> (usize, Vec<Action>) {
 fn a_401_from_a_redirect_target_on_another_origin_does_not_loop_with_credentials() {
     let mut session = open(TS_URL, Config::default());
     session
-        .set_credentials(Credentials::new("user", "pass"))
+        .set_credentials(ts(0), Credentials::new("user", "pass"))
         .expect("credentials");
     let (sent, actions) = cross_origin_401_chain(&mut session);
     assert!(
@@ -332,7 +332,7 @@ fn userinfo_in_an_http_url_becomes_credentials_and_leaves_the_request_url() {
 fn explicit_credentials_win_over_url_userinfo() {
     let mut session = open("http://user:p%40ss@example/live.ts", Config::default());
     session
-        .set_credentials(Credentials::new("other", "pw"))
+        .set_credentials(ts(0), Credentials::new("other", "pw"))
         .expect("credentials");
     let first = one(&mut session, 0);
     respond(

@@ -465,8 +465,8 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
     for (got, want) in got_samples.iter().zip(fed_samples.iter()) {
         assert_eq!(got.data, want.data, "sample bytes must match exactly");
         assert_eq!(
-            got.timing.map(|t| t.duration),
-            want.timing.map(|t| t.duration)
+            got.timing.and_then(|t| t.duration()),
+            want.timing.and_then(|t| t.duration())
         );
         assert_eq!(got.flags.is_sync, want.flags.is_sync);
     }

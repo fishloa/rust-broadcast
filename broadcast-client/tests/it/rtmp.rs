@@ -580,7 +580,7 @@ fn a_server_that_never_answers_is_given_up_on_at_the_start_timeout() {
 fn close_emits_one_close_for_the_live_connection_and_goes_silent() {
     let mut h = host();
     connect_and_play(&mut h);
-    h.session.close();
+    h.session.close(ts(h.now));
     let mut closes = Vec::new();
     while let Some(a) = h.session.poll(ts(h.now)) {
         if let Action::Close { conn } = a {

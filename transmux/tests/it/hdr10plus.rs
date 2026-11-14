@@ -99,7 +99,7 @@ fn display_order_sample_seis(ts: &[u8]) -> Vec<Vec<u8>> {
         .find(|t| matches!(t.spec.config, CodecConfig::Hevc { .. }))
         .expect("HEVC track");
     let mut samples: Vec<_> = track.samples.iter().collect();
-    samples.sort_by_key(|s| s.timing.map(|t| t.pts));
+    samples.sort_by_key(|s| s.timing.and_then(|t| t.pts()));
     samples
         .iter()
         .map(|s| {
@@ -477,7 +477,7 @@ fn hevc_track(media: &Media) -> &transmux::ir::Track {
 
 fn seis_in_display_order(media: &Media) -> Vec<Vec<u8>> {
     let mut samples: Vec<_> = hevc_track(media).samples.iter().collect();
-    samples.sort_by_key(|s| s.timing.map(|t| t.pts));
+    samples.sort_by_key(|s| s.timing.and_then(|t| t.pts()));
     samples
         .iter()
         .flat_map(|s| {

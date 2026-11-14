@@ -155,10 +155,10 @@ impl<P: PurposeKind + PartialEq, X> InFlight<P, X> {
             byte_range: req.byte_range.filter(|_| resume.is_none()),
             identity: None,
         });
-        actions.push_back(Action::WakeAt(Timestamp::from_micros(
-            now.saturating_add(timeout),
-        )));
         let deadline = now.checked_add(timeout);
+        if let Some(deadline) = deadline {
+            actions.push_back(Action::WakeAt(Timestamp::from_micros(deadline)));
+        }
         if req.purpose.is_media()
             && let Some(at) = self.inactivity.arm(conn, now)
         {

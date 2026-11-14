@@ -171,7 +171,7 @@ struct TrackState {
 
 impl TrackState {
     /// Advance the pending slot with a newly-decoded tag at `dts`, emitting
-    /// the *previous* pending sample now that its duration (`dts - prev.timing.map(|t| t.dts)`)
+    /// the *previous* pending sample now that its duration (`dts - prev.timing.and_then(|t| t.dts())`)
     /// is known.
     fn advance(&mut self, sample: Sample, dts: i64, events: &mut VecDeque<DemuxEvent>) {
         let track_id = self
@@ -182,9 +182,9 @@ impl TrackState {
             self.last_duration = duration;
             let mut emitted = prev.sample;
             if let Some(t) = emitted.timing.as_mut() {
-                t.duration = duration;
+                *t = t.with_duration(duration);
             } else {
-                emitted.timing = Some(crate::ir::SampleTiming::new(0, 0, duration));
+                emitted.timing = Some(crate::ir::SampleTiming::timed_with_duration(0, 0, duration));
             }
             events.push_back(DemuxEvent::Sample {
                 track_id,
@@ -203,9 +203,13 @@ impl TrackState {
         if let Some(prev) = self.pending.take() {
             let mut emitted = prev.sample;
             if let Some(t) = emitted.timing.as_mut() {
-                t.duration = self.last_duration;
+                *t = t.with_duration(self.last_duration);
             } else {
-                emitted.timing = Some(crate::ir::SampleTiming::new(0, 0, self.last_duration));
+                emitted.timing = Some(crate::ir::SampleTiming::timed_with_duration(
+                    0,
+                    0,
+                    self.last_duration,
+                ));
             }
             events.push_back(DemuxEvent::Sample {
                 track_id,
@@ -600,11 +604,7 @@ impl StreamingFlvDemux {
                 )?;
                 let sample = Sample {
                     data: data.into(),
-                    timing: crate::ir::SampleTiming::from_options(
-                        Some(dts_abs),
-                        Some(pts_abs),
-                        None,
-                    ), // filled in by `TrackState::advance`/`flush`
+                    timing: Some(crate::ir::SampleTiming::timed(dts_abs, pts_abs)), // filled in by `TrackState::advance`/`flush`
                     flags: crate::ir::SampleFlags::new(frame_type == FRAME_TYPE_KEYFRAME),
                     provenance: None,
                     display: None,
@@ -690,11 +690,7 @@ impl StreamingFlvDemux {
                 let dts_abs = timestamp;
                 let sample = Sample {
                     data: data.to_vec().into(),
-                    timing: crate::ir::SampleTiming::from_options(
-                        Some(dts_abs),
-                        Some(dts_abs),
-                        None,
-                    ), // filled in by `TrackState::advance`/`flush`
+                    timing: Some(crate::ir::SampleTiming::timed(dts_abs, dts_abs)), // filled in by `TrackState::advance`/`flush`
                     flags: crate::ir::SampleFlags::SYNC,
                     provenance: None,
                     display: None,
@@ -963,15 +959,12 @@ mod tests {
 
     /// Collect every `Sample` for the (single) video track across all
     /// events, in emission order.
-    fn video_samples(events: &[DemuxEvent]) -> Vec<(u32, Bytes)> {
+    fn video_samples(events: &[DemuxEvent]) -> Vec<(Option<u32>, Bytes)> {
         events
             .iter()
             .filter_map(|e| match e {
                 DemuxEvent::Sample { sample, .. } => Some((
-                    sample
-                        .timing
-                        .map(|t| t.duration)
-                        .expect("FLV video samples always carry a duration"),
+                    sample.timing.and_then(|t| t.duration()),
                     sample.data.clone(),
                 )),
                 _ => None,
@@ -997,7 +990,7 @@ mod tests {
         // Forward-delta durations: 100,100,100, then repeat 100 for the last.
         assert_eq!(
             samples.iter().map(|(d, _)| *d).collect::<Vec<_>>(),
-            vec![100, 100, 100, 100]
+            vec![Some(100), Some(100), Some(100), Some(100)]
         );
         // Payload preserved in order: byte 4 is the NAL the helper tags the
         // sample with (bytes 0..4 are its 4-byte NAL length prefix).
@@ -1222,8 +1215,8 @@ mod tests {
             .iter()
             .filter_map(|e| match e {
                 DemuxEvent::Sample { sample, .. } => Some((
-                    sample.timing.map(|t| t.dts),
-                    sample.timing.map(|t| t.duration),
+                    sample.timing.and_then(|t| t.dts()),
+                    sample.timing.and_then(|t| t.duration()),
                 )),
                 _ => None,
             })

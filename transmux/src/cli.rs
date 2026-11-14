@@ -624,7 +624,7 @@ fn segment_media(media: &Media, target_secs: u32) -> CliResult<(Vec<u8>, Vec<Vec
             // Section-carried samples have no dts; they belong to the segment
             // their neighbours are in, so they sort just after their own
             // track's last timed sample (`OrderedKey::Untimed`).
-            let key = match sample.timing.map(|t| t.dts) {
+            let key = match sample.timing.and_then(|t| t.dts()) {
                 Some(dts) => OrderedKey::Timed {
                     // Relative to the common origin, in ticks, kept as a
                     // rational `(ticks, timescale)` so two tracks' keys compare

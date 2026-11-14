@@ -95,7 +95,7 @@ fn run_stream(ts: &[u8], track_id: TrackId) -> Vec<Seen> {
                     sample,
                     ..
                 } if id == track_id => Seen::Sample {
-                    dts: sample.timing.map(|t| t.dts),
+                    dts: sample.timing.and_then(|t| t.dts()),
                     sar: sample.display.as_deref().and_then(sar),
                     afd: sample.display.as_deref().and_then(afd),
                     arc: sample.display.as_ref().map(arc_id),

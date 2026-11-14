@@ -153,8 +153,12 @@ fn sample_counts_and_oracle_timing() {
     let mut running_dts: i64 = 0;
     let mut demuxed: Vec<(i64, i32, bool)> = Vec::new(); // (dts, co, is_sync)
     for s in &vtrack.samples {
-        demuxed.push((running_dts, s.composition_offset(), s.flags.is_sync));
-        running_dts += s.timing.map(|t| t.duration).unwrap_or(0) as i64;
+        demuxed.push((
+            running_dts,
+            s.composition_offset().expect("offset").unwrap_or(0),
+            s.flags.is_sync,
+        ));
+        running_dts += s.timing.and_then(|t| t.duration()).unwrap_or(0) as i64;
     }
 
     // Every stamped oracle row carries both PTS and DTS here. Two independent,

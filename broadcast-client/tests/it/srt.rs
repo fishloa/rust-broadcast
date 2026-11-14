@@ -418,7 +418,7 @@ fn close_says_goodbye_to_a_connected_peer_once_and_then_closes_the_socket() {
     let peer_id = sim.peer().caller_socket_id;
     assert_ne!(peer_id, 0);
     let before = sim.from_session.len();
-    sim.session.close();
+    sim.session.close(stamp(sim.now));
     let mut sends = Vec::new();
     let mut closes = Vec::new();
     while let Some(a) = sim.session.poll(stamp(sim.now)) {
@@ -450,7 +450,7 @@ fn closing_before_the_handshake_completes_sends_nothing_but_the_close() {
     let mut sim = clear_sim();
     sim.peer_listening = false;
     sim.advance_by(100_000);
-    sim.session.close();
+    sim.session.close(stamp(sim.now));
     let mut sends = 0;
     let mut closes = 0;
     while let Some(a) = sim.session.poll(stamp(sim.now)) {

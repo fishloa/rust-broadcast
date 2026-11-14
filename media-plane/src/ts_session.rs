@@ -1066,8 +1066,8 @@ mod tests {
                     }
                     by_track.entry(track_id).or_default().push((
                         sample.data.to_vec(),
-                        sample.timing.map(|t| t.dts),
-                        sample.timing.map(|t| t.pts),
+                        sample.timing.and_then(|t| t.dts()),
+                        sample.timing.and_then(|t| t.pts()),
                     ));
                 }
                 _ => {}
@@ -1106,8 +1106,8 @@ mod tests {
                     );
                     by_track.entry(track_id).or_default().push((
                         sample.data.to_vec(),
-                        sample.timing.map(|t| t.dts),
-                        sample.timing.map(|t| t.pts),
+                        sample.timing.and_then(|t| t.dts()),
+                        sample.timing.and_then(|t| t.pts()),
                     ));
                 }
                 _ => {}
@@ -1276,7 +1276,7 @@ mod tests {
         let mut out = Vec::new();
         while let Some(ev) = tracker.poll() {
             if let SessionEvent::Sample { sample, .. } = ev {
-                out.push(sample.timing.map(|t| t.dts).expect("dts"));
+                out.push(sample.timing.and_then(|t| t.dts()).expect("dts"));
             }
         }
         out

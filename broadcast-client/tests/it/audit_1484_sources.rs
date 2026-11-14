@@ -70,7 +70,7 @@ fn hls_close_drops_queued_actions_and_closes_the_live_request_once() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
     };
-    session.close();
+    session.close(ts(0));
     let rest = actions(&mut session, 0);
     assert!(
         rest.iter().all(|a| matches!(a, Action::Close { .. })),
@@ -90,7 +90,7 @@ fn rtsp_close_drops_queued_sends_and_closes_the_connection_once() {
         other => panic!("{other:?}"),
     };
     session.on_connected(conn);
-    session.close();
+    session.close(ts(0));
     let rest = actions(&mut session, 0);
     assert!(
         rest.iter().all(|a| matches!(a, Action::Close { .. })),
@@ -108,7 +108,7 @@ fn hls_stale_rechallenge_is_replayed_at_most_once_then_rejected() {
         vec![support::hls_host::status_with(401, challenge)],
     );
     h.session
-        .set_credentials(Credentials::new("user", "pass"))
+        .set_credentials(ts(0), Credentials::new("user", "pass"))
         .unwrap();
     h.run_until(|_| false, 400);
     assert!(
@@ -137,7 +137,7 @@ fn rtsp_stale_rechallenge_is_replayed_at_most_once_then_rejected() {
     let mut session =
         Session::open(Url::parse(RTSP_URL).unwrap(), Config::default(), ts(0)).unwrap();
     session
-        .set_credentials(Credentials::new("user", "pass"))
+        .set_credentials(ts(0), Credentials::new("user", "pass"))
         .unwrap();
     let mut describes = 0usize;
     let mut events = Vec::new();
@@ -206,8 +206,8 @@ fn audio_rendition_switch_after_ended_is_ignored() {
     h.collect();
     let before = h.events.len();
     let requests_before = h.seen.len();
-    assert!(h.session.select_audio_rendition(Some(1)).is_ok());
-    assert!(h.session.select_audio_rendition(None).is_ok());
+    assert!(h.session.select_audio_rendition(ts(h.now), Some(1)).is_ok());
+    assert!(h.session.select_audio_rendition(ts(h.now), None).is_ok());
     h.run_until(|_| false, 50);
     assert_eq!(
         h.events.len(),
@@ -402,8 +402,8 @@ fn queued_events_are_capped_by_dropping_the_oldest_samples() {
     let key = |e: &Event| match e {
         Event::Sample { track, sample, .. } => Some((
             *track,
-            sample.timing.map(|t| t.pts),
-            sample.timing.map(|t| t.dts),
+            sample.timing.and_then(|t| t.pts()),
+            sample.timing.and_then(|t| t.dts()),
         )),
         _ => None,
     };
@@ -609,6 +609,34 @@ fn ts_time_jump_does_not_flood_stall_notices() {
                 || matches!(e, Event::Discontinuity)
                 || stalled_count(&events) > 0),
         "{events:?}"
+    );
+}
+
+#[test]
+fn ts_reconnect_past_the_end_of_the_clock_emits_no_wake() {
+    let mut session =
+        Session::open(Url::parse(TS_URL).unwrap(), Config::default(), ts(0)).expect("open");
+    let req = crate::support::ts_probe::one(&mut session, 0);
+    session.on_response(
+        req.conn,
+        support::status(503),
+        &support::headers(&[]),
+        ts(u64::MAX - 1),
+    );
+    while session.next_event().is_some() {}
+    let at = u64::MAX / 2;
+    let wakes: Vec<Timestamp> = actions(&mut session, at)
+        .into_iter()
+        .filter_map(|a| match a {
+            Action::WakeAt(t) => Some(t),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        wakes
+            .iter()
+            .all(|w| *w < Timestamp::from_micros(u64::MAX / 2)),
+        "the backoff deadline saturates to the last instant, which reads as due now forever: {wakes:?}"
     );
 }
 

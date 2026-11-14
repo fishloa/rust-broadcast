@@ -14,7 +14,6 @@ fn ts(us: u64) -> Timestamp {
 }
 pub const TS_PACKET: usize = 188;
 const PCR_BASE_MODULUS_27MHZ: u64 = (1 << 33) * 300;
-const PCR_HZ: u64 = 27_000_000;
 const FALLBACK_BPS: u64 = 12_000_000;
 const MICROS: u64 = 1_000_000;
 
@@ -46,7 +45,7 @@ pub fn bitrate_bps(bytes: &[u8]) -> u64 {
     if dt == 0 || li <= fi {
         return FALLBACK_BPS;
     }
-    ((li - fi) as u64 * TS_PACKET as u64 * 8 * PCR_HZ / dt).max(1)
+    ((li - fi) as u64 * TS_PACKET as u64 * 8 * broadcast_common::clock33::PCR_HZ / dt).max(1)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,8 +83,8 @@ impl Replay {
                     sample.data.hash(&mut h);
                     Some(SampleRec {
                         track: format!("{track:?}"),
-                        pts: sample.timing.map(|t| t.pts),
-                        dts: sample.timing.map(|t| t.dts),
+                        pts: sample.timing.and_then(|t| t.pts()),
+                        dts: sample.timing.and_then(|t| t.dts()),
                         is_sync: sample.flags.is_sync,
                         join: format!("{join:?}"),
                         len: sample.data.len(),
@@ -130,7 +129,7 @@ pub fn replay_paced(bytes: &[u8], config: Config, chunk: usize, bps: u64) -> Rep
     replay_with_host(bytes, config, chunk, bps, None).0
 }
 
-const PTS_HZ_27MHZ: i128 = 27_000_000;
+const PTS_HZ_27MHZ: i128 = broadcast_common::clock33::PCR_HZ as i128;
 const MICROS_PER_SEC: i128 = 1_000_000;
 
 #[derive(Debug, Default, Clone)]
@@ -223,7 +222,7 @@ pub fn replay_with_host(
                     seen += 1;
                     if let (Some(p), Some(pts), Some((timescale, video))) = (
                         playout.as_ref(),
-                        sample.timing.map(|t| t.pts),
+                        sample.timing.and_then(|t| t.pts()),
                         timescales.get(&format!("{track:?}")),
                     ) {
                         stats.delivered_after_start += 1;

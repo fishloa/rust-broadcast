@@ -79,13 +79,13 @@ fn anchor_index(media: &Media) -> Result<usize> {
 /// instant on every track: a per-track rebase would move a track that starts
 /// later than the others by its start offset.
 ///
-/// Returned as `i64` because `composition_offset` is signed and may push an
+/// Returned as `i64` because a composition offset is signed and may push an
 /// early sample's presentation time slightly negative.
-fn presentation_times(track: &Track, origin: &TimelineOrigin) -> Vec<i64> {
+fn presentation_times(track: &Track, origin: &TimelineOrigin) -> Result<Vec<i64>> {
     relative_decode_times(track, origin)
         .into_iter()
         .zip(&track.samples)
-        .map(|(dts, s)| dts + s.composition_offset() as i64)
+        .map(|(dts, s)| Ok(dts + i64::from(s.composition_offset()?.unwrap_or(0))))
         .collect()
 }
 
@@ -213,7 +213,7 @@ impl Media {
         // every other track then starts from that same instant (issue #1021).
         let anchor_track = &self.tracks[anchor];
         let anchor_ts = anchor_track.spec.timescale;
-        let anchor_pts = presentation_times(anchor_track, &origin);
+        let anchor_pts = presentation_times(anchor_track, &origin)?;
         let anchor_lo = rescale_floor(start, self.movie_timescale, anchor_ts);
         let anchor_hi = rescale_floor(end, self.movie_timescale, anchor_ts);
         let snapped = anchor_pts
@@ -230,7 +230,7 @@ impl Media {
         let mut kept_any = false;
         for (ti, track) in self.tracks.iter().enumerate() {
             let ts = track.spec.timescale;
-            let pts = presentation_times(track, &origin);
+            let pts = presentation_times(track, &origin)?;
             let hi = rescale_floor(end, self.movie_timescale, ts);
             let start_idx = if ti == anchor {
                 snapped
@@ -256,7 +256,7 @@ impl Media {
             }
             let first_dts = kept
                 .iter()
-                .find_map(|s| s.timing.map(|t| t.dts))
+                .find_map(|s| s.timing.and_then(|t| t.dts()))
                 .unwrap_or(0)
                 .max(0) as u64;
             out_tracks.push(Track::new_at(track.spec.clone(), kept, first_dts));
@@ -283,7 +283,7 @@ impl Media {
         let ticks: u64 = t
             .samples
             .iter()
-            .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
+            .map(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64)
             .sum();
         Some((ticks, t.spec.timescale.get()))
     }
@@ -403,7 +403,7 @@ impl Repackage {
             let track = &media.tracks[ti];
             let sample = &track.samples[cursors[ti]];
             seg.push(track.spec.track_id, sample.clone())?;
-            dts[ti] += sample.timing.map(|t| t.duration).unwrap_or(0) as u128;
+            dts[ti] += sample.timing.and_then(|t| t.duration()).unwrap_or(0) as u128;
             cursors[ti] += 1;
             for s in seg.take_ready() {
                 seg_ready.push(s);

@@ -122,8 +122,8 @@ fn summarize(ev: &DemuxEvent, what: &str) -> String {
             track_id, sample, ..
         } => format!(
             "Sample {track_id} {:?} {:?} {}",
-            sample.timing.map(|t| t.pts),
-            sample.timing.map(|t| t.dts),
+            sample.timing.and_then(|t| t.pts()),
+            sample.timing.and_then(|t| t.dts()),
             sample.data.len()
         ),
         other => format!("{other:?}"),

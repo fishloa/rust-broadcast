@@ -299,7 +299,7 @@ impl TsHttpSource {
         self.refused = (status == StatusCode::TOO_MANY_REQUESTS
             || status == StatusCode::SERVICE_UNAVAILABLE)
             .then(|| RefusedCapture::new(status, retry_after, headers));
-        self.ts.set_retry_after(retry_after / 1000);
+        self.ts.set_retry_after(Duration::from_micros(retry_after));
         self.ts
             .on_response(status, headers, Timestamp::from_micros(now_us));
         self.drain_ts_events();
@@ -366,7 +366,7 @@ impl TsHttpSource {
         self.drain_ts_events();
     }
 
-    /// Reconnect.
+    /// Reconnect at `now_us`.
     pub fn reconnect(&mut self, now_us: u64) {
         self.now_us = now_us;
         self.ts.reconnect(Timestamp::from_micros(now_us));
@@ -433,7 +433,7 @@ impl TsHttpSource {
                 DemuxEvent::Sample {
                     track_id, sample, ..
                 } => {
-                    let pts = sample.timing.map(|t| t.pts);
+                    let pts = sample.timing.and_then(|t| t.pts());
                     if !self.conn_seen_first_sample {
                         self.start_hold_if_unresolved();
                         self.conn_seen_first_sample = true;

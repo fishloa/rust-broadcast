@@ -127,7 +127,7 @@ fn heaac_override_keeps_presentation_time_unchanged() {
         t.samples
             .iter()
             .map(|s| {
-                s.timing.map(|t| t.dts).expect("audio dts") as f64
+                s.timing.and_then(|t| t.dts()).expect("audio dts") as f64
                     / f64::from(t.spec.timescale.get())
             })
             .collect()
@@ -135,7 +135,7 @@ fn heaac_override_keeps_presentation_time_unchanged() {
     let total = |t: &transmux::Track| -> f64 {
         t.samples
             .iter()
-            .map(|s| f64::from(s.timing.map(|t| t.duration).expect("audio duration")))
+            .map(|s| f64::from(s.timing.and_then(|t| t.duration()).expect("audio duration")))
             .sum::<f64>()
             / f64::from(t.spec.timescale.get())
     };
@@ -158,7 +158,7 @@ fn heaac_override_keeps_presentation_time_unchanged() {
         track
             .samples
             .iter()
-            .all(|s| s.timing.map(|t| t.duration) == Some(AAC_FRAME_SAMPLES * 2))
+            .all(|s| s.timing.and_then(|t| t.duration()) == Some(AAC_FRAME_SAMPLES * 2))
     );
 }
 
@@ -174,8 +174,9 @@ fn heaac_descriptor_demux_emits_output_rate_timescale() {
                 .iter()
                 .map(|s| {
                     (
-                        s.timing.map(|t| t.dts).unwrap() as f64 / f64::from(t.spec.timescale.get()),
-                        s.timing.map(|t| t.duration).unwrap(),
+                        s.timing.and_then(|t| t.dts()).unwrap() as f64
+                            / f64::from(t.spec.timescale.get()),
+                        s.timing.and_then(|t| t.duration()).unwrap(),
                     )
                 })
                 .collect()
@@ -204,13 +205,13 @@ fn heaac_descriptor_demux_emits_output_rate_timescale() {
         track
             .samples
             .iter()
-            .all(|s| s.timing.map(|t| t.duration) == Some(AAC_FRAME_SAMPLES * 2))
+            .all(|s| s.timing.and_then(|t| t.duration()) == Some(AAC_FRAME_SAMPLES * 2))
     );
     let span = |from: f64, to: f64| to - from;
     let last = track.samples.len() - 1;
     let remuxed_span = span(
-        track.samples[0].timing.map(|t| t.dts).unwrap() as f64 / f64::from(OUTPUT_HZ),
-        track.samples[last].timing.map(|t| t.dts).unwrap() as f64 / f64::from(OUTPUT_HZ),
+        track.samples[0].timing.and_then(|t| t.dts()).unwrap() as f64 / f64::from(OUTPUT_HZ),
+        track.samples[last].timing.and_then(|t| t.dts()).unwrap() as f64 / f64::from(OUTPUT_HZ),
     );
     let plain_span = span(plain[0].0, plain[plain.len() - 1].0);
     assert_eq!(plain.len(), track.samples.len());

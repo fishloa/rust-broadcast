@@ -49,11 +49,14 @@ fn check(label: &str, ts: &[u8]) -> Vec<(usize, usize)> {
                 s.data.len(),
                 "{label}: sample {i} is exactly one whole syncframe"
             );
-            assert_eq!(s.timing.map(|t| t.duration), Some(info.samples_per_frame()));
+            assert_eq!(
+                s.timing.and_then(|t| t.duration()),
+                Some(info.samples_per_frame())
+            );
             if let Some(p) = prev_dts {
                 // Frame-exact cadence, except where the real capture itself
                 // re-anchors (a timeline gap is a whole number of frames).
-                let delta = s.timing.map(|t| t.dts).unwrap() - p;
+                let delta = s.timing.and_then(|t| t.dts()).unwrap() - p;
                 let frame = info.samples_per_frame() as i64;
                 if delta != frame {
                     assert!(
@@ -63,7 +66,7 @@ fn check(label: &str, ts: &[u8]) -> Vec<(usize, usize)> {
                     gaps += 1;
                 }
             }
-            prev_dts = s.timing.map(|t| t.dts);
+            prev_dts = s.timing.and_then(|t| t.dts());
         }
         out.push((track.samples.len(), gaps));
     }

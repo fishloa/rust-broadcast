@@ -4,7 +4,7 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 use core::time::Duration;
 
-use broadcast_common::clock33::pcr_signed_distance;
+use broadcast_common::clock33::{PCR_TIMESCALE, pcr_signed_distance};
 use broadcast_common::timescale::{Rounding, Timescale, rescale};
 use buffering_runtime::input_log::Input;
 use buffering_runtime::{
@@ -130,11 +130,6 @@ macro_rules! rec {
     };
 }
 
-const TICKS_PER_SEC_27MHZ: u32 = 27_000_000;
-
-/// [`TICKS_PER_SEC_27MHZ`] as a [`Timescale`].
-const CLOCK_27MHZ: Timescale = broadcast_common::timescale!(TICKS_PER_SEC_27MHZ);
-
 /// Controller key of the placeholder for a declared stream that has not resolved yet; a real
 /// `TrackId` never takes it.
 const PENDING_TRACK_KEY: u32 = u32::MAX;
@@ -143,7 +138,7 @@ pub(crate) fn raw_27mhz(pts: i64, timescale: Timescale) -> i128 {
     rescale(
         i128::from(pts),
         timescale,
-        CLOCK_27MHZ,
+        PCR_TIMESCALE,
         Rounding::TowardZero,
     )
 }
@@ -650,10 +645,10 @@ impl Feeder {
         let Some(timescale) = self.timescale_of(track) else {
             return;
         };
-        let Some(pts) = sample.timing.map(|t| t.pts) else {
+        let Some(pts) = sample.timing.and_then(|t| t.pts()) else {
             return;
         };
-        let dur = i64::from(sample.timing.map(|t| t.duration).unwrap_or(0));
+        let dur = i64::from(sample.timing.and_then(|t| t.duration()).unwrap_or(0));
         let rendered = self.rendered.contains(&track);
         self.first_seen.entry(track).or_insert(pts);
 
@@ -662,8 +657,11 @@ impl Feeder {
                 Some(JoinDecision::JoinPoint(_)) if !self.video_joined.contains(&track) => {
                     self.video_joined.insert(track);
                     self.video_join_at.insert(track, (pts, timescale));
-                    let run =
-                        ReorderEnd::new(pts, sample.timing.map(|t| t.dts).unwrap_or(pts), dur);
+                    let run = ReorderEnd::new(
+                        pts,
+                        sample.timing.and_then(|t| t.dts()).unwrap_or(pts),
+                        dur,
+                    );
                     self.video_end.insert(track, run.end);
                     self.video_reorder.insert(track, run);
                     if rendered {
@@ -676,7 +674,8 @@ impl Feeder {
                         .video_reorder
                         .entry(track)
                         .or_insert_with(|| ReorderEnd::new(pts, pts, 0));
-                    let end = run.push(pts, sample.timing.map(|t| t.dts).unwrap_or(pts), dur);
+                    let end =
+                        run.push(pts, sample.timing.and_then(|t| t.dts()).unwrap_or(pts), dur);
                     self.video_end.insert(track, end);
                     if rendered {
                         self.queue_video_end(track);
@@ -932,6 +931,7 @@ impl Feeder {
 mod tests {
     use super::*;
     use broadcast_common::Unpackage;
+    use broadcast_common::clock33::PCR_HZ;
     use transmux::{LiveJoin, TsDemux};
 
     const FIXTURE: &str = "ts/h264-aac.ts";
@@ -972,17 +972,37 @@ mod tests {
     fn far(sample: &Sample) -> Sample {
         let mut s = sample.clone();
         if let Some(t) = s.timing.as_mut() {
-            t.pts = i64::MAX;
-            t.dts = i64::MAX;
-            t.duration = FAR_PTS_DURATION;
+            *t = t
+                .with_composition(i64::MAX, i64::MAX)
+                .with_duration(FAR_PTS_DURATION);
         } else {
-            s.timing = Some(transmux::ir::SampleTiming::new(
+            s.timing = Some(transmux::ir::SampleTiming::timed_with_duration(
                 i64::MAX,
                 i64::MAX,
                 FAR_PTS_DURATION,
             ));
         }
         s
+    }
+
+    #[test]
+    fn the_27mhz_conversions_use_the_shared_pcr_clock() {
+        assert_eq!(PCR_TIMESCALE.as_u64(), PCR_HZ);
+        assert_eq!(PCR_HZ, 27_000_000);
+        assert_eq!(
+            raw_27mhz(
+                PCR_HZ as i64,
+                Timescale::new(PCR_HZ as u32).expect("27 MHz is a non-zero timescale")
+            ),
+            i128::from(PCR_HZ)
+        );
+        assert_eq!(
+            pts_to_27mhz(
+                90_000,
+                Timescale::new(90_000).expect("90 kHz is a non-zero timescale")
+            ),
+            PCR_HZ
+        );
     }
 
     #[test]
@@ -1123,11 +1143,11 @@ mod tests {
             let dts = BASE + dts_slot * FRAME;
             let dur = u32::try_from(FRAME).unwrap();
             if let Some(t) = s.timing.as_mut() {
-                t.pts = pts;
-                t.dts = dts;
-                t.duration = dur;
+                *t = t.with_composition(dts, pts).with_duration(dur);
             } else {
-                s.timing = Some(transmux::ir::SampleTiming::new(dts, pts, dur));
+                s.timing = Some(transmux::ir::SampleTiming::timed_with_duration(
+                    dts, pts, dur,
+                ));
             }
             f.on_sample(vid, &s, Some(join));
             f.video_end.get(&vid).copied().map(|e| (e - BASE) / FRAME)
@@ -1174,9 +1194,9 @@ mod tests {
         }
         let mut late_audio = st.audio.1[0].clone();
         if let Some(t) = late_audio.timing.as_mut() {
-            t.pts = 1 << 40;
+            t.shift((1 << 40) - t.dts().unwrap_or(1 << 40));
         } else {
-            late_audio.timing = Some(transmux::ir::SampleTiming::new(1 << 40, 1 << 40, 0));
+            late_audio.timing = Some(transmux::ir::SampleTiming::timed(1 << 40, 1 << 40));
         }
         f.on_sample(aid, &late_audio, None);
         assert!(f.rendered.contains(&vid) && f.video_joined.contains(&vid));
@@ -1204,7 +1224,7 @@ mod tests {
     const AUDIO_B_ID: u32 = 3;
     const SLICES_PER_SEC: i64 = 10;
     const TICK_STEP_US: u64 = 50_000;
-    const STARVE_MARGIN_27MHZ: u64 = TICKS_PER_SEC_27MHZ as u64;
+    const STARVE_MARGIN_27MHZ: u64 = PCR_HZ;
 
     struct Rig {
         f: Feeder,
@@ -1285,9 +1305,7 @@ mod tests {
 
         fn position(&self) -> Option<u64> {
             match (self.playing, self.held) {
-                (Some((base, since)), _) => {
-                    Some(base + (self.now - since) * u64::from(TICKS_PER_SEC_27MHZ / 1_000_000))
-                }
+                (Some((base, since)), _) => Some(base + (self.now - since) * PCR_HZ / 1_000_000),
                 (None, held) => held,
             }
         }
@@ -1317,11 +1335,11 @@ mod tests {
                     self.audio.clone()
                 };
                 if let Some(t) = s.timing.as_mut() {
-                    t.pts = pts;
-                    t.dts = pts;
-                    t.duration = dur;
+                    *t = t.with_composition(pts, pts).with_duration(dur);
                 } else {
-                    s.timing = Some(transmux::ir::SampleTiming::new(pts, pts, dur));
+                    s.timing = Some(transmux::ir::SampleTiming::timed_with_duration(
+                        pts, pts, dur,
+                    ));
                 }
                 let join = if id == VIDEO_ID && k == 0 {
                     self.f.join_sample(track, &s)
@@ -1363,7 +1381,7 @@ mod tests {
 
         fn emitted_end_27mhz(&self) -> u64 {
             let secs = 1 + self.next_slice / SLICES_PER_SEC;
-            u64::try_from(secs).unwrap() * u64::from(TICKS_PER_SEC_27MHZ)
+            u64::try_from(secs).unwrap() * PCR_HZ
         }
 
         fn pauses_after(&self, t: u64) -> Vec<(u64, BufferEvent)> {

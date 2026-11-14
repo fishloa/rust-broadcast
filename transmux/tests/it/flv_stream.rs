@@ -74,7 +74,6 @@ struct FullSample {
     /// recovered timeline, not just on durations.
     dts: Option<i64>,
     pts: Option<i64>,
-    duration: Option<u32>,
     is_sync: bool,
     composition_offset: i32,
 }
@@ -115,11 +114,10 @@ fn one_shot_full() -> Vec<FullTrack> {
                     .iter()
                     .map(|s| FullSample {
                         data: s.data.clone(),
-                        dts: s.timing.map(|t| t.dts),
-                        pts: s.timing.map(|t| t.pts),
-                        duration: s.timing.map(|t| t.duration),
+                        dts: s.timing.and_then(|t| t.dts()),
+                        pts: s.timing.and_then(|t| t.pts()),
                         is_sync: s.flags.is_sync,
-                        composition_offset: s.composition_offset(),
+                        composition_offset: s.composition_offset().expect("offset").unwrap_or(0),
                     })
                     .collect(),
             }
@@ -153,11 +151,10 @@ fn full_from_events(events: &[DemuxEvent]) -> Vec<FullTrack> {
                     .expect("Sample must follow its track's TrackAdded");
                 tracks[i].samples.push(FullSample {
                     data: sample.data.clone(),
-                    dts: sample.timing.map(|t| t.dts),
-                    pts: sample.timing.map(|t| t.pts),
-                    duration: sample.timing.map(|t| t.duration),
+                    dts: sample.timing.and_then(|t| t.dts()),
+                    pts: sample.timing.and_then(|t| t.pts()),
                     is_sync: sample.flags.is_sync,
-                    composition_offset: sample.composition_offset(),
+                    composition_offset: sample.composition_offset().expect("offset").unwrap_or(0),
                 });
             }
             _ => {}
@@ -217,7 +214,6 @@ struct TrackSummary {
     height: u16,
     sample_count: usize,
     total_bytes: usize,
-    total_duration: u64,
     keyframes: usize,
 }
 
@@ -238,7 +234,6 @@ fn summarize(events: &[DemuxEvent]) -> Vec<TrackSummary> {
                     height,
                     sample_count: 0,
                     total_bytes: 0,
-                    total_duration: 0,
                     keyframes: 0,
                 });
             }
@@ -250,8 +245,6 @@ fn summarize(events: &[DemuxEvent]) -> Vec<TrackSummary> {
                     .expect("Sample must follow its track's TrackAdded");
                 summaries[i].sample_count += 1;
                 summaries[i].total_bytes += sample.data.len();
-                summaries[i].total_duration +=
-                    sample.timing.map(|t| t.duration).unwrap_or(0) as u64;
                 if sample.flags.is_sync {
                     summaries[i].keyframes += 1;
                 }
@@ -264,7 +257,7 @@ fn summarize(events: &[DemuxEvent]) -> Vec<TrackSummary> {
 
 fn sample_tuples(
     events: &[DemuxEvent],
-) -> Vec<(transmux::TrackId, bytes::Bytes, Option<u32>, bool)> {
+) -> Vec<(transmux::TrackId, bytes::Bytes, Option<i64>, bool)> {
     events
         .iter()
         .filter_map(|e| match e {
@@ -273,7 +266,7 @@ fn sample_tuples(
             } => Some((
                 *track_id,
                 sample.data.clone(),
-                sample.timing.map(|t| t.duration),
+                sample.timing.and_then(|t| t.dts()),
                 sample.flags.is_sync,
             )),
             _ => None,

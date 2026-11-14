@@ -50,32 +50,21 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use broadcast_client::fetch::ReconnectTimer;
 use broadcast_common::backoff::{InvalidBackoff, RetrySchedule, mix_seed};
 
 use crate::MultimuxError;
 use crate::error::{Phase, ProtocolFailure};
 use crate::route::{HealthState, RouteHandle};
-use broadcast_common::units::MICROS_PER_MILLI;
-use http;
+
+/// How long a connection must stay up before the supervisor restarts the
+/// retry series from its floor: a route that connects and drops a second later,
+/// repeatedly, is failing, so the backoff only restarts after a healthy life.
+const HEALTHY_CONNECTION: Duration = Duration::from_secs(30);
 
 /// Production default backoff: starts at 500 ms, doubles, caps at 30 s.
 const DEFAULT_BACKOFF_MIN: Duration = Duration::from_millis(500);
 const DEFAULT_BACKOFF_MAX: Duration = Duration::from_secs(30);
 const DEFAULT_BACKOFF_FACTOR: f64 = 2.0;
-
-/// How many exponential steps the supervisor samples into the shared
-/// timer's step table: past this the raw series has long since saturated at
-/// its cap for any sane factor, so every later attempt takes the cap.
-const EXPONENTIAL_STEPS: u32 = 16;
-
-/// `wait` as whole milliseconds, rounded up so a jittered sub-millisecond
-/// delay still schedules a wake rather than collapsing to "now".
-fn millis_of(wait: Duration) -> u64 {
-    u64::try_from(wait.as_micros())
-        .unwrap_or(u64::MAX)
-        .div_ceil(MICROS_PER_MILLI)
-}
 
 /// The jitter seed a fresh [`Backoff`] draws from: this process's own OS
 /// entropy, so two routes opened together do not reconnect in lockstep.
@@ -159,13 +148,13 @@ pub(crate) fn is_invalid_config(err: &MultimuxError) -> bool {
     matches!(err, MultimuxError::ConfigInvalid { .. })
 }
 
-/// The supervisor's reconnect pacing: broadcast-client's one
-/// [`ReconnectTimer`] (issue #2471 — the workspace keeps this rule in one
-/// place), configured with this crate's exponential schedule.
+/// The supervisor's reconnect pacing: `broadcast_common`'s one capped,
+/// jittered [`RetrySchedule`] (issue #2471 — the workspace keeps this rule in
+/// one place), carrying its own attempt counter.
 ///
-/// [`Backoff::next_delay`] reports the wait for *this* attempt, then grows the series
-/// (capped at `max`) for the next; [`Backoff::reset`] returns it to the floor
-/// after a healthy life so a long outage does not permanently slow down
+/// [`Backoff::next_delay`] reports the wait for *this* attempt, then grows the
+/// series (capped at `max`) for the next; [`Backoff::reset`] returns it to the
+/// floor after a healthy life so a long outage does not permanently slow down
 /// subsequent quick recoveries.
 ///
 /// The jitter is deliberately part of the delay (a fleet of inputs pointed at
@@ -173,14 +162,11 @@ pub(crate) fn is_invalid_config(err: &MultimuxError) -> bool {
 /// `min`, and every later one is within a sixth below its step.
 #[derive(Debug, Clone)]
 pub struct Backoff {
-    timer: ReconnectTimer,
-    /// The exponential series the timer's step table is sampled from.
-    series: RetrySchedule,
-    steps: Vec<u64>,
+    schedule: RetrySchedule,
+    attempt: u32,
+    min: Duration,
     max: Duration,
-    /// Where the timer series stands, in whole milliseconds from its own open;
-    /// [`Backoff::next_delay`] advances it by one wait.
-    now_ms: u64,
+    factor: f64,
 }
 
 impl Backoff {
@@ -205,16 +191,13 @@ impl Backoff {
         factor: f64,
         seed: u64,
     ) -> Result<Self, InvalidBackoff> {
-        let series = RetrySchedule::new(min, max, factor, seed)?;
-        let steps: Vec<u64> = (0..EXPONENTIAL_STEPS)
-            .map(|attempt| millis_of(series.raw_delay_for_attempt(attempt)))
-            .collect();
+        let schedule = RetrySchedule::new(min, max, factor, seed)?;
         Ok(Self {
-            timer: ReconnectTimer::new(&steps, millis_of(max), seed),
-            series,
-            steps,
+            schedule,
+            attempt: 0,
+            min,
             max,
-            now_ms: 0,
+            factor,
         })
     }
 
@@ -237,35 +220,27 @@ impl Backoff {
     /// Returns the delay to wait for *this* attempt, then grows the
     /// internal delay (capped at `max`) for the next call.
     pub fn next_delay(&mut self) -> Duration {
-        let delay = self
-            .timer
-            .on_disconnected(self.now_ms.saturating_mul(MICROS_PER_MILLI));
-        self.now_ms = self.now_ms.saturating_add(millis_of(delay));
-        delay
+        let attempt = self.attempt;
+        self.attempt = self.attempt.saturating_add(1);
+        self.schedule.delay_for_attempt(attempt)
     }
 
     /// The delay for attempt number `attempt` (0-based) without touching the
-    /// running state. The stateless form of repeated [`Self::next_delay`] calls —
-    /// [`ReconnectPolicy::backoff_for`] (push outputs) uses this so the
-    /// workspace has one capped-exponential implementation, not a shift-based
-    /// copy beside it (audit r07-O1).
-    ///
-    /// [`ReconnectPolicy::backoff_for`]: crate::config::ReconnectPolicy::backoff_for
+    /// running state. The stateless form of repeated [`Self::next_delay`] calls,
+    /// which shares the one capped-exponential [`RetrySchedule`] rather than a
+    /// shift-based copy beside it (audit r07-O1).
     pub fn delay_for_attempt(&self, attempt: u32) -> Duration {
-        self.series.raw_delay_for_attempt(attempt)
+        self.schedule.raw_delay_for_attempt(attempt)
     }
 
     /// Resets the delay back to `min` — call after a successful connect so
     /// the *next* outage starts backing off from the bottom again.
     pub fn reset(&mut self) {
         let seed = fresh_seed();
-        if let Ok(series) =
-            RetrySchedule::new(self.series.min(), self.max, DEFAULT_BACKOFF_FACTOR, seed)
-        {
-            self.series = series;
+        if let Ok(schedule) = RetrySchedule::new(self.min, self.max, self.factor, seed) {
+            self.schedule = schedule;
         }
-        self.timer = ReconnectTimer::new(&self.steps, millis_of(self.max), seed);
-        self.now_ms = 0;
+        self.attempt = 0;
     }
 }
 
@@ -443,9 +418,7 @@ pub async fn supervise_driver<F, Fut>(
         }
 
         if reached_live {
-            if attempt_started.elapsed()
-                >= Duration::from_micros(broadcast_client::fetch::HEALTHY_CONNECTION_US)
-            {
+            if attempt_started.elapsed() >= HEALTHY_CONNECTION {
                 attempt_no = 0;
                 backoff.reset();
             } else {
@@ -485,7 +458,7 @@ mod tests {
     /// parameters instead of panicking in `Duration` arithmetic.
     ///
     /// The stateless view is the unjittered bound (`min * factor^attempt`,
-    /// capped); the jittered series is `ReconnectTimer`'s, and its exact
+    /// capped); the jittered series is the [`RetrySchedule`]'s, and its exact
     /// values are `multimux/tests/it/reconnect_policy.rs`'s job on a seeded
     /// schedule. This asserts the bound and totality instead.
     #[test]

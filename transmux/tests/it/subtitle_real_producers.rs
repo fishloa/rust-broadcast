@@ -219,9 +219,9 @@ fn ours(track: &Track) -> Vec<Pkt> {
         .samples
         .iter()
         .map(|s| Pkt {
-            dts: s.timing.map(|t| t.dts).expect("dts"),
-            cts: s.timing.map(|t| t.pts).expect("pts"),
-            dur: u64::from(s.timing.map(|t| t.duration).expect("duration")),
+            dts: s.timing.and_then(|t| t.dts()).expect("dts"),
+            cts: s.timing.and_then(|t| t.pts()).expect("pts"),
+            dur: u64::from(s.timing.and_then(|t| t.duration()).expect("duration")),
             size: s.data.len(),
             crc32: broadcast_common::crc32_mpeg2::compute(&s.data),
         })

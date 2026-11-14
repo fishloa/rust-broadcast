@@ -42,7 +42,7 @@ fn presentation() -> Fixture {
     for w in cuts.windows(2) {
         let offset: u64 = v.samples[..w[0]]
             .iter()
-            .map(|s| u64::from(s.timing.map(|t| t.duration).unwrap_or(0)))
+            .map(|s| u64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)))
             .sum();
         let ftd = FragmentTrackData::new(
             v.spec.track_id,
@@ -120,18 +120,18 @@ fn same(a: &[Sample], b: &[Sample], what: &str) {
     assert_eq!(a.len(), b.len(), "{what}: sample count");
     for (k, (x, y)) in a.iter().zip(b).enumerate() {
         assert_eq!(
-            x.timing.map(|t| t.pts),
-            y.timing.map(|t| t.pts),
+            x.timing.and_then(|t| t.pts()),
+            y.timing.and_then(|t| t.pts()),
             "{what}: sample {k} pts"
         );
         assert_eq!(
-            x.timing.map(|t| t.dts),
-            y.timing.map(|t| t.dts),
+            x.timing.and_then(|t| t.dts()),
+            y.timing.and_then(|t| t.dts()),
             "{what}: sample {k} dts"
         );
         assert_eq!(
-            x.timing.map(|t| t.duration),
-            y.timing.map(|t| t.duration),
+            x.timing.and_then(|t| t.duration()),
+            y.timing.and_then(|t| t.duration()),
             "{what}: sample {k} duration"
         );
         assert_eq!(x.flags.is_sync, y.flags.is_sync, "{what}: sample {k} sync");

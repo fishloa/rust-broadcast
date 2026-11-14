@@ -58,7 +58,7 @@ impl Source {
     fn max_frame_secs(&self) -> f64 {
         self.samples
             .iter()
-            .filter_map(|s| s.timing.map(|t| t.duration))
+            .filter_map(|s| s.timing.and_then(|t| t.duration()))
             .map(|d| f64::from(d) / f64::from(self.spec.timescale.get()))
             .fold(0.0, f64::max)
     }
@@ -77,9 +77,9 @@ fn load(fixture: &str) -> Vec<Source> {
                 .into_iter()
                 .map(|mut s| {
                     if let Some(t) = s.timing.as_mut()
-                        && t.dts == 0
+                        && t.dts() == Some(0)
                     {
-                        t.dts = t.pts;
+                        t.shift(t.pts().unwrap_or(0));
                     }
                     s
                 })
@@ -142,7 +142,7 @@ fn feed(
             if !keep(ti, s) {
                 continue;
             }
-            let dts = s.timing.map(|t| t.dts).unwrap_or(0);
+            let dts = s.timing.and_then(|t| t.dts()).unwrap_or(0);
             let lead = if src.is_video() { lead_secs } else { 0.0 };
             order.push((src.secs(dts) - lead, ti, si));
         }
@@ -462,13 +462,13 @@ async fn check_rendition(
         .samples
         .iter()
         .find(|s| s.flags.is_sync)
-        .and_then(|s| s.timing.map(|t| t.dts))
+        .and_then(|s| s.timing.and_then(|t| t.dts()))
         .map(|d| video_src.secs(d))
         .expect("video sync sample");
     let first_audio_rel = audio
         .samples
         .iter()
-        .filter_map(|s| s.timing.map(|t| t.dts))
+        .filter_map(|s| s.timing.and_then(|t| t.dts()))
         .map(|d| audio.secs(d))
         .find(|t| *t >= origin)
         .map_or(0.0, |t| t - origin);
@@ -696,9 +696,9 @@ async fn split_audio_parts_at_23_976_fps_keep_the_85_percent_floor() {
                 .into_iter()
                 .map(|mut s| {
                     if let Some(t) = s.timing.as_mut()
-                        && t.dts == 0
+                        && t.dts() == Some(0)
                     {
-                        t.dts = t.pts;
+                        t.shift(t.pts().unwrap_or(0));
                     }
                     s
                 })
@@ -712,13 +712,13 @@ async fn split_audio_parts_at_23_976_fps_keep_the_85_percent_floor() {
     let video_start = video
         .samples
         .iter()
-        .filter_map(|s| s.timing.map(|t| t.dts))
+        .filter_map(|s| s.timing.and_then(|t| t.dts()))
         .min()
         .expect("dts");
     let audio_start = audio
         .samples
         .iter()
-        .filter_map(|s| s.timing.map(|t| t.dts))
+        .filter_map(|s| s.timing.and_then(|t| t.dts()))
         .min()
         .expect("dts");
     let shift = video_start * i64::from(audio.spec.timescale.get())
@@ -726,8 +726,7 @@ async fn split_audio_parts_at_23_976_fps_keep_the_85_percent_floor() {
         - audio_start;
     for s in &mut audio.samples {
         if let Some(t) = s.timing.as_mut() {
-            t.dts = t.dts.saturating_add(shift);
-            t.pts = t.pts.saturating_add(shift);
+            t.shift(shift);
         }
     }
     audio.spec.track_id = transmux::TrackId::new(video.spec.track_id.value() + 1);
@@ -762,7 +761,7 @@ async fn split_audio_silent_stretch_becomes_gap_with_contiguous_msns() {
         .samples
         .iter()
         .find(|s| s.flags.is_sync)
-        .and_then(|s| s.timing.map(|t| t.dts))
+        .and_then(|s| s.timing.and_then(|t| t.dts()))
         .expect("video sync sample");
     let origin = sources[0].secs(first_sync);
     let mut starts = vec![0.0f64];
@@ -773,7 +772,7 @@ async fn split_audio_silent_stretch_becomes_gap_with_contiguous_msns() {
     let (from, to) = (origin + starts[2], origin + starts[4]);
     let audio_ts = f64::from(sources[1].spec.timescale.get());
     let rig = rig(&sources, decls(&["eng"]), index_selectors(1), &|ti, s| {
-        let t = s.timing.map(|t| t.dts).unwrap_or(0) as f64 / audio_ts;
+        let t = s.timing.and_then(|t| t.dts()).unwrap_or(0) as f64 / audio_ts;
         !(ti == 1 && t >= from && t < to)
     });
 
@@ -1466,7 +1465,7 @@ fn cut_secs(sources: &[Source], nth_sync: usize) -> f64 {
         .filter(|s| s.flags.is_sync)
         .nth(nth_sync)
         .expect("enough video keyframes");
-    video.secs(s.timing.map(|t| t.dts).unwrap_or(0))
+    video.secs(s.timing.and_then(|t| t.dts()).unwrap_or(0))
 }
 
 async fn assert_reports_match_served_edges(rig: &Rig, n_audio: usize) {
@@ -1510,13 +1509,13 @@ async fn split_audio_rendition_report_matches_sibling_live_edge() {
         sources,
         decls(&["fre", "qad", "qaa"]),
         index_selectors(3),
-        &|ti, s| sources[ti].secs(s.timing.map(|t| t.dts).unwrap_or(0)) < cut,
+        &|ti, s| sources[ti].secs(s.timing.and_then(|t| t.dts()).unwrap_or(0)) < cut,
     );
     assert_reports_match_served_edges(&rig, 3).await;
     let before = served_edge(&rig.playlist("media.m3u8").await);
 
     rig.publish_more(sources, &|ti, s| {
-        sources[ti].secs(s.timing.map(|t| t.dts).unwrap_or(0)) >= cut
+        sources[ti].secs(s.timing.and_then(|t| t.dts()).unwrap_or(0)) >= cut
     });
     let after = served_edge(&rig.playlist("media.m3u8").await);
     assert_ne!(before, after, "publishing more moved the video live edge");
@@ -1624,7 +1623,7 @@ fn media_range_secs(sources: &[Source]) -> (f64, f64) {
         .flat_map(|s| {
             s.samples
                 .iter()
-                .map(|x| s.secs(x.timing.map(|t| t.dts).unwrap_or(0)))
+                .map(|x| s.secs(x.timing.and_then(|t| t.dts()).unwrap_or(0)))
         });
     times.fold((f64::MAX, f64::MIN), |(lo, hi), t| (lo.min(t), hi.max(t)))
 }
@@ -1641,7 +1640,7 @@ fn parts_of(pl: &MediaPlaylist) -> Vec<(u64, u64)> {
 
 fn window(sources: &[Source], from: f64, to: f64) -> impl Fn(usize, &Sample) -> bool + '_ {
     move |ti, s| {
-        let t = sources[ti].secs(s.timing.map(|t| t.dts).unwrap_or(0));
+        let t = sources[ti].secs(s.timing.and_then(|t| t.dts()).unwrap_or(0));
         t >= from && t < to
     }
 }
@@ -2223,13 +2222,13 @@ async fn split_audio_after_a_source_reconnect_starts_at_the_number_derived_time(
         .samples
         .iter()
         .find(|s| s.flags.is_sync)
-        .and_then(|s| s.timing.map(|t| t.dts))
+        .and_then(|s| s.timing.and_then(|t| t.dts()))
         .map(|d| sources[0].secs(d))
         .expect("video sync sample");
     let first_audio_rel = aac
         .samples
         .iter()
-        .filter_map(|s| s.timing.map(|t| t.dts))
+        .filter_map(|s| s.timing.and_then(|t| t.dts()))
         .map(|d| aac.secs(d))
         .find(|t| *t >= origin)
         .map_or(0.0, |t| t - origin);

@@ -34,7 +34,6 @@ const TICK_US: u64 = 50_000;
 const GAP_US: u64 = 3_000_000;
 const GAP_AFTER_CHUNK: usize = 1_300;
 const TAIL_US: u64 = 6_000_000;
-const PCR_HZ: u64 = 27_000_000;
 const VIDEO: u32 = 1;
 const AUDIO: u32 = 2;
 const OTHER_AUDIO: u32 = 3;
@@ -49,7 +48,10 @@ const AF_PRESENT: u8 = 0x20;
 const URL: &str = "http://example/live.ts";
 
 fn pts27(pts: i64, timescale: u32) -> u64 {
-    u64::try_from(i128::from(pts) * i128::from(PCR_HZ) / i128::from(timescale)).unwrap()
+    u64::try_from(
+        i128::from(pts) * i128::from(broadcast_common::clock33::PCR_HZ) / i128::from(timescale),
+    )
+    .unwrap()
 }
 
 fn packet_pid(p: &[u8]) -> u16 {
@@ -139,9 +141,10 @@ impl PlayClock {
         match self.0 {
             ClockState::Idle => None,
             ClockState::Held(p) => Some(p),
-            ClockState::Playing { base, since } => {
-                Clock27::from_27mhz(base + now.saturating_sub(since) * (PCR_HZ / 1_000_000)).ok()
-            }
+            ClockState::Playing { base, since } => Clock27::from_27mhz(
+                base + now.saturating_sub(since) * (broadcast_common::clock33::PCR_HZ / 1_000_000),
+            )
+            .ok(),
         }
     }
 }
@@ -325,7 +328,7 @@ fn first_join_point(h: &Host) -> (usize, i64) {
         .iter()
         .find_map(|(i, t, s, j)| {
             (t.value() == VIDEO && matches!(j, Some(JoinDecision::JoinPoint(_))))
-                .then(|| (*i, s.timing.map(|t| t.pts).unwrap()))
+                .then(|| (*i, s.timing.and_then(|t| t.pts()).unwrap()))
         })
         .unwrap()
 }
@@ -334,7 +337,7 @@ fn join_points(h: &Host) -> Vec<i64> {
     h.samples()
         .iter()
         .filter(|(_, t, _, j)| t.value() == VIDEO && matches!(j, Some(JoinDecision::JoinPoint(_))))
-        .map(|(_, _, s, _)| s.timing.map(|t| t.pts).unwrap())
+        .map(|(_, _, s, _)| s.timing.and_then(|t| t.pts()).unwrap())
         .collect()
 }
 
@@ -474,8 +477,8 @@ impl Oracle {
     ) {
         self.announce();
         let ts = self.specs[&track_id].timescale;
-        let dur = i64::from(sample.timing.map(|t| t.duration).unwrap_or(0));
-        let pts = sample.timing.map(|t| t.pts).unwrap();
+        let dur = i64::from(sample.timing.and_then(|t| t.duration()).unwrap_or(0));
+        let pts = sample.timing.and_then(|t| t.pts()).unwrap();
         let decision = self.joins.get_mut(&track_id).map(|j| j.push(&sample));
         if Some(track_id) == self.video {
             match decision {
@@ -483,16 +486,20 @@ impl Oracle {
                     self.joined = true;
                     self.join_27 = pts27(pts, ts.get());
                     self.video_run = VideoRun::new();
-                    let end =
-                        self.video_run
-                            .push(pts, sample.timing.map(|t| t.dts).unwrap_or(pts), dur);
+                    let end = self.video_run.push(
+                        pts,
+                        sample.timing.and_then(|t| t.dts()).unwrap_or(pts),
+                        dur,
+                    );
                     *zero = Some((track_id, pts27(pts, ts.get())));
                     ends.insert(track_id, pts27(end, ts.get()));
                 }
                 Some(JoinDecision::Keep) if self.joined => {
-                    let end =
-                        self.video_run
-                            .push(pts, sample.timing.map(|t| t.dts).unwrap_or(pts), dur);
+                    let end = self.video_run.push(
+                        pts,
+                        sample.timing.and_then(|t| t.dts()).unwrap_or(pts),
+                        dur,
+                    );
                     ends.insert(track_id, pts27(end, ts.get()));
                 }
                 _ => {}
@@ -519,7 +526,7 @@ impl Oracle {
                 DemuxEvent::ClockReference {
                     ticks, clock_hz, ..
                 } => {
-                    assert_eq!(u64::from(clock_hz), PCR_HZ);
+                    assert_eq!(u64::from(clock_hz), broadcast_common::clock33::PCR_HZ);
                     pcr = Some(ticks);
                 }
                 DemuxEvent::Sample {
@@ -855,7 +862,7 @@ fn video_before_join_point_not_reported() {
     let min_dropped_end = video
         .iter()
         .filter(|(_, _, _, j)| matches!(j, Some(JoinDecision::Drop(_))))
-        .map(|(_, _, s, _)| pts27(s.timing.map(|t| t.pts).unwrap(), ts))
+        .map(|(_, _, s, _)| pts27(s.timing.and_then(|t| t.pts()).unwrap(), ts))
         .min()
         .unwrap();
     let reports = media_reports(h.log());
@@ -1096,7 +1103,7 @@ fn demux_discontinuity_sends_pcr_discontinuity_and_rejoins() {
         .iter()
         .filter(|(_, t, s, j)| {
             t.value() == VIDEO
-                && s.timing.map(|t| t.pts).is_some_and(|p| p > joins[0])
+                && s.timing.and_then(|t| t.pts()).is_some_and(|p| p > joins[0])
                 && matches!(j, Some(JoinDecision::Drop(_)))
         })
         .count();
@@ -1223,7 +1230,7 @@ fn vod_buffer_events_come_from_the_playout_gate_not_the_controller() {
         let now = i as u64 * STEP_US;
         session.on_data(conn, chunk, ts(now));
         session.on_playback_position(ts(now), Clock27::from_27mhz(now * 27).ok());
-        session.hint(BufferHint::SourceError);
+        session.hint(ts(now), BufferHint::SourceError);
         while let Some(e) = session.next_event() {
             events.push(e);
         }
@@ -1290,21 +1297,21 @@ fn video_expectations(h: &Host) -> Vec<ChunkVideo> {
         if t.value() != VIDEO {
             continue;
         }
-        let pts = s.timing.map(|t| t.pts).unwrap();
-        let dur = i64::from(s.timing.map(|t| t.duration).unwrap());
+        let pts = s.timing.and_then(|t| t.pts()).unwrap();
+        let dur = i64::from(s.timing.and_then(|t| t.duration()).unwrap());
         let c = h.chunk_of_event(i);
-        let end = match j {
-            Some(JoinDecision::JoinPoint(_)) if run.is_none() => {
-                run.insert(VideoRun::new())
-                    .push(pts, s.timing.map(|t| t.dts).unwrap_or(pts), dur)
-            }
-            Some(JoinDecision::Keep) if run.is_some() => {
-                run.as_mut()
-                    .unwrap()
-                    .push(pts, s.timing.map(|t| t.dts).unwrap_or(pts), dur)
-            }
-            _ => continue,
-        };
+        let end =
+            match j {
+                Some(JoinDecision::JoinPoint(_)) if run.is_none() => run
+                    .insert(VideoRun::new())
+                    .push(pts, s.timing.and_then(|t| t.dts()).unwrap_or(pts), dur),
+                Some(JoinDecision::Keep) if run.is_some() => run.as_mut().unwrap().push(
+                    pts,
+                    s.timing.and_then(|t| t.dts()).unwrap_or(pts),
+                    dur,
+                ),
+                _ => continue,
+            };
         per_chunk[c].expected_end = Some(pts27(end, ts));
         per_chunk[c].last_decoded_end = Some(pts27(pts + dur, ts));
     }
@@ -1359,8 +1366,8 @@ fn audio_end_only_after_join_pts() {
             *i > join_idx
                 && t.value() == AUDIO
                 && pts27(
-                    s.timing.map(|t| t.pts).unwrap()
-                        + i64::from(s.timing.map(|t| t.duration).unwrap()),
+                    s.timing.and_then(|t| t.pts()).unwrap()
+                        + i64::from(s.timing.and_then(|t| t.duration()).unwrap()),
                     ts_audio,
                 ) <= join_27
         })
@@ -1382,7 +1389,8 @@ fn audio_end_only_after_join_pts() {
         .filter(|(i, t, _, _)| *i > join_idx && t.value() == AUDIO)
         .map(|(_, _, s, _)| {
             pts27(
-                s.timing.map(|t| t.pts).unwrap() + i64::from(s.timing.map(|t| t.duration).unwrap()),
+                s.timing.and_then(|t| t.pts()).unwrap()
+                    + i64::from(s.timing.and_then(|t| t.duration()).unwrap()),
                 ts_audio,
             )
         })
@@ -1442,7 +1450,8 @@ fn audio_end_forgotten_when_rendered_audio_changes() {
             continue;
         }
         max_end = max_end.max(pts27(
-            s.timing.map(|t| t.pts).unwrap() + i64::from(s.timing.map(|t| t.duration).unwrap()),
+            s.timing.and_then(|t| t.pts()).unwrap()
+                + i64::from(s.timing.and_then(|t| t.duration()).unwrap()),
             ts,
         ));
         expected.insert(h.chunk_of_event(i), max_end);
@@ -1482,7 +1491,7 @@ fn rejoin_run(rejoin_at: usize) -> Option<(Host, usize)> {
             Step::Data(i, t) => {
                 if i == rejoin_at {
                     mark = h.log().len();
-                    h.session.rejoin();
+                    h.session.rejoin(ts(h.now));
                 }
                 h.data(chunks[i], t);
             }
@@ -1514,7 +1523,7 @@ fn rejoin_rearms_join_without_pcr_discontinuity_hint_or_controller_reset() {
         .count();
     assert_eq!(starts, 1, "controller must not be reset");
     assert!(h.samples().iter().any(|(_, t, s, j)| t.value() == VIDEO
-        && s.timing.map(|t| t.pts).is_some_and(|p| p > joins[0])
+        && s.timing.and_then(|t| t.pts()).is_some_and(|p| p > joins[0])
         && matches!(j, Some(JoinDecision::Drop(_)))));
 }
 
@@ -1533,7 +1542,7 @@ fn rejoin_clears_pending_ends() {
         h.samples().len() > samples_before_close,
         "closing must flush demuxer samples that stay pending"
     );
-    h.session.rejoin();
+    h.session.rejoin(ts(h.now));
     let (status, headers) = tf1_headers!();
     let mut conn = None;
     while let Some(a) = h.session.poll(ts(1_300 * STEP_US)) {
