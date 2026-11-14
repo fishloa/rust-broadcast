@@ -5,8 +5,8 @@ use url::Url;
 use std::collections::BTreeMap;
 
 use broadcast_client::{
-    Action, BufferEvent, BufferInput, Config, ConnId, Event, Hint, PauseReason, Session, Status,
-    TrackId, TransportError,
+    Action, BufferEvent, BufferHint, BufferInput, Config, ConnId, Event, PauseReason, Session,
+    Status, TrackId, TransportError,
 };
 use broadcast_common::stage::Timestamp;
 use buffering_runtime::{
@@ -281,7 +281,7 @@ fn media_reports(log: &[BufferInput]) -> Vec<(usize, u32, u64)> {
     out
 }
 
-fn hints(log: &[BufferInput]) -> Vec<(usize, Hint)> {
+fn hints(log: &[BufferInput]) -> Vec<(usize, BufferHint)> {
     log.iter()
         .enumerate()
         .filter_map(|(i, l)| match l {
@@ -942,7 +942,7 @@ fn reconnect_sends_reconnected_hint_before_first_chunk_and_keeps_memory() {
     assert!(
         !hints(h.log())
             .iter()
-            .any(|(_, hint)| *hint == Hint::Reconnected)
+            .any(|(_, hint)| *hint == BufferHint::Reconnected)
     );
     let before = h.session.stall_memory();
     assert_ne!(before.peak_us, Micros(0));
@@ -953,7 +953,7 @@ fn reconnect_sends_reconnected_hint_before_first_chunk_and_keeps_memory() {
     let hs = hints(log);
     assert_eq!(
         hs.iter().map(|(_, hint)| *hint).collect::<Vec<_>>(),
-        [Hint::SourceEnded, Hint::Reconnected]
+        [BufferHint::SourceEnded, BufferHint::Reconnected]
     );
     assert_eq!(
         hs[1].0,
@@ -970,7 +970,7 @@ fn reconnect_sends_reconnected_hint_before_first_chunk_and_keeps_memory() {
     assert!(!h.log().iter().any(|l| matches!(
         l,
         BufferInput::Hint {
-            hint: Hint::PcrDiscontinuity,
+            hint: BufferHint::PcrDiscontinuity,
             ..
         }
     )));
@@ -987,7 +987,7 @@ fn source_ended_and_error_hints() {
             .into_iter()
             .map(|(_, h)| h)
             .collect::<Vec<_>>(),
-        [Hint::SourceEnded]
+        [BufferHint::SourceEnded]
     );
 
     let mut failed = skip_none!(Host::open(None));
@@ -1004,7 +1004,7 @@ fn source_ended_and_error_hints() {
             .into_iter()
             .map(|(_, h)| h)
             .collect::<Vec<_>>(),
-        [Hint::SourceError]
+        [BufferHint::SourceError]
     );
 
     let mut config = Config::default();
@@ -1020,7 +1020,7 @@ fn source_ended_and_error_hints() {
             .into_iter()
             .map(|(_, h)| h)
             .collect::<Vec<_>>(),
-        [Hint::SourceError]
+        [BufferHint::SourceError]
     );
 }
 
@@ -1031,7 +1031,7 @@ fn demux_discontinuity_sends_pcr_discontinuity_and_rejoins() {
     assert!(
         !hints(clean.log())
             .iter()
-            .any(|(_, h)| *h == Hint::PcrDiscontinuity),
+            .any(|(_, h)| *h == BufferHint::PcrDiscontinuity),
         "unmodified capture must not signal a discontinuity"
     );
     assert_eq!(join_points(&clean).len(), 1);
@@ -1051,7 +1051,7 @@ fn demux_discontinuity_sends_pcr_discontinuity_and_rejoins() {
     let hs = hints(h.log());
     let disc: Vec<usize> = hs
         .iter()
-        .filter(|(_, hint)| *hint == Hint::PcrDiscontinuity)
+        .filter(|(_, hint)| *hint == BufferHint::PcrDiscontinuity)
         .map(|(i, _)| *i)
         .collect();
     assert_eq!(disc.len(), 1, "{hs:?}");
@@ -1199,7 +1199,7 @@ fn vod_buffer_events_come_from_the_playout_gate_not_the_controller() {
         let now = i as u64 * STEP_US;
         session.on_data(conn, chunk, ts(now));
         session.on_playback_position(ts(now), Some(now * 27));
-        session.hint(Hint::SourceError);
+        session.hint(BufferHint::SourceError);
         while let Some(e) = session.next_event() {
             events.push(e);
         }

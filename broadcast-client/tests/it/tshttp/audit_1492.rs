@@ -1,4 +1,5 @@
-use broadcast_client::tshttp::{Action, Config, TsHttpClient};
+use crate::tshttp::TsHttpConfig as Config;
+use crate::tshttp::{Action, TsHttpClient};
 use broadcast_common::stage::Timestamp;
 use std::time::Duration;
 
@@ -25,7 +26,7 @@ fn a_zero_backoff_entry_is_rejected_and_clamped_to_one_millisecond() {
     assert!(
         matches!(
             config.validate(),
-            Err(broadcast_client::tshttp::config::ConfigError::ZeroBackoffEntry)
+            Err(crate::tshttp::config::ConfigError::ZeroBackoffEntry)
         ),
         "a 0 ms backoff spins"
     );
@@ -53,7 +54,7 @@ fn a_client_never_schedules_a_zero_delay_reconnect_from_a_zero_backoff_entry() {
         },
         ..Config::default()
     };
-    let mut client = TsHttpClient::new("u", config, ts(0));
+    let mut client = TsHttpClient::with_seed("u", config, ts(0), ts(0).as_millis());
     while client.poll().is_some() {}
     client.on_error(ts(0));
     let delays: Vec<u64> = std::iter::from_fn(|| client.poll())

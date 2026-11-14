@@ -1,4 +1,5 @@
-use broadcast_client::tshttp::{Action, Config, Event, TsHttpClient};
+use crate::tshttp::TsHttpConfig as Config;
+use crate::tshttp::{Action, Event, TsHttpClient};
 use broadcast_common::stage::Timestamp;
 
 /// `ms` on the tshttp policy's millisecond clock, as the session's `now`.
@@ -23,7 +24,7 @@ fn real_finite_capture() {
         }
     }
 
-    let mut c = TsHttpClient::new("u", cfg(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", cfg(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(
         200,
@@ -63,7 +64,7 @@ fn real_finite_capture() {
 #[test]
 fn real_live_capture() {
     let bytes = test_fixtures::read("ts/h264-aac.ts");
-    let mut c = TsHttpClient::new("u", cfg(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", cfg(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(200, &[], ts(0));
     let _ = c.poll_event();

@@ -613,11 +613,11 @@ fn caller_reconnect_restarts_the_connection() {
 /// before the new connection's first media.
 #[test]
 fn a_closed_connection_is_hinted_to_the_buffer_and_cleared_on_reconnect() {
-    use broadcast_client::{BufferInput, Hint};
+    use broadcast_client::{BufferHint, BufferInput};
 
     for (error, want) in [
-        (None, Hint::SourceEnded),
-        (Some("reset"), Hint::SourceError),
+        (None, BufferHint::SourceEnded),
+        (Some("reset"), BufferHint::SourceError),
     ] {
         let mut config = rtmp_config();
         config.record_buffer_inputs = true;
@@ -637,7 +637,7 @@ fn a_closed_connection_is_hinted_to_the_buffer_and_cleared_on_reconnect() {
             matches!(
                 i,
                 BufferInput::Hint {
-                    hint: Hint::Reconnected,
+                    hint: BufferHint::Reconnected,
                     ..
                 }
             )

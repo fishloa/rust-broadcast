@@ -1,4 +1,5 @@
-use broadcast_client::tshttp::{Action, Config, Event, TsHttpClient};
+use crate::tshttp::TsHttpConfig as Config;
+use crate::tshttp::{Action, Event, TsHttpClient};
 use broadcast_common::stage::Timestamp;
 use std::collections::BTreeMap;
 
@@ -26,7 +27,7 @@ fn eof_flushes_held_back_samples() {
         None => return,
     };
     // before eof
-    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(200, &[], ts(0));
     let _ = c.poll_event();
@@ -80,7 +81,7 @@ fn flush_events_precede_reconnect_action() {
         Some(b) => b,
         None => return,
     };
-    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(200, &[], ts(0));
     let _ = c.poll_event();
@@ -149,7 +150,7 @@ fn eof_with_only_flushed_sample_counts_as_played() {
     let n = found.expect("no prefix with 0 samples before finish and >=1 after");
     let prefix = &bytes[..n];
 
-    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(200, &[], ts(0));
     let _ = c.poll_event();

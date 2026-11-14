@@ -264,12 +264,6 @@ impl TsHttpPolicy {
         matches!(self.phase, Phase::Ended)
     }
 
-    /// `true` while the current response is a finite resource (T16).
-    #[must_use]
-    pub fn is_finite(&self) -> bool {
-        self.finite
-    }
-
     /// Number of `Open` actions issued so far; changes whenever a new
     /// connection starts.
     #[must_use]
@@ -391,11 +385,6 @@ impl TsHttpPolicy {
             }
             Phase::Backoff { .. } => {}
         }
-    }
-
-    /// Advance timers (T6, T10-T12, T15).
-    pub fn poll_timeout(&mut self, now: Timestamp) {
-        self.poll_timeout_with(now, |_| false);
     }
 
     /// Advance timers, calling `flush` right before a terminal start/stall

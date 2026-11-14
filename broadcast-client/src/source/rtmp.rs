@@ -16,7 +16,8 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::time::Duration;
 
-use crate::tshttp::{Config as TsConfig, TsHttpPolicy};
+use crate::tshttp::TsHttpConfig as TsConfig;
+use crate::tshttp::TsHttpPolicy;
 use rtmp_runtime::client::{ClientEvent, ClientMode, ClientSession, RtmpClientConfig};
 use rtmp_runtime::target::RtmpTarget;
 use transmux::{DemuxEvent, StreamingFlvDemux, TrackId, TrackSpec};

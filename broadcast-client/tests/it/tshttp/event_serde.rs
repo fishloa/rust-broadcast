@@ -2,7 +2,8 @@
 
 use core::marker::PhantomData;
 
-use broadcast_client::tshttp::{Config, Event, StarveKind, TsHttpClient};
+use crate::tshttp::TsHttpConfig as Config;
+use crate::tshttp::{Event, StarveKind, TsHttpClient};
 use broadcast_common::stage::Timestamp;
 use serde::de::DeserializeOwned;
 use transmux::StreamingTsDemux;
@@ -48,7 +49,7 @@ fn demux_event_serializes_as_its_bare_tag() {
 
 #[test]
 fn plain_events_serialize_with_their_fields() {
-    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(404, &[], ts(0));
     let e = c.poll_event().expect("event");

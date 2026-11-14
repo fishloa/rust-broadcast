@@ -6,7 +6,8 @@ use alloc::vec::Vec;
 use url::Url;
 
 use crate::error::TransportError;
-use crate::tshttp::{Config as TsConfig, TsHttpClient};
+use crate::tshttp::TsHttpClient;
+use crate::tshttp::TsHttpConfig as TsConfig;
 use broadcast_common::clock33::PCR_TIMESCALE;
 use broadcast_common::timescale::{Rounding, Timescale, rescale_u64};
 use transmux::{DemuxEvent, TrackId, TrackSpec};
@@ -61,8 +62,8 @@ pub struct TsHttpSource {
 }
 
 impl TsHttpSource {
-    /// Create a source, seeded from the caller's `now_us`.
-    pub fn new(url: Url, config: TsConfig, now_us: u64) -> Self {
+    #[cfg(test)]
+    fn new(url: Url, config: TsConfig, now_us: u64) -> Self {
         Self::with_seed(url, config, now_us, now_us)
     }
 
@@ -101,25 +102,18 @@ impl TsHttpSource {
         self
     }
 
-    /// Request URL.
-    pub fn url(&self) -> &Url {
+    pub(crate) fn url(&self) -> &Url {
         &self.url
     }
 
-    /// Set the request URL used for the next request.
-    pub fn set_url(&mut self, url: Url) {
+    #[cfg(test)]
+    fn set_url(&mut self, url: Url) {
         self.url = url;
     }
 
     /// Last PCR (27 MHz) observed during the current chunk's demux.
     pub fn take_last_pcr(&mut self) -> Option<u64> {
         self.last_pcr_27mhz.take()
-    }
-
-    /// Connections that reached a successful response so far; an attempt that failed before
-    /// connecting does not count.
-    pub fn connection_count(&self) -> u32 {
-        self.connection_count
     }
 
     #[cfg(test)]
@@ -171,15 +165,6 @@ impl TsHttpSource {
             }
         }
         Some(action)
-    }
-
-    /// Poll next mapped event.
-    pub fn poll_event(&mut self) -> Option<Event> {
-        loop {
-            if let Some(e) = self.poll_item()? {
-                return Some(e);
-            }
-        }
     }
 
     pub(crate) fn poll_item(&mut self) -> Option<Item> {

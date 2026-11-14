@@ -2,7 +2,7 @@ use crate::support;
 use url::Url;
 
 use broadcast_client::{
-    Action, BufferEvent, BufferInput, Config, ConnId, Event, Hint, Session, Status, TrackId,
+    Action, BufferEvent, BufferHint, BufferInput, Config, ConnId, Event, Session, Status, TrackId,
 };
 use broadcast_common::stage::Timestamp;
 use support::ts_shift::{PACKET, Shift, VIDEO_TIMESCALE, pes_starts, pts27, shift_pes};
@@ -278,7 +278,7 @@ fn a_reconnect_onto_a_lower_pts_base_starts_playing_on_the_new_timeline() {
             !matches!(
                 l,
                 BufferInput::Hint {
-                    hint: Hint::Reconnected,
+                    hint: BufferHint::Reconnected,
                     ..
                 }
             )
@@ -614,7 +614,7 @@ fn a_jump_to_a_negative_unrolled_timeline_keeps_the_controller_fed() {
             !matches!(
                 l,
                 BufferInput::Hint {
-                    hint: Hint::PcrDiscontinuity,
+                    hint: BufferHint::PcrDiscontinuity,
                     ..
                 }
             )

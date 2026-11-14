@@ -1,4 +1,5 @@
-use broadcast_client::tshttp::{Action, Config, Event, TsHttpClient};
+use crate::tshttp::TsHttpConfig as Config;
+use crate::tshttp::{Action, Event, TsHttpClient};
 use broadcast_common::stage::Timestamp;
 
 /// `ms` on the tshttp policy's millisecond clock, as the session's `now`.
@@ -8,7 +9,7 @@ fn ts(ms: u64) -> Timestamp {
 
 fn samples_for(chunk_size: usize) -> Option<(usize, usize, usize)> {
     let bytes = test_fixtures::require_bytes("http/live-channels/tf1-live.ts", "real_stream")?;
-    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(200, &[], ts(0));
     let _ = c.poll_event();
@@ -74,7 +75,7 @@ fn first_sample_moves_to_playing() {
     else {
         return;
     };
-    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(200, &[], ts(0));
     let _ = c.poll_event();
@@ -96,7 +97,7 @@ fn first_sample_moves_to_playing() {
 
 #[test]
 fn eof_before_any_sample_backs_off() {
-    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(200, &[], ts(0));
     let _ = c.poll_event();
@@ -122,7 +123,7 @@ fn missing_headers_404() {
         .parse()
         .unwrap();
     assert_eq!(status, 404);
-    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(status, &[], ts(0));
     assert!(matches!(
@@ -148,7 +149,7 @@ fn tf1_headers_200_connected() {
         .parse()
         .unwrap();
     assert_eq!(status, 200);
-    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(status, &[], ts(0));
     assert!(matches!(c.poll_event(), Some(Event::Connected)));
