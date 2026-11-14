@@ -87,7 +87,7 @@ let raw: Vec<u8> = (0..hex.len())
 
 // Wall-clock anchor: PTS 0 == 2024-01-15T12:00:00 UTC.
 let anchor = TimeAnchor { pts_90k: 0, utc_epoch_ms: 1_705_320_000_000 };
-let mut timeline = Timeline::with_anchor(anchor);
+let mut timeline = Timeline::new(anchor);
 let event = timeline.push_scte35(&raw).unwrap();
 
 // Edge 1: SCTE-35 -> HLS EXT-X-DATERANGE.
