@@ -10,6 +10,7 @@
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use core::fmt;
 
 use quick_xml::NsReader;
 use quick_xml::Writer;
@@ -20,6 +21,49 @@ use quick_xml::name::{QName, ResolveResult};
 
 /// Message for a character outside the XML 1.0 §2.2 `Char` production.
 pub const BAD_CHAR: &str = "character not allowed in XML 1.0 (Char production, §2.2)";
+
+/// Why [`char_data`], [`namespace_of`] or [`read_event`] refused part of a
+/// document.
+///
+/// A caller matches the failure kind instead of parsing the description the
+/// pull parsers put in their own error.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum XmlCharError {
+    /// A character outside the XML 1.0 §2.2 `Char` production.
+    BadChar,
+    /// A reference to an entity that is neither predefined nor declared (no
+    /// document may declare one: DOCTYPE is refused).
+    UndefinedEntity {
+        /// The entity name, without the `&` and `;`.
+        name: String,
+    },
+    /// An element or attribute name with a namespace prefix that is never
+    /// declared.
+    UnknownPrefix {
+        /// The prefix, without the `:`.
+        prefix: String,
+    },
+    /// quick-xml's own lexer refused the bytes (malformed markup, an invalid
+    /// character reference, an encoding error).
+    Reader {
+        /// The reader's description of the fault.
+        message: String,
+    },
+}
+
+impl fmt::Display for XmlCharError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BadChar => f.write_str(BAD_CHAR),
+            Self::UndefinedEntity { name } => write!(f, "undefined entity reference &{name};"),
+            Self::UnknownPrefix { prefix } => write!(f, "unknown namespace prefix '{prefix}'"),
+            Self::Reader { message } => f.write_str(message),
+        }
+    }
+}
+
+impl core::error::Error for XmlCharError {}
 
 /// XML 1.0 §2.2 `Char` production: the only characters a document may
 /// contain, whether written literally or through a character reference.
@@ -35,10 +79,11 @@ pub fn is_xml_char(c: char) -> bool {
 }
 
 /// `Ok(Some(text))` for a text run, CDATA section or entity/character
-/// reference (references resolved); `Ok(None)` for every other event; `Err`
-/// with a description for an undefined entity, an invalid character reference,
-/// or a character outside the `Char` production ([`BAD_CHAR`]).
-pub fn char_data(event: &Event<'_>) -> Result<Option<String>, String> {
+/// reference (references resolved); `Ok(None)` for every other event;
+/// `Err` [`XmlCharError::UndefinedEntity`] for an undefined entity,
+/// [`XmlCharError::Reader`] for an invalid character reference, and
+/// [`XmlCharError::BadChar`] for a character outside the `Char` production.
+pub fn char_data(event: &Event<'_>) -> Result<Option<String>, XmlCharError> {
     let content = match event {
         Event::Text(t) => t.xml10_content().into_owned(),
         Event::CData(c) => c.xml10_content().into_owned(),
@@ -46,26 +91,36 @@ pub fn char_data(event: &Event<'_>) -> Result<Option<String>, String> {
             Ok(Some(c)) => c.to_string(),
             Ok(None) => match resolve_predefined_entity(r) {
                 Some(s) => s.to_string(),
-                None => return Err(format!("undefined entity reference &{};", &**r)),
+                None => {
+                    return Err(XmlCharError::UndefinedEntity {
+                        name: (**r).to_string(),
+                    });
+                }
             },
-            Err(e) => return Err(e.to_string()),
+            Err(e) => {
+                return Err(XmlCharError::Reader {
+                    message: e.to_string(),
+                });
+            }
         },
         _ => return Ok(None),
     };
     if content.chars().all(is_xml_char) {
         Ok(Some(content))
     } else {
-        Err(BAD_CHAR.to_string())
+        Err(XmlCharError::BadChar)
     }
 }
 
 /// The namespace URI an element or attribute name resolved to: `None` when
-/// unbound, `Err` with a description for an undeclared prefix.
-pub fn namespace_of(result: ResolveResult<'_>) -> Result<Option<String>, String> {
+/// unbound, `Err` [`XmlCharError::UnknownPrefix`] for an undeclared prefix.
+pub fn namespace_of(result: ResolveResult<'_>) -> Result<Option<String>, XmlCharError> {
     match result {
         ResolveResult::Unbound => Ok(None),
         ResolveResult::Bound(ns) => Ok(Some(ns.into_inner().to_string())),
-        ResolveResult::Unknown(prefix) => Err(format!("unknown namespace prefix '{prefix}'")),
+        ResolveResult::Unknown(prefix) => Err(XmlCharError::UnknownPrefix {
+            prefix: prefix.to_string(),
+        }),
     }
 }
 
@@ -89,14 +144,16 @@ pub fn message_at(reader: &NsReader<&[u8]>, message: &str) -> String {
 }
 
 /// The next event with its owned element-namespace resolution: the
-/// namespace outcome is the [`namespace_of`] result, a reader failure is its
-/// description.
+/// namespace outcome is the [`namespace_of`] result, a reader failure is
+/// [`XmlCharError::Reader`].
 pub fn read_event<'a>(
     reader: &mut NsReader<&'a [u8]>,
-) -> Result<(Result<Option<String>, String>, Event<'a>), String> {
+) -> Result<(Result<Option<String>, XmlCharError>, Event<'a>), XmlCharError> {
     match reader.read_resolved_event() {
         Ok((ns, event)) => Ok((namespace_of(ns), event)),
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(XmlCharError::Reader {
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -143,7 +200,7 @@ pub fn read_attributes_checked<E>(
         }
         let (ns, local) = resolver.resolve_attribute(key);
         out.push(TagAttribute {
-            namespace: namespace_of(ns).map_err(|m| fail(&m))?,
+            namespace: namespace_of(ns).map_err(|e| fail(&e.to_string()))?,
             name: local.into_inner().to_string(),
             value: value.into_owned(),
         });
@@ -382,10 +439,12 @@ pub fn finish_document(w: XmlWriter) -> String {
 mod tests {
     use super::*;
 
-    fn first_char_data(xml: &str) -> Result<Option<String>, String> {
+    fn first_char_data(xml: &str) -> Result<Option<String>, XmlCharError> {
         let mut reader = NsReader::from_str(xml);
         loop {
-            let event = reader.read_event().map_err(|e| e.to_string())?;
+            let event = reader.read_event().map_err(|e| XmlCharError::Reader {
+                message: e.to_string(),
+            })?;
             if matches!(event, Event::Eof) {
                 return Ok(None);
             }
@@ -415,12 +474,25 @@ mod tests {
 
     #[test]
     fn rejects_undefined_entity_and_forbidden_character_reference() {
-        assert!(
-            first_char_data("<a>&nope;</a>")
-                .unwrap_err()
-                .contains("undefined entity")
+        assert_eq!(
+            first_char_data("<a>&nope;</a>").unwrap_err(),
+            XmlCharError::UndefinedEntity {
+                name: String::from("nope")
+            }
         );
-        assert_eq!(first_char_data("<a>&#1;</a>").unwrap_err(), BAD_CHAR);
+        assert_eq!(
+            first_char_data("<a>&#1;</a>").unwrap_err(),
+            XmlCharError::BadChar
+        );
+        // The description is unchanged, so a log line still reads the same.
+        assert_eq!(
+            XmlCharError::UndefinedEntity {
+                name: String::from("nope")
+            }
+            .to_string(),
+            "undefined entity reference &nope;"
+        );
+        assert_eq!(XmlCharError::BadChar.to_string(), BAD_CHAR);
     }
 
     #[test]
@@ -437,11 +509,27 @@ mod tests {
     fn unknown_prefix_is_an_error() {
         let mut reader = NsReader::from_str("<p:a/>");
         let (ns, _) = reader.read_resolved_event().unwrap();
-        assert!(
-            namespace_of(ns)
-                .unwrap_err()
-                .contains("unknown namespace prefix")
+        assert_eq!(
+            namespace_of(ns).unwrap_err(),
+            XmlCharError::UnknownPrefix {
+                prefix: String::from("p")
+            }
         );
+        // A caller can match the failure kind without reading the text.
+        assert_eq!(
+            XmlCharError::UnknownPrefix {
+                prefix: String::from("p")
+            }
+            .to_string(),
+            "unknown namespace prefix 'p'"
+        );
+    }
+
+    /// Wrapper for the reader-failure variant.
+    #[test]
+    fn reader_failure_keeps_its_description() {
+        let err = first_char_data("<a>&#xZZ;</a>").unwrap_err();
+        assert!(matches!(err, XmlCharError::Reader { .. }), "{err:?}");
     }
 
     fn start_attributes(
@@ -450,7 +538,7 @@ mod tests {
     ) -> Result<Vec<TagAttribute>, String> {
         let mut reader = NsReader::from_str(xml);
         loop {
-            let (_, event) = read_event(&mut reader)?;
+            let (_, event) = read_event(&mut reader).map_err(|e| e.to_string())?;
             if let Event::Start(e) | Event::Empty(e) = event {
                 return read_attributes_checked(&reader, &e, |m| message_at(&reader, m), admit);
             }

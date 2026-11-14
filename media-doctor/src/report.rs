@@ -32,6 +32,82 @@ impl Severity {
 
 broadcast_common::impl_spec_display!(Severity);
 
+/// The stream a [`Location`] names: a transport-stream PID, a container-level
+/// media track, or nothing at all.
+///
+/// A [`Pid`] (13 bits) and a [`TrackId`] (ISO/IEC 14496-12:2026 `track_ID`,
+/// 32 bits) are different quantities, so neither widens into the other.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamLocator {
+    /// A transport-stream PID.
+    Ts(Pid),
+    /// A container-level media track (ISO/IEC 14496-12:2026 `track_ID`).
+    Track(TrackId),
+    /// No stream applies (a playlist line, an MPD element, a container-level
+    /// check with no track).
+    Unknown,
+}
+
+impl fmt::Display for StreamLocator {
+    /// The bare number a report prints, `0` for [`StreamLocator::Unknown`].
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Ts(pid) => write!(f, "{}", pid.value()),
+            Self::Track(id) => write!(f, "{}", id.value()),
+            Self::Unknown => f.write_str("0"),
+        }
+    }
+}
+
+impl fmt::UpperHex for StreamLocator {
+    /// The `pid=0x{:04X}` field a report prints.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Ts(pid) => fmt::UpperHex::fmt(pid, f),
+            Self::Track(id) => fmt::UpperHex::fmt(&id.value(), f),
+            Self::Unknown => fmt::UpperHex::fmt(&0u16, f),
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for StreamLocator {
+    /// The bare number a report prints, so every JSON document that carried
+    /// the old `pid` integer is byte-identical.
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let raw = match self {
+            Self::Ts(pid) => u32::from(pid.value()),
+            Self::Track(id) => id.value(),
+            Self::Unknown => 0,
+        };
+        s.serialize_u32(raw)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for StreamLocator {
+    /// A number in the PID range is a [`StreamLocator::Ts`], anything above
+    /// it a [`StreamLocator::Track`], and the old unknown `0`…
+    ///
+    /// …is the one number that cannot round-trip both ways: PID 0 is the
+    /// Program Association Table on real transport streams, so a bare `0`
+    /// reads back as [`StreamLocator::Unknown`], not a stream on PID 0.
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let raw = u32::deserialize(d)?;
+        if raw == 0 {
+            return Ok(Self::Unknown);
+        }
+        u16::try_from(raw)
+            .ok()
+            .and_then(|raw_pid| Pid::try_new(raw_pid).ok())
+            .map_or_else(
+                || Ok(Self::Track(TrackId::new(raw))),
+                |pid| Ok(Self::Ts(pid)),
+            )
+    }
+}
+
 /// Packet / byte-stream location for a diagnostic finding.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,40 +115,37 @@ broadcast_common::impl_spec_display!(Severity);
 pub struct Location {
     /// 0-based TS packet index within the stream.
     pub packet: usize,
-    /// PID (or, for container-level checks, media track id) on which the
-    /// issue was detected (0 if unknown / N/A).
-    ///
-    /// `u32`, not `u16`: a TS PID is 13 bits, but the same field also carries
-    /// a media **track id** for container checks, and ISO/IEC 14496-12:2026
-    /// `track_ID` is a 32-bit field. Narrowing it silently aliased every
-    /// track id above 65535 onto a lower one.
-    pub pid: u32,
+    /// The stream the issue was detected on.
+    #[cfg_attr(feature = "serde", serde(rename = "pid"))]
+    pub stream: StreamLocator,
 }
 
 impl Location {
-    /// Create a new location from a raw stream id (a PID or a media track id;
-    /// prefer [`Location::at_pid`] / [`Location::at_track`] where the kind is
-    /// known, and `0` for "unknown / N/A").
-    pub fn new(packet: usize, pid: u32) -> Self {
-        Self { packet, pid }
+    /// A location with no stream: a playlist line, an MPD element, or a
+    /// container-level check with no track.
+    #[must_use]
+    pub fn new(packet: usize) -> Self {
+        Self {
+            packet,
+            stream: StreamLocator::Unknown,
+        }
     }
 
     /// A location on a transport-stream PID.
-    ///
-    /// The `pid` field is `u32` because it is shared with media track ids
-    /// (see [`Location::pid`]); a typed [`Pid`] here widens losslessly.
+    #[must_use]
     pub fn at_pid(packet: usize, pid: Pid) -> Self {
         Self {
             packet,
-            pid: u32::from(pid.value()),
+            stream: StreamLocator::Ts(pid),
         }
     }
 
     /// A location on a container-level media track (ISO/IEC 14496-12:2026 `track_ID`).
+    #[must_use]
     pub fn at_track(packet: usize, track_id: TrackId) -> Self {
         Self {
             packet,
-            pid: track_id.value(),
+            stream: StreamLocator::Track(track_id),
         }
     }
 }
@@ -113,7 +186,7 @@ impl fmt::Display for Finding {
         write!(
             f,
             "[{}] [{}] packet={} pid=0x{:04X} {}",
-            self.severity, self.rule_id, self.location.packet, self.location.pid, self.message
+            self.severity, self.rule_id, self.location.packet, self.location.stream, self.message
         )
     }
 }
@@ -197,22 +270,65 @@ mod tests {
     use super::*;
 
     #[test]
-    fn at_pid_widens_a_typed_pid_losslessly_and_at_track_keeps_32_bits() {
-        // Every valid PID survives the u32 field unchanged.
+    fn at_pid_keeps_a_typed_pid_and_at_track_keeps_32_bits() {
+        // Every valid PID is carried as a typed PID, never a widened integer.
         for raw in [0x0000u16, 0x0100, 0x1FFE, 0x1FFF] {
             let pid = Pid::try_new(raw).unwrap();
-            assert_eq!(Location::at_pid(7, pid).pid, u32::from(raw));
+            assert_eq!(Location::at_pid(7, pid).stream, StreamLocator::Ts(pid));
             assert_eq!(Location::at_pid(7, pid).packet, 7);
         }
-        // A track id above 16 bits is not aliased (the reason the field is u32).
+        // A track id above 16 bits is not aliased.
+        let track = TrackId::new(0x0001_0064);
         assert_eq!(
-            Location::at_track(0, TrackId::new(0x0001_0064)).pid,
-            0x0001_0064
+            Location::at_track(0, track).stream,
+            StreamLocator::Track(track)
         );
         // An out-of-range PID cannot be turned into a typed location at all.
         assert!(matches!(
             Pid::try_new(0x2064),
             Err(mpeg_ts::pid::PidOutOfRange { .. })
         ));
+    }
+
+    #[test]
+    fn a_track_id_and_a_pid_with_the_same_number_are_distinct_locations() {
+        let pid = Pid::try_new(0x0100).unwrap();
+        let track = TrackId::new(0x0100);
+        assert_ne!(
+            Location::at_pid(0, pid).stream,
+            Location::at_track(0, track).stream
+        );
+        assert_eq!(Location::new(3).stream, StreamLocator::Unknown);
+        // The report still renders the bare number, `0` when unknown.
+        use alloc::string::ToString;
+        assert_eq!(StreamLocator::Ts(pid).to_string(), "256");
+        assert_eq!(StreamLocator::Track(track).to_string(), "256");
+        assert_eq!(StreamLocator::Unknown.to_string(), "0");
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn location_json_still_carries_the_bare_pid_number() {
+        // A TS PID serializes as the integer the old `pid: u32` field held.
+        let finding = Finding::new(
+            Severity::Error,
+            Location::at_pid(42, Pid::try_new(0x0100).unwrap()),
+            "sync-byte",
+            "bad sync",
+        );
+        let json = serde_json::to_value(&finding).unwrap();
+        assert_eq!(json["location"]["pid"], serde_json::json!(0x0100));
+        let back: Finding = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            back.location.stream,
+            StreamLocator::Ts(Pid::try_new(0x100).unwrap())
+        );
+
+        // A track id above the PID range is not aliased onto a PID.
+        let track = TrackId::new(0x0001_0064);
+        let json = serde_json::to_value(StreamLocator::Track(track)).unwrap();
+        assert_eq!(json, serde_json::json!(0x0001_0064u32));
+        let back: StreamLocator = serde_json::from_value(json).unwrap();
+        assert_eq!(back, StreamLocator::Track(track));
     }
 }

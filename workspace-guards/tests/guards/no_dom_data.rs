@@ -18,6 +18,10 @@ pub const TABLE: &[Crate] = &[
                 "the reader's rejection reason (invalid UTF-8, not well-formed, foreign root, exceeded bound), not a node",
             ),
             (
+                "XmlCharError",
+                "the pull parsers' rejection reason (an outside-the-Char character, an undefined entity, an undeclared prefix, a reader fault), not a node",
+            ),
+            (
                 "XmlLimits",
                 "the hostile-input ceilings (bytes, depth, elements, attribute size/count) the reader enforces, not a node",
             ),

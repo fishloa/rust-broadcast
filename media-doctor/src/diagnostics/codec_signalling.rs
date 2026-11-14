@@ -179,7 +179,7 @@ mod tests {
                 .findings()
                 .iter()
                 .any(|f| f.rule_id == "codec-signalling-mismatch"
-                    && f.location.pid == u32::from(VIDEO_PID.value())),
+                    && f.location.stream == crate::StreamLocator::Ts(VIDEO_PID)),
             "expected codec-signalling-mismatch for a non-NAL H.264 PID, got {:?}",
             report.findings()
         );
@@ -232,7 +232,7 @@ mod tests {
                 .findings()
                 .iter()
                 .any(|f| f.rule_id == "codec-signalling-mismatch"
-                    && f.location.pid == u32::from(AUDIO_PID.value())),
+                    && f.location.stream == crate::StreamLocator::Ts(AUDIO_PID)),
             "expected codec-signalling-mismatch for a non-ADTS AAC PID, got {:?}",
             report.findings()
         );
@@ -256,7 +256,7 @@ mod tests {
                 .findings()
                 .iter()
                 .any(|f| f.rule_id == "codec-signalling-mismatch"
-                    && f.location.pid == u32::from(AUDIO_PID.value())),
+                    && f.location.stream == crate::StreamLocator::Ts(AUDIO_PID)),
             "expected codec-signalling-mismatch for an MP3 payload on an AAC PID, got {:?}",
             report.findings()
         );

@@ -139,7 +139,7 @@ impl SectionPacketiser {
                 pusi,
                 pid: self.pid,
                 scrambling: ScramblingControl::NotScrambled,
-                adaptation: AdaptationFieldControl::PayloadOnly,
+                adaptation_field_control: AdaptationFieldControl::PayloadOnly,
                 continuity_counter: self.continuity_counter,
             };
             header

@@ -26,7 +26,8 @@ use crate::report::Report;
 ///
 /// Equivalent to [`crate::check_hls_playlist`] — this name is kept for callers
 /// that predate it. Line numbers in [`Location`](crate::Location) are 1-based;
-/// `pid` is always 0 (text input).
+/// the stream is [`StreamLocator::Unknown`](crate::StreamLocator::Unknown)
+/// (text input).
 pub fn check_playlist(text: &str, report: &mut Report) {
     crate::check_hls_playlist(text, report);
 }

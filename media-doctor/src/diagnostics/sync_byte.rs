@@ -14,6 +14,7 @@ pub struct SyncByteCheck;
 
 impl Diagnostic for SyncByteCheck {
     fn run(&self, ts: &[u8], report: &mut Report) {
+        use mpeg_ts::pid::Pid;
         use mpeg_ts::ts::{TS_PACKET_SIZE as PACKET_SIZE, TS_SYNC_BYTE as SYNC};
 
         let n_packets = ts.len() / PACKET_SIZE;
@@ -22,9 +23,9 @@ impl Diagnostic for SyncByteCheck {
             if ts[offset] != SYNC {
                 report.push(Finding::new(
                     Severity::Error,
-                    Location::new(
+                    Location::at_pid(
                         i,
-                        u32::from(u16::from_be_bytes([ts[offset + 1], ts[offset + 2]]) & 0x1FFF),
+                        Pid::from_wire_masked(u16::from_be_bytes([ts[offset + 1], ts[offset + 2]])),
                     ),
                     "sync-byte",
                     alloc::format!(
