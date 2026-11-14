@@ -60,6 +60,23 @@ pub enum Error {
         /// Expected count: `data_count & 0xFF`.
         need: usize,
     },
+    /// The PES header (via [`mpeg_pes::PesPacket`]) is malformed
+    /// (ISO/IEC 13818-1 §2.4.3), e.g. a bad start code or a declared
+    /// `PES_packet_length` past the end of the input.
+    #[error(transparent)]
+    Pes(#[from] mpeg_pes::Error),
+    /// A packet's stored `Data_Count` word was not the one ST 291-1:2011
+    /// §6.5 derives from its `User_Data_Words` count. It is derived again on
+    /// serialize, so a packet carrying a different value could not round-trip.
+    #[error(
+        "Data_Count {stored:#05X} does not match the {derived:#05X} its user data words derive"
+    )]
+    DataCountMismatch {
+        /// The `Data_Count` word actually stored in the packet.
+        stored: u16,
+        /// The word ST 291-1's derivation gives for the user data words.
+        derived: u16,
+    },
     /// An RFC 8331 ANC RTP payload's declared `Length` did not match the
     /// bytes actually consumed while parsing `ANC_Count` ANC packets (`rtp`
     /// feature) — catches a corrupted `Length` or a corrupted `ANC_Count`

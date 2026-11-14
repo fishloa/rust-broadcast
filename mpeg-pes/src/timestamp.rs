@@ -8,6 +8,9 @@ use crate::error::{Error, Result};
 #[cfg(test)]
 const TS_MASK: u64 = (1 << 33) - 1;
 
+/// The 4-bit prefix of a standalone DTS field (ISO/IEC 13818-1 Table 2-21).
+pub(crate) const DTS_PREFIX: u8 = 0b0001;
+
 /// Presentation Time Stamp (33-bit, 90 kHz units).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -58,16 +61,17 @@ impl Dts {
     pub fn seconds(self) -> f64 {
         self.0 as f64 / 90_000.0
     }
-    /// Encode as a 5-byte DTS field (prefix `0001`, the DTS half of a PTS+DTS pair).
+    /// Encode as a 5-byte DTS field (prefix `0001`, the DTS half of a
+    /// PTS+DTS pair).
     #[must_use]
     pub fn to_field_bytes(self) -> [u8; 5] {
-        write(self.0, 0b0001)
+        write(self.0, DTS_PREFIX)
     }
     /// Decode from a 5-byte DTS field (prefix `0001`).
     ///
     /// Exact inverse of [`to_field_bytes`](Self::to_field_bytes).
     pub fn from_field_bytes(b: &[u8; 5]) -> crate::Result<Self> {
-        Ok(Dts(read(b, 0b0001, "DTS")?))
+        Ok(Dts(read(b, DTS_PREFIX, "DTS")?))
     }
 }
 
